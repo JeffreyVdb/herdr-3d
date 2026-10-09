@@ -79,7 +79,7 @@ describe('a floor bigger than one canvas (#118)', () => {
 
 describe('the wall’s what column (#118)', () => {
   const row = (over: Partial<OverviewWorkerRow>): OverviewWorkerRow => ({
-    kind: 'worker', key: 'w', id: 'w', session: 's', name: 'Sprout', display: 'working', since: 0, harness: 'claude', model: 'claude',
+    kind: 'worker', key: 'w', id: 'w', session: 's', name: 'Sprout', display: 'working', since: 0, harness: 'claude', model: 'Opus 5.5 high',
     role: null, tag: null, runColor: null, orch: null, ticket: null, task: null, now: null, activity: null, floor: null, ...over,
   });
   const ticket = { key: '#118', title: 'Floor overview', item: null, url: null };
@@ -113,12 +113,19 @@ describe('the wall’s what column (#118)', () => {
     expect(lineMark(row({ now: { ...llmNow, status: { state: 'retrying', reason: 'timeout', retry_at: at + 10 * 60_000 } } }), at)).toMatch(/^AI · just now · refresh failed · retry \d\d:\d\d/);
   });
 
-  it('an orchestrator’s round: in its chip (both modes) and its meta line with the phase and pass (two-line rows)', () => {
-    const o = row({ role: 'orch', tag: 'ORCH', orch: { phase: 'waiting for you', round: 2, pass: 'pass 3 of 3', overCap: true } });
+  it('an orchestrator’s round is in its chip (both modes); its meta line is the model alone, no run words (#229)', () => {
+    const o = row({ role: 'orch', tag: 'ORCH', orch: { round: 2, overCap: true } });
     expect(wallTag(o)).toBe('ORCH r2');
-    expect(metaLine(o)).toBe('claude · waiting for you · round 2 · pass 3 of 3 · over cap');
-    expect(wallTag(row({ role: 'orch', tag: 'ORCH', orch: { phase: null, round: null, pass: null, overCap: false } }))).toBe('ORCH');
+    expect(metaLine(o)).toBe('Opus 5.5 high');
+    expect(metaLine(o)).not.toMatch(/waiting|round|pass|over cap/);
+    expect(wallTag(row({ role: 'orch', tag: 'ORCH', orch: { round: null, overCap: false } }))).toBe('ORCH');
     expect(wallTag(row({ tag: 'CODE r1' }))).toBe('CODE r1');
+  });
+
+  it('the harness is the mark before the name (#229): Claude and Codex have one, any other harness says its name', () => {
+    expect(metaLine(row({ harness: 'codex', model: 'GPT 6 Sol medium' }))).toBe('GPT 6 Sol medium');
+    expect(metaLine(row({ harness: 'gemini', model: 'gemini-3 high' }))).toBe('gemini gemini-3 high');
+    expect(metaLine(row({ harness: null, model: '' }))).toBe('');
   });
 });
 

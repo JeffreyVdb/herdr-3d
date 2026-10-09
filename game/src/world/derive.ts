@@ -1,6 +1,7 @@
 /** Pure helpers that turn protocol objects into what the game shows. */
 
-import type { Worker } from '../net/protocol';
+import type { HireOptions, Worker } from '../net/protocol';
+import { labelsOf, modelLabel } from './modelLabel';
 
 /** Bridge default for `--max-desks`; the local fallback uses the same cap. */
 export const MAX_DESKS = 96;
@@ -152,11 +153,13 @@ export function modelCue(harness: string | undefined, model: string | undefined)
   return { family, color: CUE_COLORS[family], hat };
 }
 
-/** `claude opus-5-5 high` / `codex gpt-6-sol medium`; empty when nothing is known. */
-export function modelLabel(harness: string | undefined, model: string | undefined, effort: string | undefined): string {
-  let m = model ?? '';
-  if (harness === 'claude' && m.startsWith('claude-')) m = m.slice('claude-'.length);
-  return [harness, m, effort].filter((s): s is string => !!s).join(' ');
+/**
+ * #229: a worker's model as it is shown, its readable name (#200) and effort, never the harness (an icon says it):
+ * `Opus 5.5 high`, `GPT 6 Sol medium` (the bridge's label), an unlabelled id as it is; empty when nothing is known.
+ */
+export function modelText(harness: string | undefined, model: string | undefined, effort: string | undefined, options: HireOptions = {}): string {
+  const name = model ? modelLabel(harness ?? '', model, harness ? labelsOf(options, harness) : undefined) : '';
+  return [name, effort].filter((s): s is string => !!s).join(' ');
 }
 
 /** Stable small hash for per-worker variation (tint, animation phase). */

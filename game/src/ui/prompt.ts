@@ -1,5 +1,5 @@
 import type { PromptAck } from '../net/protocol';
-import { CHIP_TEXT, modelLabel } from '../world/derive';
+import { CHIP_TEXT, modelText } from '../world/derive';
 import { promptBlocker, promptTextError, willQueue } from '../world/prompt';
 import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
@@ -277,7 +277,7 @@ export class PromptOverlay {
     const v = this.host.store.workerView(this.id);
     if (!v) return;
     const f = this.host.store.floorView(v.worker.session);
-    const sub = [`Desk ${v.desk + 1}`, v.worker.session, modelLabel(v.harness, v.worker.model, v.worker.effort) || null].filter(Boolean).join(' · ');
+    const sub = [`Desk ${v.desk + 1}`, v.worker.session, modelText(v.harness, v.worker.model, v.worker.effort, this.host.store.hireOptions) || null].filter(Boolean).join(' · ');
     const key = JSON.stringify([v.name, sub, v.display]);
     if (key !== this.headKey) {
       this.headKey = key;

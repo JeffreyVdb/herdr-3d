@@ -10,6 +10,7 @@ import { WorldStore } from '../world/store';
 import { Arrivals, type ArrivalSpec, type DeskAway } from './arrivals';
 import { DeskSet } from './desks';
 import { lookOf, NOON } from './daylook';
+import { STICKER_MARK, type StickerLogo } from './deskArt';
 import { memberOf, OfficeView } from './office';
 
 const floor: Floor = { session: 'top', state: 'running', building: 'b1', index: 0, desks: 8 };
@@ -226,6 +227,8 @@ describe('desk kits on the office floor (M6b)', () => {
     expect(claude.sticker?.rim).toBe(memberOf(store.workerView('old')!).cue.color);
     expect(office.deskInfo(2)?.sticker?.logo).toBe('codex');
     expect(office.deskInfo(4)?.sticker?.logo).toBe('plain');
+    // #229: the cells' marks: Claude's, OpenAI's for Codex, none.
+    expect([0, 2, 4].map((i) => STICKER_MARK[office.deskInfo(i)!.sticker!.logo as StickerLogo])).toEqual(['claude', 'openai', null]);
     const kit = office.kits[0]!;
     const photos = kit.items.filter((i) => i.kind === 'photo').length;
     // Working: its mug is on the desk (idle, it is in its hand).

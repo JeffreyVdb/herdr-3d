@@ -10,10 +10,10 @@
  * floor.
  */
 
-import type { DigestLineStatus, Worker } from '../net/protocol';
+import type { DigestLineStatus, HireOptions, Worker } from '../net/protocol';
 import { ACTIVITY_WORD, activityOf } from './activity';
-import { passWords, type CrewRole } from './crew';
-import { modelLabel, STATUS_WORD, type Display } from './derive';
+import type { CrewRole } from './crew';
+import { modelText, STATUS_WORD, type Display } from './derive';
 import type { BuildingView, Counts, FloorView, WorkerView } from './store';
 
 /** Where a task or now line came from (docs/protocol.md "Floor overview digest"); `report` is a freelancer's summary. */
@@ -54,14 +54,14 @@ export interface OverviewWorkerRow {
   /** When the current status began (unix ms). */
   since: number;
   harness: string | null;
-  /** `claude opus-5-5 high`. */
+  /** #229: the model's readable name and effort, `Opus 5.5 high` (the harness is the row's icon). */
   model: string;
   role: CrewRole | null;
   /** The role chip: `ORCH`, `CODE r2`. */
   tag: string | null;
   runColor: number | null;
-  /** Orchestrators: the phase in words, the round, the pass in words (`pass 2 of 3`), over the pass cap. */
-  orch: { phase: string | null; round: number | null; pass: string | null; overCap: boolean } | null;
+  /** Orchestrators: the round (the wall's chip), over the pass cap (a chip). #229: the phase and pass are the crew card's. */
+  orch: { round: number | null; overCap: boolean } | null;
   ticket: OverviewTicket | null;
   /** One-off workers (no run): what they were asked to do. */
   task: OverviewLine | null;
@@ -141,6 +141,8 @@ export interface OverviewSource {
   floorView(session: string): { workers: WorkerView[]; floor: { building: string | null } } | null;
   level(session: string): { number: number; count: number } | null;
   readonly floors: ReadonlyMap<string, { building: string | null }>;
+  /** #229: the bridge's harness catalog, for the models' readable names (`model_labels`). */
+  readonly hireOptions: HireOptions;
 }
 
 /** #188: what the all-floors tree reads besides (`WorldStore` fits). */
@@ -209,7 +211,7 @@ function nowOf(v: WorkerView): OverviewLine | null {
   return l;
 }
 
-export function overviewRow(v: WorkerView, floorTag: string | null): OverviewWorkerRow {
+export function overviewRow(v: WorkerView, floorTag: string | null, options: HireOptions = {}): OverviewWorkerRow {
   const w = v.worker;
   const crew = v.crew ?? null;
   const act = activityOf(w);
@@ -223,23 +225,17 @@ export function overviewRow(v: WorkerView, floorTag: string | null): OverviewWor
     display: v.display,
     since: v.since,
     harness: v.harness ?? null,
-    model: modelLabel(v.harness, w.model, w.effort),
+    model: modelText(v.harness, w.model, w.effort, options),
     role: crew?.role ?? null,
     tag: crew?.tag ?? null,
     runColor: crew?.runColor ?? null,
-    orch: crew?.role === 'orch' ? { phase: crew.phase, round: crew.round, pass: passWords(crew.pass ?? undefined), overCap: crew.overCap } : null,
+    orch: crew?.role === 'orch' ? { round: crew.round, overCap: crew.overCap } : null,
     ticket: crew ? ticketOf(w, crew.ticket) : null,
     task: crew ? null : line(d?.task, d?.task_source, d?.task_status, 'task'),
     now: nowOf(v),
     activity: act ? `${ACTIVITY_WORD[act.kind]}${act.detail ? ` · ${act.detail}` : ''}` : null,
     floor: floorTag,
   };
-}
-
-/** An orchestrator's run in words, for its meta line: `waiting for you`, `round 2`, `pass 3 of 3` (over cap is a chip). */
-export function orchWords(o: OverviewWorkerRow['orch']): string[] {
-  if (!o) return [];
-  return [o.phase, o.round ? `round ${o.round}` : null, o.pass].filter((x): x is string => !!x);
 }
 
 /** A floor's name beside a row: `Floor 2` in the overview's building, else its session (the project name you know). */
@@ -269,7 +265,7 @@ export function buildOverview(src: OverviewSource, session: string): OverviewTre
   let total = 0;
   const rowOf = (v: WorkerView) => {
     total++;
-    return overviewRow(v, v.worker.session === session ? null : floorLabel(src, session, v.worker.session));
+    return overviewRow(v, v.worker.session === session ? null : floorLabel(src, session, v.worker.session), src.hireOptions);
   };
   const nested = (vs: WorkerView[], parent: OverviewTicket | null) =>
     vs.sort(freelancerOrder).map((v) => {
@@ -324,7 +320,7 @@ export function buildCityOverview(src: CityOverviewSource): CityOverviewTree {
     const here = [...f.workers].sort(byDesk);
     const rowOf = (v: WorkerView) => {
       total++;
-      return overviewRow(v, v.worker.session === session ? null : floorLabel(src, session, v.worker.session));
+      return overviewRow(v, v.worker.session === session ? null : floorLabel(src, session, v.worker.session), src.hireOptions);
     };
     const nested = (vs: WorkerView[], parent: OverviewTicket | null) =>
       vs.sort(freelancerOrder).map((v) => {

@@ -1,5 +1,6 @@
 import type { ConnState } from '../net/client';
-import { modelLabel, STATUS_WORD, taskLine, type Display } from '../world/derive';
+import type { HireOptions } from '../net/protocol';
+import { modelText, STATUS_WORD, taskLine, type Display } from '../world/derive';
 import type { Counts, FloorView, WorkerView } from '../world/store';
 import type { Target } from '../render/office';
 import type { Area } from '../world/building';
@@ -48,6 +49,15 @@ const WHERE: Record<Exclude<Area, 'floor'>, { label: string; icon: string }> = {
 };
 const svg = (paths: string) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+
+/**
+ * Everything the look-at bar shows for a worker, the key it redraws on. #229: the shown model has no harness word and
+ * a readable name, so the harness and the exact model id are in it too: a harness- or id-only upsert redraws it.
+ */
+export function workerShown(w: WorkerView, options: HireOptions): string[] {
+  const { model, effort } = w.worker;
+  return [w.name, w.display, taskLine(w.worker), modelText(w.harness, model, effort, options), w.harness ?? '', model ?? '', effort ?? ''];
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -140,6 +150,8 @@ export class Hud {
   private mode: 'city' | 'floor' = 'city';
   /** M5: worker keys shown other than KEYS says (live, or disabled and why); see setKeyState. */
   private readonly keyStates = new Map<string, { live: boolean; why?: string }>();
+  /** #229: the bridge's harness catalog, for the models' readable names (the app's store). */
+  hireOptions: () => HireOptions = () => ({});
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud');
@@ -509,8 +521,7 @@ export class Hud {
   setTarget(t: Target | null, w: WorkerView | null): void {
     this.lastTarget = t;
     this.lastWorker = w;
-    // Everything the prompt shows for a worker, so a harness/effort-only upsert redraws it too.
-    const shown = w ? [w.name, w.display, taskLine(w.worker), modelLabel(w.harness, w.worker.model, w.worker.effort)] : [];
+    const shown = w ? workerShown(w, this.hireOptions()) : [];
     // M5: the usage and the question on the bar.
     if (w) shown.push(...promptBarKey(w));
     if (w) shown.push(...crewBarKey(w));
@@ -541,7 +552,7 @@ export class Hud {
     if (t.kind === 'worker' && w) {
       const tape = text(`tape tape--${w.display}`, CHIP_TEXT[w.display]);
       line.append(text('prompt-name', w.name), tape, text('prompt-task', taskLine(w.worker)));
-      const model = modelLabel(w.harness, w.worker.model, w.worker.effort);
+      const model = modelText(w.harness, w.worker.model, w.worker.effort, this.hireOptions());
       if (model) line.append(text('prompt-model', model));
       // M5
       const usage = usageChip(w);

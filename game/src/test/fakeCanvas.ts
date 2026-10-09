@@ -3,7 +3,8 @@
  * `node`), so render classes that draw canvas atlases (cards, the desks'
  * status bars and stickers, signs) can be built. Its 2D context does nothing:
  * every method is a no-op, `measureText` is 10 px a character,
- * `getImageData` is black, `createImageData` transparent.
+ * `getImageData` is black, `createImageData` transparent. A `Path2D` (#229's
+ * brand marks) only keeps its path data.
  */
 
 type Ctx = Record<string | symbol, unknown>;
@@ -35,4 +36,10 @@ if (typeof globalThis.document === 'undefined') {
     return c;
   };
   (globalThis as unknown as { document: unknown }).document = { createElement };
+}
+
+if (typeof globalThis.Path2D === 'undefined') {
+  (globalThis as unknown as { Path2D: unknown }).Path2D = class {
+    constructor(readonly d?: string) {}
+  };
 }

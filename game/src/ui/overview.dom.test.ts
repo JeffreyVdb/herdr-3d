@@ -337,12 +337,46 @@ describe('the overview page (#118)', () => {
     expect(rows[1]?.getAttribute('aria-level')).toBe('2');
   });
 
-  it('an orchestrator’s meta line: model, phase, round, pass and the over-cap chip', () => {
-    const { ov } = setup([worker('o1', { role: 'orch', desk_index: 0, phase: 'waiting_user', round: 2, pass: 3, harness: 'claude', model: 'claude-opus-5-5' })]);
+  it('an orchestrator’s meta line is its model and effort alone, no run words; the ORCH and over-cap chips stay (#229)', () => {
+    const { ov } = setup([worker('o1', { role: 'orch', desk_index: 0, phase: 'waiting_user', round: 2, pass: 3, harness: 'claude', model: 'claude-opus-5-5', effort: 'high' })]);
     ov.open('top');
     const row = document.querySelector('.ov-row[data-key="o1"]') as HTMLElement;
-    expect(row.querySelector('.ov-meta')?.textContent).toMatch(/ · waiting for you · round 2 · pass 3 of 3$/);
+    expect(row.querySelector('.ov-meta')?.textContent).toBe('Opus 5.5 high');
+    expect(row.querySelector('.ov-who')?.textContent).not.toMatch(/waiting|round|pass/i);
+    expect(row.querySelector('.ov-tag')?.textContent).toBe('ORCH');
     expect(row.querySelector('.ov-cap')?.textContent).toBe('Over cap');
+  });
+
+  it('the harness is a white mark before the name, named for a screen reader; the row’s label keeps it (#229)', () => {
+    const { ov } = setup([
+      worker('cl', { desk_index: 0, harness: 'claude', model: 'claude-haiku-5-5', effort: 'high' }),
+      worker('cx', { desk_index: 1, harness: 'codex', model: 'gpt-6-sol', effort: 'medium' }),
+      worker('gm', { desk_index: 2, harness: 'gemini', model: 'gemini-3', effort: 'high' }),
+      worker('no', { desk_index: 3 }),
+    ]);
+    ov.open('top');
+    const row = (k: string) => document.querySelector(`.ov-row[data-key="${k}"]`) as HTMLElement;
+    const mark = (k: string) => row(k).querySelector('.ov-who > svg.ov-mark');
+    for (const [k, name] of [['cl', 'Claude'], ['cx', 'Codex']] as const) {
+      const m = mark(k)!;
+      expect(m.getAttribute('role')).toBe('img');
+      expect(m.getAttribute('aria-label')).toBe(name);
+      expect(m.querySelector('title')?.textContent).toBe(name);
+      expect(m.getAttribute('fill')).toBe('#fff');
+      expect(m.querySelector('path')?.getAttribute('d')).toBeTruthy();
+      expect(m.nextElementSibling?.classList.contains('ov-name')).toBe(true);
+      expect(row(k).getAttribute('aria-label')).toContain(`${k} · ${name} · `);
+    }
+    expect(mark('cl')!.getAttribute('viewBox')).toBe('0 0 100 100');
+    expect(mark('cx')!.getAttribute('viewBox')).toBe('1.68 1.75 16.65 16.5');
+    expect(row('cl').querySelector('.ov-meta')?.textContent).toBe('Haiku 5.5 high');
+    expect(row('cx').querySelector('.ov-meta')?.textContent).toBe('gpt-6-sol medium');
+    // A harness without a mark: no icon, its name in the meta line and the label.
+    expect(mark('gm')).toBeNull();
+    expect(row('gm').querySelector('.ov-meta')?.textContent).toBe('gemini gemini-3 high');
+    expect(row('gm').getAttribute('aria-label')).toContain('gemini');
+    expect(mark('no')).toBeNull();
+    expect(row('no').querySelector('.ov-meta')?.textContent).toBe('');
   });
 
   it('a row’s click goes to that worker’s transcript and closes the page; a ticket’s opens the issue over it', () => {

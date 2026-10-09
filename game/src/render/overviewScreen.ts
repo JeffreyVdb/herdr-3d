@@ -1,9 +1,10 @@
 import * as THREE from 'three/webgpu';
 import type { Box3 } from '../world/layout';
-import { aiLabel, BLINK_MS, orchWords, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
+import { aiLabel, BLINK_MS, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
 import { lineStatusText } from '../world/digestSettings';
 import { STATUS_CSS, STATUS_CHIP_CSS } from './palette';
 import { FONT } from './cards/atlasCards';
+import { drawMark, markFor } from './brandMarks';
 
 /**
  * #118: the floor overview's big screen on the lounge wall. A thin dark bezel box a few cm off the west wall, facing +x,
@@ -357,7 +358,7 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
 function face(v: VisibleRow, now: number): unknown[] {
   const r = v.row;
   if (r.kind !== 'worker') return [r.key, r.kind, v.depth, r.kind === 'ghost' ? [r.name, r.floor] : null];
-  return [r.key, v.depth, r.name, r.display, wallTag(r), r.runColor, metaLine(r), ticketLine(r), lineText(r), lineMark(r, now), sinceText(r.display, r.since, now)];
+  return [r.key, v.depth, r.name, r.display, markFor(r.harness), wallTag(r), !!r.orch?.overCap, r.runColor, metaLine(r), ticketLine(r), lineText(r), lineMark(r, now), sinceText(r.display, r.since, now)];
 }
 
 let scanlines: HTMLCanvasElement | null = null;
@@ -479,13 +480,27 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
       g.stroke();
     }
     const nameSize = Math.round(compact ? u * 3.6 : u * 4.4);
-    g.font = `800 ${nameSize}px ${DISPLAY}`;
     g.fillStyle = r.kind === 'worker' ? (r.display === 'asleep' ? TEXT_3 : TEXT) : TEXT_2;
     const name = r.kind === 'worker' ? r.name : r.kind === 'ghost' ? `Orchestrator ${r.name} · ${r.floor}` : 'Unlinked';
     const base = mid + nameSize * 0.36;
-    const nameW = fitText(g, name.toUpperCase(), colWho + indent, base, colWhat - colWho - indent - u * 9);
+    // #229: the harness's mark before a worker's name, as tall as its capitals, on their baseline; then the role chip
+    // and an orchestrator's over-cap badge after it, the name giving way to them.
+    const mark = r.kind === 'worker' ? markFor(r.harness) : null;
+    const nameX = colWho + indent + (mark ? nameSize * 0.92 : 0);
+    if (mark) {
+      const ink = g.fillStyle;
+      g.fillStyle = r.kind === 'worker' && r.display === 'asleep' ? TEXT_3 : '#ffffff';
+      drawMark(g, mark, colWho + indent + nameSize * 0.36, base - nameSize * 0.36, nameSize * 0.72);
+      g.fillStyle = ink;
+    }
     const tag = r.kind === 'worker' ? wallTag(r) : null;
-    if (r.kind === 'worker' && tag) chip(g, tag, colWho + indent + nameW + u * 1.2, mid, u, r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : INK_3);
+    const cap = r.kind === 'worker' && r.orch?.overCap ? 'OVER CAP' : null;
+    const chipsW = (tag ? chipW(g, tag, u) + u * 1.2 : 0) + (cap ? chipW(g, cap, u) + u * 1.2 : 0);
+    g.font = `800 ${nameSize}px ${DISPLAY}`;
+    const nameW = fitText(g, name.toUpperCase(), nameX, base, colWhat - nameX - Math.max(u * 9, chipsW + u * 2));
+    let cx = nameX + nameW + u * 1.2;
+    if (r.kind === 'worker' && tag) cx += chip(g, tag, cx, mid, u, r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : INK_3) + u * 1.2;
+    if (cap) chip(g, cap, cx, mid, u, STATUS_CHIP_CSS.needs_you);
     if (r.kind !== 'worker') return;
     g.font = `400 ${Math.round(u * 2.8)}px ${MONO}`;
     g.fillStyle = TEXT_2;
@@ -552,9 +567,12 @@ export function whatLines(r: OverviewWorkerRow, compact: boolean): [string | nul
   return [ticket, compact ? null : line];
 }
 
-/** The model under the name, and an orchestrator's run: `claude opus-5-5 high · waiting for you · round 2 · pass 3 of 3 · over cap`. */
+/**
+ * #229: the model under the name, its readable name and effort (`Opus 5.5 high`), never the run's words (the chips say
+ * ORCH, the round and over cap); a harness without a mark says its name before it.
+ */
 export function metaLine(r: OverviewWorkerRow): string {
-  return [r.model, ...orchWords(r.orch), r.orch?.overCap ? 'over cap' : null].filter(Boolean).join(' · ');
+  return [markFor(r.harness) ? null : r.harness, r.model].filter(Boolean).join(' ');
 }
 
 /** The role chip: an orchestrator's carries its round (`ORCH r2`), as a freelancer's does, for the one-line rows. */
@@ -638,13 +656,19 @@ function ring(g: CanvasRenderingContext2D, x: number, y: number, r: number, colo
   g.stroke();
 }
 
-function chip(g: CanvasRenderingContext2D, text: string, x: number, mid: number, u: number, bg: string): void {
+function chipW(g: CanvasRenderingContext2D, text: string, u: number): number {
   g.font = `400 ${Math.round(u * 2.2)}px ${MONO}`;
-  const w = g.measureText(text).width + u * 1.6;
+  return g.measureText(text).width + u * 1.6;
+}
+
+/** A chip of `text` from `x`, centred on `mid`; returns its width. */
+function chip(g: CanvasRenderingContext2D, text: string, x: number, mid: number, u: number, bg: string): number {
+  const w = chipW(g, text, u);
   g.fillStyle = bg;
   roundRect(g, x, mid - u * 1.5, w, u * 3, u * 0.4);
   g.fillStyle = '#ffffff';
   g.fillText(text, x + u * 0.8, mid + u * 0.75);
+  return w;
 }
 
 /** The status colours the wall draws with: the shared palette (exported for the contrast test). */
