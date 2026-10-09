@@ -98,6 +98,491 @@
   --scroll-thumb: #3a466e;
   --scroll-track: transparent;
 
+  /* tokens:begin (generated from the per-component token lists: see the Quiet / Ubuntu pairs below) */
+  /* The soft ring round a status dot in the top bar's counts (decoration). */
+  --dot-ring: rgb(255 255 255 / 12%);
+  /* Fill of a toggle button that is on (aria-pressed): green in Quiet, the action orange in Ubuntu. */
+  --toggle-on-bg: var(--plus);
+  /* Border of a toggle button that is on. */
+  --toggle-on-border: var(--plus);
+  /* The dot or icon of a failed connection / failed step (not the needs-you status). */
+  --error-dot: var(--needs_you);
+  /* Emboss under a label-maker tape's text; Ubuntu's dark-on-light chips are flat. */
+  --tape-text-shadow: 0 1px 0 rgb(0 0 0 / 28%);
+  /* The tape chip's bevel and drop; flat in Ubuntu. */
+  --tape-bevel: inset 0 1px 0 rgb(255 255 255 / 30%), inset 0 -1px 0 rgb(0 0 0 / 18%), 0 1px 1px rgb(0 0 0 / 18%);
+  /* The dark halo round the centre reticle's ring. */
+  --reticle-halo: rgb(28 37 64 / 55%);
+  /* Fill of a keycap on the menu's rows. */
+  --key-bg: rgb(255 255 255 / 6%);
+  /* The hint bubble over the 3D world: opaque in Ubuntu so its text never rests on the scene. */
+  --hint-bg: rgb(28 37 64 / 92%);
+  /* A small label's drop shadow (the floor plan's labels). */
+  --shadow-sm: 0 2px 6px rgb(18 24 44 / 30%);
+  /* A plate carrying a worker's name on the floor plan: white in Quiet, the raised surface in Ubuntu. */
+  --plate-bg: #ffffff;
+  /* Text on --plate-bg. */
+  --on-plate: #1c2540;
+  /* An info toast's fill: the sun in Quiet; a raised plate in Ubuntu (orange is for actions). */
+  --toast-info-bg: #ffc233;
+  /* Text on an info toast. */
+  --toast-info-text: #1c2540;
+  /* The floor plate's label on its action-coloured fill (Quiet's deeper navy, 11.7:1). */
+  --floor-plate-text: #0b1022;
+  /* Hover fill of the floor plate when it shows a place (lobby, street) rather than a floor. */
+  --where-plate-hover: #354270;
+  /* The top bar menu's body: a raised surface in Ubuntu, the bar's navy in Quiet. */
+  --menu-bg: #1c2540;
+  /* A menu row's hover / focus fill. */
+  --menu-row-hover: rgb(255 255 255 / 10%);
+  /* A soft glow in the accent colour (a lit floor button, the lift display's digits). */
+  --accent-glow: rgb(255 194 51 / 45%);
+  /* The tighter glow on a lit call button's number. */
+  --accent-glow-strong: rgb(255 194 51 / 70%);
+  /* A faint ring round a warning-coloured dot (a fallback resume). */
+  --accent-halo: rgb(255 194 51 / 30%);
+  /* The outline of an accent-coloured outlined button (wake). */
+  --accent-border-soft: rgb(255 194 51 / 50%);
+  /* The outline of a destructive row tool when hovered (Ubuntu: also at rest). */
+  --error-border-soft: rgb(232 65 58 / 65%);
+  /* Fill of an accent tag (waking, suggested, default, a credits genre); its text is --on-fill. */
+  --chip-accent: #ffc233;
+  /* Tint of a sleeping floor's row in the elevator. */
+  --asleep-row: rgb(90 95 168 / 16%);
+  /* Hover fill of an elevator row. */
+  --lift-row-hover: rgb(255 255 255 / 7%);
+  /* The track of the elevator's progress bar. */
+  --lift-bar-track: rgb(255 255 255 / 10%);
+  /* The dashed outline of an empty slot (a building without a logo). */
+  --empty-border: rgb(255 255 255 / 28%);
+  /* The thin ring on a pill filled with a data colour (a crew role tag). */
+  --pill-ring: rgb(255 255 255 / 22%);
+  /* A crew role tag's fill when its run has no colour of its own. */
+  --run-default: #24406e;
+  /* The question a crew member waits on, on the prompt bar (needs you). */
+  --ask-text: #ffd2cf;
+  /* A warning plate's fill (the About build note); its text is --on-fill in Ubuntu. */
+  --warn-fill: #b45309;
+  /* A link's hover colour (Ubuntu keeps the colour and strengthens the underline). */
+  --link-hover: #ffd25e;
+  /* A dashed or secondary control boundary (tape chips, the as-of label, a scrollbar thumb): the strong 1px border in Ubuntu */
+  --border-strong: rgb(255 255 255 / 30%);
+  /* Boundary of a small mark: check box, radio, outlined chip */
+  --border-mark: rgb(255 255 255 / 45%);
+  /* Fill of a nested group or card inside a dialog (agent group, preset row) */
+  --group-bg: rgb(255 255 255 / 4%);
+  /* A list row or plate strip hover fill */
+  --row-hover: rgb(255 255 255 / 5%);
+  /* Inset edge of a selected list row (Ubuntu adds an orange marker on top) */
+  --row-edge: rgb(255 255 255 / 16%);
+  /* A loading placeholder bar */
+  --skeleton-bg: rgb(255 255 255 / 6%);
+  /* The loading placeholder bar at the bright end of its breathing */
+  --skeleton-bg-2: rgb(255 255 255 / 11%);
+  /* Glow around the desk plate plus sign */
+  --plus-glow: rgb(47 196 106 / 55%);
+  /* Focus ring colour on a bright-filled selected chip */
+  --focus-on-fill: #fff;
+  /* A warning callout border */
+  --warn-border: rgb(255 194 51 / 45%);
+  /* The border of a "waiting on a question" pill */
+  --warn-border-strong: rgb(255 194 51 / 55%);
+  /* Dotted underline flagging a price estimate */
+  --warn-underline: rgb(255 194 51 / 70%);
+  /* A warning callout fill */
+  --warn-bg: rgb(255 194 51 / 10%);
+  /* An error callout border */
+  --error-edge: rgb(255 123 115 / 60%);
+  /* An error callout fill */
+  --error-bg: rgb(216 48 44 / 18%);
+  /* Border of a group that is switched on and fine */
+  --ok-border: rgb(47 196 106 / 50%);
+  /* Fill of a group that is switched on and fine */
+  --ok-bg: rgb(47 196 106 / 8%);
+  /* Highlighted code or path text in a dialog (git status lines, a branch name) */
+  --code-hl: #ffd9a8;
+  /* The struck-through, cut part of a prompt (Ubuntu: muted colour, no alpha) */
+  --del-text: rgb(238 242 251 / 55%);
+  /* Border of the cardboard-box (wrap-up pending) callout */
+  --kraft-border: rgb(201 147 90 / 55%);
+  /* Fill of the cardboard-box callout */
+  --kraft-bg: rgb(201 147 90 / 13%);
+  /* Fill of the cardboard-box status tape (its text is the theme chip text colour) */
+  --tape-box: #94632f;
+  /* Fill of the Claude provider tape in the limits plate */
+  --tape-claude: #a5522f;
+  /* The backdrop of the prompt overlay, which keeps the worker in view */
+  --scrim-light: rgb(18 24 44 / 22%);
+  /* The prompt overlay speech bubble (Ubuntu: the dark composer well) */
+  --note-bg: #fff;
+  /* The speech bubble border and tail */
+  --note-edge: #cfd6ea;
+  /* Text typed into the speech bubble */
+  --note-text: #1c2540;
+  /* Placeholder in the speech bubble */
+  --note-muted: #6b7596;
+  /* Caret in the speech bubble */
+  --note-caret: #2f6bf0;
+  /* The composer error colour on the bubble or the work-order slip */
+  --note-err: #b3261e;
+  /* Selected text on the work-order slip */
+  --note-select: rgb(255 194 51 / 55%);
+  /* The work-order slip (first prompt) editor fill */
+  --slip-bg: #eef2fb;
+  /* The slip editor fill on hover */
+  --slip-bg-hover: #f6f8fd;
+  /* Text and caret on the slip */
+  --slip-text: #1c2540;
+  /* Placeholder on the slip */
+  --slip-muted: #5b6685;
+  /* The ruled lines of the slip */
+  --slip-rule: rgb(28 37 64 / 10%);
+  /* An erroring file chip inside a composer */
+  --chip-error-bg: #4a2531;
+  /* Added-line count and text in the Changes panel */
+  --diff-add: #8fe3b4;
+  /* Removed-line count and text in the Changes panel */
+  --diff-del: #ffaaa3;
+  /* Added diff line fill */
+  --diff-add-bg: rgb(47 196 106 / 15%);
+  /* Removed diff line fill */
+  --diff-del-bg: rgb(232 65 58 / 17%);
+  /* Diff hunk header fill */
+  --diff-hunk-bg: rgb(47 107 240 / 18%);
+  /* Diff hunk header text */
+  --diff-hunk-text: #b3c8ff;
+  /* Unchanged diff line text */
+  --diff-text: #d3daee;
+  /* Diff line numbers */
+  --diff-num: #56628a;
+  /* A diff note line (binary file, truncated) */
+  --diff-note: #8d97b6;
+  /* The branch name on black embossing tape */
+  --emboss-bg: #0b0f1c;
+  /* Text on the embossing tape */
+  --emboss-text: #f4f6fb;
+  /* A recessed list (the Changes file list) */
+  --list-bg: rgb(0 0 0 / 16%);
+  /* A neutral small chip fill (committed) */
+  --chip-neutral-bg: rgb(255 255 255 / 10%);
+  /* Border of the Codex async-question pill (it works on: the running colour) */
+  --async-border: color-mix(in srgb, #2f6bf0 70%, white);
+  /* Text of the Codex async-question pill */
+  --async-text: color-mix(in srgb, #2f6bf0 45%, white);
+  /* Pulsing glow around a reached limit plate */
+  --lm-high-glow: rgb(255 96 88 / 35%);
+  /* The empty part of a limits meter */
+  --meter-track: rgb(255 255 255 / 14%);
+  /* Fill of the limit-reached notice in a dialog */
+  --lm-warn-bg: rgb(255 96 88 / 16%);
+  /* Text of the limit-reached notice */
+  --lm-warn-text: #ffd9d6;
+  /* A keycap (kbd) outline */
+  --kbd-border: rgb(255 255 255 / 22%);
+  /* Code-like text in a shell field (a textarea, a model slug): Quiet's own stack, Ubuntu Mono in Ubuntu. */
+  --font-code: ui-monospace, 'JetBrains Mono Variable', monospace;
+  /* A path shown as text in a card (the lightbox's missing-image card). */
+  --font-code-path: 'Recursive Variable', ui-monospace, Menlo, monospace;
+  /* Ready-state text on a composer chip. */
+  --ok-text-soft: #8ee6b8;
+  /* Muted text in a popover (status, note, key hint); never faded by opacity in Ubuntu. */
+  --text-hint: #a3adca;
+  /* What the completion popover's Quiet fill mixes the well with (Ubuntu replaces the fill by --raised). */
+  --menu-lift: #fff;
+  /* Boundary of a chip, keycap or round viewer button on a raised fill. */
+  --border-chip: rgb(255 255 255 / 22%);
+  /* Boundary of the composer lightbox's round close button. */
+  --border-viewer-btn: rgb(255 255 255 / 25%);
+  /* Hover fill of a list/option row (settings model rows, palette and completion options). */
+  --row-hover-soft: rgb(255 255 255 / 6%);
+  /* Fill of a ruled aside (the privacy note above a switch). */
+  --aside-bg: rgb(255 255 255 / 3%);
+  /* Border of a ruled aside; decoration. */
+  --aside-border: rgb(255 255 255 / 12%);
+  /* The filled part of a volume slider's track. */
+  --slider-fill: #eef2fb;
+  /* The unfilled part of a volume slider's track. */
+  --slider-rest: rgb(255 255 255 / 18%);
+  /* Filled part of a slider whose channel is muted. */
+  --slider-fill-muted: #b9c3dc;
+  /* Unfilled part of a slider whose channel is muted. */
+  --slider-rest-muted: rgb(255 255 255 / 12%);
+  /* A slider's thumb (ringed by --chrome). */
+  --slider-thumb: #ffffff;
+  /* Fill of the neutral (input) origin badge in the image viewer; dark label on it. */
+  --tag-fill-neutral: #f4f6fb;
+  /* Fill of a composer chip whose upload failed. */
+  --error-chip-bg: rgb(216 48 44 / 22%);
+  /* Border of a composer chip whose upload failed. */
+  --error-chip-border: rgb(255 123 115 / 60%);
+  /* Resting fill of a small button inside a chip (Retry); Ubuntu adds a strong border. */
+  --chip-btn-bg: rgb(255 255 255 / 14%);
+  /* Hover fill of a small button inside a chip (remove, retry). */
+  --chip-btn-bg-hover: rgb(255 255 255 / 24%);
+  /* The ground an image sits on (composer thumbnail, enlarged view): a recessed well. */
+  --image-stage: #0b1122;
+  /* The card that says an image is not available. */
+  --image-card: #101830;
+  /* A path set as text in a card: a recessed chip. */
+  --path-bg: rgb(0 0 0 / 32%);
+  /* Backdrop of the image lightbox. */
+  --scrim-viewer: rgb(10 14 28 / 92%);
+  /* Backdrop of the composer's image preview. */
+  --scrim-viewer-soft: rgb(10 14 28 / 90%);
+  /* The lightbox's tool strip: a fade in Quiet, opaque chrome in Ubuntu (text over a picture needs an opaque ground). */
+  --viewer-top-bg: linear-gradient(rgb(10 14 28 / 70%), transparent);
+  /* Fill of a lightbox / preview button. */
+  --viewer-btn-bg: #1c2540;
+  /* Hover fill of a lightbox / preview button. */
+  --viewer-btn-bg-hover: #2a355a;
+  /* Secondary text in the lightbox (meta, count, why); opaque in Ubuntu. */
+  --text-viewer: rgb(238 242 251 / 72%);
+  /* Status text in the lightbox. */
+  --text-viewer-2: rgb(238 242 251 / 80%);
+  /* Ground of the lightbox's warning note (border is --warn-border). */
+  --note-warn-bg: #2a2413;
+  /* The needs-you number/colour as text on the inbox plate (Quiet's high red, Ubuntu's yellow: not the error red). */
+  --needs_you-text: #ff6058;
+  /* The needs-you count in a footer hint, text on a surface. */
+  --needs_you-text-pale: color-mix(in srgb, #e8413a 62%, #fff);
+  /* The pulse ring round the inbox when someone needs you. */
+  --needs_you-ring: rgb(255 96 88 / 70%);
+  /* The pulse ring's faded end. */
+  --needs_you-ring-off: rgb(255 96 88 / 0%);
+  /* The pulse ring round the inbox for a finished worker. */
+  --ring-done: rgb(185 195 220 / 55%);
+  /* Thumb of a thin scrollbar (composer editor, popup list). */
+  --scroll-thumb-thin: rgb(255 255 255 / 30%);
+  /* Thumb of the inbox list's thin scrollbar. */
+  --scroll-thumb-thin-2: rgb(255 255 255 / 24%);
+  /* The receptionist's speech bubble: paper in Quiet, a raised surface in Ubuntu. */
+  --bubble-bg: #ffffff;
+  /* Text on --bubble-bg. */
+  --bubble-text: #1c2540;
+  /* The bubble's stroke and its tail's. */
+  --bubble-border: rgb(28 37 64 / 85%);
+  /* The rule above the bubble's list. */
+  --bubble-divider: rgb(28 37 64 / 14%);
+  /* Muted text and glyphs on the bubble. */
+  --bubble-muted: #5b6685;
+  /* The bubble's elevation. */
+  --bubble-shadow: 0 6px 16px rgb(18 24 44 / 22%), 0 1px 3px rgb(18 24 44 / 16%);
+  /* The inbox's plain (no harness) sticker disc; the Claude and Codex logos are brand art and stay. */
+  --sticker-plain: #5b6685;
+  /* The screen-share LIVE strip's fill. */
+  --live-bg: rgb(216 48 44 / 16%);
+  /* The LIVE strip's ring. */
+  --live-ring: rgb(255 120 110 / 38%);
+  /* What is being shared, on the LIVE strip. */
+  --live-text: #ffd9d6;
+  /* The count pill inside the selected seat tab (Ubuntu: a dark pill with a light number). */
+  --tab-count-bg-selected: rgb(28 37 64 / 18%);
+  /* The dashed outline of a provider's virtual status tray (Kaneo's planned / archived) in the boards. */
+  --tray-border: rgb(255 255 255 / 22%);
+  /* Fill of a count chip in a board column's head. */
+  --count-bg: #34406a;
+  /* Text on a board card / PR slip: dark ink on the paper in Quiet, light text on the raised purple card in Ubuntu. */
+  --on-paper: var(--ink);
+  /* The ring round a card's pin dot (Ubuntu: light, so the data-coloured pin reads on the purple card). */
+  --pin-edge: rgb(28 37 64 / 55%);
+  /* The pinhole left on a card lifted in the hand. */
+  --pin-hole: rgb(28 37 64 / 40%);
+  /* The dark edge round the drop slot's thread and its two pins. */
+  --slot-edge: rgb(28 37 64 / 55%);
+  /* A small badge on a card (its 'closed' word). */
+  --card-badge-bg: rgb(28 37 64 / 14%);
+  /* A holder chip on a card. */
+  --card-chip-bg: rgb(255 255 255 / 75%);
+  /* The ring round a holder chip on a card. */
+  --card-chip-ring: rgb(28 37 64 / 30%);
+  /* Fill of the urgent priority tape (its word is on it). */
+  --prio-urgent: #d8302c;
+  /* Fill of the high priority tape. */
+  --prio-high: #c25a00;
+  /* Fill of the medium priority tape. */
+  --prio-medium: #2f5fd0;
+  /* Fill of the low priority tape. */
+  --prio-low: #5a6480;
+  /* Fill of the closed state tape of an issue / PR. */
+  --state-closed: #6a4bb5;
+  /* A PR slip, and the status pills of the item modal: pale paper in Quiet, the raised surface in Ubuntu. */
+  --paper-pale: #f7f4ff;
+  /* The coloured edge of a PR slip. */
+  --paper-stripe: #b9a5ff;
+  /* Supporting text on a card / slip / pill (Quiet: ink on paper). */
+  --paper-text-2: #4a5570;
+  /* Muted text on pale paper (the whiteboard's loading line). */
+  --paper-text-3: #5b6685;
+  /* Passing / approved / mergeable text on a slip or pill. */
+  --paper-ok: #0b7a4f;
+  /* Failing / changes requested / conflicting text on a slip or pill. */
+  --paper-bad: #c42a26;
+  /* Pending / review required / unknown text on a slip or pill. */
+  --paper-pend: #8a5a00;
+  /* No checks / incomplete text on a slip or pill. */
+  --paper-none: #5d6478;
+  /* Added-lines count in a PR's diffstat and file list. */
+  --stat-plus: #62d99a;
+  /* Removed-lines count in a PR's diffstat and file list. */
+  --stat-minus: #ff8d86;
+  /* An error message in a panel body (the item modal's load error). */
+  --error-text-body: #ffb1ab;
+  /* A link in rendered markdown (Ubuntu: the lighter orange, underlined). */
+  --link: #9fc2ff;
+  /* The bar beside a markdown quote. */
+  --quote-rule: #3a466e;
+  /* Cell borders of a markdown table. */
+  --table-rule: #34406a;
+  /* The outline of an outlined (quiet) button. */
+  --btn-quiet-ring: rgb(255 255 255 / 20%);
+  /* Fill of a warning button (merge anyway). */
+  --btn-warn-bg: #8a5a00;
+  /* Label of a warning button. */
+  --on-btn-warn: #fff;
+  /* The border of a destructive confirmation. */
+  --error-ring: rgb(255 123 115 / 55%);
+  /* The fill of a destructive confirmation. */
+  --error-wash-strong: rgb(216 48 44 / 16%);
+  /* The fill of an inline alert bar (a drop that did not land). */
+  --error-wash: rgb(255 110 100 / 13%);
+  /* The border of a warning confirmation. */
+  --warn-ring: rgb(255 194 51 / 60%);
+  /* The fill of a warning notice or confirmation. */
+  --warn-wash: rgb(255 194 51 / 12%);
+  /* The ring of a highlighted drop target (a column a note would land in). */
+  --accent-ring: rgb(255 194 51 / 55%);
+  /* Where a dragged card was: the empty patch. */
+  --ghost-bg: rgb(255 255 255 / 4%);
+  /* The dashed outline of that patch. */
+  --ghost-edge: rgb(255 255 255 / 26%);
+  /* Display type of the floor overview (the destination, names): Archivo condensed in Quiet, Ubuntu Bold in Ubuntu. */
+  --display-font: 'H3D Overview Display', 'Archivo Variable', var(--font, system-ui), sans-serif;
+  /* Data readouts of the floor overview (counts, times, keys): Departure Mono in Quiet, Ubuntu Mono in Ubuntu. */
+  --data-font: 'H3D Overview Mono', 'Departure Mono', ui-monospace, monospace;
+  /* The overview's scanline weave (Ubuntu is solid). */
+  --ov-scan: rgb(255 255 255 / 1.6%);
+  /* The overview's corner glow (Ubuntu is solid). */
+  --ov-glass-tint: rgb(47 107 240 / 9%);
+  /* The tint at the top of a floor's band on the all-floors page. */
+  --ov-band-tint: rgb(47 107 240 / 7%);
+  /* Upper half of a split-flap count tile. */
+  --ov-flap-top: #1a2342;
+  /* Lower half of a split-flap count tile. */
+  --ov-flap-bottom: #141c36;
+  /* A header button's border on hover. */
+  --ov-rule-hover: rgb(185 195 220 / 32%);
+  /* The tree wires from an orchestrator to its workers. */
+  --ov-wire: rgb(185 195 220 / 32%);
+  /* The name of an asleep floor's band. */
+  --ov-asleep-text: #9aa5c2;
+  /* The working lamp's tight glow. */
+  --working-glow-strong: rgb(47 107 240 / 70%);
+  /* A working lamp's glow at the bright end of its blink. */
+  --working-glow: rgb(47 107 240 / 55%);
+  /* A working lamp's halo ring at the bright end of its blink. */
+  --working-halo: rgb(47 107 240 / 22%);
+  /* Hover fill of a green (go) button. */
+  --plus-hover: #4bd884;
+  /* The backdrop of a fullscreen viewer (the whiteboard; image / share viewers). */
+  --scrim-board: rgb(10 14 28 / 88%);
+  /* Recursive's casual axis for a dialog title in between plain and casual; Ubuntu has none. */
+  --fvs-title: 'CASL' 0.6;
+  /* A neutral label-maker tape chip (the whiteboard's save status). */
+  --tape-bg: #f4f6fb;
+  /* Text on a neutral tape chip. */
+  --on-tape: var(--ink);
+  /* The whiteboard's loading cover over its surface. */
+  --board-loading-bg: #fbfcff;
+  /* The whiteboard's marker tray: brushed aluminium in Quiet, recessed chrome in Ubuntu. */
+  --ledge-bg: linear-gradient(#aab2c0, #8f98a8 55%, #7d8698);
+  /* Text on the marker tray. */
+  --on-ledge: #1f2740;
+  /* A pinned drop's chip on the marker tray. */
+  --ledge-note-bg: #fff3c4;
+  /* A quiet button's border on the marker tray / confirmation. */
+  --ledge-btn-border: rgb(28 37 64 / 35%);
+  /* A quiet button's fill on the marker tray / confirmation. */
+  --ledge-btn-bg: rgb(255 255 255 / 55%);
+  /* A quiet button's hover fill there. */
+  --ledge-btn-bg-hover: rgb(255 255 255 / 80%);
+  /* The border of a floating panel over an editor (the drop picker, the confirmation). */
+  --panel-border: rgb(255 255 255 / 16%);
+  /* The border of a card-shaped button in a panel (a drop to pin). */
+  --card-border: rgb(255 255 255 / 12%);
+  /* Hover fill of a danger button on the ink panel. */
+  --error-fill-deep: #b9221f;
+  /* Border of an outlined destructive button (discard). */
+  --destructive-border: rgb(255 132 120 / 50%);
+  /* Label of an outlined destructive button. */
+  --destructive-text: #ffb9b1;
+  /* Hover fill of an outlined destructive button. */
+  --destructive-hover: rgb(216 48 44 / 22%);
+  /* The label-maker tape that names whose terminal the seat bar is (dark text on it). */
+  --tape-label-bg: #ffc233;
+  /* The seat bar's error note. */
+  --error-text-note: #ffb3ad;
+  /* Hover fill of a button on a raised surface (the seat bar's Stand up / mode switch). */
+  --raised-hover: #34416c;
+  /* A recessed pill on a bar (the terminal theme / zoom groups, the fullscreen chip). */
+  --well-wash: rgb(0 0 0 / 28%);
+  /* The edge of a terminal-theme swatch (its fills are the preset's real colours). */
+  --swatch-edge: rgb(255 255 255 / 25%);
+  /* Proportional text of the screen's own chrome (strip, prompt box, question cards, banner): Quiet keeps the transcript's Atkinson, Ubuntu is the UI face */
+  --ctl-font: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif;
+  /* Fill of the conversation strip and the prompt strip inside the seated screen */
+  --ctl-bar: #161e35;
+  /* Recessed ground of the prompt box's editor, and the label on a pressed toggle in the strip */
+  --ctl-well: #0f1526;
+  /* Resting fill of a button row, popover or chip inside the seated screen */
+  --ctl-raised: #161e35;
+  /* Hover / pressed / selected fill of a control inside the seated screen, meter track */
+  --ctl-hover: #1f2a47;
+  /* Recessed well inside the screen's chrome: the preset/zoom groups, a question's preview and its free-text field, the banner's excerpt */
+  --ctl-recess: #0a0f1c;
+  /* Decorative divider of the screen's chrome (strip and prompt edges) */
+  --ctl-line: rgb(255 255 255 / 9%);
+  /* A control's meaningful boundary inside the seated screen (buttons, rows, fields, chips) */
+  --ctl-border: rgb(255 255 255 / 9%);
+  /* Primary text of the screen's chrome and widgets */
+  --ctl-text: #e4e9f6;
+  /* Supporting text of the screen's chrome and widgets */
+  --ctl-text-2: #9aa5c3;
+  /* Muted text / placeholder / meta of the screen's chrome and widgets */
+  --ctl-text-3: #76819f;
+  /* Fill of the screen's primary actions (Send, jump to latest) and its check boxes */
+  --ctl-accent: #6f9bff;
+  /* Label on --ctl-accent */
+  --on-ctl-accent: #0b1020;
+  /* Accent as text or a thin line in the screen's chrome (links, a skill badge, a row's action) */
+  --ctl-accent-text: #6f9bff;
+  /* Focus ring and focused-field border inside the seated screen */
+  --ctl-focus: #6f9bff;
+  /* Working / in-progress hue of the screen's chrome (the working chip, the async-question card and its sent state) */
+  --ctl-working: #6f9bff;
+  /* Done / ok in the screen's chrome (completed question mark, answered, custom command badge, composer ok) */
+  --ctl-ok: #4cd88a;
+  /* Error / destructive in the screen's chrome (failed chip, error note, composer error) */
+  --ctl-error: #ff7a72;
+  /* Ground of the pinned question cards */
+  --ctl-ask-bg: #221f16;
+  /* Ground of the blocked banner */
+  --ctl-banner-bg: #2a2413;
+  /* r g b of the overlays drawn on the chrome, used with an alpha (swatch edge, an option row's edge and fill) */
+  --ctl-tint: 255 255 255;
+  /* What a filled button's hover mixes its fill with (Ubuntu's hover is --action-hover, in the ubuntu block) */
+  --ctl-lift: white;
+  /* Key cap fill on the Send button (Ubuntu outlines it instead: a dark overlay on the orange lowers the label's contrast) */
+  --ctl-kbd-bg: rgb(0 0 0 / 14%);
+  /* Shadow of the floating jump-to-latest chip */
+  --ctl-shadow-chip: 0 4px 14px rgb(0 0 0 / 40%);
+  /* Shadow of the completion popover */
+  --ctl-shadow-pop: 0 10px 28px -8px rgb(0 0 0 / 45%);
+  /* Shadow of the pinned question card (cast upward) */
+  --ctl-shadow-card: 0 -8px 22px -6px rgb(0 0 0 / 55%);
+  /* Shadow of the follow-up and async-question cards (cast upward) */
+  --ctl-shadow-card-soft: 0 -6px 18px -8px rgb(0 0 0 / 45%);
+  /* tokens:end */
+
   /* ---- type ---- */
   --font: 'Recursive Variable', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'H3D Box Quiet', ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
@@ -179,6 +664,491 @@
   --caret: #e95420;
   --scroll-thumb: #ae93a7;
   --scroll-track: #2c001e;
+
+  /* tokens:begin */
+  /* The soft ring round a status dot in the top bar's counts (decoration). */
+  --dot-ring: rgb(255 255 255 / 14%);
+  /* Fill of a toggle button that is on (aria-pressed): green in Quiet, the action orange in Ubuntu. */
+  --toggle-on-bg: #e95420;
+  /* Border of a toggle button that is on. */
+  --toggle-on-border: #ff9b76;
+  /* The dot or icon of a failed connection / failed step (not the needs-you status). */
+  --error-dot: #ff8a80;
+  /* Emboss under a label-maker tape's text; Ubuntu's dark-on-light chips are flat. */
+  --tape-text-shadow: none;
+  /* The tape chip's bevel and drop; flat in Ubuntu. */
+  --tape-bevel: none;
+  /* The dark halo round the centre reticle's ring. */
+  --reticle-halo: rgb(44 0 30 / 55%);
+  /* Fill of a keycap on the menu's rows. */
+  --key-bg: #2c001e;
+  /* The hint bubble over the 3D world: opaque in Ubuntu so its text never rests on the scene. */
+  --hint-bg: #2c001e;
+  /* A small label's drop shadow (the floor plan's labels). */
+  --shadow-sm: 0 2px 6px rgb(0 0 0 / 28%);
+  /* A plate carrying a worker's name on the floor plan: white in Quiet, the raised surface in Ubuntu. */
+  --plate-bg: #3b1330;
+  /* Text on --plate-bg. */
+  --on-plate: #ffffff;
+  /* An info toast's fill: the sun in Quiet; a raised plate in Ubuntu (orange is for actions). */
+  --toast-info-bg: #3b1330;
+  /* Text on an info toast. */
+  --toast-info-text: #ffffff;
+  /* The floor plate's label on its action-coloured fill (Quiet's deeper navy, 11.7:1). */
+  --floor-plate-text: #2c001e;
+  /* Hover fill of the floor plate when it shows a place (lobby, street) rather than a floor. */
+  --where-plate-hover: #5e2750;
+  /* The top bar menu's body: a raised surface in Ubuntu, the bar's navy in Quiet. */
+  --menu-bg: #3b1330;
+  /* A menu row's hover / focus fill. */
+  --menu-row-hover: #5e2750;
+  /* A soft glow in the accent colour (a lit floor button, the lift display's digits). */
+  --accent-glow: rgb(255 155 118 / 45%);
+  /* The tighter glow on a lit call button's number. */
+  --accent-glow-strong: rgb(255 155 118 / 70%);
+  /* A faint ring round a warning-coloured dot (a fallback resume). */
+  --accent-halo: rgb(255 200 61 / 30%);
+  /* The outline of an accent-coloured outlined button (wake). */
+  --accent-border-soft: #ff9b76;
+  /* The outline of a destructive row tool when hovered (Ubuntu: also at rest). */
+  --error-border-soft: #ff8a80;
+  /* Fill of an accent tag (waking, suggested, default, a credits genre); its text is --on-fill. */
+  --chip-accent: #ff9b76;
+  /* Tint of a sleeping floor's row in the elevator. */
+  --asleep-row: #3b1330;
+  /* Hover fill of an elevator row. */
+  --lift-row-hover: #5e2750;
+  /* The track of the elevator's progress bar. */
+  --lift-bar-track: #5e2750;
+  /* The dashed outline of an empty slot (a building without a logo). */
+  --empty-border: #ae93a7;
+  /* The thin ring on a pill filled with a data colour (a crew role tag). */
+  --pill-ring: rgb(255 255 255 / 30%);
+  /* A crew role tag's fill when its run has no colour of its own. */
+  --run-default: #5e2750;
+  /* The question a crew member waits on, on the prompt bar (needs you). */
+  --ask-text: #ffc83d;
+  /* A warning plate's fill (the About build note); its text is --on-fill in Ubuntu. */
+  --warn-fill: #ffc83d;
+  /* A link's hover colour (Ubuntu keeps the colour and strengthens the underline). */
+  --link-hover: #ff9b76;
+  /* A dashed or secondary control boundary (tape chips, the as-of label, a scrollbar thumb): the strong 1px border in Ubuntu */
+  --border-strong: #ae93a7;
+  /* Boundary of a small mark: check box, radio, outlined chip */
+  --border-mark: #ae93a7;
+  /* Fill of a nested group or card inside a dialog (agent group, preset row) */
+  --group-bg: #3b1330;
+  /* A list row or plate strip hover fill */
+  --row-hover: #5e2750;
+  /* Inset edge of a selected list row (Ubuntu adds an orange marker on top) */
+  --row-edge: #ff9b76;
+  /* A loading placeholder bar */
+  --skeleton-bg: #3b1330;
+  /* The loading placeholder bar at the bright end of its breathing */
+  --skeleton-bg-2: #5e2750;
+  /* Glow around the desk plate plus sign */
+  --plus-glow: rgb(107 224 143 / 55%);
+  /* Focus ring colour on a bright-filled selected chip */
+  --focus-on-fill: #ff9b76;
+  /* A warning callout border */
+  --warn-border: #ffc83d;
+  /* The border of a "waiting on a question" pill */
+  --warn-border-strong: #ffc83d;
+  /* Dotted underline flagging a price estimate */
+  --warn-underline: #ffc83d;
+  /* A warning callout fill */
+  --warn-bg: #3b1330;
+  /* An error callout border */
+  --error-edge: #ff8a80;
+  /* An error callout fill */
+  --error-bg: #3b1330;
+  /* Border of a group that is switched on and fine */
+  --ok-border: #6be08f;
+  /* Fill of a group that is switched on and fine */
+  --ok-bg: #3b1330;
+  /* Highlighted code or path text in a dialog (git status lines, a branch name) */
+  --code-hl: #e8d5e2;
+  /* The struck-through, cut part of a prompt (Ubuntu: muted colour, no alpha) */
+  --del-text: #cdb1c6;
+  /* Border of the cardboard-box (wrap-up pending) callout */
+  --kraft-border: #c9935a;
+  /* Fill of the cardboard-box callout */
+  --kraft-bg: #3b1330;
+  /* Fill of the cardboard-box status tape (its text is the theme chip text colour) */
+  --tape-box: #c9935a;
+  /* Fill of the Claude provider tape in the limits plate */
+  --tape-claude: #e7a98f;
+  /* The backdrop of the prompt overlay, which keeps the worker in view */
+  --scrim-light: rgb(44 0 30 / 40%);
+  /* The prompt overlay speech bubble (Ubuntu: the dark composer well) */
+  --note-bg: #2c001e;
+  /* The speech bubble border and tail */
+  --note-edge: #ae93a7;
+  /* Text typed into the speech bubble */
+  --note-text: #ffffff;
+  /* Placeholder in the speech bubble */
+  --note-muted: #cdb1c6;
+  /* Caret in the speech bubble */
+  --note-caret: #e95420;
+  /* The composer error colour on the bubble or the work-order slip */
+  --note-err: #ff8a80;
+  /* Selected text on the work-order slip */
+  --note-select: #e95420;
+  /* The work-order slip (first prompt) editor fill */
+  --slip-bg: #2c001e;
+  /* The slip editor fill on hover */
+  --slip-bg-hover: #3b1330;
+  /* Text and caret on the slip */
+  --slip-text: #ffffff;
+  /* Placeholder on the slip */
+  --slip-muted: #cdb1c6;
+  /* The ruled lines of the slip */
+  --slip-rule: rgb(255 255 255 / 14%);
+  /* An erroring file chip inside a composer */
+  --chip-error-bg: #4a1426;
+  /* Added-line count and text in the Changes panel */
+  --diff-add: #6be08f;
+  /* Removed-line count and text in the Changes panel */
+  --diff-del: #ff8a80;
+  /* Added diff line fill */
+  --diff-add-bg: rgb(107 224 143 / 15%);
+  /* Removed diff line fill */
+  --diff-del-bg: rgb(255 138 128 / 17%);
+  /* Diff hunk header fill */
+  --diff-hunk-bg: rgb(142 201 255 / 18%);
+  /* Diff hunk header text */
+  --diff-hunk-text: #8ec9ff;
+  /* Unchanged diff line text */
+  --diff-text: #e8d5e2;
+  /* Diff line numbers */
+  --diff-num: #cdb1c6;
+  /* A diff note line (binary file, truncated) */
+  --diff-note: #cdb1c6;
+  /* The branch name on black embossing tape */
+  --emboss-bg: #2c001e;
+  /* Text on the embossing tape */
+  --emboss-text: #ffffff;
+  /* A recessed list (the Changes file list) */
+  --list-bg: #2c001e;
+  /* A neutral small chip fill (committed) */
+  --chip-neutral-bg: #5e2750;
+  /* Border of the Codex async-question pill (it works on: the running colour) */
+  --async-border: #8ec9ff;
+  /* Text of the Codex async-question pill */
+  --async-text: #8ec9ff;
+  /* Pulsing glow around a reached limit plate */
+  --lm-high-glow: rgb(255 138 128 / 35%);
+  /* The empty part of a limits meter */
+  --meter-track: #5e2750;
+  /* Fill of the limit-reached notice in a dialog */
+  --lm-warn-bg: #3b1330;
+  /* Text of the limit-reached notice */
+  --lm-warn-text: #ff8a80;
+  /* A keycap (kbd) outline */
+  --kbd-border: #ae93a7;
+  /* Code-like text in a shell field (a textarea, a model slug): Quiet's own stack, Ubuntu Mono in Ubuntu. */
+  --font-code: var(--font-mono);
+  /* A path shown as text in a card (the lightbox's missing-image card). */
+  --font-code-path: var(--font-mono);
+  /* Ready-state text on a composer chip. */
+  --ok-text-soft: #6be08f;
+  /* Muted text in a popover (status, note, key hint); never faded by opacity in Ubuntu. */
+  --text-hint: #cdb1c6;
+  /* What the completion popover's Quiet fill mixes the well with (Ubuntu replaces the fill by --raised). */
+  --menu-lift: #fff;
+  /* Boundary of a chip, keycap or round viewer button on a raised fill. */
+  --border-chip: #ae93a7;
+  /* Boundary of the composer lightbox's round close button. */
+  --border-viewer-btn: #ae93a7;
+  /* Hover fill of a list/option row (settings model rows, palette and completion options). */
+  --row-hover-soft: #5e2750;
+  /* Fill of a ruled aside (the privacy note above a switch). */
+  --aside-bg: #3b1330;
+  /* Border of a ruled aside; decoration. */
+  --aside-border: rgb(255 255 255 / 14%);
+  /* The filled part of a volume slider's track. */
+  --slider-fill: #ff9b76;
+  /* The unfilled part of a volume slider's track. */
+  --slider-rest: #5e2750;
+  /* Filled part of a slider whose channel is muted. */
+  --slider-fill-muted: #ae93a7;
+  /* Unfilled part of a slider whose channel is muted. */
+  --slider-rest-muted: #3b1330;
+  /* A slider's thumb (ringed by --chrome). */
+  --slider-thumb: #ffffff;
+  /* Fill of the neutral (input) origin badge in the image viewer; dark label on it. */
+  --tag-fill-neutral: #ffffff;
+  /* Fill of a composer chip whose upload failed. */
+  --error-chip-bg: #3b1330;
+  /* Border of a composer chip whose upload failed. */
+  --error-chip-border: #ff8a80;
+  /* Resting fill of a small button inside a chip (Retry); Ubuntu adds a strong border. */
+  --chip-btn-bg: #3b1330;
+  /* Hover fill of a small button inside a chip (remove, retry). */
+  --chip-btn-bg-hover: #5e2750;
+  /* The ground an image sits on (composer thumbnail, enlarged view): a recessed well. */
+  --image-stage: #2c001e;
+  /* The card that says an image is not available. */
+  --image-card: #3b1330;
+  /* A path set as text in a card: a recessed chip. */
+  --path-bg: #2c001e;
+  /* Backdrop of the image lightbox. */
+  --scrim-viewer: rgb(44 0 30 / 92%);
+  /* Backdrop of the composer's image preview. */
+  --scrim-viewer-soft: rgb(44 0 30 / 92%);
+  /* The lightbox's tool strip: a fade in Quiet, opaque chrome in Ubuntu (text over a picture needs an opaque ground). */
+  --viewer-top-bg: #2c001e;
+  /* Fill of a lightbox / preview button. */
+  --viewer-btn-bg: #3b1330;
+  /* Hover fill of a lightbox / preview button. */
+  --viewer-btn-bg-hover: #5e2750;
+  /* Secondary text in the lightbox (meta, count, why); opaque in Ubuntu. */
+  --text-viewer: #cdb1c6;
+  /* Status text in the lightbox. */
+  --text-viewer-2: #e8d5e2;
+  /* Ground of the lightbox's warning note (border is --warn-border). */
+  --note-warn-bg: #3b1330;
+  /* The needs-you number/colour as text on the inbox plate (Quiet's high red, Ubuntu's yellow: not the error red). */
+  --needs_you-text: #ffc83d;
+  /* The needs-you count in a footer hint, text on a surface. */
+  --needs_you-text-pale: #ffc83d;
+  /* The pulse ring round the inbox when someone needs you. */
+  --needs_you-ring: rgb(255 200 61 / 70%);
+  /* The pulse ring's faded end. */
+  --needs_you-ring-off: rgb(255 200 61 / 0%);
+  /* The pulse ring round the inbox for a finished worker. */
+  --ring-done: rgb(232 213 226 / 55%);
+  /* Thumb of a thin scrollbar (composer editor, popup list). */
+  --scroll-thumb-thin: #ae93a7;
+  /* Thumb of the inbox list's thin scrollbar. */
+  --scroll-thumb-thin-2: #ae93a7;
+  /* The receptionist's speech bubble: paper in Quiet, a raised surface in Ubuntu. */
+  --bubble-bg: #3b1330;
+  /* Text on --bubble-bg. */
+  --bubble-text: #ffffff;
+  /* The bubble's stroke and its tail's. */
+  --bubble-border: #ae93a7;
+  /* The rule above the bubble's list. */
+  --bubble-divider: rgb(255 255 255 / 14%);
+  /* Muted text and glyphs on the bubble. */
+  --bubble-muted: #cdb1c6;
+  /* The bubble's elevation. */
+  --bubble-shadow: 0 10px 28px rgb(0 0 0 / 28%), 0 2px 6px rgb(0 0 0 / 18%);
+  /* The inbox's plain (no harness) sticker disc; the Claude and Codex logos are brand art and stay. */
+  --sticker-plain: #cdb1c6;
+  /* The screen-share LIVE strip's fill. */
+  --live-bg: #3b1330;
+  /* The LIVE strip's ring. */
+  --live-ring: #ff8a80;
+  /* What is being shared, on the LIVE strip. */
+  --live-text: #ffffff;
+  /* The count pill inside the selected seat tab (Ubuntu: a dark pill with a light number). */
+  --tab-count-bg-selected: #2c001e;
+  /* The dashed outline of a provider's virtual status tray (Kaneo's planned / archived) in the boards. */
+  --tray-border: #ae93a7;
+  /* Fill of a count chip in a board column's head. */
+  --count-bg: #5e2750;
+  /* Text on a board card / PR slip: dark ink on the paper in Quiet, light text on the raised purple card in Ubuntu. */
+  --on-paper: #ffffff;
+  /* The ring round a card's pin dot (Ubuntu: light, so the data-coloured pin reads on the purple card). */
+  --pin-edge: #e8d5e2;
+  /* The pinhole left on a card lifted in the hand. */
+  --pin-hole: #2c001e;
+  /* The dark edge round the drop slot's thread and its two pins. */
+  --slot-edge: #2c001e;
+  /* A small badge on a card (its 'closed' word). */
+  --card-badge-bg: #5e2750;
+  /* A holder chip on a card. */
+  --card-chip-bg: #5e2750;
+  /* The ring round a holder chip on a card. */
+  --card-chip-ring: #ae93a7;
+  /* Fill of the urgent priority tape (its word is on it). */
+  --prio-urgent: #ff8a80;
+  /* Fill of the high priority tape. */
+  --prio-high: #ffc83d;
+  /* Fill of the medium priority tape. */
+  --prio-medium: #8ec9ff;
+  /* Fill of the low priority tape. */
+  --prio-low: #cdb1c6;
+  /* Fill of the closed state tape of an issue / PR. */
+  --state-closed: #c9a8f5;
+  /* A PR slip, and the status pills of the item modal: pale paper in Quiet, the raised surface in Ubuntu. */
+  --paper-pale: #3b1330;
+  /* The coloured edge of a PR slip. */
+  --paper-stripe: #ff9b76;
+  /* Supporting text on a card / slip / pill (Quiet: ink on paper). */
+  --paper-text-2: #e8d5e2;
+  /* Muted text on pale paper (the whiteboard's loading line). */
+  --paper-text-3: #cdb1c6;
+  /* Passing / approved / mergeable text on a slip or pill. */
+  --paper-ok: #6be08f;
+  /* Failing / changes requested / conflicting text on a slip or pill. */
+  --paper-bad: #ff8a80;
+  /* Pending / review required / unknown text on a slip or pill. */
+  --paper-pend: #ffc83d;
+  /* No checks / incomplete text on a slip or pill. */
+  --paper-none: #cdb1c6;
+  /* Added-lines count in a PR's diffstat and file list. */
+  --stat-plus: #6be08f;
+  /* Removed-lines count in a PR's diffstat and file list. */
+  --stat-minus: #ff8a80;
+  /* An error message in a panel body (the item modal's load error). */
+  --error-text-body: #ff8a80;
+  /* A link in rendered markdown (Ubuntu: the lighter orange, underlined). */
+  --link: #ff9b76;
+  /* The bar beside a markdown quote. */
+  --quote-rule: #ae93a7;
+  /* Cell borders of a markdown table. */
+  --table-rule: #ae93a7;
+  /* The outline of an outlined (quiet) button. */
+  --btn-quiet-ring: #ae93a7;
+  /* Fill of a warning button (merge anyway). */
+  --btn-warn-bg: #ffc83d;
+  /* Label of a warning button. */
+  --on-btn-warn: #2c001e;
+  /* The border of a destructive confirmation. */
+  --error-ring: #ff8a80;
+  /* The fill of a destructive confirmation. */
+  --error-wash-strong: rgb(255 138 128 / 18%);
+  /* The fill of an inline alert bar (a drop that did not land). */
+  --error-wash: rgb(255 138 128 / 14%);
+  /* The border of a warning confirmation. */
+  --warn-ring: #ffc83d;
+  /* The fill of a warning notice or confirmation. */
+  --warn-wash: rgb(255 200 61 / 14%);
+  /* The ring of a highlighted drop target (a column a note would land in). */
+  --accent-ring: #ff9b76;
+  /* Where a dragged card was: the empty patch. */
+  --ghost-bg: #2c001e;
+  /* The dashed outline of that patch. */
+  --ghost-edge: #ae93a7;
+  /* Display type of the floor overview (the destination, names): Archivo condensed in Quiet, Ubuntu Bold in Ubuntu. */
+  --display-font: var(--font);
+  /* Data readouts of the floor overview (counts, times, keys): Departure Mono in Quiet, Ubuntu Mono in Ubuntu. */
+  --data-font: var(--font-mono);
+  /* The overview's scanline weave (Ubuntu is solid). */
+  --ov-scan: transparent;
+  /* The overview's corner glow (Ubuntu is solid). */
+  --ov-glass-tint: transparent;
+  /* The tint at the top of a floor's band on the all-floors page. */
+  --ov-band-tint: rgb(255 255 255 / 5%);
+  /* Upper half of a split-flap count tile. */
+  --ov-flap-top: #3b1330;
+  /* Lower half of a split-flap count tile. */
+  --ov-flap-bottom: #2c001e;
+  /* A header button's border on hover. */
+  --ov-rule-hover: #ae93a7;
+  /* The tree wires from an orchestrator to its workers. */
+  --ov-wire: #ae93a7;
+  /* The name of an asleep floor's band. */
+  --ov-asleep-text: #e8d5e2;
+  /* The working lamp's tight glow. */
+  --working-glow-strong: rgb(142 201 255 / 70%);
+  /* A working lamp's glow at the bright end of its blink. */
+  --working-glow: rgb(142 201 255 / 55%);
+  /* A working lamp's halo ring at the bright end of its blink. */
+  --working-halo: rgb(142 201 255 / 22%);
+  /* Hover fill of a green (go) button. */
+  --plus-hover: #8aeaa6;
+  /* The backdrop of a fullscreen viewer (the whiteboard; image / share viewers). */
+  --scrim-board: rgb(44 0 30 / 92%);
+  /* Recursive's casual axis for a dialog title in between plain and casual; Ubuntu has none. */
+  --fvs-title: normal;
+  /* A neutral label-maker tape chip (the whiteboard's save status). */
+  --tape-bg: #3b1330;
+  /* Text on a neutral tape chip. */
+  --on-tape: #ffffff;
+  /* The whiteboard's loading cover over its surface. */
+  --board-loading-bg: #300a24;
+  /* The whiteboard's marker tray: brushed aluminium in Quiet, recessed chrome in Ubuntu. */
+  --ledge-bg: #2c001e;
+  /* Text on the marker tray. */
+  --on-ledge: #e8d5e2;
+  /* A pinned drop's chip on the marker tray. */
+  --ledge-note-bg: #3b1330;
+  /* A quiet button's border on the marker tray / confirmation. */
+  --ledge-btn-border: #ae93a7;
+  /* A quiet button's fill on the marker tray / confirmation. */
+  --ledge-btn-bg: #3b1330;
+  /* A quiet button's hover fill there. */
+  --ledge-btn-bg-hover: #5e2750;
+  /* The border of a floating panel over an editor (the drop picker, the confirmation). */
+  --panel-border: #ae93a7;
+  /* The border of a card-shaped button in a panel (a drop to pin). */
+  --card-border: #ae93a7;
+  /* Hover fill of a danger button on the ink panel. */
+  --error-fill-deep: #ffa39b;
+  /* Border of an outlined destructive button (discard). */
+  --destructive-border: #ff8a80;
+  /* Label of an outlined destructive button. */
+  --destructive-text: #ff8a80;
+  /* Hover fill of an outlined destructive button. */
+  --destructive-hover: #5e2750;
+  /* The label-maker tape that names whose terminal the seat bar is (dark text on it). */
+  --tape-label-bg: #e8d5e2;
+  /* The seat bar's error note. */
+  --error-text-note: #ff8a80;
+  /* Hover fill of a button on a raised surface (the seat bar's Stand up / mode switch). */
+  --raised-hover: #5e2750;
+  /* A recessed pill on a bar (the terminal theme / zoom groups, the fullscreen chip). */
+  --well-wash: #2c001e;
+  /* The edge of a terminal-theme swatch (its fills are the preset's real colours). */
+  --swatch-edge: #ae93a7;
+  /* Proportional text of the screen's own chrome (strip, prompt box, question cards, banner): Quiet keeps the transcript's Atkinson, Ubuntu is the UI face */
+  --ctl-font: 'Ubuntu', system-ui, sans-serif;
+  /* Fill of the conversation strip and the prompt strip inside the seated screen */
+  --ctl-bar: #2c001e;
+  /* Recessed ground of the prompt box's editor, and the label on a pressed toggle in the strip */
+  --ctl-well: #2c001e;
+  /* Resting fill of a button row, popover or chip inside the seated screen */
+  --ctl-raised: #3b1330;
+  /* Hover / pressed / selected fill of a control inside the seated screen, meter track */
+  --ctl-hover: #5e2750;
+  /* Recessed well inside the screen's chrome: the preset/zoom groups, a question's preview and its free-text field, the banner's excerpt */
+  --ctl-recess: #2c001e;
+  /* Decorative divider of the screen's chrome (strip and prompt edges) */
+  --ctl-line: rgb(255 255 255 / 14%);
+  /* A control's meaningful boundary inside the seated screen (buttons, rows, fields, chips) */
+  --ctl-border: #ae93a7;
+  /* Primary text of the screen's chrome and widgets */
+  --ctl-text: #ffffff;
+  /* Supporting text of the screen's chrome and widgets */
+  --ctl-text-2: #e8d5e2;
+  /* Muted text / placeholder / meta of the screen's chrome and widgets */
+  --ctl-text-3: #cdb1c6;
+  /* Fill of the screen's primary actions (Send, jump to latest) and its check boxes */
+  --ctl-accent: #e95420;
+  /* Label on --ctl-accent */
+  --on-ctl-accent: #2c001e;
+  /* Accent as text or a thin line in the screen's chrome (links, a skill badge, a row's action) */
+  --ctl-accent-text: #ff9b76;
+  /* Focus ring and focused-field border inside the seated screen */
+  --ctl-focus: #ff9b76;
+  /* Working / in-progress hue of the screen's chrome (the working chip, the async-question card and its sent state) */
+  --ctl-working: #8ec9ff;
+  /* Done / ok in the screen's chrome (completed question mark, answered, custom command badge, composer ok) */
+  --ctl-ok: #6be08f;
+  /* Error / destructive in the screen's chrome (failed chip, error note, composer error) */
+  --ctl-error: #ff8a80;
+  /* Ground of the pinned question cards */
+  --ctl-ask-bg: #3b1330;
+  /* Ground of the blocked banner */
+  --ctl-banner-bg: #3b1330;
+  /* r g b of the overlays drawn on the chrome, used with an alpha (swatch edge, an option row's edge and fill) */
+  --ctl-tint: 255 255 255;
+  /* What a filled button's hover mixes its fill with (Ubuntu's hover is --action-hover, in the ubuntu block) */
+  --ctl-lift: white;
+  /* Key cap fill on the Send button (Ubuntu outlines it instead: a dark overlay on the orange lowers the label's contrast) */
+  --ctl-kbd-bg: transparent;
+  /* Shadow of the floating jump-to-latest chip */
+  --ctl-shadow-chip: 0 4px 14px rgb(0 0 0 / 40%);
+  /* Shadow of the completion popover */
+  --ctl-shadow-pop: 0 10px 28px rgb(0 0 0 / 28%), 0 2px 6px rgb(0 0 0 / 18%);
+  /* Shadow of the pinned question card (cast upward) */
+  --ctl-shadow-card: 0 -8px 22px -6px rgb(0 0 0 / 55%);
+  /* Shadow of the follow-up and async-question cards (cast upward) */
+  --ctl-shadow-card-soft: 0 -6px 18px -8px rgb(0 0 0 / 45%);
+  /* tokens:end */
 
   --font: 'Ubuntu', system-ui, sans-serif;
   --font-mono: 'Ubuntu Mono', 'H3D Box Ubuntu', 'H3D Symbols Ubuntu', 'H3D Symbols Ubuntu 2', 'H3D Symbols Ubuntu Consolas', ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;

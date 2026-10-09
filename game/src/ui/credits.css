@@ -7,8 +7,8 @@
   padding: 0;
   border: 0;
   border-radius: var(--radius);
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--surface);
+  color: var(--text);
   box-shadow: var(--shadow);
   font-family: var(--font);
   font-size: 14px;
@@ -21,7 +21,7 @@
   flex-direction: column;
 }
 .credits::backdrop {
-  background: rgb(18 24 44 / 45%);
+  background: var(--scrim);
 }
 .credits button {
   font: inherit;
@@ -51,11 +51,11 @@
   gap: 10px;
   margin: 0;
   padding: 14px 2px 8px;
-  background: var(--ink);
+  background: var(--surface);
   font-size: inherit;
 }
 .credits-count {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 700;
   font-family: var(--font-mono);
@@ -83,7 +83,7 @@
   font-weight: 700;
 }
 .credits-artist {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12.5px;
   overflow-wrap: anywhere;
 }
@@ -95,7 +95,7 @@
   font-weight: 600;
 }
 .credits-link {
-  color: var(--sun);
+  color: var(--accent-text);
   text-decoration: underline;
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
@@ -103,25 +103,25 @@
   white-space: nowrap;
 }
 .credits-link:hover {
-  color: #ffd25e;
+  color: var(--link-hover);
   text-decoration-thickness: 2px;
 }
 .credits-foot {
   margin: 0;
 }
-/* #59: the sun's tape takes the ink (white on it was 1.6:1), as the hire panel's notes do. */
+/* #59: the accent tape takes the dark ink (white on it was 1.6:1), as the hire panel's notes do. */
 .credits-genre-name .tape {
-  color: var(--ink);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .credits-fonts-texts {
   margin: 10px 2px 0;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12.5px;
 }
 .credits-body {
   scrollbar-width: thin;
-  scrollbar-color: #3a466e transparent;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
 @media (max-width: 520px) {
   .credits-row {
@@ -129,3 +129,12 @@
     gap: 4px;
   }
 }
+
+/* ubuntu:begin */
+/* #216: the link's colour is a token (--link-hover stays the same lighter orange in Ubuntu: the underline thickens, the colour does not change). */
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .credits-link {
+    color: LinkText;
+  }
+}
+/* ubuntu:end */

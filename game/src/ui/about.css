@@ -12,7 +12,7 @@
   margin: 0;
 }
 .about-key {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12.5px;
   font-weight: 700;
 }
@@ -23,14 +23,14 @@
   overflow-wrap: anywhere;
 }
 .about-value--none {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-variation-settings: normal;
 }
 .about-note {
   margin: 14px 0 2px;
   padding: 8px 10px;
   border-radius: 6px;
-  background: #b45309;
+  background: var(--warn-fill);
   font-size: 12.5px;
   font-weight: 600;
 }
@@ -42,5 +42,28 @@
   padding-top: 12px;
   border-top: 1px solid var(--line);
   font-size: 12.5px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
+
+/* ubuntu:begin */
+/* #216: the build note is a warning plate: the warning fill takes the dark ink, and carries the warning sign besides the colour. */
+:root[data-ui-theme='ubuntu'] .about-note {
+  color: var(--on-fill);
+}
+:root[data-ui-theme='ubuntu'] .about-note::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  background: currentColor;
+  -webkit-mask: var(--sign-warn) center / contain no-repeat;
+  mask: var(--sign-warn) center / contain no-repeat;
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .about-note {
+    border: 1px solid CanvasText;
+  }
+}
+/* ubuntu:end */

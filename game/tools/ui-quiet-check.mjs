@@ -28,11 +28,14 @@ for (let i = 0; i < args.length; i++) {
 
 /** The custom properties of the first `:root { ... }` block of uiTheme.css (Quiet), as name -> value. */
 function quietTokens() {
-  const css = readFileSync('src/ui/uiTheme.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-  const start = css.indexOf(':root {');
-  const body = css.slice(start + 7, css.indexOf('\n}', start));
   const map = new Map();
-  for (const m of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) map.set(m[1], m[2].trim());
+  // uiTheme.css (the shell's) and themes.css (the transcript's `--tx-*` as Quiet sets them), their first `:root` blocks.
+  for (const file of ['src/ui/uiTheme.css', 'src/ui/themes.css']) {
+    const css = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const start = css.indexOf(':root {');
+    const body = css.slice(start + 7, css.indexOf('\n}', start));
+    for (const m of body.matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)) map.set(m[1], m[2].trim());
+  }
   if (tokensDir) {
     for (const f of readdirSync(tokensDir).filter((n) => n.endsWith('.json'))) {
       const j = JSON.parse(readFileSync(join(tokensDir, f), 'utf8'));
@@ -58,6 +61,7 @@ function normalise(css) {
   return expand(css.replace(/\/\*[\s\S]*?\*\//g, ''))
     .replace(/\s+/g, ' ')
     .replace(/\s*([{};,>])\s*/g, '$1')
+    .replace(/#([0-9a-fA-F]{3})\b(?![0-9a-fA-F])/g, (_m, h) => `#${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`)
     .replace(/#([0-9a-fA-F]{3,8})\b/g, (m) => m.toLowerCase())
     .replace(/\s*\/\s*/g, '/')
     .replace(/([{};])/g, '$1\n');

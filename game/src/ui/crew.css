@@ -13,14 +13,14 @@
   margin-top: 7px;
   white-space: nowrap;
   font-size: 13px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .crew-tag {
   flex: none;
   padding: 2px 10px 3px;
   border-radius: 999px;
-  background: var(--run, #24406e);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%);
+  background: var(--run, var(--run-default));
+  box-shadow: inset 0 0 0 1px var(--pill-ring);
   font-weight: 750;
   font-size: 12.5px;
   color: #ffffff;
@@ -32,7 +32,7 @@
   font-size: 12px;
 }
 .crew-issue {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .crew-stamp {
   flex: none;
@@ -63,10 +63,10 @@
   text-overflow: ellipsis;
 }
 .crew-phase {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .crew-ask {
-  color: #ffd2cf;
+  color: var(--ask-text);
   font-weight: 650;
 }
 @media (max-width: 760px) {
@@ -74,3 +74,13 @@
     display: none;
   }
 }
+
+/* ubuntu:begin */
+/* #216: the role tag and the stamp are filled shapes: forced colors gets their outline. */
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .crew-tag,
+  :root[data-ui-theme='ubuntu'] .crew-stamp {
+    border: 1px solid CanvasText;
+  }
+}
+/* ubuntu:end */

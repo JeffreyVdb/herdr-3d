@@ -93,7 +93,7 @@ export class MusicCredits {
       const sec = el('section', 'credits-genre');
       const title = el('h3', 'credits-genre-name');
       const tape = el('span', 'tape', g.name);
-      tape.style.setProperty('--c', 'var(--sun)');
+      tape.style.setProperty('--c', 'var(--chip-accent)');
       title.append(tape, el('span', 'credits-count', String(list.length)));
       title.setAttribute('aria-label', `${g.name}, ${list.length} tracks`);
       const ul = el('ul', 'credits-list');
@@ -105,7 +105,7 @@ export class MusicCredits {
     const fonts = el('section', 'credits-genre credits-fonts');
     const fontsTitle = el('h3', 'credits-genre-name');
     const fontsTape = el('span', 'tape', 'Fonts');
-    fontsTape.style.setProperty('--c', 'var(--sun)');
+    fontsTape.style.setProperty('--c', 'var(--chip-accent)');
     fontsTitle.append(fontsTape, el('span', 'credits-count', String(FONT_CREDITS.length)));
     fontsTitle.setAttribute('aria-label', `Fonts, ${FONT_CREDITS.length}`);
     const fontList = el('ul', 'credits-list');
