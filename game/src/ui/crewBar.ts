@@ -2,6 +2,7 @@ import './crew.css';
 import { crewAsk, crewTag } from '../render/cards/crewCard';
 import { passWords, REPORT_REQUEST, type CrewView } from '../world/crew';
 import type { WorkerView } from '../world/store';
+import { keyName } from '../input/shortcuts';
 import { h } from './dom';
 
 /**
@@ -18,12 +19,19 @@ export function crewBarKey(w: WorkerView): string[] {
   return [crewTag(c).text, crewTag(c).color, c.issue ?? '', c.run ?? '', c.stamp?.text ?? '', crewAsk(c)?.text ?? '', c.askWho ?? '', c.resolved?.line ?? '', c.summary ?? '', c.life ?? ''];
 }
 
-function report(c: CrewView): { text: string; cls: string; full?: string } | null {
+/** A request the bar cannot show whole (it ellipsizes, the preview is one line): longer than this or several lines, or cut by the bridge. */
+const BAR_FITS = 48;
+
+/** #215: the keyboard way to the complete request, independent of "Show the inbox" (the Shift+N command opens the list anyway). */
+const moreHint = (): string => `${keyName('inbox')}: full request`;
+
+function report(c: CrewView): { text: string; cls: string; full?: string; more?: boolean } | null {
   // #215: a report's request says what it is and who decides, then the request; the whole text is the title (and
   // the label), the inbox row opens it in full.
   if (c.ask && !c.overCap) {
     const head = `${REPORT_REQUEST} · ${c.askWho ?? ''}`;
-    return { text: `${head} — ${c.ask.replace(/\s+/g, ' ')}`, cls: 'crew-ask', full: `${head}\n${c.ask}` };
+    const more = c.askTruncated || c.ask.length > BAR_FITS || c.ask.includes('\n');
+    return { text: `${head} — ${c.ask.replace(/\s+/g, ' ')}`, cls: 'crew-ask', full: `${head}\n${c.ask}`, more };
   }
   const ask = crewAsk(c);
   if (ask) return { text: ask.text, cls: 'crew-ask' };
@@ -49,6 +57,7 @@ export function crewLine(w: WorkerView): HTMLElement | null {
   if (c.stamp) line.append(h('span', { class: `crew-stamp crew-stamp--${c.stamp.tone}` }, c.stamp.text));
   const r = report(c);
   if (r) line.append(h('span', { class: r.cls, title: r.full ?? r.text }, r.text));
+  if (r?.more) line.append(h('span', { class: 'crew-more', 'aria-hidden': 'true' }, moreHint()));
   return line;
 }
 
@@ -57,5 +66,5 @@ export function crewAria(w: WorkerView): string {
   const c = w.crew;
   if (!c) return '';
   const r = report(c);
-  return [crewTag(c).text, c.issue ?? (c.ticket ? `ticket ${c.ticket}` : null), c.run ? `run ${c.run}` : null, c.stamp?.text, r?.full?.replace('\n', ': ') ?? r?.text].filter(Boolean).join(' · ');
+  return [crewTag(c).text, c.issue ?? (c.ticket ? `ticket ${c.ticket}` : null), c.run ? `run ${c.run}` : null, c.stamp?.text, r?.full?.replace('\n', ': ') ?? r?.text, r?.more ? `Press ${keyName('inbox')} for the full request` : null].filter(Boolean).join(' · ');
 }

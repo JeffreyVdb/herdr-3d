@@ -63,6 +63,23 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* #215: the keyboard way to a request the line cannot show whole; it keeps its width while the request ellipsizes. */
+.crew-more {
+  flex: none;
+  color: var(--text-on-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+/* Narrow: a request keeps a readable stretch of its own (the line wraps instead of squeezing it to nothing). */
+@media (max-width: 520px) {
+  .prompt-crew {
+    flex-wrap: wrap;
+    row-gap: 3px;
+  }
+  .crew-ask {
+    flex: 1 1 11em;
+  }
+}
 .crew-phase {
   color: var(--text-on-ink);
 }

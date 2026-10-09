@@ -350,7 +350,7 @@ func TestReadResolved(t *testing.T) {
 		"report array": `{"report":["coder-r1.json"]}`, "report object": `{"report":{"n":"coder-r1.json"}}`,
 		// Another worker's report is no acknowledgement.
 		"foreign report": `{"input_required":"x","summary":"s"}`,
-		"null note": `{"report":"coder-r1.json","note":null}`, "null by": `{"report":"coder-r1.json","resolved_by":null}`,
+		"null note":      `{"report":"coder-r1.json","note":null}`, "null by": `{"report":"coder-r1.json","resolved_by":null}`,
 		"null both": `{"report":"coder-r1.json","resolved_by":null,"note":null}`,
 		"number by": `{"report":"coder-r1.json","resolved_by":7}`, "object by": `{"report":"coder-r1.json","resolved_by":{}}`,
 		"array by": `{"report":"coder-r1.json","resolved_by":["a"]}`, "array note": `{"report":"coder-r1.json","note":[]}`,

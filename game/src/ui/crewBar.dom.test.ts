@@ -27,6 +27,17 @@ describe('the crew line of a report request (#215)', () => {
     expect(crewLine(v)!.textContent).not.toContain('Waiting for an answer');
   });
 
+  it('says where the whole request is when the line cannot show it, and not for a short one (#215)', () => {
+    const long = view(w({ report: { state: 'ready', at: 1, input_required: text } }));
+    expect(crewLine(long)!.querySelector('.crew-more')?.textContent).toBe('Shift+N: full request');
+    expect(crewAria(long)).toContain('Press Shift+N for the full request');
+    const lines = view(w({ report: { state: 'ready', at: 1, input_required: 'Port?\nOr 8080?' } }));
+    expect(crewLine(lines)!.querySelector('.crew-more')).not.toBeNull();
+    const short = view(w({ report: { state: 'ready', at: 1, input_required: 'Port?' } }));
+    expect(crewLine(short)!.querySelector('.crew-more')).toBeNull();
+    expect(crewAria(short)).not.toContain('full request');
+  });
+
   it('a resolved one is a quiet note, not an alert, and the bar redraws on the change', () => {
     const open = view(w({ report: { state: 'ready', at: 1, input_required: text } }));
     const done = view(w({ report: { state: 'ready', at: 1, input_required: text, input_resolved: { by: 'orchestrator', note: 'accepted as AC4 evidence' } } }));
