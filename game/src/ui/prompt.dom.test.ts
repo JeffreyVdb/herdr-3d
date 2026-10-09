@@ -163,4 +163,33 @@ describe('PromptOverlay', () => {
     await e.flush();
     expect(e.requests.map((q) => q.args.text)).toEqual(['first', 'second']);
   });
+
+  it('#210: a background hire’s undelivered first task becomes the worker’s note, its uploaded images as chips; never over what was typed', async () => {
+    const e = setup();
+    // The hire's draft, its image uploaded: the sent text names it by its Drop Zone path.
+    const { Draft } = await import('./composer/draft');
+    const from = new Draft({ upload: async () => ({ ok: true, data: { path: '/drops/grill.png' } }) });
+    from.replace(0, 0, 'see ');
+    from.addImages([new File([new Uint8Array([137, 80, 78, 71])], 'grill.png', { type: 'image/png' })]);
+    const r = await from.resolve({});
+    if (!r.ok) throw new Error('not resolved');
+    expect(e.overlay.holdTask('A', r.text, from)).toBe(true);
+    e.overlay.open('A');
+    expect(e.overlay.summary()).toMatchObject({ text: 'see [Image #1: /drops/grill.png]', images: [{ name: 'grill.png', status: 'ready', path: '/drops/grill.png' }] });
+    e.overlay.close();
+
+    // B has a note of their own: it stays as typed.
+    e.overlay.open('B');
+    e.composer.insertText('mine');
+    e.overlay.close();
+    expect(e.overlay.holdTask('B', 'the task', from)).toBe(false);
+    e.overlay.open('B');
+    expect(e.overlay.summary()?.text).toBe('mine');
+    // Sending it is one plain worker.prompt with the task.
+    e.overlay.close();
+    e.overlay.open('A');
+    void e.send();
+    await e.flush();
+    expect(e.requests.map((q) => q.args)).toEqual([{ id: 'A', text: 'see [Image #1: /drops/grill.png]' }]);
+  });
 });

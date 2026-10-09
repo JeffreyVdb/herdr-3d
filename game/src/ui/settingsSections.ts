@@ -21,6 +21,7 @@ let fieldSerial = 0;
  * #98: and what the desk monitors show while you stand: what the agent is doing (the default) or its terminal.
  * #100: and the inbox chip under the plan limits, on by default too.
  * #116: and whether a new hire takes you to its desk, on by default as well.
+ * #210: and whether Hire closes the dialog at once (off by default).
  */
 export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs, inbox?: InboxPrefs, hire?: HirePrefs): (body: HTMLElement) => SectionHandle {
   return (body) => {
@@ -61,11 +62,26 @@ export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs, inbo
       syncHire();
       hb.addEventListener('change', () => (hire.goToNew = hb.checked));
       const unsub = hire.onChange(syncHire);
-      offHire = () => void unsub();
       const l = el('label', 'settings-switch');
       l.htmlFor = hb.id;
       l.append(hb, el('span', '', 'Go to a new hire after hiring: sit at its laptop, on its conversation'));
       switches.push(l);
+      // #210: Hire in background.
+      const bb = el('input');
+      bb.type = 'checkbox';
+      bb.id = 'settings-hire-background';
+      const syncBackground = () => (bb.checked = hire.hireInBackground);
+      syncBackground();
+      bb.addEventListener('change', () => (hire.hireInBackground = bb.checked));
+      const unsubBackground = hire.onChange(syncBackground);
+      offHire = () => {
+        unsub();
+        unsubBackground();
+      };
+      const lb = el('label', 'settings-switch');
+      lb.htmlFor = bb.id;
+      lb.append(bb, el('span', '', 'Hire in background: close the dialog at once, beep when the agent is up'));
+      switches.push(lb);
     }
     if (!monitors) {
       body.append(...switches);

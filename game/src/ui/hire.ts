@@ -24,7 +24,9 @@ import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
 import { hiredToast } from './hiredToast';
+import { HireCoordinator, notPromptedText, type HireCoordinatorHost, type HireOutcome } from './hireCoordinator';
 import type { HireModelPrefs } from './hireModelPrefs';
+import type { HirePrefs } from './hirePrefs';
 import type { ToastKind } from './hud';
 // M10 limits
 import { planLimits } from './limits';
@@ -35,8 +37,8 @@ import { Drafts } from './drafts';
 import { backdropPolicy } from './dismiss';
 // #51 composer
 import { mountComposer, type Composer } from './composer/composer';
-import { Draft as PromptDraft, type DraftSnapshot, type FailedImage, type ResolveResult, type Uploader } from './composer/draft';
-import { HIRE_PROMPT_MAX_BYTES, mentionOf, serializeErrorText } from './composer/model';
+import { Draft as PromptDraft, type DraftSnapshot, type ResolveResult, type Uploader } from './composer/draft';
+import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
 
 /**
  * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
@@ -69,6 +71,14 @@ export interface HireHost extends DialogHost {
   modelPrefs?: HireModelPrefs;
   /** The empty state's way to Settings → Harness models. */
   showModelSettings?(): void;
+  /** #210: Settings → Display "Hire in background", read once when Hire is pressed (absent: in the foreground). */
+  hirePrefs?: Pick<HirePrefs, 'hireInBackground'>;
+  /** #210: the game's hire coordinator (shared with other ways to hire); absent: the dialog makes its own from this host. */
+  hires?: HireCoordinator;
+  /** #210: the beep of a hire made in the background (absent: silent). */
+  beep?(): void;
+  /** #210: a background hire's undelivered first task into the new worker's Prompt (P) note (`HireCoordinatorHost.holdTask`). */
+  holdTask?: HireCoordinatorHost['holdTask'];
 }
 
 /** M7: what "Ask a worker…" and "Review with a worker" start the dialog with. */
@@ -198,12 +208,6 @@ export function modelList(
   return h('fieldset', { class: 'dd-pick dd-pick--models', 'data-pick': 'model' }, h('legend', {}, 'Model ', count), h('div', { class: 'dd-models' }, search, row, none));
 }
 
-/** The dialog's line when a hire is held back by images that did not upload (each chip has its own reason and Retry). */
-function uploadFailedText(failed: FailedImage[]): string {
-  const names = failed.map((f) => `image ${f.numbers.join(' and ') || '?'} (${f.name})`).join(', ');
-  return `Nothing was hired: ${names} did not upload (${failed[0]?.message ?? 'unknown error'}). Retry ${failed.length === 1 ? 'it' : 'them'} on the picture, or remove ${failed.length === 1 ? 'it' : 'them'}, then hire again. Your prompt is kept.`;
-}
-
 /** The prompt as the form sees it: the text, each image a bare `[Image #n]` (the paths only exist once uploaded, at send time). */
 function promptText(s: DraftSnapshot): string {
   let n = 0;
@@ -328,11 +332,26 @@ export class HireDialog {
   private typedLabel: string | null = null;
   /** The model filter of a long list; a harness switch clears it. */
   private modelQuery = '';
+  /** #210: holds the desk, uploads, sends `worker.hire`: the same for a hire waited for here and one in the background. */
+  private readonly hires: HireCoordinator;
+  /** This dialog among others (a hire's key is the dialog and its generation). */
+  private static serial = 0;
+  private readonly id = ++HireDialog.serial;
 
   constructor(
     parent: HTMLElement,
     private readonly host: HireHost,
   ) {
+    this.hires =
+      host.hires ??
+      new HireCoordinator({
+        send: (t, args) => host.send(t, args),
+        reserve: (s, d) => host.reserve(s, d),
+        toast: (m, kind) => host.toast(m, kind),
+        beep: () => host.beep?.(),
+        workerView: (id) => host.store.workerView(id),
+        holdTask: (id, text, from) => host.holdTask?.(id, text, from) ?? false,
+      });
     // Settings changed which models show: an open form follows it (a hire on its way keeps what it sent).
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());
     this.alertEl.hidden = true;
@@ -877,65 +896,76 @@ export class HireDialog {
     const args = hireArgs(session, desk, this.f, this.prep.git);
     const who = args.label ?? this.prep.label;
     const gen = this.gen;
-    let revision = doc.revision;
-    // The images go first: Drop Zone paths go into the text, so nothing is sent until every image is uploaded.
+    const revision = doc.revision;
+    // #210: read once, here: a change in Settings while the hire is on its way does not change how it ends.
+    const background = this.host.hirePrefs?.hireInBackground === true;
     this.state = 'hiring';
     this.uploadFailed = false;
-    if (args.prompt) {
-      const waiting = doc.snapshot().images.filter((i) => i.status === 'pending' || i.status === 'uploading').length;
+    const waiting = args.prompt ? doc.snapshot().images.filter((i) => i.status === 'pending' || i.status === 'uploading').length : 0;
+    // The desk is held from here, the images go up, then `worker.hire` (the coordinator); the draft is read now.
+    const op = this.hires.start(
+      { key: `hire:${this.id}:${gen}`, session, desk, args, who, prompt: args.prompt ? doc : null, background },
+      {
+        hiring: (sentArgs) => {
+          // (The dialog may have been closed, even reopened for another desk, while the images went up: then it is not ours to touch.)
+          if (background || !this.dialog.open || gen !== this.gen) return;
+          const steps = [sentArgs.worktree ? 'creating the worktree' : null, `starting ${sentArgs.harness}`, sentArgs.prompt ? 'handing over the first task' : null].filter(Boolean);
+          this.setStatus(`Hiring ${who}: ${steps.join(', ')}…`);
+          this.render();
+        },
+      },
+    );
+    if (background) {
+      // #210: the dialog goes now and the player plays on; the coordinator says how it ended (one toast, a beep on success).
+      this.close();
+      const o = await op.done;
+      if (o.kind === 'hired') this.clearSent(doc, o.revision ?? revision, sent);
+      return;
+    }
+    if (op.phase === 'uploading') {
       this.setStatus(waiting ? `Uploading ${waiting === 1 ? 'the image' : `${waiting} images`} for ${who}…` : `Preparing ${who}’s first task…`);
       this.render();
-      const r = await doc.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
-      const open = this.dialog.open && gen === this.gen;
-      if (!r.ok) {
-        // No worker.hire: the whole prompt stays, each failed chip says why and has its Retry.
-        const msg = r.reason === 'upload' ? uploadFailedText(r.failed) : r.reason === 'serialize' ? serializeErrorText(r.error) : '';
-        // Back to the editable form: what was typed stays, and the choice is resolved against what Settings shows now.
-        if (open) {
-          this.state = 'ready';
-          this.resolveForm();
-        }
-        if (msg && open) {
-          this.uploadFailed = r.reason === 'upload';
-          this.setStatus(msg, true);
-        } else if (msg) this.host.toast(msg, 'error');
-        else if (open) this.setStatus('');
-        if (open) this.render();
-        return;
-      }
-      args.prompt = r.text;
-      revision = r.revision;
     }
-    const release = this.host.reserve(session, desk);
-    // (The dialog may have been closed, even reopened for another desk, while the images went up: then it is not ours to touch.)
-    if (this.dialog.open && gen === this.gen) {
-      const steps = [args.worktree ? 'creating the worktree' : null, `starting ${args.harness}`, args.prompt ? 'handing over the first task' : null].filter(Boolean);
-      this.state = 'hiring';
-      this.setStatus(`Hiring ${who}: ${steps.join(', ')}…`);
-      this.render();
-    }
-    const r = await this.host.send('worker.hire', args);
-    release();
+    this.landed(await op.done, { session, desk, who, gen, doc, revision, sent });
+  }
+
+  /** A hire waited for in the dialog ended: the dialog, or (closed meanwhile) a toast, says how; the go-to on success. */
+  private landed(o: HireOutcome, h: { session: string; desk: number; who: string; gen: number; doc: PromptDraft; revision: number; sent: { text: string; fields?: Record<string, string> } }): void {
     // Esc'd meanwhile (and maybe another hire opened): only a toast, this dialog is someone else's now.
-    const still = this.dialog.open && gen === this.gen;
+    const still = this.dialog.open && h.gen === this.gen;
+    if (o.kind === 'not_sent') {
+      // No worker.hire: the whole prompt stays, each failed chip says why and has its Retry.
+      // Back to the editable form: what was typed stays, and the choice is resolved against what Settings shows now.
+      if (still) {
+        this.state = 'ready';
+        this.resolveForm();
+      }
+      if (o.message && still) {
+        this.uploadFailed = o.result.reason === 'upload';
+        this.setStatus(o.message, true);
+      } else if (o.message) this.host.toast(o.message, 'error');
+      else if (still) this.setStatus('');
+      if (still) this.render();
+      return;
+    }
     if (still) this.state = 'ready';
-    if (r.ok) {
-      const ack = r.data as HireAck | undefined;
+    if (o.kind === 'hired' || o.kind === 'not_prompted') {
+      const ack = o.ack;
       const w = ack?.id ? this.host.store.workerView(ack.id) : null;
-      const name = w?.name ?? who;
+      const name = w?.name ?? h.who;
       const branch = ack?.branch ? ` on ${ack.branch}` : '';
       // The worker exists but never got the task (`prompted: false`): the text stays, so it can be copied or sent by hand.
-      if (ack?.prompted !== false) this.clearSent(doc, revision, sent);
+      if (o.kind === 'hired') this.clearSent(h.doc, o.revision ?? h.revision, h.sent);
       // #155/#186: a Codex hire that runs on the built-in server instead of its own is a warning; a task not sent, an error.
-      const notSent = ack?.prompted === false ? `The first task was not sent (${ack.prompt_error ?? 'no reason given'}): prompt them yourself (P); the text stays in this desk’s hire dialog.` : '';
+      const notSent = o.kind === 'not_prompted' ? notPromptedText(o.ack) : '';
       if (still) this.close();
       // #116: also when the first task was not sent (so it can be prompted); never from a late ack (`still`).
       if (still && ack?.id) this.host.goTo?.(ack.id);
-      const t = hiredToast(`Hired ${name} at Desk ${(w?.desk ?? desk) + 1}${branch}. Here they come.`, ack, notSent);
+      const t = hiredToast(`Hired ${name} at Desk ${(w?.desk ?? h.desk) + 1}${branch}. Here they come.`, ack, notSent);
       this.host.toast(t.text, t.kind);
       return;
     }
-    const msg = failureText('worker.hire', r.code, r.message, { floor: session, desk: desk + 1 });
+    const msg = failureText('worker.hire', o.code, o.message, { floor: h.session, desk: h.desk + 1 });
     if (!still) {
       this.host.toast(msg, 'error');
       return;
@@ -944,7 +974,7 @@ export class HireDialog {
     this.resolveForm();
     this.setStatus(msg, true);
     this.render();
-    if (r.code === 'capacity' || r.code === 'fetch_failed') void this.recheck();
+    if (o.code === 'capacity' || o.code === 'fetch_failed') void this.recheck();
   }
 
   /** After a capacity or fetch refusal: the caps and origin as they are now (the refusal stays in the status). */

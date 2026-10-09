@@ -51,8 +51,8 @@ export interface GameAudio {
   readonly music: Music;
 }
 
-/** #100: the inbox chimes: someone needs you, and the softer one for finished work. */
-export type UiSound = 'needs' | 'finished';
+/** #100: the inbox chimes: someone needs you, and the softer one for finished work. #210: a hire in the background is up. */
+export type UiSound = 'needs' | 'finished' | 'spawned';
 
 /** One `playAt`: when the clip really sounds, and when it's over. */
 export interface Playback {
@@ -75,7 +75,8 @@ interface UiNote {
 
 /**
  * #100: synthesized, no files. `needs` is a clear rising fourth (E5 → A5) that asks for you; `finished` one
- * quieter, rounder D5 that only says something is done.
+ * quieter, rounder D5 that only says something is done. #210: `spawned`, one short G5 blip: a hire made in the
+ * background is up (never an inbox chime).
  */
 const UI_NOTES: Record<UiSound, readonly UiNote[]> = {
   needs: [
@@ -83,6 +84,7 @@ const UI_NOTES: Record<UiSound, readonly UiNote[]> = {
     { at: 0.13, hz: 880, wave: 'triangle', peak: 0.32, secs: 0.55 },
   ],
   finished: [{ at: 0, hz: 587.33, wave: 'sine', peak: 0.2, secs: 0.5 }],
+  spawned: [{ at: 0, hz: 783.99, wave: 'sine', peak: 0.22, secs: 0.22 }],
 };
 
 /** The handle of a clip that won't sound. */

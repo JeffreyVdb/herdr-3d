@@ -50,6 +50,7 @@ import { WorldStore, type Change, type Counts, type FloorView, type WorkerView }
 import { ChangesPanel } from './ui/changes';
 import { failureText as commandFailure } from './ui/messages';
 import { PromptOverlay } from './ui/prompt';
+import { Draft as PromptDraft } from './ui/composer/draft';
 import { answerable, answerArgs, answerKeys, digitPick, pickLabel, questionLine, type Pick as AnswerPick } from './world/answer';
 import { askLine, askOf, isSimple, optionLabel, quickReplyBlocker } from './world/ask';
 import { faceSpots, needQueue, nextNeed, type NeedItem } from './world/next';
@@ -72,6 +73,7 @@ import { LimitsWidget } from './ui/limits';
 // #100 the inbox chip under them
 import { InboxChip, type InboxEntry } from './ui/inbox';
 import { HirePrefs } from './ui/hirePrefs';
+import { HireCoordinator } from './ui/hireCoordinator';
 import { HireModelPrefs } from './ui/hireModelPrefs';
 import { harnessModelsSection } from './ui/harnessModelsSection';
 import { onPlayerAct, waitForHire } from './ui/hireGoto';
@@ -193,6 +195,8 @@ export class App {
   readonly panels: Panels;
   /** M4: the hire and send-home dialogs, and the workers dropping in (M6b) and walking out. */
   readonly hire: HireDialog;
+  /** #210: every hire on its way, from Hire to its outcome. */
+  readonly hires: HireCoordinator;
   readonly sendHome: SendHomeDialog;
   readonly arrivals: Arrivals;
   /** M6c: the reports on their way to an orchestrator's desk, and what is in its in-tray. */
@@ -547,7 +551,22 @@ export class App {
         this.settings.reveal('harness-models');
       },
     };
-    this.hire = new HireDialog(o.host, { ...hireHost, goTo: (id) => this.goToNewHire(id), orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) } });
+    // #210: one coordinator for every hire (the dialog's, and later the dictation's): a background one beeps and toasts by itself.
+    this.hires = new HireCoordinator({
+      send: (t, args) => this.send(t, args),
+      reserve: (s, d) => this.reserve(s, d),
+      toast: dialogHost.toast,
+      beep: () => this.audio.playUi('spawned'),
+      workerView: (id) => this.store.workerView(id),
+      holdTask: (id, text, from) => this.prompt.holdTask(id, text, from instanceof PromptDraft ? from : undefined),
+    });
+    this.hire = new HireDialog(o.host, {
+      ...hireHost,
+      hirePrefs: this.hirePrefs,
+      hires: this.hires,
+      goTo: (id) => this.goToNewHire(id),
+      orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) },
+    });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, { ...dialogHost, modelPrefs: this.hireModelPrefs });
     this.startRun = new StartRunDialog(o.host, {

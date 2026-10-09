@@ -186,6 +186,18 @@ export class PromptOverlay {
     return d;
   }
 
+  /**
+   * #210: a background hire's first task that did not reach its worker becomes that worker's note, to send by hand (P).
+   * Only into an empty note (what was typed there stays); images of `from` that went up come along as chips, not uploaded
+   * again. True when the note holds it now.
+   */
+  holdTask(workerId: string, text: string, from?: PromptDraft): boolean {
+    const d = this.draftOf(workerId);
+    if (hasContent(d.snapshot())) return false;
+    d.replaceAll(text, from);
+    return true;
+  }
+
   /** #110: drops the pack-up check under way: nothing is sent, the note stays. */
   private cancelCheck(): void {
     const c = this.checking;

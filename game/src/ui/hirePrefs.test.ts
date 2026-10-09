@@ -59,3 +59,47 @@ describe('hire prefs (#116)', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('hire in background (#210)', () => {
+  it('starts off, with no storage, empty storage or a value that is not "on"', () => {
+    expect(new HirePrefs(null).hireInBackground).toBe(false);
+    expect(new HirePrefs(memory()).hireInBackground).toBe(false);
+    for (const raw of ['', 'off', 'true', '1', 'ON']) {
+      const st = memory();
+      st.m.set('h3d.hire.background', raw);
+      expect(new HirePrefs(st).hireInBackground).toBe(false);
+    }
+  });
+
+  it('stores only "on", read back by the next page, next to the go-to choice', () => {
+    const st = memory();
+    const p = new HirePrefs(st);
+    p.hireInBackground = true;
+    expect([...st.m.entries()]).toEqual([['h3d.hire.background', 'on']]);
+    expect(new HirePrefs(st).hireInBackground).toBe(true);
+    p.goToNew = false;
+    const again = new HirePrefs(st);
+    expect([again.hireInBackground, again.goToNew]).toEqual([true, false]);
+    p.hireInBackground = false;
+    expect([...st.m.entries()]).toEqual([['h3d.hire.goto', 'off']]);
+    expect(new HirePrefs(st).hireInBackground).toBe(false);
+  });
+
+  it('tells the same listeners, only on a change', () => {
+    const p = new HirePrefs(memory());
+    let calls = 0;
+    p.onChange(() => calls++);
+    p.hireInBackground = false;
+    expect(calls).toBe(0);
+    p.hireInBackground = true;
+    p.hireInBackground = true;
+    expect(calls).toBe(1);
+  });
+
+  it('works when storage throws: off by default, a change holds for the page', () => {
+    const p = new HirePrefs(broken());
+    expect(p.hireInBackground).toBe(false);
+    expect(() => (p.hireInBackground = true)).not.toThrow();
+    expect(p.hireInBackground).toBe(true);
+  });
+});
