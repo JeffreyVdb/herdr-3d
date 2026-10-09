@@ -527,6 +527,44 @@ export interface HireAck {
   codex?: WorkerCodex;
 }
 
+/**
+ * #211: `hire.interpret`'s proposal, mirrored from internal/hireintent (Interpretation). Each field says where its value
+ * came from: `dictated` (said, valid as said), `resolved` (taken from the catalog for what was said), `missing` (not
+ * said) or `invalid` (said, not usable: `said` keeps the words, there is no `value`). `value` is an exact catalog id.
+ */
+export type HireProvenance = 'dictated' | 'resolved' | 'missing' | 'invalid';
+
+export interface HireIntentField {
+  provenance: HireProvenance;
+  value?: string;
+  said?: string;
+}
+
+export interface HireIntentTask {
+  provenance: 'dictated' | 'missing';
+  value?: string;
+  span?: { source: number; start: number; end: number };
+}
+
+export interface HireIntentQuestion {
+  field: 'model' | 'effort' | 'task' | 'selection';
+  text: string;
+  /** The levels to choose from (effort): the selected model's. */
+  efforts?: string[];
+  /** The models to choose from (model, selection). */
+  choices?: Array<{ harness: string; model: string; label?: string }>;
+}
+
+export interface HireInterpretation {
+  sources: string[];
+  harness: HireIntentField;
+  model: HireIntentField;
+  effort: HireIntentField;
+  task: HireIntentTask;
+  questions: HireIntentQuestion[];
+  ready_for_review: boolean;
+}
+
 /** M4: `worker.fire.prepare` ack: what the send-home dialog shows. */
 export interface FirePrepare {
   name: string;

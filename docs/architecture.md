@@ -338,7 +338,8 @@ MacBook (M2 Max)                                   devbox (Linux)
 ## 5. Mac: game client
 
 - **three.js r186 + TypeScript + Vite**, `WebGPURenderer` (auto WebGL2 fallback), HTML/CSS menus (hire dialog:
-  harness → model → effort), xterm.js 6 for laptop screens (render to texture only for the focused desk).
+  harness → model → effort; #212: a dictated hire opens an accordion review of the same fields, and only its Hire launches),
+  xterm.js 6 for laptop screens (render to texture only for the focused desk).
 - **Workers**: original procedural rigid-part characters (capsule body, goggle + strap, tiny limbs), one `InstancedMesh`
   per part, animation in code. Measured on M2 Max at 3024×1890 with shadows: **240 workers 1.2 ms/frame pipelined,
   600 workers 3.1 ms** (Chrome 153 WebGPU); 120 Hz budget is 8.33 ms. Skinned Kenney: 4.9 ms @240, 14 ms @600.
