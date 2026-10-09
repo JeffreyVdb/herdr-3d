@@ -841,9 +841,9 @@ dialog.settings {
 :root[data-ui-theme='ubuntu'] .settings-link:hover {
   text-decoration-thickness: 2px;
 }
-:root[data-ui-theme='ubuntu'] .settings-actions .btn:disabled,
-:root[data-ui-theme='ubuntu'] .settings-fu-actions .btn:disabled,
-:root[data-ui-theme='ubuntu'] .settings-nt .btn:disabled {
+:root[data-ui-theme='ubuntu'] .settings-actions .btn:disabled:not([aria-busy='true']),
+:root[data-ui-theme='ubuntu'] .settings-fu-actions .btn:disabled:not([aria-busy='true']),
+:root[data-ui-theme='ubuntu'] .settings-nt .btn:disabled:not([aria-busy='true']) {
   opacity: 1;
   border-color: var(--border);
   background: var(--disabled-bg);

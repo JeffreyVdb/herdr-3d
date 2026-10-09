@@ -1106,11 +1106,11 @@ body {
 :root[data-ui-theme='ubuntu'] .ai-chip {
   height: 32px;
 }
-/* Disabled (native or aria): the raised fill, a muted label and the strong border; never an opacity fade, never a hover. */
+/* Disabled (native or aria, never while busy: a busy button is often natively disabled too, decisions #216 row 14): the raised fill, a muted label and the strong border; never an opacity fade, never a hover. */
 :root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:not([aria-busy='true']),
 :root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:not([aria-busy='true']):hover,
-:root[data-ui-theme='ubuntu'] .btn:disabled,
-:root[data-ui-theme='ubuntu'] .btn:disabled:hover {
+:root[data-ui-theme='ubuntu'] .btn:disabled:not([aria-busy='true']),
+:root[data-ui-theme='ubuntu'] .btn:disabled:not([aria-busy='true']):hover {
   opacity: 1;
   background: var(--disabled-bg);
   border-color: var(--btn-border);
@@ -1241,7 +1241,7 @@ body {
     background: CanvasText;
   }
   :root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:not([aria-busy='true']),
-  :root[data-ui-theme='ubuntu'] .btn:disabled {
+  :root[data-ui-theme='ubuntu'] .btn:disabled:not([aria-busy='true']) {
     color: GrayText !important;
     border-color: GrayText;
   }
