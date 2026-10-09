@@ -151,6 +151,8 @@
   --asleep-row: rgb(90 95 168 / 16%);
   /* Hover fill of an elevator row. */
   --lift-row-hover: rgb(255 255 255 / 7%);
+  /* #215: the well that holds a report request's full text (Quiet: a faint lift; Ubuntu: the recessed purple). */
+  --req-well: rgb(255 255 255 / 7%);
   /* The track of the elevator's progress bar. */
   --lift-bar-track: rgb(255 255 255 / 10%);
   /* The dashed outline of an empty slot (a building without a logo). */
@@ -717,6 +719,8 @@
   --asleep-row: #3b1330;
   /* Hover fill of an elevator row. */
   --lift-row-hover: #5e2750;
+  /* #215: the well that holds a report request's full text. */
+  --req-well: #2c001e;
   /* The track of the elevator's progress bar. */
   --lift-bar-track: #5e2750;
   /* The dashed outline of an empty slot (a building without a logo). */

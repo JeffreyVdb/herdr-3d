@@ -107,6 +107,24 @@ describe('sim.crew: the scripted freelancer', () => {
     expect(cmd('sim.crew', { step: 'dance' }).reply()).toMatchObject({ t: 'error', code: 'bad_request' });
   });
 
+  it('#215: a report request keeps its whole text and recipient, and resolve accepts it without resuming the worker', () => {
+    const { cmd } = rig();
+    cmd('sim.crew', { step: 'hire' });
+    cmd('sim.crew', { step: 'onboard' });
+    // Nothing asks yet.
+    expect(cmd('sim.crew', { step: 'resolve' }).reply()).toMatchObject({ t: 'error', code: 'bad_request' });
+    const text = `${'x'.repeat(600)} Or accept the existing evidence: ORCHESTRATOR ACCEPTANCE.`;
+    const rep = cmd('sim.crew', { step: 'report', input_required: text, input_for: 'orchestrator', input_truncated: true }).got().find((m) => m.t === 'worker.upsert') as { worker: Worker };
+    expect(rep.worker).toMatchObject({ status: 'done', report: { state: 'ready', input_required: text, input_for: 'orchestrator', input_truncated: true } });
+    expect(rep.worker.report?.input_resolved).toBeUndefined();
+    const res = cmd('sim.crew', { step: 'resolve', note: 'accepted as AC4 evidence' }).got().find((m) => m.t === 'worker.upsert') as { worker: Worker };
+    expect(res.worker).toMatchObject({ status: 'done', report: { input_required: text, input_resolved: { by: 'orchestrator', note: 'accepted as AC4 evidence' } } });
+    // The auto script never resolves by itself; an unknown recipient is dropped.
+    const again = cmd('sim.crew', { step: 'report', input_required: 'x', input_for: 'bob' }).got().find((m) => m.t === 'worker.upsert') as { worker: Worker };
+    expect(again.worker.report?.input_for).toBeUndefined();
+    expect(again.worker.report?.input_resolved).toBeUndefined();
+  });
+
   it('a second hire grows the floor by a desk', () => {
     const { cmd } = rig();
     cmd('sim.crew', { step: 'hire' });

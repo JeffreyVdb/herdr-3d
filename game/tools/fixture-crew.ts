@@ -14,10 +14,13 @@
 // - `onboard`: its agent is there (`claude`, idle): it reads its brief.
 // - `work`: it is `working`.
 // - `report`: its report is ready (`summary`, or `verdict` / `blockers` /
-//   `input_required` as given) and it is `done`. The game then walks the
+//   `input_required`, `input_for`, `input_truncated` as given) and it is `done`. The game then walks the
 //   folder over to the orchestrator's desk (M6c), hands it over, walks back
 //   and sits; `leave` any time after that (or during: it finishes the
 //   hand-over and walks out from where it stands).
+// - `resolve` (#215, manual only: the auto script skips it): the orchestrator accepts the report's `input_required`
+//   without resuming the worker (`by`, `note`): the report gains `input_resolved`, as the bridge shows it once the
+//   `<report>.resolved.json` sidecar is written. Acks `{id, step}`; `unknown_worker` when nothing asked.
 // - `leave`: its workspace closes (`worker.removed`, no reason): it waves
 //   and walks out with its briefcase.
 //
@@ -41,7 +44,9 @@ export interface CrewHost {
 }
 
 export const CREW_STEPS = ['hire', 'onboard', 'work', 'report', 'leave'] as const;
-export type CrewStep = (typeof CREW_STEPS)[number];
+/** Every step `sim.crew` takes: the auto script's, and `resolve` (#215), which is only called for. */
+export const CREW_CALLS = [...CREW_STEPS, 'resolve'] as const;
+export type CrewStep = (typeof CREW_CALLS)[number];
 
 /** The free desk nearest `orchDesk` (the bridge's rule: same pod of 4, then pod distance, then index); `taken` holds the used ones. */
 export function nearestDesk(orchDesk: number, taken: ReadonlySet<number>, desks: number): number {
@@ -80,7 +85,7 @@ export class CrewSim {
   /** `sim.crew`: one step of the script. */
   handle(a: Obj, send: Send): { id: string; step: CrewStep } {
     const step = a.step;
-    if (typeof step !== 'string' || !(CREW_STEPS as readonly string[]).includes(step)) throw this.bad(`step must be one of ${CREW_STEPS.join(', ')}`);
+    if (typeof step !== 'string' || !(CREW_CALLS as readonly string[]).includes(step)) throw this.bad(`step must be one of ${CREW_CALLS.join(', ')}`);
     if (step === 'hire') return { id: this.hire(a, send), step };
     const id = typeof a.id === 'string' ? a.id : this.last;
     const w = id ? this.h.workers.find((x) => x.id === id) : undefined;
@@ -104,7 +109,19 @@ export class CrewSim {
           report.issues = report.blockers;
         } else report.summary = typeof a.summary === 'string' ? a.summary : 'Implemented and tested; head 3f9c2e1, all checks green.';
         report.input_required = typeof a.input_required === 'string' ? a.input_required : null;
+        if (report.input_required) {
+          if (a.input_for === 'orchestrator' || a.input_for === 'user') report.input_for = a.input_for;
+          if (a.input_truncated === true) report.input_truncated = true;
+        }
         Object.assign(w, { status: 'done', status_since: this.h.now(), report });
+        this.h.emit(send, { t: 'worker.upsert', worker: w });
+        break;
+      }
+      case 'resolve': {
+        if (!w.report?.input_required) throw this.h.error('bad_request', `bad args: ${w.id} has no input_required to resolve`);
+        const input_resolved: NonNullable<WorkerReport['input_resolved']> = { by: typeof a.by === 'string' && a.by ? a.by : 'orchestrator', at: this.h.now() };
+        if (typeof a.note === 'string' && a.note) input_resolved.note = a.note;
+        w.report = { ...w.report, input_resolved };
         this.h.emit(send, { t: 'worker.upsert', worker: w });
         break;
       }
@@ -219,7 +236,7 @@ export class CrewSim {
   start(send: Send, ms: number): void {
     if (!(ms > 0)) return;
     const next = () => {
-      const step = CREW_STEPS[this.auto++ % CREW_STEPS.length] as CrewStep;
+      const step = CREW_STEPS[this.auto++ % CREW_STEPS.length] as (typeof CREW_STEPS)[number];
       try {
         this.handle(step === 'hire' ? { step, corner: this.round % 2 === 1 } : { step }, send);
         if (step === 'leave') this.round++;

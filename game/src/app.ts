@@ -78,7 +78,7 @@ import { HireModelPrefs } from './ui/hireModelPrefs';
 import { harnessModelsSection } from './ui/harnessModelsSection';
 import { onPlayerAct, waitForHire } from './ui/hireGoto';
 import { InboxPrefs } from './ui/inboxPrefs';
-import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
+import { inboxQueue, inboxReason, inboxRequest, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
 import { kaneoSection } from './ui/kaneoSection';
@@ -2668,13 +2668,10 @@ export class App {
       this.inbox.closeList();
       return;
     }
-    if (!s.shown) {
-      this.hud.toast('Nothing in the inbox: no one needs you and nothing is waiting to be read.', 2600);
-      return;
-    }
     this.walker.release();
     this.walker.stop();
-    this.inbox.openList(true);
+    // #215: the explicit command opens the list even with "Show the inbox" off (the chip then goes when it closes).
+    if (!this.inbox.openList(true, true)) this.hud.toast('Nothing in the inbox: no one needs you and nothing is waiting to be read.', 2600);
   }
 
   /** Nothing but the scene has keyboard focus (no HUD control). */
@@ -3213,6 +3210,11 @@ export class App {
     }
     const q = v.display === 'needs_you' ? answerable(v.worker.question) : null;
     if (!q) {
+      // #215: a report's request is no question of its agent: nothing to answer by a key, and none waits at its laptop.
+      if (v.display === 'needs_you' && v.crew?.ask) {
+        this.hud.toast(`${v.name} has a report request, not a question (${(v.crew.askWho ?? '').toLowerCase()}): nothing to answer here. Open the inbox for the whole text.`, 3600);
+        return;
+      }
       this.hud.toast(v.display === 'needs_you' ? `${v.name} needs you, but its screen showed no question to answer from here: sit at its laptop (E).` : `${v.name} isn’t asking anything right now.`, 3000);
       return;
     }
@@ -3320,7 +3322,7 @@ export class App {
   private inboxEntries(): InboxEntry[] {
     return this.inboxItems().flatMap((item) => {
       const v = this.store.workerView(item.id);
-      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.session), reason: inboxReason(v), blocked: item.reason === 'blocked', dismissable: item.reason === 'done', since: item.since }] : [];
+      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.session), reason: inboxReason(v), blocked: item.reason === 'blocked', dismissable: item.reason === 'done', since: item.since, request: inboxRequest(v) }] : [];
     });
   }
 

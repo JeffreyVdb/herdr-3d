@@ -264,6 +264,74 @@
   }
 }
 
+/*
+ * #215 a report's request under its row: who it is asked of and a disclosure for the whole text (the bubble and the
+ * bar only preview it). The text wraps, and scrolls when it is huge.
+ */
+.ib-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  padding: 0 8px 7px 33px;
+  font-size: 12px;
+}
+.ib-who {
+  color: var(--text-2);
+}
+.ib-more {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  margin: 0 0 0 -4px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ib-more:hover {
+  background: var(--menu-row-hover);
+}
+@media (pointer: coarse) {
+  .ib-more {
+    min-height: 44px;
+    padding: 0 8px;
+  }
+}
+.ib-more:focus-visible,
+.ib-req:focus-visible {
+  outline-offset: 1px;
+}
+.ib-req {
+  flex: 1 0 100%;
+  box-sizing: border-box;
+  max-height: 168px;
+  margin-top: 4px;
+  padding: 7px 9px;
+  overflow: auto;
+  border-radius: 7px;
+  background: var(--req-well);
+  color: var(--text);
+}
+.ib-req[hidden] {
+  display: none;
+}
+.ib-req p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+.ib-req .ib-req-cut {
+  margin-top: 6px;
+  color: var(--text-2);
+}
 /* ubuntu:begin */
 /* #216 Ubuntu: the plate is the chip's control boundary (the elevation shadow is the pulse's, so the edge is an outline);
    a pressed chip goes to the mid-aubergine; touch gets 44px targets (the shut chip's hit area is 44px already). */
@@ -273,6 +341,20 @@
 }
 :root[data-ui-theme='ubuntu'] .ib-chip:active {
   background: var(--hover);
+}
+/* #215's request under a row: the full text sits in a recessed well with its boundary, the disclosure is the link colour. */
+:root[data-ui-theme='ubuntu'] .ib-req {
+  border: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .ib-more {
+  color: var(--accent-text);
+}
+:root[data-ui-theme='ubuntu'] .ib-more:hover {
+  text-decoration-thickness: 2px;
+}
+:root[data-ui-theme='ubuntu'] .ib-more:focus-visible,
+:root[data-ui-theme='ubuntu'] .ib-req:focus-visible {
+  outline-offset: 2px;
 }
 @media (pointer: coarse) {
   :root[data-ui-theme='ubuntu'] .ib-x {

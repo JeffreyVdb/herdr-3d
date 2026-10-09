@@ -383,6 +383,7 @@ change is one `worker.upsert`. A new `h3d_report` value (the fresh path after `i
 {"state":"pending"}
 {"state":"ready","at":1790650000000,"verdict":"CHANGES_REQUIRED","blockers":2,"issues":5,"summary":"…"}
 {"state":"ready","at":1790650000000,"input_required":"Which port should the demo use?"}
+{"state":"ready","at":1790650000000,"input_required":"Accept the existing evidence?","input_for":"orchestrator","input_resolved":{"by":"orchestrator","note":"accepted as AC4 evidence","at":1790650090000}}
 {"state":"invalid","at":1790650000000,"error":"not a JSON object"}
 ```
 
@@ -392,12 +393,46 @@ change is one `worker.upsert`. A new `h3d_report` value (the fresh path after `i
 | `at` | unix ms, the file's mtime (absent for a bad name) |
 | `verdict` | reviewers (`review`, `ux`) only: `PASS` \| `CHANGES_REQUIRED` \| `INCOMPLETE`; any other value, or none without `input_required`, is `invalid` |
 | `blockers`, `issues` | reviewers: how many `issues_found` have `priority == "BLOCKER"`, and how many there are |
-| `input_required` | what the worker needs to go on, cut to 500 bytes (UTF-8 safe); absent when null or empty |
+| `input_required` | the request the report makes (a decision, an acceptance, an answer), up to 8 KiB (UTF-8 safe; #215: it used to be cut to 500 bytes, losing the actual decision); absent when null or empty. It stays present after the request was resolved |
+| `input_truncated` | `true` when `input_required` was longer than 8 KiB and was cut; absent otherwise |
+| `input_for` | who the request is for, when the report says (`"input_for": "orchestrator"` \| `"user"`, case-insensitive); any other value is ignored; absent otherwise. Present only with `input_required` |
+| `input_resolved` | `{by, note?, at}`: the orchestrator resolved the request (see below); absent while it asks. `by` is `resolved_by` of the sidecar (≤ 40 bytes, default `orchestrator`), `note` its note (≤ 300 bytes), `at` the sidecar's mtime in unix ms. Present only with `input_required` |
 | `summary` | coders and researchers: their `summary`, cut to 300 bytes |
 | `error` | why a report is `invalid`: a run id or report name not matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`, not a regular file (a symlink is not followed), over 256 KiB, not a JSON object, a bad verdict |
 
+**Resolving a request without resuming the worker (#215).** A report's `input_required` is a request the orchestrator
+(or you) must settle, but a worker that has said it in its report and ended its turn is `done`: nothing changes in the
+report file when the orchestrator accepts it and carries on. The orchestrator says so with a **sidecar** next to the
+report: for `<run>/<stem>.json` it writes `<run>/<stem>.resolved.json` (the report name with `.json` replaced by
+`.resolved.json`, or appended to a name without `.json`), atomically (temp file, then `mv`):
+
+```sh
+printf '{"report":"coder-r1.json","resolved_by":"orchestrator","note":"accepted as AC4 evidence"}' > run/coder-r1.resolved.json.tmp \
+  && mv run/coder-r1.resolved.json.tmp run/coder-r1.resolved.json
+```
+
+The sidecar is a JSON object that must carry a string `"report"` **equal to the file name of the report it resolves**
+(`coder-r1.json` above; for a report named `coder-r1` it is `coder-r1`), plus the optional strings `resolved_by` and
+`note`. So the sidecar is bound to its report: two report names sharing a sidecar path (`coder-r1` and `coder-r1.json`)
+cannot resolve each other, and another worker's report JSON is no acknowledgement. A missing or different `report`, or
+a `report`, `resolved_by` or `note` that is not a string (`null` included), makes the sidecar **ignored**. It resolves
+the report's request only when it is a regular file of at most 4 KiB (`Lstat`, `O_NOFOLLOW`, no symlink, FIFO or
+directory), valid JSON (anything else is **ignored**: the request stays active), and its mtime is **at least the
+report's**. So a report written again after the resolution (a new request) asks again, and a fresh `h3d_report` path
+(a resume after an answer) starts over at `pending` as before. A name ending in `.resolved.json` is
+**reserved for sidecars**: as an `h3d_report` it is an `invalid` report (`report name is reserved for resolutions`),
+so a worker can never occupy a sidecar path. A report whose sidecar name would exceed 80 bytes has no sidecar. The poller stats both files and re-reads when either's size
+or mtime changed (creating, replacing or deleting the sidecar is one `worker.upsert` within a second); the sidecar is
+the only state, so a bridge restart changes nothing. Use it to accept a request in the ledger and go on without
+resuming the freelancer; to *answer* a request and resume it, assign a fresh report path as before.
+
 The game derives a freelancer's lifecycle from these (hired, onboarding, working, blocked on `status: blocked` or a
-`report.input_required`, reporting on a `ready` report, leaving on `worker.removed`); nothing else goes on the wire.
+`report.input_required` that is not resolved, reporting on a `ready` report, leaving on `worker.removed`); nothing
+else goes on the wire. An unresolved request makes the worker **needs you** whatever its `status` (even `done`); a
+resolved one does not count anywhere (NEEDS YOU counts, N, inbox, badges, bubbles) and the lifecycle falls back to the
+worker's own state. Card, look-at bar and inbox call it a **Report request**, never "Waiting for an answer" (the agent
+asked no question), and say who is asked: `input_for`, else the worker's orchestrator (`orch_id`: "Asked of the
+orchestrator (Cog)"), else you ("Asked of you"). The inbox row opens the complete text.
 
 ## Events
 
@@ -539,6 +574,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `packup.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | its state | `packup.update` (before the ack) |
 | `packup.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"text", "expect", "core"?, "score", "matched", "task"?, "want_task"?, "right", "error"?}], "right", "total", "latency_ms"}` | `packup.update` when it changes `tested` |
 | `packup.detect` | `{"id", "text"}` | `{"matched", "task"?, "removed"?: [{"start", "end"}], "score"}`; `matched` false: send `text` as written | — |
+| `hire.interpret` | `{"text", "pending"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?}`: a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
 | `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…]}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
 | `inbox.dismiss` | `{"id", "status_since"}` | `{"dismissed": bool}` (see [Inbox](#inbox)) | `inbox.dismissed` (before the ack) when the dismissal is new |
@@ -2898,6 +2934,75 @@ cancels the send. Prompts typed straight into herdr (the terminal) are not looke
 classifier), and to the LLM endpoint when the classifier says yes, before it is sent. Images are never sent. That is
 why it is opt-in on its own toggle, and the game's Settings say so above it.
 
+
+### Hire interpretation
+
+#211 (phase 2 of #209: dictated hiring). **`hire.interpret {text, pending?}`** reads one dictated sentence ("Hire a
+Claude Code agent on Haiku 5.5 with high effort. Task: fix the login bug.") with the [AI integration](#ai-integration)'s
+LLM and answers a **hire proposal for review**, or that the sentence is not a hire. It never hires: it sends no
+`worker.hire`, calls no herdr and keeps nothing on the bridge. A complete, valid proposal is only `ready_for_review`;
+the game's review dialog and your explicit confirmation are what hire (phases 3 and 4).
+
+```json
+{"t":"hire.interpret","req_id":"i1","args":{"text":"Hire a Claude Code agent on Haiku 5.5 to fix the login bug."}}
+{"t":"ack","req_id":"i1","data":{"text":"Hire a Claude Code agent on Haiku 5.5 to fix the login bug.","intent":"hire","hire":{"sources":["Hire a Claude Code agent on Haiku 5.5 to fix the login bug."],"harness":{"provenance":"dictated","value":"claude"},"model":{"provenance":"resolved","value":"claude-haiku-5-5"},"effort":{"provenance":"missing"},"task":{"provenance":"dictated","value":"fix the login bug.","span":{"source":0,"start":41,"end":59}},"questions":[{"field":"effort","text":"What effort level should this agent use?","efforts":["low","medium","high","xhigh","max"]}],"ready_for_review":false}}}
+{"t":"hire.interpret","req_id":"i2","args":{"text":"High effort, please.","pending":<the hire of i1>}}
+{"t":"ack","req_id":"i2","data":{"text":"High effort, please.","intent":"hire","hire":{"sources":["Hire a Claude Code agent on Haiku 5.5 to fix the login bug.","High effort, please."],"harness":{…},"model":{…},"effort":{"provenance":"dictated","value":"high"},"task":{…},"questions":[],"ready_for_review":true}}}
+```
+
+**One call, then rules.** The LLM gets the research's prompt (`internal/hireintent/prompt.txt`, from
+`docs/research/dictation-hiring-bench`) and `{"command": text, "pending_hire"?: [the pending proposal's sources],
+"hire_options": <the bridge's current catalog>}`, in JSON mode with a 1,400-token budget, no partial answer and the
+provider's default reasoning; the AI integration's timeout, retry and concurrency limit apply, and the bridge bounds
+the whole at 35 s. Its answer must be exactly `{intent, harness, model, effort, task, multiple, selection_unclear}`
+(`intent` `hire` | `unsupported` | `unclear`, `harness` `claude` | `codex` | null, booleans for the last two, short
+strings or null for the others); anything else is the error `bad_answer`. Then, deterministically:
+
+- **`intent`** `unsupported` (a clear request for another game action, one to an existing worker) and `unclear`
+  (no clear request: a bare task, a mention, a quote, a negation, a hypothetical, history, a question about hiring,
+  nothing said) carry nothing else. More than one action or new worker is `unsupported` with `reason: "multiple"`:
+  never a part of it. Only hiring is understood.
+- **Fields.** `harness`, `model` and `effort` each have a `provenance`: `dictated` (said, and its `value` is the word
+  said), `resolved` (`value` taken from the catalog for what was said: a readable label such as "Haiku 5.5", "extra
+  high", the harness of an unambiguous model), `missing` (not said), `invalid` (said but not valid: unknown, of the
+  other harness, contradictory such as "Claude on GPT-5.5 Haiku", an effort the model does not support, or a harness
+  with no models in the current catalog; `said` keeps the words, there is no `value`). `value` is always an exact
+  launch id of the **current** catalog; nothing is ever defaulted (not from the floor's settings, the last hire or
+  `hire.prepare`'s choice) or substituted. A model is never chosen from a harness. An effort counts only when its word
+  is said outside the task ("Task: make the high effort setting visible" has no effort); before the model is valid it
+  is only checked against the catalog's levels.
+- **`task`** is `dictated` with its `span` — `sources[source]` from `start` to `end` in **UTF-16 code units**
+  (packup's units) — or `missing`. It is always an exact part of what was said, punctuation and later sentences
+  included; commands inside it are its content. A task the LLM read that is not in the sentences is the error
+  `bad_span`. Said twice, the span is in the latest sentence holding it, at its last occurrence there.
+- **`questions`**, in order, never null: `model` (missing or invalid: "Which model should this agent use?" / "Which
+  model did you mean by “…”?", with `choices` `[{harness, model, label?}]`: the harness's models, every model without
+  one), `effort` (missing: exactly "What effort level should this agent use?"; unsupported: a correction; `efforts`
+  are the selected model's levels, none before a model is valid), `task` ("What should this agent work on?"), and
+  `selection` when the LLM found the selection unclear though every value validated. **`ready_for_review`** is true
+  only with every field valid and no question.
+
+**Follow-ups.** A reply ("high", "High effort, please.", "Use Sonnet 5.5 instead.") is sent with the pending proposal
+as `pending`, exactly as it came; its `sources` grow by the reply (at most 6). The pending proposal is checked in full
+first (its sources, its task's span against them, its fields' shape, a valid harness `claude` or `codex`; else the
+error `bad_pending`, no call) and its values are resolved again against the **current** catalog: a model that left it
+is `invalid` again, and so is a harness with no models left (its model question offering every model of the catalog).
+The reply fills or changes only what it targets: a field the LLM leaves out keeps the pending one, and the task
+changes only to a part of the reply. A model change keeps a still-supported effort; an effort it does not support is
+`missing` again. A cancellation is `unclear` (drop the pending proposal), and a reply without a pending proposal
+("high") is `unclear`: it never makes a proposal ready.
+
+**Errors.** The command itself fails only on its args: unknown fields (a client catalog is refused) or a `text` over
+8 KiB, not UTF-8 or with NUL: `bad_request`. Everything else is an ack. An **operational error** is `error {code,
+message}` with `text` kept and no `intent` nor `hire`: `not_ready` (no LLM ready, or no AI integration: no call),
+`timeout`, `provider_failed`, `truncated`, `empty_answer`, `rate_limited`, `auth_failed`, `unreachable`,
+`bad_response` (the AI integration's kinds), `bad_answer`, `bad_span`, `bad_pending`. The message is fixed text, never
+the provider's.
+
+**Privacy.** Every sentence and the pending proposal's sources go to the LLM endpoint, with the hire catalog. The
+bridge logs only the intent, whether it is ready, how many questions and the error code; the audit keeps the text's
+length and the pending sources' count, never a sentence.
+
 ### Activity
 
 #98. The desk monitor says what each agent is doing right now, in one word, with a short detail and, when the agent
@@ -3442,7 +3547,7 @@ dismissed_at)`.
 | code | meaning |
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
-| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `truncated`, `empty_answer`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` (#174: also a reasoning effort or budget the model or the range refuses; `digest.retry` also `unknown_worker`) and, from its test's calls, the `ai.*` ones (`truncated`, `empty_answer`) |
+| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `truncated`, `empty_answer`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` (#174: also a reasoning effort or budget the model or the range refuses; `digest.retry` also `unknown_worker`) and, from its test's calls, the `ai.*` ones (`truncated`, `empty_answer`); #211 `hire.interpret` never fails with them: they are its result's `error` (see [Hire interpretation](#hire-interpretation)) |
 | `bad_url`, `key_required`, `not_configured`, `unauthorized`, `forbidden` | #184 `kaneo.*` and a floor's Kaneo link (see [Kaneo](#kaneo)); `unauthorized` (the provider refused the key, HTTP 401, maybe its quota) and `forbidden` (a permission problem, HTTP 403) also from the board commands of a provider that tells them apart; `unreachable`, `timeout`, `test_required`, `rate_limited` and `provider_failed` are used there too |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Ask, Building, Floor, Followup, Worker } from '../net/protocol';
 import { crewView } from './crew';
 import type { Display } from './derive';
-import { inboxAge, inboxQueue, inboxReason, inboxWhere, isDismissed, type InboxCandidate } from './inbox';
+import { inboxAge, inboxQueue, inboxReason, inboxRequest, inboxWhere, isDismissed, type InboxCandidate } from './inbox';
 import { nextNeed } from './next';
 
 const w = (id: string, display: Display, since: number, over: Partial<InboxCandidate> = {}): InboxCandidate => ({
@@ -103,7 +103,20 @@ describe('inboxReason', () => {
     expect(inboxReason(view('needs_you', { ask }))).toBe('Question');
     expect(inboxReason(view('needs_you', { followup }))).toBe('Follow-up');
     expect(inboxReason(view('needs_you', { wrapup: { state: 'needs_you', worktree: 'keep', armed_at: 1 } }))).toBe('Wrap-up stuck');
-    expect(inboxReason(view('needs_you', { label: 'CODE|r1|#100', report: { state: 'ready', input_required: 'Which port?' } }))).toBe('Report asks');
+    expect(inboxReason(view('needs_you', { label: 'CODE|r1|#100', report: { state: 'ready', input_required: 'Which port?' } }))).toBe('Report request');
+  });
+
+  it('a report request is no question: its reason says so, and its row carries the whole text and who decides (#215)', () => {
+    const text = `${'x'.repeat(600)} orchestrator acceptance`;
+    const v = view('needs_you', { label: 'CODE|r1|#100', orch_id: 'o1', report: { state: 'ready', input_required: text } });
+    expect(inboxReason(v)).toBe('Report request');
+    expect(inboxRequest(v)).toEqual({ text, truncated: false, who: 'Asked of the orchestrator' });
+    expect(inboxRequest({ ...v, crew: crewView(v.worker, true, 'Cog') })?.who).toBe('Asked of the orchestrator (Cog)');
+    expect(inboxRequest(view('needs_you', { status: 'blocked' }))).toBeNull();
+    // Accepted by the orchestrator: no request, nothing to show; the done worker is only Finished.
+    const done = view('done', { label: 'CODE|r1|#100', report: { state: 'ready', input_required: text, input_resolved: { by: 'orchestrator' } } });
+    expect(inboxRequest(done)).toBeNull();
+    expect(inboxReason(done)).toBe('Finished');
   });
 
   it('the question first, as the card shows it; an armed wrap-up or an empty input_required is no reason', () => {

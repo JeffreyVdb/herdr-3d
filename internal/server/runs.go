@@ -378,7 +378,7 @@ func (h *Hub) reportWorkers() []reportWorker {
 			continue
 		}
 		run, name := w.Tokens["h3d_run"], w.Tokens["h3d_report"]
-		if !runs.ValidName(run) || !runs.ValidName(name) {
+		if !runs.ValidName(run) || !runs.ValidReport(name) {
 			continue
 		}
 		out = append(out, reportWorker{id: id, key: st.key, role: w.Role, run: run, name: name})
@@ -402,8 +402,10 @@ func (h *Hub) setReport(id, key string, r proto.RunReport) {
 	h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: &next})
 }
 
-// reportTracker stats the watched reports (off the hub goroutine) and
-// reads one only when it is new or its size or mtime changed.
+// reportTracker stats the watched reports and their resolution sidecars (off
+// the hub goroutine) and reads one only when it is new or the size or mtime
+// of either changed (#215: the orchestrator resolving a request touches only
+// the sidecar).
 type reportTracker struct {
 	dir  string
 	seen map[string]trackedReport // worker id →
@@ -413,6 +415,9 @@ type trackedReport struct {
 	key    string
 	exists bool
 	stamp  runs.Stamp
+	// side is the sidecar's stamp, sideOK whether there is one.
+	side   runs.Stamp
+	sideOK bool
 	report proto.RunReport
 }
 
@@ -461,12 +466,17 @@ func (tr *reportTracker) poll(ws []reportWorker) []reportUpdate {
 		if err != nil {
 			continue // unreadable for now: keep what was shown
 		}
+		side, sideOK, err := runs.StatResolved(tr.dir, w.run, w.name)
+		if err != nil {
+			continue
+		}
 		prev := t.report
 		switch {
 		case !exists:
-			t.exists, t.stamp, t.report = false, runs.Stamp{}, proto.RunReport{State: proto.ReportPending}
-		case !t.exists || stamp != t.stamp:
-			t.exists, t.stamp, t.report = true, stamp, runs.Read(tr.dir, w.run, w.name, w.role)
+			t.exists, t.stamp, t.side, t.sideOK, t.report = false, runs.Stamp{}, runs.Stamp{}, false, proto.RunReport{State: proto.ReportPending}
+		case !t.exists || stamp != t.stamp || sideOK != t.sideOK || side != t.side:
+			t.exists, t.stamp, t.side, t.sideOK = true, stamp, side, sideOK
+			t.report = runs.Read(tr.dir, w.run, w.name, w.role)
 		}
 		tr.seen[w.id] = t
 		if !ok || !reflect.DeepEqual(prev, t.report) {
