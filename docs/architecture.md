@@ -123,7 +123,8 @@ MacBook (M2 Max)                                   devbox (Linux)
   - **Server ownership.** One `codex app-server` per worker, never the CODEX_HOME daemon (findings B1–B3). The bridge
     writes a launcher into the run directory and types `setsid -f fish <launcher>` into the worker's pane, so the
     server has that pane's fish, direnv and herdr environment; the launcher marks its processes with a per-launch
-    token, records the pid and listens on `unix://<run>/<marker hex>.sock` with the cwd trusted in memory. Then the
+    token, records the pid and listens on `unix://<run>/<marker hex>.sock` with the cwd trusted in memory and
+    `-c features.instant_interrupt=false` (`codexapp.ServerFeatures`, below). Then the
     TUI: `agent start … -- --remote unix://<socket> -C <dir> -m … -c model_reasoning_effort=…
     --dangerously-bypass-approvals-and-sandbox`. The bridge owns the server: send home and sleep stop it (only the
     token's processes, then its files), wake starts a new one from the pane and resumes the thread
@@ -132,26 +133,34 @@ MacBook (M2 Max)                                   devbox (Linux)
     questions, and sends only on a player's command (`worker.answer_async`, or `worker.prompt` to a worker an async
     question shows as blocked).
   - **Supported Codex: the verified release lines only**, each verified with the real TUI and the bridge's full stack
-    (`make codex-shared-tui`, findings §12 and §13): **0.160.x** (codex-cli 0.160.1, herdr 0.9.0, 2026-10-07, #155/#158)
-    and **0.161.x** (codex-cli 0.161.0, herdr 0.9.0, 2026-10-08, #186). The set is explicit
-    (`codexapp.SupportedLines`), not a range: 0.159 and 0.162 are refused until verified. Checked twice: `codex
+    (`make codex-shared-tui`, findings §12, §13 and §14): **0.160.x** (codex-cli 0.160.1, herdr 0.9.0, 2026-10-07,
+    #155/#158), **0.161.x** (codex-cli 0.161.0, herdr 0.9.0, 2026-10-08, #186) and **0.162.x** (codex-cli 0.162.0,
+    herdr 0.9.3, 2026-10-08). The set is explicit (`codexapp.SupportedLines`), not a range: 0.159 and 0.163 are
+    refused until verified. Checked twice: `codex
     --version` before anything starts, and the server's `userAgent` before the TUI attaches; the patch must be numeric
     (no pre-releases). Capabilities relied on:
     `app-server --listen unix://`, the TUI's `--remote`, `thread/resume` by id, `thread/turns/list` (the newest turns' real ids after a restart), `turn/steer` with `expectedTurnId`,
     `turn/start`, `clientUserMessageId` echoed as the user message's `clientId`, and `request_user_input_async` items
     (`agentMessage`, `delivery: "async"`, `questions`, id = the call id). Any other version: the hire **succeeds** and
     starts the usual way, with `codex: {mode: "legacy", note}` in its ack, e.g. `shared Codex server: unsupported Codex
-    version: "codex-cli 0.162.0" (supported: codex-cli 0.160.x or 0.161.x); started the usual way`. The game shows it as
+    version: "codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x); started the usual way`. The game shows it as
     a **warning** toast (#186: ink with a drawn triangle, not the red of a failed hire; a first task not sent beside it
     is still an error) and on the laptop's seat bar, in plain words: "No own Codex server: the shared Codex server is not
-    verified with Codex 0.162.0 yet (verified: 0.160.x or 0.161.x). It runs on Codex's built-in server, so its async
-    questions can't be answered from the transcript."
-  - **Known limitation on 0.161 (upstream, outside the bridge):** Codex 0.161 runs no `SessionStart` hook when a TUI
-    re-attaches (`codex resume <id> --remote`) to a server that **still has the thread loaded**, so Herdr's Codex hook
-    never reports the session id again and `herdr agent get` shows none (0.160 runs it at the first prompt). A resume
-    on a **new** server reports it on both versions. herdr-3d never re-attaches warm: sleep stops a shared worker's
+    verified with Codex 0.163.0 yet (verified: 0.160.x, 0.161.x or 0.162.x). It runs on Codex's built-in server, so its
+    async questions can't be answered from the transcript."
+  - **Instant interrupt is off on a shared server (0.162).** Codex 0.162 turns `instant_interrupt` on by default: a
+    steer (the bridge's answer, or a line typed while a turn runs) cancels the model request in flight and is recorded
+    at once. The bridge's delivery model (#158: a sent answer waits for the turn's next model request, and is dropped
+    if the turn ends first) rests on 0.160's and 0.161's behaviour, so every shared server starts with
+    `features.instant_interrupt=false`, their default (findings §14). The visible cost on 0.162: a line typed into a
+    shared worker's terminal while it works waits for the model's current step, as on 0.161, instead of cutting it
+    short. Workers hired the usual way keep Codex's default.
+  - **Known limitation on 0.161 and 0.162 (upstream, outside the bridge):** Codex 0.161 and 0.162 run no
+    `SessionStart` hook when a TUI re-attaches (`codex resume <id> --remote`) to a server that **still has the thread
+    loaded**, so Herdr's Codex hook never reports the session id again and `herdr agent get` shows none (0.160 runs it
+    at the first prompt). A resume on a **new** server reports it on every version. herdr-3d never re-attaches warm: sleep stops a shared worker's
     server and wake starts a new one, and the bridge keeps the thread it recorded. Only a terminal re-attached by hand,
-    or an orchestrator's (#154 A9), is affected (findings §13; `MixedHarness` asserts it per version).
+    or an orchestrator's (#154 A9), is affected (findings §13 and §14; `MixedHarness` asserts it per version).
   - **What a worker hired the usual way (legacy) lacks:** its async questions cannot be answered from the transcript
     (no join, no `worker.answer_async`); it answers them in its terminal, as every Codex worker did before #155. The rest
     (prompts, slash commands, approvals, images, sleep, wake, send home) works as for any Codex worker.
@@ -168,7 +177,11 @@ MacBook (M2 Max)                                   devbox (Linux)
     dialog: left for the player, the hire's first prompt not sent. A server that dies: `server: "down"` on the worker
     and its seat bar (herdr still says working); recovery is sleeping and waking the floor (the sleep quits the
     waiting terminal, #158). A wake whose server does not start: the thread resumes on Codex's built-in server, the
-    worker stays shared with a note, and the next wake tries its server again. A shared terminal that does not quit
+    worker stays shared with a note, and the next wake tries its server again. **Known issue (findings §14):** herdr
+    0.9.3 refuses a woken pane (`agent_pane_busy`, "not an available shell") while a zombie child of its fish sits in
+    the terminal's foreground process group, as an async prompt such as tide's leaves one; the bridge's own check
+    (the shell owns the foreground group) calls that pane free, the attach and its embedded fallback are both
+    refused, and the worker is not resumed. A shared terminal that does not quit
     on send home (and whose server still runs): `fire_failed`, nothing closed.
   - **Rollback.** Switch it off: only **later** hires change. Running shared workers are not terminated, migrated or
     relaunched: they keep their server, their join and their answers (verified, #158). To take one worker back to

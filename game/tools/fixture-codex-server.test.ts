@@ -48,7 +48,7 @@ describe('the fixture’s shared Codex server switch (#155)', () => {
     const { s, run } = sim(true, true);
     expect(s.hire('codex')).toBeUndefined();
     run('codex_server.set', { enabled: true });
-    expect(s.hire('codex')).toMatchObject({ mode: 'legacy', note: expect.stringContaining('"codex-cli 0.162.0"') });
+    expect(s.hire('codex')).toMatchObject({ mode: 'legacy', note: expect.stringContaining('"codex-cli 0.163.0"') });
     expect(s.hire('claude')).toBeUndefined();
     const plain = sim();
     plain.run('codex_server.set', { enabled: true });

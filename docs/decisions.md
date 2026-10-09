@@ -977,3 +977,19 @@ highlighter, `lib/common`). Code: `game/src/laptop/diffTokens.ts` (language, hun
 | 6 | Row geometry | Unchanged: highlights do not take part in layout (spans in Ubuntu Mono Italic made a row 1px taller and needed `line-height: 1`; gone with them). The e2e compares every row's size with colours off and on, in both presets. |
 | 7 | `:has()` and spans | `.settings-switch:has(input:disabled) span` made Chromium restyle every `<span>` in the page on any DOM insertion; with the first version's coloured diff (~20k spans) each painted batch did. Rewritten as `input:disabled ~ span` (same elements), kept: any page with many spans paid it. Rule for later: no bare element selector behind `:has()`. |
 | 8 | Long tasks (headless Chromium, llvmpipe) | The highlighter's own work stays below 50 ms (largest slice ~22–39 ms: highlight.js compiling a grammar on first use; a frame's painting ≤ 3 ms). With ranges, colours add no long tasks: on − off per phase (open, scrolling the coloured create, the whole change loaded, "Show next") was −1…+1 in four runs of the spec alone and 0…+2 run beside three other specs, where spans gave +6…+22. A CDP trace of opening the transcript, alone on the host, has no page task over 50 ms either way (largest 46 ms with colours, 46 without); the open phase's one long task in the spec is the host's, there with colours off too. The e2e holds "on" to "off" + 3 long tasks per phase, and the page to fewer than 5,000 ranges. |
+
+## 2026-10-08 — Codex 0.162: supported, with instant interrupt off on shared servers
+
+Codex 0.162.0 was installed and hires with the shared-server switch on fell back to Codex's built-in server ("not
+verified with Codex 0.162.0 yet"). Verifying it found one behaviour change inside the bridge's path (findings §14).
+Code: `internal/codexapp/watch.go` (`SupportedLines`), `launch.go` (`ServerFeatures`), `internal/codexshare/home.go`
+(`VerifiedCodex`), the fixture's `startServer`, `mixed_integration_test.go`.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Codex 0.162's `instant_interrupt` (on by default: a steer cancels the model request in flight and is recorded at once) | **Off on every shared server**: the launcher passes `-c features.instant_interrupt=false`, 0.160's and 0.161's default, so the bridge's sent/delivered model (#158) holds unchanged on all three lines. Rejected: reworking that model for an immediate record (larger, touches the exactly-once guarantees, and the feature is "under development" upstream). Cost: a line typed into a shared 0.162 worker while it works waits for the model's current step, as on 0.161. Workers hired the usual way keep Codex's default. |
+| 2 | Which Codex is supported | `codexapp.SupportedLines` = 0.160, 0.161, **0.162**; `codexshare.VerifiedCodex` adds **0.162.0**. Evidence: findings §14: the whole suite on 0.162.0 with the override, no version skip; on 0.161.0 the fixture-level tests (the bridge suites cannot be pointed at a Codex other than the user's `codex`), and the source (the override restates 0.161's default). |
+| 3 | The stand-in for "unsupported" | codex-cli **0.163.0** (and 0.159.9), in place of 0.162.0 (#186 row 7). |
+| 4 | The warm re-attach gap (#186 row 8) | Still on 0.162.0; accepted as on 0.161. `MixedHarness` expects the loss on 0.161.x and 0.162.x, strict on 0.160.x. |
+| 5 | A wake refused `agent_pane_busy` | **Not part of this change.** Most bridge runs today failed a wake because herdr counts a zombie of the user's tide prompt in the pane's foreground group (findings §14); it is not a Codex change (0.162 passed it twice). A 15 s retry was tried and did not help, so it was dropped. Its own issue. |
+| 6 | The fixture's own servers | Start with the same override, placed after `--listen` so the tests' process lookups (`app-server --listen unix://…`) still match. |

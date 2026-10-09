@@ -98,7 +98,7 @@ func TestCodexShareBridgeWorkers(t *testing.T) {
 // own server; switched off again (rollback) the running shared worker keeps
 // its server and answers while the next hire is legacy; on again changes
 // only later hires. A Codex the bridge does not support (a fake
-// codex-cli 0.162.0, a line not verified, as the bridge's codex) falls back with a note that says
+// codex-cli 0.163.0, a line not verified, as the bridge's codex) falls back with a note that says
 // what is supported. A Claude hire is untouched by the switch.
 func TestCodexShareBridgeRollout(t *testing.T) {
 	f := newFx(t, fxOptions{noMCP: true}, "bare-l1", "bare-s1", "bare-l2", "bare-s2", "bare-u")
@@ -193,7 +193,7 @@ func TestCodexShareBridgeRollout(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(fake), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		f.write(fake, "#!/bin/sh\necho 'codex-cli 0.162.0'\n", 0o755)
+		f.write(fake, "#!/bin/sh\necho 'codex-cli 0.163.0'\n", 0o755)
 		b.o.codexCLI = fake
 		b.restart()
 		c = b.dial("game-after-restart")
@@ -207,7 +207,7 @@ func TestCodexShareBridgeRollout(t *testing.T) {
 		}
 		f.record("15-note.txt", u.res.Codex.Note+"\n")
 		if u.res.Codex.Mode != proto.CodexModeLegacy ||
-			!strings.Contains(u.res.Codex.Note, "0.162.0") || !strings.Contains(u.res.Codex.Note, "supported: codex-cli "+codexapp.Supported()) ||
+			!strings.Contains(u.res.Codex.Note, "0.163.0") || !strings.Contains(u.res.Codex.Note, "supported: codex-cli "+codexapp.Supported()) ||
 			!strings.Contains(u.res.Codex.Note, "the usual way") {
 			t.Fatalf("an unsupported Codex: %+v", u.res.Codex)
 		}

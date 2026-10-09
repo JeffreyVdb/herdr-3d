@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 )
 
 func TestMain(m *testing.M) {
@@ -247,7 +249,9 @@ func (f *fx) startServer(pane, name string) string {
 	f.t.Helper()
 	sock := filepath.Join(f.root, name+".sock")
 	log := filepath.Join(f.root, name+".log")
-	f.shell(pane, fmt.Sprintf("setsid -f fish -c 'codex app-server --listen unix://%s' </dev/null >%s 2>&1", sock, log))
+	// The production launch's feature override (codexapp.Launch.Render),
+	// after --listen so f.owned's "app-server --listen unix://…" matches.
+	f.shell(pane, fmt.Sprintf("setsid -f fish -c 'codex app-server --listen unix://%s -c %s' </dev/null >%s 2>&1", sock, codexapp.ServerFeatures, log))
 	f.waitSocket(sock)
 	return sock
 }

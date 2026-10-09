@@ -56,7 +56,7 @@ sh-test:
 integration:
 	go test -tags integration -count=1 -run Integration -v ./internal/app/ ./internal/limits/
 
-## codex-shared-tui: #154 fixture: the real Codex TUI (a codexshare.VerifiedCodex: 0.160.1, 0.161.0) beside a second app-server client, in
+## codex-shared-tui: #154 fixture: the real Codex TUI (a codexshare.VerifiedCodex: 0.160.1, 0.161.0, 0.162.0) beside a second app-server client, in
 ## throwaway herdr sessions (h3d-it-154-*), temp CODEX_HOMEs and mock inference; EVIDENCE=<dir> keeps screens/messages
 ## (#158's full-stack suites, codex-shared-bridge, included)
 codex-shared-tui:

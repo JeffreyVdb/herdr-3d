@@ -75,6 +75,16 @@ func (l Launch) Socket() string  { return filepath.Join(l.Dir, l.Name+".sock") }
 func (l Launch) PIDFile() string { return filepath.Join(l.Dir, l.Name+".pid") }
 func (l Launch) Log() string     { return filepath.Join(l.Dir, l.Name+".log") }
 
+// ServerFeatures is the -c override every shared server starts with
+// (#186 follow-up, findings §14). Codex 0.162 turns instant_interrupt on
+// by default: a steer (the bridge's answer, or a line typed while a turn
+// runs) cancels the model request in flight and is recorded at once, so
+// an answer no longer waits for the turn's next model request and is no
+// longer dropped when the turn ends first; the bridge's sent/delivered
+// model (#158) rests on that. Off is 0.160's and 0.161's default, so the
+// override changes nothing on them.
+const ServerFeatures = "features.instant_interrupt=false"
+
 // fishQuote single-quotes s for fish.
 func fishQuote(s string) string {
 	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
@@ -91,14 +101,14 @@ func tomlString(s string) string {
 // user's `codex` wrapper function applies (phase 1, D1). It marks the
 // server's processes, records the launcher's pid, and starts `codex
 // app-server` on the worker's socket with the worker's directory trusted
-// in memory only (B10: config.toml is not written).
+// in memory only (B10: config.toml is not written) and ServerFeatures.
 func (l Launch) Render() string {
 	trust := "projects={" + tomlString(l.Cwd) + "={trust_level=\"trusted\"}}"
 	return strings.Join([]string{
 		"# herdr-3d (#155): this worker's own Codex app-server, started from its pane.",
 		"set -gx " + MarkerVar + " " + l.Token,
 		"echo $fish_pid >" + fishQuote(l.PIDFile()),
-		"codex app-server -c " + fishQuote(trust) + " --listen " + fishQuote("unix://"+l.Socket()) +
+		"codex app-server -c " + fishQuote(trust) + " -c " + fishQuote(ServerFeatures) + " --listen " + fishQuote("unix://"+l.Socket()) +
 			" </dev/null >" + fishQuote(l.Log()) + " 2>&1",
 		"",
 	}, "\n")

@@ -771,3 +771,63 @@ resume on a new server** (what a floor's wake does), is strict on both: environm
 also ran vitest and Playwright: the wake's `resume-codex-remote` was refused `agent_pane_busy` right after the
 launcher line. It passed in `make codex-shared-bridge` and in a rerun (`rerun-regress-161.log`): 2 of 3. Recorded,
 not changed (the §12.4 safety-net family).
+
+## 14. Codex 0.162.0
+
+Date 2026-10-08. Installed: **codex-cli 0.162.0**, herdr 0.9.3. Source compared with rust-v0.161.0 (rust-v0.162.0
+tarball; the CHANGELOG has no notes for it). Additive protocol changes only in what the bridge reads
+(`Turn.rootTurnId`, `TurnStartParams.parentTurnId`/`rootTurnId`, a `partial_answer` message phase, a new
+`thread/attachmentOwner/list`); `request_user_input_async`, the reply envelope, `turn/steer`'s `expectedTurnId`,
+`clientUserMessageId`, `thread/resume`/`read`/`turns/list` and the `userAgent` grammar are unchanged. The mock
+catalog still loads (the dropped `model_messages.instructions_variables` is null in it).
+
+**Found: steers interrupt the model at once (`instant_interrupt` on by default).** The first run on 0.162.0, with
+nothing changed but the verified sets, failed every test of a steered or started answer: `AsyncAnswers`,
+`AsyncStartIntoARunningTurn`, `Questions`, `BridgeQuestions`, `BridgeRestartSent` and `BridgeRegression/10` ("the
+envelope is already in the history", "badge right after turn/steer = 0, want 2", "the dropped answer reached the
+model"). Cause: `Feature::InstantInterrupt` (`features/src/lib.rs`) changed its default from false to true. With it
+on, a pending steer cancels the in-flight model request (`input_queue.rs`, `turn.rs` `watch_user_input`) and is
+recorded and emitted (`item/started`/`item/completed`, with its `clientId`) within milliseconds; on 0.160/0.161 it
+waited for the turn's next model request and was dropped if the turn ended first. The envelope still reaches the
+model once, after the tool output; what changes is when, and that a turn's end no longer drops it. The bridge's
+sent/delivered states (#158, §12.1, §12.1a) rest on the old timing.
+
+**Decision: every shared server starts with `-c features.instant_interrupt=false`** (`codexapp.ServerFeatures`,
+in the launcher and the fixture's own servers). The feature exists with that default in 0.160.1 and 0.161.0, so the
+override changes nothing there. Rejected for now: reworking the bridge's delivery model around an immediate record
+(a larger change to the #158 exactly-once guarantees, and the feature is still "under development" upstream).
+Cost: on a shared 0.162 worker a line typed while the model works waits for its current step, as on 0.161.
+
+Runs (`make codex-shared-tui`, which includes `codex-shared-bridge`):
+
+| Codex | Override | Result | Skips |
+|---|---|---|---|
+| 0.162.0 | none | 8 of 16 top-level tests pass; the 6 above fail on the steer timing (all pass with the override), `BridgeRollout` on its old 0.162.0 stand-in, `MixedHarness` on the warm re-attach (below) | 2, the real-model smokes |
+| 0.162.0 | `instant_interrupt=false` | **16 of 16 pass** (62 subtests) in this run; `BridgeRegression/10` fails in most other runs, on herdr's view of the woken pane, not on Codex (below) | 2, the real-model smokes |
+| 0.161.0 (fixture level) | `instant_interrupt=false` | the 11 fixture-level tests pass, `SharedLaunch` and `SharedApprovals` (the production launcher, `herdr_3d/0.161.0`) included; a few of their subtests also start a Codex through herdr-world, which was 0.162.0 (below) | 2, the real-model smokes |
+
+**Why 0.161.0 is verified at the fixture level only.** A Codex put first on PATH reaches the fixture's own panes
+(their fish config is the fixture's), but not what herdr-world starts: those panes load the user's fish functions,
+and a `codex` function that calls an absolute path (here `~/.local/bin/codex`, 0.162.0) wins. So the bridge suites
+(`Bridge*`) of the "0.161.0" run ran a 0.162.0 server. The override is safe on 0.161 from the source:
+`instant_interrupt` exists there with `default_enabled: false` (as in 0.160.1), so `-c
+features.instant_interrupt=false` restates the default. To verify a bridge suite on another Codex, install that
+Codex where the user's `codex` resolves, not only on PATH.
+
+**Found, not fixed (not a Codex change): a wake refused `agent_pane_busy`.** `BridgeRegression/10` (sleep and
+wake) failed in 9 of 12 bridge runs today, with and without the override, and `/11` in one more (§13 saw the same refusal 1
+in 3): the wake's `resume-codex-remote`, then its embedded fallback, are refused "agent target pane … is not an
+available shell", and the worker is not resumed. A 15 s retry did not help (3 of 3 still failed; dropped). Cause,
+from `herdr pane process-info` and `ps` right after the refusal: the pane's fish is at its prompt, but its
+foreground process group also holds a **zombie `fish`** child, the async worker of the user's tide prompt (the
+panes herdr-world starts load the user's fish config). herdr counts it as a foreground process; the bridge's
+`ProcessInfo.AtShell` (shell pid = foreground group) does not. It depends on the prompt, herdr's check and timing,
+not on Codex: run2 and run3 on 0.162.0 passed it. Left for its own issue.
+
+**The warm re-attach gap of §13 is still there on 0.162.0:** `MixedHarness`'s warm re-attach loses Herdr's session
+id, as on 0.161; the test now expects the loss on 0.161.x and 0.162.x (strict on 0.160.x), and its cold resume is
+strict on all three.
+
+**Not run:** the real-model smokes (`H3D_CODEXSHARE_REAL=1`, inference cost). The mock speaks HTTP streaming; the
+real provider's websocket path is not exercised with the override, though the override only gates the preemption
+token both paths share.

@@ -89,7 +89,7 @@ test('the seat bar’s Codex notice fits a phone, and a wide window keeps its ro
 });
 
 // #186: a Codex hire that asked for its own server and got Codex's built-in one (`simfail=codex_unverified`: a
-// codex-cli 0.162.0 the shared server is not verified with) is hired: a warning toast, with its own sign, that names the
+// codex-cli 0.163.0 the shared server is not verified with) is hired: a warning toast, with its own sign, that names the
 // version and what it costs, not the red of a failed hire.
 test('a hire that falls back to Codex’s built-in server is a warning, not an error', async ({ page }) => {
   test.setTimeout(120_000);

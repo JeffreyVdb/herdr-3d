@@ -10,12 +10,12 @@ import (
 )
 
 // VerifiedCodex are the exact Codex versions (`codex --version`) the
-// fixture was verified with: 0.160.1 (#154/#155), 0.161.0 (#186). The
-// integration tests skip on any other, loudly: verifying a release is
+// fixture was verified with: 0.160.1 (#154/#155), 0.161.0 (#186), 0.162.0.
+// The integration tests skip on any other, loudly: verifying a release is
 // adding it here and to codexapp.SupportedLines, then running
 // `make codex-shared-tui` without a version skip
 // (docs/research/codex-shared-tui.md).
-var VerifiedCodex = []string{"codex-cli 0.160.1", "codex-cli 0.161.0"}
+var VerifiedCodex = []string{"codex-cli 0.160.1", "codex-cli 0.161.0", "codex-cli 0.162.0"}
 
 // CheckFixtureCodex checks `codex --version` output against VerifiedCodex.
 func CheckFixtureCodex(out string) error {
@@ -27,7 +27,7 @@ func CheckFixtureCodex(out string) error {
 }
 
 // catalog is a one-model catalog for the mock provider (loaded unchanged by
-// 0.160.1 and 0.161.0): rust-v0.160.1's
+// 0.160.1, 0.161.0 and 0.162.0): rust-v0.160.1's
 // codex-rs/models-manager/models.json "gpt-6-astra" entry with slug "mock",
 // tool_mode "direct", prefer_websockets and use_responses_lite false and
 // experimental_supported_tools ["request_user_input_async"] (the only way
