@@ -1280,7 +1280,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.dictation.isOpen || this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */

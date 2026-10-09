@@ -86,6 +86,8 @@ export class DictationBar {
   private composing = false;
   /** Bumped by every open and close: an answer for an earlier one is dropped. */
   private gen = 0;
+  /** The close was handled (by `close`, or the `close` event of an Esc the dialog took itself). */
+  private shut = true;
 
   constructor(
     parent: HTMLElement,
@@ -138,6 +140,7 @@ export class DictationBar {
     this.say('', false);
     this.drawFloors();
     this.dialog.showModal();
+    this.shut = false;
     this.field.focus();
   }
 
@@ -146,6 +149,8 @@ export class DictationBar {
     if (!this.dialog.open) return;
     if (!restore) this.opener = null;
     this.dialog.close();
+    // (The `close` event comes a task later: the keyboard goes back now, before anything else takes it.)
+    this.closed();
   }
 
   dispose(): void {
@@ -342,6 +347,8 @@ export class DictationBar {
   }
 
   private closed(): void {
+    if (this.shut) return;
+    this.shut = true;
     this.gen++;
     const back = this.opener;
     this.opener = null;
@@ -351,5 +358,7 @@ export class DictationBar {
     // Back to where the keyboard was (the seat's input, the review, the canvas); gone: the page.
     const now = document.activeElement;
     if (back?.isConnected && (!now || now === document.body || this.dialog.contains(now))) back.focus();
+    // Nowhere to go back to (the page had it): the closed box must not keep it, or the game's keys would think you type.
+    if (this.dialog.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
   }
 }
