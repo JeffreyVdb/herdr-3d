@@ -40,24 +40,11 @@ func HireOptions() proto.HireOptions {
 	return c
 }
 
-// validHireIn checks a harness/model/effort against hire options.
+// validHireIn checks a harness/model/effort against hire options: the
+// catalog's one rule (hireintent.Catalog.Check), which dictated hiring
+// checks its proposals with too.
 func validHireIn(all proto.HireOptions, h proto.Hire) error {
-	var opts proto.HarnessOptions
-	switch h.Harness {
-	case "claude":
-		opts = all.Claude
-	case "codex":
-		opts = all.Codex
-	default:
-		return fmt.Errorf("harness must be claude or codex, got %q", h.Harness)
-	}
-	if !slices.Contains(opts.Models, h.Model) {
-		return fmt.Errorf("model %q is not a %s model (%s)", h.Model, h.Harness, strings.Join(opts.Models, ", "))
-	}
-	if !slices.Contains(opts.Efforts, h.Effort) && !slices.Contains(opts.ExtraEfforts[h.Model], h.Effort) {
-		return fmt.Errorf("effort %q is not an effort of %s", h.Effort, h.Model)
-	}
-	return nil
+	return hireCatalog(all).Check(h.Harness, h.Model, h.Effort)
 }
 
 // Limits of the status_field setting.

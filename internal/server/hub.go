@@ -24,6 +24,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
@@ -242,6 +243,11 @@ type Options struct {
 	PackupEnabled *bool
 	PackupTimeout time.Duration
 	PackupRoles   packup.Roles
+	// #211 dictated hiring: HireIntentRoles the LLM of hire.interpret
+	// (default AI; tests pass fakes), HireIntentTimeout its bound (default
+	// hireintent.DefaultTimeout).
+	HireIntentRoles   hireintent.Roles
+	HireIntentTimeout time.Duration
 	// #98 activity: ActivityModel is the environment's "Classify unknown
 	// commands" toggle (HERDR_WORLD_ACTIVITY_MODEL; nil: not set),
 	// ActivityThrottle the least time between two worker.activity events of
@@ -845,6 +851,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startFollowups
 		case proto.CmdPackupGet, proto.CmdPackupSet, proto.CmdPackupTest, proto.CmdPackupDetect: // #110
 			start = h.startPackup
+		case proto.CmdHireInterpret: // #211
+			start = h.startHireInterpret
 		case proto.CmdCodexServerGet, proto.CmdCodexServerSet: // #155
 			start = h.startCodexServer
 		case proto.CmdWorkerAnswerAsync: // #156
