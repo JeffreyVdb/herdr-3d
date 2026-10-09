@@ -963,7 +963,7 @@ test('states: inside the transcript the composer’s Send, the selected tab and 
 // ---- focus: every keyboard-operable widget has the ring -----------------------------------------------------------
 
 for (const name of ['settings', 'hire', 'hire-chips', 'hire-review', 'hire-review-ready', 'start-run', 'presets', 'prompt-dialog', 'board-issues', 'menu', 'palette', 'about', 'overview', 'seat-transcript', 'completion-commands', 'seat-images', 'lightbox', 'whiteboard']) {
-  test(`focus: every operable widget of ${name} shows a 3px ring in #FF9B76, 2px outside it and not clipped, in Ubuntu`, async ({ page }) => {
+  test(`focus: every operable widget of ${name} shows a 3px ring in #FF9B76 in Ubuntu (2px outside and unclipped in the composer, the seated screen and the editor)`, async ({ page }) => {
     test.setTimeout(240_000);
     const clean = watchErrors(page);
     const s = SURFACES.find((x) => x.name === name)!;

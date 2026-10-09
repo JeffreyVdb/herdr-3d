@@ -696,6 +696,10 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
+/* The bubble wears the editor's ring (the editor fills it): no second ring on the bubble's border. */
+:root[data-ui-theme='ubuntu'] .pr-note .cmp-editor:focus-visible {
+  outline: none;
+}
 
 :root[data-ui-theme='ubuntu'] .cp-files {
   border: 1px solid var(--border);
