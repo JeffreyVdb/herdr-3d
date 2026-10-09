@@ -136,7 +136,7 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
     await expect(page.locator('.ov', { hasText: NOW })).toBeVisible();
     expect(await page.locator('.ov-row', { hasText: NOW }).locator('.ov-llm').count()).toBeGreaterThan(0);
     // #198: the model's now line says how long ago it was written, and that the time is the summary's.
-    const nowMark = page.locator('.ov-row', { hasText: NOW }).first().locator('.ov-now .ov-llm');
+    const nowMark = page.locator('.ov-row', { hasText: NOW }).first().locator('.ov-since .ov-llm'); // #226: under the since time
     await expect(nowMark).toHaveText(/^AI · (just now|\d+m ago)$/);
     await expect(nowMark).toHaveAttribute('title', /recent activity \(its last 5 steps\) .*The time is when the summary was written, not when the activity happened\.$/);
     await shot(page, 'm118-digest-page');
@@ -189,7 +189,7 @@ test('a failed refresh of an AI now line keeps the line and its age, says so, an
   const row = page.locator('.ov-row', { hasText: 'Turnip' });
   const line = row.locator('.ov-now');
   await expect(line).toContainText(NOW);
-  await expect(line.locator('.ov-llm')).toHaveText(/^AI · \d+m ago$/);
+  await expect(row.locator('.ov-since .ov-llm')).toHaveText(/^AI · \d+m ago$/);
   const chip = line.locator('.ov-ai-state');
   await expect(chip).toHaveText('refresh failed');
   await expect(chip).toHaveAttribute('aria-label', /^Refreshing this AI summary from newer activity failed: the model did not answer in time\. The summary shown is the previous one/);
@@ -204,12 +204,14 @@ test('a failed refresh of an AI now line keeps the line and its age, says so, an
   await expect.poll(() => retries().length).toBe(2);
   expect(retries()[1]?.args?.id).toBe(retries()[0]?.args?.id);
   expect((await page.evaluate(() => window.__h3d.overview()))?.page?.open).toBe(true); // not the transcript
-  // A phone: the mark, the failure and Retry go under the line, all of them on screen.
+  // A phone: the failure and Retry go under the line, all of them on screen; the mark stays under the since time (#226).
   await page.setViewportSize({ width: 390, height: 844 });
   await line.scrollIntoViewIfNeeded();
   await expect(line.locator('.ov-retry')).toBeVisible();
-  const [text, mark] = await Promise.all([line.locator('.ov-now-text').boundingBox(), line.locator('.ov-llm').boundingBox()]);
-  expect(text && mark && mark.y >= text.y + text.height - 1).toBe(true);
+  await expect(row.locator('.ov-since .ov-llm')).toBeVisible();
+  const [text, state] = await Promise.all([line.locator('.ov-now-text').boundingBox(), chip.boundingBox()]);
+  expect(text && state && state.y >= text.y + text.height - 1).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await shot(page, 'm198-refresh-failed-narrow');
   clean();
 });

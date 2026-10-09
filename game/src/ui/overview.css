@@ -356,8 +356,8 @@
 .ov-cols,
 .ov-row {
   display: grid;
-  grid-template-columns: 34px minmax(190px, 1fr) minmax(0, 2.3fr) 118px;
-  column-gap: 18px;
+  grid-template-columns: 34px minmax(206px, 1fr) minmax(0, 4fr) 132px;
+  column-gap: 12px;
 }
 .ov-cols {
   padding: 12px 14px 8px 10px;
@@ -419,6 +419,7 @@
  */
 .ov-row--floor {
   grid-template-columns: 34px minmax(0, 1fr) auto;
+  column-gap: 18px;
   align-items: center;
   margin-top: 20px;
   padding: 12px 14px 12px 10px;
@@ -701,6 +702,13 @@
   font-family: var(--ov-mono);
   font-size: 12px;
 }
+/* #226: the live chip, a line of its own under the model: it gives way inside the column (the whole of it in its title). */
+.ov-actline {
+  display: flex;
+  flex-basis: 100%;
+  min-width: 0;
+  padding-top: 2px;
+}
 .ov-cap {
   padding: 2px 6px 1px;
   border-radius: 3px;
@@ -784,7 +792,7 @@
   font-weight: 400;
   text-transform: uppercase;
 }
-.ov-line > span:not(.ov-act, .ov-llm, .ov-ai-state) {
+.ov-line > span:not(.ov-llm, .ov-ai-state) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -797,7 +805,8 @@
   font-style: italic;
 }
 .ov-act {
-  flex: none;
+  overflow: hidden;
+  min-width: 0;
   padding: 1px 8px;
   border: 1px solid color-mix(in srgb, var(--working) 55%, transparent);
   border-radius: 999px;
@@ -805,6 +814,7 @@
   color: var(--ov-text);
   font-family: var(--ov-mono);
   font-size: 11px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ov-llm {
@@ -865,22 +875,29 @@
   outline: 2px solid var(--ov-accent);
   outline-offset: 2px;
 }
+/* #226: the time, the AI mark of a model's now line under it (both mono, both times), the row's hint in the time's place. */
 .ov-since {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  min-width: 0;
   padding-top: 4px;
   color: var(--ov-text-2);
   font-family: var(--ov-mono);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
-  text-align: right;
   white-space: nowrap;
 }
+.ov-since-text {
+  min-height: 18px;
+}
 .ov-hint {
-  position: absolute;
-  right: 14px;
-  bottom: 9px;
   display: none;
+  order: -1;
   align-items: center;
   gap: 6px;
+  height: 18px;
   color: var(--ov-accent);
   font-family: var(--ov-mono);
   font-size: 11px;
@@ -888,6 +905,12 @@
 .ov-row:hover .ov-hint,
 .ov-row:focus-visible .ov-hint {
   display: inline-flex;
+}
+/* While the hint shows (not on a phone; not while Retry has the pointer or the focus), it is the time's place. */
+@media (min-width: 761px) {
+  .ov-row:is(:hover, :focus-visible):not(:has(.ov-retry:hover, .ov-retry:focus-visible)) .ov-since:has(.ov-hint) > .ov-since-text {
+    display: none;
+  }
 }
 /* #174: the hint is only a label for the row: it never takes a pointer from a control (Retry) and steps aside while one is
    hovered or focused, and on a phone (no hover; the row is narrow) it is not shown at all. */
@@ -1090,15 +1113,10 @@
     flex-wrap: wrap;
     row-gap: 2px;
   }
-  .ov-line--status > span:not(.ov-act, .ov-llm, .ov-ai-state) {
+  .ov-line--status > span:not(.ov-llm, .ov-ai-state) {
     flex: 1 1 calc(100% - 42px);
   }
-  .ov-line--status > .ov-ai-state,
-  .ov-line--status > .ov-llm {
+  .ov-line--status > .ov-ai-state {
     margin-left: 42px; /* the label's 34px and the gap: under the line's text */
-  }
-  /* #198: a model's line: its badge leads the second row, the failed refresh follows it. */
-  .ov-line--status > .ov-llm + .ov-ai-state {
-    margin-left: 0;
   }
 }
