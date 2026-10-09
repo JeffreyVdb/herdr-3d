@@ -161,6 +161,11 @@
   --tape-resolved: #8fb8ff;
   /* #212: the origin tape of a default value (dark label on it). */
   --tape-default: #c4cde4;
+  /* A reviewer's verdict stamp in the crew bar: its paper, and the ink of each verdict (border and label; the word says it). */
+  --stamp-bg: #ffffff;
+  --stamp-pass: #0b8454;
+  --stamp-changes: #c42a26;
+  --stamp-incomplete: #5d6478;
   /* The track of the elevator's progress bar. */
   --lift-bar-track: rgb(255 255 255 / 10%);
   /* The dashed outline of an empty slot (a building without a logo). */
@@ -737,6 +742,11 @@
   --tape-resolved: #8ec9ff;
   /* #212: the origin tape of a default value (the muted text tint). */
   --tape-default: #cdb1c6;
+  /* A verdict stamp: the raised purple, the status colour as its ink (the success, error and idle tokens). */
+  --stamp-bg: #3b1330;
+  --stamp-pass: #6be08f;
+  --stamp-changes: #ff8a80;
+  --stamp-incomplete: #cdb1c6;
   /* The track of the elevator's progress bar. */
   --lift-bar-track: #5e2750;
   /* The dashed outline of an empty slot (a building without a logo). */

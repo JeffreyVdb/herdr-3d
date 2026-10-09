@@ -374,7 +374,7 @@ MacBook (M2 Max)                                   devbox (Linux)
   issue's table, pinned by `ui/uiTheme.test.ts`), and components ask for a **role** (`--surface`, `--chrome`, `--raised`,
   `--hover`, `--well`, `--text*`, `--border*`, `--action*` and `--on-action`, `--focus`, `--accent-text`, `--error-*`, the
   status colours and their `-chip` fills with `--on-chip`, `--btn-*`, `--font`, `--font-mono`, `--fvs-*`, and the per-surface
-  tokens: 316 in all), never a hue. What Ubuntu needs that Quiet must not get (disabled without opacity, busy spinners,
+  tokens: 320 in all), never a hue. What Ubuntu needs that Quiet must not get (disabled without opacity, busy spinners,
   36 / 32 / 44 px targets, keylines on bright fills, forced-colors rules) sits at the end of each stylesheet between
   `/* ubuntu:begin */` and `/* ubuntu:end */`; `tools/ui-quiet-check.mjs` strips those blocks, expands the Quiet tokens
   and diffs each stylesheet against the commit before #216: it prints nothing but deliberate hunks, which is how "Quiet

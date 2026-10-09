@@ -74,6 +74,11 @@ describe('UI themes (#216)', () => {
       '--waiting': '#76d8d8',
       '--idle': '#cdb1c6',
       '--asleep': '#c9a8f5',
+      // A reviewer's verdict stamp: raised purple, the status colours as ink.
+      '--stamp-bg': '#3b1330',
+      '--stamp-pass': '#6be08f',
+      '--stamp-changes': '#ff8a80',
+      '--stamp-incomplete': '#cdb1c6',
       '--scrim': 'rgb(44 0 30 / 72%)',
       // Every modal dialog's backdrop is the standard scrim, the prompt overlay's too; the viewers are the 92% one.
       '--scrim-light': 'rgb(44 0 30 / 72%)',
@@ -91,6 +96,7 @@ describe('UI themes (#216)', () => {
   it('Ubuntu overrides every Quiet token the shell reads except the shared shape ones, and Quiet keeps today’s values', () => {
     const same = new Set(['--paper', '--radius', '--ease', '--line', '--ink-soft', '--btn-border-hover', '--text-on-ink', '--text-on-ink-2']);
     for (const k of Object.keys(quiet)) if (!same.has(k)) expect(ubuntu, `Ubuntu sets ${k}`).toHaveProperty(k);
+    expect(quiet).toMatchObject({ '--stamp-bg': '#ffffff', '--stamp-pass': '#0b8454', '--stamp-changes': '#c42a26', '--stamp-incomplete': '#5d6478' });
     expect(quiet).toMatchObject({ '--ink': '#1c2540', '--sun': '#ffc233', '--font': "'Recursive Variable', system-ui, sans-serif", 'color-scheme': 'light' });
   });
 
@@ -109,6 +115,7 @@ describe('UI themes (#216)', () => {
     for (const k of ['--done-chip', '--needs_you-chip', '--idle-chip', '--waiting-chip', '--error-fill', '--error-fill-hover', '--action', '--action-hover', '--action-active']) {
       expect(ratio(p('--on-chip'), p(k)), k).toBeGreaterThanOrEqual(4.5);
     }
+    for (const k of ['--stamp-pass', '--stamp-changes', '--stamp-incomplete']) expect(ratio(p(k), p('--stamp-bg')), k).toBeGreaterThanOrEqual(4.5);
     // Status colours as text or icons on purple surfaces.
     for (const k of ['--working', '--done', '--needs_you', '--idle', '--asleep', '--waiting', '--error-text']) {
       for (const g of ['--surface', '--chrome', '--raised']) expect(ratio(p(k), p(g)), `${k} on ${g}`).toBeGreaterThanOrEqual(4.5);

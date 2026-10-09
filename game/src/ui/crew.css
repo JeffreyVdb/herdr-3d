@@ -39,20 +39,20 @@
   padding: 1px 7px;
   border: 2px solid currentColor;
   border-radius: 4px;
-  background: #ffffff;
+  background: var(--stamp-bg);
   transform: rotate(-3deg);
   font-weight: 850;
   font-size: 11.5px;
   letter-spacing: 0.04em;
 }
 .crew-stamp--pass {
-  color: #0b8454;
+  color: var(--stamp-pass);
 }
 .crew-stamp--changes {
-  color: #c42a26;
+  color: var(--stamp-changes);
 }
 .crew-stamp--incomplete {
-  color: #5d6478;
+  color: var(--stamp-incomplete);
 }
 .crew-summary,
 .crew-phase,
