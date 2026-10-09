@@ -33,7 +33,7 @@ import { binding, findBinding, keyName, loadLayout, pressesBinding, type Dispatc
 import { typingIn } from './input/typing';
 import { ShortcutsDialog } from './ui/shortcutsDialog';
 import { Palette } from './ui/palette';
-import { DictationBar, type DictationReply } from './ui/dictation';
+import { DictationBar, type DictationLive, type DictationReply } from './ui/dictation';
 import { followupLost, interpretOutcome, outcomeText } from './ui/dictationModel';
 import { paletteCommands, type PaletteCommand } from './world/palette';
 import { Laptops, type WatchCommand } from './laptop';
@@ -360,8 +360,8 @@ export class App {
       goTo: (s) => void this.goToFloor(s),
     });
     this.dictation = new DictationBar(o.host, {
-      submit: (text) => this.interpretDictation(text),
-      pickFloor: (session, hire) => this.openDictatedReview(session, hire),
+      submit: (text, live) => this.interpretDictation(text, live),
+      pickFloor: (session, hire, live) => this.openDictatedReview(session, hire, live),
       store: this.store,
       here: () => this.hereSession(),
       online: () => this.conn.phase === 'live',
@@ -2672,12 +2672,14 @@ export class App {
    * #213: the bar's Enter. The text goes to the interpreter with the open review's proposal, if one is open (it owns it:
    * the bar keeps no copy); the answer is routed. A hire with a review open is a follow-up, applied to that review as it
    * was when the request went (`begin` / `apply`); without one it opens the review, on the floor you are on, or after the
-   * bar asked which. Everything else is the bar's line, with the text kept. Nothing here sends `worker.hire`.
+   * bar asked which. Everything else is the bar's line, with the text kept. Nothing here sends `worker.hire`. An answer
+   * for a bar that was closed (or closed and opened again) since it asked is no one's: nothing is done with it (`live`).
    */
-  private async interpretDictation(text: string): Promise<DictationReply> {
+  private async interpretDictation(text: string, live: DictationLive): Promise<DictationReply> {
     const ticket = this.hireReview.begin();
     const pending = this.hireReview.pendingInterpretation();
     const r = await this.send('hire.interpret', pending ? { text, pending } : { text });
+    if (!live()) return { kind: 'done' };
     const o = interpretOutcome(r);
     if (o.kind !== 'hire') return { kind: 'say', text: outcomeText(o), error: o.kind === 'error' };
     if (ticket) {
@@ -2693,7 +2695,7 @@ export class App {
     if (this.hireReview.isOpen) return { kind: 'say', text: 'A hire review is open already. Press Enter again to change it.', error: true };
     const here = this.hereSession();
     if (!here) return { kind: 'floor', hire: o.hire };
-    return this.openDictatedReview(here, o.hire);
+    return this.openDictatedReview(here, o.hire, live);
   }
 
   /**
@@ -2702,7 +2704,8 @@ export class App {
    * back, the modals go and you stand up, as for a palette command, the elevator takes you there when it is another floor,
    * and the review opens at its first free desk.
    */
-  private async openDictatedReview(session: string, hire: HireInterpretation): Promise<DictationReply> {
+  private async openDictatedReview(session: string, hire: HireInterpretation, live: DictationLive): Promise<DictationReply> {
+    if (!live()) return { kind: 'done' };
     const seat = resolveHireDesk(session, this.store.floorView(session), this.heldDesks(session));
     if (!seat.ok) return { kind: 'say', text: seat.msg, error: true };
     if (this.transitioning) return { kind: 'say', text: 'Wait until you get there, then press Enter again.', error: false };

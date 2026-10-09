@@ -22,16 +22,23 @@ import './dictation.css';
  * The game answers each send (`DictationHost.submit`): the bar closed for the review (`done`), a line to show with the
  * text kept (`say`: "Not supported yet.", "Your intent is unclear.", an error), or a hire with no floor to go to
  * (`floor`): the floor list under the question, as the palette's floor-scoped commands ask it. Editing the text drops the
- * question. Esc closes the bar from any state; an answer that comes after is dropped.
+ * question. Esc closes the bar from any state, the floor question included; an answer that comes after is dropped, and
+ * the game is told so before it acts on it (`live`: a closed bar's request opens nothing, applies nothing, closes nothing).
  */
 
 export type DictationReply = { kind: 'done' } | { kind: 'say'; text: string; error: boolean } | { kind: 'floor'; hire: HireInterpretation };
 
+/** The request is still the bar's: it was not closed (Esc, the chord, the backdrop) or reopened since it went. */
+export type DictationLive = () => boolean;
+
 export interface DictationHost {
-  /** Interprets `text` and routes the answer (a hire goes to the review, and the game closes the bar for it). */
-  submit(text: string): Promise<DictationReply>;
+  /**
+   * Interprets `text` and routes the answer (a hire goes to the review, and the game closes the bar for it). The game
+   * asks `live` when the answer comes, before it does anything with it: not live, it does nothing.
+   */
+  submit(text: string, live: DictationLive): Promise<DictationReply>;
   /** The floor picked for a hire that had none: the game checks it can take the hire, then opens the review there. */
-  pickFloor(session: string, hire: HireInterpretation): Promise<DictationReply>;
+  pickFloor(session: string, hire: HireInterpretation, live: DictationLive): Promise<DictationReply>;
   store: FloorSource;
   /** The session of the office floor you are on, else null. */
   here(): string | null;
@@ -120,7 +127,10 @@ export class DictationBar {
       const row = this.rows[this.rowAt(e.target)];
       if (row?.enabled) void this.pick(row.session);
     });
-    this.dialog.addEventListener('close', () => this.closed());
+    // (The `close` event of a `close()` comes a task later: by then the bar may be open again, and that one is not closed.)
+    this.dialog.addEventListener('close', () => {
+      if (!this.dialog.open) this.closed();
+    });
     backdropPolicy(this.dialog, 'sheet', () => this.close());
     parent.append(this.dialog);
   }
@@ -213,12 +223,6 @@ export class DictationBar {
         void this.pick(this.active);
         return;
       }
-      if (k === 'close' && !e.isComposing) {
-        // Esc answers the question no: back to the text, which stays.
-        e.preventDefault();
-        this.edited();
-        return;
-      }
       if (k === 'enter-empty') {
         e.preventDefault();
         return;
@@ -246,20 +250,26 @@ export class DictationBar {
     this.hire = null;
     this.drawFloors();
     this.say('Reading the command…', false);
-    const reply = await this.host.submit(text);
-    if (gen !== this.gen || !this.dialog.open) return;
+    const live = this.liveFor(gen);
+    const reply = await this.host.submit(text, live);
+    if (!live()) return;
     this.answer(reply);
   }
 
   private async pick(session: string): Promise<void> {
     const hire = this.hire;
     if (this.state !== 'floor' || !hire || !session) return;
-    const gen = this.gen;
-    const reply = await this.host.pickFloor(session, hire);
-    if (gen !== this.gen || !this.dialog.open) return;
+    const live = this.liveFor(this.gen);
+    const reply = await this.host.pickFloor(session, hire, live);
+    if (!live()) return;
     // A floor that cannot take the hire: the list stays up to pick another, with the reason.
     if (reply.kind === 'say') return this.say(reply.text, reply.error);
     this.answer(reply);
+  }
+
+  /** True while the bar is still the one that was open at `gen` (every open and close bumps it). */
+  private liveFor(gen: number): DictationLive {
+    return () => gen === this.gen && this.dialog.open;
   }
 
   private answer(reply: DictationReply): void {

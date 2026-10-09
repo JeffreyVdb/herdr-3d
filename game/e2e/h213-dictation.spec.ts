@@ -332,6 +332,94 @@ test('provider errors and timeouts keep the text and hire nobody; Enter while on
   clean();
 });
 
+/** Waits until the client has the answer to the `n`th `hire.interpret` (0-based), and a few frames for it to be routed. */
+async function answered(page: Page, n: number): Promise<void> {
+  await expect.poll(async () => (await sentOf(page, 'hire.interpret'))[n]?.result?.ok, { timeout: 20_000 }).toBe(true);
+  await frames(page, 6);
+}
+
+test('an answer for a bar that was closed is no one’s: it opens no review, closes no bar and keeps the new draft', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  const llm = await fakeOpenAI();
+  try {
+    await openGame(page, 'demo-m4', '', SIM);
+    await setUpLlm(page, llm);
+    await enterFloor(page, 'pastry');
+    // Esc while it is on its way, the bar opened again and a new command typed (not sent): the old answer changes nothing.
+    await openBar(page);
+    await dictate(page, 'Hire an agent on Sonnet 5.5 with high effort. SLOW Task: stale dismissed request.');
+    await expect.poll(() => page.evaluate(() => window.__h3d.dictation()?.state)).toBe('pending');
+    await page.keyboard.press('Escape');
+    await expect(bar(page)).toBeHidden();
+    await openBar(page);
+    await field(page).fill('Open Settings.');
+    await answered(page, 0);
+    await expect(bar(page)).toBeVisible();
+    await expect(field(page)).toHaveValue('Open Settings.');
+    await expect(field(page)).toBeFocused();
+    expect(await page.evaluate(() => window.__h3d.dictation())).toMatchObject({ state: 'editing', status: '' });
+    expect(await review(page)).toBeNull();
+    expect(await sentOf(page, 'hire.prepare')).toHaveLength(0);
+    expect(await hires(page)).toHaveLength(0);
+    await page.keyboard.press('Escape');
+    // Esc while it is on its way and the bar left closed: still no review.
+    await openBar(page);
+    await dictate(page, 'Hire an agent on Sonnet 5.5 with high effort. SLOW Task: another dismissed request.');
+    await expect.poll(() => page.evaluate(() => window.__h3d.dictation()?.state)).toBe('pending');
+    await page.keyboard.press('Escape');
+    await expect(bar(page)).toBeHidden();
+    await answered(page, 1);
+    await expect(bar(page)).toBeHidden();
+    expect(await review(page)).toBeNull();
+    expect(await page.evaluate(() => window.__h3d.dialog())).toBeNull();
+    expect(await sentOf(page, 'hire.prepare')).toHaveLength(0);
+    expect(await hires(page)).toHaveLength(0);
+  } finally {
+    await llm.close();
+  }
+  clean();
+});
+
+test('no floor in context: an answer after Esc asks nothing; Esc while it asks which floor closes the bar and gives the keyboard back', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  const llm = await fakeOpenAI();
+  try {
+    await openGame(page, 'demo-m4', '', SIM);
+    await setUpLlm(page, llm);
+    expect(await page.evaluate(() => window.__h3d.pose()?.floor ?? null)).toBeNull();
+    const opener = await page.evaluate(() => document.activeElement?.outerHTML.slice(0, 60) ?? null);
+    // A hire whose answer comes after Esc: no floor question, no bar, no review.
+    await openBar(page);
+    await dictate(page, 'Hire an agent on Sonnet 5.5 with high effort. SLOW Task: fix the login bug.');
+    await expect.poll(() => page.evaluate(() => window.__h3d.dictation()?.state)).toBe('pending');
+    await page.keyboard.press('Escape');
+    await answered(page, 0);
+    await expect(bar(page)).toBeHidden();
+    expect(await review(page)).toBeNull();
+    // The floor question: Esc closes the bar, as everywhere else, and the keyboard goes back where it was.
+    await openBar(page);
+    await dictate(page, 'Hire an agent on Sonnet 5.5 with high effort. Task: fix the login bug.');
+    await expect.poll(() => page.evaluate(() => window.__h3d.dictation()?.state)).toBe('floor');
+    await page.keyboard.press('Escape');
+    await expect(bar(page)).toBeHidden();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.outerHTML.slice(0, 60) ?? null)).toBe(opener);
+    // Opened again, it starts empty, as after any Esc.
+    await openBar(page);
+    await expect(field(page)).toHaveValue('');
+    expect(await page.evaluate(() => window.__h3d.dictation()?.state)).toBe('editing');
+    await page.keyboard.press('Escape');
+    expect(await page.evaluate(() => window.__h3d.pose()?.floor ?? null)).toBeNull();
+    expect(await review(page)).toBeNull();
+    expect(await sentOf(page, 'hire.prepare')).toHaveLength(0);
+    expect(await hires(page)).toHaveLength(0);
+  } finally {
+    await llm.close();
+  }
+  clean();
+});
+
 test('no floor in context asks which; an asleep floor is refused with the hire’s own message; another opens the review there', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);

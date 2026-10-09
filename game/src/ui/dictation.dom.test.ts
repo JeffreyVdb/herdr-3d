@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Building, Floor, HireInterpretation, Snapshot } from '../net/protocol';
 import { WorldStore } from '../world/store';
-import { DictationBar, type DictationHost, type DictationReply } from './dictation';
+import { DictationBar, type DictationHost, type DictationLive, type DictationReply } from './dictation';
 
 beforeEach(() => {
   // jsdom has no modal dialogs: open / close are what the game's code looks at.
@@ -45,7 +45,7 @@ function setup() {
   };
   store.applySnapshot(snap);
   const replies: Array<ReturnType<typeof later<DictationReply>>> = [];
-  const submit = vi.fn((_text: string) => {
+  const submit = vi.fn((_text: string, _live: DictationLive) => {
     const l = later<DictationReply>();
     replies.push(l);
     return l.p;
@@ -106,7 +106,7 @@ describe('the dictation bar (#213)', () => {
     expect(t.press('w').defaultPrevented).toBe(false);
     expect(t.submit).not.toHaveBeenCalled();
     t.press('Enter');
-    expect(t.submit).toHaveBeenCalledWith('Hire an agent.\nTask: line one');
+    expect(t.submit).toHaveBeenCalledWith('Hire an agent.\nTask: line one', expect.any(Function));
   });
 
   it('does not send while an IME composes (Safari’s Enter after compositionend included)', async () => {
@@ -170,16 +170,27 @@ describe('the dictation bar (#213)', () => {
     expect(t.bar.summary()?.status).toBe('Say or type a command first.');
   });
 
-  it('drops an answer that comes after it closed', async () => {
+  it('drops an answer that comes after it closed, and tells the game the request is no longer its own before it answers', async () => {
     const t = setup();
     t.bar.open(t.opener);
     t.type('Hire an agent.');
     t.press('Enter');
-    t.bar.close();
+    const live = t.submit.mock.calls[0]![1];
+    expect(live()).toBe(true);
+    t.press('Escape');
+    expect(live()).toBe(false);
     t.bar.open(t.opener);
+    t.type('Open Settings.');
+    // Opened again: still not the old request's bar.
+    expect(live()).toBe(false);
     t.replies[0]!.done({ kind: 'floor', hire });
     await t.flush();
-    expect(t.bar.summary()).toMatchObject({ state: 'editing', text: '', status: '' });
+    expect(t.bar.summary()).toMatchObject({ state: 'editing', text: 'Open Settings.', status: '' });
+    // The chord (the game's close) ends it the same way.
+    t.press('Enter');
+    const second = t.submit.mock.calls[1]![1];
+    t.bar.close();
+    expect(second()).toBe(false);
   });
 
   it('asks which floor for a hire with none: ↑ ↓ choose, Enter picks, editing the text drops the question', async () => {
@@ -200,7 +211,7 @@ describe('the dictation bar (#213)', () => {
     t.pickFloor.mockResolvedValueOnce({ kind: 'say', text: 'a-two is asleep. Wake it from the elevator (L) to hire.', error: true });
     t.press('Enter');
     await t.flush();
-    expect(t.pickFloor).toHaveBeenCalledWith('a-two', hire);
+    expect(t.pickFloor).toHaveBeenCalledWith('a-two', hire, expect.any(Function));
     expect(t.bar.summary()).toMatchObject({ state: 'floor', status: 'a-two is asleep. Wake it from the elevator (L) to hire.', error: true });
     expect(t.submit).toHaveBeenCalledTimes(1);
     // A changed text is a new command.
@@ -208,21 +219,53 @@ describe('the dictation bar (#213)', () => {
     expect(t.bar.summary()).toMatchObject({ state: 'editing', floors: [] });
   });
 
-  it('a floor picked with the mouse opens the review there; Esc in the list goes back to the text', async () => {
+  it('opened again before the last close’s `close` event came: that event does not close the new one', () => {
+    const t = setup();
+    t.bar.open(t.opener);
+    t.press('Escape');
+    t.bar.open(t.opener);
+    t.type('Open Settings.');
+    t.press('Enter');
+    const live = t.submit.mock.calls[0]![1];
+    // The browser's `close` event for the Esc, a task late.
+    t.dlg.dispatchEvent(new Event('close'));
+    expect(t.dlg.open).toBe(true);
+    expect(document.activeElement).toBe(t.field);
+    expect(live()).toBe(true);
+    expect(t.bar.summary()).toMatchObject({ state: 'pending', text: 'Open Settings.' });
+  });
+
+  it('a floor picked with the mouse opens the review there, for the bar that asked', async () => {
     const t = setup();
     t.bar.open(t.opener);
     t.type('Hire an agent.');
     t.press('Enter');
     t.replies[0]!.done({ kind: 'floor', hire });
     await t.flush();
-    t.press('Escape');
-    expect(t.dlg.open).toBe(true);
-    expect(t.bar.summary()).toMatchObject({ state: 'editing', text: 'Hire an agent.' });
-    t.press('Enter');
-    t.replies[1]!.done({ kind: 'floor', hire });
-    await t.flush();
     (t.dlg.querySelector('[data-session="a-one"]') as HTMLElement).click();
     await t.flush();
-    expect(t.pickFloor).toHaveBeenCalledWith('a-one', hire);
+    expect(t.pickFloor).toHaveBeenCalledWith('a-one', hire, expect.any(Function));
+    const live = t.pickFloor.mock.calls[0]![2];
+    expect(live()).toBe(true);
+    t.bar.close();
+    expect(live()).toBe(false);
+  });
+
+  it('Esc while it asks which floor closes the bar, as everywhere else, and gives the keyboard back', async () => {
+    const t = setup();
+    t.bar.open(t.opener);
+    t.type('Hire an agent.');
+    t.press('Enter');
+    t.replies[0]!.done({ kind: 'floor', hire });
+    await t.flush();
+    expect(t.bar.summary()?.state).toBe('floor');
+    const e = t.press('Escape');
+    expect(e.defaultPrevented).toBe(true);
+    expect(t.dlg.open).toBe(false);
+    expect(document.activeElement).toBe(t.opener);
+    expect(t.pickFloor).not.toHaveBeenCalled();
+    // Opened again, it starts empty, as after any Esc.
+    t.bar.open(t.opener);
+    expect(t.bar.summary()).toMatchObject({ state: 'editing', text: '', floors: [] });
   });
 });
