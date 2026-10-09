@@ -72,7 +72,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: clamp(16px, 3vw, 40px) clamp(16px, 4vw, 56px) 14px;
+  padding: clamp(16px, 3vw, 40px) clamp(16px, 4vw, 32px) 14px;
   /* A faint scanline weave: the board's glass, not decoration over the content (it sits behind it). */
   background:
     repeating-linear-gradient(to bottom, rgb(255 255 255 / 1.6%) 0 1px, transparent 1px 4px),
@@ -357,7 +357,7 @@
 .ov-row {
   display: grid;
   grid-template-columns: 34px minmax(206px, 1fr) minmax(0, 4fr) 132px;
-  column-gap: 12px;
+  column-gap: 10px;
 }
 .ov-cols {
   padding: 12px 14px 8px 10px;
@@ -785,7 +785,7 @@
 }
 .ov-line > b {
   flex: none;
-  width: 34px;
+  width: 30px;
   color: var(--ov-text-3);
   font-family: var(--ov-mono);
   font-size: 11px;
@@ -1114,9 +1114,9 @@
     row-gap: 2px;
   }
   .ov-line--status > span:not(.ov-llm, .ov-ai-state) {
-    flex: 1 1 calc(100% - 42px);
+    flex: 1 1 calc(100% - 38px);
   }
   .ov-line--status > .ov-ai-state {
-    margin-left: 42px; /* the label's 34px and the gap: under the line's text */
+    margin-left: 38px; /* the label's 30px and the gap: under the line's text */
   }
 }

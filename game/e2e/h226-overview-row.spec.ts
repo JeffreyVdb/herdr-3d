@@ -100,10 +100,25 @@ for (const vp of [
     await page.mouse.move(name.x + name.width / 2, name.y + name.height / 2);
     await expect(row.locator('.ov-hint')).toBeVisible();
     await expect(row.locator('.ov-since-text')).toBeHidden();
-    const fit = await row.locator('.ov-now-text').evaluate((e) => ({ client: e.clientWidth, scroll: e.scrollWidth }));
-    console.log(`#226 ${vp.width}px: .ov-now-text clientWidth ${fit.client} scrollWidth ${fit.scroll}`);
+    // The text fits, and with room to spare: the line leaves it 5 % more than it needs, as another Chromium renders the
+    // same face a few percent wider (704 px against this one's 688).
+    const fit = await row.locator('.ov-now-text').evaluate(async (e) => {
+      await document.fonts.ready;
+      const line = e.parentElement as HTMLElement;
+      const label = line.querySelector('b') as HTMLElement;
+      const r = document.createRange();
+      r.selectNodeContents(e);
+      return {
+        client: e.clientWidth,
+        scroll: e.scrollWidth,
+        text: r.getBoundingClientRect().width,
+        room: line.clientWidth - label.getBoundingClientRect().width - parseFloat(getComputedStyle(line).columnGap),
+      };
+    });
+    console.log(`#226 ${vp.width}px: .ov-now-text clientWidth ${fit.client} scrollWidth ${fit.scroll} text ${fit.text.toFixed(1)} room ${fit.room} (${(fit.room / fit.text).toFixed(3)}×)`);
     await shot(page, `h226-row-${vp.width}`);
     expect(fit.scroll).toBeLessThanOrEqual(fit.client);
+    expect(fit.room).toBeGreaterThanOrEqual(fit.text * 1.05);
 
     // The hint is in the since column's place: it overlaps no other text of the row.
     const b = await boxes(page, key);
