@@ -89,7 +89,14 @@ Rules worth modelling:
   - After a partial completion the orchestrator restarts the watcher with the **same** `--progress-at` for the
     remaining paths, so the cadence is kept (covered by `test_deadline_is_reused_across_partial_completions`).
 - `input_required` (a string) = the worker is blocked on the user or orchestrator. After answering, the orchestrator
-  assigns a **fresh** report path.
+  assigns a **fresh** report path. The game shows it as a **report request** (kept whole up to 8 KiB; an optional
+  `"input_for": "orchestrator" | "user"` says who must decide, else it is the orchestrator when there is one).
+- **Accepting a request without resuming the worker** (#215): the report file stays as it is, so the orchestrator marks
+  the request resolved with a sidecar, `<stem>.resolved.json` next to `<stem>.json`, atomically:
+  `printf '{"resolved_by":"orchestrator","note":"accepted as AC4 evidence"}' > run/coder-r1.resolved.json.tmp && mv run/coder-r1.resolved.json.tmp run/coder-r1.resolved.json`
+  (both fields optional; the file must be newer than or as new as the report, so a rewritten report asks again).
+  Do this when the ledger says "accepted" and the run goes on (e.g. reviewer dispatch) without resuming the coder;
+  without it the freelancer stays NEEDS YOU in herdr-3d. To answer and resume, assign a fresh report path instead.
 
 Observed real layout (Claude orchestrators, e.g. `/tmp/claude-1000/-home-dev-devel-fomra-depot-manager/43c0263e-…/scratchpad/`):
 

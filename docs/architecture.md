@@ -27,7 +27,7 @@ Worker states → animation:
 |---|---|
 | working | typing, screen flicker |
 | idle / done | leaning back, coffee; `done` (unseen) gets a little "!" |
-| blocked / `input_required` | hand raised, speech bubble |
+| blocked / `input_required` (not resolved: #215) | hand raised, speech bubble |
 | session stopped | floor lights off, workers asleep at desks (zZz) |
 | hired | drops in to its chair from above (M6b; walked in until then), its laptop in the desk's dock |
 | fired | packs a cardboard box (its things off the desk, the laptop out of its dock), walks out |

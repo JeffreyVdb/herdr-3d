@@ -131,6 +131,47 @@ test('freelancer looks, model cues, stamps, the input_required bubble and the ov
   clean();
 });
 
+test('#215: a report request is labelled, readable in full, and stops counting once the orchestrator resolves it', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '', SIM);
+  await enter(page);
+  const text = `September parity fails on stale local CUR data. ${'More evidence follows. '.repeat(30)}Or the ORCHESTRATOR ACCEPTANCE of the existing evidence.`;
+  const hire = await page.evaluate(() => window.__h3d.simCrew({ step: 'hire' }));
+  const id = (hire.data as { id: string }).id;
+  await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
+  await page.evaluate((t) => window.__h3d.simCrew({ step: 'report', summary: 'Implemented; head 3f9c2e1.', input_required: t, input_for: 'orchestrator' }), text);
+  const needsDesk = () => page.evaluate(() => window.__h3d.needs().some((n) => n.session === 'lab' && n.desk === 13));
+  await expect.poll(needsDesk, { timeout: 10_000 }).toBe(true);
+  expect(await member(page, 13)).toMatchObject({ id, life: 'blocked', display: 'needs_you' });
+
+  // The look-at bar says what it is and who decides, never "Waiting for an answer".
+  expect(await page.evaluate((w) => window.__h3d.face(w), id)).toBe(true);
+  await frames(page, 4);
+  const ask = page.locator('.prompt .prompt-crew .crew-ask');
+  await expect(ask).toContainText('Report request · Asked of the orchestrator');
+  await expect(ask).toHaveAttribute('title', /ORCHESTRATOR ACCEPTANCE/);
+  expect((await page.evaluate(() => window.__h3d.cards())).find((x) => x.desk === 13)).toMatchObject({ display: 'needs_you', ask: { about: [expect.stringContaining('Report request · Asked of the orchestrator')] } });
+
+  // The inbox row opens the whole request (text after byte 500 included) with the keyboard.
+  await page.locator('.ib-chip').click();
+  const more = page.locator('.ib-item', { has: page.locator('.ib-why', { hasText: 'Report request' }) }).locator('.ib-more');
+  await expect(more).toHaveAttribute('aria-expanded', 'false');
+  await more.focus();
+  await page.keyboard.press('Enter');
+  await expect(more).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.ib-req:not([hidden])')).toContainText('ORCHESTRATOR ACCEPTANCE of the existing evidence');
+  await shot(page, 'm215-report-request');
+
+  // The orchestrator accepts it without resuming the worker: no alert, the real status, the note on the bar.
+  await page.evaluate(() => window.__h3d.simCrew({ step: 'resolve', note: 'accepted as AC4 evidence' }));
+  await expect.poll(needsDesk, { timeout: 10_000 }).toBe(false);
+  expect(await member(page, 13)).toMatchObject({ id, life: 'reporting', display: 'done' });
+  await expect(page.locator('.ib-more')).toHaveCount(0);
+  await expect(page.locator('.prompt .prompt-crew .crew-resolved')).toHaveText('Request resolved by orchestrator: accepted as AC4 evidence');
+  await expect(page.locator('.prompt .prompt-crew .crew-ask')).toHaveCount(0);
+  clean();
+});
+
 test('phase and pass: the pass board, the card tag and the look-at bar', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m6', '', SIM);
