@@ -37,6 +37,10 @@ export type TxToken =
   | 'sun'
   /** The sun as text on the screen's background (a light screen needs a darker one). */
   | 'sun-text'
+  /**
+   * #206: the added and deleted rows' bands, over the code ground. The terminal's green and red as strong as the
+   * highlighted tokens on them allow (every one 4.5:1); Ubuntu's green is the terminal's hue, not grey on the purple.
+   */
   | 'add-bg'
   | 'del-bg'
   | 'add-text'
@@ -115,8 +119,8 @@ const QUIET: ThemePreset = {
     red: '#ff7a72',
     sun: '#ffc233',
     'sun-text': '#ffc233',
-    'add-bg': 'rgb(47 196 106 / 15%)',
-    'del-bg': 'rgb(232 65 58 / 16%)',
+    'add-bg': 'rgb(20 200 60 / 22%)',
+    'del-bg': 'rgb(232 65 58 / 30%)',
     'add-text': '#b5f2cc',
     'del-text': '#ffc4bf',
     'code-bg': '#0a0f1c',
@@ -124,7 +128,7 @@ const QUIET: ThemePreset = {
     tint: '255 255 255',
     'banner-bg': '#2a2413',
     'ask-bg': '#221f16',
-    'hl-comment': '#76819f',
+    'hl-comment': '#8e99b8',
     'hl-keyword': '#c792ea',
     'hl-string': '#a5e075',
     'hl-number': '#f7a26b',
@@ -168,8 +172,8 @@ const UBUNTU: ThemePreset = {
     red: '#ff8a80',
     sun: '#ffc83d',
     'sun-text': '#ffc83d',
-    'add-bg': 'rgb(47 196 106 / 20%)',
-    'del-bg': 'rgb(232 65 58 / 22%)',
+    'add-bg': 'rgb(20 200 60 / 36%)',
+    'del-bg': 'rgb(232 65 58 / 36%)',
     'add-text': '#b8f5cb',
     'del-text': '#ffc9c4',
     'code-bg': '#2c001e',

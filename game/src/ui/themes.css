@@ -23,15 +23,15 @@
   --tx-red: #ff7a72;
   --tx-sun: var(--sun, #ffc233);
   --tx-sun-text: var(--sun, #ffc233);
-  --tx-add-bg: rgb(47 196 106 / 15%);
-  --tx-del-bg: rgb(232 65 58 / 16%);
+  --tx-add-bg: rgb(20 200 60 / 22%);
+  --tx-del-bg: rgb(232 65 58 / 30%);
   --tx-add-text: #b5f2cc;
   --tx-del-text: #ffc4bf;
   --tx-code-bg: #0a0f1c;
   --tx-code-text: #cdd5ea;
   --tx-banner-bg: #2a2413;
   --tx-ask-bg: #221f16;
-  --tx-hl-comment: #76819f;
+  --tx-hl-comment: #8e99b8;
   --tx-hl-keyword: #c792ea;
   --tx-hl-string: #a5e075;
   --tx-hl-number: #f7a26b;
