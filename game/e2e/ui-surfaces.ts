@@ -380,6 +380,91 @@ export const SURFACES: Surface[] = [
     },
     root: '.wb',
   },
+  // The editor's own popovers and dialogs (Excalidraw mounts its dialogs on body, in .excalidraw-modal-container).
+  {
+    name: 'whiteboard-colors',
+    fixture: 'demo',
+    extra: '&me=Theo',
+    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    open: async (page) => {
+      await openWhiteboard(page);
+      await page.locator('.wb .color-picker__button.active-color').first().click();
+      await expect(page.locator('.color-picker-content').first()).toBeVisible();
+    },
+    root: '.wb, .color-picker-content',
+    skipNarrow: true, // the phone layout has no property panel open beside a selection
+  },
+  {
+    name: 'whiteboard-tools',
+    fixture: 'demo',
+    extra: '&me=Theo',
+    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    open: async (page) => {
+      await openWhiteboard(page);
+      await page.locator('.wb .App-toolbar__extra-tools-trigger').first().click();
+      await expect(page.locator('.App-toolbar__extra-tools-dropdown').first()).toBeVisible();
+    },
+    root: '.wb, .App-toolbar__extra-tools-dropdown',
+    skipNarrow: true, // the phone toolbar has no extra-tools menu
+  },
+  {
+    name: 'whiteboard-context',
+    fixture: 'demo',
+    extra: '&me=Theo',
+    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    open: async (page) => {
+      await openWhiteboard(page);
+      const box = await page.locator('.wb-canvas').boundingBox();
+      if (!box) throw new Error('no canvas');
+      await page.mouse.click(box.x + box.width * 0.36, box.y + box.height * 0.41, { button: 'right' });
+      await expect(page.locator('.context-menu').first()).toBeVisible();
+    },
+    root: '.wb, .context-menu',
+    skipNarrow: true, // a right click: no phone has one
+  },
+  {
+    name: 'whiteboard-search',
+    fixture: 'demo',
+    extra: '&me=Theo',
+    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    open: async (page) => {
+      await openWhiteboard(page);
+      await page.locator('.wb [data-testid="main-menu-trigger"]').first().click();
+      await page.locator('[data-testid="search-menu-button"]').first().click();
+      await expect(page.locator('.layer-ui__search, .sidebar').first()).toBeVisible();
+    },
+    root: '.wb, .layer-ui__search, .sidebar',
+  },
+  {
+    name: 'whiteboard-help',
+    fixture: 'demo',
+    extra: '&me=Theo',
+    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    open: async (page) => {
+      await openWhiteboard(page);
+      // The editor takes keys only while it has the focus (handleKeyboardGlobally: false): a click on empty canvas first.
+      const box = await page.locator('.wb-canvas').boundingBox();
+      if (!box) throw new Error('no canvas');
+      await page.mouse.click(box.x + box.width * 0.8, box.y + box.height * 0.8);
+      await page.keyboard.press('?');
+      await expect(page.locator('.HelpDialog').first()).toBeVisible();
+    },
+    root: '.excalidraw-modal-container',
+  },
+  {
+    name: 'whiteboard-mermaid',
+    fixture: 'demo',
+    extra: '&me=Theo',
+    wsQuery: `play=none&sim=1&simusage=0&wb_key=wb${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    open: async (page) => {
+      await openWhiteboard(page);
+      await page.locator('.wb .App-toolbar__extra-tools-trigger').first().click();
+      await page.locator('.App-toolbar__extra-tools-dropdown').getByText(/Mermaid/i).first().click();
+      await expect(page.locator('.excalidraw-modal-container .Dialog, .excalidraw-modal-container .ttd-dialog').first()).toBeVisible();
+    },
+    root: '.excalidraw-modal-container',
+    skipNarrow: true, // reached through the extra-tools menu, which the phone toolbar has not
+  },
   {
     name: 'seat-transcript',
     fixture: 'demo-m5',

@@ -155,6 +155,48 @@
   color: var(--text-3);
   opacity: 1;
 }
+/* The search field: Excalidraw paints its well a fixed light grey; here it is the UI's well with the strong border, and the
+   input fills it (the whole 48px field is the target, not its 24px line). */
+:root[data-ui-theme='ubuntu'] .excalidraw .layer-ui__search-header .ExcTextField__input {
+  background-color: var(--well);
+  border: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .ExcTextField__input input {
+  min-width: 0;
+  height: 100%;
+}
+/* Ubuntu is wider than Excalidraw's Assistant: the field (flex: 1 0 auto, it never shrinks) would push the sidebar sideways. */
+:root[data-ui-theme='ubuntu'] .excalidraw .layer-ui__search-header .ExcTextField {
+  flex: 1 1 0;
+  min-width: 0;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .ExcTextField__input:hover {
+  border-color: var(--border-hover);
+}
+/* Text Excalidraw draws straight on the canvas (the tool hint under the toolbar, the welcome screen's heading and hints) sits on
+   the drawing's own background, white by default: the UI's light text gets an opaque raised plate under it, and the hand-drawn
+   arrows the strong-border tone, which reads on a light and a dark canvas. */
+:root[data-ui-theme='ubuntu'] .excalidraw .HintViewer > span,
+:root[data-ui-theme='ubuntu'] .excalidraw .welcome-screen-center__heading,
+:root[data-ui-theme='ubuntu'] .excalidraw .welcome-screen-decor-hint__label {
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--text-2);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .HintViewer {
+  align-items: center;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .welcome-screen-decor {
+  color: var(--border);
+}
+/* Sizes: a context-menu row is a dense control (32px), the colour picker's hex field a standard one (36px). */
+:root[data-ui-theme='ubuntu'] .excalidraw .context-menu-item {
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .color-picker-input {
+  height: var(--ctl-h);
+}
 @media (pointer: coarse) {
   :root[data-ui-theme='ubuntu'] .excalidraw :is(.ToolIcon__icon, .dropdown-menu-item, .ExcButton, .Dialog__close) {
     min-width: 44px;
