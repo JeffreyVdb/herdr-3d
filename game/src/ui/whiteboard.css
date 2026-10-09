@@ -388,6 +388,13 @@
   border-color: var(--error-border);
 }
 
+/* The editor itself takes the keyboard focus (to draw from the keyboard). It fills the board, which clips at its frame, so
+   the board wears the ring for it, 2px outside the frame. */
+:root[data-ui-theme='ubuntu'] .wb-surface:has(.excalidraw-container:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
 /* Buttons: secondary by default (raised fill, strong border, white label), then the variants. */
 :root[data-ui-theme='ubuntu'] .wb-btn {
   border-color: var(--btn-border);
