@@ -26,6 +26,8 @@ describe('reportFact', () => {
   it('none for a pending one, one that asks (it stays at the desk), no orchestrator, or an orchestrator itself', () => {
     expect(reportFact(view(w({ state: 'pending' })))).toBeNull();
     expect(reportFact(view(w({ state: 'ready', at: 7, input_required: 'Which port?' })))).toBeNull();
+    // #215: one the orchestrator resolved is handed in.
+    expect(reportFact(view(w({ state: 'ready', at: 7, input_required: 'Which port?', input_resolved: { by: 'orchestrator' } })))).toMatchObject({ id: 'f1', at: 7 });
     const lone = w({ state: 'ready', at: 7 });
     delete lone.orch_id;
     expect(reportFact(view(lone))).toBeNull();

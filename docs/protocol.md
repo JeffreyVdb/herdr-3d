@@ -383,6 +383,7 @@ change is one `worker.upsert`. A new `h3d_report` value (the fresh path after `i
 {"state":"pending"}
 {"state":"ready","at":1790650000000,"verdict":"CHANGES_REQUIRED","blockers":2,"issues":5,"summary":"…"}
 {"state":"ready","at":1790650000000,"input_required":"Which port should the demo use?"}
+{"state":"ready","at":1790650000000,"input_required":"Accept the existing evidence?","input_for":"orchestrator","input_resolved":{"by":"orchestrator","note":"accepted as AC4 evidence","at":1790650090000}}
 {"state":"invalid","at":1790650000000,"error":"not a JSON object"}
 ```
 
@@ -392,12 +393,46 @@ change is one `worker.upsert`. A new `h3d_report` value (the fresh path after `i
 | `at` | unix ms, the file's mtime (absent for a bad name) |
 | `verdict` | reviewers (`review`, `ux`) only: `PASS` \| `CHANGES_REQUIRED` \| `INCOMPLETE`; any other value, or none without `input_required`, is `invalid` |
 | `blockers`, `issues` | reviewers: how many `issues_found` have `priority == "BLOCKER"`, and how many there are |
-| `input_required` | what the worker needs to go on, cut to 500 bytes (UTF-8 safe); absent when null or empty |
+| `input_required` | the request the report makes (a decision, an acceptance, an answer), up to 8 KiB (UTF-8 safe; #215: it used to be cut to 500 bytes, losing the actual decision); absent when null or empty. It stays present after the request was resolved |
+| `input_truncated` | `true` when `input_required` was longer than 8 KiB and was cut; absent otherwise |
+| `input_for` | who the request is for, when the report says (`"input_for": "orchestrator"` \| `"user"`, case-insensitive); any other value is ignored; absent otherwise. Present only with `input_required` |
+| `input_resolved` | `{by, note?, at}`: the orchestrator resolved the request (see below); absent while it asks. `by` is `resolved_by` of the sidecar (≤ 40 bytes, default `orchestrator`), `note` its note (≤ 300 bytes), `at` the sidecar's mtime in unix ms. Present only with `input_required` |
 | `summary` | coders and researchers: their `summary`, cut to 300 bytes |
 | `error` | why a report is `invalid`: a run id or report name not matching `^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`, not a regular file (a symlink is not followed), over 256 KiB, not a JSON object, a bad verdict |
 
+**Resolving a request without resuming the worker (#215).** A report's `input_required` is a request the orchestrator
+(or you) must settle, but a worker that has said it in its report and ended its turn is `done`: nothing changes in the
+report file when the orchestrator accepts it and carries on. The orchestrator says so with a **sidecar** next to the
+report: for `<run>/<stem>.json` it writes `<run>/<stem>.resolved.json` (the report name with `.json` replaced by
+`.resolved.json`, or appended to a name without `.json`), atomically (temp file, then `mv`):
+
+```sh
+printf '{"report":"coder-r1.json","resolved_by":"orchestrator","note":"accepted as AC4 evidence"}' > run/coder-r1.resolved.json.tmp \
+  && mv run/coder-r1.resolved.json.tmp run/coder-r1.resolved.json
+```
+
+The sidecar is a JSON object that must carry a string `"report"` **equal to the file name of the report it resolves**
+(`coder-r1.json` above; for a report named `coder-r1` it is `coder-r1`), plus the optional strings `resolved_by` and
+`note`. So the sidecar is bound to its report: two report names sharing a sidecar path (`coder-r1` and `coder-r1.json`)
+cannot resolve each other, and another worker's report JSON is no acknowledgement. A missing or different `report`, or
+a `report`, `resolved_by` or `note` that is not a string (`null` included), makes the sidecar **ignored**. It resolves
+the report's request only when it is a regular file of at most 4 KiB (`Lstat`, `O_NOFOLLOW`, no symlink, FIFO or
+directory), valid JSON (anything else is **ignored**: the request stays active), and its mtime is **at least the
+report's**. So a report written again after the resolution (a new request) asks again, and a fresh `h3d_report` path
+(a resume after an answer) starts over at `pending` as before. A name ending in `.resolved.json` is
+**reserved for sidecars**: as an `h3d_report` it is an `invalid` report (`report name is reserved for resolutions`),
+so a worker can never occupy a sidecar path. A report whose sidecar name would exceed 80 bytes has no sidecar. The poller stats both files and re-reads when either's size
+or mtime changed (creating, replacing or deleting the sidecar is one `worker.upsert` within a second); the sidecar is
+the only state, so a bridge restart changes nothing. Use it to accept a request in the ledger and go on without
+resuming the freelancer; to *answer* a request and resume it, assign a fresh report path as before.
+
 The game derives a freelancer's lifecycle from these (hired, onboarding, working, blocked on `status: blocked` or a
-`report.input_required`, reporting on a `ready` report, leaving on `worker.removed`); nothing else goes on the wire.
+`report.input_required` that is not resolved, reporting on a `ready` report, leaving on `worker.removed`); nothing
+else goes on the wire. An unresolved request makes the worker **needs you** whatever its `status` (even `done`); a
+resolved one does not count anywhere (NEEDS YOU counts, N, inbox, badges, bubbles) and the lifecycle falls back to the
+worker's own state. Card, look-at bar and inbox call it a **Report request**, never "Waiting for an answer" (the agent
+asked no question), and say who is asked: `input_for`, else the worker's orchestrator (`orch_id`: "Asked of the
+orchestrator (Cog)"), else you ("Asked of you"). The inbox row opens the complete text.
 
 ## Events
 

@@ -263,3 +263,72 @@
     box-shadow: var(--shadow), 0 0 0 2px var(--ib-ring, var(--ib-red));
   }
 }
+
+/*
+ * #215 a report's request under its row: who it is asked of and a disclosure for the whole text (the bubble and the
+ * bar only preview it). The text wraps, and scrolls when it is huge.
+ */
+.ib-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  padding: 0 8px 7px 33px;
+  font-size: 12px;
+}
+.ib-who {
+  color: var(--text-on-ink-2);
+}
+.ib-more {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  margin: 0 0 0 -4px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-on-ink);
+  font: inherit;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.ib-more:hover {
+  background: rgb(255 255 255 / 10%);
+}
+@media (pointer: coarse) {
+  .ib-more {
+    min-height: 44px;
+    padding: 0 8px;
+  }
+}
+.ib-more:focus-visible,
+.ib-req:focus-visible {
+  outline-offset: 1px;
+}
+.ib-req {
+  flex: 1 0 100%;
+  box-sizing: border-box;
+  max-height: 168px;
+  margin-top: 4px;
+  padding: 7px 9px;
+  overflow: auto;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 7%);
+  color: var(--text-on-ink);
+}
+.ib-req[hidden] {
+  display: none;
+}
+.ib-req p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+.ib-req .ib-req-cut {
+  margin-top: 6px;
+  color: var(--text-on-ink-2);
+}

@@ -416,7 +416,8 @@ export class WorldStore {
     const desk = this.desksFor(w.session).get(id) ?? 0;
     const asleep = f?.state === 'asleep';
     // M6: an over-cap orchestrator, or a freelancer whose report asks, needs you whatever its agent's status.
-    const crew = crewView(w, this.crewSeen.has(id));
+    const orch = w.orch_id ? this.workers.get(w.orch_id) : undefined;
+    const crew = crewView(w, this.crewSeen.has(id), orch ? displayName(orch) : null);
     // #57: so does an agent waiting on its structured question (herdr may call it idle), since it asked.
     const ask = asleep ? null : askOf(w);
     // #83: and a wrap-up that stopped without sending it home.

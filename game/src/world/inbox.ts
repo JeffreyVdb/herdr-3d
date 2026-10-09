@@ -47,7 +47,7 @@ export function inboxQueue(workers: Iterable<InboxCandidate>, opts: InboxOptions
 }
 
 /** Why a worker is in the inbox, as its row (and a notification) says it. */
-export type InboxReason = 'Needs you' | 'Question' | 'Follow-up' | 'Wrap-up stuck' | 'Report asks' | 'Finished';
+export type InboxReason = 'Needs you' | 'Question' | 'Follow-up' | 'Wrap-up stuck' | 'Report request' | 'Finished';
 
 /**
  * Why `view` is in the inbox: done is Finished; needing you, the first of the fields `WorldStore.workerView` ORs
@@ -60,8 +60,15 @@ export function inboxReason(view: Pick<WorkerView, 'display' | 'worker' | 'crew'
   if (askOf(w)) return 'Question';
   if (followupOf(w)) return 'Follow-up';
   if (wrapUpOf(w)?.state === 'needs_you') return 'Wrap-up stuck';
-  if (view.crew?.ask) return 'Report asks';
+  if (view.crew?.ask) return 'Report request'; // #215: not a question of the agent
   return 'Needs you';
+}
+
+/** #215: a report request's complete text and who it is asked of, for the row's "Show full request"; null for any other row. */
+export function inboxRequest(view: Pick<WorkerView, 'display' | 'worker' | 'crew'>): { text: string; truncated: boolean; who: string } | null {
+  const c = view.crew;
+  if (view.display !== 'needs_you' || inboxReason(view) !== 'Report request' || !c?.ask) return null;
+  return { text: c.ask, truncated: c.askTruncated, who: c.askWho ?? '' };
 }
 
 /**

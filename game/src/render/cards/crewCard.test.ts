@@ -68,6 +68,29 @@ describe('crew cards (M6)', () => {
     expect(c).toMatchObject({ display: 'needs_you', tag: { text: 'UX r1', color: TAG_DEFAULT }, ask: { text: 'Which port should the demo use?', choices: [] } });
   });
 
+  it('a report request says it is one and who decides, never "Waiting for an answer" (#215)', () => {
+    const text = `${'x'.repeat(600)} Or accept the existing evidence: ORCHESTRATOR ACCEPTANCE.`;
+    const o = w({ id: 'o', label: 'ORCH|overcap', role: 'orch', run: RUN, name: 'Cog', desk_index: 0 });
+    const f = w({ label: 'CODE|x|1|r1', status: 'done', orch_id: 'o', report: { state: 'ready', at: 1, input_required: text } });
+    const c = cardOf(viewOf([o, f], 'x'), true);
+    expect(c).toMatchObject({ display: 'needs_you', task: 'Report request', ask: { choices: [], about: ['Report request · Asked of the orchestrator (Cog)'] } });
+    expect(c.ask?.text).toBe(text); // the whole text is carried; the layout cuts its preview
+    expect(c.crew ?? []).not.toContain('Report request'); // said once, on the question line
+    expect(JSON.stringify(c)).not.toContain('Waiting for an answer');
+    expect(compactOf(c).task).toContain('Report request · Asked of the orchestrator (Cog)');
+    // No orchestrator: you.
+    const lone = cardOf(viewOf([w({ label: 'CODE|x|1|r1', report: { state: 'ready', at: 1, input_required: 'Port?' } })], 'x'));
+    expect(lone.ask?.about).toEqual(['Report request · Asked of you']);
+  });
+
+  it('accepted without resumption: no alert, the real lifecycle, the note when looked at (#215)', () => {
+    const f = w({ label: 'CODE|x|1|r1', status: 'done', report: { state: 'ready', at: 1, summary: 'done', input_required: 'Accept?', input_resolved: { by: 'orchestrator', note: 'accepted as AC4 evidence' } } });
+    const c = cardOf(viewOf([f], 'x'), true);
+    expect(c.display).toBe('done');
+    expect(c.ask).toBeUndefined();
+    expect(c.crew).toEqual(['Handed in its report', 'Request resolved by orchestrator: accepted as AC4 evidence', 'Report: done']);
+  });
+
   it('a question on the screen wins over the report', () => {
     const q = { kind: 'permission', text: 'Proceed?', excerpt: [], choices: [{ n: 1, label: 'Yes' }], hash: 'h' };
     const c = cardOf(viewOf([w({ label: 'CODE|x|r1', status: 'blocked', question: q, report: { state: 'ready', input_required: 'Port?' } })], 'x'));

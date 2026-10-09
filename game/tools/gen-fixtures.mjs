@@ -444,7 +444,26 @@ function readReport(run, name, mtime) {
     r.blockers = issues.filter((i) => i && i.priority === 'BLOCKER').length;
     r.issues = issues.length;
   }
-  r.input_required = typeof v.input_required === 'string' && v.input_required ? cutBytes(v.input_required, 500) : null;
+  r.input_required = typeof v.input_required === 'string' && v.input_required ? cutBytes(v.input_required, 8192) : null;
+  if (r.input_required !== null) {
+    if (Buffer.byteLength(v.input_required) > 8192) r.input_truncated = true; // #215: the bridge's cap, flagged
+    const f = typeof v.input_for === 'string' ? v.input_for.trim().toLowerCase() : '';
+    if (f === 'orchestrator' || f === 'user') r.input_for = f;
+    // #215: the orchestrator's resolution, `<stem>.resolved.json` next to the report, naming it in `report`. (Fixtures have no
+    // meaningful mtimes: a valid sidecar resolves it; the bridge also needs the sidecar to be as new as the report.)
+    // A name ending `.resolved.json` is reserved for sidecars (no report, no sidecar).
+    const side = name.endsWith('.resolved.json') ? null : `${name.replace(/\.json$/, '')}.resolved.json`;
+    if (side) {
+      try {
+        const x = JSON.parse(readFileSync(join(RUNS, run, side), 'utf8'));
+        if (typeof x === 'object' && x !== null && !Array.isArray(x) && x.report === name && [x.resolved_by, x.note].every((q) => q === undefined || typeof q === 'string')) {
+          r.input_resolved = { by: cutBytes((x.resolved_by ?? '').trim(), 40) || 'orchestrator', ...(x.note?.trim() ? { note: cutBytes(x.note.trim(), 300) } : {}), at: mtime };
+        }
+      } catch {
+        // no sidecar, or an invalid one: the request stands
+      }
+    }
+  }
   if (typeof v.summary === 'string') r.summary = cutBytes(v.summary, 300);
   return r;
 }

@@ -617,3 +617,115 @@ func TestHiredFreelancerKeepsItsDesk(t *testing.T) {
 		t.Fatalf("hired freelancer = %+v", got)
 	}
 }
+
+// reportWhere waits for the worker.upsert of worker id whose report satisfies ok.
+func reportWhere(c *client, id string, ok func(*proto.RunReport) bool) *proto.RunReport {
+	c.t.Helper()
+	for {
+		ev := c.event()
+		if ev.T == proto.EvWorkerUpsert && ev.Worker.ID == id && ev.Worker.Report != nil && ok(ev.Worker.Report) {
+			return ev.Worker.Report
+		}
+	}
+}
+
+// touch sets a file's mtime.
+func touch(t *testing.T, path string, mod time.Time) {
+	t.Helper()
+	if err := os.Chtimes(path, mod, mod); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// #215: the orchestrator accepts a report's request without resuming the
+// freelancer by writing <report>.resolved.json next to it; the bridge
+// follows its creation, replacement and removal, and a report rewritten
+// afterwards asks again. A bridge started later over the same directory sees
+// the same (the sidecar is the state).
+func TestReportRequestResolution(t *testing.T) {
+	dir := t.TempDir()
+	const poll = 20 * time.Millisecond
+	const run = "20260929-0746-resolve"
+	b := startBridge(t, "", server.Options{RunsDir: dir, ReportPoll: poll})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	coder := runWorker("c", "CODE|demo|7|r1", runTokens("code", run, "h3d_report", "coder-r1.json"))
+	b.floor("s", true, coder)
+	var cid string
+	for _, ev := range c.events(2) {
+		if ev.T == proto.EvWorkerUpsert {
+			cid = ev.Worker.ID
+		}
+	}
+	sidePath := filepath.Join(dir, run, "coder-r1.resolved.json")
+	t0 := time.Now().Add(-time.Hour)
+	publishAt := func(name, data string, mod time.Time) {
+		publish(t, dir, run, name, data)
+		touch(t, filepath.Join(dir, run, name), mod)
+	}
+	resolved := func(r *proto.RunReport) bool { return r.InputResolved != nil }
+	active := func(r *proto.RunReport) bool {
+		return r.State == proto.ReportReady && r.InputRequired != nil && r.InputResolved == nil
+	}
+
+	// Published with a request, "done" agent: it asks.
+	req := "Accept the existing evidence? " // text after byte 500 follows
+	for len(req) < 700 {
+		req += "padding "
+	}
+	req += "ORCHESTRATOR ACCEPTANCE alternative."
+	data, _ := json.Marshal(map[string]any{"input_required": req, "input_for": "orchestrator", "summary": "s"})
+	publishAt("coder-r1.json", string(data), t0)
+	r := reportWhere(c, cid, active)
+	if *r.InputRequired != req || r.InputTruncated || r.InputFor != proto.InputForOrchestrator {
+		t.Fatalf("request = %+v", r)
+	}
+	quiet(c, poll)
+
+	// Accepted: the sidecar alone changes (the report is not touched).
+	publishAt("coder-r1.resolved.json", `{"report":"coder-r1.json","resolved_by":"orchestrator","note":"accepted as AC4 evidence"}`, t0.Add(time.Second))
+	r = reportWhere(c, cid, resolved)
+	if r.InputRequired == nil || *r.InputRequired != req || r.InputResolved.By != "orchestrator" || r.InputResolved.Note != "accepted as AC4 evidence" {
+		t.Fatalf("resolved = %+v %+v", r, r.InputResolved)
+	}
+	quiet(c, poll)
+
+	// Bridge restart: a fresh hub and tracker over the same directory.
+	b2 := startBridge(t, "", server.Options{RunsDir: dir, ReportPoll: poll})
+	c2 := b2.connect(proto.Hello{})
+	c2.snapshot()
+	b2.floor("s", true, coder)
+	var cid2 string
+	for _, ev := range c2.events(2) {
+		if ev.T == proto.EvWorkerUpsert {
+			cid2 = ev.Worker.ID
+		}
+	}
+	if r = reportWhere(c2, cid2, func(r *proto.RunReport) bool { return r.State == proto.ReportReady }); r.InputResolved == nil || r.InputRequired == nil {
+		t.Fatalf("after restart = %+v %+v", r, r.InputResolved)
+	}
+
+	// The sidecar removed: it asks again.
+	if err := os.Remove(sidePath); err != nil {
+		t.Fatal(err)
+	}
+	if r = reportWhere(c, cid, active); r.InputResolved != nil {
+		t.Fatalf("after delete = %+v", r)
+	}
+	// Written again, then the report is rewritten (newer): it asks again.
+	publishAt("coder-r1.resolved.json", `{"report":"coder-r1.json"}`, t0.Add(time.Second))
+	reportWhere(c, cid, resolved)
+	publishAt("coder-r1.json", `{"input_required":"A new request","summary":"s2"}`, t0.Add(2*time.Second))
+	if r = reportWhere(c, cid, func(r *proto.RunReport) bool { return r.InputRequired != nil && *r.InputRequired == "A new request" }); r.InputResolved != nil {
+		t.Fatalf("rewritten report still resolved: %+v", r.InputResolved)
+	}
+	// A garbage sidecar newer than the report changes nothing.
+	publishAt("coder-r1.resolved.json", `{"note":`, t0.Add(3*time.Second))
+	quiet(c, poll)
+	// So does a sidecar without (or with another) report name, or with a
+	// null field.
+	for _, side := range []string{`{}`, `{"report":"coder-r2.json"}`, `{"report":"coder-r1.json","note":null}`, `{"input_required":"x","summary":"s"}`} {
+		publishAt("coder-r1.resolved.json", side, t0.Add(4*time.Second))
+		quiet(c, poll)
+	}
+}
