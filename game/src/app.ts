@@ -7,7 +7,7 @@ import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
-import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent } from './net/protocol';
+import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec } from './render/arrivals';
@@ -23,6 +23,7 @@ import { RadioLink } from './radio/link';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel, type ToastKind } from './ui/hud';
 import { HireDialog, type HirePrefill } from './ui/hire';
+import { HireReviewDialog } from './ui/hireReview';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
 import { needsYouText, sentHomeText, wrapUpOf } from './world/wrapup';
@@ -40,7 +41,7 @@ import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type 
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, seatRect, type Opening, type Outline } from './world/layout';
 import { STAND_LIFT, type ArrivalKind } from './world/arrival';
 import { displayName, resolveHarness, type Display } from './world/derive';
-import { firstFreeDesk, freeDesks, isFreshHire, Reservations } from './world/hire';
+import { firstFreeDesk, freeDesks, isFreshHire, Reservations, resolveHireDesk } from './world/hire';
 import { deskToDeskRoute, handOver, walkOutRoute, type Dest, type Waypoint } from './world/route';
 // M6c: reports walk over to the orchestrator's desk.
 import { DeliveryBook, reportArrived, reportFact, trayFolderAt, TRAY_CAP, type Entry, type ReportFact, type TrayPose } from './world/delivery';
@@ -196,6 +197,8 @@ export class App {
   readonly panels: Panels;
   /** M4: the hire and send-home dialogs, and the workers dropping in (M6b) and walking out. */
   readonly hire: HireDialog;
+  /** #212: the review of a dictated hire (phase 4 opens it with the interpretation). */
+  readonly hireReview: HireReviewDialog;
   /** #210: every hire on its way, from Hire to its outcome. */
   readonly hires: HireCoordinator;
   readonly sendHome: SendHomeDialog;
@@ -570,6 +573,7 @@ export class App {
       goTo: (id) => this.goToNewHire(id),
       orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) },
     });
+    this.hireReview = new HireReviewDialog(o.host, { ...hireHost, hirePrefs: this.hirePrefs, hires: this.hires, goTo: (id) => this.goToNewHire(id) });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, { ...dialogHost, modelPrefs: this.hireModelPrefs });
     this.startRun = new StartRunDialog(o.host, {
@@ -746,6 +750,7 @@ export class App {
     this.panels.refresh();
     this.palette.refresh(); // #147
     this.hire.refresh();
+    this.hireReview.refresh();
     this.sendHome.refresh();
     this.startRun.refresh();
     this.presetsPanel.refresh();
@@ -1223,35 +1228,33 @@ export class App {
 
   /** The hire dialog for a desk of the floor you are on; no desk: the first free one (the top bar's Hire). */
   openHire(desk?: number, prefill?: HirePrefill): void {
-    const s = this.hereSession();
-    const fv = s ? this.store.floorView(s) : null;
-    if (!s || !fv) {
-      this.hud.toast('Walk onto an office floor to hire someone there.', 2400);
-      return;
-    }
-    if (fv.asleep || fv.transition) {
-      this.hud.toast(`${s} is ${fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep'}. Wake it from the elevator (L) to hire.`, 3200);
-      return;
-    }
-    const held = this.heldDesks(s);
-    const d = desk ?? firstFreeDesk(fv, held);
-    if (d === null) {
-      this.hud.toast(`No free desk on ${s} right now.`, 2400);
-      return;
-    }
-    if (held.has(d) && !fv.seats[d]) {
-      this.hud.toast(`Someone is already on the way to Desk ${d + 1}.`, 2000);
-      return;
-    }
-    const seat = fv.seats[d];
-    if (seat) {
-      this.hud.toast(`${seat.name} sits at Desk ${d + 1}.`, 2000);
-      return;
-    }
+    const d = this.hireSeat(desk);
+    if (d === null) return;
     this.walker.release();
     this.walker.stop();
     this.panels.close();
-    this.hire.open(s, d, prefill);
+    this.hire.open(this.hereSession() as string, d, prefill);
+  }
+
+  /**
+   * #212: the review dialog for a dictated hire on the floor you are on, at `desk` or the first free one. Nothing is sent:
+   * the hire happens when the human presses Hire in it. False when the floor or desk cannot take a hire (a toast says why).
+   */
+  openHireReview(interp: HireInterpretation, desk?: number): boolean {
+    const d = this.hireSeat(desk);
+    if (d === null) return false;
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    return this.hireReview.open(this.hereSession() as string, interp, d);
+  }
+
+  /** The desk a hire opens for on the floor you are on (a toast says why not: null). */
+  private hireSeat(desk?: number): number | null {
+    const s = this.hereSession();
+    const seat = resolveHireDesk(s, s ? this.store.floorView(s) : null, s ? this.heldDesks(s) : new Set(), desk);
+    if (!seat.ok) this.hud.toast(seat.msg, seat.ms);
+    return seat.ok ? seat.desk : null;
   }
 
   /** The send-home dialog for a worker. */
@@ -1265,7 +1268,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */

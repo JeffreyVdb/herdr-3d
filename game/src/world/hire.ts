@@ -173,6 +173,28 @@ export function firstFreeDesk(v: FloorView, taken: ReadonlySet<number> = new Set
   return freeDesks(v).find((d) => !taken.has(d)) ?? null;
 }
 
+/** Where a hire may sit down: the desk, or why the floor or desk cannot take one (`ms`: how long the game's toast stays). */
+export type HireSeat = { ok: true; desk: number } | { ok: false; msg: string; ms: number };
+
+/**
+ * The floor and desk a hire opens for, by the rules the Hire dialog has always had (App.openHire, and the review dialog):
+ * a floor that is gone, asleep or changing state takes nobody, no `desk` is the first free one, and a desk somebody
+ * sits at or another hire is on its way to is not offered.
+ */
+export function resolveHireDesk(session: string | null, fv: FloorView | null, held: ReadonlySet<number>, desk?: number): HireSeat {
+  if (!session || !fv) return { ok: false, msg: 'Walk onto an office floor to hire someone there.', ms: 2400 };
+  if (fv.asleep || fv.transition) {
+    const state = fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep';
+    return { ok: false, msg: `${session} is ${state}. Wake it from the elevator (L) to hire.`, ms: 3200 };
+  }
+  const d = desk ?? firstFreeDesk(fv, held);
+  if (d === null) return { ok: false, msg: `No free desk on ${session} right now.`, ms: 2400 };
+  if (held.has(d) && !fv.seats[d]) return { ok: false, msg: `Someone is already on the way to Desk ${d + 1}.`, ms: 2000 };
+  const seat = fv.seats[d];
+  if (seat) return { ok: false, msg: `${seat.name} sits at Desk ${d + 1}.`, ms: 2000 };
+  return { ok: true, desk: d };
+}
+
 /**
  * Hires on their way, one entry per `worker.hire` in flight (Esc closes the
  * dialog, not the hire, so another can start meanwhile). Each hire holds its
@@ -232,20 +254,35 @@ export function formFromPrepare(p: HirePrepare, options: HireOptions): HireForm 
   };
 }
 
-/** Why the form cannot be sent (null: it can). */
-export function hireBlocker(f: HireForm, options: HireOptions, cap: CapacityView | null): string | null {
-  if (cap?.level === 'full') return 'Over the hard cap: send someone home first.';
-  if (!options[f.harness]) return 'Choose a harness.';
-  if (!modelsFor(options, f.harness).length) return 'Every model for this harness is hidden. Show one in Settings.';
-  if (!modelsFor(options, f.harness).includes(f.model)) return 'Choose a model.';
-  if (!effortsFor(options, f.harness, f.model).includes(f.effort)) return 'Choose an effort.';
+/** Why a hire is held back by the caps (null: there is room). */
+export function capBlocker(cap: CapacityView | null): string | null {
+  return cap?.level === 'full' ? 'Over the hard cap: send someone home first.' : null;
+}
+
+/** Why the folder or the label cannot be sent (null: they can). */
+export function optionsBlocker(f: Pick<HireForm, 'cwd' | 'label'>): string | null {
   const cwd = f.cwd.trim();
   if (cwd && !cwd.startsWith('/')) return 'The folder must be an absolute path.';
   const label = f.label.trim();
   if (new TextEncoder().encode(label).length > 64) return 'The label is at most 64 bytes.';
   if (label.startsWith('-')) return 'The label can’t start with “-”.';
-  if (f.prompt.trim().startsWith('--')) return 'The first task can’t start with “--” (herdr would read it as a flag).';
   return null;
+}
+
+/** Why the first task cannot be sent (null: it can, or there is none). */
+export function promptBlocker(prompt: string): string | null {
+  return prompt.trim().startsWith('--') ? 'The first task can’t start with “--” (herdr would read it as a flag).' : null;
+}
+
+/** Why the form cannot be sent (null: it can). */
+export function hireBlocker(f: HireForm, options: HireOptions, cap: CapacityView | null): string | null {
+  const capped = capBlocker(cap);
+  if (capped) return capped;
+  if (!options[f.harness]) return 'Choose a harness.';
+  if (!modelsFor(options, f.harness).length) return 'Every model for this harness is hidden. Show one in Settings.';
+  if (!modelsFor(options, f.harness).includes(f.model)) return 'Choose a model.';
+  if (!effortsFor(options, f.harness, f.model).includes(f.effort)) return 'Choose an effort.';
+  return optionsBlocker(f) ?? promptBlocker(f.prompt);
 }
 
 /** `worker.hire` args: the label and cwd only when set, the worktree only when the cwd is a repo (and never after a failed fetch), the prompt only when there is one. */

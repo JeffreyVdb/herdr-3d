@@ -15,6 +15,8 @@ import type { ActivityState, BoardMessage, CommandName, WorldEvent, FollowupsSta
 import type { ArrivalInfo } from './render/arrivals';
 import type { CrewInfo } from './render/office';
 import type { HireSummary } from './ui/hire';
+import type { ReviewSummary } from './ui/hireReview';
+import type { HireInterpretation } from './net/protocol';
 import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
 import type { ChangesSummary } from './ui/changes';
@@ -200,10 +202,12 @@ export interface H3DDebug {
   connection(): { phase: string; epoch: string | null };
   /** M4: opens the hire dialog for a desk (0-based) of the floor you are on; no desk: the first free one (the top bar's Hire). */
   openHire(desk?: number): void;
+  /** #212: opens the review of a dictated hire (a fixture interpretation until phase 4); nothing is sent until its Hire is pressed. */
+  openHireReview(interp: HireInterpretation, desk?: number): boolean;
   /** M4: opens the send-home dialog for a worker. */
   openSendHome(workerId: string): void;
   /** M4: what the open hire / send-home dialog shows, null when neither is open; M6: the presets panel (on top), else the start-run dialog first. */
-  dialog(): HireSummary | SendHomeSummary | StartRunSummary | PresetsSummary | OpenPrSummary | null;
+  dialog(): HireSummary | ReviewSummary | SendHomeSummary | StartRunSummary | PresetsSummary | OpenPrSummary | null;
   /** M6: the start-run dialog for a floor (default: yours) and desk (default: its first free one), as the top bar's Run and M7 open it. */
   openStartRun(o?: Partial<StartRunOptions>): void;
   /** M6: the team presets panel. */
@@ -472,8 +476,9 @@ const h3d: H3DDebug = {
   floorPoint: (s) => app?.floorPoint(s) ?? null,
   connection: () => ({ phase: app?.conn.phase ?? 'stopped', epoch: app?.client.resume.epoch ?? null }),
   openHire: (desk) => app?.openHire(desk),
+  openHireReview: (interp, desk) => app?.openHireReview(interp, desk) ?? false,
   openSendHome: (id) => app?.openSendHome(id),
-  dialog: () => app?.presetsPanel.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.sendHome.summary() ?? null,
+  dialog: () => app?.presetsPanel.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.hireReview.summary() ?? app?.sendHome.summary() ?? null,
   openStartRun: (o) => app?.openStartRun(o),
   openPresets: () => app?.openPresets(),
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],
