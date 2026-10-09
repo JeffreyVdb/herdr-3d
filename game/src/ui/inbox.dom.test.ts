@@ -331,3 +331,25 @@ describe('Settings → Display: Go to a new hire after hiring (#116)', () => {
     expect(box.checked).toBe(true);
   });
 });
+
+describe('Settings → Display: Hire in background (#210)', () => {
+  it('sits right after the go-to row, off by default, bound to the hire prefs both ways', () => {
+    const prefs = new HirePrefs(null);
+    const body = document.createElement('div');
+    const handle = displaySection(new LimitsPrefs(null), undefined, undefined, prefs)(body);
+    const goTo = body.querySelector<HTMLInputElement>('#settings-hire-goto')!;
+    const box = body.querySelector<HTMLInputElement>('#settings-hire-background')!;
+    expect(goTo.closest('label')!.nextElementSibling).toBe(box.closest('label'));
+    expect(box.closest('label')!.className).toBe(goTo.closest('label')!.className);
+    expect(box.checked).toBe(false);
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    expect(prefs.hireInBackground).toBe(true);
+    expect(prefs.goToNew).toBe(true);
+    prefs.hireInBackground = false;
+    expect(box.checked).toBe(false);
+    handle.dispose?.();
+    prefs.hireInBackground = true;
+    expect(box.checked).toBe(false);
+  });
+});

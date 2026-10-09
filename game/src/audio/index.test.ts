@@ -531,6 +531,22 @@ describe('playUi: the inbox chimes', () => {
     expect(peakOf(fin.env.gain)).toBeLessThan(needsPeak);
   });
 
+  it('#210 spawned: one short note of its own, through the master, silent when muted', async () => {
+    const { audio, made } = setup();
+    await audio.unlock();
+    const ctx = made[0]!;
+    audio.playUi('finished');
+    audio.playUi('spawned');
+    expect(ctx.oscillators).toHaveLength(2);
+    const [fin, sp] = ctx.oscillators as [FakeOscillator, FakeOscillator];
+    expect(sp.frequency.value).not.toBe(fin.frequency.value);
+    expect(sp.stopped[0]! - sp.started[0]!).toBeLessThan(fin.stopped[0]! - fin.started[0]!);
+    expect(route(ctx, sp).out.connected[0]).toBe(ctx.gains[0]);
+    audio.muted = true;
+    audio.playUi('spawned');
+    expect(ctx.oscillators).toHaveLength(2);
+  });
+
   it('frees its nodes once a note has played out', async () => {
     const { audio, made } = setup();
     await audio.unlock();
