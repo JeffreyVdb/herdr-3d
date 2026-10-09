@@ -1,0 +1,192 @@
+/*
+ * #216: the application UI theme's semantic tokens (menus, dialogs, bars, panels, boards, the editor's controls).
+ *
+ * `:root` is Quiet, the default: the navy values the shell has always had, so Quiet looks exactly as it did. Under
+ * `:root[data-ui-theme='ubuntu']` (set by ui/themeLoader.ts, and by the inline script in index.html before the first
+ * frame) the same names carry Ubuntu's: solid aubergine surfaces, orange for actions, Ubuntu and Ubuntu Mono. Components
+ * ask for a ROLE (`--surface`, `--action`, `--error-text`), never for a hue; transcript content and the terminal keep
+ * their own `--tx-*` set (ui/themes.ts), which this file never touches, and the other way round.
+ *
+ * The UI theme owns `--font` and `--font-mono` (the transcript's mono is `--tx-mono`, set by themeVars()).
+ * `tests`: ui/uiTheme.test.ts pins every Ubuntu value below to the table of issue #216.
+ */
+
+:root {
+  /* ---- surfaces ---- */
+  --ink: #1c2540;
+  --ink-2: #2a355a;
+  --ink-soft: #5b6685;
+  --paper: #ffffff;
+  /** Dialog and panel bodies, main overlay backgrounds. */
+  --surface: var(--ink);
+  /** Top, status and prompt bars; recessed chrome. */
+  --chrome: var(--ink);
+  /** Cards, menus, tooltips, a secondary button's resting fill. */
+  --raised: var(--ink-2);
+  /** A raised surface's hover / pressed / selected-row fill. */
+  --hover: #3a466e;
+  /** Fields, code-like wells, the image stage. */
+  --well: #121a31;
+  --well-deep: #101626;
+  --scrim: rgb(18 24 44 / 45%);
+  --shadow: 0 10px 28px rgb(18 24 44 / 28%), 0 2px 6px rgb(18 24 44 / 18%);
+
+  /* ---- text ---- */
+  --text: #eef2fb;
+  --text-2: #b9c3dc;
+  /** Metadata and placeholders. */
+  --text-3: #8f9abb;
+  --text-on-ink: var(--text);
+  --text-on-ink-2: var(--text-2);
+
+  /* ---- borders ---- */
+  /** Decoration only: never the sole boundary of a control. */
+  --line: rgb(255 255 255 / 14%);
+  /** A control's meaningful boundary (fields, outlined buttons) and its hover. */
+  --border: rgb(255 255 255 / 18%);
+  --border-hover: rgb(255 255 255 / 30%);
+
+  /* ---- actions, focus, accent ---- */
+  --sun: #ffc233;
+  /** A primary action's fill, its hover and pressed fills, the label on it and its border. */
+  --action: var(--sun);
+  --action-hover: #ffd25e;
+  --action-active: var(--sun);
+  --on-action: var(--ink);
+  --action-border: var(--sun);
+  --focus: var(--sun);
+  /** Accent as text or a thin line on a surface: where you are, links, a highlighted word. */
+  --accent-text: var(--sun);
+  /** Text on a bright fill (a filled chip, a green or red button). */
+  --on-fill: var(--ink);
+
+  /* ---- status: the dot / text colour, and the chip fill (text on a chip is --on-chip) ---- */
+  --plus: #2fc46a;
+  --working: #2f6bf0;
+  --done: #12a26a;
+  --needs_you: #e8413a;
+  --idle: #7a8398;
+  --asleep: #5a5fa8;
+  /* #98: idle or done, waiting on its own background tasks. */
+  --waiting: #1e9aa0;
+  --done-chip: #0b8454;
+  --needs_you-chip: #d8302c;
+  --idle-chip: #6b7388;
+  --waiting-chip: #0f7378;
+  --on-chip: #ffffff;
+  --ok-text: #6fe0a0;
+  --warn: var(--sun);
+  --error: #ff6058;
+  --error-text: #ffb4ae;
+  --error-border: #ff7b73;
+  --error-fill: #d8302c;
+  --error-fill-hover: #bf2622;
+  --on-error: #ffffff;
+
+  /* ---- buttons (secondary: resting fill, boundary, hover and pressed fills) and ghost (tertiary / icon / dismiss) ---- */
+  --btn-bg: transparent;
+  --btn-border: var(--line);
+  --btn-bg-hover: rgb(255 255 255 / 8%);
+  --btn-border-hover: rgb(255 255 255 / 26%);
+  --btn-bg-active: rgb(255 255 255 / 14%);
+  --ghost-bg-hover: rgb(255 255 255 / 8%);
+  --ghost-bg-active: rgb(255 255 255 / 14%);
+  /* A disabled control: Quiet fades it, Ubuntu keeps full opacity with a raised fill and muted label (rules in the files). */
+  --disabled-bg: transparent;
+  --disabled-text: var(--text-3);
+  --caret: auto;
+  --scroll-thumb: #3a466e;
+  --scroll-track: transparent;
+
+  /* ---- type ---- */
+  --font: 'Recursive Variable', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'H3D Box Quiet', ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
+  /* Recursive's variable axes (casual names, mono data): Ubuntu's faces have none. */
+  --fvs-casual: 'CASL' 1, 'MONO' 0;
+  --fvs-plain: 'CASL' 0, 'MONO' 0;
+  --fvs-mono: 'CASL' 0, 'MONO' 1;
+
+  /* ---- shape and size ---- */
+  --radius: 14px;
+  --radius-ctl: 10px;
+  --ctl-h: 34px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: light;
+}
+
+:root[data-ui-theme='ubuntu'] {
+  --ink: #300a24;
+  --ink-2: #3b1330;
+  --ink-soft: #cdb1c6;
+  --paper: #3b1330;
+  --surface: #300a24;
+  --chrome: #2c001e;
+  --raised: #3b1330;
+  --hover: #5e2750;
+  --well: #2c001e;
+  --well-deep: #2c001e;
+  --scrim: rgb(44 0 30 / 72%);
+  --shadow: 0 10px 28px rgb(0 0 0 / 28%), 0 2px 6px rgb(0 0 0 / 18%);
+
+  --text: #ffffff;
+  --text-2: #e8d5e2;
+  --text-3: #cdb1c6;
+
+  --line: rgb(255 255 255 / 14%);
+  --border: #ae93a7;
+  --border-hover: #ff9b76;
+
+  --sun: #ff9b76;
+  --action: #e95420;
+  --action-hover: #eb6536;
+  --action-active: #ed764d;
+  --on-action: #2c001e;
+  --action-border: #ff9b76;
+  --focus: #ff9b76;
+  --accent-text: #ff9b76;
+  --on-fill: #2c001e;
+
+  --plus: #6be08f;
+  --working: #8ec9ff;
+  --done: #6be08f;
+  --needs_you: #ffc83d;
+  --idle: #cdb1c6;
+  --asleep: #c9a8f5;
+  --waiting: #76d8d8;
+  --done-chip: #6be08f;
+  --needs_you-chip: #ffc83d;
+  --idle-chip: #cdb1c6;
+  --waiting-chip: #76d8d8;
+  --on-chip: #2c001e;
+  --ok-text: #6be08f;
+  --warn: #ffc83d;
+  --error: #ff8a80;
+  --error-text: #ff8a80;
+  --error-border: #ff8a80;
+  --error-fill: #ff8a80;
+  --error-fill-hover: #ffa39b;
+  --on-error: #2c001e;
+
+  --btn-bg: #3b1330;
+  --btn-border: #ae93a7;
+  --btn-bg-hover: #5e2750;
+  --btn-border-hover: #ae93a7;
+  --btn-bg-active: #5e2750;
+  --ghost-bg-hover: #3b1330;
+  --ghost-bg-active: #5e2750;
+  --disabled-bg: #3b1330;
+  --disabled-text: #cdb1c6;
+  --caret: #e95420;
+  --scroll-thumb: #ae93a7;
+  --scroll-track: #2c001e;
+
+  --font: 'Ubuntu', system-ui, sans-serif;
+  --font-mono: 'Ubuntu Mono', 'H3D Box Ubuntu', 'H3D Symbols Ubuntu', 'H3D Symbols Ubuntu 2', 'H3D Symbols Ubuntu Consolas', ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
+  --fvs-casual: normal;
+  --fvs-plain: normal;
+  --fvs-mono: normal;
+
+  --radius-ctl: 9px;
+  --ctl-h: 36px;
+  color-scheme: dark;
+}

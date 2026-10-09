@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>herdr-3d</title>
     <meta name="theme-color" content="#1c2540" />
+    <script>
+      /* #216: the saved UI theme, on the root before the first frame (src/ui/themeLoader.ts keeps it afterwards): a saved
+         Ubuntu never shows navy chrome first. Same key and values as src/ui/uiTheme.ts; storage may be missing or throw. */
+      (function () {
+        try {
+          if (localStorage.getItem('h3d.theme.ui') === 'ubuntu') {
+            document.documentElement.setAttribute('data-ui-theme', 'ubuntu');
+            document.querySelector('meta[name="theme-color"]').setAttribute('content', '#2c001e');
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
     <style>

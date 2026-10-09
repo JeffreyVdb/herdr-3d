@@ -39,7 +39,7 @@ describe('theme loader (#59)', () => {
     const ready: string[] = [];
     t.onReady((p) => ready.push(p.id));
     expect(root.dataset.theme).toBe('quiet');
-    expect(root.style.getPropertyValue('--font-mono')).toContain('JetBrains Mono Variable');
+    expect(root.style.getPropertyValue('--tx-mono')).toContain('JetBrains Mono Variable');
     await drain(t, f);
     expect(ready).toEqual(['quiet']);
     expect(f.asked).toEqual(['400 16px "JetBrains Mono Variable"', '700 16px "JetBrains Mono Variable"', 'italic 400 16px "JetBrains Mono Variable"', 'italic 700 16px "JetBrains Mono Variable"']);
@@ -49,7 +49,11 @@ describe('theme loader (#59)', () => {
     expect(root.dataset.theme).toBe('ubuntu');
     expect(root.style.getPropertyValue('--tx-bg')).toBe('#300a24');
     expect(root.style.getPropertyValue('--tx-prose')).toContain('"Ubuntu"');
-    expect(root.style.getPropertyValue('--font-mono')).toContain('Ubuntu Mono');
+    expect(root.style.getPropertyValue('--tx-mono')).toContain('Ubuntu Mono');
+    // #216: the transcript's pick never sets the shell's fonts or its UI theme.
+    expect(root.style.getPropertyValue('--font-mono')).toBe('');
+    expect(root.style.getPropertyValue('--font')).toBe('');
+    expect(root.dataset.uiTheme).toBe('quiet');
     await drain(t, f);
     expect(ready).toEqual(['quiet']);
     expect(t.ready.id).toBe('quiet');
@@ -104,5 +108,66 @@ describe('theme loader (#59)', () => {
     t.prefs.setTheme('terminal', 'ubuntu');
     await drain(t, f);
     expect(t.ready.id).toBe('ubuntu');
+  });
+
+  it('#216: the UI theme is its own attribute on the root, restored at construction, and moves nothing of the transcript or the terminal', async () => {
+    const root = document.createElement('div');
+    const f = fonts();
+    const store = new Map<string, string>([['h3d.theme.ui', 'ubuntu']]);
+    const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) } as unknown as Storage;
+    const t = new ThemeLoader(new ViewPrefs(storage), root, f);
+    // A saved Ubuntu is on the root before anything has loaded: no navy frame.
+    expect(root.dataset.uiTheme).toBe('ubuntu');
+    expect(root.dataset.theme).toBe('quiet');
+    expect(t.ui.id).toBe('ubuntu');
+    expect(t.terminal.id).toBe('quiet');
+    const before = root.getAttribute('style');
+    t.prefs.setUiTheme('quiet');
+    expect(root.dataset.uiTheme).toBe('quiet');
+    expect(root.dataset.theme).toBe('quiet');
+    expect(root.getAttribute('style')).toBe(before);
+    t.prefs.setTheme('transcript', 'ubuntu');
+    expect(root.dataset.uiTheme).toBe('quiet');
+    await drain(t, f);
+  });
+
+  it('#216: Ubuntu UI loads the shell’s faces even with Quiet transcript and terminal; Quiet UI alone loads none of them', async () => {
+    const root = document.createElement('div');
+    const f = fonts();
+    const t = new ThemeLoader(new ViewPrefs(null), root, f);
+    await drain(t, f);
+    f.asked.length = 0;
+    t.prefs.setUiTheme('ubuntu');
+    await drain(t, f);
+    expect(f.asked).toEqual(['400 14px "Ubuntu"', '700 14px "Ubuntu"', '400 14px "Ubuntu Mono"']);
+    // The terminal-only pick stays the mono faces only (the existing guarantee).
+    f.asked.length = 0;
+    t.prefs.setUiTheme('quiet');
+    t.prefs.setTheme('terminal', 'ubuntu');
+    await drain(t, f);
+    expect(f.asked.every((x) => x.endsWith('"Ubuntu Mono"'))).toBe(true);
+  });
+
+  it('#216: a font that fails still leaves the UI theme applied (fallback faces)', async () => {
+    const root = document.createElement('div');
+    const f = fonts(true);
+    const t = new ThemeLoader(new ViewPrefs(null), root, f);
+    t.prefs.setUiTheme('ubuntu');
+    await drain(t, f);
+    expect(root.dataset.uiTheme).toBe('ubuntu');
+  });
+
+  it('#216: the browser chrome colour follows the UI theme’s bars', () => {
+    const meta = document.createElement('meta');
+    meta.name = 'theme-color';
+    meta.content = '#1c2540';
+    document.head.append(meta);
+    const t = new ThemeLoader(new ViewPrefs(null), document.documentElement, fonts());
+    t.prefs.setUiTheme('ubuntu');
+    expect(meta.content).toBe('#2c001e');
+    t.prefs.setUiTheme('quiet');
+    expect(meta.content).toBe('#1c2540');
+    meta.remove();
+    document.documentElement.removeAttribute('data-ui-theme');
   });
 });

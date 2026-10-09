@@ -16,7 +16,7 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-const css = readFileSync(resolve(import.meta.dirname, '../ui/hud.css'), 'utf8');
+const css = readFileSync(resolve(import.meta.dirname, '../ui/uiTheme.css'), 'utf8');
 const token = (name: string) => css.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1]?.toLowerCase();
 
 describe('status colours', () => {
@@ -24,7 +24,7 @@ describe('status colours', () => {
     for (const [d, c] of Object.entries(STATUS_CHIP_CSS)) expect(contrast(c, '#ffffff'), d).toBeGreaterThanOrEqual(4.5);
   });
 
-  it('hud.css and palette.ts agree', () => {
+  it('uiTheme.css (Quiet) and palette.ts agree', () => {
     for (const [d, c] of Object.entries(STATUS_CSS)) expect(token(d), d).toBe(c);
     for (const [d, c] of Object.entries(STATUS_CHIP_CSS)) expect(token(`${d}-chip`) ?? token(d), `${d}-chip`).toBe(c);
   });

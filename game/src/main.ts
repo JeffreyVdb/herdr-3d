@@ -1,6 +1,7 @@
 import '@fontsource-variable/recursive/full.css';
 import './fonts/quiet.css';
 import './ui/themes.css';
+import './ui/uiTheme.css';
 import './ui/hud.css';
 import './ui/panels.css';
 import './ui/hire.css';
@@ -126,11 +127,11 @@ export interface H3DDebug {
   /** #74: plays the human unzooming the watched pane's tab, in the fixture simulator (`simzoom=`): a `terminal.state` follows. */
   simUnzoom(workerId: string): Promise<boolean>;
   /**
-   * #59: the transcript's and the terminal's presets as picked, the one the terminal draws with (its fonts loaded),
+   * #59: the transcript's and the terminal's presets as picked (#216: and the application UI theme, `ui`), the one the terminal draws with (its fonts loaded),
    * each view's zoom, hidden tool calls, and the seated screen's font; `themeLoaded` settles when the latest picks'
    * fonts are in.
    */
-  theme(): { transcript: string; terminal: string; ready: string; transcriptZoom: number; terminalZoom: number; hideTools: boolean; showChanges: boolean; terminalFont: string | null };
+  theme(): { ui: string; transcript: string; terminal: string; ready: string; transcriptZoom: number; terminalZoom: number; hideTools: boolean; showChanges: boolean; terminalFont: string | null };
   themeLoaded(): Promise<void>;
   /** #187: how many times the floor's scene was rebuilt (a desk count or building outline change) since the page opened. */
   officeRebuilds(): number;
@@ -391,8 +392,8 @@ const h3d: H3DDebug = {
   theme: () => {
     const t = app?.themes;
     return t
-      ? { transcript: t.theme.id, terminal: t.terminal.id, ready: t.ready.id, transcriptZoom: t.prefs.zoom('transcript'), terminalZoom: t.prefs.zoom('terminal'), hideTools: t.prefs.hideTools, showChanges: t.prefs.showChanges, terminalFont: app?.laptops.seatedFont() ?? null }
-      : { transcript: '', terminal: '', ready: '', transcriptZoom: 100, terminalZoom: 100, hideTools: false, showChanges: true, terminalFont: null };
+      ? { ui: t.ui.id, transcript: t.theme.id, terminal: t.terminal.id, ready: t.ready.id, transcriptZoom: t.prefs.zoom('transcript'), terminalZoom: t.prefs.zoom('terminal'), hideTools: t.prefs.hideTools, showChanges: t.prefs.showChanges, terminalFont: app?.laptops.seatedFont() ?? null }
+      : { ui: '', transcript: '', terminal: '', ready: '', transcriptZoom: 100, terminalZoom: 100, hideTools: false, showChanges: true, terminalFont: null };
   },
   themeLoaded: () => app?.themes.loading ?? Promise.resolve(),
   transcript: () => app?.laptops.transcriptState() ?? null,

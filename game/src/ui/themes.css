@@ -1,12 +1,10 @@
 /*
  * #59: the transcript preset's custom properties, as Quiet (the default) sets them: what the page shows before
- * ui/themeLoader.ts puts the chosen preset on the root element (its inline values win over these). `--font-mono` is
- * every monospace on the page (the HUD's numbers, the limits widget, the boards, the transcript); `--tx-*` are the
- * transcript's and the Images tab's.
+ * ui/themeLoader.ts puts the chosen preset on the root element (its inline values win over these). `--tx-*` are the
+ * transcript's and the Images tab's; the shell's own fonts and colours are ui/uiTheme.css's (#216).
  */
 
 :root {
-  --font-mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
   --tx-bg: #0f1526;
   --tx-bg-2: #161e35;
   --tx-bg-3: #1f2a47;
@@ -18,11 +16,11 @@
   --tx-blue: #6f9bff;
   --tx-blue-text: #6f9bff;
   --tx-on-accent: #0b1020;
-  --tx-on-sun: var(--ink, #1c2540);
+  --tx-on-sun: #1c2540;
   --tx-green: #4cd88a;
   --tx-red: #ff7a72;
-  --tx-sun: var(--sun, #ffc233);
-  --tx-sun-text: var(--sun, #ffc233);
+  --tx-sun: #ffc233;
+  --tx-sun-text: #ffc233;
   --tx-add-bg: rgb(20 200 60 / 22%);
   --tx-del-bg: rgb(232 65 58 / 30%);
   --tx-add-text: #b5f2cc;
@@ -38,6 +36,6 @@
   --tx-hl-title: #82aaff;
   --tx-hl-attr: #ffcb6b;
   --tx-hl-meta: #ff8b82;
-  --tx-mono: var(--font-mono);
+  --tx-mono: 'JetBrains Mono Variable', 'H3D Box Quiet', ui-monospace, 'SF Mono', Menlo, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
   --tx-prose: 'Atkinson Hyperlegible Next Variable', system-ui, sans-serif;
 }

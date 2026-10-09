@@ -1,11 +1,12 @@
 import { clampZoom, DEFAULT_THEME, isThemeId, ZOOM, type ThemeId } from './themes';
+import { DEFAULT_UI_THEME, isUiThemeId, UI_THEME_KEY, type UiThemeId } from './uiTheme';
 
 /**
  * #59: what the seated views remember per browser, for every worker alike. The transcript and the terminal each have
  * their own preset and their own zoom (the same two presets); the transcript also remembers whether tool calls are
  * hidden. Guarded like `limitsPrefs.ts`: localStorage can be missing or throw (private windows, blocked site data), so
  * the values live here and storage only carries them to the next page load. A stored value that is not one of ours is
- * ignored (a zoom is clamped onto its steps).
+ * ignored (a zoom is clamped onto its steps). #216: and the application UI theme (`h3d.theme.ui`), a third, independent pick.
  */
 
 /** #172: the presets this build dropped, by the id a browser may still have stored, and what each one opens as now. */
@@ -22,7 +23,7 @@ const SHOW_CHANGES = 'h3d.transcript.showChanges';
 /** #74: a laptop at a split pane zooms it to the whole herdr tab (on unless the player turned it off: stored as '0'). */
 const FULLSCREEN = 'h3d.term.fullscreen';
 
-export type ViewPref = 'transcriptTheme' | 'terminalTheme' | 'transcriptZoom' | 'terminalZoom' | 'hideTools' | 'showChanges' | 'fullscreen';
+export type ViewPref = 'uiTheme' | 'transcriptTheme' | 'terminalTheme' | 'transcriptZoom' | 'terminalZoom' | 'hideTools' | 'showChanges' | 'fullscreen';
 
 function defaultStorage(): Storage | null {
   try {
@@ -36,6 +37,7 @@ export class ViewPrefs {
   private readonly listeners = new Set<(what: ViewPref) => void>();
   private readonly themes: Record<ThemedView, ThemeId>;
   private readonly zooms: Record<ThemedView, number>;
+  private ui: UiThemeId;
   private hide: boolean;
   private changes: boolean;
   private full: boolean;
@@ -55,6 +57,9 @@ export class ViewPrefs {
     };
     this.themes = { transcript: theme('transcript'), terminal: theme('terminal') };
     this.zooms = { transcript: zoom('transcript'), terminal: zoom('terminal') };
+    // #216: the application's own theme: its own key, never derived from the transcript's or the terminal's.
+    const ui = this.read(UI_THEME_KEY);
+    this.ui = isUiThemeId(ui) ? ui : DEFAULT_UI_THEME;
     this.hide = this.read(HIDE_TOOLS) === '1';
     this.changes = this.read(SHOW_CHANGES) !== '0';
     this.full = this.read(FULLSCREEN) !== '0';
@@ -79,6 +84,18 @@ export class ViewPrefs {
 
   private changed(what: ViewPref): void {
     for (const fn of this.listeners) fn(what);
+  }
+
+  /** #216: the application UI theme (menus, dialogs, bars, controls); Quiet unless the browser saved Ubuntu. */
+  uiTheme(): UiThemeId {
+    return this.ui;
+  }
+
+  setUiTheme(id: UiThemeId): void {
+    if (!isUiThemeId(id) || id === this.ui) return;
+    this.ui = id;
+    this.write(UI_THEME_KEY, id === DEFAULT_UI_THEME ? null : id);
+    this.changed('uiTheme');
   }
 
   theme(view: ThemedView): ThemeId {

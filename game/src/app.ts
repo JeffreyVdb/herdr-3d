@@ -94,6 +94,7 @@ import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
 import { MonitorPrefs } from './ui/monitorPrefs';
 import type { SettingsDialog } from './ui/settings';
+import { appearanceSection } from './ui/appearanceSection';
 import { displaySection, timeSection } from './ui/settingsSections';
 import { notifySection } from './ui/notifySection';
 import { ThemeLoader } from './ui/themeLoader';
@@ -351,6 +352,8 @@ export class App {
       run: (c, floor) => void this.runPaletteCommand(c, floor),
       goTo: (s) => void this.goToFloor(s),
     });
+    // #216: the application UI theme (Quiet or Ubuntu), first, where the look of everything else is chosen.
+    this.settings.addSection('appearance', 'Appearance', appearanceSection(this.themes.prefs), { store: 'browser' });
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser' });
     // #194: which models of each harness the model pickers offer, under the display settings it sits beside.
     this.settings.addSection('harness-models', 'Harness models', harnessModelsSection({ prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser' });
