@@ -527,8 +527,8 @@ test('the completion popup’s commands and paths are the UI’s Ubuntu Mono at 
     await boot(page, s.fixture, { ui: 'ubuntu', transcript: 'quiet' }, s.extra ?? '', s.wsQuery);
     await s.open(page);
     const sel = name === 'completion-commands' ? '.seat-transcript .cmp-pop .tx-cmd-name' : '.seat-transcript .cmp-pop .tx-file';
-    const font = () => page.locator(sel).first().evaluate((e) => `${getComputedStyle(e).fontFamily.split(',')[0]!.trim()} ${getComputedStyle(e).fontSize}`);
-    expect(await font()).toMatch(/^"?Ubuntu Mono"? 14px$/);
+    const font = () => page.locator(sel).first().evaluate((e) => `${getComputedStyle(e).fontFamily.split(',')[0]!.trim()} ${getComputedStyle(e).fontSize}`).catch(() => 'detached');
+    await expect.poll(font).toMatch(/^"?Ubuntu Mono"? 14px$/); // (the rows re-render as the list settles)
     // The transcript's own mono (a code span in a message) stays the Quiet preset's.
     expect(await page.locator('.seat-transcript .tx').evaluate((e) => getComputedStyle(e).getPropertyValue('--tx-mono'))).toMatch(/JetBrains/);
     await page.keyboard.press('Escape'); // closes only the popup
@@ -539,7 +539,7 @@ test('the completion popup’s commands and paths are the UI’s Ubuntu Mono at 
     await page.keyboard.press('Backspace');
     await page.keyboard.type(name === 'completion-commands' ? '/' : 'p');
     await expect(page.locator(sel).first()).toBeVisible();
-    expect(await font()).toMatch(/^"?Ubuntu Mono"? 14px$/);
+    await expect.poll(font).toMatch(/^"?Ubuntu Mono"? 14px$/); // (the rows re-render as the list settles)
     await page.goto('about:blank');
   }
   clean();
@@ -962,8 +962,8 @@ test('states: inside the transcript the composer’s Send, the selected tab and 
 
 // ---- focus: every keyboard-operable widget has the ring -----------------------------------------------------------
 
-for (const name of ['settings', 'hire', 'hire-chips', 'hire-review', 'hire-review-ready', 'start-run', 'presets', 'prompt-dialog', 'board-issues', 'menu', 'palette', 'about', 'overview', 'seat-transcript', 'completion-commands', 'seat-images', 'lightbox', 'whiteboard']) {
-  test(`focus: every operable widget of ${name} shows a 3px ring in #FF9B76 in Ubuntu (2px outside and unclipped in the composer, the seated screen and the editor)`, async ({ page }) => {
+for (const name of SURFACES.map((x) => x.name)) {
+  test(`focus: every operable widget of ${name} shows a 3px ring in #FF9B76, 2px outside it and never clipped, in Ubuntu`, async ({ page }) => {
     test.setTimeout(240_000);
     const clean = watchErrors(page);
     const s = SURFACES.find((x) => x.name === name)!;
@@ -981,8 +981,8 @@ for (const name of ['settings', 'hire', 'hire-chips', 'hire-review', 'hire-revie
       });
       return (window as unknown as { __focusables: HTMLElement[] }).__focusables.length;
     }, s.root);
-    expect(n, `${name}: controls found`).toBeGreaterThan(0);
-    for (let i = 0; i < Math.min(n, 40); i++) {
+    test.skip(n === 0, `${name} has no operable widget of its own (its bars are other surfaces')`);
+    for (let i = 0; i < Math.min(n, 150); i++) {
       const got = await page.evaluate((i) => {
         const e = (window as unknown as { __focusables: HTMLElement[] }).__focusables[i]!;
         e.scrollIntoView({ block: 'nearest' });
@@ -1020,7 +1020,22 @@ for (const name of ['settings', 'hire', 'hire-chips', 'hire-review', 'hire-revie
         const ring = { l: r.left - reach, t: r.top - reach, r: r.right + reach, b: r.bottom + reach };
         let clipped = '';
         let judgeX = true, judgeY = true;
+        // Only a box on the ring's containing-block chain clips it (a fixed or absolutely placed widget escapes the
+        // boxes between it and its containing block: the plan-limits tab inside a top-layer dialog).
+        const makesCb = (n: Element, fixed: boolean) => {
+          const ns = getComputedStyle(n);
+          return (!fixed && ns.position !== 'static') || ns.transform !== 'none' || ns.filter !== 'none' || ns.perspective !== 'none' || /paint|layout|strict|content/.test(ns.contain) || /transform|filter|perspective/.test(ns.willChange) || (ns.containerType ?? 'normal') !== 'normal';
+        };
+        const chain = new Set<Element>();
+        for (let x: Element | null = ringOn; x; ) {
+          const pos = getComputedStyle(x).position;
+          let next: Element | null = x.parentElement;
+          if (pos === 'fixed' || pos === 'absolute') while (next && !makesCb(next, pos === 'fixed')) next = next.parentElement;
+          if (next) chain.add(next);
+          x = next;
+        }
         for (let n = ringOn.parentElement; n && !clipped; n = n.parentElement) {
+          if (!chain.has(n)) continue;
           const ns = getComputedStyle(n);
           if (ns.display === 'inline' || ns.display === 'contents') continue;
           const cx = ns.overflowX !== 'visible', cy = ns.overflowY !== 'visible';
@@ -1037,9 +1052,8 @@ for (const name of ['settings', 'hire', 'hire-chips', 'hire-review', 'hire-revie
         }
         const tag = (x: Element) => `${x.tagName.toLowerCase()}.${String(x.className).split(' ').slice(0, 2).join('.')}`;
         // The ring is the outline, or (a field / card that draws its ring as a shadow) a 3px spread in the colour.
-        // The issue's exact geometry (2px off, never clipped) is held where #216's fix round put it: the composer, the
-        // seated screen's widgets and the whiteboard editor. Elsewhere the ring must be there (3px, the colour).
-        const strict = !!ringOn.closest('.tx, .cmp, .excalidraw, .wb-surface');
+        // The issue's exact geometry on every widget: 2px off, never clipped.
+        const strict = true;
         return { at: tag(e) + (ringOn !== e ? ` → ${tag(ringOn)}` : ''), strict, outline, style: c.outlineStyle, width, offset, color: rg ? `${rg[1]},${rg[2]},${rg[3]}` : c.outlineColor, shadow: c.boxShadow, clipped };
       }, i);
       if (!got) continue;
@@ -1153,8 +1167,9 @@ test('states: the elevator’s floor plates are Ubuntu controls: raised purple w
   await page.locator('dialog.panel .lift-go:not([aria-current])').first().hover();
   await expect.poll(async () => (await plate(other)).ring).toContain('rgb(255, 155, 118)');
   await page.mouse.down();
+  // (The plate eases its fill and number for 200 ms on a page that draws a few frames a second.)
   await expect.poll(async () => rgbToHex((await plate(other)).bg), { timeout: 15_000 }).toBe('#ed764d');
-  expect(rgbToHex((await plate(other)).fg)).toBe('#2c001e');
+  await expect.poll(async () => rgbToHex((await plate(other)).fg), { timeout: 15_000 }).toBe('#2c001e');
   await page.mouse.move(1, 1);
   await page.mouse.up();
   // The Buildings list's small plates are the same control at rest.
