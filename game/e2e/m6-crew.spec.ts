@@ -172,6 +172,66 @@ test('#215: a report request is labelled, readable in full, and stops counting o
   clean();
 });
 
+test('#215: with "Show the inbox" off the whole request is still one keystroke away, and its reader scrolls by keyboard (390px)', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.addInitScript(() => localStorage.setItem('h3d.inbox', JSON.stringify({ show: false })));
+  await openGame(page, 'demo-m6', '', SIM);
+  await enter(page);
+  // The decision sits at the very end of an 8 KiB-ish report.
+  const text = `Parity fails on stale CUR data. ${'More evidence follows, line after line. '.repeat(190)}Or the ORCHESTRATOR ACCEPTANCE of the existing evidence.`;
+  const hire = await page.evaluate(() => window.__h3d.simCrew({ step: 'hire' }));
+  const id = (hire.data as { id: string }).id;
+  await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
+  await page.evaluate((t) => window.__h3d.simCrew({ step: 'report', summary: 'Implemented.', input_required: t, input_for: 'orchestrator' }), text);
+  await expect.poll(() => page.evaluate(() => window.__h3d.needs().some((n) => n.session === 'lab' && n.desk === 13)), { timeout: 10_000 }).toBe(true);
+  expect(await page.evaluate((w) => window.__h3d.face(w), id)).toBe(true);
+  await frames(page, 4);
+
+  // The passive chip stays governed by the setting; the bar says where the whole text is.
+  await expect(page.locator('.ib-chip')).toBeHidden();
+  await expect(page.locator('.prompt .prompt-crew .crew-more')).toHaveText('Shift+N: full request');
+  await expect(page.locator('.prompt .prompt-crew .crew-more')).toBeInViewport();
+
+  // Shift+N opens the list anyway, on its first row; the request opens in full and scrolls by keyboard.
+  await page.keyboard.press('Shift+N');
+  await expect(page.locator('.inbox')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__h3d.inbox())).toMatchObject({ open: true });
+  const more = page.locator(`.ib-more[data-id="${id}"]`);
+  expect((await more.boundingBox())!.height).toBeGreaterThanOrEqual(32);
+  await more.focus();
+  await page.keyboard.press('Enter');
+  const req = page.locator(`#ib-req-${id}`);
+  await expect(req).toContainText('Parity fails on stale CUR data');
+  await req.focus();
+  const top = () => req.evaluate((el) => el.scrollTop);
+  const pitch = await page.evaluate(() => window.__h3d.pose()?.pitch);
+  expect(await top()).toBe(0);
+  await page.keyboard.press('PageDown');
+  await expect.poll(top).toBeGreaterThan(0);
+  const afterPage = await top();
+  await page.keyboard.press('Space');
+  await expect.poll(top).toBeGreaterThan(afterPage);
+  await page.keyboard.press('End');
+  await expect(req).toContainText('ORCHESTRATOR ACCEPTANCE of the existing evidence');
+  await expect.poll(async () => (await req.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)) < 2).toBe(true);
+  await page.keyboard.press('Home');
+  await expect.poll(top).toBe(0);
+  await expect(req).toBeFocused();
+  expect(await page.evaluate(() => window.__h3d.pose()?.pitch)).toBe(pitch); // the walker did not look up or down
+  await shot(page, 'm215-report-request-390');
+  await req.focus(); // (the shot hides the HUD for a moment)
+
+  // Esc folds the request, the next Esc shuts the list and the chip goes again.
+  await page.keyboard.press('Escape');
+  await expect(req).toBeHidden();
+  await expect(more).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => window.__h3d.inbox())).toMatchObject({ open: false, shown: false });
+  await expect(page.locator('.inbox')).toBeHidden();
+  clean();
+});
+
 test('phase and pass: the pass board, the card tag and the look-at bar', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m6', '', SIM);

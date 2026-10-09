@@ -2665,13 +2665,10 @@ export class App {
       this.inbox.closeList();
       return;
     }
-    if (!s.shown) {
-      this.hud.toast('Nothing in the inbox: no one needs you and nothing is waiting to be read.', 2600);
-      return;
-    }
     this.walker.release();
     this.walker.stop();
-    this.inbox.openList(true);
+    // #215: the explicit command opens the list even with "Show the inbox" off (the chip then goes when it closes).
+    if (!this.inbox.openList(true, true)) this.hud.toast('Nothing in the inbox: no one needs you and nothing is waiting to be read.', 2600);
   }
 
   /** Nothing but the scene has keyboard focus (no HUD control). */

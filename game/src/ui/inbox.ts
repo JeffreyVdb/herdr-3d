@@ -56,6 +56,8 @@ export class InboxChip {
   /** What the open list last drew (skips identical redraws on every world event). */
   private drawn = '';
   private on = true;
+  /** #215: the list was opened by an explicit command while the chip is switched off: shown until it closes. */
+  private forced = false;
   private open = false;
   private ages: ReturnType<typeof setInterval> | null = null;
   private pulsing: ReturnType<typeof setTimeout> | null = null;
@@ -141,12 +143,21 @@ export class InboxChip {
     }, PULSE_MS);
   }
 
-  /** #100 contract: opens the chip's list (a collapsed notification's click); nothing while the chip is not shown. */
-  openList(focus = false): void {
-    if (this.root.hidden) return;
+  /**
+   * #100 contract: opens the chip's list (a collapsed notification's click); nothing while the chip is not shown.
+   * #215 `force` (the Shift+N command): a deliberate command overrides the passive chip's setting, so the list opens
+   * even with "Show the inbox" off, and the chip goes away again when it closes. Returns whether the list is open now.
+   */
+  openList(focus = false, force = false): boolean {
+    if (force && !this.on && this.entries.length && !this.corner.screen && !this.corner.folded) {
+      this.forced = true;
+      this.sync();
+    }
+    if (this.root.hidden) return false;
     this.toggle(true, false);
     // #124: from the keyboard (Shift+N) the focus goes into the list, on the first row: arrows walk it, Enter goes there.
     if (focus) (this.rows.querySelector<HTMLElement>('.ib-row') ?? this.chip).focus();
+    return true;
   }
 
   /** #124: shuts the list, the focus back on the chip when it was inside. */
@@ -172,6 +183,10 @@ export class InboxChip {
       document.removeEventListener('pointerdown', this.onOutside, true);
       document.removeEventListener('keydown', this.onEsc, true);
       if (focusChip && this.root.contains(document.activeElement) && !this.root.hidden) this.chip.focus();
+      if (this.forced) {
+        this.forced = false;
+        this.sync();
+      }
     }
   }
 
@@ -189,12 +204,15 @@ export class InboxChip {
     const key = this.entries.map((e) => [e.id, e.name, e.harness, e.where, e.reason, e.dismissable, e.request?.text, e.request?.truncated, e.request?.who, e.request && this.expanded.has(e.id), inboxAge(e.since, now)].join('\u0001')).join('\u0000');
     if (key === this.drawn) return;
     this.drawn = key;
-    replaceKeepingFocus(this.rows, this.entries.map((e) => row(e, now, this.expanded.has(e.id))), this.focusAfter);
+    // A reader that is being read (focus, scroll offset) survives the redraw (a worker coming in, the age refresh).
+    const tops = new Map([...this.rows.querySelectorAll<HTMLElement>('.ib-req')].map((el) => [el.id, el.scrollTop] as const));
+    replaceKeepingFocus(this.rows, this.entries.map((e) => row(e, now, this.expanded.has(e.id))), this.focusAfter, { keepScroll: true });
+    for (const el of this.rows.querySelectorAll<HTMLElement>('.ib-req')) el.scrollTop = tops.get(el.id) ?? 0;
     this.focusAfter = undefined;
   }
 
   private sync(): void {
-    this.root.hidden = !this.on || !this.entries.length || this.corner.screen || this.corner.folded;
+    this.root.hidden = !(this.on || this.forced) || !this.entries.length || this.corner.screen || this.corner.folded;
     this.root.dataset.beside = this.corner.beside;
     if (this.root.hidden) this.toggle(false, false);
   }
@@ -208,6 +226,12 @@ export class InboxChip {
   private readonly onKey = (e: KeyboardEvent): void => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     const k = e.key;
+    // #215: the full request is a reader: its keys (arrows, Page Up / Down, Home / End, Space) scroll it natively and are
+    // neither row navigation nor the walker's; Tab moves on and Esc is `onEsc`'s.
+    if (inReader(e.target)) {
+      if (k !== 'Tab' && k !== 'Escape') e.stopPropagation();
+      return;
+    }
     if (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End') {
       if (!this.open) {
         if (k !== 'ArrowDown') return;
@@ -226,6 +250,18 @@ export class InboxChip {
   private readonly onEsc = (e: KeyboardEvent): void => {
     if (e.key !== 'Escape' || e.metaKey || e.ctrlKey || e.altKey) return;
     const t = e.target instanceof Element ? e.target : null;
+    // #215: Esc in the reader folds the request (the focus back on its disclosure); another Esc shuts the list.
+    const reader = inReader(t);
+    if (reader?.id) {
+      const id = reader.id.replace(/^ib-req-/, '');
+      e.preventDefault();
+      e.stopPropagation();
+      this.expanded.delete(id);
+      this.drawn = '';
+      this.draw();
+      this.rows.querySelector<HTMLElement>(`[data-key="more:${CSS.escape(id)}"]`)?.focus();
+      return;
+    }
     if (t && !this.root.contains(t) && t.closest('dialog, input, textarea, select, [contenteditable]')) return;
     e.preventDefault();
     e.stopPropagation();
@@ -258,6 +294,11 @@ export class InboxChip {
 }
 
 
+/** The full request's scroller an event came from, if any. */
+function inReader(t: EventTarget | null): HTMLElement | null {
+  return t instanceof Element ? t.closest<HTMLElement>('.ib-req') : null;
+}
+
 function row(e: InboxEntry, now: number, open: boolean): HTMLLIElement {
   const age = inboxAge(e.since, now);
   const agent = (e.harness && HARNESS_LABEL[e.harness]) || e.harness || 'Agent';
@@ -287,7 +328,7 @@ function request(e: InboxEntry, r: NonNullable<InboxEntry['request']>, open: boo
   const id = `ib-req-${e.id}`;
   const body = h(
     'div',
-    { class: 'ib-req', id, role: 'region', 'aria-label': `Full request of ${e.name}`, tabindex: '0' },
+    { class: 'ib-req', id, 'data-key': `req:${e.id}`, role: 'region', 'aria-label': `Full request of ${e.name}`, tabindex: '0' },
     h('p', { class: 'ib-req-text' }, r.text),
     r.truncated ? h('p', { class: 'ib-req-cut' }, 'Cut at 8 KiB: the rest is in the report file.') : null,
   );

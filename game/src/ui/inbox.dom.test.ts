@@ -120,6 +120,89 @@ describe('InboxChip', () => {
     expect(chip.root.querySelector('.ib-more')).toBeNull();
   });
 
+  describe('the full request reader (#215)', () => {
+    const request = { text: `${'x'.repeat(600)} ORCHESTRATOR ACCEPTANCE.`, truncated: false, who: 'Asked of the orchestrator (Cog)' };
+    const opened = () => {
+      const m = mount();
+      m.chip.set([entry('a', { reason: 'Report request', request }), entry('b')]);
+      m.chip.openList();
+      m.chip.root.querySelector<HTMLButtonElement>('.ib-more')!.click();
+      const req = m.chip.root.querySelector<HTMLElement>('.ib-req')!;
+      req.focus();
+      return { ...m, req };
+    };
+
+    it('its scroll keys are native: not row navigation, not the walker’s (they never reach the window)', () => {
+      const { req } = opened();
+      const reached: KeyboardEvent[] = [];
+      const spy = (e: KeyboardEvent) => reached.push(e);
+      window.addEventListener('keydown', spy);
+      for (const k of ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' ']) {
+        for (const shiftKey of k === ' ' ? [false, true] : [false]) {
+          const e = new KeyboardEvent('keydown', { key: k, shiftKey, bubbles: true, cancelable: true });
+          req.dispatchEvent(e);
+          expect(e.defaultPrevented, k).toBe(false); // the browser scrolls it
+          expect(document.activeElement, k).toBe(req); // the focus stays on the reader
+        }
+      }
+      expect(reached).toHaveLength(0);
+      // Tab is not swallowed: it reaches the page as ever (the browser moves the focus).
+      const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true });
+      req.dispatchEvent(tab);
+      expect(tab.defaultPrevented).toBe(false);
+      expect(reached).toHaveLength(1);
+      window.removeEventListener('keydown', spy);
+    });
+
+    it('Esc folds the request first, the focus on its disclosure; the next Esc shuts the list', () => {
+      const { chip, req } = opened();
+      const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      req.dispatchEvent(esc);
+      expect(esc.defaultPrevented).toBe(true);
+      expect(chip.summary().open).toBe(true);
+      expect(chip.root.querySelector<HTMLElement>('.ib-req')!.hidden).toBe(true);
+      expect(document.activeElement).toBe(chip.root.querySelector('.ib-more'));
+      document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      expect(chip.summary().open).toBe(false);
+    });
+
+    it('a redraw keeps the reader focused and where it was scrolled', () => {
+      const { chip, req, now } = opened();
+      req.scrollTop = 90;
+      now.t += 5 * 60_000; // the ages move: the list redraws
+      chip.set([entry('a', { reason: 'Report request', request }), entry('b'), entry('c')]); // and a worker comes in
+      const again = chip.root.querySelector<HTMLElement>('.ib-req')!;
+      expect(again).not.toBe(req); // it is a new element
+      expect(document.activeElement).toBe(again);
+      expect(again.scrollTop).toBe(90);
+    });
+  });
+
+  it('the Shift+N command opens the list with "Show the inbox" off, and the chip goes again when it closes (#215)', () => {
+    const { chip } = mount();
+    chip.enabled = false;
+    chip.set([entry('a')]);
+    expect(chip.root.hidden).toBe(true);
+    chip.openList(true); // a passive open (a notification's click) stays governed by the setting
+    expect(chip.summary().open).toBe(false);
+    expect(chip.openList(true, true)).toBe(true);
+    expect(chip.root.hidden).toBe(false);
+    expect(chip.summary().open).toBe(true);
+    expect(document.activeElement).toBe(rowsOf(chip)[0]);
+    chip.closeList();
+    expect(chip.summary()).toMatchObject({ shown: false, open: false });
+    // Nothing in the inbox: nothing opens, whatever the command.
+    chip.set([]);
+    expect(chip.openList(true, true)).toBe(false);
+    expect(chip.root.hidden).toBe(true);
+    // An entry that goes away while it is forced open takes the list with it.
+    chip.set([entry('a')]);
+    chip.openList(true, true);
+    chip.set([]);
+    expect(chip.root.hidden).toBe(true);
+    expect(chip.summary().open).toBe(false);
+  });
+
   it('a row’s click shuts the list and goes to that worker', () => {
     const { chip, go } = mount();
     chip.set([entry('a'), entry('b')]);

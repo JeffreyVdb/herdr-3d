@@ -271,7 +271,7 @@
 .ib-ask {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 2px 10px;
   padding: 0 8px 7px 33px;
   font-size: 12px;
@@ -280,8 +280,11 @@
   color: var(--text-on-ink-2);
 }
 .ib-more {
-  margin: 0;
-  padding: 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  margin: 0 0 0 -4px;
+  padding: 0 4px;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -294,6 +297,12 @@
 }
 .ib-more:hover {
   background: rgb(255 255 255 / 10%);
+}
+@media (pointer: coarse) {
+  .ib-more {
+    min-height: 44px;
+    padding: 0 8px;
+  }
 }
 .ib-more:focus-visible,
 .ib-req:focus-visible {
