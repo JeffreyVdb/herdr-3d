@@ -140,7 +140,7 @@ test('#215: a report request is labelled, readable in full, and stops counting o
   const id = (hire.data as { id: string }).id;
   await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
   await page.evaluate((t) => window.__h3d.simCrew({ step: 'report', summary: 'Implemented; head 3f9c2e1.', input_required: t, input_for: 'orchestrator' }), text);
-  const needsDesk = () => page.evaluate(() => window.__h3d.needs().some((n) => n.session === 'lab' && n.desk === 13));
+  const needsDesk = () => page.evaluate(() => window.__h3d.needs().some((n) => n.session === 'lab' && n.desk === 13 && n.reason === 'blocked'));
   await expect.poll(needsDesk, { timeout: 10_000 }).toBe(true);
   expect(await member(page, 13)).toMatchObject({ id, life: 'blocked', display: 'needs_you' });
 
@@ -154,19 +154,19 @@ test('#215: a report request is labelled, readable in full, and stops counting o
 
   // The inbox row opens the whole request (text after byte 500 included) with the keyboard.
   await page.locator('.ib-chip').click();
-  const more = page.locator('.ib-item', { has: page.locator('.ib-why', { hasText: 'Report request' }) }).locator('.ib-more');
+  const more = page.locator(`.ib-more[data-id="${id}"]`); // (the lobby's blocked UX reviewer has one too)
   await expect(more).toHaveAttribute('aria-expanded', 'false');
   await more.focus();
   await page.keyboard.press('Enter');
   await expect(more).toHaveAttribute('aria-expanded', 'true');
-  await expect(page.locator('.ib-req:not([hidden])')).toContainText('ORCHESTRATOR ACCEPTANCE of the existing evidence');
+  await expect(page.locator(`#ib-req-${id}`)).toContainText('ORCHESTRATOR ACCEPTANCE of the existing evidence');
   await shot(page, 'm215-report-request');
 
   // The orchestrator accepts it without resuming the worker: no alert, the real status, the note on the bar.
   await page.evaluate(() => window.__h3d.simCrew({ step: 'resolve', note: 'accepted as AC4 evidence' }));
   await expect.poll(needsDesk, { timeout: 10_000 }).toBe(false);
   expect(await member(page, 13)).toMatchObject({ id, life: 'reporting', display: 'done' });
-  await expect(page.locator('.ib-more')).toHaveCount(0);
+  await expect(more).toHaveCount(0);
   await expect(page.locator('.prompt .prompt-crew .crew-resolved')).toHaveText('Request resolved by orchestrator: accepted as AC4 evidence');
   await expect(page.locator('.prompt .prompt-crew .crew-ask')).toHaveCount(0);
   clean();

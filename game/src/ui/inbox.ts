@@ -90,6 +90,8 @@ export class InboxChip {
         if (!this.expanded.delete(mid)) this.expanded.add(mid);
         this.drawn = '';
         this.draw();
+        // The disclosure sits low in a list that scrolls: bring the text it opened into view.
+        if (this.expanded.has(mid)) this.rows.querySelector<HTMLElement>(`#ib-req-${CSS.escape(mid)}`)?.scrollIntoView?.({ block: 'nearest' });
         return;
       }
       const id = t?.closest<HTMLElement>('.ib-row')?.dataset.id;

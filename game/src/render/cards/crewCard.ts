@@ -46,9 +46,9 @@ export function crewLines(c: CrewView): string[] {
     const phase = [c.phase ? cap(c.phase) : null, passWords(c.pass ?? undefined)].filter(Boolean).join(' · ');
     if (phase) out.push(phase);
   } else {
-    const life = lifeWords(c);
+    // A report request is on the bubble's question line already (what it is, who decides).
+    const life = c.ask ? null : lifeWords(c);
     if (life) out.push(life);
-    if (c.askWho) out.push(c.askWho);
     if (c.resolved) out.push(c.resolved.line);
     if (c.summary) out.push(`Report: ${c.summary.replace(/\s+/g, ' ')}`);
   }

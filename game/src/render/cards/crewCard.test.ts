@@ -75,7 +75,7 @@ describe('crew cards (M6)', () => {
     const c = cardOf(viewOf([o, f], 'x'), true);
     expect(c).toMatchObject({ display: 'needs_you', task: 'Report request', ask: { choices: [], about: ['Report request · Asked of the orchestrator (Cog)'] } });
     expect(c.ask?.text).toBe(text); // the whole text is carried; the layout cuts its preview
-    expect(c.crew).toContain('Asked of the orchestrator (Cog)');
+    expect(c.crew ?? []).not.toContain('Report request'); // said once, on the question line
     expect(JSON.stringify(c)).not.toContain('Waiting for an answer');
     expect(compactOf(c).task).toContain('Report request · Asked of the orchestrator (Cog)');
     // No orchestrator: you.
