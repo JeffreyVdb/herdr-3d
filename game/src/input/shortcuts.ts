@@ -13,7 +13,7 @@
  * - Two bindings may not have the same chord in overlapping scopes (`SCOPE_PARENT`: a scope overlaps itself and its
  *   ancestors). Scopes of one level (`aim:worker`, `aim:desk`) may reuse a key: E means what you aim at.
  * - ⌘/Ctrl+P opens the command palette (#147) from every view, a field and a laptop included; `palette` on a binding
- *   makes it a row of that palette.
+ *   makes it a row of that palette. ⌘/Ctrl+Shift+Space opens the dictation bar (#213) the same way.
  * - Seated at a laptop every key but a few chords belongs to the terminal; those are listed (`readonly`, scope
  *   `seated`, kept in step with laptop/keys.ts by a test) and no seated key is a help key.
  */
@@ -146,6 +146,8 @@ export const BINDINGS = [
   // ---- on a floor or in the city ------------------------------------------------------------------
   { id: 'help', group: ['floor', 'city'], scope: 'any', keys: [{ key: '?' }], label: 'This shortcut list (over any dialog; not at a laptop or the whiteboard)', palette: { name: 'Keyboard shortcuts', aliases: ['help', 'keys', 'keyboard'] } },
   { id: 'palette', group: ['floor', 'city', 'dialogs'], scope: 'any', keys: [code('KeyP', { mod: true, typing: true })], label: 'The command palette: type to run a command, @ to jump to a floor (from every view, a text field and a laptop too)' },
+  // #213: the dictation bar, from every view like the palette. Space with Ctrl/⌘ and Shift: no browser keeps it, and a shell or TUI in the seated terminal has no use for it.
+  { id: 'dictate', group: ['floor', 'city', 'dialogs'], scope: 'any', keys: [code('Space', { mod: true, shift: true, typing: true })], label: 'The dictation bar: say, type or paste a command, Enter reads it (from every view, a text field, a dialog and a laptop too; again closes it)', palette: { name: 'Dictate a command', aliases: ['dictation', 'voice', 'speak', 'say', 'natural language', 'command bar'], where: 'anywhere' } },
   { id: 'help.field', group: 'dialogs', scope: 'any', keys: [{ key: '/', mod: true, typing: true }], label: 'The shortcut list, from inside a text field' },
   { id: 'next-need', group: ['floor', 'city'], scope: 'any', keys: [code('KeyN')], label: 'Next worker who needs you', palette: { name: 'Next who needs you', aliases: ['next', 'needs you', 'blocked'] } },
   { id: 'inbox', group: ['floor', 'city'], scope: 'any', keys: [code('KeyN', { shift: true })], label: 'Inbox list: who needs you or is done', palette: { name: 'Inbox', aliases: ['needs you', 'done', 'finished'] } },
@@ -203,6 +205,7 @@ export const BINDINGS = [
   { id: 'seat.stand', group: 'laptop', scope: 'seated', keys: [code('Escape')], label: 'Stand up', readonly: true },
   { id: 'seat.view', group: 'laptop', scope: 'seated', keys: [code('Escape', { ctrl: true })], label: 'Terminal or conversation', readonly: true },
   { id: 'seat.palette', group: 'laptop', scope: 'seated', keys: [code('KeyP', { mod: true })], label: 'The command palette (the terminal no longer gets Ctrl+P; ↑ is still previous history)', readonly: true },
+  { id: 'seat.dictate', group: 'laptop', scope: 'seated', keys: [code('Space', { mod: true, shift: true })], label: 'The dictation bar (the terminal does not get this chord)', readonly: true },
   { id: 'seat.overview', group: 'laptop', scope: 'seated', keys: [code('KeyO')], label: 'The floor overview, over the conversation (Esc comes back)', readonly: true },
   { id: 'seat.look', group: 'laptop', scope: 'seated', keys: [{ key: ',', ctrl: true }], label: 'The terminal’s preset and zoom controls', readonly: true },
   { id: 'seat.zoom', group: 'laptop', scope: 'seated', keys: [{ key: '=', ctrl: true }, { key: '-', ctrl: true }, { key: '0', ctrl: true }], show: [['Ctrl', '+'], ['Ctrl', '−'], ['Ctrl', '0']], label: 'Zoom in, out and back to 100%', readonly: true },

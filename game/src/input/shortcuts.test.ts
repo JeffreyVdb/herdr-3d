@@ -219,7 +219,7 @@ describe('the "At a laptop" group follows laptop/keys.ts (#124: seated keys are 
     expect(zoomKey(kd('-', { ctrlKey: true }))).toBe('zoom-out');
     expect(zoomKey(kd('0', { ctrlKey: true }))).toBe('zoom-reset');
     const seated = ALL.filter((b) => scopesOf(b).includes('seated'));
-    expect(seated.map((b) => b.id)).toEqual(['seat.stand', 'seat.view', 'seat.palette', 'seat.overview', 'seat.look', 'seat.zoom']);
+    expect(seated.map((b) => b.id)).toEqual(['seat.stand', 'seat.view', 'seat.palette', 'seat.dictate', 'seat.overview', 'seat.look', 'seat.zoom']);
     expect(seated.every((b) => b.readonly)).toBe(true);
     expect(seated.find((b) => b.id === 'seat.look')?.keys[0]).toMatchObject({ key: LOOK_KEY.key, ctrl: true });
     expect(bindingCaps(seated.find((b) => b.id === 'seat.look') as Binding, false)).toEqual([LOOK_KEY.label]);
@@ -280,6 +280,37 @@ describe('the command palette chord (#147)', () => {
       expect(b.keys.some((c) => c.code === 'Escape'), b.id).toBe(false);
       expect(scopesOf(b).some((s) => s.startsWith('aim:')), b.id).toBe(false);
     }
+  });
+});
+
+describe('the dictation bar chord (#213)', () => {
+  const kd = (key: string, o: Partial<KeyLike> = {}): KeyLike => ({ key, code: o.code ?? key, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, ...o });
+  const any = new Set<Scope>(['any']);
+  const space = (o: Partial<KeyEventLike>) => ev('Space', { key: ' ', ...o });
+
+  it('is ⌘⇧Space on a Mac and Ctrl+Shift+Space elsewhere, from a text field too, and not during a composition', () => {
+    expect(findBinding(space({ metaKey: true, shiftKey: true }), any, false, true)?.binding.id).toBe('dictate');
+    expect(findBinding(space({ ctrlKey: true, shiftKey: true }), any, true, false)?.binding.id).toBe('dictate');
+    // Without Shift (an input-source switch on some systems), with Alt, or the other platform's modifier: not it.
+    expect(findBinding(space({ ctrlKey: true }), any, true, false)).toBeNull();
+    expect(findBinding(space({ ctrlKey: true, shiftKey: true, altKey: true }), any, true, false)).toBeNull();
+    expect(findBinding(space({ metaKey: true, shiftKey: true }), any, true, false)).toBeNull();
+    expect(pressesBinding(space({ ctrlKey: true, shiftKey: true, isComposing: true }), 'dictate', false)).toBe(false);
+    expect(keyName('dictate', false)).toBe('Ctrl+Shift+Space');
+    expect(keyName('dictate', true)).toBe('⌘+Shift+Space');
+  });
+
+  it('is taken from the seated terminal, and the table says so', () => {
+    for (const mac of [false, true]) {
+      const e = mac ? { metaKey: true } : { ctrlKey: true };
+      expect(seatedKey(kd(' ', { code: 'Space', shiftKey: true, ...e }), mac), `mac ${mac}`).toEqual({ items: [], action: 'dictate', prevent: true });
+    }
+    // A plain Space and Ctrl+Space stay the pane's.
+    expect(seatedKey(kd(' ', { code: 'Space' }), false).action).toBeUndefined();
+    expect(seatedKey(kd(' ', { code: 'Space', ctrlKey: true }), false).action).toBeUndefined();
+    const row = ALL.find((b) => b.id === 'seat.dictate') as Binding;
+    expect(row.readonly).toBe(true);
+    expect(row.keys).toEqual((ALL.find((b) => b.id === 'dictate') as Binding).keys.map(({ typing: _t, ...c }) => c));
   });
 });
 

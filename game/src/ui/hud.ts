@@ -37,6 +37,8 @@ const ICON = {
   overview: '<rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="7.5" cy="9" r="1.1" fill="currentColor"/><circle cx="7.5" cy="12.5" r="1.1" fill="currentColor"/><circle cx="7.5" cy="16" r="1.1" fill="currentColor"/><path d="M10.5 9h6.5M10.5 12.5h5M10.5 16h6"/>',
   menu: '<path d="M4.5 7h15M4.5 12h15M4.5 17h15"/>',
   palette: '<circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4.5 4.5"/>',
+  /** #213: the dictation bar, a microphone. */
+  mic: '<rect x="9" y="3.5" width="6" height="10.5" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5v3"/>',
   hire: '<circle cx="9.5" cy="8" r="3.2"/><path d="M3.8 19.5c.6-3.4 2.8-5.3 5.7-5.3 1.4 0 2.6.4 3.6 1.2"/><path d="M18 13.5v6M15 16.5h6"/>',
 };
 
@@ -64,7 +66,7 @@ const KEYS: Array<[string, string, boolean]> = [
   ['X', 'Send home', true],
 ];
 
-export type HudAction = 'city' | 'issues' | 'prs' | 'overview' | 'overview.all' | 'battery' | 'buildings' | 'elevator' | 'hire' | 'palette';
+export type HudAction = 'city' | 'issues' | 'prs' | 'overview' | 'overview.all' | 'battery' | 'buildings' | 'elevator' | 'hire' | 'palette' | 'dictate';
 
 export interface PlanLabel {
   x: number;
@@ -107,6 +109,8 @@ export class Hud {
   private readonly menuCity = el('div', 'menu-sec');
   private readonly menuGame = el('div', 'menu-sec');
   private readonly paletteRow = el('button', 'btn menu-all', `${svg(ICON.palette)}<span>All commands…</span><i class="menu-key" aria-hidden="true"></i>`);
+  /** #213: the dictation bar, from every view (the mouse's way to it; the chord is the keyboard's). */
+  private readonly dictateRow = el('button', 'btn menu-all menu-dictate', `${svg(ICON.mic)}<span>Dictate a command…</span><i class="menu-key" aria-hidden="true"></i>`);
   private openAboutDialog: (() => void) | null = null;
   /** #92: shown while an AI model is set up but cannot be used (a rejected key, a missing part); a click opens Settings. */
   private readonly aiChip = el('button', 'ai-chip', '<i></i><span></span>');
@@ -177,7 +181,7 @@ export class Hud {
     this.menuFloor.append(this.hire, this.issues, this.prs, this.overview, this.elevator);
     this.menuCity.append(this.buildings, this.overviewAll);
     this.menuGame.append(this.settings, this.about, this.battery);
-    this.menu.append(this.menuFloor, this.menuCity, this.menuGame, this.paletteRow);
+    this.menu.append(this.menuFloor, this.menuCity, this.menuGame, this.dictateRow, this.paletteRow);
     this.refreshKeyTitles();
     this.menu.id = 'topbar-menu';
     this.menu.setAttribute('popover', 'auto');
@@ -189,6 +193,9 @@ export class Hud {
     this.menuBtn.setAttribute('aria-expanded', 'false');
     this.paletteRow.type = 'button';
     this.paletteRow.addEventListener('click', () => this.emit('palette'));
+    this.dictateRow.type = 'button';
+    this.dictateRow.setAttribute('aria-haspopup', 'dialog');
+    this.dictateRow.addEventListener('click', () => this.emit('dictate'));
     this.menu.addEventListener('toggle', (e) => {
       const open = (e as ToggleEvent).newState === 'open';
       this.menuBtn.setAttribute('aria-expanded', String(open));
@@ -807,6 +814,9 @@ export class Hud {
     // The caps the menu draws beside each row (the table's, as this keyboard labels them).
     for (const [b, id] of [[this.hire, 'hire'], [this.issues, 'issues'], [this.prs, 'prs'], [this.elevator, 'elevator'], [this.buildings, 'buildings'], [this.settings, 'settings'], [this.battery, 'battery']] as const) b.dataset.key = keyName(id);
     this.paletteRow.querySelector('.menu-key')?.setAttribute('data-key', keyName('palette'));
+    this.dictateRow.querySelector('.menu-key')?.setAttribute('data-key', keyName('dictate'));
+    this.dictateRow.title = withKey('Dictate a command: say, type or paste what to do (hiring for now)', 'dictate');
+    this.dictateRow.setAttribute('aria-keyshortcuts', keyName('dictate').replace('⌘', 'Meta').replace(/^Ctrl/, 'Control'));
     this.menuBtn.title = `Menu: everything you can do here (${keyName('palette')} searches it)`;
     this.issues.title = this.boardWhy ?? withKey('Issues: this floor’s board as a list', 'issues');
     this.prs.title = this.boardWhy ?? withKey('Pull requests: this floor’s open pull requests as a list', 'prs');

@@ -33,6 +33,8 @@ import { binding, findBinding, keyName, loadLayout, pressesBinding, type Dispatc
 import { typingIn } from './input/typing';
 import { ShortcutsDialog } from './ui/shortcutsDialog';
 import { Palette } from './ui/palette';
+import { DictationBar, type DictationReply } from './ui/dictation';
+import { followupLost, interpretOutcome, outcomeText } from './ui/dictationModel';
 import { paletteCommands, type PaletteCommand } from './world/palette';
 import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
@@ -257,6 +259,8 @@ export class App {
   readonly shortcuts: ShortcutsDialog;
   /** #147: the command palette (⌘/Ctrl+P), from every view. */
   readonly palette: Palette;
+  /** #213: the dictation bar (⌘/Ctrl+Shift+Space, the Menu's Dictate row), from every view. */
+  readonly dictation: DictationBar;
   /** M5: the worker N went to last (the next N goes on from there), and one it rides the elevator to. */
   private lastNeed: string | null = null;
   private pendingNeed: NeedItem | null = null;
@@ -354,6 +358,13 @@ export class App {
       online: () => this.conn.phase === 'live',
       run: (c, floor) => void this.runPaletteCommand(c, floor),
       goTo: (s) => void this.goToFloor(s),
+    });
+    this.dictation = new DictationBar(o.host, {
+      submit: (text) => this.interpretDictation(text),
+      pickFloor: (session, hire) => this.openDictatedReview(session, hire),
+      store: this.store,
+      here: () => this.hereSession(),
+      online: () => this.conn.phase === 'live',
     });
     // #216: the application UI theme (Quiet or Ubuntu), first, where the look of everything else is chosen.
     this.settings.addSection('appearance', 'Appearance', appearanceSection(this.themes.prefs), { store: 'browser' });
@@ -680,6 +691,7 @@ export class App {
     this.hud.on('city', () => void this.leaveFloor());
     this.hud.on('hire', () => this.openHire());
     this.hud.on('palette', () => this.togglePalette());
+    this.hud.on('dictate', () => this.openDictation());
     this.hud.on('buildings', () => this.openBuildings());
     this.hud.on('elevator', () => !this.transitioning && this.openElevator());
     this.hud.on('battery', () => this.toggleBattery());
@@ -749,6 +761,7 @@ export class App {
     this.changes.refresh();
     this.panels.refresh();
     this.palette.refresh(); // #147
+    this.dictation.refresh(); // #213
     this.hire.refresh();
     this.hireReview.refresh();
     this.sendHome.refresh();
@@ -1240,18 +1253,17 @@ export class App {
    * #212: the review dialog for a dictated hire on the floor you are on, at `desk` or the first free one. Nothing is sent:
    * the hire happens when the human presses Hire in it. False when the floor or desk cannot take a hire (a toast says why).
    */
-  openHireReview(interp: HireInterpretation, desk?: number): boolean {
-    const d = this.hireSeat(desk);
+  openHireReview(interp: HireInterpretation, desk?: number, session: string | null = this.hereSession()): boolean {
+    const d = this.hireSeat(desk, session);
     if (d === null) return false;
     this.walker.release();
     this.walker.stop();
     this.panels.close();
-    return this.hireReview.open(this.hereSession() as string, interp, d);
+    return this.hireReview.open(session as string, interp, d);
   }
 
-  /** The desk a hire opens for on the floor you are on (a toast says why not: null). */
-  private hireSeat(desk?: number): number | null {
-    const s = this.hereSession();
+  /** The desk a hire opens for on a floor (the one you are on unless `s` says), or null with a toast saying why not. */
+  private hireSeat(desk?: number, s: string | null = this.hereSession()): number | null {
     const seat = resolveHireDesk(s, s ? this.store.floorView(s) : null, s ? this.heldDesks(s) : new Set(), desk);
     if (!seat.ok) this.hud.toast(seat.msg, seat.ms);
     return seat.ok ? seat.desk : null;
@@ -1268,7 +1280,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.dictation.isOpen || this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -2433,6 +2445,7 @@ export class App {
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => this.onVisibility());
     window.addEventListener('keydown', (e) => this.onPaletteKey(e), true);
+    window.addEventListener('keydown', (e) => this.onDictateKey(e), true);
     window.addEventListener('keydown', (e) => this.onHelpKey(e), true);
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
@@ -2520,6 +2533,7 @@ export class App {
   /** What each binding of the table does (the compiler wants one for every id that is not only listed). */
   private readonly actions: Record<DispatchedId, (m: Match) => void> = {
     palette: () => this.togglePalette(), // #147: `onPaletteKey` takes the chord in the capture phase; this is the table's own entry
+    dictate: () => this.toggleDictation(), // #213: `onDictateKey` takes the chord the same way
     help: () => this.openShortcuts(),
     'help.field': () => this.openShortcuts(),
     'next-need': () => {
@@ -2629,12 +2643,89 @@ export class App {
   }
 
   /**
+   * #213: ⌘/Ctrl+Shift+Space, in the capture phase like the palette's chord, so it reaches the game from every view: the
+   * city, a floor, seated at a laptop (terminal or conversation: the pane never gets it), in a field and under a dialog,
+   * the hire review included (a dictated follow-up answers it). Again closes the bar. Not during an IME composition.
+   */
+  private onDictateKey(e: KeyboardEvent): void {
+    if (e.isComposing || !pressesBinding(e, 'dictate')) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.repeat) return;
+    this.toggleDictation();
+  }
+
+  toggleDictation(): void {
+    if (this.dictation.isOpen) this.dictation.close();
+    else this.openDictation();
+  }
+
+  /** #213: the dictation bar over whatever is up; held movement keys are let go and walking stops, as for the palette. */
+  openDictation(): void {
+    this.boardsPanel.cancelDrag();
+    this.walker.release();
+    this.walker.stop();
+    this.dictation.open(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+  }
+
+  /**
+   * #213: the bar's Enter. The text goes to the interpreter with the open review's proposal, if one is open (it owns it:
+   * the bar keeps no copy); the answer is routed. A hire with a review open is a follow-up, applied to that review as it
+   * was when the request went (`begin` / `apply`); without one it opens the review, on the floor you are on, or after the
+   * bar asked which. Everything else is the bar's line, with the text kept. Nothing here sends `worker.hire`.
+   */
+  private async interpretDictation(text: string): Promise<DictationReply> {
+    const ticket = this.hireReview.begin();
+    const pending = this.hireReview.pendingInterpretation();
+    const r = await this.send('hire.interpret', pending ? { text, pending } : { text });
+    const o = interpretOutcome(r);
+    if (o.kind !== 'hire') return { kind: 'say', text: outcomeText(o), error: o.kind === 'error' };
+    if (ticket) {
+      if (this.hireReview.apply(o.hire, ticket)) {
+        // The review has the keyboard back (it opened the bar), with the answer in it.
+        this.dictation.close();
+        return { kind: 'done' };
+      }
+      const same = this.hireReview.begin()?.epoch === ticket.epoch;
+      return { kind: 'say', text: followupLost(same && this.hireReview.summary()?.state === 'hiring' ? 'hiring' : 'closed'), error: true };
+    }
+    // (The bar is modal: a review cannot open under it meanwhile. Never a second one over it, silently.)
+    if (this.hireReview.isOpen) return { kind: 'say', text: 'A hire review is open already. Press Enter again to change it.', error: true };
+    const here = this.hereSession();
+    if (!here) return { kind: 'floor', hire: o.hire };
+    return this.openDictatedReview(here, o.hire);
+  }
+
+  /**
+   * #213: a dictated hire's review on `session`: the floor and desk are checked first (asleep, waking, full: the bar says
+   * so with the dialog's own words and keeps the text, nothing is sent); then the bar closes without handing the keyboard
+   * back, the modals go and you stand up, as for a palette command, the elevator takes you there when it is another floor,
+   * and the review opens at its first free desk.
+   */
+  private async openDictatedReview(session: string, hire: HireInterpretation): Promise<DictationReply> {
+    const seat = resolveHireDesk(session, this.store.floorView(session), this.heldDesks(session));
+    if (!seat.ok) return { kind: 'say', text: seat.msg, error: true };
+    if (this.transitioning) return { kind: 'say', text: 'Wait until you get there, then press Enter again.', error: false };
+    this.dictation.close(false);
+    if (!(await this.dismissOverlays()) || this.transitioning) return { kind: 'done' };
+    if (this.laptops.seated) this.laptops.stand(null, true);
+    if (this.hereSession() !== session) {
+      await this.enterFloor(session);
+      if (this.hereSession() !== session) return { kind: 'done' }; // the floor went meanwhile
+    }
+    this.openHireReview(hire, undefined, session);
+    return { kind: 'done' };
+  }
+
+  /**
    * #147: the palette picked `command` (`floor`: the floor chosen for it when it acts on one and you were not on one).
    * The modals and the whiteboard go first (as for a teleport) and a seat is left; then the floor, by the elevator;
    * then the very action its key would run.
    */
   private async runPaletteCommand(command: PaletteCommand, floor: string | null): Promise<void> {
     if (this.transitioning || !(await this.dismissOverlays()) || this.transitioning) return;
+    // #213: the bar answers wherever you are, a seat included: nothing to stand up for.
+    if (command.id === 'dictate') return this.openDictation();
     if (this.laptops.seated) this.laptops.stand(null, true);
     if (floor !== null && this.hereSession() !== floor) {
       await this.enterFloor(floor);

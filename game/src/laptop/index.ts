@@ -798,8 +798,8 @@ export class Laptops {
       this.zoomBy(k.action);
       return true;
     }
-    // #147: the palette's chord is the game's (its capture-phase listener opens it): nothing is sent to the pane.
-    if (k.action === 'palette') {
+    // #147: the palette's chord is the game's (its capture-phase listener opens it): nothing is sent to the pane. #213: so is the dictation bar's.
+    if (k.action === 'palette' || k.action === 'dictate') {
       e.preventDefault();
       return true;
     }
