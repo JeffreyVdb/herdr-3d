@@ -3200,6 +3200,37 @@
   color: var(--text);
 }
 
+/*
+ * A short screen (the laptop's screen at 200% browser zoom is some 140px tall): the strip's 32 / 36px controls must not
+ * take the screen. Nothing is dropped and nothing shrinks: the strip keeps to one row that scrolls sideways (room above
+ * and below for the focus ring), the timeline keeps half the screen, and the screen itself scrolls when the strip, a
+ * banner, the timeline and the prompt box are more than it holds, so the conversation and the prompt box are always
+ * reached. Decisions #216 row 25.
+ */
+:root[data-ui-theme='ubuntu'] .tx {
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+@container tx (max-height: 300px) {
+  :root[data-ui-theme='ubuntu'] .tx .tx-bar {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-block: 5px;
+    scroll-padding-inline: 12px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+  }
+  :root[data-ui-theme='ubuntu'] .tx .tx-bar > * {
+    flex: none;
+  }
+  :root[data-ui-theme='ubuntu'] .tx:not([data-tight]) .tx-main {
+    min-height: 50cqh;
+  }
+}
+
 /* Touch: 44px targets. */
 @media (pointer: coarse) {
   :root[data-ui-theme='ubuntu'] .tx .tx-sys-toggle,
