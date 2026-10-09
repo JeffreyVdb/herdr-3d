@@ -252,7 +252,7 @@ test('Ubuntu: a table of box drawing stays lined up at 70, 100 and 200 %, and th
   // glyph that is not the font's own inside its cell, so one a half wider than a cell would be squeezed).
   const adv = await tx.evaluate((e) => {
     const g = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
-    g.font = `28px ${getComputedStyle(e).getPropertyValue('--font-mono')}`;
+    g.font = `28px ${getComputedStyle(e).getPropertyValue('--tx-mono')}`;
     return { stack: g.font, M: g.measureText('M').width, sym: ['→', '●', '◆', '≤'].map((c) => g.measureText(c).width) };
   });
   for (const [i, w] of adv.sym.entries()) expect(Math.abs(w - adv.M), `canvas: symbol ${i} ${w} vs M ${adv.M} (${adv.stack})`).toBeLessThanOrEqual(0.5);

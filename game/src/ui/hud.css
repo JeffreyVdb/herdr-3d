@@ -1173,9 +1173,12 @@ body {
 }
 :root[data-ui-theme='ubuntu'] .floor-plate {
   border: 1px solid var(--action-border);
+  /* `.hud button { color: inherit }` (0,1,1) out-ranks `.floor-plate`'s own colour: the dark label on the orange is set here, (0,3,0). */
+  color: var(--floor-plate-text);
 }
 :root[data-ui-theme='ubuntu'] .floor-plate[data-kind='where'] {
   border-color: var(--border);
+  color: var(--accent-text);
 }
 
 /* Toasts: info, warning and error each carry a drawn sign and the message; orange stays for actions, so info is a raised plate with an accent ring. */

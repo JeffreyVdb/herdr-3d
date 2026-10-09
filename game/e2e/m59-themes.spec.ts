@@ -108,8 +108,9 @@ async function checkFonts(page: Page, tx: Locator, id: Id): Promise<void> {
   }
   // No ligatures in code (JetBrains Mono's are contextual alternates).
   expect(await tx.locator('.tx-out').first().evaluate((e) => getComputedStyle(e).fontVariantLigatures)).toBe('none');
-  // The transcript's mono reaches the limits widget (every DOM monospace); the HUD keeps Recursive.
-  expect(await family(page.locator('.lm-pct'))).toContain(mono);
+  // #216: the transcript's mono stays in the transcript. The limits widget's numbers are the shell's (Quiet UI: JetBrains Mono), whatever the preset; the HUD keeps Recursive.
+  expect(await family(page.locator('.lm-pct'))).toContain('JetBrains Mono Variable');
+  if (mono !== 'JetBrains Mono Variable') expect(await family(page.locator('.lm-pct'))).not.toContain(mono);
   expect(await page.locator('.hud').first().evaluate((e) => getComputedStyle(e).fontFamily)).toContain('Recursive');
   // The fonts are really in (not the fallback).
   expect(await page.evaluate((f) => document.fonts.check(`16px "${f.mono}"`) && document.fonts.check(`16px "${f.prose}"`), FAMILY[id])).toBe(true);

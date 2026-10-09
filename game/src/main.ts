@@ -186,6 +186,10 @@ export interface H3DDebug {
   openBuildings(): void;
   /** M3: opens a floor's settings panel. */
   openSettings(session: string): void;
+  /** #216: shows a toast of that kind (the UI theme's coverage and screenshots). */
+  toast(message: string, kind?: 'info' | 'warn' | 'error', ms?: number): void;
+  /** #216: picks the application UI theme as Settings → Appearance does (the live-switch tests). */
+  setUiTheme(id: 'quiet' | 'ubuntu'): void;
   /** M3: what the open panel shows, null when none is open; M5: else the prompt overlay's, else the Changes panel's. */
   panel(): PanelSummary | PromptSummary | ChangesSummary | null;
   /** M3: commands sent to the bridge so far, with their result once answered. */
@@ -461,6 +465,8 @@ const h3d: H3DDebug = {
   openElevator: (b) => (b === undefined ? app?.openElevator() : app?.openElevator(b)),
   openBuildings: () => app?.openBuildings(),
   openSettings: (s) => app?.panels.openSettings(s),
+  toast: (message, kind = 'info', ms = 600_000) => app?.hud.toast(message, ms, kind),
+  setUiTheme: (id) => app?.themes.prefs.setUiTheme(id),
   panel: () => app?.panels.summary() ?? app?.prompt.summary() ?? app?.changes.summary() ?? null,
   sent: () => structuredClone(app?.sent ?? []),
   floorPoint: (s) => app?.floorPoint(s) ?? null,

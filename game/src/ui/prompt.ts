@@ -309,7 +309,7 @@ export class PromptOverlay {
     const close = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Close');
     const send = h(
       'button',
-      { class: 'btn btn--primary', type: 'submit', form: 'prompt-form', 'data-key': 'send', 'aria-disabled': why ? 'true' : null, title: why },
+      { class: 'btn btn--primary', type: 'submit', form: 'prompt-form', 'data-key': 'send', 'aria-disabled': why ? 'true' : null, 'aria-busy': this.state === 'sending' || this.state === 'checking' ? 'true' : null, title: why },
       this.state === 'sending' ? 'Sending…' : this.state === 'checking' ? 'Checking…' : `Send to ${this.name}`,
     );
     this.actions.replaceChildren(close, send);

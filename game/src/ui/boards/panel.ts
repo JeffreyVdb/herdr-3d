@@ -654,7 +654,7 @@ export class BoardsPanel {
             'div',
             { class: 'bd-comment-actions' },
             h('span', { class: 'field-hint' }, h('kbd', {}, 'Ctrl'), '+', h('kbd', {}, 'Enter'), ' posts it.'),
-            h('button', { class: 'btn', 'data-key': 'comment', onclick: () => void this.postComment(), 'aria-disabled': this.busy ? 'true' : null }, this.busy === 'comment' ? 'Posting…' : 'Comment'),
+            h('button', { class: 'btn', 'data-key': 'comment', onclick: () => void this.postComment(), 'aria-disabled': this.busy ? 'true' : null, 'aria-busy': this.busy === 'comment' ? 'true' : null }, this.busy === 'comment' ? 'Posting…' : 'Comment'),
           ),
         ),
       );
@@ -824,7 +824,7 @@ export class BoardsPanel {
         'div',
         { class: 'bd-confirm-actions' },
         h('button', { class: 'btn', 'data-key': 'close-cancel', onclick: () => ((this.closing = null), this.renderItem()) }, 'Keep it open'),
-        h('button', { class: 'btn btn--danger', 'data-key': 'close-confirm', 'aria-disabled': this.busy ? 'true' : null, onclick: () => void this.closeIssue(card) }, this.busy === 'close' ? 'Closing…' : `Close ${card.key}`),
+        h('button', { class: 'btn btn--danger', 'data-key': 'close-confirm', 'aria-disabled': this.busy ? 'true' : null, 'aria-busy': this.busy === 'close' ? 'true' : null, onclick: () => void this.closeIssue(card) }, this.busy === 'close' ? 'Closing…' : `Close ${card.key}`),
       ),
     );
   }
@@ -977,7 +977,7 @@ export class BoardsPanel {
         'div',
         { class: 'bd-confirm', role: 'group', 'aria-label': `Merge ${pr.key}` },
         h('p', {}, `Merge ${pr.key} into ${pr.base_branch ?? 'its base'} (${how})? This can’t be undone from here.`),
-        h('div', { class: 'bd-confirm-actions' }, cancel, h('button', { class: 'btn btn--danger', 'data-key': 'merge-confirm', 'aria-disabled': this.busy ? 'true' : null, onclick: () => void this.mergeNow(pr, m, false) }, this.busy === 'merge' ? 'Merging…' : `Merge ${pr.key}`)),
+        h('div', { class: 'bd-confirm-actions' }, cancel, h('button', { class: 'btn btn--danger', 'data-key': 'merge-confirm', 'aria-disabled': this.busy ? 'true' : null, 'aria-busy': this.busy === 'merge' ? 'true' : null, onclick: () => void this.mergeNow(pr, m, false) }, this.busy === 'merge' ? 'Merging…' : `Merge ${pr.key}`)),
       );
     }
     if (m.step === 'override1') {
@@ -992,7 +992,7 @@ export class BoardsPanel {
       'div',
       { class: 'bd-confirm bd-confirm--warn', role: 'group', 'aria-label': `Really merge ${pr.key} anyway` },
       h('p', {}, h('b', {}, `Really merge ${pr.key} (${how}) although it is not ready?`), ' Second confirmation: this is recorded in the audit log as an override.'),
-      h('div', { class: 'bd-confirm-actions' }, cancel, h('button', { class: 'btn btn--danger', 'data-key': 'merge-override-2', 'aria-disabled': this.busy ? 'true' : null, onclick: () => void this.mergeNow(pr, m, true) }, this.busy === 'merge' ? 'Merging…' : `Merge ${pr.key} anyway`)),
+      h('div', { class: 'bd-confirm-actions' }, cancel, h('button', { class: 'btn btn--danger', 'data-key': 'merge-override-2', 'aria-disabled': this.busy ? 'true' : null, 'aria-busy': this.busy === 'merge' ? 'true' : null, onclick: () => void this.mergeNow(pr, m, true) }, this.busy === 'merge' ? 'Merging…' : `Merge ${pr.key} anyway`)),
     );
   }
 

@@ -833,7 +833,7 @@ export class HireDialog {
     const label = this.f.label.trim() || this.prep?.label || '';
     const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, this.state === 'hiring' ? 'Close' : 'Cancel');
     const text = this.state === 'hiring' ? 'Hiring…' : label ? `Hire ${label}` : 'Hire';
-    const hire = h('button', { class: 'btn btn--primary', type: 'submit', form: 'hire-form', 'data-key': 'hire', 'aria-disabled': blocker ? 'true' : null, title: blocker }, text);
+    const hire = h('button', { class: 'btn btn--primary', type: 'submit', form: 'hire-form', 'data-key': 'hire', 'aria-disabled': blocker ? 'true' : null, 'aria-busy': this.state === 'hiring' ? 'true' : null, title: blocker }, text);
     const had = document.activeElement === this.hireBtn;
     this.hireBtn = hire;
     const retry = this.state === 'failed' && !this.host.unsupported('hire.prepare') ? h('button', { class: 'btn', 'data-key': 'retry', onclick: () => this.retry() }, 'Try again') : null;
