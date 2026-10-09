@@ -38,9 +38,11 @@ test('the review opens collapsed or open as its values say, and only Hire hires'
 
   const sections = async () => ((await dialog(page)) as { sections: Array<{ id: string; open: boolean }> }).sections;
   expect((await sections()).map((s) => [s.id, s.open])).toEqual([['agent', false], ['effort', true], ['task', false], ['where', false]]);
-  const hire = page.getByRole('button', { name: /^Hire/ });
+  // (The hire dialog's own, closed, is in the page too: stay inside the review.)
+  const review = page.locator('.desk-dlg--review');
+  const hire = review.locator('[data-key="hire"]');
   await expect(hire).toBeDisabled();
-  await expect(page.locator('[data-pick="effort"] input:checked')).toHaveCount(0);
+  await expect(review.locator('[data-pick="effort"] input:checked')).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('review-desktop.png') });
 
   // Opening, folding and Enter in fields: no hire.
@@ -54,7 +56,7 @@ test('the review opens collapsed or open as its values say, and only Hire hires'
   expect(await hires(page)).toHaveLength(0);
 
   // The effort is the human's to pick; then Hire is possible and sends once.
-  const levels = page.locator('[data-pick="effort"] label');
+  const levels = review.locator('[data-pick="effort"] label');
   await levels.first().click();
   await expect(hire).toBeEnabled();
   await page.setViewportSize({ width: 390, height: 780 });
@@ -64,7 +66,7 @@ test('the review opens collapsed or open as its values say, and only Hire hires'
   await hire.click({ force: true }).catch(() => {});
   await expect.poll(async () => (await hires(page)).length).toBe(1);
   const sent = (await hires(page))[0] as { args: Record<string, unknown> };
-  expect(sent.args).toMatchObject({ session: 'pastry', desk_index: 14, harness: form.harness, model: form.model, prompt: 'fix the login bug.' });
+  expect(sent.args).toMatchObject({ session: 'pastry', desk_index: 14, harness: form.harness, model: form.model, prompt: 'fix the login bug.\n' }); // (Enter in the task added a line, and sent nothing)
   expect(typeof sent.args.effort).toBe('string');
   expect(await hires(page)).toHaveLength(1);
   clean();
