@@ -993,3 +993,16 @@ Code: `internal/codexapp/watch.go` (`SupportedLines`), `launch.go` (`ServerFeatu
 | 4 | The warm re-attach gap (#186 row 8) | Still on 0.162.0; accepted as on 0.161. `MixedHarness` expects the loss on 0.161.x and 0.162.x, strict on 0.160.x. |
 | 5 | A wake refused `agent_pane_busy` | **Not part of this change.** Most bridge runs today failed a wake because herdr counts a zombie of the user's tide prompt in the pane's foreground group (findings §14); it is not a Codex change (0.162 passed it twice). A 15 s retry was tried and did not help, so it was dropped. Its own issue. |
 | 6 | The fixture's own servers | Start with the same override, placed after `--listen` so the tests' process lookups (`app-server --listen unix://…`) still match. |
+
+## 2026-10-09 — #210 (phase 1 of #209): Hire in background and the hire coordinator
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | The setting | Settings → Display → "Hire in background", right after "Go to a new hire after hiring" (`HirePrefs.hireInBackground`, `ui/hirePrefs.ts`, key `h3d.hire.background`, browser-stored). **Off by default**; only "on" is stored. Off is the existing foreground hire, unchanged. |
+| 2 | One path for every hire | `HireCoordinator` (`ui/hireCoordinator.ts`, no DOM) runs a hire from Hire to its outcome: hold the desk, resolve the first task (images upload), send `worker.hire` once, let the desk go. The dialog's foreground and background hires both go through it; the app owns one instance (`App.hires`) for later callers (dictation, #209). |
+| 3 | The snapshot | The dialog hands it what was reviewed when Hire was pressed: the args (copied and frozen), the draft (its `resolve()` is called at once, so later edits are not sent) and the background setting, read once. A setting changed on the way does not change how that hire ends. |
+| 4 | The desk is held first | The reservation is taken before the images upload (for the foreground too): the old order left the desk free while uploads ran. A hire that ends any way lets go of its own hold only. |
+| 5 | Background outcome | The dialog closes at once, the player stays and plays on. Success: exactly **"Agent spawned successfully."** and one `spawned` tone (`audio.playUi`, a short G5, under the master mute and volume), never through the inbox, its pulses, desktop notifications or pings, never a go-to. A Codex fallback warning is its own warn toast 3.8 s later (the HUD has one toast slot). |
+| 6 | Background failures | An image that did not upload, a refusal, or `prompted: false` (the worker is there, its task is not) is one error toast naming the desk; the draft stays for a retry or a prompt by hand. A timeout or a dropped connection is an outcome-unknown warning: the hire may have happened, so it is never sent again. |
+| 7 | Once | A submission has a key (the dialog and its generation): a second Enter while it runs is the same operation, and each operation says its outcome at most once. |
+| 8 | Simulator | `simfail=prompt_undelivered` acks the next hire with a first task `prompted: false`; `simclock=manual` holds a hire's ack until `sim.advance` (e2e `h210-hire-background.spec.ts`). |
