@@ -16,6 +16,7 @@ import type { ArrivalInfo } from './render/arrivals';
 import type { CrewInfo } from './render/office';
 import type { HireSummary } from './ui/hire';
 import type { ReviewSummary } from './ui/hireReview';
+import type { DictationSummary } from './ui/dictation';
 import type { HireInterpretation } from './net/protocol';
 import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
@@ -204,10 +205,16 @@ export interface H3DDebug {
   openHire(desk?: number): void;
   /** #212: opens the review of a dictated hire (a fixture interpretation until phase 4); nothing is sent until its Hire is pressed. */
   openHireReview(interp: HireInterpretation, desk?: number): boolean;
+  /** #213: opens the dictation bar (as its chord does: movement let go, the keyboard's place remembered). */
+  openDictation(): void;
+  /** #213: what the dictation bar shows (state, text, its line, the floor list), null when it is closed. */
+  dictation(): DictationSummary | null;
+  /** #213: the fixture simulator's `sim.interpret` (`timeout_ms`: how long its `hire.interpret` waits for the LLM). */
+  simInterpret(args: { timeout_ms?: number }): Promise<{ ok: boolean; code?: string }>;
   /** M4: opens the send-home dialog for a worker. */
   openSendHome(workerId: string): void;
   /** M4: what the open hire / send-home dialog shows, null when neither is open; M6: the presets panel (on top), else the start-run dialog first. */
-  dialog(): HireSummary | ReviewSummary | SendHomeSummary | StartRunSummary | PresetsSummary | OpenPrSummary | null;
+  dialog(): HireSummary | ReviewSummary | SendHomeSummary | StartRunSummary | PresetsSummary | OpenPrSummary | DictationSummary | null;
   /** M6: the start-run dialog for a floor (default: yours) and desk (default: its first free one), as the top bar's Run and M7 open it. */
   openStartRun(o?: Partial<StartRunOptions>): void;
   /** M6: the team presets panel. */
@@ -477,8 +484,16 @@ const h3d: H3DDebug = {
   connection: () => ({ phase: app?.conn.phase ?? 'stopped', epoch: app?.client.resume.epoch ?? null }),
   openHire: (desk) => app?.openHire(desk),
   openHireReview: (interp, desk) => app?.openHireReview(interp, desk) ?? false,
+  openDictation: () => app?.openDictation(),
+  dictation: () => app?.dictation.summary() ?? null,
+  simInterpret: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.interpret` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.interpret' as CommandName, args as never);
+    return r.ok ? { ok: true } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   openSendHome: (id) => app?.openSendHome(id),
-  dialog: () => app?.presetsPanel.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.hireReview.summary() ?? app?.sendHome.summary() ?? null,
+  dialog: () => app?.presetsPanel.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.hireReview.summary() ?? app?.sendHome.summary() ?? app?.dictation.summary() ?? null,
   openStartRun: (o) => app?.openStartRun(o),
   openPresets: () => app?.openPresets(),
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],

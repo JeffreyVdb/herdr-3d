@@ -207,6 +207,14 @@ export class HireReviewDialog {
     return true;
   }
 
+  /**
+   * #213: the proposal this review holds, for a dictated follow-up ("high") to go back to the interpreter with as
+   * `pending`. The review owns it: closed (Cancel, Esc, a hire that landed), there is none.
+   */
+  pendingInterpretation(): HireInterpretation | null {
+    return this.dialog.open ? this.pending : null;
+  }
+
   /** The state of the review now, for a request to the interpreter: its answer goes to `apply` with this ticket. */
   begin(): ReviewTicket | null {
     return this.dialog.open ? { epoch: this.epoch, rev: this.choice.rev } : null;

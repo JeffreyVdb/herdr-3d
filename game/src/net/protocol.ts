@@ -565,6 +565,19 @@ export interface HireInterpretation {
   ready_for_review: boolean;
 }
 
+/**
+ * #213: `hire.interpret`'s ack (internal/hireintent Result). `intent` with `hire` (a proposal for the review) or alone
+ * (`unsupported`, `unclear`; `reason: "multiple"` with more than one action); or an operational `error` with `text`
+ * kept and nothing else. The command itself fails only on its args (`bad_request`).
+ */
+export interface HireInterpretAck {
+  text: string;
+  intent?: 'hire' | 'unsupported' | 'unclear';
+  reason?: 'multiple';
+  hire?: HireInterpretation;
+  error?: { code: string; message: string };
+}
+
 /** M4: `worker.fire.prepare` ack: what the send-home dialog shows. */
 export interface FirePrepare {
   name: string;
@@ -611,6 +624,8 @@ export interface CommandArgs {
   'floor.settings.set': { session: string } & SettingsPatch;
   /** M4 */
   'hire.prepare': { session: string; cwd?: string };
+  /** #213: a dictated sentence to a hire proposal (docs/protocol.md "Hire interpretation"); a follow-up carries the review's proposal as `pending`. Acks `HireInterpretAck`. */
+  'hire.interpret': { text: string; pending?: HireInterpretation };
   'worker.hire': {
     session: string;
     desk_index: number;

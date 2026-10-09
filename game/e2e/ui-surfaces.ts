@@ -564,6 +564,31 @@ export const SURFACES: Surface[] = [
     root: 'dialog.palette',
   },
   {
+    // #213: the dictation bar on a floor, a dictated command (two lines) in its box.
+    name: 'dictation',
+    fixture: 'demo-m4',
+    open: async (page) => {
+      await onFloor(page);
+      await page.keyboard.press('Control+Shift+Space');
+      await expect(page.locator('dialog.dictation')).toBeVisible();
+      await page.locator('dialog.dictation textarea').fill('Hire a Claude agent on Sonnet 5.5 with high effort.\nTask: rework the header so it no longer overlaps the logo on mobile.');
+    },
+    root: 'dialog.dictation',
+  },
+  {
+    // An error answer: no LLM is set up, so the interpreter is not ready; the text stays and the line says what to do.
+    name: 'dictation-error',
+    fixture: 'demo-m4',
+    open: async (page) => {
+      await page.keyboard.press('Control+Shift+Space');
+      const field = page.locator('dialog.dictation textarea');
+      await field.fill('Hire an agent to fix the login bug.');
+      await field.press('Enter');
+      await expect(page.locator('dialog.dictation .dict-status')).toHaveAttribute('data-tone', 'error');
+    },
+    root: 'dialog.dictation',
+  },
+  {
     // A floor's settings: a long form in the panel, its Save bar sticky at the foot.
     name: 'floor-settings',
     fixture: 'demo-m6',

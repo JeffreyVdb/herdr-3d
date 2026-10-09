@@ -19,7 +19,8 @@ export const NARROW = '(max-width: 760px)';
 // floor overview (ui/overview.ts), which fills the viewport. #147: the command palette is a small dialog but always the topmost
 // modal (it opens over any view, any other dialog): the plate steps out of it into the edge tab (the palette keeps the gutter
 // the tab needs, palette.css), and the tab, which lives inside the topmost screen, is the palette's own, so it stays clickable.
-export const PALETTE = 'dialog.palette[open]';
+// #213: so is the dictation bar, the palette's sibling (dictation.css keeps the same gutter).
+export const PALETTE = 'dialog.palette[open], dialog.dictation[open]';
 export const SCREEN = `dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], dialog.shortcuts[open], .wb[open], .ov[open], ${PALETTE}`;
 
 /**

@@ -969,6 +969,14 @@ body {
 .menu-all .menu-key {
   order: 3;
 }
+/* #213: Dictate a command… sits over All commands…: one divider above the pair. */
+.menu-dictate {
+  border-radius: 0;
+}
+.menu-dictate + .menu-all {
+  border-top: 0;
+  margin-top: 0;
+}
 .topbar-menu .btn--off,
 .topbar-menu [aria-disabled='true'] {
   opacity: 0.5;
