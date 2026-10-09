@@ -973,7 +973,7 @@ for (const size of [{ name: '1280x720', ...DESKTOP }, { name: '390x844', ...NARR
       await settle(page);
       await page.keyboard.press('Shift');
       const bad: string[] = [];
-      const { n, sticky } = await page.evaluate((root) => {
+      const n = await page.evaluate((root) => {
         const els = [...document.querySelectorAll(`:is(${root}) :is(button, a[href], input, select, textarea, [contenteditable="true"], [tabindex="0"], [role="button"], [role="radio"], [role="tab"], [role="option"])`)] as HTMLElement[];
         (window as unknown as { __focusables: HTMLElement[] }).__focusables = els.filter((e) => {
           const r = e.getBoundingClientRect();
@@ -981,12 +981,13 @@ for (const size of [{ name: '1280x720', ...DESKTOP }, { name: '390x844', ...NARR
           return r.width > 3 && r.height > 3 && cs.visibility !== 'hidden' && cs.display !== 'none' && !(e as HTMLButtonElement).disabled && e.getAttribute('aria-hidden') !== 'true' && !e.closest('[inert], [hidden]');
         });
         (window as unknown as { __sticky: Element[] }).__sticky = [...document.querySelectorAll('*')].filter((x) => getComputedStyle(x).position === 'sticky');
-        return { n: (window as unknown as { __focusables: HTMLElement[] }).__focusables.length, sticky: (window as unknown as { __sticky: Element[] }).__sticky.length };
+        return (window as unknown as { __focusables: HTMLElement[] }).__focusables.length;
       }, s.root);
       test.skip(n === 0, `${name} has no operable widget of its own (its bars are other surfaces')`);
-      // Forwards (Tab), and where a sticky bar could lie over a ring scrolled up to it, backwards too (Shift+Tab).
+      // Forwards (Tab), then backwards (Shift+Tab): scrolling up brings a widget in at a scroller's top edge, under a
+      // sticky heading if there is one.
       const order = [...Array(Math.min(n, 150)).keys()];
-      for (const i of sticky ? [...order, ...order.slice(0, -1).reverse()] : order) {
+      for (const i of [...order, ...order.slice(0, -1).reverse()]) {
         const got = await page.evaluate(async (i) => {
           const e = (window as unknown as { __focusables: HTMLElement[] }).__focusables[i]!;
           e.scrollIntoView({ block: 'nearest' });

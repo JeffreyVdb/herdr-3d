@@ -564,6 +564,18 @@ export const SURFACES: Surface[] = [
     root: 'dialog.palette',
   },
   {
+    // A floor's settings: a long form in the panel, its Save bar sticky at the foot.
+    name: 'floor-settings',
+    fixture: 'demo-m6',
+    open: async (page) => {
+      await enter(page, 'lab');
+      await page.evaluate(() => window.__h3d.openElevator());
+      await page.getByRole('button', { name: 'Settings for lab' }).click();
+      await expect(page.locator('dialog.panel h2')).toHaveText('Floor settings');
+    },
+    root: 'dialog.panel',
+  },
+  {
     // One floor's overview: its first row is a worker's, at the top of the scrolling board.
     name: 'overview-floor',
     fixture: 'demo-m6',
