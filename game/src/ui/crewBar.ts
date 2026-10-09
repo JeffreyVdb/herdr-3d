@@ -1,6 +1,6 @@
 import './crew.css';
 import { crewAsk, crewTag } from '../render/cards/crewCard';
-import { passWords, type CrewView } from '../world/crew';
+import { passWords, REPORT_REQUEST, type CrewView } from '../world/crew';
 import type { WorkerView } from '../world/store';
 import { h } from './dom';
 
@@ -15,12 +15,19 @@ import { h } from './dom';
 export function crewBarKey(w: WorkerView): string[] {
   const c = w.crew;
   if (!c) return [];
-  return [crewTag(c).text, crewTag(c).color, c.issue ?? '', c.run ?? '', c.stamp?.text ?? '', crewAsk(c)?.text ?? '', c.summary ?? '', c.life ?? ''];
+  return [crewTag(c).text, crewTag(c).color, c.issue ?? '', c.run ?? '', c.stamp?.text ?? '', crewAsk(c)?.text ?? '', c.askWho ?? '', c.resolved?.line ?? '', c.summary ?? '', c.life ?? ''];
 }
 
-function report(c: CrewView): { text: string; cls: string } | null {
+function report(c: CrewView): { text: string; cls: string; full?: string } | null {
+  // #215: a report's request says what it is and who decides, then the request; the whole text is the title (and
+  // the label), the inbox row opens it in full.
+  if (c.ask && !c.overCap) {
+    const head = `${REPORT_REQUEST} · ${c.askWho ?? ''}`;
+    return { text: `${head} — ${c.ask.replace(/\s+/g, ' ')}`, cls: 'crew-ask', full: `${head}\n${c.ask}` };
+  }
   const ask = crewAsk(c);
   if (ask) return { text: ask.text, cls: 'crew-ask' };
+  if (c.resolved) return { text: c.resolved.line, cls: 'crew-resolved' };
   if (c.role === 'orch') {
     const p = [c.phase, passWords(c.pass ?? undefined)].filter(Boolean).join(' · ');
     return p ? { text: p, cls: 'crew-phase' } : null;
@@ -41,7 +48,7 @@ export function crewLine(w: WorkerView): HTMLElement | null {
   if (c.run) line.append(h('span', { class: 'crew-run', title: `write-code run ${c.run}` }, `run ${c.run}`));
   if (c.stamp) line.append(h('span', { class: `crew-stamp crew-stamp--${c.stamp.tone}` }, c.stamp.text));
   const r = report(c);
-  if (r) line.append(h('span', { class: r.cls, title: r.text }, r.text));
+  if (r) line.append(h('span', { class: r.cls, title: r.full ?? r.text }, r.text));
   return line;
 }
 
@@ -50,5 +57,5 @@ export function crewAria(w: WorkerView): string {
   const c = w.crew;
   if (!c) return '';
   const r = report(c);
-  return [crewTag(c).text, c.issue ?? (c.ticket ? `ticket ${c.ticket}` : null), c.run ? `run ${c.run}` : null, c.stamp?.text, r?.text].filter(Boolean).join(' · ');
+  return [crewTag(c).text, c.issue ?? (c.ticket ? `ticket ${c.ticket}` : null), c.run ? `run ${c.run}` : null, c.stamp?.text, r?.full?.replace('\n', ': ') ?? r?.text].filter(Boolean).join(' · ');
 }

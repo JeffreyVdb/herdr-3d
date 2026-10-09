@@ -34,11 +34,46 @@ export function crewRole(w: Pick<Worker, 'role' | 'label'>): CrewRole | null {
 export const isFreelancer = (r: CrewRole | null): r is Exclude<CrewRole, 'orch'> => r !== null && r !== 'orch';
 
 /** A ready report's `input_required`, trimmed; null when there is none. */
-export function inputRequired(r: WorkerReport | undefined): string | null {
+function requestText(r: WorkerReport | undefined): string | null {
   if (!r || r.state !== 'ready' || typeof r.input_required !== 'string') return null;
   const s = r.input_required.trim();
   return s || null;
 }
+
+/** #215: the orchestrator resolved the report's request (without resuming the worker): who, and its note. */
+export function inputResolved(r: WorkerReport | undefined): { by: string; note: string } | null {
+  const res = r?.input_resolved;
+  if (!res || typeof res !== 'object' || !requestText(r)) return null;
+  const by = typeof res.by === 'string' && res.by.trim() ? res.by.trim() : 'orchestrator';
+  return { by, note: typeof res.note === 'string' ? res.note.trim() : '' };
+}
+
+/** A ready report's `input_required` that still asks, trimmed; null when there is none or it was resolved (#215). */
+export function inputRequired(r: WorkerReport | undefined): string | null {
+  return inputResolved(r) ? null : requestText(r);
+}
+
+/** Who a report's request is for: its `input_for`, else the orchestrator when the worker has one, else you. */
+export function requestFor(r: WorkerReport | undefined, orchId: string | null | undefined): 'orchestrator' | 'user' {
+  const f = typeof r?.input_for === 'string' ? r.input_for.trim().toLowerCase() : '';
+  if (f === 'orchestrator' || f === 'user') return f;
+  return orchId ? 'orchestrator' : 'user';
+}
+
+/** `Asked of the orchestrator (Cog)` / `Asked of you`. */
+export function askedOfText(who: 'orchestrator' | 'user', orchName: string | null | undefined): string {
+  if (who === 'user') return 'Asked of you';
+  const n = orchName?.trim();
+  return n ? `Asked of the orchestrator (${n})` : 'Asked of the orchestrator';
+}
+
+/** `Request resolved by orchestrator: accepted as AC4 evidence`. */
+export function resolvedText(res: { by: string; note: string }): string {
+  return `Request resolved by ${res.by}${res.note ? `: ${res.note}` : ''}`;
+}
+
+/** What a report request is called wherever it shows (never "waiting for an answer": the agent asked no question). */
+export const REPORT_REQUEST = 'Report request';
 
 /** Whether a worker counts as having worked: seen `working` or `done`, or it handed in a report. */
 export function hasWorked(w: Pick<Worker, 'status' | 'report' | 'codex'>): boolean {
@@ -48,8 +83,8 @@ export function hasWorked(w: Pick<Worker, 'status' | 'report' | 'codex'>): boole
 
 /**
  * A freelancer's lifecycle state. `worked`: it was seen working since it
- * first appeared (see `CrewMemory`). Blocked (its agent, or its report asks)
- * wins, then a ready report, then working; no agent yet is `hired`, an
+ * first appeared (see `CrewMemory`). Blocked (its agent, or its report still
+ * asks: a request the orchestrator resolved, #215, does not) wins, then a ready report, then working; no agent yet is `hired`, an
  * agent that has not worked yet is `onboarding` (reading its brief), and one
  * that worked and waits without a report is `idle`. #157: a Codex worker herdr calls blocked only because of an async
  * question works (`effectiveStatus`).
@@ -164,16 +199,25 @@ export interface CrewView {
   pass: number | null;
   overCap: boolean;
   stamp: Stamp | null;
-  /** The report's `input_required`. */
+  /** The report's `input_required` while it still asks: the COMPLETE text (#215), previews cut it themselves. */
   ask: string | null;
+  /** #215: the bridge cut `ask` (it was longer than it keeps). */
+  askTruncated: boolean;
+  /** #215: who decides (the report's `input_for`, else the orchestrator when it has one, else you); null when nothing asks. */
+  askFor: 'orchestrator' | 'user' | null;
+  /** #215: `Asked of the orchestrator (Cog)` / `Asked of you`; null when nothing asks. */
+  askWho: string | null;
+  /** #215: the orchestrator resolved the report's request without resuming the worker; it no longer counts. */
+  resolved: { by: string; note: string; line: string } | null;
   summary: string | null;
-  /** Counts as needing you: an over-cap orchestrator, a freelancer whose report asks. */
+  /** Counts as needing you: an over-cap orchestrator, a freelancer whose report still asks (a resolved request does not, #215). */
   needsYou: boolean;
   /** The card's role tag: `ORCH`, `CODE r2`. */
   tag: string;
 }
 
-export function crewView(w: Worker, worked: boolean): CrewView | null {
+/** `orchName`: the freelancer's orchestrator's name, for who a report request is asked of. */
+export function crewView(w: Worker, worked: boolean, orchName?: string | null): CrewView | null {
   const role = crewRole(w);
   if (!role) return null;
   const freelancer = isFreelancer(role);
@@ -181,6 +225,8 @@ export function crewView(w: Worker, worked: boolean): CrewView | null {
   const orch = role === 'orch';
   const cap = orch && overCap(w);
   const ask = freelancer ? inputRequired(w.report) : null;
+  const askFor = ask ? requestFor(w.report, w.orch_id) : null;
+  const res = freelancer ? inputResolved(w.report) : null;
   const summary = freelancer && w.report?.state === 'ready' && typeof w.report.summary === 'string' ? w.report.summary.trim() || null : null;
   const run = w.run?.trim() || null;
   return {
@@ -198,6 +244,10 @@ export function crewView(w: Worker, worked: boolean): CrewView | null {
     overCap: cap,
     stamp: freelancer ? stampOf(w.report) : null,
     ask,
+    askTruncated: ask !== null && w.report?.input_truncated === true,
+    askFor,
+    askWho: askFor ? askedOfText(askFor, orchName) : null,
+    resolved: res ? { ...res, line: resolvedText(res) } : null,
     summary,
     needsYou: cap || ask !== null,
     tag: `${role.toUpperCase()}${freelancer && round ? ` r${round}` : ''}`,

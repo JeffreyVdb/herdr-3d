@@ -78,7 +78,7 @@ import { HireModelPrefs } from './ui/hireModelPrefs';
 import { harnessModelsSection } from './ui/harnessModelsSection';
 import { onPlayerAct, waitForHire } from './ui/hireGoto';
 import { InboxPrefs } from './ui/inboxPrefs';
-import { inboxQueue, inboxReason, inboxWhere, type InboxCandidate } from './world/inbox';
+import { inboxQueue, inboxReason, inboxRequest, inboxWhere, type InboxCandidate } from './world/inbox';
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
 import { kaneoSection } from './ui/kaneoSection';
@@ -3317,7 +3317,7 @@ export class App {
   private inboxEntries(): InboxEntry[] {
     return this.inboxItems().flatMap((item) => {
       const v = this.store.workerView(item.id);
-      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.session), reason: inboxReason(v), blocked: item.reason === 'blocked', dismissable: item.reason === 'done', since: item.since }] : [];
+      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.session), reason: inboxReason(v), blocked: item.reason === 'blocked', dismissable: item.reason === 'done', since: item.since, request: inboxRequest(v) }] : [];
     });
   }
 

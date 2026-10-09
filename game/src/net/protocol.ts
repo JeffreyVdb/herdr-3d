@@ -1451,6 +1451,14 @@ export interface WorkerIssue {
   url?: string;
 }
 
+/** #215: who resolved a report's `input_required`, and how. */
+export interface WorkerInputResolved {
+  by: string;
+  note?: string;
+  /** Unix ms, the sidecar's mtime. */
+  at?: number;
+}
+
 /** M6: a freelancer's report as the bridge read it (`<runs-dir>/<h3d_run>/<h3d_report>`). */
 export interface WorkerReport {
   /** `pending` (no file yet), `ready`, `invalid`. */
@@ -1462,8 +1470,14 @@ export interface WorkerReport {
   /** Reviewers: `issues_found` with priority BLOCKER, and all of them. */
   blockers?: number;
   issues?: number;
-  /** The worker is blocked on its orchestrator or you (≤ 500 bytes). */
+  /** The worker asks for a decision (#215: up to 8 KiB, cut UTF-8-safely; `input_truncated` when it was cut). */
   input_required?: string | null;
+  /** #215: `input_required` was longer than the bridge keeps. */
+  input_truncated?: boolean;
+  /** #215: who the request is for, when the report says (`orchestrator` | `user`); absent: the game decides (orchestrator if the worker has one). */
+  input_for?: 'orchestrator' | 'user' | string;
+  /** #215: the orchestrator resolved the request without resuming the worker (a `.resolved.json` sidecar newer than the report). */
+  input_resolved?: WorkerInputResolved;
   /** Coders / researchers: the first 300 bytes of their summary. */
   summary?: string;
   /** `invalid`: why. */

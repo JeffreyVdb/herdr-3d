@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Snapshot, Worker, WorkerReport } from '../net/protocol';
-import { CrewMemory, crewRole, crewView, inputRequired, lifecycle, overCap, passWords, phaseWords, runColor, RUN_COLORS, stampOf } from './crew';
+import { askedOfText, CrewMemory, crewRole, crewView, inputRequired, inputResolved, lifecycle, overCap, passWords, phaseWords, runColor, RUN_COLORS, stampOf } from './crew';
 import { needQueue } from './next';
 import { promptBlocker } from './prompt';
 import { WorldStore } from './store';
@@ -245,3 +245,66 @@ describe('WorldStore crews (M6)', () => {
     expect(s.workerView('p')).toMatchObject({ display: 'working', crew: null });
   });
 });
+
+// #215: the orchestrator accepted a report's request without resuming the freelancer (a `.resolved.json` sidecar).
+/** The NEEDS YOU count of the floors (what the badges, the lift and the N key's queue count). */
+const needs = (s: WorldStore): number => s.city().reduce((n, b) => n + b.floors.reduce((m, f) => m + f.counts.needsYou, 0), 0);
+
+describe('a report request the orchestrator resolved (#215)', () => {
+  const longRequest = `${'x'.repeat(520)} Or accept the existing evidence: ORCHESTRATOR ACCEPTANCE.`;
+  const resolved = { by: 'orchestrator', note: 'accepted as AC4 evidence', at: 1_790_650_100_000 };
+
+  it('is no longer an input_required, and the lifecycle falls back to the real status', () => {
+    const w = worker({ status: 'done', orch_id: 'o1', report: ready({ input_required: 'Accept?', input_resolved: resolved, summary: 's' }) });
+    expect(inputRequired(w.report)).toBeNull();
+    expect(inputResolved(w.report)).toEqual({ by: 'orchestrator', note: 'accepted as AC4 evidence' });
+    expect(lifecycle(w, true)).toBe('reporting');
+    expect(lifecycle(worker({ status: 'done', report: ready({ input_required: 'Accept?', input_resolved: resolved }) }), true)).toBe('reporting');
+    expect(crewView(w, true)).toMatchObject({
+      life: 'reporting',
+      needsYou: false,
+      ask: null,
+      askWho: null,
+      resolved: { by: 'orchestrator', note: 'accepted as AC4 evidence', line: 'Request resolved by orchestrator: accepted as AC4 evidence' },
+    });
+    // Without a note, or who: the orchestrator.
+    expect(inputResolved(ready({ input_required: 'x', input_resolved: { by: '' } }))).toEqual({ by: 'orchestrator', note: '' });
+  });
+
+  it('a resolution of no request, or on another worker, changes nothing', () => {
+    expect(inputResolved(ready({ input_resolved: resolved }))).toBeNull();
+    expect(inputResolved({ state: 'pending', input_required: 'x', input_resolved: resolved })).toBeNull();
+  });
+
+  it('an unresolved request on a done worker still needs you (never suppressed by status)', () => {
+    const w = worker({ status: 'done', orch_id: 'o1', report: ready({ input_required: 'Accept the evidence?' }) });
+    expect(lifecycle(w, true)).toBe('blocked');
+    expect(crewView(w, true, 'Cog')).toMatchObject({ needsYou: true, ask: 'Accept the evidence?', askFor: 'orchestrator', askWho: 'Asked of the orchestrator (Cog)', resolved: null });
+  });
+
+  it('keeps the complete text, and who it is asked of', () => {
+    const w = worker({ status: 'done', report: ready({ input_required: longRequest, input_truncated: true }) });
+    expect(crewView(w, true)).toMatchObject({ ask: longRequest, askTruncated: true, askFor: 'user', askWho: 'Asked of you' });
+    expect(crewView(worker({ orch_id: 'o1', report: ready({ input_required: 'x', input_for: 'user' }) }), true)).toMatchObject({ askFor: 'user', askWho: 'Asked of you' });
+    expect(crewView(worker({ report: ready({ input_required: 'x', input_for: 'orchestrator' }) }), true)).toMatchObject({ askFor: 'orchestrator', askWho: 'Asked of the orchestrator' });
+    // An unknown input_for is ignored.
+    expect(crewView(worker({ orch_id: 'o1', report: ready({ input_required: 'x', input_for: 'bob' }) }), true)).toMatchObject({ askFor: 'orchestrator' });
+    expect(askedOfText('orchestrator', ' Cog ')).toBe('Asked of the orchestrator (Cog)');
+  });
+
+  it('the store: accepted without resumption is not needs_you (real status), an unresolved done worker is; a rewrite asks again', () => {
+    const s = new WorldStore(0);
+    const f = worker({ id: 'f1', label: 'CODE|x|1|r1', status: 'done', orch_id: 'o1', report: ready({ input_required: longRequest }) });
+    const o = worker({ id: 'o1', label: 'ORCH|x', role: 'orch', name: 'Cog', desk_index: 0, workspace_id: 'w1' });
+    s.applySnapshot(snap([o, f]));
+    expect(s.workerView('f1')).toMatchObject({ display: 'needs_you', crew: { life: 'blocked', ask: longRequest, askWho: 'Asked of the orchestrator (Cog)' } });
+    expect(needs(s)).toBe(1);
+    s.applyEvent({ t: 'worker.upsert', seq: 2, worker: { ...f, report: ready({ input_required: longRequest, input_resolved: resolved }) } });
+    expect(s.workerView('f1')).toMatchObject({ display: 'done', crew: { life: 'reporting', needsYou: false, ask: null } });
+    expect(needs(s)).toBe(0);
+    // A later rewrite of the report: the bridge drops the resolution.
+    s.applyEvent({ t: 'worker.upsert', seq: 3, worker: { ...f, report: ready({ at: 1_790_650_200_000, input_required: 'A new request' }) } });
+    expect(s.workerView('f1')).toMatchObject({ display: 'needs_you', crew: { life: 'blocked', ask: 'A new request' } });
+  });
+});
+

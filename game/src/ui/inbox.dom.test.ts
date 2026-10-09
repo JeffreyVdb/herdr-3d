@@ -80,6 +80,46 @@ describe('InboxChip', () => {
     expect(chip.summary().open).toBe(false);
   });
 
+  it('a report request: who decides, and a keyboard-reachable disclosure for the whole text that survives redraws (#215)', () => {
+    const { chip, go } = mount();
+    const text = `${'x'.repeat(600)} Or accept the existing evidence: ORCHESTRATOR ACCEPTANCE.`;
+    const request = { text, truncated: false, who: 'Asked of the orchestrator (Cog)' };
+    chip.set([entry('a', { reason: 'Report request', request }), entry('b')]);
+    chip.openList();
+    const more = chip.root.querySelectorAll<HTMLButtonElement>('.ib-more');
+    expect(more).toHaveLength(1); // only the request row has one
+    const btn = more[0]!;
+    expect(btn.textContent).toBe('Show full request');
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    const body = chip.root.querySelector<HTMLElement>(`#${btn.getAttribute('aria-controls')}`)!;
+    expect(body.hidden).toBe(true);
+    expect(chip.root.querySelector('.ib-who')?.textContent).toBe('Asked of the orchestrator (Cog)');
+    expect(rowsOf(chip)[0]!.getAttribute('aria-label')).toContain('Report request, asked of the orchestrator (Cog)');
+    btn.focus();
+    btn.click();
+    expect(go).not.toHaveBeenCalled(); // the disclosure is not the row
+    const open = chip.root.querySelector<HTMLButtonElement>('.ib-more')!;
+    expect(open.textContent).toBe('Hide full request');
+    expect(open.getAttribute('aria-expanded')).toBe('true');
+    expect(document.activeElement).toBe(open); // focus kept across the redraw
+    const shown = chip.root.querySelector<HTMLElement>(`#${open.getAttribute('aria-controls')}`)!;
+    expect(shown.hidden).toBe(false);
+    expect(shown.textContent).toContain('ORCHESTRATOR ACCEPTANCE'); // text after byte 500
+    expect(shown.getAttribute('tabindex')).toBe('0'); // scrollable by keyboard
+    // Still open after the inbox updates; a cut one says so.
+    chip.set([entry('a', { reason: 'Report request', request: { ...request, truncated: true } }), entry('b')]);
+    expect(chip.root.querySelector<HTMLElement>('.ib-req')!.hidden).toBe(false);
+    expect(chip.root.querySelector('.ib-req-cut')?.textContent).toContain('Cut at 8 KiB');
+    // The arrows walk row → disclosure.
+    const all = [...chip.root.querySelectorAll<HTMLElement>('.ib-row, .ib-more')];
+    expect(all.map((e) => e.className)).toEqual(['ib-row', 'ib-more', 'ib-row']);
+    // It closes again, and a resolved request is gone from the list.
+    chip.root.querySelector<HTMLButtonElement>('.ib-more')!.click();
+    expect(chip.root.querySelector<HTMLElement>('.ib-req')!.hidden).toBe(true);
+    chip.set([entry('b')]);
+    expect(chip.root.querySelector('.ib-more')).toBeNull();
+  });
+
   it('a row’s click shuts the list and goes to that worker', () => {
     const { chip, go } = mount();
     chip.set([entry('a'), entry('b')]);

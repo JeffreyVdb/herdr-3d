@@ -1,4 +1,4 @@
-import { passWords, PASS_CAP, type CrewView } from '../../world/crew';
+import { passWords, PASS_CAP, REPORT_REQUEST, type CrewView } from '../../world/crew';
 import { STAMP_FONT, TAG_FONT } from './layout';
 import type { CardAsk, CardData, CardStamp, CardTag } from './types';
 
@@ -31,7 +31,9 @@ export function crewTag(c: CrewView): CardTag {
 /** The bubble's question for a crew member that needs you (null: none). */
 export function crewAsk(c: CrewView): CardAsk | null {
   if (c.overCap) return { text: `Past the review cap (${passWords(c.pass ?? PASS_CAP) ?? `pass ${PASS_CAP}`}). It needs your call.`, choices: [] };
-  if (c.ask) return { text: c.ask, choices: [] };
+  // #215: the report's request, not a question of the agent: say so and who decides (the layout cuts the preview, the
+  // inbox and the bar keep the whole text).
+  if (c.ask) return { text: c.ask.replace(/\s+/g, ' '), choices: [], about: [`${REPORT_REQUEST} · ${c.askWho ?? ''}`.replace(/ · $/, '')] };
   return null;
 }
 
@@ -44,11 +46,19 @@ export function crewLines(c: CrewView): string[] {
     const phase = [c.phase ? cap(c.phase) : null, passWords(c.pass ?? undefined)].filter(Boolean).join(' · ');
     if (phase) out.push(phase);
   } else {
-    const life = LIFE_WORDS[c.life ?? 'idle'];
+    const life = lifeWords(c);
     if (life) out.push(life);
+    if (c.askWho) out.push(c.askWho);
+    if (c.resolved) out.push(c.resolved.line);
     if (c.summary) out.push(`Report: ${c.summary.replace(/\s+/g, ' ')}`);
   }
   return out;
+}
+
+/** A freelancer's lifecycle in words; blocked by its report's request says so (#215), not "Waiting for an answer". */
+export function lifeWords(c: CrewView): string {
+  if (c.life === 'blocked' && c.ask) return REPORT_REQUEST;
+  return LIFE_WORDS[c.life ?? 'idle'];
 }
 
 const LIFE_WORDS: Record<NonNullable<CrewView['life']>, string> = {
@@ -67,7 +77,7 @@ const LIFE_WORDS: Record<NonNullable<CrewView['life']>, string> = {
  */
 export function withCrew(card: CardData, c: CrewView, focus: boolean, titled = true): CardData {
   card.tag = crewTag(c);
-  if (!titled && c.freelancer) card.task = LIFE_WORDS[c.life ?? 'idle'];
+  if (!titled && c.freelancer) card.task = lifeWords(c);
   if (c.stamp) card.stamp = { tone: c.stamp.tone, text: c.stamp.text };
   if (!card.ask) {
     const ask = crewAsk(c);

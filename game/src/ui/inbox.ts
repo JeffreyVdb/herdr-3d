@@ -20,6 +20,8 @@ export interface InboxEntry {
   dismissable?: boolean;
   /** Unix ms, when it came in. */
   since: number;
+  /** #215: a report's request: the row can open its complete text (`who`: `Asked of the orchestrator (Cog)`). */
+  request?: { text: string; truncated: boolean; who: string } | null;
 }
 
 export interface InboxHost {
@@ -49,6 +51,8 @@ export class InboxChip {
   private readonly list: HTMLElement;
   private readonly rows = h('ul', { class: 'ib-rows' });
   private entries: readonly InboxEntry[] = [];
+  /** #215: the rows whose full request is open (a redraw keeps them open). */
+  private readonly expanded = new Set<string>();
   /** What the open list last drew (skips identical redraws on every world event). */
   private drawn = '';
   private on = true;
@@ -78,6 +82,14 @@ export class InboxChip {
       if (x?.dataset.id) {
         this.dismissing(x.dataset.id);
         this.host.dismiss(x.dataset.id);
+        return;
+      }
+      const more = t?.closest<HTMLElement>('.ib-more');
+      if (more?.dataset.id) {
+        const mid = more.dataset.id;
+        if (!this.expanded.delete(mid)) this.expanded.add(mid);
+        this.drawn = '';
+        this.draw();
         return;
       }
       const id = t?.closest<HTMLElement>('.ib-row')?.dataset.id;
@@ -172,10 +184,10 @@ export class InboxChip {
 
   private draw(): void {
     const now = this.host.now();
-    const key = this.entries.map((e) => [e.id, e.name, e.harness, e.where, e.reason, e.dismissable, inboxAge(e.since, now)].join('\u0001')).join('\u0000');
+    const key = this.entries.map((e) => [e.id, e.name, e.harness, e.where, e.reason, e.dismissable, e.request?.text, e.request?.truncated, e.request?.who, e.request && this.expanded.has(e.id), inboxAge(e.since, now)].join('\u0001')).join('\u0000');
     if (key === this.drawn) return;
     this.drawn = key;
-    replaceKeepingFocus(this.rows, this.entries.map((e) => row(e, now)), this.focusAfter);
+    replaceKeepingFocus(this.rows, this.entries.map((e) => row(e, now, this.expanded.has(e.id))), this.focusAfter);
     this.focusAfter = undefined;
   }
 
@@ -200,7 +212,7 @@ export class InboxChip {
         this.toggle(true, false);
       }
       e.preventDefault();
-      const all = [this.chip, ...this.rows.querySelectorAll<HTMLButtonElement>('.ib-row, .ib-x')]; // #106: each ×, after its row
+      const all = [this.chip, ...this.rows.querySelectorAll<HTMLButtonElement>('.ib-row, .ib-more, .ib-x')]; // #106: each ×, after its row
       const i = all.indexOf(document.activeElement as HTMLButtonElement);
       const to = k === 'Home' ? 1 : k === 'End' ? all.length - 1 : Math.min(all.length - 1, Math.max(0, i + (k === 'ArrowDown' ? 1 : -1)));
       all[to]?.focus();
@@ -244,10 +256,10 @@ export class InboxChip {
 }
 
 
-function row(e: InboxEntry, now: number): HTMLLIElement {
+function row(e: InboxEntry, now: number, open: boolean): HTMLLIElement {
   const age = inboxAge(e.since, now);
   const agent = (e.harness && HARNESS_LABEL[e.harness]) || e.harness || 'Agent';
-  const label = `${e.name}, ${agent}: ${e.reason}. ${e.where}, ${age === 'now' ? 'just now' : `${age} ago`}. Go to its laptop.`;
+  const label = `${e.name}, ${agent}: ${e.reason}${e.request?.who ? `, ${e.request.who.charAt(0).toLowerCase()}${e.request.who.slice(1)}` : ''}. ${e.where}, ${age === 'now' ? 'just now' : `${age} ago`}. Go to its laptop.`;
   return h(
     'li',
     { class: 'ib-item', 'data-dismissable': String(!!e.dismissable) },
@@ -261,6 +273,29 @@ function row(e: InboxEntry, now: number): HTMLLIElement {
       h('span', { class: 'ib-age' }, age),
     ),
     e.dismissable ? dismissButton(e) : null,
+    e.request ? request(e, e.request, open) : null,
+  );
+}
+
+/**
+ * #215: a report's request under its row: who it is asked of, and a disclosure for the complete text (the bubble and
+ * the bar only preview it). The text wraps and scrolls when huge, and the scroller takes the keyboard.
+ */
+function request(e: InboxEntry, r: NonNullable<InboxEntry['request']>, open: boolean): HTMLElement {
+  const id = `ib-req-${e.id}`;
+  const body = h(
+    'div',
+    { class: 'ib-req', id, role: 'region', 'aria-label': `Full request of ${e.name}`, tabindex: '0' },
+    h('p', { class: 'ib-req-text' }, r.text),
+    r.truncated ? h('p', { class: 'ib-req-cut' }, 'Cut at 8 KiB: the rest is in the report file.') : null,
+  );
+  body.hidden = !open;
+  return h(
+    'div',
+    { class: 'ib-ask' },
+    h('span', { class: 'ib-who' }, r.who),
+    h('button', { class: 'ib-more', type: 'button', 'data-id': e.id, 'data-key': `more:${e.id}`, 'aria-expanded': String(open), 'aria-controls': id }, open ? 'Hide full request' : 'Show full request'),
+    body,
   );
 }
 
