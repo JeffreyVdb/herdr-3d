@@ -1135,10 +1135,15 @@
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
-/* A row's ring is outside it like every other: the scrolling board gives it 5px on each side. */
+/* A row's ring is outside it like every other: the scrolling board gives it 6px on each side, and a row stays put
+   (no 1px lift on hover or focus, like the boards' cards) so the settled ring is where the room is. */
 :root[data-ui-theme='ubuntu'] .ov-board {
-  padding: 5px 5px 24px;
-  scroll-padding: 5px;
+  padding: 6px 6px 24px;
+  scroll-padding: 6px;
+}
+:root[data-ui-theme='ubuntu'] .ov-row:hover,
+:root[data-ui-theme='ubuntu'] .ov-row:focus-visible {
+  transform: none;
 }
 :root[data-ui-theme='ubuntu'] .ov-row:focus-visible {
   outline-offset: 2px;
