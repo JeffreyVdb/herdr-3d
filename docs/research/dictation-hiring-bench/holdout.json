@@ -1,0 +1,18 @@
+[
+  {"id":"spawn-agent-phrase","text":"Spawn an agent running Claude Code on Haiku 5.5 with max effort. Task: investigate flaky CI.","intent":"hire","decision":"ready","task":"investigate flaky CI."},
+  {"id":"hire-agent-phrase","text":"Hire an agent using Codex with GPT-6.1-Sol at high effort. Task: review the queue implementation.","intent":"hire","decision":"ready","task":"review the queue implementation."},
+  {"id":"research-agent-phrase","text":"Let an agent research this for me. Use Claude Code on Haiku 5.5 with medium effort. Task: compare retry strategies for the queue.","intent":"hire","decision":"ready","task":"compare retry strategies for the queue."},
+  {"id":"hire-worker-phrase","text":"Hire a worker running Claude Code on Haiku 5.5 with low effort. Task: update docs for the queue.","intent":"hire","decision":"ready","task":"update docs for the queue."},
+  {"id":"spawn-worker-phrase","text":"Spawn a worker using Codex on GPT-6-Sol with ultra effort. Task: investigate queue deadlocks.","intent":"hire","decision":"ready","task":"investigate queue deadlocks."},
+  {"id":"bare-spawn-agent","text":"Spawn an agent.","intent":"hire","decision":"clarify_selection"},
+  {"id":"research-missing-effort","text":"Let an agent research this for me using Claude Code on Haiku 5.5. Task: compare retry strategies.","intent":"hire","decision":"clarify_effort","task":"compare retry strategies."},
+  {"id":"ultra-followup","history":["Hire a worker using Codex on GPT-6.1-Sol. Task: investigate queue deadlocks."],"text":"Use ultra effort.","intent":"hire","decision":"ready","task":"investigate queue deadlocks."},
+  {"id":"unsupported-existing-research","text":"Let the existing agent at desk two research the queue for me.","intent":"unsupported","decision":"unsupported"},
+  {"id":"hypothetical-research","text":"Would it be useful to let an agent research this for me?","intent":"unclear","decision":"unclear"},
+  {"id":"research-history","text":"I let an agent research this for me last week.","intent":"unclear","decision":"unclear"},
+  {"id":"task-effort-word","text":"Hire a worker running Claude Code on Haiku 5.5. Task: set effort to ultra in the configuration examples.","intent":"hire","decision":"clarify_effort","task":"set effort to ultra in the configuration examples."},
+  {"id":"unsupported-claude-ultra","text":"Spawn a worker running Claude Code on Haiku 5.5 with ultra effort. Task: investigate flaky CI.","intent":"hire","decision":"clarify_selection","task":"investigate flaky CI."},
+  {"id":"natural-task-wrapper","text":"Hire a worker running Claude Code on Haiku 5.5 at medium effort and I want it to check why the queue stalls under load.","intent":"hire","decision":"ready","task":"check why the queue stalls under load."},
+  {"id":"extra-high","text":"Spawn an agent using Claude Code on Haiku 5.5 with extra high effort. Task: investigate flaky CI.","intent":"hire","decision":"ready","task":"investigate flaky CI."},
+  {"id":"negated-new-positive-existing","text":"Do not spawn a worker. Tell the existing worker to investigate flaky CI.","intent":"unsupported","decision":"unsupported"}
+]
