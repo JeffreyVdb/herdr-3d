@@ -1,0 +1,260 @@
+// Dry-run interpretation check of internal/hireintent (#211): the bench's 50
+// labelled cases through the product package with the configured LLM, the
+// live catalog read read-only from the bridge (hello + snapshot), and the
+// existing private AI config read-only. No worker.hire, no launch: this is
+// not a launch test. A follow-up case first interprets its history, so its
+// reply merges into a real pending proposal, as the game will do it.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/ai"
+	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+)
+
+type sample struct {
+	ID       string   `json:"id"`
+	Text     string   `json:"text"`
+	History  []string `json:"history,omitempty"`
+	Intent   string   `json:"intent"`
+	Decision string   `json:"decision"`
+	Task     string   `json:"task,omitempty"`
+}
+
+type row struct {
+	ID        string `json:"id"`
+	Set       string `json:"set"`
+	Expected  string `json:"expected"`
+	Got       string `json:"got"`
+	WantTask  string `json:"want_task,omitempty"`
+	Task      string `json:"task,omitempty"`
+	TaskExact bool   `json:"task_exact"`
+	Pass      bool   `json:"pass"`
+	// Fields are the proposal's provenances ("h=dictated:claude …").
+	Fields    string `json:"fields,omitempty"`
+	Error     string `json:"error,omitempty"` // the failure code
+	LatencyMS int64  `json:"latency_ms"`      // the scored call
+	Calls     int    `json:"calls"`
+}
+
+// metrics records the provider's model, usage and status of every call:
+// never headers, request content or private config.
+type metrics struct {
+	mu    sync.Mutex
+	calls []map[string]any
+}
+
+func (m *metrics) RoundTrip(req *http.Request) (*http.Response, error) {
+	r, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		return r, err
+	}
+	b, e := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	r.Body.Close()
+	r.Body = io.NopCloser(strings.NewReader(string(b)))
+	if e == nil {
+		var v map[string]any
+		if json.Unmarshal(b, &v) == nil {
+			m.mu.Lock()
+			m.calls = append(m.calls, map[string]any{"model": v["model"], "usage": v["usage"], "status": r.StatusCode})
+			m.mu.Unlock()
+		}
+	}
+	return r, err
+}
+
+// label is the bench's decision for a result (the order of the research's
+// decide: selection, task, effort).
+func label(r hireintent.Result) string {
+	switch {
+	case r.Error != nil:
+		return "error"
+	case r.Intent != hireintent.IntentHire:
+		return r.Intent
+	case r.Hire.ReadyForReview:
+		return "ready"
+	}
+	asks := map[string]bool{}
+	for _, q := range r.Hire.Questions {
+		asks[q.Field] = true
+	}
+	switch {
+	case asks[hireintent.AskModel] || asks[hireintent.AskSelection] || r.Hire.Effort.Provenance == hireintent.Invalid:
+		return "clarify_selection"
+	case asks[hireintent.AskTask]:
+		return "clarify_task"
+	case asks[hireintent.AskEffort]:
+		return "clarify_effort"
+	}
+	return "?"
+}
+
+func fields(in *hireintent.Interpretation) string {
+	f := func(n string, x hireintent.Field) string {
+		s := n + "=" + x.Provenance
+		if x.Value != "" {
+			s += ":" + x.Value
+		}
+		return s
+	}
+	return strings.Join([]string{f("h", in.Harness), f("m", in.Model), f("e", in.Effort), "t=" + in.Task.Provenance}, " ")
+}
+
+func catalogOf(o proto.HireOptions) hireintent.Catalog {
+	conv := func(h proto.HarnessOptions) hireintent.HarnessCatalog {
+		return hireintent.HarnessCatalog{Models: h.Models, Efforts: h.Efforts, ExtraEfforts: h.ExtraEfforts, ModelLabels: h.ModelLabels}
+	}
+	return hireintent.Catalog{Claude: conv(o.Claude), Codex: conv(o.Codex)}
+}
+
+func main() {
+	home, _ := os.UserHomeDir()
+	dir := "docs/research/dictation-hiring-bench"
+	config := flag.String("config", filepath.Join(home, ".local/state/herdr-world/ai.json"), "existing config, read-only")
+	socket := flag.String("socket", "/run/user/1000/herdr-world/bridge.sock", "read-only catalog source")
+	out := flag.String("out", filepath.Join(os.TempDir(), "dictation-dryrun.json"), "sanitized results (not committed: it holds the live catalog)")
+	flag.Parse()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	c, err := proto.Dial(ctx, *socket)
+	must(err)
+	_, err = c.Hello(ctx, proto.Hello{Client: "dictation-dryrun-readonly"})
+	must(err)
+	var opts proto.HireOptions
+	for {
+		env, b, e := c.Read(ctx)
+		must(e)
+		if env.T == proto.TSnapshot {
+			var sn proto.Snapshot
+			must(json.Unmarshal(b, &sn))
+			if sn.World.HireOptions == nil {
+				panic("missing live hire options")
+			}
+			opts = *sn.World.HireOptions
+			break
+		}
+	}
+	c.CloseNow()
+	cat := catalogOf(opts)
+
+	m := &metrics{}
+	svc, err := ai.New(ai.Options{File: *config, HTTP: &http.Client{Transport: m}})
+	must(err)
+	v := svc.View()
+	fmt.Printf("Configured LLM: %s (state %s)\n", v.LLM.Model, svc.State(ai.RoleLLM))
+
+	var cases []sample
+	sets := []string{}
+	for _, f := range []struct{ file, set string }{{"samples.json", "revised"}, {"holdout.json", "fresh"}} {
+		b, err := os.ReadFile(filepath.Join(dir, f.file))
+		must(err)
+		var ss []sample
+		must(json.Unmarshal(b, &ss))
+		cases = append(cases, ss...)
+		for range ss {
+			sets = append(sets, f.set)
+		}
+	}
+
+	rows := make([]row, len(cases))
+	slots := make(chan struct{}, ai.DefaultConcurrency)
+	var wg sync.WaitGroup
+	for i, s := range cases {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			r := row{ID: s.ID, Set: sets[i], Expected: s.Decision, WantTask: s.Task}
+			var pending *hireintent.Interpretation
+			for _, h := range s.History {
+				res := hireintent.Run(ctx, svc, hireintent.DefaultTimeout, hireintent.Request{Text: h, Pending: pending, Catalog: cat})
+				r.Calls++
+				if res.Hire == nil {
+					r.Error = "history: " + label(res)
+					rows[i] = r
+					return
+				}
+				pending = res.Hire
+			}
+			t := time.Now()
+			res := hireintent.Run(ctx, svc, hireintent.DefaultTimeout, hireintent.Request{Text: s.Text, Pending: pending, Catalog: cat})
+			r.LatencyMS = time.Since(t).Milliseconds()
+			if strings.TrimSpace(s.Text) != "" {
+				r.Calls++
+			}
+			r.Got = label(res)
+			if res.Error != nil {
+				r.Error = res.Error.Code
+			}
+			if res.Hire != nil {
+				r.Fields = fields(res.Hire)
+				r.Task = res.Hire.Task.Value
+			}
+			// The task is scored where a proposal is expected: an unsupported
+			// or unclear result carries none by design (multi-worker's label
+			// names the task the research's parser read).
+			r.TaskExact = s.Task == "" || r.Task == s.Task || (res.Hire == nil && (s.Decision == "unsupported" || s.Decision == "unclear"))
+			r.Pass = r.Got == s.Decision && r.TaskExact
+			rows[i] = r
+			fmt.Printf("%-32s got=%-17s want=%-17s task_exact=%v %dms\n", s.ID, r.Got, s.Decision, r.TaskExact, r.LatencyMS)
+		}()
+	}
+	wg.Wait()
+
+	pass := 0
+	var lat []int64
+	for _, r := range rows {
+		if r.Pass {
+			pass++
+		}
+		if r.Calls > 0 {
+			lat = append(lat, r.LatencyMS)
+		}
+	}
+	slices.Sort(lat)
+	pct := func(p float64) int64 {
+		if len(lat) == 0 {
+			return 0
+		}
+		return lat[min(len(lat)-1, int(p*float64(len(lat))))]
+	}
+	cost, calls := 0.0, len(m.calls)
+	for _, call := range m.calls {
+		if u, ok := call["usage"].(map[string]any); ok {
+			if c, ok := u["cost"].(float64); ok {
+				cost += c
+			}
+		}
+	}
+	summary := map[string]any{"pass": pass, "total": len(rows), "llm": v.LLM.Model, "median_ms": pct(0.5), "p95_ms": pct(0.95),
+		"provider_calls": calls, "provider_cost_usd": cost}
+	fmt.Printf("dry-run interpretation check: %d/%d (outcome and exact task), LLM %s, median %d ms, p95 %d ms, %d calls, reported cost $%.7f\n",
+		pass, len(rows), v.LLM.Model, pct(0.5), pct(0.95), calls, cost)
+	data := map[string]any{"at": time.Now().UTC().Format(time.RFC3339), "llm": v.LLM.Model, "catalog": opts, "summary": summary,
+		"results": rows, "http_metadata": m.calls,
+		"scope": "Dry-run interpretation check through internal/hireintent with the configured LLM via internal/ai; read-only live catalog (hello + snapshot); no worker.hire, no launch. Not a launch test."}
+	b, err := json.MarshalIndent(data, "", "  ")
+	must(err)
+	must(os.WriteFile(*out, append(b, '\n'), 0o644))
+}
+
+func must(err error) {
+	if err != nil {
+		panic(ai.Scrub(err.Error()))
+	}
+}
