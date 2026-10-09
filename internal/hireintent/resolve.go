@@ -16,6 +16,7 @@ import (
 // The rules:
 //   - not a hire: the intent, nothing else; more than one action or worker:
 //     unsupported, nothing else (never a part of it);
+//   - a harness named that has no models in cat is Invalid;
 //   - a model is an exact id or readable label of the harness named, or,
 //     with no harness named, of exactly one harness (which is then
 //     resolved); anything else is Invalid, never another model or harness;
@@ -200,7 +201,9 @@ func lookup(hc HarnessCatalog, said string) (string, bool) {
 // resolveModel resolves the harness named and the model said (see Resolve).
 func resolveModel(cat Catalog, harness, model string, sel string) (Field, Field) {
 	hf := Field{Provenance: Missing}
-	if harness != "" {
+	if hc, _ := cat.Harness(harness); harness != "" && len(hc.Models) == 0 {
+		hf = Field{Provenance: Invalid, Said: harness} // nothing of it to hire now
+	} else if harness != "" {
 		hf = Field{Provenance: provenance(harness, sel), Value: harness}
 	}
 	if model == "" {

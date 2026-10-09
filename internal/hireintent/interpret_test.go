@@ -614,6 +614,10 @@ func TestBadPending(t *testing.T) {
 		"provenance":          func(p *hireintent.Interpretation) { p.Model.Provenance = "trusted" },
 		"valid without value": func(p *hireintent.Interpretation) { p.Effort.Value = "" },
 		"invalid with value":  func(p *hireintent.Interpretation) { p.Effort.Provenance = hireintent.Invalid },
+		"unknown harness":     func(p *hireintent.Interpretation) { p.Harness.Value = "bogus" },
+		"resolved bogus": func(p *hireintent.Interpretation) {
+			p.Harness = hireintent.Field{Provenance: "resolved", Value: "Claude"}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := roundTrip(t, good)
@@ -625,6 +629,65 @@ func TestBadPending(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A pending harness that is not claude or codex is not a field: the error,
+// never a harness carried forward (#211 R2's reproduction).
+func TestBadPendingHarness(t *testing.T) {
+	p := &hireintent.Interpretation{Sources: []string{"Hire an agent."},
+		Harness: hireintent.Field{Provenance: "dictated", Value: "bogus"}, Model: hireintent.Field{Provenance: "missing"},
+		Effort: hireintent.Field{Provenance: "missing"}, Task: hireintent.Task{Provenance: "missing"}}
+	llm := answerLLM(ans("hire", "", "", "high", ""))
+	r := hireintent.Interpret(context.Background(), llm, hireintent.Request{Text: "high", Pending: p, Catalog: testCatalog()})
+	if r.Error == nil || r.Error.Code != hireintent.CodeBadPending || r.Hire != nil || r.Intent != "" || r.Text != "high" || len(llm.Calls()) != 0 {
+		t.Fatalf("%+v (error %+v), %d calls", r, r.Error, len(llm.Calls()))
+	}
+}
+
+// A harness with no models in the current catalog cannot be hired: it is
+// invalid, said kept, and the model question offers every model there is,
+// whether the harness is pending or just said. Never another harness.
+func TestHarnessLeftTheCatalog(t *testing.T) {
+	cat := testCatalog()
+	pending := roundTrip(t, pendingOf(t, "Hire a Codex agent to audit retries.", cat, ans("hire", "codex", "", "", "audit retries.")))
+	if fields(pending) != "h=dictated:codex m=missing e=missing t=dictated" {
+		t.Fatalf("pending %s", fields(pending))
+	}
+	noCodex := testCatalog()
+	noCodex.Codex = hireintent.HarnessCatalog{}
+	wantChoices := 4 // Claude's
+	check := func(t *testing.T, in *hireintent.Interpretation, want string) {
+		t.Helper()
+		if got := fields(in); got != want || in.ReadyForReview {
+			t.Fatalf("%s ready=%v, want %s", got, in.ReadyForReview, want)
+		}
+		if in.Harness.Value != "" || in.Questions[0].Field != "model" || len(in.Questions[0].Choices) != wantChoices {
+			t.Fatalf("harness %+v questions %+v", in.Harness, in.Questions)
+		}
+	}
+	t.Run("pending", func(t *testing.T) {
+		in := mustHire(t, interpret(t, "high", pending, noCodex, ans("hire", "", "", "high", "")))
+		check(t, in, "h=invalid:codex m=missing e=dictated:high t=dictated")
+		// Sent back, it holds, and is not carried: any model offered may be
+		// chosen; with codex back, naming it again is codex's.
+		back := roundTrip(t, in)
+		in = mustHire(t, interpret(t, "Use Haiku 5.5.", back, noCodex, ans("hire", "", "Haiku 5.5", "", "")))
+		if fields(in) != "h=resolved:claude m=resolved:claude-haiku-5-5 e=dictated:high t=dictated" || !in.ReadyForReview {
+			t.Fatalf("%s", fields(in))
+		}
+		in = mustHire(t, interpret(t, "Use GPT-6.1-Sol.", back, cat, ans("hire", "codex", "GPT-6.1-Sol", "", "")))
+		if fields(in) != "h=dictated:codex m=dictated:gpt-6.1-sol e=dictated:high t=dictated" || !in.ReadyForReview {
+			t.Fatalf("%s", fields(in))
+		}
+	})
+	t.Run("said now", func(t *testing.T) {
+		in := mustHire(t, interpret(t, "Hire a Codex agent to audit retries.", nil, noCodex, ans("hire", "codex", "", "", "audit retries.")))
+		check(t, in, "h=invalid:codex m=missing e=missing t=dictated")
+	})
+	t.Run("a model of another harness is not taken", func(t *testing.T) {
+		in := mustHire(t, interpret(t, "Hire a Codex agent on Haiku 5.5 to audit retries.", nil, noCodex, ans("hire", "codex", "Haiku 5.5", "", "audit retries.")))
+		check(t, in, "h=invalid:codex m=invalid:Haiku 5.5 e=missing t=dictated")
+	})
 }
 
 // Check is the tuple rule worker.hire uses: the model's levels are the

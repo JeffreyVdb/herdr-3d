@@ -2927,15 +2927,15 @@ strings or null for the others); anything else is the error `bad_answer`. Then, 
   (no clear request: a bare task, a mention, a quote, a negation, a hypothetical, history, a question about hiring,
   nothing said) carry nothing else. More than one action or new worker is `unsupported` with `reason: "multiple"`:
   never a part of it. Only hiring is understood.
-- **Fields.** `harness`, `model` and `effort` each have a `provenance`: `dictated` (said, and its `value` is the
-  word said), `resolved` (`value` taken from the catalog for what was said: a readable label such as "Haiku 5.5",
-  "extra high", the harness of an unambiguous model), `missing` (not said), `invalid` (said but not valid: unknown,
-  of the other harness, contradictory such as "Claude on GPT-5.5 Haiku", or an effort the model does not support;
-  `said` keeps the words, there is no `value`). `value` is always an exact launch id of the **current** catalog;
-  nothing is ever defaulted (not from the floor's settings, the last hire or `hire.prepare`'s choice) or substituted.
-  A model is never chosen from a harness. An effort counts only when its word is said outside the task ("Task: make
-  the high effort setting visible" has no effort); before the model is valid it is only checked against the
-  catalog's levels.
+- **Fields.** `harness`, `model` and `effort` each have a `provenance`: `dictated` (said, and its `value` is the word
+  said), `resolved` (`value` taken from the catalog for what was said: a readable label such as "Haiku 5.5", "extra
+  high", the harness of an unambiguous model), `missing` (not said), `invalid` (said but not valid: unknown, of the
+  other harness, contradictory such as "Claude on GPT-5.5 Haiku", an effort the model does not support, or a harness
+  with no models in the current catalog; `said` keeps the words, there is no `value`). `value` is always an exact
+  launch id of the **current** catalog; nothing is ever defaulted (not from the floor's settings, the last hire or
+  `hire.prepare`'s choice) or substituted. A model is never chosen from a harness. An effort counts only when its word
+  is said outside the task ("Task: make the high effort setting visible" has no effort); before the model is valid it
+  is only checked against the catalog's levels.
 - **`task`** is `dictated` with its `span` — `sources[source]` from `start` to `end` in **UTF-16 code units**
   (packup's units) — or `missing`. It is always an exact part of what was said, punctuation and later sentences
   included; commands inside it are its content. A task the LLM read that is not in the sentences is the error
@@ -2947,14 +2947,15 @@ strings or null for the others); anything else is the error `bad_answer`. Then, 
   `selection` when the LLM found the selection unclear though every value validated. **`ready_for_review`** is true
   only with every field valid and no question.
 
-**Follow-ups.** A reply ("high", "High effort, please.", "Use Sonnet 5.5 instead.") is sent with the pending
-proposal as `pending`, exactly as it came; its `sources` grow by the reply (at most 6). The pending proposal is checked
-in full first (its sources, its task's span against them, its fields' shape; else the error `bad_pending`, no call)
-and its values are resolved again against the **current** catalog: a model that left it is `invalid` again. The reply
-fills or changes only what it targets: a field the LLM leaves out keeps the pending one, and the task changes only to a
-part of the reply. A model change keeps a still-supported effort; an effort it does not support is `missing` again.
-A cancellation is `unclear` (drop the pending proposal), and a reply without a pending proposal ("high") is `unclear`:
-it never makes a proposal ready.
+**Follow-ups.** A reply ("high", "High effort, please.", "Use Sonnet 5.5 instead.") is sent with the pending proposal
+as `pending`, exactly as it came; its `sources` grow by the reply (at most 6). The pending proposal is checked in full
+first (its sources, its task's span against them, its fields' shape, a valid harness `claude` or `codex`; else the
+error `bad_pending`, no call) and its values are resolved again against the **current** catalog: a model that left it
+is `invalid` again, and so is a harness with no models left (its model question offering every model of the catalog).
+The reply fills or changes only what it targets: a field the LLM leaves out keeps the pending one, and the task
+changes only to a part of the reply. A model change keeps a still-supported effort; an effort it does not support is
+`missing` again. A cancellation is `unclear` (drop the pending proposal), and a reply without a pending proposal
+("high") is `unclear`: it never makes a proposal ready.
 
 **Errors.** The command itself fails only on its args: unknown fields (a client catalog is refused) or a `text` over
 8 KiB, not UTF-8 or with NUL: `bad_request`. Everything else is an ack. An **operational error** is `error {code,

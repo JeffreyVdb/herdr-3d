@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -144,8 +145,9 @@ func failure(err error) *Failure {
 }
 
 // checkPending checks a pending proposal sent back by a client: its
-// sources, its task's span against them, the shape of its fields. Its
-// values are resolved again against the current catalog by Resolve.
+// sources, its task's span against them, the shape of its fields (a valid
+// harness is claude or codex). Its values are resolved again against the
+// current catalog by Resolve.
 func checkPending(p *Interpretation) error {
 	if n := len(p.Sources); n == 0 || n >= MaxSources {
 		return fmt.Errorf("it must have 1-%d sources", MaxSources-1)
@@ -168,6 +170,9 @@ func checkPending(p *Interpretation) error {
 		if !ok || utf8.RuneCountInString(f.Said) > maxWords {
 			return fmt.Errorf("its %s is not a field", name)
 		}
+	}
+	if p.Harness.Valid() && !slices.Contains(Harnesses, p.Harness.Value) {
+		return fmt.Errorf("its harness is not claude or codex")
 	}
 	switch t := p.Task; t.Provenance {
 	case Missing:
