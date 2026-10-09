@@ -75,6 +75,10 @@ describe('UI themes (#216)', () => {
       '--idle': '#cdb1c6',
       '--asleep': '#c9a8f5',
       '--scrim': 'rgb(44 0 30 / 72%)',
+      // Every modal dialog's backdrop is the standard scrim, the prompt overlay's too; the viewers are the 92% one.
+      '--scrim-light': 'rgb(44 0 30 / 72%)',
+      '--scrim-viewer': 'rgb(44 0 30 / 92%)',
+      '--scrim-board': 'rgb(44 0 30 / 92%)',
       '--shadow': '0 10px 28px rgb(0 0 0 / 28%), 0 2px 6px rgb(0 0 0 / 18%)',
       '--radius-ctl': '9px',
       'color-scheme': 'dark',

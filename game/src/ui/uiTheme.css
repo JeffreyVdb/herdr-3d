@@ -781,8 +781,9 @@
   --tape-box: #c9935a;
   /* Fill of the Claude provider tape in the limits plate */
   --tape-claude: #e7a98f;
-  /* The backdrop of the prompt overlay, which keeps the worker in view */
-  --scrim-light: rgb(44 0 30 / 40%);
+  /* The backdrop of the prompt overlay: a modal dialog's backdrop, so the standard 72% scrim (the dialog sits low; the worker
+     stays visible, dimmed) */
+  --scrim-light: rgb(44 0 30 / 72%);
   /* The prompt overlay speech bubble (Ubuntu: the dark composer well) */
   --note-bg: #2c001e;
   /* The speech bubble border and tail */
@@ -807,8 +808,8 @@
   --slip-muted: #cdb1c6;
   /* The ruled lines of the slip */
   --slip-rule: rgb(255 255 255 / 14%);
-  /* An erroring file chip inside a composer */
-  --chip-error-bg: #4a1426;
+  /* An erroring file chip inside a composer: the raised plate, its red border and state say the error (as --error-chip-bg) */
+  --chip-error-bg: #3b1330;
   /* Added-line count and text in the Changes panel */
   --diff-add: #6be08f;
   /* Removed-line count and text in the Changes panel */
@@ -879,8 +880,9 @@
   --slider-rest-muted: #3b1330;
   /* A slider's thumb (ringed by --chrome). */
   --slider-thumb: #ffffff;
-  /* Fill of the neutral (input) origin badge in the image viewer; dark label on it. */
-  --tag-fill-neutral: #ffffff;
+  /* Fill of the neutral (input) origin badge in the image viewer; dark label on it. The table's #E8D5E2 tint, as the seat
+     bar's tape: Ubuntu fills no badge or button white. */
+  --tag-fill-neutral: #e8d5e2;
   /* Fill of a composer chip whose upload failed. */
   --error-chip-bg: #3b1330;
   /* Border of a composer chip whose upload failed. */
