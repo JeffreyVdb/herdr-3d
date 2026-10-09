@@ -552,6 +552,31 @@ export const SURFACES: Surface[] = [
     root: 'dialog.palette',
   },
   {
+    // On a floor while others need you: the foot's "2 floors need you · type @" hint (a button) is up.
+    name: 'palette-hint',
+    fixture: 'demo-m4',
+    open: async (page) => {
+      await onFloor(page);
+      await page.keyboard.press('Control+KeyP');
+      await expect(page.locator('dialog.palette')).toBeVisible();
+      await expect(page.locator('dialog.palette .pal-hint')).toBeVisible();
+    },
+    root: 'dialog.palette',
+  },
+  {
+    // One floor's overview: its first row is a worker's, at the top of the scrolling board.
+    name: 'overview-floor',
+    fixture: 'demo-m6',
+    open: async (page) => {
+      await enter(page, 'lab');
+      await openMenu(page);
+      await page.locator('.btn--overview:visible').first().click();
+      await expect(page.locator('.ov .ov-row--worker').first()).toBeVisible();
+      await page.waitForTimeout(700);
+    },
+    root: '.ov',
+  },
+  {
     name: 'overview',
     fixture: 'demo-m118',
     extra: '&open=none',

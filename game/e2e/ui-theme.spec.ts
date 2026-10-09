@@ -962,109 +962,131 @@ test('states: inside the transcript the composer’s Send, the selected tab and 
 
 // ---- focus: every keyboard-operable widget has the ring -----------------------------------------------------------
 
-for (const name of SURFACES.map((x) => x.name)) {
-  test(`focus: every operable widget of ${name} shows a 3px ring in #FF9B76, 2px outside it and never clipped, in Ubuntu`, async ({ page }) => {
-    test.setTimeout(240_000);
-    const clean = watchErrors(page);
-    const s = SURFACES.find((x) => x.name === name)!;
-    await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery);
-    await s.open(page);
-    await settle(page);
-    await page.keyboard.press('Shift');
-    const bad: string[] = [];
-    const n = await page.evaluate((root) => {
-      const els = [...document.querySelectorAll(`:is(${root}) :is(button, a[href], input, select, textarea, [contenteditable="true"], [tabindex="0"], [role="button"], [role="radio"], [role="tab"], [role="option"])`)] as HTMLElement[];
-      (window as unknown as { __focusables: HTMLElement[] }).__focusables = els.filter((e) => {
-        const r = e.getBoundingClientRect();
-        const cs = getComputedStyle(e);
-        return r.width > 3 && r.height > 3 && cs.visibility !== 'hidden' && cs.display !== 'none' && !(e as HTMLButtonElement).disabled && e.getAttribute('aria-hidden') !== 'true' && !e.closest('[inert], [hidden]');
-      });
-      return (window as unknown as { __focusables: HTMLElement[] }).__focusables.length;
-    }, s.root);
-    test.skip(n === 0, `${name} has no operable widget of its own (its bars are other surfaces')`);
-    for (let i = 0; i < Math.min(n, 150); i++) {
-      const got = await page.evaluate((i) => {
-        const e = (window as unknown as { __focusables: HTMLElement[] }).__focusables[i]!;
-        e.scrollIntoView({ block: 'nearest' });
-        e.focus();
-        if (document.activeElement !== e) return null;
-        // A native input drawn invisible (the whiteboard's tool radios) shows its focus on the control it stands for.
-        let ringOn: HTMLElement = e;
-        const ringed = (x: Element) => {
-          const xc = getComputedStyle(x);
-          return (xc.outlineStyle !== 'none' && parseFloat(xc.outlineWidth) > 0) || /0px 0px 0px 3px/.test(xc.boxShadow);
-        };
-        // A widget that fills a box that clips (the whiteboard's editor in its board) may have that box wear its ring:
-        // an ancestor up to two levels up that draws one around it.
-        if (!ringed(e)) {
-          const up = [e.parentElement, e.parentElement?.parentElement].find((x) => x && ringed(x));
-          if (up) ringOn = up;
-        }
-        if (getComputedStyle(e).opacity === '0') {
-          const drawn = [e.nextElementSibling, e.closest('label'), e.parentElement].filter((x): x is HTMLElement => !!x && getComputedStyle(x).opacity !== '0');
-          const ringed = drawn.find((x) => {
+for (const size of [{ name: '1280x720', ...DESKTOP }, { name: '390x844', ...NARROW }]) {
+  for (const name of SURFACES.filter((x) => size.width > 400 || !x.skipNarrow).map((x) => x.name)) {
+    test(`focus at ${size.name}: every operable widget of ${name} shows a 3px ring in #FF9B76, 2px outside it, never clipped or under a sticky bar, in Ubuntu`, async ({ page }) => {
+      test.setTimeout(300_000);
+      const clean = watchErrors(page);
+      const s = SURFACES.find((x) => x.name === name)!;
+      await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery, size);
+      await s.open(page);
+      await settle(page);
+      await page.keyboard.press('Shift');
+      const bad: string[] = [];
+      const { n, sticky } = await page.evaluate((root) => {
+        const els = [...document.querySelectorAll(`:is(${root}) :is(button, a[href], input, select, textarea, [contenteditable="true"], [tabindex="0"], [role="button"], [role="radio"], [role="tab"], [role="option"])`)] as HTMLElement[];
+        (window as unknown as { __focusables: HTMLElement[] }).__focusables = els.filter((e) => {
+          const r = e.getBoundingClientRect();
+          const cs = getComputedStyle(e);
+          return r.width > 3 && r.height > 3 && cs.visibility !== 'hidden' && cs.display !== 'none' && !(e as HTMLButtonElement).disabled && e.getAttribute('aria-hidden') !== 'true' && !e.closest('[inert], [hidden]');
+        });
+        (window as unknown as { __sticky: Element[] }).__sticky = [...document.querySelectorAll('*')].filter((x) => getComputedStyle(x).position === 'sticky');
+        return { n: (window as unknown as { __focusables: HTMLElement[] }).__focusables.length, sticky: (window as unknown as { __sticky: Element[] }).__sticky.length };
+      }, s.root);
+      test.skip(n === 0, `${name} has no operable widget of its own (its bars are other surfaces')`);
+      // Forwards (Tab), and where a sticky bar could lie over a ring scrolled up to it, backwards too (Shift+Tab).
+      const order = [...Array(Math.min(n, 150)).keys()];
+      for (const i of sticky ? [...order, ...order.slice(0, -1).reverse()] : order) {
+        const got = await page.evaluate(async (i) => {
+          const e = (window as unknown as { __focusables: HTMLElement[] }).__focusables[i]!;
+          e.scrollIntoView({ block: 'nearest' });
+          e.focus();
+          if (document.activeElement !== e) return null;
+          // Measured where the focus leaves it: a focus transition (the Overview row's lift) is let finish first.
+          void getComputedStyle(e).transform;
+          await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined)));
+          if (document.activeElement !== e) return null;
+          // A native input drawn invisible (the whiteboard's tool radios) shows its focus on the control it stands for.
+          let ringOn: HTMLElement = e;
+          const ringed = (x: Element) => {
             const xc = getComputedStyle(x);
             return (xc.outlineStyle !== 'none' && parseFloat(xc.outlineWidth) > 0) || /0px 0px 0px 3px/.test(xc.boxShadow);
-          });
-          if (ringed ?? drawn[0]) ringOn = (ringed ?? drawn[0])!;
-        }
-        const c = getComputedStyle(ringOn);
-        const rg = c.outlineColor.match(/(\d+)[ ,]+(\d+)[ ,]+(\d+)/);
-        const width = parseFloat(c.outlineWidth);
-        const offset = parseFloat(c.outlineOffset);
-        const outline = c.outlineStyle !== 'none' && width > 0;
-        // Never clipped: the ring's outer edge is inside every box between it and the page that clips (overflow other than visible).
-        // (An inset shadow ring is drawn inside its box.)
-        const reach = outline ? Math.max(0, offset) + width : / inset/.test(c.boxShadow) ? 0 : 3;
-        const r = ringOn.getBoundingClientRect();
-        const ring = { l: r.left - reach, t: r.top - reach, r: r.right + reach, b: r.bottom + reach };
-        let clipped = '';
-        let judgeX = true, judgeY = true;
-        // Only a box on the ring's containing-block chain clips it (a fixed or absolutely placed widget escapes the
-        // boxes between it and its containing block: the plan-limits tab inside a top-layer dialog).
-        const makesCb = (n: Element, fixed: boolean) => {
-          const ns = getComputedStyle(n);
-          return (!fixed && ns.position !== 'static') || ns.transform !== 'none' || ns.filter !== 'none' || ns.perspective !== 'none' || /paint|layout|strict|content/.test(ns.contain) || /transform|filter|perspective/.test(ns.willChange) || (ns.containerType ?? 'normal') !== 'normal';
-        };
-        const chain = new Set<Element>();
-        for (let x: Element | null = ringOn; x; ) {
-          const pos = getComputedStyle(x).position;
-          let next: Element | null = x.parentElement;
-          if (pos === 'fixed' || pos === 'absolute') while (next && !makesCb(next, pos === 'fixed')) next = next.parentElement;
-          if (next) chain.add(next);
-          x = next;
-        }
-        for (let n = ringOn.parentElement; n && !clipped; n = n.parentElement) {
-          if (!chain.has(n)) continue;
-          const ns = getComputedStyle(n);
-          if (ns.display === 'inline' || ns.display === 'contents') continue;
-          const cx = ns.overflowX !== 'visible', cy = ns.overflowY !== 'visible';
-          if (!cx && !cy) continue;
-          const b = n.getBoundingClientRect();
-          const box = { l: b.left + n.clientLeft, t: b.top + n.clientTop, r: b.left + n.clientLeft + n.clientWidth, b: b.top + n.clientTop + n.clientHeight };
-          // (Bigger than the box on an axis, e.g. a tall picture in the timeline, it is seen by scrolling: that axis is not judged.)
-          // (Once a nearer scroller cannot hold it on an axis, the boxes outside it are not judged on that axis either.)
-          if (cx && ring.r - ring.l > box.r - box.l + 1) judgeX = false;
-          if (cy && ring.b - ring.t > box.b - box.t + 1) judgeY = false;
-          const out = (cx && judgeX && (ring.l < box.l - 0.5 || ring.r > box.r + 0.5)) || (cy && judgeY && (ring.t < box.t - 0.5 || ring.b > box.b + 0.5));
-          const f = (q: { l: number; t: number; r: number; b: number }) => [q.l, q.t, q.r, q.b].map(Math.round).join(',');
-          if (out) clipped = `${n.tagName.toLowerCase()}.${String(n.className).split(' ').slice(0, 2).join('.')} (ring ${f(ring)}, box ${f(box)})`;
-        }
-        const tag = (x: Element) => `${x.tagName.toLowerCase()}.${String(x.className).split(' ').slice(0, 2).join('.')}`;
-        // The ring is the outline, or (a field / card that draws its ring as a shadow) a 3px spread in the colour.
-        // The issue's exact geometry on every widget: 2px off, never clipped.
-        const strict = true;
-        return { at: tag(e) + (ringOn !== e ? ` → ${tag(ringOn)}` : ''), strict, outline, style: c.outlineStyle, width, offset, color: rg ? `${rg[1]},${rg[2]},${rg[3]}` : c.outlineColor, shadow: c.boxShadow, clipped };
-      }, i);
-      if (!got) continue;
-      const asOutline = got.style === 'solid' && got.width >= 3 && got.color === '255,155,118' && (!got.strict || got.offset >= 2);
-      const asShadow = /rgb\(255, 155, 118\) 0px 0px 0px 3px/.test(got.shadow);
-      if (!asOutline && !asShadow) bad.push(`${got.at}: ${got.style} ${got.width}px offset ${got.offset}px ${got.color} / ${got.shadow.slice(0, 60)}`);
-      else if (got.strict && got.clipped) bad.push(`${got.at}: its ring is clipped by ${got.clipped}`);
-    }
-    expect(bad, `${name}: widgets without the 3px #FF9B76 ring 2px outside them, or with it clipped`).toEqual([]);
-    clean();
-  });
+          };
+          // A widget that fills a box that clips (the whiteboard's editor in its board) may have that box wear its ring:
+          // an ancestor up to two levels up that draws one around it.
+          if (!ringed(e)) {
+            const up = [e.parentElement, e.parentElement?.parentElement].find((x) => x && ringed(x));
+            if (up) ringOn = up;
+          }
+          if (getComputedStyle(e).opacity === '0') {
+            const drawn = [e.nextElementSibling, e.closest('label'), e.parentElement].filter((x): x is HTMLElement => !!x && getComputedStyle(x).opacity !== '0');
+            const ringed = drawn.find((x) => {
+              const xc = getComputedStyle(x);
+              return (xc.outlineStyle !== 'none' && parseFloat(xc.outlineWidth) > 0) || /0px 0px 0px 3px/.test(xc.boxShadow);
+            });
+            if (ringed ?? drawn[0]) ringOn = (ringed ?? drawn[0])!;
+          }
+          const c = getComputedStyle(ringOn);
+          const rg = c.outlineColor.match(/(\d+)[ ,]+(\d+)[ ,]+(\d+)/);
+          const width = parseFloat(c.outlineWidth);
+          const offset = parseFloat(c.outlineOffset);
+          const outline = c.outlineStyle !== 'none' && width > 0;
+          // Never clipped: the ring's outer edge is inside every box between it and the page that clips (overflow other than visible).
+          // (An inset shadow ring is drawn inside its box.)
+          const reach = outline ? Math.max(0, offset) + width : / inset/.test(c.boxShadow) ? 0 : 3;
+          const r = ringOn.getBoundingClientRect();
+          const ring = { l: r.left - reach, t: r.top - reach, r: r.right + reach, b: r.bottom + reach };
+          let clipped = '';
+          let judgeX = true, judgeY = true;
+          // Only a box on the ring's containing-block chain clips it (a fixed or absolutely placed widget escapes the
+          // boxes between it and its containing block: the plan-limits tab inside a top-layer dialog).
+          const makesCb = (n: Element, fixed: boolean) => {
+            const ns = getComputedStyle(n);
+            return (!fixed && ns.position !== 'static') || ns.transform !== 'none' || ns.filter !== 'none' || ns.perspective !== 'none' || /paint|layout|strict|content/.test(ns.contain) || /transform|filter|perspective/.test(ns.willChange) || (ns.containerType ?? 'normal') !== 'normal';
+          };
+          const chain = new Set<Element>();
+          for (let x: Element | null = ringOn; x; ) {
+            const pos = getComputedStyle(x).position;
+            let next: Element | null = x.parentElement;
+            if (pos === 'fixed' || pos === 'absolute') while (next && !makesCb(next, pos === 'fixed')) next = next.parentElement;
+            if (next) chain.add(next);
+            x = next;
+          }
+          for (let n = ringOn.parentElement; n && !clipped; n = n.parentElement) {
+            if (!chain.has(n)) continue;
+            const ns = getComputedStyle(n);
+            if (ns.display === 'inline' || ns.display === 'contents') continue;
+            const cx = ns.overflowX !== 'visible', cy = ns.overflowY !== 'visible';
+            if (!cx && !cy) continue;
+            const b = n.getBoundingClientRect();
+            const box = { l: b.left + n.clientLeft, t: b.top + n.clientTop, r: b.left + n.clientLeft + n.clientWidth, b: b.top + n.clientTop + n.clientHeight };
+            // (Bigger than the box on an axis, e.g. a tall picture in the timeline, it is seen by scrolling: that axis is not judged.)
+            // (Once a nearer scroller cannot hold it on an axis, the boxes outside it are not judged on that axis either.)
+            if (cx && ring.r - ring.l > box.r - box.l + 1) judgeX = false;
+            if (cy && ring.b - ring.t > box.b - box.t + 1) judgeY = false;
+            const out = (cx && judgeX && (ring.l < box.l - 0.5 || ring.r > box.r + 0.5)) || (cy && judgeY && (ring.t < box.t - 0.5 || ring.b > box.b + 0.5));
+            const f = (q: { l: number; t: number; r: number; b: number }) => [q.l, q.t, q.r, q.b].map(Math.round).join(',');
+            if (out) clipped = `${n.tagName.toLowerCase()}.${String(n.className).split(' ').slice(0, 2).join('.')} (ring ${f(ring)}, box ${f(box)})`;
+          }
+          // Never covered: no sticky bar (a scroller's heading or Save foot) lies over the ring.
+          if (!clipped) {
+            for (const st of (window as unknown as { __sticky: Element[] }).__sticky) {
+              if (st.contains(ringOn) || ringOn.contains(st)) continue;
+              const sc = getComputedStyle(st);
+              if (sc.position !== 'sticky' || sc.display === 'none' || sc.visibility === 'hidden') continue;
+              const b = st.getBoundingClientRect();
+              if (b.width < 1 || b.height < 1) continue;
+              if (ring.l < b.right - 0.5 && ring.r > b.left + 0.5 && ring.t < b.bottom - 0.5 && ring.b > b.top + 0.5) {
+                clipped = `the sticky ${st.tagName.toLowerCase()}.${String(st.className).split(' ').slice(0, 2).join('.')} over it (ring ${[ring.l, ring.t, ring.r, ring.b].map(Math.round).join(',')})`;
+                break;
+              }
+            }
+          }
+          const tag = (x: Element) => `${x.tagName.toLowerCase()}.${String(x.className).split(' ').slice(0, 2).join('.')}`;
+          // The ring is the outline, or (a field / card that draws its ring as a shadow) a 3px spread in the colour.
+          // The issue's exact geometry on every widget: 3px, exactly 2px off, never clipped.
+          return { at: tag(e) + (ringOn !== e ? ` → ${tag(ringOn)}` : ''), outline, style: c.outlineStyle, width, offset, color: rg ? `${rg[1]},${rg[2]},${rg[3]}` : c.outlineColor, shadow: c.boxShadow, clipped };
+        }, i);
+        if (!got) continue;
+        const asOutline = got.style === 'solid' && got.width === 3 && got.color === '255,155,118' && got.offset === 2;
+        const asShadow = /rgb\(255, 155, 118\) 0px 0px 0px 3px/.test(got.shadow);
+        if (!asOutline && !asShadow) bad.push(`${got.at}: ${got.style} ${got.width}px offset ${got.offset}px ${got.color} / ${got.shadow.slice(0, 60)}`);
+        else if (got.clipped) bad.push(`${got.at}: its ring is clipped by ${got.clipped}`);
+      }
+      expect([...new Set(bad)], `${name} at ${size.name}: widgets without the 3px #FF9B76 ring 2px outside them, or with it clipped or covered`).toEqual([]);
+      clean();
+    });
+  }
 }
 
 test('states: a hire in flight (the bridge’s ack held) keeps the primary orange with a dark label and a spinner, says aria-busy, and refuses a second press', async ({ page }) => {
