@@ -153,6 +153,14 @@
   --lift-row-hover: rgb(255 255 255 / 7%);
   /* #215: the well that holds a report request's full text (Quiet: a faint lift; Ubuntu: the recessed purple). */
   --req-well: rgb(255 255 255 / 7%);
+  /* #212: the outline of a review section that needs a choice (Ubuntu: the warning yellow, doubled by an inner line). */
+  --attention-border: rgb(255 194 51 / 70%);
+  /* #212: that section's fill (Ubuntu: the raised surface; the outline, the question and its tape say it). */
+  --attention-bg: rgb(255 194 51 / 7%);
+  /* #212: the origin tape of a value the interpreter resolved from a name (dark label on it). */
+  --tape-resolved: #8fb8ff;
+  /* #212: the origin tape of a default value (dark label on it). */
+  --tape-default: #c4cde4;
   /* The track of the elevator's progress bar. */
   --lift-bar-track: rgb(255 255 255 / 10%);
   /* The dashed outline of an empty slot (a building without a logo). */
@@ -721,6 +729,14 @@
   --lift-row-hover: #5e2750;
   /* #215: the well that holds a report request's full text. */
   --req-well: #2c001e;
+  /* #212: the outline of a review section that needs a choice. */
+  --attention-border: #ffc83d;
+  /* #212: that section's fill. */
+  --attention-bg: #3b1330;
+  /* #212: the origin tape of a value the interpreter resolved (the working blue). */
+  --tape-resolved: #8ec9ff;
+  /* #212: the origin tape of a default value (the muted text tint). */
+  --tape-default: #cdb1c6;
   /* The track of the elevator's progress bar. */
   --lift-bar-track: #5e2750;
   /* The dashed outline of an empty slot (a building without a logo). */

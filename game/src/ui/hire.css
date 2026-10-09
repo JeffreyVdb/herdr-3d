@@ -874,11 +874,11 @@
   flex: none;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgb(255 255 255 / 4%);
+  background: var(--group-bg);
 }
 .rv-sec[data-attention='true'] {
-  border-color: rgb(255 194 51 / 70%);
-  background: rgb(255 194 51 / 7%);
+  border-color: var(--attention-border);
+  background: var(--attention-bg);
 }
 .rv-h {
   margin: 0;
@@ -899,16 +899,16 @@
   cursor: pointer;
 }
 .rv-toggle:hover {
-  background: rgb(255 255 255 / 5%);
+  background: var(--row-hover);
 }
 .rv-toggle:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: -3px;
 }
 .rv-chev {
   display: grid;
   place-items: center;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .rv-chev svg {
   width: 18px;
@@ -933,11 +933,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 13px;
 }
 .rv-sec[data-attention='true'] .rv-sum {
-  color: var(--sun);
+  color: var(--warn);
 }
 .rv-origin {
   justify-self: end;
@@ -946,23 +946,23 @@
 }
 .rv-origin[data-origin='dictated'] {
   --c: var(--plus);
-  color: var(--ink);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .rv-origin[data-origin='resolved'] {
-  --c: #8fb8ff;
-  color: var(--ink);
+  --c: var(--tape-resolved);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .rv-origin[data-origin='default'] {
-  --c: #c4cde4;
-  color: var(--ink);
+  --c: var(--tape-default);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .rv-origin[data-origin='chosen'],
 .rv-origin[data-origin='attention'] {
-  --c: var(--sun);
-  color: var(--ink);
+  --c: var(--chip-accent);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .rv-panel {
@@ -976,7 +976,7 @@
 .rv-ask {
   margin: 0;
   font-weight: 700;
-  color: var(--sun);
+  color: var(--warn);
 }
 .rv-prov,
 .rv-prov-list {
@@ -984,7 +984,7 @@
   padding: 0;
   list-style: none;
   font-size: 12px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .rv-prov-list {
   display: flex;
@@ -1004,13 +1004,19 @@
 .rv-place {
   margin: 0;
 }
+/* A phone's width: the value under the title, and the origin tape under that (beside the title it covered the title's end). */
 @media (max-width: 560px) {
   .rv-toggle {
-    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-columns: 20px minmax(0, 1fr);
   }
   .rv-sum {
     grid-column: 2 / -1;
     grid-row: 2;
+  }
+  .rv-origin {
+    grid-column: 2;
+    grid-row: 3;
+    justify-self: start;
   }
 }
 /* A finger needs 44px: the review's choice chips (harness, model, effort) on a touch screen or a phone's width. */
@@ -1140,6 +1146,54 @@
   color: var(--disabled-text);
 }
 
+/*
+ * #212 the review's accordion. A section is a raised card with the strong border; its header is a menu row (the hover
+ * fill, a pressed keyline) and an open one is the selected tab: the orange action fill with the dark label, its bottom
+ * corners square onto its panel (aria-expanded says it). A section that needs a choice has the warning yellow outline,
+ * doubled by an inner line, and its question and tape say what is missing: never the hue alone.
+ */
+:root[data-ui-theme='ubuntu'] .rv-sec {
+  border-color: var(--border);
+}
+:root[data-ui-theme='ubuntu'] .rv-sec[data-attention='true'] {
+  border-color: var(--attention-border);
+  box-shadow: inset 0 0 0 1px var(--attention-border);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle {
+  color: var(--text);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle:active {
+  background: var(--btn-bg-active);
+  box-shadow: inset 0 0 0 1px var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] {
+  border-radius: 11px 11px 0 0;
+  background: var(--action);
+  color: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true']:hover {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true']:active {
+  background: var(--action-active);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] :is(.rv-chev, .rv-sum) {
+  color: var(--on-action);
+}
+/* A tape on the orange header keeps its own fill; a dark keyline sets it off the orange. */
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] .rv-origin {
+  box-shadow: 0 0 0 1px var(--on-action);
+}
+/* The ring sits two pixels outside the header (the sections' gap has room), with a dark keyline in that gap. */
+:root[data-ui-theme='ubuntu'] .rv-toggle:focus-visible {
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+/* What is needed is a warning, not an action: the yellow of the outline. */
+:root[data-ui-theme='ubuntu'] .rv-origin[data-origin='attention'] {
+  --c: var(--warn);
+}
+
 @media (pointer: coarse) {
   :root[data-ui-theme='ubuntu'] .dd-chip span,
   :root[data-ui-theme='ubuntu'] .dd-check,
@@ -1149,6 +1203,12 @@
   :root[data-ui-theme='ubuntu'] .desk-dlg input:not([type]),
   :root[data-ui-theme='ubuntu'] .desk-dlg .dd-search {
     height: 44px;
+  }
+}
+/* #212: the review's choice chips are a finger's 44px on touch and at a phone's width (Ubuntu's 32px chip rule out-ranks #212's own). */
+@media (pointer: coarse), (max-width: 560px) {
+  :root[data-ui-theme='ubuntu'] .desk-dlg--review .dd-chip span {
+    min-height: 44px;
   }
 }
 @media (forced-colors: active) {
@@ -1168,6 +1228,17 @@
     forced-color-adjust: none;
     border-color: Highlight;
     background: radial-gradient(circle, Highlight 0 4px, Canvas 4.5px);
+  }
+  :root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] :is(.rv-chev, .rv-sum) {
+    color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .rv-sec[data-attention='true'] {
+    border: 2px solid Highlight;
   }
 }
 /* ubuntu:end */
