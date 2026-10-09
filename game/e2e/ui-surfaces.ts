@@ -116,6 +116,24 @@ async function reportRequest(page: Page, long: boolean): Promise<string> {
 
 const dialog = (page: Page) => page.evaluate(() => window.__h3d.dialog());
 
+/**
+ * #212: the review of a dictated hire at Desk 6 of herdr-3d, from a fixture interpretation; `pick` shapes it from the
+ * floor's own catalog (the hire dialog's default choice), as the dictation bar's interpreter would.
+ */
+async function openReview(page: Page, pick: (c: { harness: string; model: string; effort: string }) => Record<string, unknown>, expand: string[] = []): Promise<void> {
+  await onFloor(page);
+  await page.evaluate(() => window.__h3d.openHire(5));
+  await expect.poll(async () => ((await dialog(page)) as { state?: string } | null)?.state).toBe('ready');
+  const form = ((await dialog(page)) as { form: { harness: string; model: string; effort: string } }).form;
+  await page.keyboard.press('Escape');
+  await expect.poll(() => dialog(page)).toBeNull();
+  expect(await page.evaluate((i) => window.__h3d.openHireReview(i as never, 5), pick(form))).toBe(true);
+  await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
+  for (const id of expand) await page.locator(`.desk-dlg--review [data-key="sec:${id}"]`).click();
+  await page.mouse.move(1, 1);
+}
+const said = (task: string) => ({ provenance: 'dictated', value: task, span: { source: 0, start: 0, end: task.length } });
+
 export const SURFACES: Surface[] = [
   {
     name: 'bars-city',
@@ -240,6 +258,69 @@ export const SURFACES: Surface[] = [
       await page.locator('#hire-task').fill('Rework the header so it no longer overlaps the logo on mobile.');
     },
     root: 'dialog.desk-dlg--hire',
+  },
+  {
+    // Effort not given: its section is open with the interpreter's question and Hire is off; Harness and model opened by hand (a selected header).
+    name: 'hire-review',
+    fixture: 'demo-m4',
+    open: async (page) => {
+      await openReview(
+        page,
+        (c) => ({
+          sources: ['Hire an agent to rework the header. Task: rework the header so it no longer overlaps the logo on mobile.'],
+          harness: { provenance: 'dictated', value: c.harness },
+          model: { provenance: 'resolved', value: c.model },
+          effort: { provenance: 'missing' },
+          task: said('Rework the header so it no longer overlaps the logo on mobile.'),
+          questions: [{ field: 'effort', text: 'What effort level should this agent use?' }],
+          ready_for_review: false,
+        }),
+        ['agent'],
+      );
+      await expect(page.locator('.desk-dlg--review [data-key="hire"]')).toBeDisabled();
+    },
+    root: 'dialog.desk-dlg--review',
+  },
+  {
+    // What cannot be hired: a model not in the catalog, no effort, a task that starts with "--" (each section open, outlined, asking).
+    name: 'hire-review-invalid',
+    fixture: 'demo-m4',
+    open: async (page) => {
+      await openReview(page, (c) => ({
+        sources: ['Hire an agent on GPT nine turbo. Task: --yolo fix the login bug.'],
+        harness: { provenance: 'dictated', value: c.harness },
+        model: { provenance: 'invalid', said: 'GPT nine turbo' },
+        effort: { provenance: 'missing' },
+        task: said('--yolo fix the login bug.'),
+        questions: [{ field: 'model', text: 'Which model should this agent use?' }],
+        ready_for_review: false,
+      }));
+      await expect.poll(async () => ((await dialog(page)) as { sections: Array<{ attention: boolean }> }).sections.filter((x) => x.attention).length).toBe(3);
+      await expect(page.locator('.desk-dlg--review [data-key="hire"]')).toBeDisabled();
+    },
+    root: 'dialog.desk-dlg--review',
+  },
+  {
+    // Everything given: every header collapsed with its value, Location opened (label, folder, worktree), Hire on.
+    name: 'hire-review-ready',
+    fixture: 'demo-m4',
+    open: async (page) => {
+      await openReview(
+        page,
+        (c) => ({
+          sources: ['Hire an agent with high effort. Task: rework the header so it no longer overlaps the logo on mobile.'],
+          harness: { provenance: 'dictated', value: c.harness },
+          model: { provenance: 'resolved', value: c.model },
+          effort: { provenance: 'dictated', value: c.effort },
+          task: said('Rework the header so it no longer overlaps the logo on mobile.'),
+          questions: [],
+          ready_for_review: true,
+        }),
+        ['where'],
+      );
+      await expect(page.locator('.desk-dlg--review [data-key="hire"]')).toBeEnabled();
+    },
+    root: 'dialog.desk-dlg--review',
   },
   {
     name: 'start-run',
