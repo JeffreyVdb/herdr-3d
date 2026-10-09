@@ -125,7 +125,7 @@ func main() {
 	dir := "docs/research/dictation-hiring-bench"
 	config := flag.String("config", filepath.Join(home, ".local/state/herdr-world/ai.json"), "existing config, read-only")
 	socket := flag.String("socket", "/run/user/1000/herdr-world/bridge.sock", "read-only catalog source")
-	out := flag.String("out", filepath.Join(dir, "results-dryrun.json"), "sanitized results")
+	out := flag.String("out", filepath.Join(os.TempDir(), "dictation-dryrun.json"), "sanitized results (not committed: it holds the live catalog)")
 	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -205,7 +205,10 @@ func main() {
 				r.Fields = fields(res.Hire)
 				r.Task = res.Hire.Task.Value
 			}
-			r.TaskExact = s.Task == "" || r.Task == s.Task
+			// The task is scored where a proposal is expected: an unsupported
+			// or unclear result carries none by design (multi-worker's label
+			// names the task the research's parser read).
+			r.TaskExact = s.Task == "" || r.Task == s.Task || (res.Hire == nil && (s.Decision == "unsupported" || s.Decision == "unclear"))
 			r.Pass = r.Got == s.Decision && r.TaskExact
 			rows[i] = r
 			fmt.Printf("%-32s got=%-17s want=%-17s task_exact=%v %dms\n", s.ID, r.Got, s.Decision, r.TaskExact, r.LatencyMS)
