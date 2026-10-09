@@ -733,4 +733,12 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
     border: 1px solid CanvasText;
   }
 }
+/* The changes panel's scroller stands 5px inside the panel so its ring is outside it, unclipped. */
+:root[data-ui-theme='ubuntu'] .cp-scroll {
+  margin: 0 5px 5px;
+  scroll-padding: 5px;
+}
+:root[data-ui-theme='ubuntu'] .cp-scroll:focus-visible {
+  outline-offset: 2px;
+}
 /* ubuntu:end */

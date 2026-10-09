@@ -1246,4 +1246,12 @@ body {
     border-color: GrayText;
   }
 }
+/* Focus room (decisions #216 row 24): a widget scrolled into view keeps its ring's 5px inside the scroller, and the menu's
+   rows ring outside themselves like every other widget (the menu's 6px padding holds it). */
+:root[data-ui-theme='ubuntu'] :is(button, a[href], input, select, textarea, summary, [tabindex], [contenteditable='true'], [role='button'], [role='tab'], [role='option'], [role='radio'], [role='menuitem']) {
+  scroll-margin: 6px;
+}
+:root[data-ui-theme='ubuntu'] .topbar-menu .btn:focus-visible {
+  outline-offset: 2px;
+}
 /* ubuntu:end */

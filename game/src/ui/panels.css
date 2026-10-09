@@ -1018,4 +1018,8 @@
     border-style: dashed;
   }
 }
+/* A form whose Save bar sticks to the foot: what is scrolled to clears the bar (and its ring's room). */
+:root[data-ui-theme='ubuntu'] .panel-body:has(.settings-actions) {
+  scroll-padding-bottom: 72px;
+}
 /* ubuntu:end */

@@ -163,6 +163,25 @@
   outline-offset: 2px;
   box-shadow: none;
 }
+/* The library's sidebar trigger is not offered (its picture is hidden above): its native checkbox goes too, or it would be
+   an invisible stop in the keyboard's path. */
+:root[data-ui-theme='ubuntu'] .wb .excalidraw label:has(> .default-sidebar-trigger) {
+  display: none !important;
+}
+/* A colour swatch: Excalidraw draws its focus as a 3px border 1px off (::after) and turns it off on some swatches; here
+   it is the issue's outline, 2px off, on every swatch. */
+:root[data-ui-theme='ubuntu'] .excalidraw .color-picker__button:focus-visible {
+  outline: 3px solid var(--focus) !important;
+  outline-offset: 2px !important;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .color-picker__button:focus-visible::after {
+  display: none;
+}
+/* A dialog's content takes the focus as it opens (help, Mermaid): it rings like any widget. */
+:root[data-ui-theme='ubuntu'] .excalidraw .Modal__content:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
 /* A widget scrolled into view (the property panel scrolls) keeps its ring's room inside the scroller. */
 :root[data-ui-theme='ubuntu'] .excalidraw :is(button, input, label, select, textarea, [role='button'], [role='radio'], [role='menuitem']) {
   scroll-margin: 6px;

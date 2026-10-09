@@ -1135,9 +1135,13 @@
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
-/* A row's ring goes inside it: the board scrolls, and its left edge has no room for an outside one. */
+/* A row's ring is outside it like every other: the scrolling board gives it 5px on each side. */
+:root[data-ui-theme='ubuntu'] .ov-board {
+  padding: 5px 5px 24px;
+  scroll-padding: 5px;
+}
 :root[data-ui-theme='ubuntu'] .ov-row:focus-visible {
-  outline-offset: -3px;
+  outline-offset: 2px;
   box-shadow: 0 8px 20px rgb(0 0 0 / 40%);
 }
 :root[data-ui-theme='ubuntu'] .ov-board {

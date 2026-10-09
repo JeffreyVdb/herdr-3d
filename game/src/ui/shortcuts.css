@@ -100,9 +100,11 @@
 }
 
 /* ubuntu:begin */
-/* #216: the scroll area's focus ring keeps the full 3px, drawn inside (the body clips it); Ubuntu Mono reads smaller, so the keycaps get a size up. */
+/* #216: the scroll area's focus ring is the full 3px, 2px outside it (credits.css gives every credits body the room);
+   Ubuntu Mono reads smaller, so the keycaps get a size up. */
 :root[data-ui-theme='ubuntu'] .sc-body:focus-visible {
-  outline-width: 3px;
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
 }
 :root[data-ui-theme='ubuntu'] .shortcuts kbd {
   font-size: 13px;

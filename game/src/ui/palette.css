@@ -276,7 +276,11 @@
   color: var(--disabled-text);
 }
 :root[data-ui-theme='ubuntu'] .pal-hint:focus-visible {
-  outline-offset: 0;
+  outline-offset: 2px;
+}
+/* (The foot keeps the hint's ring inside the dialog, which clips.) */
+:root[data-ui-theme='ubuntu'] .pal-foot {
+  padding-bottom: 10px;
 }
 @media (forced-colors: active) {
   :root[data-ui-theme='ubuntu'] .pal-opt[aria-selected='true'] {

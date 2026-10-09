@@ -938,4 +938,8 @@ dialog.settings {
     forced-color-adjust: none;
   }
 }
+/* The volume slider's ring is 2px off like every field's (Quiet's field rule pulls a range input's to 1px). */
+:root[data-ui-theme='ubuntu'] .settings-field .settings-nt-volume:focus-visible {
+  outline-offset: 2px;
+}
 /* ubuntu:end */

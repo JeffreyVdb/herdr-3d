@@ -378,4 +378,13 @@
     outline: 1px solid Highlight;
   }
 }
+/* Focus room: the rows and the close button ring outside themselves; the list holds 5px round them. */
+:root[data-ui-theme='ubuntu'] .ib-row:focus-visible,
+:root[data-ui-theme='ubuntu'] .ib-x:focus-visible {
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .ib-list {
+  padding: 5px;
+  scroll-padding: 5px;
+}
 /* ubuntu:end */
