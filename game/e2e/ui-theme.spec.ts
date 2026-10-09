@@ -825,9 +825,19 @@ test('a live switch leaves the terminal’s screen, the seated worker, a typed d
   const clean = watchErrors(page);
   await boot(page, 'demo-m5', { terminal: 'ubuntu' }, '&prints=0');
   const id = await sitAtTofu(page, 'terminal');
-  // The agent's own spinner and clock tick on: compare the screen with its digits and spinner glyph set aside.
-  const screen = () => page.evaluate((w) => (window.__h3d.screenText(w) ?? []).join('\n').replace(/\d+/g, '#').replace(/[·✶✻✽✢✳*]/g, '*'), id);
-  const before = { screen: await screen(), seated: await page.evaluate(() => window.__h3d.seated()), th: await theme(page) };
+  // The recorded agent thinks (a spinner, a clock), answers and starts over: a key it does not echo (Up) settles the
+  // fixture's screen where its recording ends, then wait until the frames stop coming, so the comparison sees the theme
+  // switch and not the recording playing on.
+  const screen = () => page.evaluate((w) => (window.__h3d.screenText(w) ?? []).join('\n'), id);
+  await page.keyboard.press('ArrowUp');
+  let settled = await screen();
+  for (;;) {
+    await page.waitForTimeout(1500);
+    const now = await screen();
+    if (now === settled) break;
+    settled = now;
+  }
+  const before = { screen: settled, seated: await page.evaluate(() => window.__h3d.seated()), th: await theme(page) };
   expect(before.screen.trim().length).toBeGreaterThan(0);
   await page.evaluate(() => window.__h3d.setUiTheme('ubuntu'));
   await frames(page, 6);
