@@ -1,0 +1,166 @@
+/*
+ * #216: Settings → Appearance: the UI theme picker. Two option cards in a fieldset (native radios). Selected is the
+ * theme picker's selected state of the issue's table: the action fill with the dark label, plus a filled dot, so it
+ * is never colour alone. Everything here is a role token; the swatches draw the real colours of what they stand for.
+ */
+.settings-theme {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.settings-theme legend {
+  padding: 0;
+  margin-bottom: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variation-settings: var(--fvs-plain);
+}
+.settings-theme-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.settings-theme-opt {
+  position: relative;
+  flex: 1 1 240px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  box-sizing: border-box;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--raised);
+  color: var(--text);
+  cursor: pointer;
+}
+.settings-theme-opt:hover {
+  background: var(--hover);
+  border-color: var(--border-hover);
+}
+/* The radio is the control and stays in the accessibility tree; the card draws its state. */
+.settings-theme-opt input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.settings-theme-opt:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.settings-theme-opt:has(input:checked) {
+  background: var(--action);
+  border-color: var(--action-border);
+  color: var(--on-action);
+}
+.settings-theme-opt:has(input:checked):focus-within {
+  box-shadow: 0 0 0 2px var(--on-action);
+}
+.settings-theme-swatch {
+  flex: none;
+  position: relative;
+  width: 56px;
+  height: 40px;
+  border: 1px solid rgb(255 255 255 / 55%);
+  border-radius: 6px;
+  background: var(--swatch-surface);
+  overflow: hidden;
+}
+/* The swatch's border has to show on a light card and on a dark one: a dark keyline outside the light one. */
+.settings-theme-swatch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 45%);
+}
+.settings-theme-swatch i {
+  position: absolute;
+  display: block;
+}
+.settings-theme-swatch-bar {
+  inset: 0 0 auto 0;
+  height: 9px;
+  background: var(--swatch-chrome);
+}
+.settings-theme-swatch-card {
+  left: 5px;
+  right: 18px;
+  top: 14px;
+  height: 20px;
+  border-radius: 3px;
+  background: var(--swatch-raised);
+}
+.settings-theme-swatch-line {
+  left: 9px;
+  top: 21px;
+  width: 22px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--swatch-text);
+}
+.settings-theme-swatch-action {
+  right: 5px;
+  bottom: 5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: var(--swatch-action);
+}
+.settings-theme-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-theme-name {
+  font-size: 14px;
+  font-weight: 700;
+}
+.settings-theme-desc {
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text-2);
+}
+.settings-theme-opt:has(input:checked) .settings-theme-desc {
+  color: var(--on-action);
+}
+/* A radio's own mark: an empty ring, filled when it is the pick. Shape, not hue. */
+.settings-theme-dot {
+  flex: none;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+.settings-theme-opt:has(input:checked) .settings-theme-dot {
+  background: radial-gradient(circle, currentColor 0 45%, transparent 50%);
+}
+@media (pointer: coarse) {
+  .settings-theme-opt {
+    min-height: 72px;
+  }
+}
+@media (forced-colors: active) {
+  .settings-theme-opt {
+    border-color: ButtonText;
+  }
+  .settings-theme-opt:has(input:checked) {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .settings-theme-opt:has(input:checked) .settings-theme-desc {
+    color: HighlightText;
+  }
+  .settings-theme-opt:has(input:focus-visible) {
+    outline-color: Highlight;
+  }
+}

@@ -13,14 +13,14 @@
   margin-top: 7px;
   white-space: nowrap;
   font-size: 13px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .crew-tag {
   flex: none;
   padding: 2px 10px 3px;
   border-radius: 999px;
-  background: var(--run, #24406e);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%);
+  background: var(--run, var(--run-default));
+  box-shadow: inset 0 0 0 1px var(--pill-ring);
   font-weight: 750;
   font-size: 12.5px;
   color: #ffffff;
@@ -32,27 +32,27 @@
   font-size: 12px;
 }
 .crew-issue {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .crew-stamp {
   flex: none;
   padding: 1px 7px;
   border: 2px solid currentColor;
   border-radius: 4px;
-  background: #ffffff;
+  background: var(--stamp-bg);
   transform: rotate(-3deg);
   font-weight: 850;
   font-size: 11.5px;
   letter-spacing: 0.04em;
 }
 .crew-stamp--pass {
-  color: #0b8454;
+  color: var(--stamp-pass);
 }
 .crew-stamp--changes {
-  color: #c42a26;
+  color: var(--stamp-changes);
 }
 .crew-stamp--incomplete {
-  color: #5d6478;
+  color: var(--stamp-incomplete);
 }
 .crew-summary,
 .crew-phase,
@@ -66,7 +66,7 @@
 /* #215: the keyboard way to a request the line cannot show whole; it keeps its width while the request ellipsizes. */
 .crew-more {
   flex: none;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 600;
 }
@@ -81,13 +81,13 @@
   }
 }
 .crew-phase {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .crew-resolved {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .crew-ask {
-  color: #ffd2cf;
+  color: var(--ask-text);
   font-weight: 650;
 }
 @media (max-width: 760px) {
@@ -95,3 +95,13 @@
     display: none;
   }
 }
+
+/* ubuntu:begin */
+/* #216: the role tag and the stamp are filled shapes: forced colors gets their outline. */
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .crew-tag,
+  :root[data-ui-theme='ubuntu'] .crew-stamp {
+    border: 1px solid CanvasText;
+  }
+}
+/* ubuntu:end */

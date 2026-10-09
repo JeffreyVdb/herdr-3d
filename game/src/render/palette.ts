@@ -1,4 +1,4 @@
-/** Scene colours. HUD colours live in ui/hud.css; status colours are shared. */
+/** Scene colours. HUD colours live in ui/uiTheme.css; status colours are shared. */
 
 import type { Display } from '../world/derive';
 
@@ -8,7 +8,7 @@ export const GRASS = 0x8fcf7f;
 export const ROAD = 0x9aa1ad;
 export const INK = 0x1c2540;
 
-/** Status colours: card chips, floor badges, laptop glow. Keep in sync with hud.css. */
+/** Status colours: card chips, floor badges, laptop glow. Keep in sync with ui/uiTheme.css (Quiet). */
 export const STATUS_COLOR: Record<Display, number> = {
   working: 0x2f6bf0,
   done: 0x12a26a,
@@ -23,7 +23,7 @@ export const STATUS_CSS: Record<Display, string> = Object.fromEntries(
   Object.entries(STATUS_COLOR).map(([k, v]) => [k, `#${v.toString(16).padStart(6, '0')}`]),
 ) as Record<Display, string>;
 
-/** The same hues deepened where they carry white text (card tape, the blocked card): >= 4.5:1. Keep in sync with hud.css. */
+/** The same hues deepened where they carry white text (card tape, the blocked card): >= 4.5:1. Keep in sync with ui/uiTheme.css (Quiet). */
 /** #83: the cardboard tape of a worker wrapping up (white text on it: 4.9:1). */
 export const BOX_TAPE = '#94632f';
 

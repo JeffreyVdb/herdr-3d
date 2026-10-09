@@ -7,7 +7,8 @@ import { frames, leftInTerminal, openGame, seatMode, shot, watchErrors } from '.
 // the terminal, a phone width). The m59 spec covers laziness, migration, keyboard and the pickers.
 
 const SIM = 'play=none&sim=1&simms=500&simusage=0&simlimits=ok';
-const UBUNTU = { 'h3d.theme.transcript': 'ubuntu', 'h3d.theme.terminal': 'ubuntu' };
+// #216: fully Ubuntu is all three picks: the transcript's bar, Send and its other widgets are the UI theme's now.
+const UBUNTU = { 'h3d.theme.ui': 'ubuntu', 'h3d.theme.transcript': 'ubuntu', 'h3d.theme.terminal': 'ubuntu' };
 
 async function sit(page: Page, init: Record<string, string> = UBUNTU): Promise<string> {
   await page.addInitScript((kv) => Object.entries(kv).forEach(([k, v]) => localStorage.setItem(k, v)), init);
@@ -252,7 +253,7 @@ test('Ubuntu: a table of box drawing stays lined up at 70, 100 and 200 %, and th
   // glyph that is not the font's own inside its cell, so one a half wider than a cell would be squeezed).
   const adv = await tx.evaluate((e) => {
     const g = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
-    g.font = `28px ${getComputedStyle(e).getPropertyValue('--font-mono')}`;
+    g.font = `28px ${getComputedStyle(e).getPropertyValue('--tx-mono')}`;
     return { stack: g.font, M: g.measureText('M').width, sym: ['→', '●', '◆', '≤'].map((c) => g.measureText(c).width) };
   });
   for (const [i, w] of adv.sym.entries()) expect(Math.abs(w - adv.M), `canvas: symbol ${i} ${w} vs M ${adv.M} (${adv.stack})`).toBeLessThanOrEqual(0.5);
@@ -326,7 +327,7 @@ for (const [name, theme, ink, fill, size] of [
   test(`${name}: Send and the jump chip are drawn in the theme's on-accent ink, 4.5:1 or better`, async ({ page }) => {
     test.setTimeout(150_000);
     if (size) await page.setViewportSize(size);
-    const id = await sit(page, { 'h3d.theme.transcript': theme, 'h3d.theme.terminal': theme });
+    const id = await sit(page, { 'h3d.theme.ui': theme, 'h3d.theme.transcript': theme, 'h3d.theme.terminal': theme });
     const tx = await transcript(page, id);
     const send = tx.locator('.tx-send');
     // Disabled while Tofu waits: faded to .45, the ink is still the on-accent one; a disabled control is exempt from 4.5:1 (reported, floor 2).
@@ -334,8 +335,14 @@ for (const [name, theme, ink, fill, size] of [
     const off = await filled(send);
     test.info().annotations.push({ type: 'disabled Send', description: JSON.stringify(off) });
     console.log(`disabled Send (${name}): ${JSON.stringify(off)}`);
-    expect(off.fg).toBe(ink);
-    expect(off.shown, `disabled Send as shown: ${JSON.stringify(off)}`).toBeGreaterThanOrEqual(2);
+    // #216: Ubuntu's disabled action is the raised purple with the muted label (5.7:1), not a faded fill; Quiet fades as before.
+    if (theme === 'ubuntu') {
+      expect(off.fg).toBe('rgb(205, 177, 198)');
+      expect(off.shown, `disabled Send as shown: ${JSON.stringify(off)}`).toBeGreaterThanOrEqual(4.5);
+    } else {
+      expect(off.fg).toBe(ink);
+      expect(off.shown, `disabled Send as shown: ${JSON.stringify(off)}`).toBeGreaterThanOrEqual(2);
+    }
     // Answered: the prompt comes back, Send is live.
     await page.keyboard.press('1');
     await expect(tx.locator('.tx-input')).toBeEnabled();
@@ -345,7 +352,9 @@ for (const [name, theme, ink, fill, size] of [
     expect(on, 'enabled Send').toMatchObject({ fg: ink, bg: fill });
     expect(on.ratio).toBeGreaterThanOrEqual(4.5);
     await send.hover();
-    expect(await filled(send), 'hovered Send').toMatchObject({ fg: ink, bg: fill });
+    // #216: the issue's hover fill for the action (#EB6536) in Ubuntu; Quiet's Send keeps its fill.
+    await expect.poll(async () => (await filled(send)).bg, { message: 'hovered Send' }).toBe(theme === 'ubuntu' ? 'rgb(235, 101, 54)' : fill);
+    expect(await filled(send), 'hovered Send').toMatchObject({ fg: ink });
     await send.focus();
     expect((await filled(send)).fg, 'focused Send').toBe(ink);
     await shot(page, `r2-send-${name.toLowerCase().replace(/ /g, '-')}`);
@@ -359,7 +368,8 @@ for (const [name, theme, ink, fill, size] of [
     expect(chip, 'jump chip').toMatchObject({ fg: ink, bg: fill });
     expect(chip.ratio).toBeGreaterThanOrEqual(4.5);
     await jump.hover();
-    expect(await filled(jump), 'hovered chip').toMatchObject({ fg: ink, bg: fill });
+    await expect.poll(async () => (await filled(jump)).bg, { message: 'hovered chip' }).toBe(theme === 'ubuntu' ? 'rgb(235, 101, 54)' : fill);
+    expect(await filled(jump), 'hovered chip').toMatchObject({ fg: ink });
     await shot(page, `r2-jump-${name.toLowerCase().replace(/ /g, '-')}`);
     // And the whole transcript, enabled controls included, still clears 4.5:1 on the ground each text sits on.
     expect((await contrastScan(tx)).filter((r) => r.ratio < 4.5 && theme === 'ubuntu')).toEqual([]);

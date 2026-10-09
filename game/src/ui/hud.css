@@ -3,49 +3,22 @@
  * Recursive family throughout (its casual axis for names, mono for data),
  * and one signature: status chips as label-maker tape.
  */
-:root {
-  --ink: #1c2540;
-  --ink-2: #2a355a;
-  --ink-soft: #5b6685;
-  --paper: #ffffff;
-  --line: rgb(255 255 255 / 14%);
-  --text-on-ink: #eef2fb;
-  --text-on-ink-2: #b9c3dc;
-  --sun: #ffc233;
-  --plus: #2fc46a;
-  --working: #2f6bf0;
-  --done: #12a26a;
-  --needs_you: #e8413a;
-  --idle: #7a8398;
-  --asleep: #5a5fa8;
-  /* #98: idle or done, waiting on its own background tasks. */
-  --waiting: #1e9aa0;
-  /* The same hues deepened for white text (tape chips): >= 4.5:1. Dots and glow keep the bright ones. */
-  --done-chip: #0b8454;
-  --needs_you-chip: #d8302c;
-  --idle-chip: #6b7388;
-  --waiting-chip: #0f7378;
-  --radius: 14px;
-  --shadow: 0 10px 28px rgb(18 24 44 / 28%), 0 2px 6px rgb(18 24 44 / 18%);
-  --font: 'Recursive Variable', system-ui, sans-serif;
-  --ease: cubic-bezier(0.16, 1, 0.3, 1);
-  color-scheme: light;
-}
+/* The shell's tokens (surfaces, text, actions, statuses, fonts) live in uiTheme.css, one set per UI theme (#216). */
 
 html,
 body {
   font-family: var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 0;
+  font-variation-settings: var(--fvs-plain);
   -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: var(--sun);
-  color: var(--ink);
+  background: var(--action);
+  color: var(--on-action);
 }
 
 :focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -54,7 +27,7 @@ body {
   inset: 0;
   pointer-events: none;
   z-index: 10;
-  color: var(--text-on-ink);
+  color: var(--text);
   font-size: 14px;
   line-height: 1.35;
 }
@@ -74,7 +47,7 @@ body {
   align-items: center;
   gap: 14px;
   padding: 5px 10px 5px 12px;
-  background: var(--ink);
+  background: var(--chrome);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   pointer-events: auto;
@@ -96,14 +69,14 @@ body {
 .topbar-name {
   font-size: 16px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .topbar-sub {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12.5px;
   white-space: nowrap;
 }
@@ -114,14 +87,14 @@ body {
   visibility: hidden;
 }
 
-/* Outside a floor (lobby, street, fire escape): where you are, in the sun colour. */
+/* Outside a floor (lobby, street, fire escape): where you are, in the accent colour. */
 .where {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--sun);
+  color: var(--accent-text);
   font-weight: 700;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
 }
 .where svg {
   width: 14px;
@@ -161,10 +134,10 @@ body {
   gap: 7px;
   height: 26px;
   padding: 0 10px 0 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--btn-border);
   border-radius: 13px;
-  background: var(--ink-2);
-  color: var(--text-on-ink);
+  background: var(--raised);
+  color: var(--text);
   font-size: 12.5px;
   font-weight: 700;
   white-space: nowrap;
@@ -174,16 +147,16 @@ body {
   display: none;
 }
 .ai-chip:hover {
-  border-color: rgb(255 255 255 / 30%);
+  border-color: var(--border-hover);
 }
 .ai-chip i {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--sun);
+  background: var(--warn);
 }
 .ai-chip[data-level='error'] i {
-  background: #ff6058;
+  background: var(--error);
 }
 
 .count {
@@ -197,14 +170,14 @@ body {
   height: 9px;
   border-radius: 50%;
   background: var(--c, var(--idle));
-  box-shadow: 0 0 0 2px rgb(255 255 255 / 12%);
+  box-shadow: 0 0 0 2px var(--dot-ring);
 }
 .count b {
   font-weight: 800;
   font-size: 15px;
 }
 .count span {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .count--working { --c: var(--working); }
 .count--needs_you { --c: var(--needs_you); }
@@ -217,26 +190,26 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  height: 34px;
+  height: var(--ctl-h);
   padding: 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: transparent;
+  border: 1px solid var(--btn-border);
+  border-radius: var(--radius-ctl);
+  background: var(--btn-bg);
   cursor: pointer;
   transition: background 160ms var(--ease), border-color 160ms var(--ease);
   white-space: nowrap;
 }
 .btn:hover {
-  background: rgb(255 255 255 / 8%);
-  border-color: rgb(255 255 255 / 26%);
+  background: var(--btn-bg-hover);
+  border-color: var(--btn-border-hover);
 }
 .btn:active {
-  background: rgb(255 255 255 / 14%);
+  background: var(--btn-bg-active);
 }
 .btn[aria-pressed='true'] {
-  background: var(--plus);
-  border-color: var(--plus);
-  color: var(--ink);
+  background: var(--toggle-on-bg);
+  border-color: var(--toggle-on-border);
+  color: var(--on-fill);
 }
 .btn svg {
   width: 17px;
@@ -244,7 +217,7 @@ body {
   flex: none;
 }
 .btn--icon {
-  width: 34px;
+  width: var(--ctl-h);
   padding: 0;
   justify-content: center;
 }
@@ -258,8 +231,8 @@ body {
   padding: 0 10px 0 8px;
   height: 26px;
   border-radius: 13px;
-  background: var(--ink-2);
-  color: var(--text-on-ink-2);
+  background: var(--raised);
+  color: var(--text-2);
   font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -272,8 +245,8 @@ body {
 }
 .conn[data-phase='live'] i { background: var(--plus); }
 .conn[data-phase='connecting'] i,
-.conn[data-phase='waiting'] i { background: var(--sun); }
-.conn[data-phase='failed'] i { background: var(--needs_you); }
+.conn[data-phase='waiting'] i { background: var(--warn); }
+.conn[data-phase='failed'] i { background: var(--error-dot); }
 
 /* ---- label-maker tape (status chip) ---------------------------------------- */
 
@@ -285,15 +258,12 @@ body {
   font-family: var(--font-mono);
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: #fff;
+  color: var(--on-chip);
   background: var(--c, var(--idle-chip));
   border-radius: 2px;
   transform: rotate(-1.5deg);
-  text-shadow: 0 1px 0 rgb(0 0 0 / 28%);
-  box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 30%),
-    inset 0 -1px 0 rgb(0 0 0 / 18%),
-    0 1px 1px rgb(0 0 0 / 18%);
+  text-shadow: var(--tape-text-shadow);
+  box-shadow: var(--tape-bevel);
   white-space: nowrap;
 }
 .tape--working { --c: var(--working); }
@@ -314,13 +284,13 @@ body {
   margin: -4px 0 0 -4px;
   border-radius: 50%;
   border: 2px solid rgb(255 255 255 / 90%);
-  box-shadow: 0 0 0 1px rgb(28 37 64 / 55%);
+  box-shadow: 0 0 0 1px var(--reticle-halo);
   transition: transform 160ms var(--ease), background 160ms var(--ease);
 }
 .reticle.is-target {
   transform: scale(1.6);
-  background: var(--sun);
-  border-color: var(--sun);
+  background: var(--accent-text);
+  border-color: var(--accent-text);
 }
 
 .prompt {
@@ -331,7 +301,7 @@ body {
   width: min(780px, calc(100vw - 32px));
   box-sizing: border-box;
   padding: 11px 14px 10px;
-  background: var(--ink);
+  background: var(--chrome);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   transition: opacity 160ms var(--ease), transform 200ms var(--ease);
@@ -351,23 +321,23 @@ body {
 .prompt-name {
   font-size: 18px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
 }
 .prompt-sep {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .prompt-task {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .prompt-model {
   flex: none;
   font-size: 12px;
   font-family: var(--font-mono);
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .prompt-keys {
   display: flex;
@@ -382,7 +352,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .key kbd {
   display: inline-grid;
@@ -392,8 +362,8 @@ body {
   padding: 0 5px;
   box-sizing: border-box;
   border-radius: 5px;
-  background: var(--ink-2);
-  border: 1px solid rgb(255 255 255 / 22%);
+  background: var(--raised);
+  border: 1px solid var(--kbd-border);
   border-bottom-width: 2px;
   font: 700 11px/1 var(--font);
   font-family: var(--font-mono);
@@ -415,17 +385,18 @@ body {
   text-overflow: ellipsis;
   box-sizing: border-box;
   padding: 8px 14px;
-  background: rgb(28 37 64 / 92%);
+  background: var(--hint-bg);
   border-radius: 12px;
   font-size: 12.5px;
   box-shadow: var(--shadow);
 }
 .hint strong {
   font-weight: 800;
-  color: var(--sun);
+  color: var(--accent-text);
 }
 .prompt:not([hidden]) ~ .hint {
-  bottom: 118px;
+  /* 8px above the look-at bar however tall it wraps, and never lower than where it always sat. */
+  bottom: max(118px, calc(18px + var(--prompt-h, 0px) + 8px));
 }
 
 /* ---- floor plan ------------------------------------------------------------- */
@@ -443,7 +414,7 @@ body {
   top: calc(var(--topbar-bottom, 70px) + 6px);
   width: 240px;
   padding: 12px 14px;
-  background: var(--ink);
+  background: var(--surface);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   cursor: default;
@@ -452,11 +423,11 @@ body {
   margin: 0;
   font-size: 16px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
 }
 .plan-card p {
   margin: 4px 0 10px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12.5px;
 }
 .plan-legend {
@@ -471,19 +442,19 @@ body {
   top: 0;
   padding: 2px 7px;
   border-radius: 6px;
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--chrome);
+  color: var(--text);
   font-size: 11.5px;
   font-weight: 700;
   white-space: nowrap;
   transform: translate(-50%, -50%);
-  box-shadow: 0 2px 6px rgb(18 24 44 / 30%);
+  box-shadow: var(--shadow-sm);
   pointer-events: none;
 }
 .plan-label--worker {
-  background: var(--paper);
-  color: var(--ink);
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  background: var(--plate-bg);
+  color: var(--on-plate);
+  font-variation-settings: var(--fvs-casual);
   display: inline-flex;
   gap: 5px;
   align-items: center;
@@ -497,7 +468,7 @@ body {
 }
 .plan-label--desk {
   background: var(--plus);
-  color: var(--ink);
+  color: var(--on-fill);
 }
 .plan-you {
   position: absolute;
@@ -519,7 +490,7 @@ body {
   width: min(420px, calc(100vw - 32px));
   box-sizing: border-box;
   padding: 20px 22px;
-  background: var(--ink);
+  background: var(--surface);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   pointer-events: auto;
@@ -528,16 +499,16 @@ body {
   margin: 0 0 6px;
   font-size: 19px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
 }
 .notice p {
   margin: 0;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .notice code {
   font-family: var(--font-mono);
   font-size: 12.5px;
-  color: var(--text-on-ink);
+  color: var(--text);
   word-break: break-all;
 }
 
@@ -547,14 +518,14 @@ body {
   padding: 0;
   border: 0;
   border-radius: var(--radius);
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--surface);
+  color: var(--text);
   box-shadow: var(--shadow);
   font-family: var(--font);
 }
 .sheet::backdrop,
 .confirm::backdrop {
-  background: rgb(18 24 44 / 45%);
+  background: var(--scrim);
 }
 .sheet-body {
   padding: 18px 20px 16px;
@@ -564,12 +535,12 @@ body {
   margin: 0 0 8px;
   font-size: 20px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
 }
 .sheet p,
 .confirm p {
   margin: 0 0 14px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   max-width: 60ch;
 }
 .sheet-actions {
@@ -585,8 +556,8 @@ body {
   max-width: calc(100vw - 32px);
   padding: 8px 14px;
   border-radius: 10px;
-  background: var(--sun);
-  color: var(--ink);
+  background: var(--toast-info-bg);
+  color: var(--toast-info-text);
   font-weight: 700;
   box-shadow: var(--shadow);
   transition: opacity 200ms var(--ease);
@@ -596,16 +567,16 @@ body {
   opacity: 0;
 }
 .toast[data-kind='error'] {
-  background: var(--needs_you-chip);
-  color: #fff;
+  background: var(--error-fill);
+  color: var(--on-error);
 }
-/* #186: it worked, with a catch (a hire on Codex's built-in server): ink, not the info sun or the error red. Warning
+/* #186: it worked, with a catch (a hire on Codex's built-in server): the surface, not the info fill or the error red. Warning
    and error each carry a drawn sign, a triangle and an octagon, so the kind does not rest on colour alone. */
 .toast[data-kind='warn'] {
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--surface);
+  color: var(--text);
   box-shadow:
-    inset 0 0 0 2px var(--sun),
+    inset 0 0 0 2px var(--warn),
     var(--shadow);
 }
 .toast[data-kind='warn'],
@@ -625,7 +596,7 @@ body {
   mask: var(--toast-sign) center / contain no-repeat;
 }
 .toast[data-kind='warn']::before {
-  background: var(--sun);
+  background: var(--warn);
   --toast-sign: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M10.27 3.5a2 2 0 0 1 3.46 0l8.66 15a2 2 0 0 1-1.73 3H3.34a2 2 0 0 1-1.73-3zM11 9h2v6h-2zm0 8h2v2h-2z'/%3E%3C/svg%3E");
 }
 .toast[data-kind='error']::before {
@@ -663,8 +634,8 @@ body {
   transform: translate(-50%, -50%);
   padding: 8px 16px;
   border-radius: 10px;
-  background: #101626;
-  color: var(--sun);
+  background: var(--well-deep);
+  color: var(--accent-text);
   font: 800 22px/1 var(--font);
   font-family: var(--font-mono);
   letter-spacing: 0.08em;
@@ -714,7 +685,7 @@ body {
   }
   .btn--menu,
   .btn--back {
-    width: 34px;
+    width: var(--ctl-h);
     padding: 0;
     justify-content: center;
   }
@@ -770,8 +741,8 @@ body {
   clip-path: none;
   padding: 6px 12px;
   border-radius: 9px;
-  background: var(--ink);
-  box-shadow: 0 0 0 3px var(--sun), var(--shadow);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--focus), var(--shadow);
   cursor: pointer;
 }
 /* Author display rules above would otherwise beat the hidden attribute. */
@@ -790,26 +761,26 @@ body {
   flex: none;
 }
 
-/* The floor plate: a yellow elevator-indicator sign. The one thing the bar must say, so it is the loudest thing on it. */
+/* The floor plate: an elevator-indicator sign in the action colour (yellow in Quiet, orange in Ubuntu). The one thing the bar must say, so it is the loudest thing on it. */
 .floor-plate {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 34px;
+  height: var(--ctl-h);
   padding: 0 10px;
   border: 0;
-  border-radius: 10px;
-  background: var(--sun);
+  border-radius: var(--radius-ctl);
+  background: var(--action);
   /* Deeper than the bar's navy: 11.7:1 on the sun (the plate must read at a glance); the "/N" is full strength too (no opacity), 13px bold. */
-  color: #0b1022;
+  color: var(--floor-plate-text);
   cursor: pointer;
   line-height: 1;
   transition: background 160ms var(--ease), transform 160ms var(--ease);
 }
 .floor-plate:hover {
-  background: #ffd25e;
+  background: var(--action-hover);
 }
 .floor-plate:active {
   transform: translateY(1px);
@@ -829,7 +800,7 @@ body {
 .floor-plate-n b {
   font-size: 20px;
   font-weight: 850;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
   letter-spacing: -0.03em;
 }
 .floor-plate-n i {
@@ -837,13 +808,13 @@ body {
   font-size: 13px;
   font-weight: 800;
 }
-/* A lobby, the street, a fire escape with no floor of its own: the place's glyph and name, in the sun colour on navy. */
+/* A lobby, the street, a fire escape with no floor of its own: the place's glyph and name, in the accent colour on the raised surface. */
 .floor-plate[data-kind='where'] {
-  background: var(--ink-2);
-  color: var(--sun);
+  background: var(--raised);
+  color: var(--accent-text);
 }
 .floor-plate[data-kind='where']:hover {
-  background: #354270;
+  background: var(--where-plate-hover);
 }
 .floor-plate[data-kind='where'] svg {
   width: 18px;
@@ -870,15 +841,15 @@ body {
   clip-path: inset(50%);
 }
 .btn--menu {
-  width: 34px;
+  width: var(--ctl-h);
   padding: 0;
   justify-content: center;
 }
 
 /* The menu button, and the menu: a popover under the bar (light dismiss, Esc and the top layer from the browser). */
 .btn--menu[aria-expanded='true'] {
-  background: rgb(255 255 255 / 14%);
-  border-color: rgb(255 255 255 / 30%);
+  background: var(--btn-bg-active);
+  border-color: var(--border-hover);
 }
 .topbar-menu {
   position: fixed;
@@ -892,14 +863,14 @@ body {
   overflow-y: auto;
   box-sizing: border-box;
   padding: 6px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--btn-border);
   border-radius: 14px;
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--menu-bg);
+  color: var(--text);
   box-shadow: var(--shadow);
   pointer-events: auto;
   font: 14px/1.3 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 0;
+  font-variation-settings: var(--fvs-plain);
 }
 .topbar-menu:popover-open {
   display: flex;
@@ -931,7 +902,7 @@ body {
 .menu-sec::before {
   content: attr(data-title);
   padding: 2px 10px 4px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.1em;
@@ -948,13 +919,13 @@ body {
 }
 .topbar-menu .btn:hover,
 .topbar-menu .btn:focus-visible {
-  background: rgb(255 255 255 / 10%);
+  background: var(--menu-row-hover);
 }
 .topbar-menu .btn:focus-visible {
   outline-offset: -2px;
 }
 .topbar-menu .btn svg {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .topbar-menu .btn > span {
   flex: 1;
@@ -977,14 +948,14 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgb(255 255 255 / 22%);
+  border: 1px solid var(--kbd-border);
   border-bottom-width: 2px;
   border-radius: 6px;
-  background: rgb(255 255 255 / 6%);
-  color: var(--text-on-ink-2);
+  background: var(--key-bg);
+  color: var(--text-2);
   font: 700 12px/1 var(--font);
   font-style: normal;
-  font-variation-settings: 'CASL' 0, 'MONO' 1;
+  font-variation-settings: var(--fvs-mono);
 }
 .topbar-menu .btn--overview .topbar-key {
   margin-left: 0;
@@ -1005,7 +976,7 @@ body {
 /* Battery saver is a toggle: on, its leaf turns green and the row says so (it is not a green button here). */
 .topbar-menu .btn--battery[aria-pressed='true'] {
   background: transparent;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .topbar-menu .btn--battery[aria-pressed='true'] svg {
   color: var(--plus);
@@ -1030,8 +1001,8 @@ body {
   min-width: 0;
 }
 .topbar-menu .audio-ctl .btn {
-  width: 34px;
-  height: 34px;
+  width: var(--ctl-h);
+  height: var(--ctl-h);
   padding: 0;
   justify-content: center;
 }
@@ -1045,3 +1016,242 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* #216: .plan-you's colours were SVG attributes in hud.ts; as a rule they follow the UI theme (the accent arrow, outlined in the bar's colour). */
+.plan-you path {
+  fill: var(--accent-text);
+  stroke: var(--chrome);
+}
+
+/* ubuntu:begin */
+/*
+ * #216, the Ubuntu application theme: what only it gets. Everything above is shared and reads the role tokens of
+ * uiTheme.css; below are the rules whose shape differs (disabled and busy without opacity, a keyline on bright fills,
+ * larger touch targets, forced colors). The .btn family is defined here once for every file: panels.css adds the
+ * primary / danger variants, and the shared composer, boards and editor styles build on the same classes.
+ */
+:root[data-ui-theme='ubuntu'] {
+  font-synthesis: none; /* Ubuntu ships 400 and 700: the browser picks the real face, it never smears a weight */
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+  /* The kind signs (a toast's, a status line's, an invalid field's): drawn, so a kind never rests on colour alone. */
+  --sign-info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zM11 7h2v2h-2zm0 4h2v6h-2z'/%3E%3C/svg%3E");
+  --sign-warn: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M10.27 3.5a2 2 0 0 1 3.46 0l8.66 15a2 2 0 0 1-1.73 3H3.34a2 2 0 0 1-1.73-3zM11 9h2v6h-2zm0 8h2v2h-2z'/%3E%3C/svg%3E");
+  --sign-error: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M8.1 2h7.8L22 8.1v7.8L15.9 22H8.1L2 15.9V8.1zM11 6.5h2v7h-2zm0 9h2v2h-2z'/%3E%3C/svg%3E");
+}
+
+/* Buttons. The colour is set here (not inherited) so a nested `.tx button { color: inherit }` cannot win (#111). */
+:root[data-ui-theme='ubuntu'] .btn {
+  color: var(--text);
+}
+:root[data-ui-theme='ubuntu'] .btn:active {
+  box-shadow: inset 0 0 0 2px var(--chrome); /* pressed: the dark keyline */
+}
+/* On (aria-pressed): the action fill with the dark label. The colour rule above would otherwise turn it white (3.65:1 on orange). */
+:root[data-ui-theme='ubuntu'] .btn[aria-pressed='true']:not(.btn--battery) {
+  color: var(--on-fill);
+}
+:root[data-ui-theme='ubuntu'] .btn[aria-pressed='true']:hover,
+:root[data-ui-theme='ubuntu'] .btn--primary:hover {
+  background: var(--action-hover);
+  border-color: var(--action-border);
+}
+/* Battery saver is a row toggle (green leaf + "on"), not a filled button: its row keeps the menu's hover, and no keyline. */
+:root[data-ui-theme='ubuntu'] .topbar-menu .btn--battery[aria-pressed='true']:hover {
+  background: var(--menu-row-hover);
+  border-color: transparent;
+}
+:root[data-ui-theme='ubuntu'] .topbar-menu .btn--battery[aria-pressed='true']:focus-visible {
+  box-shadow: none;
+}
+:root[data-ui-theme='ubuntu'] .btn--primary:active {
+  background: var(--action-active);
+  border-color: var(--action-border);
+  box-shadow: none;
+}
+:root[data-ui-theme='ubuntu'] .btn--danger:active {
+  background: var(--error-fill);
+  border-color: var(--error-fill);
+}
+/* A bright fill: the focus ring gets a dark keyline between it and the fill. */
+:root[data-ui-theme='ubuntu'] .btn--primary:focus-visible,
+:root[data-ui-theme='ubuntu'] .btn--danger:focus-visible,
+:root[data-ui-theme='ubuntu'] .btn[aria-pressed='true']:focus-visible,
+:root[data-ui-theme='ubuntu'] .floor-plate:focus-visible {
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+/* Tertiary: an icon, the menu's button, a quiet row tool: transparent on its purple, a raised fill on hover, mid-aubergine pressed.
+   :where() keeps these as light as `.btn:hover`, so a menu row's own hover and the open menu button below still win. */
+:root[data-ui-theme='ubuntu'] :where(.btn--icon, .btn--menu, .btn--quiet):where(:not(.btn--primary, .btn--danger, .btn--danger-quiet, [aria-pressed='true'])) {
+  background: transparent;
+  border-color: transparent;
+}
+:root[data-ui-theme='ubuntu'] :where(.btn--icon, .btn--menu, .btn--quiet):where(:not(.btn--primary, .btn--danger, .btn--danger-quiet, [aria-pressed='true'])):hover {
+  background: var(--ghost-bg-hover);
+}
+:root[data-ui-theme='ubuntu'] :where(.btn--icon, .btn--menu, .btn--quiet):where(:not(.btn--primary, .btn--danger, .btn--danger-quiet, [aria-pressed='true'])):active {
+  background: var(--ghost-bg-active);
+}
+:root[data-ui-theme='ubuntu'] .btn--menu[aria-expanded='true'] {
+  background: var(--ghost-bg-active);
+  border-color: var(--border);
+}
+/* A small labelled button (Save, Retry, Open PR, Edit) is a standard control: 36px. Only the icon-only one is dense, 32 x 32. */
+:root[data-ui-theme='ubuntu'] .btn--sm {
+  height: var(--ctl-h);
+}
+:root[data-ui-theme='ubuntu'] .btn--icon.btn--sm {
+  width: 32px;
+  height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .ai-chip {
+  height: 32px;
+}
+/* Disabled (native or aria, never while busy: a busy button is often natively disabled too, decisions #216 row 14): the raised fill, a muted label and the strong border; never an opacity fade, never a hover. */
+:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:not([aria-busy='true']),
+:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:not([aria-busy='true']):hover,
+:root[data-ui-theme='ubuntu'] .btn:disabled:not([aria-busy='true']),
+:root[data-ui-theme='ubuntu'] .btn:disabled:not([aria-busy='true']):hover {
+  opacity: 1;
+  background: var(--disabled-bg);
+  border-color: var(--btn-border);
+  color: var(--disabled-text) !important;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+:root[data-ui-theme='ubuntu'] .key[aria-disabled='true'],
+:root[data-ui-theme='ubuntu'] .topbar-menu .btn--off,
+:root[data-ui-theme='ubuntu'] .topbar-menu [aria-disabled='true'] {
+  opacity: 1;
+  color: var(--disabled-text);
+}
+/* Busy: keeps its colours and width, and shows a spinner beside its label. Not disabled-looking (see above). */
+:root[data-ui-theme='ubuntu'] .btn[aria-busy='true'] {
+  opacity: 1;
+  cursor: progress;
+}
+:root[data-ui-theme='ubuntu'] .btn--primary[aria-busy='true'],
+:root[data-ui-theme='ubuntu'] .btn--primary[aria-busy='true']:hover {
+  background: var(--action);
+  border-color: var(--action-border);
+}
+:root[data-ui-theme='ubuntu'] .btn--danger[aria-busy='true'],
+:root[data-ui-theme='ubuntu'] .btn--danger[aria-busy='true']:hover {
+  background: var(--error-fill);
+  border-color: var(--error-fill);
+}
+:root[data-ui-theme='ubuntu'] .btn[aria-busy='true']::before {
+  content: '';
+  flex: none;
+  width: 14px;
+  height: 14px;
+  box-sizing: border-box;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-ui-theme='ubuntu'] .btn[aria-busy='true']::before {
+    animation: btn-spin 800ms linear infinite;
+  }
+  @keyframes btn-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+}
+
+/* Mono keycaps and chips: the Ubuntu Mono face (Quiet's Recursive reaches mono through its axis), a little larger to stay readable. */
+:root[data-ui-theme='ubuntu'] .key kbd,
+:root[data-ui-theme='ubuntu'] .tape {
+  font-size: 12px;
+}
+:root[data-ui-theme='ubuntu'] .topbar-menu .btn[data-key]:not(.btn--overview)::after,
+:root[data-ui-theme='ubuntu'] .topbar-menu .btn--overview .topbar-key,
+:root[data-ui-theme='ubuntu'] .menu-key {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+:root[data-ui-theme='ubuntu'] .plan-label--worker {
+  border: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .floor-plate {
+  border: 1px solid var(--action-border);
+  /* `.hud button { color: inherit }` (0,1,1) out-ranks `.floor-plate`'s own colour: the dark label on the orange is set here, (0,3,0). */
+  color: var(--floor-plate-text);
+}
+:root[data-ui-theme='ubuntu'] .floor-plate[data-kind='where'] {
+  border-color: var(--border);
+  color: var(--accent-text);
+}
+
+/* Toasts: info, warning and error each carry a drawn sign and the message; orange stays for actions, so info is a raised plate with an accent ring. */
+:root[data-ui-theme='ubuntu'] .toast[data-kind='info'] {
+  padding-left: 38px;
+  box-shadow:
+    inset 0 0 0 2px var(--accent-text),
+    var(--shadow);
+}
+:root[data-ui-theme='ubuntu'] .toast[data-kind='info']::before {
+  content: '';
+  position: absolute;
+  left: 12px;
+  top: 8px;
+  width: 18px;
+  height: 18px;
+  background: var(--accent-text);
+  -webkit-mask: var(--sign-info) center / contain no-repeat;
+  mask: var(--sign-info) center / contain no-repeat;
+}
+
+/* Touch: every control a finger can reach is 44px each way. */
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .btn,
+  :root[data-ui-theme='ubuntu'] .floor-plate,
+  :root[data-ui-theme='ubuntu'] .ai-chip {
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .btn--icon,
+  :root[data-ui-theme='ubuntu'] .btn--menu {
+    min-width: 44px;
+  }
+}
+
+/* Forced colors: a state shown only by a fill (selected, primary, a chip, a toast kind) needs a border or a system fill. */
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .btn[aria-pressed='true'],
+  :root[data-ui-theme='ubuntu'] .btn--menu[aria-expanded='true'] {
+    background: Highlight;
+    color: HighlightText;
+    border-color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .btn--primary,
+  :root[data-ui-theme='ubuntu'] .btn--danger,
+  :root[data-ui-theme='ubuntu'] .floor-plate {
+    border: 2px solid ButtonText;
+  }
+  :root[data-ui-theme='ubuntu'] .tape,
+  :root[data-ui-theme='ubuntu'] .plan-label {
+    border: 1px solid CanvasText;
+  }
+  :root[data-ui-theme='ubuntu'] .toast {
+    border: 2px solid CanvasText;
+  }
+  :root[data-ui-theme='ubuntu'] .toast::before {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+  :root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:not([aria-busy='true']),
+  :root[data-ui-theme='ubuntu'] .btn:disabled:not([aria-busy='true']) {
+    color: GrayText !important;
+    border-color: GrayText;
+  }
+}
+/* Focus room (decisions #216 row 24): a widget scrolled into view keeps its ring's 5px inside the scroller, and the menu's
+   rows ring outside themselves like every other widget (the menu's 6px padding holds it). */
+:root[data-ui-theme='ubuntu'] :is(button, a[href], input, select, textarea, summary, [tabindex], [contenteditable='true'], [role='button'], [role='tab'], [role='option'], [role='radio'], [role='menuitem']) {
+  scroll-margin: 6px;
+}
+:root[data-ui-theme='ubuntu'] .topbar-menu .btn:focus-visible {
+  outline-offset: 2px;
+}
+/* ubuntu:end */

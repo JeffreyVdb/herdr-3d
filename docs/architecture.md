@@ -355,15 +355,42 @@ MacBook (M2 Max)                                   devbox (Linux)
   rest of the city; the textures are not reloaded, the cache holds them by hash). One mipmapped, premultiplied texture per hash in a
   shared cache, one instanced draw for the city's plates and one quad per logo. A failed fetch leaves the name. Accent
   colours taken from the logo for a canopy stripe were left out.
-- **Fonts** (#59): the HUD, panels and dialogs are Recursive. Two hard-coded presets (Ubuntu, #172: the classic
+- **Fonts** (#59): the HUD, panels and dialogs are Recursive (Quiet UI; #216's Ubuntu UI draws them in Ubuntu and Ubuntu Mono, next bullet). Two hard-coded presets (Ubuntu, #172: the classic
   Ubuntu terminal purple `#300A24` with Ubuntu orange, Ubuntu Mono + Ubuntu; Quiet, the default: JetBrains Mono +
-  Atkinson Hyperlegible Next), each a mono font, a prose font and colours, picked apart for the laptop's transcript (its fonts and colours, and every
-  `--font-mono` on the page) and for its terminal canvas (font and screen colours). Only Quiet's fonts come with the
+  Atkinson Hyperlegible Next), each a mono font, a prose font and colours, picked apart for the laptop's transcript (its fonts and colours: `--tx-mono`,
+  `--tx-prose` and `--tx-*`; #216: no longer the shell's `--font-mono`) and for its terminal canvas (font and screen colours). Only Quiet's fonts come with the
   app: Ubuntu's stylesheet (Latin and Latin Extended `@font-face`s, split by Vite) loads when it is first picked, and the
   canvas repaints once its faces have loaded. Ubuntu Mono's missing glyphs (box drawing, arrows, shapes, check marks, braille) come from size-adjusted `local()` fallback faces, so a table with one stays aligned where the host has a monospace font with that glyph (a missing glyph shows as a box of the same width; `fonts/ubuntu.css`). Each view has its own font zoom (70–200 %); the HUD does not zoom.
   Every shipped font's licence goes with the build in full (`FONT_LICENSES.txt` next to the bundle, from
   `src/ui/fontCredits.ts`; the OFL, the Ubuntu Font Licence (the Ubuntu pair's, not OFL) and the Bitstream Vera licence ask it), linked from the credits panel, which keeps
   each font's copyright line. A stored `terminal` or `paper` preset (#59's, replaced in #172) opens as Ubuntu or Quiet.
+- **Application UI theme** (#216): a third, independent browser pick beside the transcript's and the terminal's: Quiet
+  (the default, today's navy shell) or Ubuntu (aubergine surfaces, orange actions, Ubuntu and Ubuntu Mono), `h3d.theme.ui`
+  in `ViewPrefs` (`ui/themePrefs.ts`; an unknown value is Quiet, storage that is missing or throws keeps the pick in memory;
+  nothing is copied from the other two keys). It is one attribute: `ThemeLoader` sets `data-ui-theme` on the root (not
+  `data-theme`, the transcript's) and the inline script in `index.html` sets it before any CSS paints, so a saved Ubuntu
+  never shows navy first. `ui/uiTheme.css` is the whole token set: `:root` is Quiet (the values the shell always had, the
+  legacy `--ink` / `--sun` names kept as aliases), `:root[data-ui-theme='ubuntu']` overrides the same names (palette of the
+  issue's table, pinned by `ui/uiTheme.test.ts`), and components ask for a **role** (`--surface`, `--chrome`, `--raised`,
+  `--hover`, `--well`, `--text*`, `--border*`, `--action*` and `--on-action`, `--focus`, `--accent-text`, `--error-*`, the
+  status colours and their `-chip` fills with `--on-chip`, `--btn-*`, `--font`, `--font-mono`, `--fvs-*`, and the per-surface
+  tokens: 320 in all), never a hue. What Ubuntu needs that Quiet must not get (disabled without opacity, busy spinners,
+  36 / 32 / 44 px targets, keylines on bright fills, forced-colors rules) sits at the end of each stylesheet between
+  `/* ubuntu:begin */` and `/* ubuntu:end */`; `tools/ui-quiet-check.mjs` strips those blocks, expands the Quiet tokens
+  and diffs each stylesheet against the commit before #216: it prints nothing but deliberate hunks, which is how "Quiet
+  looks exactly as it did" is proved. A switch writes one attribute: no DOM is rebuilt, no focus, draft or session moves,
+  the 3D scene is not touched, and the Ubuntu stylesheet and faces (`fonts/ubuntu.css`, one lazy import shared with the
+  seated views) load for a UI pick even when both views stay Quiet. **Ownership:** the shell's fonts and colours are the UI
+  theme's alone (`--font`, `--font-mono`); the transcript preset sets only `--tx-*`, `--tx-mono` and `--tx-prose`, and the
+  terminal canvas its own. Inside the seated screen the app's widgets (seat tabs, the Conversation / Images bar, zoom and
+  theme controls, composer, Send, question answers, tool toggles) read `--ctl-*` and the action tokens, while messages,
+  code, diffs and status annotations keep `--tx-*`; every Ubuntu rule there is `:root[data-ui-theme='ubuntu'] .tx …`
+  (0,3,0 and up), out-ranking the `.tx button { color: inherit }` reset (#111). Settings → Appearance
+  (`ui/appearanceSection.ts`, browser-scoped) is a labelled radio group of exactly Quiet and Ubuntu. The whiteboard editor
+  stays on Excalidraw's light theme (its dark theme filters the canvas); `whiteboard/editor.css` (lazy with the editor)
+  overrides its UI custom properties, tooltips and the dialogs it mounts on `body`. `e2e/ui-theme*.spec.ts` and
+  `e2e/ui-surfaces.ts` hold the surface inventory: screenshots, a stray-colour scan, contrast on the rendered surfaces,
+  the eight combinations and the narrow, touch, forced-colors and reduced-motion checks.
 - **Settings window** (#91): the gear in the top bar (or `,`) opens `game/src/ui/settings.ts`, `SettingsDialog`: everything
   the player can change, as sections in the About panel's frame. A section is
   `addSection(id, title, render, { store })`: the dialog draws the heading and the storage label (`'browser'`: "This

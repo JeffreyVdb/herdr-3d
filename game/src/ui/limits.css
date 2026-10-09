@@ -5,8 +5,8 @@
  */
 .limits {
   --lm-ok: var(--plus);
-  --lm-warn: var(--sun);
-  --lm-high: #ff6058;
+  --lm-warn: var(--warn);
+  --lm-high: var(--error);
   /* A popover in the top layer: reset what the browser gives one. */
   position: fixed;
   inset: calc(var(--topbar-bottom, 64px) + 8px) 12px auto auto;
@@ -22,10 +22,10 @@
   max-height: calc(100vh - var(--topbar-bottom, 64px) - 20px);
   max-height: calc(100dvh - var(--topbar-bottom, 64px) - 20px);
   max-width: min(560px, calc(100vw - 24px));
-  background: var(--ink);
+  background: var(--surface);
   border-radius: 12px;
   box-shadow: var(--shadow);
-  color: var(--text-on-ink);
+  color: var(--text);
   font-size: 12px;
   line-height: 1.3;
   pointer-events: auto;
@@ -59,7 +59,7 @@
 }
 @keyframes lm-pulse {
   50% {
-    box-shadow: var(--shadow), 0 0 0 5px rgb(255 96 88 / 35%);
+    box-shadow: var(--shadow), 0 0 0 5px var(--lm-high-glow);
   }
 }
 
@@ -125,7 +125,7 @@
   cursor: pointer;
 }
 .lm-tab:hover {
-  background: rgb(255 255 255 / 8%);
+  background: var(--ghost-bg-hover);
 }
 .limits[data-fit='snug'] .lm-tab {
   gap: 6px;
@@ -151,7 +151,7 @@
   width: 6px;
   height: 32px;
   border-radius: 3px;
-  background: rgb(255 255 255 / 14%);
+  background: var(--meter-track);
   overflow: hidden;
 }
 .limits[data-worst='warn'] .lm-tab-bar {
@@ -184,14 +184,14 @@
   cursor: pointer;
 }
 .lm-strip:hover {
-  background: rgb(255 255 255 / 5%);
+  background: var(--row-hover);
 }
 .lm-chev {
   flex: none;
   width: 14px;
   height: 14px;
   margin-left: auto;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   transition: transform 0.2s var(--ease);
 }
 .limits[data-open='true'] .lm-chev {
@@ -208,7 +208,7 @@
 .lm-title {
   display: none;
   font-weight: 700;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
   font-size: 13px;
 }
 .limits[data-open='true'] .lm-lines {
@@ -227,7 +227,7 @@
   min-width: 0;
 }
 .lm-tape {
-  --c: #a5522f;
+  --c: var(--tape-claude);
   flex: none;
   min-width: 56px;
   text-align: center;
@@ -240,7 +240,7 @@
 }
 .lm-plan {
   min-width: 7ch;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 11px;
 }
@@ -256,7 +256,7 @@
   white-space: nowrap;
 }
 .lm-lab {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 11px;
 }
@@ -270,7 +270,7 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11px;
 }
 .lm-reset-ic {
@@ -280,14 +280,14 @@
 }
 .lm-none,
 .lm-line--wait {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .lm-asof {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11px;
   font-style: normal;
   padding: 0 5px;
-  border: 1px dashed rgb(255 255 255 / 30%);
+  border: 1px dashed var(--border-strong);
   border-radius: 4px;
 }
 .lm-line[data-stale='true'] .lm-wins,
@@ -305,7 +305,7 @@
   width: 44px;
   height: 6px;
   border-radius: 3px;
-  background: rgb(255 255 255 / 14%);
+  background: var(--meter-track);
   overflow: hidden;
 }
 .lm-bar[data-sev='warn'] {
@@ -348,10 +348,10 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: rgb(255 255 255 / 30%) transparent;
+  scrollbar-color: var(--border-strong) var(--scroll-track);
 }
 .lm-body:focus-visible {
-  outline: 2px solid var(--focus, var(--sun));
+  outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
 .lm-sec {
@@ -392,7 +392,7 @@
   white-space: nowrap;
 }
 .lm-rowlab {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 11px;
   white-space: nowrap;
@@ -403,7 +403,7 @@
 .lm-read,
 .lm-problem {
   margin: 0;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11.5px;
 }
 .lm-meta {
@@ -411,11 +411,11 @@
   gap: 8px;
 }
 .lm-meta b {
-  color: var(--text-on-ink);
+  color: var(--text);
   font-family: var(--font-mono);
 }
 .lm-problem {
-  color: var(--sun);
+  color: var(--warn);
 }
 .lm-foot {
   display: flex;
@@ -444,7 +444,7 @@
   }
 }
 .lm-status {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11.5px;
 }
 
@@ -455,20 +455,20 @@
   gap: 6px;
   padding: 9px 12px;
   border-radius: 12px;
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--chrome);
+  color: var(--text);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   --lm-ok: var(--plus);
-  --lm-warn: var(--sun);
-  --lm-high: #ff6058;
+  --lm-warn: var(--warn);
+  --lm-high: var(--error);
 }
 .lm-inline[data-hot='true'] {
   box-shadow: inset 0 0 0 1.5px var(--lm-high);
 }
 .lm-inline-title {
   margin: 0;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -478,8 +478,8 @@
   margin: 0;
   padding: 5px 8px;
   border-radius: 8px;
-  background: rgb(255 96 88 / 16%);
-  color: #ffd9d6;
+  background: var(--lm-warn-bg);
+  color: var(--lm-warn-text);
   font-weight: 600;
 }
 
@@ -527,3 +527,83 @@
 .dd-plan-limits[hidden] {
   display: none;
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: the plate's controls reach the Ubuntu sizes and get a pressed fill, a stale reading is muted by colour
+ * (and its "as of" label) instead of opacity, a limit notice gets a red edge besides its hue, and the meters keep a
+ * shape in forced colours (the percentage is always printed beside them, never the hue alone).
+ */
+:root[data-ui-theme='ubuntu'] .lm-strip {
+  min-height: var(--ctl-h);
+}
+:root[data-ui-theme='ubuntu'] .lm-strip:active,
+:root[data-ui-theme='ubuntu'] .lm-tab:active {
+  background: var(--ghost-bg-active);
+}
+/* The plate's scrolling body stands 5px inside the plate (its padding 5px less: nothing moves) so its ring is outside it. */
+:root[data-ui-theme='ubuntu'] .lm-body {
+  margin: 5px;
+  padding: 0 7px 3px;
+  scroll-padding: 5px;
+}
+:root[data-ui-theme='ubuntu'] .lm-body:focus-visible {
+  outline-width: 3px;
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .lm-line[data-stale='true'] .lm-wins,
+:root[data-ui-theme='ubuntu'] .lm-line[data-stale='true'] .lm-plan,
+:root[data-ui-theme='ubuntu'] .lm-sec[data-stale='true'] .lm-rows {
+  opacity: 1;
+}
+:root[data-ui-theme='ubuntu'] .lm-line[data-stale='true'] .lm-lab,
+:root[data-ui-theme='ubuntu'] .lm-line[data-stale='true'] .lm-plan,
+:root[data-ui-theme='ubuntu'] .lm-sec[data-stale='true'] .lm-rowlab {
+  color: var(--text-3);
+}
+/* The snug tab in a thin gutter: Ubuntu's smallest target is 32 x 32, so it is 32 wide, flush with the screen's edge (limits.ts
+   gives it 34 px of room, 2 clear of the glass, and no tab below that), with the full tab's type. */
+:root[data-ui-theme='ubuntu'] .limits[data-dock='tab'][data-fit='snug'] {
+  right: 0;
+  width: 32px;
+  border-radius: 8px 0 0 8px;
+}
+:root[data-ui-theme='ubuntu'] .limits[data-fit='snug'] .lm-tab {
+  border-radius: 8px 0 0 8px;
+}
+:root[data-ui-theme='ubuntu'] .limits[data-fit='snug'] .lm-tab-pct {
+  font-size: 11px;
+  letter-spacing: 0;
+}
+:root[data-ui-theme='ubuntu'] .lm-foot .btn {
+  height: auto;
+  min-height: var(--ctl-h); /* Refresh and Hide meter are labelled: standard 36px controls */
+}
+:root[data-ui-theme='ubuntu'] .lm-warn {
+  border: 1px solid var(--error-border);
+}
+:root[data-ui-theme='ubuntu'] .lm-inline:not([data-hot='true']) {
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .lm-strip,
+  :root[data-ui-theme='ubuntu'] .lm-foot .btn {
+    min-height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .lm-bar,
+  :root[data-ui-theme='ubuntu'] .lm-tab-bar {
+    border: 1px solid CanvasText;
+  }
+  :root[data-ui-theme='ubuntu'] .lm-bar i,
+  :root[data-ui-theme='ubuntu'] .lm-tab-bar i {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+  :root[data-ui-theme='ubuntu'] .limits[data-reached='true'] {
+    outline: 2px solid CanvasText;
+  }
+}
+/* ubuntu:end */

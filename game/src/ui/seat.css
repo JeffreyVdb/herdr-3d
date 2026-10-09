@@ -19,7 +19,7 @@
   align-items: center;
   gap: 8px 14px;
   padding: 10px 12px 10px 14px;
-  background: var(--ink);
+  background: var(--chrome);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
 }
@@ -38,8 +38,8 @@
   font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--ink);
-  background: var(--sun);
+  color: var(--on-fill);
+  background: var(--tape-label-bg);
   border-radius: 2px;
   transform: rotate(-1.5deg);
   box-shadow:
@@ -53,11 +53,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   transition: color 160ms var(--ease);
 }
 .seat[data-state='error'] .seat-note {
-  color: #ffb3ad;
+  color: var(--error-text-note);
 }
 /* #187: why it is offline or away is what you need to read: it takes the line under the tape and wraps (three lines,
    then the title has it all) instead of ending in an ellipsis in what is left beside the tape. */
@@ -84,7 +84,7 @@
   margin-right: 8px;
   border-radius: 50%;
   vertical-align: 1px;
-  background: var(--needs_you);
+  background: var(--error-dot);
 }
 .seat[data-state='offline'] .seat-note::before {
   background: var(--idle);
@@ -96,16 +96,16 @@
   align-items: center;
   gap: 7px;
   padding: 5px 11px 5px 6px;
-  border: 1px solid rgb(255 255 255 / 22%);
+  border: 1px solid var(--border-chip);
   border-radius: 9px;
-  background: var(--ink-2);
+  background: var(--raised);
   font-weight: 700;
   cursor: pointer;
   pointer-events: auto;
   transition: background 140ms var(--ease);
 }
 .seat-stand:hover {
-  background: #34416c;
+  background: var(--raised-hover);
 }
 .seat-stand kbd {
   display: inline-grid;
@@ -115,8 +115,8 @@
   padding: 0 5px;
   box-sizing: border-box;
   border-radius: 5px;
-  background: var(--ink);
-  border: 1px solid rgb(255 255 255 / 22%);
+  background: var(--chrome);
+  border: 1px solid var(--kbd-border);
   border-bottom-width: 2px;
   font: 700 11px/1 var(--font);
   font-family: var(--font-mono);
@@ -135,7 +135,7 @@
   margin-left: -2px;
 }
 .seat-aside {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   /* #59: it gives way (an ellipsis, the whole line in its tooltip) so the terminal's controls fit beside the keys
      without a second row: a taller bar would shrink the laptop's screen. */
   flex: 1 1 0;
@@ -151,16 +151,16 @@
   align-items: center;
   gap: 4px;
   padding: 4px 4px 4px 6px;
-  border: 1px solid rgb(255 255 255 / 22%);
+  border: 1px solid var(--border-chip);
   border-radius: 9px;
-  background: var(--ink-2);
+  background: var(--raised);
   font-weight: 700;
   cursor: pointer;
   pointer-events: auto;
   transition: background 140ms var(--ease);
 }
 .seat-mode:hover {
-  background: #34416c;
+  background: var(--raised-hover);
 }
 .seat-mode kbd {
   display: inline-grid;
@@ -170,8 +170,8 @@
   padding: 0 5px;
   box-sizing: border-box;
   border-radius: 5px;
-  background: var(--ink);
-  border: 1px solid rgb(255 255 255 / 22%);
+  background: var(--chrome);
+  border: 1px solid var(--kbd-border);
   border-bottom-width: 2px;
   font: 700 11px/1 var(--font);
   font-family: var(--font-mono);
@@ -180,17 +180,17 @@
   display: inline-flex;
   margin-left: 4px;
   border-radius: 6px;
-  background: var(--ink);
+  background: var(--chrome);
 }
 .seat-mode-opt {
   padding: 2px 8px;
   border-radius: 6px;
   font-size: 12px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .seat-mode-opt[data-on] {
-  color: var(--ink);
-  background: var(--sun);
+  color: var(--on-action);
+  background: var(--action);
 }
 
 /* M16: the conversation, drawn over the monitor's glass while you read it (placed each frame, in viewport px). */
@@ -200,8 +200,8 @@
   overflow: hidden;
   pointer-events: auto;
   outline: none;
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--surface);
+  color: var(--text);
 }
 .seat-transcript[hidden] {
   display: none;
@@ -265,7 +265,7 @@
   font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #fff;
+  color: var(--on-chip);
   background: var(--needs_you, #e8413a);
   border-radius: 2px;
   transform: rotate(-1.5deg);
@@ -306,8 +306,8 @@
   font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #fff;
-  background: var(--needs_you-chip, #d8302c);
+  color: var(--on-chip);
+  background: var(--error-fill);
   border-radius: 2px;
   transform: rotate(-1.5deg);
 }
@@ -336,7 +336,7 @@
   margin-left: auto;
 }
 .seat-look-label {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 700;
 }
@@ -352,7 +352,7 @@
   /* As tall as the keys' caps beside them (20px): the bar keeps its height. */
   padding: 1px;
   border-radius: 8px;
-  background: rgb(0 0 0 / 28%);
+  background: var(--well-wash);
 }
 .seat-theme,
 .seat-zoom-btn {
@@ -363,14 +363,14 @@
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font: 700 11.5px/1 var(--font);
   cursor: pointer;
   pointer-events: auto;
 }
 .seat-theme[aria-checked='true'] {
-  background: var(--ink-2);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%);
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--border-chip);
 }
 .seat-swatch {
   width: 16px;
@@ -381,15 +381,15 @@
     linear-gradient(var(--sw-fg), var(--sw-fg)) 3px 3px / 9px 1.5px no-repeat,
     linear-gradient(var(--sw-fg), var(--sw-fg)) 3px 7px / 5px 1.5px no-repeat,
     var(--sw-bg);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 25%);
+  box-shadow: inset 0 0 0 1px var(--swatch-edge);
 }
 .seat-zoom-btn {
   min-width: 26px;
 }
 .seat-zoom-btn:hover:not(:disabled),
 .seat-theme:hover {
-  background: var(--ink-2);
-  color: var(--text-on-ink);
+  background: var(--raised);
+  color: var(--text);
 }
 .seat-zoom-btn:disabled {
   opacity: 0.4;
@@ -402,7 +402,7 @@
 }
 .seat-theme:focus-visible,
 .seat-zoom-btn:focus-visible {
-  outline: 2px solid var(--sun);
+  outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
 /* #74: the chip is one more control on the keys row, which the bar's usual width has no room left for (the keys' hint
@@ -425,8 +425,8 @@
   padding: 0 7px;
   border: 0;
   border-radius: 8px;
-  background: rgb(0 0 0 / 28%);
-  color: var(--text-on-ink-2);
+  background: var(--well-wash);
+  color: var(--text-2);
   font: 700 11.5px/1 var(--font);
   white-space: nowrap;
   cursor: pointer;
@@ -447,25 +447,25 @@
   box-shadow: inset 0 0 0 1.5px currentcolor;
 }
 .seat-fs[aria-pressed='true'] {
-  background: var(--ink-2);
-  color: var(--text-on-ink);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%);
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-chip);
 }
 .seat-fs[aria-pressed='true'] .seat-fs-dot {
-  background: var(--sun);
+  background: var(--accent-text);
   box-shadow: none;
 }
 .seat-fs:hover:not([aria-disabled='true']) {
-  background: var(--ink-2);
-  color: var(--text-on-ink);
+  background: var(--raised);
+  color: var(--text);
 }
 .seat-fs[aria-disabled='true'] {
   cursor: default;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 30%);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
   background: transparent;
 }
 .seat-fs:focus-visible {
-  outline: 2px solid var(--sun);
+  outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
 /* #59: a phone's width: whose laptop it is and Stand up share the first row, the switch (its keys on it) takes the
@@ -501,3 +501,143 @@
     max-width: 170px;
   }
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: the bar is chrome, the tape a pale label (dark text, not orange: orange is for actions and selection), the
+ * mode switch's lit half, the chosen terminal theme and a pressed fullscreen chip are orange with a dark label. Ubuntu
+ * Mono is smaller than Recursive Mono at one px, so the mono labels take a size more. The theme/zoom/fullscreen controls
+ * are 18-20px tall in a bar whose height the laptop's screen depends on: they reach 32px by an invisible hit area, and
+ * their real size on a coarse pointer.
+ */
+:root[data-ui-theme='ubuntu'] .seat-tape {
+  font-size: 13px;
+  box-shadow: none;
+}
+:root[data-ui-theme='ubuntu'] .seat-ask-tag,
+:root[data-ui-theme='ubuntu'] .seat-codex-tag {
+  font-size: 12px;
+}
+:root[data-ui-theme='ubuntu'] .seat-stand kbd,
+:root[data-ui-theme='ubuntu'] .seat-mode kbd {
+  font-size: 13px;
+}
+:root[data-ui-theme='ubuntu'] .seat-stand,
+:root[data-ui-theme='ubuntu'] .seat-mode {
+  min-height: var(--ctl-h);
+}
+:root[data-ui-theme='ubuntu'] .seat-stand:active,
+:root[data-ui-theme='ubuntu'] .seat-mode:active {
+  background: var(--btn-bg-active);
+  box-shadow: inset 0 0 0 1px var(--chrome);
+}
+
+:root[data-ui-theme='ubuntu'] .seat-theme,
+:root[data-ui-theme='ubuntu'] .seat-zoom-btn,
+:root[data-ui-theme='ubuntu'] .seat-fs {
+  position: relative;
+}
+:root[data-ui-theme='ubuntu'] .seat-theme,
+:root[data-ui-theme='ubuntu'] .seat-zoom-btn {
+  min-width: 32px;
+}
+:root[data-ui-theme='ubuntu'] .seat-theme::after,
+:root[data-ui-theme='ubuntu'] .seat-zoom-btn::after,
+:root[data-ui-theme='ubuntu'] .seat-fs::after {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
+}
+:root[data-ui-theme='ubuntu'] .seat-theme:hover,
+:root[data-ui-theme='ubuntu'] .seat-zoom-btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+:root[data-ui-theme='ubuntu'] .seat-theme:active,
+:root[data-ui-theme='ubuntu'] .seat-zoom-btn:active:not(:disabled) {
+  background: var(--btn-bg-active);
+  box-shadow: inset 0 0 0 1px var(--chrome);
+}
+/* The chosen terminal theme: the same selected fill as a tab (the swatch keeps its real colours). */
+:root[data-ui-theme='ubuntu'] .seat-theme[aria-checked='true'],
+:root[data-ui-theme='ubuntu'] .seat-theme[aria-checked='true']:hover {
+  background: var(--action);
+  box-shadow: inset 0 0 0 1px var(--action-border);
+}
+:root[data-ui-theme='ubuntu'] .seat-theme[aria-checked='true']:hover {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .seat-zoom-btn:disabled {
+  opacity: 1;
+  background: var(--disabled-bg);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .seat-theme:focus-visible,
+:root[data-ui-theme='ubuntu'] .seat-zoom-btn:focus-visible,
+:root[data-ui-theme='ubuntu'] .seat-fs:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+/* A bright fill: a dark keyline between it and the ring. */
+:root[data-ui-theme='ubuntu'] .seat-theme[aria-checked='true']:focus-visible,
+:root[data-ui-theme='ubuntu'] .seat-fs[aria-pressed='true']:focus-visible {
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .seat-fs[aria-pressed='true'],
+:root[data-ui-theme='ubuntu'] .seat-fs[aria-pressed='true']:hover:not([aria-disabled='true']) {
+  background: var(--action);
+  box-shadow: none;
+  color: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .seat-fs[aria-pressed='true']:hover:not([aria-disabled='true']) {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .seat-fs[aria-pressed='true'] .seat-fs-dot {
+  background: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .seat-fs:hover:not([aria-disabled='true'], [aria-pressed='true']) {
+  background: var(--hover);
+}
+/* Cannot be widened: it keeps its words, and shows it in a dashed edge. */
+:root[data-ui-theme='ubuntu'] .seat-fs[aria-disabled='true'] {
+  border: 1px dashed var(--border);
+  background: var(--disabled-bg);
+  box-shadow: none;
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .seat-stand,
+  :root[data-ui-theme='ubuntu'] .seat-mode,
+  :root[data-ui-theme='ubuntu'] .seat-theme,
+  :root[data-ui-theme='ubuntu'] .seat-zoom-btn,
+  :root[data-ui-theme='ubuntu'] .seat-fs {
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .seat-theme,
+  :root[data-ui-theme='ubuntu'] .seat-zoom-btn,
+  :root[data-ui-theme='ubuntu'] .seat-fs {
+    min-width: 44px;
+    justify-content: center;
+  }
+  :root[data-ui-theme='ubuntu'] .seat-theme::after,
+  :root[data-ui-theme='ubuntu'] .seat-zoom-btn::after,
+  :root[data-ui-theme='ubuntu'] .seat-fs::after {
+    content: none;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .seat-mode-opt[data-on],
+  :root[data-ui-theme='ubuntu'] .seat-theme[aria-checked='true'],
+  :root[data-ui-theme='ubuntu'] .seat-fs[aria-pressed='true'] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .seat-fs[aria-pressed='true'] .seat-fs-dot {
+    background: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .seat-swatch {
+    forced-color-adjust: none;
+  }
+}
+/* ubuntu:end */

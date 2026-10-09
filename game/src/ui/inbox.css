@@ -5,7 +5,7 @@
  * long). The number is the needs-you red while someone needs you, the plate's text colour when all are done.
  */
 .inbox {
-  --ib-red: #ff6058; /* the plate's high red: 5.4:1 on the navy (the chip red, --needs_you, is for white text on it) */
+  --ib-red: var(--needs_you-text); /* the plate's high red: 5.4:1 on the navy (the chip red, --needs_you, is for white text on it); Ubuntu: the needs-you yellow */
   --ib-top: calc(var(--topbar-bottom, 64px) + 8px + var(--ib-lift, 0px));
   position: absolute;
   top: var(--ib-top);
@@ -14,9 +14,9 @@
   flex-direction: column;
   max-width: calc(100vw - 24px);
   border-radius: 10px;
-  background: var(--ink);
+  background: var(--surface);
   box-shadow: var(--shadow);
-  color: var(--text-on-ink);
+  color: var(--text);
   font-size: 12px;
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
@@ -40,7 +40,7 @@
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font: inherit;
   cursor: pointer;
 }
@@ -51,16 +51,16 @@
   inset: -9px -6px;
 }
 .ib-chip:hover {
-  background: var(--ink-2);
-  color: var(--text-on-ink);
+  background: var(--raised);
+  color: var(--text);
 }
 .inbox[data-open='true'] .ib-chip {
   border-radius: 10px 10px 0 0;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .ib-n {
   min-width: 1ch;
-  color: var(--text-on-ink);
+  color: var(--text);
   font-family: var(--font-mono);
   font-weight: 700;
 }
@@ -73,7 +73,7 @@
   height: 14px;
   align-self: center;
   margin-left: auto;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   transform: rotate(180deg);
 }
 .inbox[data-open='true'] .ib-chev {
@@ -89,7 +89,7 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: rgb(255 255 255 / 24%) transparent;
+  scrollbar-color: var(--scroll-thumb-thin-2) var(--scroll-track);
   border-radius: 0 0 10px 10px;
 }
 .ib-list[hidden] {
@@ -147,7 +147,7 @@
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   cursor: pointer;
 }
 .ib-x svg {
@@ -156,29 +156,29 @@
 }
 .ib-item:hover .ib-x,
 .ib-x:focus-visible {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .ib-x:hover {
-  background: rgb(255 255 255 / 14%);
-  color: var(--text-on-ink);
+  background: var(--ghost-bg-active);
+  color: var(--text);
 }
 .ib-x:focus-visible {
   outline-offset: -2px;
-  background: rgb(255 255 255 / 14%);
+  background: var(--ghost-bg-active);
 }
 .ib-row:hover {
-  background: rgb(255 255 255 / 7%);
+  background: var(--lift-row-hover);
 }
 .ib-row:focus-visible {
   outline-offset: -2px;
-  background: rgb(255 255 255 / 7%);
+  background: var(--lift-row-hover);
 }
 .ib-stk {
   grid-area: stk;
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 22%);
+  box-shadow: 0 0 0 1px var(--border-chip);
 }
 .ib-name {
   grid-area: name;
@@ -188,7 +188,7 @@
   white-space: nowrap;
   font-size: 13px;
   font-weight: 700;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
 }
 .ib-why {
   grid-area: why;
@@ -203,13 +203,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11.5px;
 }
 .ib-age {
   grid-area: age;
   justify-self: end;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-family: var(--font-mono);
   font-size: 11px;
 }
@@ -220,14 +220,14 @@
   animation: ib-in 200ms var(--ease), ib-pulse 1.2s var(--ease);
 }
 .inbox[data-pulse='true'][data-blocked='false'] {
-  --ib-ring: rgb(185 195 220 / 55%);
+  --ib-ring: var(--ring-done);
 }
 @keyframes ib-pulse {
   0% {
-    box-shadow: var(--shadow), 0 0 0 0 var(--ib-ring, rgb(255 96 88 / 70%));
+    box-shadow: var(--shadow), 0 0 0 0 var(--ib-ring, var(--needs_you-ring));
   }
   100% {
-    box-shadow: var(--shadow), 0 0 0 10px rgb(255 96 88 / 0%);
+    box-shadow: var(--shadow), 0 0 0 10px var(--needs_you-ring-off);
   }
 }
 
@@ -277,7 +277,7 @@
   font-size: 12px;
 }
 .ib-who {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .ib-more {
   display: inline-flex;
@@ -288,7 +288,7 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--text-on-ink);
+  color: var(--text);
   font: inherit;
   font-weight: 650;
   text-decoration: underline;
@@ -296,7 +296,7 @@
   cursor: pointer;
 }
 .ib-more:hover {
-  background: rgb(255 255 255 / 10%);
+  background: var(--menu-row-hover);
 }
 @media (pointer: coarse) {
   .ib-more {
@@ -316,8 +316,8 @@
   padding: 7px 9px;
   overflow: auto;
   border-radius: 7px;
-  background: rgb(255 255 255 / 7%);
-  color: var(--text-on-ink);
+  background: var(--req-well);
+  color: var(--text);
 }
 .ib-req[hidden] {
   display: none;
@@ -330,5 +330,61 @@
 }
 .ib-req .ib-req-cut {
   margin-top: 6px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
+/* ubuntu:begin */
+/* #216 Ubuntu: the plate is the chip's control boundary (the elevation shadow is the pulse's, so the edge is an outline);
+   a pressed chip goes to the mid-aubergine; touch gets 44px targets (the shut chip's hit area is 44px already). */
+:root[data-ui-theme='ubuntu'] .inbox {
+  outline: 1px solid var(--border);
+  outline-offset: -1px;
+}
+:root[data-ui-theme='ubuntu'] .ib-chip {
+  min-height: 32px;
+  align-items: center;
+}
+:root[data-ui-theme='ubuntu'] .ib-chip:active {
+  background: var(--hover);
+}
+/* #215's request under a row: the full text sits in a recessed well with its boundary, the disclosure is the link colour. */
+:root[data-ui-theme='ubuntu'] .ib-req {
+  border: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .ib-more {
+  color: var(--accent-text);
+}
+:root[data-ui-theme='ubuntu'] .ib-more:hover {
+  text-decoration-thickness: 2px;
+}
+:root[data-ui-theme='ubuntu'] .ib-more:focus-visible,
+:root[data-ui-theme='ubuntu'] .ib-req:focus-visible {
+  outline-offset: 2px;
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .ib-x {
+    width: 44px;
+    height: 44px;
+    margin-top: -22px;
+  }
+  :root[data-ui-theme='ubuntu'] .ib-item[data-dismissable='true'] .ib-row {
+    padding-right: 52px;
+    min-height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .ib-row:hover,
+  :root[data-ui-theme='ubuntu'] .ib-x:hover,
+  :root[data-ui-theme='ubuntu'] .ib-chip:hover {
+    outline: 1px solid Highlight;
+  }
+}
+/* Focus room: the rows and the close button ring outside themselves; the list holds 5px round them. */
+:root[data-ui-theme='ubuntu'] .ib-row:focus-visible,
+:root[data-ui-theme='ubuntu'] .ib-x:focus-visible {
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .ib-list {
+  padding: 5px;
+  scroll-padding: 5px;
+}
+/* ubuntu:end */

@@ -202,7 +202,7 @@ export class PresetsPanel {
               'div',
               { class: 'pp-confirm-actions' },
               h('button', { class: 'btn btn--sm', 'data-key': `keep:${p.id}`, onclick: () => this.toList(p.id) }, 'Keep it'),
-              h('button', { class: 'btn btn--sm btn--danger', 'data-key': `confirm-delete:${p.id}`, disabled: this.busy, onclick: () => void this.remove(p) }, this.busy ? 'Deleting…' : 'Delete preset'),
+              h('button', { class: 'btn btn--sm btn--danger', 'data-key': `confirm-delete:${p.id}`, disabled: this.busy, 'aria-busy': this.busy ? 'true' : null, onclick: () => void this.remove(p) }, this.busy ? 'Deleting…' : 'Delete preset'),
             ),
           )
         : h(
@@ -282,7 +282,7 @@ export class PresetsPanel {
     );
     const back = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.toList(v.id) }, 'Back');
     const gone = !!v.id && !this.host.store.presets.get(v.id);
-    const save = h('button', { class: 'btn btn--primary', type: 'submit', form: 'presets-form', 'data-key': 'save', 'aria-disabled': gone || v.saving ? 'true' : null }, v.saving ? 'Saving…' : v.id ? 'Save preset' : 'Create preset');
+    const save = h('button', { class: 'btn btn--primary', type: 'submit', form: 'presets-form', 'data-key': 'save', 'aria-disabled': gone || v.saving ? 'true' : null, 'aria-busy': v.saving ? 'true' : null }, v.saving ? 'Saving…' : v.id ? 'Save preset' : 'Create preset');
     replaceKeepingFocus(this.actions, [back, save]);
   }
 

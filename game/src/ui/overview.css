@@ -26,6 +26,7 @@
 
 .ov {
   /* The top bar's navy (#1c2540) taken down to a night board; every status light is >= 3:1 on it, text >= 4.5:1. */
+  /* Quiet's palette stays literal here (render/overviewScreen.test.ts reads it); Ubuntu maps it to the UI tokens at the end. */
   --ov-ink: #0b1022;
   --ov-ink-2: #111830;
   --ov-ink-3: #1c2540;
@@ -33,9 +34,10 @@
   --ov-text: #eef2fb;
   --ov-text-2: #b9c3dc;
   --ov-text-3: #7d89ab;
-  --ov-accent: var(--sun, #ffc233);
-  --ov-display: 'H3D Overview Display', 'Archivo Variable', var(--font, system-ui), sans-serif;
-  --ov-mono: 'H3D Overview Mono', 'Departure Mono', ui-monospace, monospace;
+  --ov-accent: var(--accent-text);
+  /* Quiet: Archivo and Departure Mono (--display-font / --data-font, uiTheme.css); Ubuntu: Ubuntu and Ubuntu Mono. */
+  --ov-display: var(--display-font);
+  --ov-mono: var(--data-font);
   --ov-blink: 1100ms;
   --ov-ease: cubic-bezier(0.16, 1, 0.3, 1);
   position: fixed;
@@ -44,7 +46,7 @@
   display: flex;
   background: var(--ov-ink);
   color: var(--ov-text);
-  font-family: var(--font, system-ui, sans-serif);
+  font-family: var(--font);
   font-size: 14px;
   line-height: 1.35;
   color-scheme: dark;
@@ -75,8 +77,8 @@
   padding: clamp(16px, 3vw, 40px) clamp(16px, 4vw, 56px) 14px;
   /* A faint scanline weave: the board's glass, not decoration over the content (it sits behind it). */
   background:
-    repeating-linear-gradient(to bottom, rgb(255 255 255 / 1.6%) 0 1px, transparent 1px 4px),
-    radial-gradient(120% 70% at 0% 0%, rgb(47 107 240 / 9%), transparent 60%),
+    repeating-linear-gradient(to bottom, var(--ov-scan) 0 1px, transparent 1px 4px),
+    radial-gradient(120% 70% at 0% 0%, var(--ov-glass-tint), transparent 60%),
     var(--ov-ink);
 }
 
@@ -202,7 +204,7 @@
 }
 .ov-seg[data-active='true'][aria-pressed='true']::before {
   opacity: 1;
-  box-shadow: 0 0 8px 1px rgb(47 107 240 / 70%);
+  box-shadow: 0 0 8px 1px var(--working-glow-strong);
 }
 .ov-hidden {
   display: inline-flex;
@@ -253,7 +255,7 @@
   width: 30px;
   height: 40px;
   border-radius: 4px;
-  background: linear-gradient(to bottom, #1a2342 0 50%, #141c36 50% 100%);
+  background: linear-gradient(to bottom, var(--ov-flap-top) 0 50%, var(--ov-flap-bottom) 50% 100%);
   box-shadow: 0 2px 4px rgb(0 0 0 / 45%), inset 0 1px 0 rgb(255 255 255 / 6%);
   color: var(--ov-text);
   font-family: var(--ov-mono);
@@ -327,7 +329,7 @@
     border-color 160ms var(--ov-ease);
 }
 .ov-btn:hover {
-  border-color: rgb(185 195 220 / 32%);
+  border-color: var(--ov-rule-hover);
   background: var(--ov-ink-2);
 }
 .ov-btn svg {
@@ -347,8 +349,8 @@
   color: var(--ov-ink);
 }
 .ov-btn--go:hover {
-  border-color: #4bd884;
-  background: #4bd884;
+  border-color: var(--plus-hover);
+  background: var(--plus-hover);
 }
 
 /* ---- the board ------------------------------------------------------------------------------------------- */
@@ -425,7 +427,7 @@
   border-top: 2px solid var(--ov-ink-3);
   border-bottom-color: transparent;
   border-radius: 0 0 6px 6px;
-  background: linear-gradient(to bottom, rgb(47 107 240 / 7%), transparent 85%);
+  background: linear-gradient(to bottom, var(--ov-band-tint), transparent 85%);
 }
 .ov-board > .ov-row--floor:first-child {
   margin-top: 0;
@@ -476,7 +478,7 @@
   stroke: none;
 }
 .ov-row--floor[data-asleep] .ov-name {
-  color: #9aa5c2; /* the asleep row's text tone (>= 4.5:1 on the ink) */
+  color: var(--ov-asleep-text); /* the asleep row's text tone (>= 4.5:1 on the ink) */
 }
 .ov-chips {
   display: flex;
@@ -577,7 +579,7 @@
   0%,
   100% {
     opacity: 1;
-    box-shadow: 0 0 0 3px rgb(47 107 240 / 22%), 0 0 14px 2px rgb(47 107 240 / 55%);
+    box-shadow: 0 0 0 3px var(--working-halo), 0 0 14px 2px var(--working-glow);
   }
   50% {
     opacity: 0.32;
@@ -606,7 +608,7 @@
   pointer-events: none;
 }
 .ov-wire line {
-  stroke: rgb(185 195 220 / 32%);
+  stroke: var(--ov-wire);
   stroke-width: 1.5;
   stroke-dasharray: 1;
 }
@@ -618,7 +620,7 @@
   bottom: -1px;
   left: 39.25px;
   width: 1.5px;
-  background: rgb(185 195 220 / 32%);
+  background: var(--ov-wire);
   transform-origin: 50% 0;
 }
 .ov--enter .ov-wire line,
@@ -682,6 +684,7 @@
   padding: 2px 6px 1px;
   border-radius: 3px;
   background: var(--run, var(--ov-ink-3));
+  /* White on the run's own colour (data, not a theme colour). */
   color: #fff;
   font-family: var(--ov-mono);
   font-size: 11px;
@@ -705,7 +708,7 @@
   padding: 2px 6px 1px;
   border-radius: 3px;
   background: var(--needs_you-chip, #d8302c);
-  color: #fff;
+  color: var(--on-chip);
   font-family: var(--ov-mono);
   font-size: 11px;
   text-transform: uppercase;
@@ -1102,3 +1105,238 @@
     margin-left: 0;
   }
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: the board's navy palette is the UI's aubergine one (the page is a main overlay: --surface; the hover row
+ * and the switch's well are --raised; a pressed half and the rules are --hover), its status lights are the status tokens
+ * as text/icon on purple, its accent is the accent text. Display text is Ubuntu Bold (no Archivo condensing), the data
+ * readouts Ubuntu Mono, a size up: Ubuntu Mono is smaller than Departure Mono at the same px.
+ */
+:root[data-ui-theme='ubuntu'] .ov {
+  --ov-ink: var(--surface);
+  --ov-ink-2: var(--raised);
+  --ov-ink-3: var(--hover);
+  --ov-rule: var(--line);
+  --ov-text: var(--text);
+  --ov-text-2: var(--text-2);
+  --ov-text-3: var(--text-3);
+}
+:root[data-ui-theme='ubuntu'] .ov-row[data-display='asleep'] {
+  --ov-text: var(--text-2);
+  --ov-text-2: var(--text-3);
+  --ov-key-asleep: var(--asleep);
+}
+:root[data-ui-theme='ubuntu'] .ov ::selection {
+  background: var(--action);
+  color: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .ov :focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+/* A row's ring is outside it like every other: the scrolling board gives it 6px on each side, and a row stays put
+   (no 1px lift on hover or focus, like the boards' cards) so the settled ring is where the room is. */
+:root[data-ui-theme='ubuntu'] .ov-board {
+  padding: 6px 6px 24px;
+  scroll-padding: 6px;
+}
+:root[data-ui-theme='ubuntu'] .ov-row:hover,
+:root[data-ui-theme='ubuntu'] .ov-row:focus-visible {
+  transform: none;
+}
+:root[data-ui-theme='ubuntu'] .ov-row:focus-visible {
+  outline-offset: 2px;
+  box-shadow: 0 8px 20px rgb(0 0 0 / 40%);
+}
+:root[data-ui-theme='ubuntu'] .ov-board {
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+
+/* Display type: real 700, natural case and width (the 112px / 62% condensed title would run off at Ubuntu's width). */
+:root[data-ui-theme='ubuntu'] .ov-floor {
+  font-size: clamp(34px, 6vw, 72px);
+  font-stretch: normal;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.05;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+:root[data-ui-theme='ubuntu'] .ov-name,
+:root[data-ui-theme='ubuntu'] .ov-row--floor .ov-name,
+:root[data-ui-theme='ubuntu'] .ov-empty-title {
+  font-stretch: normal;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+:root[data-ui-theme='ubuntu'] .ov-name {
+  font-size: 20px;
+  line-height: 1.2;
+}
+:root[data-ui-theme='ubuntu'] .ov-row--floor .ov-name {
+  font-size: 26px;
+  line-height: 1.15;
+}
+:root[data-ui-theme='ubuntu'] .ov-empty-title {
+  font-size: clamp(28px, 4vw, 40px);
+  line-height: 1.1;
+}
+/* Data readouts: Ubuntu Mono a step larger than Departure Mono's sizes. */
+:root[data-ui-theme='ubuntu'] .ov-cols,
+:root[data-ui-theme='ubuntu'] .ov-asleep,
+:root[data-ui-theme='ubuntu'] .ov-floortag,
+:root[data-ui-theme='ubuntu'] .ov-tag,
+:root[data-ui-theme='ubuntu'] .ov-cap,
+:root[data-ui-theme='ubuntu'] .ov-ghost-label,
+:root[data-ui-theme='ubuntu'] .ov-line > b,
+:root[data-ui-theme='ubuntu'] .ov-act,
+:root[data-ui-theme='ubuntu'] .ov-retry,
+:root[data-ui-theme='ubuntu'] .ov-hint,
+:root[data-ui-theme='ubuntu'] .ov kbd {
+  font-size: 13px;
+}
+:root[data-ui-theme='ubuntu'] .ov-llm,
+:root[data-ui-theme='ubuntu'] .ov-ai-state {
+  font-size: 12px;
+}
+:root[data-ui-theme='ubuntu'] .ov-where,
+:root[data-ui-theme='ubuntu'] .ov-hidden,
+:root[data-ui-theme='ubuntu'] .ov-floor-label,
+:root[data-ui-theme='ubuntu'] .ov-meta,
+:root[data-ui-theme='ubuntu'] .ov-since {
+  font-size: 14px;
+}
+:root[data-ui-theme='ubuntu'] .ov-ticket-key {
+  font-size: 15px;
+}
+:root[data-ui-theme='ubuntu'] .ov-chip b {
+  font-size: 16px;
+}
+:root[data-ui-theme='ubuntu'] .ov-flap {
+  font-size: 28px;
+}
+:root[data-ui-theme='ubuntu'] .ov kbd {
+  min-width: 22px;
+  height: 22px;
+  border-color: var(--kbd-border);
+  background: var(--well);
+}
+
+/* Controls: the shared secondary look (raised fill, strong border), the segmented switch's selected half orange. */
+:root[data-ui-theme='ubuntu'] .ov-switch {
+  border-color: var(--border);
+}
+:root[data-ui-theme='ubuntu'] .ov-btn {
+  height: var(--ctl-h);
+  border-color: var(--btn-border);
+  background: var(--btn-bg);
+}
+:root[data-ui-theme='ubuntu'] .ov-btn--icon {
+  width: var(--ctl-h);
+}
+:root[data-ui-theme='ubuntu'] .ov-btn:hover {
+  border-color: var(--btn-border-hover);
+  background: var(--btn-bg-hover);
+}
+:root[data-ui-theme='ubuntu'] .ov-btn:active {
+  background: var(--btn-bg-active);
+  box-shadow: inset 0 0 0 1px var(--chrome);
+}
+/* The page's one primary action (Open the wall's board / Go): orange, dark label, a keyline for its focus ring. */
+:root[data-ui-theme='ubuntu'] .ov-btn--go,
+:root[data-ui-theme='ubuntu'] .ov-btn--go:hover,
+:root[data-ui-theme='ubuntu'] .ov-btn--go:active {
+  border-color: var(--action-border);
+  background: var(--action);
+  color: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .ov-btn--go:hover {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .ov-btn--go:active {
+  background: var(--action-active);
+}
+:root[data-ui-theme='ubuntu'] .ov-btn--go:focus-visible {
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .ov-seg {
+  height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .ov-seg:hover {
+  background: var(--hover);
+  color: var(--ov-text);
+}
+:root[data-ui-theme='ubuntu'] .ov-seg[aria-pressed='true'],
+:root[data-ui-theme='ubuntu'] .ov-seg[aria-pressed='true']:hover {
+  background: var(--action);
+  color: var(--on-action);
+  box-shadow: none;
+}
+:root[data-ui-theme='ubuntu'] .ov-seg[aria-pressed='true']:hover {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .ov-seg[aria-pressed='true']:active {
+  background: var(--action-active);
+}
+:root[data-ui-theme='ubuntu'] .ov-seg[aria-pressed='true']:focus-visible {
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+/* The working lamp on Active only: dark on the orange half. */
+:root[data-ui-theme='ubuntu'] .ov-seg[data-active='true'][aria-pressed='true']::before {
+  background: var(--on-action);
+  box-shadow: none;
+}
+:root[data-ui-theme='ubuntu'] .ov-hidden,
+:root[data-ui-theme='ubuntu'] .ov-ticket {
+  min-height: 32px;
+  align-items: center;
+}
+:root[data-ui-theme='ubuntu'] .ov-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+@media (max-width: 760px) {
+  :root[data-ui-theme='ubuntu'] .ov-tools .ov-btn--floors {
+    width: var(--ctl-h);
+  }
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .ov-btn,
+  :root[data-ui-theme='ubuntu'] .ov-seg,
+  :root[data-ui-theme='ubuntu'] .ov-hidden,
+  :root[data-ui-theme='ubuntu'] .ov-ticket,
+  :root[data-ui-theme='ubuntu'] .ov-retry {
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .ov-btn--icon,
+  :root[data-ui-theme='ubuntu'] .ov-tools .ov-btn--floors,
+  :root[data-ui-theme='ubuntu'] .ov-retry {
+    min-width: 44px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .ov-seg[aria-pressed='true'] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .ov-seg[data-active='true'][aria-pressed='true']::before {
+    background: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .ov-light,
+  :root[data-ui-theme='ubuntu'] .ov-dot {
+    forced-color-adjust: none;
+  }
+  :root[data-ui-theme='ubuntu'] .ov-row {
+    border-bottom-color: CanvasText;
+  }
+}
+/* ubuntu:end */

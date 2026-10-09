@@ -7,12 +7,12 @@
   scrollbar-gutter: stable;
 }
 .sc-body:focus-visible {
-  outline: 2px solid var(--sun);
+  outline: 2px solid var(--focus);
   outline-offset: -3px;
 }
 .sc-intro {
   margin: 10px 2px 2px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 13px;
   line-height: 1.5;
   max-width: 62ch;
@@ -29,14 +29,14 @@
   z-index: 1;
   margin: 0;
   padding: 14px 2px 2px;
-  background: var(--ink);
+  background: var(--surface);
   font-size: 15px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
 }
 .sc-note {
   margin: 0 2px 6px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12.5px;
   max-width: 62ch;
 }
@@ -69,7 +69,7 @@
 }
 .sc-plus,
 .sc-or {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 11px;
 }
 .sc-or {
@@ -83,8 +83,8 @@
   padding: 0 6px;
   box-sizing: border-box;
   border-radius: 5px;
-  background: var(--ink-2);
-  border: 1px solid rgb(255 255 255 / 22%);
+  background: var(--raised);
+  border: 1px solid var(--kbd-border);
   border-bottom-width: 2px;
   font: 700 12px/1 var(--font-mono);
   font-variation-settings: normal;
@@ -98,3 +98,15 @@
     justify-content: flex-start;
   }
 }
+
+/* ubuntu:begin */
+/* #216: the scroll area's focus ring is the full 3px, 2px outside it (credits.css gives every credits body the room);
+   Ubuntu Mono reads smaller, so the keycaps get a size up. */
+:root[data-ui-theme='ubuntu'] .sc-body:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .shortcuts kbd {
+  font-size: 13px;
+}
+/* ubuntu:end */

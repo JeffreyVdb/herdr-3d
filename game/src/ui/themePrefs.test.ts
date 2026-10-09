@@ -194,3 +194,53 @@ describe('fullscreen pref (#74)', () => {
     expect(b.showChanges).toBe(false);
   });
 });
+
+describe('UI theme pref (#216)', () => {
+  it('is Quiet for a fresh browser and for one with only transcript or terminal picks; nothing is migrated from them', () => {
+    expect(new ViewPrefs(memory()).uiTheme()).toBe('quiet');
+    const st = memory({ 'h3d.theme.transcript': 'ubuntu', 'h3d.theme.terminal': 'ubuntu' });
+    const p = new ViewPrefs(st);
+    expect(p.uiTheme()).toBe('quiet');
+    expect(st.map.has('h3d.theme.ui')).toBe(false);
+  });
+
+  it('is remembered under h3d.theme.ui, independent of the two views, and Quiet stores nothing', () => {
+    const st = memory();
+    const p = new ViewPrefs(st);
+    const seen: string[] = [];
+    p.onChange((w) => seen.push(w));
+    p.setUiTheme('ubuntu');
+    expect(Object.fromEntries(st.map)).toEqual({ 'h3d.theme.ui': 'ubuntu' });
+    expect(state(p)).toEqual(['quiet', 'quiet', 100, 100, false]);
+    expect(new ViewPrefs(st).uiTheme()).toBe('ubuntu');
+    p.setTheme('transcript', 'ubuntu');
+    p.setUiTheme('quiet');
+    expect(Object.fromEntries(st.map)).toEqual({ 'h3d.theme.transcript': 'ubuntu' });
+    expect(seen).toEqual(['uiTheme', 'transcriptTheme', 'uiTheme']);
+    // Setting what is already set tells nobody.
+    p.setUiTheme('quiet');
+    expect(seen).toHaveLength(3);
+  });
+
+  it('falls back to Quiet for a missing or invalid stored value', () => {
+    for (const v of ['', 'solarized', 'Ubuntu', 'terminal', ' ubuntu', 'null']) expect(new ViewPrefs(memory({ 'h3d.theme.ui': v })).uiTheme(), JSON.stringify(v)).toBe('quiet');
+  });
+
+  it('works in memory when storage is missing, blocked or throws, and tells listeners', () => {
+    for (const st of [null, broken()]) {
+      const p = new ViewPrefs(st);
+      const seen: string[] = [];
+      p.onChange((w) => seen.push(w));
+      expect(p.uiTheme()).toBe('quiet');
+      p.setUiTheme('ubuntu');
+      expect(p.uiTheme()).toBe('ubuntu');
+      expect(seen).toEqual(['uiTheme']);
+    }
+  });
+
+  it('refuses a value that is not a UI theme', () => {
+    const p = new ViewPrefs(null);
+    p.setUiTheme('paper' as never);
+    expect(p.uiTheme()).toBe('quiet');
+  });
+});

@@ -1214,10 +1214,12 @@ export class Panels {
         return;
       }
       save.setAttribute('aria-disabled', 'true');
+      save.setAttribute('aria-busy', 'true');
       save.textContent = 'Saving…';
       this.setStatus('Saving…');
       void this.host.send('floor.settings.set', { session, ...patch }).then((r) => {
         save.removeAttribute('aria-disabled');
+        save.removeAttribute('aria-busy');
         save.textContent = 'Save settings';
         if (!r.ok) {
           this.setStatus(failureText('floor.settings.set', r.code, r.message, { floor: session }), 'error');

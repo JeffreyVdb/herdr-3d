@@ -793,7 +793,7 @@ export class StartRunDialog {
     const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, this.state === 'starting' ? 'Close' : 'Cancel');
     const start = h(
       'button',
-      { class: 'btn btn--primary', 'data-key': 'start', 'aria-disabled': blocker ? 'true' : null, title: blocker ?? 'Start the run (Ctrl+Enter)', onclick: () => void this.start() },
+      { class: 'btn btn--primary', 'data-key': 'start', 'aria-disabled': blocker ? 'true' : null, 'aria-busy': this.state === 'starting' ? 'true' : null, title: blocker ?? 'Start the run (Ctrl+Enter)', onclick: () => void this.start() },
       this.state === 'starting' ? 'Starting…' : 'Start run',
     );
     const had = document.activeElement === this.startBtn;

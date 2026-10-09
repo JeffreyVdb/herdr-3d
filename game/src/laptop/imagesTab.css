@@ -36,7 +36,7 @@
   cursor: pointer;
 }
 .imgs :focus-visible {
-  outline: 2px solid var(--tx-blue);
+  outline: 2px solid var(--ctl-focus);
   outline-offset: 1px;
 }
 
@@ -46,8 +46,12 @@
   align-items: center;
   gap: 10px;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--tx-line);
-  background: var(--tx-bg-2);
+  border-bottom: 1px solid var(--ctl-line);
+  background: var(--ctl-bar);
+  /* #216: the bar holds the seat tabs and is chrome like `.tx-bar`: the UI theme's colour and font (and the colour
+     `.imgs button { color: inherit }` hands the tabs), not the transcript's. */
+  color: var(--ctl-text);
+  font-family: var(--ctl-font);
   font-size: 12px;
 }
 .imgs-title {
@@ -55,7 +59,7 @@
   letter-spacing: 0.02em;
 }
 .imgs-count-total {
-  color: var(--tx-text-3);
+  color: var(--ctl-text-3);
   font-variant-numeric: tabular-nums;
   font-variant-numeric: tabular-nums;
 }
@@ -187,8 +191,8 @@
   right: 6px;
   padding: 1px 7px;
   border-radius: 999px;
-  background: var(--tx-sun);
-  color: var(--tx-on-sun);
+  background: var(--chip-accent);
+  color: var(--on-fill);
   font-size: 11.5px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -297,7 +301,7 @@
   padding: 0;
   border: 0;
   background: none;
-  color: var(--tx-blue-text);
+  color: var(--ctl-accent-text);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
@@ -311,3 +315,36 @@
     display: none;
   }
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: the Images tab's screen (its ground, text and thumbnails) is the transcript preset's; what you operate
+ * (focus ring, the link) and the count badge are the UI theme's (`--ctl-*`, `--chip-accent` above). `.imgs button { color:
+ * inherit }` (#111) outranks a bare `.imgs-link`, so Quiet's link is its inherited text colour (as before); Ubuntu's is
+ * `.imgs .imgs-link` under the root attribute: lighter orange, underlined, thicker on hover.
+ */
+:root[data-ui-theme='ubuntu'] .imgs :focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .imgs .imgs-link {
+  color: var(--accent-text);
+}
+:root[data-ui-theme='ubuntu'] .imgs .imgs-link:hover {
+  text-decoration-thickness: 2px;
+}
+:root[data-ui-theme='ubuntu'] .imgs .imgs-n {
+  background: var(--chip-accent);
+  color: var(--on-fill);
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .imgs .imgs-link {
+    min-height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .imgs .imgs-n {
+    border: 1px solid CanvasText;
+  }
+}
+/* ubuntu:end */

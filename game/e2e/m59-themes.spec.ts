@@ -99,17 +99,24 @@ async function checkFonts(page: Page, tx: Locator, id: Id): Promise<void> {
     if ((await el.getAttribute('aria-expanded')) !== 'true') await el.click();
   }
   const monoSel = ['.tx-md pre code', '.tx-md p code', '.tx-diff-body', '.tx-diff-path', '.tx-tool-name', '.tx-tool-sum', '.tx-out', '.tx-imgcard-path'];
-  const proseSel = ['.tx-assistant .tx-md p', '.tx-bubble', '.tx-thinking-body', '.tx-notice-text', '.tx-tool-status', '.tx-tool-dur', '.tx-thinking-tag', '.tx-count', '.tx-send', '.tx-banner-text', '.tx-choice', '.tx-diff-stat'];
+  const proseSel = ['.tx-assistant .tx-md p', '.tx-bubble', '.tx-thinking-body', '.tx-notice-text', '.tx-tool-status', '.tx-tool-dur', '.tx-thinking-tag', '.tx-diff-stat'];
+  // #216: the app's widgets inside the transcript (the strip's count, Send, the answer choices) are the UI theme's: Quiet UI's prose, whatever the preset.
+  const widgetSel = ['.tx-count', '.tx-send', '.tx-choice', '.tx-banner-text'];
   for (const s of monoSel) expect(await family(tx.locator(s)), `${id}: ${s} is mono`).toContain(mono);
   for (const s of proseSel) {
     const f = await pseudoFamily(tx.locator(s));
     expect(f, `${id}: ${s} is prose`).toContain(prose);
     expect(f).not.toContain(mono);
   }
+  for (const sel of widgetSel) {
+    const f = await pseudoFamily(tx.locator(sel));
+    expect(f, `${id}: ${sel} is the UI theme's prose (Quiet UI)`).toContain('Atkinson');
+  }
   // No ligatures in code (JetBrains Mono's are contextual alternates).
   expect(await tx.locator('.tx-out').first().evaluate((e) => getComputedStyle(e).fontVariantLigatures)).toBe('none');
-  // The transcript's mono reaches the limits widget (every DOM monospace); the HUD keeps Recursive.
-  expect(await family(page.locator('.lm-pct'))).toContain(mono);
+  // #216: the transcript's mono stays in the transcript. The limits widget's numbers are the shell's (Quiet UI: JetBrains Mono), whatever the preset; the HUD keeps Recursive.
+  expect(await family(page.locator('.lm-pct'))).toContain('JetBrains Mono Variable');
+  if (mono !== 'JetBrains Mono Variable') expect(await family(page.locator('.lm-pct'))).not.toContain(mono);
   expect(await page.locator('.hud').first().evaluate((e) => getComputedStyle(e).fontFamily)).toContain('Recursive');
   // The fonts are really in (not the fallback).
   expect(await page.evaluate((f) => document.fonts.check(`16px "${f.mono}"`) && document.fonts.check(`16px "${f.prose}"`), FAMILY[id])).toBe(true);
@@ -131,10 +138,11 @@ test('a fresh load fetches Quiet’s fonts only', async ({ page }) => {
 });
 
 for (const pick of ['ubuntu'] as const) {
-  test(`a stored ${pick} transcript loads its fonts only, from the first frame`, async ({ page }) => {
+  // #216: with all three picks on Ubuntu (the UI theme too) no Quiet font file is fetched: the shell's mono is the UI theme's.
+  test(`a stored ${pick} UI, transcript and terminal load its fonts only, from the first frame`, async ({ page }) => {
     test.setTimeout(150_000);
     const fonts = fontRequests(page);
-    const id = await sitAt(page, 'Tofu', { 'h3d.theme.transcript': pick, 'h3d.theme.terminal': pick });
+    const id = await sitAt(page, 'Tofu', { 'h3d.theme.ui': pick, 'h3d.theme.transcript': pick, 'h3d.theme.terminal': pick });
     const tx = await openTranscript(page, id);
     await page.evaluate(() => window.__h3d.themeLoaded());
     expect(await theme(page)).toMatchObject({ transcript: pick, terminal: pick, ready: pick });
@@ -229,7 +237,8 @@ test('each view takes its own preset without a reload: transcript (tools shown a
     await page.evaluate(() => window.__h3d.themeLoaded());
     expect(await theme(page)).toMatchObject({ transcript: 'ubuntu', terminal: pick, ready: pick });
     expect((await theme(page)).terminalFont).toContain(FAMILY[pick].mono);
-    expect(await family(page.locator('.lm-pct'))).toContain(FAMILY.ubuntu.mono);
+    // #216: the shell's numbers are the UI theme's (Quiet here), not the transcript's.
+    expect(await family(page.locator('.lm-pct'))).toContain(FAMILY.quiet.mono);
     expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('ubuntu');
     await frames(page, 12);
     await shot(page, `m59-terminal-${pick}`);

@@ -1,9 +1,9 @@
 /**
  * #59 (#172): the two presets, picked apart for the two seated views. For the transcript a preset sets the monospace
- * font (its code and tool rows, and every other `--font-mono` in the DOM: the limits widget, the boards, the HUD's
- * numbers), the prose font and size and the colours (the `--tx-*` set); for the terminal it sets the canvas's font,
- * background, text and cursor. The 16 ANSI colours stay (agents' TUIs keep their meaning), and the HUD, panels and
- * dialogs keep Recursive (`--font`).
+ * font (its code and tool rows: `--tx-mono`), the prose font and size and the colours (the `--tx-*` set); for the
+ * terminal it sets the canvas's font, background, text and cursor. The 16 ANSI colours stay (agents' TUIs keep their
+ * meaning). The HUD, panels and dialogs are not themed here: #216's UI theme (ui/uiTheme.ts, ui/uiTheme.css) owns
+ * `--font` and `--font-mono`, so a transcript preset never reaches the shell.
  *
  * Exactly two, hard-coded: nothing creates, edits or imports another. Quiet is the default and today's navy screen;
  * Ubuntu (#172) is the classic Ubuntu terminal purple with Ubuntu's own fonts (it replaced the Terminal and Paper presets).
@@ -234,14 +234,13 @@ export function prosePx(t: ThemePreset, zoom: number): number {
 }
 
 /**
- * The custom properties a preset at a zoom puts on the page: the two fonts, the transcript's sizes and colours.
+ * The custom properties a preset at a zoom puts on the page: the transcript's two fonts, sizes and colours.
  * `--tx-k` scales the transcript's other sizes (written against a 13.5px body); `--tx-mono-fs` is the mono size.
  */
 export function themeVars(t: ThemePreset, zoom: number): Record<string, string> {
   const z = clampZoom(zoom);
   const vars: Record<string, string> = {
-    '--font-mono': t.mono.stack,
-    '--tx-mono': 'var(--font-mono)',
+    '--tx-mono': t.mono.stack,
     '--tx-prose': t.prose.stack,
     '--tx-zoom': String(z / 100),
     '--tx-fs': `${prosePx(t, z)}px`,

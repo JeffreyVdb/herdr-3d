@@ -8,3 +8,345 @@
 .wb .excalidraw .help-icon {
   display: none !important;
 }
+
+/* ubuntu:begin */
+/*
+ * #216: the editor's own controls (toolbar, menus, property panels, dialogs, tooltips) in the Ubuntu UI theme. Excalidraw
+ * themes itself through custom properties on `.excalidraw`; `theme: 'dark'` would also set `--theme-filter: invert(93%)
+ * hue-rotate(180deg)` on the canvases and so repaint the drawing, so the editor stays on its light theme (editor.ts) and
+ * only its UI properties are overridden here. The drawing, its background, its fonts, the selection handles and the
+ * exports never read them. Dialogs and the library mount on `body` in an `.excalidraw.excalidraw-modal-container`, and
+ * tooltips in `.excalidraw-tooltip`: both are covered because the selector is not scoped to `.wb`. This file loads with
+ * the editor, never at start.
+ */
+:root[data-ui-theme='ubuntu'] .excalidraw {
+  --ui-font: var(--font);
+  --island-bg-color: var(--raised);
+  --popup-bg-color: var(--raised);
+  --popup-secondary-bg-color: var(--well);
+  --sidebar-bg-color: var(--raised);
+  --default-bg-color: var(--well);
+  --input-bg-color: var(--well);
+  --input-border-color: var(--border);
+  --input-hover-bg-color: var(--hover);
+  --input-label-color: var(--text-2);
+  --default-border-color: var(--border);
+  --sidebar-border-color: var(--border);
+  --dialog-border-color: var(--border);
+  --button-hover-bg: var(--hover);
+  --button-active-bg: var(--hover);
+  --button-active-border: var(--focus);
+  --button-gray-1: var(--raised);
+  --button-gray-2: var(--hover);
+  --button-gray-3: var(--border);
+  --overlay-bg-color: var(--scrim);
+  --popup-text-color: var(--text);
+  --popup-text-inverted-color: var(--on-action);
+  --text-primary-color: var(--text);
+  --keybinding-color: var(--text-3);
+  --link-color: var(--accent-text);
+  --icon-fill-color: var(--text);
+  --color-on-surface: var(--text);
+  --color-icon-white: var(--on-action);
+  --focus-highlight-color: var(--focus);
+  --select-highlight-color: var(--focus);
+  --shadow-island: var(--shadow);
+  --modal-shadow: var(--shadow);
+  --sidebar-shadow: var(--shadow);
+  --scrollbar-thumb: var(--scroll-thumb);
+  --scrollbar-thumb-hover: var(--border-hover);
+  --color-surface-lowest: var(--well);
+  --color-surface-low: var(--raised);
+  --color-surface-mid: var(--raised);
+  --color-surface-high: var(--hover);
+  --color-surface-primary-container: var(--action);
+  --color-on-primary-container: var(--on-action);
+  --color-border-outline: var(--border);
+  --color-border-outline-variant: var(--line);
+  --color-primary: var(--action);
+  --color-primary-darker: var(--action-hover);
+  --color-primary-darkest: var(--action-active);
+  --color-primary-hover: var(--action-hover);
+  --color-primary-light: var(--hover);
+  --color-primary-light-darker: var(--hover);
+  --color-brand-hover: var(--action-hover);
+  --color-brand-active: var(--action-active);
+  --color-selection: var(--action);
+  --color-disabled: var(--text-3);
+  --color-muted: var(--border);
+  --color-muted-darker: var(--text-3);
+  --color-muted-darkest: var(--text);
+  --color-gray-10: var(--text);
+  --color-gray-20: var(--text-2);
+  --color-gray-30: var(--text-2);
+  --color-gray-40: var(--text-3);
+  --color-gray-50: var(--text-3);
+  --color-gray-60: var(--text-3);
+  --color-gray-70: var(--border);
+  --color-gray-80: var(--hover);
+  --color-gray-85: var(--raised);
+  --color-gray-90: var(--well);
+  --color-gray-100: var(--chrome);
+  --color-danger: var(--error-text);
+  --color-danger-dark: var(--error-fill);
+  --color-danger-darker: var(--error-fill-hover);
+  --color-danger-darkest: var(--error-fill-hover);
+  --color-danger-text: var(--error-text);
+  --color-danger-background: var(--raised);
+  --color-danger-icon-background: var(--raised);
+  --color-danger-color: var(--error-text);
+  --color-danger-icon-color: var(--error-text);
+  --button-destructive-bg-color: var(--raised);
+  --button-destructive-color: var(--error-text);
+  --color-warning: var(--warn);
+  --color-warning-dark: var(--warn);
+  --color-warning-darker: var(--warn);
+  --color-warning-darkest: var(--warn);
+  --color-warning-background: var(--raised);
+  --color-warning-icon-background: var(--warn);
+  --color-warning-color: var(--text);
+  --color-warning-icon-color: var(--on-fill);
+  --color-text-warning: var(--text);
+  --color-success: var(--plus);
+  --color-success-darker: var(--plus);
+  --color-success-darkest: var(--plus);
+  --color-success-text: var(--ok-text);
+  --color-success-contrast: var(--plus);
+  --color-success-contrast-hover: var(--plus);
+  --color-success-contrast-active: var(--plus);
+  --color-badge: var(--on-fill);
+  --background-color-badge: var(--plus);
+  --icon-green-fill-color: var(--ok-text);
+  font-family: var(--font);
+}
+/* The few rules that name Excalidraw's own UI font outright. */
+:root[data-ui-theme='ubuntu'] .excalidraw :is(.ExcTextField__label, .ExcTextField__input input, .RadioGroup__choice, .ImageExportModal h3, .ImageExportModal__settings__setting__label, .OverwriteConfirm__Description, .ExcButton, button.ExportDialog-imageExportButton) {
+  font-family: var(--font);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw :is(.ttd-dialog-input, .ttd-dialog-output-error p) {
+  font-family: var(--font-mono);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw-tooltip {
+  --ui-font: var(--font);
+  font-family: var(--font);
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+/* The toolbar and the panels sit on the board: an opaque raised surface with the strong boundary. */
+:root[data-ui-theme='ubuntu'] .excalidraw .Island {
+  border: 1px solid var(--border);
+}
+/* The selected tool and the selected option: the action fill with its dark mark (the picker's selected state). */
+:root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon .ToolIcon_type_checkbox:checked + .ToolIcon__icon svg,
+:root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon .ToolIcon_type_checkbox:checked + .ToolIcon__icon .ToolIcon__keybinding {
+  color: var(--on-action);
+}
+/* Focus: 3px in the focus colour, 2px off, on every operable widget of the editor. */
+:root[data-ui-theme='ubuntu'] .excalidraw :is(button, [role='button'], [role='menuitem'], [role='radio'], [role='tab'], a, input, select, textarea:not(.excalidraw-wysiwyg), summary):focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+/* A tool is a native radio or checkbox drawn invisible (opacity 0) under its icon: the ring goes on the icon you see. On
+   the selected tool's orange the dark keyline parts the ring from the fill. */
+:root[data-ui-theme='ubuntu'] .excalidraw :is(.ToolIcon_type_radio, .ToolIcon_type_checkbox):focus-visible + .ToolIcon__icon {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw :is(.ToolIcon_type_radio, .ToolIcon_type_checkbox):checked:focus-visible + .ToolIcon__icon {
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+/* The property panel's choices (stroke, width, style…) are native radios hidden in their label: the label takes the ring. */
+:root[data-ui-theme='ubuntu'] .excalidraw .buttonList label:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+/* The library's sidebar trigger is not offered (its picture is hidden above): its native checkbox goes too, or it would be
+   an invisible stop in the keyboard's path. */
+:root[data-ui-theme='ubuntu'] .wb .excalidraw label:has(> .default-sidebar-trigger) {
+  display: none !important;
+}
+/* A colour swatch: Excalidraw draws its focus as a 3px border 1px off (::after) and turns it off on some swatches; here
+   it is the issue's outline, 2px off, on every swatch. */
+:root[data-ui-theme='ubuntu'] .excalidraw .color-picker__button:focus-visible {
+  outline: 3px solid var(--focus) !important;
+  outline-offset: 2px !important;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .color-picker__button:focus-visible::after {
+  display: none;
+}
+/* A dialog's content takes the focus as it opens (help, Mermaid): it rings like any widget. */
+:root[data-ui-theme='ubuntu'] .excalidraw .Modal__content:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+/* A widget scrolled into view (the property panel scrolls) keeps its ring's room inside the scroller. */
+:root[data-ui-theme='ubuntu'] .excalidraw :is(button, input, label, select, textarea, [role='button'], [role='radio'], [role='menuitem']) {
+  scroll-margin: 6px;
+}
+/* (A choice's radio is a small box in its label's corner: its margin reaches past the label's foot. In the property
+   panel it covers its label instead, so scrolling to it, down or up, brings the whole label and its ring's room.) */
+:root[data-ui-theme='ubuntu'] .excalidraw .buttonList input {
+  scroll-margin: 6px 6px 24px;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .panelColumn .buttonList label {
+  position: relative;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .panelColumn .buttonList :is(input[type='radio'], input[type='button']) {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  scroll-margin: 6px;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw :is(input, textarea:not(.excalidraw-wysiwyg), select) {
+  caret-color: var(--caret);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw :is(input, textarea:not(.excalidraw-wysiwyg))::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+/* The search field: Excalidraw paints its well a fixed light grey; here it is the UI's well with the strong border, and the
+   input fills it (the whole 48px field is the target, not its 24px line). */
+:root[data-ui-theme='ubuntu'] .excalidraw .layer-ui__search-header .ExcTextField__input {
+  background-color: var(--well);
+  border: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .ExcTextField__input input {
+  min-width: 0;
+  height: 100%;
+}
+/* Ubuntu is wider than Excalidraw's Assistant: the field (flex: 1 0 auto, it never shrinks) would push the sidebar sideways. */
+:root[data-ui-theme='ubuntu'] .excalidraw .layer-ui__search-header .ExcTextField {
+  flex: 1 1 0;
+  min-width: 0;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .ExcTextField__input:hover {
+  border-color: var(--border-hover);
+}
+/* The empty board's welcome (its heading, the toolbar and menu hints) is the editor's UI, set in Excalidraw's hand-drawn
+   face by a class (.excalifont): Ubuntu UI text here too. Only these nodes: text on the board keeps the font its author picked. */
+:root[data-ui-theme='ubuntu'] .excalidraw :is(.welcome-screen-center, .welcome-screen-decor),
+:root[data-ui-theme='ubuntu'] .excalidraw :is(.welcome-screen-center, .welcome-screen-decor) * {
+  font-family: var(--font);
+}
+/* Text Excalidraw draws straight on the canvas (the tool hint under the toolbar, the welcome screen's heading and hints) sits on
+   the drawing's own background, white by default: the UI's light text gets an opaque raised plate under it, and the hand-drawn
+   arrows the strong-border tone, which reads on a light and a dark canvas. */
+:root[data-ui-theme='ubuntu'] .excalidraw .HintViewer > span,
+:root[data-ui-theme='ubuntu'] .excalidraw .welcome-screen-center__heading,
+:root[data-ui-theme='ubuntu'] .excalidraw .welcome-screen-decor-hint__label {
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--text-2);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .HintViewer {
+  align-items: center;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .welcome-screen-decor {
+  color: var(--border);
+}
+/* Sizes: a context-menu row is a dense control (32px), the colour picker's hex field a standard one (36px). */
+:root[data-ui-theme='ubuntu'] .excalidraw .context-menu-item {
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .color-picker-input {
+  height: var(--ctl-h);
+}
+/*
+ * The phone toolbar. Excalidraw sizes it for a full-window editor (98vw) and shrinks its tools to 1.8rem under 450px;
+ * here the editor sits inside the board, and Ubuntu's tools keep 32px (44px on touch). So the toolbar fits the board and
+ * its tools wrap onto a second row, centred, every tool in reach; the lock and hand column under it moves down a row.
+ */
+:root[data-ui-theme='ubuntu'] .excalidraw .App-toolbar-container:has(> .App-toolbar--mobile) {
+  display: flex;
+  justify-content: center;
+  max-width: 100%;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .App-toolbar--mobile {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .App-toolbar--mobile > .Stack_horizontal {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw .App-toolbar-container :is(.ToolIcon__icon, .App-toolbar__extra-tools-trigger) {
+  min-width: 32px;
+  min-height: 32px;
+}
+/* The tray clips its tools (rounded, overflow hidden): it holds them 5px in, room for their rings. */
+:root[data-ui-theme='ubuntu'] .excalidraw .mobile-misc-tools-container {
+  top: calc(5rem - var(--editor-container-padding) + 36px);
+  padding: 5px;
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .excalidraw :is(.ToolIcon__icon, .dropdown-menu-item, .ExcButton, .Dialog__close) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .excalidraw .App-toolbar-container :is(.ToolIcon__icon, .App-toolbar__extra-tools-trigger) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .excalidraw .mobile-misc-tools-container {
+    top: calc(5rem - var(--editor-container-padding) + 48px);
+  }
+}
+/*
+ * Forced colours: Excalidraw draws its icons in `color: var(--icon-fill-color)` on SVGs, which the browser leaves alone,
+ * so the theme's white icons would vanish on the system's light Canvas. Its tokens become system colours: icons and
+ * text CanvasText on Canvas, a selected tool (radio or checkbox) Highlight with HighlightText, a disabled one GrayText.
+ */
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .excalidraw,
+  :root[data-ui-theme='ubuntu'] .excalidraw-tooltip {
+    --icon-fill-color: CanvasText;
+    --text-primary-color: CanvasText;
+    --popup-text-color: CanvasText;
+    --color-on-surface: CanvasText;
+    --keybinding-color: CanvasText;
+    --island-bg-color: Canvas;
+    --popup-bg-color: Canvas;
+    --sidebar-bg-color: Canvas;
+    --default-bg-color: Canvas;
+    --input-bg-color: Canvas;
+    --button-hover-bg: Canvas;
+    --button-active-border: Highlight;
+    --color-surface-primary-container: Highlight;
+    --color-on-primary-container: HighlightText;
+    --color-primary: Highlight;
+    --color-selection: Highlight;
+    --color-disabled: GrayText;
+    --default-border-color: CanvasText;
+    --input-border-color: CanvasText;
+    --focus-highlight-color: Highlight;
+  }
+  :root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon__icon {
+    forced-color-adjust: none;
+    background: Canvas;
+    color: CanvasText;
+  }
+  :root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon__icon:hover {
+    outline: 1px solid Highlight;
+  }
+  :root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon :is(.ToolIcon_type_radio, .ToolIcon_type_checkbox):checked + .ToolIcon__icon {
+    background: Highlight;
+    color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon :is(.ToolIcon_type_radio, .ToolIcon_type_checkbox):checked + .ToolIcon__icon :is(svg, .ToolIcon__keybinding) {
+    color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon__icon[aria-disabled='true'] svg {
+    color: GrayText;
+  }
+  :root[data-ui-theme='ubuntu'] .excalidraw :is(.ToolIcon_type_radio, .ToolIcon_type_checkbox):focus-visible + .ToolIcon__icon {
+    outline-color: Highlight;
+  }
+}
+/* ubuntu:end */

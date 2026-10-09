@@ -111,7 +111,10 @@ describe('the two presets (#59, #172)', () => {
 
   it('puts its fonts, sizes and colours on the page as custom properties', () => {
     const v = themeVars(themeById('ubuntu'), 100);
-    expect(v['--font-mono']).toBe(themeById('ubuntu').mono.stack);
+    expect(v['--tx-mono']).toBe(themeById('ubuntu').mono.stack);
+    // #216: the shell's mono is the UI theme's: a transcript preset never sets it.
+    expect(v).not.toHaveProperty('--font-mono');
+    expect(v).not.toHaveProperty('--font');
     expect(v['--tx-prose']).toContain('"Ubuntu"');
     expect(v['--tx-bg']).toBe('#300a24');
     expect(v['--tx-blue-text']).toBe(themeById('ubuntu').palette['blue-text']);

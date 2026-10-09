@@ -11,7 +11,7 @@
   transition: border-color 160ms var(--ease);
 }
 .audio-ctl:hover {
-  border-color: rgb(255 255 255 / 26%);
+  border-color: var(--btn-border-hover);
 }
 .audio-ctl .audio-mute {
   height: 32px;
@@ -22,10 +22,10 @@
 /* Pressed = muted: a quiet state, not the green "on" of the other toggles. */
 .audio-ctl .audio-mute[aria-pressed='true'] {
   background: transparent;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .audio-ctl .audio-mute[aria-pressed='true']:hover {
-  background: rgb(255 255 255 / 8%);
+  background: var(--ghost-bg-hover);
 }
 .audio-ctl .audio-mute:disabled {
   opacity: 0.42;
@@ -49,20 +49,20 @@
 .audio-vol::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(to right, var(--text-on-ink) var(--fill), rgb(255 255 255 / 18%) var(--fill));
+  background: linear-gradient(to right, var(--slider-fill) var(--fill), var(--slider-rest) var(--fill));
 }
 .audio-vol::-moz-range-track {
   height: 4px;
   border-radius: 2px;
-  background: linear-gradient(to right, var(--text-on-ink) var(--fill), rgb(255 255 255 / 18%) var(--fill));
+  background: linear-gradient(to right, var(--slider-fill) var(--fill), var(--slider-rest) var(--fill));
 }
 .audio-vol::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   margin-top: -5px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--chrome);
   border-radius: 50%;
-  background: var(--paper);
+  background: var(--slider-thumb);
   box-shadow: 0 1px 3px rgb(0 0 0 / 35%);
   transition: transform 160ms var(--ease);
   appearance: none;
@@ -71,9 +71,9 @@
 .audio-vol::-moz-range-thumb {
   width: 10px;
   height: 10px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--chrome);
   border-radius: 50%;
-  background: var(--paper);
+  background: var(--slider-thumb);
   box-shadow: 0 1px 3px rgb(0 0 0 / 35%);
 }
 .audio-vol:hover::-webkit-slider-thumb,
@@ -86,11 +86,11 @@
 }
 .audio-ctl[data-muted='true'] .audio-vol--master::-webkit-slider-runnable-track,
 .audio-pop[data-muted='true'] .audio-vol::-webkit-slider-runnable-track {
-  background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
+  background: linear-gradient(to right, var(--slider-fill-muted) var(--fill), var(--slider-rest-muted) var(--fill));
 }
 .audio-ctl[data-muted='true'] .audio-vol--master::-moz-range-track,
 .audio-pop[data-muted='true'] .audio-vol::-moz-range-track {
-  background: linear-gradient(to right, var(--text-on-ink-2) var(--fill), rgb(255 255 255 / 12%) var(--fill));
+  background: linear-gradient(to right, var(--slider-fill-muted) var(--fill), var(--slider-rest-muted) var(--fill));
 }
 
 /* The top bar keeps the floor's name whole at 1024 px: a shorter slider there (the About and Settings buttons and the Issues / PRs
@@ -112,14 +112,14 @@
   width: 32px;
   border: 0;
   border-radius: 9px;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .audio-ctl .audio-music[data-muted='true'] {
   background: transparent;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .audio-ctl .audio-music:hover {
-  background: rgb(255 255 255 / 8%);
+  background: var(--ghost-bg-hover);
 }
 .audio-ctl .audio-music:disabled {
   opacity: 0.42;
@@ -148,11 +148,11 @@
   max-width: calc(100vw - 24px);
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--surface);
+  color: var(--text);
   box-shadow: var(--shadow);
   font: 13px/1.3 var(--font);
-  font-variation-settings: 'CASL' 0, 'MONO' 0;
+  font-variation-settings: var(--fvs-plain);
 }
 .audio-pop:popover-open {
   display: flex;
@@ -177,7 +177,7 @@
 }
 .audio-pop-title {
   margin: 0 2px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -196,13 +196,13 @@
 }
 .audio-pop .audio-mute[aria-pressed='true'] {
   background: transparent;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .audio-pop-pct {
   flex: none;
   min-width: 3ch;
   text-align: right;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-weight: 700;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -211,8 +211,82 @@
   align-self: flex-start;
   gap: 7px;
   border-color: transparent;
-  color: var(--sun);
+  color: var(--accent-text);
 }
 .audio-pop .audio-credits:hover {
-  color: #ffd25e;
+  color: var(--link-hover);
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: the sound pill. Its boundary is the strong border (the 14% line is decoration), a disabled control keeps
+ * its opacity and takes the muted label, and a muted music button is dimmed by colour (`--text-3`), not by opacity.
+ * The slider's hit area is 32px (44px for a finger); the credits link underlines on hover.
+ */
+:root[data-ui-theme='ubuntu'] .audio-ctl {
+  border-color: var(--border);
+}
+:root[data-ui-theme='ubuntu'] .audio-ctl:hover {
+  border-color: var(--border-hover);
+}
+:root[data-ui-theme='ubuntu'] .audio-ctl .audio-mute:disabled,
+:root[data-ui-theme='ubuntu'] .audio-ctl .audio-music:disabled {
+  opacity: 1;
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .audio-vol:disabled {
+  opacity: 1;
+}
+:root[data-ui-theme='ubuntu'] .audio-vol:disabled::-webkit-slider-runnable-track {
+  background: var(--slider-rest);
+}
+:root[data-ui-theme='ubuntu'] .audio-vol:disabled::-moz-range-track {
+  background: var(--slider-rest);
+}
+:root[data-ui-theme='ubuntu'] .audio-vol:disabled::-webkit-slider-thumb {
+  background: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .audio-vol:disabled::-moz-range-thumb {
+  background: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .audio-ctl[data-muted='true'] .audio-music {
+  opacity: 1;
+  color: var(--text-3);
+}
+:root[data-ui-theme='ubuntu'] .audio-ctl .audio-vol {
+  height: 32px;
+}
+/* The issue's ring on the sliders too: 2px off (Quiet's is 4px). */
+:root[data-ui-theme='ubuntu'] .audio-vol:focus-visible {
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .audio-pop .audio-credits:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .audio-ctl {
+    height: auto;
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .audio-ctl .audio-mute,
+  :root[data-ui-theme='ubuntu'] .audio-ctl .audio-music,
+  :root[data-ui-theme='ubuntu'] .audio-pop .audio-mute {
+    width: 44px;
+    height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .audio-ctl .audio-vol,
+  :root[data-ui-theme='ubuntu'] .audio-pop .audio-vol {
+    height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .audio-pop .audio-credits {
+    min-height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .audio-ctl .audio-mute[aria-pressed='true'],
+  :root[data-ui-theme='ubuntu'] .audio-ctl .audio-music[data-muted='true'] {
+    border: 1px solid GrayText;
+  }
+}
+/* ubuntu:end */

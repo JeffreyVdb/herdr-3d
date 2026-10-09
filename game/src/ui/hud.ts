@@ -122,7 +122,7 @@ export class Hud {
   private readonly plan = el('div', 'plan');
   private readonly planCard = el('div', 'plan-card');
   private readonly planLabels = el('div');
-  private readonly you = el('div', 'plan-you', svg('<path d="M12 3 19 20 12 16 5 20z" fill="#ffc233" stroke="#1c2540"/>'));
+  private readonly you = el('div', 'plan-you', svg('<path d="M12 3 19 20 12 16 5 20z"/>'));
   private readonly notice = el('div', 'notice');
   private readonly toastEl = el('div', 'toast');
   private readonly doors = el('div', 'doors', '<div class="door"></div><div class="door"></div><div class="doors-label"></div>');
@@ -219,6 +219,8 @@ export class Hud {
     this.counts.after(this.usageEl);
     this.usageEl.hidden = true;
     new ResizeObserver(() => this.root.style.setProperty('--topbar-bottom', `${bar.getBoundingClientRect().bottom.toFixed(1)}px`)).observe(bar);
+    // The look-at bar grows when its lines wrap (a narrow screen, a report request): the hint above it rises with it (hud.css).
+    new ResizeObserver(() => this.root.style.setProperty('--prompt-h', `${this.prompt.offsetHeight}px`)).observe(this.prompt);
     for (const [b, a] of [
       [this.back, 'city'],
       [this.issues, 'issues'],

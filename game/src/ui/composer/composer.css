@@ -1,20 +1,20 @@
 /*
- * The prompt composer (#51): a text area that also holds pictures. It borrows the desk dialogs' look (the navy well,
- * the sun-yellow caret and focus ring) and keeps their signage: each pasted image sits in the text as a chip with a
+ * The prompt composer (#51): a text area that also holds pictures. It borrows the desk dialogs' look (the recessed well,
+ * the accent caret and focus ring; #216: the UI theme's tokens, in a dialog and inside the transcript alike) and keeps their signage: each pasted image sits in the text as a chip with a
  * numbered label-maker tag, and the number is the one the agent will read ("Image #2"); a file (#141) sits as a slim
  * one-line tag. It works inside any dark panel; the host sets its size (the editor fills its parent and scrolls inside).
  */
 
 .cmp {
-  --cmp-well: var(--well, #121a31);
-  --cmp-ok: #8ee6b8;
-  --cmp-err: #ffb4ae;
+  --cmp-well: var(--well);
+  --cmp-ok: var(--ok-text-soft);
+  --cmp-err: var(--error-text);
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-  color: var(--text-on-ink, #eef2fb);
+  color: var(--text);
   font: inherit;
 }
 
@@ -30,20 +30,20 @@
   white-space: pre-wrap;
   word-break: normal;
   line-height: 1.45;
-  border: 1px solid rgb(255 255 255 / 18%);
+  border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--cmp-well);
-  caret-color: var(--sun, #ffc233);
+  caret-color: var(--action);
   cursor: text;
   outline: none;
-  scrollbar-color: rgb(255 255 255 / 30%) transparent;
+  scrollbar-color: var(--scroll-thumb-thin) var(--scroll-track);
   scrollbar-width: thin;
 }
 .cmp-editor:hover {
-  border-color: rgb(255 255 255 / 30%);
+  border-color: var(--border-hover);
 }
 .cmp-editor:focus-visible {
-  outline: 3px solid var(--sun, #ffc233);
+  outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
 .cmp-editor[contenteditable='false'] {
@@ -55,13 +55,13 @@
   position: absolute;
   left: 10px;
   right: 10px;
-  color: #8f9abb;
+  color: var(--text-3);
   pointer-events: none;
   white-space: pre-wrap;
 }
 .cmp--dropping .cmp-editor {
-  border-color: var(--sun, #ffc233);
-  background: color-mix(in srgb, var(--cmp-well) 88%, var(--sun, #ffc233));
+  border-color: var(--accent-text);
+  background: color-mix(in srgb, var(--cmp-well) 88%, var(--accent-text));
 }
 
 .cmp-notice {
@@ -116,7 +116,7 @@
   cursor: not-allowed;
 }
 .cmp-dismiss:focus-visible {
-  outline: 3px solid var(--sun, #ffc233);
+  outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
 .cmp-sr {
@@ -140,9 +140,9 @@
   max-width: min(100%, 280px);
   margin: 2px 3px;
   padding: 3px 4px 5px 3px;
-  border: 1px solid rgb(255 255 255 / 22%);
+  border: 1px solid var(--border-chip);
   border-radius: 10px;
-  background: var(--ink-2, #2a355a);
+  background: var(--raised);
   overflow: hidden;
   white-space: normal;
   user-select: none;
@@ -162,7 +162,7 @@
   padding: 0;
   border: 0;
   border-radius: 7px;
-  background: #0b1122;
+  background: var(--image-stage);
   overflow: hidden;
   cursor: zoom-in;
 }
@@ -180,9 +180,9 @@
   top: -4px;
   padding: 0 4px;
   border-radius: 4px;
-  background: var(--sun, #ffc233);
-  color: var(--ink, #1c2540);
-  font: 700 10.5px/15px var(--font, system-ui, sans-serif);
+  background: var(--chip-accent);
+  color: var(--on-fill);
+  font: 700 10.5px/15px var(--font);
   font-variant-numeric: tabular-nums;
   box-shadow: 0 1px 2px rgb(0 0 0 / 35%);
   pointer-events: none;
@@ -205,7 +205,7 @@
   overflow: hidden;
   max-width: 14ch;
   font-size: 11px;
-  color: var(--text-on-ink-2, #b9c3dc);
+  color: var(--text-2);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -213,8 +213,8 @@
   color: var(--cmp-ok);
 }
 .cmp-chip[data-status='error'] {
-  border-color: rgb(255 123 115 / 60%);
-  background: rgb(216 48 44 / 22%);
+  border-color: var(--error-chip-border);
+  background: var(--error-chip-bg);
 }
 .cmp-chip[data-status='error'] .cmp-state {
   color: var(--cmp-err);
@@ -232,9 +232,9 @@
   justify-content: center;
   gap: 4px;
   border: 0;
-  color: var(--text-on-ink, #eef2fb);
+  color: var(--text);
   background: transparent;
-  font: 700 11.5px/1 var(--font, system-ui, sans-serif);
+  font: 700 11.5px/1 var(--font);
   cursor: pointer;
 }
 .cmp-remove {
@@ -250,7 +250,7 @@
   height: 26px;
   padding: 0 8px;
   border-radius: 13px;
-  background: rgb(255 255 255 / 14%);
+  background: var(--chip-btn-bg);
 }
 .cmp-retry svg {
   width: 13px;
@@ -261,7 +261,7 @@
 }
 .cmp-remove:hover,
 .cmp-retry:hover {
-  background: rgb(255 255 255 / 24%);
+  background: var(--chip-btn-bg-hover);
 }
 .cmp-remove:disabled,
 .cmp-retry:disabled {
@@ -271,7 +271,7 @@
 .cmp-thumb:focus-visible,
 .cmp-remove:focus-visible,
 .cmp-retry:focus-visible {
-  outline: 3px solid var(--sun, #ffc233);
+  outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
 
@@ -287,14 +287,14 @@
 }
 .cmp-chip[data-status='pending'] .cmp-bar,
 .cmp-chip[data-status='uploading'] .cmp-bar {
-  background: linear-gradient(90deg, transparent 0 20%, var(--sun, #ffc233) 20% 55%, transparent 55%);
+  background: linear-gradient(90deg, transparent 0 20%, var(--accent-text) 20% 55%, transparent 55%);
 }
 .cmp-chip[data-status='pending'] .cmp-bar {
   opacity: 0.35;
 }
 @media (prefers-reduced-motion: no-preference) {
   .cmp-chip[data-status='uploading'] .cmp-bar {
-    background: linear-gradient(90deg, transparent 0, var(--sun, #ffc233) 50%, transparent 100%) 0 0 / 60% 100% no-repeat;
+    background: linear-gradient(90deg, transparent 0, var(--accent-text) 50%, transparent 100%) 0 0 / 60% 100% no-repeat;
     animation: cmp-slide 1.1s var(--ease, ease-in-out) infinite;
   }
 }
@@ -326,12 +326,12 @@
   flex: none;
   width: 1.05em;
   height: 1.05em;
-  color: var(--sun, #ffc233);
+  color: var(--accent-text);
 }
 .cmp-file-name {
   overflow: hidden;
   min-width: 0;
-  font-family: var(--font-mono, 'JetBrains Mono Variable', ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.9em;
   font-weight: 600;
   text-overflow: ellipsis;
@@ -349,8 +349,8 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-on-ink, #eef2fb);
-  font-family: var(--font, system-ui, sans-serif);
+  color: var(--text);
+  font-family: var(--font);
   overflow: hidden;
 }
 .cmp-lightbox[open] {
@@ -358,7 +358,7 @@
   flex-direction: column;
 }
 .cmp-lightbox::backdrop {
-  background: rgb(10 14 28 / 90%);
+  background: var(--scrim-viewer-soft);
 }
 .cmp-lb-stage {
   display: flex;
@@ -375,7 +375,7 @@
   max-height: 100%;
   object-fit: contain;
   border-radius: 6px;
-  background: #0b1122;
+  background: var(--image-stage);
   box-shadow: 0 10px 28px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 30%);
   cursor: default;
 }
@@ -388,10 +388,10 @@
   width: 44px;
   height: 44px;
   padding: 0;
-  border: 1px solid rgb(255 255 255 / 25%);
+  border: 1px solid var(--border-viewer-btn);
   border-radius: 50%;
-  background: var(--ink, #1c2540);
-  color: var(--text-on-ink, #eef2fb);
+  background: var(--viewer-btn-bg);
+  color: var(--text);
   cursor: pointer;
 }
 .cmp-lb-close svg {
@@ -399,10 +399,10 @@
   height: 20px;
 }
 .cmp-lb-close:hover {
-  background: var(--ink-2, #2a355a);
+  background: var(--viewer-btn-bg-hover);
 }
 .cmp-lb-close:focus-visible {
-  outline: 3px solid var(--sun, #ffc233);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .cmp-lb-cap {
@@ -440,11 +440,11 @@
   position: relative;
 }
 .cmp-pop {
-  --cmp-pop-bg: color-mix(in srgb, var(--cmp-well) 92%, #fff);
-  --cmp-pop-line: rgb(255 255 255 / 18%);
-  --cmp-pop-text: var(--text-on-ink, #eef2fb);
-  --cmp-pop-muted: #a3adca;
-  --cmp-pop-accent: var(--sun, #ffc233);
+  --cmp-pop-bg: color-mix(in srgb, var(--cmp-well) 92%, var(--menu-lift));
+  --cmp-pop-line: var(--border);
+  --cmp-pop-text: var(--text);
+  --cmp-pop-muted: var(--text-hint);
+  --cmp-pop-accent: var(--accent-text);
   position: absolute;
   z-index: 20;
   display: flex;
@@ -473,7 +473,7 @@
   padding: 0;
   overflow-y: auto;
   list-style: none;
-  scrollbar-color: rgb(255 255 255 / 30%) transparent;
+  scrollbar-color: var(--scroll-thumb-thin) var(--scroll-track);
   scrollbar-width: thin;
 }
 .cmp-pop-list[data-loading] {
@@ -489,7 +489,7 @@
   white-space: nowrap;
 }
 .cmp-pop-opt:not([aria-disabled='true']):hover {
-  background: rgb(255 255 255 / 6%);
+  background: var(--row-hover-soft);
 }
 .cmp-pop-opt[aria-selected='true'] {
   background: color-mix(in srgb, var(--cmp-pop-accent) 16%, transparent);
@@ -542,3 +542,114 @@
     transition: opacity 120ms var(--ease, ease-out);
   }
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu. Every rule is under the root attribute, so it also outranks `.tx button` / `.tx :focus-visible` (#111) where
+ * the composer sits in a transcript scope. The ring is the issue's, 3px and 2px outside the widget: the hosts leave the
+ * editor room for it, and a chip does not clip (its upload bar rounds its own corners); disabled is a raised fill with a
+ * muted label, not a faded one.
+ */
+:root[data-ui-theme='ubuntu'] .cmp-editor:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .cmp-editor {
+  scroll-padding: 6px;
+  scroll-margin: 6px;
+}
+:root[data-ui-theme='ubuntu'] .cmp-chip {
+  overflow: visible;
+}
+:root[data-ui-theme='ubuntu'] .cmp-chip .cmp-bar {
+  overflow: hidden;
+  border-radius: 0 0 9px 9px;
+}
+/* Locked while a send is in flight (a busy state, cursor: progress): it keeps its colours, only the fade goes. */
+:root[data-ui-theme='ubuntu'] .cmp-editor[contenteditable='false'] {
+  opacity: 1;
+}
+:root[data-ui-theme='ubuntu'] .cmp--dropping .cmp-editor {
+  border-style: dashed;
+}
+:root[data-ui-theme='ubuntu'] .cmp-dismiss:focus-visible,
+:root[data-ui-theme='ubuntu'] .cmp-thumb:focus-visible,
+:root[data-ui-theme='ubuntu'] .cmp-remove:focus-visible,
+:root[data-ui-theme='ubuntu'] .cmp-retry:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .cmp-dismiss {
+  min-width: 32px;
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .cmp-remove {
+  width: 32px;
+  height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .cmp-retry {
+  height: 32px;
+  border: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .cmp-remove:hover,
+:root[data-ui-theme='ubuntu'] .cmp-retry:hover {
+  border-color: var(--border-hover);
+}
+:root[data-ui-theme='ubuntu'] .cmp-dismiss:disabled,
+:root[data-ui-theme='ubuntu'] .cmp-remove:disabled,
+:root[data-ui-theme='ubuntu'] .cmp-retry:disabled {
+  opacity: 1;
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .cmp-retry:disabled {
+  background: var(--disabled-bg);
+  border-color: var(--border);
+}
+:root[data-ui-theme='ubuntu'] .cmp-chip[data-status='pending'] .cmp-bar {
+  opacity: 1;
+}
+/* The popup: a raised surface (the well would sink it into the editor), its divider decoration only. */
+:root[data-ui-theme='ubuntu'] .cmp-pop {
+  --cmp-pop-bg: var(--raised);
+}
+/* A row is a dense control: 32px, its one line centred (the padding takes what the line leaves). */
+:root[data-ui-theme='ubuntu'] .cmp-pop-opt {
+  box-sizing: border-box;
+  min-height: 32px;
+  padding-block: max(5px, calc((32px - 1lh) / 2));
+}
+:root[data-ui-theme='ubuntu'] .cmp-pop-note,
+:root[data-ui-theme='ubuntu'] .cmp-pop-hint {
+  border-top-color: var(--line);
+}
+/* The active row: the accent tint and hairline, plus an orange marker bar so it is not colour alone. */
+:root[data-ui-theme='ubuntu'] .cmp-pop-opt[aria-selected='true'] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--cmp-pop-accent) 55%, transparent),
+    inset 4px 0 0 var(--action);
+}
+:root[data-ui-theme='ubuntu'] .cmp-lb-close:focus-visible {
+  outline-offset: 2px;
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .cmp-dismiss,
+  :root[data-ui-theme='ubuntu'] .cmp-remove,
+  :root[data-ui-theme='ubuntu'] .cmp-retry {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .cmp-pop-opt {
+    min-height: 44px;
+    padding-block: max(11px, calc((44px - 1lh) / 2));
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .cmp-pop-opt[aria-selected='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+}
+/* ubuntu:end */

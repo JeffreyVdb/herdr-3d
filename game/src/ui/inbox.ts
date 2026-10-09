@@ -358,7 +358,7 @@ const SPARK = Array.from({ length: 11 }, (_, i) => {
 const STICKERS: Record<'claude' | 'codex' | 'plain', string> = {
   claude: `<circle cx="12" cy="12" r="10" fill="#f6f1e7"/><g stroke="#d97757" stroke-linecap="round">${SPARK}</g>`,
   codex: '<circle cx="12" cy="12" r="10" fill="#11141c"/><path d="M7.2 7.9 11.8 12l-4.6 4.1" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><rect x="13.1" y="14.3" width="4.8" height="2" rx=".8" fill="#fff"/>',
-  plain: '<circle cx="12" cy="12" r="10" fill="#5b6685"/>',
+  plain: '<circle cx="12" cy="12" r="10" style="fill: var(--sticker-plain, #5b6685)"/>',
 };
 
 function sticker(harness: string | undefined): SVGSVGElement {

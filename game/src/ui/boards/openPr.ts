@@ -215,7 +215,7 @@ export class OpenPrDialog {
     else if (p?.existing?.url) nodes.push(h('button', { class: 'btn btn--primary', 'data-key': 'open-existing', onclick: () => this.host.external(p.existing?.url as string) }, `Open ${p.existing.key} in ${this.host.providerName(this.session)}`));
     if (this.state !== 'done' && !p?.existing) {
       nodes.push(
-        h('button', { class: 'btn btn--primary', 'data-key': 'confirm', 'aria-disabled': blocker ? 'true' : null, title: blocker ?? 'Push the branch and open the pull request (Ctrl+Enter)', onclick: () => void this.confirm() }, this.state === 'opening' ? 'Opening…' : 'Push and open PR'),
+        h('button', { class: 'btn btn--primary', 'data-key': 'confirm', 'aria-disabled': blocker ? 'true' : null, 'aria-busy': this.state === 'opening' ? 'true' : null, title: blocker ?? 'Push the branch and open the pull request (Ctrl+Enter)', onclick: () => void this.confirm() }, this.state === 'opening' ? 'Opening…' : 'Push and open PR'),
       );
     }
     this.actions.replaceChildren(...nodes);

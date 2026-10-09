@@ -7,17 +7,17 @@
  */
 
 .desk-dlg {
+  /* The cardboard box is artwork: it keeps its kraft in every UI theme. The well is the theme's (uiTheme.css). */
   --kraft: #c9935a;
   --kraft-ink: #3b2a17;
-  --well: #121a31;
   width: min(580px, calc(100vw - 32px));
   max-height: min(760px, calc(100vh - 32px));
   box-sizing: border-box;
   padding: 0;
   border: 0;
   border-radius: var(--radius);
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--surface);
+  color: var(--text);
   box-shadow: var(--shadow);
   font-family: var(--font);
   font-size: 14px;
@@ -30,7 +30,7 @@
   flex-direction: column;
 }
 .desk-dlg::backdrop {
-  background: rgb(18 24 44 / 45%);
+  background: var(--scrim);
 }
 .desk-dlg button,
 .desk-dlg input,
@@ -64,7 +64,7 @@
   margin: 0;
   font-size: 20px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
@@ -72,7 +72,7 @@
 }
 .dd-titles p {
   margin: 2px 0 0;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12.5px;
   white-space: nowrap;
   overflow: hidden;
@@ -93,7 +93,7 @@
   border-radius: 10px;
 }
 .dd-plate--desk {
-  background: #101626;
+  background: var(--well-deep);
   box-shadow: inset 0 2px 7px rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 8%);
   color: var(--plus);
 }
@@ -101,13 +101,13 @@
   width: 20px;
   height: 20px;
   stroke-width: 3.2;
-  filter: drop-shadow(0 0 6px rgb(47 196 106 / 55%));
+  filter: drop-shadow(0 0 6px var(--plus-glow));
 }
 .dd-plate--desk b {
   font: 800 22px/1 var(--font);
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 /* The cardboard box they leave with: kraft, a strip of parcel tape. */
 .dd-plate--box {
@@ -134,7 +134,7 @@
   gap: 16px;
   padding: 14px 16px 16px;
   scrollbar-width: thin;
-  scrollbar-color: #3a466e transparent;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
 .dd-field {
   display: flex;
@@ -149,12 +149,12 @@
   padding: 0;
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .dd-optional {
   font-weight: 500;
   font-style: italic;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
 }
 .desk-dlg input:not([type]),
 .desk-dlg input[type='text'],
@@ -163,10 +163,10 @@
   width: 100%;
   min-width: 0;
   padding: 0 10px;
-  border: 1px solid rgb(255 255 255 / 18%);
+  border: 1px solid var(--border);
   border-radius: 9px;
   background: var(--well);
-  caret-color: var(--sun);
+  caret-color: var(--action);
 }
 .desk-dlg input:not([type]) {
   height: 36px;
@@ -180,15 +180,15 @@
 }
 .desk-dlg input::placeholder,
 .desk-dlg textarea::placeholder {
-  color: #8f9abb;
+  color: var(--text-3);
 }
 .desk-dlg input:not([type]):hover,
 .desk-dlg textarea:hover {
-  border-color: rgb(255 255 255 / 30%);
+  border-color: var(--border-hover);
 }
 .desk-dlg input:focus-visible,
 .desk-dlg textarea:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
 .desk-dlg input:disabled,
@@ -199,7 +199,7 @@
 .desk-dlg .field-hint {
   margin: 6px 0 0;
   font-size: 12px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .desk-dlg kbd {
   display: inline-grid;
@@ -209,12 +209,12 @@
   padding: 0 4px;
   box-sizing: border-box;
   border-radius: 4px;
-  background: var(--ink-2);
-  border: 1px solid rgb(255 255 255 / 22%);
+  background: var(--raised);
+  border: 1px solid var(--kbd-border);
   border-bottom-width: 2px;
   font: 700 10.5px/1 var(--font);
   font-family: var(--font-mono);
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .desk-dlg code {
   font-family: var(--font);
@@ -235,7 +235,7 @@
   gap: 10px;
   padding: 12px;
   border-radius: 12px;
-  background: rgb(255 255 255 / 4%);
+  background: var(--group-bg);
 }
 .dd-pick {
   min-width: 0;
@@ -267,24 +267,24 @@
 .dd-chip span {
   display: inline-block;
   padding: 5px 9px 4px;
-  border: 1px dashed rgb(255 255 255 / 30%);
+  border: 1px dashed var(--border-strong);
   border-radius: 3px;
   font-size: 12px;
   font-weight: 700;
   font-family: var(--font-mono);
   letter-spacing: 0.02em;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   transition: background 140ms var(--ease), color 140ms var(--ease), transform 180ms var(--ease), border-color 140ms var(--ease);
 }
 .dd-chip:hover span {
   border-style: solid;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
-/* Picked: printed onto sun-yellow tape, stuck on a little crooked. */
+/* Picked: printed onto bright tape (the action fill), stuck on a little crooked. */
 .dd-chip input:checked + span {
   border: 1px solid transparent;
-  background: var(--sun);
-  color: var(--ink);
+  background: var(--action);
+  color: var(--on-action);
   transform: rotate(-1.5deg);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 45%),
@@ -292,11 +292,11 @@
     0 1px 2px rgb(0 0 0 / 30%);
 }
 .dd-chip input:focus-visible + span {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .dd-chip input:checked:focus-visible + span {
-  outline-color: #fff;
+  outline-color: var(--focus-on-fill);
 }
 .dd-chip input:disabled + span {
   opacity: 0.5;
@@ -304,12 +304,12 @@
 }
 .tape--note,
 .tape--cap-warn {
-  --c: var(--sun);
-  color: var(--ink);
+  --c: var(--warn);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .tape--cap-full {
-  --c: var(--needs_you-chip);
+  --c: var(--error-fill);
 }
 .tape--note {
   font-size: 9.5px;
@@ -324,8 +324,8 @@
   border: 1px solid var(--line);
 }
 .dd-worktree[data-on='true'] {
-  border-color: rgb(47 196 106 / 50%);
-  background: rgb(47 196 106 / 8%);
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
 }
 .dd-check {
   display: flex;
@@ -347,7 +347,7 @@
   width: 20px;
   height: 20px;
   box-sizing: border-box;
-  border: 2px solid rgb(255 255 255 / 45%);
+  border: 2px solid var(--border-mark);
   border-radius: 5px;
   background: var(--well);
 }
@@ -360,21 +360,21 @@
   background-repeat: no-repeat;
 }
 .dd-check input:focus-visible + .dd-check-box {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .dd-base {
   margin: 6px 0 0 30px;
   font-size: 12.5px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .dd-base code {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 /* Origin could not be fetched: the option is there, but off. */
 .dd-worktree[data-off='true'] .dd-check {
   cursor: not-allowed;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .dd-worktree[data-off='true'] .dd-check-box {
   opacity: 0.5;
@@ -385,18 +385,18 @@
 .dd-capacity {
   margin: 0;
   font-size: 12.5px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 .dd-callout {
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgb(255 194 51 / 45%);
-  background: rgb(255 194 51 / 10%);
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
 }
 .dd-callout p {
   margin: 0;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .dd-callout p + p,
 .dd-callout p + .btn {
@@ -404,12 +404,12 @@
 }
 .dd-callout[data-level='full'],
 .dd-callout--error {
-  border-color: rgb(255 123 115 / 60%);
-  background: rgb(216 48 44 / 18%);
+  border-color: var(--error-edge);
+  background: var(--error-bg);
 }
 .dd-capacity-facts {
   font-size: 12px;
-  color: var(--text-on-ink-2) !important;
+  color: var(--text-2) !important;
 }
 
 /* ---- send home: what is on the desk ------------------------------------------------ */
@@ -423,7 +423,7 @@
 .dd-facts dt {
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .dd-facts dd {
   margin: 0;
@@ -449,7 +449,7 @@
 .dd-porcelain code {
   white-space: pre;
   font-size: 12px;
-  color: #ffd9a8;
+  color: var(--code-hl);
 }
 .dd-choices {
   margin: 0;
@@ -468,7 +468,7 @@
   cursor: pointer;
 }
 .dd-choice:hover {
-  background: rgb(255 255 255 / 5%);
+  background: var(--row-hover);
 }
 .dd-choice input {
   position: absolute;
@@ -481,16 +481,16 @@
   height: 18px;
   margin-top: 1px;
   box-sizing: border-box;
-  border: 2px solid rgb(255 255 255 / 45%);
+  border: 2px solid var(--border-mark);
   border-radius: 50%;
   background: var(--well);
 }
 .dd-choice input:checked + .dd-radio {
-  border-color: var(--sun);
-  background: radial-gradient(circle, var(--sun) 0 4px, var(--well) 4.5px);
+  border-color: var(--action);
+  background: radial-gradient(circle, var(--action) 0 4px, var(--well) 4.5px);
 }
 .dd-choice input:focus-visible + .dd-radio {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .dd-choice-text {
@@ -521,7 +521,7 @@
   display: block;
   height: 34px;
   border-radius: 9px;
-  background: rgb(255 255 255 / 6%);
+  background: var(--skeleton-bg);
 }
 .dd-skeleton i:nth-child(2) {
   width: 72%;
@@ -535,7 +535,7 @@
   }
   @keyframes dd-breathe {
     to {
-      background: rgb(255 255 255 / 11%);
+      background: var(--skeleton-bg-2);
     }
   }
 }
@@ -582,10 +582,10 @@
   flex: 1 1 220px;
   margin: 0;
   font-size: 13px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .dd-status--error {
-  color: #ffb4ae;
+  color: var(--error-text);
   font-weight: 700;
 }
 .dd-actions {
@@ -671,7 +671,7 @@
   padding-right: 6px;
   margin-right: -6px;
   scrollbar-width: thin;
-  scrollbar-color: #3a466e transparent;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
 .desk-dlg--hire .dd-foot {
   padding: 12px 20px;
@@ -695,7 +695,7 @@
   margin-left: 4px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .dd-models {
   display: grid;
@@ -774,11 +774,11 @@
   vertical-align: 1px;
 }
 .dd-callout--box {
-  border-color: rgb(201 147 90 / 55%);
-  background: rgb(201 147 90 / 13%);
+  border-color: var(--kraft-border);
+  background: var(--kraft-bg);
 }
 .tape--box {
-  --c: #94632f;
+  --c: var(--tape-box);
 }
 .dd-wrap-reason {
   font-weight: 700;
@@ -794,7 +794,7 @@
   min-height: 92px;
 }
 .dd-wrap-prompt .field-hint b {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 /* The send home's actions wrap rather than squeeze: three of them, one long. */
 .desk-dlg--home .dd-actions {
@@ -818,7 +818,7 @@
 }
 .dd-confirm code {
   overflow-wrap: anywhere;
-  color: #ffd9a8;
+  color: var(--code-hl);
 }
 
 /* ---- #110 pack up on request: the send home's third mode ------------------------------- */
@@ -829,7 +829,7 @@
   margin: 0 0 6px;
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .dd-pk-original {
   margin: 0;
@@ -844,13 +844,13 @@
   overflow-y: auto;
 }
 .dd-pk-original del {
-  color: rgb(238 242 251 / 55%);
+  color: var(--del-text);
   text-decoration: line-through;
-  text-decoration-color: #ff7b73;
+  text-decoration-color: var(--error-border);
   text-decoration-thickness: 2px;
 }
 .dd-pk .field-hint b {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 
 /*
@@ -874,11 +874,11 @@
   flex: none;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgb(255 255 255 / 4%);
+  background: var(--group-bg);
 }
 .rv-sec[data-attention='true'] {
-  border-color: rgb(255 194 51 / 70%);
-  background: rgb(255 194 51 / 7%);
+  border-color: var(--attention-border);
+  background: var(--attention-bg);
 }
 .rv-h {
   margin: 0;
@@ -899,16 +899,16 @@
   cursor: pointer;
 }
 .rv-toggle:hover {
-  background: rgb(255 255 255 / 5%);
+  background: var(--row-hover);
 }
 .rv-toggle:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: -3px;
 }
 .rv-chev {
   display: grid;
   place-items: center;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .rv-chev svg {
   width: 18px;
@@ -933,11 +933,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 13px;
 }
 .rv-sec[data-attention='true'] .rv-sum {
-  color: var(--sun);
+  color: var(--warn);
 }
 .rv-origin {
   justify-self: end;
@@ -946,23 +946,23 @@
 }
 .rv-origin[data-origin='dictated'] {
   --c: var(--plus);
-  color: var(--ink);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .rv-origin[data-origin='resolved'] {
-  --c: #8fb8ff;
-  color: var(--ink);
+  --c: var(--tape-resolved);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .rv-origin[data-origin='default'] {
-  --c: #c4cde4;
-  color: var(--ink);
+  --c: var(--tape-default);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .rv-origin[data-origin='chosen'],
 .rv-origin[data-origin='attention'] {
-  --c: var(--sun);
-  color: var(--ink);
+  --c: var(--chip-accent);
+  color: var(--on-fill);
   text-shadow: none;
 }
 .rv-panel {
@@ -976,7 +976,7 @@
 .rv-ask {
   margin: 0;
   font-weight: 700;
-  color: var(--sun);
+  color: var(--warn);
 }
 .rv-prov,
 .rv-prov-list {
@@ -984,7 +984,7 @@
   padding: 0;
   list-style: none;
   font-size: 12px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .rv-prov-list {
   display: flex;
@@ -1004,13 +1004,19 @@
 .rv-place {
   margin: 0;
 }
+/* A phone's width: the value under the title, and the origin tape under that (beside the title it covered the title's end). */
 @media (max-width: 560px) {
   .rv-toggle {
-    grid-template-columns: 20px minmax(0, 1fr) auto;
+    grid-template-columns: 20px minmax(0, 1fr);
   }
   .rv-sum {
     grid-column: 2 / -1;
     grid-row: 2;
+  }
+  .rv-origin {
+    grid-column: 2;
+    grid-row: 3;
+    justify-self: start;
   }
 }
 /* A finger needs 44px: the review's choice chips (harness, model, effort) on a touch screen or a phone's width. */
@@ -1026,3 +1032,213 @@
     display: flex;
   }
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: what Quiet has no rule for. Selected tape is the orange action fill with a dark label (and a dark keyline
+ * under its focus ring); disabled controls keep full opacity with a raised fill and a muted label; rows, boxes and
+ * dots use the strong border, a lighter-orange hover and an orange checked fill; targets reach 32px (44px on touch).
+ */
+:root[data-ui-theme='ubuntu'] .desk-dlg :is(input:not([type]), input[type='text'], textarea):focus-visible {
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .desk-dlg :is(input, textarea):disabled {
+  opacity: 1;
+  background: var(--disabled-bg);
+  color: var(--disabled-text);
+}
+/* Read-only stays legible but reads as not editable: dashed edge, the dialog's own surface. */
+:root[data-ui-theme='ubuntu'] .desk-dlg :is(input, textarea)[readonly] {
+  border-style: dashed;
+  background: var(--surface);
+}
+:root[data-ui-theme='ubuntu'] .desk-dlg .dd-search {
+  height: var(--ctl-h);
+}
+
+/* Model / harness / effort tape. */
+:root[data-ui-theme='ubuntu'] .dd-chip span {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .dd-chip:hover input:not(:checked):not(:disabled) + span {
+  background: var(--hover);
+  border-color: var(--border-hover);
+}
+:root[data-ui-theme='ubuntu'] .dd-chip:active input:not(:checked):not(:disabled) + span {
+  background: var(--btn-bg-active);
+  box-shadow: inset 0 0 0 1px var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .dd-chip input:checked + span {
+  border-color: var(--action-border);
+  box-shadow: none;
+}
+:root[data-ui-theme='ubuntu'] .dd-chip:hover input:checked + span {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .dd-chip:active input:checked + span {
+  background: var(--action-active);
+}
+/* The ring sits two pixels off the orange fill: a dark keyline in that gap keeps it apart from the fill. */
+:root[data-ui-theme='ubuntu'] .dd-chip input:checked:focus-visible + span {
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .dd-chip input:disabled + span {
+  opacity: 1;
+  background: var(--disabled-bg);
+  border-style: solid;
+  color: var(--disabled-text);
+}
+/* The ring is 5px off the chip: leave that room on every side of the options pane so its scroller does not clip it. */
+:root[data-ui-theme='ubuntu'] .hire-options-pane {
+  padding: 6px;
+  margin: -6px;
+}
+/* A model's exact id is metadata: muted by colour, never by opacity (the selected chip's id keeps the dark label). */
+:root[data-ui-theme='ubuntu'] .dd-chip-id {
+  opacity: 1;
+}
+:root[data-ui-theme='ubuntu'] .dd-chip input:not(:checked) + span .dd-chip-id {
+  color: var(--text-3);
+}
+:root[data-ui-theme='ubuntu'] .dd-chip input:disabled + span .dd-chip-id {
+  color: inherit;
+}
+
+/* Worktree check box and the send-home radios. */
+:root[data-ui-theme='ubuntu'] .dd-check,
+:root[data-ui-theme='ubuntu'] .dd-choice {
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .dd-check-box,
+:root[data-ui-theme='ubuntu'] .dd-radio {
+  border-color: var(--border);
+}
+:root[data-ui-theme='ubuntu'] .dd-check:hover .dd-check-box,
+:root[data-ui-theme='ubuntu'] .dd-choice:hover .dd-radio {
+  border-color: var(--border-hover);
+}
+/* Checked: the orange fill with a dark mark (the data URI cannot take a variable, so the mark is redrawn here). */
+:root[data-ui-theme='ubuntu'] .dd-check input:checked + .dd-check-box {
+  border-color: var(--action-border);
+  background-color: var(--action);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232c001e' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5.5 12.5 4.5 4.5 8.5-9.5'/%3E%3C/svg%3E");
+}
+:root[data-ui-theme='ubuntu'] .dd-choice input:checked + .dd-radio {
+  border-color: var(--action-border);
+  background: radial-gradient(circle, var(--on-action) 0 4px, var(--action) 4.5px);
+}
+:root[data-ui-theme='ubuntu'] .dd-worktree[data-off='true'] .dd-check {
+  color: var(--disabled-text);
+}
+:root[data-ui-theme='ubuntu'] .dd-worktree[data-off='true'] .dd-check-box,
+:root[data-ui-theme='ubuntu'] .dd-choice[data-disabled='true'] .dd-radio {
+  opacity: 1;
+  border-style: dashed;
+  background: var(--disabled-bg);
+}
+:root[data-ui-theme='ubuntu'] .dd-choice[data-disabled='true'] .dd-choice-text,
+:root[data-ui-theme='ubuntu'] .dd-choice[data-disabled='true'] .dd-choice-text .field-hint {
+  opacity: 1;
+  color: var(--disabled-text);
+}
+
+/*
+ * #212 the review's accordion. A section is a raised card with the strong border; its header is a menu row (the hover
+ * fill, a pressed keyline) and an open one is the selected tab: the orange action fill with the dark label, its bottom
+ * corners square onto its panel (aria-expanded says it). A section that needs a choice has the warning yellow outline,
+ * doubled by an inner line, and its question and tape say what is missing: never the hue alone.
+ */
+:root[data-ui-theme='ubuntu'] .rv-sec {
+  border-color: var(--border);
+}
+:root[data-ui-theme='ubuntu'] .rv-sec[data-attention='true'] {
+  border-color: var(--attention-border);
+  box-shadow: inset 0 0 0 1px var(--attention-border);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle {
+  color: var(--text);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle:active {
+  background: var(--btn-bg-active);
+  box-shadow: inset 0 0 0 1px var(--chrome);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] {
+  border-radius: 11px 11px 0 0;
+  background: var(--action);
+  color: var(--on-action);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true']:hover {
+  background: var(--action-hover);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true']:active {
+  background: var(--action-active);
+}
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] :is(.rv-chev, .rv-sum) {
+  color: var(--on-action);
+}
+/* A tape on the orange header keeps its own fill; a dark keyline sets it off the orange. */
+:root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] .rv-origin {
+  box-shadow: 0 0 0 1px var(--on-action);
+}
+/* The ring sits two pixels outside the header (the sections' gap has room), with a dark keyline in that gap. */
+:root[data-ui-theme='ubuntu'] .rv-toggle:focus-visible {
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--chrome);
+}
+/* What is needed is a warning, not an action: the yellow of the outline. */
+:root[data-ui-theme='ubuntu'] .rv-origin[data-origin='attention'] {
+  --c: var(--warn);
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .dd-chip span,
+  :root[data-ui-theme='ubuntu'] .dd-check,
+  :root[data-ui-theme='ubuntu'] .dd-choice {
+    min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .desk-dlg input:not([type]),
+  :root[data-ui-theme='ubuntu'] .desk-dlg .dd-search {
+    height: 44px;
+  }
+}
+/* #212: the review's choice chips are a finger's 44px on touch and at a phone's width (Ubuntu's 32px chip rule out-ranks #212's own). */
+@media (pointer: coarse), (max-width: 560px) {
+  :root[data-ui-theme='ubuntu'] .desk-dlg--review .dd-chip span {
+    min-height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  /* A fill-only state needs a system colour and a shape: selected tape, a checked box (a heavy border), a checked dot. */
+  :root[data-ui-theme='ubuntu'] .dd-chip input:checked + span {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+    border-color: ButtonText;
+  }
+  :root[data-ui-theme='ubuntu'] .dd-check input:checked + .dd-check-box {
+    forced-color-adjust: none;
+    border: 6px solid Highlight;
+    background: Canvas;
+  }
+  :root[data-ui-theme='ubuntu'] .dd-choice input:checked + .dd-radio {
+    forced-color-adjust: none;
+    border-color: Highlight;
+    background: radial-gradient(circle, Highlight 0 4px, Canvas 4.5px);
+  }
+  :root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] {
+    forced-color-adjust: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .rv-toggle[aria-expanded='true'] :is(.rv-chev, .rv-sum) {
+    color: HighlightText;
+  }
+  :root[data-ui-theme='ubuntu'] .rv-sec[data-attention='true'] {
+    border: 2px solid Highlight;
+  }
+}
+/* ubuntu:end */

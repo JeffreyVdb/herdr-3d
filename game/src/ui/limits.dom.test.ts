@@ -165,6 +165,24 @@ describe('the plan-limits plate over the command palette (#147)', () => {
     w.dispose();
   });
 
+  it('#216: the Ubuntu UI theme’s snug tab is 32 px and needs 34 px of room; a live switch places it again', async () => {
+    const { w } = widget();
+    const pal = dialog('credits palette', WIDTH - 30);
+    openIt(pal);
+    await settle();
+    expect([w.root.dataset.dock, w.root.dataset.fit]).toEqual(['tab', 'snug']);
+    document.documentElement.dataset.uiTheme = 'ubuntu';
+    await settle();
+    expect(w.root.dataset.dock).toBe('away'); // 30 px is room for Quiet's 22 px tab, not for Ubuntu's 32
+    pal.dataset.right = String(WIDTH - 34);
+    window.dispatchEvent(new Event('resize'));
+    expect([w.root.dataset.dock, w.root.dataset.fit]).toEqual(['tab', 'snug']);
+    delete document.documentElement.dataset.uiTheme;
+    await settle();
+    expect([w.root.dataset.dock, w.root.dataset.fit]).toEqual(['tab', 'snug']);
+    w.dispose();
+  });
+
   it('a click on the tab peeks the plate over the palette; closing the palette ends the peek and gives the saved plate back', async () => {
     const { w, prefs } = widget();
     const pal = dialog('credits palette', PAL_RIGHT);

@@ -17,7 +17,7 @@
 }
 .prompt-usage {
   font-size: 12px;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .topbar-usage {
   align-self: center;
@@ -26,15 +26,15 @@
   border-radius: 999px;
   font-size: 12.5px;
   font-weight: 700;
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 /* #57: its agent waits on a question, and since when. */
 .prompt-ask {
   flex: none;
   padding: 1px 8px;
-  border: 1px solid rgb(255 194 51 / 55%);
+  border: 1px solid var(--warn-border-strong);
   border-radius: 999px;
-  color: var(--sun);
+  color: var(--warn);
   font-size: 12px;
   font-weight: 700;
   font-family: var(--font-mono);
@@ -43,8 +43,8 @@
 }
 /* #157: a Codex worker's async questions: it works on, so the working blue, not the needs-you sun. */
 .prompt-ask--async {
-  border-color: color-mix(in srgb, var(--working) 70%, white);
-  color: color-mix(in srgb, var(--working) 45%, white);
+  border-color: var(--async-border);
+  color: var(--async-text);
   font-family: inherit;
 }
 /* N next to "need you": the key that goes there. */
@@ -59,17 +59,17 @@
   padding: 0 4px;
   box-sizing: border-box;
   border-radius: 4px;
-  background: var(--ink-2);
-  border: 1px solid rgb(255 255 255 / 22%);
+  background: var(--raised);
+  border: 1px solid var(--kbd-border);
   border-bottom-width: 2px;
   font: 700 10.5px/1 var(--font);
   font-family: var(--font-mono);
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 /* Priced as an unknown model: the * says "see why"; the title does. */
 .prompt-usage--flagged,
 .topbar-usage--flagged {
-  text-decoration: underline dotted rgb(255 194 51 / 70%);
+  text-decoration: underline dotted var(--warn-underline);
   text-underline-offset: 3px;
   cursor: help;
 }
@@ -86,11 +86,11 @@
 }
 .key--approve kbd {
   background: var(--done-chip);
-  border-color: rgb(255 255 255 / 30%);
+  border-color: var(--border-strong);
 }
 .key--deny kbd {
-  background: var(--needs_you-chip);
-  border-color: rgb(255 255 255 / 30%);
+  background: var(--error-fill);
+  border-color: var(--border-strong);
 }
 
 /* ---- P: the prompt overlay -------------------------------------------------------- */
@@ -101,12 +101,12 @@
   margin: auto auto 18px;
 }
 .desk-dlg--prompt::backdrop {
-  background: rgb(18 24 44 / 22%);
+  background: var(--scrim-light);
 }
 .dd-plate--bubble {
   min-width: 48px;
-  background: #fff;
-  color: var(--ink);
+  background: var(--note-bg);
+  color: var(--note-text);
   box-shadow: 0 2px 5px rgb(0 0 0 / 30%);
 }
 .dd-plate--bubble svg {
@@ -124,9 +124,9 @@
 .pr-note {
   position: relative;
   margin-bottom: 10px;
-  border: 3px solid #cfd6ea;
+  border: 3px solid var(--note-edge);
   border-radius: 18px;
-  background: #fff;
+  background: var(--note-bg);
   box-shadow: 0 2px 0 rgb(0 0 0 / 18%);
   transition: border-color 160ms var(--ease);
 }
@@ -137,8 +137,8 @@
   bottom: -13px;
   width: 20px;
   height: 20px;
-  background: #fff;
-  border: solid #cfd6ea;
+  background: var(--note-bg);
+  border: solid var(--note-edge);
   border-width: 0 3px 3px 0;
   transform: skewX(24deg) rotate(45deg);
   border-bottom-right-radius: 3px;
@@ -146,13 +146,13 @@
 }
 .pr-note:focus-within,
 .pr-note:focus-within::after {
-  border-color: var(--sun);
+  border-color: var(--focus);
 }
 /* The note is the shared composer (#64) on paper: its editor is the paper (no well, no border), its chips stay navy prints. */
 .pr-note .cmp {
   --cmp-min-height: 96px;
   --cmp-max-height: 42vh;
-  --cmp-err: #b3261e;
+  --cmp-err: var(--note-err);
   position: relative;
   z-index: 1;
 }
@@ -161,9 +161,9 @@
   border: 0;
   border-radius: 15px;
   background: transparent;
-  color: var(--ink);
+  color: var(--note-text);
   font: 500 16px/1.45 var(--font);
-  caret-color: var(--working);
+  caret-color: var(--note-caret);
   color-scheme: light;
 }
 .pr-note .cmp-editor:hover {
@@ -175,21 +175,21 @@
 .pr-note .cmp-editor[data-empty='true']::before {
   left: 14px;
   right: 14px;
-  color: #6b7596;
+  color: var(--note-muted);
 }
 .pr-note .cmp-editor ::selection,
 .pr-note .cmp-editor::selection {
-  background: var(--sun);
-  color: var(--ink);
+  background: var(--action);
+  color: var(--on-action);
 }
 .pr-note .cmp-editor[contenteditable='false'] {
   opacity: 0.65;
 }
 .pr-note .cmp-chip {
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .pr-note .cmp-chip[data-status='error'] {
-  background: #4a2531;
+  background: var(--chip-error-bg);
 }
 .pr-note .cmp-notice {
   margin: 0;
@@ -220,12 +220,12 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   padding: 0 4px;
   box-sizing: border-box;
   border-radius: 4px;
-  background: var(--ink-2);
-  border: 1px solid rgb(255 255 255 / 22%);
+  background: var(--raised);
+  border: 1px solid var(--kbd-border);
   border-bottom-width: 2px;
   font: 700 10.5px/1 var(--font);
   font-family: var(--font-mono);
-  color: var(--text-on-ink);
+  color: var(--text);
 }
 .pr-queued {
   flex: 1 1 100%;
@@ -234,7 +234,7 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   gap: 8px;
   margin: 0;
   font-size: 13px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .pr-queued .tape {
   flex: none;
@@ -243,9 +243,8 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
 /* ---- C: the Changes panel ------------------------------------------------------------ */
 
 .changes {
-  --well: #121a31;
-  --add: #8fe3b4;
-  --del: #ffaaa3;
+  --add: var(--diff-add);
+  --del: var(--diff-del);
   position: fixed;
   z-index: 20;
   top: calc(var(--topbar-bottom, 64px) + 10px);
@@ -261,8 +260,8 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   box-sizing: border-box;
   border: 0;
   border-radius: var(--radius);
-  background: var(--ink);
-  color: var(--text-on-ink);
+  background: var(--surface);
+  color: var(--text);
   box-shadow: var(--shadow);
   font-family: var(--font);
   font-size: 14px;
@@ -313,9 +312,9 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   width: 44px;
   height: 44px;
   border-radius: 10px;
-  background: #101626;
+  background: var(--well-deep);
   box-shadow: inset 0 2px 7px rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 8%);
-  color: var(--sun);
+  color: var(--accent-text);
 }
 .cp-plate svg {
   width: 24px;
@@ -330,7 +329,7 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   margin: 0;
   font-size: 19px;
   font-weight: 800;
-  font-variation-settings: 'CASL' 1, 'MONO' 0;
+  font-variation-settings: var(--fvs-casual);
   letter-spacing: -0.01em;
   white-space: nowrap;
   overflow: hidden;
@@ -338,7 +337,7 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
 }
 .cp-titles p {
   margin: 2px 0 0;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-size: 12px;
   font-family: var(--font-mono);
   white-space: nowrap;
@@ -367,7 +366,7 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   font-size: 12.5px;
 }
 .cp-meta dt {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .cp-meta dd {
   margin: 0;
@@ -386,8 +385,8 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   display: inline-block;
   padding: 2px 8px 1px;
   border-radius: 2px;
-  background: #0b0f1c;
-  color: #f4f6fb;
+  background: var(--emboss-bg);
+  color: var(--emboss-text);
   letter-spacing: 0.04em;
   text-shadow: 0 -1px 0 rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 18%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 12%), 0 1px 1px rgb(0 0 0 / 40%);
@@ -440,12 +439,12 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   list-style: none;
   overflow: auto;
   border-radius: 10px;
-  background: rgb(0 0 0 / 16%);
+  background: var(--list-bg);
   scrollbar-width: thin;
-  scrollbar-color: #3a466e transparent;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
 .cp-files:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
 .cp-file {
@@ -459,11 +458,11 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   font-size: 12.5px;
 }
 .cp-file:hover {
-  background: rgb(255 255 255 / 5%);
+  background: var(--row-hover);
 }
 .cp-file[aria-selected='true'] {
-  background: var(--ink-2);
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%);
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--row-edge);
 }
 .cp-chips {
   display: inline-flex;
@@ -480,19 +479,19 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
 }
 .cp-chip--staged {
   background: var(--done-chip);
-  color: #fff;
+  color: var(--on-chip);
 }
 .cp-chip--unstaged {
-  background: var(--sun);
-  color: var(--ink);
+  background: var(--warn);
+  color: var(--on-fill);
 }
 .cp-chip--untracked {
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 45%);
-  color: var(--text-on-ink);
+  box-shadow: inset 0 0 0 1px var(--border-mark);
+  color: var(--text);
 }
 .cp-chip--committed {
-  background: rgb(255 255 255 / 10%);
-  color: var(--text-on-ink-2);
+  background: var(--chip-neutral-bg);
+  color: var(--text-2);
 }
 .cp-path {
   min-width: 0;
@@ -503,7 +502,7 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   text-align: left;
 }
 .cp-dir {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .cp-base {
   font-weight: 700;
@@ -514,7 +513,7 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-size: 11.5px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .cp-ins {
   color: var(--add);
@@ -540,19 +539,19 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   padding: 7px 10px;
   border-bottom: 1px solid var(--line);
   font-size: 12px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
 }
 .cp-diff-head code {
-  color: var(--text-on-ink);
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .cp-nodiff {
   margin: 0;
   padding: 16px 12px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .cp-scroll {
   flex: 1 1 0;
@@ -560,10 +559,10 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   overflow: auto;
   position: relative;
   scrollbar-width: thin;
-  scrollbar-color: #3a466e transparent;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
 }
 .cp-scroll:focus-visible {
-  outline: 3px solid var(--sun);
+  outline: 3px solid var(--focus);
   outline-offset: -3px;
 }
 .cp-spacer {
@@ -583,12 +582,12 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   font: 500 12px/18px var(--font);
   font-family: var(--font-mono);
   white-space: pre;
-  color: #d3daee;
+  color: var(--diff-text);
 }
 .cp-num {
   padding-right: 8px;
   text-align: right;
-  color: #56628a;
+  color: var(--diff-num);
   font-variant-numeric: tabular-nums;
   user-select: none;
 }
@@ -596,23 +595,23 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   padding: 0 12px 0 4px;
 }
 .cp-line--add {
-  background: rgb(47 196 106 / 15%);
+  background: var(--diff-add-bg);
   color: var(--add);
 }
 .cp-line--del {
-  background: rgb(232 65 58 / 17%);
+  background: var(--diff-del-bg);
   color: var(--del);
 }
 .cp-line--hunk {
-  background: rgb(47 107 240 / 18%);
-  color: #b3c8ff;
+  background: var(--diff-hunk-bg);
+  color: var(--diff-hunk-text);
 }
 .cp-line--meta {
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
   font-weight: 700;
 }
 .cp-line--note {
-  color: #8d97b6;
+  color: var(--diff-note);
   font-style: italic;
 }
 
@@ -623,14 +622,14 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   flex: 1;
   padding: 24px 16px;
   text-align: center;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 .cp-empty p {
   margin: 0;
   max-width: 44ch;
 }
 .cp-empty--error p {
-  color: #ffb4ae;
+  color: var(--error-text);
   font-weight: 700;
 }
 .cp-skeleton {
@@ -642,7 +641,7 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   display: block;
   height: 26px;
   border-radius: 8px;
-  background: rgb(255 255 255 / 6%);
+  background: var(--skeleton-bg);
 }
 .cp-skeleton i:nth-child(1) {
   width: 46%;
@@ -659,7 +658,7 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
   margin: 0;
   padding: 0 14px 10px;
   font-size: 12.5px;
-  color: var(--text-on-ink-2);
+  color: var(--text-2);
 }
 
 /* The look-at bar and the hint move into the floor's side of the screen while the panel is open. */
@@ -670,3 +669,76 @@ body:has(.desk-dlg--prompt[open]) .hud .hint {
     max-width: calc(100vw - min(780px, 58vw) - 48px);
   }
 }
+
+/* ubuntu:begin */
+/*
+ * #216 Ubuntu: the speech bubble becomes a dark composer on the strong border (its colours are the --note-* tokens), the
+ * Approve / Deny keys carry the dark on-chip label on their bright fill, the Changes list's selected row gets an orange
+ * marker, and the list and branch plate get a boundary.
+ */
+:root[data-ui-theme='ubuntu'] .key--approve kbd,
+:root[data-ui-theme='ubuntu'] .key--deny kbd {
+  color: var(--on-chip);
+}
+:root[data-ui-theme='ubuntu'] .dd-plate--bubble {
+  border: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .pr-note .cmp-editor {
+  color-scheme: dark;
+}
+/* Busy or locked: the same fill, a muted label, no opacity reduction. */
+:root[data-ui-theme='ubuntu'] .pr-note .cmp-editor[contenteditable='false'] {
+  opacity: 1;
+  color: var(--disabled-text);
+}
+/* The bubble's border turns the focus colour; the ring stands off it like every other control's. */
+:root[data-ui-theme='ubuntu'] .pr-note:focus-within {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+/* The bubble wears the editor's ring (the editor fills it): no second ring on the bubble's border. */
+:root[data-ui-theme='ubuntu'] .pr-note .cmp-editor:focus-visible {
+  outline: none;
+}
+
+:root[data-ui-theme='ubuntu'] .cp-files {
+  border: 1px solid var(--border);
+}
+:root[data-ui-theme='ubuntu'] .cp-files:focus-visible {
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .cp-file {
+  min-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .cp-file[aria-selected='true'] {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--row-edge), inset 4px 0 0 var(--action);
+}
+:root[data-ui-theme='ubuntu'] .cp-branch {
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .cp-file {
+    min-height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  /* Box shadows are dropped: the selected file keeps an outline, the plate its border. */
+  :root[data-ui-theme='ubuntu'] .cp-file[aria-selected='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  :root[data-ui-theme='ubuntu'] .cp-branch {
+    border: 1px solid CanvasText;
+  }
+}
+/* The changes panel's scroller stands 5px inside the panel so its ring is outside it, unclipped. */
+:root[data-ui-theme='ubuntu'] .cp-scroll {
+  margin: 0 5px 5px;
+  scroll-padding: 5px;
+}
+:root[data-ui-theme='ubuntu'] .cp-scroll:focus-visible {
+  outline-offset: 2px;
+}
+/* ubuntu:end */
