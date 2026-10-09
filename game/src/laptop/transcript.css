@@ -1044,6 +1044,42 @@
 .tx-del .tx-dt {
   color: var(--tx-del-text);
 }
+/* #206: syntax colours in diff rows, painted over the row's one text node (diffHighlight.ts, CSS Custom Highlight API:
+   no spans, so no restyle or layout; colour only, so comments are not italic here). The colours are the .hljs-* rules'
+   below (diffTokens.HL_COLOURS). A coloured added or deleted row's plain text is the context's (`tx-hl-plain`), as in
+   the terminal: the band says added or deleted and the sign keeps the row's tint. A row of a language nobody knows
+   stays tinted whole. */
+.tx-dt::highlight(tx-hl-plain) {
+  color: var(--tx-text);
+}
+.tx-dt::highlight(tx-hl-comment) {
+  color: var(--tx-hl-comment);
+}
+.tx-dt::highlight(tx-hl-keyword) {
+  color: var(--tx-hl-keyword);
+}
+.tx-dt::highlight(tx-hl-string) {
+  color: var(--tx-hl-string);
+}
+.tx-dt::highlight(tx-hl-number) {
+  color: var(--tx-hl-number);
+}
+.tx-dt::highlight(tx-hl-title) {
+  color: var(--tx-hl-title);
+}
+.tx-dt::highlight(tx-hl-attr) {
+  color: var(--tx-hl-attr);
+}
+.tx-dt::highlight(tx-hl-meta) {
+  color: var(--tx-hl-meta);
+}
+/* On the band the line numbers take its hue (4.5:1 on it; --tx-text-3 alone is not). */
+.tx-add .tx-dn {
+  color: color-mix(in srgb, var(--tx-add-text) 55%, var(--tx-text-3));
+}
+.tx-del .tx-dn {
+  color: color-mix(in srgb, var(--tx-del-text) 55%, var(--tx-text-3));
+}
 .tx-dh {
   background: color-mix(in srgb, var(--tx-blue) 10%, transparent);
   color: var(--tx-blue-text);
@@ -1384,7 +1420,8 @@
   font-weight: 700;
 }
 
-/* Highlighted code (highlight.js classes) */
+/* Highlighted code (highlight.js classes). #206: diff rows take the same colours as highlights (::highlight(tx-hl-*)
+   above, diffTokens.HL_COLOURS): a colour or class changed here changes there. */
 .tx .hljs-comment,
 .tx .hljs-quote {
   color: var(--tx-hl-comment);

@@ -130,6 +130,9 @@ async function contrastScan(root: Locator): Promise<Array<{ text: string; cls: s
   return root.evaluate((rootEl) => {
     type C = [number, number, number, number];
     const parse = (s: string): C => {
+      // #206: a color-mix() computes to `color(srgb r g b [/ a])`, its channels 0–1.
+      const c = s.match(/color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)(?: \/ ([\d.]+))?\)/);
+      if (c) return [+c[1]! * 255, +c[2]! * 255, +c[3]! * 255, c[4] === undefined ? 1 : +c[4]];
       const m = s.match(/rgba?\(([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:[ ,/]+([\d.]+%?))?\)/);
       if (!m) return [0, 0, 0, 0];
       const a = m[4] === undefined ? 1 : m[4].endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
