@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { frames, openGame, openMenu, watchErrors } from './game';
 import { boot, DESKTOP, NARROW, seed, SIM, sitAtTofu, SURFACES, type Themes, type UiTheme } from './ui-surfaces';
-import { strays, textSamples } from './ui-theme-probe';
+import { strays, targets, textSamples } from './ui-theme-probe';
 
 // #216: the application UI theme in the real app (WebGL2, the fixture bridge): Settings → Appearance, live switching
 // without losing anything, the saved choice before the first frame, blocked storage, the fonts the theme loads (and
@@ -384,7 +384,8 @@ for (const s of SURFACES) {
     await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery);
     await s.open(page);
     await page.waitForTimeout(300);
-    const samples = await textSamples(page, `${s.root}, .topbar, .hud .prompt, .hud .hint, .toast`, '.excalidraw canvas, canvas, img, .seat-swatch, .settings-theme-swatch');
+    // The editor's swatch hotkeys are drawn on the artwork colour in a colour Excalidraw picks for it, the same in both themes.
+    const samples = await textSamples(page, `${s.root}, .topbar, .hud .prompt, .hud .hint, .toast`, '.excalidraw canvas, canvas, img, .seat-swatch, .settings-theme-swatch, .color-picker__button__hotkey-label');
     expect(samples.length, `${s.name}: the probe found text to measure`).toBeGreaterThan(5);
     const bad = samples.filter((t) => (t.ratio !== null && t.ratio < (t.size >= 24 || (t.size >= 18.66 && Number(t.weight) >= 700) ? 3 : 4.5)) || t.bg === 'translucent');
     expect(
@@ -515,6 +516,19 @@ for (const size of [{ name: '390px wide', ...NARROW }, { name: '200% browser zoo
       clean();
     });
   }
+}
+
+for (const s of SURFACES) {
+  test(`targets: every control of ${s.name} is >= 32 x 32 px in Ubuntu, labelled buttons and fields >= 36 px high`, async ({ page }) => {
+    test.setTimeout(180_000);
+    const clean = watchErrors(page);
+    await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery);
+    await s.open(page);
+    await page.waitForTimeout(300);
+    const small = (await targets(page, `${s.root}, .topbar, .hud .prompt, .hud .hint, .toast, .excalidraw-modal-container`)).filter((t) => t.w < 32 || t.h < (t.kind === 'standard' ? 36 : 32));
+    expect(small.map((t) => `${t.at} ${t.w}x${t.h} (${t.kind})`), `${s.name}: controls under the Ubuntu sizes`).toEqual([]);
+    clean();
+  });
 }
 
 test('touch targets: Ubuntu standard controls are >= 36 px, icon controls >= 32 px, and >= 44 px on a coarse pointer', async ({ browser }) => {

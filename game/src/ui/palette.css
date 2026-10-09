@@ -245,6 +245,12 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+:root[data-ui-theme='ubuntu'] .pal-input {
+  min-height: var(--ctl-h);
+}
+:root[data-ui-theme='ubuntu'] .pal-hint {
+  min-height: 32px;
+}
 :root[data-ui-theme='ubuntu'] .pal-input::placeholder {
   color: var(--text-3);
   opacity: 1;

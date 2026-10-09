@@ -339,6 +339,10 @@
   outline: 1px solid var(--border);
   outline-offset: -1px;
 }
+:root[data-ui-theme='ubuntu'] .ib-chip {
+  min-height: 32px;
+  align-items: center;
+}
 :root[data-ui-theme='ubuntu'] .ib-chip:active {
   background: var(--hover);
 }

@@ -893,6 +893,14 @@ dialog.settings {
 :root[data-ui-theme='ubuntu'] .hm-row {
   min-height: var(--ctl-h);
 }
+/* The disclosures and the volume slider are dense controls: 32px tall targets, their type unchanged. */
+:root[data-ui-theme='ubuntu'] .settings-advanced > summary,
+:root[data-ui-theme='ubuntu'] .settings-pk-all > summary {
+  line-height: 32px;
+}
+:root[data-ui-theme='ubuntu'] .settings-field .settings-nt-volume {
+  height: 32px;
+}
 @media (pointer: coarse) {
   :root[data-ui-theme='ubuntu'] .settings-switch,
   :root[data-ui-theme='ubuntu'] .settings-check,

@@ -1095,11 +1095,13 @@ body {
   background: var(--ghost-bg-active);
   border-color: var(--border);
 }
+/* A small labelled button (Save, Retry, Open PR, Edit) is a standard control: 36px. Only the icon-only one is dense, 32 x 32. */
 :root[data-ui-theme='ubuntu'] .btn--sm {
-  height: 32px;
+  height: var(--ctl-h);
 }
 :root[data-ui-theme='ubuntu'] .btn--icon.btn--sm {
   width: 32px;
+  height: 32px;
 }
 :root[data-ui-theme='ubuntu'] .ai-chip {
   height: 32px;

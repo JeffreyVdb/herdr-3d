@@ -196,3 +196,69 @@ export function strays(page: Page, rootSel: string, allowSel = ''): Promise<Stra
     { rootSel, allowSel },
   ) as unknown as Promise<Stray[]>;
 }
+
+export interface Target {
+  at: string;
+  w: number;
+  h: number;
+  /** standard: a labelled .btn or a form field (>= 36 px high); dense: any other operable control, icon or row (>= 32 x 32). */
+  kind: 'standard' | 'dense';
+}
+
+/**
+ * Every visible operable control under `root` and its target box: a checkbox or radio is reached through its label, and
+ * an absolutely placed ::before / ::after that widens the hit area (a drawn 18 px button with a 32 px hit box) counts.
+ * Left out: text links (the issue's "Text/link action" row, read in their line; WCAG 2.5.8 exempts inline targets),
+ * controls that flow inside a sentence, and the whiteboard editor's colour swatches and opacity slider (artwork
+ * swatches in Excalidraw's own dense palette: the issue themes the editor's controls, it does not resize its palette).
+ */
+export function targets(page: Page, rootSel: string, skipSel = ''): Promise<Target[]> {
+  return page.evaluate(
+    ({ rootSel, skipSel }) => {
+      const out: Array<{ at: string; w: number; h: number; kind: 'standard' | 'dense' }> = [];
+      const OPERABLE = 'button, a[href], select, textarea, summary, input:not([type="hidden"]), [role="button"], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="radio"], [role="checkbox"], [role="switch"], [role="option"]';
+      const seen = new Set<Element>();
+      for (const root of document.querySelectorAll(rootSel)) {
+        for (const el of [root, ...root.querySelectorAll(OPERABLE)]) {
+          if (!el.matches(OPERABLE) || seen.has(el)) continue;
+          seen.add(el);
+          if (skipSel && el.closest(skipSel)) continue;
+          if (el.closest('[inert], [hidden], [aria-hidden="true"]')) continue;
+          const cs = getComputedStyle(el);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || cs.pointerEvents === 'none') continue;
+          // A visually hidden native input behind a drawn control is reached through the drawn one (its label).
+          const label = el.closest('label');
+          const hiddenInput = el.matches('input') && (cs.opacity === '0' || (cs.position === 'absolute' && cs.clipPath !== 'none') || el.getBoundingClientRect().width <= 1);
+          if (hiddenInput && !label) continue;
+          const box = (label && el.matches('input[type="checkbox"], input[type="radio"]')) || hiddenInput ? label!.getBoundingClientRect() : el.getBoundingClientRect();
+          if (box.width < 1 || box.height < 1) continue;
+          if (el.matches('a[href]:not(.btn)') || el.closest('.color-picker__button, .range-input')) continue;
+          // A pseudo-element hit area: its box from its insets inside the control's padding box.
+          let w = box.width;
+          let hgt = box.height;
+          if (cs.position !== 'static') {
+            for (const pseudo of ['::before', '::after']) {
+              const ps = getComputedStyle(el, pseudo);
+              if (ps.content === 'none' || ps.position !== 'absolute' || ps.pointerEvents === 'none') continue;
+              const px = (v: string) => (v.endsWith('px') ? parseFloat(v) : NaN);
+              const [t, r, b, l] = [px(ps.top), px(ps.right), px(ps.bottom), px(ps.left)];
+              const pw = Number.isNaN(l) || Number.isNaN(r) ? px(ps.width) : box.width - parseFloat(cs.borderLeftWidth) - parseFloat(cs.borderRightWidth) - l - r;
+              const ph = Number.isNaN(t) || Number.isNaN(b) ? px(ps.height) : box.height - parseFloat(cs.borderTopWidth) - parseFloat(cs.borderBottomWidth) - t - b;
+              if (!Number.isNaN(pw)) w = Math.max(w, pw);
+              if (!Number.isNaN(ph)) hgt = Math.max(hgt, ph);
+            }
+          }
+          // Inline in a sentence: the line of text around it is the target's neighbourhood (WCAG 2.5.8's inline exception).
+          if (cs.display === 'inline' && el.parentElement && [...el.parentElement.childNodes].some((n) => n.nodeType === 3 && (n.textContent ?? '').trim())) continue;
+          const text = (el.textContent ?? '').trim();
+          const field = el.matches('select, textarea, input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"])');
+          const standard = field || (el.matches('.btn') && !el.matches('.btn--icon') && !!text);
+          const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+          out.push({ at: `${el.tagName.toLowerCase()}${cls ? `.${cls}` : ''} “${(el.getAttribute('aria-label') ?? text).slice(0, 24)}”`, w: Math.round(w), h: Math.round(hgt), kind: standard ? 'standard' : 'dense' });
+        }
+      }
+      return out;
+    },
+    { rootSel, skipSel },
+  ) as unknown as Promise<Target[]>;
+}
