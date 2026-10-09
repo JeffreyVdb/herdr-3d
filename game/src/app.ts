@@ -3210,6 +3210,11 @@ export class App {
     }
     const q = v.display === 'needs_you' ? answerable(v.worker.question) : null;
     if (!q) {
+      // #215: a report's request is no question of its agent: nothing to answer by a key, and none waits at its laptop.
+      if (v.display === 'needs_you' && v.crew?.ask) {
+        this.hud.toast(`${v.name} has a report request, not a question (${(v.crew.askWho ?? '').toLowerCase()}): nothing to answer here. Open the inbox for the whole text.`, 3600);
+        return;
+      }
       this.hud.toast(v.display === 'needs_you' ? `${v.name} needs you, but its screen showed no question to answer from here: sit at its laptop (E).` : `${v.name} isn’t asking anything right now.`, 3000);
       return;
     }
