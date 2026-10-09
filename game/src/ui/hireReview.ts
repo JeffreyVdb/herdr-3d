@@ -117,6 +117,10 @@ export class HireReviewDialog {
   private folderRev = 0;
   /** A check of a folder (or a fetch again) is on its way: Hire waits for it. */
   private checking = false;
+  /** The folder the prepare's git and worktree state is for: a different one in the form waits for its own check. */
+  private checked: string | null = null;
+  /** What an empty Folder means: the folder the first prepare chose (the server's default for this floor). */
+  private defaultCwd = '';
   private hadWhereIssue = false;
   private readonly hires: HireCoordinator;
   private static serial = 0;
@@ -190,6 +194,8 @@ export class HireReviewDialog {
     this.refetching = false;
     this.hadWhereIssue = false;
     this.checking = false;
+    this.checked = null;
+    this.defaultCwd = '';
     this.state = 'preparing';
     this.panelKeys.clear();
     this.taskEl.value = this.choice.task;
@@ -271,9 +277,13 @@ export class HireReviewDialog {
       // Same review, new folder (or origin fetched again): its git base; the worktree follows whether it can be made.
       this.adoptGit(p.git);
       this.prep = { ...this.prep, cwd: p.cwd, capacity: p.capacity };
-      this.f.cwd = p.cwd;
+      this.checked = p.cwd;
+      // An empty Folder stays the default; a typed one is shown as the server read it.
+      if (this.f.cwd.trim()) this.f.cwd = p.cwd;
     } else {
       this.prep = p;
+      this.checked = p.cwd;
+      this.defaultCwd = p.cwd;
       // The bridge's defaults for the options (name, folder, worktree): the agent's choice is never taken from them.
       const d = formFromPrepare(p, this.host.store.hireOptions);
       if (!this.changed.label) this.f.label = d.label;
@@ -293,12 +303,32 @@ export class HireReviewDialog {
     else if (!was) this.f.worktree = true;
   }
 
+  /** The folder the form stands for: what is typed, or the default when it is empty (null: not an absolute path, optionsBlocker says so). */
+  private effectiveCwd(): string | null {
+    const v = this.f.cwd.trim();
+    if (!v) return this.defaultCwd || null;
+    return v.startsWith('/') ? v : null;
+  }
+
+  /**
+   * The one way a prepare for a folder starts after the first: for the folder the form stands for now. The git and
+   * worktree state stays that of `checked`, and Hire waits (folderBlocker) until the answer for this folder replaces it;
+   * an answer for any other folder or revision is dropped. `again`: the same folder once more (origin fetched again).
+   */
+  private checkFolder(again = false): Promise<void> | null {
+    if (!this.prep) return null;
+    const cwd = this.effectiveCwd();
+    if (!cwd || (cwd === this.checked && !again)) return null;
+    this.setStatus(again ? 'Fetching origin again…' : 'Checking the folder…');
+    return this.prepare(cwd);
+  }
+
   private async refetch(): Promise<void> {
     if (this.state !== 'ready' || !this.prep || this.refetching) return;
     this.refetching = true;
-    this.setStatus('Fetching origin again…');
+    const check = this.checkFolder(true);
     this.render();
-    await this.prepare(this.prep.cwd);
+    await check;
     this.refetching = false;
     if (this.dialog.open) this.render();
   }
@@ -389,8 +419,8 @@ export class HireReviewDialog {
    */
   private folderBlocker(): string | null {
     if (this.checking) return 'Checking the folder…';
-    const cwd = this.f.cwd.trim();
-    if (this.prep && cwd.startsWith('/') && cwd !== this.prep.cwd) return 'The folder has not been checked yet: press Tab or click away from it.';
+    const cwd = this.effectiveCwd();
+    if (this.prep && cwd && cwd !== this.checked) return 'The folder has not been checked yet: press Tab or click away from it.';
     return null;
   }
 
@@ -645,11 +675,8 @@ export class HireReviewDialog {
     });
     // A new folder: check again whether it is a repo, and its base (never a hire).
     cwd.addEventListener('change', () => {
-      const v = cwd.value.trim();
-      if (v && v.startsWith('/') && v !== this.prep?.cwd) {
-        this.setStatus('Checking the folder…');
-        void this.prepare(v);
-      }
+      // Not a render: a button clicked right now (Fetch again) is still there; the answer renders.
+      if (this.checkFolder()) this.renderActions();
     });
     // Enter in a field is not a hire (there is no form): only the Hire button is.
     for (const el of [label, cwd]) el.addEventListener('keydown', (e) => e.key === 'Enter' && e.preventDefault());

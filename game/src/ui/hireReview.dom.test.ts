@@ -651,6 +651,61 @@ describe('HireReviewDialog', () => {
       expect(rv.summary()!.error).toBe(true);
       expect(hireBtn().disabled).toBe(true);
     });
+
+    it('L5: Fetch again after a folder edit checks the folder in the form, and the answer keeps it', async () => {
+      const fail = { ...git('/home/test'), fetched: false, fetch_error: 'offline' };
+      const { waiting, prepare } = slowFolders({ git: fail });
+      const { rv, prepares } = setup({ prepare });
+      rv.open('floor', FULL);
+      await tick();
+      toggle('where').click();
+      const cwd = q<HTMLInputElement>('#review-cwd')!;
+      type(cwd, '/repo-new');
+      blur(cwd);
+      q<HTMLButtonElement>('[data-key="refetch"]')!.click();
+      // Every prepare is for the folder in the form, never the one it replaced.
+      expect(prepares).toEqual(['', '/repo-new', '/repo-new']);
+      waiting.get('/repo-new')!({ ok: true, data: prep({ cwd: '/repo-new', git: git('/repo-new') }) } as CommandResult);
+      await tick();
+      const s = rv.summary()!;
+      expect(s.form.cwd).toBe('/repo-new');
+      expect(s.form.worktree).toBe(true);
+      expect(q<HTMLInputElement>('#review-cwd')!.value).toBe('/repo-new');
+      expect(hireBtn().disabled).toBe(false);
+    });
+
+    it('L6: clearing a checked custom folder keeps Hire off, with its worktree never sent, until the default is checked', async () => {
+      const { waiting, prepare } = slowFolders({ git: null });
+      const { rv, hires, prepares } = setup({ prepare });
+      rv.open('floor', FULL);
+      await tick();
+      toggle('where').click();
+      let cwd = q<HTMLInputElement>('#review-cwd')!;
+      type(cwd, '/repo-new');
+      blur(cwd);
+      waiting.get('/repo-new')!({ ok: true, data: prep({ cwd: '/repo-new', git: git('/repo-new') }) } as CommandResult);
+      await tick();
+      expect(rv.summary()!.form.worktree).toBe(true);
+      expect(hireBtn().disabled).toBe(false);
+      cwd = q<HTMLInputElement>('#review-cwd')!;
+      type(cwd, '');
+      expect(hireBtn().disabled).toBe(true);
+      blur(cwd);
+      expect(prepares).toEqual(['', '/repo-new', '/home/test']);
+      expect(hireBtn().disabled).toBe(true);
+      hireBtn().click();
+      await tick();
+      expect(hires).toHaveLength(0);
+      waiting.get('/home/test')!({ ok: true, data: prep({ cwd: '/home/test', git: null }) } as CommandResult);
+      await tick();
+      expect(q<HTMLInputElement>('#review-cwd')!.value).toBe('');
+      expect(hireBtn().disabled).toBe(false);
+      hireBtn().click();
+      await tick();
+      expect(hires).toHaveLength(1);
+      expect(hires[0]!.args).not.toHaveProperty('cwd');
+      expect(hires[0]!.args).not.toHaveProperty('worktree');
+    });
   });
 
   describe('sections that need the human start open', () => {
