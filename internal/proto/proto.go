@@ -482,6 +482,21 @@ const (
 	VerdictIncomplete      = "INCOMPLETE"
 )
 
+// Who a report's input_required is for.
+const (
+	InputForOrchestrator = "orchestrator"
+	InputForUser         = "user"
+)
+
+// InputResolved says who resolved a report's input_required, and how (#215).
+type InputResolved struct {
+	// By is who: "orchestrator" unless the sidecar says otherwise.
+	By   string `json:"by"`
+	Note string `json:"note,omitempty"`
+	// At is the sidecar's mtime, unix ms.
+	At int64 `json:"at"`
+}
+
 // RunReport is a freelancer's write-code report as the bridge read it.
 type RunReport struct {
 	State string `json:"state"`
@@ -491,8 +506,16 @@ type RunReport struct {
 	Verdict  string `json:"verdict,omitempty"`
 	Blockers *int   `json:"blockers,omitempty"`
 	Issues   *int   `json:"issues,omitempty"`
-	// InputRequired is what the worker needs to go on (≤ 500 bytes).
+	// InputRequired is what the worker needs to go on (≤ 8 KiB, #215).
 	InputRequired *string `json:"input_required,omitempty"`
+	// InputTruncated: the report's input_required was longer and was cut.
+	InputTruncated bool `json:"input_truncated,omitempty"`
+	// InputFor is who the request is for, when the report says
+	// (InputForOrchestrator, InputForUser; other values are ignored).
+	InputFor string `json:"input_for,omitempty"`
+	// InputResolved is set when the orchestrator resolved the request
+	// (a sidecar next to the report, #215): it no longer needs anyone.
+	InputResolved *InputResolved `json:"input_resolved,omitempty"`
 	// Summary is a coder's or researcher's summary (≤ 300 bytes).
 	Summary string `json:"summary,omitempty"`
 	// Error is why an invalid report is invalid.

@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
@@ -20,15 +22,45 @@ import (
 
 // Report limits.
 const (
-	MaxReportSize    = 256 << 10
-	MaxInputRequired = 500
+	MaxReportSize = 256 << 10
+	// MaxInputRequired is the most of a report's input_required the bridge
+	// keeps (#215: 500 bytes cut real requests mid-word); a longer one is
+	// cut UTF-8-safely and flagged input_truncated.
+	MaxInputRequired = 8 << 10
 	MaxSummary       = 300
+)
+
+// Resolution sidecar (#215): the orchestrator accepts a report's
+// input_required without resuming the freelancer by writing
+// <run>/<stem>.resolved.json next to <run>/<stem>.json.
+const (
+	// ResolvedSuffix replaces a report name's ".json" (or is appended to a
+	// name without it). A report name that ends in it has no sidecar.
+	ResolvedSuffix = ".resolved.json"
+	// MaxResolveSize is the biggest sidecar read; a larger one is ignored.
+	MaxResolveSize = 4 << 10
+	// MaxResolveNote and MaxResolveBy cut a sidecar's note and resolved_by.
+	MaxResolveNote = 300
+	MaxResolveBy   = 40
+	// ResolvedByDefault is who resolved it when the sidecar does not say.
+	ResolvedByDefault = "orchestrator"
 )
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`)
 
 // ValidName reports whether s may be a run id or a report file name.
 func ValidName(s string) bool { return nameRe.MatchString(s) }
+
+// ResolvedName is the sidecar file name of report name: `coder-r1.json` →
+// `coder-r1.resolved.json`. ok is false for a name that has none: one that
+// is a sidecar name itself, or whose sidecar name is no valid name.
+func ResolvedName(name string) (string, bool) {
+	if !ValidName(name) || strings.HasSuffix(name, ResolvedSuffix) {
+		return "", false
+	}
+	side := strings.TrimSuffix(name, ".json") + ResolvedSuffix
+	return side, ValidName(side)
+}
 
 // Initial is a report's state before its file was looked at: invalid for a
 // bad run id or report name, else pending.
@@ -61,46 +93,108 @@ func Stat(dir, run, name string) (st Stamp, ok bool, err error) {
 	return Stamp{Size: fi.Size(), ModTime: fi.ModTime().UnixNano()}, true, nil
 }
 
-// Read reads and parses the report of a worker of role (names already
-// valid). A report that does not exist is pending.
-func Read(dir, run, name, role string) proto.RunReport {
-	path := filepath.Join(dir, run, name)
+// StatResolved is Stat of a report's resolution sidecar; ok is false when
+// there is none (or the report has no sidecar name).
+func StatResolved(dir, run, name string) (st Stamp, ok bool, err error) {
+	side, has := ResolvedName(name)
+	if !has {
+		return Stamp{}, false, nil
+	}
+	return Stat(dir, run, side)
+}
+
+// readRegular reads a regular file of at most max bytes without following a
+// symlink or blocking on a FIFO. missing: it does not exist; else why is
+// "" or what is wrong with it; mod is its mtime (zero when unknown).
+func readRegular(path string, max int64) (data []byte, mod time.Time, missing bool, why string) {
 	fi, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return proto.RunReport{State: proto.ReportPending}
+		return nil, time.Time{}, true, ""
 	}
 	if err != nil {
-		return invalid(0, "unreadable")
+		return nil, time.Time{}, false, "unreadable"
 	}
-	at := fi.ModTime().UnixMilli()
+	mod = fi.ModTime()
 	if !fi.Mode().IsRegular() {
-		return invalid(at, "not a regular file")
+		return nil, mod, false, "not a regular file"
 	}
-	if fi.Size() > MaxReportSize {
-		return invalid(at, "report too large")
+	if fi.Size() > max {
+		return nil, mod, false, "too large"
 	}
 	// O_NOFOLLOW: no symlink swapped in since the Lstat; O_NONBLOCK: nor a
 	// FIFO that would block the open.
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return proto.RunReport{State: proto.ReportPending}
+			return nil, time.Time{}, true, ""
 		}
-		return invalid(at, "not a regular file")
+		return nil, mod, false, "not a regular file"
 	}
 	defer f.Close()
 	if fi, err = f.Stat(); err != nil || !fi.Mode().IsRegular() {
-		return invalid(at, "not a regular file")
+		return nil, mod, false, "not a regular file"
 	}
-	at = fi.ModTime().UnixMilli()
-	data, err := io.ReadAll(io.LimitReader(f, MaxReportSize+1))
+	mod = fi.ModTime()
+	data, err = io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {
-		return invalid(at, "unreadable")
+		return nil, mod, false, "unreadable"
 	}
-	if len(data) > MaxReportSize {
-		return invalid(at, "report too large")
+	if int64(len(data)) > max {
+		return nil, mod, false, "too large"
 	}
-	return Parse(data, role, at)
+	return data, mod, false, ""
+}
+
+// Read reads and parses the report of a worker of role (names already
+// valid), and, when it asks for input, whether its sidecar resolves it. A
+// report that does not exist is pending.
+func Read(dir, run, name, role string) proto.RunReport {
+	data, mod, missing, why := readRegular(filepath.Join(dir, run, name), MaxReportSize)
+	switch {
+	case missing:
+		return proto.RunReport{State: proto.ReportPending}
+	case why == "too large":
+		return invalid(mod.UnixMilli(), "report too large")
+	case why != "":
+		return invalid(mod.UnixMilli(), why)
+	}
+	r := Parse(data, role, mod.UnixMilli())
+	if r.State == proto.ReportReady && r.InputRequired != nil {
+		r.InputResolved = readResolved(dir, run, name, mod)
+	}
+	return r
+}
+
+// readResolved reads the sidecar of report name (whose file has mtime
+// reportMod): nil unless it is a valid sidecar at least as new as the
+// report, so a report rewritten after its resolution asks again.
+func readResolved(dir, run, name string, reportMod time.Time) *proto.InputResolved {
+	side, ok := ResolvedName(name)
+	if !ok {
+		return nil
+	}
+	data, mod, missing, why := readRegular(filepath.Join(dir, run, side), MaxResolveSize)
+	if missing || why != "" || mod.Before(reportMod) {
+		return nil
+	}
+	var obj struct {
+		By   *string `json:"resolved_by"`
+		Note *string `json:"note"`
+	}
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(data, &raw) != nil || raw == nil || json.Unmarshal(data, &obj) != nil {
+		return nil
+	}
+	res := &proto.InputResolved{By: ResolvedByDefault, At: mod.UnixMilli()}
+	if obj.By != nil {
+		if by := strings.TrimSpace(*obj.By); by != "" {
+			res.By = world.CutUTF8(by, MaxResolveBy)
+		}
+	}
+	if obj.Note != nil {
+		res.Note = world.CutUTF8(strings.TrimSpace(*obj.Note), MaxResolveNote)
+	}
+	return res
 }
 
 func invalid(at int64, why string) proto.RunReport {
@@ -122,8 +216,19 @@ func Parse(data []byte, role string, at int64) proto.RunReport {
 			return invalid(at, "input_required is not a string")
 		}
 		if s != "" {
-			s = world.CutUTF8(s, MaxInputRequired)
+			if cut := world.CutUTF8(s, MaxInputRequired); len(cut) < len(s) {
+				s, r.InputTruncated = cut, true
+			}
 			r.InputRequired = &s
+		}
+	}
+	if raw, ok := obj["input_for"]; ok && r.InputRequired != nil {
+		var f string
+		if json.Unmarshal(raw, &f) == nil {
+			switch f = strings.ToLower(strings.TrimSpace(f)); f {
+			case proto.InputForOrchestrator, proto.InputForUser:
+				r.InputFor = f
+			}
 		}
 	}
 	switch role {
