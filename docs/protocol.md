@@ -539,6 +539,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `packup.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | its state | `packup.update` (before the ack) |
 | `packup.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"text", "expect", "core"?, "score", "matched", "task"?, "want_task"?, "right", "error"?}], "right", "total", "latency_ms"}` | `packup.update` when it changes `tested` |
 | `packup.detect` | `{"id", "text"}` | `{"matched", "task"?, "removed"?: [{"start", "end"}], "score"}`; `matched` false: send `text` as written | — |
+| `hire.interpret` | `{"text", "pending"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?}`: a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
 | `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…]}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
 | `inbox.dismiss` | `{"id", "status_since"}` | `{"dismissed": bool}` (see [Inbox](#inbox)) | `inbox.dismissed` (before the ack) when the dismissal is new |
@@ -2898,6 +2899,74 @@ cancels the send. Prompts typed straight into herdr (the terminal) are not looke
 classifier), and to the LLM endpoint when the classifier says yes, before it is sent. Images are never sent. That is
 why it is opt-in on its own toggle, and the game's Settings say so above it.
 
+
+### Hire interpretation
+
+#211 (phase 2 of #209: dictated hiring). **`hire.interpret {text, pending?}`** reads one dictated sentence ("Hire a
+Claude Code agent on Haiku 5.5 with high effort. Task: fix the login bug.") with the [AI integration](#ai-integration)'s
+LLM and answers a **hire proposal for review**, or that the sentence is not a hire. It never hires: it sends no
+`worker.hire`, calls no herdr and keeps nothing on the bridge. A complete, valid proposal is only `ready_for_review`;
+the game's review dialog and your explicit confirmation are what hire (phases 3 and 4).
+
+```json
+{"t":"hire.interpret","req_id":"i1","args":{"text":"Hire a Claude Code agent on Haiku 5.5 to fix the login bug."}}
+{"t":"ack","req_id":"i1","data":{"text":"Hire a Claude Code agent on Haiku 5.5 to fix the login bug.","intent":"hire","hire":{"sources":["Hire a Claude Code agent on Haiku 5.5 to fix the login bug."],"harness":{"provenance":"dictated","value":"claude"},"model":{"provenance":"resolved","value":"claude-haiku-5-5"},"effort":{"provenance":"missing"},"task":{"provenance":"dictated","value":"fix the login bug.","span":{"source":0,"start":41,"end":59}},"questions":[{"field":"effort","text":"What effort level should this agent use?","efforts":["low","medium","high","xhigh","max"]}],"ready_for_review":false}}}
+{"t":"hire.interpret","req_id":"i2","args":{"text":"High effort, please.","pending":<the hire of i1>}}
+{"t":"ack","req_id":"i2","data":{"text":"High effort, please.","intent":"hire","hire":{"sources":["Hire a Claude Code agent on Haiku 5.5 to fix the login bug.","High effort, please."],"harness":{…},"model":{…},"effort":{"provenance":"dictated","value":"high"},"task":{…},"questions":[],"ready_for_review":true}}}
+```
+
+**One call, then rules.** The LLM gets the research's prompt (`internal/hireintent/prompt.txt`, from
+`docs/research/dictation-hiring-bench`) and `{"command": text, "pending_hire"?: [the pending proposal's sources],
+"hire_options": <the bridge's current catalog>}`, in JSON mode with a 1,400-token budget, no partial answer and the
+provider's default reasoning; the AI integration's timeout, retry and concurrency limit apply, and the bridge bounds
+the whole at 35 s. Its answer must be exactly `{intent, harness, model, effort, task, multiple, selection_unclear}`
+(`intent` `hire` | `unsupported` | `unclear`, `harness` `claude` | `codex` | null, booleans for the last two, short
+strings or null for the others); anything else is the error `bad_answer`. Then, deterministically:
+
+- **`intent`** `unsupported` (a clear request for another game action, one to an existing worker) and `unclear`
+  (no clear request: a bare task, a mention, a quote, a negation, a hypothetical, history, a question about hiring,
+  nothing said) carry nothing else. More than one action or new worker is `unsupported` with `reason: "multiple"`:
+  never a part of it. Only hiring is understood.
+- **Fields.** `harness`, `model` and `effort` each have a `provenance`: `dictated` (said, and its `value` is the
+  word said), `resolved` (`value` taken from the catalog for what was said: a readable label such as "Haiku 5.5",
+  "extra high", the harness of an unambiguous model), `missing` (not said), `invalid` (said but not valid: unknown,
+  of the other harness, contradictory such as "Claude on GPT-5.5 Haiku", or an effort the model does not support;
+  `said` keeps the words, there is no `value`). `value` is always an exact launch id of the **current** catalog;
+  nothing is ever defaulted (not from the floor's settings, the last hire or `hire.prepare`'s choice) or substituted.
+  A model is never chosen from a harness. An effort counts only when its word is said outside the task ("Task: make
+  the high effort setting visible" has no effort); before the model is valid it is only checked against the
+  catalog's levels.
+- **`task`** is `dictated` with its `span` — `sources[source]` from `start` to `end` in **UTF-16 code units**
+  (packup's units) — or `missing`. It is always an exact part of what was said, punctuation and later sentences
+  included; commands inside it are its content. A task the LLM read that is not in the sentences is the error
+  `bad_span`. Said twice, the span is in the latest sentence holding it, at its last occurrence there.
+- **`questions`**, in order, never null: `model` (missing or invalid: "Which model should this agent use?" / "Which
+  model did you mean by “…”?", with `choices` `[{harness, model, label?}]`: the harness's models, every model without
+  one), `effort` (missing: exactly "What effort level should this agent use?"; unsupported: a correction; `efforts`
+  are the selected model's levels, none before a model is valid), `task` ("What should this agent work on?"), and
+  `selection` when the LLM found the selection unclear though every value validated. **`ready_for_review`** is true
+  only with every field valid and no question.
+
+**Follow-ups.** A reply ("high", "High effort, please.", "Use Sonnet 5.5 instead.") is sent with the pending
+proposal as `pending`, exactly as it came; its `sources` grow by the reply (at most 6). The pending proposal is checked
+in full first (its sources, its task's span against them, its fields' shape; else the error `bad_pending`, no call)
+and its values are resolved again against the **current** catalog: a model that left it is `invalid` again. The reply
+fills or changes only what it targets: a field the LLM leaves out keeps the pending one, and the task changes only to a
+part of the reply. A model change keeps a still-supported effort; an effort it does not support is `missing` again.
+A cancellation is `unclear` (drop the pending proposal), and a reply without a pending proposal ("high") is `unclear`:
+it never makes a proposal ready.
+
+**Errors.** The command itself fails only on its args: unknown fields (a client catalog is refused) or a `text` over
+8 KiB, not UTF-8 or with NUL: `bad_request`. Everything else is an ack. An **operational error** is `error {code,
+message}` with `text` kept and no `intent` nor `hire`: `not_ready` (no LLM ready, or no AI integration: no call),
+`timeout`, `provider_failed`, `truncated`, `empty_answer`, `rate_limited`, `auth_failed`, `unreachable`,
+`bad_response` (the AI integration's kinds), `bad_answer`, `bad_span`, `bad_pending`. The message is fixed text, never
+the provider's.
+
+**Privacy.** Every sentence and the pending proposal's sources go to the LLM endpoint, with the hire catalog. The
+bridge logs only the intent, whether it is ready, how many questions and the error code; the audit keeps the text's
+length and the pending sources' count, never a sentence.
+
 ### Activity
 
 #98. The desk monitor says what each agent is doing right now, in one word, with a short detail and, when the agent
@@ -3442,7 +3511,7 @@ dismissed_at)`.
 | code | meaning |
 |---|---|
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
-| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `truncated`, `empty_answer`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` (#174: also a reasoning effort or budget the model or the range refuses; `digest.retry` also `unknown_worker`) and, from its test's calls, the `ai.*` ones (`truncated`, `empty_answer`) |
+| `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `truncated`, `empty_answer`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` (#174: also a reasoning effort or budget the model or the range refuses; `digest.retry` also `unknown_worker`) and, from its test's calls, the `ai.*` ones (`truncated`, `empty_answer`); #211 `hire.interpret` never fails with them: they are its result's `error` (see [Hire interpretation](#hire-interpretation)) |
 | `bad_url`, `key_required`, `not_configured`, `unauthorized`, `forbidden` | #184 `kaneo.*` and a floor's Kaneo link (see [Kaneo](#kaneo)); `unauthorized` (the provider refused the key, HTTP 401, maybe its quota) and `forbidden` (a permission problem, HTTP 403) also from the board commands of a provider that tells them apart; `unreachable`, `timeout`, `test_required`, `rate_limited` and `provider_failed` are used there too |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |

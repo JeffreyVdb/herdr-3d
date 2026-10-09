@@ -1,20 +1,12 @@
 {
- "source": "docs/research/dictation-hiring-bench: samples.json + holdout.json, each case's recorded live answer (parsed) from results-refined.json / results-holdout.json; catalog: the live catalog recorded with them",
+ "source": "docs/research/dictation-hiring-bench: samples.json + holdout.json, each case's recorded live answer (parsed) from results-refined.json / results-holdout.json. Adapted for the user's selected models: the catalog is the recorded live one trimmed to claude-sonnet-5-5, claude-opus-5-5, claude-fable-5-1, claude-haiku-5-5 and gpt-6.1-sol (their efforts, extra efforts and labels as recorded), and the cases that named GPT-6-Sol (hire-codex, delegate, followup-change, spawn-worker-phrase) name GPT-6.1-Sol, with gpt-6.1-sol in their replayed answers, so their labels hold. The live dry-run replays the original texts.",
  "catalog": {
   "claude": {
    "models": [
     "claude-sonnet-5-5",
     "claude-opus-5-5",
     "claude-fable-5-1",
-    "claude-haiku-5-5",
-    "claude-haiku-4-5-20251001",
-    "claude-sonnet-5",
-    "claude-opus-5",
-    "claude-fable-5",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-opus-4-6",
-    "claude-sonnet-4-6"
+    "claude-haiku-5-5"
    ],
    "efforts": [
     "low",
@@ -22,7 +14,11 @@
     "high"
    ],
    "extra_efforts": {
-    "claude-fable-5": [
+    "claude-sonnet-5-5": [
+     "xhigh",
+     "max"
+    ],
+    "claude-opus-5-5": [
      "xhigh",
      "max"
     ],
@@ -33,62 +29,18 @@
     "claude-haiku-5-5": [
      "xhigh",
      "max"
-    ],
-    "claude-opus-4-6": [
-     "max"
-    ],
-    "claude-opus-4-7": [
-     "xhigh",
-     "max"
-    ],
-    "claude-opus-4-8": [
-     "xhigh",
-     "max"
-    ],
-    "claude-opus-5": [
-     "xhigh",
-     "max"
-    ],
-    "claude-opus-5-5": [
-     "xhigh",
-     "max"
-    ],
-    "claude-sonnet-4-6": [
-     "max"
-    ],
-    "claude-sonnet-5": [
-     "xhigh",
-     "max"
-    ],
-    "claude-sonnet-5-5": [
-     "xhigh",
-     "max"
     ]
    },
    "model_labels": {
-    "claude-fable-5": "Fable 5",
-    "claude-fable-5-1": "Fable 5.1",
-    "claude-haiku-4-5-20251001": "Haiku 4.5",
-    "claude-haiku-5-5": "Haiku 5.5",
-    "claude-opus-4-6": "Opus 4.6",
-    "claude-opus-4-7": "Opus 4.7",
-    "claude-opus-4-8": "Opus 4.8",
-    "claude-opus-5": "Opus 5",
+    "claude-sonnet-5-5": "Sonnet 5.5",
     "claude-opus-5-5": "Opus 5.5",
-    "claude-sonnet-4-6": "Sonnet 4.6",
-    "claude-sonnet-5": "Sonnet 5",
-    "claude-sonnet-5-5": "Sonnet 5.5"
+    "claude-fable-5-1": "Fable 5.1",
+    "claude-haiku-5-5": "Haiku 5.5"
    }
   },
   "codex": {
    "models": [
-    "gpt-6.1-sol",
-    "gpt-6-astra",
-    "gpt-6-sol",
-    "gpt-6-luna",
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna"
+    "gpt-6.1-sol"
    ],
    "efforts": [
     "low",
@@ -98,29 +50,11 @@
     "max"
    ],
    "extra_efforts": {
-    "gpt-5.6-sol": [
-     "ultra"
-    ],
-    "gpt-5.6-terra": [
-     "ultra"
-    ],
-    "gpt-6-astra": [
-     "ultra"
-    ],
-    "gpt-6-sol": [
-     "ultra"
-    ],
     "gpt-6.1-sol": [
      "ultra"
     ]
    },
    "model_labels": {
-    "gpt-5.6-luna": "GPT-5.6-Luna",
-    "gpt-5.6-sol": "GPT-5.6-Sol",
-    "gpt-5.6-terra": "GPT-5.6-Terra",
-    "gpt-6-astra": "GPT-6-Astra",
-    "gpt-6-luna": "GPT-6-Luna",
-    "gpt-6-sol": "GPT-6-Sol",
     "gpt-6.1-sol": "GPT-6.1-Sol"
    }
   }
@@ -146,14 +80,14 @@
   {
    "id": "hire-codex",
    "set": "revised",
-   "text": "Spawn a Codex worker using GPT-6-Sol at medium effort to write unit tests.",
+   "text": "Spawn a Codex worker using GPT-6.1-Sol at medium effort to write unit tests.",
    "intent": "hire",
    "decision": "ready",
    "task": "write unit tests.",
    "answer": {
     "intent": "hire",
     "harness": "codex",
-    "model": "gpt-6-sol",
+    "model": "gpt-6.1-sol",
     "effort": "medium",
     "task": "write unit tests.",
     "multiple": false,
@@ -180,14 +114,14 @@
   {
    "id": "delegate",
    "set": "revised",
-   "text": "Delegate to a new Codex agent on GPT-6-Sol, high effort. Task: audit retries.",
+   "text": "Delegate to a new Codex agent on GPT-6.1-Sol, high effort. Task: audit retries.",
    "intent": "hire",
    "decision": "ready",
    "task": "audit retries.",
    "answer": {
     "intent": "hire",
     "harness": "codex",
-    "model": "gpt-6-sol",
+    "model": "gpt-6.1-sol",
     "effort": "high",
     "task": "audit retries.",
     "multiple": false,
@@ -270,7 +204,7 @@
    "set": "revised",
    "text": "Actually make the effort high.",
    "history": [
-    "Hire a Codex worker on GPT-6-Sol at low effort to audit retries."
+    "Hire a Codex worker on GPT-6.1-Sol at low effort to audit retries."
    ],
    "intent": "hire",
    "decision": "ready",
@@ -278,7 +212,7 @@
    "answer": {
     "intent": "hire",
     "harness": "codex",
-    "model": "gpt-6-sol",
+    "model": "gpt-6.1-sol",
     "effort": "high",
     "task": "audit retries.",
     "multiple": false,
@@ -767,14 +701,14 @@
   {
    "id": "spawn-worker-phrase",
    "set": "fresh",
-   "text": "Spawn a worker using Codex on GPT-6-Sol with ultra effort. Task: investigate queue deadlocks.",
+   "text": "Spawn a worker using Codex on GPT-6.1-Sol with ultra effort. Task: investigate queue deadlocks.",
    "intent": "hire",
    "decision": "ready",
    "task": "investigate queue deadlocks.",
    "answer": {
     "intent": "hire",
     "harness": "codex",
-    "model": "gpt-6-sol",
+    "model": "gpt-6.1-sol",
     "effort": "ultra",
     "task": "investigate queue deadlocks.",
     "multiple": false,

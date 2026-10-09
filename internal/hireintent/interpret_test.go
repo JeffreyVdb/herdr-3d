@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,21 +14,32 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 )
 
-// A small catalog of its own: nothing here is the live one.
+// The user's selected models, as the live catalog lists them (the bench
+// fixture's catalog): four Claude models and one Codex model.
 func testCatalog() hireintent.Catalog {
+	extra := []string{"xhigh", "max"}
 	return hireintent.Catalog{
 		Claude: hireintent.HarnessCatalog{
-			Models:       []string{"claude-opus-5-5", "claude-haiku-5-5"},
-			Efforts:      []string{"low", "medium", "high"},
-			ExtraEfforts: map[string][]string{"claude-opus-5-5": {"xhigh", "max"}, "claude-haiku-5-5": {"xhigh", "max"}},
-			ModelLabels:  map[string]string{"claude-opus-5-5": "Opus 5.5", "claude-haiku-5-5": "Haiku 5.5"},
+			Models:  []string{"claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1", "claude-haiku-5-5"},
+			Efforts: []string{"low", "medium", "high"},
+			ExtraEfforts: map[string][]string{"claude-sonnet-5-5": extra, "claude-opus-5-5": extra, "claude-fable-5-1": extra,
+				"claude-haiku-5-5": extra},
+			ModelLabels: map[string]string{"claude-sonnet-5-5": "Sonnet 5.5", "claude-opus-5-5": "Opus 5.5",
+				"claude-fable-5-1": "Fable 5.1", "claude-haiku-5-5": "Haiku 5.5"},
 		},
 		Codex: hireintent.HarnessCatalog{
-			Models:       []string{"gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"},
+			Models:       []string{"gpt-6.1-sol"},
 			Efforts:      []string{"low", "medium", "high", "xhigh", "max"},
-			ExtraEfforts: map[string][]string{"gpt-6-sol": {"ultra"}, "gpt-6.1-sol": {"ultra"}},
-			ModelLabels:  map[string]string{"gpt-6-sol": "GPT-6-Sol", "gpt-6.1-sol": "GPT-6.1-Sol", "gpt-6-luna": "GPT-6-Luna"},
+			ExtraEfforts: map[string][]string{"gpt-6.1-sol": {"ultra"}},
+			ModelLabels:  map[string]string{"gpt-6.1-sol": "GPT-6.1-Sol"},
 		},
+	}
+}
+
+// The bench's catalog is testCatalog.
+func TestBenchCatalogIsTheSelectedModels(t *testing.T) {
+	if got := loadBench(t).Catalog; !reflect.DeepEqual(got, testCatalog()) {
+		t.Fatalf("bench catalog %+v", got)
 	}
 }
 
@@ -83,8 +95,8 @@ func TestCanonicalPhrasesAreHires(t *testing.T) {
 			if q := in.Questions[1]; q.Text != "What effort level should this agent use?" || q.Efforts != nil {
 				t.Fatalf("effort question %+v: no model, no levels yet", q)
 			}
-			if n := len(in.Questions[0].Choices); n != 19 {
-				t.Fatalf("model choices %d, want every model of the catalog (19)", n)
+			if n := len(in.Questions[0].Choices); n != 5 {
+				t.Fatalf("model choices %d, want every model of the catalog (5)", n)
 			}
 		})
 	}
@@ -101,16 +113,16 @@ func TestAliasesResolve(t *testing.T) {
 	}{
 		{"label", "Hire a Claude Code agent on Haiku 5.5 with high effort. Task: fix it.",
 			ans("hire", "claude", "Haiku 5.5", "high", "fix it."), "h=dictated:claude m=resolved:claude-haiku-5-5 e=dictated:high t=dictated"},
-		{"label of codex", "Spawn a Codex worker using GPT-6-Sol at medium effort to write tests.",
-			ans("hire", "codex", "GPT-6-Sol", "medium", "write tests."), "h=dictated:codex m=dictated:gpt-6-sol e=dictated:medium t=dictated"},
+		{"label of codex", "Spawn a Codex worker using GPT-6.1-Sol at medium effort to write tests.",
+			ans("hire", "codex", "GPT-6.1-Sol", "medium", "write tests."), "h=dictated:codex m=dictated:gpt-6.1-sol e=dictated:medium t=dictated"},
 		{"id in another case", "Hire a codex agent on GPT-6.1-SOL, low effort, to fix it.",
 			ans("hire", "codex", "GPT-6.1-SOL", "low", "fix it."), "h=dictated:codex m=dictated:gpt-6.1-sol e=dictated:low t=dictated"},
 		{"harness from the model", "Hire an agent on Opus 5.5 with max effort to fix it.",
 			ans("hire", "", "claude-opus-5-5", "max", "fix it."), "h=resolved:claude m=resolved:claude-opus-5-5 e=dictated:max t=dictated"},
 		{"maximum", "Hire an agent on Opus 5.5 with maximum effort to fix it.",
 			ans("hire", "", "claude-opus-5-5", "max", "fix it."), "h=resolved:claude m=resolved:claude-opus-5-5 e=resolved:max t=dictated"},
-		{"extra high", "Hire an agent on GPT-6-Luna at extra high effort to fix it.",
-			ans("hire", "codex", "gpt-6-luna", "xhigh", "fix it."), "h=resolved:codex m=dictated:gpt-6-luna e=resolved:xhigh t=dictated"},
+		{"extra high", "Hire an agent on Fable 5.1 at extra high effort to fix it.",
+			ans("hire", "", "Fable 5.1", "xhigh", "fix it."), "h=resolved:claude m=resolved:claude-fable-5-1 e=resolved:xhigh t=dictated"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -125,7 +137,7 @@ func TestAliasesResolve(t *testing.T) {
 	if in.Model.Said != "Haiku 5.5" {
 		t.Fatalf("said %q", in.Model.Said)
 	}
-	in = mustHire(t, interpret(t, "Hire a codex agent on gpt-6-sol, high effort, to fix it.", nil, cat, ans("hire", "codex", "gpt-6-sol", "high", "fix it.")))
+	in = mustHire(t, interpret(t, "Hire a codex agent on gpt-6.1-sol, high effort, to fix it.", nil, cat, ans("hire", "codex", "gpt-6.1-sol", "high", "fix it.")))
 	if in.Model.Said != "" || in.Model.Provenance != hireintent.Dictated {
 		t.Fatalf("model %+v", in.Model)
 	}
@@ -143,11 +155,11 @@ func TestContradictionsAsk(t *testing.T) {
 		choices    int
 	}{
 		{"claude on GPT-5.5 Haiku", "Hire an agent running Claude on GPT-5.5 Haiku with high effort. Task: fix the login bug.",
-			ans("hire", "claude", "GPT-5.5 Haiku", "high", "fix the login bug."), "GPT-5.5 Haiku", 2},
-		{"claude on a codex model", "Hire a Claude Code agent on GPT-6-Sol with high effort. Task: fix it.",
-			ans("hire", "claude", "gpt-6-sol", "high", "fix it."), "gpt-6-sol", 2},
+			ans("hire", "claude", "GPT-5.5 Haiku", "high", "fix the login bug."), "GPT-5.5 Haiku", 4},
+		{"claude on a codex model", "Hire a Claude Code agent on GPT-6.1-Sol with high effort. Task: fix it.",
+			ans("hire", "claude", "gpt-6.1-sol", "high", "fix it."), "gpt-6.1-sol", 4},
 		{"codex on a claude model", "Hire a Codex agent on Haiku 5.5 with high effort. Task: fix it.",
-			ans("hire", "codex", "claude-haiku-5-5", "high", "fix it."), "claude-haiku-5-5", 3},
+			ans("hire", "codex", "claude-haiku-5-5", "high", "fix it."), "claude-haiku-5-5", 1},
 		{"unknown", "Hire an agent on Dragon 99 with high effort. Task: fix it.",
 			ans("hire", "", "Dragon 99", "high", "fix it."), "Dragon 99", 5},
 	}
@@ -166,6 +178,13 @@ func TestContradictionsAsk(t *testing.T) {
 				t.Fatalf("effort %+v", in.Effort)
 			}
 		})
+	}
+	// A bare family name is not a model: four Claude models share it.
+	for _, family := range []string{"Opus", "Sonnet", "Claude", "GPT"} {
+		in := mustHire(t, interpret(t, "Hire an agent on "+family+" with high effort. Task: fix it.", nil, cat, ans("hire", "", family, "high", "fix it.")))
+		if in.Model.Provenance != hireintent.Invalid || in.Model.Said != family || in.Harness.Provenance != hireintent.Missing || len(in.Questions[0].Choices) != 5 {
+			t.Fatalf("%s: %s %+v", family, fields(in), in.Questions[0])
+		}
 	}
 	// The parser's selection_unclear asks even when every value validates.
 	a := ans("hire", "claude", "claude-haiku-5-5", "high", "fix it.")
@@ -338,20 +357,20 @@ func TestInjection(t *testing.T) {
 // it.
 func TestTaskSpans(t *testing.T) {
 	cat := testCatalog()
-	text := "😀 Hire a Codex agent on GPT-6-Sol at high effort. Task: fix “é” bug. Then write tests."
+	text := "😀 Hire a Codex agent on GPT-6.1-Sol at high effort. Task: fix “é” bug. Then write tests."
 	task := "fix “é” bug. Then write tests."
-	in := mustHire(t, interpret(t, text, nil, cat, ans("hire", "codex", "gpt-6-sol", "high", task)))
+	in := mustHire(t, interpret(t, text, nil, cat, ans("hire", "codex", "gpt-6.1-sol", "high", task)))
 	if sp := in.Task.Span; sp.Source != 0 || spanText(t, in.Sources, sp) != task || sp.End != len(utf16Of(text)) {
 		t.Fatalf("span %+v", sp)
 	}
-	text = "Hire a Codex agent on GPT-6-Sol at high effort to fix it. Task: fix it."
-	in = mustHire(t, interpret(t, text, nil, cat, ans("hire", "codex", "gpt-6-sol", "high", "fix it.")))
+	text = "Hire a Codex agent on GPT-6.1-Sol at high effort to fix it. Task: fix it."
+	in = mustHire(t, interpret(t, text, nil, cat, ans("hire", "codex", "gpt-6.1-sol", "high", "fix it.")))
 	if sp := in.Task.Span; sp.Start != strings.LastIndex(text, "fix it.") || sp.End != len(text) {
 		t.Fatalf("span %+v, want the last occurrence", sp)
 	}
 	// Not a part of the dictation, even by a character: an error.
 	for _, bad := range []string{"fix it", "Fix it.", "fix  it."} {
-		r := interpret(t, "Hire a Codex agent on GPT-6-Sol at high effort. Task: fix it!", nil, cat, ans("hire", "codex", "gpt-6-sol", "high", bad))
+		r := interpret(t, "Hire a Codex agent on GPT-6.1-Sol at high effort. Task: fix it!", nil, cat, ans("hire", "codex", "gpt-6.1-sol", "high", bad))
 		if bad == "fix it" {
 			if r.Hire == nil || r.Hire.Task.Value != "fix it" {
 				t.Fatalf("a part of the dictation is a task: %+v", r)
@@ -367,7 +386,7 @@ func TestTaskSpans(t *testing.T) {
 // The LLM's failures are operational errors: the text kept, no proposal.
 func TestProviderFailures(t *testing.T) {
 	cat := testCatalog()
-	text := "Hire a Codex agent on GPT-6-Sol at high effort to fix it."
+	text := "Hire a Codex agent on GPT-6.1-Sol at high effort to fix it."
 	for name, c := range map[string]struct {
 		err  error
 		code string
@@ -478,32 +497,32 @@ func TestFollowUp(t *testing.T) {
 		}
 	})
 	t.Run("a new task in the reply", func(t *testing.T) {
-		p := roundTrip(t, pendingOf(t, "Hire a Codex agent on GPT-6-Sol at high effort.", cat, ans("hire", "codex", "gpt-6-sol", "high", "")))
+		p := roundTrip(t, pendingOf(t, "Hire a Codex agent on GPT-6.1-Sol at high effort.", cat, ans("hire", "codex", "gpt-6.1-sol", "high", "")))
 		reply := "The task is to fix the flaky test. Then report back."
-		in := mustHire(t, interpret(t, reply, p, cat, ans("hire", "codex", "gpt-6-sol", "high", "fix the flaky test. Then report back.")))
+		in := mustHire(t, interpret(t, reply, p, cat, ans("hire", "codex", "gpt-6.1-sol", "high", "fix the flaky test. Then report back.")))
 		if !in.ReadyForReview || in.Task.Span.Source != 1 || spanText(t, in.Sources, in.Task.Span) != "fix the flaky test. Then report back." {
 			t.Fatalf("%+v", in.Task)
 		}
 	})
 	t.Run("changes the effort", func(t *testing.T) {
-		p := roundTrip(t, pendingOf(t, "Hire a Codex worker on GPT-6-Sol at low effort to audit retries.", cat, ans("hire", "codex", "gpt-6-sol", "low", "audit retries.")))
-		in := mustHire(t, interpret(t, "Actually make the effort high.", p, cat, ans("hire", "codex", "gpt-6-sol", "high", "audit retries.")))
+		p := roundTrip(t, pendingOf(t, "Hire a Codex worker on GPT-6.1-Sol at low effort to audit retries.", cat, ans("hire", "codex", "gpt-6.1-sol", "low", "audit retries.")))
+		in := mustHire(t, interpret(t, "Actually make the effort high.", p, cat, ans("hire", "codex", "gpt-6.1-sol", "high", "audit retries.")))
 		if in.Effort.Value != "high" || in.Task != p.Task || !in.ReadyForReview {
 			t.Fatalf("%s", fields(in))
 		}
 	})
 	t.Run("a model change keeps a supported effort", func(t *testing.T) {
-		p := roundTrip(t, pendingOf(t, "Hire a Codex worker on GPT-6-Sol at high effort to audit retries.", cat, ans("hire", "codex", "gpt-6-sol", "high", "audit retries.")))
-		in := mustHire(t, interpret(t, "Use GPT-6-Luna instead.", p, cat, ans("hire", "codex", "gpt-6-luna", "", "")))
-		if fields(in) != "h=dictated:codex m=dictated:gpt-6-luna e=dictated:high t=dictated" || !in.ReadyForReview {
+		p := roundTrip(t, pendingOf(t, "Hire a Claude Code agent on Haiku 5.5 at high effort to audit retries.", cat, ans("hire", "claude", "claude-haiku-5-5", "high", "audit retries.")))
+		in := mustHire(t, interpret(t, "Use Sonnet 5.5 instead.", p, cat, ans("hire", "", "Sonnet 5.5", "", "")))
+		if fields(in) != "h=dictated:claude m=resolved:claude-sonnet-5-5 e=dictated:high t=dictated" || !in.ReadyForReview {
 			t.Fatalf("%s", fields(in))
 		}
 	})
 	t.Run("a model change drops an effort it does not support", func(t *testing.T) {
-		p := roundTrip(t, pendingOf(t, "Hire a Codex worker on GPT-6-Sol at ultra effort to audit retries.", cat, ans("hire", "codex", "gpt-6-sol", "ultra", "audit retries.")))
+		p := roundTrip(t, pendingOf(t, "Hire a Codex worker on GPT-6.1-Sol at ultra effort to audit retries.", cat, ans("hire", "codex", "gpt-6.1-sol", "ultra", "audit retries.")))
 		// The parser repeats the pending effort with the new model.
-		in := mustHire(t, interpret(t, "Use GPT-6-Luna instead.", p, cat, ans("hire", "codex", "gpt-6-luna", "ultra", "audit retries.")))
-		if fields(in) != "h=dictated:codex m=dictated:gpt-6-luna e=missing t=dictated" || in.ReadyForReview {
+		in := mustHire(t, interpret(t, "Use Claude Code on Opus 5.5 instead.", p, cat, ans("hire", "claude", "claude-opus-5-5", "ultra", "audit retries.")))
+		if fields(in) != "h=dictated:claude m=resolved:claude-opus-5-5 e=missing t=dictated" || in.ReadyForReview {
 			t.Fatalf("%s", fields(in))
 		}
 		want := hireintent.Question{Field: "effort", Text: hireintent.EffortQuestion, Efforts: []string{"low", "medium", "high", "xhigh", "max"}}
@@ -553,24 +572,23 @@ func TestFollowUp(t *testing.T) {
 // that left it is asked about again, an effort it no longer has too.
 func TestCatalogChangesBetweenCalls(t *testing.T) {
 	cat := testCatalog()
-	pending := roundTrip(t, pendingOf(t, "Hire a Codex worker on GPT-6-Sol to audit retries.", cat, ans("hire", "codex", "gpt-6-sol", "", "audit retries.")))
-	if pending.Model.Value != "gpt-6-sol" {
+	pending := roundTrip(t, pendingOf(t, "Hire a Claude Code agent on Opus 5.5 to audit retries.", cat, ans("hire", "claude", "claude-opus-5-5", "", "audit retries.")))
+	if pending.Model.Value != "claude-opus-5-5" {
 		t.Fatalf("pending %s", fields(pending))
 	}
 	gone := testCatalog()
-	gone.Codex.Models = []string{"gpt-6.1-sol", "gpt-6-luna"}
-	delete(gone.Codex.ExtraEfforts, "gpt-6-sol")
+	gone.Claude.Models = slices.DeleteFunc(slices.Clone(gone.Claude.Models), func(m string) bool { return m == "claude-opus-5-5" })
 	in := mustHire(t, interpret(t, "high", pending, gone, ans("hire", "", "", "high", "")))
-	if in.Model.Provenance != hireintent.Invalid || in.Model.Said != "gpt-6-sol" || in.ReadyForReview || in.Questions[0].Field != "model" || len(in.Questions[0].Choices) != 2 {
+	if in.Model.Provenance != hireintent.Invalid || in.Model.Said != "claude-opus-5-5" || in.ReadyForReview || in.Questions[0].Field != "model" || len(in.Questions[0].Choices) != 3 {
 		t.Fatalf("%s %+v", fields(in), in.Questions)
 	}
 	// Back in the catalog: valid again.
 	in = mustHire(t, interpret(t, "high", roundTrip(t, in), cat, ans("hire", "", "", "high", "")))
-	if !in.ReadyForReview || in.Model.Value != "gpt-6-sol" {
+	if !in.ReadyForReview || in.Model.Value != "claude-opus-5-5" {
 		t.Fatalf("%s", fields(in))
 	}
 	// An effort the model lost.
-	p := roundTrip(t, pendingOf(t, "Hire a Codex worker on GPT-6-Sol at ultra effort to audit retries.", cat, ans("hire", "codex", "gpt-6-sol", "ultra", "audit retries.")))
+	p := roundTrip(t, pendingOf(t, "Hire a Codex worker on GPT-6.1-Sol at ultra effort to audit retries.", cat, ans("hire", "codex", "gpt-6.1-sol", "ultra", "audit retries.")))
 	noUltra := testCatalog()
 	noUltra.Codex.ExtraEfforts = nil
 	in = mustHire(t, interpret(t, "Use it.", p, noUltra, ans("hire", "", "", "", "")))
@@ -582,7 +600,7 @@ func TestCatalogChangesBetweenCalls(t *testing.T) {
 // A pending proposal is the client's: checked in full before any call.
 func TestBadPending(t *testing.T) {
 	cat := testCatalog()
-	good := pendingOf(t, "Hire a Codex worker on GPT-6-Sol at low effort to audit retries.", cat, ans("hire", "codex", "gpt-6-sol", "low", "audit retries."))
+	good := pendingOf(t, "Hire a Codex worker on GPT-6.1-Sol at low effort to audit retries.", cat, ans("hire", "codex", "gpt-6.1-sol", "low", "audit retries."))
 	for name, spoil := range map[string]func(*hireintent.Interpretation){
 		"no sources":          func(p *hireintent.Interpretation) { p.Sources = nil },
 		"too many sources":    func(p *hireintent.Interpretation) { p.Sources = slices.Repeat(p.Sources, hireintent.MaxSources) },
@@ -617,10 +635,11 @@ func TestCheck(t *testing.T) {
 		h, m, e string
 		ok      bool
 	}{
-		{"codex", "gpt-6-sol", "ultra", true},
-		{"codex", "gpt-6-luna", "ultra", false},
+		{"codex", "gpt-6.1-sol", "ultra", true},
+		{"claude", "claude-haiku-5-5", "ultra", false},
+		{"codex", "gpt-6.1-sol", "max", true},
 		{"claude", "claude-haiku-5-5", "max", true},
-		{"claude", "gpt-6-sol", "high", false},
+		{"claude", "gpt-6.1-sol", "high", false},
 		{"gemini", "x", "high", false},
 	} {
 		if err := cat.Check(c.h, c.m, c.e); (err == nil) != c.ok {

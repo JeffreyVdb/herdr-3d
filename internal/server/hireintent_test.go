@@ -27,8 +27,8 @@ func (r *hiRoles) LLM() ai.LLM            { return r.llm }
 var hiCatalog = proto.HireOptions{
 	Claude: proto.HarnessOptions{Models: []string{"claude-haiku-5-5"}, Efforts: []string{"low", "medium", "high"},
 		ExtraEfforts: map[string][]string{"claude-haiku-5-5": {"xhigh", "max"}}, ModelLabels: map[string]string{"claude-haiku-5-5": "Haiku 5.5"}},
-	Codex: proto.HarnessOptions{Models: []string{"gpt-6-sol"}, Efforts: []string{"low", "medium", "high"},
-		ExtraEfforts: map[string][]string{"gpt-6-sol": {"ultra"}}},
+	Codex: proto.HarnessOptions{Models: []string{"gpt-6.1-sol"}, Efforts: []string{"low", "medium", "high"},
+		ExtraEfforts: map[string][]string{"gpt-6.1-sol": {"ultra"}}},
 }
 
 const hiText = "Hire a Claude Code agent on Haiku 5.5 to fix the login bug."
@@ -84,7 +84,7 @@ func TestHireInterpretNeverHires(t *testing.T) {
 		HireOptions proto.HireOptions `json:"hire_options"`
 	}
 	_ = json.Unmarshal([]byte(llm.Calls()[0].Messages[1].Content), &payload)
-	if strings.Join(payload.HireOptions.Claude.Models, ",") != "claude-haiku-5-5" || payload.HireOptions.Codex.ExtraEfforts["gpt-6-sol"][0] != "ultra" {
+	if strings.Join(payload.HireOptions.Claude.Models, ",") != "claude-haiku-5-5" || payload.HireOptions.Codex.ExtraEfforts["gpt-6.1-sol"][0] != "ultra" {
 		t.Fatalf("catalog sent %+v", payload.HireOptions)
 	}
 

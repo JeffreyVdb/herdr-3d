@@ -91,8 +91,8 @@ func answerLLM(a any) *ai.FakeLLM {
 var historyAnswers = map[string]map[string]any{
 	"Hire a Claude Code agent on Claude Haiku 5.5 to fix the login bug.": {"intent": "hire", "harness": "claude",
 		"model": "claude-haiku-5-5", "effort": nil, "task": "fix the login bug.", "multiple": false, "selection_unclear": false},
-	"Hire a Codex worker on GPT-6-Sol at low effort to audit retries.": {"intent": "hire", "harness": "codex",
-		"model": "gpt-6-sol", "effort": "low", "task": "audit retries.", "multiple": false, "selection_unclear": false},
+	"Hire a Codex worker on GPT-6.1-Sol at low effort to audit retries.": {"intent": "hire", "harness": "codex",
+		"model": "gpt-6.1-sol", "effort": "low", "task": "audit retries.", "multiple": false, "selection_unclear": false},
 	"Hire a worker using Codex on GPT-6.1-Sol. Task: investigate queue deadlocks.": {"intent": "hire", "harness": "codex",
 		"model": "gpt-6.1-sol", "effort": nil, "task": "investigate queue deadlocks.", "multiple": false, "selection_unclear": false},
 }
@@ -116,14 +116,14 @@ func fields(in *hireintent.Interpretation) string {
 // wantFields are the provenances of every hire case.
 var wantFields = map[string]string{
 	"hire-claude":              "h=dictated:claude m=resolved:claude-haiku-5-5 e=dictated:high t=dictated",
-	"hire-codex":               "h=dictated:codex m=dictated:gpt-6-sol e=dictated:medium t=dictated",
+	"hire-codex":               "h=dictated:codex m=dictated:gpt-6.1-sol e=dictated:medium t=dictated",
 	"polite-hire":              "h=dictated:claude m=resolved:claude-haiku-5-5 e=dictated:low t=dictated",
-	"delegate":                 "h=dictated:codex m=dictated:gpt-6-sol e=dictated:high t=dictated",
+	"delegate":                 "h=dictated:codex m=dictated:gpt-6.1-sol e=dictated:high t=dictated",
 	"speech-correction":        "h=dictated:claude m=resolved:claude-haiku-5-5 e=dictated:high t=dictated",
 	"missing-effort":           "h=dictated:claude m=resolved:claude-haiku-5-5 e=missing t=dictated",
 	"effort-in-task":           "h=dictated:claude m=resolved:claude-haiku-5-5 e=missing t=dictated",
 	"followup-effort":          "h=dictated:claude m=resolved:claude-haiku-5-5 e=dictated:high t=dictated",
-	"followup-change":          "h=dictated:codex m=dictated:gpt-6-sol e=dictated:high t=dictated",
+	"followup-change":          "h=dictated:codex m=dictated:gpt-6.1-sol e=dictated:high t=dictated",
 	"missing-task":             "h=dictated:claude m=resolved:claude-haiku-5-5 e=dictated:high t=missing",
 	"missing-selection":        "h=missing m=missing e=dictated:high t=dictated",
 	"conflicting-example":      "h=dictated:claude m=invalid:GPT-5.5 Haiku e=dictated:high t=dictated",
@@ -136,7 +136,7 @@ var wantFields = map[string]string{
 	"hire-agent-phrase":        "h=dictated:codex m=dictated:gpt-6.1-sol e=dictated:high t=dictated",
 	"research-agent-phrase":    "h=dictated:claude m=resolved:claude-haiku-5-5 e=dictated:medium t=dictated",
 	"hire-worker-phrase":       "h=dictated:claude m=resolved:claude-haiku-5-5 e=dictated:low t=dictated",
-	"spawn-worker-phrase":      "h=dictated:codex m=dictated:gpt-6-sol e=dictated:ultra t=dictated",
+	"spawn-worker-phrase":      "h=dictated:codex m=dictated:gpt-6.1-sol e=dictated:ultra t=dictated",
 	"bare-spawn-agent":         "h=missing m=missing e=missing t=missing",
 	"research-missing-effort":  "h=dictated:claude m=resolved:claude-haiku-5-5 e=missing t=dictated",
 	"ultra-followup":           "h=dictated:codex m=dictated:gpt-6.1-sol e=dictated:ultra t=dictated",
