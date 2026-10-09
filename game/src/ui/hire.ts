@@ -24,7 +24,7 @@ import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
 import { hiredToast } from './hiredToast';
-import { HireCoordinator, notPromptedText, type HireOutcome } from './hireCoordinator';
+import { HireCoordinator, notPromptedText, type HireCoordinatorHost, type HireOutcome } from './hireCoordinator';
 import type { HireModelPrefs } from './hireModelPrefs';
 import type { HirePrefs } from './hirePrefs';
 import type { ToastKind } from './hud';
@@ -77,6 +77,8 @@ export interface HireHost extends DialogHost {
   hires?: HireCoordinator;
   /** #210: the beep of a hire made in the background (absent: silent). */
   beep?(): void;
+  /** #210: a background hire's undelivered first task into the new worker's Prompt (P) note (`HireCoordinatorHost.holdTask`). */
+  holdTask?: HireCoordinatorHost['holdTask'];
 }
 
 /** M7: what "Ask a worker…" and "Review with a worker" start the dialog with. */
@@ -348,6 +350,7 @@ export class HireDialog {
         toast: (m, kind) => host.toast(m, kind),
         beep: () => host.beep?.(),
         workerView: (id) => host.store.workerView(id),
+        holdTask: (id, text, from) => host.holdTask?.(id, text, from) ?? false,
       });
     // Settings changed which models show: an open form follows it (a hire on its way keeps what it sent).
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());

@@ -93,6 +93,20 @@ async function openHire(page: Page, desk: number): Promise<void> {
   await page.locator('#hire-task').focus();
 }
 
+/** Pastes a small PNG named `name` into the first task. */
+async function pasteImage(page: Page, name: string): Promise<void> {
+  await page.evaluate(async (n) => {
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 64;
+    (c.getContext('2d') as CanvasRenderingContext2D).fillRect(0, 0, 32, 32);
+    const blob = await new Promise<Blob>((r) => c.toBlob((b) => r(b as Blob), 'image/png'));
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], n, { type: 'image/png' }));
+    (document.querySelector('#hire-task') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  }, name);
+}
+
 /** Opens the hire dialog for `desk`, types a first task and presses Enter: the dialog is gone at once. */
 async function hire(page: Page, desk: number, task: string): Promise<void> {
   await openHire(page, desk);
@@ -187,16 +201,7 @@ test('an image that does not upload: the desk is held while it tries, then let g
   await onBaking(page, `&upload_key=${unique()}&fail_upload=all&upload_delay=1500`);
   await openHire(page, 14);
   await page.keyboard.type('See ');
-  await page.evaluate(async () => {
-    const c = document.createElement('canvas');
-    c.width = 64;
-    c.height = 64;
-    (c.getContext('2d') as CanvasRenderingContext2D).fillRect(0, 0, 32, 32);
-    const blob = await new Promise<Blob>((r) => c.toBlob((b) => r(b as Blob), 'image/png'));
-    const dt = new DataTransfer();
-    dt.items.add(new File([blob], 'grill.png', { type: 'image/png' }));
-    (document.querySelector('#hire-task') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  });
+  await pasteImage(page, 'grill.png');
   await page.keyboard.press('Enter');
   expect(await dialog(page)).toBeNull();
   // Uploading: the desk is already held, so no other hire can take it.
@@ -208,6 +213,38 @@ test('an image that does not upload: the desk is held while it tries, then let g
   await openHire(page, 14);
   expect(await task(page)).toContain('See');
   expect((await dialog(page)) as unknown).toMatchObject({ images: [{ name: 'grill.png', status: 'error' }] });
+  clean();
+});
+
+test('off (foreground): the images go up before the desk is held, as before: Esc while they upload, the same desk opens again', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await probe(page, { background: false });
+  await onBaking(page, `&upload_key=${unique()}&upload_delay=8000`);
+  await openHire(page, 14);
+  await page.keyboard.type('See ');
+  await pasteImage(page, 'crumb.png');
+  await page.keyboard.press('Enter');
+  // The dialog waits on the upload; the desk is not held yet (nothing is sent until the image is up).
+  expect(await dialog(page)).toMatchObject({ kind: 'hire', desk: 14, state: 'hiring', status: expect.stringMatching(/^Uploading the image/) });
+  expect(await page.evaluate(() => window.__h3d.desks()[14]?.plus)).toBe(true);
+  await page.keyboard.press('Escape');
+  expect(await dialog(page)).toBeNull();
+  // Esc did not cancel it, and did not take the desk: its dialog opens again.
+  await openHire(page, 14);
+  expect(await dialog(page)).toMatchObject({ kind: 'hire', desk: 14 });
+  expect(await page.evaluate(() => window.__h3d.desks()[14]?.plus)).toBe(true);
+  expect(await hires(page)).toHaveLength(0);
+  await page.keyboard.press('Escape');
+  // The image is up: now the desk is held and worker.hire goes, once, with its Drop Zone path.
+  await expect.poll(() => hires(page), { timeout: 30_000 }).toHaveLength(1);
+  expect(await page.evaluate(() => window.__h3d.desks()[14]?.plus)).toBe(false);
+  expect(((await hires(page))[0]!.args as { prompt: string }).prompt).toMatch(/^See \[Image #1: \/home\/fixture\/drops\/\S+\.png\]$/);
+  await advance(page, 150);
+  await expect(page.locator('.toast')).toHaveText(/^Hired .* at Desk 15.*\. Here they come\./);
+  await expect.poll(() => page.evaluate(() => window.__h3d.desks()[14]?.worker ?? null)).not.toBeNull();
+  expect(await toasts(page)).not.toContain(SPAWNED);
+  expect(await beeps(page)).toBe(0);
   clean();
 });
 
@@ -230,14 +267,19 @@ test('a launch failure and a task not delivered: each its own error, the desk le
   await onBaking(page, '&simfail=prompt_undelivered');
   await hire(page, 15, 'Score the loaves');
   await advance(page, 150);
-  await expect(page.locator('.toast')).toHaveText(/^Hired .* at Desk 16\. The first task was not sent \(the agent did not take the task \(simulated\)\): prompt them yourself/);
+  await expect(page.locator('.toast')).toHaveText(
+    /^Hired .* at Desk 16\. The first task was not sent \(the agent did not take the task \(simulated\)\): prompt them yourself \(P\); the task is in their prompt\.$/,
+  );
   await expect(page.locator('.toast')).toHaveAttribute('data-kind', 'error');
   await expect.poll(() => page.evaluate(() => window.__h3d.desks()[15]?.worker ?? null)).not.toBeNull();
   expect(await hires(page)).toHaveLength(1);
   expect(await beeps(page)).toBe(0);
   expect(await toasts(page)).not.toContain(SPAWNED);
-  // The task stays with the desk's draft, to prompt by hand.
-  expect(await page.evaluate(() => localStorage.getItem('h3d.draft.hire.pastry:15'))).toContain('Score the loaves');
+  // The desk is theirs now (its hire dialog does not open): the task is in their Prompt (P) note, to send by hand.
+  const id = (await page.evaluate(() => window.__h3d.desks()[15]?.worker ?? null)) as string;
+  await page.evaluate((w) => window.__h3d.openPrompt(w), id);
+  await expect.poll(() => page.evaluate(() => window.__h3d.panel())).toMatchObject({ kind: 'prompt', id, text: 'Score the loaves' });
+  expect(await hires(page)).toHaveLength(1);
   clean();
 });
 

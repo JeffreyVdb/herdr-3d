@@ -50,6 +50,7 @@ import { WorldStore, type Change, type Counts, type FloorView, type WorkerView }
 import { ChangesPanel } from './ui/changes';
 import { failureText as commandFailure } from './ui/messages';
 import { PromptOverlay } from './ui/prompt';
+import { Draft as PromptDraft } from './ui/composer/draft';
 import { answerable, answerArgs, answerKeys, digitPick, pickLabel, questionLine, type Pick as AnswerPick } from './world/answer';
 import { askLine, askOf, isSimple, optionLabel, quickReplyBlocker } from './world/ask';
 import { faceSpots, needQueue, nextNeed, type NeedItem } from './world/next';
@@ -557,6 +558,7 @@ export class App {
       toast: dialogHost.toast,
       beep: () => this.audio.playUi('spawned'),
       workerView: (id) => this.store.workerView(id),
+      holdTask: (id, text, from) => this.prompt.holdTask(id, text, from instanceof PromptDraft ? from : undefined),
     });
     this.hire = new HireDialog(o.host, {
       ...hireHost,

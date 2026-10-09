@@ -15,6 +15,9 @@ function setup() {
   const held = new Map<string, number>();
   const toasts: Array<{ text: string; kind: string }> = [];
   const timers: Array<{ fn: () => void; ms: number }> = [];
+  const handed: Array<{ id: string; text: string; from: unknown }> = [];
+  // What the new worker's Prompt (P) note takes (false: it already had something in it).
+  let takes = true;
   let beeps = 0;
   const hires = new HireCoordinator({
     send: (_t, args) => {
@@ -30,9 +33,14 @@ function setup() {
     beep: () => void beeps++,
     workerView: (id) => (id === 'w1' ? { name: 'Gumdrop', desk: 14 } : null),
     later: (fn, ms) => void timers.push({ fn, ms }),
+    holdTask: (id, text, from) => {
+      handed.push({ id, text, from });
+      return takes;
+    },
   });
   const answer = (i: number, r: CommandResult) => answers[i]!(r);
-  return { hires, sends, answer, held, toasts, timers, beeps: () => beeps };
+  const noteTakes = (v: boolean) => void (takes = v);
+  return { hires, sends, answer, held, toasts, timers, handed, noteTakes, beeps: () => beeps };
 }
 
 const args = (desk: number, prompt?: string): CommandArgs['worker.hire'] => ({ session: 'pastry', desk_index: desk, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', ...(prompt ? { prompt } : {}) });
@@ -93,6 +101,43 @@ describe('HireCoordinator: the snapshot', () => {
     expect(t.sends).toHaveLength(1);
     expect(t.sends[0]!.prompt).toContain('/drops/shot.png');
   });
+
+  it('in the foreground the images go up first, as the dialog always did: the desk is held only for worker.hire', async () => {
+    const t = setup();
+    let finish!: (r: CommandResult) => void;
+    const d = draft('see ', () => new Promise((r) => (finish = r)));
+    d.addImages([new File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' })]);
+    const op = t.hires.start(req({ args: args(14, 'see [Image #1]'), prompt: d, background: false }));
+    expect(t.held.get('pastry:14')).toBeUndefined();
+    await tick();
+    expect(op.phase).toBe('uploading');
+    expect(t.held.get('pastry:14')).toBeUndefined();
+    finish({ ok: true, data: { path: '/drops/shot.png' } });
+    await tick();
+    await tick();
+    expect(t.sends).toHaveLength(1);
+    expect(t.held.get('pastry:14')).toBe(1);
+    t.answer(0, { ok: true, data: { id: 'w1', prompted: true } });
+    await op.done;
+    expect(t.held.get('pastry:14')).toBe(0);
+  });
+
+  it('in the foreground an image that did not upload never holds the desk', async () => {
+    const t = setup();
+    const d = draft('see ', async () => ({ ok: false, code: 'dropzone_unavailable', message: 'Drop Zone is down' }));
+    d.addImages([new File([new Uint8Array([137, 80, 78, 71])], 'shot.png', { type: 'image/png' })]);
+    const op = t.hires.start(req({ args: args(14, 'see [Image #1]'), prompt: d, background: false }));
+    expect(await op.done).toMatchObject({ kind: 'not_sent' });
+    expect(t.held.has('pastry:14')).toBe(false);
+    expect(t.sends).toHaveLength(0);
+  });
+
+  it('in the foreground with no first task the desk is held at once (nothing to upload)', () => {
+    const t = setup();
+    t.hires.start(req({ background: false }));
+    expect(t.held.get('pastry:14')).toBe(1);
+    expect(t.sends).toHaveLength(1);
+  });
 });
 
 describe('HireCoordinator: one operation per submission', () => {
@@ -139,15 +184,40 @@ describe('HireCoordinator: what a background hire says, once', () => {
     expect(t.beeps()).toBe(1);
   });
 
-  it('prompted:false: the worker is there, the task was not delivered: an error, no beep, never hired again', async () => {
+  it('prompted:false: the worker is there, the task was not delivered: an error, no beep, never hired again; the task goes to their prompt', async () => {
     const t = setup();
+    const d = draft('go');
+    const op = t.hires.start(req({ args: args(14, 'go'), prompt: d }));
+    await tick();
+    t.answer(0, { ok: true, data: { id: 'w1', prompted: false, prompt_error: 'agent busy' } });
+    expect(await op.done).toMatchObject({ kind: 'not_prompted', prompt: 'go' });
+    expect(t.handed).toEqual([{ id: 'w1', text: 'go', from: d }]);
+    expect(t.toasts).toEqual([{ kind: 'error', text: 'Hired Gumdrop at Desk 15. The first task was not sent (agent busy): prompt them yourself (P); the task is in their prompt.' }]);
+    expect(t.beeps()).toBe(0);
+    expect(t.sends).toHaveLength(1);
+  });
+
+  it('prompted:false with something already in their prompt: it is not overwritten, and the toast points nowhere it cannot open', async () => {
+    const t = setup();
+    t.noteTakes(false);
     const op = t.hires.start(req({ args: args(14, 'go'), prompt: draft('go') }));
     await tick();
     t.answer(0, { ok: true, data: { id: 'w1', prompted: false, prompt_error: 'agent busy' } });
-    expect(await op.done).toMatchObject({ kind: 'not_prompted' });
-    expect(t.toasts).toEqual([{ kind: 'error', text: 'Hired Gumdrop at Desk 15. The first task was not sent (agent busy): prompt them yourself (P); the text stays in this desk’s hire dialog.' }]);
-    expect(t.beeps()).toBe(0);
+    await op.done;
+    expect(t.handed).toHaveLength(1);
+    expect(t.toasts).toEqual([{ kind: 'error', text: 'Hired Gumdrop at Desk 15. The first task was not sent (agent busy): prompt them yourself (P).' }]);
+    expect(t.toasts[0]!.text).not.toMatch(/hire dialog|in their prompt/);
     expect(t.sends).toHaveLength(1);
+  });
+
+  it('prompted:false in the foreground: the dialog says it; nothing is handed to the prompt', async () => {
+    const t = setup();
+    const op = t.hires.start(req({ args: args(14, 'go'), prompt: draft('go'), background: false }));
+    await tick();
+    t.answer(0, { ok: true, data: { id: 'w1', prompted: false, prompt_error: 'agent busy' } });
+    expect(await op.done).toMatchObject({ kind: 'not_prompted' });
+    expect(t.handed).toEqual([]);
+    expect(t.toasts).toEqual([]);
   });
 
   it('an image that did not upload: no worker.hire, the desk let go, an error that says so', async () => {

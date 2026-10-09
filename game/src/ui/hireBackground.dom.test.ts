@@ -30,6 +30,7 @@ function setup() {
   const holds = new Set<number>();
   const goTos: string[] = [];
   const toasts: Array<{ text: string; kind: string }> = [];
+  const handed: Array<{ id: string; text: string; from: unknown }> = [];
   let beeps = 0;
   const prefs = new HirePrefs(null);
   prefs.hireInBackground = true;
@@ -47,10 +48,16 @@ function setup() {
     beep: () => void beeps++,
     hirePrefs: prefs,
     now: () => Date.now(),
-    upload: () => new Promise(() => {}),
+    upload: (...a: unknown[]) => upload(...a),
+    holdTask: (id: string, text: string, from: unknown) => {
+      handed.push({ id, text, from });
+      return true;
+    },
   } as unknown as HireHost;
+  let upload: (...a: unknown[]) => Promise<CommandResult> = () => new Promise(() => {});
   const dlg = new HireDialog(document.body, host);
-  return { dlg, inner: dlg as unknown as Inner, prefs, hires, holds, goTos, toasts, beeps: () => beeps };
+  const uploads = (fn: typeof upload) => void (upload = fn);
+  return { dlg, inner: dlg as unknown as Inner, prefs, hires, holds, goTos, toasts, handed, uploads, beeps: () => beeps };
 }
 
 async function typed(t: ReturnType<typeof setup>, desk: number, text: string) {
@@ -168,15 +175,16 @@ describe('HireDialog: Hire in background (#210)', () => {
     expect(t.toasts.map((x) => x.text)).toEqual(['Agent spawned successfully.']);
   });
 
-  it('prompted:false keeps the task for a prompt by hand and says the task was not delivered; no beep', async () => {
+  it('prompted:false hands the task to the new worker’s prompt (P), says so, and keeps the draft; no beep', async () => {
     const t = setup();
     await typed(t, 0, 'deliver me');
     const pending = t.inner.hire();
     await tick();
     t.hires[0]!.answer({ ok: true, data: { id: 'w1', prompted: false, prompt_error: 'agent busy' } });
     await pending;
+    expect(t.handed).toEqual([{ id: 'w1', text: 'deliver me', from: t.inner.editor.draft }]);
     expect(t.toasts).toHaveLength(1);
-    expect(t.toasts[0]).toMatchObject({ kind: 'error', text: expect.stringContaining('The first task was not sent (agent busy)') });
+    expect(t.toasts[0]).toMatchObject({ kind: 'error', text: expect.stringMatching(/The first task was not sent \(agent busy\): prompt them yourself \(P\); the task is in their prompt\.$/) });
     expect(t.beeps()).toBe(0);
     expect(t.hires).toHaveLength(1);
     expect(localStorage.getItem(key(0))).toContain('deliver me');
@@ -210,5 +218,43 @@ describe('HireDialog: Hire in background (#210)', () => {
     expect(t.toasts).toHaveLength(1);
     expect(t.toasts[0]!.text).toMatch(/Here they come\.$/);
     expect(t.beeps()).toBe(0);
+  });
+
+  it('off: the images go up before the desk is held, as before; Esc while they upload leaves the desk free', async () => {
+    const t = setup();
+    t.prefs.hireInBackground = false;
+    let finish!: (r: CommandResult) => void;
+    t.uploads(() => new Promise((r) => (finish = r)));
+    await typed(t, 0, 'see ');
+    t.inner.editor.draft.addImages([new File([new Uint8Array([137, 80, 78, 71])], 'grill.png', { type: 'image/png' })]);
+    const pending = t.inner.hire();
+    await tick();
+    expect(t.dlg.summary()).toMatchObject({ state: 'hiring', status: expect.stringMatching(/^Uploading the image/) });
+    expect(t.holds.has(0)).toBe(false);
+    t.dlg.close();
+    expect(t.holds.has(0)).toBe(false);
+    expect(t.hires).toHaveLength(0);
+    finish({ ok: true, data: { path: '/drops/grill.png' } });
+    await tick();
+    await tick();
+    // Up: now the desk is held for worker.hire, and it goes.
+    expect(t.holds.has(0)).toBe(true);
+    expect(t.hires).toHaveLength(1);
+    expect(t.hires[0]!.args.prompt).toBe('see [Image #1: /drops/grill.png]');
+    t.hires[0]!.answer({ ok: true, data: { id: 'w1', prompted: true } });
+    await pending;
+    expect(t.holds.has(0)).toBe(false);
+  });
+
+  it('off: prompted:false is the dialog’s as before (no hand-over to the prompt)', async () => {
+    const t = setup();
+    t.prefs.hireInBackground = false;
+    await typed(t, 0, 'deliver me');
+    const pending = t.inner.hire();
+    await tick();
+    t.hires[0]!.answer({ ok: true, data: { id: 'w1', prompted: false, prompt_error: 'agent busy' } });
+    await pending;
+    expect(t.handed).toEqual([]);
+    expect(t.toasts).toEqual([{ kind: 'error', text: expect.stringMatching(/the text stays in this desk’s hire dialog\.$/) }]);
   });
 });
