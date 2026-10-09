@@ -111,6 +111,13 @@ export interface HireSummary {
   images: Array<{ n: number; name: string; status: string; path: string | null }>;
 }
 
+/** The worktree option as shown (null: hidden, the folder is no git repo). */
+export function gitView(g: HireGit | null, now: number): HireSummary['git'] {
+  if (!g) return null;
+  const n = fetchNote(g);
+  return { base: baseText(g, now), usable: worktreeUsable(g), note: n?.text ?? null, noteError: n?.error ?? false };
+}
+
 const DESK_PLUS = '<path d="M12 5v14M5 12h14"/>';
 
 /**
@@ -143,6 +150,42 @@ export function chips(
     row.append(e ? modelChip(input, e) : h('label', { class: 'dd-chip' }, input, h('span', {}, v)));
   }
   return h('fieldset', { class: 'dd-pick', 'data-pick': name }, h('legend', {}, legend, note), row);
+}
+
+/** The caps of a floor and the host, and what one more hire does to them: a line, or a callout past a cap. */
+export function capacityBlock(c: CapacityView, p: HirePrepare, session: string): HTMLElement {
+  const facts = `${session}: ${p.capacity.floor.count} of ${p.capacity.floor.soft} · host: ${p.capacity.host.count} of ${p.capacity.host.soft}${c.load ? ` · ${c.load}` : ''}`;
+  if (c.level === 'ok') return h('p', { class: 'dd-capacity', 'data-level': 'ok' }, facts);
+  const tape = c.level === 'full' ? 'At the hard cap' : 'Over the soft cap';
+  return h(
+    'div',
+    { class: 'dd-capacity dd-callout', 'data-level': c.level, role: c.level === 'full' ? 'alert' : null },
+    h('p', {}, h('span', { class: `tape tape--cap-${c.level}` }, tape), ' ', c.lines.join(' ')),
+    h('p', { class: 'dd-capacity-facts' }, facts),
+  );
+}
+
+/**
+ * The worktree option: a checkbox (off, and disabled, after a failed fetch) and the base it would branch from.
+ * `id` names the checkbox, so the dialogs that show it keep their own hooks.
+ */
+export function worktreeControl(g: NonNullable<HireSummary['git']>, on: boolean, onChange: (v: boolean) => void, id = 'hire-worktree'): HTMLElement {
+  const box = h('input', { type: 'checkbox', id, 'data-key': 'worktree', 'aria-describedby': g.usable ? `${id}-base` : `${id}-base hire-fetch` });
+  box.checked = on;
+  // No worktree from a stale origin: off until a fetch goes through.
+  box.disabled = !g.usable;
+  box.addEventListener('change', () => onChange(box.checked));
+  return h(
+    'div',
+    { class: 'dd-worktree', 'data-on': on ? 'true' : 'false', 'data-off': g.usable ? null : 'true' },
+    h('label', { class: 'dd-check', for: id }, box, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, 'Work in its own git worktree & branch')),
+    h(
+      'p',
+      { class: 'dd-base', id: `${id}-base` },
+      !g.usable ? 'Off: origin could not be fetched. Last fetched ' : on ? 'A new h3d/… branch from ' : 'Would branch from ',
+      h('code', {}, g.base),
+    ),
+  );
 }
 
 /** More models than this get a filter box and a multi-column list instead of one row of chips. */
@@ -206,6 +249,12 @@ export function modelList(
   });
   apply(query);
   return h('fieldset', { class: 'dd-pick dd-pick--models', 'data-pick': 'model' }, h('legend', {}, 'Model ', count), h('div', { class: 'dd-models' }, search, row, none));
+}
+
+/** Up to a row of chips; a long list gets a filter and a grid (`modelList`). */
+export function modelField(harness: string, models: string[], value: string, labels: ModelLabels, query: string, onPick: (v: string) => void, onQuery: (q: string) => void): HTMLElement {
+  if (models.length <= MODEL_LIST_AT) return chips('model', 'Model', models, value, onPick, null, modelEntries(harness, models, labels));
+  return modelList(models, value, query, onPick, onQuery, harness, labels);
 }
 
 /** The prompt as the form sees it: the text, each image a bare `[Image #n]` (the paths only exist once uploaded, at send time). */
@@ -574,9 +623,7 @@ export class HireDialog {
   }
 
   private gitView(g: HireGit | null): HireSummary['git'] {
-    if (!g) return null;
-    const n = fetchNote(g);
-    return { base: baseText(g, this.host.now()), usable: worktreeUsable(g), note: n?.text ?? null, noteError: n?.error ?? false };
+    return gitView(g, this.host.now());
   }
 
   private noteNow(): string | null {
@@ -679,25 +726,10 @@ export class HireDialog {
       const g = this.gitView(this.prep.git);
       if (g) {
         const on = this.f.worktree && g.usable;
-        const box = h('input', { type: 'checkbox', id: 'hire-worktree', 'data-key': 'worktree', 'aria-describedby': g.usable ? 'hire-worktree-base' : 'hire-worktree-base hire-fetch' });
-        box.checked = on;
-        // No worktree from a stale origin: off until a fetch goes through.
-        box.disabled = !g.usable;
-        box.addEventListener('change', () => {
-          this.f.worktree = box.checked;
+        const wt = worktreeControl(g, on, (v) => {
+          this.f.worktree = v;
           this.render();
         });
-        const wt = h(
-          'div',
-          { class: 'dd-worktree', 'data-on': on ? 'true' : 'false', 'data-off': g.usable ? null : 'true' },
-          h('label', { class: 'dd-check', for: 'hire-worktree' }, box, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, 'Work in its own git worktree & branch')),
-          h(
-            'p',
-            { class: 'dd-base', id: 'hire-worktree-base' },
-            !g.usable ? 'Off: origin could not be fetched. Last fetched ' : on ? 'A new h3d/… branch from ' : 'Would branch from ',
-            h('code', {}, g.base),
-          ),
-        );
         nodes.push(wt);
         if (g.note)
           notices.push(
@@ -709,7 +741,7 @@ export class HireDialog {
             ),
           );
       }
-      notices.push(this.capacityBlock());
+      notices.push(capacityBlock(this.capacity() as CapacityView, this.prep, this.session));
     } else {
       nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')));
     }
@@ -736,20 +768,6 @@ export class HireDialog {
     }
   }
 
-  private capacityBlock(): HTMLElement {
-    const c = this.capacity() as CapacityView;
-    const p = this.prep as HirePrepare;
-    const facts = `${this.session}: ${p.capacity.floor.count} of ${p.capacity.floor.soft} · host: ${p.capacity.host.count} of ${p.capacity.host.soft}${c.load ? ` · ${c.load}` : ''}`;
-    if (c.level === 'ok') return h('p', { class: 'dd-capacity', 'data-level': 'ok' }, facts);
-    const tape = c.level === 'full' ? 'At the hard cap' : 'Over the soft cap';
-    return h(
-      'div',
-      { class: 'dd-capacity dd-callout', 'data-level': c.level, role: c.level === 'full' ? 'alert' : null },
-      h('p', {}, h('span', { class: `tape tape--cap-${c.level}` }, tape), ' ', c.lines.join(' ')),
-      h('p', { class: 'dd-capacity-facts' }, facts),
-    );
-  }
-
   /** A harness whose models are all hidden: why nothing can be picked, and the way to Settings. */
   private noModels(): HTMLElement {
     const total = this.host.store.hireOptions[this.f.harness]?.models.length ?? 0;
@@ -759,11 +777,8 @@ export class HireDialog {
     return h('div', { class: 'dd-field dd-callout', 'data-hook': 'no-models', role: 'status' }, h('p', {}, text), open);
   }
 
-  /** Up to a row of chips; a long list gets a filter and a grid (`modelList`). */
   private modelField(models: string[]): HTMLElement {
-    const labels = labelsOf(this.host.store.hireOptions, this.f.harness);
-    if (models.length <= MODEL_LIST_AT) return chips('model', 'Model', models, this.f.model, (v) => this.pick({ model: v }), null, modelEntries(this.f.harness, models, labels));
-    return modelList(models, this.f.model, this.modelQuery, (v) => this.pick({ model: v }), (q) => (this.modelQuery = q), this.f.harness, labels);
+    return modelField(this.f.harness, models, this.f.model, labelsOf(this.host.store.hireOptions, this.f.harness), this.modelQuery, (v) => this.pick({ model: v }), (q) => (this.modelQuery = q));
   }
 
   private draftKey(session = this.session, desk = this.desk): string {
