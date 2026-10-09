@@ -311,6 +311,27 @@ export const SURFACES: Surface[] = [
     root: '.inbox',
   },
   {
+    // #215 with "Show the inbox" off: the chip is gone, the look-at bar says Shift+N, which opens the list anyway.
+    name: 'inbox-forced-request',
+    fixture: 'demo-m6',
+    extra: '&open=none',
+    open: async (page) => {
+      await page.addInitScript(() => localStorage.setItem('h3d.inbox', JSON.stringify({ show: false })));
+      await openGame(page, 'demo-m6', '&open=none', SIM);
+      await page.evaluate(() => window.__h3d.themeLoaded());
+      const id = await reportRequest(page, true);
+      expect(await page.evaluate((w) => window.__h3d.face(w), id)).toBe(true);
+      await frames(page, 4);
+      await expect(page.locator('.ib-chip')).toBeHidden();
+      await page.keyboard.press('Shift+N');
+      await expect.poll(() => page.evaluate(() => window.__h3d.inbox())).toMatchObject({ open: true });
+      await page.locator(`.ib-more[data-id="${id}"]`).focus();
+      await page.keyboard.press('Enter');
+      await expect(page.locator(`#ib-req-${id}`)).toContainText('ORCHESTRATOR ACCEPTANCE');
+    },
+    root: '.inbox, .prompt',
+  },
+  {
     name: 'board-issues',
     fixture: 'demo-m6',
     extra: '&open=none',
