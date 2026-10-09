@@ -227,6 +227,67 @@ func TestResolvedName(t *testing.T) {
 	}
 }
 
+// Report names that share a sidecar path ("coder-r1" and "coder-r1.json")
+// resolve only the report the sidecar names.
+func TestResolvedCollision(t *testing.T) {
+	dir := t.TempDir()
+	run := filepath.Join(dir, "run-1")
+	if err := os.Mkdir(run, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"coder-r1", "coder-r1.json"} {
+		if err := os.WriteFile(filepath.Join(run, n), []byte(`{"input_required":"q?"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, _ := runs.ResolvedName("coder-r1")
+	b, _ := runs.ResolvedName("coder-r1.json")
+	if a != b {
+		t.Fatalf("expected a shared sidecar path, got %q %q", a, b)
+	}
+	read := func(name string) *proto.InputResolved {
+		return runs.Read(dir, "run-1", name, "code").InputResolved
+	}
+	side := filepath.Join(run, a)
+	future := time.Now().Add(time.Hour)
+	put := func(data string) {
+		t.Helper()
+		if err := os.WriteFile(side, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(side, future, future); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(`{"report":"coder-r1.json"}`)
+	if read("coder-r1.json") == nil || read("coder-r1") != nil {
+		t.Errorf("sidecar for coder-r1.json: json=%v stem=%v", read("coder-r1.json"), read("coder-r1"))
+	}
+	put(`{"report":"coder-r1"}`)
+	if read("coder-r1") == nil || read("coder-r1.json") != nil {
+		t.Errorf("sidecar for coder-r1: json=%v stem=%v", read("coder-r1.json"), read("coder-r1"))
+	}
+}
+
+// A name ending in .resolved.json is reserved for sidecars: no report.
+func TestReservedReportName(t *testing.T) {
+	for _, n := range []string{"coder-r1.resolved.json", "x.resolved.json", ".resolved.json"} {
+		if runs.ValidReport(n) {
+			t.Errorf("ValidReport(%q)", n)
+		}
+	}
+	if !runs.ValidReport("coder-r1.json") || !runs.ValidReport("coder-r1.resolved") {
+		t.Error("ordinary names must stay valid")
+	}
+	r := runs.Initial("run-1", "coder-r1.resolved.json")
+	if r.State != proto.ReportInvalid || !strings.Contains(r.Error, "reserved") {
+		t.Errorf("Initial = %+v", r)
+	}
+	if r := runs.Initial("run-1", "coder-r1.json"); r.State != proto.ReportPending {
+		t.Errorf("Initial ordinary = %+v", r)
+	}
+}
+
 func TestReadResolved(t *testing.T) {
 	dir := t.TempDir()
 	run := filepath.Join(dir, "run-1")
@@ -251,29 +312,29 @@ func TestReadResolved(t *testing.T) {
 		t.Fatalf("no sidecar = %+v", r)
 	}
 
-	write(side, `{"resolved_by":"orchestrator","note":"accepted as AC4 evidence"}`, t0.Add(time.Second))
+	write(side, `{"report":"coder-r1.json","resolved_by":"orchestrator","note":"accepted as AC4 evidence"}`, t0.Add(time.Second))
 	r := read()
 	want := &proto.InputResolved{By: "orchestrator", Note: "accepted as AC4 evidence", At: t0.Add(time.Second).UnixMilli()}
 	if r.InputRequired == nil || *r.InputRequired != "accept the evidence?" || !reflect.DeepEqual(r.InputResolved, want) {
 		t.Fatalf("resolved = %+v %+v", r, r.InputResolved)
 	}
 	// Same mtime as the report: resolved (>=).
-	write(side, `{}`, t0)
+	write(side, `{"report":"coder-r1.json"}`, t0)
 	if r = read(); !reflect.DeepEqual(r.InputResolved, &proto.InputResolved{By: "orchestrator", At: t0.UnixMilli()}) {
 		t.Fatalf("empty object, same mtime = %+v", r.InputResolved)
 	}
 	// Both fields are cut UTF-8-safely.
-	write(side, `{"resolved_by":"`+strings.Repeat("é", 100)+`","note":"`+strings.Repeat("é", 400)+`"}`, t0.Add(time.Second))
+	write(side, `{"report":"coder-r1.json","resolved_by":"`+strings.Repeat("é", 100)+`","note":"`+strings.Repeat("é", 400)+`"}`, t0.Add(time.Second))
 	if r = read(); r.InputResolved == nil || len(r.InputResolved.By) != runs.MaxResolveBy || len(r.InputResolved.Note) != runs.MaxResolveNote {
 		t.Fatalf("cut = %+v", r.InputResolved)
 	}
 	// Stale: older than the report.
-	write(side, `{"note":"old"}`, t0.Add(-time.Second))
+	write(side, `{"report":"coder-r1.json","note":"old"}`, t0.Add(-time.Second))
 	if r = read(); r.InputResolved != nil || r.InputRequired == nil {
 		t.Fatalf("stale = %+v", r)
 	}
 	// Report rewritten after the resolution: active again.
-	write(side, `{"note":"ok"}`, t0.Add(time.Second))
+	write(side, `{"report":"coder-r1.json","note":"ok"}`, t0.Add(time.Second))
 	write(report, `{"input_required":"a new request"}`, t0.Add(2*time.Second))
 	if r = read(); r.InputResolved != nil || *r.InputRequired != "a new request" {
 		t.Fatalf("rewritten = %+v", r)
@@ -281,7 +342,19 @@ func TestReadResolved(t *testing.T) {
 	// Invalid or garbage sidecars are ignored.
 	for name, data := range map[string]string{
 		"garbage": `{"note":`, "array": `[]`, "null": `null`, "string": `"ok"`,
-		"note not a string": `{"note":3}`, "by not a string": `{"resolved_by":true}`, "empty file": ``,
+		"note not a string": `{"report":"coder-r1.json","note":3}`, "by not a string": `{"report":"coder-r1.json","resolved_by":true}`, "empty file": ``,
+		"no report": `{"note":"ok"}`, "empty object": `{}`,
+		"report mismatch": `{"report":"coder-r2.json","note":"ok"}`, "report case": `{"report":"Coder-r1.json"}`,
+		"report stem only": `{"report":"coder-r1"}`, "report path": `{"report":"run-1/coder-r1.json"}`,
+		"report not a string": `{"report":1}`, "report null": `{"report":null}`,
+		"report array": `{"report":["coder-r1.json"]}`, "report object": `{"report":{"n":"coder-r1.json"}}`,
+		// Another worker's report is no acknowledgement.
+		"foreign report": `{"input_required":"x","summary":"s"}`,
+		"null note": `{"report":"coder-r1.json","note":null}`, "null by": `{"report":"coder-r1.json","resolved_by":null}`,
+		"null both": `{"report":"coder-r1.json","resolved_by":null,"note":null}`,
+		"number by": `{"report":"coder-r1.json","resolved_by":7}`, "object by": `{"report":"coder-r1.json","resolved_by":{}}`,
+		"array by": `{"report":"coder-r1.json","resolved_by":["a"]}`, "array note": `{"report":"coder-r1.json","note":[]}`,
+		"object note": `{"report":"coder-r1.json","note":{"a":1}}`, "bool note": `{"report":"coder-r1.json","note":false}`,
 	} {
 		write(side, data, t0.Add(3*time.Second))
 		if r = read(); r.InputResolved != nil {
@@ -295,7 +368,7 @@ func TestReadResolved(t *testing.T) {
 	}
 	// A symlink (even to a good sidecar), a directory, a FIFO.
 	good := filepath.Join(run, "elsewhere")
-	write(good, `{"note":"ok"}`, t0.Add(3*time.Second))
+	write(good, `{"report":"coder-r1.json","note":"ok"}`, t0.Add(3*time.Second))
 	for name, mk := range map[string]func() error{
 		"symlink": func() error { return os.Symlink(good, side) },
 		"dir":     func() error { return os.Mkdir(side, 0o755) },
@@ -312,7 +385,7 @@ func TestReadResolved(t *testing.T) {
 	_ = os.RemoveAll(side)
 	// A resolved report with no request has nothing resolved.
 	write(report, `{"summary":"s"}`, t0)
-	write(side, `{"note":"ok"}`, t0.Add(time.Second))
+	write(side, `{"report":"coder-r1.json","note":"ok"}`, t0.Add(time.Second))
 	if r = read(); r.InputResolved != nil {
 		t.Errorf("no request, resolved = %+v", r.InputResolved)
 	}

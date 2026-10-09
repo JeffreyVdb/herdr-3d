@@ -93,8 +93,8 @@ Rules worth modelling:
   `"input_for": "orchestrator" | "user"` says who must decide, else it is the orchestrator when there is one).
 - **Accepting a request without resuming the worker** (#215): the report file stays as it is, so the orchestrator marks
   the request resolved with a sidecar, `<stem>.resolved.json` next to `<stem>.json`, atomically:
-  `printf '{"resolved_by":"orchestrator","note":"accepted as AC4 evidence"}' > run/coder-r1.resolved.json.tmp && mv run/coder-r1.resolved.json.tmp run/coder-r1.resolved.json`
-  (both fields optional; the file must be newer than or as new as the report, so a rewritten report asks again).
+  `printf '{"report":"coder-r1.json","resolved_by":"orchestrator","note":"accepted as AC4 evidence"}' > run/coder-r1.resolved.json.tmp && mv run/coder-r1.resolved.json.tmp run/coder-r1.resolved.json`
+  (`report` is required and must equal the report's file name, `resolved_by` and `note` are optional strings; names ending `.resolved.json` are reserved and cannot be report names; the file must be newer than or as new as the report, so a rewritten report asks again).
   Do this when the ledger says "accepted" and the run goes on (e.g. reviewer dispatch) without resuming the coder;
   without it the freelancer stays NEEDS YOU in herdr-3d. To answer and resume, assign a fresh report path instead.
 

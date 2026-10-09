@@ -683,7 +683,7 @@ func TestReportRequestResolution(t *testing.T) {
 	quiet(c, poll)
 
 	// Accepted: the sidecar alone changes (the report is not touched).
-	publishAt("coder-r1.resolved.json", `{"resolved_by":"orchestrator","note":"accepted as AC4 evidence"}`, t0.Add(time.Second))
+	publishAt("coder-r1.resolved.json", `{"report":"coder-r1.json","resolved_by":"orchestrator","note":"accepted as AC4 evidence"}`, t0.Add(time.Second))
 	r = reportWhere(c, cid, resolved)
 	if r.InputRequired == nil || *r.InputRequired != req || r.InputResolved.By != "orchestrator" || r.InputResolved.Note != "accepted as AC4 evidence" {
 		t.Fatalf("resolved = %+v %+v", r, r.InputResolved)
@@ -713,7 +713,7 @@ func TestReportRequestResolution(t *testing.T) {
 		t.Fatalf("after delete = %+v", r)
 	}
 	// Written again, then the report is rewritten (newer): it asks again.
-	publishAt("coder-r1.resolved.json", `{}`, t0.Add(time.Second))
+	publishAt("coder-r1.resolved.json", `{"report":"coder-r1.json"}`, t0.Add(time.Second))
 	reportWhere(c, cid, resolved)
 	publishAt("coder-r1.json", `{"input_required":"A new request","summary":"s2"}`, t0.Add(2*time.Second))
 	if r = reportWhere(c, cid, func(r *proto.RunReport) bool { return r.InputRequired != nil && *r.InputRequired == "A new request" }); r.InputResolved != nil {
@@ -722,4 +722,10 @@ func TestReportRequestResolution(t *testing.T) {
 	// A garbage sidecar newer than the report changes nothing.
 	publishAt("coder-r1.resolved.json", `{"note":`, t0.Add(3*time.Second))
 	quiet(c, poll)
+	// So does a sidecar without (or with another) report name, or with a
+	// null field.
+	for _, side := range []string{`{}`, `{"report":"coder-r2.json"}`, `{"report":"coder-r1.json","note":null}`, `{"input_required":"x","summary":"s"}`} {
+		publishAt("coder-r1.resolved.json", side, t0.Add(4*time.Second))
+		quiet(c, poll)
+	}
 }

@@ -32,10 +32,13 @@ const (
 
 // Resolution sidecar (#215): the orchestrator accepts a report's
 // input_required without resuming the freelancer by writing
-// <run>/<stem>.resolved.json next to <run>/<stem>.json.
+// <run>/<stem>.resolved.json next to <run>/<stem>.json. The sidecar names the
+// report it resolves (a "report" field equal to the report's file name), so
+// two report names that share a sidecar path cannot resolve each other.
 const (
 	// ResolvedSuffix replaces a report name's ".json" (or is appended to a
-	// name without it). A report name that ends in it has no sidecar.
+	// name without it). A name that ends in it is reserved for sidecars: it
+	// is no report name (ValidReport).
 	ResolvedSuffix = ".resolved.json"
 	// MaxResolveSize is the biggest sidecar read; a larger one is ignored.
 	MaxResolveSize = 4 << 10
@@ -51,11 +54,18 @@ var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$`)
 // ValidName reports whether s may be a run id or a report file name.
 func ValidName(s string) bool { return nameRe.MatchString(s) }
 
+// ValidReport reports whether s may be a report file name: a valid name that
+// is not reserved for a resolution sidecar, so a worker's report can never
+// occupy a sidecar path.
+func ValidReport(s string) bool {
+	return ValidName(s) && !strings.HasSuffix(s, ResolvedSuffix)
+}
+
 // ResolvedName is the sidecar file name of report name: `coder-r1.json` →
 // `coder-r1.resolved.json`. ok is false for a name that has none: one that
 // is a sidecar name itself, or whose sidecar name is no valid name.
 func ResolvedName(name string) (string, bool) {
-	if !ValidName(name) || strings.HasSuffix(name, ResolvedSuffix) {
+	if !ValidReport(name) {
 		return "", false
 	}
 	side := strings.TrimSuffix(name, ".json") + ResolvedSuffix
@@ -70,6 +80,8 @@ func Initial(run, name string) proto.RunReport {
 		return proto.RunReport{State: proto.ReportInvalid, Error: "bad run id"}
 	case !ValidName(name):
 		return proto.RunReport{State: proto.ReportInvalid, Error: "bad report name"}
+	case !ValidReport(name):
+		return proto.RunReport{State: proto.ReportInvalid, Error: "report name is reserved for resolutions (" + ResolvedSuffix + ")"}
 	}
 	return proto.RunReport{State: proto.ReportPending}
 }
@@ -177,23 +189,34 @@ func readResolved(dir, run, name string, reportMod time.Time) *proto.InputResolv
 	if missing || why != "" || mod.Before(reportMod) {
 		return nil
 	}
-	var obj struct {
-		By   *string `json:"resolved_by"`
-		Note *string `json:"note"`
-	}
+	// Only an object whose "report" names this report resolves it; a known
+	// field that is not a string (null included) voids the sidecar.
 	var raw map[string]json.RawMessage
-	if json.Unmarshal(data, &raw) != nil || raw == nil || json.Unmarshal(data, &obj) != nil {
+	if json.Unmarshal(data, &raw) != nil || raw == nil {
+		return nil
+	}
+	field := func(key string) (val string, present, ok bool) {
+		rm, present := raw[key]
+		if !present {
+			return "", false, true
+		}
+		ok = json.Unmarshal(rm, &val) == nil && !isNull(rm)
+		return val, true, ok
+	}
+	rep, has, ok := field("report")
+	if !has || !ok || rep != name {
+		return nil
+	}
+	by, _, okBy := field("resolved_by")
+	note, _, okNote := field("note")
+	if !okBy || !okNote {
 		return nil
 	}
 	res := &proto.InputResolved{By: ResolvedByDefault, At: mod.UnixMilli()}
-	if obj.By != nil {
-		if by := strings.TrimSpace(*obj.By); by != "" {
-			res.By = world.CutUTF8(by, MaxResolveBy)
-		}
+	if by = strings.TrimSpace(by); by != "" {
+		res.By = world.CutUTF8(by, MaxResolveBy)
 	}
-	if obj.Note != nil {
-		res.Note = world.CutUTF8(strings.TrimSpace(*obj.Note), MaxResolveNote)
-	}
+	res.Note = world.CutUTF8(strings.TrimSpace(note), MaxResolveNote)
 	return res
 }
 

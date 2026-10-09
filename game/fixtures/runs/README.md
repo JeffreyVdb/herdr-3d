@@ -21,9 +21,10 @@ comes from a real run.
 
 A report request the orchestrator resolved without resuming the worker (#215) is a
 `<stem>.resolved.json` sidecar next to the report, e.g. `code-lobby-r1.resolved.json`:
-`{"resolved_by":"orchestrator","note":"accepted as AC4 evidence"}`. The generator reads it
-like the bridge does, except that fixtures have no meaningful mtimes, so any valid sidecar
-resolves the report (`input_resolved` on the worker). No fixture run ships one (it would
+`{"report":"code-lobby-r1.json","resolved_by":"orchestrator","note":"accepted as AC4 evidence"}`
+(`report` must equal the report's file name; a sidecar without it, or with a non-string
+field, is ignored). The generator reads it like the bridge does, except that fixtures have no meaningful mtimes, so any valid sidecar
+naming the report resolves the report (`input_resolved` on the worker). No fixture run ships one (it would
 change the demo floor's counts); the simulator shows it live: `sim.crew` step `report` with
 `input_required` (and `input_for`), then step `resolve` (`by`, `note`), see
 `tools/fixture-crew.ts` and `e2e/m6-crew.spec.ts`.

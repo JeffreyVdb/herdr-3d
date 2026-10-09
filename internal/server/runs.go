@@ -378,7 +378,7 @@ func (h *Hub) reportWorkers() []reportWorker {
 			continue
 		}
 		run, name := w.Tokens["h3d_run"], w.Tokens["h3d_report"]
-		if !runs.ValidName(run) || !runs.ValidName(name) {
+		if !runs.ValidName(run) || !runs.ValidReport(name) {
 			continue
 		}
 		out = append(out, reportWorker{id: id, key: st.key, role: w.Role, run: run, name: name})

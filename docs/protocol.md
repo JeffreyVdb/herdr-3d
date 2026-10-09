@@ -407,16 +407,21 @@ report: for `<run>/<stem>.json` it writes `<run>/<stem>.resolved.json` (the repo
 `.resolved.json`, or appended to a name without `.json`), atomically (temp file, then `mv`):
 
 ```sh
-printf '{"resolved_by":"orchestrator","note":"accepted as AC4 evidence"}' > run/coder-r1.resolved.json.tmp \
+printf '{"report":"coder-r1.json","resolved_by":"orchestrator","note":"accepted as AC4 evidence"}' > run/coder-r1.resolved.json.tmp \
   && mv run/coder-r1.resolved.json.tmp run/coder-r1.resolved.json
 ```
 
-The sidecar is a JSON object with two optional string fields, `resolved_by` and `note`; `{}` resolves too. It resolves
+The sidecar is a JSON object that must carry a string `"report"` **equal to the file name of the report it resolves**
+(`coder-r1.json` above; for a report named `coder-r1` it is `coder-r1`), plus the optional strings `resolved_by` and
+`note`. So the sidecar is bound to its report: two report names sharing a sidecar path (`coder-r1` and `coder-r1.json`)
+cannot resolve each other, and another worker's report JSON is no acknowledgement. A missing or different `report`, or
+a `report`, `resolved_by` or `note` that is not a string (`null` included), makes the sidecar **ignored**. It resolves
 the report's request only when it is a regular file of at most 4 KiB (`Lstat`, `O_NOFOLLOW`, no symlink, FIFO or
 directory), valid JSON (anything else is **ignored**: the request stays active), and its mtime is **at least the
 report's**. So a report written again after the resolution (a new request) asks again, and a fresh `h3d_report` path
-(a resume after an answer) starts over at `pending` as before. A report name that already ends in `.resolved.json`, or
-whose sidecar name would exceed 80 bytes, has no sidecar. The poller stats both files and re-reads when either's size
+(a resume after an answer) starts over at `pending` as before. A name ending in `.resolved.json` is
+**reserved for sidecars**: as an `h3d_report` it is an `invalid` report (`report name is reserved for resolutions`),
+so a worker can never occupy a sidecar path. A report whose sidecar name would exceed 80 bytes has no sidecar. The poller stats both files and re-reads when either's size
 or mtime changed (creating, replacing or deleting the sidecar is one `worker.upsert` within a second); the sidecar is
 the only state, so a bridge restart changes nothing. Use it to accept a request in the ledger and go on without
 resuming the freelancer; to *answer* a request and resume it, assign a fresh report path as before.
