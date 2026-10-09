@@ -117,7 +117,9 @@ make e2e SPEC=e2e/m6b.spec.ts   # only that spec (same lock and portlease)
   and `game/e2e/m118-digest.spec.ts` starts its own fake OpenAI server (`tools/fixture-digest.ts` calls it). #211:
   `go test ./internal/hireintent ./internal/server` take `ai.FakeLLM`; `internal/hireintent/testdata/bench.json` replays the
   research's 50 cases with their recorded live answers. The live replay is `go run ./docs/research/dictation-hiring-bench/dryrun`
-  (the configured LLM, the running bridge's catalog read-only; a dry-run interpretation check, never a hire).
+  (the configured LLM, the running bridge's catalog read-only; a dry-run interpretation check, never a hire). #213:
+  `game/e2e/h213-dictation.spec.ts` starts its own fake OpenAI server; the fixture bridge's `hire.interpret`
+  (`tools/fixture-interpret.ts`) calls it and passes its final result on, so no spec reaches a real provider.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
@@ -777,7 +779,12 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   `last_preset`), and `simfail=no_m6` plays an M5 bridge (no `presets`, every M6 command `unknown_command`); `fixture-crew.ts`, a scripted freelancer:
   `sim.crew {step: hire|onboard|work|report|leave}` (the simulator's own, like `sim.watches`) seats a `CODE`
   freelancer of an ORCH's run at the free desk nearest it, gives it an agent, sets it working, hands in its report
-  (`verdict` / `blockers` / `input_required` / `summary`) and closes it; `simcrew=<ms>` plays that round by itself), dev WebSocket → unix-socket proxy,
+  (`verdict` / `blockers` / `input_required` / `summary`) and closes it; `simcrew=<ms>` plays that round by itself;
+  #213: `fixture-interpret.ts`, `hire.interpret` for the dictation bar, whose rules are at its top: no resolution rule of
+  `internal/hireintent`, one JSON-mode call through the AI integration (`fixture-ai.ts`) to the LLM the game set up, its
+  answer `{intent, reason?, hire?}` checked (shape, the task's span) and passed on with the bridge's `sources`, errors as
+  the bridge's acks (`not_ready` with no LLM, `provider_failed` for a non-200, `timeout` past 35 s or what
+  `sim.interpret {timeout_ms}` sets, `bad_answer`, `bad_span`, `bad_pending`), `bad_request` only for its args), dev WebSocket → unix-socket proxy,
   throwaway-herdr helper, live (`live-*.ts`) and Mac perf drivers.
 
 Run it:
