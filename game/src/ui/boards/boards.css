@@ -919,9 +919,9 @@
 }
 
 /* Disabled (aria-disabled, which keeps the button focusable to say why): the shared look, no fade. */
-:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true'],
-:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:hover,
-:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:active,
+:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:not([aria-busy='true']),
+:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:not([aria-busy='true']):hover,
+:root[data-ui-theme='ubuntu'] .btn[aria-disabled='true']:not([aria-busy='true']):active,
 :root[data-ui-theme='ubuntu'] .hud .btn--off {
   opacity: 1;
   background: var(--disabled-bg);

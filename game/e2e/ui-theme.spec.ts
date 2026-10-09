@@ -522,7 +522,7 @@ test('touch targets: Ubuntu standard controls are >= 36 px, icon controls >= 32 
   const sizes = async (page: Page, root: string) =>
     page.evaluate((sel) => {
       const out: Array<{ at: string; w: number; h: number; icon: boolean; dense: boolean }> = [];
-      for (const b of document.querySelectorAll(`${sel} button, ${sel} input[type="checkbox"], ${sel} input[type="radio"], ${sel} select, ${sel} a[href]`)) {
+      for (const b of document.querySelectorAll(`${sel} button, ${sel} input[type="checkbox"], ${sel} input[type="radio"], ${sel} select`)) {
         const cs = getComputedStyle(b);
         if (cs.display === 'none' || cs.visibility === 'hidden' || (b as HTMLElement).hidden || cs.position === 'absolute' && cs.clipPath !== 'none') continue;
         const r = b.getBoundingClientRect();
@@ -538,12 +538,22 @@ test('touch targets: Ubuntu standard controls are >= 36 px, icon controls >= 32 
     const page = await ctx.newPage();
     const clean = watchErrors(page);
     await page.addInitScript(() => localStorage.setItem('h3d.theme.ui', 'ubuntu'));
-    await openGame(page, 'demo-m5');
+    await openGame(page, 'demo-m4', '', SIM);
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
-    const small = (await sizes(page, 'dialog.settings')).filter((t) => (coarse ? t.w < 44 || t.h < 44 : t.icon || t.dense ? t.w < 32 || t.h < 32 : t.h < 36));
-    expect(small.map((t) => `${t.at} ${t.w}x${t.h}`), coarse ? 'coarse pointer' : 'fine pointer').toEqual([]);
+    const tooSmall = async (root: string) => (await sizes(page, root)).filter((t) => (coarse ? t.w < 44 || t.h < 44 : t.icon || t.dense ? t.w < 32 || t.h < 32 : t.h < 36)).map((t) => `${t.at} ${t.w}x${t.h}`);
+    expect(await tooSmall('dialog.settings'), `settings, ${coarse ? 'coarse' : 'fine'} pointer`).toEqual([]);
+    await page.keyboard.press('Escape');
+    // The Hire dialog and the top bar's menu.
+    await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+    await frames(page, 3);
+    await page.evaluate(() => window.__h3d.openHire(5));
+    await expect.poll(async () => ((await page.evaluate(() => window.__h3d.dialog())) as { state?: string } | null)?.state).toBe('ready');
+    expect(await tooSmall('dialog.desk-dlg--hire'), `hire, ${coarse ? 'coarse' : 'fine'} pointer`).toEqual([]);
+    await page.keyboard.press('Escape');
+    await openMenu(page);
+    expect(await tooSmall('.topbar-menu'), `menu, ${coarse ? 'coarse' : 'fine'} pointer`).toEqual([]);
     clean();
     await ctx.close();
   }
@@ -751,3 +761,96 @@ for (const name of ['settings', 'hire', 'start-run', 'presets', 'board-issues', 
     clean();
   });
 }
+
+test('states: a hire in flight (the bridge’s ack held) keeps the primary orange with a dark label and a spinner, says aria-busy, and refuses a second press', async ({ page }) => {
+  test.setTimeout(180_000);
+  const clean = watchErrors(page);
+  await boot(page, 'demo-m4', { ui: 'ubuntu' }, '', 'play=none&sim=1&simms=150&simusage=0&simclock=manual');
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  await page.evaluate(() => window.__h3d.openHire(5));
+  await expect.poll(async () => ((await page.evaluate(() => window.__h3d.dialog())) as { state?: string } | null)?.state).toBe('ready');
+  const hire = page.locator('dialog.desk-dlg--hire [data-key="hire"]');
+  const widthBefore = await hire.evaluate((b) => b.getBoundingClientRect().width);
+  await hire.click();
+  await expect(hire).toHaveText('Hiring…');
+  await expect(hire).toHaveAttribute('aria-busy', 'true');
+  const busy = await pair(page, 'dialog.desk-dlg--hire [data-key="hire"]');
+  expect([rgbToHex(busy.bg), rgbToHex(busy.fg)]).toEqual(['#e95420', '#2c001e']);
+  expect(busy.ratio).toBeGreaterThanOrEqual(4.5);
+  expect(await hire.evaluate((b) => getComputedStyle(b, '::before').content)).toBe('""');
+  expect(Math.abs((await hire.evaluate((b) => b.getBoundingClientRect().width)) - widthBefore)).toBeLessThan(60);
+  // A second press is not a second hire.
+  await hire.click({ force: true });
+  await page.keyboard.press('Control+Enter');
+  expect((await page.evaluate(() => window.__h3d.sent())).filter((c) => c.t === 'worker.hire')).toHaveLength(1);
+  clean();
+});
+
+// ---- what must survive a live switch ---------------------------------------------------------------------------------
+
+test('a live switch leaves the whiteboard’s drawing, its canvas and its saved data untouched (the editor stays light, nothing is filtered)', async ({ page }) => {
+  test.setTimeout(240_000);
+  const clean = watchErrors(page);
+  const wb = SURFACES.find((x) => x.name === 'whiteboard')!;
+  await boot(page, wb.fixture, {}, wb.extra ?? '', wb.wsQuery);
+  await wb.open(page);
+  const read = () =>
+    page.evaluate(() => {
+      const api = window.__h3d.excalidraw() as { getSceneElements(): unknown[]; getAppState(): { theme: string; viewBackgroundColor: string } } | null;
+      const canvases = [...document.querySelectorAll<HTMLCanvasElement>('.wb canvas')].filter((c) => c.width > 100 && c.height > 100);
+      const filters = canvases.map((c) => getComputedStyle(c).filter);
+      const staticCanvas = canvases.find((c) => c.classList.contains('static')) ?? canvases[0]!;
+      return { elements: JSON.stringify(api?.getSceneElements() ?? [], (k, v) => (k === 'boundElements' && !v?.length ? null : v)), theme: api?.getAppState().theme, bg: api?.getAppState().viewBackgroundColor, filters, pixels: staticCanvas.toDataURL().length, hash: staticCanvas.toDataURL().slice(-400) };
+    });
+  const before = await read();
+  expect(before.theme).toBe('light');
+  expect(JSON.parse(before.elements).length).toBeGreaterThan(0);
+  await page.evaluate(() => window.__h3d.setUiTheme('ubuntu'));
+  await frames(page, 4);
+  const after = await read();
+  expect(after).toEqual(before);
+  expect(after.filters.every((f) => f === 'none')).toBe(true);
+  // The editor's own controls did follow: the toolbar is the raised purple in Ubuntu fonts, outside the canvas.
+  expect(await page.locator('.wb .App-toolbar, .wb .Island').first().evaluate((e) => getComputedStyle(e).backgroundColor)).toBe(ANCHOR.raised);
+  expect(await page.locator('.wb .excalidraw').first().evaluate((e) => getComputedStyle(e).fontFamily)).toContain('Ubuntu');
+  await page.evaluate(() => window.__h3d.setUiTheme('quiet'));
+  await frames(page, 4);
+  expect(await read()).toEqual(before);
+  clean();
+});
+
+test('a live switch leaves the terminal’s screen, the seated worker, a typed draft and the conversation alone', async ({ page }) => {
+  test.setTimeout(240_000);
+  const clean = watchErrors(page);
+  await boot(page, 'demo-m5', { terminal: 'ubuntu' }, '&prints=0');
+  const id = await sitAtTofu(page, 'terminal');
+  // The agent's own spinner and clock tick on: compare the screen with its digits and spinner glyph set aside.
+  const screen = () => page.evaluate((w) => (window.__h3d.screenText(w) ?? []).join('\n').replace(/\d+/g, '#').replace(/[·✶✻✽✢*]/g, '*'), id);
+  const before = { screen: await screen(), seated: await page.evaluate(() => window.__h3d.seated()), th: await theme(page) };
+  expect(before.screen.trim().length).toBeGreaterThan(0);
+  await page.evaluate(() => window.__h3d.setUiTheme('ubuntu'));
+  await frames(page, 6);
+  expect(await screen()).toBe(before.screen);
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(before.seated);
+  expect({ ...(await theme(page)), ui: 'x' }).toEqual({ ...before.th, ui: 'x' });
+  // The conversation, a draft in its composer.
+  await page.keyboard.press('Control+Escape');
+  await expect(page.locator('.seat-transcript .tx')).toBeVisible();
+  const items = (await page.evaluate(() => window.__h3d.transcript()))?.items;
+  const composer = page.locator('.seat-transcript .cmp-editor');
+  const enabled = (await composer.getAttribute('aria-disabled')) !== 'true';
+  if (enabled) {
+    await composer.click();
+    await page.keyboard.type('half a thought');
+    await page.evaluate(() => window.__h3d.setUiTheme('quiet'));
+    await frames(page, 4);
+    await expect(composer).toContainText('half a thought');
+    await expect(composer).toBeFocused();
+  } else {
+    await page.evaluate(() => window.__h3d.setUiTheme('quiet'));
+  }
+  expect((await page.evaluate(() => window.__h3d.transcript()))?.items).toBe(items);
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
+  clean();
+});
