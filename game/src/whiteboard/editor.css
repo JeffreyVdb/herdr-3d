@@ -8,3 +8,166 @@
 .wb .excalidraw .help-icon {
   display: none !important;
 }
+
+/* ubuntu:begin */
+/*
+ * #216: the editor's own controls (toolbar, menus, property panels, dialogs, tooltips) in the Ubuntu UI theme. Excalidraw
+ * themes itself through custom properties on `.excalidraw`; `theme: 'dark'` would also set `--theme-filter: invert(93%)
+ * hue-rotate(180deg)` on the canvases and so repaint the drawing, so the editor stays on its light theme (editor.ts) and
+ * only its UI properties are overridden here. The drawing, its background, its fonts, the selection handles and the
+ * exports never read them. Dialogs and the library mount on `body` in an `.excalidraw.excalidraw-modal-container`, and
+ * tooltips in `.excalidraw-tooltip`: both are covered because the selector is not scoped to `.wb`. This file loads with
+ * the editor, never at start.
+ */
+:root[data-ui-theme='ubuntu'] .excalidraw {
+  --ui-font: var(--font);
+  --island-bg-color: var(--raised);
+  --popup-bg-color: var(--raised);
+  --popup-secondary-bg-color: var(--well);
+  --sidebar-bg-color: var(--raised);
+  --default-bg-color: var(--well);
+  --input-bg-color: var(--well);
+  --input-border-color: var(--border);
+  --input-hover-bg-color: var(--hover);
+  --input-label-color: var(--text-2);
+  --default-border-color: var(--border);
+  --sidebar-border-color: var(--border);
+  --dialog-border-color: var(--border);
+  --button-hover-bg: var(--hover);
+  --button-active-bg: var(--hover);
+  --button-active-border: var(--focus);
+  --button-gray-1: var(--raised);
+  --button-gray-2: var(--hover);
+  --button-gray-3: var(--border);
+  --overlay-bg-color: var(--scrim);
+  --popup-text-color: var(--text);
+  --popup-text-inverted-color: var(--on-action);
+  --text-primary-color: var(--text);
+  --keybinding-color: var(--text-3);
+  --link-color: var(--accent-text);
+  --icon-fill-color: var(--text);
+  --color-on-surface: var(--text);
+  --color-icon-white: var(--on-action);
+  --focus-highlight-color: var(--focus);
+  --select-highlight-color: var(--focus);
+  --shadow-island: var(--shadow);
+  --modal-shadow: var(--shadow);
+  --sidebar-shadow: var(--shadow);
+  --scrollbar-thumb: var(--scroll-thumb);
+  --scrollbar-thumb-hover: var(--border-hover);
+  --color-surface-lowest: var(--well);
+  --color-surface-low: var(--raised);
+  --color-surface-mid: var(--raised);
+  --color-surface-high: var(--hover);
+  --color-surface-primary-container: var(--action);
+  --color-on-primary-container: var(--on-action);
+  --color-border-outline: var(--border);
+  --color-border-outline-variant: var(--line);
+  --color-primary: var(--action);
+  --color-primary-darker: var(--action-hover);
+  --color-primary-darkest: var(--action-active);
+  --color-primary-hover: var(--action-hover);
+  --color-primary-light: var(--hover);
+  --color-primary-light-darker: var(--hover);
+  --color-brand-hover: var(--action-hover);
+  --color-brand-active: var(--action-active);
+  --color-selection: var(--action);
+  --color-disabled: var(--text-3);
+  --color-muted: var(--border);
+  --color-muted-darker: var(--text-3);
+  --color-muted-darkest: var(--text);
+  --color-gray-10: var(--text);
+  --color-gray-20: var(--text-2);
+  --color-gray-30: var(--text-2);
+  --color-gray-40: var(--text-3);
+  --color-gray-50: var(--text-3);
+  --color-gray-60: var(--text-3);
+  --color-gray-70: var(--border);
+  --color-gray-80: var(--hover);
+  --color-gray-85: var(--raised);
+  --color-gray-90: var(--well);
+  --color-gray-100: var(--chrome);
+  --color-danger: var(--error-text);
+  --color-danger-dark: var(--error-fill);
+  --color-danger-darker: var(--error-fill-hover);
+  --color-danger-darkest: var(--error-fill-hover);
+  --color-danger-text: var(--error-text);
+  --color-danger-background: var(--raised);
+  --color-danger-icon-background: var(--raised);
+  --color-danger-color: var(--error-text);
+  --color-danger-icon-color: var(--error-text);
+  --button-destructive-bg-color: var(--raised);
+  --button-destructive-color: var(--error-text);
+  --color-warning: var(--warn);
+  --color-warning-dark: var(--warn);
+  --color-warning-darker: var(--warn);
+  --color-warning-darkest: var(--warn);
+  --color-warning-background: var(--raised);
+  --color-warning-icon-background: var(--warn);
+  --color-warning-color: var(--text);
+  --color-warning-icon-color: var(--on-fill);
+  --color-text-warning: var(--text);
+  --color-success: var(--plus);
+  --color-success-darker: var(--plus);
+  --color-success-darkest: var(--plus);
+  --color-success-text: var(--ok-text);
+  --color-success-contrast: var(--plus);
+  --color-success-contrast-hover: var(--plus);
+  --color-success-contrast-active: var(--plus);
+  --color-badge: var(--on-fill);
+  --background-color-badge: var(--plus);
+  --icon-green-fill-color: var(--ok-text);
+  font-family: var(--font);
+}
+/* The few rules that name Excalidraw's own UI font outright. */
+:root[data-ui-theme='ubuntu'] .excalidraw :is(.ExcTextField__label, .ExcTextField__input input, .RadioGroup__choice, .ImageExportModal h3, .ImageExportModal__settings__setting__label, .OverwriteConfirm__Description, .ExcButton, button.ExportDialog-imageExportButton) {
+  font-family: var(--font);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw :is(.ttd-dialog-input, .ttd-dialog-output-error p) {
+  font-family: var(--font-mono);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw-tooltip {
+  --ui-font: var(--font);
+  font-family: var(--font);
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+/* The toolbar and the panels sit on the board: an opaque raised surface with the strong boundary. */
+:root[data-ui-theme='ubuntu'] .excalidraw .Island {
+  border: 1px solid var(--border);
+}
+/* The selected tool and the selected option: the action fill with its dark mark (the picker's selected state). */
+:root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon .ToolIcon_type_checkbox:checked + .ToolIcon__icon svg,
+:root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon .ToolIcon_type_checkbox:checked + .ToolIcon__icon .ToolIcon__keybinding {
+  color: var(--on-action);
+}
+/* Focus: 3px in the focus colour, 2px off, on every operable widget of the editor. */
+:root[data-ui-theme='ubuntu'] .excalidraw :is(button, [role='button'], [role='menuitem'], [role='radio'], [role='tab'], a, input, select, textarea:not(.excalidraw-wysiwyg), summary):focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+:root[data-ui-theme='ubuntu'] .excalidraw :is(input, textarea:not(.excalidraw-wysiwyg), select) {
+  caret-color: var(--caret);
+}
+:root[data-ui-theme='ubuntu'] .excalidraw :is(input, textarea:not(.excalidraw-wysiwyg))::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .excalidraw :is(.ToolIcon__icon, .dropdown-menu-item, .ExcButton, .Dialog__close) {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+@media (forced-colors: active) {
+  :root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon .ToolIcon_type_checkbox:checked + .ToolIcon__icon {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+  :root[data-ui-theme='ubuntu'] .excalidraw .ToolIcon .ToolIcon_type_checkbox:checked + .ToolIcon__icon svg {
+    color: HighlightText;
+  }
+}
+/* ubuntu:end */
