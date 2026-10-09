@@ -5,6 +5,7 @@ import { harnessViews, limitsView, warningOf, windowName } from '../world/limits
 import { CornerWatch, READING, SCREEN, SEATED } from './corner';
 import { h, icon, ICON } from './dom';
 import { LimitsPrefs } from './limitsPrefs';
+import { UI_THEME_ATTR } from './uiTheme';
 import './limits.css';
 
 /**
@@ -31,6 +32,8 @@ const TAB_ROOM = 48;
 
 /** Free width the snug tab (22 px, 3 px from the edge, 2 px clear of the glass; data-fit='snug' in limits.css) needs where the full one does not fit. */
 const TAB_ROOM_SNUG = 27;
+/** #216: the Ubuntu UI theme's snug tab is a 32 px target (its smallest control size), flush with the edge, 2 px clear of the glass. */
+const TAB_ROOM_SNUG_UBUNTU = 34;
 
 export interface LimitsHost {
   now(): number;
@@ -133,6 +136,8 @@ export class LimitsWidget {
     parent.append(this.root);
     this.home = parent;
     this.off = this.prefs.onChange(() => this.sync());
+    // The snug tab's room depends on the UI theme (its size): a live switch places the tab again.
+    this.themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-ui-theme'] }); // dataset[UI_THEME_ATTR]
     this.keepOnTop();
     this.sync();
     this.update();
@@ -146,6 +151,9 @@ export class LimitsWidget {
     this.root.dataset.beside = this.corner.beside;
     this.update();
     if (opened) this.raise();
+  });
+  private readonly themeWatch = new MutationObserver(() => {
+    if (this.screenOpen()) this.update();
   });
   /** A screen dialog may have more or less room beside it after a resize. */
   private readonly onResize = () => {
@@ -203,7 +211,8 @@ export class LimitsWidget {
   private tabFit(): 'full' | 'snug' | null {
     const fit = (right: number) => {
       const room = document.documentElement.clientWidth - right;
-      return room >= TAB_ROOM ? 'full' : room >= TAB_ROOM_SNUG ? 'snug' : null;
+      const snug = document.documentElement.dataset[UI_THEME_ATTR] === 'ubuntu' ? TAB_ROOM_SNUG_UBUNTU : TAB_ROOM_SNUG;
+      return room >= TAB_ROOM ? 'full' : room >= snug ? 'snug' : null;
     };
     // #147: the command palette is a modal over whatever is up (a dimmed, inert hire sheet, the laptop's glass): the tab keeps clear of it and of what opened over it, and of nothing beneath.
     if (this.corner.palette) return fit(Math.max(0, ...this.corner.clearOf().map((d) => d.getBoundingClientRect().right)));
@@ -320,6 +329,7 @@ export class LimitsWidget {
   dispose(): void {
     this.off();
     this.corner.dispose();
+    this.themeWatch.disconnect();
     this.watchOutside(false);
     window.removeEventListener('resize', this.onResize);
     this.root.remove();

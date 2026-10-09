@@ -555,6 +555,20 @@
 :root[data-ui-theme='ubuntu'] .lm-sec[data-stale='true'] .lm-rowlab {
   color: var(--text-3);
 }
+/* The snug tab in a thin gutter: Ubuntu's smallest target is 32 x 32, so it is 32 wide, flush with the screen's edge (limits.ts
+   gives it 34 px of room, 2 clear of the glass, and no tab below that), with the full tab's type. */
+:root[data-ui-theme='ubuntu'] .limits[data-dock='tab'][data-fit='snug'] {
+  right: 0;
+  width: 32px;
+  border-radius: 8px 0 0 8px;
+}
+:root[data-ui-theme='ubuntu'] .limits[data-fit='snug'] .lm-tab {
+  border-radius: 8px 0 0 8px;
+}
+:root[data-ui-theme='ubuntu'] .limits[data-fit='snug'] .lm-tab-pct {
+  font-size: 11px;
+  letter-spacing: 0;
+}
 :root[data-ui-theme='ubuntu'] .lm-foot .btn {
   height: auto;
   min-height: 32px;
