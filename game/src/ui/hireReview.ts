@@ -713,7 +713,9 @@ export class HireReviewDialog {
     const label = this.f.label.trim() || this.prep?.label || '';
     const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, this.state === 'hiring' ? 'Close' : 'Cancel');
     const text = this.state === 'hiring' ? 'Hiring…' : label ? `Hire ${label}` : 'Hire';
-    const hire = h('button', { class: 'btn btn--primary', 'data-key': 'hire', disabled: !!blocker, 'aria-disabled': blocker ? 'true' : null, title: blocker, onclick: () => void this.hire() }, text);
+    // A hire in flight is busy, not disabled (#216 decisions row 14): it keeps its focus and colours, and `hire()` ignores a second press.
+    const busy = this.state === 'hiring';
+    const hire = h('button', { class: 'btn btn--primary', 'data-key': 'hire', disabled: !!blocker && !busy, 'aria-disabled': blocker ? 'true' : null, 'aria-busy': busy ? 'true' : null, title: blocker, onclick: () => void this.hire() }, text);
     const had = document.activeElement === this.actions.querySelector('[data-key="hire"]');
     this.actions.replaceChildren(cancel, hire);
     if (had && !blocker) hire.focus();

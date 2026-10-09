@@ -446,6 +446,13 @@ describe('HireReviewDialog', () => {
       hireBtn().click();
       await tick();
       expect(rv.summary()!.state).toBe('hiring');
+      // In flight it is busy, not disabled (#216 row 14), and a second press sends nothing.
+      expect(hireBtn().getAttribute('aria-busy')).toBe('true');
+      expect(hireBtn().getAttribute('aria-disabled')).toBe('true');
+      expect(hireBtn().disabled).toBe(false);
+      hireBtn().click();
+      await tick();
+      expect(hires).toHaveLength(1);
       hires[0]!.answer({ ok: false, code: 'capacity', message: 'full' } as CommandResult);
       await tick();
       expect(rv.isOpen).toBe(true);
