@@ -826,7 +826,7 @@ test('a live switch leaves the terminal’s screen, the seated worker, a typed d
   await boot(page, 'demo-m5', { terminal: 'ubuntu' }, '&prints=0');
   const id = await sitAtTofu(page, 'terminal');
   // The agent's own spinner and clock tick on: compare the screen with its digits and spinner glyph set aside.
-  const screen = () => page.evaluate((w) => (window.__h3d.screenText(w) ?? []).join('\n').replace(/\d+/g, '#').replace(/[·✶✻✽✢*]/g, '*'), id);
+  const screen = () => page.evaluate((w) => (window.__h3d.screenText(w) ?? []).join('\n').replace(/\d+/g, '#').replace(/[·✶✻✽✢✳*]/g, '*'), id);
   const before = { screen: await screen(), seated: await page.evaluate(() => window.__h3d.seated()), th: await theme(page) };
   expect(before.screen.trim().length).toBeGreaterThan(0);
   await page.evaluate(() => window.__h3d.setUiTheme('ubuntu'));
