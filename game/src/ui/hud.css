@@ -395,7 +395,8 @@ body {
   color: var(--accent-text);
 }
 .prompt:not([hidden]) ~ .hint {
-  bottom: 118px;
+  /* 8px above the look-at bar however tall it wraps, and never lower than where it always sat. */
+  bottom: max(118px, calc(18px + var(--prompt-h, 0px) + 8px));
 }
 
 /* ---- floor plan ------------------------------------------------------------- */

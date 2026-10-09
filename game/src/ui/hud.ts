@@ -219,6 +219,8 @@ export class Hud {
     this.counts.after(this.usageEl);
     this.usageEl.hidden = true;
     new ResizeObserver(() => this.root.style.setProperty('--topbar-bottom', `${bar.getBoundingClientRect().bottom.toFixed(1)}px`)).observe(bar);
+    // The look-at bar grows when its lines wrap (a narrow screen, a report request): the hint above it rises with it (hud.css).
+    new ResizeObserver(() => this.root.style.setProperty('--prompt-h', `${this.prompt.offsetHeight}px`)).observe(this.prompt);
     for (const [b, a] of [
       [this.back, 'city'],
       [this.issues, 'issues'],
