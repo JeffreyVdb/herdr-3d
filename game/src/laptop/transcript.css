@@ -2801,23 +2801,50 @@
  * font: inherit }` (#111: a button's own `.class` colour is under that reset), whatever its order.
  */
 
-/* Focus: 3px, 2px off. Where a scroller or a clipping card is the ancestor the ring goes inside (or its padding makes room). */
+/*
+ * Focus: 3px, 2px off, everywhere, never clipped. A ring needs 5px of room outside its widget, so wherever a widget
+ * fills a box that clips (the screen itself, a diff's rounded card, a scrolling card) that box gives it the room: the
+ * timeline's scroller stands 5px inside the screen (its padding 5px less, so the conversation does not move), a diff's
+ * scrolling body 5px inside its card, a question card's scrolling options 5px inside it, the short screen's sticky top
+ * and foot 6px. Decisions #216 row 24.
+ */
 :root[data-ui-theme='ubuntu'] .tx :focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-diff-body:focus-visible,
-:root[data-ui-theme='ubuntu'] .tx .tx-scroll:focus-visible,
-:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-fu :focus-visible,
-:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-aq :focus-visible {
-  outline-offset: -3px;
+:root[data-ui-theme='ubuntu'] .tx .tx-scroll {
+  margin: 5px;
+  padding: 5px 9px 9px;
+  scroll-padding-block: 5px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-diff-body {
+  margin: 0 5px 5px;
 }
 :root[data-ui-theme='ubuntu'] .tx .tx-ask-body {
   margin: 0 -7px;
-  padding: 4px 7px 6px;
+  padding: 5px 7px 6px;
 }
-:root[data-ui-theme='ubuntu'] .tx .tx-ask-body :focus-visible {
-  outline-offset: 1px;
+:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-fu .tx-ask-top,
+:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-aq .tx-ask-top {
+  padding-top: 6px;
+}
+:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-fu .tx-ask-foot,
+:root[data-ui-theme='ubuntu'] .tx[data-tight] .tx-aq .tx-ask-foot {
+  padding-bottom: 6px;
+}
+/* A changed file's header fills the top of its rounded card: the card lets the ring out (the header rounds its own
+   corners instead), and a widget scrolled into view keeps its ring's room inside the scroller. */
+:root[data-ui-theme='ubuntu'] .tx .tx-chg-file {
+  overflow: visible;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-chg-head {
+  border-radius: 5px 5px 0 0;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-chg-head[aria-expanded='false'] {
+  border-radius: 5px;
+}
+:root[data-ui-theme='ubuntu'] .tx :is(button, input, textarea, select, summary, [tabindex], [contenteditable='true']) {
+  scroll-margin: 6px;
 }
 /* A bright fill gets the dark keyline between it and the ring, so the ring does not melt into the orange. */
 :root[data-ui-theme='ubuntu'] .tx .tx-send:focus-visible,

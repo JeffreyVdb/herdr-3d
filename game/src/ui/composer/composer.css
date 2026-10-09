@@ -546,12 +546,24 @@
 /* ubuntu:begin */
 /*
  * #216 Ubuntu. Every rule is under the root attribute, so it also outranks `.tx button` / `.tx :focus-visible` (#111) where
- * the composer sits in a transcript scope. The ring is inside the editor's box (the host may clip: the editor fills it)
- * and inside a chip (which clips); disabled is a raised fill with a muted label, not a faded one.
+ * the composer sits in a transcript scope. The ring is the issue's, 3px and 2px outside the widget: the hosts leave the
+ * editor room for it, and a chip does not clip (its upload bar rounds its own corners); disabled is a raised fill with a
+ * muted label, not a faded one.
  */
 :root[data-ui-theme='ubuntu'] .cmp-editor:focus-visible {
   outline: 3px solid var(--focus);
-  outline-offset: -3px;
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .cmp-editor {
+  scroll-padding: 6px;
+  scroll-margin: 6px;
+}
+:root[data-ui-theme='ubuntu'] .cmp-chip {
+  overflow: visible;
+}
+:root[data-ui-theme='ubuntu'] .cmp-chip .cmp-bar {
+  overflow: hidden;
+  border-radius: 0 0 9px 9px;
 }
 /* Locked while a send is in flight (a busy state, cursor: progress): it keeps its colours, only the fade goes. */
 :root[data-ui-theme='ubuntu'] .cmp-editor[contenteditable='false'] {
@@ -565,7 +577,7 @@
 :root[data-ui-theme='ubuntu'] .cmp-remove:focus-visible,
 :root[data-ui-theme='ubuntu'] .cmp-retry:focus-visible {
   outline: 3px solid var(--focus);
-  outline-offset: -2px;
+  outline-offset: 2px;
 }
 :root[data-ui-theme='ubuntu'] .cmp-dismiss {
   min-width: 32px;
