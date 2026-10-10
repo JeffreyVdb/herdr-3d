@@ -358,7 +358,9 @@
 .ov-cols,
 .ov-row {
   display: grid;
-  grid-template-columns: 34px minmax(206px, 1fr) minmax(0, 4fr) 132px;
+  /* #232: the since column says what a worker is doing as well as how long: wide enough for a verb, some detail and the
+     time, bounded so the now line keeps its room (a 100-rune one takes two lines below ~1360 px). */
+  grid-template-columns: 34px minmax(206px, 1fr) minmax(0, 4fr) clamp(164px, 14vw, 240px);
   column-gap: 10px;
 }
 .ov-cols {
@@ -692,11 +694,16 @@
 .ov-row[data-display='asleep'] .ov-mark {
   fill: var(--ov-text);
 }
-/* The user's foreground on every row, asleep ones too (that rule is as specific as this one, and earlier). */
+/* The user's foreground on every row, asleep ones too (that rule is as specific as this one, and earlier); (#232) the
+   sparkle and the since column's words too, in any theme. */
 @media (forced-colors: active) {
   .ov-mark,
   .ov-row[data-display] .ov-mark {
     fill: CanvasText;
+  }
+  :root .ov-row[data-display] .ov-ai,
+  :root .ov-row[data-display] .ov-since {
+    color: CanvasText;
   }
 }
 /* #229: a chip on the name's line is centred on its capitals, not sat on its baseline (that left it low): centred on
@@ -731,13 +738,6 @@
   color: var(--ov-text-3);
   font-family: var(--ov-mono);
   font-size: 12px;
-}
-/* #226: the live chip, a line of its own under the model: it gives way inside the column (the whole of it in its title). */
-.ov-actline {
-  display: flex;
-  flex-basis: 100%;
-  min-width: 0;
-  padding-top: 2px;
 }
 .ov-cap {
   padding: 2px 6px 1px;
@@ -806,65 +806,70 @@
 .ov-line {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
   margin: 0;
   color: var(--ov-text-2);
   font-size: 14px;
   font-weight: 380;
 }
+/* #232: the label, the sparkle of a line the AI model wrote hugging it, the text a small step after (no slot kept for a
+   sparkle a line does not have). */
 .ov-line > b {
+  display: inline-flex;
   flex: none;
-  width: 30px;
+  align-items: center;
+  gap: 3px;
   color: var(--ov-text-3);
   font-family: var(--ov-mono);
   font-size: 11px;
   font-weight: 400;
   text-transform: uppercase;
 }
-.ov-line > span:not(.ov-llm, .ov-ai-state) {
+.ov-ai {
+  display: inline-flex;
+  color: var(--ov-text-2);
+}
+.ov-ai > svg {
+  width: 13px;
+  height: 13px;
+}
+.ov-line > .ov-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ov-task > span {
+/* #232: a now line (the bridge keeps it to 100 runes) takes a second line rather than lose its end. */
+.ov-line > .ov-now-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+}
+.ov-task-text {
   color: var(--ov-text);
+}
+/* #232: the line's quiet metadata after its text, where #174's chip was: how long ago the model wrote it, what became of it;
+   on the last line of a now line that took two. */
+.ov-ai-meta {
+  display: inline-flex;
+  flex: none;
+  align-self: last baseline;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--ov-text-3);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .ov-quiet {
   color: var(--ov-text-3);
   font-style: italic;
 }
-.ov-act {
-  overflow: hidden;
-  min-width: 0;
-  padding: 1px 8px;
-  border: 1px solid color-mix(in srgb, var(--working) 55%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--working) 16%, transparent);
-  color: var(--ov-text);
-  font-family: var(--ov-mono);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ov-llm {
-  flex: none;
-  padding: 0 4px;
-  border: 1px solid var(--ov-text-3);
-  border-radius: 3px;
-  color: var(--ov-text-2);
-  font-family: var(--ov-mono);
-  font-size: 10px;
-  white-space: nowrap;
-}
-/* #198: how long ago the model wrote the line, inside its badge: a step quieter than "AI", digits that do not jitter as
-   the minutes turn. */
-.ov-llm-age {
-  color: var(--ov-text-3);
-  font-variant-numeric: tabular-nums;
-}
-/* #174: where the AI badge would be, what became of the model's line while a fallback shows: a dashed outline (the badge's
-   absent twin), the same mono, quiet while it is only pending, the board's accent once it failed or waits for a retry. */
+/* #174: what became of the model's line while a fallback shows: a dashed outline, the board's accent once it failed or
+   waits for a retry; (#232) while it is only pending, quiet words like the age. */
 .ov-ai-state {
   flex: none;
   padding: 0 4px;
@@ -874,6 +879,12 @@
   font-family: var(--ov-mono);
   font-size: 10px;
   white-space: nowrap;
+}
+.ov-ai-state--pending {
+  padding: 0;
+  border: 0;
+  color: var(--ov-text-3);
+  font-size: 11px;
 }
 .ov-ai-state--retrying,
 .ov-ai-state--failed {
@@ -905,26 +916,48 @@
   outline: 2px solid var(--ov-accent);
   outline-offset: 2px;
 }
-/* #226: the time, the AI mark of a model's now line under it (both mono, both times), the row's hint in the time's place. */
+/*
+ * #232: the since column: what the worker does and for how long, plain text on one line at the column's right edge
+ * (`Investigating · grep -n … · 9m`, else `working 9m`, `needs you 4m`): the detail gives way first, then the verb; the
+ * time never does, nor moves. The row's hint goes under it while the row is hovered or focused, over nothing. A step
+ * apart from the line's metadata before it.
+ */
 .ov-since {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
   min-width: 0;
   padding-top: 4px;
+  padding-left: 12px;
   color: var(--ov-text-2);
   font-family: var(--ov-mono);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.ov-since-text {
+.ov-doing {
+  display: flex;
+  align-items: baseline;
+  max-width: 100%;
   min-height: 18px;
+}
+/* One run of text cut at its end: the detail is last, so it gives way first, then the verb. */
+.ov-state {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ov-sep {
+  flex: none;
+  white-space: pre;
+}
+.ov-time {
+  flex: none;
 }
 .ov-hint {
   display: none;
-  order: -1;
   align-items: center;
   gap: 6px;
   height: 18px;
@@ -932,15 +965,14 @@
   font-family: var(--ov-mono);
   font-size: 11px;
 }
+.ov-doing + .ov-hint {
+  position: absolute;
+  top: 28px;
+  right: 0;
+}
 .ov-row:hover .ov-hint,
 .ov-row:focus-visible .ov-hint {
   display: inline-flex;
-}
-/* While the hint shows (not on a phone; not while Retry has the pointer or the focus), it is the time's place. */
-@media not (max-width: 760px) {
-  .ov-row:is(:hover, :focus-visible):not(:has(.ov-retry:hover, .ov-retry:focus-visible)) .ov-since:has(.ov-hint) > .ov-since-text {
-    display: none;
-  }
 }
 /* #174: the hint is only a label for the row: it never takes a pointer from a control (Retry) and steps aside while one is
    hovered or focused, and on a phone (no hover; the row is narrow) it is not shown at all. */
@@ -1126,6 +1158,8 @@
   }
   .ov-row > .ov-since {
     grid-area: since;
+    /* #232: the activity gives way (its detail first) before the name does. */
+    max-width: 46vw;
   }
   .ov-flap {
     width: 24px;
@@ -1143,11 +1177,15 @@
     flex-wrap: wrap;
     row-gap: 2px;
   }
-  .ov-line--status > span:not(.ov-llm, .ov-ai-state) {
-    flex: 1 1 calc(100% - 38px);
+  .ov-line--status > .ov-text {
+    flex: 1 1 0;
   }
-  .ov-line--status > .ov-ai-state {
-    margin-left: 38px; /* the label's 30px and the gap: under the line's text */
+  .ov-line--status > .ov-ai-meta {
+    flex-basis: 100%;
+  }
+  /* #232: the name and the model keep the most of the top line; the activity keeps its verb and time. */
+  .ov-row > .ov-since {
+    max-width: 38vw;
   }
 }
 
@@ -1246,15 +1284,19 @@
 :root[data-ui-theme='ubuntu'] .ov-cap,
 :root[data-ui-theme='ubuntu'] .ov-ghost-label,
 :root[data-ui-theme='ubuntu'] .ov-line > b,
-:root[data-ui-theme='ubuntu'] .ov-act,
+:root[data-ui-theme='ubuntu'] .ov-ai-meta,
+:root[data-ui-theme='ubuntu'] .ov-ai-state--pending,
 :root[data-ui-theme='ubuntu'] .ov-retry,
 :root[data-ui-theme='ubuntu'] .ov-hint,
 :root[data-ui-theme='ubuntu'] .ov kbd {
   font-size: 13px;
 }
-:root[data-ui-theme='ubuntu'] .ov-llm,
 :root[data-ui-theme='ubuntu'] .ov-ai-state {
   font-size: 12px;
+}
+:root[data-ui-theme='ubuntu'] .ov-ai > svg {
+  width: 14px;
+  height: 14px;
 }
 :root[data-ui-theme='ubuntu'] .ov-where,
 :root[data-ui-theme='ubuntu'] .ov-hidden,

@@ -131,14 +131,16 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
     await expect.poll(async () => (await page.evaluate(() => window.__h3d.overview()))?.page?.open).toBe(true);
     const turnip = page.locator('.ov-row', { hasText: 'Turnip' });
     await expect(turnip.locator('.ov-task')).toContainText(TASK, { timeout: 30_000 });
-    await expect(turnip.locator('.ov-task .ov-llm')).toHaveText('AI');
-    await expect(page.locator('.ov-row .ov-llm').first()).toBeVisible();
+    // #232: the sparkle beside the line's label, the same for a task line and a now line.
+    await expect(turnip.locator('.ov-task > b > .ov-ai')).toHaveAttribute('aria-label', 'AI-generated summary of what this worker was asked to do.');
+    await expect(page.locator('.ov-row .ov-ai').first()).toBeVisible();
     await expect(page.locator('.ov', { hasText: NOW })).toBeVisible();
-    expect(await page.locator('.ov-row', { hasText: NOW }).locator('.ov-llm').count()).toBeGreaterThan(0);
-    // #198: the model's now line says how long ago it was written, and that the time is the summary's.
-    const nowMark = page.locator('.ov-row', { hasText: NOW }).first().locator('.ov-since .ov-llm'); // #226: under the since time
-    await expect(nowMark).toHaveText(/^AI · (just now|\d+m ago)$/);
-    await expect(nowMark).toHaveAttribute('title', /recent activity \(its last 5 steps\) .*The time is when the summary was written, not when the activity happened\.$/);
+    const nowRow = page.locator('.ov-row', { hasText: NOW }).first();
+    expect(await nowRow.locator('.ov-now > b > .ov-ai').count()).toBe(1);
+    expect(await page.locator('.ov-since .ov-ai, .ov-llm').count()).toBe(0);
+    // #198: the model's now line says how long ago it was written (quiet words after it), and that the time is the summary's.
+    await expect(nowRow.locator('.ov-now .ov-age')).toHaveText(/^(just now|\d+m ago)$/);
+    await expect(nowRow.locator('.ov-now .ov-ai')).toHaveAttribute('title', /recent activity \(its last 5 steps\); generated .*The time is when the summary was written, not when the activity happened\.$/);
     await shot(page, 'm118-digest-page');
     // Every request marked the worker's lines as data, between delimiters, the instruction in its own turn.
     expect(llm.bodies.length).toBeGreaterThan(1);
@@ -153,7 +155,7 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
   }
 });
 
-// #198: a refresh of a model's now line that failed. The line, its AI mark and age stay; the failure follows them,
+// #198: a refresh of a model's now line that failed. The line, its AI sparkle and age stay; the failure follows them,
 // quietly, with Retry (pointer and R). The fixture bridge never fails a summary, so Turnip's digest is given that state
 // on its way to the page (the frames the game sends are kept).
 test('a failed refresh of an AI now line keeps the line and its age, says so, and Retry asks again', async ({ page }) => {
@@ -189,7 +191,8 @@ test('a failed refresh of an AI now line keeps the line and its age, says so, an
   const row = page.locator('.ov-row', { hasText: 'Turnip' });
   const line = row.locator('.ov-now');
   await expect(line).toContainText(NOW);
-  await expect(row.locator('.ov-since .ov-llm')).toHaveText(/^AI · \d+m ago$/);
+  await expect(line.locator('.ov-ai')).toBeVisible();
+  await expect(line.locator('.ov-age')).toHaveText(/^\d+m ago$/);
   const chip = line.locator('.ov-ai-state');
   await expect(chip).toHaveText('refresh failed');
   await expect(chip).toHaveAttribute('aria-label', /^Refreshing this AI summary from newer activity failed: the model did not answer in time\. The summary shown is the previous one/);
@@ -204,11 +207,11 @@ test('a failed refresh of an AI now line keeps the line and its age, says so, an
   await expect.poll(() => retries().length).toBe(2);
   expect(retries()[1]?.args?.id).toBe(retries()[0]?.args?.id);
   expect((await page.evaluate(() => window.__h3d.overview()))?.page?.open).toBe(true); // not the transcript
-  // A phone: the failure and Retry go under the line, all of them on screen; the mark stays under the since time (#226).
+  // A phone: the age, the failure and Retry go under the line, all of them on screen; the sparkle stays by its label (#232).
   await page.setViewportSize({ width: 390, height: 844 });
   await line.scrollIntoViewIfNeeded();
   await expect(line.locator('.ov-retry')).toBeVisible();
-  await expect(row.locator('.ov-since .ov-llm')).toBeVisible();
+  await expect(line.locator('b > .ov-ai')).toBeVisible();
   const [text, state] = await Promise.all([line.locator('.ov-now-text').boundingBox(), chip.boundingBox()]);
   expect(text && state && state.y >= text.y + text.height - 1).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

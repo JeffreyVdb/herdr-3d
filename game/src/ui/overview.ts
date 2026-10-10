@@ -28,6 +28,7 @@ import {
   hiddenText,
   sinceText,
   sleepyFloors,
+  spanText,
   visibleRows,
   type CityOverviewData,
   type CountItem,
@@ -39,8 +40,9 @@ import {
   type OverviewWorkerRow,
   type VisibleRow,
 } from '../world/overview';
+import { STATUS_WORD } from '../world/derive';
 import { harnessName, markSvg } from '../render/brandMarks';
-import { h, icon, ICON } from './dom';
+import { h, icon, ICON, type Child } from './dom';
 import { OverviewFilterPrefs, type OverviewPrefs } from './overviewPrefs';
 import './overview.css';
 
@@ -187,9 +189,9 @@ export class OverviewOverlay {
       'div',
       { class: 'ov-cols', 'aria-hidden': 'true' },
       h('span', {}, ''),
-      h('span', {}, 'Worker · doing'),
+      h('span', {}, 'Worker'),
       h('span', {}, 'Working on'),
-      h('span', { class: 'ov-cols-since' }, 'Since'),
+      h('span', { class: 'ov-cols-since' }, 'Doing · for'),
     );
     this.board = h('div', { class: 'ov-board', role: 'tree', 'aria-labelledby': 'ov-floor' });
     this.board.addEventListener('click', (e) => this.onClick(e));
@@ -595,18 +597,16 @@ export class OverviewOverlay {
         r.floor ? h('span', { class: 'ov-floortag' }, r.floor) : null,
         h('span', { class: 'ov-meta' }, [mark ? '' : r.harness, r.model].filter(Boolean).join(' ')),
         r.orch?.overCap ? h('span', { class: 'ov-cap' }, 'Over cap') : null,
-        // #226: the live chip is the worker's (it changes every few seconds), a line of its own under the model.
-        r.activity ? h('span', { class: 'ov-actline' }, h('span', { class: 'ov-act', title: r.activity }, r.activity)) : null,
       );
       const what = h(
         'div',
         { class: 'ov-what' },
         r.ticket ? this.ticketEl(r) : null,
-        r.task ? lineEl('ov-task', 'Task', r.task, 'task') : null,
-        r.now ? this.nowEl(r) : null,
+        r.task ? lineEl('task', r.task, now) : null,
+        r.now ? lineEl('now', r.now, now) : null,
         !r.ticket && !r.task && !r.now ? h('p', { class: 'ov-line ov-quiet' }, r.activity ? 'No summary yet' : 'No turn yet') : null,
       );
-      el.replaceChildren(h('span', { class: 'ov-light', 'aria-hidden': 'true' }), wire ?? '', fold ?? '', who, what, sinceEl(sinceText(r.display, r.since, now), r.now?.llm ? aiMarkEl(r.now, now) : null, 'Open transcript'));
+      el.replaceChildren(h('span', { class: 'ov-light', 'aria-hidden': 'true' }), wire ?? '', fold ?? '', who, what, workerSince(r, now));
       return;
     }
     delete el.dataset.display;
@@ -617,7 +617,7 @@ export class OverviewOverlay {
         fold ?? '',
         h('div', { class: 'ov-who' }, h('span', { class: 'ov-ghost-label' }, 'Orchestrator'), h('span', { class: 'ov-name' }, r.name), h('span', { class: 'ov-floortag' }, r.floor)),
         h('div', { class: 'ov-what' }, h('p', { class: 'ov-line ov-quiet' }, 'Runs on another floor; its freelancers here are below.')),
-        sinceEl('', null, 'Go there'),
+        sinceEl([], 'Go there'),
       );
       return;
     }
@@ -628,7 +628,7 @@ export class OverviewOverlay {
       fold ?? '',
       h('div', { class: 'ov-who' }, h('span', { class: 'ov-name' }, 'Unlinked'), h('span', { class: 'ov-meta' }, `${n} freelancer${n === 1 ? '' : 's'} with no orchestrator`)),
       h('div', { class: 'ov-what' }),
-      sinceEl('', null, null),
+      sinceEl([], null),
     );
   }
 
@@ -663,22 +663,25 @@ export class OverviewOverlay {
     return h('button', { class: 'ov-ticket', tabindex: '-1', 'data-ticket': '1', title: `Open ${t.key} (t)` }, ...body);
   }
 
-  /** #226: the label and the text, and (#174, #198) what became of the model's line, with Retry; the AI mark is the since column's. */
-  private nowEl(r: OverviewWorkerRow): HTMLElement {
-    const n = r.now as OverviewLine;
-    return h('p', { class: `ov-line ov-now${n.status ? ' ov-line--status' : ''}` }, h('b', {}, 'Now'), h('span', { class: 'ov-now-text' }, n.text), ...statusEls(n, 'now'));
-  }
-
-  /** The times of a row that did not change otherwise: its since column and (#198) its AI line's age, and its spoken label. */
+  /**
+   * The times of a row that did not change otherwise, in place: its since column's time, (#198) its AI now line's age and
+   * its sparkle's words, and its spoken label.
+   */
   private since(el: HTMLElement, r: OverviewAnyRow, now: number): void {
     if (r.kind !== 'worker') return;
-    const s = el.querySelector('.ov-since-text');
-    const t = sinceText(r.display, r.since, now);
-    if (s && s.textContent !== t) s.textContent = t;
-    const mark = el.querySelector<HTMLElement>('.ov-since .ov-llm');
-    if (mark && r.now?.llm && r.now.at) {
-      const next = aiMarkEl(r.now, now);
-      if (mark.textContent !== next.textContent) mark.replaceWith(next);
+    const t = el.querySelector('.ov-since .ov-time');
+    const span = spanText(now - r.since);
+    if (t && t.textContent !== span) t.textContent = span;
+    if (r.now?.llm && r.now.at) {
+      const age = el.querySelector('.ov-now .ov-age');
+      const a = ageText(r.now.at, now);
+      if (age && age.textContent !== a) age.textContent = a;
+      const mark = el.querySelector<HTMLElement>('.ov-now .ov-ai');
+      const title = aiTitle(r.now, now);
+      if (mark && mark.title !== title) {
+        mark.title = title;
+        mark.setAttribute('aria-label', title);
+      }
     }
     const label = rowLabel(r, now);
     if (el.getAttribute('aria-label') !== label) el.setAttribute('aria-label', label);
@@ -884,41 +887,55 @@ function textOf(e: Node | undefined): string {
 
 /** A worker row's spoken label: who, the ticket, the lines with what became of them, the status and how long. */
 function rowLabel(r: OverviewWorkerRow, now: number): string {
-  const ai = (l: OverviewLine) =>
-    l.llm && l.at ? ` (AI summary, ${ageText(l.at, now)}${l.status ? `; ${lineStatusText(l.status, 'now', true).chip}` : ''})` : statusLabel(l, 'now');
-  return [r.name, r.tag, harnessName(r.harness), r.model, r.activity, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${statusLabel(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${ai(r.now)}` : null, sinceText(r.display, r.since, now)]
+  const ai = (l: OverviewLine, kind: 'task' | 'now') =>
+    l.llm ? ` (AI summary${l.at ? `, ${ageText(l.at, now)}` : ''}${l.status ? `; ${lineStatusText(l.status, kind, true).chip}` : ''})` : statusLabel(l, kind);
+  return [r.name, r.tag, harnessName(r.harness), r.model, r.activity, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${ai(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${ai(r.now, 'now')}` : null, sinceText(r.display, r.since, now)]
     .filter(Boolean)
     .join(' · ');
 }
 
 /**
- * #226: the since column: the time in the status, under it the AI mark of a model's now line (#198); the row's hint takes
- * the time's place while it is hovered or focused (overview.css), never over another column.
+ * #226, #232: the since column, and the row's hint, which goes on a line under it while the row is hovered or focused
+ * (overview.css), never over another column.
  */
-function sinceEl(text: string, mark: HTMLElement | null, hint: string | null): HTMLElement {
-  return h(
-    'span',
-    { class: 'ov-since' },
-    h('span', { class: 'ov-since-text' }, text),
-    mark,
-    hint ? h('span', { class: 'ov-hint', 'aria-hidden': 'true' }, hint, h('kbd', {}, '↵')) : null,
-  );
-}
-
-/** #198: the AI mark of a model's now line, with how long ago it was written (`AI · 2m ago`); the tooltip says what the time is. */
-function aiMarkEl(line: OverviewLine, now: number): HTMLElement {
-  const title = aiTitle(line, now);
-  if (!line.at) return h('span', { class: 'ov-llm', title }, 'AI');
-  return h('span', { class: 'ov-llm', title, role: 'img', 'aria-label': title }, 'AI', h('span', { class: 'ov-llm-age' }, ` · ${ageText(line.at, now)}`));
-}
-
-function lineEl(cls: string, label: string, line: OverviewLine, kind: 'task' | 'now'): HTMLElement {
-  return h('p', { class: `ov-line ${cls}${line.status ? ' ov-line--status' : ''}` }, h('b', {}, label), h('span', {}, line.text), line.llm ? h('span', { class: 'ov-llm', title: 'Summarised by the AI model' }, 'AI') : null, ...statusEls(line, kind));
+function sinceEl(parts: Child[], hint: string | null): HTMLElement {
+  return h('span', { class: 'ov-since' }, parts.length ? h('span', { class: 'ov-doing' }, ...parts) : null, hint ? h('span', { class: 'ov-hint', 'aria-hidden': 'true' }, hint, h('kbd', {}, '↵')) : null);
 }
 
 /**
- * #174: where the AI badge would be, what became of the model's line: a chip (its words in the title and for a screen
- * reader), and Retry when it helps. #198: on a model's now line, a failed refresh of it (#226: its badge is in the since column).
+ * #232: a worker's since column: while it works with a usable activity, that in plain words (`Investigating · grep -n …`,
+ * the detail giving way first, the whole of it in the title) and how long it has worked; else its status (`working`,
+ * `needs you`, `idle`) and how long that held, never a stale activity. The time is a span of its own: the 20 s refresh
+ * rewrites only it, and it keeps its place at the column's right edge.
+ */
+function workerSince(r: OverviewWorkerRow, now: number): HTMLElement {
+  const act = r.display === 'working' ? r.act : null;
+  const state = act
+    ? h('span', { class: 'ov-state ov-state--act', title: r.activity }, h('span', { class: 'ov-verb' }, act.verb), act.detail ? h('span', { class: 'ov-detail' }, ` · ${act.detail}`) : null)
+    : h('span', { class: 'ov-state' }, STATUS_WORD[r.display]);
+  return sinceEl([state, h('span', { class: 'ov-sep' }, act ? ' · ' : ' '), h('span', { class: 'ov-time' }, spanText(now - r.since))], 'Open transcript');
+}
+
+/**
+ * #226, #232: a task or now line: its label and, beside it, the sparkle of a line the AI model wrote (what it is in its
+ * title and for a screen reader); the text; and at the line's end its quiet metadata: (#198) how long ago a model's now
+ * line was written, and (#174) what became of the model's line, with Retry.
+ */
+function lineEl(kind: 'task' | 'now', line: OverviewLine, now: number): HTMLElement {
+  const title = line.llm ? aiTitle(line, now, kind) : '';
+  const meta = [line.llm && line.at ? h('span', { class: 'ov-age' }, ageText(line.at, now)) : null, ...statusEls(line, kind)].filter((e) => e !== null);
+  return h(
+    'p',
+    { class: `ov-line ov-${kind}${line.status ? ' ov-line--status' : ''}` },
+    h('b', {}, kind === 'task' ? 'Task' : 'Now', line.llm ? h('span', { class: 'ov-ai', title, role: 'img', 'aria-label': title }, icon(ICON.sparkle)) : null),
+    h('span', { class: `ov-text ov-${kind}-text`, title: line.text }, line.text),
+    meta.length ? h('span', { class: 'ov-ai-meta' }, ...meta) : null,
+  );
+}
+
+/**
+ * #174: what became of the model's line: pending as quiet words (#232), a failed one as a chip (its words in the title
+ * and for a screen reader), and Retry when it helps. #198: on a model's now line, a failed refresh of it.
  */
 function statusEls(line: OverviewLine, kind: 'task' | 'now'): HTMLElement[] {
   if (!line.status) return [];

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { lineLLM, lineMark, metaLine, scrollAt, wallCycle, wallPages, WALL_STATUS, wallPlan, wallTag, whatLines } from './overviewScreen';
+import '../test/fakeCanvas';
+import { SPARKLE_D } from '../ui/dom';
+import { aiMark, lineLLM, lineMark, metaLine, scrollAt, wallCycle, wallPages, WALL_STATUS, wallPlan, wallTag, whatLines } from './overviewScreen';
 import type { OverviewWorkerRow } from '../world/overview';
 import { STATUS_CHIP_CSS, STATUS_CSS } from './palette';
 
@@ -80,7 +82,7 @@ describe('a floor bigger than one canvas (#118)', () => {
 describe('the wall’s what column (#118)', () => {
   const row = (over: Partial<OverviewWorkerRow>): OverviewWorkerRow => ({
     kind: 'worker', key: 'w', id: 'w', session: 's', name: 'Sprout', display: 'working', since: 0, harness: 'claude', model: 'Opus 5.5 high',
-    role: null, tag: null, runColor: null, orch: null, ticket: null, task: null, now: null, activity: null, floor: null, ...over,
+    role: null, tag: null, runColor: null, orch: null, ticket: null, task: null, now: null, activity: null, act: null, floor: null, ...over,
   });
   const ticket = { key: '#118', title: 'Floor overview', item: null, url: null };
   const now = { text: 'Reviewing the wall', source: 'recap' as const, llm: false };
@@ -93,24 +95,53 @@ describe('the wall’s what column (#118)', () => {
     expect(whatLines(row({ task: { text: 'Fix it', source: 'prompt', llm: false }, now }), true)).toEqual(['Fix it — Reviewing the wall', null]);
   });
 
-  it('the AI mark follows the page’s: a line with a part the LLM wrote (#118 phase 2)', () => {
+  it('the AI sparkle follows the page’s: a line with a part the LLM wrote (#118 phase 2, #232)', () => {
     expect(lineLLM(row({ now }))).toBe(false);
     expect(lineLLM(row({ now: { ...now, source: 'llm', llm: true } }))).toBe(true);
     expect(lineLLM(row({ task: { text: 'Fix it', source: 'llm', llm: true }, now }))).toBe(true);
     expect(lineLLM(row({ ticket }))).toBe(false);
   });
 
-  it('the AI mark says how old the model’s now line is, as the page does, and moves with the time alone (#198)', () => {
+  it('the words after the AI sparkle say how old the model’s now line is, as the page does, and move with the time alone (#198, #232)', () => {
     const at = 1_790_000_000_000;
     const llmNow = { ...now, source: 'llm' as const, llm: true, at };
     expect(lineMark(row({ now }), at)).toBeNull();
-    expect(lineMark(row({ now: llmNow }), at + 2 * 60_000)).toBe('AI · 2m ago');
-    expect(lineMark(row({ now: llmNow }), at + 9 * 60_000)).toBe('AI · 9m ago');
-    expect(lineMark(row({ task: { text: 'Fix it', source: 'llm', llm: true }, now }), at)).toBe('AI');
-    expect(lineMark(row({ now: { ...now, source: 'llm', llm: true } }), at)).toBe('AI');
+    expect(lineMark(row({ now: llmNow }), at + 2 * 60_000)).toBe('2m ago');
+    expect(lineMark(row({ now: llmNow }), at + 9 * 60_000)).toBe('9m ago');
+    // The sparkle alone: a task line, a now line with no time (none made up).
+    expect(lineMark(row({ task: { text: 'Fix it', source: 'llm', llm: true }, now }), at)).toBe('');
+    expect(lineMark(row({ now: { ...now, source: 'llm', llm: true } }), at)).toBe('');
     // A failed refresh of the line: the page's chip after the age (the wall drops it first when short of room).
-    expect(lineMark(row({ now: { ...llmNow, status: { state: 'failed', reason: 'timeout' } } }), at + 2 * 60_000)).toBe('AI · 2m ago · refresh failed');
-    expect(lineMark(row({ now: { ...llmNow, status: { state: 'retrying', reason: 'timeout', retry_at: at + 10 * 60_000 } } }), at)).toMatch(/^AI · just now · refresh failed · retry \d\d:\d\d/);
+    expect(lineMark(row({ now: { ...llmNow, status: { state: 'failed', reason: 'timeout' } } }), at + 2 * 60_000)).toBe('2m ago · refresh failed');
+    expect(lineMark(row({ now: { ...llmNow, status: { state: 'retrying', reason: 'timeout', retry_at: at + 10 * 60_000 } } }), at)).toMatch(/^just now · refresh failed · retry \d\d:\d\d/);
+  });
+
+  it('draws the page’s sparkle (its own path) with its words quiet after it; short of room the words go first, then the age (#232)', () => {
+    const calls: string[] = [];
+    const g = {
+      font: '',
+      fillStyle: '',
+      measureText: (s: string) => ({ width: s.length * 10 }),
+      save: () => calls.push('save'),
+      restore: () => calls.push('restore'),
+      translate: () => undefined,
+      scale: () => undefined,
+      fill: (p: { d?: string }) => calls.push(`fill ${p.d === SPARKLE_D ? 'sparkle' : '?'} ${g.fillStyle}`),
+      fillText: (s: string) => calls.push(`text ${s} ${g.fillStyle}`),
+    } as unknown as CanvasRenderingContext2D & { fillStyle: string };
+    const draw = (label: string, max?: number) => {
+      calls.length = 0;
+      const w = aiMark(g, label, 0, 50, 10, max);
+      return { w, calls: calls.filter((c) => c.startsWith('fill') || c.startsWith('text')) };
+    };
+    // u 10: the sparkle 28 px, a gap of 8, the words at 10 px a character (the fake), a gap of 10 after.
+    expect(draw('2m ago · refresh failed')).toEqual({ w: 28 + 8 + 230 + 10, calls: ['fill sparkle #b9c3dc', 'text 2m ago · refresh failed #7d89ab'] });
+    expect(draw('2m ago · refresh failed', 200)).toEqual({ w: 28 + 8 + 60 + 10, calls: ['fill sparkle #b9c3dc', 'text 2m ago #7d89ab'] });
+    expect(draw('2m ago · refresh failed', 60)).toEqual({ w: 38, calls: ['fill sparkle #b9c3dc'] });
+    expect(draw('', 60)).toEqual({ w: 38, calls: ['fill sparkle #b9c3dc'] });
+    expect(draw('2m ago', 30)).toEqual({ w: 0, calls: [] });
+    // No outlined box any more: nothing is stroked.
+    expect(readFileSync(resolve(import.meta.dirname, 'overviewScreen.ts'), 'utf8')).not.toMatch(/AI · /);
   });
 
   it('an orchestrator’s round is in its chip (both modes); its meta line is the model alone, no run words (#229)', () => {

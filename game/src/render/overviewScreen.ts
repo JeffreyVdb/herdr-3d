@@ -1,10 +1,11 @@
 import * as THREE from 'three/webgpu';
 import type { Box3 } from '../world/layout';
-import { aiLabel, BLINK_MS, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
+import { ageText, BLINK_MS, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
 import { lineStatusText } from '../world/digestSettings';
 import { STATUS_CSS, STATUS_CHIP_CSS } from './palette';
 import { FONT } from './cards/atlasCards';
 import { drawMark, markFor } from './brandMarks';
+import { SPARKLE_D } from '../ui/dom';
 
 /**
  * #118: the floor overview's big screen on the lounge wall. A thin dark bezel box a few cm off the west wall, facing +x,
@@ -13,7 +14,7 @@ import { drawMark, markFor } from './brandMarks';
  * (`MeshBasicMaterial`, not tone mapped), so it reads like a screen in any light, and it adds no light to the room (M17).
  *
  * Canvas work happens only when what it shows changes (at most once a second, the since column once a minute, never
- * for the live activity chip, which is the page's); nothing is drawn or uploaded to blink or to scroll:
+ * for the live activity, which is the page's); nothing is drawn or uploaded to blink or to scroll:
  * - the board is one tall canvas of the rows, shown through a window (the texture's repeat and offset): more rows
  *   than fit go one line a row, then the window scrolls down slowly and back to the top, so no row is cut off unsaid;
  *   a floor with more rows than one canvas holds (WebGL2's 4096 px) is drawn a page of them at a time, each page
@@ -511,12 +512,12 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     g.textAlign = 'left';
     const whatW = sinceRight - sinceW - u * 3 - colWhat;
     const [first, second] = whatLines(r, compact);
-    // The task and now line carries the page's AI mark when the LLM wrote a part of it (#118 phase 2), with the now
-    // line's age (#198).
+    // The task and now line carries the page's AI sparkle when the LLM wrote a part of it (#118 phase 2, #232), with the
+    // now line's age (#198) as quiet words after it.
     const llm = lineMark(r, now);
     if (first) {
       const font = `600 ${Math.round(u * 3.2)}px ${FONT}`;
-      const mark = llm && !r.ticket ? aiMark(g, llm, colWhat, base, u) : 0;
+      const mark = llm !== null && !r.ticket ? aiMark(g, llm, colWhat, base, u, whatW) : 0;
       g.font = font;
       g.fillStyle = r.ticket ? TEXT : TEXT_2;
       const w = mark + fitText(g, first, colWhat + mark, base, whatW - mark);
@@ -524,7 +525,7 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
       if (compact && second) {
         g.fillStyle = TEXT_2;
         const sep = fitText(g, ' · ', colWhat + w, base, whatW - w);
-        const m2 = llm ? aiMark(g, llm, colWhat + w + sep, base, u, whatW - w - sep) : 0;
+        const m2 = llm !== null ? aiMark(g, llm, colWhat + w + sep, base, u, whatW - w - sep) : 0;
         g.font = font;
         g.fillStyle = TEXT_2;
         fitText(g, second, colWhat + w + sep + m2, base, whatW - w - sep - m2);
@@ -533,7 +534,7 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     if (!compact) {
       if (second) {
         const y2 = base + u * 4.2;
-        const mark = llm ? aiMark(g, llm, colWhat, y2, u) : 0;
+        const mark = llm !== null ? aiMark(g, llm, colWhat, y2, u, whatW) : 0;
         g.font = `400 ${Math.round(u * 2.9)}px ${FONT}`;
         g.fillStyle = TEXT_2;
         fitText(g, second, colWhat + mark, y2, whatW - mark);
@@ -580,7 +581,7 @@ export function wallTag(r: OverviewWorkerRow): string | null {
   return r.tag && r.orch?.round ? `${r.tag} r${r.orch.round}` : r.tag;
 }
 
-/** The task and the now line (the activity chip is the page's: it moves too often for a wall to redraw). */
+/** The task and the now line (the live activity is the page's: it moves too often for a wall to redraw). */
 function lineText(r: OverviewWorkerRow): string | null {
   const now = r.now?.text ?? '';
   if (r.task && !now) return r.task.text;
@@ -593,34 +594,45 @@ export function lineLLM(r: OverviewWorkerRow): boolean {
   return !!(r.task?.llm || r.now?.llm);
 }
 
-/** #198: the words of the row's AI mark (null: none): the page's, `AI · 2m ago` when the model wrote the now line, with
- * a failed refresh of it after (`AI · 2m ago · refresh failed`, the page's chip), else `AI`. Pure (for its test). */
+/**
+ * #198, #232: the words after the row's AI sparkle (null: no sparkle): how long ago the model wrote the now line, with a
+ * failed refresh of it after (`2m ago · refresh failed`, the page's chip), else none (''): a task line has no time.
+ * Pure (for its test).
+ */
 export function lineMark(r: OverviewWorkerRow, now: number): string | null {
   if (!lineLLM(r)) return null;
-  if (!r.now?.llm) return 'AI';
-  const label = aiLabel(r.now, now);
-  return r.now.status ? `${label} · ${lineStatusText(r.now.status, 'now', true).chip}` : label;
+  if (!r.now?.llm || !r.now.at) return '';
+  const age = ageText(r.now.at, now);
+  return r.now.status ? `${age} · ${lineStatusText(r.now.status, 'now', true).chip}` : age;
 }
 
-/** The page's AI mark on the wall: `label` in an outlined box before a line on `base`; returns the width it takes with
- * its gap (0 when `max` has no room for it). Short of room it drops its last ` · ` parts (the failed refresh, then the
- * age) down to the plain "AI". */
-function aiMark(g: CanvasRenderingContext2D, label: string, x: number, base: number, u: number, max = Infinity): number {
-  g.font = `400 ${Math.round(u * 2.2)}px ${MONO}`;
-  let w = g.measureText(label).width + u * 1.2;
-  while (w + u > max && label.includes(' · ')) {
-    label = label.slice(0, label.lastIndexOf(' · '));
-    w = g.measureText(label).width + u * 1.2;
-  }
-  if (w + u > max) return 0;
-  g.strokeStyle = TEXT_3;
-  g.lineWidth = Math.max(1, u * 0.18);
-  g.beginPath();
-  g.roundRect(x, base - u * 2.6, w, u * 3.1, u * 0.4);
-  g.stroke();
+let sparkle: Path2D | null = null;
+
+/**
+ * #232: the page's AI sparkle (`ICON.sparkle`'s path) before a line on `base`, as tall as its capitals, and its words
+ * (`label`) after it, quiet; returns the width they take with the gap (0 when `max` has no room even for the sparkle).
+ * Short of room the words drop their last ` · ` parts (the failed refresh), then go (the age), down to the sparkle.
+ * Exported for its test.
+ */
+export function aiMark(g: CanvasRenderingContext2D, label: string, x: number, base: number, u: number, max = Infinity): number {
+  const size = u * 2.8;
+  g.font = `400 ${Math.round(u * 2.4)}px ${MONO}`;
+  const width = (l: string) => size + (l ? u * 0.8 + g.measureText(l).width : 0);
+  while (width(label) + u > max && label.includes(' · ')) label = label.slice(0, label.lastIndexOf(' · '));
+  if (width(label) + u > max) label = '';
+  if (size + u > max) return 0;
+  sparkle ??= new Path2D(SPARKLE_D);
+  g.save();
+  g.translate(x, base - u * 2.5);
+  g.scale(size / 24, size / 24);
   g.fillStyle = TEXT_2;
-  g.fillText(label, x + u * 0.6, base - u * 0.25);
-  return w + u;
+  g.fill(sparkle);
+  g.restore();
+  if (label) {
+    g.fillStyle = TEXT_3;
+    g.fillText(label, x + size + u * 0.8, base);
+  }
+  return width(label) + u;
 }
 
 /** Draws `s` from `x`, clipped with an ellipsis to `max` px; returns the width drawn. */
