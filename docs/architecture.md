@@ -303,8 +303,9 @@ MacBook (M2 Max)                                   devbox (Linux)
   rides the usage tracker's line tap beside the follow-up and wrap-up trackers (the same `TurnEvents`, one parse per
   line) and keeps the reply's source identity (agent session, Claude's message/request/line ids or Codex's turn and
   message ids, byte spans, the text's SHA-256); the hub shows that identity as `Worker.handoff`, never the text, and
-  `transcript.Resolve` reads the whole text back from the spans for the preview and the filing (same file, same lines,
-  same hash, or nothing). `internal/handoff` (standard library and the store only, `TestHandoffIsALeaf`) is the
+  `transcript.Resolve` reads the whole text back from the spans for the preview and the filing (same file, no
+  shorter, same lines, same hash, or nothing), after `transcript.StillLatest` read the lines written since the
+  tracker's last read with the tracker's rules (still the latest reply, or nothing). `internal/handoff` (standard library and the store only, `TestHandoffIsALeaf`) is the
   cabinet's one writer, for this mode and the later agent / LLM modes and `worker.fire`'s reserved `handoff`:
   `--handoff-dir` (default `~/handoff`, `-` none) / `<floor>/<yyyymmdd-hhmm>-<worker>-<slug>.md`, a synced `.tmp`
   linked to a free name (never over a file), the bridge's front matter over the unchanged text, a derived title, a

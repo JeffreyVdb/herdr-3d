@@ -140,8 +140,10 @@ func (s *Service) File(ctx context.Context, src Source, body string) (h store.Ha
 	}
 	if src.Turn != "" && src.Hash != "" {
 		if prev, err := s.idx.HandoffBySource(ctx, src.WorkerID, src.Turn, src.Hash); err == nil {
-			if _, serr := os.Lstat(prev.Path); serr == nil {
-				return prev, true, nil
+			if s.handoffFile(prev.Path) == nil {
+				if _, serr := os.Lstat(prev.Path); serr == nil {
+					return prev, true, nil
+				}
 			}
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return store.Handoff{}, false, err
@@ -156,11 +158,8 @@ func (s *Service) File(ctx context.Context, src Source, body string) (h store.Ha
 	if err != nil {
 		return store.Handoff{}, false, err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := s.mkdirs(dir); err != nil {
 		return store.Handoff{}, false, err
-	}
-	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
-		return store.Handoff{}, false, fmt.Errorf("%w: %s is not a directory", ErrOutside, dir)
 	}
 	content := FrontMatter(h, now) + body
 	base := now.Format("20060102-1504") + "-" + nameOf(src.WorkerName) + "-" + Slug(h.Title)
@@ -250,8 +249,50 @@ func (s *Service) inside(path string) error {
 	return nil
 }
 
+// realDirs checks that every directory from the handoff directory down to
+// dir that exists is a directory and not a symlink: nothing outside the
+// handoff directory is reached through one. (A symlink made between the
+// check and the use is not caught: the directory is the user's own.)
+func (s *Service) realDirs(dir string) error {
+	rel, err := filepath.Rel(s.dir, filepath.Clean(dir))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("%w: %s", ErrOutside, dir)
+	}
+	if rel == "." {
+		return nil
+	}
+	cur := s.dir
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("%w: %s is not a directory", ErrOutside, cur)
+		}
+	}
+	return nil
+}
+
+// mkdirs makes dir, a directory in the handoff directory, and its parents,
+// never through a symlink.
+func (s *Service) mkdirs(dir string) error {
+	if err := s.realDirs(dir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return s.realDirs(dir)
+}
+
 // handoffFile checks a row's path is a handoff file of the directory: in a
-// floor's directory (or the trash), a .md name.
+// floor's directory (or the trash), a .md name, no symlinked directory on
+// the way.
 func (s *Service) handoffFile(path string) error {
 	if err := s.inside(path); err != nil {
 		return err
@@ -261,7 +302,7 @@ func (s *Service) handoffFile(path string) error {
 	if len(parts) != 2 || parts[0] == TrashDir || strings.HasPrefix(parts[1], ".") || !strings.HasSuffix(parts[1], ".md") {
 		return fmt.Errorf("%w: %s", ErrOutside, path)
 	}
-	return nil
+	return s.realDirs(filepath.Dir(path))
 }
 
 // Read is a handoff and its body (the file without its front matter); the
@@ -323,7 +364,7 @@ func (s *Service) Delete(ctx context.Context, id int64) (store.Handoff, error) {
 	}
 	if _, err := os.Lstat(h.Path); err == nil {
 		trash := filepath.Join(s.dir, TrashDir, FloorDir(h.Floor))
-		if err := os.MkdirAll(trash, 0o700); err != nil {
+		if err := s.mkdirs(trash); err != nil {
 			return store.Handoff{}, err
 		}
 		name := filepath.Base(h.Path)
@@ -456,7 +497,9 @@ func (s *Service) Reconcile(ctx context.Context) (Reconciled, error) {
 }
 
 // register adds a handoff file without a row, when its front matter is the
-// bridge's (a source and a date).
+// bridge's (a source and a date), with the op and source identity it names,
+// so a retry of that filing finds it. An op another row has (a copy of a
+// file) is left out.
 func (s *Service) register(ctx context.Context, path string) (bool, error) {
 	b, fi, err := readFile(path)
 	if err != nil {
@@ -479,8 +522,15 @@ func (s *Service) register(ctx context.Context, path string) (bool, error) {
 	}
 	h := store.Handoff{Floor: floor, WorkerID: fm["worker_id"], WorkerName: fm["worker"], Label: fm["label"], Harness: fm["harness"],
 		Model: fm["model"], Cwd: fm["cwd"], Branch: fm["branch"], AgentSession: fm["session"], Path: path,
-		Title: Title(body, fm["worker"], at), CreatedAt: at.UnixMilli(), Source: fm["source"], SourceHash: fm["source_hash"],
-		Size: fi.Size(), MTime: fi.ModTime().UnixNano()}
+		Title: Title(body, fm["worker"], at), CreatedAt: at.UnixMilli(), Source: fm["source"], SourceTurn: fm["source_turn"],
+		SourceItems: fm["source_items"], SourceHash: fm["source_hash"], Op: fm["op"], Size: fi.Size(), MTime: fi.ModTime().UnixNano()}
+	if h.Op != "" {
+		if _, err := s.idx.HandoffByOp(ctx, h.Op); err == nil {
+			h.Op = ""
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return false, err
+		}
+	}
 	if _, err := s.idx.AddHandoff(ctx, h, body); err != nil {
 		return false, err
 	}
@@ -488,7 +538,8 @@ func (s *Service) register(ctx context.Context, path string) (bool, error) {
 }
 
 // frontKeys are the front matter's keys, in order.
-var frontKeys = []string{"date", "floor", "worker", "worker_id", "label", "branch", "harness", "model", "session", "cwd", "source", "source_hash"}
+var frontKeys = []string{"date", "floor", "worker", "worker_id", "label", "branch", "harness", "model", "session", "cwd", "source",
+	"source_turn", "source_items", "source_hash", "op"}
 
 // FrontMatter is the bridge's front matter of a handoff filed at: its
 // metadata as YAML, each value a JSON (so YAML) quoted string, empty ones
@@ -496,7 +547,8 @@ var frontKeys = []string{"date", "floor", "worker", "worker_id", "label", "branc
 func FrontMatter(h store.Handoff, at time.Time) string {
 	vals := map[string]string{"date": at.Local().Format(time.RFC3339), "floor": h.Floor, "worker": h.WorkerName,
 		"worker_id": h.WorkerID, "label": h.Label, "branch": h.Branch, "harness": h.Harness, "model": h.Model,
-		"session": h.AgentSession, "cwd": h.Cwd, "source": h.Source, "source_hash": h.SourceHash}
+		"session": h.AgentSession, "cwd": h.Cwd, "source": h.Source, "source_turn": h.SourceTurn, "source_items": h.SourceItems,
+		"source_hash": h.SourceHash, "op": h.Op}
 	var b strings.Builder
 	b.WriteString("---\n")
 	for _, k := range frontKeys {

@@ -40,11 +40,24 @@ var (
 var handoffOp = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // handoffCand is a worker's candidate and the transcript file it was read
-// from (its path, and the file as the tail read it).
+// from (its path, the file as the tail read it, and where the tail had read
+// to), under the worker's agent session then.
 type handoffCand struct {
-	c    transcript.Candidate
-	path string
-	fi   fs.FileInfo
+	c     transcript.Candidate
+	path  string
+	fi    fs.FileInfo
+	end   int64
+	agent string
+}
+
+// check reads the candidate's transcript again (off the hub goroutine): the
+// lines written since must leave it the latest completed reply, and its
+// whole text must still be what it was.
+func (hc *handoffCand) check() (string, error) {
+	if err := transcript.StillLatest(hc.path, hc.fi, &hc.c, hc.end); err != nil {
+		return "", err
+	}
+	return transcript.Resolve(hc.path, hc.fi, &hc.c, proto.MaxHandoffBytes)
 }
 
 // handoffUpdate is a worker's new candidate (nil: none now), from the usage
@@ -82,8 +95,8 @@ func (tr *usageTracker) offerHandoff(w usageWorker, s *usage.Session) {
 	}
 	u := handoffUpdate{id: w.id}
 	if c != nil && s != nil {
-		path, fi, _ := s.Main()
-		hc := &handoffCand{c: *c, path: path, fi: fi}
+		path, fi, end := s.Main()
+		hc := &handoffCand{c: *c, path: path, fi: fi, end: end, agent: w.session}
 		hc.c.Spans = append([]transcript.Span(nil), c.Spans...)
 		if hc.c.Session == "" { // a Codex rollout without its session_meta read
 			hc.c.Session = w.session
@@ -140,10 +153,16 @@ func (h *Hub) handoffsView() *proto.HandoffCabinet {
 	return v
 }
 
-// handoffView is a worker's candidate as Worker.Handoff (nil: none).
-func (h *Hub) handoffView(id string) *proto.HandoffCandidate {
+// handoffView is a worker's candidate as Worker.Handoff (nil: none). A
+// candidate read under another agent session than the worker's (agent) is
+// withdrawn: the new session's comes with the tracker's next read.
+func (h *Hub) handoffView(id, agent string) *proto.HandoffCandidate {
 	hc := h.ho.cands[id]
 	if hc == nil || h.ho.svc == nil {
+		return nil
+	}
+	if hc.agent != agent {
+		delete(h.ho.cands, id)
 		return nil
 	}
 	c := hc.c
@@ -166,7 +185,7 @@ func (h *Hub) handoffSeen(u handoffUpdate) {
 	if w == nil {
 		return
 	}
-	v := h.handoffView(u.id)
+	v := h.handoffView(u.id, w.AgentSession)
 	if (w.Handoff == nil && v == nil) || (w.Handoff != nil && v != nil && *w.Handoff == *v) {
 		return
 	}
@@ -188,6 +207,8 @@ func (h *Hub) handoffCandOf(id, session, cand, revision string) (*proto.Worker, 
 	}
 	hc := h.ho.cands[id]
 	switch {
+	case hc != nil && hc.agent != w.AgentSession:
+		return nil, nil, fmt.Errorf("%w: %s's agent session changed", errHandoffUnavailable, w.Name)
 	case hc == nil:
 		return nil, nil, fmt.Errorf("%w: %s has no completed reply to file now", errHandoffUnavailable, w.Name)
 	case hc.c.ID != cand:
@@ -259,12 +280,12 @@ func (h *Hub) startHandoffPreview(ctx context.Context, c *Client, cmd proto.Comm
 	if err != nil {
 		return err
 	}
-	cand := *h.handoffView(a.Worker)
+	cand := *h.handoffView(a.Worker, w.AgentSession)
 	prov, blocked := provenanceOf(w), h.sendHomeBlocked(w)
 	name, now := w.Name, h.opts.Now()
 	src := *hc
 	h.startAsync(ctx, c, cmd, func(context.Context) (any, error) {
-		body, err := transcript.Resolve(src.path, src.fi, &src.c, proto.MaxHandoffBytes)
+		body, err := src.check()
 		if err != nil {
 			return nil, err
 		}
@@ -290,8 +311,10 @@ type handoffReport struct {
 }
 
 // startHandoff answers worker.handoff: the candidate checked to be the
-// worker's current one, its text read back from the transcript and checked
-// against its revision, the handoff filed and indexed, handoff.added; then,
+// worker's current one, under its current agent session, and to be the
+// transcript's latest completed reply still (the lines written since the
+// tracker's last read included), its text read back from the transcript and
+// checked against its revision, the handoff filed and indexed, handoff.added; then,
 // when asked, the send home, its eligibility checked again.
 func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.WorkerHandoffArgs
@@ -337,7 +360,7 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 		defer h.wg.Done()
 		var filed store.Handoff
 		var existing bool
-		body, err := transcript.Resolve(cand.path, cand.fi, &cand.c, proto.MaxHandoffBytes)
+		body, err := cand.check()
 		if err == nil {
 			filed, existing, err = svc.File(ctx, src, body)
 			if err != nil && !errors.Is(err, handoff.ErrOpReused) {
@@ -492,7 +515,7 @@ func (h *Hub) startHandoffs(ctx context.Context, c *Client, cmd proto.Command) e
 // when it is none.
 func handoffErrorCode(err error) string {
 	switch {
-	case errors.Is(err, errHandoffUnavailable):
+	case errors.Is(err, errHandoffUnavailable), errors.Is(err, transcript.ErrNotLatest):
 		return proto.ErrHandoffUnavailable
 	case errors.Is(err, transcript.ErrSourceTooLarge), errors.Is(err, handoff.ErrTooLarge):
 		return proto.ErrTooLarge

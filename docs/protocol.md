@@ -3573,11 +3573,15 @@ filing" can be offered now.
 
 **`worker.handoff {worker, mode: "literal", session, candidate, revision, send_home?, op}`** files it:
 
-1. The candidate must be the worker's current one, with that session and revision (else `handoff_unavailable`); `op`
+1. The candidate must be the worker's current one, with that session and revision, read under the worker's current
+   agent session (a session change withdraws `Worker.handoff` at once; else `handoff_unavailable`); `op`
    is 1–64 characters of `[A-Za-z0-9_-]`, one per dialog. A second `worker.handoff` with an `op` being filed is
    `busy`.
-2. Off the hub goroutine the text is read back as for the preview (`handoff_source` when it is not what it was,
-   `too_large` above 1 MiB: a literal handoff is never clipped).
+2. Off the hub goroutine the transcript lines written since the bridge last read it are read with the tracker's own
+   rules: a new prompt, another message or turn or an interruption there makes the reply not the latest any more
+   (`handoff_unavailable`, also for the preview), although the bridge's next read has not come yet. Then the text is
+   read back as for the preview (`handoff_source` when it is not what it was or the transcript is shorter than when
+   the reply was seen, `too_large` above 1 MiB: a literal handoff is never clipped).
 3. An `op` filed before, or the same reply (candidate and revision) of the worker whose file is still there, answers
    that handoff (`existing: true`): nothing is filed twice.
 4. The file `<handoff_dir>/<floor>/<yyyymmdd-hhmm>-<worker>-<slug>.md` (`--handoff-dir`, default `~/handoff`; the
@@ -3585,8 +3589,11 @@ filing" can be offered now.
    lowercase ASCII) is written as a dot-named `.tmp` in the floor's directory, synced, and linked to the first free name
    (`-2`, `-3`, … when taken: never over a file; 0600 files, 0700 directories; the path is checked to stay in the
    directory), then the `.tmp` goes. Its front matter is the bridge's (`date` RFC3339 local, `floor`, `worker`,
-   `worker_id`, `label`, `branch`, `harness`, `model`, `session`, `cwd`, `source: literal`, `source_hash`; each a
-   quoted string), followed by the text unchanged: no heading is added.
+   `worker_id`, `label`, `branch`, `harness`, `model`, `session`, `cwd`, `source: literal`, `source_turn`,
+   `source_items`, `source_hash`, `op`; each a quoted string), followed by the text unchanged: no heading is added. A
+   file a crash left without its row is registered at startup with that op and source, so a retry answers it. The
+   floor's directory (and the trash's) must be a real directory, never a symlink: nothing is read, moved or written
+   through one (`handoff_failed`, and the startup reconcile forgets such a row).
 5. The row (`handoff`, with `created_at` the cabinet's order and the source's ids and spans) and its `handoff_fts` row
    are added in one transaction; if that fails the file is removed again (`handoff_failed`). Then `handoff.added`.
 6. With `send_home`, the worker is sent home through `worker.fire`'s own path (worktree kept, its own `worker.fire`

@@ -366,3 +366,120 @@ func TestHandoffResolve(t *testing.T) {
 		t.Fatalf("gone: %v", err)
 	}
 }
+
+// Truncated below the size it had when the candidate was read, the reply's
+// lines still there but its completion (turn_duration) gone: replaced.
+func TestHandoffResolveTruncatedSuffix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	final := claudeSay("m1", "u1", textBlock("Done."), "end_turn")
+	if err := os.WriteFile(path, []byte(final+"\n"+turnDurationLine+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tr := NewHandoffTracker(Claude)
+	feedFile(t, tr, path)
+	c := tr.Candidate()
+	fi, err := os.Stat(path)
+	if err != nil || c == nil {
+		t.Fatalf("candidate %+v, %v", c, err)
+	}
+	if err := os.Truncate(path, int64(len(final)+1)); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := Resolve(path, fi, c, 1<<20); !errors.Is(err, ErrSourceReplaced) {
+		t.Fatalf("Resolve = %q, %v", body, err)
+	}
+	if err := StillLatest(path, fi, c, fi.Size()); !errors.Is(err, ErrSourceReplaced) {
+		t.Fatalf("StillLatest: %v", err)
+	}
+}
+
+// StillLatest reads the lines written after the candidate was seen with the
+// tracker's own rules: a new prompt, another message or turn makes it stale;
+// lines that leave it the latest do not.
+func TestHandoffStillLatest(t *testing.T) {
+	user := `{"type":"user","isSidechain":false,"message":{"role":"user","content":"Go."}}`
+	hook := `{"type":"system","subtype":"stop_hook_summary","isSidechain":false}`
+	meta := cxLine("session_meta", `{"id":"sess-c","source":"cli"}`)
+	cxTurn := []string{meta, cxLine("event_msg", `{"type":"task_started","turn_id":"t1","root_turn_id":"t1"}`),
+		codexSay("a", "final_answer", "Done."), cxLine("event_msg", `{"type":"task_complete","turn_id":"t1","last_agent_message":"Done."}`)}
+	for _, tc := range []struct {
+		name    string
+		harness string
+		lines   []string
+		after   []string
+		stale   bool
+	}{
+		{"claude: nothing since", Claude, []string{user, claudeSay("m1", "u1", textBlock("Done."), "end_turn"), turnDurationLine}, nil, false},
+		{"claude: a stop hook and an attachment", Claude, []string{user, claudeSay("m1", "u1", textBlock("Done."), "end_turn"), hook},
+			[]string{`{"type":"attachment","isSidechain":false,"attachment":{"type":"date"}}`, turnDurationLine}, false},
+		{"claude: a new prompt", Claude, []string{user, claudeSay("m1", "u1", textBlock("Done."), "end_turn"), turnDurationLine},
+			[]string{user}, true},
+		{"claude: another message", Claude, []string{user, claudeSay("m1", "u1", textBlock("Done."), "end_turn"), hook},
+			[]string{claudeSay("m2", "u2", textBlock("Also…"), "tool_use")}, true},
+		{"claude: a line of it again", Claude, []string{user, claudeSay("m1", "u1", textBlock("One."), "end_turn"), hook},
+			[]string{claudeSay("m1", "u2", textBlock("Two."), "end_turn"), hook}, true},
+		{"claude: an interruption", Claude, []string{user, claudeSay("m1", "u1", textBlock("Done."), "end_turn"), hook},
+			[]string{`{"type":"user","isSidechain":false,"message":{"role":"user","content":"[Request interrupted by user]"}}`}, true},
+		{"codex: nothing since", Codex, cxTurn, nil, false},
+		{"codex: a new prompt", Codex, cxTurn,
+			[]string{cxLine("response_item", `{"type":"message","role":"user","content":[{"type":"input_text","text":"Next."}]}`)}, true},
+		{"codex: a new turn", Codex, cxTurn, []string{cxLine("event_msg", `{"type":"task_started","turn_id":"t2","root_turn_id":"t2"}`)}, true},
+		{"codex: an event copy", Codex, cxTurn, []string{cxLine("event_msg", `{"type":"token_count","info":null}`)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "s.jsonl")
+			if err := os.WriteFile(path, []byte(strings.Join(tc.lines, "\n")+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			tr := NewHandoffTracker(tc.harness)
+			feedFile(t, tr, path)
+			c := tr.Candidate()
+			fi, err := os.Stat(path)
+			if err != nil || c == nil {
+				t.Fatalf("candidate %+v, %v", c, err)
+			}
+			if len(tc.after) > 0 {
+				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.WriteString(strings.Join(tc.after, "\n") + "\n")
+				f.Close()
+			}
+			// The tracker's verdict on the same lines is the reference.
+			again := NewHandoffTracker(tc.harness)
+			feedFile(t, again, path)
+			if latest := again.Candidate() != nil && again.Candidate().ID == c.ID; latest == tc.stale {
+				t.Fatalf("the tracker says latest=%v", latest)
+			}
+			err = StillLatest(path, fi, c, fi.Size())
+			switch {
+			case tc.stale && !errors.Is(err, ErrNotLatest):
+				t.Fatalf("stale: %v", err)
+			case !tc.stale && err != nil:
+				t.Fatalf("still the latest: %v", err)
+			}
+			// A partial line at the end is not read yet.
+			if !tc.stale {
+				f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+				f.WriteString(user[:20])
+				f.Close()
+				if err := StillLatest(path, fi, c, fi.Size()); err != nil {
+					t.Fatalf("a partial line: %v", err)
+				}
+			}
+		})
+	}
+	t.Run("replaced", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "s.jsonl")
+		os.WriteFile(path, []byte(strings.Join(cxTurn, "\n")+"\n"), 0o600)
+		tr := NewHandoffTracker(Codex)
+		feedFile(t, tr, path)
+		fi, _ := os.Stat(path)
+		os.Remove(path)
+		os.WriteFile(path, []byte(strings.Join(cxTurn, "\n")+"\n"), 0o600)
+		if err := StillLatest(path, fi, tr.Candidate(), fi.Size()); !errors.Is(err, ErrSourceReplaced) {
+			t.Fatalf("replaced: %v", err)
+		}
+	})
+}

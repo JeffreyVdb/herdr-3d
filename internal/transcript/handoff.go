@@ -356,30 +356,101 @@ func (c *Candidate) seal() {
 // Why a candidate cannot be resolved.
 var (
 	// ErrSourceReplaced: the transcript is not the file the candidate was
-	// read from, or it is shorter than the candidate's lines.
+	// read from, or it is shorter than it was then or than the candidate's
+	// lines.
 	ErrSourceReplaced = errors.New("the transcript was replaced or truncated")
 	// ErrSourceChanged: the candidate's lines no longer say what they said.
 	ErrSourceChanged = errors.New("the reply's lines changed")
 	// ErrSourceTooLarge: the reply is larger than the cap.
 	ErrSourceTooLarge = errors.New("the reply is too large")
+	// ErrNotLatest: a prompt, another message or turn or an interruption
+	// was written after the candidate: it is not the latest completed reply
+	// any more.
+	ErrNotLatest = errors.New("the reply is not the latest any more")
 )
 
-// Resolve reads candidate c's text again from the transcript at path: fi is
-// the file it was read from (nil: not checked), max the most bytes the text
-// may have. The lines are parsed with TurnEvents and joined as the tracker
-// joined them; the result must hash to c.Hash.
-func Resolve(path string, fi fs.FileInfo, c *Candidate, max int) (string, error) {
+// maxSince bounds the bytes StillLatest reads: more written since the
+// candidate was seen is a newer turn.
+const maxSince = 64 << 20
+
+// openSource opens the transcript at path, checked to be the file fi (nil:
+// not checked) and no shorter than it was then.
+func openSource(path string, fi fs.FileInfo) (*os.File, fs.FileInfo, error) {
 	f, got, err := jsonl.Open(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("%w: %v", ErrSourceReplaced, err)
+			return nil, nil, fmt.Errorf("%w: %v", ErrSourceReplaced, err)
 		}
+		return nil, nil, err
+	}
+	if fi != nil && (!os.SameFile(fi, got) || got.Size() < fi.Size()) {
+		f.Close()
+		return nil, nil, ErrSourceReplaced
+	}
+	return f, got, nil
+}
+
+// StillLatest checks candidate c is still its transcript's latest completed
+// reply: the complete lines written to path from from on (a line start:
+// where the tracker that found c had read to) are read with the tracker's
+// own rules, the tracker starting at c. fi is the file c was read from.
+// ErrNotLatest when a prompt, another message or turn or an interruption
+// came since; an incomplete last line is not read yet.
+func StillLatest(path string, fi fs.FileInfo, c *Candidate, from int64) error {
+	f, got, err := openSource(path, fi)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	size := got.Size()
+	switch {
+	case from < 0 || from > size:
+		return ErrSourceReplaced
+	case size-from > maxSince:
+		return fmt.Errorf("%w: %d bytes were written since", ErrNotLatest, size-from)
+	}
+	t := resumeAt(c)
+	if t == nil {
+		return ErrNotLatest
+	}
+	if _, err := jsonl.Scan(f, from, size, 64<<10, t.Line, nil); err != nil {
+		return err
+	}
+	if t.cand == nil || t.cand.ID != c.ID {
+		return ErrNotLatest
+	}
+	return nil
+}
+
+// resumeAt is a tracker in the state it was in once candidate c completed
+// (nil: not a harness's): every line that ends c ends it here too.
+func resumeAt(c *Candidate) *HandoffTracker {
+	t := NewHandoffTracker(c.Harness)
+	if t == nil {
+		return nil
+	}
+	t.cand = c
+	if t.harness == Claude {
+		// The message closed last: a line of it again reopens it (and
+		// the reply is another then).
+		t.session, t.prev = c.Session, &claudeMsg{id: c.Message, session: c.Session}
+	} else {
+		t.codexSession = c.Session
+	}
+	return t
+}
+
+// Resolve reads candidate c's text again from the transcript at path: fi is
+// the file it was read from (nil: not checked; it may not have shrunk since),
+// max the most bytes the text
+// may have. The lines are parsed with TurnEvents and joined as the tracker
+// joined them; the result must hash to c.Hash.
+func Resolve(path string, fi fs.FileInfo, c *Candidate, max int) (string, error) {
+	f, got, err := openSource(path, fi)
+	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	if fi != nil && !os.SameFile(fi, got) {
-		return "", ErrSourceReplaced
-	}
 	total := 0
 	for _, sp := range c.Spans {
 		if sp.N <= 0 || sp.Off < 0 || sp.End() > got.Size() {

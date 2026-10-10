@@ -1473,7 +1473,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			h.dropFollowup(ctx, id, false)
 		}
 		next.Followup = h.followupView(id)
-		next.Handoff = h.handoffView(id)                       // #223
+		next.Handoff = h.handoffView(id, next.AgentSession)    // #223
 		next.Activity = h.activityFor(id, next, h.workers[id]) // #98: for its status, in the same event
 		next.Digest = h.workerDigest(id, next)                 // #118
 		h.noteCodexThread(ctx, id, next.AgentSession)          // #155

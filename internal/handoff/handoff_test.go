@@ -331,3 +331,123 @@ func TestReconcile(t *testing.T) {
 		t.Fatalf("again %+v %v", r, err)
 	}
 }
+
+// A crash between the file and its row, then the startup reconcile, then the
+// same filing again (a retry of the op, or of the same reply under another
+// op): the registered handoff is answered, never a second file or row. Its
+// front matter carries the op and the source's identity.
+func TestReconcileThenRetry(t *testing.T) {
+	ctx := context.Background()
+	svc, st, dir := service(t)
+	h, _, err := svc.File(ctx, src("op-1"), "# Original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(h.Path)
+	if fm, _ := handoff.SplitFrontMatter(string(b)); fm["op"] != "op-1" || fm["source_turn"] != "cand-1" ||
+		fm["source_items"] != `{"message":"msg_1"}` || fm["source_hash"] != "abc" {
+		t.Fatalf("front matter %v", fm)
+	}
+	if err := st.DeleteHandoff(ctx, h.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := svc.Reconcile(ctx); err != nil || r.Registered != 1 {
+		t.Fatalf("reconciled %+v %v", r, err)
+	}
+	reg, err := st.HandoffByOp(ctx, "op-1")
+	if err != nil || reg.Path != h.Path || reg.SourceTurn != "cand-1" || reg.SourceItems != `{"message":"msg_1"}` || reg.SourceHash != "abc" ||
+		reg.WorkerID != "w-1" {
+		t.Fatalf("registered %+v %v", reg, err)
+	}
+	for _, op := range []string{"op-1", "op-2"} {
+		again, existing, err := svc.File(ctx, src(op), "# Original")
+		if err != nil || !existing || again.ID != reg.ID || again.Path != h.Path {
+			t.Fatalf("%s: %+v existing=%v %v", op, again, existing, err)
+		}
+	}
+	if all, _ := st.AllHandoffs(ctx); len(all) != 1 {
+		t.Fatalf("rows %+v", all)
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "herdr-3d", "*.md")); len(files) != 1 {
+		t.Fatalf("files %v", files)
+	}
+	// A copy of a registered file (its op taken): registered without the
+	// op, and the startup goes on.
+	cp := filepath.Join(dir, "herdr-3d", "20261010-1600-ada-copy.md")
+	os.WriteFile(cp, b, 0o600)
+	if r, err := svc.Reconcile(ctx); err != nil || r.Registered != 1 {
+		t.Fatalf("the copy: %+v %v", r, err)
+	}
+	if got, err := st.HandoffByOp(ctx, "op-1"); err != nil || got.Path != h.Path {
+		t.Fatalf("op-1 is %+v %v", got, err)
+	}
+}
+
+// A directory under the handoff directory replaced by a symlink: nothing is
+// read, moved, written or registered through it.
+func TestSymlinkedDirectories(t *testing.T) {
+	ctx := context.Background()
+	t.Run("floor", func(t *testing.T) {
+		svc, st, dir := service(t)
+		h, _, err := svc.File(ctx, src("op-1"), "# Original")
+		if err != nil {
+			t.Fatal(err)
+		}
+		outside := filepath.Join(t.TempDir(), "outside")
+		if err := os.Rename(filepath.Join(dir, "herdr-3d"), outside); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(dir, "herdr-3d")); err != nil {
+			t.Fatal(err)
+		}
+		victim := filepath.Join(outside, filepath.Base(h.Path))
+		os.WriteFile(victim, []byte("outside data"), 0o600)
+		if _, body, err := svc.Read(ctx, h.ID); !errors.Is(err, handoff.ErrOutside) {
+			t.Fatalf("read %q, %v", body, err)
+		}
+		if _, err := svc.Delete(ctx, h.ID); !errors.Is(err, handoff.ErrOutside) {
+			t.Fatalf("delete: %v", err)
+		}
+		if _, _, err := svc.File(ctx, src("op-2"), "# Another"); !errors.Is(err, handoff.ErrOutside) {
+			t.Fatalf("file: %v", err)
+		}
+		if r, err := svc.Reconcile(ctx); err != nil || r != (handoff.Reconciled{Removed: 1}) {
+			t.Fatalf("reconcile %+v %v", r, err)
+		}
+		if all, _ := st.AllHandoffs(ctx); len(all) != 0 {
+			t.Fatalf("rows %+v", all)
+		}
+		if files, _ := filepath.Glob(filepath.Join(outside, "*")); len(files) != 1 {
+			t.Fatalf("outside %v", files)
+		}
+		if b, _ := os.ReadFile(victim); string(b) != "outside data" {
+			t.Fatalf("the outside file is %q", b)
+		}
+	})
+	for _, link := range []string{handoff.TrashDir, filepath.Join(handoff.TrashDir, "herdr-3d")} {
+		t.Run(link, func(t *testing.T) {
+			svc, st, dir := service(t)
+			h, _, err := svc.File(ctx, src("op-1"), "# Original")
+			if err != nil {
+				t.Fatal(err)
+			}
+			outside := t.TempDir()
+			os.MkdirAll(filepath.Dir(filepath.Join(dir, link)), 0o700)
+			if err := os.Symlink(outside, filepath.Join(dir, link)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.Delete(ctx, h.ID); !errors.Is(err, handoff.ErrOutside) {
+				t.Fatalf("delete: %v", err)
+			}
+			if _, err := os.Stat(h.Path); err != nil {
+				t.Fatalf("moved: %v", err)
+			}
+			if _, err := st.HandoffByID(ctx, h.ID); err != nil {
+				t.Fatalf("forgotten: %v", err)
+			}
+			if files, _ := filepath.Glob(filepath.Join(outside, "*")); len(files) != 0 {
+				t.Fatalf("outside %v", files)
+			}
+		})
+	}
+}

@@ -49,10 +49,20 @@ func newHoBridge(t *testing.T) *hoBridge {
 
 func newHoBridgeAt(t *testing.T, dir string) *hoBridge {
 	t.Helper()
+	return newHoBridgeWith(t, dir, 0)
+}
+
+// newHoBridgeWith reads the transcripts every interval (0: the follow-up
+// bridge's own, fast one).
+func newHoBridgeWith(t *testing.T, dir string, interval time.Duration) *hoBridge {
+	t.Helper()
 	db := filepath.Join(t.TempDir(), "world.db")
 	svc := hoService(t, dir, db)
 	off := false // #90 would classify the turn: the action must not, and nothing else may here
 	fb := startFuBridgeWith(t, db, "", newFuRoles(), &off, "", func(o *server.Options) {
+		if interval > 0 {
+			o.Usage.Interval = interval
+		}
 		o.Handoffs = svc
 		o.DigestEnabled = &off
 		o.PackupEnabled = &off
@@ -318,9 +328,11 @@ func TestHandoffSendHome(t *testing.T) {
 	if calls := hb.fl.Calls(); !slices.Contains(calls, "close w1") || slices.ContainsFunc(calls, func(s string) bool { return strings.HasPrefix(s, "prompt") }) {
 		t.Fatalf("herdr calls %q", calls)
 	}
-	if row := auditRow(t, hb.bridge, proto.CmdWorkerFire); !row.OK || !row.Done {
-		t.Fatalf("fire audit %+v", row)
-	}
+	// The fire's audit row ends after worker.removed.
+	eventually(t, "the fire's audit row", func() bool {
+		row := auditRow(t, hb.bridge, proto.CmdWorkerFire)
+		return row.OK && row.Done
+	})
 
 	// Codex, at work: filed, not sent home.
 	hb.fl.update("w2", func(w *world.WorkerObs) { w.Status = "working" })
@@ -375,5 +387,50 @@ func TestHandoffStartupReconcile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "s", ".handoff-1.tmp")); !os.IsNotExist(err) {
 		t.Fatalf("tmp left: %v", err)
+	}
+}
+
+// A genuine prompt already in the transcript when the reply is submitted,
+// before the bridge's next read (every 2 s, as in production): the reply
+// is not the latest any more, nothing is filed or previewed.
+func TestHandoffNewPromptBeforeTheRead(t *testing.T) {
+	hb := newHoBridgeWith(t, filepath.Join(t.TempDir(), "handoff"), server.DefaultUsageInterval)
+	c := hb.connect(proto.Hello{})
+	c.snapshot()
+	id := hb.ids["w1"]
+	appendTo(t, hb.claude, wrapUser("Refactor the loader.")+claudeReply("msg_1", "u1", "Previous reply.", "end_turn")+turnDone)
+	cand := *handoffOf(c, id).Handoff
+	appendTo(t, hb.claude, wrapUser("A new genuine prompt."))
+	c.mustError(proto.CmdWorkerHandoffPreview, proto.WorkerHandoffPreviewArgs{Worker: id, Candidate: cand.ID}, proto.ErrHandoffUnavailable)
+	c.mustError(proto.CmdWorkerHandoff, proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeLiteral, Session: cand.Session,
+		Candidate: cand.ID, Revision: cand.Revision, Op: "op-1"}, proto.ErrHandoffUnavailable)
+	if files, _ := filepath.Glob(filepath.Join(hb.dir, "*", "*")); len(files) != 0 {
+		t.Fatalf("files %v", files)
+	}
+	if row := auditRow(t, hb.bridge, proto.CmdWorkerHandoff); row.OK || !row.Done {
+		t.Fatalf("audit %+v", row)
+	}
+	noPrompts(t, hb)
+}
+
+// The worker's agent session changed (herdr says so before the bridge reads
+// the new transcript): the old session's reply is withdrawn at once and
+// refused when submitted.
+func TestHandoffWorkerSessionChanged(t *testing.T) {
+	hb := newHoBridgeWith(t, filepath.Join(t.TempDir(), "handoff"), server.DefaultUsageInterval)
+	c := hb.connect(proto.Hello{})
+	c.snapshot()
+	id := hb.ids["w1"]
+	appendTo(t, hb.claude, claudeReply("msg_1", "u1", "Old session reply.", "end_turn")+turnDone)
+	cand := *handoffOf(c, id).Handoff
+	hb.fl.update("w1", func(w *world.WorkerObs) { w.AgentSession = "new-session" })
+	if w := upsertFor(c, id, func(w *proto.Worker) bool { return w.AgentSession == "new-session" }); w.Handoff != nil {
+		t.Fatalf("still offered: %+v", w.Handoff)
+	}
+	c.mustError(proto.CmdWorkerHandoff, proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeLiteral, Session: cand.Session,
+		Candidate: cand.ID, Revision: cand.Revision, Op: "op-1"}, proto.ErrHandoffUnavailable)
+	c.mustError(proto.CmdWorkerHandoffPreview, proto.WorkerHandoffPreviewArgs{Worker: id, Candidate: cand.ID}, proto.ErrHandoffUnavailable)
+	if files, _ := filepath.Glob(filepath.Join(hb.dir, "*", "*")); len(files) != 0 {
+		t.Fatalf("files %v", files)
 	}
 }
