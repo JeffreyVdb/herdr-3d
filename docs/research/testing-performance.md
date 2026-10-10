@@ -128,3 +128,132 @@ Suggested targets, subject to the measured full-suite baseline:
 * Report total cost per passing run, not just the fastest shard. Sharding may reduce elapsed feedback while increasing aggregate runner minutes.
 
 These are proposed product targets, not achieved results or promises. The first deliverable is a reproducible baseline and an agreed budget; the strongest measured bottleneck today is the Go server package, not Playwright in Actions.
+
+## Results (stages 1–3)
+
+Implemented on branch `h3d/241-ci-speed` from `573cf68`. Local numbers are from this host pinned to two CPUs
+(`taskset -c 0,1 env GOMAXPROCS=2`, or `taskset -c 2,3` for Vitest) to approximate a 2-vCPU runner.
+
+### Go: `internal/server`
+
+| `taskset -c 0,1 env GOMAXPROCS=2 go test -count=1 -json ./internal/server` | Package time |
+| --- | ---: |
+| Base `573cf68` | 187.97s (3m09s wall; 22.5s user CPU) |
+| Close-grace seam + activity clock, still serial | 125.63s |
+| All but 12 tests `t.Parallel()` (two more turned serial later), `-parallel 2` (the 2-CPU default) | 78.17s |
+| … `-parallel 4` / `8` / `16` / `32` | 52.77s / 42.61s / 39.94s / 39.09s |
+| Adopted: `-parallel 8`, 14 serial, ten validation runs | 41.5–45.1s, all green |
+
+What changed:
+
+* `Serve` waited a fixed second for clients to answer its close handshake; test clients never do, so every bridge
+  restart in a test cost 1s (about 60s of the package). It is now `Server.SetCloseGrace`, default
+  `DefaultCloseGrace = 1s` unchanged; the test harness sets 20ms. The cut-off path still runs on each restart.
+* The activity tests slept `transcript.LabelHold` (1.5s) or twice that, 15s in all. The bridge clock they already
+  injected now moves on at once (`actBridge.wait`); a late tracker read falls back to the real hold. The
+  production `LabelHold` is unchanged.
+* Every top-level test calls `t.Parallel()` except 14 marked `// Not parallel:` (wall-clock bounds or rates,
+  including the un-mocked `TestPromptEchoLatency`; `TestNoTCPListener`, which reads the whole process's sockets;
+  `TestIssueGetCommentClose`, which counts polls). Serial tests run alone before the parallel ones. Each test
+  already had its own bridge, store, socket and temp dirs. No test sets the environment or a package variable.
+* `make go-test` passes `-parallel 8`. The tests wait rather than compute, so the 2-CPU default of 2 left most of the
+  win unused. Only `internal/server` uses `t.Parallel()` today, so the flag affects nothing else.
+* Under load, three tests exposed races with background work that already existed. Each now waits for that work,
+  and their assertions are unchanged: `TestAsyncAnswerRecordedBeforeTheResponse` (restarted before reading its
+  command's ack), `TestDigestOnTheWire` and `TestFollowupsSettings` (assumed the usage tracker's first read had
+  landed). `TestFollowupsSettings` failed once serially under `-shuffle`, so the race did not depend on parallelism.
+* A flake on main's CI (`TestHandoffStillLatest/replaced`, run 38075802606) came from ext4 reusing a freed inode.
+  The test now writes the replacement file before renaming it over the original.
+
+Validation, all on two CPUs: ten runs of `go test -count=1 -parallel 8 ./internal/server` after the last fix, five
+of them with `-shuffle=on`, all passed (41.5–45.1s). `go test -race -count=3 ./internal/server` (unconstrained
+host) passed in 438.6s with no races reported. On two CPUs, `-race -count=1 -timeout 30m` at the default
+`-parallel` passed in 276.4s. One 2-CPU `-race -count=3 -parallel 8` run hit the default 10m timeout with one
+failure: `TestHeldNamesAreRecycledOldestFirst` at `names_test.go:382`. That is the harness's 5s read in
+`bridge.world` → `connect` → `snapshot` (`client.next`). The race-instrumented package wanted about 1.5 CPUs of
+work on 2 CPUs (943s CPU in 623s), and the hub's snapshot reply missed 5s. Without `-race`, the package uses about
+25% of two CPUs, and no 5s wait was missed in 25 runs at `-parallel 8` (the earlier failures in those runs were the three races above and `TestNoTCPListener`). CI does not run `-race`. Test timeouts were
+not raised. These local runs exercise `./internal/server` alone; in CI, `go test ./...` shares the 2 vCPUs with
+other packages, and the nine CI runs below are the evidence for that configuration (all green). `go test -list . ./internal/... ./cmd/...` lists the same 1170 names before and after.
+
+### Go build and cache
+
+setup-go's cache key hashes `go.sum` only, and it saves nothing after an exact hit. The entry in use dated from
+2026-09-30, so every run recompiled whatever had changed since. The `-trimpath` linux build and the darwin
+helper each compiled modernc sqlite again. On two cores, with only the test build cached, `make go-build` took 54s
+and `make helper-darwin` 46s; fully warm, both took 0s.
+
+`ci.yml`'s go job now turns setup-go's cache off and restores `GOCACHE`/`GOMODCACHE` with `actions/cache` (key: OS,
+arch, hash of `go.mod`, `go.sum`, `Makefile` and the Go sources; restore prefix: OS and arch). Only pushes to main
+and manual runs save a new entry. Branch pushes restore main's entry, so they do not churn the repository's 10 GB
+cache. Go's own trim drops build entries unused for five days. The first main push after merge runs cold (about
+5m on x64, about 3.5m on arm64) and saves the first entry.
+
+### Vitest
+
+`vitest doctor` on two cores (one run each): baseline forks + isolate 166.7s; `pool: 'threads'` 152.9s (−8%);
+`isolate: false` **failed** (`src/render/deskArt.test.ts` sees state left by another file); `fsModuleCache` 165.2s
+(−1%). Doctor recommended keeping the configuration.
+
+Vitest's default is `maxWorkers` = CPUs − 1, which means **one worker** on a 2-core runner. Two-core sweep (wall
+time of `vitest run`):
+
+| Pool / workers | Runs |
+| --- | --- |
+| forks, default (1) | 193.7s, 191.0s, 187.8s |
+| threads, default (1) | 172.7s, 164.1s, 164.7s |
+| forks, 2 | 115.1s, 103.6s |
+| threads, 2 | 117.4s, 102.2s |
+| forks, 3 / threads, 3 | 114.0s, 113.9s / 136.5s, 108.8s |
+
+Adopted: `maxWorkers: Math.max(2, availableParallelism() - 1)`. Bigger machines keep the default; the pool and
+isolation are unchanged, since threads gave nothing over forks once there were two workers. With the new config
+on two cores, 109.8s. Shuffling files (`--sequence.shuffle.files`, seeds 101/202/303) passed 3/3. A full shuffle
+(files and tests) fails within files in `src/laptop/transcriptImages.test.ts` and `src/ui/overview.dom.test.ts`
+(module-level counters / order-dependent cases). The 1-worker control with the same seed (2447) fails the same two
+files, so the worker count did not cause it. Left as is: fixing it is not in scope. Inventory is unchanged at
+211 files / 2,698 tests (re-measured at base; the ticket's 207 / 2,673 predates later commits).
+
+### Release workflow
+
+`release.yml` now runs as five jobs:
+
+* `tag` checks the tag format and that the tag is on main, then pins the tag's SHA.
+* `go`, `game` and `shell` check out that SHA and run the same make targets as `ci.yml`, side by side, on
+  `ubuntu-26.04-arm`.
+* `publish` needs all four. It refuses a tag that moved, builds `release-assets` (game before the embedding
+  helper), asserts the version and SHA256SUMS, and publishes draft-then-final. Only `publish` gets
+  `contents: write`.
+
+`publish` stays on x64 `ubuntu-26.04`, so the version assertion runs the very `linux-amd64` binary that ships. On
+arm64 it could only check a separate native build. It builds the Go code without a cache, because CI saves arm64
+entries only. A release has not been run: tags publish, so the workflow was validated with actionlint 1.7.12 only.
+That version does not know the 26.04 labels yet, so `-ignore 'label "ubuntu-26\.04(-arm)?" is unknown'` was passed.
+
+### CI timing (`ci.yml`, workflow_dispatch and push on the branch)
+
+Per-job duration; the total is created → updated. The baseline is main's run 38036209695 (`12c0e9f`, x64
+ubuntu-24.04, stale setup-go cache hit).
+
+| Run | Total | go job (lint / test / build) | game job (Vitest) | shell |
+| --- | ---: | --- | --- | ---: |
+| Baseline x64 | 373s | 360s (30 / 211 / 94) | 136s (96s) | 12s |
+| x64 `b368c3f`, cold, no cache to restore (push; dispatch) | 327s; 327s | 311s (97 / 88–89 / 103–105) | 143–156s | 11–12s |
+| x64 `b368c3f`, warm (dispatch) | 162s | 83s (2 / 53 / 2) | 146s (110s) | 12s |
+| x64 `b4a3ef2`, Vitest 2 workers, warm (push; dispatch) | 154s; 149s | 73s; 88s (2 / 46–55 / 1–2) | 137s; 135s (104s; 100s) | 11–12s |
+| arm64 `348c029`, cold (push; dispatch) | 214s; 231s | 193s; 211s (52–57 / 64–68 / 56–62) | 99s; 96s (63–64s) | 10–11s |
+| arm64 `348c029`, warm (dispatch ×2) | 119s; 122s | 74s; 76s (2 / 41–42 / 1) | 100s; 102s (63–68s) | 9–12s |
+| arm64 `2cda9c8`, warm (push, branch cache) | 109s | 73s (2 / 42 / 1) | 89s (59s) | 11s |
+
+`internal/server` in CI: 170.7s at baseline, 44.5s on x64, 38.7–38.9s on arm64. Vitest's own reported duration:
+94.3s at baseline, 97.9–108.2s on x64, 61.7–66.1s on arm64. On x64 the second worker gained little, probably
+because the 2 vCPUs are SMT siblings of one core (not verified).
+
+Arm64 is faster, not slower. Warm arm64 runs take about 120s against about 150s for warm x64 at the same config.
+Cold runs take 214–231s against 327s. Billed minutes per run (each job rounded up): warm arm64 6 min × $0.005 =
+$0.030; warm x64 7 min × $0.006 = $0.042; baseline 11 min × $0.006 = $0.066. On arm64 the setup actions,
+shellcheck, Node 24.18 and pnpm all worked; so did the CGO-off darwin cross-build (`make helper-darwin`). The
+linux-amd64 release build was not run on arm64, since `publish` builds it natively on x64. Every run listed passed.
+
+The game job (setup about 20s, lint 8s, Vitest 63–68s on arm64) is now the CI critical path. The next step is
+ticket item 4 or a Vitest environment-setup cut (40% of its phase time).
