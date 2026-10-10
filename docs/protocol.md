@@ -3573,15 +3573,19 @@ filing" can be offered now.
 
 **`worker.handoff {worker, mode: "literal", session, candidate, revision, send_home?, op}`** files it:
 
-1. The candidate must be the worker's current one, with that session and revision, read under the worker's current
-   agent session (a session change withdraws `Worker.handoff` at once; else `handoff_unavailable`); `op`
+1. The candidate must be the worker's current one, with that session and revision, read under the agent session herdr
+   reports of the worker now (a session change withdraws `Worker.handoff` at once; else `handoff_unavailable`; a Codex
+   agent whose rollout was found by its cwd, none reported, is offered under none, and again under the session once
+   herdr reports it); `op`
    is 1–64 characters of `[A-Za-z0-9_-]`, one per dialog. A second `worker.handoff` with an `op` being filed is
    `busy`.
-2. Off the hub goroutine the transcript lines written since the bridge last read it are read with the tracker's own
-   rules: a new prompt, another message or turn or an interruption there makes the reply not the latest any more
-   (`handoff_unavailable`, also for the preview), although the bridge's next read has not come yet. Then the text is
-   read back as for the preview (`handoff_source` when it is not what it was or the transcript is shorter than when
-   the reply was seen, `too_large` above 1 MiB: a literal handoff is never clipped).
+2. Off the hub goroutine the lines that made the reply the candidate (from its message's, or its Codex turn's, first
+   line through the line that completed it) must be byte for byte what the bridge read (`handoff_source` otherwise:
+   a transcript truncated and grown again past its old size is caught here), and the transcript lines written after
+   them are read with the tracker's own rules: a new prompt, another message or turn or an interruption there makes the
+   reply not the latest any more (`handoff_unavailable`, also for the preview), although the bridge's next read has
+   not come yet. Then the text is read back as for the preview (`handoff_source` when it is not what it was or the
+   transcript is shorter than when the reply was seen, `too_large` above 1 MiB: a literal handoff is never clipped).
 3. An `op` filed before, or the same reply (candidate and revision) of the worker whose file is still there, answers
    that handoff (`existing: true`): nothing is filed twice.
 4. The file `<handoff_dir>/<floor>/<yyyymmdd-hhmm>-<worker>-<slug>.md` (`--handoff-dir`, default `~/handoff`; the
@@ -3676,7 +3680,7 @@ dismissed_at)`.
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |
 | `drops_unavailable` | `drops.list` without a Drop Zone data directory, or one that cannot be read |
 | `too_large` | `transcript.image` with `size: "full"` for an image whose base64 is over 12 MiB (its thumbnail is still served); #223 `worker.handoff_preview` / `worker.handoff` for a reply over 1 MiB (never clipped) |
-| `handoff_unavailable`, `handoff_source`, `handoff_failed` | #223 (see [Handoffs](#handoffs)): the worker has no candidate or not the one named (stale: a newer turn, another session or revision); the candidate's lines in the transcript are not what they were (replaced, truncated, changed); writing or registering the file failed. Nothing was filed and nobody was sent home on any of them |
+| `handoff_unavailable`, `handoff_source`, `handoff_failed` | #223 (see [Handoffs](#handoffs)): the worker has no candidate or not the one named (stale: a newer turn, another session or revision); the candidate's lines in the transcript, or those that completed it, are not what they were (replaced, truncated, changed); writing or registering the file failed. Nothing was filed and nobody was sent home on any of them |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
 | `not_clean` | #83: `worker.wrapup` with a delete for a tree that is not clean and pushed now; `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |

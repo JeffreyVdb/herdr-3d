@@ -54,6 +54,9 @@ type usageWorker struct {
 	idleAt          int64
 	wrap            *wrapWatch // #83: its armed wrap-up
 	typed           []typedSum // #95: the prompts the bridge typed into it lately
+	// #223: the agent session herdr reports (the hub's AgentSession):
+	// session may be one findCodex found instead.
+	agent string
 }
 
 // usageUpdate is a worker's new usage, or (nil) its usage gone.
@@ -420,7 +423,7 @@ func (h *Hub) usageWorkers() []usageWorker {
 		if harness == "" {
 			harness = w.AgentKind
 		}
-		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
+		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, agent: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
 			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), typed: h.typedSums(id),
 			status: w.Status, idleAt: h.act.idleAt[id]}
 		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {

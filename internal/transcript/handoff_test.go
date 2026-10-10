@@ -128,7 +128,7 @@ func TestHandoffIdenticalReplies(t *testing.T) {
 		for _, l := range bytes.SplitAfter(raw, []byte("\n")) {
 			if line := bytes.TrimRight(l, "\n"); len(line) > 0 {
 				evs := TurnEvents(h, line)
-				tr.Events(Span{Off: off, N: len(line)}, evs)
+				tr.Events(Span{Off: off, N: len(line)}, line, evs)
 				fu.Events(evs)
 				if c := tr.Candidate(); c != nil {
 					cands[c.ID] = c.Hash
@@ -482,4 +482,112 @@ func TestHandoffStillLatest(t *testing.T) {
 			t.Fatalf("replaced: %v", err)
 		}
 	})
+}
+
+// Truncated below what was read and grown again past it, the same file: the
+// lines that completed the candidate (and those read after it) must still be
+// what they were, not only the reply's own lines. A regrown file the tracker
+// would find no candidate in is rejected.
+func TestHandoffTruncateRegrow(t *testing.T) {
+	user := `{"type":"user","isSidechain":false,"message":{"role":"user","content":"Go."}}`
+	hook := `{"type":"system","subtype":"stop_hook_summary","isSidechain":false}`
+	pad := func(n int) string {
+		return `{"type":"attachment","isSidechain":false,"attachment":{"type":"date","padding":"` + strings.Repeat("x", n) + `"}}`
+	}
+	cxTurn := []string{cxLine("session_meta", `{"id":"sess-c","source":"cli"}`),
+		cxLine("event_msg", `{"type":"task_started","turn_id":"t1","root_turn_id":"t1"}`), codexSay("a", "final_answer", "Done."),
+		cxLine("event_msg", `{"type":"task_complete","turn_id":"t1","last_agent_message":"Done."}`)}
+	for _, tc := range []struct {
+		name    string
+		harness string
+		lines   []string
+		keep    int    // the lines kept by the truncation
+		regrow  string // the line written after it
+		want    error  // nil: still the candidate
+	}{
+		{"claude: the turn_duration that confirmed a null stop_reason", Claude,
+			[]string{user, claudeSay("m1", "u1", textBlock("Done."), ""), turnDurationLine}, 2, pad(len(turnDurationLine)), ErrSourceChanged},
+		{"claude: the line that closed an end_turn reply, now a line of it", Claude,
+			[]string{user, claudeSay("m1", "u1", textBlock("Done."), "end_turn"), hook}, 2,
+			claudeSay("m1", "u2", textBlock("More."), "tool_use"), ErrSourceChanged},
+		{"claude: a line read after the reply, now a prompt", Claude,
+			[]string{user, claudeSay("m1", "u1", textBlock("Done."), "end_turn"), hook, pad(40)}, 3,
+			`{"type":"user","isSidechain":false,"message":{"role":"user","content":"Next, at length: ` + strings.Repeat("y", 60) + `"}}`, ErrNotLatest},
+		{"codex: the task_complete", Codex, cxTurn, 3, pad(len(cxTurn[3])), ErrSourceChanged},
+		{"claude: the same lines again", Claude,
+			[]string{user, claudeSay("m1", "u1", textBlock("Done."), ""), turnDurationLine}, 2, turnDurationLine + "\n" + pad(10), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "s.jsonl")
+			if err := os.WriteFile(path, []byte(strings.Join(tc.lines, "\n")+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			tr := NewHandoffTracker(tc.harness)
+			feedFile(t, tr, path)
+			c := tr.Candidate()
+			fi, err := os.Stat(path)
+			if err != nil || c == nil {
+				t.Fatalf("candidate %+v, %v", c, err)
+			}
+			if err := os.Truncate(path, int64(len(strings.Join(tc.lines[:tc.keep], "\n"))+1)); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.WriteString(tc.regrow + "\n")
+			f.Close()
+			if now, _ := os.Stat(path); !os.SameFile(fi, now) || now.Size() < fi.Size() {
+				t.Fatalf("not regrown in place: %d < %d", now.Size(), fi.Size())
+			}
+			// The tracker's verdict on the regrown file is the reference.
+			fresh := NewHandoffTracker(tc.harness)
+			feedFile(t, fresh, path)
+			if latest := fresh.Candidate() != nil && fresh.Candidate().ID == c.ID; latest != (tc.want == nil) {
+				t.Fatalf("the tracker says latest=%v", latest)
+			}
+			latest := StillLatest(path, fi, c, fi.Size())
+			body, err := Resolve(path, fi, c, 1<<20)
+			if tc.want == nil {
+				if latest != nil || err != nil || body != c.Body {
+					t.Fatalf("StillLatest %v, Resolve %q, %v", latest, body, err)
+				}
+				return
+			}
+			if !errors.Is(latest, tc.want) {
+				t.Fatalf("StillLatest = %v, want %v", latest, tc.want)
+			}
+			if tc.want == ErrSourceChanged && !errors.Is(err, ErrSourceChanged) {
+				t.Fatalf("Resolve = %q, %v", body, err)
+			}
+		})
+	}
+}
+
+// A tracker reset (its transcript replaced) and fed the new file seals its
+// candidates as a new one does.
+func TestHandoffRegionAfterReset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	lines := []string{claudeSay("m1", "u1", textBlock("Done."), ""), turnDurationLine}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tr := NewHandoffTracker(Claude)
+	feedHandoff(tr, claudeSay("m0", "u0", textBlock("Earlier."), "end_turn"), turnDurationLine, turnDurationLine)
+	tr.Reset()
+	feedFile(t, tr, path)
+	c := tr.Candidate()
+	fresh := NewHandoffTracker(Claude)
+	feedFile(t, fresh, path)
+	if f := fresh.Candidate(); c == nil || f == nil || c.ID != f.ID || c.Region != f.Region || c.RegionFrom != f.RegionFrom || c.Through != f.Through {
+		t.Fatalf("after a reset %+v, fresh %+v", c, fresh.Candidate())
+	}
+	fi, _ := os.Stat(path)
+	if body, err := Resolve(path, fi, c, 1<<20); err != nil || body != "Done." {
+		t.Fatalf("Resolve = %q, %v", body, err)
+	}
+	if err := StillLatest(path, fi, c, fi.Size()); err != nil {
+		t.Fatalf("StillLatest: %v", err)
+	}
 }

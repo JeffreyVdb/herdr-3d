@@ -41,7 +41,8 @@ var handoffOp = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // handoffCand is a worker's candidate and the transcript file it was read
 // from (its path, the file as the tail read it, and where the tail had read
-// to), under the worker's agent session then.
+// to), under the agent session herdr reported of the worker then (agent;
+// "" for a Codex agent whose rollout was found by its cwd).
 type handoffCand struct {
 	c     transcript.Candidate
 	path  string
@@ -51,8 +52,9 @@ type handoffCand struct {
 }
 
 // check reads the candidate's transcript again (off the hub goroutine): the
-// lines written since must leave it the latest completed reply, and its
-// whole text must still be what it was.
+// lines that made it the candidate must be unchanged, the lines written
+// since must leave it the latest completed reply, and its whole text must
+// still be what it was.
 func (hc *handoffCand) check() (string, error) {
 	if err := transcript.StillLatest(hc.path, hc.fi, &hc.c, hc.end); err != nil {
 		return "", err
@@ -67,10 +69,13 @@ type handoffUpdate struct {
 	cand *handoffCand
 }
 
-// handoffOffered is what the tracker last offered of a worker.
+// handoffOffered is what the tracker last offered of a worker, and under
+// which agent session herdr reported: another one offers the candidate
+// again, pinned to it.
 type handoffOffered struct {
-	t   *transcript.HandoffTracker
-	seq int
+	t     *transcript.HandoffTracker
+	seq   int
+	agent string
 }
 
 // offerHandoff queues worker w's candidate when it changed (usage tracker
@@ -80,7 +85,7 @@ func (tr *usageTracker) offerHandoff(w usageWorker, s *usage.Session) {
 	if l := tr.lines[w.id]; l != nil {
 		ht = l.handoff
 	}
-	o := handoffOffered{t: ht}
+	o := handoffOffered{t: ht, agent: w.agent}
 	var c *transcript.Candidate
 	if ht != nil {
 		o.seq, c = ht.Seq(), ht.Candidate()
@@ -96,7 +101,7 @@ func (tr *usageTracker) offerHandoff(w usageWorker, s *usage.Session) {
 	u := handoffUpdate{id: w.id}
 	if c != nil && s != nil {
 		path, fi, end := s.Main()
-		hc := &handoffCand{c: *c, path: path, fi: fi, end: end, agent: w.session}
+		hc := &handoffCand{c: *c, path: path, fi: fi, end: end, agent: w.agent}
 		hc.c.Spans = append([]transcript.Span(nil), c.Spans...)
 		if hc.c.Session == "" { // a Codex rollout without its session_meta read
 			hc.c.Session = w.session
@@ -155,14 +160,11 @@ func (h *Hub) handoffsView() *proto.HandoffCabinet {
 
 // handoffView is a worker's candidate as Worker.Handoff (nil: none). A
 // candidate read under another agent session than the worker's (agent) is
-// withdrawn: the new session's comes with the tracker's next read.
+// not shown (and refused, handoffCandOf): the tracker's next read offers
+// the new session's, or the same one again pinned to it.
 func (h *Hub) handoffView(id, agent string) *proto.HandoffCandidate {
 	hc := h.ho.cands[id]
-	if hc == nil || h.ho.svc == nil {
-		return nil
-	}
-	if hc.agent != agent {
-		delete(h.ho.cands, id)
+	if hc == nil || h.ho.svc == nil || hc.agent != agent {
 		return nil
 	}
 	c := hc.c

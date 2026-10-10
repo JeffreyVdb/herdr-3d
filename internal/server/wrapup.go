@@ -128,7 +128,7 @@ func (l *txLines) Line(off int64, b []byte) {
 		l.digest.Line(off, b, evs)
 	}
 	if l.handoff != nil { // every line: one that is not the open message's closes it
-		l.handoff.Events(transcript.Span{Off: off, N: len(b)}, evs)
+		l.handoff.Events(transcript.Span{Off: off, N: len(b)}, b, evs)
 	}
 }
 

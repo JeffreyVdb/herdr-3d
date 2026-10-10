@@ -7,6 +7,10 @@ package transcript
 // message's (Codex) ids and the lines it came from. Resolve reads those
 // lines again from the file and joins the reply's text blocks exactly as the
 // tracker did, so the bridge saves the whole literal text, never a preview.
+// The tracker also hashes the lines from the message's (or Codex turn's)
+// start through the one that completed the candidate (Candidate.Region):
+// StillLatest and Resolve refuse a file whose lines there changed, as a file
+// truncated and grown again past its old size has.
 //
 // The rules (docs/research, the #223 JSONL findings R1–R16):
 //
@@ -29,9 +33,11 @@ package transcript
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -89,6 +95,13 @@ type Candidate struct {
 	Body string
 	// Images counts the image blocks left out (not text).
 	Images int
+	// Region is the hex SHA-256 of the lines read from RegionFrom (where
+	// the message, or the Codex turn, began) up to Through (where the
+	// line after the one that completed the candidate starts): its lines
+	// and every line that made it the candidate, closing and completion
+	// lines included (hashRegionLine). Not part of the ID.
+	RegionFrom, Through int64
+	Region              string
 }
 
 // claudeMsg is the Claude message being read.
@@ -128,6 +141,15 @@ type HandoffTracker struct {
 	open           bool
 	final, last    *codexMsg
 	phased         bool // a message of the turn had a phase
+
+	// The lines read from regionFrom on (nil: not hashed, a tracker
+	// resumed at a candidate), next where the line after the last one read
+	// starts, and the line being read (only during Events).
+	region     hash.Hash
+	regionFrom int64
+	next       int64
+	cur        Span
+	curB       []byte
 }
 
 // NewHandoffTracker follows a harness's (claude or codex) transcript; nil
@@ -136,7 +158,7 @@ func NewHandoffTracker(harness string) *HandoffTracker {
 	if harness != Claude && harness != Codex {
 		return nil
 	}
-	return &HandoffTracker{harness: harness}
+	return &HandoffTracker{harness: harness, region: sha256.New()}
 }
 
 // Candidate is the latest completed final reply (nil: none now). The caller
@@ -149,7 +171,7 @@ func (t *HandoffTracker) Seq() int { return t.seq }
 // Reset forgets what was read: the transcript was replaced (or went).
 func (t *HandoffTracker) Reset() {
 	had := t.cand != nil
-	*t = HandoffTracker{harness: t.harness, seq: t.seq}
+	*t = HandoffTracker{harness: t.harness, seq: t.seq, region: sha256.New()}
 	if had {
 		t.seq++
 	}
@@ -157,20 +179,31 @@ func (t *HandoffTracker) Reset() {
 
 // Line reads one line (tests): off is where it starts.
 func (t *HandoffTracker) Line(off int64, b []byte) {
-	t.Events(Span{Off: off, N: len(b)}, TurnEvents(t.harness, b))
+	t.Events(Span{Off: off, N: len(b)}, b, TurnEvents(t.harness, b))
 }
 
+// set makes c the candidate, sealed with the lines read up to the current
+// one (included).
 func (t *HandoffTracker) set(c *Candidate) {
 	if (t.cand == nil && c == nil) || (t.cand != nil && c != nil && t.cand.ID == c.ID) {
 		return
+	}
+	if c != nil && t.region != nil {
+		c.RegionFrom, c.Through, c.Region = t.regionFrom, t.next, hex.EncodeToString(t.region.Sum(nil))
 	}
 	t.cand = c
 	t.seq++
 }
 
-// Events applies one line's events; sp is the line. Call it for every line,
-// also one without events: a line that is not the open message's closes it.
-func (t *HandoffTracker) Events(sp Span, evs []TurnEvent) {
+// Events applies one line's events; sp is the line, b its bytes. Call it
+// for every line, also one without events: a line that is not the open
+// message's closes it.
+func (t *HandoffTracker) Events(sp Span, b []byte, evs []TurnEvent) {
+	if t.region != nil {
+		hashRegionLine(t.region, sp.Off, b)
+	}
+	t.next, t.cur, t.curB = sp.End()+1, sp, b
+	defer func() { t.curB = nil }()
 	if t.harness == Claude {
 		t.claude(sp, evs)
 		return
@@ -178,6 +211,29 @@ func (t *HandoffTracker) Events(sp Span, evs []TurnEvent) {
 	for _, ev := range evs {
 		t.codex(sp, ev)
 	}
+}
+
+// restartRegion starts the region over at from: the current line or the
+// next one.
+func (t *HandoffTracker) restartRegion(from int64) {
+	if t.region == nil {
+		return
+	}
+	t.region.Reset()
+	t.regionFrom = from
+	if from == t.cur.Off {
+		hashRegionLine(t.region, t.cur.Off, t.curB)
+	}
+}
+
+// hashRegionLine adds a line read at off to a region's hash: its offset,
+// its bytes and its newline.
+func hashRegionLine(h hash.Hash, off int64, b []byte) {
+	var o [8]byte
+	binary.BigEndian.PutUint64(o[:], uint64(off))
+	h.Write(o[:])
+	h.Write(b)
+	h.Write([]byte{'\n'})
 }
 
 func (t *HandoffTracker) claude(sp Span, evs []TurnEvent) {
@@ -207,6 +263,7 @@ func (t *HandoffTracker) claude(sp Span, evs []TurnEvent) {
 			t.waiting = nil
 			t.set(nil) // the agent goes on: the earlier reply is not the latest
 			t.msg = &claudeMsg{id: ev.MsgID, session: t.session}
+			t.restartRegion(sp.Off)
 			t.msg.add(sp, ev)
 		case TurnDone:
 			t.closeClaude()
@@ -279,6 +336,7 @@ func (t *HandoffTracker) codex(sp Span, ev TurnEvent) {
 		t.open, t.turnID, t.rootID = true, ev.TurnID, ev.RootTurnID
 		t.final, t.last, t.phased = nil, nil, false
 		t.set(nil)
+		t.restartRegion(sp.Off)
 	case TurnPrompt:
 		t.set(nil) // a new prompt: the earlier reply is not the latest
 	case TurnAssistant:
@@ -294,6 +352,7 @@ func (t *HandoffTracker) codex(sp Span, ev TurnEvent) {
 	case TurnInterrupted:
 		t.open, t.final, t.last = false, nil, nil
 		t.set(nil)
+		t.restartRegion(sp.End() + 1)
 	case TurnComplete:
 		final, last, phased := t.final, t.last, t.phased
 		turnID, root := t.turnID, t.rootID
@@ -306,6 +365,7 @@ func (t *HandoffTracker) codex(sp Span, ev TurnEvent) {
 		t.open, t.final, t.last = false, nil, nil
 		if t.subagent || (root != "" && root != turnID) {
 			t.set(nil)
+			t.restartRegion(sp.End() + 1)
 			return
 		}
 		var c *Candidate
@@ -324,6 +384,7 @@ func (t *HandoffTracker) codex(sp Span, ev TurnEvent) {
 			c = nil
 		}
 		t.set(c)
+		t.restartRegion(sp.End() + 1) // a rollout without task_started: the next turn starts after it
 	}
 }
 
@@ -390,10 +451,40 @@ func openSource(path string, fi fs.FileInfo) (*os.File, fs.FileInfo, error) {
 	return f, got, nil
 }
 
+// checkRegion checks candidate c's region in the open transcript f (size
+// bytes) is what the tracker read: the same lines, hashed the same way, from
+// RegionFrom up to Through. A file truncated and grown again past its old
+// size is the same file, as long; this tells its lines changed.
+func checkRegion(f *os.File, size int64, c *Candidate) error {
+	switch {
+	case c.Region == "" || c.RegionFrom < 0 || c.Through <= c.RegionFrom:
+		return fmt.Errorf("%w: the reply was not sealed", ErrSourceChanged)
+	case c.Through > size:
+		return ErrSourceReplaced
+	case c.Through-c.RegionFrom > maxSince:
+		return ErrSourceTooLarge
+	}
+	for _, sp := range c.Spans {
+		if sp.Off < c.RegionFrom || sp.End() >= c.Through {
+			return ErrSourceChanged
+		}
+	}
+	h := sha256.New()
+	next, err := jsonl.Scan(f, c.RegionFrom, c.Through, 64<<10, func(off int64, b []byte) { hashRegionLine(h, off, b) }, nil)
+	if err != nil {
+		return err
+	}
+	if next != c.Through || hex.EncodeToString(h.Sum(nil)) != c.Region {
+		return ErrSourceChanged
+	}
+	return nil
+}
+
 // StillLatest checks candidate c is still its transcript's latest completed
-// reply: the complete lines written to path from from on (a line start:
-// where the tracker that found c had read to) are read with the tracker's
-// own rules, the tracker starting at c. fi is the file c was read from.
+// reply: its region (the lines that made it the candidate) is unchanged, and
+// the complete lines written after it are read with the tracker's own rules,
+// the tracker starting at c. from is where the tracker that found c had read
+// to (a line start, at or after c.Through); fi is the file c was read from.
 // ErrNotLatest when a prompt, another message or turn or an interruption
 // came since; an incomplete last line is not read yet.
 func StillLatest(path string, fi fs.FileInfo, c *Candidate, from int64) error {
@@ -404,16 +495,21 @@ func StillLatest(path string, fi fs.FileInfo, c *Candidate, from int64) error {
 	defer f.Close()
 	size := got.Size()
 	switch {
-	case from < 0 || from > size:
+	case from < c.Through || from > size:
 		return ErrSourceReplaced
-	case size-from > maxSince:
-		return fmt.Errorf("%w: %d bytes were written since", ErrNotLatest, size-from)
+	case size-c.Through > maxSince:
+		return fmt.Errorf("%w: %d bytes were written since", ErrNotLatest, size-c.Through)
+	}
+	if err := checkRegion(f, size, c); err != nil {
+		return err
 	}
 	t := resumeAt(c)
 	if t == nil {
 		return ErrNotLatest
 	}
-	if _, err := jsonl.Scan(f, from, size, 64<<10, t.Line, nil); err != nil {
+	// From the candidate's region on, not from: the lines read between
+	// them may have been rewritten too.
+	if _, err := jsonl.Scan(f, c.Through, size, 64<<10, t.Line, nil); err != nil {
 		return err
 	}
 	if t.cand == nil || t.cand.ID != c.ID {
@@ -423,13 +519,14 @@ func StillLatest(path string, fi fs.FileInfo, c *Candidate, from int64) error {
 }
 
 // resumeAt is a tracker in the state it was in once candidate c completed
-// (nil: not a harness's): every line that ends c ends it here too.
+// (nil: not a harness's): every line that ends c ends it here too. Its
+// lines are not hashed.
 func resumeAt(c *Candidate) *HandoffTracker {
 	t := NewHandoffTracker(c.Harness)
 	if t == nil {
 		return nil
 	}
-	t.cand = c
+	t.cand, t.region = c, nil
 	if t.harness == Claude {
 		// The message closed last: a line of it again reopens it (and
 		// the reply is another then).
@@ -442,9 +539,9 @@ func resumeAt(c *Candidate) *HandoffTracker {
 
 // Resolve reads candidate c's text again from the transcript at path: fi is
 // the file it was read from (nil: not checked; it may not have shrunk since),
-// max the most bytes the text
-// may have. The lines are parsed with TurnEvents and joined as the tracker
-// joined them; the result must hash to c.Hash.
+// max the most bytes the text may have. The lines are parsed with TurnEvents
+// and joined as the tracker joined them; the result must hash to c.Hash, and
+// c's region must be unchanged (checkRegion).
 func Resolve(path string, fi fs.FileInfo, c *Candidate, max int) (string, error) {
 	f, got, err := openSource(path, fi)
 	if err != nil {
@@ -494,6 +591,9 @@ func Resolve(path string, fi fs.FileInfo, c *Candidate, max int) (string, error)
 	sum := sha256.Sum256([]byte(body))
 	if hex.EncodeToString(sum[:]) != c.Hash {
 		return "", ErrSourceChanged
+	}
+	if err := checkRegion(f, got.Size(), c); err != nil {
+		return "", err
 	}
 	return body, nil
 }
