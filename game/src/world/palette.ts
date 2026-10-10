@@ -45,6 +45,7 @@ export const COMMAND_ORDER: readonly PaletteCommandId[] = [
   'buildings',
   'inbox',
   'next-need',
+  'dictate',
   'plan',
   'leave',
   'look.level',

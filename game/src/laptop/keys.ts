@@ -10,7 +10,8 @@ import type { KeyItem } from '../net/protocol';
  * zooms the text (#59: Ctrl + = / + / − / 0, which no pane gets: see
  * `zoomKey`), or goes to the terminal's preset and zoom controls (#59:
  * Ctrl+, as for an app's settings, see `LOOK_KEY`). Nothing a seated key does
- * reaches the game, except the command palette's chord (#147: ⌘/Ctrl+P, taken by the game before the pane sees it). Pure logic.
+ * reaches the game, except the command palette's chord (#147: ⌘/Ctrl+P, taken by the game before the pane sees it) and the
+ * dictation bar's (#213: ⌘/Ctrl+Shift+Space, the same way). Pure logic.
  */
 
 export interface KeyLike {
@@ -30,9 +31,9 @@ export interface SeatKey {
    * `stand`: Esc gets you up; `paste`: the browser's paste event follows with the text; `toggle-transcript` (M16):
    * Ctrl+Esc swaps the terminal and the transcript; `zoom-in` / `zoom-out` / `zoom-reset` (#59): the text size;
    * `look` (#59): the keyboard to the seat bar's terminal preset and zoom; `palette` (#147): the command palette
-   * (the game opens it from the capture phase; the pane never gets the chord).
+   * (the game opens it from the capture phase; the pane never gets the chord); `dictate` (#213): the dictation bar, the same way.
    */
-  action?: 'stand' | 'paste' | 'toggle-transcript' | 'look' | 'palette' | ZoomAction;
+  action?: 'stand' | 'paste' | 'toggle-transcript' | 'look' | 'palette' | 'dictate' | ZoomAction;
   /** The browser must not act on it (Tab moving focus, Backspace, F5, Ctrl+W…). */
   prevent: boolean;
 }
@@ -126,6 +127,8 @@ export function seatedKey(e: KeyLike, mac: boolean): SeatKey {
   const cmd = mac ? e.metaKey : e.ctrlKey;
   // #147: ⌘P / Ctrl+P is the command palette, as in VS Code's terminal: the pane loses readline's previous-history (↑ stays).
   if (cmd && !e.altKey && !e.shiftKey && (mac ? !e.ctrlKey : !e.metaKey) && e.code === 'KeyP') return { items: [], action: 'palette', prevent: true };
+  // #213: ⌘⇧Space / Ctrl+Shift+Space is the dictation bar (the game's, from the capture phase): the pane never gets it.
+  if (cmd && !e.altKey && e.shiftKey && (mac ? !e.ctrlKey : !e.metaKey) && e.code === 'Space') return { items: [], action: 'dictate', prevent: true };
   if (cmd && !e.altKey && e.code === 'KeyV') return { items: [], action: 'paste', prevent: false };
   // Cmd+← / → are the start and end of the line, as in a Mac terminal.
   if (mac && e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return one(e.key === 'ArrowLeft' ? 'home' : 'end');

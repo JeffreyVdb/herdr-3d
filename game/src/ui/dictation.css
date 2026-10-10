@@ -1,0 +1,165 @@
+/* #213: the dictation bar. The palette's frame and place (palette.css `.palette`: the credits frame, centred high, clear of
+   the right gutter the plan-limits tab steps into), with a text box instead of a one-line search: dictated commands run to
+   a sentence or three, and a task can keep its line breaks. Its floor list wears the palette's rows. */
+.dictation {
+  width: min(640px, calc(100vw - 112px));
+  max-height: min(600px, 80vh);
+  margin-block: 11vh auto;
+}
+@media (max-width: 760px) {
+  .dictation {
+    width: min(640px, calc(100vw - 32px));
+  }
+}
+.dict-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.dict-label {
+  font-size: 14px;
+  font-weight: 800;
+  font-variation-settings: var(--fvs-casual);
+  color: var(--accent-text);
+}
+.dict-field {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 84px;
+  max-height: 36vh;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--well);
+  color: var(--text);
+  font: 600 16px/1.45 var(--font);
+  caret-color: var(--action);
+  resize: vertical;
+}
+.dict-field::placeholder {
+  color: var(--text-3);
+}
+.dict-field:hover {
+  border-color: var(--border-hover);
+}
+.dict-field:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+.dict-field::selection {
+  background: color-mix(in srgb, var(--accent-text) 35%, transparent);
+}
+/* The answer's line, beside Send: the field above it never changes while it does. */
+.dict-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+}
+.dict-status {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+.dict-status[hidden] {
+  display: block;
+  visibility: hidden;
+}
+.dict-status[data-tone='error'] {
+  color: var(--error-text);
+}
+.dict-send {
+  flex: none;
+  margin-left: auto;
+}
+.dict-send[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: progress;
+}
+/* Waiting for the interpreter: a small dot that breathes in the action colour, before the line that says so. */
+.dict-pending {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--action);
+}
+.dict-pending[hidden] {
+  display: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dict-pending {
+    animation: dict-breathe 1100ms var(--ease) infinite alternate;
+  }
+  @keyframes dict-breathe {
+    from {
+      opacity: 0.35;
+      transform: scale(0.7);
+    }
+  }
+}
+.dict-question {
+  margin: 0;
+  padding: 12px 16px 0;
+}
+.dict-question[hidden],
+.dict-floors[hidden] {
+  display: none;
+}
+.dict-floors {
+  max-height: 260px;
+}
+.dict-scope {
+  min-width: 0;
+}
+.dictation kbd {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  background: var(--raised);
+  border: 1px solid var(--border-chip);
+  border-bottom-width: 2px;
+  font: 700 12px/1 var(--font-mono);
+  font-variation-settings: normal;
+  white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .dict-scope {
+    font-size: 12px;
+  }
+}
+
+/* ubuntu:begin */
+/* #216 Ubuntu: the field is a 36 px-or-taller control with the theme's focus ring; muted text is not faded. */
+:root[data-ui-theme='ubuntu'] .dict-field {
+  min-height: max(84px, var(--ctl-h));
+  font-weight: 400;
+}
+:root[data-ui-theme='ubuntu'] .dict-field:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .dict-label {
+  font-weight: 700;
+}
+:root[data-ui-theme='ubuntu'] .dict-send[aria-disabled='true'] {
+  opacity: 1;
+  background: var(--disabled-bg);
+  border-color: var(--disabled-bg);
+  color: var(--disabled-text) !important;
+}
+:root[data-ui-theme='ubuntu'] .dict-foot {
+  flex-shrink: 0;
+  padding-bottom: 10px;
+}
+/* ubuntu:end */

@@ -2943,7 +2943,10 @@ why it is opt-in on its own toggle, and the game's Settings say so above it.
 Claude Code agent on Haiku 5.5 with high effort. Task: fix the login bug.") with the [AI integration](#ai-integration)'s
 LLM and answers a **hire proposal for review**, or that the sentence is not a hire. It never hires: it sends no
 `worker.hire`, calls no herdr and keeps nothing on the bridge. A complete, valid proposal is only `ready_for_review`;
-the game's review dialog and your explicit confirmation are what hire (phases 3 and 4). (#212, phase 3: the game's review dialog opens with this proposal, asks for a missing or invalid value and sends one `worker.hire` only on Hire; a follow-up reply goes back here with the proposal as `pending`.)
+the game's review dialog and your explicit confirmation are what hire (phases 3 and 4). (#212, phase 3: the game's review dialog opens with this proposal, asks for a missing or invalid value and sends one `worker.hire` only on Hire; a follow-up reply goes back here with the proposal as `pending`. #213, phase 4: the game's dictation bar sends it,
+Ctrl/⌘+Shift+Space or the Menu's "Dictate a command…": a hire opens that review (or, with one open, is applied to it as
+a follow-up, sent with its proposal as `pending`); `unsupported` and `unclear` are a line in the bar, as is an `error`,
+with the text kept. The client waits 40 s for the ack.)
 
 ```json
 {"t":"hire.interpret","req_id":"i1","args":{"text":"Hire a Claude Code agent on Haiku 5.5 to fix the login bug."}}

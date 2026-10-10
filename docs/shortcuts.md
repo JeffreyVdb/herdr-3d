@@ -14,6 +14,7 @@ Walking around an office, its lobby or the street.
 | --- | --- |
 | `?` | This shortcut list (over any dialog; not at a laptop or the whiteboard) |
 | `Ctrl/⌘` + `P` | The command palette: type to run a command, @ to jump to a floor (from every view, a text field and a laptop too) |
+| `Ctrl/⌘` + `Shift` + `Space` | The dictation bar: say, type or paste a command, Enter reads it (from every view, a text field, a dialog and a laptop too; again closes it) |
 | `N` | Next worker who needs you |
 | `Shift` + `N` | Inbox list: who needs you or is done |
 | `Shift` + `L` | Plan limits |
@@ -42,6 +43,7 @@ The view from above, before you go inside.
 | --- | --- |
 | `?` | This shortcut list (over any dialog; not at a laptop or the whiteboard) |
 | `Ctrl/⌘` + `P` | The command palette: type to run a command, @ to jump to a floor (from every view, a text field and a laptop too) |
+| `Ctrl/⌘` + `Shift` + `Space` | The dictation bar: say, type or paste a command, Enter reads it (from every view, a text field, a dialog and a laptop too; again closes it) |
 | `N` | Next worker who needs you |
 | `Shift` + `N` | Inbox list: who needs you or is done |
 | `Shift` + `L` | Plan limits |
@@ -83,6 +85,7 @@ Open dialogs and their fields own the keyboard.
 | Keys | Does |
 | --- | --- |
 | `Ctrl/⌘` + `P` | The command palette: type to run a command, @ to jump to a floor (from every view, a text field and a laptop too) |
+| `Ctrl/⌘` + `Shift` + `Space` | The dictation bar: say, type or paste a command, Enter reads it (from every view, a text field, a dialog and a laptop too; again closes it) |
 | `Ctrl/⌘` + `/` | The shortcut list, from inside a text field |
 | `Esc` | Close the dialog |
 | `Ctrl/⌘` + `Enter` | Submit: hire, Start Run, open a pull request, a board comment |
@@ -101,6 +104,7 @@ Every key goes to the terminal or the conversation, except these. Esc stands you
 | `Esc` | Stand up |
 | `Ctrl` + `Esc` | Terminal or conversation |
 | `Ctrl/⌘` + `P` | The command palette (the terminal no longer gets Ctrl+P; ↑ is still previous history) |
+| `Ctrl/⌘` + `Shift` + `Space` | The dictation bar (the terminal does not get this chord) |
 | `O` | The floor overview, over the conversation (Esc comes back) |
 | `Ctrl` + `,` | The terminal’s preset and zoom controls |
 | `Ctrl` + `+` or `Ctrl` + `−` or `Ctrl` + `0` | Zoom in, out and back to 100% |

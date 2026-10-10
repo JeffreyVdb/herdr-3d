@@ -46,6 +46,7 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'floor.sleep': 'put floors to sleep',
   'floor.settings.set': 'store floor settings',
   'hire.prepare': 'hire workers',
+  'hire.interpret': 'understand dictated commands',
   'worker.hire': 'hire workers',
   'worker.fire.prepare': 'send workers home',
   'worker.fire': 'send workers home',

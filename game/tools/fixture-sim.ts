@@ -33,6 +33,8 @@ import { LimitsSim } from './fixture-limits.ts';
 import { AiSim } from './fixture-ai.ts';
 // #90: follow-up questions (`followups.*`, `worker.answer_followup`, `sim.turn`).
 import { FollowupSim } from './fixture-followup.ts';
+// #213: the dictation bar's interpreter (`hire.interpret`, `sim.interpret`).
+import { InterpretSim } from './fixture-interpret.ts';
 // #110: pack up on request (`packup.*`, `sim.packup_lag`).
 import { PackupSim } from './fixture-packup.ts';
 // #118: floor overview summaries (`digest.*`).
@@ -494,6 +496,7 @@ export class SimWorld {
       if (m.t === 'worker.prompt' || m.t === 'worker.keys') this.followups.clear(a.id, send);
       if (this.followups.handle(m.t, a, send, ack, fail)) return;
       if (this.packup.handle(m.t, a, send, ack, fail)) return; // #110
+      if (this.interpreter.handle(m.t, a, ack, fail)) return; // #213
       if (this.digest.handle(m.t, a, send, ack, fail)) return; // #118 (board.watch passes on to the boards)
       if (this.transcripts.handle(m.t, a, send, ack, fail)) return;
       if (this.asks.handle(m.t, a, send, ack, fail)) return;
@@ -847,6 +850,15 @@ export class SimWorld {
       prompt: (a, send, ack, fail) => this.panels.prompt(a, send, ack, fail),
     });
     return this.followupSim;
+  }
+
+  // ---- #213: the dictation bar's interpreter (tools/fixture-interpret.ts) ------
+
+  private interpretSim: InterpretSim | null = null;
+
+  private get interpreter(): InterpretSim {
+    this.interpretSim ??= new InterpretSim({ ai: this.ai, hireOptions: () => this.hire, error: (code, message) => new CmdError(code, message) });
+    return this.interpretSim;
   }
 
   // ---- #110: pack up on request (tools/fixture-packup.ts) ------
