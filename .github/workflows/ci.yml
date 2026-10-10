@@ -19,7 +19,7 @@ jobs:
   # already changed Go code still runs it). Pushes to main and manual runs
   # always run both.
   changes:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-26.04-arm
     outputs:
       go: ${{ steps.filter.outputs.go }}
       game: ${{ steps.filter.outputs.game }}
@@ -52,7 +52,7 @@ jobs:
   go:
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@v7
       # setup-go's own cache is keyed on go.sum only and never saved again
@@ -91,7 +91,7 @@ jobs:
 
   # Shell only (shellcheck + the fake-environment deploy test), so it runs on every push.
   shell:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-26.04-arm
     steps:
       - uses: actions/checkout@v7
       - run: make sh-test
@@ -99,7 +99,7 @@ jobs:
   game:
     needs: changes
     if: needs.changes.outputs.game == 'true'
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-26.04-arm
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
