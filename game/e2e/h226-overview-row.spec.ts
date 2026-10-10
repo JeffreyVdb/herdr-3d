@@ -4,10 +4,11 @@ import { frames, openGame, shot, watchErrors } from './game';
 // #226, #232: a worker row on the floor overview gives its now line a line of its own. Turnip (demo-m118's one-off
 // worker) is given a now line of the bridge's full budget (NowMax, 100 runes) from the model and an open shell command
 // of the waiting detail's full budget (MaxWaitDetail, 40 runes) on its way to the page. Focused and hovered, at the e2e
-// viewport and a 1440 px window: the now text is never cut (one line at 1440, at most two at 1280), the live activity is
-// the since column's plain words (the detail cut first, the verb and the time whole), the sparkle sits by the line's
-// label, the row is no taller than its name and model need at 1440, and the hint goes under the time without moving or
-// overlapping any other text of the row.
+// viewport and a 1440 px window: the now text is never cut (at most two lines at either: the since column's room for the
+// activity costs it the one-line room it had), the live activity is the since column's plain words (only the detail
+// cut, the verb and the time whole), the sparkle sits by the line's label, a row whose now line takes one line is no
+// taller than its name and model need, and the hint goes under the time without moving or overlapping any other text of
+// the row.
 
 const NOW = 'Verifying host credentials after recreating an IAM role, then rerunning the staging smoke test suite';
 const DETAIL = 'ssh -o StrictHostKeyChecking=no op@54.83';
@@ -133,10 +134,13 @@ for (const vp of [
         text: rg.getBoundingClientRect().width,
         room: line.clientWidth - label.getBoundingClientRect().width - parseFloat(getComputedStyle(line).columnGap),
         gap: box(e).left - box(label).right,
-        // The detail is cut, the verb whole: its text ends inside the cut run; the time is whole.
+        // The detail is cut, the verb whole: its text ends inside the activity's box; the time is whole.
         verbEnd: vr.getBoundingClientRect().right,
         stateEnd: box(state).right,
-        stateCut: state.scrollWidth > state.clientWidth,
+        detailCut: (() => {
+          const d = r.querySelector('.ov-detail') as HTMLElement;
+          return d.scrollWidth > d.clientWidth;
+        })(),
         timeWhole: time.scrollWidth <= time.clientWidth,
         rowH: box(r).height,
         whoBottom: box(r.querySelector('.ov-who') as HTMLElement).bottom - box(r).top,
@@ -145,20 +149,20 @@ for (const vp of [
     });
     console.log(`#232 ${vp.width}px: ${JSON.stringify(m)}`);
     await shot(page, `h226-row-${vp.width}`);
-    // Never cut: whole in width and in height; one line at 1440 with room to spare (another Chromium renders the face a
-    // few percent wider), at most two at 1280 (the since column's activity costs the line its one-line room there).
+    // Never cut: whole in width and in height, in at most two lines at 1280 and 1440 (#232: the since column's room for
+    // the activity costs the line its one-line room there); on one line, with room to spare (another Chromium renders
+    // the face a few percent wider), and the row then needs only its name and model lines.
     expect(m.scroll).toBeLessThanOrEqual(m.client);
     expect(m.scrollH).toBeLessThanOrEqual(m.clientH);
-    if (vp.width >= 1440) {
-      expect(m.lines).toBe(1);
+    expect(m.lines).toBeLessThanOrEqual(2);
+    if (m.lines === 1) {
       expect(m.room).toBeGreaterThanOrEqual(m.text * 1.05);
-      // A populated row needs only its name and model lines.
       expect(m.whatBottom).toBeLessThanOrEqual(m.whoBottom + 1);
-    } else expect(m.lines).toBeLessThanOrEqual(2);
+    }
     // The text follows its label at a small step, no slot kept for a sparkle.
     expect(m.gap).toBeGreaterThanOrEqual(5);
     expect(m.gap).toBeLessThanOrEqual(9);
-    expect(m.stateCut).toBe(true);
+    expect(m.detailCut).toBe(true);
     expect(m.verbEnd).toBeLessThanOrEqual(m.stateEnd + 0.5);
     expect(m.timeWhole).toBe(true);
 

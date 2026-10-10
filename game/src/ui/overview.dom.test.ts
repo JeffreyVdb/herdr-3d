@@ -297,11 +297,16 @@ describe('the overview page (#118)', () => {
     expect(row('c').querySelector('.ov-what')?.textContent).toBe('No turn yet');
     // The header names what each column holds.
     expect([...document.querySelectorAll('.ov-cols > span')].map((e) => e.textContent)).toEqual(['', 'Worker', 'Working on', 'Doing · for']);
-    // The CSS: one run of text cut at its end (the detail, then the verb), the separator and the time never; the hint goes under the time, absolute (no
-    // row grows for it), and no longer hides anything; the sparkle and the words are the user's colour in forced colours.
+    // The CSS: only the detail is cut (it goes to a hidden second line when too little of it would show), the verb, the
+    // separator and the time never, none of them in a box that cuts with an ellipsis; the hint goes under the time,
+    // absolute (no row grows for it), and no longer hides anything; the sparkle and the words are the user's colour in
+    // forced colours.
     const css = readFileSync(resolve(import.meta.dirname, 'overview.css'), 'utf8');
     const rule = (sel: string) => [...css.matchAll(new RegExp(`\\n${sel.replace(/[.+]/g, '\\$&')} \\{([^}]*)\\}`, 'g'))].map((m) => m[1]).join('');
-    expect(rule('.ov-state')).toMatch(/flex: 0 1 auto;[^}]*text-overflow: ellipsis/);
+    expect(rule('.ov-detail')).toMatch(/flex: 1 1 10ch;[^}]*min-width: 0;[^}]*text-overflow: ellipsis/);
+    expect(rule('.ov-state--act')).toMatch(/flex-wrap: wrap;[^}]*overflow: hidden/);
+    expect(rule('.ov-state--act')).not.toMatch(/text-overflow/);
+    for (const sel of ['.ov-verb', '.ov-state']) expect(rule(sel), sel).toMatch(/flex: none/);
     expect(rule('.ov-time')).toMatch(/flex: none/);
     expect(rule('.ov-sep')).toMatch(/flex: none/);
     expect(rule('.ov-doing + .ov-hint')).toMatch(/position: absolute/);

@@ -4,11 +4,16 @@ import { frames, openGame, shot, watchErrors } from './game';
 // #232 on demo-m118's lab floor, its workers given these states on their way to the page (the frames the game sends are
 // kept): Poppy (Claude) investigating with a model's now line 2 minutes old; Juniper (Codex) testing, its model's line
 // 7 minutes old and its refresh failed; Sprout needs you while its AI line is pending; Basil working with no activity;
-// Radish idle. In Quiet and Ubuntu: the since column says what each does in plain words (or its state), the sparkle
-// sits by its line's label with the age quiet after the text, pending is quiet words, a failed refresh keeps its chip
-// and Retry. In forced colours the sparkle and the words are the user's text colour, asleep rows too.
+// Radish idle; Turnip (a one-off worker) looking at an image, under a model's task line and a model's now line of the
+// bridge's full budget (100 runes). In Quiet and Ubuntu: the since column says what each does in plain words (or its
+// state), the sparkle sits by its line's label with the age quiet after the text, pending is quiet words, a failed
+// refresh keeps its chip and Retry. From 1280 px down to a phone the verb and the time are never cut, only the detail
+// (gone, never a hanging `· …`, when too little of it would show); the label, the age and the text share a baseline and
+// the sparkle is centred on the text's capitals. In forced colours the sparkle and the words are the user's text colour,
+// asleep rows too.
 
 const SIM = 'play=none&sim=1&simms=150';
+const NOW = 'Verifying host credentials after recreating an IAM role, then rerunning the staging smoke test suite';
 const UBUNTU = { 'h3d.theme.ui': 'ubuntu', 'h3d.theme.transcript': 'ubuntu', 'h3d.theme.terminal': 'ubuntu' };
 
 async function patch(page: Page): Promise<void> {
@@ -24,6 +29,12 @@ async function patch(page: Page): Promise<void> {
     Sprout: { status: 'blocked', since: T - 4 * 60e3, activity: null, digest: { now: 'Pass 3 still has two blockers', now_source: 'recap', now_status: { state: 'pending' } } },
     Basil: { status: 'working', since: T - 12 * 60e3, activity: null },
     Radish: { status: 'idle', since: T - 41 * 60e3, activity: null },
+    Turnip: {
+      status: 'working',
+      since: T - 64 * 60e3,
+      activity: { kind: 'image', detail: 'overview-1280-quiet.png', since: T },
+      digest: { task: 'Tidy the README and its links', task_source: 'llm', now: NOW, now_source: 'llm', now_at: T - 30e3 },
+    },
   };
   const ids = new Map<string, string>();
   const apply = (w: { id: string; name?: string; label?: string; status?: string; status_since?: number; activity?: unknown; digest?: unknown }) => {
@@ -76,6 +87,7 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
     await expect(doing('Basil')).toHaveText(/^working 1[23]m$/);
     await expect(doing('Sprout')).toHaveText(/^needs you [45]m$/);
     await expect(doing('Radish')).toHaveText(/^idle 4[12]m$/);
+    await expect(doing('Turnip')).toHaveText(/^Looking at an image · overview-1280-quiet\.png · 1h 0[45]m$/);
     // The sparkle: 12–14 px, its line's label's, no outline or fill behind it; the age quiet after the text.
     for (const n of ['Poppy', 'Juniper']) {
       const s = row(n).locator('.ov-now > b > .ov-ai');
@@ -98,6 +110,119 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
     const ends = await page.locator('.ov-row--worker .ov-time').evaluateAll((es) => es.map((e) => Math.round(e.getBoundingClientRect().right)));
     expect(new Set(ends).size).toBe(1);
     await shot(page, `h232-states-${theme}`);
+    clean();
+  });
+
+  test(`the verb and the time are never cut, only the detail; the line's parts line up, 1280 px to a phone, in ${theme} (#232)`, async ({ page }) => {
+    test.setTimeout(150_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await overview(page, theme);
+    // Active only: the working rows in view.
+    if ((await page.evaluate(() => window.__h3d.overview()))?.page?.filter !== 'active') await page.keyboard.press('KeyF');
+    await page.mouse.move(1, 1);
+    for (const vp of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 760, height: 900 },
+      { width: 480, height: 900 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(vp);
+      await page.waitForTimeout(300);
+      // Narrow, the rows are taller: Turnip (its task line and its wrapped now line) in view for the shot.
+      if (vp.width <= 760) await page.locator('.ov-row', { hasText: 'Turnip' }).first().scrollIntoViewIfNeeded();
+      const m = await page.evaluate(async () => {
+        await document.fonts.ready;
+        const box = (e: Element) => e.getBoundingClientRect();
+        // A text's baseline: its first line's box (a text fragment's box is its face's ascent and descent) plus the face's
+        // ascent; its capitals' middle: the baseline less half an H's ink height, both read from a canvas in the text's own
+        // computed face, weight and size.
+        const metrics = (e: Element) => {
+          const cs = getComputedStyle(e);
+          const g = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D;
+          g.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+          const h = g.measureText('H');
+          return { ascent: h.fontBoundingBoxAscent, cap: h.actualBoundingBoxAscent };
+        };
+        const baseline = (e: Element) => {
+          const t = [...e.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim()) as Node;
+          const rg = document.createRange();
+          rg.selectNodeContents(t);
+          return (rg.getClientRects()[0] as DOMRect).top + metrics(e).ascent;
+        };
+        const inked = (e: Element) => {
+          const rg = document.createRange();
+          rg.selectNodeContents(e);
+          return rg.getBoundingClientRect().width;
+        };
+        const rows = [...document.querySelectorAll<HTMLElement>('.ov-row--worker')].filter((r) => r.querySelector('.ov-verb'));
+        const working = rows.map((r) => {
+          const q = (s: string) => r.querySelector(s) as HTMLElement;
+          const verb = q('.ov-verb');
+          const detail = r.querySelector<HTMLElement>('.ov-detail');
+          const [v, clip, since, what, time] = [verb, q('.ov-state--act'), q('.ov-since'), q('.ov-what'), q('.ov-time')].map(box) as DOMRect[];
+          const ch = (v as DOMRect).width / (verb.textContent?.length ?? 1);
+          const shown = !!detail && detail.getClientRects().length > 0 && box(detail).top < (clip as DOMRect).bottom - 1 && box(detail).width > 0;
+          return {
+            name: q('.ov-name').textContent,
+            verbWhole: verb.scrollWidth <= verb.clientWidth,
+            verbInside: (v as DOMRect).left >= (clip as DOMRect).left - 0.5 && (v as DOMRect).right <= (clip as DOMRect).right + 0.5 && (v as DOMRect).left >= (since as DOMRect).left,
+            clearOfWhat: (v as DOMRect).left >= (what as DOMRect).right,
+            // (Its text's box: an element's whole-pixel scroll and client widths disagree by a sub-pixel here.)
+            timeWhole: (time as DOMRect).width > 0 && inked(q('.ov-time')) <= (time as DOMRect).width + 0.5,
+            timeRight: Math.round((time as DOMRect).right),
+            // The detail's characters that show, less its ` · ` and the ellipsis when cut.
+            detail: shown && detail ? Math.floor(detail.clientWidth / ch + 0.01) - 3 - (detail.scrollWidth > detail.clientWidth ? 1 : 0) : 0,
+          };
+        });
+        const lines = [...document.querySelectorAll('.ov-row--worker .ov-line')].filter((l) => l.querySelector('.ov-ai'));
+        const align = lines.map((l) => {
+          const text = l.querySelector('.ov-text') as HTMLElement;
+          const age = l.querySelector('.ov-age');
+          const star = box(l.querySelector('.ov-ai path') as Element);
+          const tb = baseline(text);
+          return {
+            line: `${l.closest('.ov-row')?.querySelector('.ov-name')?.textContent} ${l.querySelector('b')?.textContent}`,
+            label: baseline(l.querySelector('b') as Element) - tb,
+            // (On a phone a line with a chip puts its metadata on a line of its own, #174.)
+            age: age && !(innerWidth <= 480 && l.matches('.ov-line--status')) ? baseline(age) - tb : 0,
+            sparkle: (star.top + star.bottom) / 2 - (tb - metrics(text).cap / 2),
+          };
+        });
+        return { overflow: document.documentElement.scrollWidth > innerWidth, working, align };
+      });
+      console.log(`#232 ${theme} ${vp.width}px: ${JSON.stringify(m)}`);
+      expect(m.overflow, `${vp.width}`).toBe(false);
+      expect(m.working.length, `${vp.width}`).toBeGreaterThan(0);
+      for (const w of m.working) {
+        const at = `${w.name} ${vp.width}`;
+        expect(w.verbWhole, at).toBe(true);
+        expect(w.verbInside, at).toBe(true);
+        if (vp.width >= 1280) expect(w.clearOfWhat, at).toBe(true);
+        expect(w.timeWhole, at).toBe(true);
+        // No hanging `· …`: a detail shows several characters, or none.
+        if (w.detail) expect(w.detail, at).toBeGreaterThanOrEqual(4);
+        if (vp.width <= 480) expect(w.detail, at).toBe(0);
+      }
+      if (vp.width >= 1280) {
+        // The time keeps its place at the column's right edge; the detail has room to say something.
+        expect(new Set(m.working.map((w) => w.timeRight)).size, `${vp.width}`).toBe(1);
+        for (const n of ['Poppy', 'Juniper']) expect(m.working.find((w) => w.name === n)?.detail, `${n} ${vp.width}`).toBeGreaterThanOrEqual(12);
+        expect(m.working.some((w) => w.name === 'Turnip'), `${vp.width}`).toBe(true);
+      }
+      if (vp.width >= 480) {
+        // TASK and NOW (a wrapped NOW by its first line): the label and the age on the text's baseline, the sparkle on its
+        // capitals' middle.
+        expect(m.align.some((a) => a.line.endsWith('Task')), `${vp.width}`).toBe(true);
+        for (const a of m.align) {
+          expect(Math.abs(a.label), `${a.line} ${vp.width} label`).toBeLessThanOrEqual(0.5);
+          expect(Math.abs(a.age), `${a.line} ${vp.width} age`).toBeLessThanOrEqual(0.5);
+          expect(Math.abs(a.sparkle), `${a.line} ${vp.width} sparkle`).toBeLessThanOrEqual(1);
+        }
+      }
+      await shot(page, `h232-geometry-${theme}-${vp.width}`);
+    }
     clean();
   });
 
