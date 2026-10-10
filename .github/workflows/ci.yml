@@ -19,7 +19,7 @@ jobs:
   # already changed Go code still runs it). Pushes to main and manual runs
   # always run both.
   changes:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       go: ${{ steps.filter.outputs.go }}
       game: ${{ steps.filter.outputs.game }}
@@ -52,19 +52,46 @@ jobs:
   go:
     needs: changes
     if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
+      # setup-go's own cache is keyed on go.sum only and never saved again
+      # after a hit, so its build cache aged with every commit (the trimmed
+      # linux build and the darwin helper recompiled modernc sqlite each run).
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false
+      - id: go-env
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+      # The latest cache of this platform (main's, or this branch's own) is
+      # restored; it is saved by main and by manual runs only, so branch
+      # pushes do not churn the repository's cache space. Go trims build cache
+      # entries unused for five days.
+      - id: go-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ steps.go-env.outputs.build }}
+            ${{ steps.go-env.outputs.mod }}
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.mod', 'go.sum', 'Makefile', 'cmd/**/*.go', 'internal/**/*.go') }}
+          restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
       - run: make go-lint
       - run: make go-test
       - run: make go-build helper-darwin
+      - if: steps.go-cache.outputs.cache-hit != 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ${{ steps.go-env.outputs.build }}
+            ${{ steps.go-env.outputs.mod }}
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   # Shell only (shellcheck + the fake-environment deploy test), so it runs on every push.
   shell:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - run: make sh-test
@@ -72,7 +99,7 @@ jobs:
   game:
     needs: changes
     if: needs.changes.outputs.game == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     env:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
     steps:
