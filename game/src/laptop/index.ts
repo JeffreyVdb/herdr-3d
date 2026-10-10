@@ -14,6 +14,7 @@ import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import { askAgent, askOf } from '../world/ask';
 import { followupOf } from '../world/followup';
+import { candidateOf } from '../world/handoff';
 import { effectiveStatus } from '../world/codexQuestions';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
@@ -78,6 +79,8 @@ export interface LaptopHost {
   packup?: PackupGate;
   /** #118: O while you read the transcript: the floor overview over it (none: O is the transcript's). */
   overview?(): void;
+  /** #223: the transcript's inline Handoff button: the filing dialog over the seat (none: no button). */
+  handoff?(id: string): void;
 }
 
 /** The HUD while you sit at a laptop. */
@@ -306,6 +309,7 @@ export class Laptops {
       // #187: while its worker is away the bar keeps saying so (a late ack of a send would say "Sent").
       status: (kind, text) => (this.seat?.away ? this.restStatus(this.seat) : this.host.seat.status(kind, text)),
       ...(host.packup ? { packup: host.packup } : {}),
+      ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
       modeChanged: (mode) => this.onMode(mode),
       ...(host.themes ? { prefs: host.themes.prefs } : {}),
     });
@@ -1036,6 +1040,7 @@ export class Laptops {
           this.syncAsk(askOf(v.worker)); // #57
           this.syncCodex(codexNotice(v.worker)); // #155
           this.transcript.followedUp(followupOf(v.worker)); // #90
+          this.transcript.handoffSeen(candidateOf(v.worker)); // #223
           this.transcript.codexSeen(v.worker.codex ?? null, status === 'working'); // #157: its async questions
           this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
         }

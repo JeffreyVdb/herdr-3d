@@ -157,6 +157,10 @@ export interface PropMeshes {
   overview: OverviewScreenMesh | null;
   /** M13: puts the board's render on the whiteboard (null: back to the placeholder); the one it replaces is disposed. */
   setWhiteboard(tex: THREE.Texture | null): void;
+  /** #223: the cabinet's drawers, top to bottom, with this many folder tabs each (`world/handoff.drawerFill`). */
+  setDrawers(fill: readonly [number, number, number]): void;
+  /** #223: the folder tabs the drawers show now (test hook), top to bottom; null without a cabinet. */
+  drawers(): [number, number, number] | null;
   dispose(): void;
 }
 
@@ -224,23 +228,48 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
   if (overview) group.add(overview.group);
 
   const filing = byId.get('filing');
+  // #223: the drawers fill: manila folder tabs peek over each drawer's front, bottom drawer first (`drawerFill`).
+  let drawFiling: ((fill: readonly [number, number, number]) => void) | null = null;
+  let filingShown = '';
   if (filing) {
     const m = boxAt(filing.box, toon(0x9aa4b5));
     m.rotation.y = 0;
-    const t = tex(
-      canvasTexture(256, 512, (g) => {
-        g.fillStyle = '#a7b0c0';
-        g.fillRect(0, 0, 256, 512);
-        for (let i = 0; i < 3; i++) {
-          g.fillStyle = '#8f99ab';
-          g.fillRect(14, 16 + i * 166, 228, 150);
-          g.fillStyle = '#e9edf4';
-          g.fillRect(98, 60 + i * 166, 60, 14);
-          g.fillStyle = '#ffffff';
-          g.fillRect(90, 100 + i * 166, 76, 30);
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 512;
+    const t = tex(new THREE.CanvasTexture(canvas));
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    drawFiling = (fill) => {
+      const g = canvas.getContext('2d');
+      if (!g) return;
+      g.fillStyle = '#a7b0c0';
+      g.fillRect(0, 0, 256, 512);
+      for (let i = 0; i < 3; i++) {
+        const y = 16 + i * 166;
+        // Folder tabs in the drawer's gap above its front, a little apart, alternating left and right.
+        const n = fill[i] ?? 0;
+        for (let k = 0; k < n; k++) {
+          const x = 22 + ((k * 53) % 180);
+          g.fillStyle = k % 2 ? '#d9b866' : '#e9cd84';
+          g.fillRect(x, y - 2, 34, 12);
         }
-      }),
-    );
+        g.fillStyle = '#8f99ab';
+        g.fillRect(14, y + 8, 228, 142);
+        g.fillStyle = '#e9edf4';
+        g.fillRect(98, y + 52, 60, 14);
+        g.fillStyle = '#ffffff';
+        g.fillRect(90, y + 92, 76, 30);
+        if (n > 0) {
+          // The label card gets a line of ink per few folders.
+          g.fillStyle = '#5b6685';
+          for (let k = 0; k < Math.min(3, Math.ceil(n / 3)); k++) g.fillRect(96, y + 98 + k * 8, 64 - k * 14, 3);
+        }
+      }
+      t.needsUpdate = true;
+    };
+    drawFiling([0, 0, 0]);
+    filingShown = '0,0,0';
     // The cabinet stands against the east wall and faces west (-x).
     const plain = toon(0x9aa4b5);
     m.material = [plain, new THREE.MeshToonMaterial({ color: 0xffffff, map: t }), plain, plain, plain, plain];
@@ -404,6 +433,15 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     },
     tv,
     overview,
+    setDrawers(fill) {
+      const key = fill.join(',');
+      if (!drawFiling || key === filingShown) return;
+      filingShown = key;
+      drawFiling(fill);
+    },
+    drawers() {
+      return drawFiling ? (filingShown.split(',').map(Number) as [number, number, number]) : null;
+    },
     dispose() {
       tv?.dispose(); // first: it lets go of the share's texture, which is not the floor's to dispose
       overview?.dispose(); // its two canvas textures

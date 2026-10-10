@@ -54,6 +54,8 @@ import { ShareSim } from './fixture-share.ts';
 import { ActivitySim } from './fixture-activity.ts';
 // #157: shared Codex workers' async questions (`sim.codex*`, `worker.answer_async`, `simcodex=ask`).
 import { CodexQuestionsSim } from './fixture-codex-questions.ts';
+// #223: literal handoffs and the filing cabinet (`worker.handoff*`, `handoff.*`, `sim.final`, `simhandoffs=<n>`, `simfail=no_handoff`).
+import { HandoffSim } from './fixture-handoff.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -93,6 +95,8 @@ export interface SimOptions {
   kaneoSlowMs?: number;
   /** #171: the transcript timeline every watch gets (`simtx=<name>`, default the fixture's name; tools/fixture-transcript.ts). */
   transcript?: string;
+  /** #223: this many handoffs in the first floor's cabinet to start with (`simhandoffs=<n>`). */
+  handoffs?: number;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -191,6 +195,8 @@ export class SimWorld {
     // The fixture's h3d/… branches stand for earlier hires by the bridge (it recorded them); any other branch is the user's.
     for (const x of this.workers) if (x.branch?.startsWith('h3d/') && x.worktree?.linked) this.hireBranch.set(x.id, x.branch);
     this.caps = o.caps ?? {};
+    this.handoffMode = o.fail === 'no_handoff' ? 'off' : 'on'; // #223
+    this.handoffSeed = o.handoffs ?? 0;
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearT = o.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
@@ -305,6 +311,8 @@ export class SimWorld {
     (session) => this.floors.has(session),
   );
   private readonly transcripts: TranscriptSim;
+  private readonly handoffMode: 'on' | 'off';
+  private readonly handoffSeed: number;
   /** #98: the agents' activities (tools/fixture-activity.ts). */
   private readonly activity: ActivitySim;
 
@@ -428,6 +436,7 @@ export class SimWorld {
     this.activitySettings.decorate(world); // #98
     this.codexServer.decorate(world); // #155
     this.kaneo.decorate(world); // #184
+    this.handoffs.decorate(world); // #223
     this.inbox.decorate(world); // #106
     this.share.decorate(world); // M13
     return { t: 'world.snapshot', seq: this.seq, world: structuredClone(world) };
@@ -511,6 +520,7 @@ export class SimWorld {
       if (this.activitySettings.handle(m.t, a, send, ack)) return; // #98
       if (this.codexServer.handle(m.t, a, send, ack)) return; // #155
       if (this.inbox.handle(m.t, a, send, ack)) return; // #106
+      if (this.handoffs.handle(m.t, a, send, ack)) return; // #223
       if (this.share.handle(m.t, a, send, ack, fail)) return; // M13
       switch (m.t) {
         case 'sim.advance':
@@ -850,6 +860,35 @@ export class SimWorld {
       prompt: (a, send, ack, fail) => this.panels.prompt(a, send, ack, fail),
     });
     return this.followupSim;
+  }
+
+  // ---- #223: handoffs and the filing cabinet (tools/fixture-handoff.ts) ------
+
+  private handoffSim: HandoffSim | null = null;
+
+  private get handoffs(): HandoffSim {
+    this.handoffSim ??= new HandoffSim(
+      {
+        workers: this.workers,
+        floors: () => [...this.sorted().flatMap((b) => b.floors), ...[...this.floors.values()].filter((f) => f.building === null).map((f) => f.session)],
+        emit: (send, m) => this.emit(send, m),
+        error: (code, message) => new CmdError(code, message),
+        now: () => this.now(),
+        push: (id, items, updates) => this.transcripts.push(id, items, updates),
+        nextSeq: (id) => this.transcripts.nextSeq(id),
+        upsert: (send, w) => this.upsertWorker(send, w),
+        fire: (id, send) =>
+          this.fireWorker(
+            { id },
+            send,
+            () => undefined,
+            () => undefined,
+          ),
+      },
+      this.handoffMode !== 'off',
+      this.handoffSeed,
+    );
+    return this.handoffSim;
   }
 
   // ---- #213: the dictation bar's interpreter (tools/fixture-interpret.ts) ------

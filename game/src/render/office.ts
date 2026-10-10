@@ -76,7 +76,7 @@ export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
 export const REACH = 3;
 /** #124: the props T can pick, in the order it goes through them. */
-const KEY_PROPS = ['board.issues', 'board.prs', 'whiteboard', 'radio', 'elevator', 'screen.overview'];
+const KEY_PROPS = ['board.issues', 'board.prs', 'whiteboard', 'radio', 'elevator', 'screen.overview', 'filing'];
 
 export interface OfficeOptions {
   shadows: boolean;
@@ -710,6 +710,16 @@ export class OfficeView {
   }
 
   whiteboardShown: string | null = null;
+
+  /** #223: the filing cabinet's drawers fill with the floor's handoffs. */
+  setDrawers(fill: readonly [number, number, number]): void {
+    this.props.setDrawers(fill);
+  }
+
+  /** #223: the folder tabs each drawer shows (test hook). */
+  drawers(): [number, number, number] | null {
+    return this.props.drawers();
+  }
 
   /** M15: what the radio's display says (null: off) and whether its LED glows. */
   setRadio(display: string | null, playing: boolean): void {

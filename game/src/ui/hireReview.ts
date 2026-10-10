@@ -174,7 +174,8 @@ export class HireReviewDialog {
    * somebody sits at or another hire is on its way to is not opened: the toast says why (false). Nothing is sent but
    * `hire.prepare` (the folder, the name, the caps).
    */
-  open(session: string, interp: HireInterpretation, desk?: number): boolean {
+  /** #223 `seed`: "Hire from handoff": the starting choice (`fromHandoff`) and the folder, instead of the proposal's. */
+  open(session: string, interp: HireInterpretation, desk?: number, seed?: { choice?: ReviewChoice; cwd?: string }): boolean {
     const seat = resolveHireDesk(session, this.host.store.floorView(session), this.host.held(session), desk);
     if (!seat.ok) {
       this.host.toast(seat.msg, 'info');
@@ -185,11 +186,11 @@ export class HireReviewDialog {
     this.desk = seat.desk;
     this.prep = null;
     this.pending = interp;
-    this.choice = fromInterpretation(interp, this.host.store.hireOptions);
+    this.choice = seed?.choice ?? fromInterpretation(interp, this.host.store.hireOptions);
     this.keep = [{ harness: this.choice.harness, model: this.choice.model }];
     this.openSet = needsAttention(this.choice, this.host.store.hireOptions, this.taskIssue());
-    this.f = { label: '', cwd: '', worktree: false };
-    this.changed = { label: false, cwd: false, worktree: false };
+    this.f = { label: '', cwd: seed?.cwd ?? '', worktree: false };
+    this.changed = { label: false, cwd: !!seed?.cwd, worktree: false };
     this.modelQuery = '';
     this.refetching = false;
     this.hadWhereIssue = false;
@@ -203,7 +204,7 @@ export class HireReviewDialog {
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
     this.focusFirst();
-    void this.prepare();
+    void this.prepare(seed?.cwd || undefined);
     return true;
   }
 
@@ -544,7 +545,7 @@ export class HireReviewDialog {
       s.root.dataset.attention = String(need.has(id));
     }
     const prov = this.sections.get('task')!.panel.querySelector<HTMLElement>('[data-hook="task-origin"]');
-    if (prov) prov.replaceChildren(this.originTape(this.choice.origin.task), ' ', this.choice.origin.task === 'dictated' ? 'Cut from what you said, word for word.' : '');
+    if (prov) prov.replaceChildren(this.originTape(this.choice.origin.task), ' ', this.choice.origin.task === 'dictated' ? 'Cut from what you said, word for word.' : this.choice.origin.task === 'handoff' ? 'Reads the handoff file, then goes on with the work.' : '');
   }
 
   private originTape(o: Origin, text = ORIGIN_LABEL[o]): HTMLElement {

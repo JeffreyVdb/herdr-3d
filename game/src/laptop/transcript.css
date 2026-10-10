@@ -3302,3 +3302,51 @@
   }
 }
 /* ubuntu:end */
+
+/* #223: the inline Handoff button on the worker's latest completed reply: a folder tab under the text, quiet until
+   you reach for it. It says what it does (files the message as written, no model call); the dialog shows the rest. */
+.tx-handoff {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 8px 2px 2px;
+}
+.tx-handoff-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 11px 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--tx-sun) 55%, var(--tx-line));
+  border-radius: 6px 6px 3px 3px;
+  background: color-mix(in srgb, var(--tx-sun) 10%, transparent);
+  color: var(--tx-text);
+  font: 600 calc(12px * var(--tx-k, 1)) / 1.2 var(--tx-prose);
+  cursor: pointer;
+  transition:
+    background 140ms ease-out,
+    border-color 140ms ease-out;
+}
+.tx-handoff-btn svg {
+  width: 14px;
+  height: 14px;
+  color: var(--tx-sun-text);
+}
+.tx-handoff-btn:hover {
+  background: color-mix(in srgb, var(--tx-sun) 22%, transparent);
+  border-color: var(--tx-sun);
+}
+.tx-handoff-btn:focus-visible {
+  outline: 2px solid var(--tx-sun);
+  outline-offset: 2px;
+}
+.tx-handoff-note {
+  color: var(--tx-text-2);
+  font: calc(11.5px * var(--tx-k, 1)) / 1.3 var(--tx-prose);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-handoff-btn {
+    transition: none;
+  }
+}

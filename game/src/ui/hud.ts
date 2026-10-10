@@ -74,6 +74,7 @@ const KEYS: Array<[string, string, boolean]> = [
   ['C', 'Changes', true],
   ['P', 'Prompt', true],
   ['X', 'Send home', true],
+  ['F', 'Handoff', true], // #223: file the last reply, as written
 ];
 
 export type HudAction = 'city' | 'issues' | 'prs' | 'overview' | 'overview.all' | 'battery' | 'buildings' | 'elevator' | 'hire' | 'palette' | 'dictate';
@@ -653,6 +654,14 @@ export class Hud {
     } else if (t.kind === 'prop' && t.id === 'whiteboard') {
       // M13: the floor's whiteboard opens its editor.
       const info = this.propInfo.get('whiteboard') ?? 'Draw, paste a screenshot, pin a drop';
+      line.append(text('prompt-name', t.label), text('prompt-task', info));
+      const k = el('span', 'key');
+      k.append(el('kbd', '', 'E'), document.createTextNode('Open'));
+      keys.append(k);
+      this.prompt.setAttribute('aria-label', `${t.label}: ${info} · E Open`);
+    } else if (t.kind === 'prop' && t.id === 'filing') {
+      // #223: the floor's filing cabinet: its handoffs (the drawers fill as they come).
+      const info = this.propInfo.get('filing') ?? 'The floor’s handoffs';
       line.append(text('prompt-name', t.label), text('prompt-task', info));
       const k = el('span', 'key');
       k.append(el('kbd', '', 'E'), document.createTextNode('Open'));

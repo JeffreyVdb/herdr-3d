@@ -1,0 +1,476 @@
+/* #223: the filing dialog and the filing cabinet. The reply is a sheet of paper in a manila folder: the sheet is the
+   theme's paper (the text exactly as written, in the mono face it was written in), the folder's tab the title it
+   gets. Manila is artwork, like the send-home box's kraft: it keeps its colour in every UI theme. */
+
+.desk-dlg--handoff,
+.cab {
+  --manila: #e9cd84;
+  --manila-edge: #c9a75a;
+  --manila-ink: #3d2c0c;
+}
+
+/* ---- the filing dialog ------------------------------------------------------ */
+
+.desk-dlg--handoff {
+  width: min(680px, calc(100vw - 32px));
+}
+.dd-plate--folder {
+  min-width: 48px;
+  background: linear-gradient(180deg, var(--manila) 0 70%, var(--manila-edge) 70%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 40%), inset 0 -2px 0 rgb(0 0 0 / 14%), 0 2px 5px rgb(0 0 0 / 30%);
+  color: var(--manila-ink);
+}
+.dd-plate--folder svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 1.8;
+}
+.ho-body {
+  gap: 14px;
+}
+.ho-lede {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 13.5px;
+  max-width: 64ch;
+}
+.ho-lede b {
+  color: var(--text);
+}
+.ho-lede--none {
+  color: var(--text);
+  font-size: 14.5px;
+}
+.ho-hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  max-width: 68ch;
+}
+.ho-hint--warn {
+  color: var(--warn);
+}
+.ho-stale {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 60%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  font-size: 13px;
+}
+
+/* The folder: a tab with the title, the sheet under it. */
+.ho-file {
+  margin: 0;
+  display: grid;
+  min-width: 0;
+}
+.ho-tab {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: min(100%, 52ch);
+  margin-left: 10px;
+  padding: 5px 14px 6px 10px;
+  border-radius: 7px 7px 0 0;
+  background: var(--manila);
+  color: var(--manila-ink);
+  font-weight: 700;
+  font-size: 13px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 45%);
+}
+.ho-tab span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ho-tab svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
+}
+.ho-sheet {
+  margin: 0;
+  max-height: min(42vh, 380px);
+  overflow: auto;
+  padding: 14px 16px 16px;
+  border: 6px solid var(--manila);
+  border-radius: 4px 8px 8px 8px;
+  background: var(--paper);
+  color: var(--on-plate);
+  font: 12.5px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+  box-shadow: 0 6px 16px rgb(0 0 0 / 28%);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--on-plate) 30%, transparent) transparent;
+}
+.ho-sheet::selection {
+  background: color-mix(in srgb, var(--manila) 70%, transparent);
+  color: var(--manila-ink);
+}
+.ho-sheet:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.ho-prov {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.ho-prov dt {
+  color: var(--text-3);
+  font-weight: 700;
+}
+.ho-prov dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ho-prov code,
+.ho-path {
+  font: 12.5px/1.4 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.ho-home {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--well);
+}
+.ho-home[data-on='true'] {
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
+}
+.ho-home[data-off='true'] .dd-check {
+  cursor: not-allowed;
+  color: var(--text-2);
+}
+.ho-home[data-off='true'] .dd-check-box {
+  opacity: 0.5;
+}
+.ho-where {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--well);
+}
+.ho-where .ho-path {
+  flex: 1 1 260px;
+}
+
+/* ---- the cabinet -------------------------------------------------------------- */
+
+.cab {
+  width: min(1040px, calc(100vw - 32px));
+  height: min(740px, calc(100vh - 32px));
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow: hidden;
+}
+.cab[open] {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+.cab::backdrop {
+  background: var(--scrim);
+}
+.cab-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px 10px;
+}
+/* The cabinet's face: three drawers with their handles. */
+.cab-plate {
+  flex: none;
+  display: grid;
+  gap: 3px;
+  width: 40px;
+  padding: 4px;
+  border-radius: 6px;
+  background: #9aa4b5;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%), 0 2px 5px rgb(0 0 0 / 30%);
+}
+.cab-plate i {
+  display: block;
+  height: 10px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent 38%, #e9edf4 38% 62%, transparent 62%) center / 100% 3px no-repeat, #8f99ab;
+}
+.cab-bar {
+  padding: 0 16px 10px;
+}
+.cab-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--well);
+}
+.cab-find:focus-within {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+.cab-find svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+}
+.cab-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  caret-color: var(--action);
+}
+.cab-search::placeholder {
+  color: var(--text-3);
+}
+.cab-panes {
+  display: grid;
+  grid-template-columns: minmax(260px, 2fr) minmax(0, 3fr);
+  min-height: 0;
+  border-top: 1px solid var(--line);
+}
+.cab-drawer {
+  min-height: 0;
+  overflow: auto;
+  border-right: 1px solid var(--line);
+  background: var(--well);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+.cab-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px 10px 14px;
+  display: grid;
+  gap: 6px;
+}
+/* A folder in the drawer: its tab is the title. */
+.cab-row {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 12px 10px;
+  border: 1px solid transparent;
+  border-top: 4px solid var(--manila-edge);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease-out;
+}
+.cab-row:hover {
+  background: var(--hover);
+}
+.cab-row:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+.cab-row[aria-current='true'] {
+  border-color: var(--manila);
+  border-top-color: var(--manila);
+}
+.cab-row-title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.cab-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.cab-source {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--manila);
+  color: var(--manila-ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+.cab-row-branch {
+  color: var(--text-3);
+  font: 11.5px/1.3 var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.cab-snippet {
+  color: var(--text-2);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.cab-snippet mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--manila) 85%, transparent);
+  color: var(--manila-ink);
+}
+.cab-empty {
+  margin: 0;
+  padding: 18px 14px;
+  color: var(--text-2);
+  font-size: 13px;
+  max-width: 48ch;
+}
+.cab-view {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 20px;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+.cab-doc-title {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.cab-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cab-actions .btn svg {
+  width: 15px;
+  height: 15px;
+}
+.cab-confirm {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--error-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--error-fill) 14%, transparent);
+}
+.cab-confirm p {
+  margin: 0;
+}
+/* The handoff itself, sanitised Markdown on paper. */
+.cab-doc {
+  min-width: 0;
+  padding: 16px 18px;
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--on-plate);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 22%);
+}
+.cab-doc > :first-child {
+  margin-top: 0;
+}
+.cab-doc > :last-child {
+  margin-bottom: 0;
+}
+.cab-doc :is(h1, h2, h3, h4) {
+  margin: 1em 0 0.4em;
+  line-height: 1.25;
+}
+.cab-doc h1 {
+  font-size: 1.35em;
+}
+.cab-doc :is(p, ul, ol, blockquote, pre, table) {
+  margin: 0 0 0.7em;
+}
+.cab-doc :is(ul, ol) {
+  padding-left: 1.4em;
+}
+.cab-doc a {
+  color: inherit;
+  text-underline-offset: 2px;
+}
+.cab-doc code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--on-plate) 8%, transparent);
+  font: 0.9em/1.4 var(--font-mono);
+}
+.cab-doc pre {
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--on-plate) 7%, transparent);
+}
+.cab-doc pre code {
+  padding: 0;
+  background: none;
+}
+.cab-doc blockquote {
+  padding-left: 12px;
+  border-left: 1px solid color-mix(in srgb, var(--on-plate) 30%, transparent);
+  color: color-mix(in srgb, var(--on-plate) 80%, transparent);
+}
+.cab-doc table {
+  border-collapse: collapse;
+}
+.cab-doc :is(th, td) {
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--on-plate) 18%, transparent);
+}
+.cab-doc ::selection {
+  background: color-mix(in srgb, var(--manila) 70%, transparent);
+}
+.cab-foot {
+  display: flex;
+  justify-content: flex-end;
+  min-height: 0;
+  padding: 0 16px;
+  border-top: 1px solid var(--line);
+}
+.cab-foot .dd-status:not([hidden]) {
+  padding: 8px 0;
+}
+
+@media (max-width: 720px) {
+  .cab-panes {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(140px, 2fr) minmax(0, 3fr);
+  }
+  .cab-drawer {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cab-row {
+    transition: none;
+  }
+}

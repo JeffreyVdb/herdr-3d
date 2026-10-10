@@ -1,7 +1,7 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { Ask, CommandArgs, Followup, TranscriptChanges, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
+import type { Ask, CommandArgs, Followup, HandoffCandidate, TranscriptChanges, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
 import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
@@ -10,7 +10,8 @@ import { diffColours } from './diffHighlight';
 import { FollowupCard, type FollowupResult } from './followupCard';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
-import { h, icon } from '../ui/dom';
+import { h, icon, ICON } from '../ui/dom';
+import { handoffRow } from '../world/handoff';
 // #64: the prompt box is the shared composer, so a screenshot can be pasted into it
 import { mountComposer, type Composer } from '../ui/composer/composer';
 import { Draft as PromptDraft, type Uploader } from '../ui/composer/draft';
@@ -52,6 +53,8 @@ export interface TranscriptRenderHost {
   onAnswerFollowup?(args: CommandArgs['worker.answer_followup']): Promise<FollowupResult>;
   /** #90: dismisses them. */
   onDismissFollowup?(turnId: string): Promise<FollowupResult>;
+  /** #223: the inline Handoff button on the worker's latest completed reply was pressed (none: no button). */
+  onHandoff?(c: HandoffCandidate): void;
   /** #157: answers a Codex worker's async questions (none: the card cannot send). */
   onAnswerAsync?(args: CommandArgs['worker.answer_async']): Promise<AsyncResult>;
   /** #157: hides them in the bridge. */
@@ -106,6 +109,11 @@ export interface TranscriptView {
   setAsk(ask: Ask | null): void;
   /** #90: the open questions of the agent's final message (null: none): a card above the prompt box, which stays on. */
   setFollowup(f: Followup | null): void;
+  /**
+   * #223: the worker's latest completed reply a literal handoff can file (null: none). Its row, when the timeline has
+   * it, gets the inline Handoff button; no other row ever does.
+   */
+  setHandoff?(c: HandoffCandidate | null): void;
   /**
    * #157: the worker's Codex launch (null: none): its async questions, on a card above the prompt box, which stays on;
    * `working`: the worker works on (its effective status, not a real block), the card's "still working".
@@ -220,6 +228,8 @@ const HL_CONFIG: Config = {
 type PinnedCard = 'followup' | 'asyncq';
 /** Ids for the cards the tabs control (one transcript per seat, but each mount anew). */
 let cardIds = 0;
+/** #223: ids for the Handoff button's note. */
+let handoffIds = 0;
 /** #157: a screen this short (a phone's laptop) has no room for a pinned card beside the timeline (`fit()`). */
 const SHORT_SCREEN = 300;
 /** #157: the least room a pinned card's questions keep beside the timeline (a question and an answer): less, it takes the timeline's. */
@@ -632,6 +642,10 @@ class Timeline {
     return this.items.get(id);
   }
 
+  values(): IterableIterator<TranscriptItem> {
+    return this.items.values();
+  }
+
   /** The `seq` of the last item of this kind (-Infinity: none). */
   lastSeq(kind: string): number {
     let n = -Infinity;
@@ -829,6 +843,9 @@ class Transcript implements TranscriptView {
   private blocked: BlockedQuestion | null = null;
   private readonly ask: AskCard;
   private readonly followup: FollowupCard; // #90
+  /** #223: the worker's handoff candidate, and the inline button on its row (null: none shown). */
+  private handoff: HandoffCandidate | null = null;
+  private handoffEl: HTMLElement | null = null;
   private readonly asyncq: AsyncCard; // #157
   /**
    * #157: the follow-up's card and the async questions' both up (an idle Codex worker keeps the questions its last turn
@@ -1082,6 +1099,41 @@ class Transcript implements TranscriptView {
   setFollowup(f: Followup | null): void {
     if (this.destroyed) return;
     this.followup.set(f);
+  }
+
+  setHandoff(c: HandoffCandidate | null): void {
+    if (this.destroyed) return;
+    this.handoff = c && typeof c === 'object' && typeof c.id === 'string' ? c : null;
+    this.syncHandoff();
+  }
+
+  /**
+   * #223: the one inline Handoff button, on the row of the candidate's message when the timeline holds it (a page
+   * without it has none: never the last row of a partial page). A row rebuilt by an update gets it back.
+   */
+  private syncHandoff(): void {
+    const c = this.host.onHandoff ? this.handoff : null;
+    const id = handoffRow(this.timeline.values(), c);
+    const row = id ? this.timeline.row(id) : undefined;
+    const btn = this.handoffEl;
+    if (btn && row && c && btn.parentElement === row && btn.dataset.cand === c.id) return;
+    btn?.remove();
+    this.handoffEl = null;
+    if (!row || !c) return;
+    const note = `tx-ho-note-${++handoffIds}`;
+    const el = h(
+      'div',
+      { class: 'tx-handoff', 'data-cand': c.id },
+      h(
+        'button',
+        { class: 'tx-handoff-btn', 'data-key': 'handoff', 'aria-describedby': note, title: 'File this reply in the cabinet, exactly as written', onclick: () => this.host.onHandoff?.(c) },
+        icon(ICON.folder),
+        'Handoff',
+      ),
+      h('span', { class: 'tx-handoff-note', id: note }, 'Save this message as written · no AI call'),
+    );
+    row.append(el);
+    this.handoffEl = el;
   }
 
   /** #157: the worker's Codex launch, and whether it works on (its effective status: the card's "still working"). */
@@ -1829,6 +1881,7 @@ class Transcript implements TranscriptView {
 
   private afterChange(added: TranscriptItem[], initial: boolean): void {
     this.updateCounts();
+    this.syncHandoff(); // #223
     if (initial || this.following) {
       this.stick(true);
       return;

@@ -9,7 +9,7 @@
  * for another. The functions below only ever keep a value that is still valid, or clear it.
  */
 
-import type { HireInterpretation, HireIntentField, HireOptions } from '../net/protocol';
+import type { HandoffEntry, HireInterpretation, HireIntentField, HireOptions } from '../net/protocol';
 import { modelsFor } from './hire';
 import { effortsFor } from './settings';
 
@@ -25,7 +25,7 @@ export type ReviewField = 'harness' | 'model' | 'effort' | 'task';
  * it from the catalog for what was said), `default` (the floor, the folder or the name the bridge offers), `chosen` (the
  * human picked or typed it here), `missing` (not said), `invalid` (said, but not usable: it has to be chosen again).
  */
-export type Origin = 'dictated' | 'resolved' | 'default' | 'chosen' | 'missing' | 'invalid';
+export type Origin = 'dictated' | 'resolved' | 'default' | 'chosen' | 'missing' | 'invalid' | 'handoff';
 
 export const ORIGIN_LABEL: Record<Origin, string> = {
   dictated: 'Dictated',
@@ -34,6 +34,7 @@ export const ORIGIN_LABEL: Record<Origin, string> = {
   chosen: 'Your choice',
   missing: 'Not given',
   invalid: 'Needs a new choice',
+  handoff: 'From the handoff',
 };
 
 /** The interpreter's question for a missing effort, word for word (internal/hireintent EffortQuestion). */
@@ -93,6 +94,21 @@ function read(f: HireIntentField, valid: (v: string) => boolean): { value: strin
  * have is empty and `invalid`; one that is missing is empty and `missing`. An effort said before its model is valid is
  * held, and checked once the model is.
  */
+/**
+ * #223: "Hire from handoff": the review's starting choice from a filed handoff, checked against the catalog like a
+ * proposal. Its harness and model when the catalog has them (else empty and `invalid`, the handoff's word kept); the
+ * effort is never taken (a handoff does not record one): the human picks it; the task reads the handoff.
+ */
+export function fromHandoff(e: Pick<HandoffEntry, 'harness' | 'model'>, task: string, cat: HireOptions): ReviewChoice {
+  const field = (v: string | undefined): HireIntentField => (v ? { provenance: 'resolved', value: v } : { provenance: 'missing' });
+  const c = fromInterpretation(
+    { sources: [], harness: field(e.harness), model: field(e.model), effort: { provenance: 'missing' }, task: { provenance: 'dictated', value: task }, questions: [], ready_for_review: true },
+    cat,
+  );
+  const as = (o: Origin): Origin => (o === 'resolved' ? 'handoff' : o);
+  return { ...c, origin: { harness: as(c.origin.harness), model: as(c.origin.model), effort: c.origin.effort, task: 'handoff' } };
+}
+
 export function fromInterpretation(h: HireInterpretation, cat: HireOptions): ReviewChoice {
   const harness = read(h.harness, (v) => !!cat[v]);
   const model = read(h.model, (v) => !!harness.value && modelsFor(cat, harness.value).includes(v));

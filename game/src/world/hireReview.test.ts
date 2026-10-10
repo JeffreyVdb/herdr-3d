@@ -5,6 +5,7 @@ import {
   editTask,
   effortChoices,
   effortOk,
+  fromHandoff,
   fromInterpretation,
   modelOk,
   needsAttention,
@@ -167,5 +168,23 @@ describe('taskPreview', () => {
     expect(taskPreview('fix\n  the   bug')).toBe('fix the bug');
     expect(taskPreview('x'.repeat(200), 20)).toHaveLength(20);
     expect(taskPreview('x'.repeat(200), 20).endsWith('…')).toBe(true);
+  });
+});
+
+describe('fromHandoff (#223)', () => {
+  const task = 'Read /h/f/a.md and continue the work. Invoke the skills it suggests.';
+  it('takes the handoff’s harness and model when the catalog has them; never an effort', () => {
+    const c = fromHandoff({ harness: 'claude', model: 'claude-opus-5-5' }, task, CAT);
+    expect(c).toMatchObject({ harness: 'claude', model: 'claude-opus-5-5', effort: '', task });
+    expect(c.origin).toEqual({ harness: 'handoff', model: 'handoff', effort: 'missing', task: 'handoff' });
+    expect(needsAttention(c, CAT)).toEqual(new Set(['effort']));
+  });
+  it('a model the catalog lacks is empty and needs a new choice, its word kept; nothing is substituted', () => {
+    const c = fromHandoff({ harness: 'claude', model: 'claude-opus-4' }, task, CAT);
+    expect(c).toMatchObject({ harness: 'claude', model: '', effort: '' });
+    expect(c.origin.model).toBe('invalid');
+    expect(c.said.model).toBe('claude-opus-4');
+    const none = fromHandoff({}, task, CAT);
+    expect(none.origin).toMatchObject({ harness: 'missing', model: 'missing' });
   });
 });
