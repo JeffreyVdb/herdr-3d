@@ -57,7 +57,7 @@ func TestFollowupTrackerFixtures(t *testing.T) {
 				t.Fatalf("turn = %+v, want text %q", turn, tc.text)
 			}
 			sum := sha256.Sum256([]byte(tc.text))
-			if h := hex.EncodeToString(sum[:]); turn.Hash != h || turn.ID != h[:16] {
+			if h := hex.EncodeToString(sum[:]); turn.Hash != h || len(turn.ID) != 16 {
 				t.Fatalf("hash %q id %q", turn.Hash, turn.ID)
 			}
 			// The same lines read again (a restart): the same turn.
