@@ -214,8 +214,9 @@ export class HireCoordinator {
         this.host.toast(which(failureText('worker.hire', o.code, o.message, { floor: req.session, desk: req.desk + 1 })), 'error');
         return;
       case 'unknown':
+        // (#214: a dictated review hands over no draft: no hire dialog keeps its task.)
         this.host.toast(
-          `No answer about the hire at ${desk} of ${req.session}: ${o.code === 'timeout' ? 'herdr-world did not answer in time' : 'the connection dropped'}. It may still have gone through: look at the desk before you hire again. The task stays in its hire dialog.`,
+          `No answer about the hire at ${desk} of ${req.session}: ${o.code === 'timeout' ? 'herdr-world did not answer in time' : 'the connection dropped'}. It may still have gone through: look at the desk before you hire again.${req.prompt ? ' The task stays in its hire dialog.' : ''}`,
           'warn',
         );
         return;

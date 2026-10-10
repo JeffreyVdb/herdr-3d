@@ -259,6 +259,23 @@ describe('HireCoordinator: what a background hire says, once', () => {
     });
   }
 
+  // #214: a dictated review hands over no draft, so its unknown outcome points to no hire dialog (nothing is kept there).
+  it('an unknown outcome says the task stays in its hire dialog only when there is a draft there', async () => {
+    const dictated = setup();
+    const a = dictated.hires.start(req({ args: args(14, 'bake the rye') }));
+    dictated.answer(0, { ok: false, code: 'timeout', message: 'no answer' });
+    await a.done;
+    expect(dictated.toasts[0]!.text).toMatch(/look at the desk before you hire again\.$/);
+    expect(dictated.toasts[0]!.text).not.toContain('hire dialog');
+
+    const typed = setup();
+    const b = typed.hires.start(req({ args: args(14, 'bake the rye'), prompt: draft('bake the rye') }));
+    await tick();
+    typed.answer(0, { ok: false, code: 'disconnected', message: 'no answer' });
+    await b.done;
+    expect(typed.toasts[0]!.text).toMatch(/look at the desk before you hire again\. The task stays in its hire dialog\.$/);
+  });
+
   it('offline: never sent, so a plain failure', async () => {
     const t = setup();
     const op = t.hires.start(req());

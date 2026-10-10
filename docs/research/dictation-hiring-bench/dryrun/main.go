@@ -1,5 +1,6 @@
 // Dry-run interpretation check of internal/hireintent (#211): the bench's 50
-// labelled cases through the product package with the configured LLM, the
+// labelled cases (#214: plus the e2e's sentences, `-extra e2e-phrases.json`)
+// through the product package with the configured LLM, the
 // live catalog read read-only from the bridge (hello + snapshot), and the
 // existing private AI config read-only. No worker.hire, no launch: this is
 // not a launch test. A follow-up case first interprets its history, so its
@@ -126,6 +127,7 @@ func main() {
 	config := flag.String("config", filepath.Join(home, ".local/state/herdr-world/ai.json"), "existing config, read-only")
 	socket := flag.String("socket", "/run/user/1000/herdr-world/bridge.sock", "read-only catalog source")
 	out := flag.String("out", filepath.Join(os.TempDir(), "dictation-dryrun.json"), "sanitized results (not committed: it holds the live catalog)")
+	extra := flag.String("extra", "", "#214: one more labelled sample file in the bench's schema (set \"e2e\"), e.g. "+dir+"/e2e-phrases.json")
 	flag.Parse()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
@@ -159,8 +161,12 @@ func main() {
 
 	var cases []sample
 	sets := []string{}
-	for _, f := range []struct{ file, set string }{{"samples.json", "revised"}, {"holdout.json", "fresh"}} {
-		b, err := os.ReadFile(filepath.Join(dir, f.file))
+	files := []struct{ file, set string }{{filepath.Join(dir, "samples.json"), "revised"}, {filepath.Join(dir, "holdout.json"), "fresh"}}
+	if *extra != "" {
+		files = append(files, struct{ file, set string }{*extra, "e2e"})
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f.file)
 		must(err)
 		var ss []sample
 		must(json.Unmarshal(b, &ss))
@@ -218,9 +224,21 @@ func main() {
 
 	pass := 0
 	var lat []int64
+	perSet := map[string][2]int{}
+	// The hard rule: a case that must not be launch-ready (unclear,
+	// unsupported, or any clarify_*: a missing effort among them) never
+	// comes back ready for review.
+	var launchReady []string
 	for _, r := range rows {
+		ps := perSet[r.Set]
+		ps[1]++
 		if r.Pass {
 			pass++
+			ps[0]++
+		}
+		perSet[r.Set] = ps
+		if r.Expected != "ready" && r.Got == "ready" {
+			launchReady = append(launchReady, r.ID)
 		}
 		if r.Calls > 0 {
 			lat = append(lat, r.LatencyMS)
@@ -241,10 +259,15 @@ func main() {
 			}
 		}
 	}
-	summary := map[string]any{"pass": pass, "total": len(rows), "llm": v.LLM.Model, "median_ms": pct(0.5), "p95_ms": pct(0.95),
-		"provider_calls": calls, "provider_cost_usd": cost}
-	fmt.Printf("dry-run interpretation check: %d/%d (outcome and exact task), LLM %s, median %d ms, p95 %d ms, %d calls, reported cost $%.7f\n",
-		pass, len(rows), v.LLM.Model, pct(0.5), pct(0.95), calls, cost)
+	sets2 := map[string]string{}
+	for k, ps := range perSet {
+		sets2[k] = fmt.Sprintf("%d/%d", ps[0], ps[1])
+	}
+	summary := map[string]any{"pass": pass, "total": len(rows), "llm": v.LLM.Model, "median_ms": pct(0.5), "p90_ms": pct(0.9), "p95_ms": pct(0.95),
+		"provider_calls": calls, "provider_cost_usd": cost, "per_set": sets2, "launch_ready_violations": launchReady}
+	fmt.Printf("dry-run interpretation check: %d/%d (outcome and exact task) %v, LLM %s, median %d ms, p90 %d ms, p95 %d ms, %d calls, reported cost $%.7f\n",
+		pass, len(rows), sets2, v.LLM.Model, pct(0.5), pct(0.9), pct(0.95), calls, cost)
+	fmt.Printf("not-ready cases (unclear, unsupported, clarify_*) that came back ready for review: %d %v\n", len(launchReady), launchReady)
 	data := map[string]any{"at": time.Now().UTC().Format(time.RFC3339), "llm": v.LLM.Model, "catalog": opts, "summary": summary,
 		"results": rows, "http_metadata": m.calls,
 		"scope": "Dry-run interpretation check through internal/hireintent with the configured LLM via internal/ai; read-only live catalog (hello + snapshot); no worker.hire, no launch. Not a launch test."}

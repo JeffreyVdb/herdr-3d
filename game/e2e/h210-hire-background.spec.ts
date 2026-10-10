@@ -1,75 +1,21 @@
 import { expect, test, type Page } from '@playwright/test';
 import { frames, openGame, openMenu, watchErrors } from './game';
+import { advance, beeps, forgetToasts, notes, pose, probe, SPAWNED, toasts } from './hireProbe';
 
 // #210 on demo-m4 with the simulator on a manual clock (sim=1, simclock=manual): a hire's ack is held until the test
 // releases it (`simAdvance`), so what happens between Hire and the ack is seen. Settings → Display "Hire in background"
 // on: Hire closes the dialog at once and you play on; the ack is one toast, exactly "Agent spawned successfully.", and
 // one beep, nothing in the inbox, no go-to. pastry (bottom, 16 desks, 14 and 15 empty).
 //
-// The beep is seen in the real Web Audio graph: oscillators started at the spawn tone's pitch (G5) are counted. Toasts
-// are recorded as they are shown (the HUD has one toast slot, so a later one replaces the earlier). Desktop
-// notifications are stubbed and counted.
+// The beep, the toasts and desktop notifications are counted as e2e/hireProbe.ts says.
 
 const SIM = 'play=none&sim=1&simms=150&simusage=0&simclock=manual';
-const SPAWNED = 'Agent spawned successfully.';
 const unique = () => `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
-type Probe = { __beeps: number; __toasts: string[]; __notes: number };
-
-async function probe(page: Page, o: { background?: boolean; muted?: boolean } = {}): Promise<void> {
-  await page.addInitScript(
-    ({ background, muted }) => {
-      const w = window as unknown as Probe;
-      w.__beeps = 0;
-      w.__toasts = [];
-      w.__notes = 0;
-      // Only on the first load: a reload keeps what Settings stored.
-      if (!sessionStorage.getItem('h210')) {
-        sessionStorage.setItem('h210', '1');
-        if (background) localStorage.setItem('h3d.hire.background', 'on');
-        if (muted) localStorage.setItem('h3d.audio', JSON.stringify({ muted: true, volume: 0.8 }));
-      }
-      const make = AudioContext.prototype.createOscillator;
-      AudioContext.prototype.createOscillator = function (this: AudioContext) {
-        const osc = make.call(this);
-        const set = osc.frequency.setValueAtTime.bind(osc.frequency);
-        osc.frequency.setValueAtTime = (hz: number, at: number) => {
-          if (Math.abs(hz - 783.99) < 0.01) w.__beeps++;
-          return set(hz, at);
-        };
-        return osc;
-      };
-      const N = function Notification() {
-        w.__notes++;
-      } as unknown as { permission: string; requestPermission: () => Promise<string> };
-      N.permission = 'granted';
-      N.requestPermission = () => Promise.resolve('granted');
-      Object.defineProperty(window, 'Notification', { value: N, configurable: true, writable: true });
-      new MutationObserver((records) => {
-        for (const r of records) {
-          const t = r.target as HTMLElement;
-          if (t instanceof HTMLElement && t.classList.contains('toast') && r.type === 'childList' && t.textContent) w.__toasts.push(t.textContent);
-        }
-      }).observe(document, { childList: true, subtree: true });
-    },
-    { background: o.background ?? true, muted: o.muted ?? false },
-  );
-}
-
-const beeps = (page: Page) => page.evaluate(() => (window as unknown as Probe).__beeps);
-const toasts = (page: Page) => page.evaluate(() => (window as unknown as Probe).__toasts);
-const notes = (page: Page) => page.evaluate(() => (window as unknown as Probe).__notes);
 const hires = async (page: Page) => (await page.evaluate(() => window.__h3d.sent())).filter((c) => c.t === 'worker.hire');
-const advance = (page: Page, ms: number) => page.evaluate((m) => window.__h3d.simAdvance(m), ms);
 const dialog = (page: Page) => page.evaluate(() => window.__h3d.dialog());
 /** The first task as the editor shows it (without the caret's zero-width anchors). */
 const task = async (page: Page) => ((await page.locator('#hire-task').textContent()) ?? '').replace(/\u200b/g, '');
-
-const pose = async (page: Page) => {
-  const p = await page.evaluate(() => window.__h3d.pose());
-  if (!p) throw new Error('not walking');
-  return p;
-};
 
 /** On pastry, in the aisle behind desk 14's chair, facing along the aisle. */
 async function onBaking(page: Page, extra = ''): Promise<{ x: number; z: number }> {
@@ -83,7 +29,7 @@ async function onBaking(page: Page, extra = ''): Promise<{ x: number; z: number 
   await page.evaluate(([x, z]) => window.__h3d.setPose({ x, z, yaw: 0 }), [at.x, at.z] as const);
   await frames(page, 2);
   // What was said before this point is not the hire's.
-  await page.evaluate(() => ((window as unknown as Probe).__toasts = []));
+  await forgetToasts(page);
   return at;
 }
 
