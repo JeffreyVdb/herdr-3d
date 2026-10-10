@@ -119,7 +119,12 @@ make e2e SPEC=e2e/m6b.spec.ts   # only that spec (same lock and portlease)
   research's 50 cases with their recorded live answers. The live replay is `go run ./docs/research/dictation-hiring-bench/dryrun`
   (the configured LLM, the running bridge's catalog read-only; a dry-run interpretation check, never a hire). #213:
   `game/e2e/h213-dictation.spec.ts` starts its own fake OpenAI server; the fixture bridge's `hire.interpret`
-  (`tools/fixture-interpret.ts`) calls it and passes its final result on, so no spec reaches a real provider.
+  (`tools/fixture-interpret.ts`) calls it and passes its final result on, so no spec reaches a real provider. #214:
+  `game/e2e/h214-full-path.spec.ts` (the whole dictated hire, background on and off) and `game/e2e/h214-edge-cases.spec.ts`
+  (the cross-phase edge cases) start their own fake OpenAI server the same way (`e2e/dictation.ts`, shared with h213; the
+  beep, toast and notification probe is `e2e/hireProbe.ts`, shared with h210) and hold the hire's ack with
+  `simclock=manual`. The dry run also takes the e2e's sentences: `go run ./docs/research/dictation-hiring-bench/dryrun
+  -extra docs/research/dictation-hiring-bench/e2e-phrases.json` (from the repo root; its result is not committed).
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
