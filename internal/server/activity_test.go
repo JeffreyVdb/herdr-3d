@@ -44,20 +44,51 @@ type actBridge struct {
 	*hireBridge
 	dir, claude, codex string
 	ids                map[string]string
+	clock              *actClock
 }
 
 // actClock is 2026-10-01T19:21:00Z when the bridge starts, then runs: the
-// background fixtures' tasks are minutes old.
-func actClock() func() time.Time {
-	start := time.Now()
+// background fixtures' tasks are minutes old. pass moves it on at once.
+type actClock struct {
+	start, at time.Time
+	mu        sync.Mutex
+	skipped   time.Duration
+}
+
+func newActClock() *actClock {
 	at, _ := time.Parse(time.RFC3339, "2026-10-01T19:21:00Z")
-	return func() time.Time { return at.Add(time.Since(start)) }
+	return &actClock{start: time.Now(), at: at}
+}
+
+func (c *actClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at.Add(time.Since(c.start) + c.skipped)
+}
+
+func (c *actClock) pass(d time.Duration) {
+	c.mu.Lock()
+	c.skipped += d
+	c.mu.Unlock()
+}
+
+// actSettle is long enough for the usage tracker (every 15 ms) to have read
+// what a test just appended.
+const actSettle = 100 * time.Millisecond
+
+// wait lets d go by on the bridge's clock, as a sleep of d would: the
+// tracker reads what was appended, then the clock moves on at once. Should
+// the tracker read late, the label holds in real time as before: slower,
+// never wrong.
+func (ab *actBridge) wait(d time.Duration) {
+	time.Sleep(actSettle)
+	ab.clock.pass(d)
 }
 
 func startActBridge(t *testing.T, tweak func(*server.Options)) *actBridge {
 	t.Helper()
 	dir := t.TempDir()
-	ab := &actBridge{dir: dir, claude: filepath.Join(dir, "claude", "-home-u-w1", wrapSess+".jsonl"),
+	ab := &actBridge{dir: dir, clock: newActClock(), claude: filepath.Join(dir, "claude", "-home-u-w1", wrapSess+".jsonl"),
 		codex: filepath.Join(dir, "codex", "2026", "10", "01", "rollout-2026-10-01T09-00-00-"+wrapCodex+".jsonl")}
 	writeTranscript(t, ab.claude, wrapUser("Hi.")+wrapSay("m0", "Hello.", "end_turn")+wrapTurnEnd)
 	writeTranscript(t, ab.codex, `{"timestamp":"2026-10-01T09:00:00.000Z","type":"session_meta","payload":{"id":"`+wrapCodex+`","cwd":"`+wrapWT2+`"}}`+"\n")
@@ -69,7 +100,7 @@ func startActBridge(t *testing.T, tweak func(*server.Options)) *actBridge {
 	ab.hireBridge = startHireBridgeAt(t, "", func(o *server.Options) {
 		o.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: filepath.Join(dir, "claude"), CodexSessions: filepath.Join(dir, "codex")},
 			Interval: 15 * time.Millisecond}
-		o.Now = actClock()
+		o.Now = ab.clock.now
 		if tweak != nil {
 			tweak(o)
 		}
@@ -175,7 +206,7 @@ func TestActivityOnTheWire(t *testing.T) {
 	if a.Source != activity.SourceDerived || a.Since == 0 {
 		t.Fatalf("%+v", a)
 	}
-	time.Sleep(transcript.LabelHold) // the label holds
+	ab.wait(transcript.LabelHold) // the label holds
 	appendTo(t, ab.claude, claudeToolLine("t1", "Bash", map[string]any{"command": "cd backend && uv run pytest -n auto | tail -5"}))
 	a = activityOf(c, w1, kindIs(activity.KindTesting))
 	if a.Detail != "pytest -n auto" || a.Source != activity.SourceRule {
@@ -372,7 +403,7 @@ func TestActivityModelOptIn(t *testing.T) {
 	c.mustAck(proto.CmdBoardWatch, proto.BoardArgs{Session: "s"})
 	ab.status("w1", "working")
 	appendTo(t, ab.claude, wrapUser("Wait for the coders."))
-	time.Sleep(transcript.LabelHold)
+	ab.wait(transcript.LabelHold)
 	wait := claudeToolLine("t1", "Bash", map[string]any{"command": "python3 /home/u/.agents/skills/write-code/scripts/wait_for_results.py /runs/20261002-0603-activity --timeout 600"})
 	appendTo(t, ab.claude, wait)
 	a := activityOf(c, w1, kindIs(activity.KindWorking))
@@ -413,7 +444,7 @@ func TestActivityModelOptIn(t *testing.T) {
 	}
 	// The same command (other run id, other path): the cache's answer.
 	appendTo(t, ab.claude, claudeResultLine("t1", "ok"))
-	time.Sleep(2 * transcript.LabelHold)
+	ab.wait(2 * transcript.LabelHold)
 	appendTo(t, ab.claude, claudeToolLine("t2", "Bash", map[string]any{"command": "python3 /other/wait_for_results.py /runs/20261003-1200-other --timeout 900"}))
 	activityOf(c, w1, func(a *proto.Activity) bool {
 		return a != nil && a.Kind == activity.KindWaiting && a.Source == activity.SourceModel
@@ -423,7 +454,7 @@ func TestActivityModelOptIn(t *testing.T) {
 	}
 	// An answer under the margin stays Working (and is cached too).
 	appendTo(t, ab.claude, claudeResultLine("t2", "ok"))
-	time.Sleep(2 * transcript.LabelHold)
+	ab.wait(2 * transcript.LabelHold)
 	appendTo(t, ab.claude, claudeToolLine("t3", "Bash", map[string]any{"command": "parallel-cli extract https://example.com/docs"}))
 	deadline := time.Now().Add(3 * time.Second)
 	for roles.calls() < 2 && time.Now().Before(deadline) {
@@ -493,7 +524,7 @@ func TestActivityModelBudget(t *testing.T) {
 	appendTo(t, ab.codex, wrapCodexLine("response_item", map[string]any{"type": "function_call_output", "call_id": "c1", "output": "ok"})+
 		wrapCodexLine("response_item", map[string]any{"type": "function_call", "name": "exec_command", "call_id": "c2",
 			"arguments": `{"cmd":"go test ./..."}`}))
-	time.Sleep(2 * transcript.LabelHold)
+	ab.wait(2 * transcript.LabelHold)
 	activityOf(c, ab.ids["w2"], kindIs(activity.KindTesting))
 	close(release)
 	activityOf(c, ab.ids["w1"], kindIs(activity.KindWaiting))
@@ -515,7 +546,7 @@ func TestActivityModelBudget(t *testing.T) {
 	}
 	n := roles.calls()
 	appendTo(t, ab.claude, claudeResultLine("t1", "ok"))
-	time.Sleep(2 * transcript.LabelHold)
+	ab.wait(2 * transcript.LabelHold)
 	appendTo(t, ab.claude, claudeToolLine("t9", "Bash", map[string]any{"command": "third-tool --z"}))
 	activityOf(c, ab.ids["w1"], kindIs(activity.KindWorking))
 	time.Sleep(200 * time.Millisecond)
