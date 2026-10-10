@@ -234,7 +234,7 @@ export class SimWorld {
         floor: (session) => this.floors.get(session),
         now: this.now,
         error: (code, message) => new CmdError(code, message),
-        extra: (id) => this.asks.extra(id),
+        extra: (id) => [...this.asks.extra(id), ...this.handoffs.extra(id)], // #223: the replies and prompts sim.final played
         activityHash: (id) => this.activity.hash(id),
       },
       o.fail !== 'no_m16',
@@ -877,6 +877,10 @@ export class SimWorld {
         push: (id, items, updates) => this.transcripts.push(id, items, updates),
         nextSeq: (id) => this.transcripts.nextSeq(id),
         upsert: (send, w) => this.upsertWorker(send, w),
+        fireBlocked: (id) => {
+          const p = this.firePrepare({ id });
+          return p.can_fire === false ? String(p.fire_blocked ?? 'it cannot be sent home') : '';
+        },
         fire: (id, send) =>
           this.fireWorker(
             { id },

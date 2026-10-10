@@ -31,6 +31,8 @@ export interface HandoffHost {
   upsert(send: Send, w: Worker): void;
   /** The simulator's worker.fire with the worktree kept; a refusal throws. */
   fire(id: string, send: Send): void;
+  /** Why worker.fire would refuse it now ("": it would not). */
+  fireBlocked(id: string): string;
 }
 
 const PREVIEW = 64 << 10;
@@ -104,6 +106,8 @@ export class HandoffSim {
   private next = 1;
   private turns = 0;
   private failNext: string | null = null;
+  /** The items `sim.final` and `sim.prompt_turn` added to each worker's timeline (a new watch has them too). */
+  private readonly items = new Map<string, TranscriptItem[]>();
 
   constructor(
     private readonly h: HandoffHost,
@@ -165,7 +169,7 @@ export class HandoffSim {
     if (w.status === 'working') return `${w.name ?? w.id} is working`;
     if (w.status === 'blocked') return `${w.name ?? w.id} is blocked: it waits on you`;
     if (w.ask) return `${w.name ?? w.id} waits on its question`;
-    return '';
+    return this.h.fireBlocked(w.id);
   }
 
   handle(t: unknown, a: Obj, send: Send, ack: (d?: unknown) => void): boolean {
@@ -181,6 +185,7 @@ export class HandoffSim {
         const message = `msg_sim${n}`;
         const item: TranscriptItem = { id: harness === 'codex' ? message : `${message}#0`, seq: this.h.nextSeq(w.id), ts: this.h.now(), kind: 'assistant', parts: [{ text }] };
         this.h.push(w.id, [item], []);
+        this.keep(w.id, item);
         const images = Number.isInteger(a.images) ? (a.images as number) : 0;
         const c: HandoffCandidate = { id: `cand${String(n).padStart(12, '0')}`, session: w.agent_session ?? 'sim-session', revision: `rev${n}-${byteLen(text)}`, harness, message, source: 'message', bytes: byteLen(text), ...(images ? { images } : {}), ...(byteLen(text) > MAX ? { too_large: true } : {}) };
         if (!text.trim()) {
@@ -196,7 +201,9 @@ export class HandoffSim {
       }
       case 'sim.prompt_turn': {
         const w = this.worker(a);
-        this.h.push(w.id, [{ id: `sim-prompt-${++this.turns}`, seq: this.h.nextSeq(w.id), ts: this.h.now(), kind: 'user', parts: [{ text: typeof a.text === 'string' ? a.text : 'Go on.' }] }], []);
+        const item: TranscriptItem = { id: `sim-prompt-${++this.turns}`, seq: this.h.nextSeq(w.id), ts: this.h.now(), kind: 'user', parts: [{ text: typeof a.text === 'string' ? a.text : 'Go on.' }] };
+        this.h.push(w.id, [item], []);
+        this.keep(w.id, item);
         this.cands.delete(w.id);
         delete w.handoff;
         this.h.upsert(send, w);
@@ -314,6 +321,17 @@ export class HandoffSim {
         return true;
       }
     }
+  }
+
+  private keep(id: string, it: TranscriptItem): void {
+    const list = this.items.get(id) ?? [];
+    list.push(it);
+    this.items.set(id, list.slice(-40));
+  }
+
+  /** The items played into a worker's timeline, for a new watch of it. */
+  extra(id: string): TranscriptItem[] {
+    return this.items.get(id) ?? [];
   }
 
   /** A worker that left: its candidate goes. */

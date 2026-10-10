@@ -64,6 +64,8 @@ export class HandoffDialog {
   private why = '';
   private op = '';
   private stale = false;
+  /** The latest candidate the stale note was drawn for ("": none). */
+  private latest = '';
   private statusText = '';
   private statusError = false;
   private gen = 0;
@@ -169,8 +171,10 @@ export class HandoffDialog {
       if (now) this.start(now);
       return;
     }
-    if (same === !this.stale) return;
+    const latest = now ? `${now.id}/${now.revision}` : '';
+    if (same === !this.stale && (same || latest === this.latest)) return;
     this.stale = !same;
+    this.latest = latest;
     this.render();
   }
 
@@ -193,7 +197,7 @@ export class HandoffDialog {
     const sub = [this.session, v ? `Desk ${v.desk + 1}` : null, v?.worker.branch ?? null].filter(Boolean).join(' · ');
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--folder', 'aria-hidden': 'true' }, icon(ICON.folder)),
-      h('div', { class: 'dd-titles' }, h('h2', { id: 'ho-title' }, this.state === 'filed' ? `Filed ${this.name}’s handoff` : `File a handoff from ${this.name}`), h('p', { id: 'ho-sub' }, sub)),
+      h('div', { class: 'dd-titles' }, h('h2', { id: 'ho-title' }, `File a handoff from ${this.name}`), h('p', { id: 'ho-sub' }, sub)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
     this.body.replaceChildren(...this.bodyNodes());

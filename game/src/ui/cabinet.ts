@@ -175,12 +175,13 @@ export class Cabinet {
       this.renderList();
       return;
     }
-    this.setStatus('');
+    if (this.statusError) this.setStatus('');
     this.rows = (r.data as HandoffListAck).handoffs ?? [];
     this.renderList();
     const want = this.pick ?? this.selected?.id ?? null;
     this.pick = null;
-    const keep = want !== null ? this.rows.find((e) => e.id === want) : undefined;
+    // The one asked for, else the one shown, else the first: the reading pane is never empty while the drawer is not.
+    const keep = (want !== null ? this.rows.find((e) => e.id === want) : undefined) ?? (this.selected ? undefined : this.rows[0]);
     if (keep) void this.show(keep, false);
     else if (this.selected && !this.rows.some((e) => e.id === this.selected?.id) && !q.trim()) {
       this.selected = null;
@@ -244,7 +245,7 @@ export class Cabinet {
   private renderView(loading = false): void {
     const e = this.selected;
     if (!e) {
-      this.view.replaceChildren(h('p', { class: 'cab-empty' }, this.rows.length ? 'Pick a handoff to read it.' : ''));
+      this.view.replaceChildren(h('p', { class: 'cab-empty' }, this.rows.length ? 'Pick a handoff to read it.' : 'Nothing to read yet.'));
       return;
     }
     const meta = h(

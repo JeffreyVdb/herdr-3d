@@ -174,7 +174,7 @@
 
 .cab {
   width: min(1040px, calc(100vw - 32px));
-  height: min(740px, calc(100vh - 32px));
+  height: min(720px, calc(100vh - 32px));
   box-sizing: border-box;
   padding: 0;
   border: 0;
@@ -231,7 +231,7 @@
 }
 .cab-find:focus-within {
   outline: 3px solid var(--focus);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 .cab-find svg {
   flex: none;
@@ -295,7 +295,7 @@
 }
 .cab-row:focus-visible {
   outline: 3px solid var(--focus);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 .cab-row[aria-current='true'] {
   border-color: var(--manila);

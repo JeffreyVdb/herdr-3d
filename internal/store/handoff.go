@@ -85,8 +85,8 @@ type HandoffHit struct {
 
 // Snippet markers: a match starts at SnippetOpen and ends at SnippetClose.
 const (
-	SnippetOpen  = ""
-	SnippetClose = ""
+	SnippetOpen  = "\uE000"
+	SnippetClose = "\uE001"
 )
 
 // Query limits: the most bytes of a search and its terms.

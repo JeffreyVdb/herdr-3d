@@ -1105,6 +1105,7 @@ class Transcript implements TranscriptView {
     if (this.destroyed) return;
     this.handoff = c && typeof c === 'object' && typeof c.id === 'string' ? c : null;
     this.syncHandoff();
+    this.stick(); // following: the button under the last reply stays in view
   }
 
   /**
