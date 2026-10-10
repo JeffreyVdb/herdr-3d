@@ -133,7 +133,7 @@ export class HandoffDialog {
   }
 
   private async load(c: HandoffCandidate): Promise<void> {
-    const gen = ++this.gen;
+    const op = this.op; // this preview's: a newer one (another reply, a reopen) has another
     if (this.host.unsupported('worker.handoff_preview')) {
       this.state = 'failed';
       this.setStatus(failureText('worker.handoff_preview', 'unknown_command', ''), true);
@@ -141,7 +141,7 @@ export class HandoffDialog {
       return;
     }
     const r = await this.host.send('worker.handoff_preview', { worker: this.id, candidate: c.id });
-    if (gen !== this.gen || !this.dialog.open) return;
+    if (op !== this.op || this.state !== 'loading' || !this.dialog.open) return;
     if (!r.ok) {
       this.state = 'failed';
       this.setStatus(failureText('worker.handoff_preview', r.code, r.message, { worker: this.name, floor: this.session }), true);

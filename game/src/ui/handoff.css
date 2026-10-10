@@ -270,25 +270,35 @@
 .cab-list {
   list-style: none;
   margin: 0;
-  padding: 10px 10px 14px;
+  padding: 14px 10px 14px;
   display: grid;
-  gap: 6px;
+  gap: 12px;
 }
-/* A folder in the drawer: its tab is the title. */
+/* A folder in the drawer: a manila tab sticks up over its top edge. */
 .cab-row {
+  position: relative;
   display: grid;
   gap: 3px;
   width: 100%;
   padding: 9px 12px 10px;
   border: 1px solid transparent;
-  border-top: 4px solid var(--manila-edge);
-  border-radius: 6px;
+  border-radius: 2px 6px 6px 6px;
   background: var(--raised);
   color: var(--text);
   font: inherit;
   text-align: left;
   cursor: pointer;
   transition: background 120ms ease-out;
+}
+.cab-row::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: -1px;
+  width: 54px;
+  height: 7px;
+  border-radius: 5px 5px 0 0;
+  background: var(--manila-edge);
 }
 .cab-row:hover {
   background: var(--hover);
@@ -299,7 +309,9 @@
 }
 .cab-row[aria-current='true'] {
   border-color: var(--manila);
-  border-top-color: var(--manila);
+}
+.cab-row[aria-current='true']::before {
+  background: var(--manila);
 }
 .cab-row-title {
   font-weight: 700;
