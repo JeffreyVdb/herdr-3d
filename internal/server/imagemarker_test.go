@@ -19,6 +19,7 @@ const (
 )
 
 func TestWorkerPromptCarriesImageMarkers(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"), agentW("w2", "codex", "working"), shell("w3"))
 	c := tb.connect(proto.Hello{})
 	snap := c.snapshot()
@@ -47,6 +48,7 @@ func TestWorkerPromptCarriesImageMarkers(t *testing.T) {
 }
 
 func TestRunPromptsCarryImageMarkers(t *testing.T) {
+	t.Parallel()
 	hb, w := launchBridge(t, worker("w1", "CODE|a", "", "idle"))
 	c := hb.c
 	seed := w.Presets[0].ID

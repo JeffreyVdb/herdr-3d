@@ -42,6 +42,7 @@ func (f *fakeFiles) Files(ctx context.Context, dir, query string, limit int) (*p
 }
 
 func TestWorkerFiles(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	ff := &fakeFiles{hang: map[string]chan struct{}{"/home/u/slow": release}}
 	b := startBridge(t, "", server.Options{Files: ff})

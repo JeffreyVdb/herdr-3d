@@ -89,6 +89,7 @@ func workerID(t *testing.T, c *client, agentSession string) string {
 // pushes new items and, for a tool result, the call's item again; pages,
 // items in full and a subagent's own timeline are read on request.
 func TestTranscriptWatch(t *testing.T) {
+	t.Parallel()
 	const (
 		sess  = "0a0b0c0d-5555-4555-8555-555555555551"
 		other = "0a0b0c0d-5555-4555-8555-555555555552"
@@ -262,6 +263,7 @@ func (l *logBuf) lines(msg string) []string {
 // and a watch acked pending or with no items is logged at debug with the
 // worker's id, never with content.
 func TestTranscriptRewatchAndEmptyAckLog(t *testing.T) {
+	t.Parallel()
 	const sess = "0a0b0c0d-5555-4555-8555-555555555561"
 	dir := t.TempDir()
 	writeTranscript(t, filepath.Join(dir, "-home-u-w1", sess+".jsonl"), fixture(t, "claude", "message.jsonl"))
@@ -312,6 +314,7 @@ func TestTranscriptRewatchAndEmptyAckLog(t *testing.T) {
 // the watch ends with resync instead (the game watches again), and the
 // connection is not dropped as a slow consumer.
 func TestTranscriptResync(t *testing.T) {
+	t.Parallel()
 	const sess = "0a0b0c0d-6666-4666-8666-666666666661"
 	dir := t.TempDir()
 	path := filepath.Join(dir, "-home-u-w1", sess+".jsonl")
@@ -386,6 +389,7 @@ func TestTranscriptResync(t *testing.T) {
 // rollout picked by its cwd, as for its usage; a newer rollout there (after
 // /new) ends the watch with session_changed.
 func TestTranscriptCodexRollout(t *testing.T) {
+	t.Parallel()
 	const (
 		first  = "01a0eba4-0119-7e33-915b-1d458317a918"
 		second = "01a0eba4-0119-7e33-915b-1d458317a919"

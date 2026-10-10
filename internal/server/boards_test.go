@@ -22,6 +22,7 @@ import (
 // at once, then from its first poll: the issues first, then the pull
 // requests, both without a seq, and never in the snapshot.
 func TestBoardWatch(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, host := bb.fb.repo("JeffreyVdb/lab")
 	tr.board.Cards = []tracker.Card{card("JeffreyVdb/lab#9", "#9", "Boards", "todo")}
@@ -122,6 +123,7 @@ func (w *watcher) mustErrorFor(typ string, args any, code string) {
 // A watched floor is polled every minute, one nobody watches every ten,
 // asleep floors included.
 func TestBoardPollPeriods(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, _ := bb.fb.repo("JeffreyVdb/lab")
 	bb.link("JeffreyVdb/lab")
@@ -156,6 +158,7 @@ func TestBoardPollPeriods(t *testing.T) {
 // board.refresh polls now, coalesces with a poll in flight, and at most one
 // poll per ten seconds per floor comes of it.
 func TestBoardRefresh(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, _ := bb.fb.repo("JeffreyVdb/lab")
 	bb.link("JeffreyVdb/lab")
@@ -208,6 +211,7 @@ func TestBoardRefresh(t *testing.T) {
 // A failed poll keeps the last good data and sends it again, stale, with the error;
 // the next good one clears it.
 func TestBoardStale(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, host := bb.fb.repo("JeffreyVdb/lab")
 	tr.board.Cards = []tracker.Card{card("JeffreyVdb/lab#1", "#1", "One", "todo")}
@@ -247,6 +251,7 @@ func TestBoardStale(t *testing.T) {
 // A request open at one poll and merged at the next rings once: never on
 // the replay of the cache, and not again, also across a restart.
 func TestBoardMergeOnce(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	fb := newFakeBoards()
 	clk := newBoardClock()
@@ -329,6 +334,7 @@ func TestBoardMergeOnce(t *testing.T) {
 // A merge that happened while the bridge was down is found by the first poll
 // after the restart, from the open set of the store, and announced once.
 func TestBoardMergeAcrossRestart(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	fb := newFakeBoards()
 	clk := newBoardClock()
@@ -379,6 +385,7 @@ func TestBoardMergeAcrossRestart(t *testing.T) {
 // keeps: after a restart the poll is given all of them (also past 100), so a
 // later merge is found. The board's own requests and the kept ones are one set.
 func TestBoardKeepsWatchedAcrossRestart(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	fb := newFakeBoards()
 	clk := newBoardClock()
@@ -429,6 +436,7 @@ func TestBoardKeepsWatchedAcrossRestart(t *testing.T) {
 // needs, only watched floors are polled; below 50 or after a rate limit
 // nothing is until the reset, then it resumes.
 func TestBoardRateLimit(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	a, _ := bb.fb.repo("JeffreyVdb/a")
 	b, _ := bb.fb.repo("JeffreyVdb/b")
@@ -497,6 +505,7 @@ func TestBoardRateLimit(t *testing.T) {
 // A rate limit error stops the polls until its reset, also for watched floors,
 // and says so in the stale message; a secondary limit waits a minute, then more.
 func TestBoardRateLimitError(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, _ := bb.fb.repo("JeffreyVdb/lab")
 	tr.board.Cards = []tracker.Card{card("JeffreyVdb/lab#1", "#1", "One", "todo")}
@@ -552,6 +561,7 @@ func TestBoardRateLimitError(t *testing.T) {
 
 // Changing a floor's link drops what was cached of the old one.
 func TestBoardLinkChange(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	a, _ := bb.fb.repo("JeffreyVdb/a")
 	b, _ := bb.fb.repo("JeffreyVdb/b")
@@ -595,6 +605,7 @@ func TestBoardLinkChange(t *testing.T) {
 
 // Without a provider factory the boards are off.
 func TestBoardsNotConfigured(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil)
 	hb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Repo: proto.Some("JeffreyVdb/lab")})
 	_, m := hb.c.command(proto.CmdBoardWatch, "w", proto.BoardArgs{Session: "s"})

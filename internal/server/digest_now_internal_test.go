@@ -72,6 +72,7 @@ func noOp(t *testing.T, h *Hub) {
 // line and then its now line, from the recent steps. A worker with no usable
 // step keeps the honest fallback.
 func TestDigestNowFirstViewDuringLongTurn(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, false)
@@ -106,6 +107,7 @@ func TestDigestNowFirstViewDuringLongTurn(t *testing.T) {
 // before it, nothing goes and the pump is woken for it. After a turn end the
 // settle still applies.
 func TestDigestNowLongTurnRefreshesAfterGap(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, true)
@@ -150,6 +152,7 @@ func TestDigestNowLongTurnRefreshesAfterGap(t *testing.T) {
 // pumps, or only the task line changing (the context, not the activity).
 // Several viewers at once make one call.
 func TestDigestNowUnchangedStepsNoCall(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, false)
@@ -175,6 +178,7 @@ func TestDigestNowUnchangedStepsNoCall(t *testing.T) {
 // Steps that come while a call is out are summarized after it, once the gap
 // is over; the line of the older steps shows meanwhile.
 func TestDigestNowActivityDuringCall(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, true)
@@ -203,6 +207,7 @@ func TestDigestNowActivityDuringCall(t *testing.T) {
 // Once the last viewer leaves nothing more goes; coming back writes the line
 // of the latest steps, replacing the older one, without a turn end.
 func TestDigestNowViewerLeavesAndReturns(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, false)
@@ -237,6 +242,7 @@ func TestDigestNowViewerLeavesAndReturns(t *testing.T) {
 // until its attempts are used up; then a turn end, a manual retry or a reset
 // starts the count again. The overview says what became of the line.
 func TestDigestNowFailuresAreBounded(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, true)
@@ -320,6 +326,7 @@ func TestDigestNowFailuresAreBounded(t *testing.T) {
 // A /clear (another reset) drops the model's line: nothing is summarized
 // until the new session has steps of its own, and the gap still holds.
 func TestDigestNowReset(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, true)
@@ -349,6 +356,7 @@ func TestDigestNowReset(t *testing.T) {
 
 // A call that could not go (busy) is no attempt: the steps stay due.
 func TestDigestNowBusyIsNoAttempt(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, _ := dgHubFor(t, &clock, true)
@@ -404,6 +412,7 @@ func lastNowAt(t *testing.T, c *Client) int64 {
 // 12:00, when another agent session with the same recent steps replaced the
 // tracker: no call, and now_at stays 10:00, when the model wrote it.
 func TestDigestNowCachedLineKeepsItsTime(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, false)
@@ -458,6 +467,7 @@ func upserts(t *testing.T, c *Client) int {
 // refresh is only on its way. The next success, a manual retry that works
 // and a reset clear it.
 func TestDigestNowFailedRefreshKeepsLineWithStatus(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, false)

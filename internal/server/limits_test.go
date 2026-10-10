@@ -69,6 +69,7 @@ func limitsOptions(r *limitsRunner) server.Options {
 // limits.update per provider, flat on the wire, and later clients get them
 // in the snapshot.
 func TestLimitsUpdatesAndSnapshot(t *testing.T) {
+	t.Parallel()
 	r := &limitsRunner{}
 	b := startBridge(t, "", limitsOptions(r))
 	time.Sleep(100 * time.Millisecond)
@@ -120,6 +121,7 @@ func TestLimitsUpdatesAndSnapshot(t *testing.T) {
 
 // limits.refresh reads at once, and at most every 20 s.
 func TestLimitsRefresh(t *testing.T) {
+	t.Parallel()
 	r := &limitsRunner{}
 	opts := limitsOptions(r)
 	opts.Limits.Interval = time.Hour
@@ -147,6 +149,7 @@ func TestLimitsRefresh(t *testing.T) {
 }
 
 func TestLimitsRefreshUnsupportedWithoutPoller(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	// --no-limits: the snapshot leaves `limits` out (a bridge that reads them says `[]` before its first reading).

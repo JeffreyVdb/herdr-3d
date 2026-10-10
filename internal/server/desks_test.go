@@ -71,6 +71,7 @@ func agent(ws, status string) world.WorkerObs {
 }
 
 func TestDesksAndNamesSurviveRestartAndFreedDesksAreReused(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	b := startBridge(t, db, server.Options{})
 	b.floor("s", true, agent("a", "idle"), agent("b", "idle"), agent("c", "working"), agent("d", "idle"))
@@ -142,6 +143,7 @@ func TestDesksAndNamesSurviveRestartAndFreedDesksAreReused(t *testing.T) {
 }
 
 func TestNamesUniqueOnABigFloor(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	var obs []world.WorkerObs
 	for i := range len(world.Names) + 20 {
@@ -163,6 +165,7 @@ func TestNamesUniqueOnABigFloor(t *testing.T) {
 // bridge restart changes nothing. Past the hold a newcomer may
 // take it, and the worker then comes back under a new name.
 func TestReturningWorkerKeepsItsName(t *testing.T) {
+	t.Parallel()
 	const day = int64(24 * time.Hour / time.Millisecond)
 	db := filepath.Join(t.TempDir(), "world.db")
 	clk := newClock(1_790_000_000_000)
@@ -254,6 +257,7 @@ func TestReturningWorkerKeepsItsName(t *testing.T) {
 // is seen leaving when it restarts, so a long downtime never shortens the
 // hold. A worker back after its hold keeps its name if nobody took it.
 func TestNameHoldCountsFromDeparture(t *testing.T) {
+	t.Parallel()
 	const day = 24 * time.Hour
 	db := filepath.Join(t.TempDir(), "world.db")
 	clk := newClock(1_790_000_000_000)
@@ -305,6 +309,7 @@ func TestNameHoldCountsFromDeparture(t *testing.T) {
 }
 
 func TestStatusSinceSurvivesRestartWhenUnchanged(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	clk := newClock(1_000)
 	b := startBridge(t, db, server.Options{Now: clk.now})
@@ -337,6 +342,7 @@ func TestStatusSinceSurvivesRestartWhenUnchanged(t *testing.T) {
 }
 
 func TestWorkerStatusCarriesTitle(t *testing.T) {
+	t.Parallel()
 	clk := newClock(1_000)
 	b := startBridge(t, "", server.Options{Now: clk.now})
 	c := b.connect(proto.Hello{})
@@ -376,6 +382,7 @@ func TestWorkerStatusCarriesTitle(t *testing.T) {
 }
 
 func TestHarnessModelEffortRemembered(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	b := startBridge(t, db, server.Options{})
 	w := agent("a", "working")
@@ -405,6 +412,7 @@ func TestHarnessModelEffortRemembered(t *testing.T) {
 }
 
 func TestFloorDesks(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{MaxDesks: 8})
 	c := b.connect(proto.Hello{})
 	c.snapshot()

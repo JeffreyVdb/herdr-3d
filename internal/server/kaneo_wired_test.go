@@ -113,6 +113,7 @@ func (wb *wiredBridge) boardReads() int { return wb.kn.Count("GET", "/task/tasks
 // The settings, a floor's link, its board, the writes and the recovery from
 // a refused key, through the real wiring.
 func TestKaneoWiredEndToEnd(t *testing.T) {
+	t.Parallel()
 	kn := kaneotest.New(t, wiredKey)
 	wb := startWired(t, kn, "", filepath.Join(t.TempDir(), "kaneo.json"), newBoardClock())
 	c := wb.c
@@ -277,6 +278,7 @@ func TestKaneoWiredEndToEnd(t *testing.T) {
 // {provider: kaneo, id}, and after a restart the orchestrator is still
 // linked to the task by its launch record, never a GitHub issue.
 func TestKaneoWiredRunSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	kn := kaneotest.New(t, wiredKey)
 	db, file, clk := filepath.Join(t.TempDir(), "world.db"), filepath.Join(t.TempDir(), "kaneo.json"), newBoardClock()
 	wb := startWired(t, kn, db, file, clk)

@@ -236,6 +236,7 @@ func removedSentHome(c *client, id string) proto.Event {
 // worker goes home through the send home's steps and its worktree is
 // removed; nobody else is touched.
 func TestWrapUpCleanSendsHome(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", nil)
 	c := wb.connect(proto.Hello{Client: "wrap-test"})
 	c.snapshot()
@@ -284,6 +285,7 @@ func TestWrapUpCleanSendsHome(t *testing.T) {
 // Codex, keep: the result from its rollout; the workspace closes, the
 // worktree stays.
 func TestWrapUpCodexKeep(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", nil)
 	c := wb.connect(proto.Hello{})
 	c.snapshot()
@@ -303,6 +305,7 @@ func TestWrapUpCodexKeep(t *testing.T) {
 
 // The decision table: what the transcript says, what follows.
 func TestWrapUpDecisions(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		final func(nonce string) string
@@ -358,6 +361,7 @@ func TestWrapUpDecisions(t *testing.T) {
 // another character's run does not close it) is no result: it needs you, and
 // nothing is closed or removed.
 func TestWrapUpFencedExampleNeverFires(t *testing.T) {
+	t.Parallel()
 	for name, example := range map[string]string{
 		"shorter": "I could not stop the server. Example only:\n````text\n```\n",
 		"mixed":   "I could not stop the server. Example only:\n```text\n~~~\n",
@@ -388,6 +392,7 @@ func TestWrapUpFencedExampleNeverFires(t *testing.T) {
 // #83 review: a top-level fence closed at another indent than its opener's
 // is closed: CLEAN after it sends the worker home, Claude or Codex.
 func TestWrapUpClosedFenceSendsHome(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"w1", "w2"} {
 		t.Run(name, func(t *testing.T) {
 			wb := startWrapBridge(t, "", "", nil)
@@ -416,6 +421,7 @@ func TestWrapUpClosedFenceSendsHome(t *testing.T) {
 // A person prompting (or typing) while armed takes over: disarmed, nothing
 // needs you. So does a prompt typed in herdr itself, seen in the transcript.
 func TestWrapUpTakeover(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", nil)
 	c := wb.connect(proto.Hello{})
 	c.snapshot()
@@ -452,6 +458,7 @@ func TestWrapUpTakeover(t *testing.T) {
 // worker.prompt (its user line in the transcript too), worker.keys, a prompt
 // typed in herdr. A transcript that goes on decides again.
 func TestWrapUpTakeoverDuringCleanCheck(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		step func(t *testing.T, wb *wrapBridge, c *client, id, nonce string)
@@ -554,6 +561,7 @@ func (wb *wrapBridge) waitHeld(t *testing.T) {
 
 // Blocked (or working) in herdr: the result waits; idle again, it is read.
 func TestWrapUpWaitsWhileBlocked(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", nil)
 	c := wb.connect(proto.Hello{})
 	c.snapshot()
@@ -572,6 +580,7 @@ func TestWrapUpWaitsWhileBlocked(t *testing.T) {
 
 // No result in time: it needs you.
 func TestWrapUpTimeout(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", func(o *server.Options) { o.WrapUpTimeout = 300 * time.Millisecond })
 	c := wb.connect(proto.Hello{})
 	c.snapshot()
@@ -587,6 +596,7 @@ func TestWrapUpTimeout(t *testing.T) {
 // fails and the worker stays at its desk (needs you); it is never sent home
 // with its worktree kept.
 func TestWrapUpStrictDelete(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", nil)
 	c := wb.connect(proto.Hello{})
 	c.snapshot()
@@ -620,6 +630,7 @@ func TestWrapUpStrictDelete(t *testing.T) {
 // After CLEAN the tree is checked again before anything: dirty now, nothing
 // is touched and it needs you.
 func TestWrapUpCleanChecksTheTree(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", nil)
 	c := wb.connect(proto.Hello{})
 	c.snapshot()
@@ -642,6 +653,7 @@ func TestWrapUpCleanChecksTheTree(t *testing.T) {
 // A bridge restart while armed resumes from the stored offset: the result
 // written while it was down is read, and only that one.
 func TestWrapUpResumesAfterRestart(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", nil)
 	c := wb.connect(proto.Hello{})
 	c.snapshot()
@@ -664,6 +676,7 @@ func TestWrapUpResumesAfterRestart(t *testing.T) {
 
 // Restarted with the transcript gone: it needs you, nothing is sent home.
 func TestWrapUpRestartTranscriptGone(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", nil)
 	c := wb.connect(proto.Hello{})
 	c.snapshot()
@@ -688,6 +701,7 @@ func TestWrapUpRestartTranscriptGone(t *testing.T) {
 
 // What worker.wrapup refuses, and worker.wrapup.cancel.
 func TestWrapUpValidation(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", nil)
 	c := wb.connect(proto.Hello{})
 	c.snapshot()
@@ -728,6 +742,7 @@ func TestWrapUpValidation(t *testing.T) {
 
 // Without transcripts read, there is no wrap-up.
 func TestWrapUpNeedsTranscripts(t *testing.T) {
+	t.Parallel()
 	wb := startWrapBridge(t, "", "", func(o *server.Options) { o.Usage = nil })
 	c := wb.connect(proto.Hello{})
 	c.snapshot()

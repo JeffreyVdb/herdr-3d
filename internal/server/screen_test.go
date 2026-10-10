@@ -176,6 +176,7 @@ func screenAudit(t *testing.T, b *bridge, cmd string) []store.AuditEntry {
 var nibble = proto.ScreenGrabArgs{Floor: "s", Requester: "Nibble"}
 
 func TestScreenGrabRoundTrip(t *testing.T) {
+	// Not parallel: it bounds a grab in wall-clock.
 	b, dir := screenBridge(t, server.Options{})
 	g, evs := b.gameEvents(true, proto.SurfaceWindow)
 	if len(evs) != 1 || evs[0].T != proto.EvScreenState || !evs[0].Sharing || evs[0].Surface != proto.SurfaceWindow {
@@ -233,6 +234,7 @@ func TestScreenGrabRoundTrip(t *testing.T) {
 }
 
 func TestScreenGrabRefusals(t *testing.T) {
+	t.Parallel()
 	b, _ := screenBridge(t, server.Options{})
 	cli := b.connect(proto.Hello{Client: "office-cli"})
 	if s := cli.snapshot(); s.World.Screen == nil || s.World.Screen.Sharing {
@@ -276,6 +278,7 @@ func TestScreenGrabRefusals(t *testing.T) {
 }
 
 func TestScreenGrabWithoutFrameDir(t *testing.T) {
+	t.Parallel()
 	b, _ := screenBridge(t, server.Options{ScreenDir: "-"})
 	b.game(true, proto.SurfaceMonitor)
 	cli := b.connect(proto.Hello{Client: "office-cli"})
@@ -287,6 +290,7 @@ func TestScreenGrabWithoutFrameDir(t *testing.T) {
 }
 
 func TestScreenGrabTimeout(t *testing.T) {
+	// Not parallel: it bounds a grab in wall-clock.
 	b, dir := screenBridge(t, server.Options{ScreenTimeout: 200 * time.Millisecond})
 	g := b.game(true, proto.SurfaceWindow)
 	cli := b.connect(proto.Hello{Client: "office-cli"})
@@ -311,6 +315,7 @@ func TestScreenGrabTimeout(t *testing.T) {
 }
 
 func TestScreenFrameRefused(t *testing.T) {
+	t.Parallel()
 	b, dir := screenBridge(t, server.Options{})
 	g := b.game(true, proto.SurfaceBrowser)
 	cli := b.connect(proto.Hello{Client: "office-cli"})
@@ -349,6 +354,7 @@ func TestScreenFrameRefused(t *testing.T) {
 }
 
 func TestScreenGrabsConcurrent(t *testing.T) {
+	t.Parallel()
 	b, _ := screenBridge(t, server.Options{})
 	g := b.game(true, proto.SurfaceMonitor)
 	clis := make([]*client, 4)
@@ -397,6 +403,7 @@ func TestScreenGrabsConcurrent(t *testing.T) {
 }
 
 func TestScreenGameGoesAwayMidRequest(t *testing.T) {
+	// Not parallel: it bounds a grab in wall-clock.
 	b, _ := screenBridge(t, server.Options{ScreenTimeout: 30 * time.Second})
 	g := b.game(true, proto.SurfaceWindow)
 	cli := b.connect(proto.Hello{Client: "office-cli"})
@@ -420,6 +427,7 @@ func TestScreenGameGoesAwayMidRequest(t *testing.T) {
 }
 
 func TestScreenStopOrGameRefusalMidRequest(t *testing.T) {
+	t.Parallel()
 	b, _ := screenBridge(t, server.Options{ScreenTimeout: 30 * time.Second})
 	g := b.game(true, proto.SurfaceWindow)
 	cli := b.connect(proto.Hello{Client: "office-cli"})
@@ -442,6 +450,7 @@ func TestScreenStopOrGameRefusalMidRequest(t *testing.T) {
 }
 
 func TestScreenLatestSharerIsAsked(t *testing.T) {
+	t.Parallel()
 	b, _ := screenBridge(t, server.Options{})
 	first := b.game(true, proto.SurfaceWindow)
 	second := b.game(true, proto.SurfaceBrowser)
@@ -486,6 +495,7 @@ func (c *fakeClock) Add(d time.Duration) {
 }
 
 func TestScreenFramesExpire(t *testing.T) {
+	t.Parallel()
 	clk := &fakeClock{t: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)}
 	b, dir := screenBridge(t, server.Options{Now: clk.Now, ScreenSweep: 5 * time.Millisecond})
 	g := b.game(true, proto.SurfaceWindow)
@@ -526,6 +536,7 @@ func TestScreenFramesExpire(t *testing.T) {
 }
 
 func TestScreenFramesSweptAtStartup(t *testing.T) {
+	t.Parallel()
 	clk := &fakeClock{t: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)}
 	dir := filepath.Join(t.TempDir(), "screen")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -540,6 +551,7 @@ func TestScreenFramesSweptAtStartup(t *testing.T) {
 }
 
 func TestScreenGrabClientCall(t *testing.T) {
+	t.Parallel()
 	b, dir := screenBridge(t, server.Options{})
 	cli := b.connect(proto.Hello{Client: "office-cli"})
 	var gerr *proto.ScreenGrabError

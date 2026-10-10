@@ -16,6 +16,7 @@ import (
 
 // The fallback catalog is handed out as a copy: changing one leaves the next as it was.
 func TestHireOptionsCopy(t *testing.T) {
+	t.Parallel()
 	a := server.HireOptions()
 	a.Codex.ModelLabels["gpt-6-sol"], a.Codex.ExtraEfforts["gpt-6-sol"][0], a.Codex.Models[0] = "x", "x", "x"
 	a.Claude.Models[0], a.Claude.Efforts[0] = "x", "x"
@@ -30,6 +31,7 @@ func TestHireOptionsCopy(t *testing.T) {
 }
 
 func TestFloorSettings(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	home := t.TempDir()
 	b := startBridge(t, db, server.Options{})
@@ -143,6 +145,7 @@ func inRepo(ws, cwd, root string) world.WorkerObs {
 }
 
 func TestRepoSuggestion(t *testing.T) {
+	t.Parallel()
 	origins := &fakeOrigins{asked: map[string]int{}, repos: map[string]string{
 		"/r/herdr-3d-wt/m3-go": "JeffreyVdb/herdr-3d", "/r/herdr-3d-wt/m3-game": "JeffreyVdb/herdr-3d",
 		"/r/infra": "fomra/depot-manager", "/r/infra-wt/x": "fomra/depot-manager", "/r/other": "o/other",

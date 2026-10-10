@@ -16,6 +16,7 @@ import (
 // a full frame replaces what is pending, diffs are appended, and past the
 // bound it overflows and keeps nothing more.
 func TestWatchQueueIsBounded(t *testing.T) {
+	t.Parallel()
 	q := newWatchQueue()
 	q.put(herdr.Frame{Data: []byte("diff before any full frame")})
 	if _, _, _, _, ok, err := q.take(); ok || err != nil {
@@ -71,6 +72,7 @@ func (o *burstObs) Close() error { o.closed.Do(func() { close(o.done) }); return
 // queues outside the bounded merged frame, and full frames just replace
 // it. Diffs that outgrow it make the watch resync once it can go on.
 func TestObserverIsReadWhileSendingWaits(t *testing.T) {
+	t.Parallel()
 	for _, full := range []bool{true, false} {
 		h := &Hub{opts: Options{FirstFrame: time.Second}}
 		h.initTerm()

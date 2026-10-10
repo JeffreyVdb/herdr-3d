@@ -17,6 +17,12 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
+// Every test here runs in parallel (t.Parallel) but those that time the
+// bridge in wall-clock or count its polls: they say "Not parallel" and run
+// alone, before the parallel ones. Each test has its own bridge, store, socket
+// and temp dirs; a test that shares any of these, sets the environment or a
+// package variable, or asserts a wall-clock bound is not parallel.
+
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // shortDir is a temp dir short enough for a unix socket path.

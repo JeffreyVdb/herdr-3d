@@ -13,6 +13,7 @@ import (
 // Code 2.1.285, codex-cli 0.159.2, herdr 0.9.0, 100 × 30 unless named wide;
 // the grounding of #57 has the keys that led from one to the next).
 func TestParseClaudeDialog(t *testing.T) {
+	t.Parallel()
 	type row = dialogRow
 	for _, tc := range []struct {
 		screen   string
@@ -98,6 +99,7 @@ func TestParseClaudeDialog(t *testing.T) {
 }
 
 func TestParseCodexDialog(t *testing.T) {
+	t.Parallel()
 	type row = dialogRow
 	for _, tc := range []struct {
 		screen       string
@@ -143,6 +145,7 @@ func TestParseCodexDialog(t *testing.T) {
 
 // Every captured dialog screen is a dialog to its parser, and to only one.
 func TestEveryAskScreenIsADialog(t *testing.T) {
+	t.Parallel()
 	names, err := filepath.Glob(filepath.Join("testdata", "screens", "*-ask-*.txt"))
 	if err != nil || len(names) < 30 {
 		t.Fatalf("%d screens (%v)", len(names), err)
@@ -160,6 +163,7 @@ func TestEveryAskScreenIsADialog(t *testing.T) {
 // or its review with its headers (it shows no options); cut tabs and
 // scrolled-off options count.
 func TestDialogShowsAsk(t *testing.T) {
+	t.Parallel()
 	opts := func(labels ...string) []proto.AskOption {
 		var o []proto.AskOption
 		for _, l := range labels {
@@ -210,6 +214,7 @@ func TestDialogShowsAsk(t *testing.T) {
 // its place: the same headers are not enough. A long one wraps or is cut;
 // one cut too short to tell, or a review listing fewer, is not the ask's.
 func TestReviewShowsAsk(t *testing.T) {
+	t.Parallel()
 	for s, want := range map[string][]string{
 		"claude-ask-two-review":         {"Which color?", "Which extras?"},
 		"claude-ask-four-review":        {"First choice?", "Second choice?", "Third choice?", "Fourth choice?"},

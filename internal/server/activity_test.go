@@ -197,6 +197,7 @@ func claudeResultLine(id, text string) string {
 // What a Claude worker does goes out as it does it: Thinking, then its tool's
 // label, nothing once herdr says idle, and never for a shell.
 func TestActivityOnTheWire(t *testing.T) {
+	t.Parallel()
 	ab := startActBridge(t, nil)
 	c := ab.c
 	w1, w3 := ab.ids["w1"], ab.ids["w3"]
@@ -245,6 +246,7 @@ func TestActivityOnTheWire(t *testing.T) {
 
 // Changes go out at most twice a second per worker, the last one always.
 func TestActivityIsThrottled(t *testing.T) {
+	// Not parallel: it counts events per wall-clock second.
 	ab := startActBridge(t, nil)
 	w1 := ab.ids["w1"]
 	ab.status("w1", "working")
@@ -297,6 +299,7 @@ func TestActivityIsThrottled(t *testing.T) {
 // #98 §3b with the real lines: a turn that ends with open tasks is waiting
 // while idle, each notification closes its task, the last one clears it.
 func TestActivityWaitingOnBackgroundTasks(t *testing.T) {
+	t.Parallel()
 	ab := startActBridge(t, nil)
 	c := ab.c
 	w1 := ab.ids["w1"]
@@ -320,6 +323,7 @@ func TestActivityWaitingOnBackgroundTasks(t *testing.T) {
 // connection on the worker's floor, by the hash the activity shows now; not
 // to another connection, nor by another hash.
 func TestActivityImageIsServedToItsFloor(t *testing.T) {
+	t.Parallel()
 	cache, err := imgcache.New(imgcache.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -392,6 +396,7 @@ func yes() *bool { v := true; return &v }
 // same normalised command again is the cache's), only for a floor someone
 // stands on, and its answer shows.
 func TestActivityModelOptIn(t *testing.T) {
+	t.Parallel()
 	roles := newActRoles()
 	ab := startActBridge(t, func(o *server.Options) { o.ActivityRoles = roles })
 	c := ab.c
@@ -479,6 +484,7 @@ func TestActivityModelOptIn(t *testing.T) {
 // frees is never asked about; nothing for a floor no one stands on; the
 // daily cap holds.
 func TestActivityModelBudget(t *testing.T) {
+	t.Parallel()
 	roles := newActRoles()
 	release := make(chan struct{})
 	var mu sync.Mutex
@@ -556,6 +562,7 @@ func TestActivityModelBudget(t *testing.T) {
 }
 
 func TestActivitySettingsCommands(t *testing.T) {
+	t.Parallel()
 	off := false
 	roles := newActRoles()
 	ab := startActBridge(t, func(o *server.Options) { o.ActivityRoles = roles; o.ActivityModel = &off })

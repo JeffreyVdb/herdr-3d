@@ -71,6 +71,7 @@ func (c *client) echoPush(id, text, reqID string) time.Time {
 // that push still waits out the 250 ms flush. The defaults are the bridge's:
 // the tracker's intervals and the push flush.
 func TestPromptEchoLatency(t *testing.T) {
+	// Not parallel: it times prompt echoes in wall-clock.
 	const sess = "0a0b0c0d-5858-4558-8558-585858585858"
 	dir := t.TempDir()
 	path := filepath.Join(dir, "-home-u-w1", sess+".jsonl")

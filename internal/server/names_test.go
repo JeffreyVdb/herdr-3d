@@ -79,6 +79,7 @@ func hasWorker(session, ws string) func(proto.World) bool {
 // departure is recorded first, so the newcomer never gets the name, even
 // with a hold shorter than the leaver's time on the floor.
 func TestLeaveAndJoinInOneObservation(t *testing.T) {
+	t.Parallel()
 	clk := newClock(1_790_000_000_000)
 	b := startBridge(t, "", server.Options{Now: clk.now, NameHold: time.Minute})
 	obs := nearlyFullFloor(3)
@@ -121,6 +122,7 @@ func TestLeaveAndJoinInOneObservation(t *testing.T) {
 // name; with the list full that is the longest-released one, and the
 // worker it was taken from gets yet another.
 func TestExpiredReturnDoesNotTakeAHeldName(t *testing.T) {
+	t.Parallel()
 	const day = 24 * time.Hour
 	clk := newClock(1_790_000_000_000)
 	b := startBridge(t, "", server.Options{Now: clk.now})
@@ -174,6 +176,7 @@ func TestExpiredReturnDoesNotTakeAHeldName(t *testing.T) {
 // real watcher against a fake herdr, whose unchanged safety snapshots never
 // reach the hub.
 func TestUnchangedRunningFloorAcrossRestart(t *testing.T) {
+	t.Parallel()
 	const day = 24 * time.Hour
 	clk := newClock(1_790_000_000_000)
 	db := filepath.Join(t.TempDir(), "world.db")
@@ -253,6 +256,7 @@ func TestUnchangedRunningFloorAcrossRestart(t *testing.T) {
 // alone. A deleted session releases its names, which its workers get back
 // if it returns within the hold.
 func TestNameClaimsEventsAndFloorRemoval(t *testing.T) {
+	t.Parallel()
 	clk := newClock(1_790_000_000_000)
 	b := startBridge(t, "", server.Options{Now: clk.now})
 	c := b.connect(proto.Hello{})
@@ -318,6 +322,7 @@ func TestNameClaimsEventsAndFloorRemoval(t *testing.T) {
 // held: a worker on the floor keeps its name, and one that is not there
 // when the bridge first looks is released then.
 func TestNamesHeldAtStartup(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "world.db")
 	st, err := store.Open(ctx, path)
@@ -368,6 +373,7 @@ func noDigits(t *testing.T, name string) {
 // ends its hold early, and owns it in the store; a name of a live worker is
 // never taken.
 func TestHeldNamesAreRecycledOldestFirst(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	clk := newClock(1_790_000_000_000)
 	b := startBridge(t, db, server.Options{Now: clk.now, NameHold: 7 * 24 * time.Hour})
@@ -413,6 +419,7 @@ func TestHeldNamesAreRecycledOldestFirst(t *testing.T) {
 // inside the hold: names run out, and never grow a digit or repeat among
 // live workers.
 func TestNoDigitsAfterManyHires(t *testing.T) {
+	t.Parallel()
 	clk := newClock(1_790_000_000_000)
 	b := startBridge(t, "", server.Options{Now: clk.now, NameHold: 7 * 24 * time.Hour})
 	keep := []world.WorkerObs{agent("keep", "idle"), agent("keep2", "idle")}
@@ -436,6 +443,7 @@ func TestNoDigitsAfterManyHires(t *testing.T) {
 
 // A name an agent left with a numeric suffix stays its name.
 func TestLegacySuffixedNameIsKept(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	b := startBridge(t, db, server.Options{})
 	b.floor("s", true, agent("a", "idle"), agent("b", "idle"))
@@ -467,6 +475,7 @@ func TestLegacySuffixedNameIsKept(t *testing.T) {
 // A worker that closes (crash, pane close) keeps its name for the hold; one
 // sent home does not.
 func TestSendHomeReleasesTheNameAtOnce(t *testing.T) {
+	t.Parallel()
 	clk := newClock(1_790_000_000_000)
 	hold := 7 * 24 * time.Hour
 	hb := startHireBridge(t, func(o *server.Options) { o.Now, o.NameHold = clk.now, hold },

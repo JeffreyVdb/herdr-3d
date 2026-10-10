@@ -7,6 +7,7 @@ import (
 )
 
 func TestReadLoad(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	write := func(name, s string) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(s), 0o644); err != nil {

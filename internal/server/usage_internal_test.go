@@ -15,6 +15,7 @@ import (
 // worker.usage goes out at most once per 5 s per worker, and only when the
 // usage changed (fake clock).
 func TestUsageThrottle(t *testing.T) {
+	t.Parallel()
 	const sess = "0a0b0c0d-2222-4222-8222-222222222222"
 	dir := t.TempDir()
 	path := filepath.Join(dir, "p", sess+".jsonl")
@@ -103,6 +104,7 @@ func codexRollout(t *testing.T, root, stamp, id, cwd string, in int) {
 // backfill's rule), without an agent_session of its own; looked for again
 // after usage.MissRescan.
 func TestUsageCodexWithoutSession(t *testing.T) {
+	t.Parallel()
 	const (
 		oldID  = "0c0d0e0f-0000-4000-8000-000000000001"
 		midID  = "0c0d0e0f-0000-4000-8000-000000000002"
@@ -183,6 +185,7 @@ func TestUsageCodexWithoutSession(t *testing.T) {
 // old one's usage at once, whether or not the new transcript is there yet;
 // the new one's usage comes as the throttle lets it.
 func TestUsageGoesWithItsSession(t *testing.T) {
+	t.Parallel()
 	const (
 		oldID = "0a0b0c0d-3333-4333-8333-333333333331"
 		newID = "0a0b0c0d-3333-4333-8333-333333333332"
@@ -249,6 +252,7 @@ func TestUsageGoesWithItsSession(t *testing.T) {
 // out even when everything else, the rounded percentage included, is the
 // same: the meter shows both.
 func TestUsageThrottleContextOnlyChange(t *testing.T) {
+	t.Parallel()
 	pct := func(v float64) *float64 { return &v }
 	base := proto.Usage{Tokens: 100, Priced: proto.PricedKnown, ContextPct: pct(4.2), ContextWindow: 1_000_000, ContextTokens: 42_000}
 	th := &usageThrottle{every: 5 * time.Second, shown: map[string]proto.Usage{}, at: map[string]time.Time{}}

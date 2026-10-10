@@ -143,6 +143,7 @@ func (b *bridge) rawUpload(head string, body []byte, closeWrite bool) (int, []by
 }
 
 func TestUploadEndToEnd(t *testing.T) {
+	t.Parallel()
 	dz := startDropZone(t)
 	b := uploadBridge(t, dz.srv.URL)
 	img := append(append([]byte{}, pngMagic...), []byte("PIXELS-that-must-never-be-logged")...)
@@ -194,6 +195,7 @@ func TestUploadEndToEnd(t *testing.T) {
 }
 
 func TestUploadDoesNotTrustTheClientsType(t *testing.T) {
+	t.Parallel()
 	dz := startDropZone(t)
 	b := uploadBridge(t, dz.srv.URL)
 	req, _ := http.NewRequest("POST", "http://bridge/upload?n=1", bytes.NewReader(append(pngMagic, 1, 2, 3)))
@@ -219,6 +221,7 @@ func TestUploadDoesNotTrustTheClientsType(t *testing.T) {
 }
 
 func TestUploadRefusals(t *testing.T) {
+	t.Parallel()
 	dz := startDropZone(t)
 	b := uploadBridge(t, dz.srv.URL)
 	png := func() io.Reader { return bytes.NewReader(append(append([]byte{}, pngMagic...), 1, 2, 3)) }
@@ -297,6 +300,7 @@ func (p *pattern) Read(b []byte) (int, error) {
 }
 
 func TestUploadSizeCap(t *testing.T) {
+	t.Parallel()
 	dz := startDropZone(t)
 	b := uploadBridge(t, dz.srv.URL)
 
@@ -347,6 +351,7 @@ func TestUploadSizeCap(t *testing.T) {
 }
 
 func TestUploadDropZoneDown(t *testing.T) {
+	t.Parallel()
 	dz := startDropZone(t)
 	b := uploadBridge(t, dz.srv.URL)
 	dz.srv.Close()
@@ -362,6 +367,7 @@ func TestUploadDropZoneDown(t *testing.T) {
 }
 
 func TestUploadWithoutADropZone(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	st, body, _ := b.upload("POST", "?n=1", bytes.NewReader(append(pngMagic, 1)))
 	if st != 502 || logoErrCode(t, body) != "dropzone_unavailable" {
@@ -381,6 +387,7 @@ func (f fakeUploader) Upload(_ context.Context, _ upload.Meta, src io.Reader) (u
 }
 
 func TestUploadErrorMapping(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		err    error
 		status int

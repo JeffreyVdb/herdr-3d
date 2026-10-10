@@ -12,7 +12,10 @@ import (
 // tracker reads (internal/transcript/testdata/*/digest_turns.jsonl): w1 is a
 // Claude agent, w2 a Codex one (the follow-up bridge, its features off).
 func TestDigestOnTheWire(t *testing.T) {
+	t.Parallel()
 	fb := startFuBridge(t, "", "", newFuRoles(), nil, "")
+	// The usage tracker's first read is in (w1's first prompt).
+	fb.world(func(w proto.World) bool { return workersOf(w, "s")["w1"].Digest != nil })
 	c := fb.connect(proto.Hello{})
 	// Before any assistant step: the task as soon as it is known (w1's first
 	// prompt), never a now line; nothing at all without a prompt (w2).

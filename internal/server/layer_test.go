@@ -16,6 +16,7 @@ import (
 // another provider (files in the repository, Monday.com) can be dropped in
 // through server.Options.Boards. Only the app wires GitHub in.
 func TestBoardLayerIsProviderNeutral(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -64,6 +65,7 @@ func TestBoardLayerIsProviderNeutral(t *testing.T) {
 // them stay away from the Kaneo client (internal/kaneo), which only the app
 // wires in.
 func TestKaneoSettingsIsProviderNeutral(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -84,6 +86,7 @@ func TestKaneoSettingsIsProviderNeutral(t *testing.T) {
 // carry its settings and its state; the features of later tickets take its
 // two interfaces.
 func TestAIIsFeatureAgnostic(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -104,6 +107,7 @@ func TestAIIsFeatureAgnostic(t *testing.T) {
 // module, no net/http), and never names the service or a provider. The hub
 // hands it the models.
 func TestFollowupUsesOnlyAIInterfaces(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -155,6 +159,7 @@ func TestFollowupUsesOnlyAIInterfaces(t *testing.T) {
 // module, no net/http), and never names the service or a provider. The hub
 // hands it the models.
 func TestPackupUsesOnlyAIInterfaces(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -206,6 +211,7 @@ func TestPackupUsesOnlyAIInterfaces(t *testing.T) {
 // module, no net/http; not proto: the server hands it the catalog), and
 // never names the service or a provider.
 func TestHireIntentUsesOnlyAIInterfaces(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -257,6 +263,7 @@ func TestHireIntentUsesOnlyAIInterfaces(t *testing.T) {
 // this module, no net/http, not internal/transcript nor internal/activity),
 // never the service or a provider. The hub hands it the LLM and the input.
 func TestDigestUsesOnlyAIInterfaces(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -308,6 +315,7 @@ func TestDigestUsesOnlyAIInterfaces(t *testing.T) {
 // this module, no net/http), never the service or a provider. The hub hands
 // it the classifier.
 func TestActivityUsesOnlyAIInterfaces(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -358,6 +366,7 @@ func TestActivityUsesOnlyAIInterfaces(t *testing.T) {
 // protocol reach no harness probe; only the app wires internal/harness in
 // through server.Options.Commands.
 func TestCommandCatalogIsProviderNeutral(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -389,6 +398,7 @@ func TestCommandCatalogIsProviderNeutral(t *testing.T) {
 // the file index nor its scorer; only the app wires internal/fileindex in
 // through server.Options.Files.
 func TestFileIndexIsWiredByTheApp(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}
@@ -422,6 +432,7 @@ func TestFileIndexIsWiredByTheApp(t *testing.T) {
 // holds no harness name of its own (translate.go and ask.go; input.go has
 // only the #95 typing rule).
 func TestPromptRulesAreInTheHarnessTable(t *testing.T) {
+	t.Parallel()
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go tool")
 	}

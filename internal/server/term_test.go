@@ -395,6 +395,7 @@ func decoded(t *testing.T, f frameMsg) string {
 func shell(ws string) world.WorkerObs { return worker(ws, "shell-"+ws, "", "unknown") }
 
 func TestWatchStreamsFramesToTheWatcherOnly(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, shell("w1"), shell("w2"))
 	c := tb.connect(proto.Hello{Client: "watcher"})
 	other := tb.connect(proto.Hello{Client: "other"})
@@ -473,6 +474,7 @@ func waitFor(t *testing.T, what string, ok func() bool) {
 // Diffs arriving faster than fps are concatenated; a full frame replaces
 // what is pending.
 func TestWatchThrottlesToFps(t *testing.T) {
+	// Not parallel: it times frames in wall-clock.
 	tb := startTermBridge(t, nil, shell("w1"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -576,6 +578,7 @@ func (d *directClient) wasKicked() error {
 // (a new observer, a full frame) once there is room again. Diffs piling
 // up past 512 KiB resync the same way.
 func TestWatchResyncsInsteadOfOverflowing(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, func(o *server.Options) { o.Queue = 16 }, shell("w1"))
 	d := tb.direct(t)
 	d.read() // welcome
@@ -657,6 +660,7 @@ func TestWatchResyncsInsteadOfOverflowing(t *testing.T) {
 // An observer that exits or sends nothing is restarted with backoff, at
 // most 3 times in 30 s; then the watch ends with observer_failed.
 func TestWatchRestartsObserversWithBackoff(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, func(o *server.Options) {
 		o.FirstFrame = 50 * time.Millisecond
 		o.ObserverBackoff = 20 * time.Millisecond
@@ -705,6 +709,7 @@ func TestWatchRestartsObserversWithBackoff(t *testing.T) {
 // A watch ends with terminal.closed when its worker leaves, its floor
 // falls asleep or its pane changes; closing the connection stops the rest.
 func TestWatchEndsWithItsWorker(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, shell("w1"), shell("w2"), shell("w3"))
 	c := tb.connect(proto.Hello{})
 	snap := c.snapshot()
@@ -757,6 +762,7 @@ func TestWatchEndsWithItsWorker(t *testing.T) {
 }
 
 func TestWatchCaps(t *testing.T) {
+	t.Parallel()
 	var ws []world.WorkerObs
 	for i := 1; i <= 5; i++ {
 		ws = append(ws, shell(fmt.Sprintf("w%d", i)))
@@ -838,6 +844,7 @@ func (s *slowStopTerm) counts() (peak, stopped int) {
 // re-watch, or a watch right after an unwatch, waits for it instead of
 // running more observers than --max-observers / --max-watches.
 func TestStoppingObserversHoldTheirSlot(t *testing.T) {
+	t.Parallel()
 	for _, caps := range []struct {
 		name                   string
 		maxWatches, maxObsvers int
@@ -879,6 +886,7 @@ func TestStoppingObserversHoldTheirSlot(t *testing.T) {
 }
 
 func TestWatchStartFailure(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, shell("w1"))
 	tb.term.observeFn = func(n int) error {
 		if n == 0 {

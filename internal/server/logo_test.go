@@ -65,6 +65,7 @@ func testPNG(t *testing.T, w, h int, c color.NRGBA) []byte {
 }
 
 func TestLogoSetFetchClear(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
@@ -177,6 +178,7 @@ func TestLogoSetFetchClear(t *testing.T) {
 // the caller would cache it under H1. It gets not_found (and no image), and
 // the request without ?h= or with the new hash still works.
 func TestLogoStaleHash(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
@@ -212,6 +214,7 @@ func TestLogoStaleHash(t *testing.T) {
 }
 
 func TestLogoLimitsAndTypes(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
@@ -266,6 +269,7 @@ func TestLogoLimitsAndTypes(t *testing.T) {
 }
 
 func TestDeletingTheBuildingDeletesItsLogo(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
@@ -291,6 +295,7 @@ func TestDeletingTheBuildingDeletesItsLogo(t *testing.T) {
 // draw is refused once the worker is killed at its deadline, and the bridge
 // converts the next one at once.
 func TestLogoSVGDrawnByWorker(t *testing.T) {
+	// Not parallel: its render worker runs against a wall-clock timeout.
 	const deadline = 3 * time.Second
 	b := startBridgeWith(t, "", server.Options{}, func(s *server.Server) { s.SetLogoRenderTimeout(deadline) })
 	c := b.connect(proto.Hello{})

@@ -23,6 +23,7 @@ func inboxResult(t *testing.T, ack proto.Ack) bool {
 // #106: inbox.dismiss hides a done worker's row for that done episode, for
 // every client, across a restart, until the worker's next working → done.
 func TestInboxDismiss(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	b := startBridge(t, db, server.Options{})
 	a := b.connect(proto.Hello{Client: "a"})

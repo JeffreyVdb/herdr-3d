@@ -103,6 +103,7 @@ func noPrompts(t *testing.T, hb *hoBridge) {
 // with no model call and nothing sent to the worker; a repeated submit files
 // nothing twice; the cabinet lists, shows, searches and deletes it.
 func TestHandoffLiteralClaude(t *testing.T) {
+	t.Parallel()
 	hb := newHoBridge(t)
 	c := hb.connect(proto.Hello{})
 	s := c.snapshot()
@@ -209,6 +210,7 @@ func TestHandoffLiteralClaude(t *testing.T) {
 // A stale or unknown candidate, another mode, a bad operation id: refused,
 // nothing filed. A new prompt takes the candidate away.
 func TestHandoffRefusals(t *testing.T) {
+	t.Parallel()
 	hb := newHoBridge(t)
 	c := hb.connect(proto.Hello{})
 	c.snapshot()
@@ -249,6 +251,7 @@ func TestHandoffRefusals(t *testing.T) {
 // The transcript replaced under a candidate the bridge still offers: the
 // text is not what it was, and nothing is filed or sent home.
 func TestHandoffSourceReplaced(t *testing.T) {
+	t.Parallel()
 	hb := newHoBridge(t)
 	c := hb.connect(proto.Hello{})
 	c.snapshot()
@@ -280,6 +283,7 @@ func TestHandoffSourceReplaced(t *testing.T) {
 // A file failure (the floor's directory is a file): handoff_failed, no row,
 // and no send home although it was asked.
 func TestHandoffFileFailure(t *testing.T) {
+	t.Parallel()
 	hb := newHoBridge(t)
 	c := hb.connect(proto.Hello{})
 	c.snapshot()
@@ -307,6 +311,7 @@ func TestHandoffFileFailure(t *testing.T) {
 // Send home after filing: only once filed, through worker.fire's path; a
 // working worker is filed but not sent home.
 func TestHandoffSendHome(t *testing.T) {
+	t.Parallel()
 	hb := newHoBridge(t)
 	c := hb.connect(proto.Hello{})
 	c.snapshot()
@@ -368,6 +373,7 @@ func codexTurn(turn, item, text string) string {
 // A handoff file a crash left without its row is in the cabinet after the
 // restart (the startup reconcile), and counted in the snapshot.
 func TestHandoffStartupReconcile(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "handoff")
 	os.MkdirAll(filepath.Join(dir, "s"), 0o700)
 	at := time.Date(2026, 10, 10, 12, 0, 0, 0, time.Local)
@@ -394,6 +400,7 @@ func TestHandoffStartupReconcile(t *testing.T) {
 // before the bridge's next read (every 2 s, as in production): the reply
 // is not the latest any more, nothing is filed or previewed.
 func TestHandoffNewPromptBeforeTheRead(t *testing.T) {
+	t.Parallel()
 	hb := newHoBridgeWith(t, filepath.Join(t.TempDir(), "handoff"), server.DefaultUsageInterval)
 	c := hb.connect(proto.Hello{})
 	c.snapshot()
@@ -419,6 +426,7 @@ func TestHandoffNewPromptBeforeTheRead(t *testing.T) {
 // the new transcript): the old session's reply is withdrawn at once and
 // refused when submitted.
 func TestHandoffWorkerSessionChanged(t *testing.T) {
+	t.Parallel()
 	hb := newHoBridgeWith(t, filepath.Join(t.TempDir(), "handoff"), server.DefaultUsageInterval)
 	c := hb.connect(proto.Hello{})
 	c.snapshot()
@@ -442,6 +450,7 @@ func TestHandoffWorkerSessionChanged(t *testing.T) {
 // herdr reports the same session later, the reply is offered again under it
 // and files.
 func TestHandoffCodexFoundByCwd(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	dir := filepath.Join(t.TempDir(), "handoff")
 	svc := hoService(t, dir, db)
@@ -483,6 +492,7 @@ func TestHandoffCodexFoundByCwd(t *testing.T) {
 // file): the turn_duration that completed a null stop_reason reply is gone,
 // so the reply is not filed and not previewed.
 func TestHandoffTruncateRegrow(t *testing.T) {
+	t.Parallel()
 	hb := newHoBridgeWith(t, filepath.Join(t.TempDir(), "handoff"), server.DefaultUsageInterval)
 	c := hb.connect(proto.Hello{})
 	c.snapshot()

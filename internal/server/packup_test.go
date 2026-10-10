@@ -96,6 +96,7 @@ func detect(t *testing.T, c *client, id, text string) proto.PackupDetectResult {
 // Off, or a role not ready: packup.detect answers no match and no model is
 // called.
 func TestPackupDetectOffMakesNoCall(t *testing.T) {
+	t.Parallel()
 	t.Run("off", func(t *testing.T) {
 		roles := newPkRoles() // the models ready: configured, not switched on
 		hb, ids := startPkBridge(t, roles, nil, "", nil)
@@ -130,6 +131,7 @@ func TestPackupDetectOffMakesNoCall(t *testing.T) {
 // On: the leaving part is cut; a prompt that does not ask goes as written.
 // The prompt is never in the audit log.
 func TestPackupDetect(t *testing.T) {
+	t.Parallel()
 	roles := newPkRoles()
 	hb, ids := startPkBridge(t, roles, on(), "", nil)
 	c := hb.connect(proto.Hello{})
@@ -161,6 +163,7 @@ func TestPackupDetect(t *testing.T) {
 // Who: the wrap-up's workers only. A freelancer, a plain shell: no match,
 // no call.
 func TestPackupDetectSkips(t *testing.T) {
+	t.Parallel()
 	roles := newPkRoles()
 	hb, ids := startPkBridge(t, roles, on(), "code", nil)
 	c := hb.connect(proto.Hello{})
@@ -177,6 +180,7 @@ func TestPackupDetectSkips(t *testing.T) {
 
 // A model failing or too slow: no match, within the timeout.
 func TestPackupDetectFailsOpen(t *testing.T) {
+	// Not parallel: it bounds the detection in wall-clock.
 	roles := newPkRoles()
 	block := make(chan struct{})
 	defer close(block)
@@ -207,6 +211,7 @@ func TestPackupDetectFailsOpen(t *testing.T) {
 
 // The settings go through the protocol and publish packup.update.
 func TestPackupSettings(t *testing.T) {
+	t.Parallel()
 	roles := newPkRoles()
 	roles.cls.Func = func(_ context.Context, state map[string]any, _ string) (float64, error) {
 		for _, s := range packup.Samples {
@@ -260,6 +265,7 @@ func TestPackupSettings(t *testing.T) {
 // cleanup request. The agent gets the task first, then the footer that
 // makes a task that did not complete BLOCKED: the worker stays.
 func TestPackupHandsOffToWrapUp(t *testing.T) {
+	t.Parallel()
 	roles := newPkRoles()
 	wb := startWrapBridge(t, "", "", func(o *server.Options) {
 		o.PackupRoles = roles
@@ -294,6 +300,7 @@ func TestPackupHandsOffToWrapUp(t *testing.T) {
 // A provider's error can echo the prompt (an HTTP 400 quoting it): the
 // bridge log has the failure's kind or code, never the error's text.
 func TestPackupDetectNeverLogsTheProvidersWords(t *testing.T) {
+	t.Parallel()
 	const secret = "Please fix the confidential payroll formula and end your turn"
 	echo := &ai.Error{Kind: ai.KindFailed, Msg: "the provider answered HTTP 400: Rejected prompt: " + secret}
 	roles := newPkRoles()

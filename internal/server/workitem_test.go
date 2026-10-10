@@ -14,6 +14,7 @@ import (
 // A run's issue is on the wire in the neutral form too: Worker.work_item,
 // present whenever issue is, built by the floor's issue provider.
 func TestWorkerWorkItem(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil,
 		runWorker("o", "ORCH|demo", runTokens("orch", "run-1")),
 		runWorker("c", "CODE|demo|7|r1", runTokens("code", "run-1")),
@@ -55,6 +56,7 @@ func TestWorkerWorkItem(t *testing.T) {
 
 // Without a provider factory the M6 link stays as it was.
 func TestWorkItemNeedsBoards(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil, runWorker("o", "ORCH|demo", runTokens("orch", "run-1")),
 		runWorker("c", "CODE|demo|7|r1", runTokens("code", "run-1")))
 	setRepo(hb.c, "s", "JeffreyVdb/lab")
@@ -71,6 +73,7 @@ func decorateRoles(bb *boardBridge) {
 // run.start: the orchestrator's issue and work item are on the wire before
 // the ack, not tens of seconds later (the M6 advisory).
 func TestRunStartRelinksBeforeTheAck(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	bb.fb.repo("JeffreyVdb/lab")
 	bb.git.repos["/home/u/lab"] = "/home/u/lab"
@@ -98,6 +101,7 @@ func TestRunStartRelinksBeforeTheAck(t *testing.T) {
 
 // run.prepare and run.start take a work_item, a third way to name the ticket.
 func TestRunWorkItem(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, _ := bb.fb.repo("JeffreyVdb/lab")
 	tr.board.Cards = []tracker.Card{card("JeffreyVdb/lab#9", "#9", "Boards", "todo")}
@@ -158,6 +162,7 @@ func TestRunWorkItem(t *testing.T) {
 // in: the provider is asked, and an id that is not an item of the tracker is
 // not_found for run.prepare and run.start (a known one goes through).
 func TestRunWorkItemBeforeTheFirstPoll(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, _ := bb.fb.repo("JeffreyVdb/lab")
 	tr.gate = make(chan struct{}) // the first poll never ends

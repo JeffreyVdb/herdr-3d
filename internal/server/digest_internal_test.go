@@ -83,6 +83,7 @@ func dgView(resets int, recent string) *transcript.Digest {
 // everything), drops the model's lines, starts a new generation (a turn that
 // ended in it is due) and ignores a completion of the old one.
 func TestDigestResetByIdentity(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 3, 12, 0, 0, 0, time.Local)
 	h, _ := dgHubFor(t, &clock, false)
@@ -130,6 +131,7 @@ func TestDigestResetByIdentity(t *testing.T) {
 // R3: the usage tracker gives each digest tracker of a worker its own epoch
 // (another agent session), and a /clear shows in the digest's Resets.
 func TestOfferDigestIdentity(t *testing.T) {
+	t.Parallel()
 	tr := newUsageTracker(UsageConfig{})
 	w := usageWorker{id: "w"}
 	t1 := transcript.NewDigestTracker(transcript.Claude)
@@ -157,6 +159,7 @@ func TestOfferDigestIdentity(t *testing.T) {
 // back), tomorrow wakes the pump, and once the budget is back (a higher cap)
 // both are written.
 func TestDigestCapDefers(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 3, 12, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, true)
@@ -204,6 +207,7 @@ func TestDigestCapDefers(t *testing.T) {
 // R4: tomorrow the budget is back by itself: the pump the day's wake runs
 // writes what waited.
 func TestDigestCapNextDay(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 3, 23, 0, 0, 0, time.Local)
 	h, llm := dgHubFor(t, &clock, true)

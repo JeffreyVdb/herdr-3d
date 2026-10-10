@@ -59,6 +59,7 @@ func interpretCmd(t *testing.T, c *client, id string, args proto.HireInterpretAr
 // herdr calls, no worker, nothing kept by the bridge (the follow-up carries
 // the pending proposal), the text only by its length in the audit.
 func TestHireInterpretNeverHires(t *testing.T) {
+	t.Parallel()
 	llm := &ai.FakeLLM{Func: func(_ context.Context, req ai.Request) (string, error) {
 		switch p := req.Messages[1].Content; {
 		case strings.Contains(p, `"pending_hire"`):
@@ -129,6 +130,7 @@ func TestHireInterpretNeverHires(t *testing.T) {
 // Without a ready LLM, or without the AI integration at all, every
 // interpretation is a not_ready result with the text, and no call is made.
 func TestHireInterpretNotReady(t *testing.T) {
+	t.Parallel()
 	t.Run("role not ready", func(t *testing.T) {
 		roles := &hiRoles{state: ai.StateInvalid, llm: &ai.FakeLLM{}}
 		hb := startHiBridge(t, roles)
@@ -157,6 +159,7 @@ func TestHireInterpretNotReady(t *testing.T) {
 // Bad text is a bad request; a pending proposal that does not hold is the
 // result's error.
 func TestHireInterpretArgs(t *testing.T) {
+	t.Parallel()
 	roles := &hiRoles{state: ai.StateReady, llm: &ai.FakeLLM{}}
 	hb := startHiBridge(t, roles)
 	hb.c.mustError(proto.CmdHireInterpret, proto.HireInterpretArgs{Text: "a\x00b"}, proto.ErrBadRequest)

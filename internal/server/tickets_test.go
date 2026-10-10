@@ -22,6 +22,7 @@ func gets(tr *fakeTracker, id string) int {
 // #118: a run's ticket carries its title and URL from the floor's board, and
 // a poll that renames the card renames it on the workers.
 func TestTicketTitleFromTheBoard(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil,
 		runWorker("o", "ORCH|demo", runTokens("orch", "run-1")),
 		runWorker("c", "CODE|demo|7|r1", runTokens("code", "run-1")))
@@ -57,6 +58,7 @@ func TestTicketTitleFromTheBoard(t *testing.T) {
 // #118: an item no board has (closed long ago) is read once with issue.get's
 // provider call, and the answer kept: never asked again, for any worker.
 func TestTicketTitleReadOnce(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil,
 		runWorker("o", "ORCH|demo", runTokens("orch", "run-1")),
 		runWorker("c", "CODE|demo|7|r1", runTokens("code", "run-1")))
@@ -89,6 +91,7 @@ func TestTicketTitleReadOnce(t *testing.T) {
 // #118: a read that fails is not retried (no loop against a provider): the
 // ticket keeps the provider's link and no title.
 func TestTicketTitleReadFails(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil, runWorker("o", "ORCH|demo|7", runTokens("orch", "run-1", "h3d_ticket", "7")))
 	tr, _ := bb.fb.repo("JeffreyVdb/lab")
 	tr.set(func(f *fakeTracker) { f.missing = map[string]bool{"JeffreyVdb/lab#7": true} })
