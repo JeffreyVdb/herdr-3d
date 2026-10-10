@@ -29,6 +29,10 @@ const (
 	maxClientMsg = 256 << 10
 )
 
+// DefaultCloseGrace is how long Serve, when it stops, waits for the clients
+// to answer its close handshake before it cuts them off.
+const DefaultCloseGrace = time.Second
+
 var errShutdown = errors.New("server shutting down")
 
 // Server serves the protocol over WebSocket.
@@ -40,6 +44,8 @@ type Server struct {
 	// M13: drops' thumbnails are decoded two at a time.
 	dropThumbs chan struct{}
 
+	closeGrace time.Duration // see DefaultCloseGrace
+
 	mu    sync.Mutex
 	conns map[*websocket.Conn]context.CancelFunc // cancelling a conn's reads closes it at once
 	wg    sync.WaitGroup
@@ -47,8 +53,13 @@ type Server struct {
 
 // NewServer returns a server for hub.
 func NewServer(hub *Hub, log *slog.Logger) *Server {
-	return &Server{hub: hub, log: log, conv: logo.NewConverter(0, 0), dropThumbs: make(chan struct{}, 2), conns: map[*websocket.Conn]context.CancelFunc{}}
+	return &Server{hub: hub, log: log, conv: logo.NewConverter(0, 0), dropThumbs: make(chan struct{}, 2), closeGrace: DefaultCloseGrace,
+		conns: map[*websocket.Conn]context.CancelFunc{}}
 }
+
+// SetCloseGrace sets how long Serve waits, when it stops, for the clients to
+// answer its close handshake (default DefaultCloseGrace). Call it before Serve.
+func (s *Server) SetCloseGrace(d time.Duration) { s.closeGrace = d }
 
 // SetLogoRenderTimeout sets how long an SVG upload may take to draw before the
 // render worker is killed (default logo.DefaultRenderTimeout). Call it before
@@ -96,7 +107,7 @@ func (s *Server) Serve(ctx context.Context, ln *net.UnixListener) error {
 	go func() { s.wg.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(s.closeGrace):
 		// Peers that do not answer the close handshake are cut off.
 		s.log.Warn("websocket clients did not close in time")
 		s.eachConn(func(_ *websocket.Conn, cancel context.CancelFunc) { cancel() })

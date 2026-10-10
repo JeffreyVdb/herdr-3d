@@ -30,6 +30,9 @@ func shortDir(t *testing.T) string {
 	return dir
 }
 
+// testCloseGrace is the test bridges' close grace (server.DefaultCloseGrace).
+const testCloseGrace = 20 * time.Millisecond
+
 // bridge is a hub + WebSocket server on a temp socket and database.
 type bridge struct {
 	t       *testing.T
@@ -73,6 +76,9 @@ func startBridgeWith(t *testing.T, db string, opts server.Options, setup func(*s
 	go func() { hub.Run(ctx); close(hubDone) }()
 	go func() {
 		srv := server.NewServer(hub, quietLog())
+		// The test clients read only when a test reads, so they never answer the
+		// close handshake: a stop would wait out the whole default grace.
+		srv.SetCloseGrace(testCloseGrace)
 		if setup != nil {
 			setup(srv)
 		}
