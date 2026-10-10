@@ -14,7 +14,7 @@ const worker = (id: string, session: string, over: Partial<Worker> = {}): Worker
 
 /** Work: top over bottom; den asleep in the lot. A run spans top and bottom. */
 const CITY = [
-  worker('o1', 'top', { role: 'orch', desk_index: 0, issue: { repo: 'o/r', number: 188, title: 'All floors' }, work_item: { provider: 'gh', id: 'o/r#188' } }),
+  worker('o1', 'top', { role: 'orch', desk_index: 0, harness: 'codex', model: 'gpt-6-sol', effort: 'high', issue: { repo: 'o/r', number: 188, title: 'All floors' }, work_item: { provider: 'gh', id: 'o/r#188' } }),
   worker('c1', 'bottom', { role: 'code', orch_id: 'o1', round: 1, desk_index: 0, status: 'working' }),
   worker('r1', 'top', { role: 'review', orch_id: 'o1', round: 1, desk_index: 1 }),
   worker('emp', 'top', { desk_index: 2, status: 'blocked' }),
@@ -75,6 +75,9 @@ describe('the all-floors page (#188)', () => {
     const i = ov.info();
     expect(i).toMatchObject({ open: true, floor: null, view: 'city', filter: 'active', hidden: '2 idle hidden · 1 floor asleep' });
     expect(keys(ov)).toEqual(['floor:top', '  o1', '    c1', '  emp']);
+    // #229: a worker's row here has its harness's mark too.
+    expect(document.querySelector('.ov-row[data-key="o1"] .ov-mark')?.getAttribute('aria-label')).toBe('Codex');
+    expect(document.querySelector('.ov-row[data-key="o1"] .ov-meta')?.textContent).toBe('GPT 6 Sol high');
     expect(document.querySelector('.ov-floor')?.textContent).toBe('All floors');
     expect(document.querySelector('.ov-where')?.textContent).toBe('3 floors in 1 building · 6 workers');
     expect([...document.querySelectorAll('.ov-counts .ov-count')].map((c) => c.getAttribute('title'))).toEqual(['1 working', '1 needs you', '3 idle', '1 asleep']);

@@ -211,11 +211,11 @@ test('the sound control has a music popover with a slider and mute of its own, a
   await expect(pop).toBeHidden();
   const dialog = page.getByRole('dialog', { name: 'Music credits' });
   await expect(dialog).toBeVisible();
-  await expect(dialog.locator('.credits-row:not(.credits-font)')).toHaveCount(total);
+  await expect(dialog.locator('.credits-row:not(.credits-font, .credits-mark)')).toHaveCount(total);
   expect(total).toBeGreaterThanOrEqual(25);
   // The genres, then (#59) the fonts: Recursive, each transcript preset's two (the Ubuntu pair under the Ubuntu Font Licence, the rest OFL), and the box-drawing subset;
-  // M13: then the whiteboard editor's (Excalidraw's) nine families.
-  await expect(dialog.getByRole('heading', { level: 3 })).toHaveCount(6);
+  // M13: then the whiteboard editor's (Excalidraw's) nine families; #229: then the harness marks.
+  await expect(dialog.getByRole('heading', { level: 3 })).toHaveCount(7);
   await expect(dialog.locator('.credits-font .credits-title')).toHaveText([
     'Recursive', 'Departure Mono', 'Archivo', 'JetBrains Mono', 'Atkinson Hyperlegible Next', 'Ubuntu', 'Ubuntu Mono', 'H3D Box (DejaVu Sans Mono)',
     'Excalifont', 'Virgil', 'Xiaolai', 'Nunito', 'Lilita One', 'Assistant', 'Comic Shanns', 'Cascadia Code', 'Liberation Sans 1.05',
@@ -242,6 +242,11 @@ test('the sound control has a music popover with a slider and mute of its own, a
   expect(licences.text).toContain('Copyright (c) 2018 Shannon Miwa');
   expect(licences.text).toContain('GNU GENERAL PUBLIC LICENSE');
   expect(licences.text).toContain('Bitstream Vera is');
+  // #229: the harness marks, each with its licence, source and whose trademark it is.
+  await expect(dialog.locator('.credits-mark .credits-title')).toHaveText(['Claude symbol', 'OpenAI symbol']);
+  await expect(dialog.getByRole('link', { name: 'Claude symbol: license, CC0 1.0' })).toHaveAttribute('href', /creativecommons\.org\/publicdomain\/zero/);
+  await expect(dialog.getByRole('link', { name: 'OpenAI symbol: source' })).toHaveAttribute('href', /commons\.wikimedia\.org/);
+  await expect(dialog.locator('.credits-mark').last()).toContainText('trademarks of OpenAI');
   // The sun's tapes are written in ink (#59: white on it was 1.6:1).
   expect(await dialog.locator('.credits-fonts .tape').evaluate((e) => getComputedStyle(e).color)).not.toBe('rgb(255, 255, 255)');
   await dialog.locator('.credits-fonts-texts').scrollIntoViewIfNeeded();

@@ -344,6 +344,7 @@ export class App {
     this.batterySaver = o.params.get('battery') === '1';
     this.timeOfDay = new TimeOfDay(this.timePrefs, overridesFrom(o.params, (m) => console.warn(m)));
     this.hud = new Hud(o.host);
+    this.hud.hireOptions = () => this.store.hireOptions;
     this.hud.setBattery(this.batterySaver);
     // Sound (the first click, key or pointer lock unlocks it) and the receptionist in every lobby.
     this.audio = createGameAudio();

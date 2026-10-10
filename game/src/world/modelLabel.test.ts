@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claudeSlugName, modelEntries, modelLabel, modelMatches, modelOptionText, spaceSeparators } from './modelLabel';
+import { claudeSlugName, codexSlugName, modelEntries, modelLabel, modelMatches, modelOptionText, spaceSeparators } from './modelLabel';
 
 // #200: readable model names. Fixture ids only; nothing here is a catalog.
 
@@ -28,8 +28,37 @@ describe('modelLabel', () => {
     expect(claudeSlugName('claude-opus-5-5')).toBe('Opus 5.5');
   });
 
+  it('names OpenAI GPT slugs when there is no label, as their tidied labels read (#229)', () => {
+    expect(codexSlugName('gpt-6-sol')).toBe('GPT 6 Sol');
+    expect(codexSlugName('gpt-6.1-sol')).toBe('GPT 6.1 Sol');
+    expect(codexSlugName('gpt-6-luna')).toBe('GPT 6 Luna');
+    expect(codexSlugName('gpt-6.1-sol-mini')).toBe('GPT 6.1 Sol Mini');
+    expect(codexSlugName('gpt-6')).toBe('GPT 6');
+    expect(codexSlugName('gpt-12.10-astra')).toBe('GPT 12.10 Astra');
+    // The same words as the bridge's label for the model, once tidied: a labelled and an unlabelled model look alike.
+    for (const [id, label] of [['gpt-6-sol', 'GPT-6-Sol'], ['gpt-6.1-sol', 'GPT-6.1-Sol'], ['gpt-6.1-sol-mini', 'GPT-6.1-Sol-Mini']] as const) {
+      expect(codexSlugName(id)).toBe(spaceSeparators(label));
+      expect(modelLabel('codex', id)).toBe(modelLabel('codex', id, { [id]: label }));
+    }
+    // Any harness: the shape is the vendor's own (as with Claude slugs).
+    expect(modelLabel('codex', 'gpt-6-sol')).toBe('GPT 6 Sol');
+    expect(modelLabel('claude', 'gpt-6-sol')).toBe('GPT 6 Sol');
+  });
+
+  it('only a strict GPT slug is named; dated, numbered and other shapes are null', () => {
+    for (const id of ['gpt-6-sol-2026-08-01', 'gpt-6-sol-2', 'gpt-6.1.2-sol', 'gpt-6-', 'gpt-6--sol', 'gpt6-sol', 'gpt-4o', 'gpt-6-Sol', 'GPT-6-Sol', 'gpt-', 'gpt-x-sol', 'gpt-123-sol', 'chatgpt-6-sol', 'o9-preview', 'gpt-6_sol', ' gpt-6-sol']) {
+      expect(codexSlugName(id), id).toBeNull();
+    }
+  });
+
+  it("the harness's own label wins over the GPT slug rule", () => {
+    expect(modelLabel('codex', 'gpt-6-sol', { 'gpt-6-sol': 'Sol Preview' })).toBe('Sol Preview');
+    expect(modelLabel('codex', 'gpt-6-sol', { 'gpt-6-sol': 'GPT-6-Sol-Max' })).toBe('GPT 6 Sol Max');
+    expect(modelLabel('codex', 'gpt-6-sol', { 'gpt-6-sol': '   ' })).toBe('GPT 6 Sol');
+  });
+
   it('keeps any other slug exactly as it is', () => {
-    for (const id of ['gpt-6.1-sol', 'gpt-6-sol', 'claude-sonnet-4-20250514', 'claude-3-5-sonnet', 'claude-opus-5-5-1', 'claude-opus', 'sonnet', 'default', 'x_1']) {
+    for (const id of ['gpt-6-sol-2026-08-01', 'gpt-4o', 'claude-sonnet-4-20250514', 'claude-3-5-sonnet', 'claude-opus-5-5-1', 'claude-opus', 'sonnet', 'default', 'x_1']) {
       expect(modelLabel('claude', id)).toBe(id);
       expect(modelLabel('codex', id)).toBe(id);
     }
@@ -79,6 +108,18 @@ describe('modelEntries and modelMatches', () => {
     expect(hits('twin')).toEqual(['a-1', 'a-2']);
     expect(hits('a-2')).toEqual(['a-2']);
     expect(hits('zzz')).toEqual([]);
+  });
+
+  it('an unlabelled GPT slug is named, so its id is shown beside it, and shares a name with its labelled twin', () => {
+    const e = modelEntries('codex', ['gpt-6-sol', 'gpt-6-sol-2026-08-01', 'sol'], { sol: 'GPT-6-Sol' });
+    expect(e.map((x) => [x.id, x.label, x.named, x.collides])).toEqual([
+      ['gpt-6-sol', 'GPT 6 Sol', true, true],
+      ['gpt-6-sol-2026-08-01', 'gpt-6-sol-2026-08-01', false, false],
+      ['sol', 'GPT 6 Sol', true, true],
+    ]);
+    expect(e.map(modelOptionText)).toEqual(['GPT 6 Sol (gpt-6-sol)', 'gpt-6-sol-2026-08-01', 'GPT 6 Sol (sol)']);
+    expect(modelMatches('gpt 6 sol', e[0]!)).toBe(true);
+    expect(modelMatches('gpt-6-sol', e[0]!)).toBe(true);
   });
 
   it("also matches the provider's own wording of a Codex name", () => {

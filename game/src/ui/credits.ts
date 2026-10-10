@@ -2,6 +2,7 @@ import { CHANGES, GENRES, LICENSE_NAME, MANIFEST, type MusicRow } from '../audio
 import './credits.css';
 import { backdropPolicy } from './dismiss';
 import { ALL_FONT_CREDITS as FONT_CREDITS, FONT_LICENSES_FILE, OFL, type FontCredit } from './fontCredits';
+import { MARK_CREDITS, type MarkCredit } from '../render/brandMarks';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -42,6 +43,17 @@ function fontRow(f: FontCredit): HTMLLIElement {
   const meta = el('div', 'credits-meta');
   const lic = f.license ?? OFL;
   meta.append(link(lic.url, lic.name, `${f.name}: license, ${lic === OFL ? 'SIL Open Font License 1.1' : lic.name}`), link(f.source, 'Source', `${f.name}: source`));
+  li.append(who, meta);
+  return li;
+}
+
+/** #229: a harness mark: what it marks, its licence and source, and whose trademark it is. */
+function markRow(m: MarkCredit): HTMLLIElement {
+  const li = el('li', 'credits-row credits-mark');
+  const who = el('div', 'credits-who');
+  who.append(el('span', 'credits-title', m.name), el('span', 'credits-artist', `${m.role}. ${m.trademark}`));
+  const meta = el('div', 'credits-meta');
+  meta.append(link(m.license.url, m.license.name, `${m.name}: license, ${m.license.name}`), link(m.source, 'Source', `${m.name}: source`));
   li.append(who, meta);
   return li;
 }
@@ -120,6 +132,17 @@ export class MusicCredits {
     texts.append(document.createTextNode('Their licences in full ship with the game: '), local, document.createTextNode('.'));
     fonts.append(fontsTitle, fontList, texts);
     body.append(fonts);
+    // #229: the harness marks, after the fonts.
+    const marks = el('section', 'credits-genre credits-marks');
+    const marksTitle = el('h3', 'credits-genre-name');
+    const marksTape = el('span', 'tape', 'Marks');
+    marksTape.style.setProperty('--c', 'var(--chip-accent)');
+    marksTitle.append(marksTape, el('span', 'credits-count', String(MARK_CREDITS.length)));
+    marksTitle.setAttribute('aria-label', `Marks, ${MARK_CREDITS.length}`);
+    const markList = el('ul', 'credits-list');
+    markList.append(...MARK_CREDITS.map(markRow));
+    marks.append(marksTitle, markList);
+    body.append(marks);
     const foot = el('p', 'panel-status credits-foot', `Each music file is ${CHANGES}. The same list ships as MUSIC_CREDITS.txt, the fonts’ licences as ${FONT_LICENSES_FILE}.`);
 
     this.dialog.setAttribute('aria-labelledby', 'credits-title');

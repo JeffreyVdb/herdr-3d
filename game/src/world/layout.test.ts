@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { blocked, moveWithCollision, pickNearest, rayBox } from './collide';
-import { assignDesks, deskCountFallback, displayStatus, modelCue, modelLabel, taskLine } from './derive';
+import { assignDesks, deskCountFallback, displayStatus, modelCue, modelText, taskLine } from './derive';
 import { COUNTER_RECT, COUNTER_TOP, EYE_HEIGHT, HEAD, floorLayout, openingsFor, outlineOf, overviewScreenBox, podGrid, POST_W, ROOM_HEIGHT, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
 
 describe('deskCountFallback', () => {
@@ -78,10 +78,19 @@ describe('display helpers', () => {
     expect(modelCue('claude', 'claude-opus-5-5').hat).toBe('beanie');
     expect(modelCue(undefined, undefined).hat).toBe('none');
   });
-  it('formats the model label like the prompt bar', () => {
-    expect(modelLabel('claude', 'claude-opus-5-5', 'high')).toBe('claude opus-5-5 high');
-    expect(modelLabel('codex', 'gpt-6-sol', undefined)).toBe('codex gpt-6-sol');
-    expect(modelLabel(undefined, undefined, undefined)).toBe('');
+  it('shows the model as its readable name and effort, never the harness (#229)', () => {
+    expect(modelText('claude', 'claude-opus-5-5', 'high')).toBe('Opus 5.5 high');
+    expect(modelText('claude', 'claude-haiku-5-5', 'high')).toBe('Haiku 5.5 high');
+    // A Codex model: the bridge's label, tidied as the pickers do (#200); without one, a GPT slug by rule, the same
+    // words; any other id as it is.
+    const options = { codex: { models: ['gpt-6-sol'], efforts: ['medium'], model_labels: { 'gpt-6-sol': 'GPT-6-Sol' } } };
+    expect(modelText('codex', 'gpt-6-sol', 'medium', options)).toBe('GPT 6 Sol medium');
+    expect(modelText('codex', 'gpt-6-luna', undefined, options)).toBe('GPT 6 Luna');
+    expect(modelText('codex', 'gpt-6-sol', 'high')).toBe('GPT 6 Sol high');
+    expect(modelText('codex', 'gpt-6-sol-2026-08-01', 'high')).toBe('gpt-6-sol-2026-08-01 high');
+    expect(modelText('claude', 'claude-opus-4-20250514', 'high')).toBe('claude-opus-4-20250514 high');
+    expect(modelText('claude', undefined, undefined)).toBe('');
+    expect(modelText(undefined, undefined, undefined)).toBe('');
   });
   it('uses the title, else the label, as the task', () => {
     expect(taskLine({ title: ' Fix CI ', label: 'L' })).toBe('Fix CI');

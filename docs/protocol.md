@@ -175,8 +175,10 @@ Claude Code's initialize reply and of Codex's `model/list`), e.g. `{"claude-opus
 `models`, `extra_efforts`, a hire's `model` and everything stored stay keyed by the exact id. A name is trimmed plain text
 of at most 64 characters without control characters; a blank, longer or invalid one is left out, as is the generic
 "Default (recommended)" of Claude's `default` alias when that alias resolves to a model another alias names (the first
-usable name of the aliases of one id wins). The key is absent from an older bridge, from a fallback catalog and when no
-model has a name; a client then formats the id it knows (`claude-opus-5-5` → "Opus 5.5") and shows any other id as it is.
+usable name of the aliases of one id wins). The key is absent from an older bridge, from the Claude fallback catalog and
+when no model has a name; the Codex fallback catalog names its models as `model/list` does (`gpt-6-sol` → "GPT-6-Sol",
+#229). Without a name a client formats the ids it knows (`claude-opus-5-5` → "Opus 5.5", `gpt-6.1-sol` → "GPT 6.1 Sol")
+and shows any other id as it is.
 
 `limits` (M10) is the latest reading of each provider's plan limits, Claude first (see [Plan limits](#plan-limits));
 `[]` before the first reading. A bridge that does not read limits (`--no-limits`) leaves the key out, as a bridge from

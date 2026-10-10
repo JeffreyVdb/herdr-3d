@@ -26,7 +26,6 @@ import {
   BLINK_MS,
   filterOverview,
   hiddenText,
-  orchWords,
   sinceText,
   sleepyFloors,
   visibleRows,
@@ -40,6 +39,7 @@ import {
   type OverviewWorkerRow,
   type VisibleRow,
 } from '../world/overview';
+import { harnessName, markSvg } from '../render/brandMarks';
 import { h, icon, ICON } from './dom';
 import { OverviewFilterPrefs, type OverviewPrefs } from './overviewPrefs';
 import './overview.css';
@@ -584,18 +584,16 @@ export class OverviewOverlay {
       el.dataset.display = r.display;
       el.style.setProperty('--run', r.runColor !== null ? `#${r.runColor.toString(16).padStart(6, '0')}` : 'transparent');
       el.setAttribute('aria-label', rowLabel(r, now));
+      // #229: the harness is a mark before the name (a harness without one says its name in the meta line).
+      const mark = markSvg(r.harness, 'ov-mark');
       const who = h(
         'div',
         { class: 'ov-who' },
+        mark,
         h('span', { class: 'ov-name' }, r.name),
         r.tag ? h('span', { class: 'ov-tag' }, r.tag) : null,
         r.floor ? h('span', { class: 'ov-floortag' }, r.floor) : null,
-        h(
-          'span',
-          { class: 'ov-meta' },
-          r.model || r.harness || '',
-          ...orchWords(r.orch).map((w) => ` · ${w}`),
-        ),
+        h('span', { class: 'ov-meta' }, [mark ? '' : r.harness, r.model].filter(Boolean).join(' ')),
         r.orch?.overCap ? h('span', { class: 'ov-cap' }, 'Over cap') : null,
         // #226: the live chip is the worker's (it changes every few seconds), a line of its own under the model.
         r.activity ? h('span', { class: 'ov-actline' }, h('span', { class: 'ov-act', title: r.activity }, r.activity)) : null,
@@ -866,7 +864,7 @@ export class OverviewOverlay {
         key: v.row.key,
         depth: v.depth,
         display: v.row.kind === 'worker' ? v.row.display : null,
-        text: this.rows.get(v.row.key)?.el.textContent ?? '',
+        text: textOf(this.rows.get(v.row.key)?.el),
         expanded: v.expandable ? v.expanded : null,
       })),
       focused: this.focusKey,
@@ -877,11 +875,18 @@ export class OverviewOverlay {
   }
 }
 
+/** An element's text as it reads (#229: a mark's `<title>` is its tooltip, not text of the row). */
+function textOf(e: Node | undefined): string {
+  if (!e) return '';
+  if (e.nodeType === Node.TEXT_NODE) return e.textContent ?? '';
+  return e instanceof Element && e.localName === 'title' ? '' : [...e.childNodes].map(textOf).join('');
+}
+
 /** A worker row's spoken label: who, the ticket, the lines with what became of them, the status and how long. */
 function rowLabel(r: OverviewWorkerRow, now: number): string {
   const ai = (l: OverviewLine) =>
     l.llm && l.at ? ` (AI summary, ${ageText(l.at, now)}${l.status ? `; ${lineStatusText(l.status, 'now', true).chip}` : ''})` : statusLabel(l, 'now');
-  return [r.name, r.tag, r.model, r.activity, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${statusLabel(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${ai(r.now)}` : null, sinceText(r.display, r.since, now)]
+  return [r.name, r.tag, harnessName(r.harness), r.model, r.activity, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${statusLabel(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${ai(r.now)}` : null, sinceText(r.display, r.since, now)]
     .filter(Boolean)
     .join(' · ');
 }

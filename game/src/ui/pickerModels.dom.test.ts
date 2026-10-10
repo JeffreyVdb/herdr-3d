@@ -92,7 +92,7 @@ describe('Start run: the orchestrator model chips', () => {
     expect(chipValues()).toEqual(['claude-opus-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-lab']);
     expect(document.querySelector('[data-pick="orch-model"] b')).toBeNull();
     document.querySelector<HTMLInputElement>('[data-key="orch-harness:codex"]')!.click();
-    expect(chipTexts()).toEqual(['GPT 6.1 Sol', 'gpt-6-sol']);
+    expect(chipTexts()).toEqual(['GPT 6.1 Sol', 'GPT 6 Sol']);
   });
 
   it('offers only the models Settings leaves shown, plus the preset’s orchestrator even when hidden', async () => {
@@ -150,7 +150,7 @@ describe('Team presets: names and the models Settings leaves shown', () => {
   it('the list names each role’s model', () => {
     setup(new HireModelPrefs(memory())).open();
     const lines = [...document.querySelectorAll('.pp-roles dd')].map((d) => d.textContent);
-    expect(lines).toEqual(['claude · Fable 5.1 · high', 'claude · Opus 5.5 · high', 'codex · gpt-6-sol · high', 'claude · Opus 5 · high', 'claude · <b>Lab</b> · high']);
+    expect(lines).toEqual(['claude · Fable 5.1 · high', 'claude · Opus 5.5 · high', 'codex · GPT 6 Sol · high', 'claude · Opus 5 · high', 'claude · <b>Lab</b> · high']);
   });
 
   it('the editor names the models (value: the exact id) and offers the shown ones plus the role’s saved model', () => {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -25,6 +26,8 @@ var hireOptions = proto.HireOptions{
 		Models:       []string{"gpt-6-sol", "gpt-6-luna", "gpt-6-astra"},
 		Efforts:      []string{"low", "medium", "high", "xhigh", "max"},
 		ExtraEfforts: map[string][]string{"gpt-6-sol": {"ultra"}, "gpt-6-astra": {"ultra"}},
+		// The display names Codex's model/list reports for these ids (#200, #229).
+		ModelLabels: map[string]string{"gpt-6-sol": "GPT-6-Sol", "gpt-6-luna": "GPT-6-Luna", "gpt-6-astra": "GPT-6-Astra"},
 	},
 }
 
@@ -37,6 +40,7 @@ func HireOptions() proto.HireOptions {
 	}
 	c.Claude.Models, c.Claude.Efforts = slices.Clone(c.Claude.Models), slices.Clone(c.Claude.Efforts)
 	c.Codex.Models, c.Codex.Efforts = slices.Clone(c.Codex.Models), slices.Clone(c.Codex.Efforts)
+	c.Codex.ModelLabels = maps.Clone(hireOptions.Codex.ModelLabels)
 	return c
 }
 

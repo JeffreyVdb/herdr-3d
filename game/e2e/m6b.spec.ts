@@ -110,7 +110,7 @@ test('a live screen is on the desk monitor, big, in its glance view; the docked 
     expect(s.size.height).toBeCloseTo(s.monitor.height, 2);
     expect(s.size.width * s.size.height).toBeGreaterThan(3 * 0.31 * 0.2);
   }
-  // Stickers: Claude Code's spark, Codex's prompt, by the worker's harness; the rim is the hat's colour.
+  // Stickers: the Claude mark, the OpenAI mark for Codex (#229), by the worker's harness; the rim is the hat's colour.
   const floor = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'herdr-3d');
   const logos = new Set<string>();
   for (const w of floor?.workers ?? []) {

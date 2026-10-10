@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { Floor, Snapshot, Worker } from '../net/protocol';
+import type { Floor, HireOptions, Snapshot, Worker } from '../net/protocol';
 import { WorldStore } from './store';
-import { aiLabel, aiTitle, ageText, buildOverview, countItems, orchWords, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
+import { aiLabel, aiTitle, ageText, buildOverview, countItems, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
 
 const NOW = 1_790_000_000_000;
 
@@ -23,12 +23,12 @@ const orch = (id: string, session: string, desk: number, over: Partial<Worker> =
 const free = (id: string, session: string, desk: number, role: string, orchId: string | undefined, over: Partial<Worker> = {}) =>
   worker(id, session, { role, run: 'run', desk_index: desk, ...(orchId ? { orch_id: orchId } : {}), round: 1, issue: { repo: 'o/r', number: 118 }, work_item: { provider: 'gh', id: 'o/r#118' }, ...over });
 
-function store(workers: Worker[], floors: Floor[] = [floor('top'), floor('bottom', { index: 1 }), floor('lot', { building: null, index: null })]): WorldStore {
+function store(workers: Worker[], floors: Floor[] = [floor('top'), floor('bottom', { index: 1 }), floor('lot', { building: null, index: null })], hire?: HireOptions): WorldStore {
   const s = new WorldStore(NOW);
   const snap: Snapshot = {
     t: 'world.snapshot',
     seq: 1,
-    world: { buildings: [{ id: 'b1', name: 'Work', sort: 0, floors: ['top', 'bottom'] }], unassigned: ['lot'], floors, workers },
+    world: { buildings: [{ id: 'b1', name: 'Work', sort: 0, floors: ['top', 'bottom'] }], unassigned: ['lot'], floors, workers, ...(hire ? { hire_options: hire } : {}) },
   };
   s.applySnapshot(snap, NOW);
   return s;
@@ -116,17 +116,37 @@ describe('buildOverview: a row', () => {
   it('takes its light from the store’s display (the top bar’s), with name, harness, model and since', () => {
     const s = store([worker('a', 'top', { status: 'working', harness: 'claude', model: 'claude-opus-5-5', effort: 'high', status_since: NOW - 4 * 60_000 })]);
     const r = row(s, 'a');
-    expect(r).toMatchObject({ display: s.workerView('a')?.display, name: 'a', model: 'claude opus-5-5 high', role: null, tag: null });
+    expect(r).toMatchObject({ display: s.workerView('a')?.display, name: 'a', harness: 'claude', model: 'Opus 5.5 high', role: null, tag: null });
     expect(sinceText(r.display, r.since, NOW)).toBe('working 4m');
   });
 
-  it('an orchestrator: role, phase, round, pass, over-cap and its ticket with the issue’s title', () => {
-    const s = store([orch('o', 'top', 0, { phase: 'waiting_user', pass: 3, round: 2 })]);
+  it('the model is its readable name and effort, no harness word (#229): a Codex model by the bridge’s label, else a GPT slug by rule, else its id', () => {
+    const hire: HireOptions = {
+      claude: { models: ['claude-haiku-5-5'], efforts: ['high'] },
+      codex: { models: ['gpt-6-sol', 'gpt-6-luna', 'o9-preview'], efforts: ['medium'], model_labels: { 'gpt-6-sol': 'GPT-6-Sol' } },
+    };
+    const s = store(
+      [
+        worker('h', 'top', { desk_index: 0, harness: 'claude', model: 'claude-haiku-5-5', effort: 'high' }),
+        worker('c', 'top', { desk_index: 1, harness: 'codex', model: 'gpt-6-sol', effort: 'medium' }),
+        worker('l', 'top', { desk_index: 2, harness: 'codex', model: 'gpt-6-luna', effort: 'medium' }),
+        worker('o', 'top', { desk_index: 3, harness: 'codex', model: 'o9-preview', effort: 'medium' }),
+      ],
+      undefined,
+      hire,
+    );
+    expect(row(s, 'h').model).toBe('Haiku 5.5 high');
+    expect(row(s, 'c')).toMatchObject({ harness: 'codex', model: 'GPT 6 Sol medium' });
+    expect(row(s, 'l').model).toBe('GPT 6 Luna medium');
+    expect(row(s, 'o').model).toBe('o9-preview medium');
+  });
+
+  it('an orchestrator: role, round, over-cap and its ticket with the issue’s title; no run words (#229)', () => {
+    const s = store([orch('o', 'top', 0, { phase: 'waiting_user', pass: 3, round: 2, harness: 'claude', model: 'claude-opus-5-5', effort: 'high' })]);
     const r = row(s, 'o');
-    expect(r).toMatchObject({ role: 'orch', tag: 'ORCH', orch: { phase: 'waiting for you', round: 2, pass: 'pass 3 of 3', overCap: true } });
-    expect(orchWords(r.orch)).toEqual(['waiting for you', 'round 2', 'pass 3 of 3']);
-    expect(orchWords(row(store([orch('o', 'top', 0)]), 'o').orch)).toEqual([]);
-    expect(orchWords(null)).toEqual([]);
+    expect(r).toMatchObject({ role: 'orch', tag: 'ORCH', model: 'Opus 5.5 high', orch: { round: 2, overCap: true } });
+    expect(r.orch).toEqual({ round: 2, overCap: true });
+    expect(row(store([orch('o', 'top', 0)]), 'o').orch).toEqual({ round: null, overCap: false });
     expect(r.ticket).toEqual({ key: '#118', title: 'Floor overview', item: { session: 'top', id: 'o/r#118' }, url: 'https://example.test/118' });
     expect(r.display).toBe('needs_you');
   });

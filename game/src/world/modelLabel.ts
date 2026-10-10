@@ -1,7 +1,8 @@
 /**
  * Readable model names (#200), one place for every model picker (Hire, Start run, team presets, floor defaults) and
  * Settings → Harness models. The bridge sends the harness's own
- * display names (`model_labels`, keyed by exact launch id); everything else here is presentation. The id stays the
+ * display names (`model_labels`, keyed by exact launch id); without one, a recognised Claude or OpenAI GPT slug is
+ * named by rule (#229), and any other id is shown as it is. Everything else here is presentation. The id stays the
  * value: selection, the submitted launch id, saved defaults, hidden-model prefs and effort lookup never see a label.
  * All functions are pure and return plain text (callers set it with `textContent`, never `innerHTML`).
  */
@@ -49,14 +50,28 @@ export function claudeSlugName(id: string): string | null {
   return `${family[0]!.toUpperCase()}${family.slice(1)} ${m[2]}${m[3] !== undefined ? `.${m[3]}` : ''}`;
 }
 
+const GPT_SLUG = /^gpt-(\d{1,2})(?:\.(\d{1,2}))?((?:-[a-z]+)*)$/;
+
 /**
- * The readable name of a model: the harness's own label (Codex's tidied), else a recognised Claude slug, else the
- * exact id, which is never invented into something else.
+ * `gpt-6-sol` → `GPT 6 Sol`, `gpt-6.1-sol-mini` → `GPT 6.1 Sol Mini`: the form a tidied Codex label of the same model
+ * takes (`GPT-6.1-Sol-Mini` through `spaceSeparators`), so a labelled and an unlabelled model look alike (#229). Null
+ * for any other slug: a dated or numbered variant (`gpt-6-sol-2026-08-01`), a second version dot, other vendors.
+ */
+export function codexSlugName(id: string): string | null {
+  const m = GPT_SLUG.exec(id);
+  if (!m) return null;
+  const words = m[3]!.split('-').filter(Boolean).map((w) => `${w[0]!.toUpperCase()}${w.slice(1)}`);
+  return ['GPT', `${m[1]}${m[2] !== undefined ? `.${m[2]}` : ''}`, ...words].join(' ');
+}
+
+/**
+ * The readable name of a model: the harness's own label (Codex's tidied), else a recognised Claude or GPT slug (for
+ * any harness: the shapes are the vendors' own), else the exact id, which is never invented into something else.
  */
 export function modelLabel(harness: string, id: string, labels?: ModelLabels): string {
   const provided = providerLabel(id, labels);
   if (provided) return harness === 'codex' ? spaceSeparators(provided) : provided;
-  return claudeSlugName(id) ?? id;
+  return claudeSlugName(id) ?? codexSlugName(id) ?? id;
 }
 
 /** One model as a picker shows it. */
