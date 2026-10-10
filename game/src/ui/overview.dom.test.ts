@@ -88,7 +88,7 @@ describe('the overview page (#118)', () => {
     expect(bg.inert).toBe(false);
   });
 
-  it('marks the lines the LLM wrote AI, and only those (#118 phase 2)', () => {
+  it('marks the lines the LLM wrote with the sparkle beside their label, and only those (#118 phase 2, #232)', () => {
     const { ov } = setup([
       worker('a', { desk_index: 0, digest: { task: 'Fix the login test', task_source: 'llm', now: 'Running the e2e suite', now_source: 'llm', now_at: NOW } }),
       worker('b', { desk_index: 1, digest: { task: 'Port the importer', task_source: 'prompt', now: 'Back after lunch', now_source: 'recap', now_at: NOW } }),
@@ -96,37 +96,66 @@ describe('the overview page (#118)', () => {
     ]);
     ov.open('top');
     const rows = [...document.querySelectorAll<HTMLElement>('.ov-row')];
-    expect(rows.map((r) => r.querySelector('.ov-task')?.textContent?.includes('AI') ?? false)).toEqual([true, false, false]);
-    expect(rows.map((r) => r.querySelectorAll('.ov-llm').length)).toEqual([2, 0, 1]);
-    // #226: the task line keeps its mark; a model's now line has its mark (and age) in the since column.
-    expect(rows.map((r) => !!r.querySelector('.ov-since .ov-llm'))).toEqual([true, false, true]);
-    expect(rows.some((r) => r.querySelector('.ov-now .ov-llm'))).toBe(false);
-    expect(rows[0]?.querySelector('.ov-llm')?.getAttribute('title')).toBe('Summarised by the AI model');
-    expect(rows[0]?.textContent).toContain('Running the e2e suite');
+    expect(rows.map((r) => r.querySelectorAll('.ov-ai').length)).toEqual([2, 0, 1]);
+    // Both kinds of line: the sparkle is the label's, before the text, never in the since column or after the text.
+    for (const m of document.querySelectorAll<HTMLElement>('.ov-ai')) {
+      expect(m.parentElement?.localName).toBe('b');
+      expect(m.parentElement?.parentElement?.firstElementChild).toBe(m.parentElement);
+      expect(m.getAttribute('role')).toBe('img');
+      expect(m.getAttribute('aria-label')).toBe(m.title);
+      const svg = m.querySelector('svg');
+      expect(svg?.getAttribute('aria-hidden')).toBe('true');
+      expect(svg?.querySelector('path')?.getAttribute('fill')).toBe('currentColor');
+    }
+    expect(rows[0]?.querySelector('.ov-task > b')?.textContent).toBe('Task');
+    expect(rows[0]?.querySelector('.ov-task .ov-ai')?.getAttribute('title')).toBe('AI-generated summary of what this worker was asked to do.');
+    expect(rows[0]?.querySelector('.ov-now .ov-ai')?.getAttribute('title')).toMatch(/^AI-generated summary of this worker’s recent activity \(its last 5 steps\); generated just now\./);
+    expect(document.querySelector('.ov-since .ov-ai, .ov-llm')).toBeNull();
+    // A task line has no time: the sparkle alone; a model's now line says how old it is at the line's end.
+    expect(rows[0]?.querySelector('.ov-task .ov-ai-meta')).toBeNull();
+    expect(rows[0]?.querySelector('.ov-now > .ov-ai-meta > .ov-age')?.textContent).toBe('just now');
+    expect(rows[0]?.getAttribute('aria-label')).toContain('Task: Fix the login test (AI summary) · Now: Running the e2e suite (AI summary, just now)');
+    expect(rows[1]?.getAttribute('aria-label')).not.toContain('AI');
   });
 
-  it('says how long ago the model wrote a now line, and the age moves while the line stays (#198)', () => {
+  it('a model’s now line with no time keeps its sparkle and invents no age (#232)', () => {
+    const { ov } = setup([worker('a', { desk_index: 0, digest: { now: 'Writing the changelog', now_source: 'llm' } })]);
+    ov.open('top');
+    const line = document.querySelector<HTMLElement>('.ov-now');
+    expect(line?.querySelector('.ov-ai')?.getAttribute('aria-label')).toBe('AI-generated summary of this worker’s recent activity (its last 5 steps).');
+    expect(line?.querySelector('.ov-ai-meta')).toBeNull();
+    expect(line?.textContent).toBe('NowWriting the changelog');
+    expect(document.querySelector('.ov-row')?.getAttribute('aria-label')).toContain('Now: Writing the changelog (AI summary)');
+  });
+
+  it('says how long ago the model wrote a now line, and the 20 s refresh moves the ages and the time in place (#198, #232)', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     try {
       let now = NOW;
-      const { ov } = setup([worker('a', { desk_index: 0, status: 'working', digest: { now: 'Running the e2e suite', now_source: 'llm', now_at: NOW - 30_000 } })], { now: () => now });
+      const act = { kind: 'investigating' as const, detail: 'grep -n activityOf', since: NOW - 5_000, source: 'rule' as const };
+      const { ov } = setup([worker('a', { desk_index: 0, status: 'working', activity: act, digest: { now: 'Running the e2e suite', now_source: 'llm', now_at: NOW - 30_000 } })], { now: () => now });
       ov.open('top');
       const row = document.querySelector<HTMLElement>('.ov-row');
-      const mark = () => row?.querySelector<HTMLElement>('.ov-since .ov-llm');
-      expect(mark()?.textContent).toBe('AI · just now');
+      const parts = { line: row?.querySelector('.ov-now'), doing: row?.querySelector('.ov-doing'), verb: row?.querySelector('.ov-verb'), age: row?.querySelector('.ov-age'), time: row?.querySelector('.ov-time') };
+      const mark = () => row?.querySelector<HTMLElement>('.ov-now .ov-ai');
+      expect(parts.age?.textContent).toBe('just now');
       expect(mark()?.getAttribute('title')).toBe(
-        'Summarised by the AI model from this worker’s recent activity (its last 5 steps) just now. The time is when the summary was written, not when the activity happened.',
+        'AI-generated summary of this worker’s recent activity (its last 5 steps); generated just now. The time is when the summary was written, not when the activity happened.',
       );
+      expect(parts.doing?.textContent).toBe('Investigating · grep -n activityOf · 1m');
       expect(row?.getAttribute('aria-label')).toContain('Now: Running the e2e suite (AI summary, just now)');
-      // Three minutes on, nothing else changed: the page's own timer moves the age.
+      // Three minutes on, nothing else changed: the page's own timer moves the age and the time, and only them.
       now = NOW + 3 * 60_000;
       vi.advanceTimersByTime(20_000);
       expect(document.querySelector('.ov-row')).toBe(row);
+      for (const [k, e] of Object.entries(parts)) expect(row?.querySelector(`.ov-${k === 'line' ? 'now' : k}`), k).toBe(e);
       expect(row?.querySelector('.ov-now-text')?.textContent).toBe('Running the e2e suite');
-      expect(mark()?.textContent).toBe('AI · 3m ago');
-      expect(row?.querySelector('.ov-since-text')?.textContent).toBe('working 4m');
-      expect(mark()?.getAttribute('aria-label')).toContain(' 3m ago. The time is when the summary was written');
+      expect(parts.age?.textContent).toBe('3m ago');
+      expect(parts.time?.textContent).toBe('4m');
+      expect(parts.doing?.textContent).toBe('Investigating · grep -n activityOf · 4m');
+      expect(mark()?.getAttribute('aria-label')).toContain('; generated 3m ago. The time is when the summary was written');
       expect(row?.getAttribute('aria-label')).toContain('(AI summary, 3m ago)');
+      expect(row?.getAttribute('aria-label')).toMatch(/ · working 4m$/);
       ov.closeNow();
     } finally {
       vi.useRealTimers();
@@ -153,11 +182,16 @@ describe('the overview page (#118)', () => {
     expect(now(0)?.getAttribute('aria-label')).toContain('token budget');
     expect(now(0)?.getAttribute('title')).toContain('with newer activity or when the turn ends');
     expect(rows[0]?.querySelectorAll('.ov-retry')).toHaveLength(2);
-    // Pending: a quiet chip, no retry; the model's own line carries the badge and no status.
+    // Pending: quiet words in the line's metadata (#232: no outline), no retry, and no sparkle (the line shown is the
+    // fallback); the model's own line carries the sparkle and no status.
     expect(task(1)?.textContent).toBe('AI pending');
+    expect(task(1)?.parentElement?.className).toBe('ov-ai-meta');
+    expect(rows[1]?.querySelector('.ov-ai')).toBeNull();
     expect(rows[1]?.querySelector('.ov-retry')).toBeNull();
+    const css = readFileSync(resolve(import.meta.dirname, 'overview.css'), 'utf8');
+    expect(css).toMatch(/\.ov-ai-state--pending \{[^}]*border: 0/);
     expect(rows[2]?.querySelector('.ov-ai-state')).toBeNull();
-    expect(rows[2]?.querySelector('.ov-llm')).not.toBeNull();
+    expect(rows[2]?.querySelector('.ov-task .ov-ai')).not.toBeNull();
     // The row's spoken label has the words too.
     expect(rows[0]?.getAttribute('aria-label')).toContain('Task: Investigate. Missing transcript diffs. (AI retry');
     expect(rows[0]?.getAttribute('aria-label')).toContain('(AI failed)');
@@ -188,18 +222,20 @@ describe('the overview page (#118)', () => {
     worker('k3', { desk_index: 2, status: 'working', digest: { now: 'Running the lift tests', now_source: 'llm', now_at: NOW - 60_000, now_status: { state: 'pending' } } }),
   ];
 
-  it('a model’s line whose refresh failed keeps its mark and age, says so quietly after them, and offers Retry (#198)', () => {
+  it('a model’s line whose refresh failed keeps its sparkle and age, says so quietly after them, and offers Retry (#198)', () => {
     const { ov } = setup(KEPT);
     ov.open('top');
     const rows = [...document.querySelectorAll<HTMLElement>('.ov-row')];
     const line = (i: number) => rows[i]?.querySelector<HTMLElement>('.ov-now');
     const chip = (i: number) => line(i)?.querySelector<HTMLElement>('.ov-ai-state');
     expect(line(0)?.querySelector('.ov-now-text')?.textContent).toBe('Reading the lift code');
-    expect(rows[0]?.querySelector('.ov-since .ov-llm')?.textContent).toBe('AI · 4m ago');
+    expect(line(0)?.querySelector('.ov-ai')).not.toBeNull();
+    expect(line(0)?.querySelector('.ov-age')?.textContent).toBe('4m ago');
     expect(chip(0)?.textContent).toBe('refresh failed');
     expect(chip(0)?.classList.contains('ov-ai-state--kept')).toBe(true);
-    // In reading order: the line, the failed refresh, Retry (#226: the mark is the since column's).
-    expect([...(line(0)?.children ?? [])].map((e) => e.className)).toEqual(['', 'ov-now-text', 'ov-ai-state ov-ai-state--failed ov-ai-state--kept', 'ov-retry']);
+    // In reading order: the label and its sparkle, the line, then its metadata: the age, the failed refresh, Retry (#232).
+    expect([...(line(0)?.children ?? [])].map((e) => e.className)).toEqual(['', 'ov-text ov-now-text', 'ov-ai-meta']);
+    expect([...(line(0)?.querySelector('.ov-ai-meta')?.children ?? [])].map((e) => e.className)).toEqual(['ov-age', 'ov-ai-state ov-ai-state--failed ov-ai-state--kept', 'ov-retry']);
     expect(line(0)?.classList.contains('ov-line--status')).toBe(true);
     expect(chip(0)?.getAttribute('aria-label')).toBe(chip(0)?.getAttribute('title'));
     expect(chip(0)?.getAttribute('aria-label')).toContain('Refreshing this AI summary from newer activity failed: the model did not answer in time. The summary shown is the previous one');
@@ -209,53 +245,73 @@ describe('the overview page (#118)', () => {
     expect(chip(1)?.getAttribute('title')).toContain('It tries again at');
     expect(rows[1]?.getAttribute('aria-label')).toMatch(/\(AI summary, 1m ago; refresh failed · retry \d\d:\d\d.*\)/);
     expect(line(1)?.querySelector('.ov-retry')).not.toBeNull();
-    // A refresh only on its way is no news: the mark alone.
+    // A refresh only on its way is no news: the sparkle and the age alone.
+    expect(line(2)?.querySelector('.ov-ai-meta')?.textContent).toBe('1m ago');
     expect(chip(2)).toBeNull();
     expect(line(2)?.querySelector('.ov-retry')).toBeNull();
     expect(line(2)?.classList.contains('ov-line--status')).toBe(false);
   });
 
-  it('the now line is its label and text: the live chip is the worker’s, the AI mark the since column’s, the hint the time’s place (#226)', () => {
+  it('the live activity is the since column’s plain words while working, the name and model alone in the Worker column (#232)', () => {
     const act = { kind: 'waiting' as const, detail: 'ssh -o StrictHostKeyChecking=no op@54.83', since: NOW - 5_000, source: 'rule' as const };
+    const bg = { kind: 'waiting' as const, since: NOW, source: 'derived' as const, tasks: 1 };
     const { ov } = setup([
       worker('a', { desk_index: 0, status: 'working', activity: act, digest: { task: 'Recreate the IAM role', task_source: 'prompt', now: 'Verifying host credentials', now_source: 'llm', now_at: NOW } }),
       worker('b', { desk_index: 1, status: 'working', activity: { kind: 'testing', detail: 'pytest', since: NOW, source: 'rule' } }),
       worker('c', { desk_index: 2 }),
+      worker('d', { desk_index: 3, status: 'working', activity: { kind: 'thinking', detail: '', since: NOW, source: 'rule' } }),
+      worker('e', { desk_index: 4, status: 'working' }),
+      worker('f', { desk_index: 5, status: 'blocked', activity: { kind: 'testing', detail: 'pytest', since: NOW, source: 'rule' } }),
+      worker('g', { desk_index: 6, status: 'idle', activity: bg }),
+      worker('h', { desk_index: 7, status: 'done' }),
     ]);
     ov.open('top');
-    const [a, b, c] = [...document.querySelectorAll<HTMLElement>('.ov-row')];
-    const now = a?.querySelector<HTMLElement>('.ov-now');
-    expect([...(now?.children ?? [])].map((e) => e.className)).toEqual(['', 'ov-now-text']);
-    // The chip: a line of its own in the Worker column, after the model; whole in its title and the row's label.
-    const chip = a?.querySelector<HTMLElement>('.ov-who > .ov-actline > .ov-act');
-    expect(chip?.textContent).toBe('Waiting · ssh -o StrictHostKeyChecking=no…'); // the game's own clip of a detail (32)
-    expect(chip?.title).toBe(chip?.textContent);
-    expect(chip?.parentElement?.previousElementSibling?.className).toBe('ov-meta');
-    expect(a?.getAttribute('aria-label')).toContain(' · Waiting · ssh -o StrictHostKeyChecking=no… · ');
-    // The since column: the time, the AI mark and age under it, the hint last (it takes the time's place in the CSS).
-    const since = a?.querySelector<HTMLElement>('.ov-row > .ov-since');
-    expect([...(since?.children ?? [])].map((e) => e.className)).toEqual(['ov-since-text', 'ov-llm', 'ov-hint']);
-    expect(since?.querySelector('.ov-since-text')?.textContent).toBe('working 1m');
-    const mark = since?.querySelector<HTMLElement>('.ov-llm');
-    expect(mark?.textContent).toBe('AI · just now');
-    expect(mark?.getAttribute('role')).toBe('img');
-    expect(mark?.getAttribute('aria-label')).toBe(mark?.title);
-    expect(since?.querySelector('.ov-hint')?.textContent).toBe('Open transcript↵'); // the gap spaces the key
-    expect(a?.querySelector('.ov-row > .ov-hint')).toBeNull();
-    // A row with only its live chip: no blank work column, and not "No turn yet" (it is in one).
-    expect(b?.querySelector('.ov-who .ov-act')?.textContent).toBe('Testing · pytest');
-    expect(b?.querySelector('.ov-what')?.textContent).toBe('No summary yet');
-    expect(b?.querySelector('.ov-now')).toBeNull();
-    expect(c?.querySelector('.ov-what')?.textContent).toBe('No turn yet');
-    expect(c?.querySelector('.ov-act')).toBeNull();
+    const row = (k: string) => document.querySelector<HTMLElement>(`.ov-row[data-key="${k}"]`) as HTMLElement;
+    const doing = (k: string) => row(k).querySelector<HTMLElement>('.ov-row > .ov-since > .ov-doing');
+    // No third line under the model: the Worker column is the mark, the name and the model.
+    expect(document.querySelector('.ov-actline, .ov-act')).toBeNull();
+    expect([...row('a').querySelector('.ov-who')!.children].map((e) => e.className)).toEqual(['ov-name', 'ov-meta']);
+    // Working with an activity: the verb, the detail (the game's own clip, 32), how long it has worked; whole in the title.
+    const clipped = 'Waiting · ssh -o StrictHostKeyChecking=no…';
+    expect(doing('a')?.textContent).toBe(`${clipped} · 1m`);
+    expect([...doing('a')!.children].map((e) => e.className)).toEqual(['ov-state ov-state--act', 'ov-sep', 'ov-time']);
+    expect([...doing('a')!.querySelector('.ov-state')!.children].map((e) => e.textContent)).toEqual(['Waiting', ' · ssh -o StrictHostKeyChecking=no…']);
+    expect(doing('a')?.querySelector<HTMLElement>('.ov-state')?.title).toBe(clipped);
+    expect(row('a').getAttribute('aria-label')).toContain(` · ${clipped} · `);
+    expect(doing('b')?.textContent).toBe('Testing · pytest · 1m');
+    expect(doing('d')?.textContent).toBe('Thinking · 1m');
+    expect(doing('d')?.querySelector('.ov-detail')).toBeNull();
+    // Working with none: the status, as before. Every other state: its own word, never an activity it may still carry.
+    expect(doing('e')?.textContent).toBe('working 1m');
+    expect(doing('f')?.textContent).toBe('needs you 1m');
+    expect(doing('g')?.textContent).toBe('waiting 1m');
+    expect(doing('h')?.textContent).toBe('done 1m');
+    expect(doing('c')?.textContent).toBe('idle 1m');
+    for (const k of ['e', 'f', 'g', 'h', 'c']) expect(row(k).querySelector('.ov-verb, .ov-state--act'), k).toBeNull();
+    // The hint follows the time in the column, never in another one.
+    expect(row('a').querySelector('.ov-since > .ov-hint')?.textContent).toBe('Open transcript↵'); // the gap spaces the key
+    expect(row('a').querySelector('.ov-row > .ov-hint')).toBeNull();
+    // A row with only its live activity: no blank work column, and not "No turn yet" (it is in one).
+    expect(row('b').querySelector('.ov-what')?.textContent).toBe('No summary yet');
+    expect(row('b').querySelector('.ov-now')).toBeNull();
+    expect(row('c').querySelector('.ov-what')?.textContent).toBe('No turn yet');
     // The header names what each column holds.
-    expect([...document.querySelectorAll('.ov-cols > span')].map((e) => e.textContent)).toEqual(['', 'Worker · doing', 'Working on', 'Since']);
-    // The CSS: the hint is in the cell's flow (never absolute) and hides the time while it shows, not on a phone.
+    expect([...document.querySelectorAll('.ov-cols > span')].map((e) => e.textContent)).toEqual(['', 'Worker', 'Working on', 'Doing · for']);
+    // The CSS: only the detail is cut (it goes to a hidden second line when too little of it would show), the verb, the
+    // separator and the time never, none of them in a box that cuts with an ellipsis; the hint goes under the time,
+    // absolute (no row grows for it), and no longer hides anything; the sparkle and the words are the user's colour in
+    // forced colours.
     const css = readFileSync(resolve(import.meta.dirname, 'overview.css'), 'utf8');
-    const hint = css.match(/\n\.ov-hint \{[^}]*\}/g)?.join('') ?? '';
-    expect(hint).not.toMatch(/position:\s*absolute/);
-    expect(hint).toMatch(/order:\s*-1/);
-    expect(css).toMatch(/@media not \(max-width: 760px\)\s*\{\s*\.ov-row:is\(:hover, :focus-visible\)[^{]*\.ov-since:has\(\.ov-hint\) > \.ov-since-text\s*\{\s*display:\s*none/);
+    const rule = (sel: string) => [...css.matchAll(new RegExp(`\\n${sel.replace(/[.+]/g, '\\$&')} \\{([^}]*)\\}`, 'g'))].map((m) => m[1]).join('');
+    expect(rule('.ov-detail')).toMatch(/flex: 1 1 10ch;[^}]*min-width: 0;[^}]*text-overflow: ellipsis/);
+    expect(rule('.ov-state--act')).toMatch(/flex-wrap: wrap;[^}]*overflow: hidden/);
+    expect(rule('.ov-state--act')).not.toMatch(/text-overflow/);
+    for (const sel of ['.ov-verb', '.ov-state']) expect(rule(sel), sel).toMatch(/flex: none/);
+    expect(rule('.ov-time')).toMatch(/flex: none/);
+    expect(rule('.ov-sep')).toMatch(/flex: none/);
+    expect(rule('.ov-doing + .ov-hint')).toMatch(/position: absolute/);
+    expect(css).not.toMatch(/ov-since-text|\.ov-actline|\.ov-act\b|\.ov-llm/);
+    expect(css).toMatch(/@media \(forced-colors: active\) \{[^@]*:root \.ov-row\[data-display\] \.ov-ai,\s*:root \.ov-row\[data-display\] \.ov-since \{\s*color: CanvasText;/);
   });
 
   it('Retry and R on the row of a model’s line whose refresh failed ask the host to retry that worker (#198)', () => {

@@ -1,15 +1,18 @@
 import { expect, test, type Page } from '@playwright/test';
 import { frames, openGame, shot, watchErrors } from './game';
 
-// #226: a worker row on the floor overview gives its now line a line of its own. Turnip (demo-m118's one-off worker)
-// is given a now line of the bridge's full budget (NowMax, 100 runes) from the model and an open shell command of the
-// waiting detail's full budget (MaxWaitDetail, 40 runes) on its way to the page. Focused and hovered, at the e2e
-// viewport and a 1440 px window: the now text is not cut, the live chip sits under the worker, the AI mark under the
-// since time, and the hint takes the since time's place without overlapping any other text of the row.
+// #226, #232: a worker row on the floor overview gives its now line a line of its own. Turnip (demo-m118's one-off
+// worker) is given a now line of the bridge's full budget (NowMax, 100 runes) from the model and an open shell command
+// of the waiting detail's full budget (MaxWaitDetail, 40 runes) on its way to the page. Focused and hovered, at the e2e
+// viewport and a 1440 px window: the now text is never cut (at most two lines at either: the since column's room for the
+// activity costs it the one-line room it had), the live activity is the since column's plain words (only the detail
+// cut, the verb and the time whole), the sparkle sits by the line's label, a row whose now line takes one line is no
+// taller than its name and model need, and the hint goes under the time without moving or overlapping any other text of
+// the row.
 
 const NOW = 'Verifying host credentials after recreating an IAM role, then rerunning the staging smoke test suite';
 const DETAIL = 'ssh -o StrictHostKeyChecking=no op@54.83';
-/** The chip as the game shows it: it clips a detail to 32 code points itself (world/activity.ts `DETAIL_MAX`). */
+/** The activity as the game shows it: it clips a detail to 32 code points itself (world/activity.ts `DETAIL_MAX`). */
 const CHIP = `Waiting · ${[...DETAIL].slice(0, 31).join('').trimEnd()}…`;
 
 /** Turnip, working on a model's now line with a shell command open, whatever the fixture's sim sends. */
@@ -61,7 +64,7 @@ for (const vp of [
   { width: 1280, height: 720 },
   { width: 1440, height: 900 },
 ]) {
-  test(`a 100-rune now line reads in full beside its chips, focused and hovered, at ${vp.width} px (#226)`, async ({ page }) => {
+  test(`a 100-rune now line reads in full beside the activity and the sparkle, focused and hovered, at ${vp.width} px (#226, #232)`, async ({ page }) => {
     test.setTimeout(150_000);
     const clean = watchErrors(page);
     await page.setViewportSize(vp);
@@ -78,17 +81,22 @@ for (const vp of [
     expect([...NOW]).toHaveLength(100);
     expect([...DETAIL]).toHaveLength(40);
 
-    // The now line is the label and the text; the chip is the worker's, the AI mark the since column's.
-    await expect(row.locator('.ov-who .ov-act')).toHaveText(CHIP);
-    await expect(row.locator('.ov-who .ov-act')).toHaveAttribute('title', CHIP);
-    await expect(row.locator('.ov-since .ov-llm')).toHaveText(/^AI · (just now|\d+m ago)$/);
-    expect(await row.locator('.ov-now .ov-act, .ov-now .ov-llm').count()).toBe(0);
+    // The Worker column is the name and the model; the activity is the since column's words, with how long it has worked.
+    expect(await row.locator('.ov-act, .ov-actline, .ov-llm').count()).toBe(0);
+    const esc = (t: string) => t.replace(/[.*+?^$()|[\]\\{}]/g, '\\$&');
+    await expect(row.locator('.ov-since .ov-doing')).toHaveText(new RegExp(`^${esc(CHIP)} · (<1m|\\d+m|\\d+h \\d\\dm|\\d+d)$`));
+    await expect(row.locator('.ov-since .ov-state')).toHaveAttribute('title', CHIP);
     expect(await row.getAttribute('aria-label')).toContain(` · ${CHIP} · `);
+    // The sparkle hugs the line's label; the age is the line's quiet words after the text.
+    await expect(row.locator('.ov-now > b > .ov-ai')).toBeVisible();
+    await expect(row.locator('.ov-now .ov-age')).toHaveText(/^(just now|\d+m ago)$/);
+    await row.locator('.ov-now').scrollIntoViewIfNeeded();
 
-    // At rest: the since time shows, the hint does not.
+    // At rest: the time shows, the hint does not.
     await page.mouse.move(2, 2);
     await expect(row.locator('.ov-hint')).toBeHidden();
-    await expect(row.locator('.ov-since-text')).toBeVisible();
+    await expect(row.locator('.ov-time')).toBeVisible();
+    const rest = await row.boundingBox();
 
     // Focused and hovered.
     await row.focus();
@@ -99,39 +107,78 @@ for (const vp of [
     if (!name) throw new Error('no name');
     await page.mouse.move(name.x + name.width / 2, name.y + name.height / 2);
     await expect(row.locator('.ov-hint')).toBeVisible();
-    await expect(row.locator('.ov-since-text')).toBeHidden();
-    // The text fits, and with room to spare: the line leaves it 5 % more than it needs, as another Chromium renders the
-    // same face a few percent wider (704 px against this one's 688).
-    const fit = await row.locator('.ov-now-text').evaluate(async (e) => {
+    // The hint takes nothing's place: the activity and the time stay, the row keeps its height.
+    await expect(row.locator('.ov-time')).toBeVisible();
+    await expect(row.locator('.ov-state')).toBeVisible();
+    expect((await row.boundingBox())?.height).toBeCloseTo(rest?.height ?? 0, 0);
+    const m = await row.evaluate(async (r) => {
       await document.fonts.ready;
+      const e = r.querySelector('.ov-now-text') as HTMLElement;
       const line = e.parentElement as HTMLElement;
       const label = line.querySelector('b') as HTMLElement;
-      const r = document.createRange();
-      r.selectNodeContents(e);
+      const rg = document.createRange();
+      rg.selectNodeContents(e);
+      const lines = new Set([...rg.getClientRects()].map((c) => Math.round(c.top))).size;
+      const verb = r.querySelector('.ov-verb') as HTMLElement;
+      const vr = document.createRange();
+      vr.selectNodeContents(verb);
+      const box = (x: Element) => x.getBoundingClientRect();
+      const state = r.querySelector('.ov-state') as HTMLElement;
+      const time = r.querySelector('.ov-time') as HTMLElement;
       return {
         client: e.clientWidth,
         scroll: e.scrollWidth,
-        text: r.getBoundingClientRect().width,
+        clientH: e.clientHeight,
+        scrollH: e.scrollHeight,
+        lines,
+        text: rg.getBoundingClientRect().width,
         room: line.clientWidth - label.getBoundingClientRect().width - parseFloat(getComputedStyle(line).columnGap),
+        gap: box(e).left - box(label).right,
+        // The detail is cut, the verb whole: its text ends inside the activity's box; the time is whole.
+        verbEnd: vr.getBoundingClientRect().right,
+        stateEnd: box(state).right,
+        detailCut: (() => {
+          const d = r.querySelector('.ov-detail') as HTMLElement;
+          return d.scrollWidth > d.clientWidth;
+        })(),
+        timeWhole: time.scrollWidth <= time.clientWidth,
+        rowH: box(r).height,
+        whoBottom: box(r.querySelector('.ov-who') as HTMLElement).bottom - box(r).top,
+        whatBottom: box(r.querySelector('.ov-what') as HTMLElement).bottom - box(r).top,
       };
     });
-    console.log(`#226 ${vp.width}px: .ov-now-text clientWidth ${fit.client} scrollWidth ${fit.scroll} text ${fit.text.toFixed(1)} room ${fit.room} (${(fit.room / fit.text).toFixed(3)}×)`);
+    console.log(`#232 ${vp.width}px: ${JSON.stringify(m)}`);
     await shot(page, `h226-row-${vp.width}`);
-    expect(fit.scroll).toBeLessThanOrEqual(fit.client);
-    expect(fit.room).toBeGreaterThanOrEqual(fit.text * 1.05);
+    // Never cut: whole in width and in height, in at most two lines at 1280 and 1440 (#232: the since column's room for
+    // the activity costs the line its one-line room there); on one line, with room to spare (another Chromium renders
+    // the face a few percent wider), and the row then needs only its name and model lines.
+    expect(m.scroll).toBeLessThanOrEqual(m.client);
+    expect(m.scrollH).toBeLessThanOrEqual(m.clientH);
+    expect(m.lines).toBeLessThanOrEqual(2);
+    if (m.lines === 1) {
+      expect(m.room).toBeGreaterThanOrEqual(m.text * 1.05);
+      expect(m.whatBottom).toBeLessThanOrEqual(m.whoBottom + 1);
+    }
+    // The text follows its label at a small step, no slot kept for a sparkle.
+    expect(m.gap).toBeGreaterThanOrEqual(5);
+    expect(m.gap).toBeLessThanOrEqual(9);
+    expect(m.detailCut).toBe(true);
+    expect(m.verbEnd).toBeLessThanOrEqual(m.stateEnd + 0.5);
+    expect(m.timeWhole).toBe(true);
 
-    // The hint is in the since column's place: it overlaps no other text of the row.
+    // The hint is under the time: it overlaps no other text of the row.
     const b = await boxes(page, key);
     expect(b.hint).not.toBeNull();
     const h = b.hint as NonNullable<typeof b.hint>;
     const hit = b.text.filter((t) => t.x < h.x + h.w && h.x < t.x + t.w && t.y < h.y + h.h && h.y < t.y + t.h);
     expect(hit, `hint ${JSON.stringify(h)} overlaps`).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
-    // Away: the since time is back.
+    // Away: the hint goes.
     await page.mouse.move(2, 2);
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await expect(row.locator('.ov-hint')).toBeHidden();
-    await expect(row.locator('.ov-since-text')).toBeVisible();
+    await expect(row.locator('.ov-time')).toBeVisible();
     clean();
   });
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Floor, HireOptions, Snapshot, Worker } from '../net/protocol';
 import { WorldStore } from './store';
-import { aiLabel, aiTitle, ageText, buildOverview, countItems, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
+import { aiTitle, ageText, buildOverview, countItems, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
 
 const NOW = 1_790_000_000_000;
 
@@ -181,21 +181,24 @@ describe('buildOverview: a row', () => {
     expect(rows[4]?.now?.status).toEqual({ state: 'retrying', reason: 'timeout', attempts: 1, retry_at: NOW + 5 });
   });
 
-  it('a one-off worker’s task, and every worker’s now line from the digest: the recap, else its title; the activity chip apart', () => {
+  it('a one-off worker’s task, and every worker’s now line from the digest: the recap, else its title; the activity apart', () => {
     const s = store([
       worker('recap', 'top', { desk_index: 0, digest: { task: 'Fix the flaky e2e', task_source: 'ai_title', now: 'Waiting for review', now_source: 'recap', now_at: NOW } }),
       worker('title', 'top', { desk_index: 1, status: 'working', title: 'Reading hub.go', activity: { kind: 'testing', detail: 'pytest', since: NOW, source: 'rule' }, digest: { task: 'Port it', task_source: 'prompt', now_source: 'title' } }),
       worker('fresh', 'top', { desk_index: 2, title: 'Claude Code' }),
       worker('llm', 'top', { desk_index: 3, digest: { task: 'x', task_source: 'llm', now: 'y', now_source: 'llm' } }),
+      worker('think', 'top', { desk_index: 4, status: 'working', activity: { kind: 'thinking', since: NOW, source: 'rule' } }),
     ]);
-    expect(row(s, 'recap')).toMatchObject({ task: { text: 'Fix the flaky e2e', source: 'ai_title', llm: false }, now: { text: 'Waiting for review', source: 'recap', llm: false }, activity: null });
-    expect(row(s, 'title')).toMatchObject({ task: { text: 'Port it', source: 'prompt' }, now: { text: 'Reading hub.go', source: 'title' }, activity: 'Testing · pytest' });
+    expect(row(s, 'recap')).toMatchObject({ task: { text: 'Fix the flaky e2e', source: 'ai_title', llm: false }, now: { text: 'Waiting for review', source: 'recap', llm: false }, activity: null, act: null });
+    // #232: the verb and the detail apart (the since column gives the detail way first), and joined for the row's label.
+    expect(row(s, 'title')).toMatchObject({ task: { text: 'Port it', source: 'prompt' }, now: { text: 'Reading hub.go', source: 'title' }, activity: 'Testing · pytest', act: { verb: 'Testing', detail: 'pytest' } });
+    expect(row(s, 'think')).toMatchObject({ activity: 'Thinking', act: { verb: 'Thinking', detail: '' } });
     // No turn read yet (no digest): no task or now line.
     expect(row(s, 'fresh')).toMatchObject({ task: null, now: null });
     expect(row(s, 'llm')).toMatchObject({ task: { llm: true }, now: { llm: true } });
   });
 
-  it('#198: a model’s now line carries when it was written (now_at); its mark says how old it is', () => {
+  it('#198: a model’s now line carries when it was written (now_at); its sparkle says how old it is', () => {
     const s = store([
       worker('llm', 'top', { desk_index: 0, digest: { task: 'x', task_source: 'llm', now: 'Rerunning the login test', now_source: 'llm', now_at: NOW - 2 * 60_000 } }),
       worker('recap', 'top', { desk_index: 1, digest: { now: 'Waiting for review', now_source: 'recap', now_at: NOW } }),
@@ -206,17 +209,17 @@ describe('buildOverview: a row', () => {
     expect(now).toEqual({ text: 'Rerunning the login test', source: 'llm', llm: true, at: NOW - 2 * 60_000 });
     expect(row(s, 'recap').now?.at).toBeUndefined();
     expect(row(s, 'llm').task?.at).toBeUndefined();
-    expect(aiLabel(now, NOW)).toBe('AI · 2m ago');
-    // The same line, later: only its age moves.
-    expect(aiLabel(now, NOW + 60 * 60_000)).toBe('AI · 1h 02m ago');
+    expect(ageText(now.at as number, NOW)).toBe('2m ago');
     expect(aiTitle(now, NOW)).toBe(
-      'Summarised by the AI model from this worker’s recent activity (its last 5 steps) 2m ago. The time is when the summary was written, not when the activity happened.',
+      'AI-generated summary of this worker’s recent activity (its last 5 steps); generated 2m ago. The time is when the summary was written, not when the activity happened.',
     );
-    // A bridge that sends no time: the plain mark.
+    // The same line, later: only its age moves.
+    expect(aiTitle(now, NOW + 60 * 60_000)).toContain('; generated 1h 02m ago.');
+    // A bridge that sends no time: no age made up. A task line has none: what it sums up instead.
     const plain = row(s, 'old').now;
     if (!plain) throw new Error('no now line');
-    expect(aiLabel(plain, NOW)).toBe('AI');
-    expect(aiTitle(plain, NOW)).toBe('Summarised by the AI model from this worker’s recent activity (its last 5 steps).');
+    expect(aiTitle(plain, NOW)).toBe('AI-generated summary of this worker’s recent activity (its last 5 steps).');
+    expect(aiTitle(row(s, 'llm').task as NonNullable<OverviewWorkerRow['task']>, NOW, 'task')).toBe('AI-generated summary of what this worker was asked to do.');
   });
 
   it('crew members have no task line; a finished freelancer’s now is its report’s summary', () => {

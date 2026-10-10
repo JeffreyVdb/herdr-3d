@@ -1,10 +1,11 @@
 import * as THREE from 'three/webgpu';
 import type { Box3 } from '../world/layout';
-import { aiLabel, BLINK_MS, sinceText, visibleRows, type OverviewData, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
+import { ageText, BLINK_MS, sinceText, visibleRows, type OverviewData, type OverviewLine, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
 import { lineStatusText } from '../world/digestSettings';
 import { STATUS_CSS, STATUS_CHIP_CSS } from './palette';
 import { FONT } from './cards/atlasCards';
 import { drawMark, markFor } from './brandMarks';
+import { SPARKLE_D } from '../ui/dom';
 
 /**
  * #118: the floor overview's big screen on the lounge wall. A thin dark bezel box a few cm off the west wall, facing +x,
@@ -13,7 +14,7 @@ import { drawMark, markFor } from './brandMarks';
  * (`MeshBasicMaterial`, not tone mapped), so it reads like a screen in any light, and it adds no light to the room (M17).
  *
  * Canvas work happens only when what it shows changes (at most once a second, the since column once a minute, never
- * for the live activity chip, which is the page's); nothing is drawn or uploaded to blink or to scroll:
+ * for the live activity, which is the page's); nothing is drawn or uploaded to blink or to scroll:
  * - the board is one tall canvas of the rows, shown through a window (the texture's repeat and offset): more rows
  *   than fit go one line a row, then the window scrolls down slowly and back to the top, so no row is cut off unsaid;
  *   a floor with more rows than one canvas holds (WebGL2's 4096 px) is drawn a page of them at a time, each page
@@ -358,7 +359,7 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
 function face(v: VisibleRow, now: number): unknown[] {
   const r = v.row;
   if (r.kind !== 'worker') return [r.key, r.kind, v.depth, r.kind === 'ghost' ? [r.name, r.floor] : null];
-  return [r.key, v.depth, r.name, r.display, markFor(r.harness), wallTag(r), !!r.orch?.overCap, r.runColor, metaLine(r), ticketLine(r), lineText(r), lineMark(r, now), sinceText(r.display, r.since, now)];
+  return [r.key, v.depth, r.name, r.display, markFor(r.harness), wallTag(r), !!r.orch?.overCap, r.runColor, metaLine(r), ticketLine(r), lineSegs(r, now), sinceText(r.display, r.since, now)];
 }
 
 let scanlines: HTMLCanvasElement | null = null;
@@ -510,34 +511,22 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     const sinceW = g.measureText(since).width;
     g.textAlign = 'left';
     const whatW = sinceRight - sinceW - u * 3 - colWhat;
-    const [first, second] = whatLines(r, compact);
-    // The task and now line carries the page's AI mark when the LLM wrote a part of it (#118 phase 2), with the now
-    // line's age (#198).
-    const llm = lineMark(r, now);
+    const [first, second] = whatLines(r, compact, now);
+    // The task and now lines under their labels, each with the page's AI sparkle by its label when the LLM wrote it
+    // (#118 phase 2, #232) and its words (the now line's age, #198) quiet after its text.
+    const big = `600 ${Math.round(u * 3.2)}px ${FONT}`;
     if (first) {
-      const font = `600 ${Math.round(u * 3.2)}px ${FONT}`;
-      const mark = llm && !r.ticket ? aiMark(g, llm, colWhat, base, u) : 0;
-      g.font = font;
-      g.fillStyle = r.ticket ? TEXT : TEXT_2;
-      const w = mark + fitText(g, first, colWhat + mark, base, whatW - mark);
+      const w = drawLine(g, first, colWhat, base, whatW, u, big, r.ticket ? TEXT : TEXT_2);
       // One line a row: the ticket's key, then what it does now, never dropped for the ticket's title.
       if (compact && second) {
+        g.font = big;
         g.fillStyle = TEXT_2;
         const sep = fitText(g, ' · ', colWhat + w, base, whatW - w);
-        const m2 = llm ? aiMark(g, llm, colWhat + w + sep, base, u, whatW - w - sep) : 0;
-        g.font = font;
-        g.fillStyle = TEXT_2;
-        fitText(g, second, colWhat + w + sep + m2, base, whatW - w - sep - m2);
+        drawLine(g, second, colWhat + w + sep, base, whatW - w - sep, u, big, TEXT_2);
       }
     }
     if (!compact) {
-      if (second) {
-        const y2 = base + u * 4.2;
-        const mark = llm ? aiMark(g, llm, colWhat, y2, u) : 0;
-        g.font = `400 ${Math.round(u * 2.9)}px ${FONT}`;
-        g.fillStyle = TEXT_2;
-        fitText(g, second, colWhat + mark, y2, whatW - mark);
-      }
+      if (second) drawLine(g, second, colWhat, base + u * 4.2, whatW, u, `400 ${Math.round(u * 2.9)}px ${FONT}`, TEXT_2);
       const meta = metaLine(r);
       if (meta) {
         g.font = `400 ${Math.round(u * 2.5)}px ${MONO}`;
@@ -554,19 +543,29 @@ function ticketLine(r: OverviewWorkerRow): string | null {
   return r.ticket ? `${r.ticket.key}${r.ticket.title ? ` · ${r.ticket.title}` : ''}` : null;
 }
 
+/** #232: a task or now line on the wall: its label, its text, and the words after its AI sparkle (null: no sparkle). */
+export interface WallSeg {
+  label: 'TASK' | 'NOW';
+  text: string;
+  words: string | null;
+}
+
+/** The ticket's line, or the row's task and now lines (one wall line, each under its own label). */
+export type WallLine = string | WallSeg[];
+
 /**
- * A row's what column on the wall: two lines, the ticket then the task and now line; one line (`compact`), the
- * ticket's key alone then the task and now line (what it does now beats the ticket's title), else the ticket's line.
+ * A row's what column on the wall: two lines, the ticket then the task and now lines; one line (`compact`), the
+ * ticket's key alone then the task and now lines (what it does now beats the ticket's title), else the ticket's line.
  * Pure (exported for its test).
  */
-export function whatLines(r: OverviewWorkerRow, compact: boolean): [string | null, string | null] {
+export function whatLines(r: OverviewWorkerRow, compact: boolean, now: number): [WallLine | null, WallLine | null] {
   const ticket = ticketLine(r);
-  const line = lineText(r);
+  const segs = lineSegs(r, now);
+  const line = segs.length ? segs : null;
   if (!ticket) return [line, null];
   if (compact && line) return [r.ticket?.key ?? ticket, line];
   return [ticket, compact ? null : line];
 }
-
 /**
  * #229: the model under the name, its readable name and effort (`Opus 5.5 high`), never the run's words (the chips say
  * ORCH, the round and over cap); a harness without a mark says its name before it.
@@ -580,47 +579,127 @@ export function wallTag(r: OverviewWorkerRow): string | null {
   return r.tag && r.orch?.round ? `${r.tag} r${r.orch.round}` : r.tag;
 }
 
-/** The task and the now line (the activity chip is the page's: it moves too often for a wall to redraw). */
-function lineText(r: OverviewWorkerRow): string | null {
-  const now = r.now?.text ?? '';
-  if (r.task && !now) return r.task.text;
-  if (r.task) return `${r.task.text} — ${now}`;
-  return now || null;
+/** The task and the now line, each under its label (the live activity is the page's: it moves too often for a wall to redraw). Pure. */
+export function lineSegs(r: OverviewWorkerRow, now: number): WallSeg[] {
+  const segs: WallSeg[] = [];
+  if (r.task) segs.push({ label: 'TASK', text: r.task.text, words: lineMark(r.task, 'task', now) });
+  if (r.now?.text) segs.push({ label: 'NOW', text: r.now.text, words: lineMark(r.now, 'now', now) });
+  return segs;
 }
 
-/** Whether the LLM wrote a part of the row's task and now line (the page marks those lines AI). Pure (for its test). */
-export function lineLLM(r: OverviewWorkerRow): boolean {
-  return !!(r.task?.llm || r.now?.llm);
+/**
+ * #198, #232: the words after a line's AI sparkle (null: the LLM did not write it, no sparkle): how long ago the model
+ * wrote it, then a failed refresh of it (`2m ago · refresh failed`, the page's chip); a line with no time (a task line,
+ * a now line without one) has none made up, only what became of it, if anything ('': the sparkle alone).
+ * Pure (for its test).
+ */
+export function lineMark(l: OverviewLine, kind: 'task' | 'now', now: number): string | null {
+  if (!l.llm) return null;
+  return [l.at ? ageText(l.at, now) : null, l.status ? lineStatusText(l.status, kind, true).chip : null].filter(Boolean).join(' · ');
 }
 
-/** #198: the words of the row's AI mark (null: none): the page's, `AI · 2m ago` when the model wrote the now line, with
- * a failed refresh of it after (`AI · 2m ago · refresh failed`, the page's chip), else `AI`. Pure (for its test). */
-export function lineMark(r: OverviewWorkerRow, now: number): string | null {
-  if (!lineLLM(r)) return null;
-  if (!r.now?.llm) return 'AI';
-  const label = aiLabel(r.now, now);
-  return r.now.status ? `${label} · ${lineStatusText(r.now.status, 'now', true).chip}` : label;
+/** Where a wall line's parts go: a segment's start, whether its sparkle shows, its text's room, its words (shrunk). */
+export interface SegPlan {
+  seg: WallSeg;
+  x: number;
+  sparkle: boolean;
+  textMax: number;
+  words: string;
 }
 
-/** The page's AI mark on the wall: `label` in an outlined box before a line on `base`; returns the width it takes with
- * its gap (0 when `max` has no room for it). Short of room it drops its last ` · ` parts (the failed refresh, then the
- * age) down to the plain "AI". */
-function aiMark(g: CanvasRenderingContext2D, label: string, x: number, base: number, u: number, max = Infinity): number {
-  g.font = `400 ${Math.round(u * 2.2)}px ${MONO}`;
-  let w = g.measureText(label).width + u * 1.2;
-  while (w + u > max && label.includes(' · ')) {
-    label = label.slice(0, label.lastIndexOf(' · '));
-    w = g.measureText(label).width + u * 1.2;
+/** The wall line's measures (in u): the sparkle, the label to it, the label (or sparkle) to the text, the text to its words, a segment to the next. */
+const SPARK = 2.8;
+const GAP_SPARK = 0.6;
+const GAP_TEXT = 1.2;
+const GAP_WORDS = 1.4;
+const GAP_SEG = 3;
+/** A segment's text keeps at least this much (in u) while its words give way. */
+const TEXT_MIN = 14;
+
+/**
+ * #232: lays out a wall line of task and now segments in `max` px from 0: each its label, its sparkle hugging it (an AI
+ * line), its text, its words after. Short of room a segment's words drop their last ` · ` parts (the failed refresh),
+ * then go (the age), down to the sparkle alone, while its text keeps some room; then the text is cut. Two segments
+ * that do not fit: the now line keeps what it needs but the task keeps a share; a task too short of room for its label
+ * and a little text goes, the now line taking the whole line. `measure` reads a part's width in its font. Pure (for its
+ * test).
+ */
+export function segPlan(measure: (part: 'label' | 'text' | 'words', s: string) => number, segs: readonly WallSeg[], max: number, u: number): SegPlan[] {
+  const wordsW = (w: string) => (w ? u * GAP_WORDS + measure('words', w) : 0);
+  const head = (s: WallSeg, spark: boolean) => measure('label', s.label) + (spark ? u * (GAP_SPARK + SPARK) : 0) + u * GAP_TEXT;
+  const natural = (s: WallSeg) => head(s, s.words !== null) + measure('text', s.text) + wordsW(s.words ?? '');
+  const fit = (s: WallSeg, x: number, room: number): SegPlan | null => {
+    if (measure('label', s.label) > room) return null;
+    const sparkle = s.words !== null && head(s, true) <= room;
+    const h = head(s, sparkle);
+    const min = Math.min(measure('text', s.text), u * TEXT_MIN);
+    let words = sparkle ? (s.words ?? '') : '';
+    while (words && h + min + wordsW(words) > room) words = words.includes(' · ') ? words.slice(0, words.lastIndexOf(' · ')) : '';
+    return { seg: s, x, sparkle, textMax: Math.max(0, Math.min(measure('text', s.text), room - h - wordsW(words))), words };
+  };
+  const [task, now] = segs.length > 1 ? segs : [null, segs[0]];
+  if (!now) return [];
+  if (!task) return [fit(now, 0, max)].filter((p) => p !== null);
+  const room = max - u * GAP_SEG;
+  const own = Math.min(natural(task), Math.max(room - natural(now), room * 0.35));
+  if (own < Math.min(natural(task), head(task, false) + u * TEXT_MIN)) return [fit(now, 0, max)].filter((p) => p !== null);
+  return [fit(task, 0, own), fit(now, own + u * GAP_SEG, room - own)].filter((p) => p !== null);
+}
+
+/** Draws a wall line from `x` in `max` px (a ticket's line in `font`, or task and now segments); returns the width it takes. */
+function drawLine(g: CanvasRenderingContext2D, line: WallLine, x: number, base: number, max: number, u: number, font: string, ink: string): number {
+  if (typeof line === 'string') {
+    g.font = font;
+    g.fillStyle = ink;
+    return fitText(g, line, x, base, max);
   }
-  if (w + u > max) return 0;
-  g.strokeStyle = TEXT_3;
-  g.lineWidth = Math.max(1, u * 0.18);
-  g.beginPath();
-  g.roundRect(x, base - u * 2.6, w, u * 3.1, u * 0.4);
-  g.stroke();
+  const small = `400 ${Math.round(u * 2.4)}px ${MONO}`;
+  const measure = (part: 'label' | 'text' | 'words', s: string) => {
+    g.font = part === 'text' ? font : small;
+    return g.measureText(s).width;
+  };
+  // The sparkle is centred on the capitals of the text beside it, not on its small label.
+  g.font = font;
+  const cap = g.measureText('H').actualBoundingBoxAscent || u * 2.2;
+  let end = 0;
+  for (const p of segPlan(measure, line, max, u)) {
+    let at = x + p.x;
+    g.font = small;
+    g.fillStyle = TEXT_3;
+    at += fitText(g, p.seg.label, at, base, max - p.x);
+    if (p.sparkle) {
+      sparkleAt(g, at + u * GAP_SPARK, base, u, cap);
+      at += u * (GAP_SPARK + SPARK);
+    }
+    at += u * GAP_TEXT;
+    g.font = font;
+    g.fillStyle = ink;
+    at += fitText(g, p.seg.text, at, base, p.textMax);
+    if (p.words) {
+      g.font = small;
+      g.fillStyle = TEXT_3;
+      at += u * GAP_WORDS + fitText(g, p.words, at + u * GAP_WORDS, base, Infinity);
+    }
+    end = at - x;
+  }
+  return end;
+}
+
+let sparkle: Path2D | null = null;
+
+/**
+ * #232: the page's AI sparkle (`ICON.sparkle`'s path, centred in its box) from `x`, centred on capitals `cap` px tall on
+ * `base` (the line's text's). Exported for its test.
+ */
+export function sparkleAt(g: CanvasRenderingContext2D, x: number, base: number, u: number, cap: number): void {
+  const size = u * SPARK;
+  sparkle ??= new Path2D(SPARKLE_D);
+  g.save();
+  g.translate(x, base - cap / 2 - size / 2);
+  g.scale(size / 24, size / 24);
   g.fillStyle = TEXT_2;
-  g.fillText(label, x + u * 0.6, base - u * 0.25);
-  return w + u;
+  g.fill(sparkle);
+  g.restore();
 }
 
 /** Draws `s` from `x`, clipped with an ellipsis to `max` px; returns the width drawn. */

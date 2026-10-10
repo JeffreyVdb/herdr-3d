@@ -67,8 +67,10 @@ export interface OverviewWorkerRow {
   task: OverviewLine | null;
   /** What it does now (only once a turn of it was read). */
   now: OverviewLine | null;
-  /** The live activity chip, `Testing · pytest` (#98). */
+  /** The live activity, `Testing · pytest` (#98): the row's spoken words and its no-summary line. */
   activity: string | null;
+  /** #232: the same as the since column shows it while working: the verb, and its detail ('' for none), which gives way first. */
+  act: { verb: string; detail: string } | null;
   /** The floor it is on, when not the overview's (`Floor 2`, or the session outside this building). */
   floor: string | null;
 }
@@ -234,6 +236,7 @@ export function overviewRow(v: WorkerView, floorTag: string | null, options: Hir
     task: crew ? null : line(d?.task, d?.task_source, d?.task_status, 'task'),
     now: nowOf(v),
     activity: act ? `${ACTIVITY_WORD[act.kind]}${act.detail ? ` · ${act.detail}` : ''}` : null,
+    act: act ? { verb: ACTIVITY_WORD[act.kind], detail: act.detail } : null,
     floor: floorTag,
   };
 }
@@ -529,7 +532,7 @@ export function countItems(c: Counts, asleep: boolean): CountItem[] {
 }
 
 /** A time span in the overview's words: `<1m`, `4m`, `2h 05m`, `3d` (a negative one is `<1m`). */
-function spanText(ms: number): string {
+export function spanText(ms: number): string {
   const m = Math.floor(Math.max(0, ms) / 60_000);
   return m < 1 ? '<1m' : m < 60 ? `${m}m` : m < 24 * 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${Math.floor(m / 1440)}d`;
 }
@@ -545,13 +548,12 @@ export function ageText(at: number, now: number): string {
   return t === '<1m' ? 'just now' : `${t} ago`;
 }
 
-/** #198: the AI mark of a model's line, on the page and the wall: `AI · 2m ago` with its time (a now line), else `AI`. */
-export function aiLabel(l: OverviewLine, now: number): string {
-  return l.at ? `AI · ${ageText(l.at, now)}` : 'AI';
-}
-
-/** #198: what a model's now line is, in full (the mark's tooltip and its words for a screen reader). */
-export function aiTitle(l: OverviewLine, now: number): string {
-  const what = 'Summarised by the AI model from this worker’s recent activity (its last 5 steps)';
-  return l.at ? `${what} ${ageText(l.at, now)}. The time is when the summary was written, not when the activity happened.` : `${what}.`;
+/**
+ * #198, #232: what a model's line is, in full (its sparkle's tooltip and its words for a screen reader): a now line sums
+ * up the recent activity and says when it was written; a task line (no time) what the worker was asked.
+ */
+export function aiTitle(l: OverviewLine, now: number, kind: 'task' | 'now' = 'now'): string {
+  if (kind === 'task') return 'AI-generated summary of what this worker was asked to do.';
+  const what = 'AI-generated summary of this worker’s recent activity (its last 5 steps)';
+  return l.at ? `${what}; generated ${ageText(l.at, now)}. The time is when the summary was written, not when the activity happened.` : `${what}.`;
 }

@@ -20,6 +20,12 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs = 
   return e;
 }
 
+/**
+ * #232: the AI sparkle, a four-point star with concave sides, filled (a stroke blunts its points at the 13 px it is drawn
+ * at). One source for the page (`ICON.sparkle`) and the wall screen (render/overviewScreen.ts draws it as a `Path2D`).
+ */
+export const SPARKLE_D = 'M12 2.5c.75 5.2 4.3 8.75 9.5 9.5-5.2.75-8.75 4.3-9.5 9.5-.75-5.2-4.3-8.75-9.5-9.5 5.2-.75 8.75-4.3 9.5-9.5z';
+
 /** Authored 24×24 stroke icons, one weight (same family as the top bar's). */
 export const ICON = {
   back: '<path d="M14.5 6 8.5 12l6 6"/>',
@@ -39,6 +45,7 @@ export const ICON = {
   chevron: '<path d="M7 9.5l5 5 5-5"/>',
   image: '<rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m5 17 4.5-4.5 3.5 3.5 2.5-2.5L19 17"/>',
   file: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/>',
+  sparkle: `<path d="${SPARKLE_D}" fill="currentColor" stroke="none"/>`,
   folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h3.8l2 2.2h7.2a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
 };
 
