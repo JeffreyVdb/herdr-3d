@@ -99,6 +99,10 @@ type usageTracker struct {
 	dgOffered map[string]digestOffered
 	dgUps     []digestUpdate
 	dgEpoch   int // the last tracker's epoch
+	// #223: what was last offered of every worker's handoff candidate, and
+	// this round's changes.
+	hoOffered map[string]handoffOffered
+	hoUps     []handoffUpdate
 	now       func() time.Time
 }
 
@@ -132,7 +136,7 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 		found:    map[string]foundCodex{}, logs: map[string]*txLog{},
 		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
 		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, dgOffered: map[string]digestOffered{},
-		now: time.Now}
+		hoOffered: map[string]handoffOffered{}, now: time.Now}
 }
 
 // trackUsage runs the tracker until ctx is done.
@@ -188,11 +192,12 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 	fus := tr.followUps            // #90
 	acts := tr.actUps              // #98
 	dgs := tr.dgUps                // #118
+	hos := tr.hoUps                // #223
 	for _, id := range tr.pasted { // #95
 		h.log.Warn("a prompt the bridge typed reached Claude Code as a paste: its paste threshold may have changed (#95)",
 			"worker", id)
 	}
-	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending || len(acts) > 0 || len(dgs) > 0 {
+	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending || len(acts) > 0 || len(dgs) > 0 || len(hos) > 0 {
 		pending, err := query(ctx, h, func() bool {
 			for _, u := range ups {
 				h.setUsage(u.id, u.usage)
@@ -215,6 +220,9 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 			for _, u := range dgs { // #118
 				h.digestSeen(ctx, u)
 			}
+			for _, u := range hos { // #223
+				h.handoffSeen(u)
+			}
 			return h.sweepFollowups(ctx)
 		})
 		if err == nil {
@@ -226,7 +234,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 // poll reads the workers' sessions and returns the updates to publish.
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	ws = tr.findCodex(ws, now)
-	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps, tr.actUps, tr.dgUps = nil, nil, nil, nil, nil, nil
+	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps, tr.actUps, tr.dgUps, tr.hoUps = nil, nil, nil, nil, nil, nil, nil
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -244,7 +252,8 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 				l := &txLines{harness: w.harness, ask: transcript.NewAskTracker(w.harness), // #83: and a wrap-up's
 					followup: transcript.NewFollowupTracker(w.harness),                               // #90: and the turn's final message
 					activity: transcript.NewActivityTracker(w.harness, tr.cfg.Images, w.cwd, tr.now), // #98: and what it does
-					digest:   transcript.NewDigestTracker(w.harness)}                                 // #118: and its digest
+					digest:   transcript.NewDigestTracker(w.harness),                                 // #118: and its digest
+					handoff:  transcript.NewHandoffTracker(w.harness)}                                // #223: and its last reply
 				if w.harness == transcript.Claude { // #95: and typed prompts arriving as a paste
 					l.paste = newPasteWatch()
 				}
@@ -276,6 +285,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.offerFollowup(w)      // #90
 			tr.offerActivity(w, now) // #98
 			tr.offerDigest(w)        // #118
+			tr.offerHandoff(w, s)    // #223
 			continue
 		}
 		s.SetRescan(0)
@@ -292,6 +302,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		tr.offerFollowup(w)      // #90
 		tr.offerActivity(w, now) // #98
 		tr.offerDigest(w)        // #118
+		tr.offerHandoff(w, s)    // #223
 		if ok {
 			if pub, emit := tr.throttle.offer(w.id, u, now); emit {
 				ups = append(ups, usageUpdate{id: w.id, usage: &pub})
@@ -312,6 +323,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.fuOffered, id)  // #90
 			delete(tr.actOffered, id) // #98
 			delete(tr.dgOffered, id)  // #118
+			delete(tr.hoOffered, id)  // #223
 			tr.throttle.forget(id)
 		}
 	}

@@ -26,6 +26,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
+	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
 	"github.com/JeffreyVdb/herdr-3d/internal/harness"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
@@ -142,6 +143,18 @@ func DefaultRunsDir() string {
 		dir = filepath.Join(home, ".local", "state")
 	}
 	return filepath.Join(dir, "write-code", "runs")
+}
+
+// #223 handoffs: the filing cabinet's directory.
+const EnvHandoffDir = "HERDR_WORLD_HANDOFF_DIR"
+
+// DefaultHandoffDir is ~/handoff.
+func DefaultHandoffDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "/"
+	}
+	return filepath.Join(home, "handoff")
 }
 
 // #51 image upload: Drop Zone's base URL. The bridge is its only client; a
@@ -411,10 +424,11 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	dropzoneData := fs.String("dropzone-data", envOr(EnvDropzoneData, DefaultDropzoneData()), "Drop Zone's data directory: a root a transcript's [Image #n: path] may be read under ($"+EnvDropzoneData+")") // M16 images
 	imageCache := fs.String("image-cache", os.Getenv(EnvImageCache), "directory of the transcript image disk cache, \"-\" for none (default $XDG_CACHE_HOME/herdr-world/img) ($"+EnvImageCache+")")          // M16 images
 	codexRun := fs.String("codex-run", envOr(EnvCodexRun, DefaultCodexRun()), "private directory of the shared Codex servers' launchers and sockets, \"-\" for none (#155) ($"+EnvCodexRun+")")
-	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")") // M13 screen
-	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")               // M13 whiteboard
-	aiFile := fs.String("ai-file", os.Getenv(EnvAIFile), "file of the AI integration's settings and keys, 0600 (default ai.json next to the database) ($"+EnvAIFile+")")                 // #92
-	kaneoFile := fs.String("kaneo-file", os.Getenv(EnvKaneoFile), "file of the Kaneo connection's settings and key, 0600 (default kaneo.json next to the database) ($"+EnvKaneoFile+")") // #184
+	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")")      // M13 screen
+	handoffDir := fs.String("handoff-dir", envOr(EnvHandoffDir, DefaultHandoffDir()), "directory of the filing cabinet's handoffs (<dir>/<floor>/*.md), \"-\" for none ($"+EnvHandoffDir+")") // #223
+	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")                    // M13 whiteboard
+	aiFile := fs.String("ai-file", os.Getenv(EnvAIFile), "file of the AI integration's settings and keys, 0600 (default ai.json next to the database) ($"+EnvAIFile+")")                      // #92
+	kaneoFile := fs.String("kaneo-file", os.Getenv(EnvKaneoFile), "file of the Kaneo connection's settings and key, 0600 (default kaneo.json next to the database) ($"+EnvKaneoFile+")")      // #184
 	aiClsKey := fs.String("ai-classifier-key-file", os.Getenv(EnvAIClassifierKeyFile), "file holding the classification model's key; overrides the panel's ($"+EnvAIClassifierKeyFile+")")
 	aiClsModel := fs.String("ai-classifier-model", os.Getenv(EnvAIClassifierModel), "classification model; overrides the panel's ($"+EnvAIClassifierModel+")")
 	aiLLMBase := fs.String("ai-llm-base-url", os.Getenv(EnvAILLMBaseURL), "OpenAI-compatible endpoint's base URL; overrides the panel's ($"+EnvAILLMBaseURL+")")
@@ -569,6 +583,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		TranscriptImages: transcriptImages(log, *dropzoneData, *imageCache, *codexSessions), // M16 images
 		ScreenDir:        *screenDir,                                                        // M13 screen
 		Whiteboards:      *whiteboards,                                                      // M13 whiteboard
+		HandoffDir:       *handoffDir,                                                       // #223 handoffs
 		DropsRoot:        *dropzoneData,                                                     // M13 drops.list
 		AI: &ai.Options{File: orDefault(*aiFile, DefaultAIFile(*db)), Env: ai.Overrides{ // #92 AI integration
 			ClassifierKeyFile: *aiClsKey, ClassifierModel: *aiClsModel, LLMBaseURL: *aiLLMBase, LLMKeyFile: *aiLLMKey, LLMModel: *aiLLMModel}},
@@ -676,6 +691,9 @@ type ServeConfig struct {
 	// Drop Zone's data directory, for drops.list ("": none).
 	Whiteboards string
 	DropsRoot   string
+	// #223: the filing cabinet's directory ("" or "-": none, the handoff
+	// commands answer unsupported).
+	HandoffDir string
 	// #92 AI integration: the classification model and the LLM (nil: none,
 	// the ai.* commands answer unsupported).
 	AI *ai.Options
@@ -758,6 +776,15 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Whiteboards = whiteboard.New(cfg.Whiteboards)
 	}
 	opts.DropsRoot = cfg.DropsRoot
+	if cfg.HandoffDir != "" && cfg.HandoffDir != "-" { // #223 handoffs
+		dir, err := filepath.Abs(cfg.HandoffDir)
+		if err != nil {
+			return fmt.Errorf("handoff directory: %w", err)
+		}
+		if opts.Handoffs, err = handoff.New(dir, st, nil); err != nil {
+			return fmt.Errorf("handoff directory: %w", err)
+		}
+	}
 	if cfg.AI != nil { // #92 AI integration
 		svc, err := ai.New(*cfg.AI)
 		if err != nil {

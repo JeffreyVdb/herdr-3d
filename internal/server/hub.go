@@ -23,6 +23,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/digest"
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
+	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
@@ -221,6 +222,11 @@ type Options struct {
 	Whiteboards *whiteboard.Store
 	DropsRoot   string
 
+	// #223 handoffs: the filing cabinet (nil: the handoff commands fail
+	// with unsupported, workers have no handoff candidate and the snapshot
+	// has no handoffs).
+	Handoffs *handoff.Service
+
 	// #92 AI integration: the classification model and the LLM (nil: the
 	// ai.* commands fail with unsupported, the snapshot has no ai).
 	AI *ai.Service
@@ -379,6 +385,7 @@ type Hub struct {
 	dismissed map[string]int64 // #106: inbox dismissals, worker id → status_since
 
 	fu followupState // #90 follow-up questions
+	ho handoffState  // #223 handoffs
 	pk packupState   // #110 pack up on request
 	kn kaneoState    // #184 Kaneo
 
@@ -600,6 +607,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.initFollowups(ctx); err != nil { // #90
+		return nil, err
+	}
+	if err := h.initHandoffs(ctx); err != nil { // #223
 		return nil, err
 	}
 	if err := h.initPackup(ctx); err != nil { // #110
@@ -865,6 +875,12 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startAnswerFollowup
 		case proto.CmdWorkerDismissFollowup:
 			start = h.startDismissFollowup
+		case proto.CmdWorkerHandoffPreview: // #223
+			start = h.startHandoffPreview
+		case proto.CmdWorkerHandoff: // #223
+			start = h.startHandoff
+		case proto.CmdHandoffList, proto.CmdHandoffGet, proto.CmdHandoffDelete: // #223
+			start = h.startHandoffs
 		case proto.CmdActivityGet, proto.CmdActivitySet: // #98
 			start = h.startActivity
 		case proto.CmdDigestGet, proto.CmdDigestSet, proto.CmdDigestTest, proto.CmdDigestRetry: // #118, #174
@@ -958,6 +974,8 @@ func errorCode(err error) string {
 		return coded.code
 	case followupErrorCode(err) != "": // #90
 		return followupErrorCode(err)
+	case handoffErrorCode(err) != "": // #223
+		return handoffErrorCode(err)
 	case packupErrorCode(err) != "": // #110
 		return packupErrorCode(err)
 	case activityErrorCode(err) != "": // #98
@@ -1336,6 +1354,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		delete(h.dg, id)              // #118
 		delete(h.dgs.ws, id)          // #118 phase 2
 		h.dropFollowup(ctx, id, true) // #90: gone
+		delete(h.ho.cands, id)        // #223
 		if w == nil {
 			continue
 		}
@@ -1454,6 +1473,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			h.dropFollowup(ctx, id, false)
 		}
 		next.Followup = h.followupView(id)
+		next.Handoff = h.handoffView(id)                       // #223
 		next.Activity = h.activityFor(id, next, h.workers[id]) // #98: for its status, in the same event
 		next.Digest = h.workerDigest(id, next)                 // #118
 		h.noteCodexThread(ctx, id, next.AgentSession)          // #155
@@ -1846,6 +1866,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.AI = h.aiView()                         // #92 AI integration
 	w.Kaneo = h.kaneoView()                   // #184 Kaneo
 	w.Followups = h.followupsView()           // #90
+	w.Handoffs = h.handoffsView()             // #223
 	w.Packup = h.packupView()                 // #110
 	w.Activity = h.activityView()             // #98
 	w.Digest = h.digestView()                 // #118
