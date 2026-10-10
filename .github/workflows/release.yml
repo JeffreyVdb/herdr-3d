@@ -73,6 +73,7 @@ jobs:
           restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
       - run: make go-lint
       - run: make go-test
+      - run: make go-build helper-darwin
 
   game:
     needs: tag
