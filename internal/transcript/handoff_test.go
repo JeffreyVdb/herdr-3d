@@ -476,8 +476,11 @@ func TestHandoffStillLatest(t *testing.T) {
 		tr := NewHandoffTracker(Codex)
 		feedFile(t, tr, path)
 		fi, _ := os.Stat(path)
-		os.Remove(path)
-		os.WriteFile(path, []byte(strings.Join(cxTurn, "\n")+"\n"), 0o600)
+		// The new file is written while the old one still exists, then renamed
+		// over it: a remove first would free the old inode, which the
+		// filesystem may hand straight to the new file (ext4 does).
+		os.WriteFile(path+".new", []byte(strings.Join(cxTurn, "\n")+"\n"), 0o600)
+		os.Rename(path+".new", path)
 		if err := StillLatest(path, fi, tr.Candidate(), fi.Size()); !errors.Is(err, ErrSourceReplaced) {
 			t.Fatalf("replaced: %v", err)
 		}
