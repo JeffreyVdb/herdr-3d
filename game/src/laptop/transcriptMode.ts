@@ -1,6 +1,6 @@
 import type { CommandResult } from '../net/client';
 import type { PackupGate } from '../world/packup';
-import type { AnswerAskAck, Ask, CommandArgs, Followup, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
+import type { AnswerAskAck, Ask, CommandArgs, Followup, HandoffCandidate, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import type { ViewPrefs } from '../ui/themePrefs';
@@ -87,6 +87,8 @@ export interface TranscriptModeHost {
   modeChanged(mode: SeatMode): void;
   /** #59: the preset, hidden tool calls and the zoom (the view's top strip sets them). */
   prefs?: ViewPrefs;
+  /** #223: the inline Handoff button of a worker's reply was pressed: the filing dialog (none: no button). */
+  handoff?(id: string, c: HandoffCandidate): void;
   /** #58: the clock of the pending prompts' "not seen yet" hint (default Date.now; tests pass their own). */
   now?(): number;
 }
@@ -155,6 +157,9 @@ interface Sitting {
   /** #90: the worker's follow-up questions, and their turn + questions (a new one told from the same one). */
   followup: Followup | null;
   followupKey: string;
+  /** #223: the worker's handoff candidate (the inline button's), and its id + revision. */
+  handoff: HandoffCandidate | null;
+  handoffKey: string;
   /** #157: the worker's Codex launch (its async questions), and what of it the card shows (a new one told from the same one). */
   codex: WorkerCodex | null;
   /** #157: the worker works on (its effective status): the async card's "still working". */
@@ -293,7 +298,7 @@ export class TranscriptMode {
     // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
     const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
+      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', handoff: null, handoffKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
@@ -578,6 +583,7 @@ export class TranscriptMode {
     if (s.question) s.view.setBlocked(s.question);
     if (s.ask) s.view.setAsk(s.ask);
     if (s.followup) s.view.setFollowup(s.followup);
+    if (s.handoff) s.view.setHandoff?.(s.handoff);
     if (s.codex) s.view.setCodex(s.id, s.codex, s.codexWorking);
     if (s.pending.length) s.view.setPending(s.pending);
     s.cueKey = '';
@@ -638,7 +644,9 @@ export class TranscriptMode {
 
   private renderHost(s: Sitting): TranscriptRenderHost {
     const live = () => this.s === s;
+    const handoff = this.host.handoff;
     return {
+      ...(handoff ? { onHandoff: (c: HandoffCandidate) => live() && handoff(s.id, c) } : {}),
       images: this.host.feed(s.id),
       upload: this.host.upload ?? null,
       label: s.name,
@@ -974,6 +982,17 @@ export class TranscriptMode {
     s.followupKey = key;
     s.followup = f;
     s.view?.setFollowup(f);
+  }
+
+  /** #223: the worker's handoff candidate (from the store; null when it has none). */
+  handoffSeen(c: HandoffCandidate | null): void {
+    const s = this.s;
+    if (!s) return;
+    const key = c ? `${c.id}\u0000${c.revision}\u0000${c.message ?? ''}` : '';
+    if (key === s.handoffKey) return;
+    s.handoffKey = key;
+    s.handoff = c;
+    s.view?.setHandoff?.(c);
   }
 
   /**

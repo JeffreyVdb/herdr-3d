@@ -80,6 +80,12 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'followups.test': 'test the follow-up questions',
   'worker.answer_followup': 'answer follow-up questions',
   'worker.dismiss_followup': 'dismiss follow-up questions',
+  // #223
+  'worker.handoff_preview': 'file handoffs',
+  'worker.handoff': 'file handoffs',
+  'handoff.list': 'open the filing cabinet',
+  'handoff.get': 'open the filing cabinet',
+  'handoff.delete': 'delete handoffs',
   // #110
   'packup.get': 'keep pack up on request',
   'packup.set': 'keep pack up on request',
@@ -141,6 +147,16 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
     return `${ctx.provider ?? 'The provider'} does not let this key ${DOES[t]}${ctx.item ? ` (${ctx.item})` : ''}: a permission problem there, not a failure. Nothing changed.`;
   }
   switch (code) {
+    // #223 handoffs: nothing was filed (or sent home) on any of these.
+    case 'handoff_unavailable':
+      return `${ctx.worker ?? 'The worker'}’s last reply can’t be filed now: ${why.replace(/^no such handoff candidate:\s*/, '') || 'a newer turn started'}. Nothing was filed.`;
+    case 'handoff_source':
+      return `The reply in ${ctx.worker ?? 'the worker'}’s transcript is not what it was (the file was replaced, cut or changed), so nothing was filed.`;
+    case 'handoff_failed':
+      return `The handoff was not filed: ${why.replace(/^filing the handoff failed:\s*/, '') || 'writing it failed'}. Nobody was sent home.`;
+    case 'too_large':
+      if (t === 'worker.handoff' || t === 'worker.handoff_preview') return 'That reply is larger than 1 MB: a literal handoff never cuts it, so it can’t be filed.';
+      break;
     case 'offline':
       return 'Not connected to herdr-world, so nothing was sent. Try again once it reconnects.';
     case 'unavailable':

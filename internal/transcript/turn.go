@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -41,6 +42,9 @@ const (
 	TurnDone
 	// TurnComplete is Codex's task_complete (Text: last_agent_message).
 	TurnComplete
+	// TurnSession is Codex's session_meta (#223): Session, and Subagent
+	// when the rollout is a subagent's (its source names one).
+	TurnSession
 )
 
 // TurnEvent is one thing a line says about the turn.
@@ -48,8 +52,28 @@ type TurnEvent struct {
 	Kind  TurnEventKind
 	Text  string
 	MsgID string
+	// Texts are the text blocks (parts) as written: never trimmed.
 	Texts []string
 	Final bool
+	// #223, the source identity of a final reply:
+	// StopReason is Claude's raw message.stop_reason ("" when null).
+	StopReason string
+	// UUID and RequestID are Claude's line uuid and requestId; Session its
+	// sessionId (Codex: session_meta's id, on TurnSession).
+	UUID, RequestID, Session string
+	// Images counts a Claude assistant line's image blocks (not text: a
+	// handoff leaves them out and says so).
+	Images int
+	// ItemID and Phase are a Codex assistant message's payload.id and
+	// phase (commentary, final_answer; "" in legacy rollouts).
+	ItemID, Phase string
+	// TurnID and RootTurnID are a Codex task_started's, task_complete's
+	// or turn_aborted's turn_id and root_turn_id.
+	TurnID, RootTurnID string
+	// Subagent: a Codex session_meta of a subagent's rollout.
+	Subagent bool
+	// Null: task_complete's last_agent_message was null or absent.
+	Null bool
 }
 
 // TurnEvents reads one line of a harness's (claude or codex) main
@@ -67,6 +91,9 @@ func TurnEvents(harness string, b []byte) []TurnEvent {
 
 type turnClaudeLine struct {
 	Type             string          `json:"type"`
+	UUID             string          `json:"uuid"`
+	RequestID        string          `json:"requestId"`
+	SessionID        string          `json:"sessionId"`
 	Subtype          string          `json:"subtype"`
 	IsSidechain      bool            `json:"isSidechain"`
 	IsMeta           bool            `json:"isMeta"`
@@ -127,20 +154,42 @@ func claudeTurnEvents(b []byte) []TurnEvent {
 		}
 		return evs
 	}
-	ev := TurnEvent{Kind: TurnAssistant, MsgID: l.Message.ID}
+	ev := TurnEvent{Kind: TurnAssistant, MsgID: l.Message.ID, UUID: l.UUID, RequestID: l.RequestID, Session: l.SessionID}
 	for _, bl := range blocks {
-		if bl.Type == "text" {
+		switch bl.Type {
+		case "text":
 			ev.Texts = append(ev.Texts, bl.Text)
+		case "image":
+			ev.Images++
 		}
 	}
 	sr := l.Message.StopReason
 	ev.Final = sr != nil && *sr != "" && *sr != "tool_use"
+	if sr != nil {
+		ev.StopReason = *sr
+	}
 	return []TurnEvent{ev}
 }
 
 type turnCodexEvent struct {
-	Type             string `json:"type"`
-	LastAgentMessage string `json:"last_agent_message"`
+	Type             string  `json:"type"`
+	LastAgentMessage *string `json:"last_agent_message"`
+	TurnID           string  `json:"turn_id"`
+	RootTurnID       string  `json:"root_turn_id"`
+}
+
+// turnCodexMeta is what a Codex session_meta says of the rollout: its id
+// and source, a string ("cli", "vscode", "exec") or, for a subagent's, an
+// object naming one.
+type turnCodexMeta struct {
+	ID     string          `json:"id"`
+	Source json.RawMessage `json:"source"`
+}
+
+// turnCodexMessage is what TurnEvents reads of a Codex assistant message
+// beyond codexItem.
+type turnCodexMessage struct {
+	Phase string `json:"phase"`
 }
 
 func codexTurnEvents(b []byte) []TurnEvent {
@@ -170,7 +219,9 @@ func codexTurnEvents(b []byte) []TurnEvent {
 			}
 			return []TurnEvent{{Kind: TurnPrompt, Text: text.String()}}
 		case "assistant":
-			ev := TurnEvent{Kind: TurnAssistant}
+			var m turnCodexMessage
+			_ = json.Unmarshal(l.Payload, &m)
+			ev := TurnEvent{Kind: TurnAssistant, ItemID: it.ID, Phase: m.Phase}
 			for _, p := range list {
 				if p.Type == "output_text" || p.Type == "text" || p.Type == "" {
 					ev.Texts = append(ev.Texts, p.Text)
@@ -178,6 +229,14 @@ func codexTurnEvents(b []byte) []TurnEvent {
 			}
 			return []TurnEvent{ev}
 		}
+	case "session_meta":
+		var m turnCodexMeta
+		if json.Unmarshal(l.Payload, &m) != nil {
+			return nil
+		}
+		src := bytes.TrimSpace(m.Source)
+		sub := len(src) > 0 && src[0] == '{' && bytes.Contains(src, []byte(`"subagent"`))
+		return []TurnEvent{{Kind: TurnSession, Session: m.ID, Subagent: sub}}
 	case "event_msg":
 		if !bytes.Contains(l.Payload, []byte(`"task_`)) && !bytes.Contains(l.Payload, []byte(`"turn_aborted"`)) {
 			return nil
@@ -188,11 +247,15 @@ func codexTurnEvents(b []byte) []TurnEvent {
 		}
 		switch ev.Type {
 		case "task_started":
-			return []TurnEvent{{Kind: TurnStarted}}
+			return []TurnEvent{{Kind: TurnStarted, TurnID: ev.TurnID, RootTurnID: ev.RootTurnID}}
 		case "turn_aborted":
-			return []TurnEvent{{Kind: TurnInterrupted}}
+			return []TurnEvent{{Kind: TurnInterrupted, TurnID: ev.TurnID, RootTurnID: ev.RootTurnID}}
 		case "task_complete":
-			return []TurnEvent{{Kind: TurnComplete, Text: ev.LastAgentMessage}}
+			out := TurnEvent{Kind: TurnComplete, TurnID: ev.TurnID, RootTurnID: ev.RootTurnID, Null: ev.LastAgentMessage == nil}
+			if ev.LastAgentMessage != nil {
+				out.Text = *ev.LastAgentMessage
+			}
+			return []TurnEvent{out}
 		}
 	}
 	return nil
@@ -205,12 +268,13 @@ func codexTurnEvents(b []byte) []TurnEvent {
 type lastMessage struct {
 	harness string
 	msgID   string
+	itemID  string // Codex: the message's payload.id (#223)
 	text    strings.Builder
 	has     bool
 }
 
 func (m *lastMessage) reset() {
-	m.msgID, m.has = "", false
+	m.msgID, m.itemID, m.has = "", "", false
 	m.text.Reset()
 }
 
@@ -219,7 +283,7 @@ func (m *lastMessage) reset() {
 func (m *lastMessage) assistant(ev TurnEvent) {
 	if m.harness != Claude || ev.MsgID != m.msgID {
 		m.reset()
-		m.msgID = ev.MsgID
+		m.msgID, m.itemID = ev.MsgID, ev.ItemID
 	}
 	for _, t := range ev.Texts {
 		if m.has {
@@ -242,8 +306,11 @@ func (m *lastMessage) String() string { return m.text.String() }
 
 // Turn is a turn that ended, with its final assistant message.
 type Turn struct {
-	// ID is the first 16 hex digits of Hash: the same message is the same
-	// turn, across re-reads and restarts.
+	// ID is 16 hex digits of the turn's identity (#223): its place among
+	// the transcript's turns, the message's ids (Claude: message.id; Codex:
+	// turn_id and the message's id) and Hash. The same message is the same
+	// turn across re-reads and restarts; two turns with the same reply are
+	// not.
 	ID string
 	// Hash is the hex SHA-256 of Text.
 	Hash string
@@ -260,6 +327,8 @@ type FollowupTracker struct {
 	turn    *Turn
 	aborted bool
 	seq     int
+	turns   int    // prompts and task starts read: the turn's place
+	turnID  string // Codex: the open turn's turn_id
 }
 
 // NewFollowupTracker follows a harness's (claude or codex) transcript; nil
@@ -302,6 +371,10 @@ func (t *FollowupTracker) Events(evs []TurnEvent) {
 		case TurnPrompt, TurnStarted:
 			t.msg.reset()
 			t.aborted = false
+			t.turns++
+			if ev.Kind == TurnStarted {
+				t.turnID = ev.TurnID
+			}
 			t.set(nil)
 		case TurnInterrupted:
 			t.msg.reset()
@@ -334,5 +407,6 @@ func (t *FollowupTracker) end() {
 	}
 	sum := sha256.Sum256([]byte(text))
 	h := hex.EncodeToString(sum[:])
-	t.set(&Turn{ID: h[:16], Hash: h, Text: text})
+	id := sha256.Sum256([]byte(strconv.Itoa(t.turns) + "\x00" + t.msg.msgID + "\x00" + t.turnID + "\x00" + t.msg.itemID + "\x00" + h))
+	t.set(&Turn{ID: hex.EncodeToString(id[:8]), Hash: h, Text: text})
 }

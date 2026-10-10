@@ -214,6 +214,8 @@ export interface Worker {
   wrapup?: WrapUp;
   /** #90: the open questions of its agent's final message, found by the AI integration's models, until answered or moot. */
   followup?: Followup;
+  /** #223: its agent's latest completed final reply, which a literal handoff can file (absent: none now, or no cabinet). */
+  handoff?: HandoffCandidate;
   /** #155: how a Codex worker the bridge hired was launched (absent for other workers). */
   codex?: WorkerCodex;
 }
@@ -340,6 +342,8 @@ export interface World {
   codex_server?: CodexServerState;
   /** #184 the Kaneo connection (absent from an older bridge). Never a key. */
   kaneo?: KaneoState;
+  /** #223 the filing cabinet: each floor's handoff count (absent from an older bridge, or one without a handoff directory). */
+  handoffs?: HandoffCabinet;
 }
 
 export interface Hello {
@@ -443,6 +447,9 @@ export type WorldEvent =
   | DigestUpdate
   // #106 the inbox: a finished row was dismissed
   | InboxDismissed
+  // #223 the filing cabinet
+  | HandoffAdded
+  | HandoffRemoved
   // #155 the shared Codex server switch
   | CodexServerUpdate
   // #184 the Kaneo connection
@@ -638,7 +645,7 @@ export interface CommandArgs {
     prompt?: string;
   };
   'worker.fire.prepare': { id: string };
-  /** `handoff` (M9) and `stop_services` (#14) are reserved, not sent yet. */
+  /** `handoff` (#223: filed through the shared filing service, see `worker.handoff`) and `stop_services` (#14) are reserved, not sent yet. */
   'worker.fire': { id: string; worktree?: FireWorktree };
   /** #83: the cleanup prompt (the bridge appends its result-line footer) and the send home's worktree choice. */
   'worker.wrapup': { id: string; prompt: string; worktree?: FireWorktree };
@@ -757,6 +764,17 @@ export interface CommandArgs {
   'whiteboard.get': { floor: string };
   'whiteboard.clear': { floor: string; confirm: true; author?: string };
   'drops.list': { limit?: number };
+  // #223 handoffs (docs/protocol.md "Handoffs"). The candidate is the bridge's (`Worker.handoff`): never a path or a text.
+  /** Acks `HandoffPreviewAck`: the candidate's exact text (the first 64 KiB), the title it would get, where it comes from. */
+  'worker.handoff_preview': { worker: string; candidate: string };
+  /** Files it (acks `HandoffAck`); `op` is one per dialog, so a repeated submit files nothing twice. */
+  'worker.handoff': { worker: string; mode: 'literal'; session: string; candidate: string; revision: string; send_home?: boolean; op: string };
+  /** A floor's handoffs, newest first, or with `q` the matches (acks `HandoffListAck`). */
+  'handoff.list': { floor: string; q?: string; limit?: number };
+  /** One handoff and its body, Markdown to sanitize (acks `HandoffGetAck`). */
+  'handoff.get': { id: number };
+  /** To the trash (acks `{handoff}`). */
+  'handoff.delete': { id: number; confirm: true };
 }
 
 // M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
@@ -1016,6 +1034,8 @@ const EVENT_TYPES = new Set([
   'activity.update', // #98 activity settings
   'digest.update', // #118 floor overview summaries
   'inbox.dismissed', // #106 the inbox: a finished row dismissed
+  'handoff.added', // #223 the filing cabinet
+  'handoff.removed',
   'codex_server.update', // #155 the shared Codex server switch
   'kaneo.update', // #184 the Kaneo connection
   'screen.state', // M13 screen
@@ -1109,6 +1129,11 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #106: a dismissal of one done episode.
     case 'inbox.dismissed':
       return isStr(o.id) && isInt(o.status_since);
+    // #223: a handoff filed or deleted, and its floor's count after it.
+    case 'handoff.added':
+      return isStr(o.session) && isObj(o.handoff) && isInt(o.handoff.id) && isInt(o.handoff_count);
+    case 'handoff.removed':
+      return isStr(o.session) && isInt(o.handoff_id) && isInt(o.handoff_count);
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
@@ -2354,4 +2379,112 @@ export interface WorkerActivityEvent {
   session?: string;
   workspace_id?: string;
   activity?: Activity | null;
+}
+
+// ---- #223 handoffs (docs/protocol.md "Handoffs") ----
+
+/**
+ * #223: a worker's latest completed final reply, which a literal handoff files as written (`Worker.handoff`). The
+ * bridge's identity of it, never its text. `message` names its transcript row: Claude's message id (the row's item id
+ * is `<message>#<n>`), Codex's message item id; absent for Codex's `last_agent_message` (no row).
+ */
+export interface HandoffCandidate {
+  id: string;
+  session: string;
+  revision: string;
+  harness: string;
+  message?: string;
+  turn?: string;
+  source: 'message' | 'last_agent_message';
+  bytes: number;
+  /** Image blocks of the message a handoff leaves out. */
+  images?: number;
+  /** Over the 1 MiB cap: it cannot be filed. */
+  too_large?: boolean;
+}
+
+export type HandoffSource = 'literal' | 'agent' | 'llm';
+
+/** A filed handoff, without its text. */
+export interface HandoffEntry {
+  id: number;
+  floor: string;
+  worker_id?: string;
+  worker_name: string;
+  label?: string;
+  harness?: string;
+  model?: string;
+  cwd?: string;
+  branch?: string;
+  agent_session?: string;
+  path: string;
+  title: string;
+  /** Unix ms. */
+  created_at: number;
+  source: HandoffSource;
+  bytes: number;
+  /** `handoff.list` with a query: the body's matching text, each match between U+E000 and U+E001. Text, never markup. */
+  snippet?: string;
+}
+
+export interface HandoffCabinet {
+  counts: Record<string, number>;
+}
+
+export interface HandoffProvenance {
+  floor: string;
+  worker_name: string;
+  label?: string;
+  harness?: string;
+  model?: string;
+  branch?: string;
+  cwd?: string;
+  session?: string;
+}
+
+/** `worker.handoff_preview` ack. */
+export interface HandoffPreviewAck {
+  candidate: HandoffCandidate;
+  text: string;
+  truncated?: boolean;
+  title: string;
+  provenance: HandoffProvenance;
+  can_send_home: boolean;
+  send_home_blocked?: string;
+}
+
+/** `worker.handoff` ack. `send_home`: `started` (worker.removed follows), `skipped` (why in `send_home_reason`). */
+export interface HandoffAck {
+  handoff: HandoffEntry;
+  existing?: boolean;
+  send_home?: 'started' | 'skipped';
+  send_home_reason?: string;
+}
+
+export interface HandoffListAck {
+  floor: string;
+  handoffs: HandoffEntry[];
+}
+
+export interface HandoffGetAck {
+  handoff: HandoffEntry;
+  body: string;
+}
+
+/** `handoff.added`: filed (complete file, indexed). `session` is its floor; `handoff_count` the floor's count now. */
+export interface HandoffAdded {
+  t: 'handoff.added';
+  seq: number;
+  session: string;
+  handoff: HandoffEntry;
+  handoff_count: number;
+}
+
+/** `handoff.removed`: deleted (its file in the trash). */
+export interface HandoffRemoved {
+  t: 'handoff.removed';
+  seq: number;
+  session: string;
+  handoff_id: number;
+  handoff_count: number;
 }

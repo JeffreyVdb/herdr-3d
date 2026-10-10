@@ -67,6 +67,7 @@ Look at it with the crosshair, or pick it without the mouse: T and Shift+T cycle
 | `P` | Worker: send a prompt |
 | `C` | Worker: their Changes (again closes it) |
 | `X` | Worker: send them home |
+| `F` | Worker: file their last reply as a handoff, as written (no AI call) |
 | `1–9` or `0` | Worker: answer their question with that choice; 0 denies |
 | `E` | Empty desk: hire here |
 | `E` | Your desk: sit down |
@@ -75,6 +76,7 @@ Look at it with the crosshair, or pick it without the mouse: T and Shift+T cycle
 | `E` | Reception: the floor directory |
 | `E` | Whiteboard: draw |
 | `E` | Lounge screen: the floor overview, growing out of it |
+| `E` | Filing cabinet: the floor’s handoffs (search, read, copy, hire from one) |
 | `E` | Radio: next genre |
 | `R` | Radio: next track |
 

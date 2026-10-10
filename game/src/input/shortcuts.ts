@@ -36,6 +36,7 @@ export type Scope =
   | 'aim:whiteboard'
   | 'aim:radio'
   | 'aim:overview'
+  | 'aim:cabinet'
   | 'dialog'
   | 'seated';
 
@@ -58,6 +59,7 @@ export const SCOPE_PARENT: Readonly<Record<Scope, Scope | null>> = {
   'aim:whiteboard': 'floor',
   'aim:radio': 'floor',
   'aim:overview': 'floor',
+  'aim:cabinet': 'floor',
   dialog: null,
   seated: null,
 };
@@ -181,6 +183,7 @@ export const BINDINGS = [
   { id: 'worker.prompt', group: 'aimed', scope: 'aim:worker', keys: [code('KeyP')], label: 'Worker: send a prompt' },
   { id: 'worker.changes', group: 'aimed', scope: ['aim:worker', 'changes'], keys: [code('KeyC')], label: 'Worker: their Changes (again closes it)' },
   { id: 'worker.home', group: 'aimed', scope: 'aim:worker', keys: [code('KeyX')], label: 'Worker: send them home' },
+  { id: 'worker.handoff', group: 'aimed', scope: 'aim:worker', keys: [code('KeyF')], label: 'Worker: file their last reply as a handoff, as written (no AI call)' },
   { id: 'worker.answer', group: 'aimed', scope: 'aim:worker', keys: DIGITS, show: [['1–9'], ['0']], label: 'Worker: answer their question with that choice; 0 denies' },
   { id: 'desk.hire', group: 'aimed', scope: 'aim:desk', keys: [code('KeyE')], label: 'Empty desk: hire here' },
   { id: 'own-desk.sit', group: 'aimed', scope: 'aim:own-desk', keys: [code('KeyE')], label: 'Your desk: sit down' },
@@ -189,6 +192,7 @@ export const BINDINGS = [
   { id: 'reception.open', group: 'aimed', scope: 'aim:reception', keys: [code('KeyE')], label: 'Reception: the floor directory' },
   { id: 'whiteboard.open', group: 'aimed', scope: 'aim:whiteboard', keys: [code('KeyE')], label: 'Whiteboard: draw' },
   { id: 'overview.open', group: 'aimed', scope: 'aim:overview', keys: [code('KeyE')], label: 'Lounge screen: the floor overview, growing out of it' },
+  { id: 'cabinet.open', group: 'aimed', scope: 'aim:cabinet', keys: [code('KeyE')], label: 'Filing cabinet: the floor’s handoffs (search, read, copy, hire from one)' },
   { id: 'radio.genre', group: 'aimed', scope: 'aim:radio', keys: [code('KeyE')], label: 'Radio: next genre' },
   { id: 'radio.track', group: 'aimed', scope: 'aim:radio', keys: [code('KeyR')], label: 'Radio: next track' },
   // ---- dialogs and fields (their own keys; listed so they are findable) ---------------------------

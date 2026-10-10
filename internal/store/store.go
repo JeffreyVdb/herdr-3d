@@ -185,6 +185,8 @@ var migrations = []string{
 	// #184: a floor's issue tracker (GitHub or Kaneo) and its Kaneo link,
 	// and a run launched on a provider's item.
 	migrationKaneo,
+	// #223: the filing cabinet's handoffs and their full-text index.
+	migrationHandoff,
 }
 
 // Fingerprint kinds.

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { blocked3, moveWalker, type V3p, type WalkWorld } from './collide';
 import { buildingPlan, floorY, loadedFloor, walkWorld, type BuildingPlan } from './building';
 import { floorLayout, MEZZ_Y, outlineOf, seatRect, type FloorLayout } from './layout';
-import { deskToDeskRoute, handOver, HAND_LATERAL, reverseRoute, walkOutRoute, type Dest, type Waypoint } from './route';
+import { cabinetSpot, deskToCabinetRoute, deskToDeskRoute, handOver, HAND_LATERAL, reverseRoute, walkOutRoute, type Dest, type Waypoint } from './route';
 
 const R = 0.28;
 const counts = [20, 10, 16];
@@ -192,5 +192,24 @@ describe('walkOutRoute from where the walker stands', () => {
   it('without a start it is the walk-out of old: seat first', () => {
     const out = walkOutRoute(L, plan, storey, 5);
     expect(out[0]).toEqual({ x: L.slots[5]!.seat.x, y: floorY(storey), z: L.slots[5]!.seat.z });
+  });
+});
+
+describe('deskToCabinetRoute (#223)', () => {
+  it('from every desk: straight, walkable legs to the spot in front of the filing cabinet, and back', () => {
+    for (const [storey, L] of floors.entries()) {
+      const spot = cabinetSpot(L)!;
+      expect(spot).not.toBeNull();
+      for (const from of L.slots) {
+        const route = deskToCabinetRoute(L, storey, from.index);
+        const what = `storey ${storey} desk ${from.index} → cabinet`;
+        expect(route.length, what).toBeGreaterThanOrEqual(3);
+        expect(route[0], what).toEqual({ x: from.seat.x, y: floorY(storey), z: from.seat.z });
+        expect(route.at(-1), what).toEqual({ x: spot.x, y: floorY(storey), z: spot.z });
+        const w = worldWith(L, storey, [from.index]);
+        expectWalkable(route, w, what);
+        expectWalkable(reverseRoute(route), w, `${what} (back)`);
+      }
+    }
   });
 });

@@ -7,7 +7,7 @@ import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
-import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
+import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffEntry, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec } from './render/arrivals';
@@ -26,6 +26,10 @@ import { HireDialog, type HirePrefill } from './ui/hire';
 import { HireReviewDialog } from './ui/hireReview';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
+import { HandoffDialog } from './ui/handoffDialog';
+import { Cabinet } from './ui/cabinet';
+import { drawerFill, hireTask } from './world/handoff';
+import { fromHandoff } from './world/hireReview';
 import { needsYouText, sentHomeText, wrapUpOf } from './world/wrapup';
 import { RADIUS, Walker } from './input/walk';
 // #124: the keyboard shortcuts, one table (dispatch, the ? reference, the hints and the top bar's titles).
@@ -44,7 +48,7 @@ import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overl
 import { STAND_LIFT, type ArrivalKind } from './world/arrival';
 import { displayName, resolveHarness, type Display } from './world/derive';
 import { firstFreeDesk, freeDesks, isFreshHire, Reservations, resolveHireDesk } from './world/hire';
-import { deskToDeskRoute, handOver, walkOutRoute, type Dest, type Waypoint } from './world/route';
+import { cabinetSpot, deskToCabinetRoute, deskToDeskRoute, handOver, walkOutRoute, type Dest, type Waypoint } from './world/route';
 // M6c: reports walk over to the orchestrator's desk.
 import { DeliveryBook, reportArrived, reportFact, trayFolderAt, TRAY_CAP, type Entry, type ReportFact, type TrayPose } from './world/delivery';
 import { toneColor } from './render/tray';
@@ -204,6 +208,9 @@ export class App {
   /** #210: every hire on its way, from Hire to its outcome. */
   readonly hires: HireCoordinator;
   readonly sendHome: SendHomeDialog;
+  /** #223: the filing dialog and the floor's filing cabinet. */
+  readonly handoffDialog: HandoffDialog;
+  readonly cabinet: Cabinet;
   readonly arrivals: Arrivals;
   /** M6c: the reports on their way to an orchestrator's desk, and what is in its in-tray. */
   private readonly deliveries = new DeliveryBook();
@@ -602,6 +609,10 @@ export class App {
       },
     });
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
+    // #223: a literal handoff, and the cabinet it goes into.
+    const copy = (text: string) => copyText(text);
+    this.handoffDialog = new HandoffDialog(o.host, { ...dialogHost, copy, openCabinet: (floor, select) => this.openCabinet(floor, select) });
+    this.cabinet = new Cabinet(o.host, { ...dialogHost, copy, hireFrom: (e) => this.hireFromHandoff(e) });
     this.boardsPanel = new BoardsPanel(o.host, {
       ...dialogHost,
       session: () => this.hereSession(),
@@ -639,6 +650,7 @@ export class App {
         monitors: this.monitorPrefs,
         packup: (id, text, signal) => this.packupCheck(id, text, signal), // #110
         overview: () => this.openOverview(false), // #118
+        handoff: (id) => this.openHandoff(id, true), // #223
       },
       o.params,
     );
@@ -766,6 +778,10 @@ export class App {
     this.hire.refresh();
     this.hireReview.refresh();
     this.sendHome.refresh();
+    this.handoffDialog.refresh(); // #223
+    this.cabinet.refresh();
+    this.syncDrawers();
+    this.playFilings();
     this.startRun.refresh();
     this.presetsPanel.refresh();
     this.limitsWidget.update();
@@ -923,6 +939,12 @@ export class App {
 
   /** Whether a delivery on its way no longer fits the world: false for one whose freelancer is leaving (that walk is the walk-out's). */
   private deliveryStale(a: ArrivalInfo): boolean {
+    // #223: a filing walk goes on while its floor is the one you see and its worker sits where it did.
+    if (a.key?.includes(FILING)) {
+      const v = this.store.workerView(a.key.slice(0, a.key.indexOf(FILING)));
+      const o = this.office;
+      return !o || this.mode !== 'floor' || o.session !== a.session || (!!v && (v.worker.session !== a.session || v.desk !== a.desk));
+    }
     const e = this.deliveries.get(a.key as string);
     const c = this.deliveryCtx.get(a.key as string);
     // (Its freelancer's workspace closed: the hand-over finishes and the walk-out follows, whatever the book still has of it.)
@@ -1279,9 +1301,114 @@ export class App {
     this.sendHome.open(id);
   }
 
+  // ---- #223: handoffs and the filing cabinet ------------------------------------------
+
+  /** The filing dialog for a worker's latest completed reply (`seated`: from its conversation, the seat stays). */
+  openHandoff(id: string, seated: boolean): void {
+    if (!this.store.workerView(id)) return;
+    if (!seated) {
+      this.walker.release();
+      this.walker.stop();
+      this.panels.close();
+    }
+    this.handoffDialog.open(id, { seated });
+  }
+
+  /** The floor's filing cabinet (null: the floor you are on); `select`: that handoff. */
+  openCabinet(floor: string | null, select?: number): void {
+    if (!floor) {
+      this.hud.toast('The filing cabinet is on each office floor.', 2400);
+      return;
+    }
+    if (!this.store.handoffs.known) {
+      this.hud.toast('This herdr-world has no filing cabinet: start it with --handoff-dir (default ~/handoff).', 5200, 'info');
+      return;
+    }
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    this.cabinet.open(floor, select);
+  }
+
+  /**
+   * Hire from handoff: the reviewed hire (#212) on the handoff's floor, its folder, harness and model taken when the
+   * catalog has them (else the review asks; the effort is never guessed) and a task that reads the handoff.
+   */
+  private hireFromHandoff(e: HandoffEntry): void {
+    const session = e.floor;
+    const choice = fromHandoff(e, hireTask(e.path), this.store.hireOptions);
+    const d = this.hireSeat(undefined, session);
+    if (d === null) return;
+    this.cabinet.close();
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    const interp = { sources: [], harness: { provenance: 'missing' as const }, model: { provenance: 'missing' as const }, effort: { provenance: 'missing' as const }, task: { provenance: 'missing' as const }, questions: [], ready_for_review: true };
+    this.hireReview.open(session, interp, d, { choice, ...(e.cwd ? { cwd: e.cwd } : {}) });
+  }
+
+  /** The drawers of the floor you see fill with its handoffs. */
+  private syncDrawers(): void {
+    const o = this.office;
+    if (!o) return;
+    const n = this.store.handoffs.count(o.session);
+    o.setDrawers(drawerFill(n));
+    this.hud.setPropInfo('filing', !this.store.handoffs.known ? 'No cabinet on this bridge (--handoff-dir)' : n === 0 ? 'Empty: file a reply with F at a worker' : `${n === 1 ? '1 handoff' : `${n} handoffs`} · search, read, hire from one`);
+  }
+
+  /** The handoffs just filed: their workers carry a folder to the cabinet (only one you can see; the rest just land). */
+  private playFilings(): void {
+    for (const e of this.store.handoffs.takeFiled()) if (e.worker_id) this.startFiling(e.worker_id, e);
+  }
+
+  /** #223: the filing walk, a delivery to the cabinet: from the desk, the folder into its top drawer, back. */
+  private startFiling(id: string, e: HandoffEntry): boolean {
+    const o = this.office;
+    const ctx = this.building;
+    const v = this.store.workerView(id);
+    const fv = this.store.floorView(e.floor);
+    if (!o || !ctx || !v || !fv || this.mode !== 'floor' || o.session !== e.floor || v.worker.session !== e.floor || fv.asleep) return false;
+    if (this.arrivals.has(id) || o.awayDesks().has(v.desk)) return false;
+    const storey = ctx.floors.findIndex((f) => f.session === e.floor);
+    const L = o.layout;
+    const slot = L.slots[v.desk];
+    const spot = cabinetSpot(L);
+    if (storey < 0 || !slot || !spot) return false;
+    const route = deskToCabinetRoute(L, storey, v.desk);
+    if (route.length < 3) return false;
+    const fy = floorY(storey);
+    const m = memberOf(v);
+    const key = `${id}${FILING}${e.id}`;
+    const deliver: DeliverSpec = {
+      key,
+      handYaw: spot.yaw,
+      swivels: false,
+      orchDesk: -1,
+      turn: 0,
+      hand: { x: spot.hand.x, y: fy + spot.hand.y, z: spot.hand.z },
+      tray: { x: spot.drop.x, y: fy + spot.drop.y, z: spot.drop.z, yaw: spot.yaw },
+      edge: MANILA,
+    };
+    const spec: ArrivalSpec = { id: `deliver:${key}`, kind: 'deliver', session: e.floor, desk: v.desk, name: v.name, route, seatYaw: slot.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: resolveHarness(v.worker), deliver };
+    if (m.crew) spec.crew = m.crew;
+    if (!this.arrivals.start(spec, performance.now() / 1000)) return false;
+    o.setOut(v.desk, { chair: 0 });
+    this.activity(true);
+    return true;
+  }
+
+  /** Test hook: the folder tabs the cabinet's drawers show on the floor you see (top to bottom), and the filing walks under way. */
+  filingStates(): { drawers: [number, number, number] | null; walks: string[] } {
+    const walks = this.arrivals
+      .info(performance.now() / 1000)
+      .filter((a) => a.kind === 'deliver' && a.key?.includes(FILING))
+      .map((a) => a.key as string);
+    return { drawers: this.office?.drawers() ?? null, walks };
+  }
+
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -1732,6 +1859,7 @@ export class App {
     old?.dispose();
     this.screen.paint(); // M13: the share on this floor's TV
     this.office.setPlan(this.planOpen);
+    this.syncDrawers(); // #223
     this.worldCache = null;
     this.planCam.userData.fit = false;
     this.statusDirty = true;
@@ -1817,6 +1945,7 @@ export class App {
     this.office.setDoor(this.fireDoor);
     this.office.setMezzDoor(this.mezzDoor);
     this.office.setPlan(this.planOpen);
+    this.syncDrawers(); // #223
     this.worldCache = null;
     this.planCam.userData.fit = false;
     this.cameraMoved = true;
@@ -2577,6 +2706,8 @@ export class App {
     'worker.prompt': () => this.aimed('worker', (t) => this.openPrompt(t.id)),
     'worker.changes': () => this.toggleChanges(this.target?.kind === 'worker' ? this.target.id : null),
     'worker.home': () => this.aimed('worker', (t) => this.openSendHome(t.id)),
+    'worker.handoff': () => this.aimed('worker', (t) => this.openHandoff(t.id, false)), // #223
+    'cabinet.open': () => this.openCabinet(this.hereSession()), // #223
     'worker.answer': (m) => this.aimed('worker', (t) => this.answerKey(t.id, Number(m.code.slice(-1)))),
     'desk.hire': () => this.aimed('desk', (t) => this.openHire(t.desk)),
     'own-desk.sit': () => this.sit(),
@@ -3033,7 +3164,7 @@ export class App {
     const onFloor = this.mode === 'floor' && (this.place.area === 'floor' || this.place.area === 'fire-escape');
     // #110: a pack-up check's dialog keeps you seated (the prompt box and its draft stay); it still owns the keys.
     // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
-    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.overview.isOpen) || this.hud.sheetOpen || this.transitioning;
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.overview.isOpen) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.orphaned && !this.laptops.seated) {
       this.orphaned = false;
@@ -3741,7 +3872,22 @@ function aimScope(t: Target): Scope | null {
     case 'board':
       return t.id === 'board.issues' || t.id === 'board.prs' ? 'aim:board' : null;
     case 'prop':
-      return t.id === 'elevator' ? 'aim:elevator' : t.id === 'whiteboard' ? 'aim:whiteboard' : t.id === 'radio' ? 'aim:radio' : t.id === 'reception' ? 'aim:reception' : t.id === 'screen.overview' ? 'aim:overview' : null;
+      return t.id === 'elevator' ? 'aim:elevator' : t.id === 'whiteboard' ? 'aim:whiteboard' : t.id === 'radio' ? 'aim:radio' : t.id === 'reception' ? 'aim:reception' : t.id === 'screen.overview' ? 'aim:overview' : t.id === 'filing' ? 'aim:cabinet' : null;
+  }
+}
+
+/** #223: a filing walk's delivery key is `<worker>@handoff:<id>` (a leaving worker's walk is found by its `<worker>@`). */
+const FILING = '@handoff:';
+/** The filed folder's edge: manila. */
+const MANILA = 0xe9cd84;
+
+/** Puts text on the clipboard; false when the browser refused (no permission, not a secure context). */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
   }
 }
 

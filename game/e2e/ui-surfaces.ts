@@ -442,6 +442,31 @@ export const SURFACES: Surface[] = [
     root: 'dialog.desk-dlg--home',
   },
   {
+    // #223: the filing dialog with a reply's exact text (a sim.final of Zippy's), and the floor's filing cabinet.
+    name: 'handoff-dialog',
+    fixture: 'demo-m5',
+    open: async (page) => {
+      await onFloor(page);
+      const id = await page.evaluate(() => window.__h3d.world().flatMap((f) => f.workers).find((w) => w.name === 'Zippy')!.id);
+      await page.evaluate((w) => window.__h3d.simHandoff('sim.final', { id: w, text: '# Loader refactor\n\nThe loader streams now.\n\n```sh\nmake test\n```\n' }), id);
+      await page.evaluate((w) => window.__h3d.openHandoff(w), id);
+      await expect.poll(() => page.evaluate(() => window.__h3d.handoffDialog()?.state)).toBe('ready');
+    },
+    root: 'dialog.desk-dlg--handoff',
+  },
+  {
+    name: 'cabinet',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simhandoffs=3`,
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openCabinet('herdr-3d'));
+      await expect(page.locator('dialog.cab .cab-row')).toHaveCount(3);
+      await expect(page.locator('dialog.cab [data-hook="cab-doc"] h1')).toBeVisible();
+    },
+    root: 'dialog.cab',
+  },
+  {
     name: 'changes',
     fixture: 'demo-m4',
     open: async (page) => {

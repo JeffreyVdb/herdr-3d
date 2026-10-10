@@ -18,6 +18,8 @@ import type { HireSummary } from './ui/hire';
 import type { ReviewSummary } from './ui/hireReview';
 import type { DictationSummary } from './ui/dictation';
 import type { HireInterpretation } from './net/protocol';
+import type { HandoffDialogSummary } from './ui/handoffDialog';
+import type { CabinetSummary } from './ui/cabinet';
 import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
 import type { ChangesSummary } from './ui/changes';
@@ -227,6 +229,12 @@ export interface H3DDebug {
   mezzDoor(): number;
   /** M6c: the in-trays of the floor with an interior: per orchestrator desk, the folders in it (edge colours, oldest first); `waiting`: reports queued behind a delivery; `pending`: deliveries not yet on a tray. */
   trays(): { trays: Array<{ desk: number; worker: string; folders: number; edges: number[] }>; waiting: number[]; pending: number };
+  /** #223: the filing dialog and the cabinet as shown, the drawers' folder tabs and the filing walks; open them. */
+  handoffDialog(): HandoffDialogSummary | null;
+  cabinet(): CabinetSummary | null;
+  filing(): { drawers: [number, number, number] | null; walks: string[] };
+  openHandoff(id: string): void;
+  openCabinet(floor?: string): void;
   /** M4: plays walks `k` times as fast (tests). */
   arrivalRate(k: number): void;
   /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
@@ -256,6 +264,8 @@ export interface H3DDebug {
   simAi(args: Record<string, unknown>): Promise<{ ok: boolean; code?: string }>;
   /** #90: the fixture simulator's `sim.turn {id, text}`: a worker's agent ends its turn with that message (`sim=1`). */
   simTurn(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #223: the fixture bridge's handoff plays: `sim.final`, `sim.prompt_turn`, `sim.handoff_fail`. */
+  simHandoff(t: 'sim.final' | 'sim.prompt_turn' | 'sim.handoff_fail', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #90: the follow-up questions feature's state as the bridge last sent it (null: none). */
   followups(): FollowupsState | null;
   /** #110: pack up on request's settings and state as the bridge sent them (null: none). */
@@ -500,6 +510,11 @@ const h3d: H3DDebug = {
   arrivalLog: () => structuredClone(app?.arrivals.log ?? []),
   arrivalRate: (k) => app?.arrivals.setRate(k, performance.now() / 1000),
   trays: () => app?.trayStates() ?? { trays: [], waiting: [], pending: 0 },
+  handoffDialog: () => app?.handoffDialog.summary() ?? null,
+  cabinet: () => app?.cabinet.summary() ?? null,
+  filing: () => app?.filingStates() ?? { drawers: null, walks: [] },
+  openHandoff: (id) => app?.openHandoff(id, false),
+  openCabinet: (floor) => app?.openCabinet(floor ?? app.hereSession()),
   mezzDoor: () => app?.office?.mezzDoor01 ?? 0,
   desks: () => app?.deskStates() ?? [],
   deskArt: (d) => {
@@ -526,6 +541,11 @@ const h3d: H3DDebug = {
     if (!app) return { ok: false, code: 'not_started' };
     const r = await app.client.request('sim.ai' as CommandName, args as never);
     return r.ok ? { ok: true } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simHandoff: async (t, args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request(t as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   simTurn: async (args) => {
     if (!app) return { ok: false, code: 'not_started' };

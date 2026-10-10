@@ -223,6 +223,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             ...(q.get('simkaneoslow') !== null ? { kaneoSlowMs: Math.max(0, Number(q.get('simkaneoslow')) || 0) } : {}),
             // #171: the transcript timeline (tools/fixture-transcript.ts): demo-h171's own code changes.
             transcript: q.get('simtx') || name,
+            // #223: the filing cabinet starts with this many handoffs on the first floor (tools/fixture-handoff.ts).
+            ...(q.get('simhandoffs') ? { handoffs: Math.min(40, Math.max(0, Number(q.get('simhandoffs')) || 0)) } : {}),
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {

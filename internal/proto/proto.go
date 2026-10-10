@@ -195,6 +195,9 @@ type World struct {
 	// #90 follow-up questions: the feature's settings and state. nil (left
 	// out) when the bridge has no AI service.
 	Followups *Followups `json:"followups,omitempty"`
+	// #223 handoffs: the filing cabinet (nil, left out, when the bridge has
+	// no handoff directory).
+	Handoffs *HandoffCabinet `json:"handoffs,omitempty"`
 	// #110 pack up on request: the feature's settings and state. nil (left
 	// out) when the bridge has no AI service.
 	Packup *Packup `json:"packup,omitempty"`
@@ -369,6 +372,9 @@ type Worker struct {
 	// #90: Followup is the open questions of the agent's final message,
 	// until they are answered, dismissed or the agent is prompted again.
 	Followup *Followup `json:"followup,omitempty"`
+	// #223: Handoff is the agent's latest completed final reply a literal
+	// handoff can file (absent: none now, or no filing cabinet).
+	Handoff *HandoffCandidate `json:"handoff,omitempty"`
 	// #98: Activity is what the agent is doing right now: while Status is
 	// working, and while idle or done only as waiting on background tasks.
 	// Absent otherwise, and for harnesses other than claude and codex.
@@ -579,6 +585,12 @@ type Event struct {
 	// #90 follow-up questions: on followups.update the fields of Followups
 	// are flat in the event.
 	*Followups
+	// #223 handoffs: Handoff is set on handoff.added, HandoffID on
+	// handoff.removed (Session: its floor); HandoffCount is the floor's
+	// count after either.
+	Handoff      *HandoffEntry `json:"handoff,omitempty"`
+	HandoffID    int64         `json:"handoff_id,omitempty"`
+	HandoffCount *int          `json:"handoff_count,omitempty"`
 }
 
 // Command is a client request. Args depend on T (see the *Args types).

@@ -334,6 +334,38 @@ export function deskToDeskRoute(layout: FloorLayout, storey: number, from: numbe
   return route;
 }
 
+/**
+ * #223: where a worker stands to file a handoff: in front of the filing cabinet (it stands against the east wall and
+ * faces west), facing it; where its hand holds the folder and where the folder goes in (the top drawer's slot). Null
+ * without a cabinet.
+ */
+export function cabinetSpot(layout: FloorLayout): { x: number; z: number; yaw: number; hand: Waypoint; drop: Waypoint } | null {
+  const c = layout.props.find((p) => p.id === 'filing');
+  if (!c) return null;
+  const [x0, , z0] = c.box.min;
+  const [, y1, z1] = c.box.max;
+  const z = r3((z0 + z1) / 2);
+  const x = r3(x0 - (R + 0.22));
+  return { x, z, yaw: Math.atan2(1, 0), hand: { x: r3(x + 0.32), y: 0.98, z }, drop: { x: r3(x0 + 0.12), y: r3(y1 - 0.12), z } };
+}
+
+/**
+ * #223: a worker's way from its desk to the filing cabinet (`cabinetSpot`): out of the pod into the aisle behind its
+ * chair, along the aisles to the spot. Straight, walkable segments, like `deskToDeskRoute`; `[]` when there is no way.
+ * The way back is `reverseRoute` of it.
+ */
+export function deskToCabinetRoute(layout: FloorLayout, storey: number, from: number): Waypoint[] {
+  const slot = layout.slots[from];
+  const spot = cabinetSpot(layout);
+  const aisle = behind(layout, from);
+  if (!slot || !spot || !aisle || storey < 0) return [];
+  const fy = floorY(storey);
+  const wp = (p: Vec2): Waypoint => ({ x: r3(p.x), y: r3(fy), z: r3(p.z) });
+  const path = floorPath(layout, aisle, spot, new Set([from]));
+  if (!path) return [];
+  return [wp(slot.seat), wp(aisle), ...path.slice(1).map((p) => wp(p))];
+}
+
 // ---- the way out ----------------------------------------------------------------------
 
 /**

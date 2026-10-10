@@ -97,7 +97,7 @@ describe('SimWorld buildings', () => {
 
   it('answers unknown commands and a missing req_id like the bridge', () => {
     const r = rig();
-    expect(r.cmd('worker.handoff', {}).got()[0]).toMatchObject({ t: 'error', code: 'unknown_command' });
+    expect(r.cmd('worker.teleport', {}).got()[0]).toMatchObject({ t: 'error', code: 'unknown_command' });
     r.sim.handle({ t: 'building.create', args: { name: 'x' } }, (m) => r.out.push(m));
     expect(r.out.at(-1)).toEqual({ t: 'error', code: 'bad_request', message: 'missing req_id' });
   });
