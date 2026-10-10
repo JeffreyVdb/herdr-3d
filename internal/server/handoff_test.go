@@ -407,7 +407,9 @@ func TestHandoffNewPromptBeforeTheRead(t *testing.T) {
 	if files, _ := filepath.Glob(filepath.Join(hb.dir, "*", "*")); len(files) != 0 {
 		t.Fatalf("files %v", files)
 	}
-	if row := auditRow(t, hb.bridge, proto.CmdWorkerHandoff); row.OK || !row.Done {
+	// Refused after the transcript was read again (an audit row that failed);
+	// no row only when the bridge's read came first (a rare race).
+	if row := auditRow(t, hb.bridge, proto.CmdWorkerHandoff); row.OK || (row.Done != (row.Error != "")) {
 		t.Fatalf("audit %+v", row)
 	}
 	noPrompts(t, hb)
