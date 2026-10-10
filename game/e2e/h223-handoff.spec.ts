@@ -53,6 +53,14 @@ test('the inline button on the last reply files it as written, sends the worker 
   // On the reply's own row, not elsewhere.
   expect(await btn.evaluate((b) => (b.closest('[data-id]') as HTMLElement).dataset.kind)).toBe('assistant');
   await shot(page, 'h223-inline-button');
+  // #216 row 21: a labelled button is 36px high in Ubuntu; Quiet keeps its own.
+  const height = () => btn.evaluate((b) => b.getBoundingClientRect().height);
+  const quiet = await height();
+  const was = await page.evaluate(() => document.documentElement.getAttribute('data-ui-theme'));
+  await page.evaluate(() => document.documentElement.setAttribute('data-ui-theme', 'ubuntu'));
+  expect(await height()).toBeGreaterThanOrEqual(36);
+  await page.evaluate((v) => (v === null ? document.documentElement.removeAttribute('data-ui-theme') : document.documentElement.setAttribute('data-ui-theme', v)), was);
+  expect(await height()).toBe(quiet);
   await btn.click();
 
   const dlg = page.getByRole('dialog', { name: 'File a handoff from Zippy' });
@@ -187,9 +195,18 @@ test('the filing cabinet: E opens it, search, safe preview, delete with a confir
   await expect(doc.locator('h1')).toBeVisible();
   await expect(doc.locator('pre code')).toContainText('make e2e');
   expect(await doc.locator('script, img, iframe, [onerror]').count()).toBe(0);
+  // The actions wear the dialog's text colour and face in Quiet, never the browser's black on the dark surface.
+  const unthemed = () =>
+    cab.locator('.cab-actions .btn:not(.btn--danger)').evaluateAll((bs) => {
+      const d = getComputedStyle(bs[0]!.closest('dialog')!);
+      return bs.filter((b) => getComputedStyle(b).color !== d.color || getComputedStyle(b).fontFamily !== d.fontFamily).map((b) => b.textContent);
+    });
+  expect(await cab.locator('.cab-actions .btn').count()).toBe(3);
+  expect(await unthemed()).toEqual([]);
   // Delete: a confirm first, then out of the drawer.
   await cab.getByRole('button', { name: 'Delete' }).click();
   await expect(cab.getByRole('button', { name: 'Move to trash' })).toBeVisible();
+  expect(await unthemed()).toEqual([]); // Keep it
   await cab.getByRole('button', { name: 'Move to trash' }).click();
   await expect(cab.locator('.cab-foot [role="status"]')).toContainText('trash');
   await expect.poll(() => page.evaluate(() => window.__h3d.filing().drawers)).toEqual([0, 0, 2]);

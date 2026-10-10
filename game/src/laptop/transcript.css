@@ -3341,6 +3341,18 @@
   outline: 2px solid var(--tx-sun);
   outline-offset: 2px;
 }
+/* ubuntu:begin */
+/* #216 row 21: a labelled button is a standard control, 36px in Ubuntu (Quiet keeps its 26); a coarse pointer 44. */
+:root[data-ui-theme='ubuntu'] .tx .tx-handoff-btn {
+  min-height: 36px;
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .tx .tx-handoff-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+/* ubuntu:end */
 .tx-handoff-note {
   color: var(--tx-text-2);
   font: calc(11.5px * var(--tx-k, 1)) / 1.3 var(--tx-prose);
