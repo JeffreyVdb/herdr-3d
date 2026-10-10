@@ -298,6 +298,25 @@ MacBook (M2 Max)                                   devbox (Linux)
   orchestrator's floor, no ghosts, Unlinked per floor); both pages filter **Active only / All** (`f`, remembered per
   view; the all-floors page starts active only), the header's counts never filtered. Page only: the wall stays per
   floor (`decisions.md` "#188"). #174: the feature's own reasoning effort (from the model's catalog) and completion budget (default 1,024), a bounded retry of a failed task line, per-call sanitized diagnostics (`truncated` / `empty_answer` apart from `bad_response`), and a status on the page's line while a fallback shows (`decisions.md` "#174").
+- **Handoffs and the filing cabinet** (#223, part 1 of #11; details in `protocol.md` "Handoffs"): a worker's latest
+  completed final reply is filed **literally**, no model call and nothing sent to the worker. `transcript.HandoffTracker`
+  rides the usage tracker's line tap beside the follow-up and wrap-up trackers (the same `TurnEvents`, one parse per
+  line) and keeps the reply's source identity (agent session, Claude's message/request/line ids or Codex's turn and
+  message ids, byte spans, the text's SHA-256); the hub shows that identity as `Worker.handoff`, never the text, and
+  `transcript.Resolve` reads the whole text back from the spans for the preview and the filing (same file, same lines,
+  same hash, or nothing). `internal/handoff` (standard library and the store only, `TestHandoffIsALeaf`) is the
+  cabinet's one writer, for this mode and the later agent / LLM modes and `worker.fire`'s reserved `handoff`:
+  `--handoff-dir` (default `~/handoff`, `-` none) / `<floor>/<yyyymmdd-hhmm>-<worker>-<slug>.md`, a synced `.tmp`
+  linked to a free name (never over a file), the bridge's front matter over the unchanged text, a derived title, a
+  1 MiB cap, deletion to `.trash/`, and the startup reconcile (gone rows, changed files, crash orphans, leftover `.tmp`).
+  The store holds `handoff` (one row a file, with the source's ids, size and mtime, and the filing's `op` idempotency
+  key) and `handoff_fts` (FTS5, `porter unicode61 remove_diacritics 2`, rowid = `handoff.id`): bm25 search on quoted
+  terms, never raw FTS syntax, private-use snippet markers. A send home asked for with the filing runs only after it,
+  through `worker.fire`'s path with its checks done again. The game: the transcript's inline Handoff button on the
+  reply's own row (`world/handoff.handoffRow`), the filing dialog (`ui/handoffDialog.ts`; F at a worker), the cabinet
+  overlay (E at the floor's filing cabinet, `ui/cabinet.ts`; sanitised Markdown, Copy path, Delete, Hire from handoff
+  through the reviewed hire), the drawers filling with the floor's count and the worker's walk to the cabinet with a
+  folder (the M6c delivery walk, `world/route.deskToCabinetRoute`).
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.

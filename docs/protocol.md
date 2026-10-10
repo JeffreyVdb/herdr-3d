@@ -211,6 +211,9 @@ client reads that as `{}`.
 `kaneo` (#184) is the Kaneo connection, never a key (see [Kaneo](#kaneo)); a bridge without the settings, or from
 before #184, leaves it out.
 
+`handoffs` (#223) is the filing cabinet, `{"counts": {floor: n}}` (floors without a handoff left out; see
+[Handoffs](#handoffs)); a bridge without a handoff directory (`--handoff-dir -`), or from before #223, leaves it out.
+
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
@@ -280,6 +283,7 @@ floor with no workers and an `error`).
 | `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
 | `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "question", "kind": "yes_no" \| "choice" \| "open", "options"?}], "score", "source": "model" \| "fallback", "at", "tail"?}`, until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
+| `handoff` | object, optional | #223: its agent's latest completed final reply a literal handoff can file, `{"id", "session", "revision", "harness", "message"?, "turn"?, "source": "message" \| "last_agent_message", "bytes", "images"?, "too_large"?}`: the bridge's identity of it, never its text (see [Handoffs](#handoffs)) |
 | `activity` | object, optional | #98: what its agent is doing right now, `{"kind", "detail"?, "since", "source", "image"?, "tasks"?}`: while `status` is `working`, and while `idle` or `done` only as `waiting` on open background tasks; absent otherwise and for harnesses other than Claude and Codex (see [Activity](#activity)) |
 | `digest` | object, optional | #118: what the floor overview says of it, `{"task"?, "task_source"?, "now"?, "now_source", "now_at"?, "task_status"?, "now_status"?}`: its task and what it does now in words, each with its source, and (#174) what became of a model line that is awaited or failed; absent until its transcript has a prompt or an assistant step, and for harnesses other than Claude and Codex (see [Floor overview digest](#floor-overview-digest)) |
 | `wrapup` | object, optional | #83: its wrap-up, `{"state": "armed" \| "needs_you", "worktree": "keep" \| "delete" \| "delete_branch", "armed_at": int, "reason"?: string}` (unix ms, bridge clock; `reason` with `needs_you`), while armed or needing you (see [Wrap up](#wrap-up)) |
@@ -464,6 +468,8 @@ and remember the last `seq` applied.
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
 | `codex_server.update` | `enabled`, `available` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
+| `handoff.added` | `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (`session` is its floor, `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
+| `handoff.removed` | `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
 | `kaneo.update` | the fields of the Kaneo state | #184: the Kaneo connection changed (saved, cleared, paused by a refused key, resumed); flat in the event, never a key (see [Kaneo](#kaneo)). Like `packup.update`, decode it by its `t`: its `state` and `last_error` are not `ai.update`'s |
 
 ```json
@@ -579,6 +585,11 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `hire.interpret` | `{"text", "pending"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?}`: a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
 | `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…]}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
+| `worker.handoff_preview` | `{"worker", "candidate"}` | `{"candidate", "text", "truncated"?, "title", "provenance", "can_send_home", "send_home_blocked"?}` (see [Handoffs](#handoffs)) | — |
+| `worker.handoff` | `{"worker", "mode": "literal", "session", "candidate", "revision", "send_home"?, "op"}` | `{"handoff", "existing"?, "send_home"?: "started" \| "skipped", "send_home_reason"?}` | `handoff.added` (before the ack) when filed; `worker.removed` later when sent home |
+| `handoff.list` | `{"floor", "q"?, "limit"?: 1–500}` | `{"floor", "handoffs": [HandoffEntry…]}` | — |
+| `handoff.get` | `{"id"}` | `{"handoff", "body"}` | — |
+| `handoff.delete` | `{"id", "confirm": true}` | `{"handoff"}`; the file goes to the trash | `handoff.removed` (before the ack) |
 | `inbox.dismiss` | `{"id", "status_since"}` | `{"dismissed": bool}` (see [Inbox](#inbox)) | `inbox.dismissed` (before the ack) when the dismissal is new |
 | `activity.get` | `{}` | "Classify unknown commands"' state (see [Activity](#activity)) | — |
 | `activity.set` | `{"model_enabled"?: bool, "threshold"?: 0.05–0.99, "margin"?: 0–0.9, "daily_cap"?: 1–100000}` | its state | `activity.update` (before the ack) |
@@ -1025,7 +1036,7 @@ remote-tracking refs) and is audited like any command.
 | `cwd` | absolute, existing directory; default as in `hire.prepare` |
 | `worktree` | `true`: hire into a new linked git worktree and branch of `cwd`'s repository (below); `cwd` must be in a git work tree with a known `origin/<default>` |
 | `prompt` | optional first task, 1–32768 bytes of UTF-8 without NUL, not starting with `--` (herdr's CLI would read it as a flag). Sent once the agent is ready. For Claude it is typed (#95, step 5): no control characters but line ends (`\r\n` and `\r` go as `\n`) and tabs (four spaces each), at most 32768 bytes as typed, else `bad_request`. The game sends pasted images as `[Image #n: <absolute path>]` markers in the text, after uploading them (`POST /upload`, above). |
-| `handoff`, `stop_services` | reserved (M9, #14); refused like any unknown field |
+| `handoff`, `stop_services` | reserved (#11, #14); refused like any unknown field |
 
 Capacity: a hire that would put the floor above `--max-workers-per-floor` or the host above `--max-workers` is
 `capacity` (the `message` says which). A worktree hire needs room for **one** worker, like any hire: the main
@@ -1148,8 +1159,10 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
 5. The audit row is completed with each step (exit keys, released or not, the git state, the cleanup choice and
    outcome) and the ack sent. A failure is `fire_failed` with what went wrong.
 
-`handoff` (M9) and `stop_services` (#14) are reserved `worker.fire` arguments; today they are refused like any unknown
-field.
+`handoff` (#11) and `stop_services` (#14) are reserved `worker.fire` arguments; today they are refused like any unknown
+field. When `handoff` comes it files through the same filing service as `worker.handoff` (see [Handoffs](#handoffs)):
+the same path, front matter, index, audit and "send home only after a successful filing" rule, never a second writer.
+Today a handoff with a send home is `worker.handoff` with `send_home: true`.
 
 #### Wrap up
 
@@ -2823,7 +2836,9 @@ assistant `response_item` (else `task_complete`'s `last_agent_message`). A new p
    was, a cleared one never. A classifier failure is not recorded (logged; a later restart may try again).
 
 The calls run off the hub goroutine, under the AI integration's bounds (two calls in flight over the whole bridge).
-`turn_id` is the message's first 16 hex SHA-256 digits.
+`turn_id` is 16 hex digits of the turn's identity (#223): its place among the transcript's turns, the message's ids
+(Claude's `message.id`; Codex's `turn_id` and message id) and the text's SHA-256, so two turns with the same reply are
+two turns (`followup_seen` still keys on the text's hash: the same text is never classified twice).
 
 **Clearing.** `followup` goes (the worker's upsert, the record cleared) when it is answered, dismissed, on any
 `worker.prompt`, `worker.keys` or answer to it, when herdr says `working` again, when the transcript goes on to a new
@@ -3514,6 +3529,94 @@ it has to be typed into the terminal, which herdr refuses while it says `blocked
 
 The audit log keeps the ids, the indexes and each answer's length (`answer_bytes`), never the text.
 
+### Handoffs
+
+#223, part 1 of #11. A **literal handoff** files a worker's latest completed final reply, exactly as written, as a
+Markdown file in its floor's **filing cabinet**. No model is called and nothing is sent to the worker: the reply is
+already complete, so the worker is not woken. Later modes (the agent writes one, the configured LLM writes one) and
+`worker.fire`'s reserved `handoff` file through the same service: one path rule, front matter, index, audit and
+send-home rule.
+
+```json
+"handoff":{"id":"4a71102e7ae8ef34","session":"7a7b7c7d-…","revision":"9267469792d9bd31…","harness":"claude","message":"msg_01ABC","source":"message","bytes":5120,"images":1}
+"handoffs":{"counts":{"herdr-3d":3}}
+```
+
+**The candidate** (`Worker.handoff`; absent: none now, or the bridge has no handoff directory) is the bridge's
+identity of the reply, never its text. The usage tracker reads it from the same lines and `TurnEvents` as the
+follow-up and wrap-up trackers (`transcript.HandoffTracker`):
+
+- **Claude**: a message is every main-thread line of one `message.id`; its text blocks are joined in order with
+  `"\n"`. It is a candidate once it is closed (the next line is not one of its own) and its last line's `stop_reason`
+  is `end_turn` or `stop_sequence`, or it is null and `system/turn_duration` confirms the turn ended (headless `claude
+  -p` has no `turn_duration`: `end_turn` is the marker there). Never `tool_use`, `refusal`, `max_tokens`, a
+  thinking-only message, a sidechain or subagent line, a compaction summary or meta line. A new prompt, a tool result,
+  another assistant message or an interruption ends it.
+- **Codex**: text from `response_item` assistant messages only (the `event_msg` `agent_message` and `item_completed`
+  copies are never read, so a reply has one button). A turn runs from `task_started` to `task_complete`; its candidate
+  is its last `phase: final_answer` message, in a legacy rollout without phases its last assistant message, else
+  `task_complete.last_agent_message` (`source: "last_agent_message"`, no transcript row). Never a `commentary`, an
+  aborted (`turn_aborted`) or unfinished turn, a subagent's rollout (`session_meta.source` names one) or a child turn
+  (`root_turn_id` is not its `turn_id`).
+- `id` is 16 hex digits of the identity: harness, agent session, Claude's `message.id`, `requestId` and final line's
+  `uuid` or Codex's `turn_id` and message id, the source, the byte spans of its lines and the text's SHA-256
+  (`revision`). Two turns with the same reply have different ids. `message` names its transcript row: Claude's row id
+  is `<message>#<n>` (the last assistant row of that message), Codex's is the message id. `bytes` is the text's size,
+  `images` the image blocks it leaves out, `too_large` a text over 1 MiB.
+
+**`worker.handoff_preview {worker, candidate}`** reads the candidate's text back from its lines in the transcript
+(the file the tail read, checked to be the same file, its lines re-parsed and joined, the hash checked against the
+revision) and answers `{candidate, text, truncated?, title, provenance, can_send_home, send_home_blocked?}`: the first
+64 KiB of the text (`truncated` when cut, on a character), the title the handoff would get, where it comes from
+(`floor`, `worker_name`, `label`, `harness`, `model`, `branch`, `cwd`, `session`), and whether "send home after
+filing" can be offered now.
+
+**`worker.handoff {worker, mode: "literal", session, candidate, revision, send_home?, op}`** files it:
+
+1. The candidate must be the worker's current one, with that session and revision (else `handoff_unavailable`); `op`
+   is 1–64 characters of `[A-Za-z0-9_-]`, one per dialog. A second `worker.handoff` with an `op` being filed is
+   `busy`.
+2. Off the hub goroutine the text is read back as for the preview (`handoff_source` when it is not what it was,
+   `too_large` above 1 MiB: a literal handoff is never clipped).
+3. An `op` filed before, or the same reply (candidate and revision) of the worker whose file is still there, answers
+   that handoff (`existing: true`): nothing is filed twice.
+4. The file `<handoff_dir>/<floor>/<yyyymmdd-hhmm>-<worker>-<slug>.md` (`--handoff-dir`, default `~/handoff`; the
+   floor's name with anything but `[A-Za-z0-9._-]` a `-` and no leading dot; the worker's name and the title's slug in
+   lowercase ASCII) is written as a dot-named `.tmp` in the floor's directory, synced, and linked to the first free name
+   (`-2`, `-3`, … when taken: never over a file; 0600 files, 0700 directories; the path is checked to stay in the
+   directory), then the `.tmp` goes. Its front matter is the bridge's (`date` RFC3339 local, `floor`, `worker`,
+   `worker_id`, `label`, `branch`, `harness`, `model`, `session`, `cwd`, `source: literal`, `source_hash`; each a
+   quoted string), followed by the text unchanged: no heading is added.
+5. The row (`handoff`, with `created_at` the cabinet's order and the source's ids and spans) and its `handoff_fts` row
+   are added in one transaction; if that fails the file is removed again (`handoff_failed`). Then `handoff.added`.
+6. With `send_home`, the worker is sent home through `worker.fire`'s own path (worktree kept, its own `worker.fire`
+   audit row), only now and only if it may go now: not `working`, not `blocked`, no `ask`, and `worker.fire`'s checks.
+   The ack says `send_home: "started"` (`worker.removed` follows) or `"skipped"` with `send_home_reason`; the handoff
+   is filed either way. No failure in steps 1–5 sends anyone home.
+
+The ack is `{handoff, existing?, send_home?, send_home_reason?}`. The audit row has the ids, the path and the size,
+never the text.
+
+**The title** is derived, never generated: the text's first H1 (outside code fences), else its first nonempty line
+(heading marks off), else the worker's name and the date; blanks collapsed, at most 80 characters.
+
+**The cabinet.** `handoff.list {floor, q?, limit?}` answers `{floor, handoffs}`: without a query (or only blanks) the
+floor's handoffs newest first; with one, the matches by FTS5 `bm25` (title 10, label and worker 3, branch 2, body 1),
+each with `snippet`, the body's matching text with each match between U+E000 and U+E001 and cuts marked `…` (text: a
+client builds text nodes, never HTML). The query is never FTS5 syntax: it is cut to 256 bytes, control characters made
+blanks, split on blanks into at most 8 terms, each quoted (`"` doubled), the last a prefix, all required. `limit`
+defaults to 100, at most 500. The index (`tokenize='porter unicode61 remove_diacritics 2'`) stems and folds
+diacritics; there is no typo tolerance or substring search. `handoff.get {id}` answers `{handoff, body}`: the file
+without its front matter (Markdown: sanitise before showing), at most 1 MiB plus front matter. `handoff.delete {id,
+confirm: true}` moves the file to `<handoff_dir>/.trash/<floor>/` (a free name there too) and removes the row and its
+index row in one transaction, then `handoff.removed`. A `HandoffEntry` is `{id, floor, worker_id, worker_name, label,
+harness, model, cwd, branch, agent_session, path, title, created_at, source, bytes, snippet?}`; `source` is `literal`
+(later `agent`, `llm`).
+
+**Startup reconcile.** When the bridge starts it forgets rows whose file is gone, reads a changed file again (size or
+mtime) into the index, registers a handoff file it has no row of (a crash between the file and its row: the front
+matter says what it is) and removes leftover `.tmp` files. The snapshot's `handoffs.counts` has each floor's count.
+
 ### Inbox
 
 The game's inbox (#100) is derived in the client from the world: the workers that need you and the employees that are
@@ -3565,7 +3668,8 @@ dismissed_at)`.
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |
 | `drops_unavailable` | `drops.list` without a Drop Zone data directory, or one that cannot be read |
-| `too_large` | `transcript.image` with `size: "full"` for an image whose base64 is over 12 MiB (its thumbnail is still served) |
+| `too_large` | `transcript.image` with `size: "full"` for an image whose base64 is over 12 MiB (its thumbnail is still served); #223 `worker.handoff_preview` / `worker.handoff` for a reply over 1 MiB (never clipped) |
+| `handoff_unavailable`, `handoff_source`, `handoff_failed` | #223 (see [Handoffs](#handoffs)): the worker has no candidate or not the one named (stale: a newer turn, another session or revision); the candidate's lines in the transcript are not what they were (replaced, truncated, changed); writing or registering the file failed. Nothing was filed and nobody was sent home on any of them |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
 | `not_clean` | #83: `worker.wrapup` with a delete for a tree that is not clean and pushed now; `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |
@@ -3578,7 +3682,7 @@ dismissed_at)`.
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `files_failed` | #137 `worker.files` whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |
-| `confirmation_required` | `issue.close`, `pr.merge` or `worker.open_pr` without `confirm: true` (see [Boards](#boards-issues-and-pull-requests)) |
+| `confirmation_required` | `issue.close`, `pr.merge`, `worker.open_pr` or #223 `handoff.delete` without `confirm: true` (see [Boards](#boards-issues-and-pull-requests)) |
 | `unsupported` | the floor has no board (no repo linked, no provider), or the provider or the card cannot do it (a capability is off); `worker.open_pr*` on a floor that cannot open pull requests |
 | `provider_failed` | the provider call failed (`gh` missing, not logged in, the network, GitHub's refusal, a failed `git push`); the message is short and never has a token |
 | `rate_limited` | the provider's rate limit |
