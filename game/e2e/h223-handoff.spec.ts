@@ -122,6 +122,8 @@ test('F at a worker: a stale reply, a filing failure, a retry, and no candidate 
   const ops = (await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.handoff').map((c) => (c.args as { op: string }).op))) as string[];
   expect(ops).toHaveLength(2);
   expect(ops[0]).toBe(ops[1]);
+  // Zippy (not sent home) carries the folder to the cabinet; the drawer holds it.
+  await expect.poll(() => page.evaluate(() => window.__h3d.filing().walks.some((k) => k.includes('@handoff:')))).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__h3d.filing().drawers)).toEqual([0, 0, 1]);
   await nothingToWorker(page);
   clean();
