@@ -22,6 +22,7 @@ func (r readyRoles) Classifier() ai.Classifier { return r.cls }
 // neither shows with the model's cached answer nor is asked about. Once the
 // tracker has read the new turn, its own command's answer shows.
 func TestActivityCandidateOfAnOverTurn(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	cls := &ai.FakeClassifier{ManyFunc: func(context.Context, map[string]any, map[string]string) (map[string]float64, error) {
 		return map[string]float64{"testing": 0.99}, nil

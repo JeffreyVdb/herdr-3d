@@ -27,6 +27,7 @@ import (
 // working Claude it is typed for Claude to queue. Codex keeps agent
 // prompt.
 func TestPromptTypedToClaude(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"), agentW("w2", "claude", "working"),
 		agentW("w3", "codex", "idle"), agentW("w4", "claude", "unknown"), agentW("w5", "claude", "done"))
 	c := tb.connect(proto.Hello{})
@@ -101,6 +102,7 @@ func TestPromptTypedToClaude(t *testing.T) {
 // The Enter after a typed prompt is dropped (Claude just started): one
 // more Enter; acked once the worker started, else prompt_failed.
 func TestPromptTypedRetriesADroppedEnter(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -128,6 +130,7 @@ func TestPromptTypedRetriesADroppedEnter(t *testing.T) {
 // A typed prompt is several herdr calls: it holds the worker's input lane,
 // so a laptop's keys cannot land between two of its chunks.
 func TestPromptTypedHoldsTheLane(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -160,6 +163,7 @@ func TestPromptTypedHoldsTheLane(t *testing.T) {
 // other input), so a retry is not appended to it; an error that typed
 // nothing erases nothing.
 func TestPartlyTypedPromptIsErased(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -186,6 +190,7 @@ func TestPartlyTypedPromptIsErased(t *testing.T) {
 // When the erase fails too, the worker's input is dirty: the next prompt
 // erases first, and is refused (nothing typed) while that fails.
 func TestPartlyTypedPromptNotErasedBlocksTheNext(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -209,6 +214,7 @@ func TestPartlyTypedPromptNotErasedBlocksTheNext(t *testing.T) {
 // Typing cut short by the bridge stopping (its context done) is still
 // erased, with a context of its own.
 func TestPartlyTypedPromptErasedWhenTheBridgeStops(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -231,6 +237,7 @@ func TestPartlyTypedPromptErasedWhenTheBridgeStops(t *testing.T) {
 // then Enter is pressed until it works; a Codex hire's goes with agent
 // prompt.
 func TestHireTypesClaudePrompt(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil)
 	a := hireArgs(0)
 	a.Prompt = "/write-code https://github.com/JeffreyVdb/herdr-3d/issues/95\n\nTeam:\n- coders: claude"
@@ -343,6 +350,7 @@ func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(
 // Code's paste threshold changed) is logged as a warning; a person's own
 // paste is not.
 func TestTypedPromptArrivingAsAPasteIsLogged(t *testing.T) {
+	t.Parallel()
 	const sess = "0a0b0c0d-9595-4595-8595-959595959595"
 	dir := t.TempDir()
 	path := filepath.Join(dir, "-home-u-w1", sess+".jsonl")

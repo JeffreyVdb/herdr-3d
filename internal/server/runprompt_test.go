@@ -34,6 +34,7 @@ const placementLine = "Start every agent you hire in its own herdr workspace or 
 const buildHead = buildTeamLines + "\n\n" + placementLine
 
 func TestRunPrompt(t *testing.T) {
+	t.Parallel()
 	issueURL := server.IssueURL("JeffreyVdb/lab", 3)
 	if issueURL != "https://github.com/JeffreyVdb/lab/issues/3" {
 		t.Fatalf("IssueURL = %q", issueURL)
@@ -91,6 +92,7 @@ func TestRunPrompt(t *testing.T) {
 // #184: an item's ticket inlines what the provider gave, its description
 // bounded, and the item line replaces the status line.
 func TestItemPrompt(t *testing.T) {
+	t.Parallel()
 	ticket := &proto.RunTicket{Kind: proto.TicketItem, ProviderName: "Kaneo", Body: "Do it.",
 		Item: &proto.WorkItemRef{Provider: "kaneo", ID: "t1", Key: "HRD-3", Title: " Lobby ", URL: "https://tasks.example.test/x"}}
 	got := server.TicketPrompt("codex", ticket, buildTeam, "")

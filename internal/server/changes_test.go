@@ -47,6 +47,7 @@ func (f *fakeChanges) Changes(ctx context.Context, dir string) (*proto.WorkerCha
 }
 
 func TestWorkerChanges(t *testing.T) {
+	t.Parallel()
 	branch := "feat/x"
 	want := &proto.WorkerChanges{Cwd: "/home/u/w1", Branch: &branch, Head: strings.Repeat("a", 40), Ahead: 1,
 		Base:  &proto.ChangesBase{Ref: "origin/main", SHA: strings.Repeat("b", 40)},

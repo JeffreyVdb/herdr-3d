@@ -29,6 +29,7 @@ func (f *fakeCatalog) Commands(_ context.Context, harness, dir string) (*proto.W
 }
 
 func TestWorkerCommands(t *testing.T) {
+	t.Parallel()
 	fc := &fakeCatalog{}
 	b := startBridge(t, "", server.Options{Commands: fc})
 	c := b.connect(proto.Hello{})

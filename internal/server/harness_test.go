@@ -17,6 +17,12 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
+// Every test here runs in parallel (t.Parallel) but those that time the
+// bridge in wall-clock or count its polls: they say "Not parallel" and run
+// alone, before the parallel ones. Each test has its own bridge, store, socket
+// and temp dirs; a test that shares any of these, sets the environment or a
+// package variable, or asserts a wall-clock bound is not parallel.
+
 func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // shortDir is a temp dir short enough for a unix socket path.
@@ -29,6 +35,9 @@ func shortDir(t *testing.T) string {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	return dir
 }
+
+// testCloseGrace is the test bridges' close grace (server.DefaultCloseGrace).
+const testCloseGrace = 20 * time.Millisecond
 
 // bridge is a hub + WebSocket server on a temp socket and database.
 type bridge struct {
@@ -73,6 +82,9 @@ func startBridgeWith(t *testing.T, db string, opts server.Options, setup func(*s
 	go func() { hub.Run(ctx); close(hubDone) }()
 	go func() {
 		srv := server.NewServer(hub, quietLog())
+		// The test clients read only when a test reads, so they never answer the
+		// close handshake: a stop would wait out the whole default grace.
+		srv.SetCloseGrace(testCloseGrace)
 		if setup != nil {
 			setup(srv)
 		}

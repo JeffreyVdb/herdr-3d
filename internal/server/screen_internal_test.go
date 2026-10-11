@@ -49,6 +49,7 @@ func runOps(t *testing.T, h *Hub) {
 // SC-R2: a grab cancelled while its registration is still queued asks the
 // game nothing and holds no slot, however many there are.
 func TestScreenCancelledGrabRegistersNothing(t *testing.T) {
+	t.Parallel()
 	h, c := screenHub(t, time.Hour)
 	for range maxPendingFrames + 1 {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -79,6 +80,7 @@ func TestScreenCancelledGrabRegistersNothing(t *testing.T) {
 // ctx ended between the registration and the answer) expires on its own and
 // frees its slot.
 func TestScreenOrphanedFrameRequestExpires(t *testing.T) {
+	t.Parallel()
 	h, _ := screenHub(t, 5*time.Millisecond)
 	runOps(t, h)
 	ctx := context.Background()

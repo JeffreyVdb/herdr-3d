@@ -175,6 +175,7 @@ func (ab *askBridge) askNow(t *testing.T, id string) *proto.Ask {
 // whatever herdr says (idle here, as for a hire's named session), and goes
 // in the upsert where its result is read; a prompt meanwhile is refused.
 func TestAskFromTheTranscript(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "idle")
 	c := ab.connect(proto.Hello{})
 	snap := c.snapshot()
@@ -216,6 +217,7 @@ func TestAskFromTheTranscript(t *testing.T) {
 // keys the dialog takes (2 picks Blue and moves on, 1 ticks Logs, → to
 // the review, Enter), resolved once the transcript has the result.
 func TestAnswerAskTwoQuestions(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -273,6 +275,7 @@ func TestAnswerAskTwoQuestions(t *testing.T) {
 // arrows to its row, the text, Enter to tick it, Tab to Submit, Enter,
 // then the review). The audit keeps the text's length, never the text.
 func TestAnswerAskOther(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -346,6 +349,7 @@ func TestAnswerAskOther(t *testing.T) {
 // pressed; answered in the terminal meanwhile (the transcript records it
 // before the next key) is stale, and no more keys go.
 func TestAnswerAskChecksTheScreen(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -379,6 +383,7 @@ func TestAnswerAskChecksTheScreen(t *testing.T) {
 // Esc, then the prompt once the transcript has the rejection and herdr
 // sees the agent idle (#95: typed into Claude).
 func TestAnswerAskCancelWithAPrompt(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -402,6 +407,7 @@ func TestAnswerAskCancelWithAPrompt(t *testing.T) {
 // AC6: Codex: a digit per question; Other is the arrows to "None of the
 // above", Enter (its notes), the text, Enter.
 func TestAnswerAskCodex(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w2")
@@ -446,6 +452,7 @@ func TestAnswerAskCodex(t *testing.T) {
 // still has the old ask while the terminal shows another question: stale,
 // nothing pressed (Claude and Codex).
 func TestAnswerAskCancelChecksTheDialog(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "idle")
 	c := ab.connect(proto.Hello{})
 	snap := c.snapshot()
@@ -482,6 +489,7 @@ func TestAnswerAskCancelChecksTheDialog(t *testing.T) {
 // is typed; on a single-select question the arrows go to such a row (its
 // digit would submit the old text).
 func TestAnswerAskReconcilesOther(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -559,6 +567,7 @@ func TestAnswerAskReconcilesOther(t *testing.T) {
 // AC4: the last key is checked too: a dialog still showing its question
 // (or its review) after it is input_failed, not a sent answer.
 func TestAnswerAskChecksTheLastKey(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
 	snap := c.snapshot()
@@ -604,6 +613,7 @@ func TestAnswerAskChecksTheLastKey(t *testing.T) {
 // input_failed reaches the audit log and the server's log: its message
 // names steps by number, never a question's, option's or typed text.
 func TestAnswerAskErrorsKeepNoContent(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -657,6 +667,7 @@ func TestAnswerAskErrorsKeepNoContent(t *testing.T) {
 // review lists the ask's questions. A later ask with the same headers
 // (Color, Extras) but other questions is stale, nothing pressed.
 func TestAnswerAskCancelChecksTheReview(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "idle")
 	c := ab.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -693,6 +704,7 @@ func TestAnswerAskCancelChecksTheReview(t *testing.T) {
 // input_failed, nothing pressed; empty, the answer's text goes in, then
 // Enter; the answer's text already, Enter.
 func TestAnswerAskCodexOtherWithNotesOpen(t *testing.T) {
+	t.Parallel()
 	ab := startAskBridge(t, "blocked")
 	c := ab.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w2")

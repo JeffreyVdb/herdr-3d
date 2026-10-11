@@ -50,6 +50,7 @@ func issueOf(w proto.Worker) proto.IssueRef {
 }
 
 func TestRunFieldsFromTokens(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
@@ -85,6 +86,7 @@ func TestRunFieldsFromTokens(t *testing.T) {
 // Runs started outside the game, without tokens: the labels alone link
 // the freelancers to the floor's only orchestrator and to the issue.
 func TestRunFieldsFromLabels(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
@@ -116,6 +118,7 @@ func TestRunFieldsFromLabels(t *testing.T) {
 }
 
 func TestIssueFromTheSuggestedRepo(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{RepoOf: func(_ context.Context, dir string) string { return "o/suggested" }})
 	b.floor("s", true, runWorker("o", "ORCH|a", nil), runWorker("c", "CODE|x|12|r1", nil))
 	ws := workersOf(b.world(func(w proto.World) bool { return workersOf(w, "s")["o"].Issue != nil }), "s")
@@ -126,6 +129,7 @@ func TestIssueFromTheSuggestedRepo(t *testing.T) {
 }
 
 func TestIssueFromTheLaunchRecord(t *testing.T) {
+	t.Parallel()
 	var orch atomic.Value
 	orch.Store("")
 	clk := newClock(1_000_000)
@@ -155,6 +159,7 @@ func TestIssueFromTheLaunchRecord(t *testing.T) {
 }
 
 func TestOverCap(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	for _, tc := range []struct {
 		phase, pass string
@@ -174,6 +179,7 @@ func TestOverCap(t *testing.T) {
 }
 
 func TestPhaseAndPassRemembered(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	b := startBridge(t, db, server.Options{})
 	orch := func(tokens map[string]string) world.WorkerObs { return runWorker("o", "ORCH|a", tokens) }
@@ -240,6 +246,7 @@ func quiet(c *client, poll time.Duration) {
 }
 
 func TestReports(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	const poll = 20 * time.Millisecond
 	b := startBridge(t, "", server.Options{RunsDir: dir, ReportPoll: poll})
@@ -334,6 +341,7 @@ func TestReports(t *testing.T) {
 // waiting for the user is over the cap, REVIEW r3 says CHANGES_REQUIRED with
 // two blockers, UX r3 passed, CODE r3 handed in its summary.
 func TestOverCapFixture(t *testing.T) {
+	t.Parallel()
 	runsDir := filepath.Join("..", "..", "game", "fixtures", "runs")
 	raw, err := os.ReadFile(filepath.Join(runsDir, "20260928-1400-overcap", "workspaces.json"))
 	if err != nil {
@@ -408,6 +416,7 @@ func desksOf(w proto.World, session string) map[string]int {
 }
 
 func TestFreelancersSitNextToTheirOrchestrator(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	fl := func(ws, role, run string) world.WorkerObs {
 		return runWorker(ws, "CODE|"+ws, runTokens(role, run))
@@ -468,6 +477,7 @@ func TestFreelancersSitNextToTheirOrchestrator(t *testing.T) {
 // fresh bridge, a new floor): the ORCH is seated first and its freelancers
 // take the desks nearest to it, at once.
 func TestInitialDiscoverySeatsFreelancersNextToTheirOrchestrator(t *testing.T) {
+	t.Parallel()
 	plain := func(ws string) world.WorkerObs {
 		w := agent(ws, "idle")
 		w.Label, w.Role = "plain "+ws, ""
@@ -516,6 +526,7 @@ func TestInitialDiscoverySeatsFreelancersNextToTheirOrchestrator(t *testing.T) {
 }
 
 func TestFreelancerReseatedOnceWhenItsLinkAppearsLate(t *testing.T) {
+	t.Parallel()
 	clk := newClock(1_000_000)
 	b := startBridge(t, "", server.Options{Now: clk.now})
 	emp := func(ws string) world.WorkerObs {
@@ -587,6 +598,7 @@ func TestFreelancerReseatedOnceWhenItsLinkAppearsLate(t *testing.T) {
 
 // Workers in a run without a freelancer role are seated as before.
 func TestNonFreelancersSeatedAsBefore(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	orch := runWorker("o", "ORCH|a", runTokens("orch", "run-1"))
 	b.floor("s", true, agent("e0", "idle"), agent("e1", "idle"), agent("e2", "idle"), agent("e3", "idle"), orch)
@@ -601,6 +613,7 @@ func TestNonFreelancersSeatedAsBefore(t *testing.T) {
 // A hired worker sits where it was hired, even once it turns out to be a
 // freelancer of an ORCH on its floor.
 func TestHiredFreelancerKeepsItsDesk(t *testing.T) {
+	t.Parallel()
 	orch := runWorker("w1", "ORCH|a", runTokens("orch", "run-1"))
 	hb := startHireBridge(t, nil, orch)
 	a := hireArgs(5) // pod 1; desks 1…3 next to the ORCH are free
@@ -643,6 +656,7 @@ func touch(t *testing.T, path string, mod time.Time) {
 // afterwards asks again. A bridge started later over the same directory sees
 // the same (the sidecar is the state).
 func TestReportRequestResolution(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	const poll = 20 * time.Millisecond
 	const run = "20260929-0746-resolve"

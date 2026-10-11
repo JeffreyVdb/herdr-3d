@@ -125,6 +125,7 @@ func (p *prBridge) prepare() proto.OpenPRPrepareResult {
 }
 
 func TestOpenPRPrepare(t *testing.T) {
+	t.Parallel()
 	p := startPRBridge(t)
 	res := p.prepare()
 	if !res.CanOpen || res.Reason != "" || res.Branch != p.branch || res.Base != "main" || res.Ahead != 2 || res.Dirty || res.Existing != nil ||
@@ -171,6 +172,7 @@ func TestOpenPRPrepare(t *testing.T) {
 }
 
 func TestOpenPRPrepareRefusals(t *testing.T) {
+	t.Parallel()
 	p := startPRBridge(t)
 	c := p.c
 	c.mustError(proto.CmdOpenPRPrepare, proto.WorkerArgs{ID: "nobody"}, proto.ErrUnknownWorker)
@@ -208,6 +210,7 @@ func TestOpenPRPrepareRefusals(t *testing.T) {
 }
 
 func TestOpenPR(t *testing.T) {
+	t.Parallel()
 	p := startPRBridge(t)
 	c := p.c
 	p.host.set(func(f *fakeHost) {
@@ -321,6 +324,7 @@ type store_row struct{ args, result string }
 
 // The checkout's origin must be the floor's repo.
 func TestOpenPROrigin(t *testing.T) {
+	t.Parallel()
 	p := startPRBridge(t)
 	p.origin.Store("someone-else/lab")
 	if res := p.prepare(); res.CanOpen || !strings.Contains(res.Reason, "origin") {

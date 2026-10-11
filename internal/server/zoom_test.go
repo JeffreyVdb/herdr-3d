@@ -173,6 +173,7 @@ func zoomAudit(t *testing.T, tb *termBridge) (rows []string) {
 }
 
 func TestFullscreenWatchZoomsASplitPaneAndPutsItBack(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -206,6 +207,7 @@ func TestFullscreenWatchZoomsASplitPaneAndPutsItBack(t *testing.T) {
 
 // A connection that drops stands up too.
 func TestFullscreenWatchIsPutBackWhenTheConnectionDrops(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -218,6 +220,7 @@ func TestFullscreenWatchIsPutBackWhenTheConnectionDrops(t *testing.T) {
 
 // The bridge stopping stands up too.
 func TestFullscreenWatchIsPutBackWhenTheBridgeStops(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -234,6 +237,7 @@ func TestFullscreenWatchIsPutBackWhenTheBridgeStops(t *testing.T) {
 }
 
 func TestWatchWithoutFullscreenNeverZooms(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -255,6 +259,7 @@ func TestWatchWithoutFullscreenNeverZooms(t *testing.T) {
 }
 
 func TestFullscreenOfASinglePaneTabZoomsNothing(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.singleTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -275,6 +280,7 @@ func TestFullscreenOfASinglePaneTabZoomsNothing(t *testing.T) {
 // A tab the human zoomed on the pane already is not the bridge's: no call
 // at all, and it stays as it was.
 func TestFullscreenKeepsATabTheHumanZoomed(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	floor.with("w1", func(t *fakeTab) { t.zoomed, t.focused = true, "w1:p1" })
@@ -297,6 +303,7 @@ func TestFullscreenKeepsATabTheHumanZoomed(t *testing.T) {
 // starts over at the pane's own size, the bridge does not zoom again, and
 // standing up leaves the tab alone.
 func TestHumanUnzoomWhileSeatedIsReportedAndNotUndone(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -332,6 +339,7 @@ func TestHumanUnzoomWhileSeatedIsReportedAndNotUndone(t *testing.T) {
 
 // Focus moving to another pane while seated shows as a split.
 func TestFocusMovingAwayIsReported(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -349,6 +357,7 @@ func TestFocusMovingAwayIsReported(t *testing.T) {
 // An explicit size of the client is its own: the pane changing does not
 // resize the observer.
 func TestExplicitSizeIsNotResized(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -366,6 +375,7 @@ func TestExplicitSizeIsNotResized(t *testing.T) {
 }
 
 func TestTwoFullscreenWatchersOfATabShareTheZoom(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -396,6 +406,7 @@ func TestTwoFullscreenWatchersOfATabShareTheZoom(t *testing.T) {
 // A re-watch (the game does it after a gap) does not put the tab back and
 // zoom it again.
 func TestRewatchKeepsTheZoom(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -416,6 +427,7 @@ func TestRewatchKeepsTheZoom(t *testing.T) {
 }
 
 func TestFailedZoomNeverFailsTheWatch(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	floor.fail = errors.New("herdr: boom")
@@ -439,6 +451,7 @@ func TestFailedZoomNeverFailsTheWatch(t *testing.T) {
 
 // A watch whose session is asleep has nothing to put back through.
 func TestAsleepSessionIsNotZoomedBack(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -456,6 +469,7 @@ func TestAsleepSessionIsNotZoomedBack(t *testing.T) {
 }
 
 func TestTerminalZoomCommand(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -527,6 +541,7 @@ func TestTerminalZoomCommand(t *testing.T) {
 
 // terminal.zoom on takes the zoom for the watch: standing up puts it back.
 func TestTerminalZoomOnIsPutBackOnStandUp(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -542,6 +557,7 @@ func TestTerminalZoomOnIsPutBackOnStandUp(t *testing.T) {
 // Without a Zoomer (or a PaneState) the bridge says so and never fails a
 // watch.
 func TestFullscreenWithoutZoomSupport(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, shell("w1"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -606,6 +622,7 @@ func (c *client) nextReply(reqID string) {
 // decision of the watch it replaces: the human unzoomed, so it does not
 // zoom again. Only terminal.zoom on does.
 func TestRewatchAfterHumanUnzoomDoesNotZoomAgain(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -638,6 +655,7 @@ func TestRewatchAfterHumanUnzoomDoesNotZoomAgain(t *testing.T) {
 // B2: a terminal.zoom that is still reading when its watch ends takes no
 // ref and zooms nothing: nobody would put the tab back.
 func TestZoomCommandInFlightWhenTheWatchEndsZoomsNothing(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	gate := newZoomGate(floor)
@@ -665,6 +683,7 @@ func TestZoomCommandInFlightWhenTheWatchEndsZoomsNothing(t *testing.T) {
 // B3: a watch that turned fullscreen off is not a fullscreen watcher: the
 // last one that is puts the tab back.
 func TestWatchThatTurnedFullscreenOffDoesNotHoldTheTab(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -686,6 +705,7 @@ func TestWatchThatTurnedFullscreenOffDoesNotHoldTheTab(t *testing.T) {
 // B3: a watch that only follows (fullscreen false) is no owner either: it
 // standing up leaves a tab another laptop zoomed.
 func TestFollowingWatchStandingUpLeavesTheOtherLaptopsZoom(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -706,6 +726,7 @@ func TestFollowingWatchStandingUpLeavesTheOtherLaptopsZoom(t *testing.T) {
 // finds it is no longer the last. (With the read outside the lock the new
 // watch decided "zoomed already" on a tab the restore then put back.)
 func TestNewWatchReadsTheTabInsideTheWriteLock(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	gate := newZoomGate(floor)
@@ -735,6 +756,7 @@ func TestNewWatchReadsTheTabInsideTheWriteLock(t *testing.T) {
 // B5: the tab the bridge zoomed is the one it puts back: a pane the human
 // moved to a tab of theirs, zoomed, is left as it is.
 func TestRestoreLeavesTheTabThePaneMovedTo(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	ft := newFakeTerm()
@@ -766,6 +788,7 @@ func TestRestoreLeavesTheTabThePaneMovedTo(t *testing.T) {
 // watch itself stays fail-open), and the refused command changes nothing:
 // the watch does not become a fullscreen one.
 func TestZoomCommandReturnsWhatHerdrRefused(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -810,6 +833,7 @@ func TestZoomCommandReturnsWhatHerdrRefused(t *testing.T) {
 // of the human zooming, and its observer follows the size. It owns nothing
 // of the tab until it zooms by terminal.zoom.
 func TestWatchWithFullscreenFalseFollowsTheTab(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	tb := startZoomBridge(t, floor)
@@ -836,6 +860,7 @@ func TestWatchWithFullscreenFalseFollowsTheTab(t *testing.T) {
 // B7 / A8: a client that never sent fullscreen is not followed: no state
 // messages, one observer, no snapshot polling for it.
 func TestWatchWithoutTheFullscreenFieldIsNeverFollowed(t *testing.T) {
+	t.Parallel()
 	floor := newZoomFloor()
 	floor.splitTab("w1")
 	var reads atomic.Int32
@@ -870,6 +895,7 @@ func TestWatchWithoutTheFullscreenFieldIsNeverFollowed(t *testing.T) {
 
 // The wire shape of the tri-state: absent, false and true are three things.
 func TestTerminalWatchFullscreenIsATriState(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		json string
 		want *bool

@@ -62,6 +62,7 @@ func promptsBridge(t *testing.T, fp *fakePrompts) *termBridge {
 // (working); a Claude worker gets its text as typed, and the translator is
 // not even asked.
 func TestPromptIsTranslatedForCodexOnly(t *testing.T) {
+	t.Parallel()
 	fp := &fakePrompts{}
 	tb := promptsBridge(t, fp)
 	c := tb.connect(proto.Hello{})
@@ -106,6 +107,7 @@ func TestPromptIsTranslatedForCodexOnly(t *testing.T) {
 // asked with what was typed) says so in its ack, direct or queued; any other
 // prompt's ack has no "terminal".
 func TestTerminalOnlyPromptSaysSoInItsAck(t *testing.T) {
+	t.Parallel()
 	fp := &fakePrompts{}
 	tb := promptsBridge(t, fp)
 	c := tb.connect(proto.Hello{})
@@ -140,6 +142,7 @@ func TestTerminalOnlyPromptSaysSoInItsAck(t *testing.T) {
 // Enter and acked at once: nothing waits for a turn, and no Enter is pressed
 // again (it would act on the dialog).
 func TestTerminalOnlyPromptStartsNoTurnAndIsSentOnce(t *testing.T) {
+	// Not parallel: it bounds a prompt in wall-clock.
 	fp := &fakePrompts{}
 	tb := startTermBridge(t, func(o *server.Options) {
 		o.Prompts = fp
@@ -166,6 +169,7 @@ func TestTerminalOnlyPromptStartsNoTurnAndIsSentOnce(t *testing.T) {
 
 // #140 R1: a terminal-only built-in that herdr fails to deliver still fails.
 func TestTerminalOnlyPromptThatIsNotDeliveredFails(t *testing.T) {
+	t.Parallel()
 	tb := promptsBridge(t, &fakePrompts{})
 	tb.term.onTyped = nil
 	tb.term.typeErrs = []error{errors.New("herdr: pane gone")}
@@ -178,6 +182,7 @@ func TestTerminalOnlyPromptThatIsNotDeliveredFails(t *testing.T) {
 
 // Two prompts to one worker are translated and sent in the order they came.
 func TestTranslatedPromptsKeepTheirOrder(t *testing.T) {
+	t.Parallel()
 	fp := &fakePrompts{block: make(chan struct{})}
 	tb := promptsBridge(t, fp)
 	c := tb.connect(proto.Hello{})
@@ -199,6 +204,7 @@ func TestTranslatedPromptsKeepTheirOrder(t *testing.T) {
 
 // A lookup that fails never blocks a prompt: it goes as typed.
 func TestPromptFailsOpen(t *testing.T) {
+	t.Parallel()
 	fp := &fakePrompts{err: errors.New("catalog: timed out")}
 	tb := promptsBridge(t, fp)
 	c := tb.connect(proto.Hello{})
@@ -221,6 +227,7 @@ func TestPromptFailsOpen(t *testing.T) {
 // refused after translating, and nothing is sent. Claude's is not
 // translated, so its limit is the typed one, at once.
 func TestPromptLimitAppliesToTheTranslatedText(t *testing.T) {
+	t.Parallel()
 	fp := &fakePrompts{}
 	tb := promptsBridge(t, fp)
 	c := tb.connect(proto.Hello{})
@@ -258,6 +265,7 @@ func TestPromptLimitAppliesToTheTranslatedText(t *testing.T) {
 // Dismissing a Codex dialog with a prompt: the prompt is the composer's, so
 // it is translated like worker.prompt's.
 func TestAnswerAskPromptIsTranslated(t *testing.T) {
+	t.Parallel()
 	fp := &fakePrompts{}
 	ab := startAskBridgeWith(t, "idle", func(o *server.Options) { o.Prompts = fp })
 	c := ab.connect(proto.Hello{})
@@ -280,6 +288,7 @@ func TestAnswerAskPromptIsTranslated(t *testing.T) {
 // What the bridge builds itself is not rewritten, whatever the text holds:
 // a follow-up's answers (their notes are free text) and a wrap-up's prompt.
 func TestBridgeBuiltPromptsAreNotTranslated(t *testing.T) {
+	t.Parallel()
 	t.Run("followup answers", func(t *testing.T) {
 		fp := &fakePrompts{}
 		fb := startFuBridgeWith(t, "", "", newFuRoles(), on(), "", func(o *server.Options) { o.Prompts = fp })
@@ -338,6 +347,7 @@ func (f *fakePrompts) RetryKeys(harness, text string) []string {
 // takes the Enter (agent_prompt_stalled): the retry closes it first. Other
 // stalled prompts get a lone Enter, as before.
 func TestStalledPromptEndingInASkillPressesEscThenEnter(t *testing.T) {
+	t.Parallel()
 	fp := &fakePrompts{}
 	tb := promptsBridge(t, fp)
 	c := tb.connect(proto.Hello{})
@@ -365,6 +375,7 @@ func TestStalledPromptEndingInASkillPressesEscThenEnter(t *testing.T) {
 // quarter of itself (@"a" is a). Worker.prompt takes what fits at the bound,
 // and refuses, without translating, what is beyond it.
 func TestPromptSourceBoundNeverRefusesWhatFitsTranslated(t *testing.T) {
+	t.Parallel()
 	fp := &fakePrompts{}
 	tb := promptsBridge(t, fp)
 	c := tb.connect(proto.Hello{})
@@ -414,6 +425,7 @@ func codexAsk(t *testing.T, fp *fakePrompts) (*askBridge, *client, string, strin
 // that does not fit translated, or is beyond the source bound, is refused
 // before the dialog is touched.
 func TestAnswerAskPromptLimitAppliesToTheTranslatedText(t *testing.T) {
+	t.Parallel()
 	for name, text := range map[string]string{
 		"4000 quoted mentions":   strings.Repeat(`@"a" `, 4000),
 		"7000 quoted mentions":   strings.Repeat(`@"a" `, 7000),
@@ -454,6 +466,7 @@ func TestAnswerAskPromptLimitAppliesToTheTranslatedText(t *testing.T) {
 // meanwhile (it was only slow), the retry's Esc is not pressed: it would
 // abort the turn that is running. When it did not, esc, enter go as before.
 func TestStalledPromptRetryKeysAreSkippedOnceTheWorkerStarted(t *testing.T) {
+	t.Parallel()
 	stalled := &herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000ms"}
 	for name, statuses := range map[string][]string{
 		"working":                {"working"},
@@ -499,6 +512,7 @@ func TestStalledPromptRetryKeysAreSkippedOnceTheWorkerStarted(t *testing.T) {
 
 // The same guard on the dismiss-and-prompt route.
 func TestAnswerAskStalledPromptRetryKeysAreSkippedOnceTheWorkerStarted(t *testing.T) {
+	t.Parallel()
 	stalled := &herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000ms"}
 	t.Run("late start", func(t *testing.T) {
 		fp := &fakePrompts{}

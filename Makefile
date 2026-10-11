@@ -41,8 +41,10 @@ game-build: deps
 ## test: go test + vitest + the deploy script test
 test: go-test game-test sh-test
 
+# internal/server's tests mostly wait on the bridge, not the CPU: 8 at once even on a 2-core CI runner
+# (go test's default is GOMAXPROCS).
 go-test:
-	go test ./...
+	go test -parallel 8 ./...
 
 game-test: deps
 	$(PNPM) test

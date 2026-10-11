@@ -54,6 +54,7 @@ func claudeImageLine(t *testing.T, uuid string, data []byte, extra ...any) strin
 // transcript.images lists every image of the session, also the ones older
 // than the watch's window, with no bytes; the client never names a path.
 func TestTranscriptImages(t *testing.T) {
+	t.Parallel()
 	const sess = "0a0b0c0d-7777-4777-8777-777777777771"
 	base, _ := filepath.EvalSymlinks(t.TempDir())
 	dir, drops, secret := filepath.Join(base, "projects"), filepath.Join(base, "drops"), filepath.Join(base, "secret")

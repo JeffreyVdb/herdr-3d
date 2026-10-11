@@ -10,6 +10,7 @@ import (
 )
 
 func TestDiscoveredModelsAcrossCommands(t *testing.T) {
+	t.Parallel()
 	catalog := server.HireOptions()
 	catalog.Codex = proto.HarnessOptions{Models: []string{"gpt-6.1-sol", "gpt-future"}, Efforts: []string{"high"},
 		ExtraEfforts: map[string][]string{"gpt-6.1-sol": {"ultra"}}}

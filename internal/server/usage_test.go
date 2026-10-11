@@ -17,6 +17,7 @@ import (
 // throttle, only on change), in snapshots and upserts; gone with its agent
 // session.
 func TestWorkerUsage(t *testing.T) {
+	t.Parallel()
 	const sess = "0a0b0c0d-1111-4111-8111-111111111111"
 	dir := t.TempDir()
 	path := filepath.Join(dir, "-home-u-w1", sess+".jsonl")
@@ -89,6 +90,7 @@ func TestWorkerUsage(t *testing.T) {
 // there yet loses the old session's usage: in an upsert, and in the next
 // snapshot.
 func TestUsageGoesWithItsAgentSession(t *testing.T) {
+	t.Parallel()
 	const (
 		oldID = "0a0b0c0d-4444-4444-8444-444444444441"
 		newID = "0a0b0c0d-4444-4444-8444-444444444442"

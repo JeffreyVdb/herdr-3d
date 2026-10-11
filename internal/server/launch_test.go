@@ -43,6 +43,7 @@ var cheapTeam = proto.PresetRoles{
 // Presets: the seed, validation, events, the snapshot and persistence
 // across a bridge restart (a real database file, reopened).
 func TestPresets(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	b := startBridge(t, db, server.Options{})
 	c := b.connect(proto.Hello{Client: "presets"})
@@ -155,6 +156,7 @@ func runPrepare(t *testing.T, c *client, args any) proto.RunPrepareResult {
 }
 
 func TestRunPrepare(t *testing.T) {
+	t.Parallel()
 	hb, w := launchBridge(t)
 	c := hb.c
 	seed := w.Presets[0].ID
@@ -266,6 +268,7 @@ func TestRunPrepare(t *testing.T) {
 }
 
 func TestRunStart(t *testing.T) {
+	t.Parallel()
 	hb, w := launchBridge(t, worker("w1", "CODE|a", "", "idle"))
 	c := hb.c
 	seed := w.Presets[0].ID
@@ -393,6 +396,7 @@ func TestRunStart(t *testing.T) {
 
 // A run started before a restart gets its run id after it.
 func TestRunIDAfterRestart(t *testing.T) {
+	t.Parallel()
 	hb, w := launchBridge(t)
 	orch := buildTeam.Orch
 	desk := 1

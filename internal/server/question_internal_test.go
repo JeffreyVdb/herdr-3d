@@ -35,6 +35,7 @@ func screen(t *testing.T, name string) string {
 //   - codex-trust: Codex's trust dialog: herdr says idle (so it is never
 //     read as a question); "1" does nothing, Enter trusts.
 func TestParseQuestionOnCapturedScreens(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		screen   string
 		kind     string
@@ -101,6 +102,7 @@ func TestParseQuestionOnCapturedScreens(t *testing.T) {
 }
 
 func TestParseQuestionEdges(t *testing.T) {
+	t.Parallel()
 	perm := screen(t, "claude-permission-bash")
 	base := parseQuestion(perm, 1).q
 
@@ -179,6 +181,7 @@ func TestParseQuestionEdges(t *testing.T) {
 // last line, or lost at 100 columns), labels without their descriptions or
 // previews, and Claude's Yes / No question not a permission.
 func TestParseQuestionOnAskDialogs(t *testing.T) {
+	t.Parallel()
 	long := "For the live terminal streaming implementation, should the bridge send HTTP POST requests through the existing helper for each operator interaction, preserving explicit acknowledgments and retry behavior, or use WebSocket chunks matching issue thirteen, with continuous bidirectional delivery and reconnection handling for long running agent sessions?"
 	codexLong := "When sending a large fixture payload through a helper process while the receiver is temporarily unavailable and the terminal is narrow, which transport should preserve delivery ordering, retries, and a clear progress indication for the person waiting at the laptop?"
 	for _, tc := range []struct {

@@ -272,6 +272,7 @@ func lastFloor(t *testing.T, evs []proto.Event) proto.Floor {
 }
 
 func TestWakeHappyPath(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	b := startBridge(t, "", fastOps(fh))
 	sleeping := []world.WorkerObs{claudeW("w1", "sess-1"), worker("w2", "notes", "", "unknown")}
@@ -339,6 +340,7 @@ func TestWakeHappyPath(t *testing.T) {
 }
 
 func TestWakeConfirmedByAgentDetected(t *testing.T) {
+	// Not parallel: it bounds a wake in wall-clock.
 	fh := newFakeHerdr()
 	opts := fastOps(fh)
 	opts.ResumeTimeout = 5 * time.Second // only the event can end it quickly
@@ -363,6 +365,7 @@ func TestWakeConfirmedByAgentDetected(t *testing.T) {
 }
 
 func TestWakeFallback(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	b := startBridge(t, "", fastOps(fh))
 	codex := worker("w2", "CODE|w2", "01a0e795-0000", "unknown")
@@ -407,6 +410,7 @@ func TestWakeFallback(t *testing.T) {
 
 // A pane that runs something else is not typed into: its worker fails.
 func TestWakeNoFallbackOutsideAShell(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	b := startBridge(t, "", fastOps(fh))
 	sleeping := []world.WorkerObs{claudeW("w1", "sess-1")}
@@ -428,6 +432,7 @@ func TestWakeNoFallbackOutsideAShell(t *testing.T) {
 }
 
 func TestWakeFailsWhenTheServerDoesNotAnswer(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr() // started, but the socket never answers
 	b := startBridge(t, "", fastOps(fh))
 	b.floorAt("s", false, []world.WorkerObs{claudeW("w1", "sess-1")})
@@ -455,6 +460,7 @@ func TestWakeFailsWhenTheServerDoesNotAnswer(t *testing.T) {
 }
 
 func TestFloorCommandStates(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	fh.gate = make(chan struct{})
 	opts := fastOps(fh)
@@ -519,6 +525,7 @@ func TestFloorCommandStates(t *testing.T) {
 }
 
 func TestSleepBackfillsCodexThenStops(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	opts := fastOps(fh)
 	var looked []string
@@ -581,6 +588,7 @@ func TestSleepBackfillsCodexThenStops(t *testing.T) {
 }
 
 func TestSleepFailed(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	fh.stopErr = errors.New("herdr session stop: exit status 1: no such session")
 	b := startBridge(t, "", fastOps(fh))
@@ -603,6 +611,7 @@ func TestSleepFailed(t *testing.T) {
 // A full cycle keeps every worker's identity, desk and name, and resume
 // states end with the next sleep.
 func TestSleepWakeCycleKeepsDesksAndNames(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	b := startBridge(t, "", fastOps(fh))
 	var awake []world.WorkerObs
@@ -649,6 +658,7 @@ func TestSleepWakeCycleKeepsDesksAndNames(t *testing.T) {
 
 // Without resumable workers the ack still waits for the floor to run.
 func TestWakeWithoutAgentsAcksOnceRunning(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	b := startBridge(t, "", fastOps(fh))
 	plain := []world.WorkerObs{worker("w1", "notes", "", "unknown")}
@@ -674,6 +684,7 @@ func TestWakeWithoutAgentsAcksOnceRunning(t *testing.T) {
 // A server that answers ping but that the watcher never sees running is no
 // wake: the command fails, the transition ends and the audit row says so.
 func TestWakeFailsWhenTheFloorIsNotSeenRunning(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	b := startBridge(t, "", fastOps(fh))
 	b.floorAt("s", false, []world.WorkerObs{claudeW("w1", "sess-1")})
@@ -704,6 +715,7 @@ func TestWakeFailsWhenTheFloorIsNotSeenRunning(t *testing.T) {
 
 // A stop that herdr accepts but that the watcher never sees is no sleep.
 func TestSleepFailsWhenTheFloorIsNotSeenAsleep(t *testing.T) {
+	t.Parallel()
 	fh := newFakeHerdr()
 	opts := fastOps(fh)
 	opts.SleepTimeout = 300 * time.Millisecond
@@ -745,6 +757,7 @@ func (r *runnerHerdr) Ping(context.Context, string) error {
 // however long herdr takes to say what runs in them: panes are watched
 // side by side, and a stalled one holds up neither the others nor the ack.
 func TestWakeBoundedWhenProcessInfoStalls(t *testing.T) {
+	// Not parallel: it bounds a wake in wall-clock.
 	var workers []world.WorkerObs
 	for i := 1; i <= 12; i++ {
 		ws := fmt.Sprintf("w%d", i)

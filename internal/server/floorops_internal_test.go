@@ -10,6 +10,7 @@ import (
 // A wait cancelled while its closure is queued on the hub must not read
 // what the closure writes when the hub runs it after all (go test -race).
 func TestPendingWaitsCancelledWhileQueued(t *testing.T) {
+	t.Parallel()
 	for range 200 {
 		h := &Hub{ops: make(chan func(context.Context), 1), done: make(chan struct{}), floors: map[string]*floorState{}}
 		op := &floorOp{session: "s", waits: map[string]*resumeWait{"w": {pane: "w1:p1", state: proto.ResumePending}}}

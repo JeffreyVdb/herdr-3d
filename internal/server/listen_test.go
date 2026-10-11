@@ -25,6 +25,7 @@ func mode(t *testing.T, path string) fs.FileMode {
 }
 
 func TestListenPermissions(t *testing.T) {
+	t.Parallel()
 	sock := filepath.Join(shortDir(t), "herdr-world", "bridge.sock")
 	ln, err := server.Listen(sock)
 	if err != nil {
@@ -43,6 +44,7 @@ func TestListenPermissions(t *testing.T) {
 }
 
 func TestListenTightensLooseDir(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(shortDir(t), "herdr-world")
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -61,6 +63,7 @@ func TestListenTightensLooseDir(t *testing.T) {
 }
 
 func TestListenStaleAndLiveSockets(t *testing.T) {
+	t.Parallel()
 	sock := filepath.Join(shortDir(t), "bridge.sock")
 	// A crashed bridge leaves its socket file behind.
 	stale, err := net.ListenUnix("unix", &net.UnixAddr{Name: sock, Net: "unix"})
@@ -81,6 +84,7 @@ func TestListenStaleAndLiveSockets(t *testing.T) {
 }
 
 func TestListenRefusesNonSocketsAndLongPaths(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(shortDir(t), "bridge.sock")
 	if err := os.WriteFile(path, []byte("precious"), 0o600); err != nil {
 		t.Fatal(err)
@@ -100,6 +104,8 @@ func TestListenRefusesNonSocketsAndLongPaths(t *testing.T) {
 // TestNoTCPListener runs a full bridge and checks the kernel's socket tables:
 // no TCP socket owned by this process is listening.
 func TestNoTCPListener(t *testing.T) {
+	// Not parallel: it reads the whole process's TCP sockets, and parallel
+	// tests run httptest servers.
 	if runtime.GOOS != "linux" {
 		t.Skip("reads /proc")
 	}

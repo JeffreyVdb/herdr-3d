@@ -71,6 +71,7 @@ func taskStatus(state string) func(*proto.Worker) bool {
 // after a bounded retry, for a Claude and a Codex worker alike. A line not
 // yet written says why, and the failed call's diagnostics are audited.
 func TestDigestTaskRecoversAfterAFailedFirstCall(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	failFirst(roles, digest.KindTask, &ai.Error{Kind: ai.KindBadResponse, Msg: "the answer has no text"})
 	fb := startDgRetryBridge(t, roles, 0, shortRetry(3, 60*time.Millisecond))
@@ -146,6 +147,7 @@ func TestDigestTaskRecoversAfterAFailedFirstCall(t *testing.T) {
 // the overview says it gave up; digest.retry starts the count again, and a
 // new prompt does too.
 func TestDigestTaskAttemptsAreBoundedAndManuallyRetried(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	var mu sync.Mutex
 	broken := true
@@ -207,6 +209,7 @@ func TestDigestTaskAttemptsAreBoundedAndManuallyRetried(t *testing.T) {
 // A call that could not go (the daily cap, the feature off) costs no attempt,
 // and a changed setting or a passing test forgives the failures.
 func TestDigestRetryRespectsCapOffAndSettings(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	failFirst(roles, digest.KindTask, &ai.Error{Kind: ai.KindEmpty, Msg: "no text"})
 	fb := startDgRetryBridge(t, roles, 0, shortRetry(3, 80*time.Millisecond))
@@ -281,6 +284,7 @@ func TestDigestRetryRespectsCapOffAndSettings(t *testing.T) {
 // A now line that failed shows it (failed, with its reason) while a fallback
 // is shown, and is asked for again after the next turn or a retry.
 func TestDigestNowFailureAndRetry(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	failFirst(roles, digest.KindNow, &ai.Error{Kind: ai.KindTruncated, Msg: "cut off"})
 	fb := startDgRetryBridge(t, roles, 0, nil)
@@ -313,6 +317,7 @@ func TestDigestNowFailureAndRetry(t *testing.T) {
 // Retry is for a feature that is on: off, the bridge says there is nothing to
 // retry.
 func TestDigestRetryNeedsTheFeature(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	fb := startFuBridgeWith(t, "", "", newFuRoles(), nil, "", func(o *server.Options) {
 		o.DigestRoles = roles
@@ -327,6 +332,7 @@ func TestDigestRetryNeedsTheFeature(t *testing.T) {
 // request; "" is the provider's default again; an effort the model's catalog
 // does not list is refused.
 func TestDigestReasoningSettingsThroughTheProtocol(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	roles.reason = &ai.Reasoning{Support: ai.SupportYes, Model: "gpt-6-luna", Efforts: []string{"none", "low", "medium", "high"}, Listed: true, Default: "medium"}
 	fb := startDgBridge(t, "", "", roles, on(), 0)
@@ -370,6 +376,7 @@ func intp(n int) *int       { return &n }
 // An LLM that is not ready (an invalid key) makes no call and costs no
 // attempt: once it is ready the line gets its first attempt.
 func TestDigestNotReadyBurnsNoAttempt(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	roles.set(ai.StateInvalid)
 	fb := startDgRetryBridge(t, roles, 0, shortRetry(2, 30*time.Millisecond))

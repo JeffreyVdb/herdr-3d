@@ -111,6 +111,7 @@ func (kb *kaneoBridge) noKey(keys ...string) {
 }
 
 func TestKaneoConnectionCommands(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	c := kb.c
 	_, ack := c.mustAck(proto.CmdKaneoGet, nil)
@@ -195,6 +196,7 @@ func TestKaneoConnectionCommands(t *testing.T) {
 // A floor's Kaneo link is checked with Kaneo before it is saved, and the
 // GitHub settings and the Kaneo link survive switching between them.
 func TestKaneoFloorSettings(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	c := kb.c
 	link := func(ws, project string) proto.FloorSettingsArgs {
@@ -260,6 +262,7 @@ func TestKaneoFloorSettings(t *testing.T) {
 // also has that repository's pull requests. The fetch's name never holds
 // the key.
 func TestKaneoBoardWithAndWithoutRepo(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	tr := kb.fb.kaneoTracker("p1", 1)
 	tr.board.Cards = []tracker.Card{card("t1", "HRD-1", "First", "to-do"), card("t2", "HRD-2", "Later", "planned")}
@@ -318,6 +321,7 @@ func TestKaneoBoardWithAndWithoutRepo(t *testing.T) {
 // with them (not Kaneo's, which has none), and a refusal of the code host
 // is not Kaneo refusing its key: no pause.
 func TestKaneoFloorPullRequestsKeepTheirOwnGate(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	tr := kb.fb.kaneoTracker("p1", 1)
 	tr.board.Cards = []tracker.Card{card("t1", "HRD-1", "First", "to-do")}
@@ -350,6 +354,7 @@ func TestKaneoFloorPullRequestsKeepTheirOwnGate(t *testing.T) {
 // A new key (a new generation) drops the floor's board: a poll that was in
 // flight with the old one is never shown, and the store keeps the new one.
 func TestKaneoNewConnectionDropsBoardAndLateResults(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	old, fresh := kb.fb.kaneoTracker("p1", 1), kb.fb.kaneoTracker("p1", 2)
 	old.board.Cards = []tracker.Card{card("old", "HRD-1", "Old key", "to-do")}
@@ -392,6 +397,7 @@ func TestKaneoNewConnectionDropsBoardAndLateResults(t *testing.T) {
 // Kaneo floors' polling for the cooldown: the board says so, refreshes do
 // not poll, and a passing re-test of the saved connection resumes at once.
 func TestKaneoUnauthorizedPausesPolling(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	tr := kb.fb.kaneoTracker("p1", 1)
 	kb.saveConnection(kaneoKey)
@@ -452,6 +458,7 @@ func TestKaneoUnauthorizedPausesPolling(t *testing.T) {
 
 // A Kaneo item's 403 on a command is a permission problem, not a failure.
 func TestKaneoForbiddenCommand(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	tr := kb.fb.kaneoTracker("p1", 1)
 	tr.board.Cards = []tracker.Card{card("t1", "HRD-1", "First", "to-do")}
@@ -469,6 +476,7 @@ func TestKaneoForbiddenCommand(t *testing.T) {
 // {provider, id} (never a repo or number), and the orchestrator and its
 // crew carry the item, not a GitHub issue.
 func TestKaneoRunWorkItem(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	tr := kb.fb.kaneoTracker("p1", 1)
 	url := kaneoURL + "/dashboard/workspace/ws1/project/p1/task/t1"
@@ -540,6 +548,7 @@ func healthzOpenHosts(t *testing.T, sock string) string {
 // The bridge names its Kaneo instance's web host to the Mac helper on
 // /healthz (its own socket, never a client), only while one is saved.
 func TestKaneoOpenHostOnHealthz(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	if h := healthzOpenHosts(t, kb.sock); h != "" {
 		t.Fatalf("open hosts before a connection = %q", h)
@@ -592,6 +601,7 @@ func (c *client) staleReply(reqID string) {
 // instance, or none) before the save landed is not saved: it is a project
 // of the old connection.
 func TestKaneoLinkCheckedWithAReplacedConnectionIsStale(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name    string
 		replace func(kb *kaneoBridge)
@@ -627,6 +637,7 @@ func TestKaneoLinkCheckedWithAReplacedConnectionIsStale(t *testing.T) {
 // An older save whose check answers last does not undo a newer link; a
 // save of another setting meanwhile does not stop it.
 func TestKaneoLinkSavesAnswerInOrder(t *testing.T) {
+	t.Parallel()
 	kb := startKaneoBridge(t)
 	kb.saveConnection(kaneoKey)
 	c, gate := kb.heldLink("old")
@@ -710,6 +721,7 @@ func (kb *kaneoBridge) offBoard(gen int64, title string) *fakeTracker {
 // read it: a new instance or key reads it again, and a read of the old one
 // that lands after the switch is dropped.
 func TestKaneoTicketTitleFollowsTheConnection(t *testing.T) {
+	t.Parallel()
 	t.Run("read before the switch", func(t *testing.T) {
 		kb := startKaneoBridge(t)
 		id := kb.kaneoRun()
@@ -745,6 +757,7 @@ func TestKaneoTicketTitleFollowsTheConnection(t *testing.T) {
 // switches tracker (or connection) starts nothing: the task is of a board
 // the floor no longer has.
 func TestKaneoRunStartAfterTheFloorChangedIsStale(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		change func(kb *kaneoBridge)

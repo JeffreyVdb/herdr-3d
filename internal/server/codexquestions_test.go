@@ -129,6 +129,7 @@ func ans(i int, text string) proto.AsyncAnswerArg {
 // Asked while the transcript is closed: seen live, published, and kept
 // through the tool's {"accepted":true}, the turn's end and unrelated input.
 func TestAsyncQuestionSurvivesTheAcknowledgement(t *testing.T) {
+	t.Parallel()
 	sb, _ := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ, contextQ)))
 	c := sb.stateIs(t, "call_3", 1, proto.AsyncPending)
@@ -149,6 +150,7 @@ func TestAsyncQuestionSurvivesTheAcknowledgement(t *testing.T) {
 // against what was seen live; an envelope there (the terminal's) answers
 // its question.
 func TestAsyncQuestionRecoveredOnRejoin(t *testing.T) {
+	t.Parallel()
 	sb, _ := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ)))
 	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
@@ -181,6 +183,7 @@ func TestAsyncQuestionRecoveredOnRejoin(t *testing.T) {
 // Active turn: the envelope is steered into it with the bridge's client id;
 // the ack says sent, and only the envelope coming back says answered.
 func TestAsyncAnswerSteersTheActiveTurn(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ, contextQ)))
 	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
@@ -215,6 +218,7 @@ func TestAsyncAnswerSteersTheActiveTurn(t *testing.T) {
 // Idle: a turn is started with the envelope; both questions of a batch in
 // one envelope.
 func TestAsyncAnswerStartsATurnWhenIdle(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ, contextQ)), turnCompleted("t1"))
 	sb.codexWorker(t, func(c *proto.WorkerCodex) bool { return len(c.Questions) == 1 && c.Turn == "" })
@@ -236,6 +240,7 @@ func TestAsyncAnswerStartsATurnWhenIdle(t *testing.T) {
 // ended it, and refused the steer (nothing delivered). A turn is started
 // instead, exactly once.
 func TestAsyncAnswerFallsBackOnceWhenTheTurnEnded(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.host.steer = func(turn, _, _ string) (string, error) {
 		return "", &codexapp.RPCError{Code: -32600, Message: "expected active turn id `" + turn + "` but found none"}
@@ -274,6 +279,7 @@ func TestAsyncAnswerFallsBackOnceWhenTheTurnEnded(t *testing.T) {
 // unconfirmed, and never sent again by itself (a second delivery would
 // answer twice); no fallback either.
 func TestAsyncAnswerWithoutResponseIsNotResent(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.host.steer = func(string, string, string) (string, error) {
 		return "", errors.Join(codexapp.ErrNoResponse, errors.New("context deadline exceeded"))
@@ -296,6 +302,7 @@ func TestAsyncAnswerWithoutResponseIsNotResent(t *testing.T) {
 
 // Identity: the thread named, the batch, its question's state, the answer.
 func TestAsyncAnswerStaleIdentity(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ, contextQ)), itemDone("t1", asyncItem("call_4", contextQ)))
 	sb.stateIs(t, "call_4", 0, proto.AsyncPending)
@@ -346,6 +353,7 @@ func TestAsyncAnswerStaleIdentity(t *testing.T) {
 }
 
 func TestAsyncAnswerNeedsASharedWorker(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, false) // a legacy Codex hire
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
@@ -355,6 +363,7 @@ func TestAsyncAnswerNeedsASharedWorker(t *testing.T) {
 }
 
 func TestAsyncDismiss(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ, contextQ)))
 	sb.stateIs(t, "call_3", 1, proto.AsyncPending)
@@ -375,6 +384,7 @@ func TestAsyncDismiss(t *testing.T) {
 // Two answers for one question queued at once: the lane runs them in turn,
 // the second finds it sending or sent and is stale. One send.
 func TestAsyncAnswerSerializedOnTheLane(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	gate := make(chan struct{})
 	sb.host.steer = func(turn, _, _ string) (string, error) {
@@ -412,6 +422,7 @@ func TestAsyncAnswerSerializedOnTheLane(t *testing.T) {
 // (sent and undelivered). The second was submitted before that, so it is
 // stale, not a retry: one send.
 func TestAsyncAnswerQueuedTwiceIsNotARetry(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	gate := make(chan struct{})
 	sb.term.mu.Lock()
@@ -465,6 +476,7 @@ func TestAsyncAnswerQueuedTwiceIsNotARetry(t *testing.T) {
 // into the running turn); its screen is not a question to answer with keys.
 // An approval open on the server is a real block: refused, as before.
 func TestPromptReachesAWorkerBlockedByAnAsyncQuestion(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.term.mu.Lock()
 	sb.term.screens["w1:p1"] = "• Queued follow-up inputs\n  ? 1 question\n    shift+← to answer\n\n› Ask Codex to do anything\n"
@@ -515,6 +527,7 @@ func TestPromptReachesAWorkerBlockedByAnAsyncQuestion(t *testing.T) {
 // (nothing else would: the transcript may never be opened); one refused
 // for good is not.
 func TestSharedCodexRejoinsAfterGivingUp(t *testing.T) {
+	t.Parallel()
 	sb, _ := asyncWorker(t)
 	watches := func() int {
 		sb.host.mu.Lock()
@@ -541,6 +554,7 @@ func TestSharedCodexRejoinsAfterGivingUp(t *testing.T) {
 // itself, and the user may send it again. One that came back stays
 // answered.
 func TestAsyncAnswerUndeliveredMayBeSentAgain(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ, contextQ)))
 	sb.stateIs(t, "call_3", 1, proto.AsyncPending)
@@ -580,6 +594,7 @@ func TestAsyncAnswerUndeliveredMayBeSentAgain(t *testing.T) {
 // turn's end, the join lost. A dismissal hides a question in the bridge
 // only: Codex still holds it, so the flag stays.
 func TestAsyncBlockedFlagFollowsThePredicate(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	flag := func(want bool) proto.WorkerCodex {
 		t.Helper()
@@ -621,6 +636,7 @@ func TestAsyncBlockedFlagFollowsThePredicate(t *testing.T) {
 // #157: a /new in the terminal is another thread: the old one's questions
 // go, and with them async_blocked (an upsert).
 func TestAsyncBlockedFlagGoesWithTheThread(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)))
 	upsertFor(sb.c, a.ID, func(w *proto.Worker) bool { return w.Codex != nil && w.Codex.AsyncBlocked })
@@ -658,6 +674,7 @@ func (sb *sharedBridge) restartWith(t *testing.T, history *codexapp.Thread) *sha
 // sent: a retry is stale, nothing is sent twice. When the turn ends
 // without it, it is undelivered and may be sent once more.
 func TestAsyncAnswerSentSurvivesARestart(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ, contextQ)))
 	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
@@ -715,6 +732,7 @@ func TestAsyncAnswerSentSurvivesARestart(t *testing.T) {
 // was gone, without it: undelivered after the restart, one resend allowed.
 // An answer that was delivered meanwhile is answered, and goes.
 func TestAsyncAnswerUndeliveredAcrossARestart(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)), itemDone("t1", asyncItem("call_4", contextQ)))
 	sb.stateIs(t, "call_4", 0, proto.AsyncPending)
@@ -746,6 +764,7 @@ func TestAsyncAnswerUndeliveredAcrossARestart(t *testing.T) {
 // #158 R1: a send recorded before its response came (herdr-world stopped
 // in between) counts as sent into the turn it was steered into.
 func TestAsyncAnswerRecordedBeforeTheResponse(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)))
 	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
@@ -758,7 +777,11 @@ func TestAsyncAnswerRecordedBeforeTheResponse(t *testing.T) {
 		return turn, nil
 	}
 	sb.host.mu.Unlock()
-	go sb.c.command(proto.CmdWorkerAnswerAsync, "ans", answerArgs(a.ID, "call_3", ans(0, "x")))
+	answered := make(chan struct{})
+	go func() {
+		defer close(answered)
+		sb.c.command(proto.CmdWorkerAnswerAsync, "ans", answerArgs(a.ID, "call_3", ans(0, "x")))
+	}()
 	<-seen
 	recorded, err := sb.st.CodexAsyncSends(context.Background())
 	if err != nil || len(recorded[a.ID]) != 1 || recorded[a.ID][0].Turn != "t1" || recorded[a.ID][0].Confirmed {
@@ -766,6 +789,7 @@ func TestAsyncAnswerRecordedBeforeTheResponse(t *testing.T) {
 	}
 	close(release)
 	sb.stateIs(t, "call_3", 0, proto.AsyncSent)
+	<-answered // its ack is read before the restart closes the connection
 	// The answer's response never recorded; and a worker that is gone.
 	if err := sb.st.RecordCodexAsyncSends(context.Background(), []store.CodexAsyncSend{{WorkerID: a.ID, Thread: asyncThread,
 		Batch: "call_3", ClientID: "herdr_3d-00", Turn: "t1"}, {WorkerID: "gone", Thread: asyncThread, Batch: "call_1",
@@ -786,6 +810,7 @@ func TestAsyncAnswerRecordedBeforeTheResponse(t *testing.T) {
 
 // #158: sending a worker home forgets its recorded sends.
 func TestAsyncAnswerSendsGoWithTheWorker(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)))
 	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
@@ -828,6 +853,7 @@ func (sb *sharedBridge) recordedBatches(t *testing.T, id string) []string {
 // answered, and once a join reads call_3 the question is sent again: a
 // retry is stale, one envelope in all.
 func TestAsyncAnswerKeptThroughAFailedLegacyRepair(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ)))
 	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
@@ -876,6 +902,7 @@ func TestAsyncAnswerKeptThroughAFailedLegacyRepair(t *testing.T) {
 // record is kept and the bridge joins again after CodexRejoin, which reads
 // call_3.
 func TestAsyncAnswerKeptThroughAnUnmatchedLegacyRepair(t *testing.T) {
+	t.Parallel()
 	sb, a := asyncWorker(t)
 	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ)))
 	sb.stateIs(t, "call_3", 0, proto.AsyncPending)

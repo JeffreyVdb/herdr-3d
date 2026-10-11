@@ -210,6 +210,7 @@ func (sb *sharedBridge) launches(t *testing.T) map[string]store.CodexLaunch {
 }
 
 func TestCodexServerSwitch(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, false)
 	snap := sb.connect(proto.Hello{Client: "x"}).snapshot()
 	if cs := snap.World.CodexServer; cs == nil || cs.Enabled || !cs.Available {
@@ -243,6 +244,7 @@ func TestCodexServerSwitch(t *testing.T) {
 // The switch on: a Codex hire starts its own server from its pane, then
 // the TUI attached to it; no socket or server setup is asked of anyone.
 func TestSharedCodexHire(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	args := codexHire(2)
 	args.Prompt = "fix it"
@@ -291,6 +293,7 @@ func TestSharedCodexHire(t *testing.T) {
 // #186: a server on each verified line (0.160, 0.161) is joined in shared
 // mode; TestSharedCodexHireFallsBack has the lines around them.
 func TestSharedCodexHireOnEachVerifiedLine(t *testing.T) {
+	t.Parallel()
 	for _, ua := range []string{"herdr_3d/0.160.1 (Linux; x86_64) xterm", "herdr_3d/0.161.0 (Linux; x86_64) xterm"} {
 		t.Run(ua, func(t *testing.T) {
 			sb := startSharedBridge(t, true)
@@ -307,6 +310,7 @@ func TestSharedCodexHireOnEachVerifiedLine(t *testing.T) {
 // The switch off: a Codex hire is launched exactly as before, and nothing
 // of the feature is recorded or shown.
 func TestCodexHireWithTheSwitchOff(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, false)
 	_, m := sb.c.command(proto.CmdWorkerHire, "h", codexHire(2))
 	res := ackData[proto.HireResult](t, m)
@@ -338,6 +342,7 @@ func TestCodexHireWithTheSwitchOff(t *testing.T) {
 // Whatever keeps the server from starting starts the worker the usual way,
 // with the reason on the hire's result and on the worker.
 func TestSharedCodexHireFallsBack(t *testing.T) {
+	t.Parallel()
 	for name, tc := range map[string]struct {
 		setup func(*sharedBridge)
 		cwd   string
@@ -395,6 +400,7 @@ func TestSharedCodexHireFallsBack(t *testing.T) {
 // one (herdr forgets it when the TUI exits) changes nothing, and another
 // worker's thread is never taken.
 func TestSharedCodexThread(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
@@ -426,6 +432,7 @@ func TestSharedCodexThread(t *testing.T) {
 // never backfilled. Wake: the bridge starts its server from its pane again
 // and resumes its thread attached to it, without a permission override.
 func TestSharedCodexSleepAndWake(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true, claudeW("w9", "sess-9"))
 	sb.fl.setProcs("w9:p1", running("claude", "sess-9"))
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
@@ -511,6 +518,7 @@ func TestSharedCodexSleepAndWake(t *testing.T) {
 // A shared worker herdr resumed its own way anyway (a plain `codex
 // resume`, no --remote) is quit first, then relaunched attached.
 func TestSharedCodexWakeQuitsHerdrsResume(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
@@ -550,6 +558,7 @@ func TestSharedCodexWakeQuitsHerdrsResume(t *testing.T) {
 
 // Send home stops the worker's server once its TUI quit, and forgets it.
 func TestSharedCodexSendHome(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
@@ -574,6 +583,7 @@ func TestSharedCodexSendHome(t *testing.T) {
 
 // A server that dies is reported (herdr would show the TUI as working).
 func TestSharedCodexServerDown(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
@@ -591,6 +601,7 @@ func TestSharedCodexServerDown(t *testing.T) {
 // async question asked meanwhile is seen and can be answered); the
 // transcript closing leaves the join as it is.
 func TestSharedCodexJoinsWithoutTheTranscript(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
@@ -679,6 +690,7 @@ func (sb *sharedBridge) wakeResumes(t *testing.T) ([]string, map[string]string) 
 // Codex's hooks review) is relaunched on wake: its server, then a new TUI
 // attached to it. No thread is resumed or guessed.
 func TestSharedCodexWakeWithoutThread(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	a := sb.hireAndSleep(t, "")
 	l := sb.launches(t)[a.ID]
@@ -710,6 +722,7 @@ func TestSharedCodexWakeWithoutThread(t *testing.T) {
 // resume`; it stays shared, with the reason on it, and the next wake tries
 // its server again.
 func TestSharedCodexWakeFallsBack(t *testing.T) {
+	t.Parallel()
 	const th = "01a11172-ac09-7aa0-ab6b-84485199ada3"
 	for name, tc := range map[string]struct {
 		thread string
@@ -784,6 +797,7 @@ func TestSharedCodexWakeFallsBack(t *testing.T) {
 // A failed join (here a permanent refusal) is not retried while its target
 // is unchanged; reopening the transcript, or a new server, tries again.
 func TestSharedCodexFailedJoinIsKept(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
@@ -857,6 +871,7 @@ func TestSharedCodexFailedJoinIsKept(t *testing.T) {
 // which lists the user's other threads (B10). Nothing is closed or
 // stopped: its terminal stays usable, and it can be sent home again.
 func TestSharedCodexSendHomeSendsNoCtrlC(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
@@ -894,6 +909,7 @@ func TestSharedCodexSendHomeSendsNoCtrlC(t *testing.T) {
 // that TUI offers), so herdr forgets its session and the wake relaunches
 // it attached; a TUI whose server still runs never gets one.
 func TestSharedCodexSleepQuitsATerminalWhoseServerDied(t *testing.T) {
+	t.Parallel()
 	for _, dead := range []bool{true, false} {
 		t.Run(fmt.Sprintf("server dead %v", dead), func(t *testing.T) {
 			sb := startSharedBridge(t, true)
@@ -930,6 +946,7 @@ func TestSharedCodexSleepQuitsATerminalWhoseServerDied(t *testing.T) {
 // #158: send home quits a shared worker whose server died the way it quits
 // a legacy one (Ctrl-C after /quit), then stops what is left of its server.
 func TestSharedCodexSendHomeWhenItsServerDied(t *testing.T) {
+	t.Parallel()
 	sb := startSharedBridge(t, true)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)

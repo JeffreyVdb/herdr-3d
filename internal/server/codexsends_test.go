@@ -101,6 +101,7 @@ func envelope(batch string, index int, answer string) string {
 // the canonical rejoin (CodexRejoin) restores call_3 as sent: a retry is
 // stale, one envelope in all.
 func TestAsyncAnswerKeptThroughAnEvictedLegacyBatch(t *testing.T) {
+	t.Parallel()
 	sb, a := sentAnswer(t)
 	var older []codexapp.Turn
 	for i := range codexapp.MaxBatches - 1 {
@@ -135,6 +136,7 @@ func TestAsyncAnswerKeptThroughAnEvictedLegacyBatch(t *testing.T) {
 // newest, so reading it evicts it again); its envelope, once delivered,
 // removes the record though the view never shows the batch again.
 func TestAsyncAnswerKeptThroughAnEvictedBatch(t *testing.T) {
+	t.Parallel()
 	sb, a := sentAnswer(t)
 	newer := newerBatches("t1", codexapp.MaxBatches)
 	sb.evict(t, newer)
@@ -173,6 +175,7 @@ func TestAsyncAnswerKeptThroughAnEvictedBatch(t *testing.T) {
 // first. The record stays, and the restarted bridge (which forgot the
 // dismissal) shows it sent; its envelope, once delivered, removes it.
 func TestAsyncAnswerKeptThroughADismissedEvictedBatch(t *testing.T) {
+	t.Parallel()
 	sb, a := sentAnswer(t)
 	sb.c.mustAck(proto.CmdWorkerDismissAsync, proto.WorkerDismissAsyncArgs{ID: a.ID, Thread: asyncThread, Batch: "call_3"})
 	sb.stateIs(t, "call_3", 0, proto.AsyncDismissed)
@@ -202,6 +205,7 @@ func TestAsyncAnswerKeptThroughADismissedEvictedBatch(t *testing.T) {
 // The bridge chose turn/start from its idle view, or steered into t0 and
 // fell back to turn/start when the steer was refused (t0 had ended).
 func TestAsyncAnswerQueuedIntoAConcurrentTurnSurvivesARestart(t *testing.T) {
+	t.Parallel()
 	for _, steered := range []bool{false, true} {
 		t.Run(map[bool]string{false: "turn/start", true: "turn/steer refused, then turn/start"}[steered], func(t *testing.T) {
 			sb, a := asyncWorker(t)
@@ -277,6 +281,7 @@ func TestAsyncAnswerQueuedIntoAConcurrentTurnSurvivesARestart(t *testing.T) {
 // from call_3's answer steered into the running turn t1, and gives the
 // batches recorded after it.
 func TestAsyncSendRecordInvariant(t *testing.T) {
+	t.Parallel()
 	bridgeEnvelope := func(sb *sharedBridge) codexapp.Item {
 		s := sb.sent()[0]
 		return userItem("u", s.cid, s.text)

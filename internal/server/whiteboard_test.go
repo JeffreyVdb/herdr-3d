@@ -135,6 +135,7 @@ func wbCommand(c *client, typ, reqID string, args any) (*proto.WhiteboardUpdated
 }
 
 func TestWhiteboardSaveRestartAndRender(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "wb")
 	db := filepath.Join(t.TempDir(), "world.db")
 	b, c := wbBridge(t, dir, db, "")
@@ -220,6 +221,7 @@ func TestWhiteboardSaveRestartAndRender(t *testing.T) {
 }
 
 func TestWhiteboardConflictAndRefusals(t *testing.T) {
+	t.Parallel()
 	b, c := wbBridge(t, filepath.Join(t.TempDir(), "wb"), "", "")
 	render := wbPNG(t, 10, 10, color.White)
 	if st, body := b.wbSave("herdr-3d", 0, fmt.Sprintf(drawn, ""), render); st != 200 {
@@ -293,6 +295,7 @@ func (zeros) Read(p []byte) (int, error) {
 }
 
 func TestWhiteboardCommandsAndPins(t *testing.T) {
+	t.Parallel()
 	b, c := wbBridge(t, filepath.Join(t.TempDir(), "wb"), "", "")
 	_, ack := c.mustAck(proto.CmdWhiteboardGet, proto.WhiteboardArgs{Floor: "herdr-3d"})
 	if d := ack.Data.(map[string]any); d["version"] != 0.0 || d["stale"] != false || d["render"] != false {
@@ -368,6 +371,7 @@ func TestWhiteboardCommandsAndPins(t *testing.T) {
 }
 
 func TestWhiteboardWithoutStore(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{T: proto.THello, Proto: proto.Version})
 	c.snapshot()
@@ -379,6 +383,7 @@ func TestWhiteboardWithoutStore(t *testing.T) {
 }
 
 func TestDropsListAndFile(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	img := wbPNG(t, 900, 300, color.RGBA{10, 200, 10, 255})
 	if err := os.MkdirAll(filepath.Join(root, "2026-10"), 0o700); err != nil {

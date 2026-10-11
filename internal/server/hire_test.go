@@ -517,6 +517,7 @@ func auditRow(t *testing.T, b *bridge, cmd string) (row struct {
 }
 
 func TestHirePrepare(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, func(o *server.Options) {
 		o.Caps = server.Caps{FloorSoft: 1, FloorHard: 3, HostSoft: 5, HostHard: 9}
 	}, worker("w1", "CODE|a", "", "idle"))
@@ -588,6 +589,7 @@ func jsonEqual(a, b any) bool {
 }
 
 func TestHireAtDesk(t *testing.T) {
+	// Not parallel: it bounds a hire in wall-clock.
 	hb := startHireBridge(t, nil, worker("w1", "CODE|a", "", "idle"))
 	c := hb.c
 	label := "Mochi"
@@ -665,6 +667,7 @@ func TestHireAtDesk(t *testing.T) {
 }
 
 func TestHireValidation(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, func(o *server.Options) { o.Caps = server.Caps{FloorSoft: 1, FloorHard: 2, HostSoft: 1, HostHard: 5} },
 		worker("w1", "a", "", "idle"))
 	c := hb.c
@@ -701,6 +704,7 @@ func TestHireValidation(t *testing.T) {
 
 // Two hires to one desk: the first accepted wins. Wake and sleep wait.
 func TestHireReservesItsDesk(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil)
 	c := hb.c
 	hb.fl.createGate = make(chan struct{})
@@ -737,6 +741,7 @@ func mustRaw(v any) json.RawMessage {
 // new workspace still becomes the hired worker, at its desk, without a
 // stranger showing up first.
 func TestHireWorkspaceSeenBeforeCreateReturns(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil, worker("w1", "a", "", "idle"))
 	hb.fl.publishEarly = true
 	evs, m := hb.c.command(proto.CmdWorkerHire, "h", hireArgs(5))
@@ -752,6 +757,7 @@ func TestHireWorkspaceSeenBeforeCreateReturns(t *testing.T) {
 }
 
 func TestHireAnswersTrustDialogs(t *testing.T) {
+	t.Parallel()
 	claudeTrust := "❯ claude --model x\n Accessing workspace:\n\n /home/u/repo\n\n Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel"
 	codexTrust := "  Folder access\n  /home/u/repo\n  Trust this folder? Codex can read, edit, and run files here.\n› 1. Trust and continue\n  2. Quit"
 	for _, tc := range []struct {
@@ -790,6 +796,7 @@ func TestHireAnswersTrustDialogs(t *testing.T) {
 }
 
 func TestHireIntoWorktree(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil)
 	hb.git.repos["/home/u/repo/sub"] = "/home/u/repo"
 	a := hireArgs(1)
@@ -846,6 +853,7 @@ func TestHireIntoWorktree(t *testing.T) {
 }
 
 func TestHireRollsBack(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil)
 	hb.fl.markErr = errors.New("pane not found")
 	evs, m := hb.c.command(proto.CmdWorkerHire, "h", hireArgs(0))
@@ -871,6 +879,7 @@ func TestHireRollsBack(t *testing.T) {
 // A failed worktree hire removes its checkout only when the tree is
 // clean, and deletes its branch only while it still points at its base.
 func TestHireRollsBackAWorktree(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name          string
 		dirty         []string
@@ -937,6 +946,7 @@ func TestHireRollsBackAWorktree(t *testing.T) {
 // herdr opens the repository's main checkout with the first worktree of
 // it on a floor, but that is no worker: a worktree hire needs room for one.
 func TestWorktreeHireNeedsOneWorker(t *testing.T) {
+	t.Parallel()
 	caps := func(hard int) func(*server.Options) {
 		return func(o *server.Options) {
 			o.Caps = server.Caps{FloorSoft: 1, FloorHard: hard, HostSoft: 1, HostHard: 50}
@@ -980,6 +990,7 @@ func TestWorktreeHireNeedsOneWorker(t *testing.T) {
 
 // Codex (#95: only Codex's prompts are pasted with agent prompt).
 func TestHirePromptRetriesUntilReady(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil)
 	notReady := &herdr.APIError{Code: "agent_not_ready", Message: "starting"}
 	hb.fl.promptErrs = []error{notReady, notReady}
@@ -1007,6 +1018,7 @@ func linkedWorker(ws, branch string) world.WorkerObs {
 }
 
 func TestFirePrepare(t *testing.T) {
+	t.Parallel()
 	main := claudeW("w1", "")
 	main.Cwd = "/home/u/repo"
 	main.Worktree = &world.Worktree{RepoRoot: "/home/u/repo", RepoName: "repo", CheckoutPath: "/home/u/repo"}
@@ -1064,6 +1076,7 @@ func TestFirePrepare(t *testing.T) {
 }
 
 func TestSendHome(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil, claudeW("w1", "sess-1"), worker("w2", "notes", "", "unknown"))
 	hb.fl.setProcs("w1:p1", running("claude", "sess-1"))
 	ws := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 2 }), "s")
@@ -1100,6 +1113,7 @@ func TestSendHome(t *testing.T) {
 }
 
 func TestSendHomeAgentThatDoesNotExit(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil, withKind(worker("w1", "x", "", "working"), "codex"))
 	hb.fl.exitWorks = false
 	hb.fl.setProcs("w1:p1", running("codex", ""))
@@ -1144,6 +1158,7 @@ func withKind(w world.WorkerObs, kind string) world.WorkerObs {
 }
 
 func TestSendHomeWorktree(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil, linkedWorker("w1", "h3d/pixel-a1b2c3"), linkedWorker("w2", "h3d/mochi-d4e5f6"),
 		withKind(linkedWorker("w3", "feature/x"), "claude"), linkedWorker("w4", "h3d/tofu-0f0f0f"),
 		linkedWorker("w5", "h3d/miso-123456"))
@@ -1231,6 +1246,7 @@ func TestSendHomeWorktree(t *testing.T) {
 }
 
 func TestSendHomeWhileBusy(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil, claudeW("w1", "sess-1"))
 	id := workersOf(hb.world(func(w proto.World) bool { return len(workersOf(w, "s")) == 1 }), "s")["w1"].ID
 	// A sleep in progress: busy.
@@ -1253,6 +1269,7 @@ func TestSendHomeWhileBusy(t *testing.T) {
 // marker reconciles it (even on another workspace id), with its desk,
 // name, hired_at and model.
 func TestHiredWorkerSurvivesRestarts(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil)
 	a := hireArgs(4)
 	a.Harness, a.Model, a.Effort = "codex", "gpt-6-astra", "ultra"
@@ -1279,6 +1296,7 @@ func TestHiredWorkerSurvivesRestarts(t *testing.T) {
 // the Enter: herdr reports agent_prompt_stalled, the bridge presses Enter
 // until the worker works. Codex: agent prompt (#95).
 func TestHirePromptStalled(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil)
 	hb.fl.promptErrs = []error{&herdr.APIError{Code: "agent_prompt_stalled", Message: "no working state within 5000 ms"}}
 	enters := 0
@@ -1334,6 +1352,7 @@ func eventWhere(c *client, ok func(proto.Event) bool) proto.Event {
 // worker while it has no agent: no desk, no count. It is one again when an
 // agent runs in it or its last worktree is gone.
 func TestIdleMainCheckoutIsNoWorker(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))
 	w := hb.world(hasWorkers("s", 1))
 	if _, ok := workersOf(w, "s")["w2"]; !ok {
@@ -1378,6 +1397,7 @@ func TestIdleMainCheckoutIsNoWorker(t *testing.T) {
 // A main checkout with an agent stays a worker, and cannot go while its
 // worktrees are open.
 func TestIdleMainCheckoutDoesNotCountAgainstCaps(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, func(o *server.Options) {
 		o.Caps = server.Caps{FloorSoft: 1, FloorHard: 2, HostSoft: 1, HostHard: 50}
 	}, mainShell("w1"), linkedWorker("w2", "h3d/pixel-a1b2c3"))
@@ -1391,6 +1411,7 @@ func TestIdleMainCheckoutDoesNotCountAgainstCaps(t *testing.T) {
 // Sending home the last worktree the bridge hired closes the main checkout
 // herdr opened for it, when nothing else works there.
 func TestSendHomeClosesTheIdleMainCheckout(t *testing.T) {
+	t.Parallel()
 	hired := func(t *testing.T, hb *hireBridge, ws string) {
 		t.Helper()
 		id := workersOf(hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")[ws]; return ok }), "s")[ws].ID
@@ -1503,6 +1524,7 @@ func TestSendHomeClosesTheIdleMainCheckout(t *testing.T) {
 // A worktree hire on an empty floor ends with one worker; sending it home
 // closes the main checkout herdr opened for it.
 func TestWorktreeHireOnAnEmptyFloor(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil)
 	hb.git.repos["/home/u/repo"] = "/home/u/repo"
 	a := hireArgs(0)
@@ -1535,6 +1557,7 @@ func TestWorktreeHireOnAnEmptyFloor(t *testing.T) {
 
 // A client label with a numeric suffix never becomes a worker's name.
 func TestHireLabelWithDigitsGetsAPlainName(t *testing.T) {
+	t.Parallel()
 	hb := startHireBridge(t, nil, worker("w1", "CODE|a", "", "idle"))
 	hb.world(func(w proto.World) bool { return len(w.Workers) == 1 })
 	args := hireArgs(3)

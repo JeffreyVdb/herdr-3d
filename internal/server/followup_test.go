@@ -153,6 +153,7 @@ func on() *bool { v := true; return &v }
 // answering sends exactly one prompt with the answers and clears it; a stale
 // turn is refused.
 func TestFollowupClaudeFlagAndAnswer(t *testing.T) {
+	t.Parallel()
 	roles := newFuRoles()
 	fb := startFuBridge(t, "", "", roles, on(), "")
 	c := fb.connect(proto.Hello{})
@@ -227,6 +228,7 @@ func TestFollowupClaudeFlagAndAnswer(t *testing.T) {
 
 // Codex: its rollout's final message flags w2.
 func TestFollowupCodex(t *testing.T) {
+	t.Parallel()
 	roles := newFuRoles()
 	fb := startFuBridge(t, "", "", roles, on(), "")
 	c := fb.connect(proto.Hello{})
@@ -241,6 +243,7 @@ func TestFollowupCodex(t *testing.T) {
 // A plain summary: classified, no LLM call, no flag. A freelancer's turn
 // with questions: no call at all.
 func TestFollowupNoFlag(t *testing.T) {
+	t.Parallel()
 	t.Run("summary", func(t *testing.T) {
 		roles := newFuRoles()
 		fb := startFuBridge(t, "", "", roles, on(), "")
@@ -277,6 +280,7 @@ func (fb *fuBridge) noFollowups(t *testing.T) {
 // Switched off, not ready, a role invalid: zero calls on turn end, and
 // nothing changes.
 func TestFollowupOffMakesNoCall(t *testing.T) {
+	t.Parallel()
 	t.Run("off", func(t *testing.T) {
 		roles := newFuRoles() // the models ready: configured, not switched on
 		fb := startFuBridge(t, "", "", roles, nil, "")
@@ -311,6 +315,7 @@ func TestFollowupOffMakesNoCall(t *testing.T) {
 
 // A pending ask or a blocked worker: the classifier is not called.
 func TestFollowupSkipsAskAndBlocked(t *testing.T) {
+	t.Parallel()
 	t.Run("ask", func(t *testing.T) {
 		roles := newFuRoles()
 		fb := startFuBridge(t, "", "", roles, on(), "")
@@ -342,6 +347,7 @@ func TestFollowupSkipsAskAndBlocked(t *testing.T) {
 // The LLM failing still flags the worker, with one open item and the
 // message's tail.
 func TestFollowupFallback(t *testing.T) {
+	t.Parallel()
 	roles := newFuRoles()
 	roles.llm.Text = "no json here"
 	fb := startFuBridge(t, "", "", roles, on(), "")
@@ -365,6 +371,7 @@ func TestFollowupFallback(t *testing.T) {
 
 // Typing a prompt, dismissing, or the worker at work again clears it.
 func TestFollowupClears(t *testing.T) {
+	t.Parallel()
 	flag := func(t *testing.T) (*fuBridge, *client, *proto.Followup) {
 		roles := newFuRoles()
 		fb := startFuBridge(t, "", "", roles, on(), "")
@@ -418,6 +425,7 @@ func mustMarshal(t *testing.T, v any) json.RawMessage {
 // The same message after a restart: no second classification and no
 // re-flag once dealt with; an open one comes back as it was.
 func TestFollowupRestart(t *testing.T) {
+	t.Parallel()
 	roles := newFuRoles()
 	fb := startFuBridge(t, "", "", roles, on(), "")
 	c := fb.connect(proto.Hello{})
@@ -454,8 +462,15 @@ func TestFollowupRestart(t *testing.T) {
 // followups.test must pass before followups.set can switch the feature on;
 // both go through the protocol and publish followups.update.
 func TestFollowupsSettings(t *testing.T) {
+	t.Parallel()
 	roles := newFuRoles()
 	fb := startFuBridge(t, "", "", roles, nil, "")
+	// The usage tracker's first read is in before the commands, whose events
+	// are counted.
+	fb.world(func(w proto.World) bool {
+		ws := workersOf(w, "s")
+		return ws["w1"].Usage != nil && ws["w2"].Usage != nil
+	})
 	c := fb.connect(proto.Hello{})
 	c.snapshot()
 	enable := proto.FollowupsSetArgs{Enabled: on()}
@@ -490,6 +505,7 @@ func ptrTo[T any](v T) *T { return &v }
 // result is recorded, not shown, even when it is idle again by then with the
 // same transcript tail.
 func TestFollowupWorkingDropsTheLookUnderWay(t *testing.T) {
+	t.Parallel()
 	roles := newFuRoles()
 	entered, release := make(chan struct{}), make(chan struct{})
 	roles.cls.Func = func(context.Context, map[string]any, string) (float64, error) {
@@ -522,6 +538,7 @@ func TestFollowupWorkingDropsTheLookUnderWay(t *testing.T) {
 // working) clear the shown follow-up: its turn_id is stale, and the newer
 // message is looked at in its place.
 func TestFollowupNewTurnClearsIt(t *testing.T) {
+	t.Parallel()
 	roles := newFuRoles()
 	fb := startFuBridge(t, "", "", roles, on(), "")
 	c := fb.connect(proto.Hello{})

@@ -47,6 +47,8 @@ func auditRows(t *testing.T, bb *boardBridge, cmd string) []store.AuditEntry {
 }
 
 func TestIssueGetCommentClose(t *testing.T) {
+	// Not parallel: it counts the polls a write starts, and on a loaded CPU
+	// the watcher's own refresh can land in that count.
 	bb, tr, _ := linked(t)
 	c := bb.c
 	tr.detail = tracker.Detail{Card: card("JeffreyVdb/lab#9", "#9", "Boards", "todo"), Body: "# Boards\n\n<script>alert(1)</script>",
@@ -150,6 +152,7 @@ func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
 
 // What a provider says goes out as the protocol's error codes.
 func TestBoardErrorCodes(t *testing.T) {
+	t.Parallel()
 	bb, tr, host := linked(t)
 	c := bb.c
 	for _, tc := range []struct {
@@ -186,6 +189,7 @@ func TestBoardErrorCodes(t *testing.T) {
 }
 
 func TestBoardCommandValidation(t *testing.T) {
+	t.Parallel()
 	bb, tr, host := linked(t)
 	c := bb.c
 	long := strings.Repeat("x", 65537)
@@ -211,6 +215,7 @@ func TestBoardCommandValidation(t *testing.T) {
 // A floor with no board, a provider without pull requests, and a capability
 // that is off: refused as unsupported, whatever a client sends.
 func TestBoardUnsupported(t *testing.T) {
+	t.Parallel()
 	bb, tr, host := linked(t)
 	c := bb.c
 	bb.floorAt("u", true, nil)
@@ -264,6 +269,7 @@ func mergeArgs(id, method string, mods ...func(*proto.PRMergeArgs)) proto.PRMerg
 
 // pr.merge: confirm, the fresh read, the gate and the override with its second confirmation.
 func TestPRMerge(t *testing.T) {
+	t.Parallel()
 	bb, _, host := linked(t)
 	c := bb.c
 	const id = "JeffreyVdb/lab#31"
@@ -350,6 +356,7 @@ func TestPRMerge(t *testing.T) {
 }
 
 func TestPRGetComment(t *testing.T) {
+	t.Parallel()
 	bb, _, host := linked(t)
 	c := bb.c
 	host.detail = codehost.Detail{Request: request("JeffreyVdb/lab#31", "#31", "M6", "feat/7-m6", "failure"), Body: "body",
@@ -389,6 +396,7 @@ func TestPRGetComment(t *testing.T) {
 // refused before the provider is asked, and so is any after without the
 // order capability.
 func TestIssueSetStatusAfter(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, _ := bb.fb.repo("JeffreyVdb/lab")
 	tr.caps.Order = true
@@ -462,6 +470,7 @@ func TestIssueSetStatusAfter(t *testing.T) {
 // it: it never becomes the latest board, and the refresh the write asked for
 // follows.
 func TestBoardWriteDuringPoll(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, _ := bb.fb.repo("JeffreyVdb/lab")
 	tr.board.Cards = []tracker.Card{card("JeffreyVdb/lab#9", "#9", "Boards", "todo")}
@@ -495,6 +504,7 @@ func TestBoardWriteDuringPoll(t *testing.T) {
 // place did not): the poll in flight is dropped all the same, and the
 // refresh shows the card where the provider has it.
 func TestBoardPartialWriteDuringPoll(t *testing.T) {
+	t.Parallel()
 	bb := startBoardBridge(t, nil)
 	tr, _ := bb.fb.repo("JeffreyVdb/lab")
 	tr.board.Cards = []tracker.Card{card("JeffreyVdb/lab#9", "#9", "Boards", "todo")}

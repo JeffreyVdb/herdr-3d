@@ -16,6 +16,7 @@ const (
 )
 
 func TestTrustDialogMatchesTheWholePath(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, screen, dir, want string
 	}{

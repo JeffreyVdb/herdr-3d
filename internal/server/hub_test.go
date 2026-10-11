@@ -19,6 +19,7 @@ import (
 )
 
 func TestWorkerEvents(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	if s := c.snapshot(); len(s.World.Floors) != 0 {
@@ -80,6 +81,7 @@ func TestWorkerEvents(t *testing.T) {
 }
 
 func TestStaleObservationIgnored(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
@@ -94,6 +96,7 @@ func TestStaleObservationIgnored(t *testing.T) {
 }
 
 func TestKeepWorkers(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
@@ -110,6 +113,7 @@ func TestKeepWorkers(t *testing.T) {
 }
 
 func TestSnapshotPlacesFloorsInBuildingsInOrder(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	for _, s := range []string{"zeta", "alpha", "herdr-3d", "infra", "mid"} {
 		b.floor(s, s != "mid", worker("w1", s+"-worker", "", "idle"))
@@ -156,6 +160,7 @@ func TestSnapshotPlacesFloorsInBuildingsInOrder(t *testing.T) {
 }
 
 func TestCommands(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	b.floor("s1", true)
 	b.floor("s2", false)
@@ -224,6 +229,7 @@ func TestCommands(t *testing.T) {
 // A known command without req_id is rejected like before, and audited
 // like every other rejection; an unknown one is not a command.
 func TestCommandWithoutReqIDIsAudited(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	b.floor("s", true)
 	c := b.connect(proto.Hello{Client: "no-req"})
@@ -273,6 +279,7 @@ func TestCommandWithoutReqIDIsAudited(t *testing.T) {
 }
 
 func TestHelloRequired(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	for name, first := range map[string]any{
 		"command first": proto.Command{T: proto.CmdBuildingCreate, ReqID: "1"},
@@ -302,6 +309,7 @@ func TestHelloRequired(t *testing.T) {
 }
 
 func TestReplaySinceSeq(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{Ring: 16})
 	b.floor("s", true, worker("w1", "a", "", "idle"))
 	c := b.connect(proto.Hello{})
@@ -369,6 +377,7 @@ func TestReplaySinceSeq(t *testing.T) {
 }
 
 func TestPersistsAcrossRestart(t *testing.T) {
+	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
 	b := startBridge(t, db, server.Options{})
 	b.floor("a", true, worker("w1", "ORCH|x", "sess-1", "idle"), worker("w2", "notes", "", "unknown"))
@@ -417,6 +426,7 @@ func TestPersistsAcrossRestart(t *testing.T) {
 }
 
 func TestSlowClientIsDropped(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{Queue: 64})
 	b.floor("s", true, worker("w1", "a", "", "idle"))
 	slow := b.connect(proto.Hello{Client: "slow"}) // never reads

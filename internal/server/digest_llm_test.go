@@ -159,6 +159,7 @@ func llmDigest(w *proto.Worker) bool {
 // come from the model (source llm). The now request holds the last steps'
 // texts and tool calls, never a tool's output.
 func TestDigestSummariesClaudeAndCodex(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	fb := startDgBridge(t, "", "", roles, on(), 0)
 	c := fb.connect(proto.Hello{})
@@ -243,6 +244,7 @@ func TestDigestSummariesClaudeAndCodex(t *testing.T) {
 // per worker; a /clear starts over (the model's now line goes, the next
 // prompt's task is written).
 func TestDigestOncePerPromptAndGap(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	fb := startDgBridge(t, "", "", roles, on(), 0)
 	c := fb.connect(proto.Hello{})
@@ -272,6 +274,7 @@ func TestDigestOncePerPromptAndGap(t *testing.T) {
 
 // With a short gap, each settled turn end gets its own now line.
 func TestDigestGapOver(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	fb := startDgBridge(t, "", "", roles, on(), 150*time.Millisecond)
 	c := fb.connect(proto.Hello{})
@@ -297,6 +300,7 @@ func TestDigestGapOver(t *testing.T) {
 // needs a passing digest.test (test_required before), both through the
 // protocol, each change a digest.update.
 func TestDigestOffByDefaultAndTestRequired(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	fb := startDgBridge(t, "", "", roles, nil, 0)
 	c := fb.connect(proto.Hello{})
@@ -353,6 +357,7 @@ func mustJSONString(t *testing.T, v any) string {
 // still needs the LLM ready: an invalid LLM sends nothing and shows the
 // fallbacks.
 func TestDigestEnvOverride(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	roles.set(ai.StateInvalid)
 	fb := startDgBridge(t, "", "", roles, on(), 0)
@@ -374,6 +379,7 @@ func TestDigestEnvOverride(t *testing.T) {
 
 // The daily cap: past it nothing more is sent, the lines written stay.
 func TestDigestDailyCap(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	fb := startDgBridge(t, "", "", roles, on(), time.Millisecond)
 	c := fb.connect(proto.Hello{})
@@ -400,6 +406,7 @@ func TestDigestDailyCap(t *testing.T) {
 // A restart spends nothing on inputs it wrote lines for: the cache is in
 // the database, by the input's hash, and the lines show again.
 func TestDigestCacheSurvivesRestart(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	fb := startDgBridge(t, "", "", roles, on(), 0)
 	c := fb.connect(proto.Hello{})
@@ -425,6 +432,7 @@ func TestDigestCacheSurvivesRestart(t *testing.T) {
 
 // A recap newer than the model's now line shows instead.
 func TestDigestNewerRecapWins(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	fb := startDgBridge(t, "", "", roles, on(), 0)
 	c := fb.connect(proto.Hello{})
@@ -442,6 +450,7 @@ func TestDigestNewerRecapWins(t *testing.T) {
 // What is sent goes through the activity's scrub and ai's: the digest's own
 // copy of the activity's patterns removes all it removes.
 func TestDigestScrubCoversActivity(t *testing.T) {
+	t.Parallel()
 	for _, s := range []string{
 		"ghp_abcdefghijklmnop1234", "gho_abcdefgh12345678", "github_pat_11ABCDEFG_abcdefghijk", "AKIAABCDEFGHIJKLMNOP",
 		"eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.sig", "https://bob:hunter2@example.com/x", "Authorization: Bearer abcdef0123456789",
@@ -494,6 +503,7 @@ func waitCalls(t *testing.T, roles *dgRoles, n int) []ai.Request {
 // once someone looks at the floor, and newer steps of it get another once the
 // gap is over, with no turn end; the same steps cost nothing more.
 func TestDigestNowDuringLongTurnClaudeAndCodex(t *testing.T) {
+	t.Parallel()
 	roles := newDgRoles()
 	fb := startDgBridge(t, "", "", roles, on(), 300*time.Millisecond)
 	c := fb.connect(proto.Hello{})

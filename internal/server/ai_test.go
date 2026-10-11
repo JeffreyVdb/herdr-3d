@@ -81,6 +81,7 @@ func rawCommand(c *client, typ string, args any) (frames string, reply msg) {
 }
 
 func TestAICommandsEndToEndAndKeysNeverOnTheWire(t *testing.T) {
+	t.Parallel()
 	f := newAIFakes(t, ai.Overrides{})
 	b := startBridge(t, "", server.Options{AI: f.svc})
 	c := b.connect(proto.Hello{Client: "ai-test"})
@@ -236,6 +237,7 @@ func TestAICommandsEndToEndAndKeysNeverOnTheWire(t *testing.T) {
 }
 
 func TestAIEnvironmentIsShownReadOnly(t *testing.T) {
+	t.Parallel()
 	keyFile := filepath.Join(t.TempDir(), "k")
 	if err := writeFile(keyFile, aiJevKey); err != nil {
 		t.Fatal(err)
@@ -252,6 +254,7 @@ func TestAIEnvironmentIsShownReadOnly(t *testing.T) {
 }
 
 func TestAICommandsAreUnsupportedWithoutTheService(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	c := b.connect(proto.Hello{})
 	if s := c.snapshot(); s.World.AI != nil {

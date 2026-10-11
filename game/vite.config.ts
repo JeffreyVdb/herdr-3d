@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { availableParallelism } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vitest/config';
@@ -132,6 +133,9 @@ export default defineConfig({
   test: {
     include: ['src/**/*.test.ts', 'e2e/**/*.test.ts', 'tools/**/*.test.ts'],
     environment: 'node',
+    // #241: Vitest's default is a worker less than the CPUs, one on a 2-core CI runner. Two took the suite from ~190 s
+    // to ~110 s on 2 cores (forks and threads alike; three gained nothing). Unchanged on bigger machines.
+    maxWorkers: Math.max(2, availableParallelism() - 1),
     // M13: Excalidraw (src/whiteboard/goPins.test.ts) imports JSON without an import attribute: Vite transforms it.
     server: { deps: { inline: [/@excalidraw\//] } },
   },

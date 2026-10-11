@@ -26,6 +26,7 @@ func agentW(ws, kind, status string) world.WorkerObs {
 }
 
 func TestKeysAreBatchedInOrder(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, shell("w1"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -79,6 +80,7 @@ func TestKeysAreBatchedInOrder(t *testing.T) {
 // Input to one worker is serialized: a second worker.keys waits for the
 // first, however long herdr takes.
 func TestInputToAWorkerIsSerialized(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, shell("w1"), shell("w2"))
 	gate := make(chan struct{})
 	tb.term.textGate = gate
@@ -121,6 +123,7 @@ func TestInputToAWorkerIsSerialized(t *testing.T) {
 // What a person types never reaches the audit log: its lengths and the
 // key names do.
 func TestInputIsAuditedWithoutTheText(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"))
 	c := tb.connect(proto.Hello{Client: "auditor"})
 	id := idOf(t, c.snapshot(), "w1")
@@ -152,6 +155,7 @@ func TestInputIsAuditedWithoutTheText(t *testing.T) {
 }
 
 func TestPrompt(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "idle"), shell("w2"), agentW("w3", "codex", "working"),
 		agentW("w4", "claude", "blocked"))
 	c := tb.connect(proto.Hello{})
@@ -196,6 +200,7 @@ func TestPrompt(t *testing.T) {
 // worker is working, else prompt_failed. Codex (#95: a prompt to Claude is
 // typed, TestPromptTypedToClaude).
 func TestPromptRetriesADroppedEnter(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "codex", "idle"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -254,6 +259,7 @@ func upsertFor(c *client, id string, ok func(*proto.Worker) bool) *proto.Worker 
 // longer blocked. worker.answer re-reads the screen, refuses a stale
 // hash, presses the choice's keys and waits for the worker to move on.
 func TestQuestionsAndAnswers(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, nil, agentW("w1", "claude", "working"), agentW("w2", "claude", "working"))
 	c := tb.connect(proto.Hello{})
 	snap := c.snapshot()
@@ -347,6 +353,7 @@ func TestQuestionsAndAnswers(t *testing.T) {
 // another command with the same question and choices or even reads the
 // same.
 func TestAnAnswerIsForItsOwnPermission(t *testing.T) {
+	t.Parallel()
 	tb := startTermBridge(t, func(o *server.Options) { o.AnswerTimeout = time.Millisecond }, agentW("w1", "claude", "working"))
 	c := tb.connect(proto.Hello{})
 	id := idOf(t, c.snapshot(), "w1")
@@ -390,6 +397,7 @@ func TestAnAnswerIsForItsOwnPermission(t *testing.T) {
 
 // Without a laptop herdr the commands fail and no screen is read.
 func TestLaptopsNotConfigured(t *testing.T) {
+	t.Parallel()
 	b := startBridge(t, "", server.Options{})
 	b.floor("s", true, agentW("w1", "claude", "blocked"))
 	c := b.connect(proto.Hello{})
