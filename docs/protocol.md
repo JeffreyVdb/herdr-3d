@@ -2062,7 +2062,9 @@ The transcript view of a Codex worker shows the rewritten text (what Codex recei
 its end; read before any translation) is not sent as typed: it becomes an agent handoff request (see [Ask the
 agent](#ask-the-agent)) with that instruction and the optional `op` (1–64 of `[A-Za-z0-9_-]`; none: the bridge makes
 one). The ack has `handoff` (the request) and `existing: true` when the op was known or the worker's running request
-was answered: nothing is sent again. Prose, a quoted example, `/handoff/x` and `/handoffs` are prompts as typed, and
+was answered: nothing is sent again. A known op is answered with its request as it is now (pending, filed or failed;
+a settled one from the store, across restarts), so the game resends an unanswered `/handoff` (its ack lost: the
+connection dropped or it timed out) with the same op while the text and the worker are the same, and never asks twice. Prose, a quoted example, `/handoff/x` and `/handoffs` are prompts as typed, and
 so is every `/handoff` to a bridge without a filing cabinet. Typed directly into the worker's terminal it is the
 agent's own, native command.
 
@@ -2438,7 +2440,7 @@ ever made to learn it.
 | `expires_from`, `expires_to` | `request_from + ttl_min`, `request_to + ttl_max` (absent when a part is unknown) |
 | `cache_read` | the cache-read tokens of that request: what the previous call reused, not what the next one will |
 | `context_tokens` | the context the dialog's "about N tokens" uses (`usage.context_tokens`, never the transcript file's size) |
-| `reason` | why it is unknown or assumed (`compacted`, a start that is unknown, an undocumented route) |
+| `reason` | why it is unknown or assumed (`compacted`, `model changed`, a start that is unknown, an undocumented route or provider) |
 
 The state is computed by its reader at a time (`usage.CacheState`; the game's `cacheState`): **`warm`** only before
 `expires_from`, **`expired`** only after `expires_to`, else **`unknown`**. `worker.handoff_preview` (mode `agent`)
@@ -2450,14 +2452,18 @@ sends it computed by the bridge, as `cache: {state, estimated: true, evidence}`.
   response, never move it; there is no fixed deduction). The last relevant request read or wrote the cache; the policy
   is the latest writing request's (1h only, 5m only, both), a read-only request refreshes the time and keeps it, and
   with no writes seen it is `documented` (5 min with an API key or cloud provider, 1 h with a subscription: 5–60 min).
-  A `compact_boundary` makes it `unknown` until the next request; a model change forgets the old model's policy. The
+  A `compact_boundary` makes it `unknown` until the next request; so does a main request on another model than the last
+  relevant one's (`model changed`: another model, another prefix), until a relevant request on the new model. The
   statusline's `prompt_cache` (Claude Code 2.1.251+) reaches only a statusline command's input: the bridge cannot read
   it and does not try.
 - **Codex**: the model from `turn_context`, the request interval from the turn's `task_started.started_at` and
   `task_complete.completed_at` (unix seconds), `cached_input_tokens` from `token_count`; a `compacted` record or
-  `context_compacted` resets. On the API (`auth_mode` not `chatgpt`): GPT-5.6 and later at least 30 min after the
-  last write or reuse, no upper bound (`documented`, so never `expired`); earlier models 5–60 min. Signed in with
-  ChatGPT: not documented, `assumed` with no TTL (always `unknown`). No `auth.json`: the model's range, `assumed`.
+  `context_compacted` resets, and so does a `turn_context` naming another model than the last relevant request's
+  (`model changed`), until the next cache read. OpenAI's policies apply only when `session_meta.model_provider` is
+  `openai`; another provider (a local or third-party server) or none named is `unknown`, with no TTL. On the API
+  (`auth_mode` not `chatgpt`): GPT-5.6 and later at least 30 min after the last write or reuse, no upper bound
+  (`documented`, so never `expired`); earlier models 5–60 min. Signed in with ChatGPT: not documented, `assumed` with
+  no TTL (always `unknown`). No `auth.json`: the model's range, `assumed`.
 
 **Pricing table** (USD per million tokens, standard API rates, retrieved 2026-09-29; the built-in
 `internal/usage/pricing.json`):

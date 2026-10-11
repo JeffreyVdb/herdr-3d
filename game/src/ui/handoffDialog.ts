@@ -337,7 +337,12 @@ export class HandoffDialog {
     const choices: Array<{ v: HandoffMode | 'llm'; label: string; hint: string; off?: boolean }> = [
       { v: 'literal', label: 'Save last message', hint: 'The last reply, as written. Nothing is sent to any model.' },
       { v: 'agent', label: 'Ask the agent', hint: `${this.name}’s agent${who ? ` (${who})` : ''} writes it; its provider reads the conversation.` },
-      { v: 'llm', label: 'Use configured LLM', hint: 'Not available yet.', off: true },
+      {
+        v: 'llm',
+        label: 'Use configured LLM',
+        hint: `The bridge sends selected transcript context to the LLM provider and model set in Settings, not ${this.name}’s agent. Not available yet.`,
+        off: true,
+      },
     ];
     const set = h('fieldset', { class: 'dd-choices ho-modes', 'data-hook': 'ho-modes' }, h('legend', {}, 'How to make it'));
     for (const c of choices) {

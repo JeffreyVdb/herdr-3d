@@ -240,7 +240,7 @@ describe('HandoffDialog: Ask the agent', () => {
     d.open('A');
     await e.flush();
     expect(d.summary().mode).toBe('literal');
-    expect(e.hook('ho-modes')?.textContent).toMatch(/Save last message.*Nothing is sent to any model.*Ask the agent.*Pixel’s agent \(claude\) writes it; its provider reads the conversation.*Use configured LLM.*Not available yet/);
+    expect(e.hook('ho-modes')?.textContent).toMatch(/Save last message.*Nothing is sent to any model.*Ask the agent.*Pixel’s agent \(claude\) writes it; its provider reads the conversation.*Use configured LLM.*The bridge sends selected transcript context to the LLM provider and model set in Settings, not Pixel’s agent\. Not available yet\./);
     expect(document.querySelector<HTMLInputElement>('[data-key="mode:llm"]')!.disabled).toBe(true);
     expect(e.sent.map((x) => x.cmd)).toEqual(['worker.handoff_preview']);
   });
