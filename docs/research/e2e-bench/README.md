@@ -23,6 +23,9 @@ Research harness, not game code. Results and conclusions: [testing-performance.m
     cgroup: kswapd, dm-crypt and btrfs workers, much of it caused by the run itself) are `cpu.kernel_s`. The first
     two batches (`results/control.jsonl`, `results/sweep.jsonl`) predate that split: their `foreign_s` is `/proc/stat`
     minus the run, kernel threads included, and no `cpu.metric` field.
+  - Before each run it waits up to 240 s (`cooldown_s`) for the 1-minute load average to fall under 2.0: the
+    previous run's own load takes minutes to decay. The first two batches had no cooldown, so their back-to-back
+    runs show a high `loadavg_before` from the run before.
   - A run is `contaminated` (kept, with `contamination_reasons`) when it waited on the e2e lock (make printed
     `waiting for another worktree's e2e run`), when the 1-minute load average was above 2.0 before it started, or when
     other user-space processes used more than 1.0 core on average while it ran.
@@ -43,7 +46,7 @@ Research harness, not game code. Results and conclusions: [testing-performance.m
 | `workers`, `lp_num_threads` | `H3D_WORKERS`; `LP_NUM_THREADS` (`null`: unset) |
 | `shader_cache` | `mode` (warm/cold), Mesa cache dir, bytes before and after the run |
 | `tmp` | `mode` (default/shm), `TMPDIR` used, its filesystem type (`stat -f`), peak bytes in it (shm only) |
-| `loadavg_before`, `loadavg_after` | `/proc/loadavg` 1/5/15 min |
+| `cooldown_s`, `loadavg_before`, `loadavg_after` | Seconds waited for the load to settle; `/proc/loadavg` 1/5/15 min |
 | `lock_waited`, `start_delay_s` | Whether make waited on the e2e lock; seconds from launching make to Playwright's start |
 | `cpu` | Host busy CPU seconds, the run's own (cgroup), other user space (`foreign_s`, `foreign_cores` = per wall second), kernel threads (`kernel_s`) |
 | `mem` | Lowest `MemAvailable` seen (sampled every 5 s), pages swapped in and out during the run |

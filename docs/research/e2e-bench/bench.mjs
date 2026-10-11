@@ -20,6 +20,9 @@ import { join, resolve } from 'node:path';
 // than FOREIGN_CORES_LIMIT cores on average while it ran (the top-level cgroups' CPU time minus the run's own cgroup).
 // Kernel threads (kswapd, kcryptd, btrfs workers: much of it the run's own I/O and memory pressure) are counted apart.
 const LOAD_LIMIT = 2.0;
+// Before each run, wait up to COOLDOWN_MAX_S for the load average to drop under LOAD_LIMIT (the previous run's own load
+// takes a few minutes to decay), so a high reading means other work, not the last run.
+const COOLDOWN_MAX_S = 240;
 const FOREIGN_CORES_LIMIT = 1.0;
 const LOCK_WAIT_MSG = "waiting for another worktree's e2e run";
 
@@ -97,6 +100,9 @@ async function runOnce(c, round) {
   let tmpPeak = 0;
   const tmpTimer = shmTmp ? setInterval(() => { tmpPeak = Math.max(tmpPeak, duBytes(shmTmp)); }, 5000) : null;
 
+  const c0 = Date.now();
+  while (loadavg()[0] > LOAD_LIMIT && Date.now() - c0 < COOLDOWN_MAX_S * 1000) await new Promise((r) => setTimeout(r, 5000));
+  const cooldownS = (Date.now() - c0) / 1000;
   const loadBefore = loadavg();
   const statBefore = procStat();
   const slicesBefore = sliceUsage();
@@ -160,7 +166,7 @@ async function runOnce(c, round) {
     spec: args.spec ?? null,
     shader_cache: { mode: args.cache, dir: cacheDir, bytes_before: cacheBefore, bytes_after: cacheAfter },
     tmp: { mode: tmpMode, dir: tmpDir, fs: tmpFs, peak_bytes: shmTmp ? tmpPeak : null },
-    loadavg_before: loadBefore.map(r2), loadavg_after: loadAfter.map(r2),
+    cooldown_s: r2(cooldownS), loadavg_before: loadBefore.map(r2), loadavg_after: loadAfter.map(r2),
     lock_waited: lockWaited, start_delay_s: startDelayS === null ? null : r2(startDelayS),
     cpu: { host_busy_s: r2(hostBusyS), run_s: runCpuS === null ? null : r2(runCpuS), foreign_s: foreignS === null ? null : r2(foreignS),
       foreign_cores: foreignCores === null ? null : r2(foreignCores), kernel_s: r2(kernelS), metric: 'cgroup-slices' },
