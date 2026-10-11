@@ -135,7 +135,7 @@ type claudeUsage struct {
 	reqOrder []string              // their keys, oldest first (to forget)
 	last     *claudeReq            // the last relevant request: it read or wrote the cache
 	wpol     string                // the policy the latest writing request showed ("": none since a reset)
-	reason   string                // why unknown with no request since a compaction: "compacted"
+	reason   string                // why unknown with no request since a reset: "compacted", "model changed"
 }
 
 func newClaudeUsage() *claudeUsage {
@@ -254,9 +254,14 @@ func (c *claudeUsage) user(b []byte) {
 
 // request takes one record of a main request (key: its requestId). The
 // first record fixes when it started; its cache counts are the latest
-// record's. The first relevant one makes it the last relevant request: its
-// writes set the policy, and a model change forgets the old one's.
+// record's. A request on another model than the last relevant one's
+// forgets that evidence (another model: another prefix), relevant or not;
+// the first relevant one makes it the last relevant request, its writes
+// setting the policy.
 func (c *claudeUsage) request(key string, at time.Time, model string, k cacheCounts) {
+	if c.last != nil && c.last.model != model {
+		c.last, c.wpol, c.reason = nil, "", "model changed"
+	}
 	r := c.reqs[key]
 	if r == nil {
 		r = &claudeReq{model: model, from: c.trigger, first: at}
@@ -275,9 +280,6 @@ func (c *claudeUsage) request(key string, at time.Time, model string, k cacheCou
 		return
 	}
 	r.applied = true
-	if c.last != nil && c.last.model != model {
-		c.wpol = ""
-	}
 	c.last, c.reason = r, ""
 	switch {
 	case k.m5 > 0 && k.h1 > 0:

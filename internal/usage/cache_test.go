@@ -233,6 +233,35 @@ func TestClaudeCacheModelChange(t *testing.T) {
 	}
 }
 
+// A switch to another model with a request that neither read nor wrote
+// the cache: the old model's evidence is not the new one's (another
+// prefix), so the estimate is unknown, never warm or expired from it, and
+// the evidence names the model Usage does.
+func TestClaudeCacheModelChangeUncached(t *testing.T) {
+	c := newClaudeUsage()
+	feedClaude(c, true, cUser("2026-10-11T10:00:00Z"), cReq("req_1", "msg_1", cacheOpus, "2026-10-11T10:00:02Z", 0, 1000, 0),
+		cUser("2026-10-11T10:00:30Z"), cReq("req_2", "msg_2", cacheSonnet, "2026-10-11T10:00:31Z", 0, 0, 0))
+	u := c.usage(DefaultPricing())
+	want := proto.UsageCache{Estimated: true, Provider: proto.CacheProviderAnthropic, Model: cacheSonnet,
+		Policy: proto.CachePolicyUnknown, Reason: "model changed", ContextTokens: u.ContextTokens}
+	if u.Cache == nil || *u.Cache != want {
+		t.Fatalf("after the switch: cache = %+v\nwant    %+v", u.Cache, want)
+	}
+	if u.Cache.Model != u.Model {
+		t.Errorf("cache model %q, usage model %q", u.Cache.Model, u.Model)
+	}
+	for _, at := range []string{"2026-10-11T10:01:00Z", "2026-10-11T12:00:00Z"} {
+		if st := CacheState(u.Cache, cacheAt(at)); st != proto.CacheUnknown {
+			t.Errorf("at %s: %s, want unknown", at, st)
+		}
+	}
+	// The new model's first relevant request is evidence again.
+	feedClaude(c, true, cUser("2026-10-11T10:02:00Z"), cReq("req_3", "msg_3", cacheSonnet, "2026-10-11T10:02:01Z", 1000, 0, 0))
+	if got := c.usage(DefaultPricing()).Cache; got == nil || got.Policy != proto.CachePolicyObserved5m || got.Model != cacheSonnet {
+		t.Fatalf("the new model's write: cache = %+v", got)
+	}
+}
+
 // No relevant request (no cache read or write) is no evidence.
 func TestClaudeCacheNoEvidence(t *testing.T) {
 	if got := claudeCache(cUser("2026-10-11T10:00:00Z"), cReq("req_1", "msg_1", cacheOpus, "2026-10-11T10:00:02Z", 0, 0, 0)); got != nil {
@@ -391,6 +420,74 @@ func TestCodexCacheCompaction(t *testing.T) {
 	if got = poll(t, s, cacheAt("2026-10-11T10:02:00Z")).Cache; got == nil || got.Policy != proto.CachePolicyAssumed ||
 		got.CacheRead != 15000 || got.Reason != "" {
 		t.Fatalf("next read: cache = %+v", got)
+	}
+}
+
+// Codex: a switch to another model whose request read no cached input:
+// the old model's evidence is not the new one's, so the estimate is unknown
+// and names the model Usage does, until the new model reads the cache.
+func TestCodexCacheModelChange(t *testing.T) {
+	start := cacheAt("2026-10-11T10:00:00Z").Unix()
+	root := t.TempDir()
+	sessions := filepath.Join(root, "sessions")
+	writeFile(t, filepath.Join(root, "auth.json"), `{"auth_mode":"apikey"}`)
+	rollout := filepath.Join(sessions, "2026", "10", "11", "rollout-x-"+codexID+".jsonl")
+	writeFile(t, rollout, cMeta("openai")+cTurn("gpt-5.5")+cStart(start)+cCount(20000)+cDone(start+20))
+	s := NewSession(Codex, codexID, Roots{CodexSessions: sessions}, DefaultPricing())
+	if u := poll(t, s, cacheAt("2026-10-11T10:00:25Z")); u.Cache == nil || CacheState(u.Cache, cacheAt("2026-10-11T10:00:25Z")) != proto.CacheWarm {
+		t.Fatalf("before the switch: cache = %+v", u.Cache)
+	}
+
+	appendFile(t, rollout, cTurn("gpt-6-sol")+cStart(start+30)+cCount(0)+cDone(start+40))
+	u := poll(t, s, cacheAt("2026-10-11T10:01:00Z"))
+	want := proto.UsageCache{Estimated: true, Provider: proto.CacheProviderOpenAI, Model: "gpt-6-sol", Auth: "apikey",
+		Policy: proto.CachePolicyUnknown, Reason: "model changed", ContextTokens: u.ContextTokens}
+	if u.Cache == nil || *u.Cache != want {
+		t.Fatalf("after the switch: cache = %+v\nwant    %+v", u.Cache, want)
+	}
+	if u.Cache.Model != u.Model {
+		t.Errorf("cache model %q, usage model %q", u.Cache.Model, u.Model)
+	}
+	for _, at := range []string{"2026-10-11T10:01:00Z", "2026-10-11T12:00:00Z"} {
+		if st := CacheState(u.Cache, cacheAt(at)); st != proto.CacheUnknown {
+			t.Errorf("at %s: %s, want unknown", at, st)
+		}
+	}
+
+	appendFile(t, rollout, cStart(start+100)+cCount(15000))
+	if got := poll(t, s, cacheAt("2026-10-11T10:02:00Z")).Cache; got == nil || got.Model != "gpt-6-sol" ||
+		got.Policy != proto.CachePolicyDocumented || got.TTLMin != ttl30m || got.CacheRead != 15000 {
+		t.Fatalf("the new model's read: cache = %+v", got)
+	}
+}
+
+// Codex: OpenAI's policies are OpenAI's; another provider (a local
+// server) or none named has no known retention: unknown, no TTL, never
+// warm, whatever the model and the auth route.
+func TestCodexCacheProvider(t *testing.T) {
+	start := cacheAt("2026-10-11T10:00:00Z").Unix()
+	for _, tc := range []struct{ name, meta, provider string }{
+		{"ollama", cMeta("ollama"), "ollama"},
+		{"none named", `{"type":"session_meta","payload":{"id":"` + codexID + `","cwd":"/w"}}` + "\n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			sessions := filepath.Join(root, "sessions")
+			writeFile(t, filepath.Join(root, "auth.json"), `{"auth_mode":"apikey"}`)
+			rollout := filepath.Join(sessions, "2026", "10", "11", "rollout-x-"+codexID+".jsonl")
+			writeFile(t, rollout, tc.meta+cTurn("gpt-5.5")+cStart(start)+cCount(20000)+cDone(start+20))
+			u := poll(t, NewSession(Codex, codexID, Roots{CodexSessions: sessions}, DefaultPricing()), cacheAt("2026-10-11T10:00:30Z"))
+			c := u.Cache
+			if c == nil || c.Provider != tc.provider || c.Policy != proto.CachePolicyUnknown || c.TTLMin != 0 || c.TTLMax != 0 ||
+				c.ExpiresFrom != 0 || c.ExpiresTo != 0 || c.Reason == "" || c.CacheRead != 20000 {
+				t.Fatalf("cache = %+v", c)
+			}
+			for _, at := range []string{"2026-10-11T10:00:30Z", "2026-10-11T12:00:00Z"} {
+				if st := CacheState(c, cacheAt(at)); st != proto.CacheUnknown {
+					t.Errorf("at %s: %s, want unknown", at, st)
+				}
+			}
+		})
 	}
 }
 

@@ -80,11 +80,11 @@ type codexUsage struct {
 	ctxOK bool
 
 	// The prompt cache's evidence (#224).
-	provider string     // the session_meta's model_provider ("": openai)
+	provider string     // the session_meta's model_provider ("": unknown)
 	auth     string     // Codex's auth_mode ("": unknown)
 	turn     *codexTurn // the current (or latest) turn
 	last     *codexReq  // the last relevant request: it read cached input or wrote the cache
-	reason   string     // why unknown with no request since a compaction: "compacted"
+	reason   string     // why unknown with no request since a reset: "compacted", "model changed", "provider changed"
 }
 
 // codexTurn is a turn's start and completion, unix ms (0: unknown; end 0
@@ -128,6 +128,9 @@ func (c *codexUsage) line(_ bool, b []byte) {
 		c.ctxOK = false
 		c.last, c.reason = nil, "compacted"
 	case l.Type == "session_meta":
+		if c.last != nil && c.provider != "" && l.Payload.ModelProvider != c.provider {
+			c.last, c.reason = nil, "provider changed"
+		}
 		c.provider = l.Payload.ModelProvider
 	case l.Type == "event_msg" && l.Payload.Type == "task_started":
 		c.turn = &codexTurn{start: secondsMS(l.Payload.StartedAt)}
@@ -140,8 +143,12 @@ func (c *codexUsage) line(_ bool, b []byte) {
 		}
 		c.turn.end = secondsMS(l.Payload.CompletedAt)
 	case l.Type == "turn_context":
-		if l.Payload.Model != "" {
-			c.model = l.Payload.Model
+		if m := l.Payload.Model; m != "" {
+			// Another model: another prefix, the old evidence is not its.
+			if c.last != nil && c.last.model != m {
+				c.last, c.reason = nil, "model changed"
+			}
+			c.model = m
 		}
 	case l.Type == "event_msg" && l.Payload.Type == "token_count" && l.Payload.Info != nil:
 		cur := l.Payload.Info.Total
@@ -170,9 +177,6 @@ func (c *codexUsage) cacheEvidence() *proto.UsageCache {
 		return nil
 	}
 	u := &proto.UsageCache{Estimated: true, Provider: c.provider, Model: c.model, Auth: c.auth}
-	if u.Provider == "" {
-		u.Provider = proto.CacheProviderOpenAI
-	}
 	if c.last == nil {
 		u.Policy, u.Reason = proto.CachePolicyUnknown, c.reason
 		return u
@@ -181,7 +185,7 @@ func (c *codexUsage) cacheEvidence() *proto.UsageCache {
 	if t := c.last.turn; t != nil {
 		u.RequestFrom, u.RequestTo = t.start, t.end
 	}
-	policy, lo, hi, why := codexRetention(u.Model, c.auth)
+	policy, lo, hi, why := codexRetention(c.provider, u.Model, c.auth)
 	setRetention(u, policy, lo, hi)
 	if u.Reason = why; why == "" && u.RequestFrom == 0 {
 		u.Reason = "no turn start before the last request: its start is unknown"
@@ -190,13 +194,19 @@ func (c *codexUsage) cacheEvidence() *proto.UsageCache {
 }
 
 // codexRetention is a model's cache retention (min, max ms; max 0: no
-// documented bound) on an auth route: OpenAI documents 30 minutes or more
-// for GPT-5.6 and later, and 5 to 60 minutes before that, on the API. A
-// ChatGPT sign-in's lifetime is not documented, so it is assumed to be
-// unknown; without auth.json, the model's range is assumed.
-func codexRetention(model, auth string) (policy string, min, max int64, reason string) {
+// documented bound) at a provider on an auth route: OpenAI documents 30
+// minutes or more for GPT-5.6 and later, and 5 to 60 minutes before that,
+// on the API. A ChatGPT sign-in's lifetime is not documented, so it is
+// assumed to be unknown; without auth.json, the model's range is assumed.
+// Another provider (Codex's model_provider: a local or third-party server)
+// or none known has no policy: unknown.
+func codexRetention(provider, model, auth string) (policy string, min, max int64, reason string) {
 	later := gptFrom56(model)
 	switch {
+	case provider == "":
+		return proto.CachePolicyUnknown, 0, 0, "the session names no model provider"
+	case provider != proto.CacheProviderOpenAI:
+		return proto.CachePolicyUnknown, 0, 0, "the cache lifetime of model provider " + strconv.Quote(provider) + " is not known"
 	case auth == "chatgpt":
 		return proto.CachePolicyAssumed, 0, 0, "ChatGPT-subscription cache lifetime is not documented"
 	case auth == "" && later:
