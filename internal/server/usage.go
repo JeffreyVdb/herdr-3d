@@ -506,6 +506,7 @@ func (t *usageThrottle) forget(id string) {
 
 func sameUsage(a, b proto.Usage) bool {
 	pa, pb := a.ContextPct, b.ContextPct
-	a.ContextPct, b.ContextPct = nil, nil
-	return a == b && (pa == nil) == (pb == nil) && (pa == nil || *pa == *pb)
+	ca, cb := a.Cache, b.Cache // #224: compared by value
+	a.ContextPct, b.ContextPct, a.Cache, b.Cache = nil, nil, nil, nil
+	return a == b && (pa == nil) == (pb == nil) && (pa == nil || *pa == *pb) && (ca == nil) == (cb == nil) && (ca == nil || *ca == *cb)
 }

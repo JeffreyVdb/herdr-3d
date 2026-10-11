@@ -1062,6 +1062,9 @@ type Usage struct {
 	// observed or reported. Both are additive: absent from older bridges.
 	ContextTokens          int64 `json:"context_tokens"`
 	ContextWindowEstimated bool  `json:"context_window_estimated,omitempty"`
+	// Cache is the main thread's prompt-cache evidence (#224; additive,
+	// absent from older bridges and before any request was read).
+	Cache *UsageCache `json:"cache,omitempty"`
 	// UpdatedAt is when the bridge saw it change, unix ms.
 	UpdatedAt int64 `json:"updated_at"`
 }
