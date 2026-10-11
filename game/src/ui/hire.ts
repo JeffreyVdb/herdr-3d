@@ -71,8 +71,8 @@ export interface HireHost extends DialogHost {
   modelPrefs?: HireModelPrefs;
   /** The empty state's way to Settings → Harness models. */
   showModelSettings?(): void;
-  /** #210: Settings → Display "Hire in background", read once when Hire is pressed (absent: in the foreground). */
-  hirePrefs?: Pick<HirePrefs, 'hireInBackground'>;
+  /** Settings → Display: background hiring and the initial worktree choice (absent: foreground, worktree on). */
+  hirePrefs?: Partial<Pick<HirePrefs, 'hireInBackground' | 'worktreeByDefault'>>;
   /** #210: the game's hire coordinator (shared with other ways to hire); absent: the dialog makes its own from this host. */
   hires?: HireCoordinator;
   /** #210: the beep of a hire made in the background (absent: silent). */
@@ -514,7 +514,7 @@ export class HireDialog {
     } else {
       this.prep = p;
       const prompt = this.f.prompt;
-      this.f = { ...formFromPrepare(p, options), prompt };
+      this.f = { ...formFromPrepare(p, options, this.host.hirePrefs?.worktreeByDefault), prompt };
       if (this.typedLabel !== null) this.f.label = this.typedLabel;
       // The note ("Floor default") is about the saved choice on the whole catalog, so it is not shown for a replacement.
       this.prepared = resolveChoice(this.host.store.hireOptions, p.choice ?? null);
@@ -530,12 +530,12 @@ export class HireDialog {
     this.render();
   }
 
-  /** A new git answer: no worktree after a failed fetch; ticked again once it can be made again. */
+  /** A new git answer: no worktree after a failed fetch; restore the configured default once it can be made again. */
   private adoptGit(g: HireGit | null): void {
     const was = this.prep ? worktreeUsable(this.prep.git) : false;
     if (this.prep) this.prep = { ...this.prep, git: g };
     if (!worktreeUsable(g)) this.f.worktree = false;
-    else if (!was) this.f.worktree = true;
+    else if (!was) this.f.worktree = this.host.hirePrefs?.worktreeByDefault ?? true;
   }
 
   /** "Fetch again": `hire.prepare` for the same folder, keeping the form. */

@@ -5,10 +5,12 @@
  * carries it to the next page load.
  * #210: and whether Hire waits in the dialog for the worker (the default) or closes it at once and says so when the
  * worker is up (`hireInBackground`).
+ * The initial worktree choice for worker hires, dictated hires and orchestrator runs is remembered here too.
  */
 
 const KEY = 'h3d.hire.goto';
 const BACKGROUND_KEY = 'h3d.hire.background';
+const WORKTREE_KEY = 'h3d.hire.worktree';
 
 function defaultStorage(): Storage | null {
   try {
@@ -22,10 +24,12 @@ export class HirePrefs {
   private readonly listeners = new Set<() => void>();
   private value: boolean;
   private background: boolean;
+  private worktree: boolean;
 
   constructor(private readonly storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null = defaultStorage()) {
     this.value = this.read(KEY) !== 'off';
     this.background = this.read(BACKGROUND_KEY) === 'on';
+    this.worktree = this.read(WORKTREE_KEY) !== 'off';
   }
 
   private read(key: string): string | null {
@@ -69,7 +73,18 @@ export class HirePrefs {
     this.write(BACKGROUND_KEY, v ? 'on' : null);
   }
 
-  /** Called when `goToNew` or `hireInBackground` changes (the Settings rows keep in step). */
+  /** Settings → Display: the initial worktree choice for hires and runs; on by default. */
+  get worktreeByDefault(): boolean {
+    return this.worktree;
+  }
+
+  set worktreeByDefault(v: boolean) {
+    if (v === this.worktree) return;
+    this.worktree = v;
+    this.write(WORKTREE_KEY, v ? null : 'off');
+  }
+
+  /** Called when a hire preference changes (the Settings rows keep in step). */
   onChange(fn: () => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);

@@ -362,3 +362,40 @@ test('an M5 bridge (unknown_command): the orchestrator tab, Run and presets are 
   await expect(page.locator('dialog.desk-dlg--presets [data-key="new"]')).toHaveAttribute('aria-disabled', 'true');
   clean();
 });
+
+for (const width of [1280, 360]) {
+  test(`Settings remembers the worktree default for workers and orchestrators while allowing individual overrides (${width}px)`, async ({ page }) => {
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width, height: width === 360 ? 640 : 720 });
+    await openGame(page, 'demo-m4', '', SIM);
+    await openMenu(page);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const setting = page.locator('#settings-hire-worktree');
+    await expect(setting).toBeChecked();
+    await setting.scrollIntoViewIfNeeded();
+    await shot(page, `settings-worktree-${width}`);
+    await setting.uncheck();
+    await page.keyboard.press('Escape');
+    await page.reload();
+    await expect.poll(() => page.evaluate(() => window.__h3d?.frames ?? 0)).toBeGreaterThan(2);
+    await enter(page, 'herdr-3d');
+    await page.evaluate(() => window.__h3d.openHire(5));
+    const worker = page.locator('#hire-worktree');
+    await expect(worker).not.toBeChecked();
+    await worker.check();
+    await expect(worker).toBeChecked();
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.__h3d.openStartRun());
+    await runDialog(page);
+    const orch = page.locator('#run-worktree');
+    await expect(orch).not.toBeChecked();
+    await orch.check();
+    await page.locator('#run-ticket').fill('7');
+    expect((await settled(page)).form.worktree).toBe(true);
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => window.__h3d.openStartRun());
+    await runDialog(page);
+    await expect(orch).not.toBeChecked();
+    clean();
+  });
+}

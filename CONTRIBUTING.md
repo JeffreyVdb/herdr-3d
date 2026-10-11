@@ -1160,8 +1160,8 @@ sit beside it, or under it on a phone, and Hire / Cancel stay on screen; what yo
 is acknowledged),
 harness → model → effort as chips (Tab into a group, ← → pick; the floor's default hire or the last hire on the floor
 is preselected and marked so), the label (the next generated name), the folder (the floor's default; changing it
-checks the new folder again), **Work in its own git worktree & branch** (on by default, only when the folder is a git
-repo) with the base `origin/<default> @ <sha>, <age>`, and the floor's and host's caps with the host load: a warning
+checks the new folder again), **Work in its own git worktree & branch** (on by default, configurable per browser in Settings → Display →
+**Use a Git worktree and branch by default**, only when the folder is a git repo; each hire or run can override it) with the base `origin/<default> @ <sha>, <age>`, and the floor's and host's caps with the host load: a warning
 above the soft cap, Hire refused at the hard cap. When `git fetch origin` failed the worktree option is off (a worktree
 never branches from a stale origin; the bridge would refuse it with `fetch_failed`), the error sits above the buttons
 with **Fetch again**, and hiring without a worktree still works. Warnings sit by the buttons, so they are in view

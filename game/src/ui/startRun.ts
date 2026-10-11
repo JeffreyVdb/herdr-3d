@@ -352,7 +352,7 @@ export class StartRunDialog {
     if (first) {
       this.f.preset = p.preset;
       this.f.orch = resolveVisibleChoice(this.options(), p.orch);
-      this.f.worktree = worktreeUsable(p.git);
+      this.f.worktree = (this.host.hirePrefs?.worktreeByDefault ?? true) && worktreeUsable(p.git);
     } else if (!worktreeUsable(p.git)) this.f.worktree = false;
     this.ticketError = null;
     this.preview = previewGenerated(this.preview, p.prompt);

@@ -103,3 +103,35 @@ describe('hire in background (#210)', () => {
     expect(p.hireInBackground).toBe(true);
   });
 });
+
+
+describe('worktree default', () => {
+  it('defaults on and remembers an off choice across page loads independently of other hire preferences', () => {
+    const st = memory();
+    const prefs = new HirePrefs(st);
+    expect(prefs.worktreeByDefault).toBe(true);
+    prefs.worktreeByDefault = false;
+    prefs.hireInBackground = true;
+    expect(new HirePrefs(st).worktreeByDefault).toBe(false);
+    expect(new HirePrefs(st).hireInBackground).toBe(true);
+    prefs.worktreeByDefault = true;
+    expect(st.m.has('h3d.hire.worktree')).toBe(false);
+    expect(new HirePrefs(st).worktreeByDefault).toBe(true);
+  });
+
+  it('works without storage and notifies only on changes, until unsubscribed', () => {
+    for (const st of [null, broken()]) {
+      const prefs = new HirePrefs(st);
+      let calls = 0;
+      const off = prefs.onChange(() => calls++);
+      prefs.worktreeByDefault = true;
+      prefs.worktreeByDefault = false;
+      prefs.worktreeByDefault = false;
+      expect(prefs.worktreeByDefault).toBe(false);
+      expect(calls).toBe(1);
+      off();
+      prefs.worktreeByDefault = true;
+      expect(calls).toBe(1);
+    }
+  });
+});

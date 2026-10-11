@@ -71,7 +71,7 @@ function setup(over: Partial<Env> = {}, background = false) {
     now: () => Date.now(),
   } as unknown as HireHost;
   const rv = new HireReviewDialog(document.body, host);
-  return { rv, env, hires, prepares, toasts, reserved, goTos };
+  return { rv, env, hires, prepares, toasts, reserved, goTos, prefs };
 }
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
@@ -542,6 +542,28 @@ describe('HireReviewDialog', () => {
       await tick();
       expect(q('[data-level="warn"]')).not.toBeNull();
       expect(hireBtn().disabled).toBe(false);
+    });
+
+    it.each([true, false])('uses the configured worktree default after prepare or refetch (initial fetch: %s), with a per-hire override', async (fetched) => {
+      const git = { repo_root: '/home/test', default_branch: 'main', base_sha: 'abcdef1234', base_time: Date.now(), fetched: true };
+      let fresh = fetched;
+      const { rv, hires, prefs } = setup({ prepare: async () => ({ ok: true, data: prep({ git: { ...git, fetched: fresh } }) }) as CommandResult });
+      prefs.worktreeByDefault = false;
+      rv.open('floor', FULL);
+      await tick();
+      toggle('where').click();
+      expect(q<HTMLInputElement>('#review-worktree')!.checked).toBe(false);
+      if (!fresh) {
+        fresh = true;
+        q<HTMLButtonElement>('[data-key="refetch"]')!.click();
+        await tick();
+        expect(q<HTMLInputElement>('#review-worktree')!.checked).toBe(false);
+      }
+      q<HTMLInputElement>('#review-worktree')!.click();
+      hireBtn().click();
+      await tick();
+      expect(hires[0]!.args.worktree).toBe(true);
+      expect(prefs.worktreeByDefault).toBe(false);
     });
 
     it('shows the floor, the desk, the folder, the label and the worktree choice; none is hidden', async () => {
