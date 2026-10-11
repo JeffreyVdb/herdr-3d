@@ -13,6 +13,7 @@ import { TranscriptDrafts } from './transcriptDrafts';
 import { AsyncDrafts } from './asyncDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
+import { handoffCommand, newOp } from '../world/handoff';
 
 export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost, TranscriptView };
 
@@ -603,7 +604,9 @@ export class TranscriptMode {
     this.pendingChanged(s);
     this.prompting.add(s.id);
     // Resolves whether it went: a refused prompt goes back in the box.
-    return this.host.send('worker.prompt', { id: s.id, text: t }).then((r) => {
+    // #224: an exact "/handoff [instruction]" becomes an agent handoff request: one op, so a retry asks once.
+    const handoff = handoffCommand(t) !== null;
+    return this.host.send('worker.prompt', { id: s.id, text: t, ...(handoff ? { op: newOp() } : {}) }).then((r) => {
       // Answered (the client never rejects; it times out): this worker takes the next one, from whichever seat.
       this.prompting.delete(s.id);
       if (!live()) return r.ok;
@@ -616,6 +619,24 @@ export class TranscriptMode {
         this.pendingChanged(s);
         this.host.status('ok', `Sent to ${s.name}: it shows in the terminal`);
         if (s.mode !== 'terminal') this.setMode('terminal', false);
+        return true;
+      }
+      if (r.ok && ack.handoff) {
+        // #224: the bridge sent its own request (the skill, where to save, the marker), which the transcript shows;
+        // the outcome follows on the worker (a toast when it is filed or fails).
+        s.pending = s.pending.filter((x) => x.id !== p.id);
+        this.pendingChanged(s);
+        const a = ack.handoff;
+        this.host.status(
+          a.state === 'failed' ? 'error' : 'ok',
+          a.state === 'failed'
+            ? `${s.name}’s agent handoff was not filed: ${a.reason ?? 'it failed'}`
+            : a.state === 'filed'
+              ? `${s.name}’s handoff is filed`
+              : ack.existing
+                ? `${s.name} is already writing a handoff: nothing was sent again`
+                : `Asked ${s.name}’s agent for a handoff: it is filed once its turn ends with the file written`,
+        );
         return true;
       }
       if (r.ok) this.host.status('ok', `Sent to ${s.name}`);

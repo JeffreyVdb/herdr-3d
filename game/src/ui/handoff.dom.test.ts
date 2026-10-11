@@ -209,3 +209,130 @@ describe('Cabinet', () => {
     expect(c.summary().status).toContain('trash');
   });
 });
+
+// #224: "Ask the agent" in the same dialog: the modes, the instruction, the cache estimate as an estimate, the
+// request followed on the worker until it is filed or fails, and no switch made for you.
+describe('HandoffDialog: Ask the agent', () => {
+  const AGENT_PV: HandoffPreviewAck = {
+    candidate: CAND,
+    text: TEXT,
+    title: 'Loader',
+    provenance: PREVIEW.provenance,
+    can_send_home: true,
+    agent: { call: '/handoff', can_ask: true, harness: 'claude', model: 'opus', instruction: 'summarize the conversation' },
+    cache: {
+      state: 'expired',
+      estimated: true,
+      evidence: { estimated: true, policy: 'observed_1h', ttl_min_ms: 3_600_000, ttl_max_ms: 3_600_000, request_from: 1, request_to: 2, expires_from: 3_600_001, expires_to: 3_600_002, context_tokens: 48_200 },
+    },
+  };
+  const ask = (worker: Partial<Worker> = {}, more: Record<string, Reply[]> = {}) =>
+    setup(worker, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: AGENT_PV }], ...more });
+  const choose = (m: string) => {
+    const r = document.querySelector<HTMLInputElement>(`[data-key="mode:${m}"]`)!;
+    r.checked = true;
+    r.dispatchEvent(new Event('change'));
+  };
+
+  it('offers the three modes, literal by default, the configured LLM shown but off', async () => {
+    const e = ask();
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    await e.flush();
+    expect(d.summary().mode).toBe('literal');
+    expect(e.hook('ho-modes')?.textContent).toMatch(/Save last message.*Nothing is sent to any model.*Ask the agent.*Pixel’s agent \(claude\) writes it; its provider reads the conversation.*Use configured LLM.*Not available yet/);
+    expect(document.querySelector<HTMLInputElement>('[data-key="mode:llm"]')!.disabled).toBe(true);
+    expect(e.sent.map((x) => x.cmd)).toEqual(['worker.handoff_preview']);
+  });
+
+  it('asks with the instruction and send home, says the estimate in the ticket’s words, then follows the request to filed', async () => {
+    const e = ask({}, { 'worker.handoff': [{ ok: true, data: { request: { op: 'x', state: 'pending', started_at: 1, instruction: 'focus on tests', send_home: true } } }], 'handoff.get': [{ ok: true, data: { handoff: { ...ENTRY, source: 'agent' }, body: '# Loader' } }] });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    await e.flush();
+    choose('agent');
+    await e.flush();
+    expect(e.sent[1]).toEqual({ cmd: 'worker.handoff_preview', args: { worker: 'A', mode: 'agent', candidate: 'cand-1' } });
+    const s = d.summary();
+    expect(s.mode).toBe('agent');
+    expect(s.canAsk).toBe(true);
+    expect(s.cache).toBe('expired');
+    expect(s.cacheLine).toContain('Estimate · May have expired');
+    expect(s.cacheLine).toContain('Agent cache may have expired. Generating a handoff can process the current conversation context again (about 48k tokens).');
+    expect(s.cacheLine).not.toMatch(/JSONL/);
+    expect(e.q('use-literal').textContent).toBe('Save the last message instead');
+    const instr = document.getElementById('ho-instruction') as HTMLTextAreaElement;
+    expect(instr.placeholder).toBe('summarize the conversation');
+    instr.value = '  focus on tests ';
+    const box = document.getElementById('ho-send-home') as HTMLInputElement;
+    box.checked = true;
+    box.dispatchEvent(new Event('change'));
+    expect(e.q('file').textContent).toContain('Ask, then send home');
+    e.q('file').click();
+    await e.flush();
+    const sent = e.sent.find((x) => x.cmd === 'worker.handoff')!;
+    expect(sent.args).toMatchObject({ worker: 'A', mode: 'agent', instruction: 'focus on tests', send_home: true });
+    expect(String(sent.args.op)).toMatch(/^ho-/);
+    expect(d.summary().state).toBe('pending');
+    expect(e.hook('ho-request')?.textContent).toMatch(/Asked since .*within 10 minutes/);
+    // The bridge files it: the dialog shows where.
+    e.w.agent_handoff = { op: 'x', state: 'filed', started_at: 1, handoff: 7, send_home_result: 'started' };
+    d.refresh();
+    await e.flush();
+    expect(d.summary().state).toBe('filed');
+    expect(e.hook('ho-path')?.textContent).toBe(ENTRY.path);
+    expect(e.hook('ho-home')?.textContent).toBe('Pixel is on the way home; the worktree is kept.');
+  });
+
+  it('says why the agent can’t be asked, and never switches mode for you', async () => {
+    const e = setup({}, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: { ...AGENT_PV, agent: { can_ask: false, cannot_ask: 'claude lists no "handoff" skill in /w', instruction: 'summarize the conversation' } } }] });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    await e.flush();
+    choose('agent');
+    await e.flush();
+    expect(e.hook('ho-cannot')?.textContent).toContain('lists no "handoff" skill');
+    expect(e.q('file').getAttribute('aria-disabled')).toBe('true');
+    e.q('file').click();
+    await e.flush();
+    expect(e.sent.some((x) => x.cmd === 'worker.handoff')).toBe(false);
+    expect(d.summary().mode).toBe('agent');
+  });
+
+  it('opens on a failed request, says why, dismisses it or asks again with a new op', async () => {
+    const e = setup({ agent_handoff: { op: 'old', state: 'failed', started_at: 1, reason: 'a person took over' } }, { 'worker.handoff_preview': [{ ok: true, data: AGENT_PV }], 'worker.handoff_cancel': [{ ok: true, data: {} }] });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    await e.flush();
+    expect(d.summary().state).toBe('failed');
+    expect(e.hook('ho-reason')?.textContent).toBe('a person took over');
+    expect(e.hook('ho-request')?.textContent).toContain('Pixel stays; nobody was sent home.');
+    e.q('ask-again').click();
+    await e.flush();
+    expect(d.summary().state).toBe('ready');
+    expect(d.summary().request).toBeNull();
+    expect(e.sent.at(-1)).toEqual({ cmd: 'worker.handoff_preview', args: { worker: 'A', mode: 'agent', candidate: 'cand-1' } });
+  });
+
+  it('cancels a running request', async () => {
+    const e = setup({ agent_handoff: { op: 'run', state: 'pending', started_at: 1 } }, { 'worker.handoff_cancel': [{ ok: true, data: { op: 'run', state: 'failed', started_at: 1, reason: 'cancelled' } }] });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    expect(d.summary().state).toBe('pending');
+    expect(e.hook('ho-modes')).toBeNull();
+    e.q('cancel-request').click();
+    await e.flush();
+    expect(e.sent[0]).toEqual({ cmd: 'worker.handoff_cancel', args: { worker: 'A', op: 'run' } });
+    expect(d.summary().state).toBe('failed');
+    expect(e.hook('ho-reason')?.textContent).toBe('cancelled');
+  });
+});
+
+describe('HandoffDialog: one mode row', () => {
+  it('draws the modes once in every agent state', async () => {
+    const e = setup({ agent_handoff: { op: 'old', state: 'failed', started_at: 1, reason: 'x' } });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    expect(document.querySelectorAll('[data-hook="ho-modes"]')).toHaveLength(1);
+  });
+});

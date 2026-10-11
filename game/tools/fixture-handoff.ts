@@ -13,9 +13,16 @@
 // - `handoff.list` matches every term (the last as a prefix) in the title, label, worker, branch and body, titles
 //   first, with a snippet around the first body match between U+E000 and U+E001; `handoff.get`, `handoff.delete`
 //   (`confirm: true`, else `confirmation_required`) and the `handoff.added` / `handoff.removed` events.
+// - #224 "Ask the agent": `worker.handoff_preview {mode: 'agent'}` answers `agent` (the skill call by harness: Claude
+//   `/handoff`, Codex `$handoff`; askable when idle or done with no request running) and `cache` (`sim.cache {id,
+//   state}` sets it, else `expired` with the worker's context tokens); `worker.handoff {mode: 'agent', instruction?,
+//   send_home?, op}` and an exact top-level `worker.prompt` "/handoff [instruction]" start a request (the worker's
+//   `agent_handoff` pending; a repeated op, or a second /handoff while one runs, answers it; `sim.agent_skill
+//   {missing}` refuses with `handoff_skill_missing`); `sim.agent_turn {id, text?, fail?}` plays the agent's turn: filed
+//   as an `agent` handoff (then sent home when asked), or failed with `fail` as the reason; `worker.handoff_cancel`.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
-import type { HandoffCandidate, HandoffEntry, TranscriptItem, Worker } from '../src/net/protocol.ts';
+import type { AgentHandoff, CacheState, HandoffCandidate, HandoffEntry, TranscriptItem, Worker } from '../src/net/protocol.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -108,6 +115,10 @@ export class HandoffSim {
   private failNext: string | null = null;
   /** The items `sim.final` and `sim.prompt_turn` added to each worker's timeline (a new watch has them too). */
   private readonly items = new Map<string, TranscriptItem[]>();
+  /** #224: agent handoff requests by op, the skill missing, and each worker's cache state. */
+  private readonly reqs = new Map<string, AgentHandoff & { worker: string }>();
+  private skillMissing = false;
+  private readonly caches = new Map<string, CacheState>();
 
   constructor(
     private readonly h: HandoffHost,
@@ -136,14 +147,14 @@ export class HandoffSim {
     return this.filed.filter((f) => f.e.floor === floor).length;
   }
 
-  private add(floor: string, w: Partial<HandoffEntry> & { worker_name: string }, body: string, at: number, op: string, source: string): HandoffEntry {
+  private add(floor: string, w: Partial<HandoffEntry> & { worker_name: string }, body: string, at: number, op: string, source: string, kind: 'literal' | 'agent' = 'literal'): HandoffEntry {
     const title = titleOf(body, w.worker_name, at);
     const d = new Date(at);
     const p = (n: number) => String(n).padStart(2, '0');
     const base = `/home/u/handoff/${floor.replace(/[^A-Za-z0-9._-]/g, '-')}/${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}-${slug(w.worker_name, 32)}-${slug(title)}`;
     let path = `${base}.md`;
     for (let i = 2; this.filed.some((f) => f.e.path === path); i++) path = `${base}-${i}.md`;
-    const e: HandoffEntry = { ...w, id: this.next++, floor, path, title, created_at: at, source: 'literal', bytes: byteLen(body) + 120 };
+    const e: HandoffEntry = { ...w, id: this.next++, floor, path, title, created_at: at, source: kind, bytes: byteLen(body) + 120 };
     this.filed.push({ e, body, op, source });
     return e;
   }
@@ -173,7 +184,16 @@ export class HandoffSim {
   }
 
   handle(t: unknown, a: Obj, send: Send, ack: (d?: unknown) => void): boolean {
-    const ours = ['sim.final', 'sim.prompt_turn', 'sim.handoff_fail', 'worker.handoff_preview', 'worker.handoff', 'handoff.list', 'handoff.get', 'handoff.delete'];
+    const ours = ['sim.final', 'sim.prompt_turn', 'sim.handoff_fail', 'worker.handoff_preview', 'worker.handoff', 'handoff.list', 'handoff.get', 'handoff.delete', 'worker.handoff_cancel', 'sim.agent_turn', 'sim.agent_skill', 'sim.cache'];
+    // #224: an exact top-level "/handoff [instruction]" from the composer is a request; any other prompt is not ours.
+    if (t === 'worker.prompt' && this.enabled && typeof a.text === 'string') {
+      const m = /^\s*\/handoff(?:\s+([\s\S]*?))?\s*$/.exec(a.text);
+      if (!m) return false;
+      const w = this.worker(a);
+      const r = this.ask(w, typeof a.op === 'string' && a.op ? a.op : `prompt-${++this.turns}`, m[1] ?? '', false, send, true);
+      ack({ queued: false, retried: false, handoff: r.request, ...(r.existing ? { existing: true } : {}) });
+      return true;
+    }
     if (typeof t !== 'string' || !ours.includes(t)) return false;
     if (!this.enabled && !t.startsWith('sim.')) throw this.h.error('unknown_command', `unknown command: "${t}"`);
     switch (t) {
@@ -214,7 +234,99 @@ export class HandoffSim {
         this.failNext = typeof a.code === 'string' ? a.code : 'handoff_failed';
         ack();
         return true;
+      case 'sim.agent_skill':
+        this.skillMissing = a.missing === true;
+        ack();
+        return true;
+      case 'sim.cache': {
+        const w = this.worker(a);
+        this.caches.set(w.id, a.state === 'warm' || a.state === 'unknown' ? a.state : 'expired');
+        ack();
+        return true;
+      }
+      case 'sim.agent_turn': {
+        const w = this.worker(a);
+        const r = [...this.reqs.values()].find((x) => x.worker === w.id && x.state === 'pending');
+        if (!r) throw this.h.error('invalid_state', `${w.name ?? w.id} has no handoff request running`);
+        if (typeof a.fail === 'string') {
+          this.settle(w, r, { state: 'failed', reason: a.fail }, send);
+          ack({ request: this.view(r) });
+          return true;
+        }
+        const body = typeof a.text === 'string' ? a.text : `# ${w.name ?? w.id}: handoff\n\nWhat changed, what is left.\n`;
+        const e = this.add(
+          w.session,
+          JSON.parse(JSON.stringify({ worker_id: w.id, worker_name: w.name ?? w.id, label: w.label, harness: w.harness ?? w.agent_kind, model: w.model, branch: w.branch, cwd: w.worktree?.checkout_path ?? w.cwd, agent_session: w.agent_session })) as HandoffEntry,
+          body,
+          this.h.now(),
+          r.op,
+          `agent/${r.op}`,
+          'agent',
+        );
+        this.h.emit(send, { t: 'handoff.added', session: e.floor, handoff: e, handoff_count: this.count(e.floor) });
+        const done: Partial<AgentHandoff> = { state: 'filed', handoff: e.id };
+        if (r.send_home) {
+          const why = this.canGo(w);
+          if (why) Object.assign(done, { send_home_result: 'skipped', send_home_reason: why });
+          else done.send_home_result = 'started';
+        }
+        this.settle(w, r, done, send);
+        if (done.send_home_result === 'started') {
+          try {
+            this.h.fire(w.id, send);
+          } catch {
+            // gone already
+          }
+        }
+        ack({ request: this.view(r), handoff: e });
+        return true;
+      }
+      case 'worker.handoff_cancel': {
+        const w = this.worker(a, 'worker');
+        const r = this.reqs.get(String(a.op));
+        if (!r || r.worker !== w.id || w.agent_handoff?.op !== r.op) throw this.h.error('invalid_state', `${w.name ?? w.id} has no handoff request "${String(a.op)}"`);
+        if (r.state === 'pending') this.settle(w, r, { state: 'failed', reason: 'cancelled' }, send);
+        else {
+          delete w.agent_handoff;
+          this.h.upsert(send, w);
+        }
+        ack(this.view(r));
+        return true;
+      }
       case 'worker.handoff_preview': {
+        if (a.mode === 'agent') {
+          const w = this.worker(a, 'worker');
+          const c = this.cands.get(w.id);
+          const why = this.canGo(w);
+          const harness = (w.harness ?? w.agent_kind) === 'codex' ? 'codex' : 'claude';
+          const cannot = this.cannotAsk(w);
+          const state = this.caches.get(w.id) ?? 'expired';
+          const ctx = w.usage?.context_tokens ?? 48_200;
+          const at = this.h.now();
+          ack({
+            ...(c && c.c.id === a.candidate ? { candidate: c.c, text: c.text.slice(0, PREVIEW), title: titleOf(c.text, w.name ?? '', at) } : {}),
+            provenance: { floor: w.session, worker_name: w.name ?? w.id, label: w.label, harness: w.harness ?? w.agent_kind, model: w.model, branch: w.branch, cwd: w.worktree?.checkout_path ?? w.cwd, session: w.agent_session },
+            can_send_home: !why,
+            ...(why ? { send_home_blocked: why } : {}),
+            agent: { ...(this.skillMissing ? {} : { call: harness === 'codex' ? '$handoff' : '/handoff' }), can_ask: !cannot, ...(cannot ? { cannot_ask: cannot } : {}), harness, model: w.model, instruction: 'summarize the conversation' },
+            cache: {
+              state,
+              estimated: true,
+              evidence: {
+                estimated: true,
+                provider: harness === 'codex' ? 'openai' : 'anthropic',
+                model: w.model,
+                policy: harness === 'codex' ? 'assumed' : 'observed_1h',
+                ...(harness === 'codex' ? { reason: 'ChatGPT-subscription cache lifetime is not documented' } : { ttl_min_ms: 3_600_000, ttl_max_ms: 3_600_000 }),
+                request_from: at - (state === 'warm' ? 600_000 : 7_200_000) - 4000,
+                request_to: at - (state === 'warm' ? 600_000 : 7_200_000),
+                cache_read: 41_000,
+                context_tokens: ctx,
+              },
+            },
+          });
+          return true;
+        }
         const { w, c } = this.current(a);
         let text = c.text;
         let cut = false;
@@ -235,8 +347,14 @@ export class HandoffSim {
         return true;
       }
       case 'worker.handoff': {
-        for (const k of Object.keys(a)) if (!['worker', 'mode', 'session', 'candidate', 'revision', 'send_home', 'op'].includes(k)) throw this.h.error('bad_request', `bad args: json: unknown field "${k}"`);
-        if (a.mode !== 'literal') throw this.h.error('bad_request', `bad args: mode must be "literal", got "${String(a.mode)}"`);
+        for (const k of Object.keys(a)) if (!['worker', 'mode', 'session', 'candidate', 'revision', 'send_home', 'op', 'instruction'].includes(k)) throw this.h.error('bad_request', `bad args: json: unknown field "${k}"`);
+        if (a.mode === 'agent') {
+          if (typeof a.op !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(a.op)) throw this.h.error('bad_request', 'bad args: op must be 1–64 characters of A-Z, a-z, 0-9, _ and -');
+          const r = this.ask(this.worker(a, 'worker'), a.op, typeof a.instruction === 'string' ? a.instruction : '', a.send_home === true, send, false);
+          ack({ request: r.request, ...(r.existing ? { existing: true } : {}) });
+          return true;
+        }
+        if (a.mode !== 'literal') throw this.h.error('bad_request', `bad args: mode must be "literal" or "agent", got "${String(a.mode)}"`);
         if (typeof a.op !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(a.op)) throw this.h.error('bad_request', 'bad args: op must be 1–64 characters of A-Z, a-z, 0-9, _ and -');
         const { w, c } = this.current(a);
         if (c.c.too_large) throw this.h.error('too_large', 'the reply is too large');
@@ -321,6 +439,55 @@ export class HandoffSim {
         return true;
       }
     }
+  }
+
+  /** #224: why worker w's agent can't be asked now ("": it can). */
+  private cannotAsk(w: Worker): string {
+    const name = w.name ?? w.id;
+    const kind = w.harness ?? w.agent_kind;
+    if (kind !== 'claude' && kind !== 'codex') return `${name} runs no Claude or Codex agent`;
+    if (w.ask) return `${name} waits on its question: answer it first`;
+    if (w.status !== 'idle' && w.status !== 'done') return `${name} is ${w.status}: only an idle or done worker can be asked for a handoff`;
+    if (w.agent_handoff && (w.agent_handoff.state === 'pending' || w.agent_handoff.state === 'starting' || w.agent_handoff.state === 'filing')) return `${name} is writing a handoff already`;
+    if (this.skillMissing) return `${kind} lists no "handoff" skill in ${w.worktree?.checkout_path ?? w.cwd ?? 'its checkout'}`;
+    return '';
+  }
+
+  private view(r: AgentHandoff & { worker: string }): AgentHandoff {
+    const { worker: _w, ...v } = r;
+    return { ...v };
+  }
+
+  /** #224: starts a request (or answers the one its op, or the worker's running one from the composer, names). */
+  private ask(w: Worker, op: string, instruction: string, sendHome: boolean, send: Send, prompt: boolean): { request: AgentHandoff; existing: boolean } {
+    const known = this.reqs.get(op);
+    if (known) {
+      if (known.worker !== w.id) throw this.h.error('bad_request', `bad args: op "${op}" is another worker's handoff`);
+      return { request: this.view(known), existing: true };
+    }
+    const running = w.agent_handoff && w.agent_handoff.state === 'pending' ? this.reqs.get(w.agent_handoff.op) : undefined;
+    if (prompt && running) return { request: this.view(running), existing: true };
+    const cannot = this.cannotAsk(w);
+    if (cannot) {
+      if (this.skillMissing && cannot.includes('"handoff" skill')) throw this.h.error('handoff_skill_missing', `no handoff skill: ${cannot}`);
+      throw this.h.error(cannot.endsWith('already') ? 'busy' : 'invalid_state', cannot);
+    }
+    const text = instruction.trim() || 'summarize the conversation';
+    const r = { worker: w.id, op, state: 'pending' as const, started_at: this.h.now(), instruction: text, ...(sendHome ? { send_home: true } : {}) };
+    this.reqs.set(op, r);
+    w.agent_handoff = this.view(r);
+    const call = (w.harness ?? w.agent_kind) === 'codex' ? '$handoff' : '/handoff';
+    const item: TranscriptItem = { id: `sim-handoff-${++this.turns}`, seq: this.h.nextSeq(w.id), ts: this.h.now(), kind: 'user', parts: [{ text: `${call} ${text}\n\nSave the handoff document at this exact path, not in the temporary directory: write it to /home/u/handoff/.pending/${w.session}/${op}.md.tmp first, then rename that file.\n\n(H3D-HANDOFF 0123456789abcdef)` }] };
+    this.h.push(w.id, [item], []);
+    this.keep(w.id, item);
+    this.h.upsert(send, w);
+    return { request: this.view(r), existing: false };
+  }
+
+  private settle(w: Worker, r: AgentHandoff & { worker: string }, done: Partial<AgentHandoff>, send: Send): void {
+    Object.assign(r, done);
+    w.agent_handoff = this.view(r);
+    this.h.upsert(send, w);
   }
 
   private keep(id: string, it: TranscriptItem): void {

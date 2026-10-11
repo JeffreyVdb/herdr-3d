@@ -28,7 +28,7 @@ import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
 import { HandoffDialog } from './ui/handoffDialog';
 import { Cabinet } from './ui/cabinet';
-import { drawerFill, hireTask } from './world/handoff';
+import { agentHandoffNote, drawerFill, hireTask } from './world/handoff';
 import { fromHandoff } from './world/hireReview';
 import { needsYouText, sentHomeText, wrapUpOf } from './world/wrapup';
 import { RADIUS, Walker } from './input/walk';
@@ -780,6 +780,7 @@ export class App {
     this.hireReview.refresh();
     this.sendHome.refresh();
     this.handoffDialog.refresh(); // #223
+    this.noteAgentHandoffs(); // #224
     this.cabinet.refresh();
     this.syncDrawers();
     this.playFilings();
@@ -1313,6 +1314,27 @@ export class App {
       this.panels.close();
     }
     this.handoffDialog.open(id, { seated });
+  }
+
+  /** #224: the agent handoff requests last seen (worker → op/state), to say once when one is filed or fails. */
+  private readonly agentHandoffs = new Map<string, string>();
+
+  /** #224: a request filed or failed says so once (a composer's /handoff, or the dialog closed meanwhile). */
+  private noteAgentHandoffs(): void {
+    const seen = new Set<string>();
+    for (const [id, w] of this.store.workers) {
+      const a = w.agent_handoff;
+      if (!a) continue;
+      seen.add(id);
+      const key = `${a.op}/${a.state}`;
+      const was = this.agentHandoffs.get(id);
+      this.agentHandoffs.set(id, key);
+      if (was === undefined || was === key) continue; // first sight (a reload): already said, or nothing to say
+      const watching = this.handoffDialog.isOpen && this.handoffDialog.summary().worker === id;
+      const note = watching ? null : agentHandoffNote(a, this.store.workerView(id)?.name ?? 'The worker');
+      if (note) this.hud.toast(note.text, note.kind === 'error' ? 7000 : 4200, note.kind);
+    }
+    for (const id of [...this.agentHandoffs.keys()]) if (!seen.has(id)) this.agentHandoffs.delete(id);
   }
 
   /** The floor's filing cabinet (null: the floor you are on); `select`: that handoff. */
