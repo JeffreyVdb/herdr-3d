@@ -318,6 +318,21 @@ MacBook (M2 Max)                                   devbox (Linux)
   overlay (E at the floor's filing cabinet, `ui/cabinet.ts`; sanitised Markdown, Copy path, Delete, Hire from handoff
   through the reviewed hire), the drawers filling with the floor's count and the worker's walk to the cabinet with a
   folder (the M6c delivery walk, `world/route.deskToCabinetRoute`).
+- **Ask the agent** (#224, part 2 of #11; `protocol.md` "Ask the agent"): `worker.handoff` mode `agent` and the composer's
+  exact `/handoff [instruction]` (read in `startPrompt` before translation) ask an idle or done worker's own agent to
+  write a handoff with its `handoff` skill. `internal/server/agenthandoff.go` owns the flow: the catalog lists the skill
+  (else `handoff_skill_missing`), `handoff.Reserve` gives a path under the cabinet's hidden `.pending/` (never
+  registered by the reconcile), the request is stored (`handoff_request`, op-keyed, one pending per worker), the
+  offset taken, one prompt sent (the skill in `harness.SkillCall`'s spelling through `PromptTranslator`, the path,
+  the bridge's front matter values, a nonce marker). The usage tracker feeds a `transcript.NewMarkerTracker` (the
+  wrap-up's turn rules) and checks the file every round; the hub files it (`handoff.Adopt`: the bridge's front matter
+  through `File`) only once the turn ended with herdr idle **and** the file is complete, else fails it with why
+  (timeout, cancel, session change, a person taking over, no file). The package stays a leaf. `Usage.cache`
+  (`internal/usage`) is the main thread's prompt-cache evidence: Claude's direct 1h/5m writes per `requestId` with the
+  request start as an interval, Codex's turn timing and model/route policy; its warm / expired / unknown state is
+  estimated when shown (`usage.CacheState`, the game's `cacheState`), never published. The game: the F dialog's three
+  modes (literal default, Ask the agent, Use configured LLM disabled), the instruction, the estimate's copy, the
+  request followed on `Worker.agent_handoff`.
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.

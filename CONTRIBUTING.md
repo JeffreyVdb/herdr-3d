@@ -47,9 +47,12 @@ complete Excalidraw elements with valid fractional indices; files only, pure Go,
 commands sit on it) and `drops` (Drop Zone's newest files, read only through imgcache's allowlist, for "Pin a drop"); #92: `ai` (the classification model and the OpenAI-compatible LLM behind feature-agnostic `Classifier` / `LLM` interfaces with fakes, their keys in a 0600 file, the shared timeouts, one retry and two-call limit; standard library only, `TestAIIsFeatureAgnostic`); #90: `followup` (the follow-up questions: the classifier gate, the LLM extraction and its strict validation, the fallback item, the feature's switch, threshold and `followups.test`; it takes only `ai`'s interfaces, `TestFollowupUsesOnlyAIInterfaces`), and `transcript`'s `TurnEvents` / `FollowupTracker` (a turn's final assistant message, one parse per line shared with `WrapUpTracker`); #110: `packup` (pack up on request: the classifier gate on a prompt you send, the LLM's spans to cut validated as exact substrings in order and never over an image, the tidied task, the labelled samples, the switch, threshold and `packup.test`; it takes only `ai`'s interfaces, `TestPackupUsesOnlyAIInterfaces`); #118 phase 2: `digest` (the floor overview summaries: the LLM's task and now lines from scrubbed, delimited input, their cleaning, the switch and `digest.test`, one call at a time, the daily cap and the cache by input hash; #174: its reasoning effort and completion budget settings, the bounded retry policy and the call diagnostics, `ai`'s `Request.ReasoningEffort` / `Report` and model reasoning metadata; it takes only `ai`'s LLM interface, `TestDigestUsesOnlyAIInterfaces`); #211: `hireintent` (dictated hiring, phase 2 of #209: one sentence read by the LLM with the research's prompt into a hire proposal for review, never a hire: the strict parse, the resolution against the current hire catalog (`Catalog.Check`, the one tuple rule `validHireIn` calls), the task's UTF-16 source span, the stateless follow-up merge; it takes only `ai`'s LLM interface, `TestHireIntentUsesOnlyAIInterfaces`); #223: `handoff` (the filing cabinet's one writer: a handoff as
 `<handoff_dir>/<floor>/<yyyymmdd-hhmm>-<worker>-<slug>.md`, written as a synced `.tmp` linked to a free name, the
 bridge's front matter over the unchanged text, the derived title, the size cap, deletion to `.trash/`, the startup
-reconcile; the standard library and `store` only, `TestHandoffIsALeaf`; no model anywhere), and `transcript`'s
-`HandoffTracker` / `Resolve` (a transcript's latest completed final reply, its source identity and its whole text read
-back from its byte spans, on the same `TurnEvents` as `FollowupTracker`);
+reconcile; #224: `Reserve` / `Written` / `Adopt` / `Discard` / `CleanPending`, the agent's file at
+`<dir>/.pending/<floor>/<op>.md` filed with the bridge's front matter; the standard library and `store` only,
+`TestHandoffIsALeaf`; no model anywhere), and `transcript`'s `HandoffTracker` / `Resolve` (a transcript's latest
+completed final reply, its source identity and its whole text read back from its byte spans, on the same `TurnEvents`
+as `FollowupTracker`; #224: `NewMarkerTracker`, an agent handoff request's turn by its marker); #224: `usage`'s
+`Usage.cache` evidence and `CacheState` (pure, a fake clock's);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
@@ -142,6 +145,12 @@ make browsers          # download the Chromium revision the pinned Playwright ex
   with the AI fakes and the fake herdr's prompt and key calls counted (none may happen); `game/e2e/h223-handoff.spec.ts`
   drives the fixture bridge's handoffs (`tools/fixture-handoff.ts`: `sim.final`, `sim.prompt_turn`,
   `sim.handoff_fail`, `simhandoffs=<n>`, `simfail=no_handoff`).
+- #224: `go test ./internal/server -run AgentHandoff` asks the agent against fake transcripts the usage tracker reads
+  (Claude's slash-command tags, Codex's `<skill>` message), a fake catalog and the fake herdr's typed and submitted
+  prompts (exactly one per request), files and fails it every way; `go test ./internal/usage -run Cache` has the cache
+  evidence on a fake clock; `game/e2e/h224-agent-handoff.spec.ts` drives the fixture bridge (`sim.agent_turn`,
+  `sim.agent_skill`, `sim.cache`). `make codex-shared-tui` includes `TestCodexShareBridgeAgentHandoff`: the real Codex
+  TUI, mock inference, the fixture's own `handoff` skill.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 

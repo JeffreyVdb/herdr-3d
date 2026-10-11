@@ -551,7 +551,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
-| `worker.prompt` | `{"id": string, "text": string}` | `{"queued": bool, "retried": bool, "sent"?: string, "terminal"?: true}` | the worker's statuses |
+| `worker.prompt` | `{"id": string, "text": string, "op"?: string}` | `{"queued": bool, "retried": bool, "sent"?: string, "terminal"?: true, "handoff"?: AgentHandoff, "existing"?: true}` | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
 | `worker.answer_ask` | `{"id": string, "tool_use_id": string, "answers"?: [{"question": int, "choices"?: [int…], "other"?: string}…], "cancel"?: true, "prompt"?: string}` | `{"sent": [string…], "resolved": bool, "prompted"?: bool}` | the worker's upsert without its `ask` once the transcript has the answer (before the ack) (see [Laptops: asks](#laptops-asks)) |
 | `transcript.watch` | `{"id": string, "limit"?: 1–500}` | `{"harness", "session", "version", "cursor", "has_more", "pending", "items"}` | `transcript.items` to this connection only (see [Laptops: transcript](#laptops-transcript)) |
@@ -2058,6 +2058,14 @@ leaves Codex's skill popup open and its Enter is taken: the retry presses `esc` 
 unless the worker started meanwhile (the prompt was only slow): then nothing is pressed, as Esc aborts a running turn.
 The transcript view of a Codex worker shows the rewritten text (what Codex received).
 
+#224: an exact top-level **`/handoff [instruction]`** (the text, trimmed, starts with `/handoff` and then a blank or
+its end; read before any translation) is not sent as typed: it becomes an agent handoff request (see [Ask the
+agent](#ask-the-agent)) with that instruction and the optional `op` (1–64 of `[A-Za-z0-9_-]`; none: the bridge makes
+one). The ack has `handoff` (the request) and `existing: true` when the op was known or the worker's running request
+was answered: nothing is sent again. Prose, a quoted example, `/handoff/x` and `/handoffs` are prompts as typed, and
+so is every `/handoff` to a bridge without a filing cabinet. Typed directly into the worker's terminal it is the
+agent's own, native command.
+
 #140: the ack (direct or `queued`) has `"terminal": true` when the typed text runs a built-in whose output or dialog
 shows only in the worker's terminal (the table under [Commands and skills](#commands-and-skills): the text, trimmed,
 is `/name` or, for an `always` built-in, `/name args`; the name ends at the first whitespace of any kind, so
@@ -2335,6 +2343,7 @@ Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.
 | `context_pct`, `context_window` | how full the context window is (below), 0–100 with one decimal, and the window used; `null` and 0 when unknown |
 | `context_tokens` | #101: the main thread's context in use, in tokens: what the next turn starts with, the same definition for Claude and Codex (below). 0 when unknown (no usage read yet, or just after a `/compact`): never a measured 0. Not `tokens`, which is cumulative. Additive: an older bridge does not send it (the game then shows the share and the window only). |
 | `context_window_estimated` | #101: `true` when `context_window` was **assumed** (the model table's, or its family's), `false`/absent when it was seen (a `[1m]` on the model, context above 200K) or is the agent's own (Codex). Additive, as above. |
+| `cache` | #224: the main thread's prompt-cache **evidence** (below), absent before a relevant request was read (and from older bridges). Never a state: a reader estimates it when it shows it. |
 | `updated_at` | when the bridge saw this usage change, unix ms (bridge clock) |
 
 - `worker.usage` is a world event (it has a `seq` and is replayed). It goes out when the usage changed (anything but
@@ -2410,6 +2419,45 @@ other's: a known limit, #101).
   `context_tokens / context_window`** for Codex (50,000 of 258,400 is 15.4 %, not 19.4 %); the game's tooltip says so.
   A token count with no request in it (0) is unknown, not 0 %. A compaction (a top-level `compacted` line, or an
   `event_msg` `context_compacted`) clears the context until the next `token_count`.
+
+**Prompt-cache evidence** (#224, `usage.cache`): what the transcript showed of the main thread's prompt cache, so
+the filing dialog can say whether asking the agent likely reuses it. An estimate, never a measurement: no request is
+ever made to learn it.
+
+```json
+"cache":{"estimated":true,"provider":"anthropic","model":"claude-opus-5-5","policy":"observed_1h","ttl_min_ms":3600000,"ttl_max_ms":3600000,
+         "request_from":1790859600000,"request_to":1790859603400,"expires_from":1790863200000,"expires_to":1790863203400,"cache_read":41000,"context_tokens":48200}
+```
+
+| field | |
+|---|---|
+| `provider`, `model`, `auth` | the route: `anthropic` / Codex's `model_provider`; the model of the last relevant request; Codex's `auth.json` `auth_mode` (`chatgpt`, `apikey`; only that key is read), absent when unknown |
+| `policy` | where the retention comes from: `observed_1h`, `observed_5m`, `observed_mixed` (the latest request that wrote the cache wrote those entries), `documented` (the provider's documented default for the route and model), `assumed` (a route whose lifetime is not documented), `unknown` (nothing since a compaction or a model change) |
+| `ttl_min_ms`, `ttl_max_ms` | the retention range (equal when one; `ttl_max_ms` absent: no documented upper bound) |
+| `request_from`, `request_to` | the last relevant request's **start**, as an interval (unix ms; `request_from` absent: unknown) |
+| `expires_from`, `expires_to` | `request_from + ttl_min`, `request_to + ttl_max` (absent when a part is unknown) |
+| `cache_read` | the cache-read tokens of that request: what the previous call reused, not what the next one will |
+| `context_tokens` | the context the dialog's "about N tokens" uses (`usage.context_tokens`, never the transcript file's size) |
+| `reason` | why it is unknown or assumed (`compacted`, a start that is unknown, an undocumented route) |
+
+The state is computed by its reader at a time (`usage.CacheState`; the game's `cacheState`): **`warm`** only before
+`expires_from`, **`expired`** only after `expires_to`, else **`unknown`**. `worker.handoff_preview` (mode `agent`)
+sends it computed by the bridge, as `cache: {state, estimated: true, evidence}`.
+
+- **Claude**, main thread only (subagents' files and sidechain lines never count): `cache_creation.ephemeral_1h_input_tokens`
+  and `ephemeral_5m_input_tokens` are read directly (not the cost's inference). A request is a `requestId`; it started
+  between the latest main prompt or tool result before its first line and that first line (its later lines, a long
+  response, never move it; there is no fixed deduction). The last relevant request read or wrote the cache; the policy
+  is the latest writing request's (1h only, 5m only, both), a read-only request refreshes the time and keeps it, and
+  with no writes seen it is `documented` (5 min with an API key or cloud provider, 1 h with a subscription: 5–60 min).
+  A `compact_boundary` makes it `unknown` until the next request; a model change forgets the old model's policy. The
+  statusline's `prompt_cache` (Claude Code 2.1.251+) reaches only a statusline command's input: the bridge cannot read
+  it and does not try.
+- **Codex**: the model from `turn_context`, the request interval from the turn's `task_started.started_at` and
+  `task_complete.completed_at` (unix seconds), `cached_input_tokens` from `token_count`; a `compacted` record or
+  `context_compacted` resets. On the API (`auth_mode` not `chatgpt`): GPT-5.6 and later at least 30 min after the
+  last write or reuse, no upper bound (`documented`, so never `expired`); earlier models 5–60 min. Signed in with
+  ChatGPT: not documented, `assumed` with no TTL (always `unknown`). No `auth.json`: the model's range, `assumed`.
 
 **Pricing table** (USD per million tokens, standard API rates, retrieved 2026-09-29; the built-in
 `internal/usage/pricing.json`):
@@ -3533,7 +3581,7 @@ The audit log keeps the ids, the indexes and each answer's length (`answer_bytes
 
 #223, part 1 of #11. A **literal handoff** files a worker's latest completed final reply, exactly as written, as a
 Markdown file in its floor's **filing cabinet**. No model is called and nothing is sent to the worker: the reply is
-already complete, so the worker is not woken. Later modes (the agent writes one, the configured LLM writes one) and
+already complete, so the worker is not woken. Later modes (#224: the agent writes one, [Ask the agent](#ask-the-agent); the configured LLM writes one) and
 `worker.fire`'s reserved `handoff` file through the same service: one path rule, front matter, index, audit and
 send-home rule.
 
@@ -3628,6 +3676,61 @@ harness, model, cwd, branch, agent_session, path, title, created_at, source, byt
 mtime) into the index, registers a handoff file it has no row of (a crash between the file and its row: the front
 matter says what it is) and removes leftover `.tmp` files. The snapshot's `handoffs.counts` has each floor's count.
 
+#### Ask the agent
+
+#224, part 2 of #11. The worker's own agent writes the handoff with its own `handoff` skill;
+the bridge files it. Only an idle or done Claude or Codex worker with no question and no request or wrap-up running,
+on a bridge with a cabinet and its transcripts, can be asked.
+
+```json
+{"t":"worker.handoff","req_id":"7","args":{"worker":"a58752ea-…","mode":"agent","instruction":"focus on the open review comments","send_home":true,"op":"ho-k2…"}}
+{"t":"ack","req_id":"7","data":{"request":{"op":"ho-k2…","state":"pending","started_at":1790859600000,"instruction":"focus on the open review comments","send_home":true}}}
+"agent_handoff":{"op":"ho-k2…","state":"filed","started_at":1790859600000,"handoff":12,"send_home_result":"started"}
+```
+
+1. **Check.** `op` as for a literal handoff; `instruction` at most 4 KiB (blank: `summarize the conversation`, the
+   default; a custom one replaces it). An `op` known answers its request (`existing: true`) and sends nothing; a
+   worker with a request running, or a wrap-up armed, is `busy`; not idle or done, or with an `ask`, `invalid_state`.
+   The worker's command catalog (`worker.commands`') must list a skill `handoff` no built-in shadows:
+   `handoff_skill_missing` otherwise (a partial catalog: its skills could not be listed). Nothing is sent then.
+2. **Reserve.** The file the agent writes is `<handoff_dir>/.pending/<floor>/<op>.md` (whatever is there for that op
+   goes first), and the request is stored (SQLite `handoff_request`: op, worker, floor, harness, agent session,
+   transcript and offset, path, nonce, instruction, send home, state `pending`/`filed`/`failed`, reason, handoff id;
+   one `pending` per worker). The startup reconcile never registers from `.pending`.
+3. **Prompt.** Once the transcript offset is taken (a request's transcript is looked for every 2 s; one not found within
+   about 6 s, as an agent never prompted has none yet, is `invalid_state`, nothing sent), one prompt on the worker's input lane, sent only while it is still
+   idle or done: the skill in the harness's spelling (Claude `/handoff`, Codex `$handoff`), the instruction, "write it
+   to `<path>.tmp` first, then rename that file to `<path>`" (not the skill's temporary directory), the front matter
+   values the bridge supplies (`date` the request's time, `floor`, `worker`, `branch`, `harness`, `model`, `session`,
+   `source: "agent"`), "one specific H1 title of at most 80 characters", and a last line `(H3D-HANDOFF <nonce>)`. It
+   must fit a prompt (16 KiB) and, for Claude, be typed. The ack follows the prompt: `{request, existing?}`.
+4. **Watch.** The transcript from the offset (the wrap-up's rules): the bridge's prompt is the first user prompt that
+   contains the marker (Claude records `/handoff …` as its command tags, read as typed; the skill's own text, Claude's
+   meta line or Codex's `<skill>` message, is not a prompt), every later prompt or interruption is a person's.
+5. **File** once both hold, in either order: the prompt's turn ended, the transcript quiet and herdr `idle` or `done`
+   with no `ask`, each for the debounce (2 s), **and** the file is complete (a regular file, its `.tmp` gone). The
+   file's own front matter is dropped; its text is filed as a handoff with the bridge's front matter (`source:
+   agent`, the request's date and op, the worker's metadata), its title the first H1 else #223's fallback, through the
+   same writer, row and index (`handoff.added`), and the reserved file goes. Then, with `send_home`, the send home of
+   #223 (worktree kept). A failure to file fails the request.
+6. **Fail**, keeping the worker, filing nothing, never sending it home, the reason on `agent_handoff`: no handoff within
+   10 minutes; `worker.handoff_cancel`; the transcript gone or the agent session changed; a person prompting, typing
+   or answering the worker (`worker.prompt`, `worker.keys`, `worker.answer`, `worker.answer_ask`,
+   `worker.answer_followup`, or in the transcript); the turn ending without the file (after 5 s), or with only its
+   `.tmp`. The agent's file, if any, goes to `<handoff_dir>/.trash/<floor>/agent-<op>.md`. Asking again is a new request
+   (a new op).
+7. **Restart.** A request whose prompt was sent resumes from its offset while its 10 minutes run; one never sent, or
+   out of time, fails ("restarted"). Reserved files of no pending request go to the trash.
+
+**`Worker.agent_handoff`** is the worker's request while it runs and after it settled (until dismissed or a new one
+starts): `{op, state, reason?, started_at, instruction?, send_home?, handoff?, send_home_result?, send_home_reason?}`,
+`state` `starting` (checked, not sent), `pending`, `filing`, `filed` (`handoff`: its id) or `failed`.
+**`worker.handoff_cancel {worker, op}`** fails a running request as cancelled (`busy` while it is being filed) or
+dismisses a settled one; its ack is the request. **`worker.handoff_preview {worker, mode: "agent", candidate?}`**
+answers `{provenance, can_send_home, send_home_blocked?, agent: {call?, can_ask, cannot_ask?, harness?, model?,
+instruction}, cache?: {state, estimated, evidence}}` and, when `candidate` names the current one, its text as for a
+literal preview. The audit row has the op, nonce, path and offset, never the text of the instruction's request.
+
 ### Inbox
 
 The game's inbox (#100) is derived in the client from the world: the workers that need you and the employees that are
@@ -3673,13 +3776,14 @@ dismissed_at)`.
 | `name_taken` | another building, or another team preset, already has that name (ignoring case) |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
-| `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started |
+| `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started; #224: an agent handoff for a worker with a request running or a wrap-up armed, a wrap-up while a request runs, `worker.handoff_cancel` while it is being filed |
 | `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |
 | `drops_unavailable` | `drops.list` without a Drop Zone data directory, or one that cannot be read |
 | `too_large` | `transcript.image` with `size: "full"` for an image whose base64 is over 12 MiB (its thumbnail is still served); #223 `worker.handoff_preview` / `worker.handoff` for a reply over 1 MiB (never clipped) |
+| `handoff_skill_missing` | #224: the worker's harness lists no `handoff` skill in its checkout (or its skills could not be listed), so its agent cannot be asked for a handoff; nothing was sent (see [Ask the agent](#ask-the-agent)) |
 | `handoff_unavailable`, `handoff_source`, `handoff_failed` | #223 (see [Handoffs](#handoffs)): the worker has no candidate or not the one named (stale: a newer turn, another session or revision); the candidate's lines in the transcript, or those that completed it, are not what they were (replaced, truncated, changed); writing or registering the file failed. Nothing was filed and nobody was sent home on any of them |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
 | `not_clean` | #83: `worker.wrapup` with a delete for a tree that is not clean and pushed now; `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
