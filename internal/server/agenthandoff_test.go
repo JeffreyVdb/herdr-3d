@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -38,9 +39,19 @@ type skillCatalog struct {
 	mu      sync.Mutex
 	missing bool
 	partial bool
+	// gate, when set, holds every lookup until it is closed; entered
+	// gets one send per lookup held.
+	gate, entered chan struct{}
 }
 
 func (f *skillCatalog) Commands(_ context.Context, harness, dir string) (*proto.WorkerCommands, error) {
+	f.mu.Lock()
+	gate, entered := f.gate, f.entered
+	f.mu.Unlock()
+	if gate != nil {
+		entered <- struct{}{}
+		<-gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.partial {
@@ -268,6 +279,31 @@ func TestAgentHandoffCodexComposer(t *testing.T) {
 	if _, _, _, n := ab.requested("w2:p1"); n != 1 {
 		t.Fatalf("%d prompts", n)
 	}
+	// The composer's resend of the same submission (its ack was lost) keeps
+	// its op: answered with the filed request, nothing sent or filed again,
+	// also after a restart.
+	upsertFor(c, id, agentState(proto.AgentHandoffFiled))
+	resend := func(c *client, reqID string) {
+		t.Helper()
+		_, m := c.command(proto.CmdWorkerPrompt, reqID, proto.WorkerPromptArgs{ID: id, Text: "/handoff focus on the flaky test", Op: "op-c"})
+		if pr := ackData[proto.PromptResult](t, m); pr.Handoff == nil || pr.Handoff.Op != "op-c" || !pr.Existing ||
+			pr.Handoff.State != proto.AgentHandoffFiled || pr.Handoff.Handoff != ev.Handoff.ID {
+			t.Fatalf("resend %s", m.raw)
+		}
+	}
+	resend(c, "p3")
+	ab.stop()
+	ab2 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, nil)
+	c2 := ab2.connect(proto.Hello{})
+	c2.snapshot()
+	resend(c2, "p4")
+	time.Sleep(300 * time.Millisecond)
+	if _, _, _, n := ab2.requested("w2:p1"); n != 0 {
+		t.Fatalf("%d prompts after the restart", n)
+	}
+	if all, _ := ab2.st.AllHandoffs(context.Background()); len(all) != 1 {
+		t.Fatalf("filed %+v", all)
+	}
 }
 
 // Only an exact top-level "/handoff" is the request: prose, a quoted
@@ -450,6 +486,109 @@ func TestAgentHandoffFailures(t *testing.T) {
 			t.Fatalf("retry %s", m.raw)
 		}
 	})
+}
+
+// A request cancelled while its skill is looked up and its file reserved
+// (off the hub goroutine): nothing is sent, the reserved file is gone, the
+// request is stored failed, so its op answers a retry, also after a
+// restart. Run with -race: the reservation is published on the hub.
+func TestAgentHandoffCancelWhileStarting(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	id := ab.ids["w1"]
+	gate := make(chan struct{})
+	ab.cat.mu.Lock()
+	ab.cat.gate, ab.cat.entered = gate, make(chan struct{}, 1)
+	ab.cat.mu.Unlock()
+	cmd := func(typ, reqID string, args any) proto.Command {
+		b, _ := json.Marshal(args)
+		return proto.Command{T: typ, ReqID: reqID, Args: b}
+	}
+	c.send(cmd(proto.CmdWorkerHandoff, "h", proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeAgent, Op: "op-c"}))
+	<-ab.cat.entered
+	c.send(cmd(proto.CmdWorkerHandoffCancel, "x", proto.WorkerHandoffCancelArgs{Worker: id, Op: "op-c"}))
+	replies := map[string]msg{}
+	for len(replies) < 2 {
+		if m := c.next(); m.env.T == proto.TAck || m.env.T == proto.TError {
+			replies[m.env.ReqID] = m
+		}
+	}
+	if m := replies["h"]; m.env.T != proto.TError {
+		t.Fatalf("the cancelled request %s", m.raw)
+	}
+	if m := replies["x"]; ackData[proto.AgentHandoff](t, m).State != proto.AgentHandoffFailed {
+		t.Fatalf("cancel %s", m.raw)
+	}
+	close(gate)
+	eventually(t, "the cancelled request stored", func() bool {
+		r, err := ab.st.HandoffRequestByOp(context.Background(), "op-c")
+		return err == nil && r.State == store.HandoffRequestFailed && r.Reason == "cancelled" && r.Path != ""
+	})
+	time.Sleep(300 * time.Millisecond)
+	if _, _, _, n := ab.requested("w1:p1"); n != 0 {
+		t.Fatalf("%d requests sent after the cancel", n)
+	}
+	if left, _ := filepath.Glob(filepath.Join(ab.hdir, handoff.PendingDir, "*", "*")); len(left) != 0 {
+		t.Fatalf("pending files %v", left)
+	}
+	_, m := c.command(proto.CmdWorkerHandoff, "again", proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeAgent, Op: "op-c"})
+	if r := ackData[proto.WorkerHandoffRequestResult](t, m); !r.Existing || r.Request.State != proto.AgentHandoffFailed {
+		t.Fatalf("the cancelled op again %s", m.raw)
+	}
+	ab.stop()
+	ab2 := startAgentBridge(t, ab.db, ab.dir, ab.hdir, nil)
+	c2 := ab2.connect(proto.Hello{})
+	c2.snapshot()
+	_, m = c2.command(proto.CmdWorkerHandoff, "after", proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeAgent, Op: "op-c"})
+	if r := ackData[proto.WorkerHandoffRequestResult](t, m); !r.Existing || r.Request.State != proto.AgentHandoffFailed {
+		t.Fatalf("the cancelled op after a restart %s", m.raw)
+	}
+	if _, _, _, n := ab2.requested("w1:p1"); n != 0 {
+		t.Fatal("sent after the restart")
+	}
+}
+
+// A cancel racing the end of the starting checks, whichever the hub sees
+// first: the request ends failed and stored, its reserved file gone. Run
+// with -race.
+func TestAgentHandoffCancelRacesStart(t *testing.T) {
+	t.Parallel()
+	ab := startAgentBridge(t, "", "", "", nil)
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	id := ab.ids["w1"]
+	cmd := func(typ, reqID string, args any) proto.Command {
+		b, _ := json.Marshal(args)
+		return proto.Command{T: typ, ReqID: reqID, Args: b}
+	}
+	for i := range 8 {
+		op := fmt.Sprintf("op-race-%d", i)
+		gate := make(chan struct{})
+		ab.cat.mu.Lock()
+		ab.cat.gate, ab.cat.entered = gate, make(chan struct{}, 1)
+		ab.cat.mu.Unlock()
+		c.send(cmd(proto.CmdWorkerHandoff, "h"+op, proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeAgent, Op: op}))
+		<-ab.cat.entered
+		close(gate)
+		c.send(cmd(proto.CmdWorkerHandoffCancel, "x"+op, proto.WorkerHandoffCancelArgs{Worker: id, Op: op}))
+		for got := false; !got; {
+			m := c.next()
+			if m.env.ReqID == "x"+op {
+				if ackData[proto.AgentHandoff](t, m).State != proto.AgentHandoffFailed {
+					t.Fatalf("cancel %s", m.raw)
+				}
+				got = true
+			}
+		}
+		eventually(t, op+" stored failed, its file gone", func() bool {
+			r, err := ab.st.HandoffRequestByOp(context.Background(), op)
+			left, _ := filepath.Glob(filepath.Join(ab.hdir, handoff.PendingDir, "*", "*"))
+			return err == nil && r.State == store.HandoffRequestFailed && r.Reason == "cancelled" && len(left) == 0
+		})
+		c.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: id, Op: op})
+	}
 }
 
 // Filed with send home: the worker goes home through worker.fire's path,

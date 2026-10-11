@@ -362,20 +362,24 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		path, err := h.agentHandoffSkill(ctx, kind, dir)
+		call, err := h.agentHandoffSkill(ctx, kind, dir)
+		var path string
 		if err == nil {
-			ah.req.Path, err = svc.Reserve(floor, a.op)
+			path, err = svc.Reserve(floor, a.op)
 		}
+		// The request is the hub's: what was found is set there.
 		_ = h.doWait(ctx, func() {
 			if h.ah.byOp[a.op] != ah || ah.state != proto.AgentHandoffStarting {
-				return // cancelled meanwhile
+				h.agentStartEnded(ctx, ah, path) // cancelled (or gone) meanwhile
+				return
 			}
 			if err != nil {
 				h.failAgentHandoff(ctx, ah, err.Error())
 				h.endAgentStart(ctx, ah, err)
 				return
 			}
-			if err := h.agentHandoffPrompt(ah, path); err != nil {
+			ah.req.Path = path
+			if err := h.agentHandoffPrompt(ah, call); err != nil {
 				h.failAgentHandoff(ctx, ah, err.Error())
 				h.endAgentStart(ctx, ah, err)
 				return
@@ -393,6 +397,24 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 		})
 	}()
 	return nil
+}
+
+// agentStartEnded settles a request that ended (cancelled, the worker gone,
+// a person took over) while its skill was looked up and its file reserved
+// (hub goroutine): nothing was sent; the request is stored as it ended,
+// with the path reserved for it, so its op answers a retry after a
+// restart too, and the reserved file goes to the trash.
+func (h *Hub) agentStartEnded(ctx context.Context, ah *agentHandoff, path string) {
+	if path == "" || ah.req.Path != "" || ah.pending() {
+		return
+	}
+	ah.req.Path, ah.req.State = path, store.HandoffRequestFailed
+	if err := h.st.AddHandoffRequest(ctx, ah.req); err != nil {
+		h.log.Error("saving the handoff request failed", "op", ah.req.Op, "err", err)
+	}
+	if err := h.ho.svc.Discard(path); err != nil {
+		h.log.Warn("discarding the agent's handoff file failed", "path", path, "err", err)
+	}
 }
 
 // agentHandoffSkill checks the harness lists a handoff skill in the
