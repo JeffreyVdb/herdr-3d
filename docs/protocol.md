@@ -2459,7 +2459,7 @@ sends it computed by the bridge, as `cache: {state, estimated: true, evidence}`.
 - **Codex**: the model from `turn_context`, the request interval from the turn's `task_started.started_at` and
   `task_complete.completed_at` (unix seconds), `cached_input_tokens` from `token_count`; a `compacted` record or
   `context_compacted` resets, and so does a `turn_context` naming another model than the last relevant request's
-  (`model changed`), until the next cache read. OpenAI's policies apply only when `session_meta.model_provider` is
+  (`model changed`), as does a `session_meta` naming another provider (`provider changed`), until the next cache read. OpenAI's policies apply only when `session_meta.model_provider` is
   `openai`; another provider (a local or third-party server) or none named is `unknown`, with no TTL. On the API
   (`auth_mode` not `chatgpt`): GPT-5.6 and later at least 30 min after the last write or reuse, no upper bound
   (`documented`, so never `expired`); earlier models 5–60 min. Signed in with ChatGPT: not documented, `assumed` with
