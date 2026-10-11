@@ -3,12 +3,13 @@
 // or more configurations and appends one JSON line per run. See README.md next to it.
 //
 //   node docs/research/e2e-bench/bench.mjs --out <file.jsonl> --config <workers>:<lp> [--config ...]
-//        [--rounds N] [--cache warm|cold] [--build] [--spec <e2e/x.spec.ts>] [--note <text>]
+//        [--rounds N] [--cache warm|cold] [--tmp default|shm] [--build] [--spec <e2e/x.spec.ts>] [--note <text>]
 //   node docs/research/e2e-bench/bench.mjs --out <file.jsonl> --build-only N
 //
 // <lp> is an LP_NUM_THREADS value or `unset` (the variable is removed from the run's environment). With several
 // --config, each round runs every configuration once, the order rotated by one per round (A B C, B C A, C A B, ...),
-// so drift and other agents' load spread over all of them. Run from the repository root.
+// so drift and other agents' load spread over all of them. A config may end in :shm (e.g. 6:unset:shm) to run with
+// TMPDIR on tmpfs, whatever --tmp says. Run from the repository root.
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { availableParallelism, cpus, homedir, loadavg, release, totalmem } from 'node:os';
@@ -63,7 +64,8 @@ for (let round = 0; round < args.rounds; round++) {
 }
 
 async function runOnce(c, round) {
-  const label = `w${c.workers}-lp${c.lp}`;
+  const tmpMode = c.tmp ?? args.tmp;
+  const label = `w${c.workers}-lp${c.lp}${tmpMode === 'shm' ? '-shm' : ''}`;
   const id = `${benchId}-${label}-r${round}`;
   const reportPath = join(benchDir, `${id}.json`);
   const logPath = join(benchDir, `${id}.log`);
@@ -81,6 +83,18 @@ async function runOnce(c, round) {
     cacheDir = join(coldTmp, 'mesa_shader_cache');
   }
   const cacheBefore = duBytes(cacheDir);
+  // TMPDIR of the test run: where Playwright puts each Chromium profile (os.tmpdir()). shm: a new directory on
+  // /dev/shm (tmpfs) for this run only, removed afterwards, passed as H3D_E2E_TMPDIR (playwright.config.ts sets
+  // TMPDIR from it; TMPDIR around make would move portlease's shared state too); default: the caller's TMPDIR or /tmp.
+  let shmTmp = null;
+  if (tmpMode === 'shm') {
+    shmTmp = mkdtempSync('/dev/shm/h3d-e2e-bench-');
+    env.H3D_E2E_TMPDIR = shmTmp;
+  }
+  const tmpDir = env.H3D_E2E_TMPDIR || env.TMPDIR || '/tmp';
+  const tmpFs = fsType(tmpDir);
+  let tmpPeak = 0;
+  const tmpTimer = shmTmp ? setInterval(() => { tmpPeak = Math.max(tmpPeak, duBytes(shmTmp)); }, 5000) : null;
 
   const loadBefore = loadavg();
   const statBefore = procStat();
@@ -102,6 +116,8 @@ async function runOnce(c, round) {
   const loadAfter = loadavg();
   const cacheAfter = duBytes(cacheDir);
   if (coldTmp) rmSync(coldTmp, { recursive: true, force: true });
+  if (tmpTimer) clearInterval(tmpTimer);
+  if (shmTmp) rmSync(shmTmp, { recursive: true, force: true });
 
   const log = readFileSync(logPath, 'utf8');
   const wallS = (t1 - t0) / 1000;
@@ -133,6 +149,7 @@ async function runOnce(c, round) {
     workers: c.workers, lp_num_threads: c.lp === 'unset' ? null : Number(c.lp),
     spec: args.spec ?? null,
     shader_cache: { mode: args.cache, dir: cacheDir, bytes_before: cacheBefore, bytes_after: cacheAfter },
+    tmp: { mode: tmpMode, dir: tmpDir, fs: tmpFs, peak_bytes: shmTmp ? tmpPeak : null },
     loadavg_before: loadBefore.map(r2), loadavg_after: loadAfter.map(r2),
     lock_waited: lockWaited, start_delay_s: startDelayS === null ? null : r2(startDelayS),
     cpu: { host_busy_s: r2(hostBusyS), run_s: runCpuS === null ? null : r2(runCpuS), foreign_s: foreignS === null ? null : r2(foreignS),
@@ -215,14 +232,21 @@ function mesaCacheDir(env) {
 }
 
 function duBytes(dir) {
-  if (!existsSync(dir)) return 0;
   let n = 0;
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
+  let ents;
+  try { ents = readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
+  for (const e of ents) {
     const p = join(dir, e.name);
-    if (e.isDirectory()) n += duBytes(p);
-    else if (e.isFile()) n += statSync(p).size;
+    try {
+      if (e.isDirectory()) n += duBytes(p);
+      else if (e.isFile()) n += statSync(p).size;
+    } catch { /* removed while we looked (a browser profile going away) */ }
   }
   return n;
+}
+
+function fsType(dir) {
+  try { return execFileSync('stat', ['-f', '-c', '%T', dir], { encoding: 'utf8' }).trim(); } catch { return null; }
 }
 
 // Busy jiffies of all CPUs: everything but idle and iowait.
@@ -247,17 +271,18 @@ function write(rec) {
 }
 
 function parseArgs(a) {
-  const o = { configs: [], rounds: 1, cache: 'warm', build: false, buildOnly: 0 };
+  const o = { configs: [], rounds: 1, cache: 'warm', tmp: 'default', build: false, buildOnly: 0 };
   for (let i = 0; i < a.length; i++) {
     const k = a[i];
     const v = () => a[++i] ?? die(`${k} needs a value`);
     if (k === '--out') o.out = v();
     else if (k === '--config') {
-      const m = /^([1-9]\d*):(unset|\d+)$/.exec(v());
-      if (!m) die('--config is <workers>:<LP_NUM_THREADS|unset>, e.g. 6:unset or 8:4');
-      o.configs.push({ workers: Number(m[1]), lp: m[2] });
+      const m = /^([1-9]\d*):(unset|\d+)(?::(shm|default))?$/.exec(v());
+      if (!m) die('--config is <workers>:<LP_NUM_THREADS|unset>[:shm|:default], e.g. 6:unset or 8:4:shm');
+      o.configs.push({ workers: Number(m[1]), lp: m[2], tmp: m[3] });
     } else if (k === '--rounds') o.rounds = Number(v());
     else if (k === '--cache') { o.cache = v(); if (!['warm', 'cold'].includes(o.cache)) die('--cache is warm or cold'); }
+    else if (k === '--tmp') { o.tmp = v(); if (!['default', 'shm'].includes(o.tmp)) die('--tmp is default or shm'); }
     else if (k === '--build') o.build = true;
     else if (k === '--build-only') o.buildOnly = Number(v());
     else if (k === '--spec') o.spec = v();

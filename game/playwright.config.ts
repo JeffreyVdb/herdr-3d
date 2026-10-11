@@ -16,6 +16,9 @@ const baseURL = `http://127.0.0.1:${port}`;
 // H3D_DIST: another build directory (agents building side by side in one checkout); default dist.
 const dist = /^[\w.-]+$/.test(process.env.H3D_DIST ?? '') ? (process.env.H3D_DIST as string) : 'dist';
 const report = process.env.H3D_E2E_REPORT || 'test-results/e2e-report.json';
+// H3D_E2E_TMPDIR: TMPDIR for this run's processes only (Playwright workers, so each browser's profile, and the preview
+// server). Set here, not around make: portlease keeps its shared lease state under TMPDIR.
+if (process.env.H3D_E2E_TMPDIR) process.env.TMPDIR = process.env.H3D_E2E_TMPDIR;
 
 export default defineConfig({
   testDir: 'e2e',
