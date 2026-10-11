@@ -15,6 +15,7 @@ const workers = asked !== undefined && /^[1-9]\d*$/.test(asked.trim()) ? Number(
 const baseURL = `http://127.0.0.1:${port}`;
 // H3D_DIST: another build directory (agents building side by side in one checkout); default dist.
 const dist = /^[\w.-]+$/.test(process.env.H3D_DIST ?? '') ? (process.env.H3D_DIST as string) : 'dist';
+const report = process.env.H3D_E2E_REPORT || 'test-results/e2e-report.json';
 
 export default defineConfig({
   testDir: 'e2e',
@@ -24,7 +25,10 @@ export default defineConfig({
   retries: 0,
   fullyParallel: true,
   workers,
-  reporter: 'list',
+  // list for the terminal; the JSON report (per-test status, durations, stats) for the bench harness and for reading a
+  // failed run afterwards. H3D_E2E_REPORT moves it (docs/research/e2e-bench). Kept out of outputDir, which Playwright
+  // empties at the start of a run.
+  reporter: [['list'], ['json', { outputFile: report }]],
   use: {
     baseURL,
     browserName: 'chromium',
