@@ -74,14 +74,26 @@ export function displaySection(prefs: LimitsPrefs, monitors?: MonitorPrefs, inbo
       syncBackground();
       bb.addEventListener('change', () => (hire.hireInBackground = bb.checked));
       const unsubBackground = hire.onChange(syncBackground);
-      offHire = () => {
-        unsub();
-        unsubBackground();
-      };
       const lb = el('label', 'settings-switch');
       lb.htmlFor = bb.id;
       lb.append(bb, el('span', '', 'Hire in background: close the dialog at once, beep when the agent is up'));
       switches.push(lb);
+      const wb = el('input');
+      wb.type = 'checkbox';
+      wb.id = 'settings-hire-worktree';
+      const syncWorktree = () => (wb.checked = hire.worktreeByDefault);
+      syncWorktree();
+      wb.addEventListener('change', () => (hire.worktreeByDefault = wb.checked));
+      const unsubWorktree = hire.onChange(syncWorktree);
+      const lw = el('label', 'settings-switch');
+      lw.htmlFor = wb.id;
+      lw.append(wb, el('span', '', 'Use a Git worktree and branch by default (can be changed for each hire or run)'));
+      switches.push(lw);
+      offHire = () => {
+        unsub();
+        unsubBackground();
+        unsubWorktree();
+      };
     }
     if (!monitors) {
       body.append(...switches);

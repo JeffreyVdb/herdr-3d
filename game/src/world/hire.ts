@@ -241,7 +241,7 @@ export interface HireForm {
 }
 
 /** The form a prepare opens with. */
-export function formFromPrepare(p: HirePrepare, options: HireOptions): HireForm {
+export function formFromPrepare(p: HirePrepare, options: HireOptions, worktreeByDefault = true): HireForm {
   const c = resolveVisibleChoice(options, p.choice ?? null);
   return {
     prompt: '',
@@ -250,7 +250,7 @@ export function formFromPrepare(p: HirePrepare, options: HireOptions): HireForm 
     effort: c.effort,
     label: p.label,
     cwd: p.cwd,
-    worktree: worktreeUsable(p.git),
+    worktree: worktreeByDefault && worktreeUsable(p.git),
   };
 }
 

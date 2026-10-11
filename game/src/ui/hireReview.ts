@@ -294,7 +294,7 @@ export class HireReviewDialog {
       this.checked = p.cwd;
       this.defaultCwd = p.cwd;
       // The bridge's defaults for the options (name, folder, worktree): the agent's choice is never taken from them.
-      const d = formFromPrepare(p, this.host.store.hireOptions);
+      const d = formFromPrepare(p, this.host.store.hireOptions, this.host.hirePrefs?.worktreeByDefault);
       if (!this.changed.label) this.f.label = d.label;
       if (!this.changed.cwd) this.f.cwd = d.cwd;
       if (!this.changed.worktree) this.f.worktree = d.worktree;
@@ -304,12 +304,12 @@ export class HireReviewDialog {
     this.render();
   }
 
-  /** A new git answer: no worktree after a failed fetch; ticked again once it can be made again. */
+  /** A new git answer: no worktree after a failed fetch; restore the configured default once it can be made again. */
   private adoptGit(g: HireGit | null): void {
     const was = this.prep ? worktreeUsable(this.prep.git) : false;
     if (this.prep) this.prep = { ...this.prep, git: g };
     if (!worktreeUsable(g)) this.f.worktree = false;
-    else if (!was) this.f.worktree = true;
+    else if (!was) this.f.worktree = this.host.hirePrefs?.worktreeByDefault ?? true;
   }
 
   /** The folder the form stands for: what is typed, or the default when it is empty (null: not an absolute path, optionsBlocker says so). */

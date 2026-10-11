@@ -103,6 +103,7 @@ describe('worktree base', () => {
     // The form starts without a worktree, and even a form that asks for one does not send it.
     expect(formFromPrepare(prep({ git: failed }), H).worktree).toBe(false);
     expect(formFromPrepare(prep({ git }), H).worktree).toBe(true);
+    expect(formFromPrepare(prep({ git }), H, false).worktree).toBe(false);
     const f = { ...formFromPrepare(prep({ git }), H), worktree: true };
     expect(hireArgs('s', 0, f, failed).worktree).toBe(false);
     expect(hireArgs('s', 0, f, git).worktree).toBe(true);

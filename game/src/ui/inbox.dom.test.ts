@@ -476,3 +476,22 @@ describe('Settings → Display: Hire in background (#210)', () => {
     expect(box.checked).toBe(false);
   });
 });
+
+
+describe('Settings → Display: Worktree default', () => {
+  it('updates the hire preference and stays in sync until disposed', () => {
+    const prefs = new HirePrefs(null);
+    const body = document.createElement('div');
+    const handle = displaySection(new LimitsPrefs(null), undefined, undefined, prefs)(body);
+    const box = body.querySelector<HTMLInputElement>('#settings-hire-worktree')!;
+    expect(box.checked).toBe(true);
+    box.checked = false;
+    box.dispatchEvent(new Event('change'));
+    expect(prefs.worktreeByDefault).toBe(false);
+    prefs.worktreeByDefault = true;
+    expect(box.checked).toBe(true);
+    handle.dispose?.();
+    prefs.worktreeByDefault = false;
+    expect(box.checked).toBe(true);
+  });
+});

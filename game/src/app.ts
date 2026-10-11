@@ -597,6 +597,7 @@ export class App {
     this.presetsPanel = new PresetsPanel(o.host, { ...dialogHost, modelPrefs: this.hireModelPrefs });
     this.startRun = new StartRunDialog(o.host, {
       ...hireHost,
+      hirePrefs: this.hirePrefs,
       hireAt: (s, d) => {
         this.hire.open(s, d);
         this.hire.focusTab();
