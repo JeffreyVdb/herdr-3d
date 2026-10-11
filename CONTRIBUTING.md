@@ -85,18 +85,26 @@ make codex-shared-bridge  # #158 only: herdr-world itself (app.Serve) driven ove
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
-make e2e               # the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS parallel workers, ~7.5 min, one run per host
+make e2e               # build, then the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS parallel workers, one run per host:
+                       # ~38 min on the 32-vCPU dev host at the default (one measured run, 1179 tests; #241, docs/research/testing-performance.md)
 make e2e SPEC=e2e/m6b.spec.ts   # only that spec (same lock and portlease)
+make e2e-prebuilt      # the same suite against the bundle already in game/dist (no build; same lock and portlease; SPEC= too)
+make browsers          # download the Chromium revision the pinned Playwright expects (opt-in; make setup says when it is missing)
 ```
 
 - `make shot` (only `e2e/shot.spec.ts`) and `make e2e` (every spec) run Playwright against the **cached** Chromium in
-  `~/.cache/ms-playwright` (`@playwright/test` is pinned to the version that matches it). Browsers are never downloaded (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`). It forces the
+  `~/.cache/ms-playwright` (`@playwright/test` is pinned to the version that matches it). Browsers are never downloaded (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`) except by `make browsers`; `make setup` fails naming it when that revision is missing. It forces the
   WebGL2 backend (`?backend=webgl2`) because the server has no GPU; rendering goes through ANGLE → Vulkan → mesa llvmpipe.
 - `make e2e` runs `H3D_WORKERS` tests in parallel (default 6, a positive integer; anything else falls back to it).
   Playwright runs with `fullyParallel`, so the tests of one spec file are spread over the workers too. Every test opens
   its own page against the shared preview server and writes only its own `test-results/<name>.png`, so keep it that
   way: no shared files, no fixed ports, no order between tests (also within a file: no `describe.serial`, no pages
-  shared through `beforeAll`, no module-level mutable state). Lower it on a loaded machine if timeouts appear.
+  shared through `beforeAll`, no module-level mutable state). Lower it on a loaded machine if timeouts appear: the
+  suite is CPU-bound on llvmpipe, and first-attempt failures rise with workers (#241). `LP_NUM_THREADS` (Mesa's
+  rasterizer threads per pool, default the CPU count) reaches the browser too; capping it alone made the suite slower.
+  Each run writes a JSON report beside the list output, `game/test-results/e2e-report.json` (`H3D_E2E_REPORT` moves it);
+  `H3D_E2E_TMPDIR` sets `TMPDIR` for the test run only (browser profiles), never `TMPDIR` around make, since portlease
+  keeps its shared state there.
 - `make e2e` and `make shot` take a host-wide lock (`flock` on `$XDG_RUNTIME_DIR/herdr-3d-e2e.lock`, `/tmp` without
   it): one Playwright run at a time per host. Two suites side by side take about as long as two in a row, but both
   render below 10 fps on llvmpipe, where game time runs slower than wall time and fixed polls time out. A second run
@@ -1290,7 +1298,7 @@ Tests:
 make test lint                # vitest + tsc (protocol client and requests, store, layout, collision, cards, frame
                               # policy, fixtures, settings validation/diffing, reordering, the command simulation)
 make shot                     # Playwright WebGL2, just the screenshot: game/test-results/shot.png
-make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS parallel, ~7.5 min, one per host):
+make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS parallel, ~38 min measured, one per host):
                               # game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
                               # scripted look-at path, floor entry, keyboard focus, live plan labels, events
                               # during the elevator ride, held keys across floors, small-window plan; M3 on the
