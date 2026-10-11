@@ -16,8 +16,9 @@ import { availableParallelism, cpus, homedir, loadavg, release, totalmem } from 
 import { join, resolve } from 'node:path';
 
 // A run is flagged contaminated (kept, never dropped) when it waited on another worktree's e2e lock, when the host's
-// 1-minute load average was above LOAD_LIMIT before it started, or when processes outside the run used more than
-// FOREIGN_CORES_LIMIT cores on average while it ran (host CPU time from /proc/stat minus the run's own cgroup).
+// 1-minute load average was above LOAD_LIMIT before it started, or when user-space processes outside the run used more
+// than FOREIGN_CORES_LIMIT cores on average while it ran (the top-level cgroups' CPU time minus the run's own cgroup).
+// Kernel threads (kswapd, kcryptd, btrfs workers: much of it the run's own I/O and memory pressure) are counted apart.
 const LOAD_LIMIT = 2.0;
 const FOREIGN_CORES_LIMIT = 1.0;
 const LOCK_WAIT_MSG = "waiting for another worktree's e2e run";
@@ -98,6 +99,10 @@ async function runOnce(c, round) {
 
   const loadBefore = loadavg();
   const statBefore = procStat();
+  const slicesBefore = sliceUsage();
+  const vmBefore = vmstat();
+  let memAvailMin = memAvailable();
+  const memTimer = setInterval(() => { memAvailMin = Math.min(memAvailMin, memAvailable()); }, 5000);
   const t0 = Date.now();
   // The run gets its own cgroup (a transient systemd user scope), so its CPU time, browsers included, is exact.
   const makeArgs = ['e2e-prebuilt', ...(args.spec ? [`SPEC=${args.spec}`] : [])];
@@ -113,6 +118,9 @@ async function runOnce(c, round) {
   });
   const t1 = Date.now();
   const statAfter = procStat();
+  const slicesAfter = sliceUsage();
+  const vmAfter = vmstat();
+  clearInterval(memTimer);
   const loadAfter = loadavg();
   const cacheAfter = duBytes(cacheDir);
   if (coldTmp) rmSync(coldTmp, { recursive: true, force: true });
@@ -123,8 +131,10 @@ async function runOnce(c, round) {
   const wallS = (t1 - t0) / 1000;
   const hostBusyS = (statAfter.busy - statBefore.busy) / clkTck();
   const runCpuS = cpuStatUsage(cpuStatPath);
-  const foreignS = runCpuS === null ? null : Math.max(0, hostBusyS - runCpuS);
+  const slicesS = slicesAfter - slicesBefore;
+  const foreignS = runCpuS === null ? null : Math.max(0, slicesS - runCpuS);
   const foreignCores = foreignS === null ? null : foreignS / wallS;
+  const kernelS = Math.max(0, hostBusyS - slicesS);
 
   const rep = existsSync(reportPath) ? JSON.parse(readFileSync(reportPath, 'utf8')) : null;
   const st = rep?.stats ?? {};
@@ -135,7 +145,7 @@ async function runOnce(c, round) {
   if (lockWaited) reasons.push('waited on the e2e lock');
   if (loadBefore[0] > LOAD_LIMIT) reasons.push(`loadavg1 before ${loadBefore[0].toFixed(2)} > ${LOAD_LIMIT}`);
   if (foreignCores !== null && foreignCores > FOREIGN_CORES_LIMIT)
-    reasons.push(`foreign CPU ${foreignCores.toFixed(2)} cores > ${FOREIGN_CORES_LIMIT}`);
+    reasons.push(`foreign user CPU ${foreignCores.toFixed(2)} cores > ${FOREIGN_CORES_LIMIT}`);
   if (!rep) reasons.push('no JSON report');
 
   const tests = {
@@ -153,7 +163,9 @@ async function runOnce(c, round) {
     loadavg_before: loadBefore.map(r2), loadavg_after: loadAfter.map(r2),
     lock_waited: lockWaited, start_delay_s: startDelayS === null ? null : r2(startDelayS),
     cpu: { host_busy_s: r2(hostBusyS), run_s: runCpuS === null ? null : r2(runCpuS), foreign_s: foreignS === null ? null : r2(foreignS),
-      foreign_cores: foreignCores === null ? null : r2(foreignCores) },
+      foreign_cores: foreignCores === null ? null : r2(foreignCores), kernel_s: r2(kernelS), metric: 'cgroup-slices' },
+    mem: { available_min_mib: Math.round(memAvailMin / 1024), swap_in_pages: vmAfter.pswpin - vmBefore.pswpin,
+      swap_out_pages: vmAfter.pswpout - vmBefore.pswpout },
     contaminated: reasons.length > 0, contamination_reasons: reasons,
     build_s: null,
     suite_s: st.duration === undefined ? null : r2(st.duration / 1000),
@@ -258,6 +270,26 @@ function procStat() {
 
 function clkTck() {
   return Number(execFileSync('getconf', ['CLK_TCK'], { encoding: 'utf8' }).trim()) || 100;
+}
+
+// CPU seconds of every process in a top-level cgroup (all of user space; kernel threads sit in the root cgroup).
+function sliceUsage() {
+  let n = 0;
+  for (const d of readdirSync('/sys/fs/cgroup')) {
+    if (!/\.(slice|scope)$/.test(d)) continue;
+    n += cpuStatUsage(join('/sys/fs/cgroup', d, 'cpu.stat')) ?? 0;
+  }
+  return n;
+}
+
+function memAvailable() {
+  return Number(/MemAvailable:\s+(\d+)/.exec(readFileSync('/proc/meminfo', 'utf8'))[1]); // KiB
+}
+
+function vmstat() {
+  const t = readFileSync('/proc/vmstat', 'utf8');
+  const g = (k) => Number(new RegExp(`^${k} (\\d+)`, 'm').exec(t)?.[1] ?? 0);
+  return { pswpin: g('pswpin'), pswpout: g('pswpout') };
 }
 
 function cpuStatUsage(p) {

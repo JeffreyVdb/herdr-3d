@@ -18,11 +18,14 @@ Research harness, not game code. Results and conclusions: [testing-performance.m
   - `--build` times `make game-build` once before the batch (recorded on the batch's first line); `--build-only N`
     times N builds and writes `kind: "build"` lines.
   - Each run is its own transient systemd user scope (`systemd-run --user --scope`), so the run's CPU time, browsers
-    included, comes from its cgroup's `cpu.stat`. CPU the rest of the host used meanwhile (`/proc/stat` minus that)
-    is `cpu.foreign_s`.
+    included, comes from its cgroup's `cpu.stat`. User-space CPU the rest of the host used meanwhile (the top-level
+    cgroups' `cpu.stat` minus the run's) is `cpu.foreign_s`; kernel threads (`/proc/stat` busy time outside every
+    cgroup: kswapd, dm-crypt and btrfs workers, much of it caused by the run itself) are `cpu.kernel_s`. The first
+    two batches (`results/control.jsonl`, `results/sweep.jsonl`) predate that split: their `foreign_s` is `/proc/stat`
+    minus the run, kernel threads included, and no `cpu.metric` field.
   - A run is `contaminated` (kept, with `contamination_reasons`) when it waited on the e2e lock (make printed
     `waiting for another worktree's e2e run`), when the 1-minute load average was above 2.0 before it started, or when
-    other processes used more than 1.0 core on average while it ran.
+    other user-space processes used more than 1.0 core on average while it ran.
   - Per run it keeps the Playwright JSON report and the make/Playwright log under `game/test-results/bench/`
     (gitignored); the line names both.
 - `gpu-probe.mjs <seconds>`: while a run goes on, finds Playwright's Chromium GPU processes and counts their threads by
@@ -42,7 +45,8 @@ Research harness, not game code. Results and conclusions: [testing-performance.m
 | `tmp` | `mode` (default/shm), `TMPDIR` used, its filesystem type (`stat -f`), peak bytes in it (shm only) |
 | `loadavg_before`, `loadavg_after` | `/proc/loadavg` 1/5/15 min |
 | `lock_waited`, `start_delay_s` | Whether make waited on the e2e lock; seconds from launching make to Playwright's start |
-| `cpu` | Host busy CPU seconds, the run's own (cgroup), the rest (`foreign_s`, `foreign_cores` = per wall second) |
+| `cpu` | Host busy CPU seconds, the run's own (cgroup), other user space (`foreign_s`, `foreign_cores` = per wall second), kernel threads (`kernel_s`) |
+| `mem` | Lowest `MemAvailable` seen (sampled every 5 s), pages swapped in and out during the run |
 | `contaminated`, `contamination_reasons` | See above |
 | `build_s` | `make game-build` seconds, on the line after the build it timed; `null` otherwise |
 | `suite_s` | Playwright JSON `stats.duration` (includes starting the preview server) |
