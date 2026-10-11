@@ -21,8 +21,8 @@ Research harness, not game code. Results and conclusions: [testing-performance.m
     included, comes from its cgroup's `cpu.stat`. User-space CPU the rest of the host used meanwhile (the top-level
     cgroups' `cpu.stat` minus the run's) is `cpu.foreign_s`; kernel threads (`/proc/stat` busy time outside every
     cgroup: kswapd, dm-crypt and btrfs workers, much of it caused by the run itself) are `cpu.kernel_s`. The first
-    two batches (`results/control.jsonl`, `results/sweep.jsonl`) predate that split: their `foreign_s` is `/proc/stat`
-    minus the run, kernel threads included, and no `cpu.metric` field.
+    batches (`results/control.jsonl` and the first seven lines of `results/sweep.jsonl`) predate that split: their
+    `foreign_s` is `/proc/stat` minus the run, kernel threads included, and they have no `cpu.metric` field.
   - Before each run it waits up to 240 s (`cooldown_s`) for the 1-minute load average to fall under 2.0: the
     previous run's own load takes minutes to decay. The first two batches had no cooldown, so their back-to-back
     runs show a high `loadavg_before` from the run before.
@@ -33,7 +33,12 @@ Research harness, not game code. Results and conclusions: [testing-performance.m
     (gitignored); the line names both.
 - `gpu-probe.mjs <seconds>`: while a run goes on, finds Playwright's Chromium GPU processes and counts their threads by
   name. Mesa's rasterizer threads are `llvmpipe-<n>`. Used to show that `LP_NUM_THREADS` reaches the GPU process.
-- `results/*.jsonl`: every run cited in the doc, raw.
+- `summarize.mjs [--base results/isolation.jsonl] <file.jsonl> ...`: the doc's tables. Per configuration: suite and
+  total-feedback percentiles (nearest rank), first-attempt failures and those beyond the base set (tests that failed in
+  every isolation run), contaminated runs; then a test × configuration failure matrix.
+- `results/*.jsonl`: every run cited in the doc, raw. `control.jsonl` (6 workers, LP unset), `sweep.jsonl` (one run
+  per grid point), `isolation.jsonl` (every test that failed in those runs, alone by `file:line`, 2 workers, twice),
+  `shortlist.jsonl` (8:4 and 12:2, five rounds, `/dev/shm` TMPDIR on rounds 1 and 3), `cold.jsonl`, `build.jsonl`.
 
 ## Fields of a `kind: "run"` line
 
