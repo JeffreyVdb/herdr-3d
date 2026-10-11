@@ -205,9 +205,10 @@ func parseCodex(off int64, b []byte) (cs []contrib, version string) {
 var execCmd = regexp.MustCompile(`\bcmd:\s*"((?:[^"\\]|\\.)*)"`)
 
 // Injected context Codex sends as user messages (AGENTS.md, the
-// environment): not the user's words.
+// environment; #224: a "$skill" prompt's skill text, a user message of its
+// own after the prompt, checked on codex-cli 0.162.1): not the user's words.
 var codexInjected = []string{"# AGENTS.md instructions", "<environment_context>", "<user_instructions>", "<INSTRUCTIONS>",
-	"<user_shell_command>", "<turn_aborted>"}
+	"<user_shell_command>", "<turn_aborted>", "<skill>\n<name>"}
 
 // execSummary is a code-mode script's summary: its first exec_command's
 // cmd, plus how many more the script runs (Codex lists each as its own

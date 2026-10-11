@@ -256,7 +256,10 @@ func classify(body []byte) Request {
 		}
 		if it.Type == "message" && it.Role == "user" {
 			t := texts(it.Content)
-			if strings.HasPrefix(t, "<environment_context>") {
+			// Injected context, not the user's words: the environment, and
+			// (#224) a "$skill" prompt's skill text, a message of its own
+			// after the prompt.
+			if strings.HasPrefix(t, "<environment_context>") || strings.HasPrefix(t, "<skill>\n") {
 				continue
 			}
 			r.UserText = t

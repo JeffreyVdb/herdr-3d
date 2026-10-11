@@ -69,3 +69,20 @@ func TestSlashCommand(t *testing.T) {
 		}
 	}
 }
+
+// #224: Codex records a "$skill" prompt and then the skill's text as a user
+// message of its own ("<skill>\n<name>…"): injected context, not a person's
+// prompt, so a request's turn is not taken over by it.
+func TestCodexSkillTextIsNotAPrompt(t *testing.T) {
+	const marker = "(H3D-HANDOFF " + wrapUpNonce + ")"
+	tr := NewMarkerTracker(Codex, wrapUpNonce, marker, 0)
+	at := feedLines(tr, 0, wrapUpPromptLine(Codex, "$handoff summarize\n\n"+marker),
+		wrapUpPromptLine(Codex, "<skill>\n<name>handoff</name>\n<path>/h/.codex/skills/handoff/SKILL.md</path>\n---\nname: handoff\n---\nbody\n</skill>"))
+	if st := tr.State(); !st.Prompted || st.TookOver {
+		t.Fatalf("%+v: the skill's text took over", st)
+	}
+	feedLines(tr, at, wrapUpFinalLines(Codex, "", "done")...)
+	if st := tr.State(); !st.Ended || st.TookOver {
+		t.Fatalf("%+v", st)
+	}
+}

@@ -55,6 +55,10 @@ const (
 	DefaultAgentHandoffGrace = 5 * time.Second
 	// agentHandoffSkillWait bounds the catalog lookup of the skill.
 	agentHandoffSkillWait = 10 * time.Second
+	// agentHandoffFind is how long a starting request waits for the
+	// worker's transcript to be found (a transcript not found is looked for
+	// again every WatchedRescan while a request runs).
+	agentHandoffFind = 2*WatchedRescan + 2*time.Second
 	// agentHandoffKeep is how long a settled request's row is kept (its op
 	// answers a retry).
 	agentHandoffKeep = 30 * 24 * time.Hour
@@ -644,8 +648,11 @@ func (h *Hub) agentSeen(ctx context.Context, u agentUpdate) {
 // agentArmed records the offset the tracker took and prompts the agent on
 // its input lane, once more checked to be idle or done.
 func (h *Hub) agentArmed(ctx context.Context, ah *agentHandoff, u agentUpdate) {
+	if (!u.found || u.offset < 0) && h.opts.Now().Sub(ah.at) < agentHandoffFind {
+		return // not found yet: looked for again soon
+	}
 	if !u.found || u.offset < 0 {
-		err := fmt.Errorf("%w: the worker's transcript cannot be read, so its handoff could not be seen", errInvalidState)
+		err := fmt.Errorf("%w: the worker's transcript cannot be read (an agent that was never prompted has none yet), so its handoff could not be seen; nothing was sent", errInvalidState)
 		h.failAgentHandoff(ctx, ah, err.Error())
 		h.endAgentStart(ctx, ah, err)
 		return

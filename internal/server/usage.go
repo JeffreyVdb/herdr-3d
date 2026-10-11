@@ -302,7 +302,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			continue
 		}
 		s.SetRescan(0)
-		if w.watched {
+		if w.watched || w.agentHo != nil { // #224: a request's transcript is looked for as a watched one's
 			s.SetRescan(WatchedRescan)
 		}
 		if l := tr.lines[w.id]; l != nil && l.activity != nil { // #98: herdr's status before the round's lines
