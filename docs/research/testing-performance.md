@@ -331,7 +331,7 @@ at the default and 10.4 s at `LP_NUM_THREADS=1` (`results/shot-checks.jsonl`).
 
 The GPU process uses Mesa's disk cache (`~/.cache/mesa_shader_cache`, multi-file layout, 13 MB of entries here).
 Pointed at an empty `MESA_SHADER_CACHE_DIR`, one `shot.spec.ts` run wrote 1.7 MB into it and took 10.5 s against 6.7 s
-warm (`results/shot-checks.jsonl`, one run each). Every full-suite run below ran warm; the cache did not grow during
+warm (`results/shot-checks.jsonl`, one run each). Every full-suite run below ran warm; the cache grew by under 2 KB during
 them, so they share one cache state. A full-suite cold run was not done. Chromium's own GPU cache lives in the
 per-launch temporary profile, so it is always cold.
 
@@ -357,7 +357,7 @@ line).
 
 Every run is flagged `contaminated` in the data. For these runs that flag is not reliable. The harness then counted
 `/proc/stat` CPU outside the run's cgroup as foreign (1.0–1.9 cores per run), and most of that turned out to be kernel
-threads the run itself keeps busy (kswapd, dm-crypt `kcryptd`, btrfs workers). A per-cgroup sample during the 8:4 run put
+threads the run itself keeps busy (kswapd, dm-crypt `kcryptd`, btrfs workers). A per-cgroup sample during the 16:2 run put
 other user space at about 0.3 cores (other agents' sessions). The sweep also ran back to back, so `loadavg_before` is
 the previous run's load. The harness now counts only other cgroups' user-space CPU and waits for the load to settle;
 the isolation runs, made with it, show 0.46–0.62 foreign cores. No run waited on the e2e lock.
