@@ -331,8 +331,8 @@ at the default and 10.4 s at `LP_NUM_THREADS=1` (`results/shot-checks.jsonl`).
 
 The GPU process uses Mesa's disk cache (`~/.cache/mesa_shader_cache`, multi-file layout, 13 MB of entries here).
 Pointed at an empty `MESA_SHADER_CACHE_DIR`, one `shot.spec.ts` run wrote 1.7 MB into it and took 10.5 s against 6.7 s
-warm (`results/shot-checks.jsonl`, one run each). Every full-suite run below ran warm; the cache grew by under 2 KB during
-them, so they share one cache state. A full-suite cold run was not done. Chromium's own GPU cache lives in the
+warm (`results/shot-checks.jsonl`, one run each). Every full-suite run below ran warm; the cache grew by 1–9 KB per run (23 KB
+over all seven), so they share one warm cache state. A full-suite cold run was not done. Chromium's own GPU cache lives in the
 per-launch temporary profile, so it is always cold.
 
 ### Sweep: one full-suite run per configuration
@@ -376,7 +376,7 @@ What the sweep shows:
 ### Failure classification
 
 51 distinct tests failed in at least one full run. Their 50 `file:line` locations were run again without the rest of
-the suite, at 2 workers with `LP_NUM_THREADS` unset, twice (`results/isolation.jsonl`, 790–798 s per round, 0.5–0.6
+the suite, at 2 workers with `LP_NUM_THREADS` unset, twice (`results/isolation.jsonl`, 788–798 s suite time per round, 0.5–0.6
 foreign cores, no lock wait). A location inside a loop selects its sibling tests too, so 160 tests ran.
 
 * **Base failures, 9 tests: failed in both isolation rounds.** They fail on this host at `8951f0f` whatever the load,
@@ -405,8 +405,8 @@ Playwright passes the environment to the browser, and the probe above shows the 
 ### Against the targets
 
 The ticket's target was full E2E feedback p50 ≤ 3 min / p95 ≤ 5 min including the build. On this host the fastest
-configuration took 24 minutes (with 42 failures), and the default takes 38 minutes. The suite needs 37,000–44,000 CPU-s
-on these cores, which is at least 19–23 minutes on 32 vCPUs at full use. **No worker or thread setting on this host
+configuration took 24 minutes (with 42 failures), and the default takes 38 minutes. The suite needs 31,000–44,000 CPU-s
+on these cores, which is at least 16–23 minutes on 32 vCPUs at full use. **No worker or thread setting on this host
 gets near the target.** CONTRIBUTING's "~7.5 min" was an estimate from when the suite had 453 tests; the measured
 default is about 38 minutes for 1179 tests. Proposed revised local target, pending repeated runs: the default at or
 under 40 minutes with no first-attempt failures beyond the base set. Reaching minutes, not tens of minutes, needs what
