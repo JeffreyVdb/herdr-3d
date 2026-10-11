@@ -39,6 +39,9 @@ type PromptTranslator interface {
 	// TerminalOnly reports whether text, typed as a prompt, runs a built-in
 	// whose output shows only in the worker's terminal (#140).
 	TerminalOnly(harness, text string) bool
+	// SkillCall is how the harness runs a skill from a prompt (#224: Claude
+	// "/handoff", Codex "$handoff").
+	SkillCall(harness, name string) string
 }
 
 // maxShrink is how many times shorter a rewrite can make a prompt: the

@@ -508,7 +508,8 @@ func (h *Hub) startAnswerFollowup(ctx context.Context, c *Client, cmd proto.Comm
 	if w.Ask != nil { // #57: its dialog would take the text
 		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
 	}
-	h.tookOver(ctx, a.ID) // #83: a person prompts: an armed wrap-up is off
+	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
+	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		stale, err := query(ctx, h, func() error { _, err := h.followupOf(a.ID, a.TurnID); return err })
 		if err != nil {

@@ -253,6 +253,7 @@ func (h *Hub) startKeys(ctx context.Context, c *Client, cmd proto.Command) error
 		return err
 	}
 	h.tookOver(ctx, a.ID)      // #83: a person types: an armed wrap-up is off
+	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		t := h.opts.Term
@@ -306,10 +307,23 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if w.Ask != nil { // #57: its dialog would take the text
 		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
 	}
+	// #224: exactly "/handoff [instruction]" asks the agent for a handoff
+	// the bridge files, before any translation.
+	if instruction, ok := handoffCommand(a.Text); ok && h.ho.svc != nil {
+		op := a.Op
+		if op == "" {
+			op = "prompt-" + randHex(8)
+		}
+		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.ID, op: op, instruction: instruction, prompt: true,
+			answer: func(r proto.AgentHandoff, existing, queued bool) any {
+				return proto.PromptResult{Queued: queued, Handoff: &r, Existing: existing}
+			}})
+	}
 	// #140: a built-in whose output or dialog shows only in the terminal,
 	// as typed: it starts no turn, so it is sent without waiting for one.
 	terminal := h.opts.Prompts != nil && h.opts.Prompts.TerminalOnly(kind, a.Text)
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
+	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		typed := a.Text

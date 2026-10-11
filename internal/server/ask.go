@@ -196,6 +196,7 @@ func (h *Hub) startAnswerAsk(ctx context.Context, c *Client, cmd proto.Command) 
 			return err
 		}
 	}
+	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		return h.answerAsk(ctx, a, answers, session, pane)
 	})

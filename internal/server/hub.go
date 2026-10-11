@@ -124,6 +124,11 @@ type Options struct {
 	// and herdr's idle must hold before it is read (default
 	// DefaultWrapUpDebounce).
 	WrapUpTimeout, WrapUpDebounce time.Duration
+	// #224: AgentHandoffTimeout is how long an agent handoff request waits
+	// for its file and its turn's end (default DefaultAgentHandoffTimeout),
+	// AgentHandoffGrace how long after the turn ended the file may still
+	// appear (default DefaultAgentHandoffGrace).
+	AgentHandoffTimeout, AgentHandoffGrace time.Duration
 	// HirePoll is how often a hire or send-home looks at a pane, and
 	// ExitPause the pause between Codex's /quit and Enter (defaults 250 ms,
 	// 400 ms).
@@ -384,10 +389,11 @@ type Hub struct {
 
 	dismissed map[string]int64 // #106: inbox dismissals, worker id → status_since
 
-	fu followupState // #90 follow-up questions
-	ho handoffState  // #223 handoffs
-	pk packupState   // #110 pack up on request
-	kn kaneoState    // #184 Kaneo
+	fu followupState     // #90 follow-up questions
+	ho handoffState      // #223 handoffs
+	ah agentHandoffState // #224 agent handoff requests
+	pk packupState       // #110 pack up on request
+	kn kaneoState        // #184 Kaneo
 
 	act activityHub // #98 activity
 
@@ -528,6 +534,12 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.WrapUpDebounce <= 0 {
 		opts.WrapUpDebounce = DefaultWrapUpDebounce
 	}
+	if opts.AgentHandoffTimeout <= 0 { // #224
+		opts.AgentHandoffTimeout = DefaultAgentHandoffTimeout
+	}
+	if opts.AgentHandoffGrace <= 0 {
+		opts.AgentHandoffGrace = DefaultAgentHandoffGrace
+	}
 	if opts.FollowupDebounce <= 0 {
 		opts.FollowupDebounce = DefaultFollowupDebounce
 	}
@@ -610,6 +622,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.initHandoffs(ctx); err != nil { // #223
+		return nil, err
+	}
+	if err := h.loadAgentHandoffs(ctx); err != nil { // #224
 		return nil, err
 	}
 	if err := h.initPackup(ctx); err != nil { // #110
@@ -881,6 +896,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startHandoff
 		case proto.CmdHandoffList, proto.CmdHandoffGet, proto.CmdHandoffDelete: // #223
 			start = h.startHandoffs
+		case proto.CmdWorkerHandoffCancel: // #224
+			start = h.startAgentHandoffCancel
 		case proto.CmdActivityGet, proto.CmdActivitySet: // #98
 			start = h.startActivity
 		case proto.CmdDigestGet, proto.CmdDigestSet, proto.CmdDigestTest, proto.CmdDigestRetry: // #118, #174
@@ -1362,8 +1379,9 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			if err := h.st.CloseWorker(ctx, id); err != nil {
 				h.log.Error("recording closed worker failed", "worker", id, "err", err)
 			}
-			h.forgetWrapUp(ctx, id)    // #83: closed in herdr
-			h.forgetDismissed(ctx, id) // #106
+			h.forgetWrapUp(ctx, id)       // #83: closed in herdr
+			h.forgetAgentHandoff(ctx, id) // #224
+			h.forgetDismissed(ctx, id)    // #106
 		}
 		ev := proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID}
 		if op := f.fires[id]; op != nil && !rawWS[op.workspaceID] {
@@ -1371,7 +1389,8 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			op.removed = true
 			sentHome[id] = true
 			op.signal()
-			h.forgetWrapUp(ctx, id) // #83: sent home
+			h.forgetWrapUp(ctx, id)       // #83: sent home
+			h.forgetAgentHandoff(ctx, id) // #224
 		}
 		evs = append(evs, ev)
 	}
@@ -1474,6 +1493,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		}
 		next.Followup = h.followupView(id)
 		next.Handoff = h.handoffView(id, next.AgentSession)    // #223
+		next.AgentHandoff = h.agentHandoffView(id)             // #224
 		next.Activity = h.activityFor(id, next, h.workers[id]) // #98: for its status, in the same event
 		next.Digest = h.workerDigest(id, next)                 // #118
 		h.noteCodexThread(ctx, id, next.AgentSession)          // #155

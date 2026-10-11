@@ -93,3 +93,6 @@ func (p *Prompts) TerminalOnly(harness, text string) bool { return TerminalOnly(
 
 // RetryKeys is RetryKeys for the server.
 func (p *Prompts) RetryKeys(harness, text string) []string { return RetryKeys(harness, text) }
+
+// SkillCall is SkillCall for the server.
+func (p *Prompts) SkillCall(harness, name string) string { return SkillCall(harness, name) }

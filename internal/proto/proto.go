@@ -375,6 +375,9 @@ type Worker struct {
 	// #223: Handoff is the agent's latest completed final reply a literal
 	// handoff can file (absent: none now, or no filing cabinet).
 	Handoff *HandoffCandidate `json:"handoff,omitempty"`
+	// #224: AgentHandoff is the worker's agent handoff request while it
+	// runs, and after it failed (until dismissed or a new one starts).
+	AgentHandoff *AgentHandoff `json:"agent_handoff,omitempty"`
 	// #98: Activity is what the agent is doing right now: while Status is
 	// working, and while idle or done only as waiting on background tasks.
 	// Absent otherwise, and for harnesses other than claude and codex.
