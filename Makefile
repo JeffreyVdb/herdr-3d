@@ -21,13 +21,15 @@ E2E_LOCK := $${XDG_RUNTIME_DIR:-/tmp}/herdr-3d-e2e.lock
 E2E_LOCKED = command -v flock >/dev/null || { echo "make: flock not found (util-linux); needed for the e2e lock" >&2; exit 1; }; \
 	flock -n 9 || { echo "waiting for another worktree's e2e run ($(E2E_LOCK))..." >&2; \
 	flock 9 || { echo "make: could not take the e2e lock ($(E2E_LOCK))" >&2; exit 1; }; }
+# The full suite (or SPEC=...) under that lock, on a leased preview port, against whatever game/$${H3D_DIST:-dist} holds.
+E2E_RUN = @( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test $(SPEC) 9>&- ) 9>"$(E2E_LOCK)"
 
 # The built game is copied here and embedded in h3d-helper (internal/webdist).
 EMBED_DIR := internal/webdist/game
 RELEASE_DIR := bin/release
 
 .PHONY: build go-build game-build test go-test game-test integration codex-shared-tui codex-shared-bridge lint go-lint game-lint \
-	sh-test embed-game helper-darwin release-assets dev shot e2e setup toolchain deps clean
+	sh-test embed-game helper-darwin release-assets dev shot e2e e2e-prebuilt setup toolchain browsers browser-check deps clean
 
 ## build: Go binaries (bin/) + game bundle (game/dist/)
 build: go-build game-build
@@ -109,12 +111,18 @@ shot: game-build
 
 ## e2e: the full headless Playwright suite (all e2e/*.spec.ts, H3D_WORKERS parallel workers; one run per host); SPEC=e2e/x.spec.ts runs only that file
 e2e: game-build
-	@( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test $(SPEC) 9>&- ) 9>"$(E2E_LOCK)"
+	$(E2E_RUN)
+
+## e2e-prebuilt: make e2e without the build: tests the bundle already in game/dist (H3D_DIST=<dir>: game/<dir>), same lock and portlease
+e2e-prebuilt: deps
+	@test -f "game/$${H3D_DIST:-dist}/index.html" || { echo "make e2e-prebuilt: no build in game/$${H3D_DIST:-dist}; run 'make game-build' first (or 'make e2e')" >&2; exit 1; }
+	$(E2E_RUN)
 
 ## setup: make a fresh worktree test-ready: toolchain check, game deps, Go module cache (idempotent, ~3 s warm)
 setup:
 	@$(MAKE) --no-print-directory toolchain
 	@$(MAKE) --no-print-directory deps
+	@$(MAKE) --no-print-directory browser-check
 	go mod download
 	@echo "setup ok: next 'make lint' then 'make shot' (docs/git-worktrees.md)"
 
@@ -123,7 +131,7 @@ GO_WANT   = $(shell sed -n 's/^go \([0-9]*\.[0-9]*\).*/\1/p' go.mod)
 NODE_WANT = $(shell sed 's/^v//' game/.nvmrc | cut -d. -f1,2)
 PNPM_WANT = $(shell sed -n 's/.*"packageManager": *"pnpm@\([0-9]*\.[0-9]*\).*/\1/p' game/package.json)
 
-## toolchain: fail with a clear message when go, node, pnpm, portlease or flock is missing or the wrong version
+## toolchain: fail with a clear message when go, node, pnpm, portlease or flock is missing or the wrong version, or (once deps are in) Playwright's Chromium is missing
 toolchain:
 	@fail=0; \
 	miss() { echo "make setup: $$1 not found on PATH ($$2)" >&2; fail=1; }; \
@@ -142,7 +150,23 @@ toolchain:
 	else miss pnpm "need $(PNPM_WANT), see packageManager in game/package.json"; fi; \
 	command -v portlease >/dev/null || miss portlease "ports are leased from it, never hardcoded"; \
 	command -v flock >/dev/null || miss flock "util-linux; needed for the e2e lock"; \
+	if [ -f game/node_modules/.modules.yaml ]; then $(MAKE) --no-print-directory browser-check || fail=1; fi; \
 	exit $$fail
+
+# The Chromium builds the pinned @playwright/test expects (chromium and chromium_headless_shell, one revision), as its
+# own dry run names them. Needs game/node_modules, so `toolchain` checks only once deps are installed; `setup` checks
+# after deps. Nothing is downloaded here: `make browsers` does that, on request.
+browser-check:
+	@dirs=$$($(PNPM) exec playwright install chromium --dry-run 2>/dev/null | sed -n 's/^ *Install location: *//p'); \
+	[ -n "$$dirs" ] || { echo "make setup: could not ask Playwright which Chromium it needs ('$(PNPM) exec playwright install chromium --dry-run' failed)" >&2; exit 1; }; \
+	fail=0; for d in $$dirs; do \
+		case "$${d##*/}" in chromium*) ;; *) continue;; esac; \
+		[ -f "$$d/INSTALLATION_COMPLETE" ] || { echo "make setup: Playwright's Chromium $${d##*/} is missing ($$d); run 'make browsers' to download it" >&2; fail=1; }; \
+	done; exit $$fail
+
+## browsers: download the Chromium revision the pinned @playwright/test expects into ~/.cache/ms-playwright (opt-in; nothing else downloads browsers)
+browsers: deps
+	env -u PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD $(PNPM) exec playwright install chromium
 
 ## deps: install game dependencies from the lockfile
 deps: game/node_modules/.modules.yaml

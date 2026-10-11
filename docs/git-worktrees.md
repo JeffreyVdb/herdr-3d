@@ -18,8 +18,9 @@ make setup && make lint && make shot
 
 That is the whole setup, no other manual step. `make setup` checks the toolchain (go, node 24.18, pnpm 11.7,
 portlease, flock; pins read from `go.mod`, `game/.nvmrc`, `game/package.json`) and fails with a clear message
-when one is missing or wrong. It then runs `make deps` (`game/node_modules`, ~3 s from the shared pnpm store) and
-`go mod download`. Safe to repeat. `make shot` takes seconds: it proves node_modules, Chromium, portlease and
+when one is missing or wrong. It then runs `make deps` (`game/node_modules`, ~3 s from the shared pnpm store), checks
+that the Chromium revision the pinned Playwright expects is in `~/.cache/ms-playwright` (missing: it says to run
+`make browsers`, the only target that downloads one) and runs `go mod download`. Safe to repeat. `make shot` takes seconds: it proves node_modules, Chromium, portlease and
 WebGL2 work. It may wait for another worktree's e2e run (host-wide lock); that is normal.
 
 ## Rules
@@ -28,7 +29,7 @@ WebGL2 work. It may wait for another worktree's e2e run (host-wide lock); that i
 - No `.env` and no music (`game/public/music`) needed to build, run vitest or run e2e.
 - Ports only through `portlease` (`make dev`, `make shot`). Never hardcode one. Bind `127.0.0.1` only.
 - Prefer `make` targets over bare `pnpm`: they carry `deps`, the e2e lock and the Playwright env. For a bare
-  `pnpm -C game ...`, run `make deps` first.
+  `pnpm -C game ...`, run `make deps` first. `make e2e-prebuilt` reruns the suite on the bundle you already built.
 - The first `go test ./...` takes ~2 min (`internal/server`). Run the packages you touched while iterating.
 
 ## Teardown

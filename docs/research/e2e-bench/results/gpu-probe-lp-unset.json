@@ -1,0 +1,23 @@
+{
+ "gpu_processes": 1,
+ "llvmpipe_threads_max": 64,
+ "processes": [
+  {
+   "pid": 1123894,
+   "env": {},
+   "max_threads": 141,
+   "max_by_name": {
+    "chrome-headless": 67,
+    "PerfettoTrace": 1,
+    "llvmpipe-<n>": 64,
+    "chrome-:disk$<n>": 2,
+    "ANGLE-GC": 1,
+    "ThreadPoolServi": 1,
+    "ThreadPoolForeg": 2,
+    "Chrome_ChildIOT": 1,
+    "VizCompositorTh": 1,
+    "ThreadPoolSingl": 1
+   }
+  }
+ ]
+}

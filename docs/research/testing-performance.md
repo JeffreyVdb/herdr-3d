@@ -257,3 +257,170 @@ linux-amd64 release build was not run on arm64, since `publish` builds it native
 
 The game job (setup about 20s, lint 8s, Vitest 63–68s on arm64) is now the CI critical path. The next step is
 ticket item 4 or a Vitest environment-setup cut (40% of its phase time).
+
+## Results (stages 4–5)
+
+Branch `h3d/241-e2e-speed` from `8951f0f` (the merge of stages 1–3). The game source is unchanged on the branch, so every
+build tested is the `8951f0f` game; runs record the SHA of the harness commit they ran at. Raw data and the harness:
+[e2e-bench/](e2e-bench/).
+
+**Scope cut (user decision).** Everything ran on this one host: 32 vCPU Xeon E5-2660 v3, 38 GiB RAM, no GPU, Mesa
+25.2.7 lavapipe/llvmpipe (LLVM 21.1.8, 256-bit), Playwright 1.61.1, Chrome for Testing 149.0.7827.55 (headless shell),
+renderer `ANGLE (Mesa, Vulkan 1.4.318 (llvmpipe (LLVM 21.1.8 256 bits)), llvmpipe)`. No shards across machines, no AWS
+or hosted runners, no cloud cost comparison, no Playwright in GitHub Actions. These ticket acceptance criteria are
+dropped by that decision: independent E2E shards overlapping on separate machines with merged diagnostics, queue and
+provisioning timings, cold/warm **cost** comparisons and total cost per passing run, and provisioning/terminating
+temporary AWS infrastructure.
+
+**Stopped early (user decision).** The benchmark was stopped after the sweep and the failure isolation. The ticket's
+"≥10 full-suite runs per shortlisted configuration" was first cut to five runs per configuration for 8:4 and 12:2, then
+dropped: **no configuration has repeated full-suite runs, so there is no p50/p95**. Every full-suite number below is one
+run. The `/dev/shm` TMPDIR A/B and the full-suite cold-cache runs were not done either (the knobs exist; see below).
+
+### What was added
+
+* `make e2e-prebuilt`: the full suite (or `SPEC=`) against the bundle already in `game/dist` (`H3D_DIST=<dir>`: another
+  one), with the same host-wide `flock` and portlease as `make e2e`. It fails at once when there is no build. `make e2e`
+  still builds first; both share one recipe (`E2E_RUN`). `make game-build` takes 5.0–5.3 s here, so `make e2e` costs
+  that plus the suite.
+* `playwright.config.ts` writes a JSON report next to the `list` output: `game/test-results/e2e-report.json`
+  (gitignored, kept out of `outputDir`, which Playwright empties). `H3D_E2E_REPORT` moves it. `retries: 0` unchanged;
+  failure artifacts stay in `test-results/artifacts`.
+* `H3D_E2E_TMPDIR`: `TMPDIR` for the test run only (Playwright workers, so each browser's
+  `playwright_chromiumdev_profile-*`, and the preview server). It is set in the config, not around make: portlease
+  keeps its shared lease state in `$TMPDIR/portlease-<uid>`, so a different `TMPDIR` around make would give it a
+  private registry and hand out ports other worktrees hold. Checked on `shot.spec.ts`: with it set to a `/dev/shm`
+  directory the profile appeared there and none in `/tmp`, while `portlease-1000` and Playwright's transform cache
+  stayed in `/tmp`. Default unset (unchanged behaviour); the A/B was not measured.
+* `make browsers` installs the Chromium revision the pinned `@playwright/test` expects (`playwright install chromium`
+  with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD` removed), on request only. `make setup` (after deps) and `make toolchain`
+  (once `game/node_modules` exists) run `browser-check`: it reads the install locations from
+  `playwright install chromium --dry-run` (`chromium-1228`, `chromium_headless_shell-1228`) and fails naming
+  `make browsers` when either has no `INSTALLATION_COMPLETE`. Nothing downloads browsers implicitly.
+* `docs/research/e2e-bench/bench.mjs`: runs `make e2e-prebuilt` per configuration (workers × `LP_NUM_THREADS`, warm or
+  cold Mesa cache, `/tmp` or `/dev/shm` TMPDIR), each run in its own systemd user scope, and appends one JSON line:
+  SHA, versions, host, renderer, workers, `LP_NUM_THREADS`, shader-cache state and size, TMPDIR and its filesystem,
+  load average before/after, lock wait, CPU (the run's own from its cgroup, other user space, kernel threads), memory,
+  build, suite and wall time, test counts and every first-attempt failure. `summarize.mjs` makes the tables below.
+
+### Test inventory
+
+`playwright test --list`: **1179 tests in 82 files** at `8951f0f` and at the branch head (no test, skip, retry,
+assertion or timeout changed). The research section above quotes 453 tests / 70 files at `ad3db71`; the suite has grown
+since. Fifteen tests skip in a normal run (the opt-in `H3D_PERF=1` checks and the like); every full run below reports
+1179 = passed + failed + 15 skipped.
+
+### `LP_NUM_THREADS` reaches the GPU process
+
+`gpu-probe.mjs` counted the threads of Playwright's Chromium GPU process during `make e2e-prebuilt
+SPEC=e2e/shot.spec.ts` (`results/gpu-probe-*.json`):
+
+| `LP_NUM_THREADS` | `llvmpipe-<n>` threads in the GPU process |
+| --- | ---: |
+| unset | 64 |
+| 8 | 16 |
+| 5 | 10 |
+| 1 | 2 |
+
+The GPU process runs two llvmpipe pools of `LP_NUM_THREADS` threads each (default: 32, the CPU count), so the default
+6 workers run up to 6 × 64 = 384 rasterizer threads on 32 vCPUs. `/proc/<pid>/environ` cannot show it: Chromium
+rewrites its children's process titles over the environment block. Timing also moves: `shot.spec.ts` alone took 6.7 s
+at the default and 10.4 s at `LP_NUM_THREADS=1` (`results/shot-checks.jsonl`).
+
+### Shader cache
+
+The GPU process uses Mesa's disk cache (`~/.cache/mesa_shader_cache`, multi-file layout, 13 MB of entries here).
+Pointed at an empty `MESA_SHADER_CACHE_DIR`, one `shot.spec.ts` run wrote 1.7 MB into it and took 10.5 s against 6.7 s
+warm (`results/shot-checks.jsonl`, one run each). Every full-suite run below ran warm; the cache grew by 1–9 KB per run (23 KB
+over all seven), so they share one warm cache state. A full-suite cold run was not done. Chromium's own GPU cache lives in the
+per-launch temporary profile, so it is always cold.
+
+### Sweep: one full-suite run per configuration
+
+Suite = Playwright's `stats.duration` (includes starting the preview server). Feedback = make's wall time plus one
+5.0–5.3 s build. CPU = the run's cgroup CPU time / wall time. "Beyond base" = first-attempt failures minus the nine
+base failures below.
+
+| Workers : `LP_NUM_THREADS` | Suite | Feedback incl. build | CPU (cores) | First-attempt failures | Beyond base |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 16 : 2 | 1436 s (23m56) | 24m02 | 25.6 | 42 | 33 |
+| 12 : 2 | 1565 s (26m05) | 26m12 | 22.4 | 27 | 19 |
+| 8 : 4 | 1837 s (30m37) | 30m44 | 20.3 | 20 | 11 |
+| 8 : 2 | 2041 s (34m01) | 34m08 | 15.8 | 21 | 12 |
+| **6 : unset (current default)** | 2289 s (38m09) | 38m16 | 19.2 | 18 | 9 |
+| 6 : 2 | 2628 s (43m48) | 43m54 | 11.9 | 20 | 12 |
+| 4 : 8 | 2953 s (49m13) | 49m19 | 13.3 | 11 | 2 |
+
+Runs: `results/control.jsonl` (6:unset, harness `9d8ac28`) and `results/sweep.jsonl` (the rest, `15d34ee`), all from
+2026-10-11. Points 8:unset, 8:8, 10:4, 16:1 and 24:1 were planned and not run (8:unset was killed mid-run, so it has no
+line).
+
+Every run is flagged `contaminated` in the data. For these runs that flag is not reliable. The harness then counted
+`/proc/stat` CPU outside the run's cgroup as foreign (1.0–1.9 cores per run), and most of that turned out to be kernel
+threads the run itself keeps busy (kswapd, dm-crypt `kcryptd`, btrfs workers). A per-cgroup sample during the 16:2 run put
+other user space at about 0.3 cores (other agents' sessions). The sweep also ran back to back, so `loadavg_before` is
+the previous run's load. The harness now counts only other cgroups' user-space CPU and waits for the load to settle;
+the isolation runs, made with it, show 0.46–0.62 foreign cores. No run waited on the e2e lock.
+
+What the sweep shows:
+
+* **The suite is CPU-bound on this host.** The default run used 19 of 32 cores for 38 minutes (43,900 CPU-s). Even
+  two workers on 160 tests used 10 cores on average: each browser renders continuously and takes whatever rasterizer
+  CPU it gets.
+* **Capping `LP_NUM_THREADS` does not make it faster by itself.** At 6 workers, `LP_NUM_THREADS=2` was 15% slower than
+  the default and used 12 cores instead of 19. Starving the rasterizer slows each test more than it relieves
+  contention. More workers make up for it (12:2, 16:2), but at a large cost in failures.
+* **First-attempt failures rise with workers.** 4 workers: 2 beyond base; 6: 9–12; 8: 11–12; 12: 19; 16: 33. They are
+  timing failures under load (game time running behind wall time, fixed polls), spread over many specs.
+
+### Failure classification
+
+51 distinct tests failed in at least one full run. Their 50 `file:line` locations were run again without the rest of
+the suite, at 2 workers with `LP_NUM_THREADS` unset, twice (`results/isolation.jsonl`, 788–798 s suite time per round, 0.5–0.6
+foreign cores, no lock wait). A location inside a loop selects its sibling tests too, so 160 tests ran.
+
+* **Base failures, 9 tests: failed in both isolation rounds.** They fail on this host at `8951f0f` whatever the load,
+  and 8 of the 9 failed in every full run. `m98-monitor.spec.ts:203` passed in two full runs (6:2, 12:2).
+  `h155-codex-server.spec.ts:94` (fallback hire is a warning), `h194-harness-models.spec.ts:15` and `:65`,
+  `m10-limits.spec.ts:366` (390×640 panel folds away), `m2.spec.ts:273` (look-at HUD along a scripted camera path),
+  `m5-panels.spec.ts:64` (P prompts the looked-at worker), `m98-monitor.spec.ts:203` (reduced motion),
+  `ui-theme.spec.ts:967` for credits at 1280×720 and 390×844 (focus ring). None was changed or skipped here; they need
+  their own ticket.
+* **Load-sensitive even in isolation, 5 tests: failed in one of the two rounds.**
+  `h206-diff-highlight.spec.ts:201` (long-task count, off vs on), `m110-packup.spec.ts:251`,
+  `m13-whiteboard.spec.ts:113`, `m6c.spec.ts:144` and `:169`. One sibling never seen failing in a full run failed once
+  too: the transcript variant of `h187-keep-seat.spec.ts:411`.
+* **Load-only, 37 tests: passed both times in isolation, failed only in full runs.** The per-test matrix is
+  `node docs/research/e2e-bench/summarize.mjs --base results/isolation.jsonl results/control.jsonl results/sweep.jsonl`.
+
+### Defaults: unchanged
+
+`DEFAULT_WORKERS` stays 6, and `LP_NUM_THREADS` stays unset (Mesa's default, the CPU count). With one run per
+configuration, the data does not clearly beat the default once failures weigh as much as speed. 8:4 was 20% faster
+(30m37 against 38m09) but had 11 failures beyond base against 9. That gap is within what single runs can show, but it
+is not an improvement. Configurations faster than 8:4 added 19–33 failures, and the only one with fewer failures (4:8,
+2) took 49 minutes. Both overrides work and are the knobs for a repeat: `H3D_WORKERS=8 LP_NUM_THREADS=4 make e2e`.
+Playwright passes the environment to the browser, and the probe above shows the value arriving.
+
+### Against the targets
+
+The ticket's target was full E2E feedback p50 ≤ 3 min / p95 ≤ 5 min including the build. On this host the fastest
+configuration took 24 minutes (with 42 failures), and the default takes 38 minutes. The suite needs 31,000–44,000 CPU-s
+on these cores, which is at least 16–23 minutes on 32 vCPUs at full use. **No worker or thread setting on this host
+gets near the target.** CONTRIBUTING's "~7.5 min" was an estimate from when the suite had 453 tests; the measured
+default is about 38 minutes for 1179 tests. Proposed revised local target, pending repeated runs: the default at or
+under 40 minutes with no first-attempt failures beyond the base set. Reaching minutes, not tens of minutes, needs what
+this ticket's single-machine scope excluded: shards on separate machines, or a GPU or faster cores. A cheaper first
+step is to fix the nine base failures and the load-sensitive polls, which is also what any faster default needs.
+
+### Reproduce
+
+```sh
+make setup                                    # fails naming `make browsers` if Playwright's Chromium is missing
+make game-build                               # 5 s
+node docs/research/e2e-bench/bench.mjs --out /tmp/e2e.jsonl --config 6:unset --config 8:4 --rounds 10
+node docs/research/e2e-bench/bench.mjs --out /tmp/e2e.jsonl --config 8:4:shm --rounds 5     # /dev/shm TMPDIR
+node docs/research/e2e-bench/bench.mjs --out /tmp/e2e.jsonl --config 6:unset --cache cold
+LP_NUM_THREADS=2 sh -c 'node docs/research/e2e-bench/gpu-probe.mjs 20 & make e2e-prebuilt SPEC=e2e/shot.spec.ts; wait'
+node docs/research/e2e-bench/summarize.mjs --base docs/research/e2e-bench/results/isolation.jsonl /tmp/e2e.jsonl
+```
