@@ -291,9 +291,9 @@ the menu label means.
 ### 4.3 Launch gotchas (verified)
 
 - `agent start` **types the command into the pane's shell**. The response includes `"argv":["claude","--model",…]` and the
-  pane shows `[dev@devbox tmp]$ claude --model opus …`. So shell functions apply. On this server, `claude`/`codex` are
-  **bash and fish functions** (`~/.bashrc.d/parallel-agent-auth.sh`, `~/.config/fish/functions/{claude,codex}.fish`) that
-  inject `PARALLEL_API_KEY` (needed by the parallel web skills). A bridge that `exec`s the binary directly would lose that.
+  pane shows `[dev@devbox tmp]$ claude --model opus …`. So shell functions apply. Many setups define `claude`/`codex` as
+  **bash or fish wrapper functions** (for example under `~/.config/fish/functions/`) that export API keys or other
+  environment the agents need. A bridge that `exec`s the binary directly would lose that.
   Always go through a herdr shell pane.
 - **Folder trust**: Claude in an untrusted cwd (`/tmp`) shows "Quick safety check… trust this folder". `agent start`
   returns `{"error":{"code":"agent_not_ready",…}}`, and `agent get` shows `agent_status: blocked, launch_pending: true`.

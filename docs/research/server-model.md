@@ -17,20 +17,20 @@ Researcher: GROUND|server · Date: 2026-09-28 · herdr 0.9.0 (API protocol 22) �
 - **Recommendation: option (a), a small server-side bridge daemon ("herdr-world", Go)** that holds one subscription per
   running session, keeps an in-memory world model, stores the new building/group layer in **SQLite**, and exposes a single
   **WebSocket** (JSON, snapshot + versioned diffs) on the tailnet. Put it behind `tailscale serve` (HTTPS, tailnet only,
-  identity headers) or bind it to the tailnet IP and check `WhoIs`; allow-list the owner's user + the Mac's node.
+  identity headers) or bind it to the tailnet IP and check `WhoIs`; allow-list the operator's user + the Mac's node.
 - In-game live terminal: bridge spawns `herdr --session <s> terminal session observe <pane> --cols C --rows R`
   (read-only observer; NDJSON `terminal.frame` = base64 ANSI, one full frame then incremental diffs — verified) only for
   panes the camera is looking at, and relays frames. Fallback: poll `pane.read format=ansi` at ~4 Hz. "Open in real terminal": game launches
   `herdr --remote dev@devbox --session <s>` in the user's terminal app, after the bridge focuses the target
   workspace/agent.
-- Cost: negligible. 11 running herdr servers already use ~286 MB RSS total; the bridge adds ~20–40 MB and <1 % of one core.
+- Cost: negligible. A handful of running herdr servers (one per session) already use ~286 MB RSS total; the bridge adds ~20–40 MB and <1 % of one core.
 
 ## 1. How `herdr --remote` / `herdr machine` work today
 
 ### Evidence (server, `ps`)
 
 ```
-tailscaled be-child ssh --login-shell=/bin/fish --uid=1000 ... --remote-user=JeffreyVdb@github --remote-ip=203.0.113.20
+tailscaled be-child ssh --login-shell=/bin/fish --uid=1000 ... --remote-user=dev@example.com --remote-ip=203.0.113.20
    --has-tty=false ... --cmd=exec /home/dev/.local/bin/herdr --session herdr-3d remote-client-bridge
 /home/dev/.local/bin/herdr --session herdr-3d remote-client-bridge      (RSS ~4 MB)
 /home/dev/.local/bin/herdr server                                         (RSS 20–40 MB, one per session)
@@ -55,7 +55,7 @@ ssh: $TMPDIR/herdr-ssh-77524-0/ctl [mux]
 | Mac | `herdr --remote …` | launcher; writes a private ssh config + control socket in `$TMPDIR/herdr-ssh-<pid>-0/` |
 | Mac | `herdr client` | local TUI renderer, local keybindings (`--remote-keybindings local` default) |
 | Mac | `ssh … -T … exec herdr … remote-client-bridge` | transport, no TTY, stdio pipe; ControlMaster mux so extra channels can reuse it |
-| Server | `tailscaled be-child ssh` | Tailscale SSH (server has `RunSSH: true`); identity = `JeffreyVdb@github` from node 203.0.113.20 |
+| Server | `tailscaled be-child ssh` | Tailscale SSH (server has `RunSSH: true`); identity = `dev@example.com` from node 203.0.113.20 |
 | Server | `herdr --session X remote-client-bridge` | relays stdio ↔ the session's private `herdr-client.sock` |
 | Server | `herdr server` (per session) | owns PTYs, agents, state, `session.json` persistence |
 
@@ -148,19 +148,20 @@ The bridge can create workspaces and start agents that run with bypass permissio
 shell as dev on devbox.**
 
 1. **Never public.** No Funnel. Either
-   - **Preferred: `tailscale serve --bg --https=<port> http://127.0.0.1:<port>`** (the server already uses serve for other
-     tailnet-only services). Bridge listens on `127.0.0.1` only. Serve terminates TLS with the `*.example.net` cert and injects
+   - **Preferred: `tailscale serve --bg --https=<port> http://127.0.0.1:<port>`** (Serve exposes tailnet-only
+     services). Bridge listens on `127.0.0.1` only. Serve terminates TLS with the `*.example.net` cert and injects
      `Tailscale-User-Login` / `Tailscale-User-Name` headers (stripped from incoming requests to prevent spoofing; not set for
      tagged devices; Funnel traffic gets none) — source: https://tailscale.com/docs/features/tailscale-serve (identity headers).
      WebSocket upgrade passes through the HTTP proxy.
    - Or bind directly to `203.0.113.10:<port>` and call **LocalAPI WhoIs** on each connection's remote addr
-     (`tailscale whois --json 203.0.113.20` works as dev; LocalAPI socket `/var/run/tailscale/tailscaled.sock` is `0666`).
-     This also gives the **node** (`StableID example-stable-id`, `devmac`), so you can allow-list
-     "the owner *and* the Mac" — headers only give the user. Plain `ws://` is still WireGuard-encrypted end to end.
-2. **Allow-list:** the owner's Tailscale login; optionally node StableID of the Mac. Reject everything
+     (`tailscale whois --json <peer-ip>` works for a local user only if the LocalAPI socket permits it; the stock
+     `/var/run/tailscale/tailscaled.sock` is world-accessible, so check the socket mode on the target host).
+     This also gives the **node** (a `StableID`, e.g. `example-stable-id` for `devmac`), so you can allow-list
+     "the user *and* the Mac" — headers only give the user. Plain `ws://` is still WireGuard-encrypted end to end.
+2. **Allow-list:** the operator's Tailscale login; optionally node StableID of the Mac. Reject everything
    else with 403 before upgrading the WebSocket.
 3. **Residual risk of the localhost + headers pattern:** any local process can hit `127.0.0.1:<port>` with forged headers.
-   On this box every local process runs as dev and can already use the herdr sockets directly, so this adds no new
+   If every local process runs as the same unix user it can already use the herdr sockets directly, so this adds no new
    privilege — but it means **coding agents on the server can drive the bridge.** Mitigation: also require a per-install
    bearer token stored on the Mac (`~/Library/Application Support/herdr-3d/token`) and on the server
    (`~/.config/herdr-world/token`, 0600), or use the direct-bind + WhoIs variant which cannot be forged from localhost.
@@ -326,7 +327,7 @@ Bridge at ~25 running sessions / ~150 workspaces:
 Build **`herdr-world`, a Go bridge daemon** on devbox (systemd user unit), that
 1. discovers sessions, keeps one `events.subscribe` per running session + periodic re-poll, and maintains a world model;
 2. owns a SQLite DB for buildings, floor assignment, avatars, hire history, audit;
-3. exposes one **WebSocket** bound to the tailnet IP, authorising each connection via Tailscale **WhoIs** (the owner's user +
+3. exposes one **WebSocket** bound to the tailnet IP, authorising each connection via Tailscale **WhoIs** (the operator's user +
    the Mac's node);
 4. speaks a small versioned JSON protocol: `hello/welcome` → `world.snapshot` or replay → `*.upsert/removed/status`
    events; typed commands `hire/fire/prompt/keys/focus/watch_terminal/open_terminal/building.*`;

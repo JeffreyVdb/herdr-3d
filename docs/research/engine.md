@@ -54,7 +54,7 @@ What works over SSH:
 | AppKit window from a binary run directly over SSH, or through `open -W -n X.app` | **Works**. Because a user is logged in at the console, the window appears on that screen. The app captured its own content view (`cacheDisplay`) to a PNG. Engines capturing *their own* framebuffer (Godot `get_viewport().get_texture().get_image()`, `canvas.toDataURL`, Playwright `page.screenshot`) avoid TCC completely. |
 | Headless Chrome (installed `/Applications/Google Chrome.app`) + `playwright-core` 1.63 from /tmp | **Works**. The three.js r186 WebGPURenderer got a WebGPU adapter `{"vendor":"apple","arch":"metal-3"}`, reported `backend: webgpu`, and the screenshot rendered correctly. See `engine-img/three-mac-webgpu-metal.png`. |
 | System `WKWebView` (Swift/AppKit probe over SSH, what Tauri uses) | **Works**: `adapter {"vendor":"apple","arch":"apple"} device true webgl2 true`. |
-| Mac → server port over tailscale (`curl http://devbox:18799/`) | **Works**: 200 in 0.12 s. MagicDNS name and IP both work. firewalld's public zone only allows ssh/cockpit, but tailscale traffic gets through. |
+| Mac → server port over tailscale (`curl http://devbox:18799/`) | **Works**: 200 in 0.12 s. MagicDNS name and IP both work. A host firewall that only opens a few services on its public zone does not block tailnet traffic. |
 
 ### Server: `devbox`
 | Item | Value |
@@ -62,7 +62,7 @@ What works over SSH:
 | OS | AlmaLinux 10.2, kernel 6.12, 32 vCPU, 38 GB RAM (about 10 GB available) |
 | GPU | **None**. `lspci`: `VGA … Device 1234:1111` (QEMU std VGA). |
 | Installed | rust 1.98.1, node v24.18.0, python 3.12. **Playwright browsers already cached:** `~/.cache/ms-playwright/chromium-1228` (HeadlessChrome/149) and `chromium_headless_shell-1228`, which bundle **SwiftShader**. Of mesa, only `mesa-libgbm`; no mesa DRI or Vulkan drivers, and no X server. |
-| Available via dnf (not installed) | `mesa-dri-drivers`, `mesa-vulkan-drivers` (llvmpipe/lavapipe), `vulkan-tools`, `xorg-x11-server-Xwayland`, `xwayland-run` (appstream), `weston` (EPEL). **There is no `xorg-x11-server-Xvfb` in EL10.** `xwayland-run` is the replacement. sudo works without a password. |
+| Available via dnf (not installed) | `mesa-dri-drivers`, `mesa-vulkan-drivers` (llvmpipe/lavapipe), `vulkan-tools`, `xorg-x11-server-Xwayland`, `xwayland-run` (appstream), `weston` (EPEL). **There is no `xorg-x11-server-Xvfb` in EL10.** `xwayland-run` is the replacement. Installing them needs root (sudo). |
 
 Server rendering probes:
 
@@ -251,7 +251,7 @@ frame time), and URL params `?fixture=…&cam=…&gl&frozen`.
 
 ## 8. Open questions
 1. OK to use **Chrome on the Mac (browser tab / "Install as app")** as the game shell, rather than a native .app? If a native window is wanted later, a Tauri 2 wrapper is acceptable? (WKWebView WebGPU works on this Mac.)
-2. OK to run a one-time `npm i playwright-core` in e.g. `~/h3d-tools` on the Mac, so agents can take Metal screenshots over SSH (headless, nothing pops up)? Also OK for agents to occasionally open a *headed* window on your screen?
+2. Is a one-time `npm i playwright-core` in a tools directory on the Mac acceptable, so agents can take Metal screenshots over SSH (headless, nothing pops up)? Is it acceptable for agents to occasionally open a *headed* window on the operator's screen?
 3. Should agents be able to install `mesa-dri-drivers mesa-vulkan-drivers` on the server (for faster, GPU-API-complete software rendering), and `xwayland-run weston` only if we ever go the Godot route?
-4. Xcode 27 license isn't accepted (`sudo xcodebuild -license`). That's only relevant if a native Swift/Tauri wrapper is wanted later.
+4. A fresh Xcode 27 needs its license accepted (`sudo xcodebuild -license`). That's only relevant if a native Swift/Tauri wrapper is wanted later.
 5. Art direction preference: Kenney Mini Characters + Furniture Kit (GLB, 32 anim clips; my default), KayKit (chunky cute), or Quaternius (needs FBX→glTF conversion)?

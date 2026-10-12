@@ -72,7 +72,7 @@ Researcher: GROUND (engine brief, follow-up) · Date: 2026-09-28 · Builds on [e
 - Chrome 153.0 (installed `/Applications/Google Chrome.app`), headless via `playwright-core` 1.63.0 in `~/h3d-tools` (approved).
   WKWebView ran through a small Swift harness ([`engine-bench/wkbench.swift`](engine-bench/wkbench.swift)).
   - WKWebView rounds `performance.now()` to 1 ms, so its medians are integers.
-  - The Mac was **on battery** (85% → 82%) with the user's normal apps open, so some background noise is included.
+  - The Mac was **on battery** (85% → 82%) with normal desktop apps open, so some background noise is included.
   - Raw JSONL: [`engine-bench/results/`](engine-bench/results/).
 
 ### Results: 3024x1890 (DPR 2, full Retina), shadows on unless noted
@@ -126,8 +126,8 @@ What this shows:
 
 ### Sustained runs in a visible window (rAF-driven, 1920x1200 canvas, 40 s each) plus energy
 Energy was sampled with `top -stats cpu,power` (macOS "energy impact", no sudo), averaged over 5 samples of 4 s. It's the sum over
-Chrome/WebKit/harness processes, and **includes the user's own open Chrome/Safari tabs**; the idle baseline is 25–26. GPU watts were
-**not** measured: `powermetrics` needs sudo, and sudo on the Mac needs a password.
+Chrome/WebKit/harness processes, and **includes any other open Chrome/Safari tabs**; the idle baseline is 25–26. GPU watts were
+**not** measured: `powermetrics` needs root, which the unattended probe did not have.
 
 | Run | Sustained fps | Energy (idle baseline ≈ 25) | Δ vs idle | WindowServer energy |
 |---|---|---|---|---|
@@ -336,7 +336,7 @@ three.js node materials. It does **not** give WebGPU-backend screenshots on the 
 
 ## 7. Incident + cleanup
 
-- **Incident:** a Mac ssh config with `Host * ControlMaster auto, ControlPath ~/.ssh/sockets/%r@%h:%p, ControlPersist 10m`
+- **Incident:** a typical Mac ssh config with `Host * ControlMaster auto, ControlPath ~/.ssh/sockets/%r@%h:%p, ControlPersist 10m`
   means an `ssh -f -N -L 18770:… dev@devbox` **becomes the shared ControlMaster** for `dev@devbox:22`.
   - During cleanup that PID was killed (it held the 18770 listener).
   - Any *plain* `ssh devbox` sessions opened meanwhile would have been multiplexed through it and **dropped**.
@@ -361,7 +361,7 @@ three.js node materials. It does **not** give WebGPU-backend screenshots on the 
    toggle. Agreed?
 3. Want a **Godot MultiMesh port** of this benchmark to close the "measured vs docs" gap? It needs Godot 4.7.2 downloaded on the
    Mac, about 150 MB, to `/Applications` or `~/Applications`.
-4. For GPU watts: would you run `sudo powermetrics --samplers gpu_power,cpu_power -i 1000 -n 30` on the Mac while a soak runs? I
-   can't sudo there.
+4. For GPU watts: run `sudo powermetrics --samplers gpu_power,cpu_power -i 1000 -n 30` on the Mac while a soak runs. The
+   unattended probe had no root there.
 5. Worker design: go procedural (capsule + goggle + tiny limbs), or commission a single hand-modelled base mesh per part in Blender
    later for extra charm? Both render the same way.

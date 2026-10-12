@@ -7,7 +7,7 @@ Chrome 153.0.8010.53, Safari 26.6.2, server Go 1.27.0.
 
 ## TL;DR
 
-1. **The Mac uses the OpenSSH client, and the server side is Tailscale SSH** (`tailscaled be-child ssh … --remote-user=JeffreyVdb@github`).
+1. **The Mac uses the OpenSSH client, and the server side is Tailscale SSH** (`tailscaled be-child ssh … --remote-user=dev@example.com`).
    Verified on this path: **TCP `-L`, unix-to-unix `-L`, and TCP-to-unix `-L` forwarding all work**. The tunnel adds **~0 ms**:
    the echo RTT median was 22.4–23.6 ms against a 23.2 ms ICMP average. A fresh SSH connect takes ~340 ms. An exec over an
    existing ControlMaster takes ~190 ms (dominated by the fish login shell). New design: the bridge listens on
@@ -38,30 +38,28 @@ Chrome 153.0.8010.53, Safari 26.6.2, server Go 1.27.0.
 
 ### Which SSH is it?
 
-The Mac side is OpenSSH:
+The Mac side is OpenSSH (`ssh -V` → OpenSSH_10.3p1, LibreSSL 3.3.6). Two properties matter to the bridge:
+
+- A typical `~/.ssh/config` enables `ControlMaster auto` / `ControlPersist` for all hosts, so `ssh -G <host>` reports a
+  `controlpath` under `~/.ssh/sockets/` and a `serveraliveinterval`. The bridge must not assume a host block exists.
+- The server's MagicDNS name resolves to its tailnet address (`devbox.example.net`, 203.0.113.10).
+
+The server side is Tailscale SSH. While the Mac ran `ssh -o ControlPath=none dev@devbox 'sleep 12; …'`, the server showed
+a `tailscaled be-child ssh` process wrapping the command (login identity shown as the placeholder `dev@example.com`):
 
 ```
-$ ssh -V                              → OpenSSH_10.3p1, LibreSSL 3.3.6
-$ ssh -G devbox              → user dev, hostname devbox, port 22, controlmaster auto,
-                                        controlpath ~/.ssh/sockets/dev@devbox:22, serveraliveinterval 60
-$ dscacheutil -q host -a name devbox → devbox.example.net 203.0.113.10 (MagicDNS)
-~/.ssh/config: Host * { ControlMaster auto; ControlPersist 10m; ... }  (no host block for devbox)
-```
-
-The server side is Tailscale SSH. While the Mac ran `ssh -o ControlPath=none dev@devbox 'sleep 12; …'`, the server showed:
-
-```
-355238 13476 /usr/sbin/tailscaled be-child ssh --login-shell=/bin/fish --uid=1000 ... --remote-user=JeffreyVdb@github
+355238 13476 /usr/sbin/tailscaled be-child ssh --login-shell=/bin/fish --uid=1000 ... --remote-user=dev@example.com
        --remote-ip=203.0.113.20 --has-tty=false ... --cmd=sleep 12; echo h3d-probe-done
 355248 355238 /bin/fish -c sleep 12; echo h3d-probe-done
 ```
 
-`sshd` is also active on `0.0.0.0:22`, but traffic to the tailnet IP is intercepted by tailscaled (`RunSSH: true`).
-**"Anyone with SSH access" therefore means:** (a) whoever the tailnet policy's `ssh` rules map to local user `dev`, plus
-(b) whoever has a key in `~dev/.ssh/authorized_keys` and can reach sshd on a non-tailnet interface. The bridge socket is `0600 dev`, so
+With Tailscale SSH enabled (`RunSSH: true`), traffic to the tailnet IP is intercepted by tailscaled even if a regular
+`sshd` is also listening. **"Anyone with SSH access" therefore means:** (a) whoever the tailnet policy's `ssh` rules map to
+the local user, plus (b) on a host that also runs `sshd`, whoever has an authorized key for that user and can reach it on a
+non-tailnet interface. The bridge socket is `0600 dev`, so
 only sessions that land as `dev` can use it. Any root user can too, which is unavoidable.
 
-### Forwarding tests (Mac → server; own ControlMaster, the user's masters untouched)
+### Forwarding tests (Mac → server; own ControlMaster, existing masters untouched)
 
 Throwaway echo server on the server: TCP `127.0.0.1:47777` + unix `/tmp/h3d-probe-server/echo.sock` (0600, dir 0700).
 It was removed afterwards.
@@ -99,7 +97,7 @@ Reconnect after a network drop is therefore well under 1 s once the network is b
   config file is not left on disk. These masters are an implementation detail tied to one attach (docs: "a private per-attach control
   socket"), so **I did not attach forwards to them**. Adding a forward to one is technically possible, but it would break when that attach
   ends and it is not a supported interface.
-- A global `ControlPath ~/.ssh/sockets/%r@%h:%p` + `ControlPersist 10m` means any plain `ssh devbox` could
+- A typical global `ControlPath ~/.ssh/sockets/%r@%h:%p` + `ControlPersist 10m` means any plain `ssh devbox` could
   become or reuse a master. That is fine, but the helper should use an explicit ControlPath of its own (or `ControlPath=none` for
   the tunnel process) so its lifetime is independent. Recommended tunnel command:
 
@@ -111,7 +109,7 @@ Reconnect after a network drop is therefore well under 1 s once the network is b
   ```
 
   The helper supervises it and restarts it with backoff. `StreamLocalBindUnlink` removes a stale local socket on restart. The system `ssh`
-  is used, not a Go SSH library, so the user's ssh config, key agent, known_hosts and Tailscale SSH all behave as they do today.
+  is used, not a Go SSH library, so the operator's ssh config, key agent, known_hosts and Tailscale SSH all behave as they do today.
 
 ### Bridge side changes vs server-model.md
 

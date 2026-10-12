@@ -7,13 +7,13 @@ tag `rust-v0.160.1`. Parent epic: #153.
 messages were recorded per test, one directory per test, with files numbered in capture order. The raw captures
 are not published (they are terminal dumps from a real machine); regenerate them with `make codex-shared-tui EVIDENCE=<dir>`.
 The text cites a capture by test and label, for example `Questions/active-after-steer-not-yet-delivered`.
-**[S]** marks a claim that rests on reading the source only. **[R-live]** marks a read-only observation of the user's real
-machine. **[R-real]** marks a claim from a real-model run: the smoke test of §9, whose captures were
+**[S]** marks a claim that rests on reading the source only. **[R-live]** marks a read-only observation of an
+existing installation. **[R-real]** marks a claim from a real-model run: the smoke test of §9, whose captures were
 recorded under `RealModelSmoke/`, or #158's run through
 herdr-world (§12.5).
 
 The fixture tests use mock inference. One bounded real-model smoke test (§9) ran the phase-2 launch, a per-worker
-server on the user's real `~/.codex`, with `gpt-6.1-sol` at low effort, through Herdr only. The user's shared daemon was
+server on the real `~/.codex`, with `gpt-6.1-sol` at low effort, through Herdr only. The shared daemon was
 left alone; the test never connected to it.
 
 ## 0. The answer: does the terminal still work with a shared app server?
@@ -63,12 +63,13 @@ What breaks, and the fix for each:
 | B9 | **`codex resume ID --remote …` refuses hire's `--dangerously-bypass-approvals-and-sandbox`**: "Error: Permission overrides are not supported when resuming a remote task." Codex exits at once, but `herdr agent start` waits for its full `--timeout` (60 s) and then reports `timeout`, not the exit | [R-real] `RealModelSmoke/18-*`, `19-tui-resumed` | The resume launcher drops the bypass flag (and any other permission override). The thread keeps the permissions it was started with: the resumed TUI still shows `permissions: YOLO mode`. `-m` and `-c model_reasoning_effort=…` are accepted (`20-*`, `21-tui-resumed`) |
 | B10 | **A fresh, untrusted cwd shows Codex's "Trust this folder?" dialog even with the bypass flag**, and `herdr agent start` fails with `agent_not_ready` ("blocked during startup"). Accepting saves the decision into the server's `config.toml`. Ctrl+C on it (and Esc, by the dialog's own `esc back` label) opens Codex's **Agent command center**, which lists the threads of the server's CODEX_HOME, the user's other workers' threads included; a second Ctrl+C quits | [R-real] `RealModelSmoke/00-first-attempt-trust-dialog` | Keep hire's existing trust handling (the dialog is the same with `--remote`), or start the server with an in-memory override for that one cwd, `codex app-server -c 'projects={"<cwd>"={trust_level="trusted"}}' …`. That override suppressed the dialog and left `config.toml` unchanged. It replaces the `projects` table for that server only. Launchers must not send Esc or Ctrl+C to a dialog they did not expect |
 
-**User's machine, today [R-live].** The running `~/.codex` daemon (pid file `~/.codex/app-server-daemon/app-server.pid`)
-has `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_SESSION` and `HERDR_SOCKET_PATH` in its environment. Its cwd is a herdr
-worktree of another project. `~/.codex/hooks.json` holds Herdr's SessionStart hook.
-Read only those variable names were read; values were not printed. Together with B1–B3, this means every argument-free
-`codex` TUI the user starts today probably runs its tools with that pane's environment and reports its session id
-**to that pane**. That is the misrouting the fixture reproduces, but it is not observed on the live session.
+**Typical installation, today.** A long-lived `~/.codex` daemon (pid file `~/.codex/app-server-daemon/app-server.pid`)
+started from inside a Herdr pane carries that pane's `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_SESSION` and
+`HERDR_SOCKET_PATH` in its environment, and its cwd is whatever worktree that pane was in, possibly another project's. A
+Herdr SessionStart hook in `~/.codex/hooks.json` then reports to that pane. Together with B1–B3, every argument-free
+`codex` TUI started afterwards probably runs its tools with that pane's environment and reports its session id **to that
+pane**. That is the misrouting the fixture reproduces. It was inferred from the variable names and files, not observed
+on a live session.
 
 ## 1. Async questions: external and terminal answers (A1, A2)
 
@@ -102,7 +103,7 @@ call id) (`Questions/*-question-live-item`).
   badge at 1 (`unrelated-badge`).
 - **Countdown [R]:** a collapsed question shows a 30 s countdown (`? 1 question · 10s`). When it expires, the countdown
   disappears, the question **stays pending**, and nothing is sent to the model (`countdown-expired`,
-  `countdown-requests`). The user's screenshot of this fixture showed the same badge with `· 19s`.
+  `countdown-requests`). A screenshot of this fixture showed the same badge with `· 19s`.
 
 ## 2. Semantics: active vs idle, ids, double submit (A4)
 
@@ -148,8 +149,8 @@ call id) (`Questions/*-question-live-item`).
 
 `TestCodexShareEnvironment` [R]. Sentinels: a per-workspace `.envrc` (allowed, or `blocked-c` left unallowed, in the
 fixture's own direnv allow list), the pane's Herdr `--env`, an exported fish-config variable, a `codex` **wrapper
-function** that exports `H3D_WRAPPER_SENTINEL` (modelled on the user's real `~/.config/fish/functions/codex.fish`,
-which exports `PARALLEL_API_KEY` for Codex only), `h3d-tool` on fish's PATH, and a fish-only function. Each launch was
+function** that exports `H3D_WRAPPER_SENTINEL` (modelled on the common pattern of a `~/.config/fish/functions/codex.fish`
+that exports an API key for Codex only), `h3d-tool` on fish's PATH, and a fish-only function. Each launch was
 checked with a **model-driven `exec_command`** (`probe-*`) and an **env-dumping stdio MCP child** (`mcp-*`, the test
 binary). The MCP child gets only the variables `env_vars` forwards [S] (`rmcp-client/src/utils.rs`), so the fixture
 forwards the sentinels.
@@ -266,7 +267,7 @@ codex resume <thread-id> --remote unix:///run/…/w.sock -C <cwd>
 short turns; the TUI's exit summary reported `total=31,038` tokens (`16-tui-exit`).
 
 **Setup.** A throwaway Herdr session `h3d-it-154-smoke-44a259`, its server started with every `HERDR_*`, `CODEX_*`,
-`OPENAI_*` and `CLAUDE*` variable removed. One workspace in a fresh temp dir, not a git repository. The user's real
+`OPENAI_*` and `CLAUDE*` variable removed. One workspace in a fresh temp dir, not a git repository. The real
 `~/.codex` (auth, config, hooks); no `CODEX_HOME` set. The server was started as D1 proposes, typed into the test pane
 with `herdr pane run`: `setsid -f fish <script>`, where the script holds `codex app-server -c
 'projects={"<cwd>"={trust_level="trusted"}}' --listen unix://<tmp>/w.sock` (`00-start-server.fish`). A script instead
@@ -305,8 +306,8 @@ dir removed.
   covers interrupting a held model response (`Lifecycle/ctrlc*`), not a running command either.
 - Herdr reported `idle`, never `done`, at the end of each real turn. The pane was focused, and the fixture's runs saw
   `done`. Whether focus decides this is unverified; orchestrators wait with both `--until idle --until done`.
-- **No real-model run on the shared managed daemon.** The live daemon carries a live pane's `HERDR_PANE_ID`, and
-  `~/.codex` has Herdr's SessionStart hook (§0). A new thread there would report its session id into that pane and
+- **No real-model run on the shared managed daemon.** A managed daemon can carry a live pane's `HERDR_PANE_ID`, and
+  `~/.codex` can have Herdr's SessionStart hook (§0). A new thread there would report its session id into that pane and
   could change that worker's identity and resume. The smoke test therefore used the phase-2 launch only.
 - **Side effect in development:** before the fixture pinned `CODEX_HOME` on its Herdr server, one Herdr session
   restart restored a pane without its `--env` and ran `codex resume <fixture id>` against `~/.codex`. It failed ("No
