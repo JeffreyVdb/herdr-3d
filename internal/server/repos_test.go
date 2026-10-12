@@ -101,7 +101,7 @@ func (f *fakeDirs) set(dir string, exists bool) {
 func TestWorkerRepos(t *testing.T) {
 	t.Parallel()
 	fd := &fakeDirs{exists: map[string]bool{"/src/api": true, "/src/docs": true, "/src/other": true, "/src/lib": true, "/src/lot": true, "/src/own": true},
-		origins: map[string]string{"/src/api": "acme/api", "/src/other": "acme/not-lib"}}
+		origins: map[string]string{"/src/api": "acme/api", "/src/other": "acme/not-lib", "/home/u/w-suggested": "acme/suggested"}}
 	db := filepath.Join(t.TempDir(), "world.db")
 	b := startBridge(t, db, server.Options{StatDir: fd.stat, RepoOf: fd.repoOf})
 	c := b.connect(proto.Hello{})
@@ -139,7 +139,16 @@ func TestWorkerRepos(t *testing.T) {
 	fd.set("/src/gone-soon", true)
 	set("gone", proto.FloorSettingsArgs{DefaultCwd: proto.Some("/src/gone-soon")})
 	fd.set("/src/gone-soon", false)
-	// "suggested" has no stored settings: whatever the bridge suggests for it is not listed.
+	// "suggested" has no stored settings, only what the bridge suggests from its worker's checkout: not listed.
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		if f := floorOf(b.connect(proto.Hello{}).snapshot().World, "suggested"); f.Suggested != nil && f.Suggested.Repo == "acme/suggested" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no suggestion for the suggested floor")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	work1, home1 := "Work", "Home"
 	ask := func(id string) []proto.RepoRef {
