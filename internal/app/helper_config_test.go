@@ -117,6 +117,14 @@ func TestResolveHelperTargetMissingHost(t *testing.T) {
 	if _, err := resolveHelperTarget("", ""); err == nil || !strings.Contains(err.Error(), ":1:") {
 		t.Errorf("a malformed config file is an error with its line: %v", err)
 	}
+	helperEnv(t, "@H3D_HELPER_HOST@", "@H3D_HELPER_REMOTE_SOCKET@", filepath.Join(t.TempDir(), "missing.env"))
+	if _, err := resolveHelperTarget("", ""); err == nil || !strings.Contains(err.Error(), "no bridge host") {
+		t.Errorf("an unfilled plist placeholder is no host: %v", err)
+	}
+	helperEnv(t, "dev@devbox", "@H3D_HELPER_REMOTE_SOCKET@", filepath.Join(t.TempDir(), "missing.env"))
+	if got, err := resolveHelperTarget("", ""); err != nil || got.Remote != "" {
+		t.Errorf("an unfilled socket placeholder means: ask the host; got %+v, %v", got, err)
+	}
 	helperEnv(t, "-oProxyCommand=x", "", filepath.Join(t.TempDir(), "missing.env"))
 	if _, err := resolveHelperTarget("", ""); err == nil {
 		t.Error("a host that looks like an ssh option is refused")

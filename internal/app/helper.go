@@ -162,13 +162,15 @@ func resolveHelperTarget(flagHost, flagRemote string) (helperTarget, error) {
 	if err != nil {
 		return helperTarget{}, err
 	}
+	// An unfilled @PLACEHOLDER@ (a LaunchAgent plist installed without its sed) is not a value.
+	set := func(v string) bool { return v != "" && !(strings.HasPrefix(v, "@") && strings.HasSuffix(v, "@")) }
 	pick := func(flagVal, key string) (val, source string) {
 		switch {
-		case flagVal != "":
+		case set(flagVal):
 			return flagVal, sourceFlag
-		case os.Getenv(key) != "":
+		case set(os.Getenv(key)):
 			return os.Getenv(key), sourceEnv
-		case cfg[key] != "":
+		case set(cfg[key]):
 			return cfg[key], sourceConfig
 		}
 		return "", ""
