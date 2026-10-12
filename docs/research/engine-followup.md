@@ -284,10 +284,6 @@ three.js node materials. It does **not** give WebGPU-backend screenshots on the 
   - fired: walk-off along a path, carrying a box mesh,
   - blocked: "?" bubble.
 
-![rigid workers close-up, Mac Chrome WebGPU](engine-img/stress-rigid-close-mac-webgpu.png)
-![Kenney skinned close-up, Mac Chrome WebGPU](engine-img/stress-skinned-close-mac-webgpu.png)
-![city overview, 240 rigid workers, Mac Chrome WebGPU](engine-img/stress-city-mac-webgpu.png)
-
 (These are benchmark placements: workers face away from their laptops and one laptop row floats. Visuals weren't tuned.)
 
 **Recommendation:**
