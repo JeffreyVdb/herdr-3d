@@ -22,6 +22,11 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	// The helper has no built-in bridge host: name one (children inherit it), and keep a
+	// developer's real private helper config out of the tests.
+	os.Setenv(EnvHelperHost, "dev@devbox")
+	os.Setenv(EnvHelperRemoteSocket, "/run/user/1000/herdr-world/bridge.sock")
+	os.Setenv(EnvHelperConfig, filepath.Join(os.TempDir(), "h3d-no-such-helper.env"))
 	if os.Getenv(childEnv) == "1" {
 		os.Exit(Helper("h3d-helper", strings.Split(os.Getenv(helperArgsEnv), "\n"), os.Stdout, os.Stderr))
 	}
