@@ -403,6 +403,8 @@ type Hub struct {
 	dgs digestHub // #118 phase 2: floor overview summaries
 
 	cx codexState // #155 shared Codex server
+
+	rr repoRefsState // #247 repositories on other floors
 }
 
 type floorState struct {
@@ -645,6 +647,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initCodex(ctx); err != nil { // #155
 		return nil, err
 	}
+	if err := h.initRepoRefs(ctx); err != nil { // #247
+		return nil, err
+	}
 	if err := h.initDigest(ctx); err != nil { // #118
 		return nil, err
 	}
@@ -839,6 +844,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startCommands
 		case proto.CmdWorkerFiles: // #137
 			start = h.startFiles
+		case proto.CmdWorkerRepos: // #247
+			start = h.startWorkerRepos
+		case proto.CmdRepoRefsGet, proto.CmdRepoRefsSet: // #247
+			start = h.startRepoRefs
 		// M5 term
 		case proto.CmdTerminalWatch:
 			start = h.startWatch
@@ -1892,6 +1901,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.Digest = h.digestView()                 // #118
 	w.InboxDismissed = h.inboxDismissedView() // #106
 	w.CodexServer = h.codexServerView()       // #155
+	w.RepoRefs = h.repoRefsView()             // #247
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {
