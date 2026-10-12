@@ -147,8 +147,10 @@ describe('the bridge’s list', () => {
     const src = repoSource('w1', b.host);
     const p = src.items('', signal);
     expect(Array.isArray(p)).toBe(false);
+    // Handled before it settles, as the popup does (else the rejection is unhandled while the answer is flushed).
+    const failed = expect(p).rejects.toThrow();
     await b.answer(0, { ok: false, code: 'internal', message: 'x' });
-    await expect(p).rejects.toThrow();
+    await failed;
     // The next popup asks again.
     src.opening?.();
     const p2 = src.items('', signal);
