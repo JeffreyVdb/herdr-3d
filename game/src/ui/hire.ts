@@ -20,7 +20,7 @@ import {
 } from '../world/hire';
 import { labelsOf, modelEntries, modelMatches, type ModelEntry, type ModelLabels } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
-import { levelChipText, levelProblem, preselectLevel, TASK_LEVELS, type TaskLevelId } from '../world/taskLevels';
+import { isComplete, levelChipText, levelProblem, preselectLevel, type TaskLevelId } from '../world/taskLevels';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
@@ -92,10 +92,11 @@ export interface HirePrefill {
   prompt?: string;
   choice?: { harness: string; model: string; effort: string };
   /**
-   * #248: open in task-level mode with this level picked (or the nearest usable one): the levels instead of the harness,
-   * model and effort fields. `choice` never applies then.
+   * #248, #40: open in task-level mode with this level picked (or the nearest usable one by list position): the levels
+   * instead of the harness, model and effort fields. `'default'` asks for the player's default level (the one marked so in
+   * Settings → Task levels, else the first); an id no longer in the list does too. `choice` never applies then.
    */
-  level?: TaskLevelId;
+  level?: 'default' | TaskLevelId;
   /** #248: a worktree whenever one can be made, whatever Settings → Display says. */
   worktree?: true;
 }
@@ -658,17 +659,17 @@ export class HireDialog {
     this.f = { ...this.f, ...resolveVisibleChoice(this.options(), this.f) };
   }
 
-  /** #248: the set levels in order, each with why it cannot be used now (null: it can). */
+  /** #248, #40: the set levels in the player's order, each with why it cannot be used now (null: it can). */
   private levelChips(): LevelChip[] {
     const levels = this.host.taskLevels;
     if (!levels) return [];
     const cat = this.host.store.hireOptions;
     const prefs = this.host.modelPrefs;
     const hidden = (harness: string): ReadonlySet<string> => prefs?.hidden(harness) ?? new Set();
-    return TASK_LEVELS.flatMap((id) => {
-      const l = levels.get(id);
-      return l ? [{ id, text: levelChipText(id, l, cat), problem: levelProblem(l, cat, hidden) }] : [];
-    });
+    return levels
+      .list()
+      .filter(isComplete)
+      .map((l) => ({ id: l.id, text: levelChipText(l, cat), problem: levelProblem(l, cat, hidden) }));
   }
 
   /**
@@ -679,7 +680,10 @@ export class HireDialog {
     const want = this.prefill.level;
     if (want === undefined) return;
     const ok = new Set(this.levelChips().flatMap((c) => (c.problem ? [] : [c.id])));
-    const id = this.level && ok.has(this.level) ? this.level : preselectLevel(want, (l) => ok.has(l));
+    // #40: the fallback goes by position in the whole list (a level not set yet counts as a place, never as a pick).
+    const ids = this.host.taskLevels?.list().map((l) => l.id) ?? [];
+    const requested = want !== 'default' && ids.includes(want) ? want : (this.host.taskLevels?.defaultId ?? null);
+    const id = this.level && ok.has(this.level) ? this.level : requested !== null ? preselectLevel(ids, requested, (l) => ok.has(l)) : null;
     const l = id ? this.host.taskLevels?.get(id) : null;
     if (id && l) {
       this.levelMode = 'levels';
