@@ -249,7 +249,7 @@ test('a PR: body, files, checks; Review with a worker hires the last team’s re
   await standAt(page, 'herdr-3d', 12);
   const it = await openItem(page, 'prs', `${HERDR}#34`);
   // Green checks and mergeable: Merge is on, and there is nothing to override.
-  expect(it.actions).toEqual(['review', 'comment-focus', 'merge-method', 'merge', 'open']);
+  expect(it.actions).toEqual(['review', 'merge-method', 'merge', 'open']);
   await expect(modal(page).locator('.bd-files li')).toHaveCount(3);
   await expect(modal(page).locator('.bd-checks li')).toHaveCount(3);
   await expect(modal(page).locator('.bd-diffstat')).toContainText('+');

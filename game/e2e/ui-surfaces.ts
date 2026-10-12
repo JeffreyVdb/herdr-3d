@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test';
 import { frames, leftInTerminal, openGame, openMenu, seatMode } from './game';
-import { board as boardState, enter, faceBoard, waitNotes } from './m7';
+import { board as boardState, enter, faceBoard, waitNotes, wall } from './m7';
 
 // #216: the application surfaces, one opener each, shared by the screenshot spec, the coverage inventory and the
 // contrast / font checks. A surface is opened on a fresh page (`boot`) with the UI, transcript and terminal themes seeded
@@ -133,6 +133,27 @@ async function openReview(page: Page, pick: (c: { harness: string; model: string
   for (const id of expand) await page.locator(`.desk-dlg--review [data-key="sec:${id}"]`).click();
   await page.mouse.move(1, 1);
 }
+/** #248: the conflicting PR #35 of herdr-3d (demo-m6) in its modal: Resolve is the footer's primary. */
+async function openConflictingPr(page: Page): Promise<void> {
+  await enter(page, 'herdr-3d');
+  await expect.poll(async () => (await wall(page))?.prs.length, { timeout: 15_000 }).toBe(4);
+  await page.evaluate(() => window.__h3d.openBoardItem('prs', 'JeffreyVdb/herdr-3d#35'));
+  await expect.poll(async () => (await boardState(page))?.item?.state, { timeout: 10_000 }).toBe('ready');
+}
+
+/** #248: two task levels set through Settings → Task levels (a harness chip sets its first shown model). */
+async function setTaskLevels(page: Page): Promise<void> {
+  await openMenu(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const section = page.locator('[data-section="task-levels"]');
+  for (const [id, harness] of [['very_trivial', 'codex'], ['trivial', 'claude']] as const) {
+    await section.locator(`label:has([data-key="tl-${id}-harness:${harness}"])`).click();
+    await expect(section.locator(`.tl-level[data-level="${id}"] .settings-badge`)).toHaveText('Set');
+  }
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeHidden();
+}
+
 const said = (task: string) => ({ provenance: 'dictated', value: task, span: { source: 0, start: 0, end: task.length } });
 
 export const SURFACES: Surface[] = [
@@ -566,6 +587,28 @@ export const SURFACES: Surface[] = [
       await frames(page, 4);
     },
     root: 'dialog.desk-dlg--board',
+  },
+  {
+    // #248: a conflicting PR's footer: Resolve conflicts with a worker (primary), Review quiet, the merge group, Open.
+    name: 'board-pr-conflict',
+    fixture: 'demo-m6',
+    extra: '&open=none',
+    open: openConflictingPr,
+    root: 'dialog.desk-dlg--item',
+  },
+  {
+    // #248: the hire dialog of Resolve conflicts, on its task levels (Trivial picked).
+    name: 'hire-levels',
+    fixture: 'demo-m6',
+    extra: '&open=none',
+    open: async (page) => {
+      await setTaskLevels(page);
+      await openConflictingPr(page);
+      await page.locator('dialog.desk-dlg--item [data-key="resolve"]').click();
+      await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
+      await expect(page.locator('dialog.desk-dlg--hire [data-pick="level"]')).toBeVisible();
+    },
+    root: 'dialog.desk-dlg--hire',
   },
   {
     name: 'palette',

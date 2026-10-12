@@ -90,11 +90,9 @@ export function taskLevelsSection(host: TaskLevelsHost): (body: HTMLElement) => 
         const total = cat[harness]?.models.length ?? 0;
         fields.append(el('p', 'settings-field-hint', total ? `Every ${HARNESS_LABEL[harness] ?? harness} model is hidden in Harness models.` : 'This harness has no models to hire with.'));
       }
+      // Why it cannot be used, under its name: the stored slug stays, so it works again when the model comes back.
+      if (cur && problem) root.append(h('p', { class: 'settings-field-error tl-stale', role: 'note' }, 'Uses ', h('code', {}, cur.model), `: ${problem} Choose another model, or clear the level.`));
       root.append(fields);
-      if (cur && problem) {
-        const warn = h('p', { class: 'settings-field-error tl-stale', role: 'note' }, 'Uses ', h('code', {}, cur.model), `: ${problem} Choose another model, or clear the level.`);
-        root.append(warn);
-      }
       return root;
     };
 
