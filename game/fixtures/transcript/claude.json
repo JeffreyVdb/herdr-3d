@@ -230,7 +230,7 @@
     "hidden": true,
     "truncated": true,
     "notice": {
-      "text": "Base directory for this skill: /home/dev/.claude/skills/write-code\n\nYou are orchestrating the development of a bug fix or feature.\n\nRead `herdr --skill` to load skill instructions for spawning coders and reviewers in new workspaces.\nIt's very important that we let coders and reviewers work until they're done. If you think we need to\ninterrupt them, ask the user first and explain why. It's okay to send them non-interrupting messages\nthat they consume on the next turn when new information becomes available t",
+      "text": "Base directory for this skill: /home/dev/.claude/skills/write-code\n\nYou are orchestrating the development of a bug fix or feature.\n\nRead `herdr --skill` to load skill instructions for spawning coders and reviewers in new workspaces.\nIt's very important that we let coders and reviewers work until they're done. If you think we need to\ninterrupt them, ask the user first and explain why. It's okay to send them non-interrupting messages\nthat they consume on the next turn when new information becomes available th",
       "source": "user/meta"
     }
   },
@@ -499,7 +499,7 @@
     "raw_type": "system/hologram_summary"
   },
   {
-    "id": "o:48604",
+    "id": "o:48480",
     "seq": 35,
     "ts": 0,
     "kind": "unknown",

@@ -183,14 +183,14 @@ func TestRead(t *testing.T) {
 	}
 }
 
-// #215: the request that the issue's real report had, with the orchestrator
+// #215: a long request with the orchestrator
 // acceptance alternative after byte 500, survives whole.
 func TestReadKeepsTextAfterByte500(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "run-1"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	req := strings.Repeat("September parity fails on stale local CUR data. ", 12) + "Either refresh /backend/data to rerun, or orchestrator acceptance of the existing evidence plus the passing August run."
+	req := strings.Repeat("The nightly sync fails on a stale local cache. ", 12) + "Either refresh /srv/cache to rerun, or orchestrator acceptance of the existing evidence plus the passing nightly run."
 	if len(req) < 600 {
 		t.Fatal("fixture too short")
 	}

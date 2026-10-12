@@ -63,7 +63,7 @@ describe('SimWorld buildings', () => {
     // Deleting Work sends its floors to the lot and shifts the later buildings up.
     const d = r.cmd('building.delete', { id: W }).got();
     expect(d.map((m) => m.t)).toEqual(['floor.upsert', 'floor.upsert', 'building.upsert', 'building.upsert', 'building.removed', 'ack']);
-    expect(r.store.stack(null).map((f) => f.session)).toEqual(['herdr-3d', 'depot-manager']);
+    expect(r.store.stack(null).map((f) => f.session)).toEqual(['depot-manager', 'herdr-3d']);
     expect(r.store.city().map((b) => b.building?.name ?? 'lot')).toEqual(['Personal', 'Studio', 'lot']);
   });
 

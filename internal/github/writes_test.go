@@ -577,7 +577,7 @@ func TestOpenFromBranch(t *testing.T) {
 			if existing {
 				nodes = `[{"id":"PR_2","number":2,"url":"https://github.com/JeffreyVdb/h3d-lab/pull/2","headRefName":"h3d/bramble-ca1d46","baseRefName":"main"}]`
 			}
-			return `{"data":{"repository":{"id":"R_toy","pullRequests":{"nodes":` + nodes + `}}}}`, true
+			return `{"data":{"repository":{"id":"R_lab","pullRequests":{"nodes":` + nodes + `}}}}`, true
 		case githubcli.DocCreatePR:
 			return `{"data":{"createPullRequest":{"pullRequest":{"id":"PR_7","number":7,"url":"https://github.com/JeffreyVdb/h3d-lab/pull/7","state":"OPEN"}}}}`, true
 		}
@@ -599,7 +599,7 @@ func TestOpenFromBranch(t *testing.T) {
 		t.Fatalf("created = %+v %v", got, err)
 	}
 	v := gh.last(githubcli.DocCreatePR)
-	if v["repositoryId"] != "R_toy" || v["baseRefName"] != "main" || v["headRefName"] != "h3d/bramble-ca1d46" || v["title"] != "feat: x" ||
+	if v["repositoryId"] != "R_lab" || v["baseRefName"] != "main" || v["headRefName"] != "h3d/bramble-ca1d46" || v["title"] != "feat: x" ||
 		v["body"] != "- x" || v["draft"] != false {
 		t.Fatalf("vars = %v", v)
 	}

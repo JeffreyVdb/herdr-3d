@@ -240,7 +240,7 @@ function mkPr(repo: string, n: number, title: string, head: string, o: Partial<P
 }
 
 /** The lab repo: two runs' issues (the fixture's orchestrators hold #3 and #4) and their PRs. */
-function toyRepo(now: number): Repo {
+function labRepo(now: number): Repo {
   const r = 'JeffreyVdb/lab';
   const cards = [
     mkCard(r, 1, 'Set up the lab project', COL.done, { state: 'closed', closed_at: now - 26 * HOUR, updated_at: now - 26 * HOUR, labels: [LABELS.docs] }),
@@ -386,7 +386,7 @@ export class BoardSim {
     let b = this.repos.get(repo);
     if (!b) {
       const now = this.d.now();
-      b = seedOrder(repo === 'JeffreyVdb/lab' ? toyRepo(now) : repo === 'JeffreyVdb/herdr-3d' ? herdrRepo(now) : repo === 'JeffreyVdb/bench' ? perfRepo(now) : plainRepo(repo, now));
+      b = seedOrder(repo === 'JeffreyVdb/lab' ? labRepo(now) : repo === 'JeffreyVdb/herdr-3d' ? herdrRepo(now) : repo === 'JeffreyVdb/bench' ? perfRepo(now) : plainRepo(repo, now));
       this.repos.set(repo, b);
     }
     return b;

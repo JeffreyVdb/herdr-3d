@@ -25,7 +25,7 @@ async function faceScreen(page: Page, x = 2.6, pitch = 0.45): Promise<void> {
   await frames(page, 4);
 }
 
-async function onToy(page: Page, wsQuery = 'play=none'): Promise<void> {
+async function onLab(page: Page, wsQuery = 'play=none'): Promise<void> {
   await openGame(page, 'demo-m118', '', wsQuery);
   await page.evaluate(() => window.__h3d.enterFloor('lab'));
   await frames(page, 3);
@@ -34,7 +34,7 @@ async function onToy(page: Page, wsQuery = 'play=none'): Promise<void> {
 test('the lounge wall shows the floor: lit, every row, and E at it grows the page out of it to fill the viewport', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
-  await onToy(page);
+  await onLab(page);
   await expect.poll(async () => (await info(page))?.wall).toMatchObject({ lit: true, rows: 13 });
   // The wall from across the lounge (make shot-style).
   await faceScreen(page, 7.5, 0.3);
@@ -121,7 +121,7 @@ test('O opens it from a desk, the top bar has Overview, and in the city or the l
 test('an orchestrator and its freelancers render as a tree that collapses, by key and by click, and is remembered', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
-  await onToy(page);
+  await onLab(page);
   await page.keyboard.press('KeyO');
   await expect.poll(async () => (await page_(page))?.open).toBe(true);
   const keys = async () => ((await page_(page))?.rows ?? []).map((r) => r.key);
@@ -173,7 +173,7 @@ test('an orchestrator and its freelancers render as a tree that collapses, by ke
 test('a row’s click ends seated at that laptop with its conversation on screen; a ticket opens the issue window over the page', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
-  await onToy(page, SIM);
+  await onLab(page, SIM);
   await page.keyboard.press('KeyO');
   await expect.poll(async () => (await page_(page))?.open).toBe(true);
   // The ticket: the issue window on top of the page; Esc there closes it, not the page.
@@ -213,7 +213,7 @@ test('a row’s click ends seated at that laptop with its conversation on screen
 test('reduced motion: no blink, cascade or flap; steady lights on the page', async ({ page }) => {
   test.setTimeout(90_000);
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await onToy(page);
+  await onLab(page);
   await page.keyboard.press('KeyO');
   await expect.poll(async () => (await page_(page))?.calm).toBe(true);
   const anim = await page.locator('.ov-row[data-display="working"] .ov-light').first().evaluate((e) => getComputedStyle(e).animationName);
@@ -247,7 +247,7 @@ test('Retry on a failed summary works by pointer at a phone width and by Enter a
   });
   const retries = () => sent.filter((f) => f.t === 'digest.retry');
   await page.setViewportSize({ width: 390, height: 844 });
-  await onToy(page);
+  await onLab(page);
   await page.keyboard.press('KeyO');
   await expect.poll(async () => (await page_(page))?.open).toBe(true);
   const retry = () => page.locator('.ov-row', { hasText: 'Turnip' }).locator('.ov-now .ov-retry'); // the last line of the row: where the hint sits

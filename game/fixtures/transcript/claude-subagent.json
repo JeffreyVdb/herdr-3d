@@ -17,7 +17,7 @@
     "kind": "tool",
     "tool": {
       "name": "Bash",
-      "input_summary": "cd /home/dev/.herdr/worktrees/herdr-3d/h3d-acorn-72abd7; git ls-files | grep -v node_modules | head -300; wc -l internal/store/store.go internal/proto/proto.go internal/server/*.go internal/helper/*…",
+      "input_summary": "cd /home/dev/.herdr/worktrees/herdr-3d/h3d-acorn-72abd7; git ls-files | grep -v node_modules | head -300; wc -l internal/store/store.go internal/proto/proto.go internal/server/*.go internal/helper/*.…",
       "input": {
         "command": "cd /home/dev/.herdr/worktrees/herdr-3d/h3d-acorn-72abd7; git ls-files | grep -v node_modules | head -300; wc -l internal/store/store.go internal/proto/proto.go internal/server/*.go internal/helper/*.go docs/*.md game/src/ui/panels.ts game/src/render/{lobby,outside,city,palette}.ts game/src/net/protocol.ts"
       },
@@ -47,7 +47,7 @@
     "kind": "tool",
     "tool": {
       "name": "Bash",
-      "input_summary": "cd /home/dev/.herdr/worktrees/herdr-3d/h3d-acorn-72abd7; grep -n -i \"building\" internal/proto/proto.go | head -60; echo ---; grep -n -i \"building\" game/src/net/protocol.ts | head -40; echo ---; grep…",
+      "input_summary": "cd /home/dev/.herdr/worktrees/herdr-3d/h3d-acorn-72abd7; grep -n -i \"building\" internal/proto/proto.go | head -60; echo ---; grep -n -i \"building\" game/src/net/protocol.ts | head -40; echo ---; grep …",
       "input": {
         "command": "cd /home/dev/.herdr/worktrees/herdr-3d/h3d-acorn-72abd7; grep -n -i \"building\" internal/proto/proto.go | head -60; echo ---; grep -n -i \"building\" game/src/net/protocol.ts | head -40; echo ---; grep -n -i \"building\" docs/protocol.md | head -60"
       },

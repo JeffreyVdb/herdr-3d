@@ -55,10 +55,10 @@ test('@r: lists this building’s other floors; a pick puts in the folder; the s
   await expect(rows(page).first().locator('.tx-repo-floor')).toHaveText('depot-manager');
   await expect(rows(page).first().locator('.tx-repo-note')).toHaveCount(0);
   await expect(rows(page).nth(1).locator('.tx-repo-dir')).toHaveText('/home/dev/pastry');
-  // Fuzzy: `ifm` is in depot-manager in order, not side by side.
-  await page.keyboard.type('ifm');
+  // Fuzzy: `dpm` is in depot-manager in order, not side by side.
+  await page.keyboard.type('dpm');
   await expect(labels(page)).toHaveText(['fomra/depot-manager']);
-  await expect(rows(page).first().locator('.tx-repo-name .tx-repo-hit')).toHaveText(['i', 'f', 'm']);
+  await expect(rows(page).first().locator('.tx-repo-name .tx-repo-hit')).toHaveText(['d', 'p', 'm']);
   await shot(page, 'h247-open');
   await page.keyboard.press('Enter');
   await expect(pop(page)).toBeHidden();
