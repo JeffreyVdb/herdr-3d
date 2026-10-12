@@ -201,7 +201,42 @@ run
 expect "guard, abort path (an unfilled plist placeholder is not a host): fails" "1" "$rc"
 expect "and says what is missing and where to put it" "1/1" "$(grep -c 'no bridge host' "$T/out")/$(grep -c 'update.env' "$T/out")"
 expect "and changes neither the bridge nor the helper, downloads nothing" "v0.5.0/v0.5.0/0/no" "$(versions)/$(grep -c downloading "$T/out" || true)/$(yes_no test -e "$MAC_CONF")"
+# The guard asks what the helper would resolve, not whether the text is there: an
+# empty, unfilled or overridden host is none. With nothing to install, every one
+# of these stops before the bridge, the helper or the Mac's file change.
+PLIST="$T/machome/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist"
+abort_case() { # abort_case DESCRIPTION WANT-MESSAGE  (the Mac's helper.env is on stdin, - for none)
+  local before
+  rm -rf "$T/machome/Library"
+  mkdir -p "$(dirname "$MAC_CONF")" "$(dirname "$PLIST")"
+  cat >"$MAC_CONF"
+  before=$(cksum <"$MAC_CONF")
+  run
+  expect "guard abort, $1: fails with the reason" "1/1" "$rc/$(grep -c -e "$2" "$T/out")"
+  expect "guard abort, $1: bridge and helper unchanged, nothing downloaded, file untouched" "v0.5.0/v0.5.0/0/$before/no" \
+    "$(versions)/$(grep -c downloading "$T/out" || true)/$(cksum <"$MAC_CONF")/$(yes_no test -e "$MAC_CONF.new")"
+}
+abort_case "empty quoted host" 'no bridge host' <<'F'
+H3D_HELPER_HOST=""
+F
+abort_case "unfilled placeholder" 'no bridge host' <<'F'
+H3D_HELPER_HOST=@H3D_HELPER_HOST@
+F
+abort_case "valid host, then an empty duplicate (the last one wins)" 'no bridge host' <<'F'
+H3D_HELPER_HOST=dev@devbox
+H3D_HELPER_HOST=
+F
+abort_case "valid host in a comment, empty one in quotes" 'no bridge host' <<'F'
+# H3D_HELPER_HOST=dev@devbox
+H3D_HELPER_HOST=''
+F
+abort_case "a line that is not KEY=VALUE (the helper would not start)" 'not KEY=VALUE' <<'F'
+H3D_HELPER_HOST=dev@devbox
+garbage
+F
+
 printf '%s\n' "$HELPER_ENV" >"$CONF"
+rm -rf "$T/machome/Library"
 run
 expect "with the values in update.env the same update goes through" "0/v0.6.0/v0.6.0" "$rc/$(versions)"
 printf 'H3D_HELPER_HOST=dev@devbox;touch x\n' >"$CONF"
@@ -211,6 +246,37 @@ expect "a host with shell characters is refused before anything is sent" "1/v0.6
 printf '%s\n' "$HELPER_ENV" >"$CONF"
 run --rollback
 expect "rollback is unaffected by the guard" "0/v0.5.0/v0.5.0" "$rc/$(versions)"
+
+# Installing: an existing helper.env is extended, never glued onto, and the result
+# must resolve a host or nothing is installed.
+install_case() { # install_case DESCRIPTION  (the Mac's helper.env is on stdin, - for none)
+  rm -rf "$T/machome/Library"
+  mkdir -p "$(dirname "$MAC_CONF")"
+  cat >"$MAC_CONF"
+  run --force --no-bridge
+  expect "guard install, $1: the update goes through" "0" "$rc"
+}
+host_lines() { grep -c '^H3D_HELPER_HOST=dev@devbox$' "$MAC_CONF" || true; }
+printf '%s\n' "$HELPER_ENV" >"$CONF"
+printf 'H3D_HELPER_REMOTE_SOCKET=/run/user/1000/custom.sock' | install_case "existing file without a final newline"
+expect "the existing socket value is intact and the host is on its own line" "H3D_HELPER_REMOTE_SOCKET=/run/user/1000/custom.sock/1/1" \
+  "$(grep '^H3D_HELPER_REMOTE' "$MAC_CONF")/$(host_lines)/$(grep -c '^H3D_HELPER_REMOTE' "$MAC_CONF")"
+printf '# my notes' | install_case "unterminated comment as the last line"
+expect "the comment stays a comment and the host is its own line" "# my notes/1" "$(head -n1 "$MAC_CONF")/$(host_lines)"
+printf 'H3D_HELPER_HOST=""\n' | install_case "an empty host in the file"
+expect "the host is appended after it, so it wins" "H3D_HELPER_HOST=dev@devbox" "$(grep '^H3D_HELPER_HOST' "$MAC_CONF" | tail -n1)"
+printf 'H3D_HELPER_HOST=@H3D_HELPER_HOST@' | install_case "a placeholder without a final newline"
+expect "the host is appended after it, so it wins" "H3D_HELPER_HOST=dev@devbox" "$(grep '^H3D_HELPER_HOST' "$MAC_CONF" | tail -n1)"
+expect "no temporary file is left behind" "no" "$(yes_no test -e "$MAC_CONF.new")"
+
+# A host the helper would reject is caught by the check of the file about to be installed.
+printf 'H3D_HELPER_HOST=-devbox\n' >"$CONF"
+rm -rf "$T/machome/Library"
+before=$(versions)
+run --force
+expect "guard install, a host the helper rejects: fails, nothing installed, nothing changed" "1/$before/no" "$rc/$(versions)/$(yes_no test -e "$MAC_CONF")"
+expect "and says so" "1" "$(grep -c "would not give the Mac's helper a bridge host" "$T/out")"
+printf '%s\n' "$HELPER_ENV" >"$CONF"
 
 before_music=$(versions)
 mkdir -p "$T/music/house" && echo a >"$T/music/house/a.ogg" && echo b >"$T/music/house/b.ogg"

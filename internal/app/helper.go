@@ -100,6 +100,8 @@ func HelperConfigPath() string {
 	return envOr(EnvHelperConfig, filepath.Join(helperDir(os.UserConfigDir, ".config"), "helper.env"))
 }
 
+// These parsing and resolution rules are mirrored by MAC_PROBE in deploy/h3d-update
+// (its migration guard): change both together.
 // helperConfigKeys are the settings read from the config file; every other line is ignored.
 var helperConfigKeys = []string{EnvHelperHost, EnvHelperRemoteSocket}
 

@@ -97,11 +97,14 @@ h3d-update [vX.Y.Z]   # installs both and starts them (name the tag while only -
 **Migration guard (deprecated: removed with the cutover, #253).** The helper has no built-in bridge host, and a LaunchAgent
 does not inherit shell exports, so a release must never leave the Mac with a helper that has no target. Before the bridge
 or the helper change (and only when the helper is about to be replaced), `h3d-update` asks the Mac whether the helper
-knows its host: `H3D_HELPER_HOST` in the installed LaunchAgent plist (a left-over `@H3D_HELPER_HOST@` placeholder does not
-count) or in `~/Library/Application Support/h3d-helper/helper.env`. If not, it installs that file (mode 600, a deprecation
-note in it) from `H3D_HELPER_HOST` / `H3D_HELPER_REMOTE_SOCKET` in the server's `update.env`; if `update.env` has no
-`H3D_HELPER_HOST`, it stops with the message above, with the bridge and the Mac still as they were. An existing file or
-plist is never rewritten.
+knows its host, by the helper's own rules (the last assignment wins, quotes are stripped, an empty or `@PLACEHOLDER@`
+value is unset; the plist wins over the file): `H3D_HELPER_HOST` in the installed LaunchAgent plist or in
+`~/Library/Application Support/h3d-helper/helper.env`. If neither resolves a host, it extends that file (mode 600, a
+deprecation note in a new one; a missing final newline is added first, the host is appended last so it wins over an
+earlier empty one), checks the new file with the same rules, and only then moves it into place, from `H3D_HELPER_HOST` /
+`H3D_HELPER_REMOTE_SOCKET` in the server's `update.env`. It stops, with the bridge, the helper and the file as they were,
+if `update.env` has no `H3D_HELPER_HOST`, if the Mac's file has a line that is not `KEY=VALUE`, or if the result would
+still not resolve a host. A configuration that already resolves a host is never rewritten.
 
 Agents keep running through a bridge restart: herdr sessions are started with `systemd-run` in their own units. Update
 between hires and send-homes; an in-flight one rolls back.
