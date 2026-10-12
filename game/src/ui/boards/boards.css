@@ -647,6 +647,18 @@
   flex-wrap: wrap;
   margin-left: 0;
   align-items: center;
+  column-gap: 16px;
+}
+/* #248: the PR footer's groups (workers, merge, open) wrap as a whole; one wraps inside only when it alone is too wide. */
+.bd-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.bd-group--end {
+  margin-left: auto;
 }
 .bd-move {
   display: inline-flex;

@@ -42,6 +42,8 @@ export interface BoardsHost extends DialogHost {
   ask(session: string, card: IssueCard, provider: string, body: string | null): void;
   /** "Review with a worker": the hire dialog with a reviewer and its first prompt. */
   review(session: string, pr: PullRequest): void;
+  /** #248: "Resolve conflicts with a worker": the hire dialog with the task levels and the resolve-and-merge prompt for `method`. */
+  resolve(session: string, pr: PullRequest, method: MergeMethod): void;
   /** Why an action that starts a run or hires is off (null: it works). */
   whyNoRun(session: string): string | null;
   whyNoHire(session: string): string | null;
@@ -945,27 +947,38 @@ export class BoardsPanel {
         { class: `btn${o.cls ? ` ${o.cls}` : ''}`, 'data-key': key, title: o.why ?? o.title ?? label, 'aria-disabled': o.why || busy ? 'true' : null, onclick: () => (o.why ? this.setError(o.why) : busy ? undefined : onclick()) },
         label,
       );
-    const actions: HTMLElement[] = [];
+    // #248: three groups that wrap whole: the workers (one primary: Resolve on a conflicting PR, else Review), the
+    // merge, and the way out to the provider.
+    const groups: HTMLElement[] = [];
     const noHire = this.host.whyNoHire(session);
-    actions.push(btn('review', 'Review with a worker', () => this.host.review(session, pr), { cls: 'btn--primary', why: noHire, title: 'Hire a reviewer with the last team’s reviewer model' }));
-    if (can(board, pr, 'comment')) actions.push(btn('comment-focus', 'Comment', () => this.commentBox.focus(), { title: 'Write a comment below' }));
+    const conflicting = pr.mergeable === 'conflicting';
+    groups.push(
+      h(
+        'span',
+        { class: 'bd-group bd-group--workers' },
+        conflicting
+          ? btn('resolve', 'Resolve conflicts with a worker', () => this.host.resolve(session, pr, this.method), { cls: 'btn--primary', why: noHire, title: 'Hire a worker on a task level to resolve the conflicts and merge, with the merge method picked here' })
+          : null,
+        btn('review', 'Review with a worker', () => this.host.review(session, pr), { cls: conflicting ? 'btn--quiet' : 'btn--primary', why: noHire, title: 'Hire a reviewer with the last team’s reviewer model' }),
+      ),
+    );
     if (can(board, pr, 'merge')) {
       const blocker = mergeBlocker(pr);
       const sel = h('select', { 'data-key': 'merge-method', 'aria-label': 'Merge method', onchange: (e: Event) => (this.method = (e.target as HTMLSelectElement).value as MergeMethod) });
       for (const m of MERGE_METHODS) sel.append(h('option', { value: m.id, selected: m.id === this.method ? true : null }, m.label));
-      actions.push(
+      groups.push(
         h(
           'span',
-          { class: 'bd-move' },
+          { class: 'bd-group bd-move' },
           sel,
           btn('merge', 'Merge…', () => ((this.merging = { step: 'confirm', method: this.method }), this.renderItem()), { cls: 'btn--quiet', why: blocker?.why ?? null }),
           blocker?.overridable ? btn('merge-anyway', 'Merge anyway…', () => ((this.merging = { step: 'override1', method: this.method }), this.renderItem()), { cls: 'btn--quiet btn--warn', title: 'Merge although it is not ready: asks twice' }) : null,
         ),
       );
     }
-    if (pr.url) actions.push(btn('open', `Open in ${name}`, () => this.host.external(pr.url as string), { cls: 'btn--quiet' }));
+    if (pr.url) groups.push(h('span', { class: 'bd-group bd-group--end' }, btn('open', `Open in ${name}`, () => this.host.external(pr.url as string), { cls: 'btn--quiet' })));
     if (this.merging) notices.unshift(this.mergeConfirm(pr, this.merging));
-    this.itemFoot.replaceChildren(h('div', { class: 'bd-notices' }, ...notices), h('div', { class: 'dd-actions bd-actions' }, ...actions));
+    this.itemFoot.replaceChildren(h('div', { class: 'bd-notices' }, ...notices), h('div', { class: 'dd-actions bd-actions' }, ...groups));
   }
 
   private mergeConfirm(pr: PullRequest, m: MergeStep): HTMLElement {
