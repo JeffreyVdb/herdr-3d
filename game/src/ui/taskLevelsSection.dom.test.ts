@@ -163,6 +163,12 @@ describe('Settings → Task levels (#248, #40)', () => {
     const checked = () => [...m.body.querySelectorAll<HTMLInputElement>('.tl-default input')].map((i) => i.checked);
     expect(checked()).toEqual([true, false, false]);
     expect(m.levels.defaultMark).toBeNull();
+    // The first shows as the default; a click on it marks it, so it stays the default when it moves.
+    m.input('tl-id-1-default')!.click();
+    expect(m.levels.defaultMark).toBe('id-1');
+    m.button('tl-id-1-down').click();
+    expect(checked()).toEqual([false, true, false]);
+    m.button('tl-id-1-up').click();
     m.input('tl-id-3-default')!.click();
     expect(m.levels.defaultMark).toBe('id-3');
     expect(checked()).toEqual([false, false, true]);

@@ -261,6 +261,9 @@
   gap: 6px;
 }
 .dd-chip {
+  /* #40: the containing block of its visually hidden radio, so focusing the radio scrolls the scroller the chip is in,
+     never the dialog around it (which clips, and would hide its header and body). */
+  position: relative;
   display: inline-flex;
   cursor: pointer;
 }

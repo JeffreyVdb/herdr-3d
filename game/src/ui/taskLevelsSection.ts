@@ -56,6 +56,11 @@ function scroller(e: HTMLElement): HTMLElement | null {
  */
 function focusInPlace(e: HTMLElement): void {
   e.focus({ preventScroll: true });
+  reveal(e);
+}
+
+/** Brings `e` into view inside its own scroller only (nothing else may scroll). */
+function reveal(e: HTMLElement): void {
   // A chip's radio is a 1 px box: its label is what has to be seen.
   const box = (e.closest('label') ?? e) as HTMLElement;
   const sc = scroller(box);
@@ -180,7 +185,9 @@ export function taskLevelsSection(host: TaskLevelsHost): (body: HTMLElement) => 
         }
       });
       const def = h('input', { type: 'radio', name: group, 'data-key': `tl-${id}-default` });
-      def.addEventListener('change', () => def.checked && levels.setDefault(id));
+      // A click, not a change: with none marked the first row shows as the default already, and a click on it marks it
+      // (so it stays the default when the rows move). Space and the arrow keys click too.
+      def.addEventListener('click', () => def.checked && levels.setDefault(id));
       const clear = h('button', { type: 'button', class: 'btn btn--sm', 'data-key': `tl-${id}-clear` }, 'Clear');
       clear.addEventListener('click', () => {
         if (isOff(clear)) return;
@@ -201,10 +208,15 @@ export function taskLevelsSection(host: TaskLevelsHost): (body: HTMLElement) => 
         body: h('div', { class: 'tl-body' }),
         drawn: '',
       };
+      // One line that wraps whole: the name and its state, then the row's own controls (a line of their own on a phone).
       r.root.append(
-        h('div', { class: 'tl-head' }, h('div', { class: 'settings-field tl-name-field' }, name), r.badge),
+        h(
+          'div',
+          { class: 'tl-head' },
+          h('div', { class: 'tl-title' }, h('div', { class: 'settings-field tl-name-field' }, name), r.badge),
+          h('div', { class: 'tl-tools' }, h('label', { class: 'settings-switch tl-default' }, def, h('span', {}, 'Default')), h('div', { class: 'tl-tools-end' }, r.up, r.down, clear, r.remove)),
+        ),
         error,
-        h('div', { class: 'tl-tools' }, h('label', { class: 'settings-switch tl-default' }, def, h('span', {}, 'Default')), h('div', { class: 'tl-tools-end' }, r.up, r.down, clear, r.remove)),
         r.body,
       );
       return r;
@@ -248,6 +260,8 @@ export function taskLevelsSection(host: TaskLevelsHost): (body: HTMLElement) => 
     const render = () => {
       const a = document.activeElement;
       const focusKey = a instanceof HTMLElement && body.contains(a) ? (a.dataset.key ?? null) : null;
+      const focusRow = focusKey && a instanceof HTMLElement ? a.closest('.tl-level') : null;
+      const at0 = focusRow ? [...rowsEl.children].indexOf(focusRow) : -1;
       const list = levels.list();
       const ids = new Set(list.map((l) => l.id));
       for (const [id, r] of rows) {
@@ -285,6 +299,9 @@ export function taskLevelsSection(host: TaskLevelsHost): (body: HTMLElement) => 
         const chip = !back && focusKey.includes(':') ? body.querySelector<HTMLElement>(`[data-pick="${CSS.escape(focusKey.split(':')[0] ?? '')}"] input:checked`) : null;
         const to = back ?? chip;
         if (to) focusInPlace(to);
+      } else if (focusRow && a instanceof HTMLElement && [...rowsEl.children].indexOf(focusRow) !== at0) {
+        // Its row moved under it (another row went past): it stays focused, and in view.
+        reveal(a);
       }
     };
 
