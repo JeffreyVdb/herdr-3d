@@ -41,6 +41,8 @@
 // (tools/fixture-codex-questions.ts).
 // #171: `simtx=<name>` picks the transcript timeline every watch gets (default: the fixture's name, e.g. demo-h171's code
 // changes; the demo one when there is none by that name; tools/fixture-transcript.ts).
+// #247: `simrepos=<key>` sets demo-m5's floors up for `@r:` and shares the "Repositories from other buildings" switch
+// between the connections with that key (tools/fixture-repos.ts).
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';
@@ -225,6 +227,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             transcript: q.get('simtx') || name,
             // #223: the filing cabinet starts with this many handoffs on the first floor (tools/fixture-handoff.ts).
             ...(q.get('simhandoffs') ? { handoffs: Math.min(40, Math.max(0, Number(q.get('simhandoffs')) || 0)) } : {}),
+            // #247: demo-m5's floors set up for `@r:`, the shared switch shared by the key's connections (tools/fixture-repos.ts).
+            ...(q.get('simrepos') ? { repos: q.get('simrepos') as string } : {}),
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {

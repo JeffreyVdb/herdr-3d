@@ -8,6 +8,11 @@
  * Each match says which characters of the name it is (`hits`, UTF-16 offsets), for the row to highlight: the prefix,
  * the first word start, else the first occurrence. One linear pass per item, so a few hundred rank in well under a
  * frame on every keystroke.
+ *
+ * #247: opt-in (`subsequence`), a fourth tier after those: the query's characters in order, not next to each other
+ * (`apsv` finds `api-server`), the leftmost such characters its hits. The palette and `/` commands do not ask for it.
+ * `rankByKeys` ranks items with several names (a repo, its folder, its floor): the best tier on any key wins, an earlier
+ * key breaks a tie, then the source order.
  */
 
 export interface Ranked<T> {
@@ -24,6 +29,16 @@ const fold = (s: string): string => {
   return l.length === s.length ? l : s;
 };
 
+export interface RankOptions {
+  /** #247: also match the query's characters in order with gaps, after every other tier. */
+  subsequence?: boolean;
+}
+
+/** A match of one of an item's keys (`rankByKeys`): `hits` are offsets in that key. */
+export interface KeyRanked<T> extends Ranked<T> {
+  key: number;
+}
+
 /** 0: prefix, 1: word start, 2: substring; and where (-1: no match). */
 function matchAt(name: string, q: string): [tier: number, at: number] {
   const first = name.indexOf(q);
@@ -35,14 +50,37 @@ function matchAt(name: string, q: string): [tier: number, at: number] {
   return [2, first];
 }
 
-export function rankByName<T>(items: readonly T[], query: string, name: (item: T) => string): Ranked<T>[] {
-  if (query === '') return items.map((item) => ({ item, hits: [] }));
-  const q = fold(query);
-  const tiers: Ranked<T>[][] = [[], [], []];
-  for (const item of items) {
-    const [tier, at] = matchAt(fold(name(item)), q);
-    if (at < 0) continue;
-    tiers[tier]?.push({ item, hits: Array.from({ length: q.length }, (_, k) => at + k) });
+/** The tier and hits of `q` (folded) in `name` (folded), or null; tier 3 (a subsequence) only when asked for. */
+function matchOf(name: string, q: string, o: RankOptions): [tier: number, hits: number[]] | null {
+  const [tier, at] = matchAt(name, q);
+  if (at >= 0) return [tier, Array.from({ length: q.length }, (_, k) => at + k)];
+  if (!o.subsequence) return null;
+  const hits: number[] = [];
+  let i = 0;
+  for (const c of q) {
+    i = name.indexOf(c, i);
+    if (i < 0) return null;
+    hits.push(i++);
   }
-  return tiers.flat();
+  return [3, hits];
+}
+
+export function rankByName<T>(items: readonly T[], query: string, name: (item: T) => string, o: RankOptions = {}): Ranked<T>[] {
+  return rankByKeys(items, query, (item) => [name(item)], o).map(({ item, hits }) => ({ item, hits }));
+}
+
+export function rankByKeys<T>(items: readonly T[], query: string, keys: (item: T) => readonly (string | null | undefined)[], o: RankOptions = {}): KeyRanked<T>[] {
+  if (query === '') return items.map((item) => ({ item, hits: [], key: 0 }));
+  const q = fold(query);
+  const found: { r: KeyRanked<T>; tier: number; i: number }[] = [];
+  items.forEach((item, i) => {
+    let best: { r: KeyRanked<T>; tier: number; i: number } | null = null;
+    keys(item).forEach((k, key) => {
+      if (!k) return;
+      const m = matchOf(fold(k), q, o);
+      if (m && (!best || m[0] < best.tier)) best = { r: { item, hits: m[1], key }, tier: m[0], i };
+    });
+    if (best) found.push(best);
+  });
+  return found.sort((a, b) => a.tier - b.tier || a.r.key - b.r.key || a.i - b.i).map((f) => f.r);
 }

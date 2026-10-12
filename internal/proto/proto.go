@@ -212,6 +212,8 @@ type World struct {
 	InboxDismissed map[string]int64 `json:"inbox_dismissed"`
 	// #155: the shared Codex server switch. Always present.
 	CodexServer *CodexServer `json:"codex_server,omitempty"`
+	// #247: the "Repositories from other buildings" switch. Always present.
+	RepoRefs *RepoRefs `json:"repo_refs,omitempty"`
 	// #184: the Kaneo connection (never a key). nil (left out) when the
 	// bridge has no Kaneo settings.
 	Kaneo *Kaneo `json:"kaneo,omitempty"`

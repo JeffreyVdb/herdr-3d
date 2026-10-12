@@ -208,6 +208,9 @@ client reads that as `{}`.
 `codex_server` (#155) is the shared Codex server switch, `{"enabled", "available"}` (see
 [Shared Codex server](#shared-codex-server)); a bridge from before #155 leaves it out.
 
+`repo_refs` (#247) is the "Repositories from other buildings" switch, `{"all_buildings": bool}` (see
+[Repositories on other floors](#repositories-on-other-floors)); a bridge from before #247 leaves it out.
+
 `kaneo` (#184) is the Kaneo connection, never a key (see [Kaneo](#kaneo)); a bridge without the settings, or from
 before #184, leaves it out.
 
@@ -468,6 +471,7 @@ and remember the last `seq` applied.
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
 | `codex_server.update` | `enabled`, `available` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
+| `repo_refs.update` | `all_buildings` | #247: the "Repositories from other buildings" switch changed (flat in the event, see [Repositories on other floors](#repositories-on-other-floors)) |
 | `handoff.added` | `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (`session` is its floor, `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
 | `handoff.removed` | `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
 | `kaneo.update` | the fields of the Kaneo state | #184: the Kaneo connection changed (saved, cleared, paused by a refused key, resumed); flat in the event, never a key (see [Kaneo](#kaneo)). Like `packup.update`, decode it by its `t`: its `state` and `last_error` are not `ai.update`'s |
@@ -547,6 +551,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
 | `worker.commands` | `{"id": string}` | #136: the slash commands and skills of the worker's harness in its checkout, `{"commands": [{"name", "description", "argument_hint", "kind"}…], "partial": bool}` (see [Commands and skills](#commands-and-skills)) | — |
 | `worker.files` | `{"id": string, "query": string, "limit"?: 1–100}` (default 30) | #137: the files and directories of the worker's checkout ranked against `query`, `{"files": [{"path", "kind", "indices"}…], "source", "reason"}` (see [Files](#files)) | — |
+| `worker.repos` | `{"id": string}` | #247: the repositories and folders stored on the other floors of the worker's building (every building's with `repo_refs.all_buildings`), `{"repos": [{"session", "building", "same_building", "repo"?, "dir"?, "cloned"}…]}` (see [Repositories on other floors](#repositories-on-other-floors)) | — |
 | `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100, "fullscreen"?: bool}` | `{"pane", "cols", "rows", "zoom"?}` | `terminal.frame`s to this connection only; with `fullscreen` (true or false), also `terminal.state` (see [Fullscreen](#fullscreen-74)) |
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
@@ -595,6 +600,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `activity.set` | `{"model_enabled"?: bool, "threshold"?: 0.05–0.99, "margin"?: 0–0.9, "daily_cap"?: 1–100000}` | its state | `activity.update` (before the ack) |
 | `codex_server.get` | `{}` | `{"enabled", "available"}`, the shared Codex server switch (see [Shared Codex server](#shared-codex-server)) | — |
 | `codex_server.set` | `{"enabled": bool}` | the switch; switching on without `available` is `unsupported` | `codex_server.update` (before the ack) when it changes |
+| `repo_refs.get` | `{}` | `{"all_buildings"}`, the "Repositories from other buildings" switch (see [Repositories on other floors](#repositories-on-other-floors)) | — |
+| `repo_refs.set` | `{"all_buildings": bool}` | the switch | `repo_refs.update` (before the ack) when it changes |
 | `digest.get` | `{}` | the floor overview summaries' state (see [Floor overview summaries](#floor-overview-summaries)); it reads the LLM model's reasoning from its catalog when that was not read lately (#174) | — |
 | `digest.set` | `{"enabled"?: bool, "daily_cap"?: 1–10000, "reasoning_effort"?: string, "max_tokens"?: 64–16384}` | its state; `reasoning_effort` `""` is the provider's default, else one the model's catalog lists (`bad_request` otherwise) (#174) | `digest.update` (before the ack) |
 | `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?, "diag"?}], "latency_ms"}` (`diag`: the call's sanitized [diagnostics](#floor-overview-summaries)) | `digest.update` when it changes `tested` |
@@ -2320,6 +2327,51 @@ Errors: `unknown_worker`, `invalid_state` (its floor is asleep, or it has no dir
 fields, a negative `limit`, a `query` over 256 characters), `files_failed` (the listing failed and there is no earlier
 index; the message says why), `internal` (not configured). Not being in a git work tree is not an error (above). Each
 call is one audit row.
+
+#### Repositories on other floors
+
+#247. **`worker.repos`** lists the repositories and folders configured on the **other floors of the worker's
+building**, read-only, for the composer's `@r:` (the game asks once per popup and ranks the rows itself):
+
+```json
+{"t":"worker.repos","req_id":"58","args":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5"}}
+{"t":"ack","req_id":"58","data":{"repos":[
+  {"session":"api","building":"Work","same_building":true,"repo":"acme/api-server","dir":"/home/me/src/api","cloned":true},
+  {"session":"web","building":"Work","same_building":true,"repo":"acme/web","cloned":false},
+  {"session":"notes","building":"Work","same_building":true,"dir":"/home/me/notes","cloned":false},
+  {"session":"lib","building":"Home","same_building":false,"repo":"acme/lib","dir":"/home/me/src/other","cloned":false}]}}
+```
+
+| field | |
+|---|---|
+| `repos` | never `null`, in display order: the worker's building's floors by their index in it, then, with the switch on, the other buildings' floors (buildings by `sort`, floors by index) and the unassigned lot's (by name). The worker's own floor is never listed |
+| `session` | the floor |
+| `building` | the floor's building's **name** (not its id); `null` for the unassigned lot |
+| `same_building` | the floor is in the worker's building (false for every row of a worker in the unassigned lot, which is in no building) |
+| `repo` | the floor's stored `settings.repo` (`owner/repo`); absent when it has none |
+| `dir` | the floor's stored `settings.default_cwd`; absent when it has none |
+| `cloned` | `repo` is set, `dir` exists (the bridge's `StatDir`) and its GitHub origin (`git -C <dir> remote get-url origin`, the lookup of the floor suggestions) is `repo`, ignoring case and a `.git` suffix. A subfolder of the checkout counts (git finds the origin from it) |
+
+Only **stored** settings count: a floor's `suggested` values (what the bridge guessed from its workers' checkouts) are
+ignored, and a floor with neither a stored `repo` nor a stored `default_cwd` is not listed. A floor with only a folder
+is listed only when the folder exists. Asleep floors are listed (their settings persist), and so is a Kaneo-tracked
+floor that still carries a GitHub `repo`.
+
+The stat and the origin lookups run off the hub, all at once, each origin lookup at most 3 s (a slower one is "not
+cloned" for this answer) and reused for 30 s; a lookup that fails is "not cloned", never an error of the list.
+
+**The switch** "Repositories from other buildings" (bridge-wide, SQLite `repo_refs_settings`, off by default and when
+never set): `repo_refs.get` answers it, the snapshot's `repo_refs` holds it (always present), `repo_refs.update`
+carries it flat. `repo_refs.set {all_buildings}` needs `all_buildings` (`bad_request`); every change goes to every
+client (before the ack) and is one audit row.
+
+```json
+{"t":"repo_refs.set","req_id":"r1","args":{"all_buildings":true}}
+{"t":"repo_refs.update","seq":2211,"all_buildings":true}
+{"t":"ack","req_id":"r1","data":{"all_buildings":true}}
+```
+
+Errors: `unknown_worker`, `bad_request` (unknown `args` fields). Each call is one audit row.
 
 #### Usage and cost
 

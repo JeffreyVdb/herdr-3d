@@ -42,6 +42,7 @@ import { DigestSim } from './fixture-digest.ts';
 // #98: "Classify unknown commands" (`activity.get` / `activity.set`, `sim.activity_settings`).
 import { ActivitySettingsSim } from './fixture-activity-settings.ts';
 import { CodexServerSim } from './fixture-codex-server.ts';
+import { ReposSim, seedRepos } from './fixture-repos.ts';
 // #106: the inbox's dismissals (`inbox.dismiss`, `sim.status`, `simfail=no_inbox`).
 import { InboxSim } from './fixture-inbox.ts';
 // M16: the transcript view (`transcript.watch`, `sim.transcript`, `simfail=no_m16`).
@@ -97,6 +98,8 @@ export interface SimOptions {
   transcript?: string;
   /** #223: this many handoffs in the first floor's cabinet to start with (`simhandoffs=<n>`). */
   handoffs?: number;
+  /** #247: `simrepos=<key>`: demo-m5's floors set up for `@r:`, the shared switch shared by the key's connections (tools/fixture-repos.ts). */
+  repos?: string;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -253,6 +256,21 @@ export class SimWorld {
     };
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
     if (o.codex) this.codexq.seed(o.codex); // #157
+    if (o.repos !== undefined) seedRepos(this.floors, [...this.buildings.values()]); // #247
+    this.repos = new ReposSim(
+      {
+        layout: () => {
+          const buildings = this.sorted();
+          return { buildings, unassigned: [...this.floors.values()].filter((f) => f.building === null).map((f) => f.session).sort() };
+        },
+        floor: (s) => this.floors.get(s),
+        sessionOf: (id) => this.workers.find((w) => w.id === id)?.session,
+        emit: (send, m) => this.emit(send, m),
+        error: (code, message) => new CmdError(code, message),
+      },
+      o.repos ?? null,
+      (m) => this.announce(m),
+    );
     this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run', o.fail === 'codex_unverified'); // #155, #186
     this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
@@ -303,6 +321,8 @@ export class SimWorld {
   private readonly activitySettings: ActivitySettingsSim;
   /** #155: the shared Codex server switch (tools/fixture-codex-server.ts). */
   private readonly codexServer: CodexServerSim;
+  /** #247: repositories on other floors (tools/fixture-repos.ts). */
+  private readonly repos: ReposSim;
   private readonly inbox: InboxSim;
   /** M13: the screen share (tools/fixture-share.ts). */
   private readonly share = new ShareSim(
@@ -326,6 +346,7 @@ export class SimWorld {
 
   dispose(): void {
     this.share.dispose();
+    this.repos.dispose(); // #247
     for (const t of this.timers) this.clearT(t);
     this.timers.clear();
   }
@@ -435,6 +456,7 @@ export class SimWorld {
     this.digest.decorate(world); // #118
     this.activitySettings.decorate(world); // #98
     this.codexServer.decorate(world); // #155
+    this.repos.decorate(world); // #247
     this.kaneo.decorate(world); // #184
     this.handoffs.decorate(world); // #223
     this.inbox.decorate(world); // #106
@@ -519,6 +541,7 @@ export class SimWorld {
       if (this.ai.handle(m.t, a, send, ack, fail)) return; // #92
       if (this.activitySettings.handle(m.t, a, send, ack)) return; // #98
       if (this.codexServer.handle(m.t, a, send, ack)) return; // #155
+      if (this.repos.handle(m.t, a, send, ack)) return; // #247
       if (this.inbox.handle(m.t, a, send, ack)) return; // #106
       if (this.handoffs.handle(m.t, a, send, ack)) return; // #223
       if (this.share.handle(m.t, a, send, ack, fail)) return; // M13
