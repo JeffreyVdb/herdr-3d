@@ -22,10 +22,10 @@ const session = env('H3D_LIVE_SESSION');
 const OUT = env('H3D_LIVE_OUT');
 const SHOTS = env('H3D_LIVE_SHOTS');
 const DB = env('H3D_LIVE_DB');
-const TOY_DIR = env('H3D_LIVE_CWD');
+const LAB_DIR = env('H3D_LIVE_CWD');
 const lab = 'JeffreyVdb/h3d-lab';
 const REAL = 'JeffreyVdb/herdr-3d';
-const issues = JSON.parse(env('H3D_LIVE_TOY_ISSUES')) as Array<{ number: number; title: string }>;
+const issues = JSON.parse(env('H3D_LIVE_LAB_ISSUES')) as Array<{ number: number; title: string }>;
 const bridge = new LiveBridge({ bin: env('H3D_LIVE_BRIDGE_BIN'), socket: env('H3D_LIVE_SOCKET'), db: DB, session, log: join(OUT, 'bridge.log') });
 const created: { branches: string[]; prs: number[] } = { branches: [], prs: [] };
 const saveCreated = () => writeFileSync(join(OUT, 'created.json'), JSON.stringify(created));
@@ -107,7 +107,7 @@ const board = (page: Page) => page.evaluate(() => window.__h3d.board());
 const sent = (page: Page, t: string) => page.evaluate((x) => window.__h3d.sent().filter((c) => c.t === x), t);
 
 async function link(repo: string, project: { owner: string; number: number }): Promise<void> {
-  await ok('floor.settings.set', { session, repo, project, default_cwd: TOY_DIR });
+  await ok('floor.settings.set', { session, repo, project, default_cwd: LAB_DIR });
 }
 
 test('the floor’s boards are the GitHub Project’s columns and cards (read only, JeffreyVdb/herdr-3d, project 2)', async ({ page }) => {
@@ -230,7 +230,7 @@ test('writes on the lab repository from the game: comment, move, close, hand to 
   await ok('worker.fire', { id: orch!.id, worktree: 'keep' });
 
   // ---- Open PR for a plain worker, then merge it ---------------------------------------------------------------
-  const hired = (await ok('worker.hire', { session, desk_index: 3, harness: 'codex', model: 'gpt-6-luna', effort: 'low', cwd: TOY_DIR, worktree: true, label: 'm7-plain' })) as { id: string; branch: string };
+  const hired = (await ok('worker.hire', { session, desk_index: 3, harness: 'codex', model: 'gpt-6-luna', effort: 'low', cwd: LAB_DIR, worktree: true, label: 'm7-plain' })) as { id: string; branch: string };
   created.branches.push(hired.branch);
   saveCreated();
   const w = await snapshotWorker(hired.id);

@@ -25,7 +25,7 @@ async function setBackground(page: Page, on: boolean): Promise<void> {
 }
 
 /** On pastry, in the aisle behind desk 14's chair, facing along the aisle; toasts so far forgotten. */
-async function standOnBaking(page: Page): Promise<{ x: number; z: number }> {
+async function standOnPastry(page: Page): Promise<{ x: number; z: number }> {
   await enterFloor(page, 'pastry');
   const L = await page.evaluate(() => window.__h3d.layout('pastry'));
   const s = L?.slots[14];
@@ -50,7 +50,7 @@ test('background on: dictated, reviewed and changed, Hire closes at once; while 
     await openGame(page, 'demo-m4', '', SIM);
     await setUpLlm(page, llm);
     await setBackground(page, true);
-    const at = await standOnBaking(page);
+    const at = await standOnPastry(page);
     const inbox = (await page.evaluate(() => window.__h3d.inboxItems())).length;
 
     // Ctrl+Shift+Space, a complete hire sentence, Enter: the populated review, nothing hired.
@@ -122,7 +122,7 @@ test('background off (the default): the same dictated hire waits in the review, 
     await openGame(page, 'demo-m4', '', SIM);
     await setUpLlm(page, llm);
     expect(await page.evaluate(() => localStorage.getItem('h3d.hire.background'))).toBeNull();
-    await standOnBaking(page);
+    await standOnPastry(page);
 
     await openBar(page);
     await dictate(page, 'Spawn a worker on GPT-6 Sol at medium effort. Task: count the grills on the bottom floor.');
@@ -170,7 +170,7 @@ test('background on and muted: the dictated hire’s toast, no sound', async ({ 
   try {
     await openGame(page, 'demo-m4', '', SIM);
     await setUpLlm(page, llm);
-    await standOnBaking(page);
+    await standOnPastry(page);
     await openBar(page);
     await dictate(page, 'Hire an agent on Sonnet 5.5 with high effort. Task: maybe bake the rye.');
     await reviewReady(page, 'pastry');

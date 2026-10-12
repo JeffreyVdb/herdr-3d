@@ -18,7 +18,7 @@ const dialog = (page: Page) => page.evaluate(() => window.__h3d.dialog());
 const task = async (page: Page) => ((await page.locator('#hire-task').textContent()) ?? '').replace(/\u200b/g, '');
 
 /** On pastry, in the aisle behind desk 14's chair, facing along the aisle. */
-async function onBaking(page: Page, extra = ''): Promise<{ x: number; z: number }> {
+async function onPastry(page: Page, extra = ''): Promise<{ x: number; z: number }> {
   await openGame(page, 'demo-m4', '', `${SIM}${extra}`);
   await page.evaluate(() => window.__h3d.enterFloor('pastry'));
   await frames(page, 3);
@@ -87,7 +87,7 @@ test('the setting is off by default, kept across a reload; on, Hire closes at on
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="display"]').getByLabel(/^Hire in background/)).toBeChecked();
 
-  const at = await onBaking(page);
+  const at = await onPastry(page);
   const inbox = (await page.evaluate(() => window.__h3d.inboxItems())).length;
   await hire(page, 14, 'Label the loaves');
   // The desk is held for the hire; nothing said yet; the hire is one worker.hire.
@@ -127,7 +127,7 @@ test('muted: the toast, no sound', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await probe(page, { muted: true });
-  await onBaking(page);
+  await onPastry(page);
   await hire(page, 14, 'Quietly');
   await advance(page, 150);
   await expect(page.locator('.toast')).toHaveText(SPAWNED);
@@ -144,7 +144,7 @@ test('an image that does not upload: the desk is held while it tries, then let g
   page.on('pageerror', (e) => errors.push(e.message));
   const clean = () => expect(errors).toEqual([]);
   await probe(page);
-  await onBaking(page, `&upload_key=${unique()}&fail_upload=all&upload_delay=1500`);
+  await onPastry(page, `&upload_key=${unique()}&fail_upload=all&upload_delay=1500`);
   await openHire(page, 14);
   await page.keyboard.type('See ');
   await pasteImage(page, 'grill.png');
@@ -166,7 +166,7 @@ test('off (foreground): the images go up before the desk is held, as before: Esc
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await probe(page, { background: false });
-  await onBaking(page, `&upload_key=${unique()}&upload_delay=8000`);
+  await onPastry(page, `&upload_key=${unique()}&upload_delay=8000`);
   await openHire(page, 14);
   await page.keyboard.type('See ');
   await pasteImage(page, 'crumb.png');
@@ -198,7 +198,7 @@ test('a launch failure and a task not delivered: each its own error, the desk le
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await probe(page);
-  await onBaking(page, '&simfail=hire_failed');
+  await onPastry(page, '&simfail=hire_failed');
   await hire(page, 14, 'Proof the dough');
   await advance(page, 150);
   await expect(page.locator('.toast')).toHaveText(/^Desk 15 of pastry · .*claude exited during startup/);
@@ -210,7 +210,7 @@ test('a launch failure and a task not delivered: each its own error, the desk le
   await page.keyboard.press('Escape');
 
   // A fresh page and simulator: the next hire's first task is not delivered.
-  await onBaking(page, '&simfail=prompt_undelivered');
+  await onPastry(page, '&simfail=prompt_undelivered');
   await hire(page, 15, 'Score the loaves');
   await advance(page, 150);
   await expect(page.locator('.toast')).toHaveText(
@@ -233,7 +233,7 @@ test('a dialog edited while an earlier hire ends keeps its edits; two hires on t
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await probe(page);
-  await onBaking(page);
+  await onPastry(page);
   await hire(page, 14, 'First loaf');
   await advance(page, 100); // (so the acks fall at different times)
 
@@ -275,7 +275,7 @@ test('a dropped connection while the hire is on its way: an outcome-unknown noti
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await probe(page);
-  await onBaking(page);
+  await onPastry(page);
   await hire(page, 14, 'Maybe bake');
   await page.evaluate(() => window.__h3d.reconnect());
   await expect(page.locator('.toast')).toHaveText(/^No answer about the hire at Desk 15 of pastry: the connection dropped\. It may still have gone through/);

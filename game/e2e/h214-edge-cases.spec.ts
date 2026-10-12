@@ -21,7 +21,7 @@ type HireArgs = { session: string; desk_index: number; harness: string; model: s
 const hireArgs = async (page: Page) => (await hires(page)).map((h) => h.args as HireArgs);
 
 /** The game on pastry with the fake LLM set up; `test` runs with it and the server is closed after, whatever happens. */
-async function onBaking(page: Page, o: { background: boolean }, test: (llm: Fake) => Promise<void>): Promise<void> {
+async function onPastry(page: Page, o: { background: boolean }, test: (llm: Fake) => Promise<void>): Promise<void> {
   await probe(page, { background: o.background });
   const llm = await fakeOpenAI();
   try {
@@ -51,7 +51,7 @@ async function confirm(page: Page): Promise<void> {
 test('repeated Enter: in the bar while the answer is on its way one request and one review; on the review’s Hire one worker.hire', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
-  await onBaking(page, { background: false }, async () => {
+  await onPastry(page, { background: false }, async () => {
     // The fake answers SLOW sentences after 2.5 s: Enter, Enter, Enter while it is on its way.
     await openBar(page);
     await dictate(page, 'Hire an agent on Sonnet 5.5 with high effort. SLOW Task: knead the dough twice.');
@@ -87,7 +87,7 @@ test('repeated Enter: in the bar while the answer is on its way one request and 
 test('two dictated hires on their way at once: each ends with its own toast and beep at its own desk, no cross-talk', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
-  await onBaking(page, { background: true }, async () => {
+  await onPastry(page, { background: true }, async () => {
     expect((await dictateReview(page, 'Hire an agent on Opus 5.5 with low effort. Task: proof the first batch.')).desk).toBe(14);
     await confirm(page);
     await advance(page, 100); // (so the acks fall at different times)
@@ -124,7 +124,7 @@ test('two dictated hires on their way at once: each ends with its own toast and 
 test('a review being edited while an earlier dictated hire completes is not closed, reset or overwritten', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
-  await onBaking(page, { background: true }, async () => {
+  await onPastry(page, { background: true }, async () => {
     await dictateReview(page, 'Hire an agent on Opus 5.5 with low effort. Task: proof the first batch.');
     await confirm(page);
     await advance(page, 100);
@@ -169,7 +169,7 @@ test('a review being edited while an earlier dictated hire completes is not clos
 test('a dictated follow-up whose interpretation fails leaves the open review as it was, hires nobody and says so in the bar', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
-  await onBaking(page, { background: false }, async () => {
+  await onPastry(page, { background: false }, async () => {
     const r = await dictateReview(page, 'Hire an agent on Sonnet 5.5. Task: sweep the bakery floor.');
     expect(r.choice.effort).toBe('');
     expect(r.blocker).not.toBeNull();
@@ -205,7 +205,7 @@ test('a dictated follow-up whose interpretation fails leaves the open review as 
 test('a model change after a dictated effort keeps it when the new model has it, else clears it, opens Effort and turns Hire off', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
-  await onBaking(page, { background: false }, async () => {
+  await onPastry(page, { background: false }, async () => {
     const r = await dictateReview(page, 'Hire a worker on GPT-6 Sol with ultra effort. Task: shard the dough queue.');
     expect([r.choice.harness, r.choice.model, r.choice.effort]).toEqual(['codex', 'gpt-6-sol', 'ultra']);
     await reviewEl(page).locator('[data-key="sec:agent"]').click();
@@ -242,7 +242,7 @@ test('a model change after a dictated effort keeps it when the new model has it,
 test('a dropped connection while a confirmed dictated hire is on its way: an outcome-unknown notice, no toast or beep of success, never a second worker.hire', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
-  await onBaking(page, { background: true }, async () => {
+  await onPastry(page, { background: true }, async () => {
     await dictateReview(page, 'Hire an agent on Sonnet 5.5 with high effort. Task: maybe bake the rye.');
     await confirm(page);
     expect(await hires(page)).toHaveLength(1);
@@ -267,7 +267,7 @@ test('a confirmed dictated hire herdr-world does not answer in time: an outcome-
     const set = window.setTimeout;
     window.setTimeout = ((fn: TimerHandler, ms?: number, ...rest: unknown[]) => set(fn, ms === 90_000 ? 4000 : ms, ...rest)) as typeof window.setTimeout;
   });
-  await onBaking(page, { background: true }, async () => {
+  await onPastry(page, { background: true }, async () => {
     await dictateReview(page, 'Hire an agent on Sonnet 5.5 with high effort. Task: maybe bake the rye.');
     await confirm(page);
     expect(await hires(page)).toHaveLength(1);
