@@ -814,7 +814,6 @@ dialog.settings {
   flex: 1 1 auto;
 }
 .tl-name-field input {
-  height: 32px;
   font-weight: 700;
 }
 .tl-tools {
