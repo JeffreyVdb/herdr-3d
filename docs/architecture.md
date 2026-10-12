@@ -61,11 +61,11 @@ MacBook (M2 Max)                                   devbox (Linux)
 - The helper's tunnel must use `-o ControlMaster=no -o ControlPath=none`: a tunnel that becomes the shared ControlMaster
   gets killed along with everyone's multiplexed sessions (happened during research, see §7).
 - **No machine is built in.** The helper finds the bridge through `H3D_HELPER_HOST` (and optionally
-  `H3D_HELPER_REMOTE_SOCKET`; unset, it asks the host for `$XDG_RUNTIME_DIR` over ssh), and `h3d-update` finds the Mac
-  through `H3D_MAC`, from the flag/environment, the LaunchAgent's `EnvironmentVariables`, or, as a deprecated fallback
-  until the cutover (#253), private config files outside the repository (`~/.config/h3d/update.env` on the server,
-  the helper's `helper.env` on the Mac). `deploy/*.example` show the shape with fictional values; `docs/releasing.md`
-  has the procedure.
+  `H3D_HELPER_REMOTE_SOCKET`; unset, it asks the host for `$XDG_RUNTIME_DIR` over ssh), from its flags or the
+  environment, which on the Mac is the LaunchAgent's `EnvironmentVariables` and nothing else. `h3d-update` finds the
+  Mac through `H3D_MAC`, from the environment or the private `~/.config/h3d/update.env` on the server. Both live outside
+  the repository; `deploy/update.env.example` and the plist's placeholders show the shape with fictional values, and
+  `docs/releasing.md` has the procedure.
 
 ## 3. Server: `herdr-world` bridge (Go)
 

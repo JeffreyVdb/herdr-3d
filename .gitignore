@@ -19,9 +19,8 @@ game/music/incoming/*
 !game/music/incoming/.gitkeep
 
 # Private deployment config: real hosts and users live outside the repository
-# (~/.config/h3d/update.env, the helper's helper.env); only the *.example files are tracked.
+# (~/.config/h3d/update.env, the Mac's installed LaunchAgent plist); only the *.example files are tracked.
 update.env
-helper.env
 .env.*
 !.env.example
 !*.example
