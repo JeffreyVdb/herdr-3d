@@ -48,6 +48,21 @@ async function seed(page: Page, levels: object | null, worktree: 'on' | 'off' = 
   );
 }
 
+/** Stands at a desk seat of a floor (to be the nearest to it). */
+async function standAt(page: Page, session: string, desk: number, back = 0.7): Promise<void> {
+  await page.evaluate(
+    ([s, d, b]) => {
+      const slot = window.__h3d.layout(s as string)?.slots[d as number];
+      if (!slot) throw new Error('no desk');
+      const fx = Math.sin(slot.yaw);
+      const fz = Math.cos(slot.yaw);
+      window.__h3d.setPose({ x: slot.seat.x - fx * (b as number), z: slot.seat.z - fz * (b as number), yaw: Math.atan2(-fx, -fz), pitch: -0.2 });
+    },
+    [session, desk, back] as const,
+  );
+  await frames(page, 3);
+}
+
 async function openPrs(page: Page): Promise<void> {
   await openGame(page, 'demo-m6', EXTRA, SIM);
   await enter(page, 'herdr-3d');
@@ -67,6 +82,8 @@ test('Resolve conflicts: only on a conflicting PR; the dialog opens on the Trivi
   // Settings → Display says no worktree: a resolve hire takes one anyway.
   await seed(page, LEVELS, 'off');
   await openPrs(page);
+  // Like Review: the free desk nearest to where you stand.
+  await standAt(page, 'herdr-3d', 12);
 
   // A mergeable PR: Review is the primary, no Resolve, no Comment button.
   const ok = await openItem(page, `${HERDR}#34`);
@@ -86,6 +103,7 @@ test('Resolve conflicts: only on a conflicting PR; the dialog opens on the Trivi
   // The method picked in the select goes into the prompt.
   await act(page, 'merge-method').selectOption('rebase');
   const d = await resolve(page);
+  expect(d.desk).toBe(12);
   expect(d.form.prompt).toContain(`https://github.com/${HERDR}/pull/35`);
   expect(d.form.prompt).toContain('gh pr checkout 35 --detach');
   expect(d.form.prompt).toContain('git push origin HEAD:feat/lounge');

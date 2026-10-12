@@ -436,8 +436,10 @@ export class HireDialog {
       });
     // Settings changed which models show: an open form follows it (a hire on its way keeps what it sent).
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());
-    // #248: so does a change of the task levels.
-    this.host.taskLevels?.onChange(() => this.visibilityChanged());
+    // #248: so does a change of the task levels, for a hire that asks for one (a plain hire never looks at them).
+    this.host.taskLevels?.onChange(() => {
+      if (this.levelMode) this.visibilityChanged();
+    });
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
     this.form.append(this.editorPane, this.optionsPane);
@@ -740,7 +742,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.session);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.host.taskLevels?.version]);
+    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
