@@ -519,7 +519,7 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
 `h3d-helper` is what makes the game playable on the Mac:
 
 - it owns `ssh -N -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes … -L <local.sock>:<bridge.sock>
-  dev@devbox`, restarts it with exponential backoff (0.5 s doubling to 30 s, ±20 % jitter, back to 0.5 s after
+  <host>`, restarts it with exponential backoff (0.5 s doubling to 30 s, ±20 % jitter, back to 0.5 s after
   30 s up) and checks the bridge's `/healthz` through it every 5 s (3 failures in a row restart ssh). On exit it kills
   ssh's process group and removes the local socket;
 - it serves the game on `http://127.0.0.1:7777` (loopback only; a secure context, so WebGPU works) from the game
@@ -557,8 +557,8 @@ State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not an
 
 | flag | env | default |
 |---|---|---|
-| `--host` | `H3D_HELPER_HOST` | `dev@devbox` |
-| `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | `/run/user/1000/herdr-world/bridge.sock` (the bridge's default) |
+| `--host` | `H3D_HELPER_HOST` | **none: required.** Flag, then env, then the deprecated private config file (below); without any the helper exits naming all three |
+| `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | flag, env, config file; else the helper asks the host for its `$XDG_RUNTIME_DIR` over ssh and uses `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` (the bridge's default) |
 | `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock` |
 | `--listen` | `H3D_HELPER_LISTEN` | `127.0.0.1:7777`; anything but a loopback IP is refused |
 | `--bundle` | `H3D_HELPER_BUNDLE` | the game embedded in the binary; else `~/Library/Application Support/h3d-helper/dist` |
@@ -570,6 +570,21 @@ State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not an
 | `--chrome`, `--chrome-profile` | `H3D_HELPER_CHROME`, `H3D_HELPER_CHROME_PROFILE` | `Google Chrome`, `~/Library/Application Support/h3d-helper/chrome` |
 | `--ssh` | `H3D_HELPER_SSH` | `ssh` on `PATH` |
 | `--log-level`, `--log-format` | `H3D_HELPER_LOG_LEVEL`, `H3D_HELPER_LOG_FORMAT` | `info`, `text` (or `json`) |
+
+**No built-in machine.** The helper never guesses where the bridge is. Set `H3D_HELPER_HOST` (`user@host`) in the
+LaunchAgent's `EnvironmentVariables` (launchd does not see shell exports; `deploy/com.jeffreyvdb.h3d-helper.plist`
+carries `@H3D_HELPER_HOST@` and `@H3D_HELPER_REMOTE_SOCKET@` placeholders and its header says how to `sed` them in) or pass
+`-host`. Without a host the helper exits with `no bridge host: pass -host …, set $H3D_HELPER_HOST, or put
+H3D_HELPER_HOST=… in <config file> (deprecated fallback)`; `-version` and `-print-url` need none. Without a socket it runs
+`ssh <host> 'printf %s "$XDG_RUNTIME_DIR"'` (same no-multiplexing options as the tunnel) once at start and refuses an empty,
+relative or odd answer, telling you to pass `-remote-socket`.
+
+*Deprecated fallback, removed with the cutover (#253):* if neither flag nor env names them, the helper reads
+`H3D_HELPER_HOST` and `H3D_HELPER_REMOTE_SOCKET` from a private `KEY=VALUE` file (`#` comments, optional quotes, other keys ignored) at
+`~/Library/Application Support/h3d-helper/helper.env` (`$H3D_HELPER_CONFIG` overrides the path; `deploy/helper.env.example`), and logs a
+deprecation warning when it does. It exists so a release does not depend on reconfiguring the installed Mac first:
+`h3d-update` installs that file on a Mac whose helper has no host configured (`docs/releasing.md`, "Migration guard").
+Real values live only in such private files, never in the repository (`.gitignore` keeps `update.env` and `helper.env` out).
 
 Installing and updating are one command, `deploy/h3d-update`, from a GitHub release: see
 [`docs/releasing.md`](docs/releasing.md) (first install, updating, rolling back, installing the game as a Dock app).
@@ -586,26 +601,26 @@ Development: forward a Vite dev server (`make dev` on the server) to the Mac and
 first, or give it another `-listen` port); HMR goes through the helper too:
 
 ```sh
-ssh -o ControlMaster=no -o ControlPath=none -N -L 5173:127.0.0.1:<leased dev port> dev@devbox &
+ssh -o ControlMaster=no -o ControlPath=none -N -L 5173:127.0.0.1:<leased dev port> <user@server> &
 ~/.local/bin/h3d-helper -dev-upstream http://127.0.0.1:5173
 ```
 
 Agents test it without launchd and without a window: copy the binary and a `game/dist` to a temp dir such as
-`~/h3d-tools/helper-<task>/`, run `./h3d-helper -no-open -remote-socket <private bridge socket> -bundle <dir>/dist
+`~/h3d-tools/helper-<task>/`, run `./h3d-helper -no-open -host <user@server> -remote-socket <private bridge socket> -bundle <dir>/dist
 -local-socket <dir>/bridge.sock` (it logs the game URL with its token), drive headless Chrome from `~/h3d-tools`
 (`playwright-core`), and stop it with SIGTERM when done. Mac port 7777 is the helper's; others use their own.
 
 ## Rule: never serve the game to the Mac over plain `http://<tailnet-host>`
 
 WebGPU only exists in a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Secure_Contexts).
-`http://devbox:<port>` is a remote, insecure origin, so Chrome **silently** falls back to WebGL2 — the game
+`http://<server>:<port>` is a remote, insecure origin, so Chrome **silently** falls back to WebGL2 — the game
 still renders, but on the wrong backend, and any Metal/perf check is meaningless
 (see [`docs/research/engine.verify.md`](docs/research/engine.verify.md)).
 
 Always reach the server from the Mac through an SSH forward and open it on loopback:
 
 ```sh
-ssh -o ControlMaster=no -o ControlPath=none -N -L <port>:127.0.0.1:<port> dev@devbox
+ssh -o ControlMaster=no -o ControlPath=none -N -L <port>:127.0.0.1:<port> <user@server>
 # then open http://127.0.0.1:<port> (or http://localhost:<port>) on the Mac
 ```
 
@@ -953,7 +968,7 @@ M6 on the simulating server: presets and runs on any fixture (herdr-3d of demo-m
 M7 on the simulating server (`tools/fixture-boards.ts`, rules at its top): the boards of the floor you are on, from its
 effective repo (`settings.repo ?? suggested.repo`; none: `board.watch` answers `enabled: false`). `JeffreyVdb/lab` and
 `JeffreyVdb/herdr-3d` have a project (Todo / Doing / QA / Done), `JeffreyVdb/bench` (the `perf-boards` fixture) 100 issues
-and 20 pull requests, any other repo no project (Open / Closed, no `set_status`). lab issue #7 has a markdown body full of
+and 20 pull requests, any other repo no project (Open / Closed, no `set_status`). Lab issue #7 has a markdown body full of
 script, handlers, `javascript:` links, svg, an iframe, a form and a tracking pixel: the sanitiser's fixture. Writes queue a
 poll of the floor, as the bridge does. `sim.boards` (the simulator's own command, `simBoards(args)` in the hooks) merges a
 PR (`{merge: id}`: gone from the open list, announced by the next poll, its issues closed and in Done), makes the next polls
@@ -1479,7 +1494,8 @@ and R: the truncation notice. About 1.5 min and a few haiku turns. Shots go to `
 is stopped and deleted afterwards, also on failure; Claude remembers the trust of the temporary folders.
 
 `perf:mac` serves `game/dist` on a leased port P and opens `ssh -o ControlMaster=no -o ControlPath=none -N -R
-127.0.0.1:P:127.0.0.1:P devmac`, so the Mac page is on its own loopback (a secure context: WebGPU).
+127.0.0.1:P:127.0.0.1:P <the Mac>`, so the Mac page is on its own loopback (a secure context: WebGPU). The Mac is `$H3D_MAC`, else
+`H3D_MAC=` in the private `~/.config/h3d/update.env` (`deploy/update.env.example`); there is no default, and without one `perf:mac` exits 2.
 It pipes `tools/mac-runner.mjs` into `/opt/homebrew/bin/node` in `~/h3d-tools` (playwright-core, headless Chrome at
 3024×1890) and runs `window.__h3d.bench()` — the engine-bench method: serialized update + render + GPU wait,
 pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3b jobs bench the outside of the

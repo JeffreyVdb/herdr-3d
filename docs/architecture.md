@@ -56,10 +56,16 @@ MacBook (M2 Max)                                   devbox (Linux)
 ```
 
 - **Auth = SSH access** (decision 1). Nothing listens on the tailnet. Tunnel overhead measured ~0 ms (RTT 22–24 ms).
-- Game is served from Mac `localhost` → secure context → WebGPU works. A plain `http://devbox:…` origin silently
+- Game is served from Mac `localhost` → secure context → WebGPU works. A plain `http://<server>:…` origin silently
   falls back to WebGL2 (verified), so never use it for real play.
 - The helper's tunnel must use `-o ControlMaster=no -o ControlPath=none`: a tunnel that becomes the shared ControlMaster
   gets killed along with everyone's multiplexed sessions (happened during research, see §7).
+- **No machine is built in.** The helper finds the bridge through `H3D_HELPER_HOST` (and optionally
+  `H3D_HELPER_REMOTE_SOCKET`; unset, it asks the host for `$XDG_RUNTIME_DIR` over ssh), and `h3d-update` finds the Mac
+  through `H3D_MAC`, from the flag/environment, the LaunchAgent's `EnvironmentVariables`, or, as a deprecated fallback
+  until the cutover (#253), private config files outside the repository (`~/.config/h3d/update.env` on the server,
+  the helper's `helper.env` on the Mac). `deploy/*.example` show the shape with fictional values; `docs/releasing.md`
+  has the procedure.
 
 ## 3. Server: `herdr-world` bridge (Go)
 
@@ -365,7 +371,7 @@ MacBook (M2 Max)                                   devbox (Linux)
   laptop screen = live read-only terminal via `observe`; prompts, approvals and keys via `worker.prompt` / `worker.keys`.
   herdr servers run headless on the server; nothing on the Mac needs a terminal. Only for "let me type in the raw
   pane myself": bridge `agent.focus` → helper immediately opens a new Ghostty window via AppleScript
-  `new window with configuration` + `command "herdr --remote dev@devbox --session <s>"` (fresh attach lands
+  `new window with configuration` + `command "herdr --remote <user@server> --session <s>"` (fresh attach lands
   on the focused workspace, 5/5 in tests; `+new-window` unsupported on macOS). Exact-pane alternative:
   `ssh -t … herdr --session <s> terminal attach <term_id>` (0.64 s). Focus marks `done` as seen — acceptable.
   herdr 0.9.1 also makes focus move attached clients.
@@ -473,7 +479,7 @@ MacBook (M2 Max)                                   devbox (Linux)
 
 1. Agents work on the server: `vitest` for logic; Playwright Chromium headless with **WebGL2 on mesa lavapipe/llvmpipe**
    (installed; 3.6× faster than SwiftShader) for screenshot tests. WebGPU screenshots don't work on the server.
-2. Metal verification: agent runs `ssh -o ControlMaster=no devmac` → `-L` forward of the Vite port →
+2. Metal verification: agent runs `ssh -o ControlMaster=no <the Mac>` (`$H3D_MAC`, or the private update config, `docs/releasing.md`) → `-L` forward of the Vite port →
    headless Chrome via `~/h3d-tools` (playwright-core installed) → scp PNG + timing JSON back. Assert the backend
    `webgpu` + adapter `apple/metal-3` in results.
 3. Theo plays via the helper + Chrome app window; the helper can point at the Vite dev server during development.
