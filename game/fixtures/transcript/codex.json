@@ -11,7 +11,7 @@
     }
   },
   {
-    "id": "o:777",
+    "id": "o:775",
     "seq": 2,
     "ts": 1790659966952,
     "kind": "notice",
@@ -29,7 +29,7 @@
     "hidden": true,
     "truncated": true,
     "notice": {
-      "text": "\u003cskills_instructions\u003e\n## Skills\nA skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and a short path that can be expanded into an absolute path using the skill roots table.\n### Skill roots\n- `r0` = `/home/dev/.codex/skills`\n- `r1` = `/home/dev/.agents/skills`\n- `r2` = `/home/dev/.codex/skills/.system`\n- `r3` = `/home/dev/.codex/plugins/cache/openai-curated-remote`\n- `r4` = `/home/dev",
+      "text": "\u003cskills_instructions\u003e\n## Skills\nA skill is a set of local instructions to follow that is stored in a `SKILL.md` file. Below is the list of skills that can be used. Each entry includes a name, description, and a short path that can be expanded into an absolute path using the skill roots table.\n### Skill roots\n- `r0` = `/home/dev/.codex/skills`\n- `r1` = `/home/dev/.agents/skills`\n- `r2` = `/home/dev/.codex/skills/.system`\n- `r3` = `/home/dev/.codex/plugins/cache/openai-curated-remote`\n- `r4` = `/home/dev/.cod",
       "source": "message/developer"
     }
   },
@@ -64,12 +64,12 @@
     "hidden": true,
     "truncated": true,
     "notice": {
-      "text": "# AGENTS.md instructions for /home/dev/.herdr/worktrees/hello/h3d-tumble-e58b7c\n\n\u003cINSTRUCTIONS\u003e\n# Agent Instructions\n\nKeep changes small and tested.\n\u003c/INSTRUCTIONS\u003e\n\u003cenvironment_context\u003e\n  \u003ccwd\u003e/home/dev/.herdr/worktrees/hello/h3d-tumble-e58b7c\u003c/cwd\u003e\n  \u003cshell\u003ebash\u003c/shell\u003e\n  \u003ccurrent_date\u003e2026-09-29\u003c/current_date\u003e\n  \u003ctimezone\u003eEurope/Brussels\u003c/timezone\u003e\n  \u003cfilesystem\u003e\u003cworkspace_roots\u003e\u003croot\u003e/home/dev/.herdr/worktrees/hello/h3d-tumble-e58b7c\u003c/root\u003e\u003c/workspace_roots\u003e\u003cpermission_profile type=\"disabled\"\u003e\u003cfile_s",
+      "text": "# AGENTS.md instructions for /home/dev/.herdr/worktrees/hello/h3d-tumble-e58b7c\n\n\u003cINSTRUCTIONS\u003e\n# Agent Instructions\n\nKeep changes small and tested.\n\u003c/INSTRUCTIONS\u003e\n\u003cenvironment_context\u003e\n  \u003ccwd\u003e/home/dev/.herdr/worktrees/hello/h3d-tumble-e58b7c\u003c/cwd\u003e\n  \u003cshell\u003ebash\u003c/shell\u003e\n  \u003ccurrent_date\u003e2026-09-29\u003c/current_date\u003e\n  \u003ctimezone\u003eEurope/Brussels\u003c/timezone\u003e\n  \u003cfilesystem\u003e\u003cworkspace_roots\u003e\u003croot\u003e/home/dev/.herdr/worktrees/hello/h3d-tumble-e58b7c\u003c/root\u003e\u003c/workspace_roots\u003e\u003cpermission_profile type=\"disabled\"\u003e\u003cfile_syst",
       "source": "message/user"
     }
   },
   {
-    "id": "o:6006",
+    "id": "o:5996",
     "seq": 7,
     "ts": 1790659967378,
     "kind": "notice",
@@ -80,7 +80,7 @@
     }
   },
   {
-    "id": "o:7144",
+    "id": "o:7132",
     "seq": 8,
     "ts": 1790659967380,
     "kind": "notice",
@@ -102,7 +102,7 @@
     ]
   },
   {
-    "id": "o:9313",
+    "id": "o:9299",
     "seq": 10,
     "ts": 1790659967485,
     "kind": "notice",
@@ -113,7 +113,7 @@
     }
   },
   {
-    "id": "o:9829",
+    "id": "o:9815",
     "seq": 11,
     "ts": 1790659974072,
     "kind": "notice",
@@ -130,7 +130,7 @@
     "kind": "thinking"
   },
   {
-    "id": "o:10533",
+    "id": "o:10519",
     "seq": 13,
     "ts": 1790659974756,
     "kind": "notice",
@@ -165,7 +165,7 @@
     }
   },
   {
-    "id": "o:12815",
+    "id": "o:12801",
     "seq": 16,
     "ts": 1790659977718,
     "kind": "notice",
@@ -176,7 +176,7 @@
     }
   },
   {
-    "id": "o:13685",
+    "id": "o:13671",
     "seq": 17,
     "ts": 1790659977914,
     "kind": "notice",
@@ -187,7 +187,7 @@
     }
   },
   {
-    "id": "o:16287",
+    "id": "o:16272",
     "seq": 18,
     "ts": 1790659977923,
     "kind": "notice",
@@ -198,7 +198,7 @@
     }
   },
   {
-    "id": "o:16771",
+    "id": "o:16756",
     "seq": 19,
     "ts": 1790659979854,
     "kind": "notice",
@@ -215,7 +215,7 @@
     "kind": "thinking"
   },
   {
-    "id": "o:17475",
+    "id": "o:17460",
     "seq": 21,
     "ts": 1790659980721,
     "kind": "notice",
@@ -237,7 +237,7 @@
     ]
   },
   {
-    "id": "o:18932",
+    "id": "o:18917",
     "seq": 23,
     "ts": 1790659980735,
     "kind": "notice",
@@ -248,7 +248,7 @@
     }
   },
   {
-    "id": "o:19804",
+    "id": "o:19789",
     "seq": 24,
     "ts": 1790659980737,
     "kind": "notice",
@@ -259,7 +259,7 @@
     }
   },
   {
-    "id": "o:20289",
+    "id": "o:20274",
     "seq": 25,
     "ts": 1790659980744,
     "kind": "notice",
@@ -564,7 +564,7 @@
     }
   },
   {
-    "id": "o:31615",
+    "id": "o:31594",
     "seq": 34,
     "ts": 1790693816551,
     "kind": "notice",
@@ -574,7 +574,7 @@
     }
   },
   {
-    "id": "o:31864",
+    "id": "o:31843",
     "seq": 35,
     "ts": 1790601572837,
     "kind": "compaction",
@@ -584,7 +584,7 @@
     }
   },
   {
-    "id": "o:37382",
+    "id": "o:37360",
     "seq": 36,
     "ts": 1790676360000,
     "kind": "unknown",
@@ -600,7 +600,7 @@
     "raw_type": "response_item/hologram_call"
   },
   {
-    "id": "o:37626",
+    "id": "o:37604",
     "seq": 38,
     "ts": 1790676362000,
     "kind": "unknown",

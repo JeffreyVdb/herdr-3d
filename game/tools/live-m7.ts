@@ -46,7 +46,7 @@ const procs: ChildProcess[] = [];
 let session: Throwaway | null = null;
 let closeProxy: (() => void) | null = null;
 let work: string | null = null;
-let toyDir: string | null = null;
+let labDir: string | null = null;
 let cleaned = false;
 const probeIssues: number[] = [];
 
@@ -112,7 +112,7 @@ async function cleanup(): Promise<void> {
       // already deleted (a merge may have)
     }
   }
-  if (toyDir) rmSync(join(homedir(), '.herdr', 'worktrees', basename(toyDir)), { recursive: true, force: true });
+  if (labDir) rmSync(join(homedir(), '.herdr', 'worktrees', basename(labDir)), { recursive: true, force: true });
   if (paths) removeRunPaths(paths);
   if (work) rmSync(work, { recursive: true, force: true });
 }
@@ -142,9 +142,9 @@ async function main(): Promise<number> {
 
   // A clone of the lab repository with a name of its own: herdr keeps worktrees under ~/.herdr/worktrees/<name>.
   const name = `m7game-lab-${randomBytes(3).toString('hex')}`;
-  toyDir = join(work, name);
-  gh(['repo', 'clone', lab, toyDir]);
-  log(`cloned ${lab} to ${toyDir}`);
+  labDir = join(work, name);
+  gh(['repo', 'clone', lab, labDir]);
+  log(`cloned ${lab} to ${labDir}`);
 
   // Two probe issues on the lab repository, in its project (the board shows them under Status).
   const tag = basename(work).slice(-6);
@@ -162,7 +162,7 @@ async function main(): Promise<number> {
   session = new Throwaway(undefined, PREFIX);
   await session.start(work, join(OUT, 'herdr-server.log'));
   log(`throwaway session ${session.name} is up`);
-  session.run(['--session', session.name, 'workspace', 'create', '--cwd', toyDir, '--label', 'live-shell', '--no-focus']);
+  session.run(['--session', session.name, 'workspace', 'create', '--cwd', labDir, '--label', 'live-shell', '--no-focus']);
 
   makeRunPaths(run);
   const proxy = await startProxy(proxyPort, sock);
@@ -181,10 +181,10 @@ async function main(): Promise<number> {
       H3D_LIVE_BRIDGE_BIN: bin,
       H3D_LIVE_SOCKET: sock,
       H3D_LIVE_DB: run.db,
-      H3D_LIVE_CWD: toyDir,
+      H3D_LIVE_CWD: labDir,
       H3D_LIVE_OUT: OUT,
       H3D_LIVE_SHOTS: shots,
-      H3D_LIVE_TOY_ISSUES: JSON.stringify(issues),
+      H3D_LIVE_LAB_ISSUES: JSON.stringify(issues),
     },
   });
   procs.push(pw);
