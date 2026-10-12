@@ -153,43 +153,46 @@ test('Resolve conflicts with no level set: the usual pickers, and no “Choose a
   clean();
 });
 
-test('the PR footer at 390 px: the groups wrap whole, nothing scrolls sideways', async ({ page }) => {
-  test.setTimeout(120_000);
-  const clean = watchErrors(page);
-  await page.setViewportSize({ width: 390, height: 640 });
-  await openPrs(page);
-  await openItem(page, `${HERDR}#35`);
-  await frames(page, 2);
-  const layout = await modal(page)
-    .locator('.bd-actions')
-    .evaluate((bar) => ({
-      overflow: bar.scrollWidth - bar.clientWidth,
-      groups: [...bar.querySelectorAll<HTMLElement>(':scope > .bd-group')].map((g) => {
-        const tops = [...g.children].map((c) => Math.round(c.getBoundingClientRect().top));
-        const r = g.getBoundingClientRect();
-        return { tops, left: Math.round(r.left), right: Math.round(r.right) };
-      }),
-      bar: { left: Math.round(bar.getBoundingClientRect().left), right: Math.round(bar.getBoundingClientRect().right) },
-    }));
-  await shot(page, 'h248-pr-footer-390');
-  await test.info().attach('layout', { body: JSON.stringify(layout, null, 2), contentType: 'application/json' });
-  expect(layout.overflow).toBeLessThanOrEqual(0);
-  expect(layout.groups).toHaveLength(3);
-  // The merge group (select and Merge…) and Open each sit on one line (within a pixel or two of alignment); the workers'
-  // two buttons only wrap inside their group when it alone is wider than the bar, so it then holds a line of its own.
-  const oneLine = (tops: number[]) => Math.max(...tops) - Math.min(...tops) <= 3;
-  for (const g of layout.groups.slice(1)) expect(oneLine(g.tops), JSON.stringify(g)).toBe(true);
-  const workers = layout.groups[0]!;
-  if (!oneLine(workers.tops)) expect(workers.right - workers.left).toBeGreaterThanOrEqual(layout.bar.right - layout.bar.left - 1);
-  // At 390 px the merge group starts on a line of its own, below the workers' group: no button of one beside the other's.
-  expect(Math.min(...layout.groups[1]!.tops)).toBeGreaterThan(Math.max(...workers.tops));
-  // Every group stays inside the bar.
-  for (const g of layout.groups) {
-    expect(g.left).toBeGreaterThanOrEqual(layout.bar.left - 1);
-    expect(g.right).toBeLessThanOrEqual(layout.bar.right + 1);
-  }
-  clean();
-});
+for (const theme of ['quiet', 'ubuntu'] as const) {
+  test(`the PR footer at 390 px in ${theme}: the groups wrap whole, nothing scrolls sideways`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: 390, height: 640 });
+    if (theme === 'ubuntu') await page.addInitScript(() => localStorage.setItem('h3d.theme.ui', 'ubuntu'));
+    await openPrs(page);
+    await page.evaluate(() => window.__h3d.themeLoaded());
+    await openItem(page, `${HERDR}#35`);
+    await frames(page, 2);
+    const layout = await modal(page)
+      .locator('.bd-actions')
+      .evaluate((bar) => ({
+        overflow: bar.scrollWidth - bar.clientWidth,
+        groups: [...bar.querySelectorAll<HTMLElement>(':scope > .bd-group')].map((g) => {
+          const tops = [...g.children].map((c) => Math.round(c.getBoundingClientRect().top));
+          const r = g.getBoundingClientRect();
+          return { tops, left: Math.round(r.left), right: Math.round(r.right) };
+        }),
+        bar: { left: Math.round(bar.getBoundingClientRect().left), right: Math.round(bar.getBoundingClientRect().right) },
+      }));
+    await shot(page, `h248-pr-footer-390-${theme}`);
+    await test.info().attach('layout', { body: JSON.stringify(layout, null, 2), contentType: 'application/json' });
+    expect(layout.overflow).toBeLessThanOrEqual(0);
+    expect(layout.groups).toHaveLength(3);
+    // Every group keeps its buttons on one line (within a pixel or two of alignment): the workers' (Resolve and Review,
+    // their labels wrapping inside when narrow), the merge group (select and Merge…) and Open. Groups wrap whole.
+    const oneLine = (tops: number[]) => Math.max(...tops) - Math.min(...tops) <= 3;
+    for (const g of layout.groups) expect(oneLine(g.tops), JSON.stringify(g)).toBe(true);
+    const workers = layout.groups[0]!;
+    // At 390 px the merge group starts on a line of its own, below the workers' group: no button of one beside the other's.
+    expect(Math.min(...layout.groups[1]!.tops)).toBeGreaterThan(Math.max(...workers.tops));
+    // Every group stays inside the bar.
+    for (const g of layout.groups) {
+      expect(g.left).toBeGreaterThanOrEqual(layout.bar.left - 1);
+      expect(g.right).toBeLessThanOrEqual(layout.bar.right + 1);
+    }
+    clean();
+  });
+}
 
 test('Settings → Task levels: a level set there is what Resolve offers; a hidden model shows as stale', async ({ page }) => {
   test.setTimeout(150_000);
