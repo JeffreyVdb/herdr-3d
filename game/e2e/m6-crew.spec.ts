@@ -135,7 +135,7 @@ test('#215: a report request is labelled, readable in full, and stops counting o
   const clean = watchErrors(page);
   await openGame(page, 'demo-m6', '', SIM);
   await enter(page);
-  const text = `September parity fails on stale local CUR data. ${'More evidence follows. '.repeat(30)}Or the ORCHESTRATOR ACCEPTANCE of the existing evidence.`;
+  const text = `The nightly sync fails on a stale local cache. ${'More evidence follows. '.repeat(30)}Or the ORCHESTRATOR ACCEPTANCE of the existing evidence.`;
   const hire = await page.evaluate(() => window.__h3d.simCrew({ step: 'hire' }));
   const id = (hire.data as { id: string }).id;
   await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
@@ -179,7 +179,7 @@ test('#215: with "Show the inbox" off the whole request is still one keystroke a
   await openGame(page, 'demo-m6', '', SIM);
   await enter(page);
   // The decision sits at the very end of an 8 KiB-ish report.
-  const text = `Parity fails on stale CUR data. ${'More evidence follows, line after line. '.repeat(190)}Or the ORCHESTRATOR ACCEPTANCE of the existing evidence.`;
+  const text = `Sync fails on a stale cache. ${'More evidence follows, line after line. '.repeat(190)}Or the ORCHESTRATOR ACCEPTANCE of the existing evidence.`;
   const hire = await page.evaluate(() => window.__h3d.simCrew({ step: 'hire' }));
   const id = (hire.data as { id: string }).id;
   await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
@@ -202,7 +202,7 @@ test('#215: with "Show the inbox" off the whole request is still one keystroke a
   await more.focus();
   await page.keyboard.press('Enter');
   const req = page.locator(`#ib-req-${id}`);
-  await expect(req).toContainText('Parity fails on stale CUR data');
+  await expect(req).toContainText('Sync fails on a stale cache');
   await req.focus();
   const top = () => req.evaluate((el) => el.scrollTop);
   const pitch = await page.evaluate(() => window.__h3d.pose()?.pitch);

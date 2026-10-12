@@ -106,7 +106,7 @@ export async function openWhiteboard(page: Page, draw = true): Promise<void> {
 /** #215: a coder's report that asks something of its orchestrator: the look-at bar's request line and the inbox row's request. */
 async function reportRequest(page: Page, long: boolean): Promise<string> {
   await enter(page);
-  const text = `September parity fails on stale local CUR data. ${'More evidence follows. '.repeat(long ? 30 : 1)}Or the ORCHESTRATOR ACCEPTANCE of the existing evidence.`;
+  const text = `The nightly sync fails on a stale local cache. ${'More evidence follows. '.repeat(long ? 30 : 1)}Or the ORCHESTRATOR ACCEPTANCE of the existing evidence.`;
   const hire = await page.evaluate(() => window.__h3d.simCrew({ step: 'hire' }));
   const id = (hire.data as { id: string }).id;
   await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
