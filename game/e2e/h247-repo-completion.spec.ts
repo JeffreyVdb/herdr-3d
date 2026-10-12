@@ -38,6 +38,8 @@ const input = (page: Page) => tx(page).locator('.tx-input');
 const prompts = (page: Page) => page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'worker.prompt').map((c) => (c.args as { text: string }).text));
 
 test('@r: lists this building’s other floors; a pick puts in the folder; the shared switch adds the other building in another client', async ({ page, browser }) => {
+  // Two game instances, each sat at a desk: slow on a loaded host.
+  test.slow();
   const clean = watchErrors(page);
   const key = `h247-${test.info().workerIndex}-${Date.now()}`;
   const sim = `play=none&sim=1&simms=300&simusage=0&simrepos=${key}`;
