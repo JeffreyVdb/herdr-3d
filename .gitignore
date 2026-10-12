@@ -17,3 +17,15 @@ game/public/music/
 game/music/.cache/
 game/music/incoming/*
 !game/music/incoming/.gitkeep
+
+# Private deployment config: real hosts and users live outside the repository
+# (~/.config/h3d/update.env, the helper's helper.env); only the *.example files are tracked.
+update.env
+helper.env
+.env.*
+!.env.example
+!*.example
+
+# Database backups (h3d-update writes world.db.bak, sqlite3 .backup copies).
+*.db.bak
+*.db.*
