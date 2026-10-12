@@ -6,6 +6,7 @@
 #   h3d-update --check      show installed and latest versions, change nothing
 #   h3d-update --rollback   put the previous bridge and helper back
 #   h3d-update --music DIR  rsync the radio's tracks (DIR = game/public/music) to the Mac
+#   h3d-update --server-only  (with any of the above) leave the Mac alone: bridge only (--no-mac)
 #
 # It downloads the release with `gh`, verifies SHA256SUMS, then updates the
 # bridge first (database backup, restart, wait for the new version on
@@ -17,9 +18,22 @@
 #
 # Install once:  install -Dm755 deploy/h3d-update ~/.local/bin/h3d-update
 #
-# Environment (defaults suit devbox + the MacBook):
+# There is no built-in Mac: H3D_MAC comes from the environment, else from the
+# private config file ${XDG_CONFIG_HOME:-~/.config}/h3d/update.env (KEY=VALUE
+# lines, # comments; deploy/update.env.example; read as data, never sourced;
+# only the H3D_MAC, H3D_HELPER_HOST and H3D_HELPER_REMOTE_SOCKET keys). Without
+# a Mac it stops before touching anything, unless --server-only.
+#
+# Migration guard (deprecated, removed with the cutover, issue #253): before the
+# helper binary is swapped, the Mac must say where its bridge is (H3D_HELPER_HOST
+# in its LaunchAgent plist or in its helper config file). If not, the helper
+# config file is installed from H3D_HELPER_HOST / H3D_HELPER_REMOTE_SOCKET here;
+# without those, the update stops before the bridge or the Mac change.
+#
+# Environment:
 #   H3D_REPO      GitHub repo with the releases        JeffreyVdb/herdr-3d
-#   H3D_MAC       ssh destination of the Mac           devmac
+#   H3D_MAC       ssh destination of the Mac           (none: env, else update.env)
+#   H3D_HELPER_HOST, H3D_HELPER_REMOTE_SOCKET   what the guard installs on the Mac (update.env)
 #   H3D_BIN       install dir for herdr-world          ~/.local/bin
 #   H3D_MAC_BIN   install dir for h3d-helper, relative to the Mac's $HOME   .local/bin
 #   H3D_DB        the bridge database                  $XDG_STATE_HOME/herdr-world/world.db
@@ -31,7 +45,7 @@
 set -euo pipefail
 
 REPO=${H3D_REPO:-JeffreyVdb/herdr-3d}
-MAC=${H3D_MAC:-devmac}
+CONF=${XDG_CONFIG_HOME:-$HOME/.config}/h3d/update.env
 BIN=${H3D_BIN:-$HOME/.local/bin}
 MAC_BIN=${H3D_MAC_BIN:-.local/bin}
 DB=${H3D_DB:-${XDG_STATE_HOME:-$HOME/.local/state}/herdr-world/world.db}
@@ -44,6 +58,33 @@ MAC_LABEL=com.jeffreyvdb.h3d-helper
 MAC_PORT=7777
 # Never become (or use) a shared ControlMaster: docs/architecture.md section 7.
 SSH_OPTS=(-o ControlMaster=no -o ControlPath=none -o BatchMode=yes -o ConnectTimeout=10)
+
+# The private config file: KEY=VALUE lines read as data (never sourced), for the
+# keys below only; a variable already set in the environment wins.
+load_conf() {
+  [ -f "$CONF" ] || return 0
+  local line key val
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%$'\r'}
+    line=${line#"${line%%[![:space:]]*}"}
+    case $line in '' | '#'*) continue ;; esac
+    line=${line#export }
+    key=${line%%=*}
+    [ "$key" != "$line" ] || die "$CONF: want KEY=VALUE, got '$line'"
+    key=${key%"${key##*[![:space:]]}"}
+    val=${line#*=}
+    val=${val#"${val%%[![:space:]]*}"}
+    val=${val%"${val##*[![:space:]]}"}
+    case $val in
+      \"*\" | \'*\') [ ${#val} -lt 2 ] || val=${val:1:${#val}-2} ;;
+      *' #'*) val=${val%% \#*}; val=${val%"${val##*[![:space:]]}"} ;;
+    esac
+    case $key in
+      H3D_MAC | H3D_HELPER_HOST | H3D_HELPER_REMOTE_SOCKET)
+        [ -n "${!key:-}" ] || printf -v "$key" %s "$val" ;;
+    esac
+  done <"$CONF"
+}
 
 mode=update
 tag=
@@ -67,7 +108,7 @@ while [ $# -gt 0 ]; do
       mode=music
       if [ $# -gt 1 ] && [[ $2 != -* ]]; then MUSIC_SRC=$2; shift; fi ;;
     --force) force=1 ;;
-    --no-mac) do_mac=0 ;;
+    --no-mac | --server-only) do_mac=0 ;;
     --no-bridge) do_bridge=0 ;;
     --no-backup) backup=0 ;;
     -h|--help) usage; exit 0 ;;
@@ -77,6 +118,16 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+load_conf
+MAC=${H3D_MAC:-}
+HELPER_HOST=${H3D_HELPER_HOST:-}
+HELPER_REMOTE_SOCKET=${H3D_HELPER_REMOTE_SOCKET:-}
+
+# Everything that talks to the Mac needs to know which one: stop now, before anything is downloaded or touched.
+if [ -z "$MAC" ] && { [ "$mode" = music ] || [ "$do_mac" = 1 ]; }; then
+  die "no Mac to update: set H3D_MAC=<ssh destination of the Mac> in the environment or in $CONF (see deploy/update.env.example), or pass --server-only to update the bridge alone"
+fi
 
 # --- probes ----------------------------------------------------------------
 
@@ -220,15 +271,136 @@ command -v gh >/dev/null || die "gh not found (needed to download the release)"
 echo "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || die "'$tag' is not a release tag like v0.2.0"
 
 old_bridge=$(bridge_version | grep . || echo unknown)
+old_mac=unknown
+[ "$do_mac" = 1 ] && old_mac=$(mac_version | grep . || echo unknown)
 if [ "$force" = 0 ]; then
   todo=0
   { [ "$do_bridge" = 1 ] && [ "$old_bridge" != "$tag" ]; } && todo=1
-  { [ "$do_mac" = 1 ] && [ "$(mac_version | grep . || echo unknown)" != "$tag" ]; } && todo=1
+  { [ "$do_mac" = 1 ] && [ "$old_mac" != "$tag" ]; } && todo=1
   if [ "$todo" = 0 ]; then
     say "already at $tag: nothing to do"
     exit 0
   fi
 fi
+
+# --- the Mac helper must know its bridge (migration guard) -------------------
+# The helper has no built-in host. Before the new one is installed, the old
+# configuration must be where it will find it; if it is not, install it from
+# this host's update config, else stop. Runs before the bridge changes, so a
+# refusal leaves both machines as they were. Deprecated with the config file
+# fallback: removed with the cutover, issue #253.
+MAC_HELPER_CONF='Library/Application Support/h3d-helper/helper.env'
+MAC_PLIST=Library/LaunchAgents/$MAC_LABEL.plist
+
+# What "the helper has a bridge host" means is decided by the helper's own
+# rules (internal/app/helper.go: parseHelperConfig, resolveHelperTarget), kept
+# here, in one place, for the probe below; change both together:
+#   - resolution order: $H3D_HELPER_HOST (the plist's EnvironmentVariables), then the
+#     config file; the config file is always parsed, a malformed line is an error;
+#   - config lines: surrounding blanks and an optional `export ` dropped, blank lines
+#     and # comments skipped, KEY=VALUE, a value in matching quotes has them stripped,
+#     an unquoted one ends at " #"; the LAST assignment of a key wins, even an empty one;
+#   - empty and unfilled @PLACEHOLDER@ values are unset (the next source is tried);
+#   - a set host starting with "-" or containing whitespace is rejected.
+# Prints one of: ok-plist, ok-config, missing, bad-config (malformed line),
+# invalid-plist, invalid-config (a set but unusable host). Runs on the Mac under sh.
+read -r -d '' MAC_PROBE <<'PROBE' || true
+cfg_value() { # FILE KEY: the effective value of KEY in FILE; status 2 on a malformed line
+  [ -f "$1" ] || return 0
+  awk -v want="$2" '
+    function trim(s) { sub(/^[ \t\r\f]+/, "", s); sub(/[ \t\r\f]+$/, "", s); return s }
+    { line = $0; if (NR == 1) sub(/^\357\273\277/, "", line); line = trim(line)
+      if (line == "" || substr(line, 1, 1) == "#") next
+      if (substr(line, 1, 7) == "export ") line = trim(substr(line, 8))
+      eq = index(line, "="); key = trim(substr(line, 1, eq - 1))
+      if (eq == 0 || key == "") { bad = 1; next }
+      val = trim(substr(line, eq + 1)); n = length(val); q = substr(val, 1, 1)
+      if (n >= 2 && (q == "\"" || q == "\047") && substr(val, n, 1) == q) val = substr(val, 2, n - 2)
+      else if ((j = index(val, " #")) > 0) val = trim(substr(val, 1, j - 1))
+      if (key == want) found = val }
+    END { if (bad) exit 2; print found }' "$1"
+}
+is_set() { case $1 in '' | @ | @*@) return 1 ;; esac; }
+probe() { # CONFIG-FILE
+  c=$(cfg_value "$1" H3D_HELPER_HOST) || { echo bad-config; return 0; }
+  p=
+  [ -f "$plist" ] && p=$(tr '\n' ' ' <"$plist" |
+    sed -n 's/.*<key>H3D_HELPER_HOST<\/key>[[:space:]]*<string>\([^<]*\)<\/string>.*/\1/p')
+  if is_set "$p"; then src=plist; h=$p
+  elif is_set "$c"; then src=config; h=$c
+  else echo missing; return 0
+  fi
+  case $h in -* | *[[:space:]]*) echo "invalid-$src"; return 0 ;; esac
+  echo "ok-$src"
+}
+PROBE
+
+# The variables the probe script reads, as the Mac will see them.
+# shellcheck disable=SC2016
+mac_probe_paths() { printf 'cfg="$HOME/%s"\nplist="$HOME/%s"\n' "$MAC_HELPER_CONF" "$MAC_PLIST"; }
+
+mac_helper_config_state() {
+  {
+    mac_probe_paths
+    printf '%s\n' "$MAC_PROBE"
+    echo "probe \"\$cfg\""
+  } | mac_sh
+}
+
+# Install the config from update.env. The new file is built beside the old one
+# (an existing file is kept, a missing final newline is added so the new line is
+# its own line, the host goes last so it wins over an earlier empty or
+# placeholder one), checked with the same probe, and only then moved into
+# place: a file that would still not resolve a host is never installed.
+install_mac_helper_config() {
+  local out
+  out=$({
+    mac_probe_paths
+    printf '%s\n' "$MAC_PROBE"
+    cat <<EOF
+set -e
+new="\$cfg.new"
+umask 077
+mkdir -p "\$(dirname "\$cfg")"
+{
+  if [ -s "\$cfg" ]; then
+    cat "\$cfg"
+    [ -z "\$(tail -c1 "\$cfg")" ] || echo
+  else
+    printf '%s\\n' '# h3d-helper private config, installed by h3d-update. Deprecated fallback: removed with the cutover (issue 253).'
+  fi
+  printf '%s\\n' 'H3D_HELPER_HOST=$HELPER_HOST'
+  if [ -n '$HELPER_REMOTE_SOCKET' ] && ! grep -qs '^H3D_HELPER_REMOTE_SOCKET=' "\$cfg"; then
+    printf '%s\\n' 'H3D_HELPER_REMOTE_SOCKET=$HELPER_REMOTE_SOCKET'
+  fi
+} >"\$new"
+state=\$(probe "\$new")
+if [ "\$state" != ok-config ]; then rm -f "\$new"; echo "\$state"; exit 3; fi
+chmod 600 "\$new"
+mv -f "\$new" "\$cfg"
+EOF
+  } | mac_sh) || die "the helper config built from $CONF would not give the Mac's helper a bridge host (${out:-no answer}): check H3D_HELPER_HOST there and ~/$MAC_HELPER_CONF on the Mac; nothing was changed"
+}
+
+ensure_mac_helper_config() {
+  local state v
+  state=$(mac_helper_config_state) || die "cannot check the helper's configuration on the Mac ($MAC)"
+  case $state in
+    ok-*) return 0 ;;
+    missing | invalid-config) ;;
+    bad-config) die "the Mac's ~/$MAC_HELPER_CONF has a line that is not KEY=VALUE, so its helper would not start: fix it (docs/releasing.md); nothing was changed" ;;
+    invalid-plist) die "H3D_HELPER_HOST in the Mac's LaunchAgent plist is not a usable host: fix it (docs/releasing.md); nothing was changed" ;;
+    *) die "unexpected answer from the Mac while checking the helper's configuration: $state" ;;
+  esac
+  [ -n "$HELPER_HOST" ] || die "the Mac's helper has no bridge host (H3D_HELPER_HOST is empty or unfilled in both its LaunchAgent plist and ~/$MAC_HELPER_CONF) and $CONF has none to install: add H3D_HELPER_HOST there (deploy/update.env.example), or configure the Mac (docs/releasing.md); nothing was changed"
+  for v in "$HELPER_HOST" "$HELPER_REMOTE_SOCKET"; do
+    [[ $v =~ ^[A-Za-z0-9@._:/+%-]*$ ]] || die "H3D_HELPER_HOST / H3D_HELPER_REMOTE_SOCKET in $CONF: unexpected characters in '$v'"
+  done
+  install_mac_helper_config
+  say "the Mac's helper had no bridge host: installed ~/$MAC_HELPER_CONF (from $CONF)"
+}
+
+if [ "$do_mac" = 1 ] && { [ "$force" = 1 ] || [ "$old_mac" != "$tag" ]; }; then ensure_mac_helper_config; fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -238,7 +410,6 @@ gh release download "$tag" --repo "$REPO" --dir "$tmp" \
   --pattern herdr-world-linux-amd64 --pattern h3d-helper-darwin-arm64 --pattern SHA256SUMS
 (cd "$tmp" && sha256sum -c --quiet SHA256SUMS) || die "checksum mismatch: nothing was installed"
 
-old_mac=unknown
 mac_changed=0
 
 update_bridge() {
@@ -272,7 +443,6 @@ update_bridge() {
 }
 
 update_mac() {
-  old_mac=$(mac_version | grep . || echo unknown)
   if [ "$force" = 0 ] && [ "$old_mac" = "$tag" ]; then
     say "helper is already $tag"
     return 0

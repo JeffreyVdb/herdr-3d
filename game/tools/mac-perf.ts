@@ -10,12 +10,34 @@
 // in game/test-results/perf/. Every ssh uses ControlMaster=no.
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const GAME = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(GAME, 'test-results', 'perf');
-const MAC = process.env.H3D_MAC ?? 'devmac';
+
+// The Mac is named by $H3D_MAC, else by H3D_MAC= in h3d-update's private config
+// (${XDG_CONFIG_HOME:-~/.config}/h3d/update.env, deploy/update.env.example). No built-in default.
+function macFromUpdateEnv(): string | undefined {
+  const file = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'h3d', 'update.env');
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*(?:export\s+)?H3D_MAC\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s#]*))/.exec(line);
+    if (m) return m[1] ?? m[2] ?? m[3] ?? undefined;
+  }
+  return undefined;
+}
+function noMac(): never {
+  console.error('no Mac to run on: set H3D_MAC=<ssh destination of the Mac>, or H3D_MAC= in ~/.config/h3d/update.env (see deploy/update.env.example)');
+  return process.exit(2);
+}
+const MAC: string = process.env.H3D_MAC || macFromUpdateEnv() || noMac();
 const SSH = ['-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'BatchMode=yes', '-o', 'ServerAliveInterval=15'];
 const port = Number(process.env.PORTLEASE_PREVIEW_PORT);
 if (!port) {

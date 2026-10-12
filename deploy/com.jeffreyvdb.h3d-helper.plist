@@ -2,9 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   h3d-helper as a user LaunchAgent on the Mac (see CONTRIBUTING.md "Helper").
-  launchd does not expand ~ or $HOME: install with
-    sed "s|@HOME@|$HOME|g" deploy/com.jeffreyvdb.h3d-helper.plist > ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist
-  Flags can go into ProgramArguments, or H3D_HELPER_* into EnvironmentVariables.
+  launchd does not expand ~ or $HOME, and it does not see your shell's exports. The helper has
+  no built-in bridge host: fill in the placeholders when installing (user@host of the bridge
+  server, and its bridge socket; leave H3D_HELPER_REMOTE_SOCKET empty to have the helper ask
+  the host for its $XDG_RUNTIME_DIR):
+    sed -e "s|@HOME@|$HOME|g" \
+        -e "s|@H3D_HELPER_HOST@|dev@devbox|g" \
+        -e "s|@H3D_HELPER_REMOTE_SOCKET@|/run/user/1000/herdr-world/bridge.sock|g" \
+        deploy/com.jeffreyvdb.h3d-helper.plist > ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist
+    launchctl bootout gui/$(id -u)/com.jeffreyvdb.h3d-helper 2>/dev/null; launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist
+  Other flags can go into ProgramArguments, other H3D_HELPER_* into EnvironmentVariables.
 -->
 <plist version="1.0">
 <dict>
@@ -28,6 +35,10 @@
 	<dict>
 		<key>PATH</key>
 		<string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>H3D_HELPER_HOST</key>
+		<string>@H3D_HELPER_HOST@</string>
+		<key>H3D_HELPER_REMOTE_SOCKET</key>
+		<string>@H3D_HELPER_REMOTE_SOCKET@</string>
 	</dict>
 	<key>StandardOutPath</key>
 	<string>@HOME@/Library/Logs/h3d-helper.log</string>
