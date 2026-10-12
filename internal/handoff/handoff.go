@@ -104,13 +104,16 @@ func (s *Service) Dir() string { return s.dir }
 // Source is what a handoff is of: the bridge's metadata, never the client's.
 type Source struct {
 	Floor, WorkerID, WorkerName, Label, Harness, Model, Cwd, Branch, AgentSession string
-	// Kind is store.HandoffLiteral (agent and llm later).
+	// Kind is store.HandoffLiteral or (#224) store.HandoffAgent (llm later).
 	Kind string
 	// Turn, Items and Hash are the source's identity (literal: the
 	// transcript candidate's id, its ids and spans as JSON, its hash).
 	Turn, Items, Hash string
 	// Op is the filing operation's idempotency key ("": none).
 	Op string
+	// At is the handoff's date (zero: now). #224: an agent's is the
+	// request's, the date its prompt gave.
+	At time.Time
 }
 
 // File files body as a handoff of src. existing: the operation (or the same
@@ -149,7 +152,10 @@ func (s *Service) File(ctx context.Context, src Source, body string) (h store.Ha
 			return store.Handoff{}, false, err
 		}
 	}
-	now := s.now()
+	now := src.At
+	if now.IsZero() {
+		now = s.now()
+	}
 	h = store.Handoff{Floor: src.Floor, WorkerID: src.WorkerID, WorkerName: src.WorkerName, Label: src.Label,
 		Harness: src.Harness, Model: src.Model, Cwd: src.Cwd, Branch: src.Branch, AgentSession: src.AgentSession,
 		Title: Title(body, src.WorkerName, now), CreatedAt: now.UnixMilli(), Source: src.Kind, SourceTurn: src.Turn,

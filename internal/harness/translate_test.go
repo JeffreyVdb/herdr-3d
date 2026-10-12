@@ -230,3 +230,13 @@ func TestTranslateNeverShrinksPastAQuarter(t *testing.T) {
 		t.Fatalf("worst case: %q", out)
 	}
 }
+
+// #224: a skill's native spelling comes from the harness's rules.
+func TestSkillCall(t *testing.T) {
+	if got := SkillCall("codex", "handoff"); got != "$handoff" {
+		t.Errorf("codex: %q", got)
+	}
+	if got := SkillCall("claude", "handoff"); got != "/handoff" {
+		t.Errorf("claude: %q", got)
+	}
+}

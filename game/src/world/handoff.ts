@@ -1,4 +1,4 @@
-import type { HandoffAdded, HandoffCabinet, HandoffCandidate, HandoffEntry, HandoffRemoved, Worker } from '../net/protocol';
+import type { AgentHandoff, CacheState, HandoffAdded, HandoffCabinet, HandoffCandidate, HandoffEntry, HandoffRemoved, UsageCache, Worker } from '../net/protocol';
 
 /**
  * #223 handoffs, the game's side: pure logic, no DOM. The bridge owns the candidate (`Worker.handoff`: its identity,
@@ -140,4 +140,72 @@ export class HandoffBook {
     this.filed = [];
     return out;
   }
+}
+
+// ---- #224: asking the agent ----
+
+/**
+ * The composer's exact top-level "/handoff [instruction]" (the bridge reads the same rule before translating): the
+ * trimmed text starts with "/handoff" and a blank or the end. The instruction ("" for none); null when the text is
+ * any other prompt (prose, a quoted example, a path, a longer name).
+ */
+export function handoffCommand(text: string): string | null {
+  const t = text.trim();
+  if (!t.startsWith('/handoff')) return null;
+  const rest = t.slice('/handoff'.length);
+  if (rest !== '' && !/^\s/u.test(rest)) return null;
+  return rest.trim();
+}
+
+/**
+ * A cache's estimated state at `now` (unix ms), the bridge's rule (usage.CacheState): warm only before the earliest
+ * expiry, expired only after the latest, else unknown. Never a promise that the next request hits.
+ */
+export function cacheState(c: UsageCache | null | undefined, now: number): CacheState {
+  if (!c) return 'unknown';
+  if ((c.expires_from ?? 0) > 0 && now < (c.expires_from ?? 0)) return 'warm';
+  if ((c.expires_to ?? 0) > 0 && now > (c.expires_to ?? 0)) return 'expired';
+  return 'unknown';
+}
+
+const mins = (ms: number) => (ms >= 3_600_000 && ms % 3_600_000 === 0 ? `${ms / 3_600_000} h` : `${Math.round(ms / 60_000)} min`);
+const tokensWord = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n));
+
+/** The estimate as the dialog says it: a short label, the sentence, and the evidence line. Context tokens, never the JSONL's size. */
+export function cacheCopy(c: UsageCache | null | undefined, state: CacheState, contextTokens?: number): { label: string; line: string; evidence: string } {
+  const n = c?.context_tokens || contextTokens || 0;
+  const about = n > 0 ? ` (about ${tokensWord(n)} tokens)` : '';
+  const label = state === 'warm' ? 'Likely warm' : state === 'expired' ? 'May have expired' : 'Unknown';
+  const line =
+    state === 'warm'
+      ? `Agent cache is likely still warm, an estimate: the request can reuse the current conversation context${about}, though a reuse is never certain.`
+      : `Agent cache may have expired. Generating a handoff can process the current conversation context again${about}.`;
+  const bits: string[] = [];
+  if (c) {
+    const ttl = c.ttl_min_ms && c.ttl_max_ms && c.ttl_min_ms !== c.ttl_max_ms ? `${mins(c.ttl_min_ms)}–${mins(c.ttl_max_ms)}` : c.ttl_min_ms ? `${c.ttl_max_ms ? '' : 'at least '}${mins(c.ttl_min_ms)}` : '';
+    const src: Record<string, string> = {
+      observed_1h: 'observed 1-hour cache writes',
+      observed_5m: 'observed 5-minute cache writes',
+      observed_mixed: 'observed 5-minute and 1-hour writes',
+      documented: 'the provider’s documented default',
+      assumed: 'assumed: this route’s lifetime is not documented',
+      unknown: 'no evidence yet',
+    };
+    bits.push(ttl ? `Kept ${ttl}, from ${src[c.policy] ?? c.policy}` : `Lifetime unknown (${src[c.policy] ?? c.policy})`);
+    if (c.request_to) bits.push(`last request ${c.request_from ? '' : 'by '}${new Date(c.request_to).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+    if (c.cache_read) bits.push(`it reused ${tokensWord(c.cache_read)} cached tokens`);
+    if (c.reason) bits.push(c.reason);
+  } else bits.push('No cache evidence read yet');
+  return { label, line, evidence: bits.join(' · ') };
+}
+
+/** A request's outcome as a toast (null: nothing to say yet). */
+export function agentHandoffNote(a: AgentHandoff | null | undefined, name: string): { text: string; kind: 'info' | 'error' } | null {
+  if (!a) return null;
+  if (a.state === 'filed') {
+    const home = a.send_home_result === 'started' ? ` ${name} is on the way home.` : a.send_home_result === 'skipped' ? ` ${name} stays: ${a.send_home_reason ?? 'it can’t go now'}.` : '';
+    return { text: `Filed ${name}’s handoff, written by its agent.${home}`, kind: 'info' };
+  }
+  if (a.state === 'failed') return { text: `${name}’s agent handoff was not filed: ${a.reason ?? 'it failed'}. ${name} stays; nobody was sent home.`, kind: 'error' };
+  return null;
 }

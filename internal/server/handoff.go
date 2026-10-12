@@ -278,6 +278,9 @@ func (h *Hub) startHandoffPreview(ctx context.Context, c *Client, cmd proto.Comm
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	if a.Mode == proto.HandoffModeAgent { // #224
+		return h.startAgentPreview(ctx, c, cmd, a)
+	}
 	w, hc, err := h.handoffCandOf(a.Worker, "", a.Candidate, "")
 	if err != nil {
 		return err
@@ -292,7 +295,7 @@ func (h *Hub) startHandoffPreview(ctx context.Context, c *Client, cmd proto.Comm
 			return nil, err
 		}
 		text, cut := previewText(body, proto.HandoffPreviewBytes)
-		return proto.WorkerHandoffPreviewResult{Candidate: cand, Text: text, Truncated: cut, Title: handoff.Title(body, name, now),
+		return proto.WorkerHandoffPreviewResult{Candidate: &cand, Text: text, Truncated: cut, Title: handoff.Title(body, name, now),
 			Provenance: prov, CanSendHome: blocked == "", SendHomeBlocked: blocked}, nil
 	})
 	return nil
@@ -323,9 +326,15 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	if a.Mode == proto.HandoffModeAgent { // #224
+		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.Worker, op: a.Op, instruction: a.Instruction, sendHome: a.SendHome,
+			answer: func(r proto.AgentHandoff, existing, _ bool) any {
+				return proto.WorkerHandoffRequestResult{Request: r, Existing: existing}
+			}})
+	}
 	switch {
 	case a.Mode != proto.HandoffModeLiteral:
-		return bad("mode must be %q, got %q", proto.HandoffModeLiteral, a.Mode)
+		return bad("mode must be %q or %q, got %q", proto.HandoffModeLiteral, proto.HandoffModeAgent, a.Mode)
 	case !handoffOp.MatchString(a.Op):
 		return bad("op must be 1–%d characters of A-Z, a-z, 0-9, _ and -", proto.MaxHandoffOp)
 	case a.Session == "" || a.Candidate == "" || a.Revision == "":
@@ -384,7 +393,7 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 					h.log.Info("handoff filed", "worker", w.ID, "handoff", filed.ID, "path", filed.Path, "bytes", rep.Bytes)
 				}
 				if a.SendHome {
-					res.SendHome, res.SendHomeReason = h.handoffSendHome(ctx, c, a.Worker, filed.ID)
+					res.SendHome, res.SendHomeReason = h.handoffSendHome(ctx, c.name, a.Worker, filed.ID)
 					rep.SendHome, rep.Reason = res.SendHome, res.SendHomeReason
 				}
 			} else {
@@ -409,7 +418,7 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 // handoffSendHome sends a worker home after its handoff was filed (hub
 // goroutine): worker.fire's path with the worktree kept, its own audit row,
 // when the worker may go now; else skipped and why.
-func (h *Hub) handoffSendHome(ctx context.Context, c *Client, id string, handoffID int64) (string, string) {
+func (h *Hub) handoffSendHome(ctx context.Context, by string, id string, handoffID int64) (string, string) {
 	w := h.workers[id]
 	if w == nil {
 		return proto.HandoffSendSkipped, "the worker is gone"
@@ -426,7 +435,7 @@ func (h *Hub) handoffSendHome(ctx context.Context, c *Client, id string, handoff
 		return proto.HandoffSendSkipped, err.Error()
 	}
 	args, _ := json.Marshal(map[string]any{"id": id, "worktree": proto.FireKeep, "handoff": handoffID})
-	auditID, err := h.st.AuditBegin(ctx, c.name, proto.CmdWorkerFire, args)
+	auditID, err := h.st.AuditBegin(ctx, by, proto.CmdWorkerFire, args)
 	if err != nil {
 		return proto.HandoffSendSkipped, "the audit log could not be written: " + err.Error()
 	}
@@ -529,6 +538,8 @@ func handoffErrorCode(err error) string {
 		return proto.ErrHandoffUnavailable
 	case errors.Is(err, errHandoffFailed), errors.Is(err, handoff.ErrOutside):
 		return proto.ErrHandoffFailed
+	case errors.Is(err, errSkillMissing): // #224
+		return proto.ErrHandoffSkillMissing
 	}
 	return ""
 }

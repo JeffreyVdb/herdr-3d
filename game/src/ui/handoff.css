@@ -492,3 +492,40 @@
     transition: none;
   }
 }
+
+/* ---- #224: Ask the agent ------------------------------------------------------ */
+
+/* The three ways to file: the sendHome radio rows, packed tighter (they lead the dialog, not decide it). */
+.ho-modes {
+  margin: 0;
+  gap: 2px;
+}
+.ho-instruction textarea {
+  min-height: 3.2em;
+  resize: vertical;
+}
+/* The cache estimate: a warning while it may have expired or is unknown; quiet (the well) while likely warm. */
+.ho-cache[data-level='ok'] {
+  border-color: var(--line);
+  background: var(--well);
+}
+.ho-cache .tape {
+  margin-right: 4px;
+  vertical-align: 1px;
+}
+.ho-cache .btn {
+  margin-top: 8px;
+}
+.ho-request .tape {
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+/* Side by side where the dialog has the room: they lead the dialog, they don't fill it. */
+@media (min-width: 600px) {
+  .ho-modes {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .ho-modes legend {
+    grid-column: 1 / -1;
+  }
+}

@@ -145,6 +145,10 @@ type InputItem struct {
 type WorkerPromptArgs struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
+	// Op (#224, optional): the operation id of a "/handoff [instruction]"
+	// prompt (1–64 of [A-Za-z0-9_-]), which becomes an agent handoff
+	// request: a repeated submit with it answers the first.
+	Op string `json:"op,omitempty"`
 }
 
 // PromptResult is the ack data of worker.prompt.
@@ -164,6 +168,11 @@ type PromptResult struct {
 	// worker's app-server (herdr refuses a prompt while Codex's async
 	// question shows the worker as blocked); absent when herdr sent it.
 	Via string `json:"via,omitempty"`
+	// Handoff (#224): the prompt was "/handoff [instruction]" and became
+	// this agent handoff request (Existing: one with its op, or the
+	// worker's pending one, was answered; nothing was sent again).
+	Handoff  *AgentHandoff `json:"handoff,omitempty"`
+	Existing bool          `json:"existing,omitempty"`
 }
 
 // Question is what a blocked worker's screen asks.

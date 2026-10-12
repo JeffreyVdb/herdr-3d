@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { HandoffCandidate, Worker } from '../net/protocol';
-import { drawerFill, handoffRow, HandoffBook, hireTask, newOp, noCandidateWhy, omittedNote, snippetRuns } from './handoff';
+import type { AgentHandoff, HandoffCandidate, UsageCache, Worker } from '../net/protocol';
+import { agentHandoffNote, cacheCopy, cacheState, drawerFill, handoffCommand, handoffRow, HandoffBook, hireTask, newOp, noCandidateWhy, omittedNote, snippetRuns } from './handoff';
 
 const claude: HandoffCandidate = { id: 'c1', session: 's', revision: 'r', harness: 'claude', message: 'msg_1', source: 'message', bytes: 5 };
 const codex: HandoffCandidate = { id: 'c2', session: 's', revision: 'r', harness: 'codex', message: 'msg_c', source: 'message', bytes: 5 };
@@ -67,5 +67,50 @@ describe('the rest', () => {
     expect(b.takeFiled()).toEqual([]);
     b.removed({ t: 'handoff.removed', seq: 2, session: 'f', handoff_id: 3, handoff_count: 2 });
     expect(b.count('f')).toBe(2);
+  });
+});
+
+describe('#224 handoffCommand', () => {
+  it('reads an exact top-level /handoff and its instruction', () => {
+    expect(handoffCommand('/handoff')).toBe('');
+    expect(handoffCommand('  /handoff focus on the tests\n')).toBe('focus on the tests');
+    expect(handoffCommand('/handoff\nmulti\nline')).toBe('multi\nline');
+  });
+  it('leaves prose, quotes, paths and longer names alone', () => {
+    for (const t of ['run /handoff later', '`/handoff`', '/handoff/x.md', '/handoffs', '"/handoff"']) expect(handoffCommand(t)).toBeNull();
+  });
+});
+
+describe('#224 cacheState and cacheCopy', () => {
+  const c: UsageCache = { estimated: true, policy: 'observed_1h', ttl_min_ms: 3_600_000, ttl_max_ms: 3_600_000, request_from: 1000, request_to: 5000, expires_from: 3_601_000, expires_to: 3_605_000, context_tokens: 48_200 };
+  it('is warm only before the earliest expiry, expired only after the latest', () => {
+    expect(cacheState(c, 3_600_999)).toBe('warm');
+    expect(cacheState(c, 3_603_000)).toBe('unknown');
+    expect(cacheState(c, 3_605_001)).toBe('expired');
+    expect(cacheState({ ...c, expires_from: 0 }, 2000)).toBe('unknown');
+    expect(cacheState({ ...c, expires_to: 0 }, 9e12)).toBe('unknown');
+    expect(cacheState(undefined, 1)).toBe('unknown');
+  });
+  it('says the ticket’s words with context tokens, never the transcript’s size', () => {
+    const cold = cacheCopy(c, 'expired');
+    expect(cold.line).toBe('Agent cache may have expired. Generating a handoff can process the current conversation context again (about 48k tokens).');
+    expect(cold.label).toBe('May have expired');
+    expect(cold.evidence).toContain('Kept 1 h, from observed 1-hour cache writes');
+    expect(cacheCopy(c, 'unknown').line).toMatch(/^Agent cache may have expired/);
+    expect(cacheCopy(c, 'warm').line).toMatch(/likely still warm, an estimate/);
+    expect(cacheCopy({ estimated: true, policy: 'assumed', reason: 'ChatGPT-subscription cache lifetime is not documented' }, 'unknown').evidence).toMatch(/^Lifetime unknown \(assumed/);
+    expect(cacheCopy({ ...c, ttl_max_ms: 0, ttl_min_ms: 1_800_000, policy: 'documented' }, 'warm').evidence).toContain('Kept at least 30 min');
+    expect(cacheCopy(undefined, 'unknown', 900).line).toContain('(about 900 tokens)');
+    for (const s of ['warm', 'expired', 'unknown'] as const) expect(cacheCopy(c, s).line).not.toMatch(/JSONL|transcript|whole/i);
+  });
+});
+
+describe('#224 agentHandoffNote', () => {
+  const base: AgentHandoff = { op: 'o', state: 'pending', started_at: 1 };
+  it('says filed, failed, or nothing while it runs', () => {
+    expect(agentHandoffNote(base, 'Ada')).toBeNull();
+    expect(agentHandoffNote({ ...base, state: 'filed', send_home_result: 'started' }, 'Ada')?.text).toBe('Filed Ada’s handoff, written by its agent. Ada is on the way home.');
+    const f = agentHandoffNote({ ...base, state: 'failed', reason: 'a person took over' }, 'Ada');
+    expect(f).toEqual({ text: 'Ada’s agent handoff was not filed: a person took over. Ada stays; nobody was sent home.', kind: 'error' });
   });
 });

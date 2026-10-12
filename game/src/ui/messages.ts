@@ -83,6 +83,7 @@ const DOES: Record<CommandName | LogoAction, string> = {
   // #223
   'worker.handoff_preview': 'file handoffs',
   'worker.handoff': 'file handoffs',
+  'worker.handoff_cancel': 'cancel handoff requests',
   'handoff.list': 'open the filing cabinet',
   'handoff.get': 'open the filing cabinet',
   'handoff.delete': 'delete handoffs',
@@ -152,6 +153,8 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
       return `${ctx.worker ?? 'The worker'}’s last reply can’t be filed now: ${why.replace(/^no such handoff candidate:\s*/, '') || 'a newer turn started'}. Nothing was filed.`;
     case 'handoff_source':
       return `The reply in ${ctx.worker ?? 'the worker'}’s transcript is not what it was (the file was replaced, cut or changed), so nothing was filed.`;
+    case 'handoff_skill_missing': // #224: nothing was sent to the agent
+      return `${ctx.worker ?? 'The worker'}’s agent can’t be asked for a handoff: ${why.replace(/^no handoff skill:\s*/, '') || 'it has no handoff skill'}. Nothing was sent; save its last message instead.`;
     case 'handoff_failed':
       return `The handoff was not filed: ${why.replace(/^filing the handoff failed:\s*/, '') || 'writing it failed'}. Nobody was sent home.`;
     case 'too_large':

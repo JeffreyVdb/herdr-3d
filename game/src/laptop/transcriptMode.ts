@@ -13,6 +13,7 @@ import { TranscriptDrafts } from './transcriptDrafts';
 import { AsyncDrafts } from './asyncDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
+import { handoffCommand, newOp } from '../world/handoff';
 
 export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost, TranscriptView };
 
@@ -107,6 +108,8 @@ const RELIST_MS = 300;
 const MODES_MAX = 64;
 /** How many of a subagent's items its nested timeline shows (the newest; the bridge's most). */
 const SUBAGENT_LIMIT = 500;
+/** #224: a command's outcome is not known (it may have run, or not gone at all): a retry must keep its op. */
+const UNANSWERED = new Set(['timeout', 'disconnected', 'offline']);
 
 function readModes(s: Storage | null, key = MODES_KEY): string[] {
   try {
@@ -243,6 +246,12 @@ export class TranscriptMode {
    * stand up but the send does not, nor does the draft it came from: sitting there again must not send it twice.
    */
   private readonly prompting = new Set<string>();
+  /**
+   * #224: each worker's composer "/handoff" not answered for sure (its ack lost: the connection dropped, it timed out),
+   * with its text and op: sending the same text to the same worker again reuses the op, so the bridge answers the request
+   * it may have started (or filed) instead of asking the agent twice. An answer, a refusal or other text drops it.
+   */
+  private readonly handoffOps = new Map<string, { text: string; op: string }>();
 
   constructor(private readonly host: TranscriptModeHost) {
     this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage });
@@ -603,9 +612,12 @@ export class TranscriptMode {
     this.pendingChanged(s);
     this.prompting.add(s.id);
     // Resolves whether it went: a refused prompt goes back in the box.
-    return this.host.send('worker.prompt', { id: s.id, text: t }).then((r) => {
+    // #224: an exact "/handoff [instruction]" becomes an agent handoff request: one op, so a retry asks once.
+    const op = this.handoffOp(s.id, t);
+    return this.host.send('worker.prompt', { id: s.id, text: t, ...(op ? { op } : {}) }).then((r) => {
       // Answered (the client never rejects; it times out): this worker takes the next one, from whichever seat.
       this.prompting.delete(s.id);
+      if (op && (r.ok || !UNANSWERED.has(r.code)) && this.handoffOps.get(s.id)?.op === op) this.handoffOps.delete(s.id);
       if (!live()) return r.ok;
       const ack = (r.ok ? (r.data ?? {}) : {}) as Partial<PromptAck>;
       if (r.ok && ack.terminal === true) {
@@ -616,6 +628,24 @@ export class TranscriptMode {
         this.pendingChanged(s);
         this.host.status('ok', `Sent to ${s.name}: it shows in the terminal`);
         if (s.mode !== 'terminal') this.setMode('terminal', false);
+        return true;
+      }
+      if (r.ok && ack.handoff) {
+        // #224: the bridge sent its own request (the skill, where to save, the marker), which the transcript shows;
+        // the outcome follows on the worker (a toast when it is filed or fails).
+        s.pending = s.pending.filter((x) => x.id !== p.id);
+        this.pendingChanged(s);
+        const a = ack.handoff;
+        this.host.status(
+          a.state === 'failed' ? 'error' : 'ok',
+          a.state === 'failed'
+            ? `${s.name}’s agent handoff was not filed: ${a.reason ?? 'it failed'}`
+            : a.state === 'filed'
+              ? `${s.name}’s handoff is filed`
+              : ack.existing
+                ? `${s.name} is already writing a handoff: nothing was sent again`
+                : `Asked ${s.name}’s agent for a handoff: it is filed once its turn ends with the file written`,
+        );
         return true;
       }
       if (r.ok) this.host.status('ok', `Sent to ${s.name}`);
@@ -640,6 +670,22 @@ export class TranscriptMode {
       this.pendingChanged(s);
       return r.ok;
     });
+  }
+
+  /**
+   * #224: the op of a composer prompt to worker id that is "/handoff [instruction]": the unanswered one's for the same
+   * text, else a new one. Any other prompt has none, and the unanswered one is dropped (the person moved on).
+   */
+  private handoffOp(id: string, text: string): string | undefined {
+    if (handoffCommand(text) === null) {
+      this.handoffOps.delete(id);
+      return undefined;
+    }
+    const kept = this.handoffOps.get(id);
+    if (kept && kept.text === text) return kept.op;
+    const op = newOp();
+    this.handoffOps.set(id, { text, op });
+    return op;
   }
 
   private renderHost(s: Sitting): TranscriptRenderHost {

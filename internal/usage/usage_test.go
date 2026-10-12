@@ -55,8 +55,17 @@ func TestClaudeFixture(t *testing.T) {
 	if !near(wantCost, 0.018165) {
 		t.Fatalf("hand-computed %v", wantCost)
 	}
+	// The cache: msg_a wrote both (600 × 5m, 400 × 1h), so the policy is mixed;
+	// req_b only read (it refreshed the cache, not the policy). The fixture has
+	// no timestamps, so no timing.
+	wantCache := proto.UsageCache{Estimated: true, Provider: proto.CacheProviderAnthropic, Model: "claude-opus-5-5",
+		Policy: proto.CachePolicyObservedMixed, TTLMin: ttl5m, TTLMax: ttl1h, CacheRead: 12000, ContextTokens: 12050,
+		Reason: "no prompt or tool result before the last request: its start is unknown"}
+	if u.Cache == nil || *u.Cache != wantCache {
+		t.Fatalf("cache = %+v\nwant    %+v", u.Cache, wantCache)
+	}
 	got := u
-	got.ContextPct = nil
+	got.ContextPct, got.Cache = nil, nil
 	if got != want {
 		t.Fatalf("usage = %+v\nwant    %+v", got, want)
 	}
@@ -119,8 +128,16 @@ func TestCodexFixture(t *testing.T) {
 	// GPT-6 Sol: (100000 − 60000 cached) × 2 + 60000 × 0.20 + 10000 × 10.
 	want := proto.Usage{Tokens: 40000 + 10000, Input: 40000, Output: 10000, CacheRead: 60000, CostUSDEst: 0.192,
 		Priced: proto.PricedKnown, Model: "gpt-6-sol", ContextWindow: 258400, ContextTokens: 50000}
+	// The cache: the last request that read it (cached 30000) at GPT-6 Sol on
+	// no known route (no auth.json): assumed, 30 minutes or more.
+	wantCache := proto.UsageCache{Estimated: true, Provider: proto.CacheProviderOpenAI, Model: "gpt-6-sol",
+		Policy: proto.CachePolicyAssumed, TTLMin: ttl30m, CacheRead: 30000, ContextTokens: 50000,
+		Reason: "no turn start before the last request: its start is unknown"}
+	if u.Cache == nil || *u.Cache != wantCache {
+		t.Fatalf("cache = %+v\nwant    %+v", u.Cache, wantCache)
+	}
 	got := u
-	got.ContextPct = nil
+	got.ContextPct, got.Cache = nil, nil
 	if !near((40000*2+60000*0.20+10000*10)/1e6, 0.192) || got != want {
 		t.Fatalf("usage = %+v\nwant    %+v", got, want)
 	}

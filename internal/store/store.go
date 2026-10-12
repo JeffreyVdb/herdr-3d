@@ -187,6 +187,8 @@ var migrations = []string{
 	migrationKaneo,
 	// #223: the filing cabinet's handoffs and their full-text index.
 	migrationHandoff,
+	// #224: agent handoff requests, pending until filed or failed.
+	migrationHandoffRequest,
 }
 
 // Fingerprint kinds.

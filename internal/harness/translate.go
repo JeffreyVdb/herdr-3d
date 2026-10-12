@@ -73,6 +73,16 @@ func endsInSkillToken(text, sigil string) bool {
 	return true
 }
 
+// SkillCall is how harness kind runs skill name from a prompt (#224): the
+// harness's sigil and the name ("$handoff" for Codex), "/name" for a
+// harness with no rules (Claude Code).
+func SkillCall(kind, name string) string {
+	if r, ok := harnessRules[kind]; ok && r.skillSigil != "" {
+		return r.skillSigil + name
+	}
+	return "/" + name
+}
+
 // Rewrites reports whether Translate may change a prompt for this harness
 // kind: false lets the caller skip the lookups it would feed Translate.
 func Rewrites(kind string) bool {

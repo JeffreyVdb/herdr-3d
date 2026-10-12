@@ -15,6 +15,9 @@ const (
 	CmdHandoffList   = "handoff.list"
 	CmdHandoffGet    = "handoff.get"
 	CmdHandoffDelete = "handoff.delete"
+	// CmdWorkerHandoffCancel (#224) cancels a worker's pending agent
+	// handoff request, or dismisses its failed one.
+	CmdWorkerHandoffCancel = "worker.handoff_cancel"
 )
 
 // Events: a handoff was filed (Handoff, HandoffCount) or deleted
@@ -25,11 +28,24 @@ const (
 )
 
 func init() {
-	Commands = append(Commands, CmdWorkerHandoffPreview, CmdWorkerHandoff, CmdHandoffList, CmdHandoffGet, CmdHandoffDelete)
+	Commands = append(Commands, CmdWorkerHandoffPreview, CmdWorkerHandoff, CmdHandoffList, CmdHandoffGet, CmdHandoffDelete,
+		CmdWorkerHandoffCancel)
 }
 
-// Handoff modes: literal (#223); agent and llm are later parts of #11.
-const HandoffModeLiteral = "literal"
+// Handoff modes: literal (#223), agent (#224: the worker's agent writes it
+// with its own handoff skill); llm is a later part of #11.
+const (
+	HandoffModeLiteral = "literal"
+	HandoffModeAgent   = "agent"
+	HandoffModeLLM     = "llm"
+)
+
+// HandoffSkill is the skill an agent handoff runs (#224), and
+// DefaultHandoffInstruction its instruction when none is given.
+const (
+	HandoffSkill              = "handoff"
+	DefaultHandoffInstruction = "summarize the conversation"
+)
 
 // Handoff sources, kept with each handoff.
 const (
@@ -55,6 +71,9 @@ const (
 	// ErrHandoffFailed: writing the file or registering it failed; nothing
 	// was filed.
 	ErrHandoffFailed = "handoff_failed"
+	// ErrHandoffSkillMissing (#224): the worker's harness lists no handoff
+	// skill in its checkout; nothing was sent.
+	ErrHandoffSkillMissing = "handoff_skill_missing"
 )
 
 // Limits.
@@ -67,6 +86,8 @@ const (
 	MaxHandoffBytes = 1 << 20
 	// MaxHandoffOp bounds an operation id.
 	MaxHandoffOp = 64
+	// MaxHandoffInstruction bounds an agent handoff's instruction (bytes).
+	MaxHandoffInstruction = 4 << 10
 )
 
 // HandoffCandidate is a worker's latest completed final reply that a literal
@@ -128,10 +149,29 @@ type HandoffProvenance struct {
 	Session    string `json:"session,omitempty"`
 }
 
-// WorkerHandoffPreviewArgs are the args of worker.handoff_preview.
+// WorkerHandoffPreviewArgs are the args of worker.handoff_preview. #224:
+// with mode "agent" no candidate is needed: the preview is what asking the
+// agent would do (Agent, Cache), with the candidate's text when Candidate
+// names the current one.
 type WorkerHandoffPreviewArgs struct {
 	Worker    string `json:"worker"`
-	Candidate string `json:"candidate"`
+	Candidate string `json:"candidate,omitempty"`
+	Mode      string `json:"mode,omitempty"`
+}
+
+// AgentHandoffPreview is what asking the worker's agent would do (#224):
+// the skill call its harness gets ("/handoff", "$handoff"; "" when it has
+// no handoff skill), whether it can be asked now (CannotAsk says why not:
+// not idle or done, a question, a request running, no skill, the skills
+// could not be listed), the provider and model that receive the request,
+// and the instruction used when none is given.
+type AgentHandoffPreview struct {
+	Call        string `json:"call,omitempty"`
+	CanAsk      bool   `json:"can_ask"`
+	CannotAsk   string `json:"cannot_ask,omitempty"`
+	Harness     string `json:"harness,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Instruction string `json:"instruction"`
 }
 
 // WorkerHandoffPreviewResult is its ack: the candidate, its text (the first
@@ -139,13 +179,19 @@ type WorkerHandoffPreviewArgs struct {
 // get, the provenance, and whether "send home after filing" can be offered
 // now (SendHomeBlocked says why not).
 type WorkerHandoffPreviewResult struct {
-	Candidate       HandoffCandidate  `json:"candidate"`
-	Text            string            `json:"text"`
+	// Candidate, Text, Truncated and Title: the literal candidate (#224:
+	// absent in an agent preview without one).
+	Candidate       *HandoffCandidate `json:"candidate,omitempty"`
+	Text            string            `json:"text,omitempty"`
 	Truncated       bool              `json:"truncated,omitempty"`
-	Title           string            `json:"title"`
+	Title           string            `json:"title,omitempty"`
 	Provenance      HandoffProvenance `json:"provenance"`
 	CanSendHome     bool              `json:"can_send_home"`
 	SendHomeBlocked string            `json:"send_home_blocked,omitempty"`
+	// #224, agent previews: what asking the agent would do, and the
+	// agent's prompt cache as estimated now (absent: no evidence read).
+	Agent *AgentHandoffPreview `json:"agent,omitempty"`
+	Cache *CacheEstimate       `json:"cache,omitempty"`
 }
 
 // WorkerHandoffArgs are the args of worker.handoff: the worker, the mode
@@ -153,14 +199,67 @@ type WorkerHandoffPreviewResult struct {
 // them, whether to send the worker home after filing, and the operation id
 // (1–64 characters of [A-Za-z0-9_-], one per dialog: a repeated submit with
 // it files nothing again and answers the first handoff).
+//
+// #224, mode "agent": no candidate; Instruction (optional, at most
+// MaxHandoffInstruction bytes; blank: DefaultHandoffInstruction) is what
+// the agent's handoff skill is asked to do. The ack is
+// WorkerHandoffRequestResult.
 type WorkerHandoffArgs struct {
-	Worker    string `json:"worker"`
-	Mode      string `json:"mode"`
-	Session   string `json:"session"`
-	Candidate string `json:"candidate"`
-	Revision  string `json:"revision"`
-	SendHome  bool   `json:"send_home,omitempty"`
-	Op        string `json:"op"`
+	Worker      string `json:"worker"`
+	Mode        string `json:"mode"`
+	Session     string `json:"session,omitempty"`
+	Candidate   string `json:"candidate,omitempty"`
+	Revision    string `json:"revision,omitempty"`
+	Instruction string `json:"instruction,omitempty"`
+	SendHome    bool   `json:"send_home,omitempty"`
+	Op          string `json:"op"`
+}
+
+// Agent handoff request states (AgentHandoff.State).
+const (
+	// AgentHandoffStarting: checked, its prompt not sent yet.
+	AgentHandoffStarting = "starting"
+	// AgentHandoffPending: the prompt was sent; the bridge waits for the
+	// agent's turn to end with the file written.
+	AgentHandoffPending = "pending"
+	// AgentHandoffFiling: both seen; the file is being filed.
+	AgentHandoffFiling = "filing"
+	// AgentHandoffFiled: filed (Handoff), and sent home when asked.
+	AgentHandoffFiled = "filed"
+	// AgentHandoffFailed: not filed (Reason); the worker stays. A retry is
+	// a new request (a new op).
+	AgentHandoffFailed = "failed"
+)
+
+// AgentHandoff is an agent handoff request (#224): its op, state, why it
+// failed, when it started (unix ms), the instruction given, whether the
+// worker goes home once it is filed, the handoff it was filed as, and how
+// the send home went.
+type AgentHandoff struct {
+	Op             string `json:"op"`
+	State          string `json:"state"`
+	Reason         string `json:"reason,omitempty"`
+	StartedAt      int64  `json:"started_at"`
+	Instruction    string `json:"instruction,omitempty"`
+	SendHome       bool   `json:"send_home,omitempty"`
+	Handoff        int64  `json:"handoff,omitempty"`
+	SendHomeResult string `json:"send_home_result,omitempty"`
+	SendHomeReason string `json:"send_home_reason,omitempty"`
+}
+
+// WorkerHandoffRequestResult is worker.handoff's ack in mode "agent": the
+// request (Existing: its op was known, or the worker's pending request
+// answered; nothing was sent again) and, once filed, its handoff.
+type WorkerHandoffRequestResult struct {
+	Request  AgentHandoff  `json:"request"`
+	Handoff  *HandoffEntry `json:"handoff,omitempty"`
+	Existing bool          `json:"existing,omitempty"`
+}
+
+// WorkerHandoffCancelArgs are the args of worker.handoff_cancel (#224).
+type WorkerHandoffCancelArgs struct {
+	Worker string `json:"worker"`
+	Op     string `json:"op"`
 }
 
 // Send-home outcomes of worker.handoff.

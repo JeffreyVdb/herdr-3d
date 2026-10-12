@@ -375,6 +375,9 @@ type Worker struct {
 	// #223: Handoff is the agent's latest completed final reply a literal
 	// handoff can file (absent: none now, or no filing cabinet).
 	Handoff *HandoffCandidate `json:"handoff,omitempty"`
+	// #224: AgentHandoff is the worker's agent handoff request while it
+	// runs, and after it failed (until dismissed or a new one starts).
+	AgentHandoff *AgentHandoff `json:"agent_handoff,omitempty"`
 	// #98: Activity is what the agent is doing right now: while Status is
 	// working, and while idle or done only as waiting on background tasks.
 	// Absent otherwise, and for harnesses other than claude and codex.
@@ -1062,6 +1065,9 @@ type Usage struct {
 	// observed or reported. Both are additive: absent from older bridges.
 	ContextTokens          int64 `json:"context_tokens"`
 	ContextWindowEstimated bool  `json:"context_window_estimated,omitempty"`
+	// Cache is the main thread's prompt-cache evidence (#224; additive,
+	// absent from older bridges and before any request was read).
+	Cache *UsageCache `json:"cache,omitempty"`
 	// UpdatedAt is when the bridge saw it change, unix ms.
 	UpdatedAt int64 `json:"updated_at"`
 }

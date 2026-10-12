@@ -61,6 +61,7 @@ type Session struct {
 	subs   map[string]*jsonl.Tail // Claude subagents, by path
 	missAt time.Time              // when a lookup last found nothing
 	subAt  time.Time              // when the subagents were last listed
+	auth   string                 // Codex's auth_mode, read once (NewSession)
 	found  bool
 	rescan time.Duration // how long a miss waits (MissRescan)
 	tap    Tap
@@ -143,14 +144,19 @@ func NewSession(harness, id string, roots Roots, p *Pricing) *Session {
 	if harness != Claude && harness != Codex {
 		return nil
 	}
-	return &Session{harness: harness, id: id, roots: roots, pricing: p, subs: map[string]*jsonl.Tail{}, parse: newParser(harness)}
+	s := &Session{harness: harness, id: id, roots: roots, pricing: p, subs: map[string]*jsonl.Tail{}}
+	if harness == Codex {
+		s.auth = codexAuthMode(roots.CodexSessions)
+	}
+	s.parse = s.newParser()
+	return s
 }
 
-func newParser(harness string) parser {
-	if harness == Claude {
+func (s *Session) newParser() parser {
+	if s.harness == Claude {
 		return newClaudeUsage()
 	}
-	return newCodexUsage()
+	return newCodexUsage(s.auth)
 }
 
 // Poll reads what the session's files gained since the last Poll and
@@ -170,7 +176,7 @@ func (s *Session) Poll(now time.Time) (u proto.Usage, ok bool) {
 			return s.usage()
 		}
 		if s.found { // found again after it went: count it all afresh
-			s.parse = newParser(s.harness)
+			s.parse = s.newParser()
 			s.resetLines()
 			for _, t := range s.subs {
 				t.Restart()
@@ -186,7 +192,7 @@ func (s *Session) Poll(now time.Time) (u proto.Usage, ok bool) {
 		// A file was truncated or replaced: forget everything, read it all.
 		s.void(false)
 		s.resetLines()
-		s.parse = newParser(s.harness)
+		s.parse = s.newParser()
 		s.main.Restart()
 		for _, t := range s.subs {
 			t.Restart()

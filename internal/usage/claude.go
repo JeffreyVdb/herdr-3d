@@ -39,10 +39,12 @@ func (a tokens) cost(p Price) float64 {
 // claudeLine is what the bridge reads of a Claude Code transcript line:
 // assistant messages' usage, cost-state snapshots and compact boundaries.
 type claudeLine struct {
-	Type      string `json:"type"`
-	Subtype   string `json:"subtype"`
-	Timestamp string `json:"timestamp"`
-	Message   *struct {
+	Type        string `json:"type"`
+	Subtype     string `json:"subtype"`
+	Timestamp   string `json:"timestamp"`
+	IsSidechain bool   `json:"isSidechain"`
+	RequestID   string `json:"requestId"`
+	Message     *struct {
 		ID    string `json:"id"`
 		Model string `json:"model"`
 		Usage *struct {
@@ -52,11 +54,40 @@ type claudeLine struct {
 			CacheRead     int64 `json:"cache_read_input_tokens"`
 			Split         *struct {
 				M5 int64 `json:"ephemeral_5m_input_tokens"`
+				H1 int64 `json:"ephemeral_1h_input_tokens"`
 			} `json:"cache_creation"`
 		} `json:"usage"`
 	} `json:"message"`
 	TotalCostUSD        *float64 `json:"totalCostUSD"`
 	HasUnknownModelCost bool     `json:"hasUnknownModelCost"`
+}
+
+// claudeUser is what the cache evidence reads of a user line: a prompt or a
+// tool result (not a meta line, not a subagent's).
+type claudeUser struct {
+	Type        string `json:"type"`
+	Timestamp   string `json:"timestamp"`
+	IsSidechain bool   `json:"isSidechain"`
+	IsMeta      bool   `json:"isMeta"`
+}
+
+// cacheCounts are a main request's cache tokens: the cache read, the writes
+// as the cache_creation split reports them (m5, h1) and the total created.
+type cacheCounts struct {
+	read, creation, m5, h1 int64
+}
+
+// relevant: the request read or wrote the cache, so it refreshed it.
+func (k cacheCounts) relevant() bool { return k.read > 0 || k.creation > 0 }
+
+// claudeReq is a main request as its records show it: the time of its first
+// record, the latest prompt or tool result before that (it started between
+// the two), and its cache counts (the latest record's).
+type claudeReq struct {
+	model       string
+	from, first time.Time
+	cacheCounts
+	applied bool // its cache evidence was taken
 }
 
 type claudeMsg struct {
@@ -97,19 +128,32 @@ type claudeUsage struct {
 	// window allows. Kept across a compact; dropped when the model changes.
 	long    bool
 	longFor string // the model (without [1m]) it was seen on
+
+	// The prompt cache's evidence (#224), from the main thread only.
+	trigger  time.Time             // the latest prompt or tool result: a request starts after it
+	reqs     map[string]*claudeReq // main requests by requestId (message id without one)
+	reqOrder []string              // their keys, oldest first (to forget)
+	last     *claudeReq            // the last relevant request: it read or wrote the cache
+	wpol     string                // the policy the latest writing request showed ("": none since a reset)
+	reason   string                // why unknown with no request since a reset: "compacted", "model changed"
 }
 
 func newClaudeUsage() *claudeUsage {
-	return &claudeUsage{msgs: map[string]*claudeMsg{}, all: map[string]tokens{}, post: map[string]tokens{}}
+	return &claudeUsage{msgs: map[string]*claudeMsg{}, all: map[string]tokens{}, post: map[string]tokens{},
+		reqs: map[string]*claudeReq{}}
 }
 
 var (
 	assistantTag       = []byte(`"assistant"`)
 	costStateTag       = []byte(`"cost-state"`)
 	compactBoundaryTag = []byte(`"compact_boundary"`)
+	userTag            = []byte(`"user"`)
 )
 
 func (c *claudeUsage) line(main bool, b []byte) {
+	if main && bytes.Contains(b, userTag) {
+		c.user(b)
+	}
 	if !bytes.Contains(b, assistantTag) && !bytes.Contains(b, costStateTag) && !bytes.Contains(b, compactBoundaryTag) {
 		return // most lines: skip without decoding
 	}
@@ -121,6 +165,7 @@ func (c *claudeUsage) line(main bool, b []byte) {
 	case "system":
 		if main && l.Subtype == "compact_boundary" {
 			c.ctxOK = false
+			c.last, c.wpol, c.reason = nil, "", "compacted"
 		}
 	case "cost-state":
 		if !main || l.TotalCostUSD == nil {
@@ -156,6 +201,17 @@ func (c *claudeUsage) line(main bool, b []byte) {
 			if c.context > claudeBaseWindow {
 				c.long, c.longFor = true, strings.TrimSuffix(m.Model, oneM)
 			}
+			if !l.IsSidechain {
+				k := cacheCounts{read: u.CacheRead, creation: u.CacheCreation}
+				if u.Split != nil {
+					k.m5, k.h1 = u.Split.M5, u.Split.H1
+				}
+				key := l.RequestID
+				if key == "" {
+					key = m.ID
+				}
+				c.request(key, ts, m.Model, k)
+			}
 		}
 		c.any = m.Model
 		post := c.snap != nil && ts.After(c.snap.at)
@@ -183,6 +239,86 @@ func (c *claudeUsage) addTo(model string, t tokens, post bool, sign int64) {
 		p.add(t, sign)
 		c.post[model] = p
 	}
+}
+
+// user takes a main prompt or tool result as the start of the next request.
+func (c *claudeUsage) user(b []byte) {
+	var l claudeUser
+	if json.Unmarshal(b, &l) != nil || l.Type != "user" || l.IsSidechain || l.IsMeta {
+		return
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, l.Timestamp); err == nil {
+		c.trigger = ts
+	}
+}
+
+// request takes one record of a main request (key: its requestId). The
+// first record fixes when it started; its cache counts are the latest
+// record's. A request on another model than the last relevant one's
+// forgets that evidence (another model: another prefix), relevant or not;
+// the first relevant one makes it the last relevant request, its writes
+// setting the policy.
+func (c *claudeUsage) request(key string, at time.Time, model string, k cacheCounts) {
+	if c.last != nil && c.last.model != model {
+		c.last, c.wpol, c.reason = nil, "", "model changed"
+	}
+	r := c.reqs[key]
+	if r == nil {
+		r = &claudeReq{model: model, from: c.trigger, first: at}
+		if !at.IsZero() && r.from.After(at) {
+			r.from = time.Time{} // a prompt stamped after the response: no bound
+		}
+		c.reqs[key] = r
+		c.reqOrder = append(c.reqOrder, key)
+		if len(c.reqOrder) > MaxMessages {
+			delete(c.reqs, c.reqOrder[0])
+			c.reqOrder = c.reqOrder[1:]
+		}
+	}
+	r.cacheCounts = k
+	if r.applied || !k.relevant() {
+		return
+	}
+	r.applied = true
+	c.last, c.reason = r, ""
+	switch {
+	case k.m5 > 0 && k.h1 > 0:
+		c.wpol = proto.CachePolicyObservedMixed
+	case k.h1 > 0:
+		c.wpol = proto.CachePolicyObserved1h
+	case k.m5 > 0:
+		c.wpol = proto.CachePolicyObserved5m
+	}
+}
+
+// cacheEvidence is the main thread's prompt-cache evidence; nil before any
+// relevant request or compaction.
+func (c *claudeUsage) cacheEvidence() *proto.UsageCache {
+	if c.last == nil && c.reason == "" {
+		return nil
+	}
+	u := &proto.UsageCache{Estimated: true, Provider: proto.CacheProviderAnthropic, Model: c.model}
+	if c.last == nil {
+		u.Policy, u.Reason = proto.CachePolicyUnknown, c.reason
+		return u
+	}
+	r := c.last
+	u.Model, u.CacheRead = r.model, r.read
+	u.RequestFrom, u.RequestTo = unixMS(r.from), unixMS(r.first)
+	if u.RequestFrom == 0 {
+		u.Reason = "no prompt or tool result before the last request: its start is unknown"
+	}
+	switch c.wpol {
+	case proto.CachePolicyObserved1h:
+		setRetention(u, c.wpol, ttl1h, ttl1h)
+	case proto.CachePolicyObserved5m:
+		setRetention(u, c.wpol, ttl5m, ttl5m)
+	case proto.CachePolicyObservedMixed:
+		setRetention(u, c.wpol, ttl5m, ttl1h)
+	default: // no writes seen: the documented range (1h with a subscription, 5m on the API)
+		setRetention(u, proto.CachePolicyDocumented, ttl5m, ttl1h)
+	}
+	return u
 }
 
 func (c *claudeUsage) usage(p *Pricing) proto.Usage {
@@ -218,6 +354,9 @@ func (c *claudeUsage) usage(p *Pricing) proto.Usage {
 				u.ContextPct = pct(float64(c.context) / float64(u.ContextWindow))
 			}
 		}
+	}
+	if u.Cache = c.cacheEvidence(); u.Cache != nil {
+		u.Cache.ContextTokens = u.ContextTokens
 	}
 	return u
 }

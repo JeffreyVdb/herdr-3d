@@ -216,6 +216,8 @@ export interface Worker {
   followup?: Followup;
   /** #223: its agent's latest completed final reply, which a literal handoff can file (absent: none now, or no cabinet). */
   handoff?: HandoffCandidate;
+  /** #224: its agent handoff request while it runs, and after it failed (until dismissed or a new one starts). */
+  agent_handoff?: AgentHandoff;
   /** #155: how a Codex worker the bridge hired was launched (absent for other workers). */
   codex?: WorkerCodex;
 }
@@ -651,7 +653,8 @@ export interface CommandArgs {
   'worker.wrapup': { id: string; prompt: string; worktree?: FireWorktree };
   'worker.wrapup.cancel': { id: string };
   /** M5 */
-  'worker.prompt': { id: string; text: string };
+  /** #224: `op` (optional) for an exact "/handoff [instruction]", which becomes an agent handoff request (ack `handoff`). */
+  'worker.prompt': { id: string; text: string; op?: string };
   /** Exactly one of `choice` or `cancel`. */
   'worker.answer': { id: string; hash: string; choice?: number; cancel?: boolean };
   /** #57: an answer for every question of the worker's ask, or `cancel` (Esc on its dialog) with an optional `prompt` sent after. */
@@ -766,9 +769,15 @@ export interface CommandArgs {
   'drops.list': { limit?: number };
   // #223 handoffs (docs/protocol.md "Handoffs"). The candidate is the bridge's (`Worker.handoff`): never a path or a text.
   /** Acks `HandoffPreviewAck`: the candidate's exact text (the first 64 KiB), the title it would get, where it comes from. */
-  'worker.handoff_preview': { worker: string; candidate: string };
+  /** #224: with `mode: 'agent'` no candidate is needed: what asking the agent would do, and its cache estimate. */
+  'worker.handoff_preview': { worker: string; candidate?: string; mode?: 'agent' };
   /** Files it (acks `HandoffAck`); `op` is one per dialog, so a repeated submit files nothing twice. */
-  'worker.handoff': { worker: string; mode: 'literal'; session: string; candidate: string; revision: string; send_home?: boolean; op: string };
+  'worker.handoff':
+    | { worker: string; mode: 'literal'; session: string; candidate: string; revision: string; send_home?: boolean; op: string }
+    /** #224: asks the worker's agent (acks `AgentHandoffAck`); the outcome follows on `Worker.agent_handoff`. */
+    | { worker: string; mode: 'agent'; instruction?: string; send_home?: boolean; op: string };
+  /** #224: cancels a running agent handoff request, or dismisses a settled one (acks `AgentHandoff`). */
+  'worker.handoff_cancel': { worker: string; op: string };
   /** A floor's handoffs, newest first, or with `q` the matches (acks `HandoffListAck`). */
   'handoff.list': { floor: string; q?: string; limit?: number };
   /** One handoff and its body, Markdown to sanitize (acks `HandoffGetAck`). */
@@ -821,6 +830,8 @@ export interface Usage {
   context_tokens?: number;
   /** #101: `context_window` was assumed (the model table or its family), not seen or reported. Absent from older bridges. */
   context_window_estimated?: boolean;
+  /** #224: the main thread's prompt-cache evidence (an estimate; its state is computed when shown). Absent from older bridges. */
+  cache?: UsageCache;
   updated_at?: number;
 }
 
@@ -845,6 +856,9 @@ export interface PromptAck {
   terminal?: boolean;
   /** #156: sent through a shared Codex worker's app-server (herdr refused it: blocked by an async question). */
   via?: 'app_server';
+  /** #224: the prompt was "/handoff [instruction]" and became this agent handoff request (`existing`: one was answered, nothing sent again). */
+  handoff?: AgentHandoff;
+  existing?: boolean;
 }
 
 /** M5: `worker.answer` ack. */
@@ -2442,15 +2456,84 @@ export interface HandoffProvenance {
   session?: string;
 }
 
-/** `worker.handoff_preview` ack. */
+/** `worker.handoff_preview` ack (#224: an agent preview has `agent` and `cache`, and the candidate only when one was named). */
 export interface HandoffPreviewAck {
-  candidate: HandoffCandidate;
-  text: string;
+  candidate?: HandoffCandidate;
+  text?: string;
   truncated?: boolean;
-  title: string;
+  title?: string;
   provenance: HandoffProvenance;
   can_send_home: boolean;
   send_home_blocked?: string;
+  agent?: AgentHandoffPreview;
+  cache?: CacheEstimate;
+}
+
+/** #224: what asking the worker's agent would do: its skill call ("/handoff", "$handoff"), whether it can be asked now. */
+export interface AgentHandoffPreview {
+  call?: string;
+  can_ask: boolean;
+  cannot_ask?: string;
+  harness?: string;
+  model?: string;
+  /** The instruction used when none is given ("summarize the conversation"). */
+  instruction: string;
+}
+
+export type AgentHandoffState = 'starting' | 'pending' | 'filing' | 'filed' | 'failed';
+
+/** #224: an agent handoff request (`Worker.agent_handoff`). */
+export interface AgentHandoff {
+  op: string;
+  state: AgentHandoffState;
+  reason?: string;
+  /** Unix ms. */
+  started_at: number;
+  instruction?: string;
+  send_home?: boolean;
+  /** The handoff it was filed as. */
+  handoff?: number;
+  send_home_result?: 'started' | 'skipped';
+  send_home_reason?: string;
+}
+
+/** #224: `worker.handoff` ack in mode `agent`. */
+export interface AgentHandoffAck {
+  request: AgentHandoff;
+  handoff?: HandoffEntry;
+  existing?: boolean;
+}
+
+export type CacheState = 'warm' | 'expired' | 'unknown';
+export type CachePolicy = 'observed_1h' | 'observed_5m' | 'observed_mixed' | 'documented' | 'assumed' | 'unknown';
+
+/**
+ * #224: the prompt-cache evidence (`Usage.cache`): what the transcript showed, never a measurement or a promise. Times
+ * unix ms, durations ms; absent or 0: unknown. The last relevant request started in [request_from, request_to]; the
+ * cache expires in [expires_from, expires_to].
+ */
+export interface UsageCache {
+  estimated: boolean;
+  provider?: string;
+  model?: string;
+  auth?: string;
+  policy: CachePolicy;
+  ttl_min_ms?: number;
+  ttl_max_ms?: number;
+  request_from?: number;
+  request_to?: number;
+  expires_from?: number;
+  expires_to?: number;
+  cache_read?: number;
+  context_tokens?: number;
+  reason?: string;
+}
+
+/** #224: a cache's estimated state at a time, with its evidence. */
+export interface CacheEstimate {
+  state: CacheState;
+  estimated: boolean;
+  evidence: UsageCache;
 }
 
 /** `worker.handoff` ack. `send_home`: `started` (worker.removed follows), `skipped` (why in `send_home_reason`). */

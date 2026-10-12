@@ -52,6 +52,7 @@ type bridgeOptions struct {
 	sessions string   // the Codex rollout directory ("": the fixture's CODEX_HOME/sessions)
 	db       string   // the store ("": a new one under the fixture's root)
 	models   []string // Codex models hire accepts besides herdr-world's own list ("mock" always)
+	handoffs string   // #224: the filing cabinet's directory ("": none)
 }
 
 // bridge is one herdr-world run aimed at the fixture's session.
@@ -120,7 +121,7 @@ func (b *bridge) start() {
 			Name: "herdr-world", Ready: func() { close(ready) },
 			Control: b.ctl, Git: &gitops.Git{}, CodexRun: b.run, ClaudeCLI: "claude", CodexCLI: b.o.codexCLI, CodexSessions: b.o.sessions,
 			Caps: server.Caps{FloorSoft: 10, FloorHard: 20, HostSoft: 100, HostHard: 200}, HireOptions: &opts,
-			ExitTimeout: 10 * time.Second,
+			ExitTimeout: 10 * time.Second, HandoffDir: b.o.handoffs,
 		})
 	}()
 	select {

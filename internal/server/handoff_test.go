@@ -223,7 +223,7 @@ func TestHandoffRefusals(t *testing.T) {
 		edit func(*proto.WorkerHandoffArgs)
 		code string
 	}{
-		{func(a *proto.WorkerHandoffArgs) { a.Mode = "agent" }, proto.ErrBadRequest},
+		{func(a *proto.WorkerHandoffArgs) { a.Mode = "llm" }, proto.ErrBadRequest},
 		{func(a *proto.WorkerHandoffArgs) { a.Op = "" }, proto.ErrBadRequest},
 		{func(a *proto.WorkerHandoffArgs) { a.Op = "../x" }, proto.ErrBadRequest},
 		{func(a *proto.WorkerHandoffArgs) { a.Candidate = "0123456789abcdef" }, proto.ErrHandoffUnavailable},

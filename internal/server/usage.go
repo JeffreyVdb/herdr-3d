@@ -52,8 +52,9 @@ type usageWorker struct {
 	asking          bool   // #57: it has an ask now
 	status          string // #98: herdr's status, and when its last idle or done began
 	idleAt          int64
-	wrap            *wrapWatch // #83: its armed wrap-up
-	typed           []typedSum // #95: the prompts the bridge typed into it lately
+	wrap            *wrapWatch  // #83: its armed wrap-up
+	agentHo         *agentWatch // #224: its agent handoff request
+	typed           []typedSum  // #95: the prompts the bridge typed into it lately
 	// #223: the agent session herdr reports (the hub's AgentSession):
 	// session may be one findCodex found instead.
 	agent string
@@ -86,6 +87,8 @@ type usageTracker struct {
 	// this round's looks at the armed wrap-ups.
 	lines   map[string]*txLines
 	wrapUps []wrapUpdate
+	// #224: this round's looks at the agent handoff requests.
+	agentUps []agentUpdate
 	// #95: the workers a typed prompt reached as a paste this round.
 	pasted []string
 	// #90: what was last offered of every worker's ended turn, this
@@ -196,11 +199,12 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 	acts := tr.actUps              // #98
 	dgs := tr.dgUps                // #118
 	hos := tr.hoUps                // #223
+	ahs := tr.agentUps             // #224
 	for _, id := range tr.pasted { // #95
 		h.log.Warn("a prompt the bridge typed reached Claude Code as a paste: its paste threshold may have changed (#95)",
 			"worker", id)
 	}
-	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending || len(acts) > 0 || len(dgs) > 0 || len(hos) > 0 {
+	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending || len(acts) > 0 || len(dgs) > 0 || len(hos) > 0 || len(ahs) > 0 {
 		pending, err := query(ctx, h, func() bool {
 			for _, u := range ups {
 				h.setUsage(u.id, u.usage)
@@ -226,6 +230,9 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 			for _, u := range hos { // #223
 				h.handoffSeen(u)
 			}
+			for _, u := range ahs { // #224
+				h.agentSeen(ctx, u)
+			}
 			return h.sweepFollowups(ctx)
 		})
 		if err == nil {
@@ -238,6 +245,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	ws = tr.findCodex(ws, now)
 	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps, tr.actUps, tr.dgUps, tr.hoUps = nil, nil, nil, nil, nil, nil, nil
+	tr.agentUps = nil
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -275,6 +283,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		s := tr.sessions[w.id]
 		tr.syncTranscript(w, s, tr.keys[w.id])
 		tr.wrapBefore(w)                                     // #83
+		tr.agentBefore(w)                                    // #224
 		if l := tr.lines[w.id]; l != nil && l.paste != nil { // #95
 			l.paste.sums = w.typed
 		}
@@ -285,6 +294,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.throttle.forget(w.id)
 			tr.offerAsk(w)
 			tr.offerWrapUp(w)
+			tr.offerAgentHandoff(w)  // #224
 			tr.offerFollowup(w)      // #90
 			tr.offerActivity(w, now) // #98
 			tr.offerDigest(w)        // #118
@@ -292,7 +302,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			continue
 		}
 		s.SetRescan(0)
-		if w.watched {
+		if w.watched || w.agentHo != nil { // #224: a request's transcript is looked for as a watched one's
 			s.SetRescan(WatchedRescan)
 		}
 		if l := tr.lines[w.id]; l != nil && l.activity != nil { // #98: herdr's status before the round's lines
@@ -302,6 +312,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		tr.syncTranscript(w, s, tr.keys[w.id])
 		tr.offerAsk(w)
 		tr.offerWrapUp(w)
+		tr.offerAgentHandoff(w)  // #224
 		tr.offerFollowup(w)      // #90
 		tr.offerActivity(w, now) // #98
 		tr.offerDigest(w)        // #118
@@ -424,7 +435,7 @@ func (h *Hub) usageWorkers() []usageWorker {
 			harness = w.AgentKind
 		}
 		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, agent: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
-			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), typed: h.typedSums(id),
+			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), agentHo: h.agentWatchOf(id), typed: h.typedSums(id),
 			status: w.Status, idleAt: h.act.idleAt[id]}
 		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {
 			uw.codexCwd = w.Cwd
@@ -506,6 +517,7 @@ func (t *usageThrottle) forget(id string) {
 
 func sameUsage(a, b proto.Usage) bool {
 	pa, pb := a.ContextPct, b.ContextPct
-	a.ContextPct, b.ContextPct = nil, nil
-	return a == b && (pa == nil) == (pb == nil) && (pa == nil || *pa == *pb)
+	ca, cb := a.Cache, b.Cache // #224: compared by value
+	a.ContextPct, b.ContextPct, a.Cache, b.Cache = nil, nil, nil, nil
+	return a == b && (pa == nil) == (pb == nil) && (pa == nil || *pa == *pb) && (ca == nil) == (cb == nil) && (ca == nil || *ca == *cb)
 }

@@ -96,6 +96,7 @@ type txLines struct {
 	harness  string
 	ask      *transcript.AskTracker
 	wrap     *transcript.WrapUpTracker
+	agentHo  *transcript.WrapUpTracker   // #224: a handoff request's turn
 	paste    *pasteWatch                 // #95
 	followup *transcript.FollowupTracker // #90
 	activity *transcript.ActivityTracker // #98
@@ -110,13 +111,16 @@ func (l *txLines) Line(off int64, b []byte) {
 	if l.paste != nil {
 		l.paste.line(b)
 	}
-	if l.wrap == nil && l.followup == nil && l.activity == nil && l.digest == nil && l.handoff == nil {
+	if l.wrap == nil && l.agentHo == nil && l.followup == nil && l.activity == nil && l.digest == nil && l.handoff == nil {
 		return
 	}
 	// The turn boundaries and final message, read once for all.
 	evs := transcript.TurnEvents(l.harness, b)
 	if l.wrap != nil {
 		l.wrap.Events(off, evs)
+	}
+	if l.agentHo != nil {
+		l.agentHo.Events(off, evs)
 	}
 	if l.followup != nil {
 		l.followup.Events(evs)
@@ -138,6 +142,9 @@ func (l *txLines) Reset() {
 	}
 	if l.wrap != nil {
 		l.wrap.Reset()
+	}
+	if l.agentHo != nil {
+		l.agentHo.Reset()
 	}
 	if l.followup != nil {
 		l.followup.Reset()
@@ -324,6 +331,9 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 	}
 	if old := h.wrapups[a.ID]; old != nil && old.state != proto.WrapUpNeedsYou {
 		return fmt.Errorf("%w: %s is wrapping up already", errBusy, w.Name)
+	}
+	if ah := h.ah.byWorker[a.ID]; ah != nil && ah.pending() { // #224: one prompt of the bridge at a time
+		return fmt.Errorf("%w: %s is writing a handoff", errBusy, w.Name)
 	}
 	op, err := h.newFireOp(ctx, w, f, a.Worktree)
 	if err != nil {

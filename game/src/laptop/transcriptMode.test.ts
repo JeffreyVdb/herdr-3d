@@ -309,6 +309,67 @@ describe('TranscriptMode', () => {
     expect(h.views[0]?.calls.at(-1)).toBe('prompt');
   });
 
+  it('#224: an exact /handoff carries one op and becomes a request (its row goes; the outcome follows on the worker)', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada');
+    await flush();
+    const host = (h.views[0] as FakeView).host;
+    const plain = host.onPromptSubmit('please /handoff later');
+    expect(h.sent[0]?.args).toEqual({ id: 'a', text: 'please /handoff later' });
+    h.sent[0]?.resolve({ ok: true, data: {} });
+    await plain;
+    const ok = host.onPromptSubmit('/handoff focus on the tests');
+    expect(h.sent[1]?.args).toMatchObject({ id: 'a', text: '/handoff focus on the tests' });
+    expect(String(h.sent[1]?.args.op)).toMatch(/^ho-/);
+    h.sent[1]?.resolve({ ok: true, data: { queued: false, retried: false, handoff: { op: 'x', state: 'pending', started_at: 1 } } });
+    await expect(ok).resolves.toBe(true);
+    expect(h.status.at(-1)).toEqual(['ok', 'Asked Ada’s agent for a handoff: it is filed once its turn ends with the file written']);
+    const again = host.onPromptSubmit('/handoff');
+    h.sent[2]?.resolve({ ok: true, data: { handoff: { op: 'x', state: 'pending', started_at: 1 }, existing: true } });
+    await again;
+    expect(h.status.at(-1)).toEqual(['ok', 'Ada is already writing a handoff: nothing was sent again']);
+    const missing = host.onPromptSubmit('/handoff');
+    h.sent[3]?.resolve({ ok: false, code: 'handoff_skill_missing', message: 'no handoff skill: claude lists no "handoff" skill in /w' });
+    await expect(missing).resolves.toBe(false);
+    expect(h.status.at(-1)?.[1]).toBe('Ada’s agent can’t be asked for a handoff: claude lists no "handoff" skill in /w. Nothing was sent; save its last message instead.');
+  });
+
+  it('#224: a /handoff whose ack was lost keeps its op for the same text, until it is answered, refused or the text changes', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada');
+    await flush();
+    const host = (h.views[0] as FakeView).host;
+    const opOf = (i: number) => String(h.sent[i]?.args.op);
+    const send = async (text: string, r: CommandResult) => {
+      const i = h.sent.length;
+      const p = host.onPromptSubmit(text);
+      h.sent[i]?.resolve(r);
+      await p;
+      return opOf(i);
+    };
+    const lost: CommandResult = { ok: false, code: 'disconnected', message: 'the connection to herdr-world dropped before it answered; the command may still have run' };
+    const filed: CommandResult = { ok: true, data: { handoff: { op: 'x', state: 'filed', started_at: 1, handoff: 7 }, existing: true } };
+    // Lost, then lost again (timed out), then answered: one op throughout; the bridge answers the filed request.
+    const first = await send('/handoff notes', lost);
+    expect(first).toMatch(/^ho-/);
+    expect(await send('/handoff notes', { ok: false, code: 'timeout', message: 'herdr-world did not answer' })).toBe(first);
+    expect(await send('/handoff notes', filed)).toBe(first);
+    expect(h.status.at(-1)).toEqual(['ok', 'Ada’s handoff is filed']);
+    // Answered: the same text again is a new request.
+    const second = await send('/handoff notes', lost);
+    expect(second).not.toBe(first);
+    // Another text (the draft edited) is another request; so is the same text after a plain prompt.
+    const third = await send('/handoff other notes', lost);
+    expect(third).not.toBe(second);
+    await send('go on', { ok: true, data: {} });
+    const fourth = await send('/handoff other notes', lost);
+    expect(fourth).not.toBe(third);
+    // Refused by the bridge (a real error): answered, the next is new.
+    await send('/handoff other notes', { ok: false, code: 'handoff_skill_missing', message: 'no handoff skill' });
+    expect(opOf(h.sent.length - 1)).toBe(fourth);
+    expect(await send('/handoff other notes', filed)).not.toBe(fourth);
+  });
+
   it('reads a subagent from its page ack; a failed load throws for the view to show', async () => {
     expect(subagentItems({ items: [item('a'), { junk: true }], cursor: 'c:1', has_more: false }).map((i) => i.id)).toEqual(['a']);
     expect(subagentItems({ item: item('b') })).toEqual([]);

@@ -66,4 +66,24 @@ describe('fixture handoffs', () => {
     const r = rig({ handoffs: 3 });
     expect((r.ack('handoff.list', { floor: 'f1' }).data.handoffs as unknown[]).length).toBe(3);
   });
+
+  it('#224 asks the agent: one request per op, the composer’s /handoff, filed as agent, a failure, a missing skill', () => {
+    const r = rig({ handoffs: 'on' });
+    const pv = r.ack('worker.handoff_preview', { worker: 'A', mode: 'agent' }).data;
+    expect(pv.agent).toMatchObject({ call: '/handoff', can_ask: true, instruction: 'summarize the conversation' });
+    expect((pv.cache as Record<string, unknown>).state).toBe('expired');
+    const first = r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1', instruction: 'focus' });
+    expect(first.data.request).toMatchObject({ op: 'op-1', state: 'pending', instruction: 'focus' });
+    expect(r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-1' }).data.existing).toBe(true);
+    const p = r.ack('worker.prompt', { id: 'A', text: '/handoff' }).data;
+    expect(p).toMatchObject({ existing: true, handoff: { op: 'op-1' } });
+    const filed = r.ack('sim.agent_turn', { id: 'A' });
+    expect(filed.events.find((m) => m.t === 'handoff.added')).toMatchObject({ handoff: { source: 'agent' } });
+    expect(filed.data.request).toMatchObject({ state: 'filed' });
+    r.ack('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-2' });
+    expect(r.ack('sim.agent_turn', { id: 'A', fail: 'a person took over' }).data.request).toMatchObject({ state: 'failed', reason: 'a person took over' });
+    r.ack('sim.agent_skill', { missing: true });
+    const err = r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-3' }).find((m) => m.t === 'error');
+    expect(err).toMatchObject({ code: 'handoff_skill_missing' });
+  });
 });

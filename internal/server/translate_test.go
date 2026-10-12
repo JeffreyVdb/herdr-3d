@@ -336,6 +336,14 @@ func (f *fakePrompts) TerminalOnly(harness, text string) bool {
 	return false
 }
 
+// SkillCall plays harness.SkillCall.
+func (f *fakePrompts) SkillCall(harness, name string) string {
+	if harness == "codex" {
+		return "$" + name
+	}
+	return "/" + name
+}
+
 func (f *fakePrompts) RetryKeys(harness, text string) []string {
 	if harness == "codex" && strings.HasSuffix(strings.TrimRight(text, "."), "$grill") {
 		return []string{"esc", "enter"}

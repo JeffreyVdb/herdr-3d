@@ -496,6 +496,7 @@ func (h *Hub) startAnswer(ctx context.Context, c *Client, cmd proto.Command) err
 	if w.Status != statusBlocked {
 		return fmt.Errorf("%w: %s is %s, not blocked", errInvalidState, w.Name, w.Status)
 	}
+	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		return h.answer(ctx, a, session, pane)
 	})

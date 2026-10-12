@@ -229,10 +229,13 @@ type WrapUpState struct {
 type WrapUpTracker struct {
 	harness string
 	nonce   string
-	from    int64
-	st      WrapUpState
-	msg     lastMessage // the latest assistant message's text, this turn
-	asked   string      // the bridge's prompt as read, once Prompted
+	// marker: #224, a prompt is the bridge's when it contains it (""
+	// for a wrap-up: when it ends with the nonce's footer).
+	marker string
+	from   int64
+	st     WrapUpState
+	msg    lastMessage // the latest assistant message's text, this turn
+	asked  string      // the bridge's prompt as read, once Prompted
 }
 
 // NewWrapUpTracker follows a harness's (claude or codex) transcript for
@@ -242,6 +245,20 @@ func NewWrapUpTracker(harness, nonce string, from int64) *WrapUpTracker {
 		return nil
 	}
 	return &WrapUpTracker{harness: harness, nonce: nonce, from: from, msg: lastMessage{harness: harness}}
+}
+
+// NewMarkerTracker follows a harness's transcript from byte offset from for
+// the turn of a bridge prompt that contains marker (#224: an agent handoff
+// request): the same rules as a wrap-up's (Prompted, TookOver, Ended,
+// Void, Lines), with no result line to read. Nil for another harness, a bad
+// nonce or an empty marker.
+func NewMarkerTracker(harness, nonce, marker string, from int64) *WrapUpTracker {
+	t := NewWrapUpTracker(harness, nonce, from)
+	if t == nil || strings.TrimSpace(marker) == "" {
+		return nil
+	}
+	t.marker = marker
+	return t
 }
 
 // Nonce is the nonce it looks for.
@@ -277,10 +294,39 @@ func (t *WrapUpTracker) newTurn() {
 }
 
 // asking is a user prompt's text as the bridge's would read: without
-// Claude's paste wrapper and reminders, line ends and the ends trimmed.
+// Claude's paste wrapper and reminders, line ends and the ends trimmed. A
+// slash command Claude Code recorded as its tags (#224: "/handoff …" is
+// <command-message>, <command-name> and <command-args>) reads as typed:
+// its name, a space and its arguments.
 func asking(text string) string {
 	text = systemReminder.ReplaceAllString(unwrapPasted(strings.ReplaceAll(text, "\r\n", "\n")), "")
+	if cmd, ok := slashCommand(text); ok {
+		text = cmd
+	}
 	return strings.TrimSpace(text)
+}
+
+// slashCommand is a Claude user line's slash command as typed ("/name
+// args"), when its text is Claude Code's command tags.
+func slashCommand(text string) (string, bool) {
+	t := strings.TrimSpace(text)
+	if !strings.HasPrefix(t, "<command-") {
+		return "", false
+	}
+	tags := map[string]string{}
+	for _, m := range xmlTag.FindAllStringSubmatch(t, -1) {
+		if m[1] == m[3] {
+			tags[m[1]] = m[2]
+		}
+	}
+	name := strings.TrimSpace(tags["command-name"])
+	if name == "" {
+		return "", false
+	}
+	if a := strings.TrimSpace(tags["command-args"]); a != "" {
+		name += " " + a
+	}
+	return name, true
 }
 
 // prompt reads a user's text. Before the bridge's prompt: the bridge's
@@ -292,7 +338,7 @@ func asking(text string) string {
 func (t *WrapUpTracker) prompt(text string) {
 	s := asking(text)
 	switch {
-	case !t.st.Prompted && strings.HasSuffix(s, WrapUpFooter(t.nonce)):
+	case !t.st.Prompted && t.bridges(s):
 		t.st.Prompted, t.asked = true, s
 		t.newTurn()
 	case t.st.Prompted && s == t.asked:
@@ -300,6 +346,15 @@ func (t *WrapUpTracker) prompt(text string) {
 	default:
 		t.interrupted()
 	}
+}
+
+// bridges reports whether a prompt's text (as asking reads it) is the
+// bridge's.
+func (t *WrapUpTracker) bridges(s string) bool {
+	if t.marker != "" {
+		return strings.Contains(s, t.marker)
+	}
+	return strings.HasSuffix(s, WrapUpFooter(t.nonce))
 }
 
 // interrupted notes a person stepping in after the bridge's prompt.
