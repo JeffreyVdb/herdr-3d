@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BoardIssues, BoardPrs, IssueCard, PullRequest, Worker } from '../net/protocol';
-import { BoardBook, can, closesText, columnViews, holderOf, holdersOf, isPriorityLabel, issuePlacements, keysById, mergeBlocker, nearestDesk, paperLabel, paperOf, pinOf, prPlacements, reviewPrompt, askPrompt, tint, verdictOf, wallColumns, freshness } from './boards';
+import { BoardBook, can, closesText, columnViews, holderOf, holdersOf, isPriorityLabel, issuePlacements, keysById, mergeBlocker, nearestDesk, paperLabel, paperOf, pinOf, prPlacements, reviewPrompt, resolveConflictsPrompt, askPrompt, tint, verdictOf, wallColumns, freshness } from './boards';
 
 const card = (id: string, o: Partial<IssueCard> = {}): IssueCard => ({
   id,
@@ -283,5 +283,47 @@ describe('Kaneo wording (#184)', () => {
     expect(p.length).toBeLessThan(4300);
     const f = freshness({ stale: true, error: '403', error_code: 'forbidden', fetched_at: 0, provider_name: 'Kaneo' }, 0, () => 'now');
     expect(f).toContain('permission problem');
+  });
+});
+
+describe('the resolve-conflicts prompt (#248)', () => {
+  const pr = { key: '#35', url: 'https://github.com/o/r/pull/35', head_branch: 'feat/lounge', base_branch: 'main' };
+
+  it('names the PR, its number and both branches, and lists the steps in order', () => {
+    const p = resolveConflictsPrompt(pr, 'squash');
+    expect(p).toContain('https://github.com/o/r/pull/35');
+    expect(p).toContain('#35');
+    expect(p).toContain('feat/lounge');
+    const steps = ['gh pr checkout 35 --detach', 'git merge origin/main', 'keeping the intent of both sides', 'tests', 'git push origin HEAD:feat/lounge', 'checks', 'gh pr merge 35 --squash'];
+    const at = steps.map((s) => p.indexOf(s));
+    expect(at.every((i) => i >= 0), JSON.stringify(at)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+  });
+
+  it('maps each merge method of the panel to its gh flag, one to one', () => {
+    expect(resolveConflictsPrompt(pr, 'squash')).toContain('gh pr merge 35 --squash');
+    expect(resolveConflictsPrompt(pr, 'merge')).toContain('gh pr merge 35 --merge');
+    expect(resolveConflictsPrompt(pr, 'rebase')).toContain('gh pr merge 35 --rebase');
+    for (const m of ['squash', 'merge', 'rebase'] as const) expect(resolveConflictsPrompt(pr, m).match(/gh pr merge/g)).toHaveLength(1);
+  });
+
+  it('stops instead of merging, never switches the shared checkout, and makes its own worktree when it has none', () => {
+    const p = resolveConflictsPrompt(pr, 'merge');
+    expect(p).toMatch(/not mechanical[^\n]*stop/i);
+    expect(p).toMatch(/checks fail[^\n]*stop/i);
+    expect(p).toContain('git worktree add --detach');
+    expect(p).toMatch(/never switch the branch of a shared checkout/i);
+    expect(p.indexOf('git worktree add --detach')).toBeLessThan(p.indexOf('gh pr checkout'));
+  });
+
+  it('is the same for both harnesses (plain text, no skill call) and works without a URL or a base branch', () => {
+    const p = resolveConflictsPrompt({ key: '#7', head_branch: 'fix/x' }, 'rebase');
+    expect(p).toContain('gh pr checkout 7 --detach');
+    expect(p).toContain('git push origin HEAD:fix/x');
+    expect(p).toContain('gh pr merge 7 --rebase');
+    expect(p).not.toContain('undefined');
+    expect(p).toContain('baseRefName');
+    expect(p.startsWith('/')).toBe(false);
+    expect(p.startsWith('$')).toBe(false);
   });
 });
