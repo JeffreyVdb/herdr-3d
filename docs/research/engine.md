@@ -26,13 +26,13 @@ Researcher: GROUND (engine brief) · Date: 2026-09-28
 - The Mac already has almost everything needed: Chrome, Safari 26, node 26.7, pnpm, Rust, **Xcode 27.0 (license not yet
   accepted; CLT active)**, claude 2.1.237, codex 0.148.0 and herdr 0.9.0.
   - **`screencapture` over SSH fails** ("could not create image from display"; there is no Screen Recording permission for sshd).
-  - Apps launched over SSH **can** open windows in Theo's GUI session and capture their own frames. Headless Chrome needs no
+  - Apps launched over SSH **can** open windows in the logged-in user's GUI session and capture their own frames. Headless Chrome needs no
     permission at all.
 
 ## 1. Environment (verified 2026-09-28)
 
 ### Mac: `devmac`
-Commands: `ssh devmac bash -s < probe.sh`. Theo's login shell is fish, so wrap commands in `bash -c`.
+Commands: `ssh devmac bash -s < probe.sh`. The login shell is fish, so wrap commands in `bash -c`.
 
 | Item | Value |
 |---|---|
@@ -51,10 +51,10 @@ What works over SSH:
 |---|---|
 | `screencapture -x /tmp/x.png` | **Fails**: `could not create image from display`. `launchctl asuser 501 …` also fails: `Could not switch to audit session …: Operation not permitted`. sshd has no Screen Recording permission, and the TCC database is not readable. |
 | Offscreen Metal from `swift script.swift` over SSH | **Works**. `MTLCreateSystemDefaultDevice()` returns `Apple M2 Max`. I rendered into a texture, read back pixels `255 153 204 255` and wrote a PNG. No window and no permission were needed. |
-| AppKit window from a binary run directly over SSH, or through `open -W -n X.app` | **Works**. Because Theo is logged in at the console, the window appears on his screen. The app captured its own content view (`cacheDisplay`) to a PNG. Engines capturing *their own* framebuffer (Godot `get_viewport().get_texture().get_image()`, `canvas.toDataURL`, Playwright `page.screenshot`) avoid TCC completely. |
+| AppKit window from a binary run directly over SSH, or through `open -W -n X.app` | **Works**. Because a user is logged in at the console, the window appears on that screen. The app captured its own content view (`cacheDisplay`) to a PNG. Engines capturing *their own* framebuffer (Godot `get_viewport().get_texture().get_image()`, `canvas.toDataURL`, Playwright `page.screenshot`) avoid TCC completely. |
 | Headless Chrome (installed `/Applications/Google Chrome.app`) + `playwright-core` 1.63 from /tmp | **Works**. The three.js r186 WebGPURenderer got a WebGPU adapter `{"vendor":"apple","arch":"metal-3"}`, reported `backend: webgpu`, and the screenshot rendered correctly. See `engine-img/three-mac-webgpu-metal.png`. |
 | System `WKWebView` (Swift/AppKit probe over SSH, what Tauri uses) | **Works**: `adapter {"vendor":"apple","arch":"apple"} device true webgl2 true`. |
-| Mac → server port over tailscale (`curl http://devbox:18799/`) | **Works**: 200 in 0.12 s. MagicDNS name and IP both work. firewalld's public zone only allows ssh/cockpit on `ens18`, but tailscale traffic gets through. |
+| Mac → server port over tailscale (`curl http://devbox:18799/`) | **Works**: 200 in 0.12 s. MagicDNS name and IP both work. firewalld's public zone only allows ssh/cockpit, but tailscale traffic gets through. |
 
 ### Server: `devbox`
 | Item | Value |
@@ -112,7 +112,7 @@ Legend: ++ excellent, + good, 0 ok, − weak, −− blocker
 
 ### With three.js (recommended)
 1. **Serve from the server.** Run `pnpm dev` (Vite, `server.host: true`, port e.g. 5173) and the herdr bridge (WebSocket, e.g. :7681,
-   or proxied by Vite at `/ws`) together in a herdr pane. Theo opens `http://devbox:5173` in Chrome on the Mac, where HMR
+   or proxied by Vite at `/ws`) together in a herdr pane. The user opens `http://devbox:5173` in Chrome on the Mac, where HMR
    updates live while agents edit. Tailscale reachability is verified. Optionally use Chrome "Install as app" for a windowed,
    game-like shell.
 2. **Agent inner loop on the server (no Mac):**
@@ -132,11 +132,11 @@ Legend: ++ excellent, + good, 0 ok, − weak, −− blocker
    `renderer.info`, or the timestamp-query feature). The Mac only needs `playwright-core` in some folder (`~/h3d-tools`). That's a
    one-time `npm i`, which I have *not* done without asking. Nothing is copied to the Mac, because Chrome loads the app from the
    server URL.
-   - Headed runs (a real window on Theo's screen, to check vsync/fps) are also possible over SSH (`headless:false`). Only do this
-     when Theo agrees, since it pops up on his display.
-   - `screencapture` stays unavailable unless Theo grants Screen Recording to `sshd-keygen-wrapper`/Terminal. It isn't needed,
+   - Headed runs (a real window on the Mac's screen, to check vsync/fps) are also possible over SSH (`headless:false`). Only do this
+     when the user agrees, since it pops up on the display.
+   - `screencapture` stays unavailable unless the user grants Screen Recording to `sshd-keygen-wrapper`/Terminal. It isn't needed,
      because pages capture themselves.
-4. **Safari check** (occasional, manual): Theo opens the same URL in Safari 26 to confirm WebGPU works on WebKit.
+4. **Safari check** (occasional, manual): the user opens the same URL in Safari 26 to confirm WebGPU works on WebKit.
 
 ### If Godot were chosen instead
 - Server: `godot --headless --path . -s res://tests/run.gd` (or GUT/gdUnit4) for logic, and `--headless --export-release "macOS"`
@@ -149,7 +149,7 @@ Legend: ++ excellent, + good, 0 ok, − weak, −− blocker
 
 ### Does a Claude Code instance need to run on the Mac?
 **No** for three.js. Everything is driven from the server over SSH. Claude Code, codex and herdr are already installed on the Mac
-if Theo ever wants a local agent (e.g. Safari/WebKit-specific debugging with `agent-browser`), but the plan doesn't depend on
+if a local agent is ever wanted (e.g. Safari/WebKit-specific debugging with `agent-browser`), but the plan doesn't depend on
 one.
 
 ## 5. Recommendation
@@ -249,7 +249,7 @@ frame time), and URL params `?fixture=…&cam=…&gl&frozen`.
 - Godot rendering on the server via xwayland-run + llvmpipe is untested (it needs installs).
 - Godot on the Mac is untested (not installed). The AppKit probe suggests a Godot app launched over SSH will render and self-capture fine.
 
-## 8. Open questions for Theo
+## 8. Open questions
 1. OK to use **Chrome on the Mac (browser tab / "Install as app")** as the game shell, rather than a native .app? If a native window is wanted later, a Tauri 2 wrapper is acceptable? (WKWebView WebGPU works on this Mac.)
 2. OK to run a one-time `npm i playwright-core` in e.g. `~/h3d-tools` on the Mac, so agents can take Metal screenshots over SSH (headless, nothing pops up)? Also OK for agents to occasionally open a *headed* window on your screen?
 3. Should agents be able to install `mesa-dri-drivers mesa-vulkan-drivers` on the server (for faster, GPU-API-complete software rendering), and `xwayland-run weston` only if we ever go the Godot route?

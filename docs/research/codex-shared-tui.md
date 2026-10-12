@@ -4,11 +4,12 @@ Date 2026-10-06. Installed and verified: **codex-cli 0.160.1**, **herdr 0.9.0**,
 tag `rust-v0.160.1`. Parent epic: #153.
 
 **Labels.** **[R]** marks a runtime-verified claim. The fixture test that shows it is named, and its captured screens and
-messages are in [`codex-shared-tui-evidence/`](codex-shared-tui-evidence/), one directory per test, with files numbered
-in capture order. The text cites a file by test and label, for example `Questions/active-after-steer-not-yet-delivered`.
+messages were recorded per test, one directory per test, with files numbered in capture order. The raw captures
+are not published (they are terminal dumps from a real machine); regenerate them with `make codex-shared-tui EVIDENCE=<dir>`.
+The text cites a capture by test and label, for example `Questions/active-after-steer-not-yet-delivered`.
 **[S]** marks a claim that rests on reading the source only. **[R-live]** marks a read-only observation of the user's real
-machine. **[R-real]** marks a claim from a real-model run: the smoke test of §9, whose evidence is in
-[`codex-shared-tui-evidence/RealModelSmoke/`](codex-shared-tui-evidence/RealModelSmoke/), or #158's run through
+machine. **[R-real]** marks a claim from a real-model run: the smoke test of §9, whose captures were
+recorded under `RealModelSmoke/`, or #158's run through
 herdr-world (§12.5).
 
 The fixture tests use mock inference. One bounded real-model smoke test (§9) ran the phase-2 launch, a per-worker
@@ -64,7 +65,7 @@ What breaks, and the fix for each:
 
 **User's machine, today [R-live].** The running `~/.codex` daemon (pid file `~/.codex/app-server-daemon/app-server.pid`)
 has `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_SESSION` and `HERDR_SOCKET_PATH` in its environment. Its cwd is a herdr
-worktree, `github-code-review/review-100-written-feedback-r3`. `~/.codex/hooks.json` holds Herdr's SessionStart hook.
+worktree of another project. `~/.codex/hooks.json` holds Herdr's SessionStart hook.
 Read only those variable names were read; values were not printed. Together with B1–B3, this means every argument-free
 `codex` TUI the user starts today probably runs its tools with that pane's environment and reports its session id
 **to that pane**. That is the misrouting the fixture reproduces, but it is not observed on the live session.
@@ -261,7 +262,7 @@ codex resume <thread-id> --remote unix:///run/…/w.sock -C <cwd>
 
 ## 9. Real-model smoke test
 
-[R-real], evidence in [`codex-shared-tui-evidence/RealModelSmoke/`](codex-shared-tui-evidence/RealModelSmoke/). Five
+[R-real], captures recorded under `RealModelSmoke/` (not published). Five
 short turns; the TUI's exit summary reported `total=31,038` tokens (`16-tui-exit`).
 
 **Setup.** A throwaway Herdr session `h3d-it-154-smoke-44a259`, its server started with every `HERDR_*`, `CODEX_*`,
@@ -331,9 +332,8 @@ dir removed.
 ## 11. Phase 3: the bridge's answers (#156)
 
 `TestCodexShareAsyncAnswers` [R], mock model, real TUI in a Herdr pane, the production `codexapp.Watcher` (its
-`Steer` and `StartTurn`) and `codexapp.Questions` (the reconciler the hub runs). Evidence in
-[`codex-shared-tui-evidence/TestCodexShareAsyncAnswers/`](codex-shared-tui-evidence/TestCodexShareAsyncAnswers/),
-cited as `AsyncAnswers/<label>`.
+`Steer` and `StartTurn`) and `codexapp.Questions` (the reconciler the hub runs). Captures recorded under
+`TestCodexShareAsyncAnswers/` (not published), cited as `AsyncAnswers/<label>`.
 
 - **A steered input is an item only once delivered.** Right after `turn/steer` returned (with the asking turn's id,
   `AsyncAnswers/a-steer-result`) the join had no user message for it (`a-user-items-before-delivery`: none), and the
@@ -370,16 +370,13 @@ TUI's screen (its queued-question badge, the rendered answer) and the mock's cla
 answer" is counted in the **model's whole input** (a model request carries the conversation so far), not in acks.
 
 `make codex-shared-bridge` (or `make codex-shared-tui`, which includes it), `EVIDENCE=<dir>` as before:
-`internal/codexshare/bridge*_integration_test.go`. Evidence in
-[`TestCodexShareBridgeQuestions/`](codex-shared-tui-evidence/TestCodexShareBridgeQuestions/),
-[`TestCodexShareBridgeRegression/`](codex-shared-tui-evidence/TestCodexShareBridgeRegression/),
-[`TestCodexShareBridgeWorkers/`](codex-shared-tui-evidence/TestCodexShareBridgeWorkers/),
-[`TestCodexShareBridgeRollout/`](codex-shared-tui-evidence/TestCodexShareBridgeRollout/),
-[`TestCodexShareBridgeRestartSent/`](codex-shared-tui-evidence/TestCodexShareBridgeRestartSent/) and
-[`TestCodexShareBridgeRealModelSmoke/`](codex-shared-tui-evidence/TestCodexShareBridgeRealModelSmoke/), cited as
+`internal/codexshare/bridge*_integration_test.go`. Captures (not published) were recorded under
+`TestCodexShareBridgeQuestions/`, `TestCodexShareBridgeRegression/`, `TestCodexShareBridgeWorkers/`,
+`TestCodexShareBridgeRollout/`, `TestCodexShareBridgeRestartSent/` and
+`TestCodexShareBridgeRealModelSmoke/`, cited as
 `BridgeQuestions/<label>` and so on. **[R]** below is this full stack with the mock model. The UX review's run of the
-real game against the real TUI and model is in
-[`RealGameWalkthrough/`](codex-shared-tui-evidence/RealGameWalkthrough/), cited as `RealGame/<file>` (§12.5a).
+real game against the real TUI and model was recorded under
+`RealGameWalkthrough/` (screenshots and a write-up; not published), cited as `RealGame/<file>` (§12.5a).
 
 **Where the fixture differs from production**, and why:
 
@@ -635,7 +632,7 @@ review's run the real model read and used the bridge's answers, during the askin
 `7dcaedb`) and the **real Codex 0.160.1 TUI**, with **three `gpt-6.1-sol` low turns**, in a throwaway Herdr session
 with its own database, run directory and a **private CODEX_HOME**; the user's `~/.codex` daemon and files were the
 same before and after (`RealGame/baseline-before.txt`, `baseline-after.txt`, `cleanup.json`). Verdict: pass. Its
-write-up, curated: [`RealGameWalkthrough/README.md`](codex-shared-tui-evidence/RealGameWalkthrough/README.md). The
+write-up was curated in `RealGameWalkthrough/README.md` (not published). The
 run predates §12.1a's fix, which it does not exercise (no restart).
 
 | Check | Result | Evidence |

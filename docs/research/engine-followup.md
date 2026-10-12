@@ -72,7 +72,7 @@ Researcher: GROUND (engine brief, follow-up) · Date: 2026-09-28 · Builds on [e
 - Chrome 153.0 (installed `/Applications/Google Chrome.app`), headless via `playwright-core` 1.63.0 in `~/h3d-tools` (approved).
   WKWebView ran through a small Swift harness ([`engine-bench/wkbench.swift`](engine-bench/wkbench.swift)).
   - WKWebView rounds `performance.now()` to 1 ms, so its medians are integers.
-  - The Mac was **on battery** (85% → 82%) with Theo's normal apps open, so some background noise is included.
+  - The Mac was **on battery** (85% → 82%) with the user's normal apps open, so some background noise is included.
   - Raw JSONL: [`engine-bench/results/`](engine-bench/results/).
 
 ### Results: 3024x1890 (DPR 2, full Retina), shadows on unless noted
@@ -126,7 +126,7 @@ What this shows:
 
 ### Sustained runs in a visible window (rAF-driven, 1920x1200 canvas, 40 s each) plus energy
 Energy was sampled with `top -stats cpu,power` (macOS "energy impact", no sudo), averaged over 5 samples of 4 s. It's the sum over
-Chrome/WebKit/harness processes, and **includes Theo's own open Chrome/Safari tabs**; the idle baseline is 25–26. GPU watts were
+Chrome/WebKit/harness processes, and **includes the user's own open Chrome/Safari tabs**; the idle baseline is 25–26. GPU watts were
 **not** measured: `powermetrics` needs sudo, and sudo on the Mac needs a password.
 
 | Run | Sustained fps | Energy (idle baseline ≈ 25) | Δ vs idle | WindowServer energy |
@@ -149,7 +149,7 @@ Takeaways for battery:
   - pause entirely when the window is hidden (Tauri `backgroundThrottling`, §2),
   - offer a "battery saver" 60 Hz cap.
 - Caveat: the first unlocked rigid run held only 62.8 fps. A re-run gave 120. Most likely the window wasn't frontmost or visible
-  (Theo had other windows on top, and closed one bench window by accident). WebKit throttles rAF for occluded windows. That's
+  (other windows were on top, and one bench window was closed by accident). WebKit throttles rAF for occluded windows. That's
   expected behaviour, but a benchmark in a visible window needs the window in front.
 
 ## 2. WKWebView / Safari WebGPU vs Chrome on macOS 26: gaps and caveats
@@ -236,12 +236,12 @@ agent loop and the HTML/xterm.js UI. **Recommendation unchanged, sharpened:**
      tested; only the raw WKWebView was.
    - Frame-rate policy: 120 when animating or interacting, 60 or 30 idle, on-demand when nothing moves, a battery-saver toggle.
    - **Instance everything repeated.** Workers are rigid-part `InstancedMesh`es.
-2. **Dev loop:** Vite on server `127.0.0.1:5173`. Theo/agents use `ssh -L 5173:127.0.0.1:5173` and open
+2. **Dev loop:** Vite on server `127.0.0.1:5173`. The user and agents use `ssh -L 5173:127.0.0.1:5173` and open
    `http://localhost:5173` in Chrome, which is secure, so WebGPU works. The loopback name means there's no `allowedHosts` problem
    either (verifier c). Assert `isSecureContext`, the backend and the adapter in `window.__info`, and **fail Mac-shot checks if
    the backend isn't `webgpu` with vendor `apple`**.
 3. **Runner-up: Godot 4.7.2**, if later needs shift to thousands of skinned characters or heavy VFX. A one-hour Godot MultiMesh
-   port of this benchmark would settle the per-draw question if Theo wants numbers (needs approval to download Godot.app on the
+   port of this benchmark would settle the per-draw question if numbers are wanted (needs approval to download Godot.app on the
    Mac).
 4. **Babylon.js 9** (verifier e): same browser loop, and it has crowd tools three.js lacks out of the box. Neither changes the
    pick for our workload:
@@ -252,7 +252,7 @@ agent loop and the HTML/xterm.js UI. **Recommendation unchanged, sharpened:**
    - With rigid instanced workers we're already at 25 draw calls, so snapshot rendering would save about 0.3 ms. It would matter
      only if we went skinned or non-instanced at scale.
 
-## 4. Mesa on the server: useful? (Theo approved "if useful")
+## 4. Mesa on the server: useful? (approved "if useful")
 
 I installed `mesa-vulkan-drivers vulkan-loader vulkan-tools` (AlmaLinux appstream 25.2.7 / 1.4.328). `vulkaninfo` shows
 `llvmpipe (LLVM 21.1.8, 256 bits)`, Vulkan 1.4.318.
@@ -336,13 +336,11 @@ three.js node materials. It does **not** give WebGPU-backend screenshots on the 
 
 ## 7. Incident + cleanup
 
-- **Incident:** Theo's Mac `~/.ssh/config` has `Host * ControlMaster auto, ControlPath ~/.ssh/sockets/%r@%h:%p, ControlPersist 10m`.
-  My `ssh -f -N -L 18770:… dev@devbox` therefore **became the shared ControlMaster** for `dev@devbox:22`.
-  - During cleanup I killed that PID (it held the 18770 listener).
-  - Any *plain* `ssh devbox` sessions Theo opened on the Mac between about 12:44 and 13:00 CEST would have been
-    multiplexed through it and **dropped**.
-  - The four `herdr --remote` clients (sessions common, livesub, sched, herdr-3d) use their own `-F`/`-S` control sockets. I
-    checked afterwards: all still running.
+- **Incident:** a Mac ssh config with `Host * ControlMaster auto, ControlPath ~/.ssh/sockets/%r@%h:%p, ControlPersist 10m`
+  means an `ssh -f -N -L 18770:… dev@devbox` **becomes the shared ControlMaster** for `dev@devbox:22`.
+  - During cleanup that PID was killed (it held the 18770 listener).
+  - Any *plain* `ssh devbox` sessions opened meanwhile would have been multiplexed through it and **dropped**.
+  - The `herdr --remote` clients use their own `-F`/`-S` control sockets and were checked afterwards: all still running.
   - **Design consequence:** the game's native tunnel must use `ssh -o ControlMaster=no -o ControlPath=none -N -L …` (or a private
     `-S` socket, as herdr does), so it never becomes or joins the user's shared master. Killing the game's tunnel must not affect
     other SSH sessions.
@@ -350,12 +348,12 @@ three.js node materials. It does **not** give WebGPU-backend screenshots on the 
   - Mac: tunnel closed; `/tmp/h3d-*` and bench screenshots removed; `~/h3d-tools` kept (approved install: `playwright-core`
     1.63.0, `run.mjs`, `soak.sh`, `wkbench` + source).
   - Server: bench HTTP servers on 18770/18771 stopped. Mesa Vulkan packages left installed (approved).
-  - Bench windows on the Mac were visible for about 40 s each (they close themselves). Theo closed one by accident, and that run
+  - Bench windows on the Mac were visible for about 40 s each (they close themselves). One was closed by accident, and that run
     was redone.
   - No herdr session, workspace or pane was touched.
 - The harness and raw results are kept for reproducibility in [`engine-bench/`](engine-bench/). Assets and three aren't committed.
 
-## 8. Open questions for Theo
+## 8. Open questions
 
 1. OK to rely on a **private WebKit feature toggle** for 120 Hz in the Tauri shell? Fine outside the App Store, but it may break
    on a macOS update. The fallback is 60 Hz.

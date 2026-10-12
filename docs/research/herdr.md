@@ -146,7 +146,7 @@ Rules (socket-api.mdx): display-only (never changes semantic status); ≤16 keys
 Other durable places:
 1. **Workspace label** (persisted `custom_name`) — already used as `ROLE|descr|ticket|rN`. Could append a short tag, but it's user-visible and 80-char-ish; brittle.
 2. **Agent name** (persisted while agent alive).
-3. **Session name** — could encode building (`personal.bnb-prototype`)? Not recommended; Theo already names sessions by project.
+3. **Session name** — could encode building (`<group>.<project>`)? Not recommended; sessions are already named by project.
 4. **Plugin state dir** (`HERDR_PLUGIN_STATE_DIR`, plugin-owned files) + `[[startup]]` hook to re-apply tokens after every server start. Plugins are **global** (`~/.config/herdr/plugins.json`) so they load in every session.
 5. **Bridge-owned store** (SQLite/JSON under e.g. `~/.local/share/herdr-3d/`) keyed by `(session, workspace_id, uuid-token)`. ← Recommended source of truth for buildings (session→building map), avatars, roles, parent links; bridge re-applies tokens after restart so herdr's sidebar matches.
 
@@ -233,7 +233,7 @@ Recommendation: bridge renders cheap *summary* for all workers (status + `termin
 
 ## 7. Remote / how the Mac attaches
 
-Observed on the Mac (`ps`): 4× `herdr --remote dev@devbox --session {common,sched,herdr-3d,livesub}` + local `herdr client` each, with Herdr-managed SSH ControlMaster sockets in `$TMPDIR/herdr-ssh-*`. On the server each maps to `tailscaled be-child ssh … --remote-ip=203.0.113.20 --cmd=exec herdr --session <X> remote-client-bridge`. `herdr machine list --json` on Mac = `[]` (no saved machines).
+Observed on the Mac (`ps`): several `herdr --remote dev@devbox --session <name>` processes + local `herdr client` each, with Herdr-managed SSH ControlMaster sockets in `$TMPDIR/herdr-ssh-*`. On the server each maps to `tailscaled be-child ssh … --remote-ip=203.0.113.20 --cmd=exec herdr --session <X> remote-client-bridge`. `herdr machine list --json` on Mac = `[]` (no saved machines).
 - `--remote` = stdio bridge of the **binary client protocol** (render/input), not the JSON API. One session per attach; saved machines (`herdr machine add … --remote-session <X>`) are also one session per profile.
 - `--handoff`: opt-in live server replacement during update/remote attach (keeps PTYs alive; interrupts subscriptions). Mac install is Homebrew, so `herdr update` is disabled there.
 - **JSON socket over SSH**: works via OpenSSH unix-socket forwarding (Tailscale SSH allowed it). Verified from the Mac:
@@ -250,8 +250,8 @@ Observed on the Mac (`ps`): 4× `herdr --remote dev@devbox --session {common,sch
 
 ## 8. Notifications, integrations, plugins — hooks a bridge could use
 
-- **Integrations** (`herdr integration status`): here `claude: outdated (v8 < v9)`, `codex: current (v8)`, `opencode: outdated`. Claude's hook (`~/.claude/hooks/herdr-agent-state.sh session`, SessionStart) reports the native session id via `pane.report_agent_session`; lifecycle state is screen-detected. `herdr integration install claude` would upgrade to v9 (not done — Theo's call). Custom agents can report semantic state with `pane report-agent --source custom:x --agent x --state working|idle|blocked`.
-- **Plugins** (global `~/.config/herdr/plugins.json`; Theo has `herdr-navigator` v0.3.6, which itself enumerates sessions via `herdr session list --json`): manifest `herdr-plugin.toml` with `[[startup]]` (runs after each server start/restore — could ping the bridge "session X up" and re-apply tokens), `[[events]] on = "<event>"` hooks for workspace.*/tab.*/pane.created|closed|focused|moved|exited|agent_detected|**agent_status_changed** (spawns a process per event with `HERDR_PLUGIN_EVENT_JSON` — fine for low-rate, heavier than a socket), `[[actions]]` (e.g. "Open in herdr-3d", bindable to keys), `[[panes]]` (TUI panes). `workspace.metadata_updated` does **not** fire plugin hooks.
+- **Integrations** (`herdr integration status`): here `claude: outdated (v8 < v9)`, `codex: current (v8)`, `opencode: outdated`. Claude's hook (`~/.claude/hooks/herdr-agent-state.sh session`, SessionStart) reports the native session id via `pane.report_agent_session`; lifecycle state is screen-detected. `herdr integration install claude` would upgrade to v9 (not done — the owner's call). Custom agents can report semantic state with `pane report-agent --source custom:x --agent x --state working|idle|blocked`.
+- **Plugins** (global `~/.config/herdr/plugins.json`; one installed plugin, `herdr-navigator` v0.3.6, itself enumerates sessions via `herdr session list --json`): manifest `herdr-plugin.toml` with `[[startup]]` (runs after each server start/restore — could ping the bridge "session X up" and re-apply tokens), `[[events]] on = "<event>"` hooks for workspace.*/tab.*/pane.created|closed|focused|moved|exited|agent_detected|**agent_status_changed** (spawns a process per event with `HERDR_PLUGIN_EVENT_JSON` — fine for low-rate, heavier than a socket), `[[actions]]` (e.g. "Open in herdr-3d", bindable to keys), `[[panes]]` (TUI panes). `workspace.metadata_updated` does **not** fire plugin hooks.
 - **notification.show** `{title, body, position, sound: none|done|request}` → toast/desktop notification via the foreground attached client (returns `shown`/`no_foreground_client`/…). The game could trigger these, e.g. "Bob finished".
 - `agent.view.set` can customize herdr's own Agents sidebar (filter/sort by tokens) — optional nicety for keeping TUI and game consistent.
 - `herdr status --json` exposes server/client versions & capabilities (`live_handoff`, `surface_interest`, `health_check`).
@@ -272,7 +272,7 @@ Observed on the Mac (`ps`): 4× `herdr --remote dev@devbox --session {common,sch
 3. **Freelancer linkage**: small change to the write-code skill to tag spawned workspaces with `parent`/`role` tokens + `H3D_PARENT` env; bridge falls back to label prefixes.
 4. Consider upgrading to herdr 0.9.1 (both machines) for `--machine`, observer stall handling, focus fixes — not required for the bridge.
 
-## Open questions for Theo
+## Open questions
 
 1. Where should the building↔session mapping live — bridge store only, or also mirrored into herdr (tokens/labels) so the TUI shows it? Can we modify the write-code skill to add `parent`/`role` tokens when spawning freelancers?
 2. Should "hire" create a **new session** (new floor) or only workspaces in an existing session? And is starting/stopping sessions from the game allowed (stop kills processes)?

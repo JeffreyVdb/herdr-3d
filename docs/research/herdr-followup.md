@@ -7,7 +7,7 @@ Probes ran on throwaway sessions `h3d-probe-herdr2` and `h3d-probe-herdr3`. Both
 ## TL;DR
 
 1. **Stopped sessions can be read offline** from `~/.config/herdr/sessions/<name>/session.json` (`version: 3`). It holds workspace ids and labels, tabs, split layout, each pane's cwd, pane label, agent name, managed agent kind and native `agent_session` id. That is enough to draw a sleeping floor with a worker per workspace. The format is internal and has no docs. It is the same in 0.9.0 and 0.9.1 (`SNAPSHOT_VERSION = 3`, serde defaults, so fields only get added). herdr refuses to load newer versions. Guard on `version == 3` and ignore unknown fields. Don't treat a leftover `herdr.sock` file as "running"; stopped sessions keep theirs.
-2. **Supervised start from a daemon.** Run `systemd-run --user --unit=herdr-s-<name> --collect -p KillMode=process --working-directory=$HOME /bin/fish -l -c 'exec herdr --session <name> server'`. The server gets Theo's normal login environment (same PATH and variables as his existing servers) and none of the `CLAUDE*`/`HERDR_*` leakage. Stop with `herdr session stop <name> --json`, never `systemctl stop`.
+2. **Supervised start from a daemon.** Run `systemd-run --user --unit=herdr-s-<name> --collect -p KillMode=process --working-directory=$HOME /bin/fish -l -c 'exec herdr --session <name> server'`. The server gets the user's normal login environment (same PATH and variables as the existing servers) and none of the `CLAUDE*`/`HERDR_*` leakage. Stop with `herdr session stop <name> --json`, never `systemctl stop`.
    - **Starting a stopped session resumes its agents on its own, with no client attached.** I verified this twice and the server log shows it (see §2). The verifier's HIGH item (a) doesn't match what the binary does: pending resumes start 750 ms after start at the default 120×40 size. The bridge should still confirm each resume and have a fallback (§2c).
 3. **Firing (`workspace close`)** sends **SIGHUP → 250 ms → SIGTERM → 250 ms → SIGKILL** to every process in each pane's session (`src/pane.rs` `shutdown_pane_processes`). Codex exits on SIGHUP. The Claude pane consistently needed **SIGKILL** (~0.57 s). A gentler sequence works: `/exit` (Claude, ~1.6 s) or `/quit` + pause + Enter (Codex), confirm the agent was released, then close. A graceful exit **removes the pane's `agent_session`/`agent_name` from `session.json`**. So use it for firing, never for putting a floor to sleep.
 4. **0.9.1**: the API is almost unchanged (protocol 22 in both; the only new method is `pane.link.resolve`). The session format and resume code are unchanged. Bridge-relevant changes: observers are dropped after **30 s without write progress**, possibly without a `terminal.closed`; `agent focus` now moves attached clients; macOS server service-context fix; `--machine` CLI forwarding; stricter session delete. **Upgrading is advisable but not required**; do it at a quiet time with a normal client update. Don't use `--handoff` on bridge-supervised servers until that's tested (§4).
@@ -20,26 +20,26 @@ Probes ran on throwaway sessions `h3d-probe-herdr2` and `h3d-probe-herdr3`. Both
 Directory contents of stopped sessions (read-only listing):
 
 ```
-sessions/personal/:  herdr-server.log  session.json            (987 B)
-sessions/pastry/:    herdr-client.sock herdr-server.log herdr.sock session.json   ← stale sockets, running:false
+sessions/idle-one/:  herdr-server.log  session.json            (987 B)
+sessions/idle-two/:  herdr-client.sock herdr-server.log herdr.sock session.json   ← stale sockets, running:false
 ```
 Optional extra files: `session-history.json` (only with `[experimental] pane_history = true`, not enabled here) and `session-backups/` (0.9.1 keeps copies of files it couldn't load).
 
-Real `personal/session.json` (stopped, last saved 09-04):
+Shape of a stopped single-pane session's `session.json` (values illustrative):
 ```json
 {"version":3,
- "workspaces":[{"id":"w1","custom_name":"Ansible Home","identity_cwd":"/home/dev",
+ "workspaces":[{"id":"w1","custom_name":"Notes","identity_cwd":"/home/dev",
    "public_pane_numbers":{"1":1},"next_public_pane_number":2,
    "public_tab_numbers":[1],"next_public_tab_number":2,
    "tabs":[{"custom_name":null,"layout":{"Pane":1},
             "panes":{"1":{"cwd":"/home/dev",
-                          "agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"01a0663b-61cd-73a0-a3a0-034ca9fc6c48"}}},
+                          "agent_session":{"source":"herdr:codex","agent":"codex","kind":"id","value":"00000000-0000-0000-0000-000000000000"}}},
             "zoomed":false,"focused":1,"root_pane":1}],
    "active_tab":0}],
  "active":0,"selected":0,"sidebar_width":26,"sidebar_section_split":0.5,"collapsed_space_keys":[]}
 ```
 
-All keys seen across the 20 `session.json` files on this machine (script that walks them):
+All keys seen across the `session.json` files inspected (script that walks them):
 ```
 .version .active .selected .sidebar_width .sidebar_section_split .collapsed_space_keys
 .workspaces[].{id, custom_name, identity_cwd, active_tab, public_pane_numbers{<internal>:<public>},
@@ -66,7 +66,7 @@ All keys seen across the 20 `session.json` files on this machine (script that wa
 ## 2. Supervised headless start/stop
 
 ### 2a. Environment check
-Existing servers (started by Theo's attaches) carry his login-shell environment, e.g. `PATH=/home/dev/.cargo/bin:…:/home/dev/.local/bin:…`, `SHELL=/bin/fish`, `SSH_AUTH_SOCK` and his API variables. Panes run `$SHELL` (fish), and herdr *types* `claude …`/`codex …` into it. So Theo's fish wrappers `~/.config/fish/functions/{claude,codex}.fish` (which inject `PARALLEL_API_KEY`) apply. **The server must run in a login fish environment**, or agents lose credentials.
+Existing servers (started by a user's attaches) carry that user's login-shell environment (`PATH`, `SHELL=/bin/fish`, `SSH_AUTH_SOCK`, API variables). Panes run `$SHELL` (fish), and herdr *types* `claude …`/`codex …` into it. So the user's fish wrappers for `claude`/`codex` (which inject API keys) apply. **The server must run in a login fish environment**, or agents lose credentials.
 
 Leak confirmed earlier: a server started from a Claude tool shell inherited `CLAUDE_CODE_CHILD_SESSION` and similar, which turned transcript saving off and broke `--resume`. 0.9.1 strips only `OMPCODE` from pane environments (`src/pane.rs` diff), so hygiene is still the bridge's job.
 
@@ -75,7 +75,7 @@ Leak confirmed earlier: a server started from a Claude tool shell inherited `CLA
 systemd-run --user --unit=h3d-probe-herdr2 --collect -p KillMode=process \
   --working-directory=/home/dev /bin/fish -l -c 'exec herdr --session h3d-probe-herdr2 server'
 ```
-- systemd user manager is running and `Linger=yes`, so this survives SSH logout. The unit's environment starts from `systemctl --user show-environment` (HOME, PATH, SHELL=/bin/fish, …), then `fish -l` layers config.fish on top. The resulting server environment had the same key set as Theo's normal servers plus systemd's `INVOCATION_ID/JOURNAL_STREAM`, and **no `CLAUDE*`**.
+- systemd user manager is running and `Linger=yes`, so this survives SSH logout. The unit's environment starts from `systemctl --user show-environment` (HOME, PATH, SHELL=/bin/fish, …), then `fish -l` layers config.fish on top. The resulting server environment had the same key set as the normal servers plus systemd's `INVOCATION_ID/JOURNAL_STREAM`, and **no `CLAUDE*`**.
 - Every pane process lives in the unit's cgroup (`systemd-cgls` showed fish shells, `claude --resume`, `codex resume` and MCP children), which is handy for accounting and orphan checks.
 - **Stop**: `herdr session stop <name> --json` → `{"session":{…,"running":false},"stopped":true}`. The server logs `server shutdown initiated … headless server exiting`, runs the per-pane HUP/TERM/KILL sequence (§3) and exits 0, and the transient unit disappears (`--collect`). Avoid `systemctl --user stop`: it sends SIGTERM straight to the unit and skips herdr's orderly save and pane shutdown path.
 - `KillMode=process`: the idea is that live handoff (`update --handoff` replaces the server process) isn't cut down when the old main PID exits. **Handoff under systemd is untested.** Probes used `KillMode=mixed` (first start) and the default/`process` (later starts); stop/start behaved identically in all cases.
@@ -97,7 +97,7 @@ Probe 2: Claude (`--model haiku`, session `8cb4e8a5…`) and Codex (session `01a
 Source path: `src/server/headless.rs:3372–3378`. The headless scheduled-task loop calls `start_pending_agent_resumes(pending_agent_resume_due(now))` whenever geometry isn't dirty. After the 750 ms theme wait it proceeds with `allow_empty_theme = true`. With no client the view area is the headless default 120×40, so `pending_agent_resume_candidates` doesn't bail on zero size. **Response to verifier (a)**: the doc wording ("after a client attaches") describes the normal case, but the headless server doesn't actually wait for one. The cost is that resumed agents may miss terminal theme and colour hints and get sized 120×40 until a client attaches.
 
 Pitfalls the bridge must handle on wake:
-- **Codex didn't report its session id** in my fresh probe: `agent_session` stayed `None` after a full turn. Yet 25 other Codex panes on this machine have ids, so it looks intermittent (Codex hook trust or timing; `~/.codex/hooks.json` SessionStart hook present; unresolved). Without an id there's no resume. **Backfill works**: `herdr pane report-agent-session w2:p1 --source herdr:codex --agent codex --agent-session-id <id>` (id from the newest `~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` whose cwd matches). After that, restart resumed it. The bridge can check after each hire that `agent_session` is set, and show a small "no resume" warning icon otherwise.
+- **Codex didn't report its session id** in my fresh probe: `agent_session` stayed `None` after a full turn. Yet other Codex panes on this machine have ids, so it looks intermittent (Codex hook trust or timing; `~/.codex/hooks.json` SessionStart hook present; unresolved). Without an id there's no resume. **Backfill works**: `herdr pane report-agent-session w2:p1 --source herdr:codex --agent codex --agent-session-id <id>` (id from the newest `~/.codex/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` whose cwd matches). After that, restart resumed it. The bridge can check after each hire that `agent_session` is set, and show a small "no resume" warning icon otherwise.
 - Resume fails if the transcript doesn't exist (e.g. the env-leak case) and the pane falls back to a shell (`No conversation found…`), dropping the agent name. Detect it: after start, expect a `pane.agent_detected` per pane that had `agent_session`, within about 10 s. Any that don't arrive become "didn't wake up" workers, and the bridge can offer a fallback `pane run <pane> "claude --resume <id>"`.
 - Wake cost: every agent in the session starts at once (MCP servers and all). Fine for a floor, but don't wake a whole building at once.
 
@@ -141,7 +141,7 @@ Source diff of `src/api` shows only `pane.link.resolve` added (plus its response
 | Live agent names survive detection uncertainty (#3225) | Fewer transient "worker vanished" flickers. |
 | Codex state fixes (static titles, queued follow-ups, idle not shown as blocked), Claude spinner detection | Better status accuracy for desk animations. |
 | OpenCode lifecycle fixes, Grok/Claude integration hook narrowing ("reinstall Claude integration") | `herdr integration install claude` after upgrading (currently v8 < v9). |
-| Handoff > 64 panes; remote bandwidth/CPU fixes | Nice for Theo's `--remote` use. |
+| Handoff > 64 panes; remote bandwidth/CPU fixes | Nice for `--remote` use. |
 
 **Advice**: upgrade both machines to 0.9.1. The server uses herdr's own updater (`~/.local/bin/herdr`): run `herdr update` without `--handoff`. Running compatible servers keep going on 0.9.0 until they're restarted; each session picks up 0.9.1 on its next stop/start (e.g. a sleep/wake cycle). The Mac uses `brew upgrade herdr`. Then reinstall the Claude integration. Nothing in the bridge design depends on 0.9.1, and the protocol and session format are identical, so a mixed 0.9.0/0.9.1 fleet is fine. Avoid `--handoff` for bridge-supervised units until it's tested under systemd.
 
@@ -152,7 +152,7 @@ Workspace-id reuse only happens across a restart, for ids above the highest surv
 
 **Proposal**
 - The bridge store (SQLite) has `worker(uuid PK, session, workspace_id, created_at, created_by, role, avatar, building…)` and `worker_fingerprint(uuid, label, identity_cwd, agent_session_ids[], pane_label_marker, last_seen_at, last_seen_session_generation)`.
-- **Marker**: at hire (or first sight), `pane rename <root pane> "h3d-<short uuid>"`. The pane label is saved as `panes{…}.label` and **survived a restart** in the probe (`w3:p1 label h3d-7f3a9c`, new terminal id). It shows only as the pane's label (a small border title), not the workspace sidebar name. If Theo finds it ugly on borders, skip it and rely on the fingerprint.
+- **Marker**: at hire (or first sight), `pane rename <root pane> "h3d-<short uuid>"`. The pane label is saved as `panes{…}.label` and **survived a restart** in the probe (`w3:p1 label h3d-7f3a9c`, new terminal id). It shows only as the pane's label (a small border title), not the workspace sidebar name. If it looks ugly on borders, skip it and rely on the fingerprint.
 - **Session generation**: record the server pid and start time (`status server --json` / the socket `ping`) per session. When a generation changes, or after bridge downtime, reconcile each `(session, wN)`:
   1. marker matches → same worker;
   2. else `agent_session.value` matches a recorded id → same worker (unique, survives restart; note that Claude `/clear` or Codex `/new` change it, so update on `pane.updated`);
@@ -167,8 +167,8 @@ Workspace-id reuse only happens across a restart, for ids above the highest surv
 - The observe stream can end without `terminal.closed` (0.9.1 stall timeout), so reconnect.
 - `herdr agent read` / `pane read` CLI output is **plain text**. Use raw socket `pane.read` for JSON (my first doc labelled the CLI output as JSON by mistake).
 
-## Open questions for Theo
+## Open questions
 1. Is a small pane-border label like `h3d-7f3a9c` on each worker's pane OK as a durable identity marker, or should identity be fingerprint-only?
 2. Codex sometimes doesn't report its session id, which means no resume after sleep. Should the bridge backfill it from `~/.codex/sessions` rollout files (tested, works), or just show a warning badge?
 3. "Wake floor" starts every agent in the session at once (with their MCP servers). OK, or should the game offer per-worker wake? That would mean stripping `agent_session` for sleepers the user doesn't want to wake, which is irreversible.
-4. OK to run bridge-started sessions as `systemd --user` transient units (`herdr-s-<name>`)? Sessions Theo starts himself via `herdr --remote` would stay outside systemd.
+4. OK to run bridge-started sessions as `systemd --user` transient units (`herdr-s-<name>`)? Sessions a user starts via `herdr --remote` would stay outside systemd.

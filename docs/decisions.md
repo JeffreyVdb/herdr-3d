@@ -656,7 +656,8 @@ Herdr only, and never connected to the user's shared daemon.
 
 Built on #154's decisions (rows 1–8 above). Protocol: [Shared Codex server](protocol.md#shared-codex-server). Code:
 `internal/codexapp` (adapter, launcher, process ownership, checks), `internal/server/codexserver.go` and
-`codexfloor.go`, four new `herdr.Control` shapes. Evidence: `docs/research/codex-shared-tui-evidence/`
+`codexfloor.go`, four new `herdr.Control` shapes. Evidence (raw captures recorded during #154/#158, not published; regenerate with
+`make codex-shared-tui EVIDENCE=<dir>`; conclusions in `docs/research/codex-shared-tui.md`):
 `TestCodexShareResumeSuppression`, `TestCodexShareSharedLaunch`, `TestCodexShareSharedApprovals` (mock model) and
 `TestCodexShareRealModelSmoke` (real model). Codex 0.160.1, Herdr 0.9.0.
 
@@ -683,7 +684,7 @@ Built on #154's decisions (rows 1–8 above). Protocol: [Shared Codex server](pr
 Built on #154 (findings §1, §2) and #155 (rows 8–10, 15). Protocol: [Codex async questions](protocol.md#codex-async-questions).
 Code: `internal/codexapp/questions.go` (the reconciler), `reply.go` (the envelope, moved from the fixture, and its
 parser), `watch.go` (the join's history, `Steer`/`StartTurn`), `internal/server/codexquestions.go`. Evidence:
-`docs/research/codex-shared-tui-evidence/TestCodexShareAsyncAnswers` (findings §11; mock model, real TUI). Codex 0.160.1.
+`TestCodexShareAsyncAnswers` (captures not published; findings §11; mock model, real TUI). Codex 0.160.1.
 
 | # | Question | Decision |
 |---|---|---|

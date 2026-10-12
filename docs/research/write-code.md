@@ -72,8 +72,8 @@ Rules worth modelling:
 - A worker is **never interrupted** without asking the user. A non-interrupting message ("steering", consumed on the
   worker's next turn) is allowed.
 - **Pass cap** = 3 review passes; code + UX of the same revision count as one pass. Fresh workspaces never reset the count.
-  *In the wild the cap is exceeded*: `code-review` session has `CODE|learnpref|100|r1..r4` and `REVIEW|…|r1..r4`,
-  and depot-manager run `43c0263e…/run/review-status-r4.json` exists. The user presumably approved these extra passes.
+  *In the wild the cap is exceeded*: one session has `CODE|<descr>|<ticket>|r1..r4` and `REVIEW|…|r1..r4`,
+  and a run with `…/run/review-status-r4.json` exists. The user presumably approved these extra passes.
 - Advisory findings never trigger a coder round.
 
 ### 1.3 Reporting and waiting (the "watcher")
@@ -98,7 +98,7 @@ Rules worth modelling:
   Do this when the ledger says "accepted" and the run goes on (e.g. reviewer dispatch) without resuming the coder;
   without it the freelancer stays NEEDS YOU in herdr-3d. To answer and resume, assign a fresh report path instead.
 
-Observed real layout (Claude orchestrators, e.g. `/tmp/claude-1000/-home-dev-devel-fomra-depot-manager/43c0263e-…/scratchpad/`):
+Observed real layout (Claude orchestrators, e.g. `/tmp/claude-1000/<project-slug>/43c0263e-…/scratchpad/`):
 
 ```
 run/brief-status.md        ← contains "Report path: …/run/code-status-r1.json", ports, worktree
@@ -115,17 +115,17 @@ guaranteed.
 
 ### 1.4 Naming in the wild (read-only survey, 2026-09-28)
 
-| Session | Workspaces (label → agent) |
+| Session kind | Workspaces (label → agent) |
 |---|---|
-| code-review | `ORCH|learnpref` (codex), `CODE|learnpref|100|r1..r4` (claude, agent names `code_learnpref_100_rN`), `REVIEW|learnpref|100|r1..r4` (codex, `review_learnpref_100_rN`), `ORCH|ocrbudget`, `ORCH|checkrun`, `ORCH|pref100`, plus plain `github-code-review` |
-| depot-manager | 7× `ORCH|…` (workers already cleaned up); ORCH workspaces have 3–11 panes / 2–7 tabs (dev servers) |
-| herdr-3d | `ORCH|herdr-3d`, `GROUND|herdr`, `GROUND|write-code`, `GROUND|server`, `GROUND|engine` (agent names `r-herdr`, `r-writecode`, …) |
-| livesub, bnb-prototype, claudia | one `ORCH|…` each plus free-form labels (`bancontact enable`, `booking.com research`, `psycholoog-claudia-conte`) |
-| common, games, gta, sched | only free-form labels (`research`, `admin`, `gta-deepseek`) |
+| Review-heavy project | `ORCH|<descr>` (codex), `CODE|<descr>|<ticket>|r1..r4` (claude, agent names `code_<descr>_<ticket>_rN`), `REVIEW|<descr>|<ticket>|r1..r4` (codex, `review_<descr>_<ticket>_rN`), several more `ORCH|…`, plus plain free-form workspaces |
+| Larger project | 7× `ORCH|…` (workers already cleaned up); ORCH workspaces have 3–11 panes / 2–7 tabs (dev servers) |
+| This project | `ORCH|herdr-3d`, `GROUND|herdr`, `GROUND|write-code`, `GROUND|server`, `GROUND|engine` (agent names `r-herdr`, `r-writecode`, …) |
+| Smaller projects | one `ORCH|…` each plus free-form labels |
+| Misc sessions | only free-form labels (`research`, `admin`, …) |
 
 Takeaways: label prefixes are applied consistently for write-code runs. **Agent names follow no convention**
-(`code_learnpref_100_r1` vs `r-writecode` vs none). Some workers live in a split pane of another workspace
-(`bnb-prototype` wF:p2 codex `bancontact`), which the skill doesn't prescribe. Worktrees are visible through
+(`code_<descr>_<ticket>_r1` vs `r-writecode` vs none). Some workers live in a split pane of another workspace
+(one session: wF:p2, a codex worker), which the skill doesn't prescribe. Worktrees are visible through
 `workspace get … .worktree` (`is_linked_worktree`, `checkout_path`, `repo_name`).
 
 ---
@@ -175,7 +175,7 @@ A floor-level "project board" per ORCH can show: ticket → Doing, research ✓,
 | Status | `agent list` / `api snapshot` per session: `agent_status` idle/working/blocked/done/unknown, `launch_pending`, `interactive_ready` | Good |
 | Harness | `agent` field (`claude`/`codex`) | Good |
 | Model / effort | **not exposed** by herdr. Only on screen (status line "Opus 5.5 with low effort", "GPT-6-Luna low") | Screen-scrape only |
-| Parent (ORCH) | Same herdr session plus heuristics. In multi-ORCH sessions (code-review has 4 ORCHs) match `descr`: `CODE|learnpref|…` ↔ `ORCH|learnpref`. Weak: descr often differs (ORCH `herdr-3d` vs `GROUND|herdr`) | Weak |
+| Parent (ORCH) | Same herdr session plus heuristics. In multi-ORCH sessions (one session had 4 ORCHs) match `descr`: `CODE|<descr>|…` ↔ `ORCH|<descr>`. Weak: descr often differs (ORCH `herdr-3d` vs `GROUND|herdr`) | Weak |
 | Parent via report path (Claude ORCH only) | report paths live under `/tmp/claude-1000/<project-slug>/<orch-claude-session-uuid>/scratchpad/…`, and `<uuid>` == ORCH pane `agent_session.value`. For example, this ORCH's pane `w1:p1` has `agent_session.value = 2f2eb2a1-…`, the same as its scratchpad dir. But the child→path link is only inside the brief text sent to the worker | Strong once the path is known, but the path isn't observable |
 | Report arrival | scan `/tmp/claude-1000/*/<uuid>/scratchpad/**/{code,coder,review,ux}-*-r*.json` for the known ORCH UUIDs; parse `brief-*.md` for `Report path:` | Heuristic; naming isn't standardized |
 | Ledger / pass count | `ledger.md` or `ledger-*.json` (format varies) | Poor |
@@ -240,7 +240,7 @@ the tmp+rename pattern the skill already uses:
 The bridge finds runs through `h3d_run` tokens, or by globbing `~/.local/state/write-code/runs/*.json` if the skill also
 drops a symlink there. The registry standardizes the ledger (today it's markdown or JSON, ad hoc).
 
-**C. Agent names.** Standardize `<role>_<descr>_<ticket>_r<N>` (lowercase, `[a-z][a-z0-9_-]{0,31}`), as the learnpref run
+**C. Agent names.** Standardize `<role>_<descr>_<ticket>_r<N>` (lowercase, `[a-z][a-z0-9_-]{0,31}`), as an existing run
 already did. Also pass `--name '<label>'` to claude so the terminal title shows the role.
 
 Everything above is optional. A bridge that finds no tokens falls back to the label regex in §3.1.
@@ -258,7 +258,7 @@ Everything above is optional. A bridge that finds no tokens falls back to the la
 
 Defaults: effort **medium** unless the user says otherwise (skill). Codex config default: `model="gpt-6-sol"`,
 `model_reasoning_effort="medium"`. Skill inconsistency: the Research section recommends `gpt-5.6-luna` (xhigh|max) and
-`gpt-5.6-sol` (low), while the model list uses `gpt-6-*`. Both exist in the models cache. **Flag for Theo**: which one is intended?
+`gpt-5.6-sol` (low), while the model list uses `gpt-6-*`. Both exist in the models cache. **Flag for the owner**: which one is intended?
 
 The researcher recommendation from the skill: cheaper codex model (luna on xhigh/max, or sol on low for long context).
 
@@ -329,7 +329,7 @@ freelancers as they appear.
 
 **User-in-the-loop hooks the game must surface**: orchestrator `blocked`/asking (model choice, pass cap reached,
 interrupt approval), worker `input_required`, folder-trust at startup, PR ready (link). The game must **not** answer these
-automatically. It shows them and lets Theo reply (`agent prompt` for text answers, `agent send-keys` for dialogs, after
+automatically. It shows them and lets the user reply (`agent prompt` for text answers, `agent send-keys` for dialogs, after
 confirmation).
 
 **Guardrails**: the game only closes workspaces it (or an ORCH) created, and only after the report was consumed. The
@@ -350,7 +350,7 @@ orchestrator does its own cleanup. The game never closes an ORCH (the skill says
    `agent_not_ready`/trust.
 5. Build "promote to orchestrator" as a first-class action. The prompt must carry the worker model choices.
 
-## Open questions for Theo
+## Open questions
 
 1. Research models: the skill text says `gpt-5.6-luna`/`gpt-5.6-sol`, but the model list says `gpt-6-*`. Which is intended?
 2. OK to edit the write-code skill to emit `h3d_*` metadata tokens (and optionally `run.json`)? Should the game work
@@ -361,4 +361,4 @@ orchestrator does its own cleanup. The game never closes an ORCH (the skill says
 5. Should the game offer only the models in the skill, or also the others the CLIs accept (claude `sonnet`, codex
    `gpt-5.6-*`, `gpt-5.5`)?
 6. Where do codex orchestrators keep their run dirs? I didn't verify this. Convention A/B would make it irrelevant.
-7. Should the game be allowed to accept folder-trust dialogs on Theo's click, or only show them?
+7. Should the game be allowed to accept folder-trust dialogs on the user's click, or only show them?

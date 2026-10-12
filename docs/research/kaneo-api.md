@@ -1,16 +1,16 @@
 # Kaneo API research
 
-Investigated 2026-10-07. Research only; no implementation or remote mutations. The user's instance is `https://tasks.example.org`; its public [deployment OpenAPI schema](https://tasks.example.org/api/openapi) is the authoritative endpoint contract for this integration. The schema reports API version `1.0.0`, which does not identify a Kaneo release or source commit. Official documentation and source were also checked; source links below pin upstream commit `6bd0c1ac42164ec2604a2e74538f6e084c684641` (2026-10-07). They explain behavior but do not prove the instance runs exactly that commit. Authenticated observations below were supplied by the main investigation; this documentation investigator did not access the supplied API key.
+Investigated 2026-10-07. Research only; no implementation or remote mutations. The investigated instance is a self-hosted deployment (written `https://tasks.example.org` here); its public [deployment OpenAPI schema](https://tasks.example.org/api/openapi) is the authoritative endpoint contract for this integration. The schema reports API version `1.0.0`, which does not identify a Kaneo release or source commit. Official documentation and source were also checked; source links below pin upstream commit `6bd0c1ac42164ec2604a2e74538f6e084c684641` (2026-10-07). They explain behavior but do not prove the instance runs exactly that commit. Authenticated observations below were supplied by the main investigation; this documentation investigator did not access the supplied API key.
 
 ## Findings
 
 Kaneo supports the requested workflow: authenticate with an API key, list accessible workspaces, and list projects in a selected workspace. Kaneo calls workspaces **organizations** in its authentication API. Store workspace and project IDs, displaying names in the UI. A key authenticates as its owning user; it does not automatically authorize every workspace or project. [Official authentication docs](https://kaneo.app/docs/api-reference/authentication), [deployment schema](https://tasks.example.org/api/openapi), [workspace authorization source](https://github.com/usekaneo/kaneo/blob/6bd0c1ac42164ec2604a2e74538f6e084c684641/apps/api/src/utils/validate-workspace-access.ts), [project listing source](https://github.com/usekaneo/kaneo/blob/6bd0c1ac42164ec2604a2e74538f6e084c684641/apps/api/src/project/controllers/get-projects.ts).
 
-An integration needs an instance URL alongside the API key. The user's API base is `https://tasks.example.org/api`; the hosted service's schema advertises `https://cloud.kaneo.app/api`. Self-hosted instances normally expose `<public-origin>/api`. A running instance exposes its own OpenAPI document at `/api/openapi`, which the official docs recommend as the best match for its installed version. Normalize the configurable origin/API base consistently; retain the web origin for links. [Official introduction](https://kaneo.app/docs/api-reference/introduction), [cloud schema](https://cloud.kaneo.app/api/openapi), [deployment schema](https://tasks.example.org/api/openapi).
+An integration needs an instance URL alongside the API key. The investigated API base is `https://tasks.example.org/api`; the hosted service's schema advertises `https://cloud.kaneo.app/api`. Self-hosted instances normally expose `<public-origin>/api`. A running instance exposes its own OpenAPI document at `/api/openapi`, which the official docs recommend as the best match for its installed version. Normalize the configurable origin/API base consistently; retain the web origin for links. [Official introduction](https://kaneo.app/docs/api-reference/introduction), [cloud schema](https://cloud.kaneo.app/api/openapi), [deployment schema](https://tasks.example.org/api/openapi).
 
 ## Read-only deployment verification
 
-The main investigation used the supplied key against `https://tasks.example.org/api` on 2026-10-07. No key, private user identity, workspace/project names, or resource IDs are recorded here. All requests were read-only; no tasks, comments, projects, keys, or workspace settings were created/changed.
+The main investigation used a supplied key against `https://tasks.example.org/api` on 2026-10-07. No key, private user identity, workspace/project names, or resource IDs are recorded here. All requests were read-only; no tasks, comments, projects, keys, or workspace settings were created/changed.
 
 | Request | Observed result |
 | --- | --- |
@@ -35,7 +35,7 @@ Keep the key on the Herdr backend, mask the settings field, and return only a co
 
 ## Endpoint contract
 
-All paths in this table are relative to the configured API base. The methods, required parameters, and response types are present in the [user's deployment OpenAPI document](https://tasks.example.org/api/openapi).
+All paths in this table are relative to the configured API base. The methods, required parameters, and response types are present in the [deployment OpenAPI document](https://tasks.example.org/api/openapi).
 
 | Purpose | Endpoint | Contract |
 | --- | --- | --- |
