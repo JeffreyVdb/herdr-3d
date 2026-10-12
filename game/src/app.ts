@@ -97,6 +97,7 @@ import { digestFailureText } from './world/digestSettings';
 import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup';
 import { activitySection } from './ui/activitySection';
 import { codexServerSection } from './ui/codexServerSection';
+import { repoRefsSection } from './ui/repoRefsSection';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
 import { MonitorPrefs } from './ui/monitorPrefs';
@@ -414,6 +415,8 @@ export class App {
     );
     // #155: whether new Codex workers get a Codex server of their own (the bridge's switch, off by default).
     settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
+    // #247: whether a conversation's `@r:` lists every building's floors (the bridge's switch, off by default).
+    settings.addSection('repos', 'Repositories', repoRefsSection({ book: this.store.repoRefs, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
     // #184: the Kaneo instance a floor can use as its issue board instead of GitHub.
     settings.addSection('kaneo', 'Kaneo', kaneoSection({ book: this.store.kaneo, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
     this.store.ai.onChange((notice) => {

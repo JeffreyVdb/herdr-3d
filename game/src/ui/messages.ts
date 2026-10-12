@@ -59,6 +59,7 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'worker.changes': 'show changes',
   'worker.commands': 'list slash commands and skills', // #136
   'worker.files': 'search files', // #137
+  'worker.repos': 'list repositories on other floors', // #247
   // M6 start
   'preset.create': 'keep team presets',
   'preset.update': 'keep team presets',
@@ -106,6 +107,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'kaneo.projects': 'list Kaneo projects',
   'codex_server.get': 'give Codex workers their own server', // #155
   'codex_server.set': 'give Codex workers their own server',
+  'repo_refs.get': 'list repositories from other buildings', // #247
+  'repo_refs.set': 'list repositories from other buildings',
   'worker.answer_async': "answer a Codex worker's question", // #156
   'worker.dismiss_async': "dismiss a Codex worker's question",
   // #118

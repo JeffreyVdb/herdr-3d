@@ -310,6 +310,7 @@ export class Laptops {
       status: (kind, text) => (this.seat?.away ? this.restStatus(this.seat) : this.host.seat.status(kind, text)),
       ...(host.packup ? { packup: host.packup } : {}),
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
+      repoRefs: host.store.repoRefs, // #247
       modeChanged: (mode) => this.onMode(mode),
       ...(host.themes ? { prefs: host.themes.prefs } : {}),
     });

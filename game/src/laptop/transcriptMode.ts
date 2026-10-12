@@ -1,4 +1,5 @@
 import type { CommandResult } from '../net/client';
+import type { RepoSearchHost } from './repoSearch';
 import type { PackupGate } from '../world/packup';
 import type { AnswerAskAck, Ask, CommandArgs, Followup, HandoffCandidate, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
@@ -62,7 +63,7 @@ export interface OverlayRect {
 
 export interface TranscriptModeHost {
   send<
-    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files',
+    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files' | 'worker.repos',
   >(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
@@ -90,6 +91,8 @@ export interface TranscriptModeHost {
   prefs?: ViewPrefs;
   /** #223: the inline Handoff button of a worker's reply was pressed: the filing dialog (none: no button). */
   handoff?(id: string, c: HandoffCandidate): void;
+  /** #247: the shared "Repositories from other buildings" switch, for the prompt box's `@r:` (none: as if off). */
+  repoRefs?: RepoSearchHost['refs'];
   /** #58: the clock of the pending prompts' "not seen yet" hint (default Date.now; tests pass their own). */
   now?(): number;
 }
@@ -704,6 +707,8 @@ export class TranscriptMode {
       sending: this.drafts.sending(s.id),
       asyncDrafts: this.asyncDrafts,
       files: { id: s.id, search: { send: (t, args) => this.host.send(t, args) } },
+      // #247: `@r:` lists the repositories and folders of the other floors.
+      repos: { id: s.id, search: { send: (t, args) => this.host.send(t, args), refs: this.host.repoRefs ?? null } },
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');

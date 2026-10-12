@@ -1385,6 +1385,71 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+/*
+ * #247: a repository or folder of another floor (`@r:`), drawn like a file row: the glyph, the label in the code face
+ * (the repo name bold, its owner plain; a folder's basename bold, its path dimmed), the matched letters in the sun,
+ * then the floor, dimmed, and "not cloned" as a quiet badge when a pick puts in the GitHub address. The path gives way
+ * first, then the floor; the label only past 70% of the row.
+ */
+.tx .cmp-pop-opt:has(.tx-repo) {
+  max-width: 46em;
+}
+.tx-repo {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55em;
+  min-width: 0;
+  font-family: var(--tx-mono);
+  font-size: var(--tx-mono-fs, 11.5px);
+}
+.tx-repo svg {
+  flex: none;
+  align-self: center;
+  width: 1.15em;
+  height: 1.15em;
+  color: var(--ctl-accent-text);
+}
+.tx-repo[data-kind='dir'] svg {
+  color: var(--warn);
+}
+.tx-repo-label,
+.tx-repo-dir,
+.tx-repo-floor {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tx-repo-label {
+  flex: none;
+  max-width: 70%;
+  color: var(--ctl-text);
+}
+.tx-repo-name {
+  font-weight: 700;
+}
+.tx-repo-dir {
+  flex: 0 3 auto;
+  min-width: 3em;
+  color: var(--ctl-text-2);
+}
+.tx-repo-floor {
+  flex: 0 1 auto;
+  min-width: 3em;
+  color: var(--ctl-text-2);
+}
+.tx-repo-hit {
+  color: var(--warn);
+  font-weight: 700;
+}
+.tx-repo-note {
+  flex: none;
+  margin-left: auto;
+  padding: 0 0.45em;
+  border: 1px solid var(--ctl-line);
+  border-radius: 4px;
+  color: var(--ctl-text-2);
+  font-size: 0.85em;
+  line-height: 1.5;
+}
 .tx .cmp-chip {
   color: var(--ctl-text);
   background: var(--ctl-hover);
@@ -3007,7 +3072,7 @@
 }
 /* The completion popup's commands and paths, and a file chip's name, are the composer's (app) data: the UI's mono
    (Ubuntu Mono) at the shell's 14px, whatever the transcript's preset or zoom. Code in messages keeps --tx-mono. */
-:root[data-ui-theme='ubuntu'] .tx :is(.tx-cmd-name, .tx-cmd-arg, .tx-file) {
+:root[data-ui-theme='ubuntu'] .tx :is(.tx-cmd-name, .tx-cmd-arg, .tx-file, .tx-repo) {
   font-family: var(--font-mono);
   font-size: 14px;
 }

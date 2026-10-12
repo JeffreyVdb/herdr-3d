@@ -297,6 +297,38 @@ export interface CodexServerUpdate extends CodexServerState {
   seq: number;
 }
 
+/** #247: the shared "Repositories from other buildings" switch (`repo_refs` in the snapshot, `repo_refs.update`). */
+export interface RepoRefsState {
+  /** `worker.repos` lists every building's floors, after the worker's own building's. */
+  all_buildings: boolean;
+}
+
+/** #247: `repo_refs.update`: the switch, flat. */
+export interface RepoRefsUpdate extends RepoRefsState {
+  t: 'repo_refs.update';
+  seq: number;
+}
+
+/** #247: one floor of `worker.repos`: its stored repo and folder (never the bridge's suggestions). */
+export interface RepoRef {
+  session: string;
+  /** The floor's building's name; null: the unassigned lot. */
+  building: string | null;
+  /** The worker's own building. */
+  same_building: boolean;
+  /** GitHub `owner/repo` (absent: none). */
+  repo?: string;
+  /** The floor's folder (absent: none); a folder-only floor is listed only when it exists. */
+  dir?: string;
+  /** `repo` is set and `dir` is a checkout of it. */
+  cloned: boolean;
+}
+
+/** #247: `worker.repos` ack: in display order. */
+export interface WorkerRepos {
+  repos: RepoRef[];
+}
+
 /**
  * #83: a worker's wrap-up. `armed`: the cleanup prompt went out and the bridge waits for the agent's result line;
  * `needs_you`: disarmed without a send home (BLOCKED, no result, a time-out, a failed check), `reason` says why.
@@ -342,6 +374,8 @@ export interface World {
   inbox_dismissed?: Record<string, number>;
   /** #155 the shared Codex server switch (absent from an older bridge). */
   codex_server?: CodexServerState;
+  /** #247 the "Repositories from other buildings" switch (absent from an older bridge). */
+  repo_refs?: RepoRefsState;
   /** #184 the Kaneo connection (absent from an older bridge). Never a key. */
   kaneo?: KaneoState;
   /** #223 the filing cabinet: each floor's handoff count (absent from an older bridge, or one without a handoff directory). */
@@ -454,6 +488,8 @@ export type WorldEvent =
   | HandoffRemoved
   // #155 the shared Codex server switch
   | CodexServerUpdate
+  // #247 the "Repositories from other buildings" switch
+  | RepoRefsUpdate
   // #184 the Kaneo connection
   | KaneoUpdate
   // M13 whiteboard
@@ -664,6 +700,8 @@ export interface CommandArgs {
   'worker.commands': { id: string };
   /** #137: the worker's files and directories ranked against `query` (ack `WorkerFiles`). `limit` 1–100, default 30. */
   'worker.files': { id: string; query: string; limit?: number };
+  /** #247: the repos and folders of the other floors of the worker's building (ack `WorkerRepos`). */
+  'worker.repos': { id: string };
   /** #74: `fullscreen` asks the bridge to zoom the pane's herdr tab while the watch lasts (absent / false: as before). */
   'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number; fullscreen?: boolean };
   'terminal.unwatch': { id: string };
@@ -736,6 +774,8 @@ export interface CommandArgs {
   'kaneo.projects': { workspace_id: string };
   'codex_server.get': Record<string, never>; // #155
   'codex_server.set': { enabled: boolean };
+  'repo_refs.get': Record<string, never>; // #247
+  'repo_refs.set': { all_buildings: boolean };
   // #156 Codex async questions. `worker.answer_async` acks `AsyncAnswerAck`.
   'worker.answer_async': { id: string; thread: string; batch: string; answers: { index: number; answer: string }[] };
   'worker.dismiss_async': { id: string; thread: string; batch: string; indexes?: number[] };
@@ -1051,6 +1091,7 @@ const EVENT_TYPES = new Set([
   'handoff.added', // #223 the filing cabinet
   'handoff.removed',
   'codex_server.update', // #155 the shared Codex server switch
+  'repo_refs.update', // #247 the "Repositories from other buildings" switch
   'kaneo.update', // #184 the Kaneo connection
   'screen.state', // M13 screen
   // M13 whiteboard
@@ -1137,6 +1178,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #155: the shared Codex server switch, flat.
     case 'codex_server.update':
       return typeof o.enabled === 'boolean' && typeof o.available === 'boolean';
+    // #247: the "Repositories from other buildings" switch, flat.
+    case 'repo_refs.update':
+      return typeof o.all_buildings === 'boolean';
     // #184: the Kaneo connection, flat.
     case 'kaneo.update':
       return typeof o.state === 'string' && typeof o.key_set === 'boolean';

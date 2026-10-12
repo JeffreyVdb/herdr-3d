@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rankByName } from './rank';
+import { rankByKeys, rankByName } from './rank';
 
 const names = (items: readonly string[], q: string) => rankByName(items, q, (s) => s).map((r) => r.item);
 const hits = (items: readonly string[], q: string) => rankByName(items, q, (s) => s).map((r) => [r.item, r.hits]);
@@ -59,5 +59,62 @@ describe('rankByName', () => {
     const t = performance.now();
     for (let k = 0; k < 10; k++) rankByName(many, 'sk', (s) => s);
     expect((performance.now() - t) / 10).toBeLessThan(16);
+  });
+});
+
+describe('#247 the subsequence tier (opt-in)', () => {
+  const sub = (items: readonly string[], q: string) => rankByName(items, q, (s) => s, { subsequence: true }).map((r) => [r.item, r.hits]);
+
+  it('is off unless asked for: the palette and `/` commands keep substrings only', () => {
+    expect(names(['api-server'], 'apsv')).toEqual([]);
+    expect(sub(['api-server'], 'apsv')).toEqual([['api-server', [0, 1, 4, 7]]]);
+  });
+
+  it('comes after prefix, word start and substring, in source order', () => {
+    const items = ['a-r-c', 'arc', 'xarc', 'sc-arc', 'abrac'];
+    expect(sub(items, 'arc').map(([i]) => i)).toEqual(['arc', 'sc-arc', 'xarc', 'a-r-c', 'abrac']);
+  });
+
+  it('ignores case and needs every character, in order', () => {
+    expect(sub(['API-Server'], 'APSV')).toEqual([['API-Server', [0, 1, 4, 7]]]);
+    expect(sub(['api-server'], 'vsa')).toEqual([]);
+    expect(sub(['ab'], 'abc')).toEqual([]);
+  });
+});
+
+describe('#247 rankByKeys', () => {
+  interface Row {
+    id: string;
+    keys: (string | null)[];
+  }
+  const rank = (rows: Row[], q: string, subsequence = true) => rankByKeys(rows, q, (r) => r.keys, { subsequence }).map((r) => [r.item.id, r.key, r.hits]);
+
+  it('the best tier on any key wins; an earlier key breaks a tie; then the source order', () => {
+    const rows: Row[] = [
+      { id: 'folder-prefix', keys: [null, 'apix'] },
+      { id: 'repo-substring', keys: ['xapi', null] },
+      { id: 'repo-prefix', keys: ['api', 'zzz'] },
+      { id: 'repo-sub-2', keys: ['yapi', 'api'] },
+    ];
+    expect(rank(rows, 'api')).toEqual([
+      ['repo-prefix', 0, [0, 1, 2]],
+      ['folder-prefix', 1, [0, 1, 2]],
+      ['repo-sub-2', 1, [0, 1, 2]],
+      ['repo-substring', 0, [1, 2, 3]],
+    ]);
+  });
+
+  it('a key that matches in a better tier is the one whose hits it says', () => {
+    expect(rank([{ id: 'a', keys: ['web-api', 'api'] }], 'api')).toEqual([['a', 1, [0, 1, 2]]]);
+    expect(rank([{ id: 'a', keys: ['api-server', 'apsv'] }], 'apsv')).toEqual([['a', 1, [0, 1, 2, 3]]]);
+    expect(rank([{ id: 'a', keys: ['api-server', 'x'] }], 'apsv')).toEqual([['a', 0, [0, 1, 4, 7]]]);
+    expect(rank([{ id: 'a', keys: ['api-server', 'x'] }], 'apsv', false)).toEqual([]);
+  });
+
+  it('an empty query keeps every item in order, the first key named, nothing highlighted', () => {
+    expect(rank([{ id: 'a', keys: [null, 'x'] }, { id: 'b', keys: ['y'] }], '')).toEqual([
+      ['a', 0, []],
+      ['b', 0, []],
+    ]);
   });
 });
