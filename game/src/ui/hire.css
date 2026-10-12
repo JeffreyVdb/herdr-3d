@@ -302,6 +302,14 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* #248: a task level that cannot be used now: shown off, its reason as the tooltip. */
+.dd-chip[data-off='true'] {
+  cursor: not-allowed;
+}
+/* #248: the switch between the task levels and the usual pickers, under the chips' column. */
+.dd-level-switch {
+  padding-left: 72px;
+}
 .tape--note,
 .tape--cap-warn {
   --c: var(--warn);
@@ -610,6 +618,9 @@
   .dd-pick legend {
     flex-direction: row;
     margin-top: 0;
+  }
+  .dd-level-switch {
+    padding-left: 0;
   }
 }
 
