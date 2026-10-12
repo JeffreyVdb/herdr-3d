@@ -12,15 +12,15 @@ Captured 2026-09-30, 20:06–20:15 UTC (22:06–22:15 Europe/Brussels). Reposito
 
 Versions: Claude Code **2.1.286**, Codex CLI **0.159.2**. Exact requested models: **claude-sonnet-5-5**, effort **high**; **gpt-6.1-sol**, reasoning effort **high**. Existing user configuration and hooks remained enabled, so hook/startup metadata and their latency are part of the measured behavior. Codex reported reasoning summaries `none`.
 
-All work ran in [ground-jsonl-scratch](ground-jsonl-scratch/). The two CLIs were launched as subprocesses there, and interactive experiments used two newly created Herdr panes with `--no-focus`. Both panes were closed after the experiments. No test agent was asked to edit files, delegate, use skills, or browse. Commands were `ls` and `sleep`; no attachments were submitted.
+All work ran in `ground-jsonl-scratch` (a scratch directory, not published). The two CLIs were launched as subprocesses there, and interactive experiments used two newly created Herdr panes with `--no-focus`. Both panes were closed after the experiments. No test agent was asked to edit files, delegate, use skills, or browse. Commands were `ls` and `sleep`; no attachments were submitted.
 
-- [capture.py](ground-jsonl-scratch/capture.py): records subprocess launch/exit with wall and monotonic nanoseconds; scans transcript trees and stats/tails changed files, sleeping 100 ms per pass. Actual pass cost adds to that interval. Records byte sizes and all newly read bytes. The report uses observation time, not the JSONL's embedded timestamp, as evidence of disk visibility.
-- [observations.jsonl](ground-jsonl-scratch/observations.jsonl): original append batches and subprocess events, filtered after capture to these experiment sessions so unrelated concurrent transcripts are excluded.
-- [monitor.py](ground-jsonl-scratch/monitor.py), [target-observations.jsonl](ground-jsonl-scratch/target-observations.jsonl): later targeted poller, recording unchanged sizes too. Representative measured per-file interval: median **127 ms**, maximum **176 ms**. First snapshots of existing files are historical snapshots, not new append times.
-- [interactive.py](ground-jsonl-scratch/interactive.py), [jsonl-claude-interactive.jsonl](ground-jsonl-scratch/jsonl-claude-interactive.jsonl), [jsonl-codex-interactive.jsonl](ground-jsonl-scratch/jsonl-codex-interactive.jsonl): exact prompt command arguments, invocation/return times, acknowledgements, and approximately 1 Hz Herdr status/TUI snapshots.
-- [finite-events.jsonl](ground-jsonl-scratch/finite-events.jsonl), [think-finite.py](ground-jsonl-scratch/think-finite.py): bounded Codex thinking-only completion.
-- [abort-events.jsonl](ground-jsonl-scratch/abort-events.jsonl): prompt and Escape command timestamps for a real interactive interruption.
-- [lines-observed.jsonl](ground-jsonl-scratch/lines-observed.jsonl): one raw JSONL record per observed line, with source path, byte offset, and earliest captured observation timestamp. [analyze.py](ground-jsonl-scratch/analyze.py) regenerates the detailed timeline appendix.
+- `capture.py`: records subprocess launch/exit with wall and monotonic nanoseconds; scans transcript trees and stats/tails changed files, sleeping 100 ms per pass. Actual pass cost adds to that interval. Records byte sizes and all newly read bytes. The report uses observation time, not the JSONL's embedded timestamp, as evidence of disk visibility.
+- `observations.jsonl`: original append batches and subprocess events, filtered after capture to these experiment sessions so unrelated concurrent transcripts are excluded.
+- `monitor.py`, `target-observations.jsonl`: later targeted poller, recording unchanged sizes too. Representative measured per-file interval: median **127 ms**, maximum **176 ms**. First snapshots of existing files are historical snapshots, not new append times.
+- `interactive.py`, `jsonl-claude-interactive.jsonl`, `jsonl-codex-interactive.jsonl`: exact prompt command arguments, invocation/return times, acknowledgements, and approximately 1 Hz Herdr status/TUI snapshots.
+- `finite-events.jsonl`, `think-finite.py`: bounded Codex thinking-only completion.
+- `abort-events.jsonl`: prompt and Escape command timestamps for a real interactive interruption.
+- `lines-observed.jsonl`: one raw JSONL record per observed line, with source path, byte offset, and earliest captured observation timestamp. `analyze.py` regenerates the detailed timeline appendix.
 - Each session's original JSONL was copied into scratch; subprocess stdout/stderr files preserve answers, tool results, model selection, and exit diagnostics.
 
 The first puzzle asked for all positive integers n such that n²+1 divides n!+1, without tools. Claude completed in 33.6 seconds. Codex remained reasoning and was terminated at the **240-second guard**, exit -15; this is an explicitly censored thinking turn, not a normal completion. A bounded twelve-coins/three-weighings puzzle then completed in 88.6 seconds. **Its initial 31 seconds were not polled**: the first poller had ended and the second began later. Its start records are therefore marked historical below; its two reasoning appends and final completion were observed live. This gap does not affect the fully captured first long Codex turn or either tool turn.
@@ -233,7 +233,7 @@ Every observed line below includes relative observation time, file byte offset, 
 
 ### claude-thinking
 
-Raw transcript: [91fdc9f9-a06d-4cde-8207-1cc1c75a13ca.jsonl](ground-jsonl-scratch/91fdc9f9-a06d-4cde-8207-1cc1c75a13ca.jsonl). Origin: 2026-09-30T20:06:44.358685+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
+Raw transcript: `91fdc9f9-a06d-4cde-8207-1cc1c75a13ca.jsonl`. Origin: 2026-09-30T20:06:44.358685+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
 
 | Observed relative ms | Byte offset | Line type / subtype | Record timestamp |
 |---:|---:|---|---|
@@ -269,7 +269,7 @@ Raw transcript: [91fdc9f9-a06d-4cde-8207-1cc1c75a13ca.jsonl](ground-jsonl-scratc
 
 ### claude-interactive
 
-Raw transcript: [8d9c1cb9-a77d-4ed3-9cf5-3cb46e70289c.jsonl](ground-jsonl-scratch/8d9c1cb9-a77d-4ed3-9cf5-3cb46e70289c.jsonl). Origin: 2026-09-30T20:08:46.233947+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
+Raw transcript: `8d9c1cb9-a77d-4ed3-9cf5-3cb46e70289c.jsonl`. Origin: 2026-09-30T20:08:46.233947+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
 
 | Observed relative ms | Byte offset | Line type / subtype | Record timestamp |
 |---:|---:|---|---|
@@ -303,7 +303,7 @@ Raw transcript: [8d9c1cb9-a77d-4ed3-9cf5-3cb46e70289c.jsonl](ground-jsonl-scratc
 
 ### claude-tools
 
-Raw transcript: [ab200186-b800-4ac2-8c9f-180ee8596154.jsonl](ground-jsonl-scratch/ab200186-b800-4ac2-8c9f-180ee8596154.jsonl). Origin: 2026-09-30T20:11:18.631029+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
+Raw transcript: `ab200186-b800-4ac2-8c9f-180ee8596154.jsonl`. Origin: 2026-09-30T20:11:18.631029+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
 
 | Observed relative ms | Byte offset | Line type / subtype | Record timestamp |
 |---:|---:|---|---|
@@ -346,7 +346,7 @@ Raw transcript: [ab200186-b800-4ac2-8c9f-180ee8596154.jsonl](ground-jsonl-scratc
 
 ### codex-thinking
 
-Raw transcript: [rollout-2026-09-30T22-07-19-01a0f3ed-bb01-7be3-bd4b-07e1ec2f9844.jsonl](ground-jsonl-scratch/rollout-2026-09-30T22-07-19-01a0f3ed-bb01-7be3-bd4b-07e1ec2f9844.jsonl). Origin: 2026-09-30T20:07:18.297889+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
+Raw transcript: `rollout-2026-09-30T22-07-19-01a0f3ed-bb01-7be3-bd4b-07e1ec2f9844.jsonl`. Origin: 2026-09-30T20:07:18.297889+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
 
 | Observed relative ms | Byte offset | Line type / subtype | Record timestamp |
 |---:|---:|---|---|
@@ -378,7 +378,7 @@ Raw transcript: [rollout-2026-09-30T22-07-19-01a0f3ed-bb01-7be3-bd4b-07e1ec2f984
 
 ### codex-interactive
 
-Raw transcript: [rollout-2026-09-30T22-09-22-01a0f3ef-9e56-7011-a253-545ccf96bf44.jsonl](ground-jsonl-scratch/rollout-2026-09-30T22-09-22-01a0f3ef-9e56-7011-a253-545ccf96bf44.jsonl). Origin: 2026-09-30T20:10:33.083494+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
+Raw transcript: `rollout-2026-09-30T22-09-22-01a0f3ef-9e56-7011-a253-545ccf96bf44.jsonl`. Origin: 2026-09-30T20:10:33.083494+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
 
 | Observed relative ms | Byte offset | Line type / subtype | Record timestamp |
 |---:|---:|---|---|
@@ -427,7 +427,7 @@ Raw transcript: [rollout-2026-09-30T22-09-22-01a0f3ef-9e56-7011-a253-545ccf96bf4
 
 ### codex-tools
 
-Raw transcript: [rollout-2026-09-30T22-11-40-01a0f3f1-bbb9-7f62-a87a-18979b4b7bf3.jsonl](ground-jsonl-scratch/rollout-2026-09-30T22-11-40-01a0f3f1-bbb9-7f62-a87a-18979b4b7bf3.jsonl). Origin: 2026-09-30T20:11:40.636228+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
+Raw transcript: `rollout-2026-09-30T22-11-40-01a0f3f1-bbb9-7f62-a87a-18979b4b7bf3.jsonl`. Origin: 2026-09-30T20:11:40.636228+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
 
 | Observed relative ms | Byte offset | Line type / subtype | Record timestamp |
 |---:|---:|---|---|
@@ -464,7 +464,7 @@ Raw transcript: [rollout-2026-09-30T22-11-40-01a0f3f1-bbb9-7f62-a87a-18979b4b7bf
 
 ### codex-thinking-finite
 
-Raw transcript: [rollout-2026-09-30T22-12-13-01a0f3f2-3949-77f2-b38d-5e2b271ec3ac.jsonl](ground-jsonl-scratch/rollout-2026-09-30T22-12-13-01a0f3f2-3949-77f2-b38d-5e2b271ec3ac.jsonl). Origin: 2026-09-30T20:12:12.850917+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
+Raw transcript: `rollout-2026-09-30T22-12-13-01a0f3f2-3949-77f2-b38d-5e2b271ec3ac.jsonl`. Origin: 2026-09-30T20:12:12.850917+00:00 (prompt command invocation; delivery is bounded by the recorded command return).
 
 | Observed relative ms | Byte offset | Line type / subtype | Record timestamp |
 |---:|---:|---|---|

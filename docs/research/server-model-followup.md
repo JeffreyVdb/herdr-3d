@@ -7,7 +7,7 @@ Chrome 153.0.8010.53, Safari 26.6.2, server Go 1.27.0.
 
 ## TL;DR
 
-1. **The Mac uses the OpenSSH client, and the server side is Tailscale SSH** (`tailscaled be-child ssh … --remote-user=JeffreyVdb@github`).
+1. **The Mac uses the OpenSSH client, and the server side is Tailscale SSH** (`tailscaled be-child ssh … --remote-user=dev@example.com`).
    Verified on this path: **TCP `-L`, unix-to-unix `-L`, and TCP-to-unix `-L` forwarding all work**. The tunnel adds **~0 ms**:
    the echo RTT median was 22.4–23.6 ms against a 23.2 ms ICMP average. A fresh SSH connect takes ~340 ms. An exec over an
    existing ControlMaster takes ~190 ms (dominated by the fish login shell). New design: the bridge listens on
@@ -38,30 +38,28 @@ Chrome 153.0.8010.53, Safari 26.6.2, server Go 1.27.0.
 
 ### Which SSH is it?
 
-The Mac side is OpenSSH:
+The Mac side is OpenSSH (`ssh -V` → OpenSSH_10.3p1, LibreSSL 3.3.6). Two properties matter to the bridge:
+
+- A typical `~/.ssh/config` enables `ControlMaster auto` / `ControlPersist` for all hosts, so `ssh -G <host>` reports a
+  `controlpath` under `~/.ssh/sockets/` and a `serveraliveinterval`. The bridge must not assume a host block exists.
+- The server's MagicDNS name resolves to its tailnet address (`devbox.example.net`, 203.0.113.10).
+
+The server side is Tailscale SSH. While the Mac ran `ssh -o ControlPath=none dev@devbox 'sleep 12; …'`, the server showed
+a `tailscaled be-child ssh` process wrapping the command (login identity shown as the placeholder `dev@example.com`):
 
 ```
-$ ssh -V                              → OpenSSH_10.3p1, LibreSSL 3.3.6
-$ ssh -G devbox              → user dev, hostname devbox, port 22, controlmaster auto,
-                                        controlpath ~/.ssh/sockets/dev@devbox:22, serveraliveinterval 60
-$ dscacheutil -q host -a name devbox → devbox.example.net 203.0.113.10 (MagicDNS)
-~/.ssh/config: Host * { IdentityAgent Bitwarden agent; ControlMaster auto; ControlPersist 10m; ... }  (no host block for devbox)
-```
-
-The server side is Tailscale SSH. While the Mac ran `ssh -o ControlPath=none dev@devbox 'sleep 12; …'`, the server showed:
-
-```
-355238 13476 /usr/sbin/tailscaled be-child ssh --login-shell=/bin/fish --uid=1000 ... --remote-user=JeffreyVdb@github
+355238 13476 /usr/sbin/tailscaled be-child ssh --login-shell=/bin/fish --uid=1000 ... --remote-user=dev@example.com
        --remote-ip=203.0.113.20 --has-tty=false ... --cmd=sleep 12; echo h3d-probe-done
 355248 355238 /bin/fish -c sleep 12; echo h3d-probe-done
 ```
 
-`sshd` is also active on `0.0.0.0:22`, but traffic to the tailnet IP is intercepted by tailscaled (`RunSSH: true`).
-**"Anyone with SSH access" therefore means:** (a) whoever the tailnet policy's `ssh` rules map to local user `dev`, plus
-(b) whoever has a key in `~dev/.ssh/authorized_keys` and can reach sshd on a non-tailnet interface. The bridge socket is `0600 dev`, so
+With Tailscale SSH enabled (`RunSSH: true`), traffic to the tailnet IP is intercepted by tailscaled even if a regular
+`sshd` is also listening. **"Anyone with SSH access" therefore means:** (a) whoever the tailnet policy's `ssh` rules map to
+the local user, plus (b) on a host that also runs `sshd`, whoever has an authorized key for that user and can reach it on a
+non-tailnet interface. The bridge socket is `0600 dev`, so
 only sessions that land as `dev` can use it. Any root user can too, which is unavoidable.
 
-### Forwarding tests (Mac → server; own ControlMaster, Theo's masters untouched)
+### Forwarding tests (Mac → server; own ControlMaster, existing masters untouched)
 
 Throwaway echo server on the server: TCP `127.0.0.1:47777` + unix `/tmp/h3d-probe-server/echo.sock` (0600, dir 0700).
 It was removed afterwards.
@@ -99,7 +97,7 @@ Reconnect after a network drop is therefore well under 1 s once the network is b
   config file is not left on disk. These masters are an implementation detail tied to one attach (docs: "a private per-attach control
   socket"), so **I did not attach forwards to them**. Adding a forward to one is technically possible, but it would break when that attach
   ends and it is not a supported interface.
-- Theo's global `ControlPath ~/.ssh/sockets/%r@%h:%p` + `ControlPersist 10m` means any plain `ssh devbox` could
+- A typical global `ControlPath ~/.ssh/sockets/%r@%h:%p` + `ControlPersist 10m` means any plain `ssh devbox` could
   become or reuse a master. That is fine, but the helper should use an explicit ControlPath of its own (or `ControlPath=none` for
   the tunnel process) so its lifetime is independent. Recommended tunnel command:
 
@@ -111,7 +109,7 @@ Reconnect after a network drop is therefore well under 1 s once the network is b
   ```
 
   The helper supervises it and restarts it with backoff. `StreamLocalBindUnlink` removes a stale local socket on restart. The system `ssh`
-  is used, not a Go SSH library, so Theo's config, the Bitwarden agent, known_hosts and Tailscale SSH all behave as they do today.
+  is used, not a Go SSH library, so the operator's ssh config, key agent, known_hosts and Tailscale SSH all behave as they do today.
 
 ### Bridge side changes vs server-model.md
 
@@ -143,7 +141,7 @@ can't spawn `ssh` or launch Ghostty, so something native is needed on the Mac.
 - It is the only option that keeps the engine researcher's Chrome/Playwright verification loop unchanged.
 - It can be built and updated entirely by agents on the server.
 - It reuses Go and protocol types from the bridge, and keeps all privileged local actions in one small, auditable process.
-- If Theo later wants a "real app", wrap the same page in Tauri 2. The helper's tunnel and Ghostty logic stays, and Tauri just
+- If a native app is wanted later, wrap the same page in Tauri 2. The helper's tunnel and Ghostty logic stays, and Tauri just
   loads `http://127.0.0.1:7777`. First verify WebGPU inside an actual Tauri window, as the verifier asked.
 
 ### Helper design sketch
@@ -163,7 +161,7 @@ can't spawn `ssh` or launch Ghostty, so something native is needed on the Mac.
   - require a per-launch random token. The helper opens the window with `#t=<token>`; the page sends it as a header or first WS message.
 
   Behind the helper sits a bridge that can start bypass-permission agents, so all three checks matter. Other local processes on the Mac run as
-  Theo and are trusted.
+  the same user and are trusted.
 - **Open terminal:** `POST /local/open-terminal {session, workspace_id?, pane_id?}`. Steps:
   1. The helper asks the bridge to `prepare_open` (focus, see §4).
   2. The helper runs the Ghostty AppleScript (§3).
@@ -186,9 +184,9 @@ Resources: Ghostty.sdef, Metadata.appintents (NewTerminalIntent[location, comman
 | `ghostty -e cmd` from CLI | help text: "On macOS, launching the terminal emulator from the CLI is not supported … Use `open -na Ghostty.app`" |
 | `open -na Ghostty.app --args -e <cmd>` | works per Ghostty help, but `-n` = "open a new instance even if one is already running". That gives a **second Ghostty process** with its own Dock icon and no shared tabs. Acceptable fallback only |
 | **AppleScript** `new window with configuration` | ✅ Ghostty.sdef: `surface configuration` has `command` ("Command to execute instead of the configured shell"), `initial working directory`, `initial input`, `wait after command`, `environment variables`. Commands: `new window`, `new tab [in window]`, `split`, `focus`, `activate window`, `input text`, `send key` … ([docs](https://ghostty.org/docs/features/applescript)) |
-| Shortcuts / App Intents (`NewTerminalIntent`) | present, gated by `macos-shortcuts` (ask/allow/deny, since 1.2.0). Usable from `shortcuts run` only after Theo builds a Shortcut, which is more setup than AppleScript |
+| Shortcuts / App Intents (`NewTerminalIntent`) | present, gated by `macos-shortcuts` (ask/allow/deny, since 1.2.0). Usable from `shortcuts run` only after the user builds a Shortcut, which is more setup than AppleScript |
 
-Script used by the helper (compiled OK with `osacompile`. **Not executed**, so no window was opened in Theo's session):
+Script used by the helper (compiled OK with `osacompile`. **Not executed**, so no window was opened in a real session):
 
 ```applescript
 on run argv
@@ -206,7 +204,7 @@ end run
 The helper invokes it as `osascript open.scpt <session>`.
 - First use triggers the macOS Automation (TCC) prompt: "herdr3d-helper wants to control Ghostty". Which process TCC attributes the request to
   (launchd-spawned binary vs `osascript`) needs a one-time check on the Mac.
-- `new tab in front window` is an alternative if Theo prefers tabs.
+- `new tab in front window` is an alternative if tabs are preferred.
 - Use the absolute path `/opt/homebrew/bin/herdr`, since a Ghostty `command` may not get the fish PATH.
 
 ## 4. Verifier HIGH finding: landing a fresh attach on a specific workspace or pane
@@ -255,9 +253,9 @@ A workspace that is already focused never shows `done`: a finish there counts as
    focus at handshake (~1.4 s).
 
 Accepted side effects, to document in UI and code:
-- `done` → seen for that worker. This is semantically right, since Theo is about to look at it. The game should update its
+- `done` → seen for that worker. This is semantically right, since the user is about to look at it. The game should update its
   "finished!" bubble.
-- The server's focus changes, so Theo's *next* plain `herdr --remote` lands there. Existing attached windows don't move.
+- The server's focus changes, so the *next* plain `herdr --remote` lands there. Existing attached windows don't move.
 - Small race: if another client changes server focus in the ~1 s before the handshake, the new window lands elsewhere. Rare with
   one human. No fix exists short of a herdr feature.
 - Every click opens a new window. Reusing an existing Ghostty window attached to that session wouldn't navigate it, because the client
@@ -265,7 +263,7 @@ Accepted side effects, to document in UI and code:
   caveat that it may show a different workspace.
 
 Complementary **"look over the worker's shoulder"** mode: `ssh -t dev@devbox herdr --session <s> terminal attach <term_id>`
-in Ghostty. It shows exactly one pane full-screen without the herdr UI. Open question: does it resize or steal input from Theo's TUI when used
+in Ghostty. It shows exactly one pane full-screen without the herdr UI. Open question: does it resize or steal input from an attached TUI when used
 without `--takeover` while a TUI is attached? I tested it only with no other client. The in-game observer
 (`terminal session observe`, server-model.md) remains the non-intrusive viewer.
 
@@ -278,7 +276,7 @@ A probe server launched as plain `herdr --session S server` under `nohup` made t
 "the remote server was started by a herdr build that may not survive SSH connection loss. restart it … [y/N]". Answering
 `y` restarted it (pane processes lost). The restarted server was a proper daemon:
 - PPID 1, cmdline `/home/dev/.local/bin/herdr server`, env `HERDR_SESSION=<s>`, `HERDR_STARTUP_CWD=/home/dev`
-- same as all of Theo's running servers
+- same as all other running servers
 
 So **don't start sessions with a bare `herdr server` from the bridge.** A "wake the sleeping floor" action should use herdr's own
 detached-daemon launch path. The practical way today is to let the first `herdr --remote … --session <s>` (the open-terminal flow)
@@ -295,7 +293,7 @@ start it. Or confirm with the herdr researcher which non-interactive command per
 - **Open in terminal:** bridge `agent.focus`/`workspace.focus`, then Ghostty AppleScript `new window with configuration`
   running `/opt/homebrew/bin/herdr --remote dev@devbox --session <s>`. Optional direct `terminal attach` mode for a single pane.
 
-## Open questions for Theo
+## Open questions
 
 1. OK that "open in terminal" always opens a **new Ghostty window**, which also clears that worker's "done" badge? New tab in
    the front window instead?
@@ -309,4 +307,4 @@ start it. Or confirm with the herdr researcher which non-interactive command per
 - The server echo listener (pid 351802, `/tmp/h3d-probe-server/`) was killed and removed. Port 47777 is free.
 - Session `h3d-probe-server` was stopped and deleted.
 - Mac: temp dirs `/tmp/h3dp.*`, `/tmp/h3dg.*` and `/tmp/h3d-macpty.py` were removed, and my ControlMasters were exited (`-O exit`).
-- No existing herdr session, workspace, pane or SSH master of Theo's was modified. No config changes on either host.
+- No existing herdr session, workspace, pane or SSH master was modified. No config changes on either host.

@@ -82,7 +82,7 @@ This is a private repository under a personal account. GitHub's [hosted-runner r
 
 ## Hardware benchmark
 
-The same built game, source snapshot, Playwright 1.61.1, Chromium 149.0.7827.55 and fixtures were tested on the current host and an depot-manager instance in `us-east-2`. The instance initially ran as `m8a.2xlarge`, then was resized to `m8i.8xlarge`. AWS could not supply `m8a.8xlarge` in the selected availability zone. The bundle entrypoint and Playwright configuration hashes matched on both hosts.
+The same built game, source snapshot, Playwright 1.61.1, Chromium 149.0.7827.55 and fixtures were tested on the current host and a cloud instance in `us-east-2`. The instance initially ran as `m8a.2xlarge`, then was resized to `m8i.8xlarge`. AWS could not supply `m8a.8xlarge` in the selected availability zone. The bundle entrypoint and Playwright configuration hashes matched on both hosts.
 
 | Host | Exposed vCPUs | RAM | CPU |
 | --- | ---: | ---: | --- |
@@ -112,7 +112,7 @@ With identical explicit thread limits, the m8i run took about 54% less time for 
 
 Reproduce the subsets with `H3D_WORKERS=6 make e2e SPEC='e2e/shot.spec.ts --repeat-each=12 --reporter=json'` and `H3D_WORKERS=6 make e2e SPEC='e2e/m2.spec.ts --repeat-each=2 --reporter=json'`. Use the JSON `stats.duration` to exclude Make build time. For a prepared artifact on the instance, the equivalent command ran through portlease and flock without rebuilding.
 
-Evidence: `/tmp/herdr-shot-local.json`, `/tmp/herdr-m2-local.json`, `/tmp/herdr-shot-w2-local.json`, `/tmp/herdr-m2-w2-local.json`, `/tmp/herdr-remote-results/`, `/tmp/herdr-m8i-results/`, and `/tmp/herdr-run-{remote,large}-bench.sh`. Estimated EC2+root-disk rates from depot-manager were $0.4913/hour for m8a.2xlarge and $1.6978/hour for m8i.8xlarge; these are regional estimates, not the final billed spend. depot-manager confirmed the test instance terminated at 2026-10-10 18:53:59 UTC. The investigation leaves no running benchmark instance.
+Evidence: `/tmp/herdr-shot-local.json`, `/tmp/herdr-m2-local.json`, `/tmp/herdr-shot-w2-local.json`, `/tmp/herdr-m2-w2-local.json`, `/tmp/herdr-remote-results/`, `/tmp/herdr-m8i-results/`, and `/tmp/herdr-run-{remote,large}-bench.sh`. Estimated EC2+root-disk rates from a fleet-management tool were $0.4913/hour for m8a.2xlarge and $1.6978/hour for m8i.8xlarge; these are regional estimates, not the final billed spend. depot-manager confirmed the test instance terminated at 2026-10-10 18:53:59 UTC. The investigation leaves no running benchmark instance.
 
 ## Proposed implementation ticket and acceptance criteria
 

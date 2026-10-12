@@ -17,26 +17,26 @@ Researcher: GROUND|server · Date: 2026-09-28 · herdr 0.9.0 (API protocol 22) �
 - **Recommendation: option (a), a small server-side bridge daemon ("herdr-world", Go)** that holds one subscription per
   running session, keeps an in-memory world model, stores the new building/group layer in **SQLite**, and exposes a single
   **WebSocket** (JSON, snapshot + versioned diffs) on the tailnet. Put it behind `tailscale serve` (HTTPS, tailnet only,
-  identity headers) or bind it to the tailnet IP and check `WhoIs`; allow-list Theo's user + the Mac's node.
+  identity headers) or bind it to the tailnet IP and check `WhoIs`; allow-list the operator's user + the Mac's node.
 - In-game live terminal: bridge spawns `herdr --session <s> terminal session observe <pane> --cols C --rows R`
   (read-only observer; NDJSON `terminal.frame` = base64 ANSI, one full frame then incremental diffs — verified) only for
   panes the camera is looking at, and relays frames. Fallback: poll `pane.read format=ansi` at ~4 Hz. "Open in real terminal": game launches
   `herdr --remote dev@devbox --session <s>` in the user's terminal app, after the bridge focuses the target
   workspace/agent.
-- Cost: negligible. 11 running herdr servers already use ~286 MB RSS total; the bridge adds ~20–40 MB and <1 % of one core.
+- Cost: negligible. A handful of running herdr servers (one per session) already use ~286 MB RSS total; the bridge adds ~20–40 MB and <1 % of one core.
 
 ## 1. How `herdr --remote` / `herdr machine` work today
 
 ### Evidence (server, `ps`)
 
 ```
-tailscaled be-child ssh --login-shell=/bin/fish --uid=1000 ... --remote-user=JeffreyVdb@github --remote-ip=203.0.113.20
+tailscaled be-child ssh --login-shell=/bin/fish --uid=1000 ... --remote-user=dev@example.com --remote-ip=203.0.113.20
    --has-tty=false ... --cmd=exec /home/dev/.local/bin/herdr --session herdr-3d remote-client-bridge
 /home/dev/.local/bin/herdr --session herdr-3d remote-client-bridge      (RSS ~4 MB)
 /home/dev/.local/bin/herdr server                                         (RSS 20–40 MB, one per session)
 ```
 
-Same pattern for sessions `common`, `livesub`, `sched`.
+Same pattern for every other attached session.
 
 ### Evidence (Mac, read-only `ps`)
 
@@ -55,7 +55,7 @@ ssh: $TMPDIR/herdr-ssh-77524-0/ctl [mux]
 | Mac | `herdr --remote …` | launcher; writes a private ssh config + control socket in `$TMPDIR/herdr-ssh-<pid>-0/` |
 | Mac | `herdr client` | local TUI renderer, local keybindings (`--remote-keybindings local` default) |
 | Mac | `ssh … -T … exec herdr … remote-client-bridge` | transport, no TTY, stdio pipe; ControlMaster mux so extra channels can reuse it |
-| Server | `tailscaled be-child ssh` | Tailscale SSH (server has `RunSSH: true`); identity = `JeffreyVdb@github` from node 203.0.113.20 |
+| Server | `tailscaled be-child ssh` | Tailscale SSH (server has `RunSSH: true`); identity = `dev@example.com` from node 203.0.113.20 |
 | Server | `herdr --session X remote-client-bridge` | relays stdio ↔ the session's private `herdr-client.sock` |
 | Server | `herdr server` (per session) | owns PTYs, agents, state, `session.json` persistence |
 
@@ -65,7 +65,7 @@ So "remote mode" is **not** socket forwarding of the public API; it is an SSH-ex
 client protocol (versioned: `private_protocol: 22`, `endpoint_protocol_generation: 1`). `--handoff` opts into live
 handoff (moving an attached client across a server binary upgrade; `server.live_handoff` API method,
 `capabilities.live_handoff: true` in `ping`). `herdr machine add` "prepares the remote Herdr server and saves an SSH
-machine" so the local TUI can list/switch machines; Theo doesn't use it (he uses `--remote` directly).
+machine" so the local TUI can list/switch machines; this project uses `--remote` directly instead.
 
 Docs (persistence-remote, v0.9.1) confirm: "the remote server owns the running panes and sends their terminal content and
 session state over SSH. Your local Herdr draws the UI". `herdr --remote` uses a temporary SSH config (user config first,
@@ -80,7 +80,7 @@ The **public socket API** (`herdr api schema --json`, 275 KB JSON Schema, `proto
 ### Public socket API facts (verified by probe)
 
 - Socket: `~/.config/herdr/sessions/<name>/herdr.sock`, mode `0600`, owner dev. Default session:
-  `~/.config/herdr/herdr.sock`. `herdr session list --json` gives name, running, socket_path for all 24 sessions (11 running).
+  `~/.config/herdr/herdr.sock`. `herdr session list --json` gives name, running, socket_path for every session.
 - Framing: write one JSON line `{"id":"1","method":"…","params":{…}}\n`, read one JSON line. The server closes the
   connection after the response (second write → `BrokenPipe`), **except** `events.subscribe`, which answers
   `{"result":{"type":"subscription_started"}}` and then streams events on the same connection.
@@ -148,19 +148,20 @@ The bridge can create workspaces and start agents that run with bypass permissio
 shell as dev on devbox.**
 
 1. **Never public.** No Funnel. Either
-   - **Preferred: `tailscale serve --bg --https=<port> http://127.0.0.1:<port>`** (Theo already uses serve for 4 tailnet-only
-     services on this box). Bridge listens on `127.0.0.1` only. Serve terminates TLS with the `*.example.net` cert and injects
+   - **Preferred: `tailscale serve --bg --https=<port> http://127.0.0.1:<port>`** (Serve exposes tailnet-only
+     services). Bridge listens on `127.0.0.1` only. Serve terminates TLS with the `*.example.net` cert and injects
      `Tailscale-User-Login` / `Tailscale-User-Name` headers (stripped from incoming requests to prevent spoofing; not set for
      tagged devices; Funnel traffic gets none) — source: https://tailscale.com/docs/features/tailscale-serve (identity headers).
      WebSocket upgrade passes through the HTTP proxy.
    - Or bind directly to `203.0.113.10:<port>` and call **LocalAPI WhoIs** on each connection's remote addr
-     (`tailscale whois --json 203.0.113.20` works as dev; LocalAPI socket `/var/run/tailscale/tailscaled.sock` is `0666`).
-     This also gives the **node** (`StableID example-stable-id`, `devmac`), so you can allow-list
-     "Theo *and* the Mac" — headers only give the user. Plain `ws://` is still WireGuard-encrypted end to end.
-2. **Allow-list:** user `JeffreyVdb@github` (ID 8966199681587026); optionally node StableID of the Mac. Reject everything
+     (`tailscale whois --json <peer-ip>` works for a local user only if the LocalAPI socket permits it; the stock
+     `/var/run/tailscale/tailscaled.sock` is world-accessible, so check the socket mode on the target host).
+     This also gives the **node** (a `StableID`, e.g. `example-stable-id` for `devmac`), so you can allow-list
+     "the user *and* the Mac" — headers only give the user. Plain `ws://` is still WireGuard-encrypted end to end.
+2. **Allow-list:** the operator's Tailscale login; optionally node StableID of the Mac. Reject everything
    else with 403 before upgrading the WebSocket.
 3. **Residual risk of the localhost + headers pattern:** any local process can hit `127.0.0.1:<port>` with forged headers.
-   On this box every local process runs as dev and can already use the herdr sockets directly, so this adds no new
+   If every local process runs as the same unix user it can already use the herdr sockets directly, so this adds no new
    privilege — but it means **coding agents on the server can drive the bridge.** Mitigation: also require a per-install
    bearer token stored on the Mac (`~/Library/Application Support/herdr-3d/token`) and on the server
    (`~/.config/herdr-world/token`, 0600), or use the direct-bind + WhoIs variant which cannot be forged from localhost.
@@ -188,7 +189,7 @@ Transport: one WebSocket, text frames, JSON (msgpack later if ever needed; volum
 ... replays events seq 1235.. ...
 // else:
 {"v":1,"t":"world.snapshot","seq":5120,"world":{
-  "buildings":[{"id":"b_personal","name":"Personal","pos":[0,0],"style":"cottage","floors":["games","claudia"]}],
+  "buildings":[{"id":"b_personal","name":"Personal","pos":[0,0],"style":"cottage","floors":["notes","games"]}],
   "floors":[{"session":"herdr-3d","running":true,"building":"b_work","order":3}],
   "workers":[{"key":"herdr-3d/w2","session":"herdr-3d","workspace_id":"w2","label":"GROUND|herdr",
               "status":"working","agents":[{"pane_id":"w2:p1","agent":"claude","name":"r-herdr",
@@ -254,7 +255,7 @@ viewer, restart the observer to get a fresh `full` frame. Cost: one ~few-MB proc
 
 Writable variant: `herdr terminal session control <pane> --takeover --cols --rows` (NDJSON stdin `terminal.input`,
 `terminal.resize`, `terminal.scroll`, `terminal.release`; one controller at a time). **Don't use by default** — takeover
-would steal input/size from Theo's attached TUI. Prefer `agent.prompt`/`agent.send_keys` for in-game input.
+would steal input/size from an attached TUI. Prefer `agent.prompt`/`agent.send_keys` for in-game input.
 
 **Fallback (no subprocess):** while a pane is on screen (camera zoomed on a desk or a "monitor" UI open) the bridge
 polls `pane.read {source:"visible", format:"ansi"}` at **4 Hz** (max 10 Hz), hashes the text, and sends
@@ -272,7 +273,7 @@ use "open in terminal".
 1. Game sends `open_terminal {worker}`.
 2. Bridge calls `workspace.focus` (+ `agent.focus`) in that session, returns argv.
 3. Mac client spawns the user's terminal: e.g. `open -na Ghostty --args -e herdr --remote dev@devbox --session herdr-3d`
-   (or `osascript` for Terminal/iTerm). If a `herdr --remote … --session <s>` is already running (Theo often has several),
+   (or `osascript` for Terminal/iTerm). If a `herdr --remote … --session <s>` is already running (a user often has several),
    just focusing is enough — the attached TUI follows the focus change. Detecting that is local to the Mac (`pgrep -f`).
 4. Alternative for a single pane without the full TUI: `ssh -t dev@devbox herdr --session <s> agent attach <target>`
    (`--takeover` exists). Keep as an option; flag: check how it coexists with an attached TUI.
@@ -326,7 +327,7 @@ Bridge at ~25 running sessions / ~150 workspaces:
 Build **`herdr-world`, a Go bridge daemon** on devbox (systemd user unit), that
 1. discovers sessions, keeps one `events.subscribe` per running session + periodic re-poll, and maintains a world model;
 2. owns a SQLite DB for buildings, floor assignment, avatars, hire history, audit;
-3. exposes one **WebSocket** bound to the tailnet IP, authorising each connection via Tailscale **WhoIs** (Theo's user +
+3. exposes one **WebSocket** bound to the tailnet IP, authorising each connection via Tailscale **WhoIs** (the operator's user +
    the Mac's node);
 4. speaks a small versioned JSON protocol: `hello/welcome` → `world.snapshot` or replay → `*.upsert/removed/status`
    events; typed commands `hire/fire/prompt/keys/focus/watch_terminal/open_terminal/building.*`;
@@ -337,16 +338,15 @@ Build **`herdr-world`, a Go bridge daemon** on devbox (systemd user unit), that
 Prototype path: day 1 a 200-line Python/Go script that polls all sockets every second and serves `world.snapshot` over WS —
 enough to drive the first 3D scene — then add subscriptions, SQLite and commands.
 
-## Open questions for Theo
+## Open questions (settled in `docs/decisions.md`)
 
-1. Is it OK for the bridge to run as a `systemd --user` service on devbox, reachable only from your tailnet (your
-   user + the MacBook)? Any other devices (iPad/phone) that should be allowed?
+1. Bridge as a `systemd --user` service on the server, reachable only from the tailnet? Which other devices (tablet/phone),
+   if any, should be allowed?
 2. Which terminal app on the Mac should "open in real terminal" launch (Ghostty / iTerm / Terminal / WezTerm)?
-3. Should stopped sessions (13 of 24 today) appear as dark floors, or be hidden until started? Should the game be allowed
+3. Should stopped sessions appear as dark floors, or be hidden until started? Should the game be allowed
    to start them?
 4. Fire semantics: close the workspace outright, or first ask the agent to wrap up / commit? Allowed while `working`?
-5. Where should buildings come from initially — manual in-game, or seed from a config (e.g. Personal = games, claudia,
-   bnb-prototype…; Work = depot-manager, code-review…)?
+5. Where should buildings come from initially: manual in-game, or seeded from a config grouping sessions by theme?
 6. Go vs Rust for the bridge (recommend Go for Tailscale libs; Rust matches herdr).
 
 ## Sources
