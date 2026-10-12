@@ -1101,6 +1101,24 @@ one per worker) is kept with it: a view made while a send is on its way is busy 
 `TranscriptMode` refuses a second `worker.prompt` to a worker that has one unanswered. The simulator answers `simFiles` (`SIM_FILES` in
 `tools/fixture-panels.ts`); `e2e/h141-file-chips.spec.ts` drives a Claude and a Codex worker (`@comp`, a folder, a
 quoted path, Backspace and undo, the sent `@path` text) and the copy/paste, desk switch and reload of a draft.
+#247: `@r:` (or `@repo:`) in the same box lists the repositories and folders stored on the other floors of the worker's
+building (every building's with the shared "Repositories from other buildings" switch, `repo_refs`). It is a query
+prefix, not a trigger: `laptop/atSource.ts` `atSource(files, repos)` is the transcript's one `@` source (only when the
+host passes `TranscriptRenderHost.repos`), routing a query that starts `r:` / `repo:` to `laptop/repoSearch.ts`
+`repoSource` with the prefix taken off and anything else to `fileSource`; its label follows the query, its keys are
+`file:` / `repo:`-prefixed, and the files' empty footer becomes the `r:` hint (`REPO_HINT`). `repoSource` asks
+`worker.repos` once per popup (`opening` marks the list stale, the first `r:` query asks; the known rows show at once and
+follow the answer through `subscribe`), ranks with `rankByKeys` (`world/rank.ts`; keys: the repo name, `owner/repo`, the
+folder's basename, the folder, the floor; `subsequence: true`, the opt-in tier the palette and `/` do not use), and
+asks again when the switch changes (`RepoRefsBook`, `world/repoRefs.ts`), so an open popup follows another client.
+"Loading…", a failed first ask, a failed refresh's note and the empty list's note ("No other floors in this building
+have a repository or folder") follow the `/` source. A pick is plain text and a space: the folder (quoted with
+whitespace) when the bridge says `cloned` or the floor has only a folder, else `https://github.com/owner/repo`; a folder
+with `"` or a line break is never offered (`filePathProblem`). The switch is `ui/repoRefsSection.ts` (Settings,
+`store: 'bridge'`). The simulator's `simrepos=<key>` (`tools/fixture-repos.ts`) sets demo-m5's floors up (a cloned repo
+and a folder-only floor in Work, a repo in Personal; cloned when the folder's basename is the repo name) and shares the
+switch between the key's connections; `e2e/h247-repo-completion.spec.ts` picks a folder and, after another client turns
+the switch on, a URL from the other building.
 #147: ⌘P (Mac) / Ctrl+P (elsewhere) opens the command palette from every view: `Game.onPaletteKey`, a window **capture-phase**
 listener next to `onHelpKey` that always `preventDefault`s the chord (no print dialog, repeats and the previews included),
 calls `stopImmediatePropagation` (the seated terminal, the whiteboard's editor and the dialogs under it never see it) and

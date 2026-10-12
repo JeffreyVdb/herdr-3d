@@ -189,6 +189,8 @@ var migrations = []string{
 	migrationHandoff,
 	// #224: agent handoff requests, pending until filed or failed.
 	migrationHandoffRequest,
+	// #247: the "Repositories from other buildings" switch.
+	migrationRepoRefs,
 }
 
 // Fingerprint kinds.

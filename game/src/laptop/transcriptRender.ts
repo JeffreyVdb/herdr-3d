@@ -22,6 +22,9 @@ import { THEMES, ZOOM, stepZoom, type ThemeId } from '../ui/themes';
 import { contextMeter } from '../world/usage';
 import { commandSource, type CommandList } from './slashCommands';
 import { fileSource, type FileSearchHost } from './fileSearch';
+import { repoSource, type RepoSearchHost } from './repoSearch';
+import { atSource } from './atSource';
+import type { Source } from '../ui/composer/complete';
 import { SendGate } from './transcriptDrafts';
 import { zoomKey } from './keys';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
@@ -90,6 +93,8 @@ export interface TranscriptRenderHost {
   sending?: SendGate;
   /** #141: the worker's checkout, for the prompt box's `@` file search (none: no popup). */
   files?: { id: string; search: FileSearchHost } | null;
+  /** #247: the worker, for the `@r:` repositories of the other floors (needs `files`; none: `@` is files only). */
+  repos?: { id: string; search: RepoSearchHost } | null;
 }
 
 export interface BlockedQuestion {
@@ -905,10 +910,10 @@ class Transcript implements TranscriptView {
       placeholder: PROMPT_HINT,
       submitPolicy: 'enter',
       onSubmit: () => this.submit(),
-      // #139: completion is on; #140: `/` lists the worker's commands and skills, #141: `@` its files (only here: no
-      // other composer has them).
+      // #139: completion is on; #140: `/` lists the worker's commands and skills, #141: `@` its files, #247: `@r:` the
+      // other floors' repositories (only here: no other composer has them).
       complete: {
-        sources: [...(host.commands ? [commandSource(host.commands.list, host.commands.harness)] : []), ...(host.files ? [fileSource(host.files.id, host.files.search)] : [])],
+        sources: [...(host.commands ? [commandSource(host.commands.list, host.commands.harness)] : []), ...this.atSources(host)],
         bounds: () => this.root,
       },
     });
@@ -2253,6 +2258,13 @@ class Transcript implements TranscriptView {
     if (e.key === 'Escape' || zoomKey(e)) return;
     e.stopPropagation();
     // Enter sends and Shift+Enter adds a line: the composer's own key handling (submitPolicy 'enter').
+  }
+
+  /** #141, #247: the `@` source: the worker's files, and with `repos` the other floors' repositories behind `r:`. */
+  private atSources(host: TranscriptRenderHost): Source[] {
+    if (!host.files) return [];
+    const files = fileSource(host.files.id, host.files.search);
+    return [(host.repos ? atSource(files, repoSource(host.repos.id, host.repos.search)) : files) as Source];
   }
 
   private submit(): void {
