@@ -3,9 +3,10 @@
 <!--
   h3d-helper as a user LaunchAgent on the Mac (see CONTRIBUTING.md "Helper").
   launchd does not expand ~ or $HOME, and it does not see your shell's exports. The helper has
-  no built-in bridge host: fill in the placeholders when installing (user@host of the bridge
-  server, and its bridge socket; leave H3D_HELPER_REMOTE_SOCKET empty to have the helper ask
-  the host for its $XDG_RUNTIME_DIR):
+  no built-in bridge host and reads no config file: the EnvironmentVariables below are its only
+  configuration. Fill in the placeholders when installing (user@host of the bridge server, and
+  its bridge socket; leave H3D_HELPER_REMOTE_SOCKET empty to have the helper ask the host for
+  its $XDG_RUNTIME_DIR), and rerun these to change them:
     sed -e "s|@HOME@|$HOME|g" \
         -e "s|@H3D_HELPER_HOST@|dev@devbox|g" \
         -e "s|@H3D_HELPER_REMOTE_SOCKET@|/run/user/1000/herdr-world/bridge.sock|g" \

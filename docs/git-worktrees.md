@@ -31,6 +31,9 @@ WebGL2 work. It may wait for another worktree's e2e run (host-wide lock); that i
 - Prefer `make` targets over bare `pnpm`: they carry `deps`, the e2e lock and the Playwright env. For a bare
   `pnpm -C game ...`, run `make deps` first. `make e2e-prebuilt` reruns the suite on the bundle you already built.
 - The first `go test ./...` takes ~2 min (`internal/server`). Run the packages you touched while iterating.
+- `origin` is the public repository and the only push target. The private `JeffreyVdb/herdr-3d-archive` (the history
+  before it; old `#NNN` references point there) may be added as a read-only extra remote for context, never pushed to
+  (CONTRIBUTING.md, "Remotes").
 
 ## Teardown
 

@@ -14,7 +14,6 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -40,8 +39,6 @@ const (
 	EnvHelperSSH           = "H3D_HELPER_SSH"
 	EnvHelperLogLevel      = "H3D_HELPER_LOG_LEVEL"
 	EnvHelperLogFormat     = "H3D_HELPER_LOG_FORMAT"
-	// EnvHelperConfig overrides where the deprecated private config file lives (HelperConfigPath).
-	EnvHelperConfig = "H3D_HELPER_CONFIG"
 )
 
 // DefaultHelperListen is where the helper serves the game. There is no default
@@ -84,86 +81,21 @@ func DefaultChromeProfile() string {
 
 // Where a helper setting came from.
 const (
-	sourceFlag   = "flag"
-	sourceEnv    = "env"
-	sourceConfig = "config file"
+	sourceFlag = "flag"
+	sourceEnv  = "env"
 )
-
-// HelperConfigPath is the private helper config file: KEY=VALUE lines, # comments,
-// at <UserConfigDir>/h3d-helper/helper.env (macOS: ~/Library/Application
-// Support/h3d-helper/helper.env), or $H3D_HELPER_CONFIG.
-//
-// Deprecated: a fallback so a release does not depend on reconfiguring the
-// installed Mac first; the flag, the environment (the LaunchAgent's
-// EnvironmentVariables) win over it. Removed with the cutover, issue #253.
-func HelperConfigPath() string {
-	return envOr(EnvHelperConfig, filepath.Join(helperDir(os.UserConfigDir, ".config"), "helper.env"))
-}
-
-// These parsing and resolution rules are mirrored by MAC_PROBE in deploy/h3d-update
-// (its migration guard): change both together.
-// helperConfigKeys are the settings read from the config file; every other line is ignored.
-var helperConfigKeys = []string{EnvHelperHost, EnvHelperRemoteSocket}
-
-// parseHelperConfig parses KEY=VALUE lines (an optional `export `, blank lines
-// and # comments are skipped; a value may be single- or double-quoted, an
-// unquoted one ends at " #"). Only helperConfigKeys are kept.
-func parseHelperConfig(file string, data []byte) (map[string]string, error) {
-	out := map[string]string{}
-	for i, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "\ufeff"))
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
-		key, val, ok := strings.Cut(line, "=")
-		key = strings.TrimSpace(key)
-		if !ok || key == "" {
-			return nil, fmt.Errorf("%s:%d: want KEY=VALUE, got %q", file, i+1, line)
-		}
-		val = strings.TrimSpace(val)
-		if n := len(val); n >= 2 && (val[0] == '"' || val[0] == '\'') && val[n-1] == val[0] {
-			val = val[1 : n-1]
-		} else if j := strings.Index(val, " #"); j >= 0 {
-			val = strings.TrimSpace(val[:j])
-		}
-		if slices.Contains(helperConfigKeys, key) {
-			out[key] = val
-		}
-	}
-	return out, nil
-}
-
-// loadHelperConfig reads HelperConfigPath; a missing file is an empty config.
-func loadHelperConfig() (map[string]string, string, error) {
-	file := HelperConfigPath()
-	data, err := os.ReadFile(file)
-	if errors.Is(err, os.ErrNotExist) {
-		return map[string]string{}, file, nil
-	}
-	if err != nil {
-		return nil, file, fmt.Errorf("helper config file: %w", err)
-	}
-	cfg, err := parseHelperConfig(file, data)
-	return cfg, file, err
-}
 
 // helperTarget is the bridge the helper tunnels to. Remote is empty when
 // nothing named it: discoverRemoteSocket asks the host.
 type helperTarget struct {
 	Host, Remote             string
 	HostSource, RemoteSource string
-	ConfigPath               string
 }
 
-// resolveHelperTarget picks the host and the remote socket: flag, then the
-// H3D_HELPER_* environment, then the deprecated private config file (#253).
-// There is no built-in machine: a missing host is an error naming all three.
+// resolveHelperTarget picks the host and the remote socket: the flag, then the
+// H3D_HELPER_* environment (on the Mac, the LaunchAgent's EnvironmentVariables).
+// There is no built-in machine: a missing host is an error naming both.
 func resolveHelperTarget(flagHost, flagRemote string) (helperTarget, error) {
-	cfg, file, err := loadHelperConfig()
-	if err != nil {
-		return helperTarget{}, err
-	}
 	// An unfilled @PLACEHOLDER@ (a LaunchAgent plist installed without its sed) is not a value.
 	set := func(v string) bool { return v != "" && !(strings.HasPrefix(v, "@") && strings.HasSuffix(v, "@")) }
 	pick := func(flagVal, key string) (val, source string) {
@@ -172,17 +104,14 @@ func resolveHelperTarget(flagHost, flagRemote string) (helperTarget, error) {
 			return flagVal, sourceFlag
 		case set(os.Getenv(key)):
 			return os.Getenv(key), sourceEnv
-		case set(cfg[key]):
-			return cfg[key], sourceConfig
 		}
 		return "", ""
 	}
-	t := helperTarget{ConfigPath: file}
+	var t helperTarget
 	t.Host, t.HostSource = pick(flagHost, EnvHelperHost)
 	t.Remote, t.RemoteSource = pick(flagRemote, EnvHelperRemoteSocket)
 	if t.Host == "" {
-		return t, fmt.Errorf("no bridge host: pass -host [user@]host, set $%s, or put %s=[user@]host in %s (deprecated fallback)",
-			EnvHelperHost, EnvHelperHost, file)
+		return t, fmt.Errorf("no bridge host: pass -host [user@]host or set $%s (on the Mac: in the LaunchAgent's EnvironmentVariables)", EnvHelperHost)
 	}
 	if strings.HasPrefix(t.Host, "-") || strings.ContainsAny(t.Host, " \t\r\n") {
 		return t, fmt.Errorf("bridge host %q (%s): want [user@]host", t.Host, t.HostSource)
@@ -249,8 +178,8 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	host := fs.String("host", "", "ssh destination running the bridge, [user@]host; required ($"+EnvHelperHost+", else the deprecated config file "+HelperConfigPath()+")")
-	remote := fs.String("remote-socket", "", "bridge socket on the host; default: $XDG_RUNTIME_DIR/herdr-world/bridge.sock as the host reports it over ssh ($"+EnvHelperRemoteSocket+", else the deprecated config file)")
+	host := fs.String("host", "", "ssh destination running the bridge, [user@]host; required ($"+EnvHelperHost+")")
+	remote := fs.String("remote-socket", "", "bridge socket on the host; default: $XDG_RUNTIME_DIR/herdr-world/bridge.sock as the host reports it over ssh ($"+EnvHelperRemoteSocket+")")
 	local := fs.String("local-socket", envOr(EnvHelperLocalSocket, DefaultLocalSocket()), "local end of the tunnel ($"+EnvHelperLocalSocket+")")
 	listen := fs.String("listen", envOr(EnvHelperListen, DefaultHelperListen), "loopback address serving the game ($"+EnvHelperListen+")")
 	bundle := fs.String("bundle", os.Getenv(EnvHelperBundle), "serve this built game directory (a copy of game/dist) instead of the game embedded in the binary; default: the embedded game, else "+DefaultBundle()+" ($"+EnvHelperBundle+")")
@@ -286,6 +215,11 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 	if *printURL {
 		fmt.Fprintf(stdout, "http://%s/#token=%s\n", *listen, token)
 		return nil
+	}
+	// Before anything else is checked: without a bridge there is nothing to serve.
+	target, err := resolveHelperTarget(*host, *remote)
+	if err != nil {
+		return err
 	}
 	cfg := helper.Config{
 		Token:    token,
@@ -329,15 +263,6 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 			}
 		} else {
 			cfg.Open = func(ctx context.Context, u string) error { return helper.OpenChrome(ctx, *chrome, u, *profile) }
-		}
-	}
-	target, err := resolveHelperTarget(*host, *remote)
-	if err != nil {
-		return err
-	}
-	for _, setting := range []struct{ key, source string }{{EnvHelperHost, target.HostSource}, {EnvHelperRemoteSocket, target.RemoteSource}} {
-		if setting.source == sourceConfig {
-			log.Warn("deprecated: "+setting.key+" read from the private helper config file; set it in the LaunchAgent's EnvironmentVariables or pass the flag (removed with the cutover, #253)", "file", target.ConfigPath)
 		}
 	}
 	if target.Remote == "" {

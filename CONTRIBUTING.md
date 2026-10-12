@@ -76,6 +76,18 @@ Go 1.27 (see `go.mod`), Node 24.18 (`game/.nvmrc`), pnpm 11.7 (`packageManager` 
 `portlease` for ports. CI uses the same pins. Working in a git worktree (the default here)? Follow
 [`docs/git-worktrees.md`](docs/git-worktrees.md): create, `make setup`, verify, teardown.
 
+## Remotes
+
+`origin` is the public `JeffreyVdb/herdr-3d`; push branches and tags there only. The history before the public
+repository started lives in the private `JeffreyVdb/herdr-3d-archive`: old `#NNN` references in commit messages and
+in these docs point at its issues and PRs. Where that context helps, add it as a read-only extra remote, never as a
+push target:
+
+```sh
+git remote add archive git@github.com:JeffreyVdb/herdr-3d-archive.git
+git remote set-url --push archive DISABLED   # pushing to it fails
+```
+
 ## Build and test
 
 ```sh
@@ -557,8 +569,8 @@ State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not an
 
 | flag | env | default |
 |---|---|---|
-| `--host` | `H3D_HELPER_HOST` | **none: required.** Flag, then env, then the deprecated private config file (below); without any the helper exits naming all three |
-| `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | flag, env, config file; else the helper asks the host for its `$XDG_RUNTIME_DIR` over ssh and uses `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` (the bridge's default) |
+| `--host` | `H3D_HELPER_HOST` | **none: required.** Flag, then env; without either the helper exits naming both |
+| `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | flag, then env; else the helper asks the host for its `$XDG_RUNTIME_DIR` over ssh and uses `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` (the bridge's default) |
 | `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock` |
 | `--listen` | `H3D_HELPER_LISTEN` | `127.0.0.1:7777`; anything but a loopback IP is refused |
 | `--bundle` | `H3D_HELPER_BUNDLE` | the game embedded in the binary; else `~/Library/Application Support/h3d-helper/dist` |
@@ -574,17 +586,12 @@ State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not an
 **No built-in machine.** The helper never guesses where the bridge is. Set `H3D_HELPER_HOST` (`user@host`) in the
 LaunchAgent's `EnvironmentVariables` (launchd does not see shell exports; `deploy/com.jeffreyvdb.h3d-helper.plist`
 carries `@H3D_HELPER_HOST@` and `@H3D_HELPER_REMOTE_SOCKET@` placeholders and its header says how to `sed` them in) or pass
-`-host`. Without a host the helper exits with `no bridge host: pass -host …, set $H3D_HELPER_HOST, or put
-H3D_HELPER_HOST=… in <config file> (deprecated fallback)`; `-version` and `-print-url` need none. Without a socket it runs
+`-host`. These are the helper's only configuration: it reads no config file. Without a host it exits at once with
+`no bridge host: pass -host [user@]host or set $H3D_HELPER_HOST (on the Mac: in the LaunchAgent's EnvironmentVariables)`;
+`-version` and `-print-url` need none. Without a socket it runs
 `ssh <host> 'printf %s "$XDG_RUNTIME_DIR"'` (same no-multiplexing options as the tunnel) once at start and refuses an empty,
-relative or odd answer, telling you to pass `-remote-socket`.
-
-*Deprecated fallback, removed with the cutover (#253):* if neither flag nor env names them, the helper reads
-`H3D_HELPER_HOST` and `H3D_HELPER_REMOTE_SOCKET` from a private `KEY=VALUE` file (`#` comments, optional quotes, other keys ignored) at
-`~/Library/Application Support/h3d-helper/helper.env` (`$H3D_HELPER_CONFIG` overrides the path; `deploy/helper.env.example`), and logs a
-deprecation warning when it does. It exists so a release does not depend on reconfiguring the installed Mac first:
-`h3d-update` installs that file on a Mac whose helper has no host configured (`docs/releasing.md`, "Migration guard").
-Real values live only in such private files, never in the repository (`.gitignore` keeps `update.env` and `helper.env` out).
+relative or odd answer, telling you to pass `-remote-socket`. Real values live only in the installed plist on the Mac,
+never in the repository; `docs/releasing.md` ("Changing the Mac's bridge host") has the steps.
 
 Installing and updating are one command, `deploy/h3d-update`, from a GitHub release: see
 [`docs/releasing.md`](docs/releasing.md) (first install, updating, rolling back, installing the game as a Dock app).
