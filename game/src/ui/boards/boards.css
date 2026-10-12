@@ -647,6 +647,35 @@
   flex-wrap: wrap;
   margin-left: 0;
   align-items: center;
+  column-gap: 16px;
+}
+/* #248: the PR footer's groups (workers, merge, open) wrap as a whole, never button by button. */
+.bd-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* The workers' two buttons never wrap apart: when narrow their labels wrap inside, the buttons growing as tall as the
+   taller one, so the group stays one row. */
+.bd-group--workers {
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+.bd-group--workers .btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: auto;
+  min-height: var(--ctl-h);
+  padding-top: 6px;
+  padding-bottom: 6px;
+  justify-content: center;
+  text-align: center;
+  white-space: normal;
+}
+.bd-group--end {
+  margin-left: auto;
 }
 .bd-move {
   display: inline-flex;

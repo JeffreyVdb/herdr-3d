@@ -20,6 +20,7 @@ import {
 } from '../world/hire';
 import { labelsOf, modelEntries, modelMatches, type ModelEntry, type ModelLabels } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
+import { levelChipText, levelProblem, preselectLevel, TASK_LEVELS, type TaskLevelId } from '../world/taskLevels';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
@@ -27,6 +28,7 @@ import { hiredToast } from './hiredToast';
 import { HireCoordinator, notPromptedText, type HireCoordinatorHost, type HireOutcome } from './hireCoordinator';
 import type { HireModelPrefs } from './hireModelPrefs';
 import type { HirePrefs } from './hirePrefs';
+import type { TaskLevels } from './taskLevels';
 import type { ToastKind } from './hud';
 // M10 limits
 import { planLimits } from './limits';
@@ -71,6 +73,10 @@ export interface HireHost extends DialogHost {
   modelPrefs?: HireModelPrefs;
   /** The empty state's way to Settings → Harness models. */
   showModelSettings?(): void;
+  /** #248: Settings → Task levels, for a hire that asks for a level (none: no level is set). */
+  taskLevels?: TaskLevels;
+  /** #248: the way to Settings → Task levels when no level can be used. */
+  showTaskLevelSettings?(): void;
   /** Settings → Display: background hiring and the initial worktree choice (absent: foreground, worktree on). */
   hirePrefs?: Partial<Pick<HirePrefs, 'hireInBackground' | 'worktreeByDefault'>>;
   /** #210: the game's hire coordinator (shared with other ways to hire); absent: the dialog makes its own from this host. */
@@ -85,6 +91,27 @@ export interface HireHost extends DialogHost {
 export interface HirePrefill {
   prompt?: string;
   choice?: { harness: string; model: string; effort: string };
+  /**
+   * #248: open in task-level mode with this level picked (or the nearest usable one): the levels instead of the harness,
+   * model and effort fields. `choice` never applies then.
+   */
+  level?: TaskLevelId;
+  /** #248: a worktree whenever one can be made, whatever Settings → Display says. */
+  worktree?: true;
+}
+
+/**
+ * #248: how a hire that asks for a level shows the choice: the level chips (`levels`), the usual pickers the player
+ * switched to (`more`), or the usual pickers because no level can be used (`none`).
+ */
+export type LevelMode = 'levels' | 'more' | 'none';
+
+/** One level as the dialog shows it (test hook). */
+export interface LevelChip {
+  id: TaskLevelId;
+  text: string;
+  /** Why it cannot be picked, null when it can. */
+  problem: string | null;
 }
 
 export type HireState = 'preparing' | 'ready' | 'hiring' | 'failed';
@@ -109,6 +136,8 @@ export interface HireSummary {
   error: boolean;
   /** The first task's images in document order (`n` is the marker's number). */
   images: Array<{ n: number; name: string; status: string; path: string | null }>;
+  /** #248: a hire that asks for a task level: the mode, the picked level and the set levels; absent for a plain hire. */
+  level?: { mode: LevelMode; picked: TaskLevelId | null; chips: LevelChip[] };
 }
 
 /** The worktree option as shown (null: hidden, the folder is no git repo). */
@@ -205,6 +234,7 @@ export function modelList(
   onQuery: (q: string) => void,
   harness = '',
   labels?: ModelLabels,
+  name = 'model',
 ): HTMLFieldSetElement {
   const count = h('span', { class: 'dd-count', 'aria-live': 'polite' });
   const none = h('p', { class: 'field-hint dd-none' });
@@ -212,7 +242,7 @@ export function modelList(
   const chipsByValue: Array<[ModelEntry, HTMLLabelElement, HTMLInputElement]> = [];
   for (const e of modelEntries(harness, values, labels)) {
     const v = e.id;
-    const input = h('input', { type: 'radio', name: 'model', value: v, class: 'visually-hidden', 'data-key': `model:${v}` });
+    const input = h('input', { type: 'radio', name, value: v, class: 'visually-hidden', 'data-key': `${name}:${v}` });
     input.checked = v === value;
     input.addEventListener('change', () => input.checked && onPick(v));
     const label = modelChip(input, e);
@@ -231,7 +261,7 @@ export function modelList(
     none.textContent = q && !shown ? `No model matches “${raw.trim()}”.` : '';
     none.hidden = !none.textContent;
   };
-  const search = h('input', { type: 'text', class: 'dd-search', 'data-key': 'model-search', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Filter ${values.length} models`, placeholder: `Filter ${values.length} models` });
+  const search = h('input', { type: 'text', class: 'dd-search', 'data-key': `${name}-search`, autocomplete: 'off', spellcheck: 'false', 'aria-label': `Filter ${values.length} models`, placeholder: `Filter ${values.length} models` });
   search.value = query;
   search.addEventListener('input', () => {
     onQuery(search.value);
@@ -248,13 +278,13 @@ export function modelList(
     }
   });
   apply(query);
-  return h('fieldset', { class: 'dd-pick dd-pick--models', 'data-pick': 'model' }, h('legend', {}, 'Model ', count), h('div', { class: 'dd-models' }, search, row, none));
+  return h('fieldset', { class: 'dd-pick dd-pick--models', 'data-pick': name }, h('legend', {}, 'Model ', count), h('div', { class: 'dd-models' }, search, row, none));
 }
 
-/** Up to a row of chips; a long list gets a filter and a grid (`modelList`). */
-export function modelField(harness: string, models: string[], value: string, labels: ModelLabels, query: string, onPick: (v: string) => void, onQuery: (q: string) => void): HTMLElement {
-  if (models.length <= MODEL_LIST_AT) return chips('model', 'Model', models, value, onPick, null, modelEntries(harness, models, labels));
-  return modelList(models, value, query, onPick, onQuery, harness, labels);
+/** Up to a row of chips; a long list gets a filter and a grid (`modelList`). `name` keeps several on one page apart. */
+export function modelField(harness: string, models: string[], value: string, labels: ModelLabels, query: string, onPick: (v: string) => void, onQuery: (q: string) => void, name = 'model'): HTMLElement {
+  if (models.length <= MODEL_LIST_AT) return chips(name, 'Model', models, value, onPick, null, modelEntries(harness, models, labels));
+  return modelList(models, value, query, onPick, onQuery, harness, labels, name);
 }
 
 /** The prompt as the form sees it: the text, each image a bare `[Image #n]` (the paths only exist once uploaded, at send time). */
@@ -381,6 +411,9 @@ export class HireDialog {
   private typedLabel: string | null = null;
   /** The model filter of a long list; a harness switch clears it. */
   private modelQuery = '';
+  /** #248: a hire that asks for a level: how the choice is shown (null: a plain hire), and the level picked. Never saved. */
+  private levelMode: LevelMode | null = null;
+  private level: TaskLevelId | null = null;
   /** #210: holds the desk, uploads, sends `worker.hire`: the same for a hire waited for here and one in the background. */
   private readonly hires: HireCoordinator;
   /** This dialog among others (a hire's key is the dialog and its generation). */
@@ -403,6 +436,10 @@ export class HireDialog {
       });
     // Settings changed which models show: an open form follows it (a hire on its way keeps what it sent).
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());
+    // #248: so does a change of the task levels, for a hire that asks for one (a plain hire never looks at them).
+    this.host.taskLevels?.onChange(() => {
+      if (this.levelMode) this.visibilityChanged();
+    });
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
     this.form.append(this.editorPane, this.optionsPane);
@@ -460,6 +497,8 @@ export class HireDialog {
     const draft = this.drafts.get(this.draftKey());
     this.typedLabel = draft?.fields?.label ?? null;
     this.modelQuery = '';
+    this.levelMode = null;
+    this.level = null;
     this.uploadFailed = false;
     // The desk's composer draft (images too) if it is still in memory, else the text storage kept; a first task handed in starts a draft of its own.
     this.editor.show(prefill.prompt !== undefined ? this.newDoc(prefill.prompt) : this.deskDoc(this.draftKey(), draft?.text ?? ''));
@@ -518,12 +557,19 @@ export class HireDialog {
       if (this.typedLabel !== null) this.f.label = this.typedLabel;
       // The note ("Floor default") is about the saved choice on the whole catalog, so it is not shown for a replacement.
       this.prepared = resolveChoice(this.host.store.hireOptions, p.choice ?? null);
-      // A reviewer's model wins over the floor's default (and is no longer "the floor default").
-      const want = this.prefill.choice ? resolveVisibleChoice(options, this.prefill.choice) : null;
-      if (want) {
-        Object.assign(this.f, want);
-        this.prepared = null;
+      if (this.prefill.level !== undefined) {
+        // #248: a level, never a reviewer's model; no usable level leaves the floor's choice in the usual pickers.
+        this.syncLevels();
+      } else {
+        // A reviewer's model wins over the floor's default (and is no longer "the floor default").
+        const want = this.prefill.choice ? resolveVisibleChoice(options, this.prefill.choice) : null;
+        if (want) {
+          Object.assign(this.f, want);
+          this.prepared = null;
+        }
       }
+      // #248: a hire that must not touch the shared checkout takes a worktree whenever one can be made.
+      if (this.prefill.worktree) this.f.worktree = worktreeUsable(p.git);
     }
     this.state = 'ready';
     this.setStatus('');
@@ -535,7 +581,7 @@ export class HireDialog {
     const was = this.prep ? worktreeUsable(this.prep.git) : false;
     if (this.prep) this.prep = { ...this.prep, git: g };
     if (!worktreeUsable(g)) this.f.worktree = false;
-    else if (!was) this.f.worktree = this.host.hirePrefs?.worktreeByDefault ?? true;
+    else if (!was) this.f.worktree = this.prefill.worktree ?? this.host.hirePrefs?.worktreeByDefault ?? true;
   }
 
   /** "Fetch again": `hire.prepare` for the same folder, keeping the form. */
@@ -600,9 +646,67 @@ export class HireDialog {
     return prefs ? visibleOptions(cat, (harness) => prefs.hidden(harness)) : cat;
   }
 
-  /** The form holds a shown model: one it holds that is hidden falls to the first shown one (effort normalized). */
+  /**
+   * The form holds a shown model: one it holds that is hidden falls to the first shown one (effort normalized).
+   * #248: with the levels on screen (or none usable), the levels decide instead (`syncLevels`).
+   */
   private resolveForm(): void {
+    if (this.levelMode === 'levels' || this.levelMode === 'none') {
+      this.syncLevels();
+      return;
+    }
     this.f = { ...this.f, ...resolveVisibleChoice(this.options(), this.f) };
+  }
+
+  /** #248: the set levels in order, each with why it cannot be used now (null: it can). */
+  private levelChips(): LevelChip[] {
+    const levels = this.host.taskLevels;
+    if (!levels) return [];
+    const cat = this.host.store.hireOptions;
+    const prefs = this.host.modelPrefs;
+    const hidden = (harness: string): ReadonlySet<string> => prefs?.hidden(harness) ?? new Set();
+    return TASK_LEVELS.flatMap((id) => {
+      const l = levels.get(id);
+      return l ? [{ id, text: levelChipText(id, l, cat), problem: levelProblem(l, cat, hidden) }] : [];
+    });
+  }
+
+  /**
+   * #248: the levels as they are now: the picked level while it can be used, else the one asked for or the nearest usable
+   * one (its harness, model and effort into the form); none usable: the usual pickers, with the form resolved as usual.
+   */
+  private syncLevels(): void {
+    const want = this.prefill.level;
+    if (want === undefined) return;
+    const ok = new Set(this.levelChips().flatMap((c) => (c.problem ? [] : [c.id])));
+    const id = this.level && ok.has(this.level) ? this.level : preselectLevel(want, (l) => ok.has(l));
+    const l = id ? this.host.taskLevels?.get(id) : null;
+    if (id && l) {
+      this.levelMode = 'levels';
+      this.level = id;
+      this.f = { ...this.f, ...resolveVisibleChoice(this.options(), l) };
+      return;
+    }
+    this.levelMode = 'none';
+    this.level = null;
+    this.f = { ...this.f, ...resolveVisibleChoice(this.options(), this.f) };
+  }
+
+  /** #248: a level chip was picked. */
+  private pickLevel(id: TaskLevelId): void {
+    this.level = id;
+    this.syncLevels();
+    this.render();
+  }
+
+  /** #248: "Choose a more complex model…": the usual pickers, holding the picked level's choice; or back to the levels. */
+  private switchLevels(to: 'levels' | 'more'): void {
+    if (this.state !== 'ready') return;
+    if (to === 'more') this.levelMode = 'more';
+    else this.syncLevels();
+    this.render();
+    const pick = this.levelMode === 'levels' ? 'level' : 'harness';
+    this.optionsPane.querySelector<HTMLElement>(`[data-pick="${pick}"] input:checked`)?.focus();
   }
 
   /** Settings changed what is shown: an open form that holds a hidden model takes the first shown one, and the chips redraw. */
@@ -638,7 +742,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.session);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness)]);
+    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -682,12 +786,25 @@ export class HireDialog {
       const note = this.noteNow();
       const noteTape = note ? h('span', { class: 'tape tape--note', title: note === 'Floor default' ? 'The floor’s default hire (floor settings)' : 'What was hired on this floor last time' }, note) : null;
       const models = modelsFor(options, this.f.harness);
-      const agent = h(
-        'div',
-        { class: 'dd-agent' },
-        chips('harness', 'Harness', Object.keys(options), this.f.harness, (v) => this.pick({ harness: v }), noteTape),
-        ...(models.length ? [this.modelField(models), chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v }))] : [this.noModels()]),
-      );
+      const levels = this.levelMode ? this.levelChips() : [];
+      const agent =
+        this.levelMode === 'levels'
+          ? h(
+              'div',
+              { class: 'dd-agent', 'data-hook': 'levels' },
+              this.levelField(levels),
+              h('div', { class: 'dd-level-switch' }, h('button', { type: 'button', class: 'btn btn--sm', 'data-key': 'levels-more', disabled: busy, onclick: () => this.switchLevels('more') }, 'Choose a more complex model…')),
+            )
+          : h(
+              'div',
+              { class: 'dd-agent' },
+              this.levelMode === 'none' && levels.length ? this.levelsOff() : null,
+              chips('harness', 'Harness', Object.keys(options), this.f.harness, (v) => this.pick({ harness: v }), noteTape),
+              ...(models.length ? [this.modelField(models), chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v }))] : [this.noModels()]),
+              this.levelMode === 'more' && levels.some((c) => !c.problem)
+                ? h('div', { class: 'dd-level-switch' }, h('button', { type: 'button', class: 'btn btn--sm btn--quiet', 'data-key': 'levels-back', disabled: busy, onclick: () => this.switchLevels('levels') }, 'Back to task levels'))
+                : null,
+            );
       const limits = planLimits(this.host.store.limits, [{ harness: this.f.harness, model: this.f.model }], this.host.now());
       const slot = h('div', { class: 'dd-plan-limits', 'data-hook': 'plan-limits' });
       if (limits) slot.append(limits);
@@ -766,6 +883,27 @@ export class HireDialog {
       // A chip group re-rendered on another pick: focus its checked chip.
       if (!back && focusKey.includes(':')) this.optionsPane.querySelector<HTMLElement>(`[data-pick="${focusKey.split(':')[0]}"] input:checked`)?.focus();
     }
+  }
+
+  /** #248: one chip per set level; one that cannot be used now is shown off, with why as its tooltip. */
+  private levelField(list: LevelChip[]): HTMLFieldSetElement {
+    const row = h('div', { class: 'dd-chips' });
+    for (const c of list) {
+      const l = this.host.taskLevels?.get(c.id);
+      const exact = l ? `${HARNESS_LABEL[l.harness] ?? l.harness} · ${l.model} · ${l.effort}` : null;
+      const input = h('input', { type: 'radio', name: 'level', value: c.id, class: 'visually-hidden', 'data-key': `level:${c.id}`, title: c.problem });
+      input.checked = c.id === this.level;
+      input.disabled = !!c.problem;
+      input.addEventListener('change', () => input.checked && this.pickLevel(c.id));
+      row.append(h('label', { class: 'dd-chip', title: c.problem ?? exact, 'data-off': c.problem ? 'true' : null }, input, h('span', {}, c.text)));
+    }
+    return h('fieldset', { class: 'dd-pick', 'data-pick': 'level' }, h('legend', {}, 'Level'), row);
+  }
+
+  /** #248: levels are set, but none can be used now: the usual pickers, and the way to Settings → Task levels. */
+  private levelsOff(): HTMLElement {
+    const open = this.host.showTaskLevelSettings ? h('button', { type: 'button', class: 'btn btn--sm', 'data-key': 'show-levels', onclick: () => this.host.showTaskLevelSettings?.() }, 'Open Task levels') : null;
+    return h('div', { class: 'dd-field dd-callout', 'data-hook': 'levels-off', role: 'status' }, h('p', {}, 'None of your task levels can be used right now, so choose the model here.'), open);
   }
 
   /** A harness whose models are all hidden: why nothing can be picked, and the way to Settings. */
@@ -1024,6 +1162,7 @@ export class HireDialog {
       status: this.statusText,
       error: this.statusError,
       images: this.editor.draft.snapshot().images.map((i) => ({ n: i.n, name: i.name, status: i.status, path: i.path })),
+      ...(this.levelMode ? { level: { mode: this.levelMode, picked: this.level, chips: this.levelChips() } } : {}),
     };
   }
 }

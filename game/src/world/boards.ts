@@ -4,7 +4,7 @@
  * `key`, and what a provider cannot do arrives as capability flags.
  */
 
-import type { BoardCaps, BoardColumn, BoardIssues, BoardMessage, BoardPrs, IssueCard, MergedPullRequest, Priority, PullRequest, Worker, WorkItem } from '../net/protocol';
+import type { BoardCaps, BoardColumn, BoardIssues, BoardMessage, BoardPrs, IssueCard, MergedPullRequest, MergeMethod, Priority, PullRequest, Worker, WorkItem } from '../net/protocol';
 import { crewRole, stampOf, type Stamp } from './crew';
 
 // ---- capabilities -----------------------------------------------------------------------
@@ -409,7 +409,35 @@ export function reviewPrompt(harness: string, target: { url?: string; key: strin
   return harness === 'codex' ? `$code-review ${ref}` : `/mattpocock-skills:code-review ${ref}`;
 }
 
-export const workItemOf = (card: Pick<IssueCard, 'id'>, provider: string): WorkItem => ({ provider, id: card.id });
+/** The gh merge flag of each of the panel's merge methods, one to one. */
+const MERGE_FLAG: Record<MergeMethod, string> = { squash: '--squash', merge: '--merge', rebase: '--rebase' };
+
+/**
+ * #248: the first prompt of "Resolve conflicts with a worker": resolve the PR's conflicts in a worktree of its own, push
+ * them to the PR's branch, and merge with the method picked in the panel once the checks pass. Plain text, so one version
+ * serves every harness. The number for gh comes from the PR's link or key (what a person reads), else gh takes the link.
+ */
+export function resolveConflictsPrompt(pr: Pick<PullRequest, 'key' | 'url' | 'head_branch' | 'base_branch'>, method: MergeMethod): string {
+  const n = /\/pull\/(\d+)\/?$/.exec(pr.url ?? '')?.[1] ?? /^#(\d+)$/.exec(pr.key)?.[1] ?? pr.url ?? pr.key;
+  const base = pr.base_branch ? `origin/${pr.base_branch}` : 'origin/<base>';
+  return [
+    `Resolve the merge conflicts of pull request ${pr.key}${pr.url ? ` (${pr.url})` : ''} and merge it. Its branch is ${pr.head_branch}; it merges into ${pr.base_branch ?? `its base branch (find it with \`gh pr view ${n} --json baseRefName\`)`}.`,
+    '',
+    'Work in a git worktree of your own: never switch the branch of a shared checkout, other workers use it. If you are not in a worktree of your own yet, make one first (`git worktree add --detach <path>`) and work there.',
+    '',
+    `1. Check the PR out detached: \`gh pr checkout ${n} --detach\`.`,
+    `2. Merge its base in: \`git fetch origin && git merge ${base}\`.`,
+    '3. Resolve the conflicts, keeping the intent of both sides.',
+    "4. Run the project's tests.",
+    `5. Push to the PR's branch: \`git push origin HEAD:${pr.head_branch}\`.`,
+    '6. Wait for the checks to finish.',
+    `7. Merge: \`gh pr merge ${n} ${MERGE_FLAG[method]}\`.`,
+    '',
+    'If a conflict is not mechanical (both sides changed the same logic in ways that do not fit together), stop and report instead of merging. If the tests or the checks fail, stop and report too; do not merge.',
+  ].join('\n');
+}
+
+export const workItemOf =(card: Pick<IssueCard, 'id'>, provider: string): WorkItem => ({ provider, id: card.id });
 
 export const CLOSE_REASONS: ReadonlyArray<{ id: 'completed' | 'not_planned' | 'duplicate'; label: string }> = [
   { id: 'completed', label: 'Completed' },

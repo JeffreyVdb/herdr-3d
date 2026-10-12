@@ -7,7 +7,7 @@ import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
-import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffEntry, type IssueCard, type MergedPullRequest, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
+import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffEntry, type IssueCard, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec } from './render/arrivals';
@@ -69,7 +69,7 @@ import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/start
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, inputRequired, isFreelancer } from './world/crew';
 // M7: the issues and pull request boards.
-import { askInlinesItem, askItemPrompt, askPrompt, BoardBook, nearestDesk, reviewPrompt } from './world/boards';
+import { askInlinesItem, askItemPrompt, askPrompt, BoardBook, nearestDesk, resolveConflictsPrompt, reviewPrompt } from './world/boards';
 import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
 import { openExternal } from './ui/boards/external';
 import { OpenPrDialog } from './ui/boards/openPr';
@@ -83,6 +83,8 @@ import { HirePrefs } from './ui/hirePrefs';
 import { HireCoordinator } from './ui/hireCoordinator';
 import { HireModelPrefs } from './ui/hireModelPrefs';
 import { harnessModelsSection } from './ui/harnessModelsSection';
+import { TaskLevels } from './ui/taskLevels';
+import { taskLevelsSection } from './ui/taskLevelsSection';
 import { onPlayerAct, waitForHire } from './ui/hireGoto';
 import { InboxPrefs } from './ui/inboxPrefs';
 import { inboxQueue, inboxReason, inboxRequest, inboxWhere, type InboxCandidate } from './world/inbox';
@@ -195,6 +197,8 @@ export class App {
   readonly hirePrefs = new HirePrefs(); // #116
   /** #194: the models the Hire dialog shows, per harness (none hidden until the player hides one). */
   readonly hireModelPrefs = new HireModelPrefs();
+  /** #248: Settings → Task levels (per browser). */
+  readonly taskLevels = new TaskLevels();
   /** #116: cancels the go-to still waiting for its new hire. */
   private stopHireGoto: (() => void) | null = null;
   private hireGotoGen = 0;
@@ -380,6 +384,8 @@ export class App {
     this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser' });
     // #194: which models of each harness the model pickers offer, under the display settings it sits beside.
     this.settings.addSection('harness-models', 'Harness models', harnessModelsSection({ prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser' });
+    // #248: the named harness / model / effort combinations for small jobs, beside the models they choose from.
+    this.settings.addSection('task-levels', 'Task levels', taskLevelsSection({ levels: this.taskLevels, prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser' });
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
     this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser' });
@@ -578,6 +584,11 @@ export class App {
         this.settings.open();
         this.settings.reveal('harness-models');
       },
+      taskLevels: this.taskLevels,
+      showTaskLevelSettings: () => {
+        this.settings.open();
+        this.settings.reveal('task-levels');
+      },
     };
     // #210: one coordinator for every hire (the dialog's, and later the dictation's): a background one beeps and toasts by itself.
     this.hires = new HireCoordinator({
@@ -626,6 +637,7 @@ export class App {
       handTo: (session, card, provider) => this.handTo(session, card, provider),
       ask: (session, card, provider, body) => this.askAbout(session, card, provider, body),
       review: (session, pr) => this.reviewPr(session, pr),
+      resolve: (session, pr, method) => this.resolvePr(session, pr, method),
       whyNoRun: (session) => this.whyNoRun(session),
       whyNoHire: (session) => this.whyNoHire(session),
       goTo: (id) => void this.goToWorker(id),
@@ -2536,6 +2548,16 @@ export class App {
     const reviewer = preset?.roles.reviewer;
     this.boardsPanel.close();
     this.openHire(desk ?? undefined, { prompt: reviewPrompt(reviewer?.harness ?? 'claude', { key: pr.key, ...(pr.url ? { url: pr.url } : {}) }), ...(reviewer ? { choice: reviewer } : {}) });
+  }
+
+  /**
+   * #248: "Resolve conflicts with a worker": the hire dialog at the nearest free desk with the resolve-and-merge prompt
+   * (the panel's merge method), the task levels from Trivial, never the reviewer's model, and a worktree of its own.
+   */
+  private resolvePr(session: string, pr: PullRequest, method: MergeMethod): void {
+    const desk = this.nearestFreeDesk(session);
+    this.boardsPanel.close();
+    this.openHire(desk ?? undefined, { prompt: resolveConflictsPrompt(pr, method), level: 'trivial', worktree: true });
   }
 
   /** The note of a card leaves its board and is carried to an orchestrator's desk. */
