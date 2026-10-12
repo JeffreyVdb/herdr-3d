@@ -99,7 +99,7 @@ func TestTunnelRestartsWithBackoff(t *testing.T) {
 	}
 	args, _ := os.ReadFile(ctl + ".args")
 	for _, want := range []string{"-N", "ControlMaster=no", "ControlPath=none", "ExitOnForwardFailure=yes", "ServerAliveInterval=10",
-		"-L\n" + tun.Local + ":" + bridgeSock + "\njeff@example"} {
+		"-L\n" + tun.Local + ":" + bridgeSock + "\ndev@example"} {
 		if !strings.Contains(string(args), want) {
 			t.Errorf("ssh args lack %q:\n%s", want, args)
 		}
