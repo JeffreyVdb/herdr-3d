@@ -57,8 +57,10 @@ Every test's selection is visible in its source as a Playwright tag: `test(title
 | (iii) theme matrix reduced | 29 / 26 | 545 / 79 | 453 / 6 | 11 / 10 | 28 / 2 | 1009 / 86 |
 | (iv) duplicates removed | 29 / 26 | 540 / 79 | 453 / 6 | 11 / 10 | 26 / 2 | 1004 / 86 |
 
+| (vi) the narrow Hire audit joins smoke | 30 / 26 | 540 / 79 | 453 / 6 | 11 / 10 | 26 / 2 | 1004 / 86 |
+
 Since 1236 → 1004 discovered cases: 232 removed by merging or deleting (229 from the theme matrix, 5 duplicates, +2 from
-splitting the two mixed perf cases). Captures, audits and benches (464) left the routine selection; `make e2e` runs 29.
+splitting the two mixed perf cases). Captures, audits and benches (464) left the routine selection; `make e2e` runs 30.
 
 ## The smoke run, measured (one run, 2026-10-13)
 
@@ -67,7 +69,7 @@ timestamped as they came; suite time is the JSON report's `stats.duration`.
 
 | | |
 | --- | ---: |
-| Cases | 29 (27 passed, 2 failed) |
+| Cases | 29 (27 passed, 2 failed); the narrow Hire audit was tagged @smoke after this run (30 now) |
 | Build (`pnpm build` + `check-bundle`) | 6.2 s |
 | Lock wait | 0 s (no other run held it; no "waiting" line) |
 | Preview server start + Playwright load | 5.4 s |
@@ -122,6 +124,7 @@ their files.
 | File a handoff, then send home | `h223-handoff.spec.ts` "the inline button on the last reply files it as written, …" |
 | Theme switch from the keyboard, applied and saved at once | `ui-theme.spec.ts` "keyboard: arrows move the UI theme between Quiet and Ubuntu, …" |
 | A saved theme survives a reload, no navy first frame | `ui-theme.spec.ts` "a saved Ubuntu survives a reload and no frame paints navy first" |
+| One narrow layout / keyboard-focus journey (added after the measured run) | `ui-theme.spec.ts` "audit at 390x844: hire in Ubuntu: no sideways overflow or clipped control; the focus ring on every operable widget, …" (8 s alone) |
 | Typing in fields never fires game keys | `h124-fields.spec.ts` "the hire dialog: the task composer (contenteditable) and the model filter (a search input)" |
 
 ## Assertion-to-coverage map
@@ -225,3 +228,19 @@ Moving a test does not fix its bug. Where each one is now:
 | #34 Codex 0.163 fallback / version | `h155-codex-server.spec.ts` "a hire that falls back to Codex’s built-in server is a warning, not an error" | extended |
 | #35 stale "shown in Hire" copy | `h194-harness-models.spec.ts` "a model hidden in Settings leaves the Hire dialog, …", "every model of the harness hidden: …" | extended |
 | #36 limits panel at 390x640 | `m10-limits.spec.ts` "at 390x640 an open panel folds away while a dialog is open, and comes back when it closes" | extended |
+
+## Verification of the migration
+
+- Unit: `make lint`, `make test` (Vitest 221 files / 2824 tests, Go, shell) pass; the touched Vitest files
+  (`src/ui/uiTheme.test.ts`, `src/ui/themePrefs.test.ts`, `src/ui/composer/composer.test.ts`, `src/input/shortcuts.test.ts`)
+  each pass alone.
+- Browser, scoped (`make e2e-prebuilt`, the lock and a leased port): every test of `composer`, `composer-complete`,
+  `h124-fields`, `m6-crew` (both split cases) and `m98-monitor` (both split cases): 49 passed. `ui-theme.spec.ts`
+  extended: 32 passed (9 audits, 23 others, including the merged storage / limits case). 12 `@visual` audits
+  (toast-info, palette, menu, elevator at all three sizes): passed. `m10-limits` and `prompt-images` whole: 48 passed,
+  3 failed, all three older than #42 and in the #241 bench history: `m10-limits` "at 390x640 an open panel folds away …"
+  (#36, every bench run), "seated on a narrow viewport the glass leaves no gutter: …" (failed at 16 workers in the
+  bench) and `prompt-images` "Start Run: a screenshot pasted in Extra instructions is a chip; …" (the same
+  "The run is starting." ack poll as the two hire flakes above, in 4 bench runs).
+- The other spec files changed only by a tag: every profile lists them (`make e2e-list`, the module loads) and their
+  `@smoke` tests passed or failed as above in the measured run.

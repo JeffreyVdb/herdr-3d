@@ -100,7 +100,7 @@ make codex-shared-bridge  # #158 only: herdr-world itself (app.Serve) driven ove
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
-make e2e               # build, then the smoke suite: the ~30 essential journeys tagged @smoke (H3D_WORKERS parallel, one run per host)
+make e2e               # build, then the smoke suite: the 30 essential journeys tagged @smoke (H3D_WORKERS parallel, one run per host)
 make e2e SPEC=e2e/m6b.spec.ts   # every test of that spec, whatever its tags (same lock and portlease)
 make e2e-prebuilt      # the same against the bundle already in game/dist (no build; same lock and portlease; SPEC= PROFILE= GREP= too)
 make e2e-extended      # on request: every functional test (all but @visual and @perf; the old full suite minus captures and benches)

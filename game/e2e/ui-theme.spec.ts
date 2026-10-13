@@ -1030,7 +1030,8 @@ const AUDITED: Record<AuditSize, string[]> = {
 for (const kind of ['desktop', 'narrow', 'zoomed'] as AuditSize[]) {
   const { label, size, checks } = AUDIT_SIZES[kind];
   for (const s of SURFACES.filter((x) => kind === 'desktop' || !x.skipNarrow)) {
-    const tag = AUDITED[kind].includes(s.name) ? [] : ['@visual'];
+    // The narrow Hire audit is the smoke run's one narrow layout / keyboard-focus journey.
+    const tag = !AUDITED[kind].includes(s.name) ? ['@visual'] : kind === 'narrow' ? ['@smoke'] : [];
     test(`audit at ${label}: ${s.name} in Ubuntu: ${checks}`, { tag }, async ({ page }) => {
       test.setTimeout(360_000);
       const clean = watchErrors(page);
