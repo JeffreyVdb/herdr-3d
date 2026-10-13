@@ -174,7 +174,8 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker dro
   ]);
   // The "+" goes as the hire starts, and stays gone until the worker is there.
   expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
-  await expect.poll(() => dialog(page)).toBeNull();
+  // #43: the simulated hire ack runs on game time, which lags wall time under a loaded llvmpipe; 5 s is too short.
+  await expect.poll(() => dialog(page), { timeout: 20_000 }).toBeNull();
   await expect(page.locator('.toast')).toHaveText(/^Hired Gumdrop at Desk 15 on h3d\/gumdrop-[0-9a-f]{6}\. Here they come\.$/);
   // M6b: it drops in to its chair (no walk from the street), and its desk is its own from the first frame.
   const w = await arrived(page, 14);

@@ -86,8 +86,9 @@ poll's default 5 s. Both passed when run alone right after (`make e2e-prebuilt S
 e2e/hire-composer.spec.ts' PROFILE=smoke`, 2 passed, 17.6 s). They are load-dependent and older than #42: the
 #241 bench runs (`docs/research/e2e-bench/results/`) record the same `toBeNull()` failure of `hire-composer.spec.ts:232`
 at 6, 8, 12 and 16 workers and of `m4.spec.ts:108` at 12 and 16. The simulator's hire ack is timed on the game's clock,
-which runs slower than wall time when llvmpipe is loaded, against a fixed 5 s poll. Unfixed here (only tagged); they
-need their own issue. Not rerun to improve the number.
+which runs slower than wall time when llvmpipe is loaded, against a fixed 5 s poll. Not rerun to improve the number.
+After this run those two polls (only) got a 20 s timeout, so smoke stays green under load; #43 tracks the cause (the ack
+on game time).
 
 ## The smoke suite
 
