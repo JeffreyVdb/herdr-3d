@@ -122,3 +122,42 @@ describe('UI themes (#216)', () => {
     }
   });
 });
+
+// #42: index.html's inline script puts a saved Ubuntu on the root before the first frame (the e2e checks the frames of a
+// real reload); here its reading of storage: only the exact stored 'ubuntu', and never a throw.
+describe('the pre-frame UI theme script in index.html (#216)', () => {
+  const html = readFileSync(resolve(import.meta.dirname, '../../index.html'), 'utf8');
+  const script = /<script>([\s\S]*?)<\/script>/.exec(html)![1]!;
+  function boot(storage: () => Pick<Storage, 'getItem'>): { theme: string | null; color: string | null } {
+    const got = { theme: null as string | null, color: null as string | null };
+    const document = {
+      documentElement: { setAttribute: (k: string, v: string) => k === 'data-ui-theme' && (got.theme = v) },
+      querySelector: (s: string) => (s === 'meta[name="theme-color"]' ? { setAttribute: (_k: string, v: string) => (got.color = v) } : null),
+    };
+    const scope = {} as { localStorage: Storage };
+    Object.defineProperty(scope, 'localStorage', { get: storage });
+    new Function('scope', 'document', `with (scope) {${script}}`)(scope, document);
+    return got;
+  }
+  const stored = (v: string | null) => () => ({ getItem: (k: string) => (k === UI_THEME_KEY ? v : null) });
+
+  it('marks the root Ubuntu, with the Ubuntu theme colour, for a stored Ubuntu only', () => {
+    expect(boot(stored('ubuntu'))).toEqual({ theme: 'ubuntu', color: '#2c001e' });
+    for (const v of [null, '', 'quiet', 'solarized', 'UBUNTU', 'Ubuntu', ' ubuntu', 'null']) expect(boot(stored(v)), JSON.stringify(v)).toEqual({ theme: null, color: null });
+  });
+
+  it('leaves the root alone when storage is blocked or throws', () => {
+    expect(
+      boot(() => {
+        throw new DOMException('denied', 'SecurityError');
+      }),
+    ).toEqual({ theme: null, color: null });
+    expect(
+      boot(() => ({
+        getItem: () => {
+          throw new DOMException('denied', 'SecurityError');
+        },
+      })),
+    ).toEqual({ theme: null, color: null });
+  });
+});

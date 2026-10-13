@@ -54,6 +54,7 @@ Every test's selection is visible in its source as a Playwright tag: `test(title
 | baseline (`6d68d06`, no profiles) | — | — | — | — | — | 1236 / 86 |
 | (i) mechanism + smoke / component tags | 27 / 25 | 1236 / 86 | 0 | 0 | 28 / 2 | 1236 / 86 |
 | (ii) captures, tours and benches out | 27 / 25 | 946 / 79 | 281 / 5 | 11 / 10 | 28 / 2 | 1238 / 86 |
+| (iii) theme matrix reduced | 29 / 26 | 545 / 79 | 453 / 6 | 11 / 10 | 28 / 2 | 1009 / 86 |
 
 ## The smoke suite
 
@@ -88,6 +89,8 @@ their files.
 | Screen capture starts and stops cleanly | `m13-screen.spec.ts` "Share → LIVE and the TV plays it; …" |
 | Wrap up / send home does not lose work | `m83-wrapup.spec.ts` "wrap up: delete preselected, …" |
 | File a handoff, then send home | `h223-handoff.spec.ts` "the inline button on the last reply files it as written, …" |
+| Theme switch from the keyboard, applied and saved at once | `ui-theme.spec.ts` "keyboard: arrows move the UI theme between Quiet and Ubuntu, …" |
+| A saved theme survives a reload, no navy first frame | `ui-theme.spec.ts` "a saved Ubuntu survives a reload and no frame paints navy first" |
 | Typing in fields never fires game keys | `h124-fields.spec.ts` "the hire dialog: the task composer (contenteditable) and the model filter (a search input)" |
 
 ## Assertion-to-coverage map
@@ -128,3 +131,35 @@ assertion lives now.
 | `h206-diff-highlight.spec.ts` "highlighting causes no long task: …" | perf | The highlighting itself (colours, plain context, unknown files): `h206-diff-highlight.spec.ts` "diff rows gain syntax colours: …". |
 | `m6-crew.spec.ts` "frame budget: crew parts are instanced, …" | perf (the draw-call bench) | Split: new functional `m6-crew.spec.ts` "crew parts are instanced: one mesh per part kind for the floor, none on a floor without a run or once nobody is crew" keeps every mesh assertion without the bench. |
 | `m98-monitor.spec.ts` "a floor of 60 desks animates every card …; one draw for all of them" | split | The functional case keeps its ledger, canvas-draw, texture and one-mesh / zero-mesh assertions (title now "… one mesh for all of them"); the draw-call and frame-time comparison is the new perf case "bench: the cards of a 60-desk floor cost a draw or two …". |
+
+### The theme matrix (`ui-theme.spec.ts`, 433 → 204: 2 smoke, 32 extended, 172 visual)
+
+The five generated families were one full game boot per surface per check. They are now one boot per surface and
+viewport that runs every check of that viewport (`expect.soft`, so one run reports all of them), "audit at <size>:
+<surface> in Ubuntu: …". Same probes (`ui-theme-probe.ts`), same roots, same thresholds; the focus walk runs last.
+
+| Case(s) (baseline count) | Now | Coverage |
+| --- | --- | --- |
+| "coverage: <surface> has no Quiet navy, yellow or Recursive left in Ubuntu" (58) | merged | "audit at 1280x720: <surface> …" (stray colours / fonts) |
+| "contrast: text on <surface> is 4.5:1 …" (58) | merged | "audit at 1280x720: <surface> …" (contrast) |
+| "targets: every control of <surface> is >= 32 x 32 px …" (58) | merged | "audit at 1280x720: <surface> …" (targets) |
+| "focus at 1280x720: every operable widget of <surface> …" (58) | merged | "audit at 1280x720: <surface> …" (focus ring, last). A surface with no widget of its own no longer shows as skipped: the ring check is left out for it. |
+| "focus at 390x844: …" (54) | merged | "audit at 390x844: <surface> …" (focus ring) |
+| "layout at 390px wide: <surface> …" (54) | merged | "audit at 390x844: <surface> …" (overflow) |
+| "layout at 200% browser zoom (640x360): <surface> …" (54) | merged | "audit at 200% browser zoom (640x360): <surface> …" |
+| the audits above, per family | extended | Representatives: 1280x720 settings, hire, seat-transcript, seat-terminal, board-issues, overview, whiteboard (the issue's component families); 390x844 hire; 640x360 settings. Every other surface’s audit (157) is `@visual`. |
+| "Settings → Appearance (This browser): a labelled UI theme radio group of exactly Quiet and Ubuntu, Quiet selected, the exact copy" | deleted | Copy, legend, hint, labels, descriptions, the store and Quiet for a fresh browser: `src/ui/appearanceSection.dom.test.ts` "is a browser-scoped section titled Appearance …", "has Quiet selected for a fresh browser"; the copy in `src/ui/uiTheme.test.ts` "are exactly Quiet and Ubuntu, …"; transcript/terminal-only picks leave the UI Quiet: `src/ui/themePrefs.test.ts` "is Quiet for a fresh browser and for one with only transcript or terminal picks; …". The wiring is the smoke keyboard test. |
+| "missing, invalid, blocked and throwing storage is safe: …" | reduced | The four invalid-value page boots are gone: invalid / missing values in `src/ui/themePrefs.test.ts` "falls back to Quiet for a missing or invalid stored value" (now also `UBUNTU`) and, **added**, the pre-frame script of `index.html` in `src/ui/uiTheme.test.ts` "the pre-frame UI theme script in index.html": only a stored `ubuntu` marks the root, blocked or throwing storage is left alone. The integrated throwing-storage start-up stays: "blocked and throwing storage is safe: Quiet at start-up, …" (extended). |
+| "combination ui=… transcript=… terminal=…" (8) | 2 extended, 6 visual | `ubuntu/quiet/ubuntu` and `quiet/ubuntu/quiet` (every pick apart from its neighbour) run in every functional run; all eight with `make e2e-visual`. |
+| "layout at 1280x720: the seated conversation’s timeline and prompt box …" | visual | The 200% zoom case of the same check stays extended. |
+| "view zoom and a mode switch leave the shell’s fonts, colours and sizes unchanged (Ubuntu UI)" | visual | Fine-grained theme regression for CSS work; the transcript zoom one ("transcript zoom 100 → 200 leaves the seated widgets …") stays extended. |
+| "the completion popup’s commands and paths are the UI’s Ubuntu Mono at 14px …" | visual | Popup behaviour: `composer-complete.spec.ts` (component), `h141-file-chips.spec.ts`. |
+| "the empty whiteboard’s welcome (heading, hints) is Ubuntu UI text …" | visual | Whiteboard theming: "audit at 1280x720: whiteboard …", "a live switch leaves the whiteboard’s drawing …". |
+| "states: inside the transcript the composer’s Send, the selected tab and its count keep the UI theme’s colours (#111)" | visual | The seat-transcript audit's contrast check; the button states: "states: the primary, secondary and busy buttons …" (extended). |
+| "states: the review’s Hire in flight (#212) is busy like the hire dialog’s: …" | visual | The busy / no-second-hire guarantee: "states: a hire in flight …" (extended); the dictated review's single hire: `h214-edge-cases.spec.ts` "repeated Enter: …" (smoke). |
+| "states: a preset being deleted …", "states: a reviewer’s verdict stamps …", "states: the elevator’s floor plates …" | visual | Exact palette values for CSS work. The palette anchors on the real elements: "Ubuntu UI: exact palette anchors …" (extended). |
+| everything else in the file (focus, switching, fonts, palette, touch, forced colours, the whiteboard, the hire in flight) | extended | unchanged |
+
+32 extended theme cases is more than the issue's "roughly 25": seven of them are the family representatives the issue
+lists (Settings and Hire, transcript and terminal, board and overview, whiteboard), and the live-switch, font-loading and
+forced-colour cases are the real-CSS / data-loss regressions it asks to keep.
