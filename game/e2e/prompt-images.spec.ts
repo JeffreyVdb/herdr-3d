@@ -573,7 +573,7 @@ async function toTranscript(page: Page): Promise<void> {
   await expect(txBox(page)).toBeFocused();
 }
 
-test('transcript: a pasted screenshot is a chip in the prompt box; Enter sends worker.prompt with the marker; Shift+Enter is a new line', async ({ page }) => {
+test('transcript: a pasted screenshot is a chip in the prompt box; Enter sends worker.prompt with the marker; Shift+Enter is a new line', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 1280, height: 720 });

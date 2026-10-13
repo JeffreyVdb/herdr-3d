@@ -90,7 +90,7 @@ async function facingTv(page: Page, z = 3.2): Promise<void> {
 const screen = (page: Page) => page.evaluate(() => window.__h3d.screen());
 const shares = async (page: Page) => (await page.evaluate(() => window.__h3d.screen()))?.reported ?? [];
 
-test('Share → LIVE and the TV plays it; a frame request gets a JPEG and a toast; Stop clears it all', async ({ page }) => {
+test('Share → LIVE and the TV plays it; a frame request gets a JPEG and a toast; Stop clears it all', { tag: '@smoke' }, async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await onFloor(page);

@@ -229,7 +229,7 @@ test('an image alone is a valid first task', async ({ page }) => {
   clean();
 });
 
-test('a failed upload blocks the hire, keeps the prompt and shows a retry; then the retry and the hire go through', async ({ page }) => {
+test('a failed upload blocks the hire, keeps the prompt and shows a retry; then the retry and the hire go through', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   // The forced failure is a real 502 the browser logs by itself: only script errors count here.
   const errors: string[] = [];

@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { openGame, shot, watchErrors } from './game';
 
-test('the game renders the fixture city with WebGL2', async ({ page }) => {
+test('the game renders the fixture city with WebGL2', { tag: '@smoke' }, async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page);
   await expect(page.locator('#debug')).toHaveText('backend: webgl2');

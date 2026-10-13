@@ -21,15 +21,22 @@ E2E_LOCK := $${XDG_RUNTIME_DIR:-/tmp}/herdr-3d-e2e.lock
 E2E_LOCKED = command -v flock >/dev/null || { echo "make: flock not found (util-linux); needed for the e2e lock" >&2; exit 1; }; \
 	flock -n 9 || { echo "waiting for another worktree's e2e run ($(E2E_LOCK))..." >&2; \
 	flock 9 || { echo "make: could not take the e2e lock ($(E2E_LOCK))" >&2; exit 1; }; }
-# The full suite (or SPEC=...) under that lock, on a leased preview port, against whatever game/$${H3D_DIST:-dist} holds.
-E2E_RUN = @( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test $(SPEC) 9>&- ) 9>"$(E2E_LOCK)"
+# #42: which tests a run selects (H3D_E2E_PROFILE in game/playwright.config.ts, by the tags in the specs): smoke unless
+# PROFILE= says otherwise; SPEC=e2e/x.spec.ts alone runs every test of that file (profile all), SPEC with PROFILE only
+# that profile's tests of it. GREP= narrows either further (Playwright --grep: a title or tag regex, both must match).
+# The perf profile also turns on the opt-in benches (H3D_PERF, H3D_BENCH) unless they are set.
+E2E_PROFILE = $(or $(PROFILE),$(if $(SPEC),all,smoke))
+E2E_ENV = H3D_E2E_PROFILE=$(E2E_PROFILE)$(if $(filter perf,$(E2E_PROFILE)), H3D_PERF=$${H3D_PERF:-1} H3D_BENCH=$${H3D_BENCH:-1})
+E2E_ARGS = $(SPEC)$(if $(GREP), --grep '$(GREP)')
+# The selection (smoke by default) under that lock, on a leased preview port, against whatever game/$${H3D_DIST:-dist} holds.
+E2E_RUN = @( $(E2E_LOCKED); set -x; $(E2E_ENV) $(PORTLEASE) --name preview --service game-e2e -- $(PNPM) exec playwright test $(E2E_ARGS) 9>&- ) 9>"$(E2E_LOCK)"
 
 # The built game is copied here and embedded in h3d-helper (internal/webdist).
 EMBED_DIR := internal/webdist/game
 RELEASE_DIR := bin/release
 
 .PHONY: build go-build game-build test go-test game-test integration codex-shared-tui codex-shared-bridge lint go-lint game-lint \
-	sh-test embed-game helper-darwin release-assets dev shot e2e e2e-prebuilt setup toolchain browsers browser-check deps clean
+	sh-test embed-game helper-darwin release-assets dev shot e2e e2e-prebuilt e2e-extended e2e-visual e2e-perf e2e-component e2e-list setup toolchain browsers browser-check deps clean
 
 ## build: Go binaries (bin/) + game bundle (game/dist/)
 build: go-build game-build
@@ -107,16 +114,44 @@ dev: deps
 ## shot: headless WebGL2 screenshot of the built game -> game/test-results/shot.png (e2e/shot.spec.ts only)
 shot: game-build
 	rm -f game/test-results/shot.png
-	@( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service game-shot -- $(PNPM) exec playwright test e2e/shot.spec.ts 9>&- ) 9>"$(E2E_LOCK)"
+	@( $(E2E_LOCKED); set -x; H3D_E2E_PROFILE=all $(PORTLEASE) --name preview --service game-shot -- $(PNPM) exec playwright test e2e/shot.spec.ts 9>&- ) 9>"$(E2E_LOCK)"
 
-## e2e: the full headless Playwright suite (all e2e/*.spec.ts, H3D_WORKERS parallel workers; one run per host); SPEC=e2e/x.spec.ts runs only that file
+## e2e: build, then the smoke suite (the @smoke journeys, ~30 tests, H3D_WORKERS parallel workers; one run per host);
+## SPEC=e2e/x.spec.ts runs every test of that file instead; PROFILE=extended|visual|perf|component|all picks another
+## selection (with SPEC: that selection's tests of the file); GREP=<regex> narrows by title or tag
 e2e: game-build
 	$(E2E_RUN)
 
-## e2e-prebuilt: make e2e without the build: tests the bundle already in game/dist (H3D_DIST=<dir>: game/<dir>), same lock and portlease
+## e2e-prebuilt: make e2e without the build: tests the bundle already in game/dist (H3D_DIST=<dir>: game/<dir>), same
+## lock and portlease, same SPEC / PROFILE / GREP
 e2e-prebuilt: deps
 	@test -f "game/$${H3D_DIST:-dist}/index.html" || { echo "make e2e-prebuilt: no build in game/$${H3D_DIST:-dist}; run 'make game-build' first (or 'make e2e')" >&2; exit 1; }
 	$(E2E_RUN)
+
+## e2e-extended: build, then every functional test (all but @visual and @perf: smoke, component and the rest); on request
+e2e-extended: PROFILE = extended
+e2e-extended: game-build
+	$(E2E_RUN)
+
+## e2e-visual: build, then the @visual tests: theme captures (game/test-results/ui-theme/), the per-surface theme audit,
+## screenshot tours; for CSS / theme work
+e2e-visual: PROFILE = visual
+e2e-visual: game-build
+	$(E2E_RUN)
+
+## e2e-perf: build, then the @perf benches and long-task measurements (H3D_PERF=1 H3D_BENCH=1 set for them); minutes each
+e2e-perf: PROFILE = perf
+e2e-perf: game-build
+	$(E2E_RUN)
+
+## e2e-component: build, then the @component tests: the composer in its test-only host (/?composer-demo), no 3D scene
+e2e-component: PROFILE = component
+e2e-component: game-build
+	$(E2E_RUN)
+
+## e2e-list: list the tests a selection runs, without a build, a port, a server or a browser (PROFILE, SPEC, GREP as for e2e)
+e2e-list: deps
+	@$(E2E_ENV) $(PNPM) exec playwright test --list --reporter=list $(E2E_ARGS)
 
 ## setup: make a fresh worktree test-ready: toolchain check, game deps, Go module cache (idempotent, ~3 s warm)
 setup:

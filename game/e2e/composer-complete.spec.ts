@@ -27,7 +27,7 @@ const selected = (page: Page) => page.locator('[role="option"][aria-selected="tr
 const text = (page: Page) => page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).composer.getSnapshot().text);
 const events = (page: Page) => page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).events);
 
-test('/ at the start opens an accessible popup under the caret; arrows move, Enter picks, Enter then sends', async ({ page }) => {
+test('/ at the start opens an accessible popup under the caret; arrows move, Enter picks, Enter then sends', { tag: '@component' }, async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await open(page);
@@ -75,7 +75,7 @@ test('/ at the start opens an accessible popup under the caret; arrows move, Ent
   expect(errors).toEqual([]);
 });
 
-test('mid-word / and @ do not open; after a space they do', async ({ page }) => {
+test('mid-word / and @ do not open; after a space they do', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('see a/b http://x/y me@x.com');
   await expect(pop(page)).toBeHidden();
@@ -84,7 +84,7 @@ test('mid-word / and @ do not open; after a space they do', async ({ page }) => 
   await expect(list(page)).toHaveAttribute('aria-label', 'Files');
 });
 
-test('Tab picks; one undo takes the pick back and redo puts it again', async ({ page }) => {
+test('Tab picks; one undo takes the pick back and redo puts it again', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('run /re');
   await expect(options(page)).toHaveText([/\/review/]);
@@ -101,7 +101,7 @@ test('Tab picks; one undo takes the pick back and redo puts it again', async ({ 
   expect(await text(page)).toBe('run /review now');
 });
 
-test('Esc closes the popup only, not the dialog; a second Esc is the dialog’s', async ({ page }) => {
+test('Esc closes the popup only, not the dialog; a second Esc is the dialog’s', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('/');
   await expect(pop(page)).toBeVisible();
@@ -114,7 +114,7 @@ test('Esc closes the popup only, not the dialog; a second Esc is the dialog’s'
   await expect.poll(() => page.evaluate(() => window.__h3dComposer?.dialog.open)).toBe(false);
 });
 
-test('a click picks without taking the focus from the editor', async ({ page }) => {
+test('a click picks without taking the focus from the editor', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('/c');
   const blurs = await page.evaluateHandle(() => {
@@ -130,7 +130,7 @@ test('a click picks without taking the focus from the editor', async ({ page }) 
   expect(await text(page)).toBe('/compact x');
 });
 
-test('the caret leaving the token closes it', async ({ page }) => {
+test('the caret leaving the token closes it', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('go /he');
   await expect(pop(page)).toBeVisible();
@@ -140,7 +140,7 @@ test('the caret leaving the token closes it', async ({ page }) => {
   await expect(pop(page)).toBeHidden();
 });
 
-test('an async source: loading, rows, a late reply dropped, a failure, No match', async ({ page }) => {
+test('an async source: loading, rows, a late reply dropped, a failure, No match', { tag: '@component' }, async ({ page }) => {
   await open(page);
   // "my" answers late: by then the query is "my n", whose reply is already shown.
   await page.evaluate(() => {
@@ -169,7 +169,7 @@ test('an async source: loading, rows, a late reply dropped, a failure, No match'
   await expect(list(page)).toHaveAttribute('aria-busy', 'false');
 });
 
-test('the popup flips above the caret when there is no room below, and stays inside the dialog', async ({ page }) => {
+test('the popup flips above the caret when there is no room below, and stays inside the dialog', { tag: '@component' }, async ({ page }) => {
   await open(page);
   // Lines down to the bottom of the editor, then the trigger.
   for (let i = 0; i < 14; i++) await page.keyboard.press('Shift+Enter');
@@ -197,7 +197,7 @@ test('the popup flips above the caret when there is no room below, and stays ins
   await shot(page, 'complete-above');
 });
 
-test('an IME composition does not open or disturb it; the commit does', async ({ page }) => {
+test('an IME composition does not open or disturb it; the commit does', { tag: '@component' }, async ({ page }) => {
   await open(page);
   const cdp = await page.context().newCDPSession(page);
   await page.keyboard.type('x ');
@@ -213,7 +213,7 @@ test('an IME composition does not open or disturb it; the commit does', async ({
   expect(await events(page)).toEqual([]);
 });
 
-test('an image chip before the token: it still opens and picks', async ({ page }) => {
+test('an image chip before the token: it still opens and picks', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.evaluate(async () => {
     const c = document.createElement('canvas');
@@ -239,7 +239,7 @@ test('an image chip before the token: it still opens and picks', async ({ page }
   expect(await page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).composer.getSnapshot().doc.text)).toBe('￼/help ');
 });
 
-test('rows kept from an older query while the next one loads cannot be picked by a click, Enter or Tab', async ({ page }) => {
+test('rows kept from an older query while the next one loads cannot be picked by a click, Enter or Tab', { tag: '@component' }, async ({ page }) => {
   await open(page);
   const stub = (delayMs: number) => page.evaluate((ms) => ((window.__h3dComposer as NonNullable<Window['__h3dComposer']>).stub.delayMs = ms), delayMs);
   await page.keyboard.type('@');
@@ -269,7 +269,7 @@ test('rows kept from an older query while the next one loads cannot be picked by
   expect(await text(page)).toBe('@zz @q');
 });
 
-test('scrolling the caret out of the editor closes the popup; the keys are the editor’s again', async ({ page }) => {
+test('scrolling the caret out of the editor closes the popup; the keys are the editor’s again', { tag: '@component' }, async ({ page }) => {
   await open(page);
   const inDialog = () =>
     page.evaluate(() => {

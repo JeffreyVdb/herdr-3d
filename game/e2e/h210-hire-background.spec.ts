@@ -271,7 +271,7 @@ test('a dialog edited while an earlier hire ends keeps its edits; two hires on t
   clean();
 });
 
-test('a dropped connection while the hire is on its way: an outcome-unknown notice, never a second worker.hire', async ({ page }) => {
+test('a dropped connection while the hire is on its way: an outcome-unknown notice, never a second worker.hire', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await probe(page);

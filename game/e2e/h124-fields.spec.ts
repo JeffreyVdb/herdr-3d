@@ -91,7 +91,7 @@ async function onFloor(page: Page, fixture: string, floor: string, wsQuery = SIM
   await frames(page, 4);
 }
 
-test('the hire dialog: the task composer (contenteditable) and the model filter (a search input)', async ({ page }) => {
+test('the hire dialog: the task composer (contenteditable) and the model filter (a search input)', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await onFloor(page, 'demo-m6', 'herdr-3d', `${SIM}&simmodels=24`);

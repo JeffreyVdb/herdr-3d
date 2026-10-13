@@ -295,7 +295,7 @@ test('T reaches the radio and the elevator too (the radio is below the default v
   clean();
 });
 
-test('keyboard only: from the city into a floor, hire, pick the new worker and open its conversation, then Issues, then the Inbox', async ({ page }) => {
+test('keyboard only: from the city into a floor, hire, pick the new worker and open its conversation, then Issues, then the Inbox', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   // The hire leaves you where you stand (Settings → Display "Go to a new hire after hiring" off): the way to its laptop is the keyboard's.

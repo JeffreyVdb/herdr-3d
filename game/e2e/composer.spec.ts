@@ -97,7 +97,7 @@ const lightbox = (page: Page) => page.locator('dialog.cmp-lightbox[open]');
 const hostEvents = (page: Page) => page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).events);
 const uploadLog = async (page: Page, key: string) => (await page.evaluate(async (k) => (await fetch(`/upload/_log?upload_key=${k}`)).json(), key)).data as Array<{ label: string; n: number; result: string; mime: string | null }>;
 
-test('a pasted screenshot lands inline at the caret, between the words, and shows its thumbnail', async ({ page }) => {
+test('a pasted screenshot lands inline at the caret, between the words, and shows its thumbnail', { tag: '@component' }, async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await open(page);
@@ -141,7 +141,7 @@ test('a pasted screenshot lands inline at the caret, between the words, and show
   expect(errors).toEqual([]);
 });
 
-test('two images pasted around typed text stay in order, and text pasted alongside is plain', async ({ page }) => {
+test('two images pasted around typed text stay in order, and text pasted alongside is plain', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('see ');
   await paste(page, [{ name: 'a.png', color: '#e8413a' }]);
@@ -163,7 +163,7 @@ test('two images pasted around typed text stay in order, and text pasted alongsi
   expect((await snap(page)).text).toBe('see  and  please\nline two');
 });
 
-test('clicking a thumbnail opens it enlarged; the close button, Esc and the empty surface all go back to the prompt untouched', async ({ page }) => {
+test('clicking a thumbnail opens it enlarged; the close button, Esc and the empty surface all go back to the prompt untouched', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('the header overlaps the logo');
   for (let i = 0; i < 9; i++) await page.keyboard.press('ArrowLeft');
@@ -225,7 +225,7 @@ test('clicking a thumbnail opens it enlarged; the close button, Esc and the empt
   expect(await page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).dialog.open)).toBe(false);
 });
 
-test('a drag that starts on the image or ends on the surface does not close the enlarged view', async ({ page }) => {
+test('a drag that starts on the image or ends on the surface does not close the enlarged view', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await paste(page, [{ name: 'a.png', w: 1200, h: 600 }]);
   await chips(page).first().locator('.cmp-thumb').click();
@@ -254,7 +254,7 @@ test('a drag that starts on the image or ends on the surface does not close the 
   await expect(lightbox(page)).toHaveCount(0);
 });
 
-test('Esc closes only the topmost layer, once per press, however the host handles it', async ({ page }) => {
+test('Esc closes only the topmost layer, once per press, however the host handles it', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await paste(page, [{ name: 'a.png' }]);
   await chips(page).first().locator('.cmp-thumb').click();
@@ -292,7 +292,7 @@ async function heldEscape(page: Page, repeats: number): Promise<{ down(): Promis
   };
 }
 
-test('a held Esc closes only the enlarged view: its auto-repeat never reaches the host, and a new press after the key is up does', async ({ page }) => {
+test('a held Esc closes only the enlarged view: its auto-repeat never reaches the host, and a new press after the key is up does', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await paste(page, [{ name: 'a.png' }]);
   await chips(page).first().locator('.cmp-thumb').click();
@@ -311,7 +311,7 @@ test('a held Esc closes only the enlarged view: its auto-repeat never reaches th
   expect(await page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).dialog.open)).toBe(false);
 });
 
-test('the held-Esc guard lets go of a keyup that never comes: a new Esc press then closes the host', async ({ page }) => {
+test('the held-Esc guard lets go of a keyup that never comes: a new Esc press then closes the host', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await paste(page, [{ name: 'a.png' }]);
   const hostOpen = () => page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).dialog.open);
@@ -328,7 +328,7 @@ test('the held-Esc guard lets go of a keyup that never comes: a new Esc press th
   expect(await hostOpen()).toBe(false);
 });
 
-test('a backward selection, the caret and the scroll come back exactly after the enlarged view', async ({ page }) => {
+test('a backward selection, the caret and the scroll come back exactly after the enlarged view', { tag: '@component' }, async ({ page }) => {
   await open(page);
   // Enough lines to scroll inside the editor.
   for (let i = 0; i < 40; i++) await page.keyboard.type(`line ${i}`), await page.keyboard.press('Shift+Enter');
@@ -361,7 +361,7 @@ test('a backward selection, the caret and the scroll come back exactly after the
   expect((await snap(page)).text).toContain('X');
 });
 
-test('two pasted images serialise to [Image #1] and [Image #2] in the right places through the fixture upload', async ({ page }) => {
+test('two pasted images serialise to [Image #1] and [Image #2] in the right places through the fixture upload', { tag: '@component' }, async ({ page }) => {
   const { key } = await open(page);
   await page.keyboard.type('The header overlaps the logo, see ');
   await paste(page, [{ name: 'one.png', color: '#e8413a' }]);
@@ -381,7 +381,7 @@ test('two pasted images serialise to [Image #1] and [Image #2] in the right plac
   await shot(page, '04-serialised');
 });
 
-test('a failed upload blocks the send, keeps the draft, shows a retry on that chip, and the retry lets it through', async ({ page }) => {
+test('a failed upload blocks the send, keeps the draft, shows a retry on that chip, and the retry lets it through', { tag: ['@smoke', '@component'] }, async ({ page }) => {
   const { key } = await open(page, '&fail_upload=1');
   await page.keyboard.type('compare ');
   await paste(page, [{ name: 'one.png', color: '#e8413a' }, { name: 'two.png', color: '#12a26a' }]);
@@ -419,7 +419,7 @@ test('a failed upload blocks the send, keeps the draft, shows a retry on that ch
   await shot(page, '06-retried-and-sent');
 });
 
-test('pressing send again after a failure stays blocked, and does not hit the service again, until the chip is retried', async ({ page }) => {
+test('pressing send again after a failure stays blocked, and does not hit the service again, until the chip is retried', { tag: '@component' }, async ({ page }) => {
   const { key } = await open(page, '&fail_upload=1');
   await paste(page, [{ name: 'only.png' }]);
   await expect(page.locator('.cmp-chip[data-status="error"]')).toHaveCount(1);
@@ -435,7 +435,7 @@ test('pressing send again after a failure stays blocked, and does not hit the se
   await expect(page.locator('#cmp-out')).toHaveText(`[Image #1: ${DROPS}/h3d-demo-1.png]`);
 });
 
-test('keys around chips in a real browser: Backspace, Delete, arrows, a caret between chips, undo and redo', async ({ page }) => {
+test('keys around chips in a real browser: Backspace, Delete, arrows, a caret between chips, undo and redo', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('ab');
   await page.keyboard.press('ArrowLeft');
@@ -475,7 +475,7 @@ test('keys around chips in a real browser: Backspace, Delete, arrows, a caret be
   expect(await layout(page)).toEqual(['chip:y.png']);
 });
 
-test('Enter sends and adds no line; Shift+Enter adds one; both work at the start and end; an IME composition is left alone', async ({ page }) => {
+test('Enter sends and adds no line; Shift+Enter adds one; both work at the start and end; an IME composition is left alone', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('one');
   await page.keyboard.press('Shift+Enter');
@@ -499,7 +499,7 @@ test('Enter sends and adds no line; Shift+Enter adds one; both work at the start
   expect((await snap(page)).text).toContain('日本語');
 });
 
-test('refused files say why, and nothing is added; the limit stops at twenty', async ({ page }) => {
+test('refused files say why, and nothing is added; the limit stops at twenty', { tag: '@component' }, async ({ page }) => {
   await open(page);
   const claimed = await page.evaluate(() => {
     const dt = new DataTransfer();
@@ -517,7 +517,7 @@ test('refused files say why, and nothing is added; the limit stops at twenty', a
   await expect(page.locator('.cmp-notice')).toHaveText('You can attach up to 20 images to one prompt.');
 });
 
-test('the draft survives closing and reopening the dialog: text, caret, images and their uploaded paths', async ({ page }) => {
+test('the draft survives closing and reopening the dialog: text, caret, images and their uploaded paths', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('first task ');
   await paste(page, [{ name: 'keep.png' }]);
@@ -534,7 +534,7 @@ test('the draft survives closing and reopening the dialog: text, caret, images a
   expect((await snap(page)).text).toBe('first task  more!');
 });
 
-test('the editor fills its dialog and scrolls inside; the placeholder shows only while empty; it works at phone width', async ({ page }) => {
+test('the editor fills its dialog and scrolls inside; the placeholder shows only while empty; it works at phone width', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await expect(ed(page)).toHaveAttribute('data-empty', 'true');
   const placeholder = await ed(page).evaluate((e) => getComputedStyle(e, '::before').content);

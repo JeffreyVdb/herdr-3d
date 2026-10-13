@@ -30,7 +30,7 @@ async function emptyInbox(page: Page, all: Worker[], setStatus: (w: Worker, s: s
   await expect.poll(() => inbox(page)).toMatchObject({ shown: false, count: 0 });
 }
 
-test('the inbox: the chip opens a list of who and where across the buildings, live; a row seats you at that laptop', async ({ page }) => {
+test('the inbox: the chip opens a list of who and where across the buildings, live; a row seats you at that laptop', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   const all = workers();

@@ -152,7 +152,7 @@ test('walking along the pod swaps live screens with hysteresis, the old ones sta
   clean();
 });
 
-test('E sits at a worker’s laptop: typed input echoes in its terminal, game keys stay in the terminal, Esc gets up', async ({ page }) => {
+test('E sits at a worker’s laptop: typed input echoes in its terminal, game keys stay in the terminal, Esc gets up', { tag: '@smoke' }, async ({ page }) => {
   const clean = watchErrors(page);
   const { L, ids } = await enter(page);
   const sprout = ids.Sprout as string; // desk 15, a plain shell

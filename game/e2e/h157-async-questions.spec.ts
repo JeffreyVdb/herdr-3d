@@ -37,7 +37,7 @@ async function sitAtTranscript(page: Page, w: Worker): Promise<Locator> {
   return tx;
 }
 
-test('answered from the transcript while Codex works on: picks never send, Send sends once; prompts and the terminal stay', async ({ page }) => {
+test('answered from the transcript while Codex works on: picks never send, Send sends once; prompts and the terminal stay', { tag: '@smoke' }, async ({ page }) => {
   const clean = watchErrors(page);
   const w = pixel();
   await openGame(page, 'demo-m5', '', SIM);

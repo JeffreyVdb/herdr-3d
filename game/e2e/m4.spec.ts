@@ -105,7 +105,7 @@ const focusedKey = (page: Page) =>
     return !a || a === document.body ? 'BODY' : (a.dataset.key ?? a.id);
   });
 
-test('E on an empty desk: the hire dialog from the keyboard, then the worker drops in to its chair', async ({ page }) => {
+test('E on an empty desk: the hire dialog from the keyboard, then the worker drops in to its chair', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m4', '', SIM);

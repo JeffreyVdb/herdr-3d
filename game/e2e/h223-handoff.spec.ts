@@ -38,7 +38,7 @@ async function nothingToWorker(page: Page): Promise<void> {
   expect(ts.filter((t) => ['worker.prompt', 'worker.keys', 'worker.answer', 'worker.wrapup'].includes(t) || t.startsWith('ai.') || t.startsWith('followups.') || t.startsWith('digest.') || t === 'packup.detect')).toEqual([]);
 }
 
-test('the inline button on the last reply files it as written, sends the worker home after, and the drawers fill', async ({ page }) => {
+test('the inline button on the last reply files it as written, sends the worker home after, and the drawers fill', { tag: '@smoke' }, async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m5', '', SIM);
   const w = demoWorker('Zippy');
