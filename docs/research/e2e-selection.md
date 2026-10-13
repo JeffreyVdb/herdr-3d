@@ -57,6 +57,36 @@ Every test's selection is visible in its source as a Playwright tag: `test(title
 | (iii) theme matrix reduced | 29 / 26 | 545 / 79 | 453 / 6 | 11 / 10 | 28 / 2 | 1009 / 86 |
 | (iv) duplicates removed | 29 / 26 | 540 / 79 | 453 / 6 | 11 / 10 | 26 / 2 | 1004 / 86 |
 
+Since 1236 → 1004 discovered cases: 232 removed by merging or deleting (229 from the theme matrix, 5 duplicates, +2 from
+splitting the two mixed perf cases). Captures, audits and benches (464) left the routine selection; `make e2e` runs 29.
+
+## The smoke run, measured (one run, 2026-10-13)
+
+`make e2e` once at `1efde20` on the 32-vCPU development host (Xeon E5-2660 v3, llvmpipe), default 6 workers, lines
+timestamped as they came; suite time is the JSON report's `stats.duration`.
+
+| | |
+| --- | ---: |
+| Cases | 29 (27 passed, 2 failed) |
+| Build (`pnpm build` + `check-bundle`) | 6.2 s |
+| Lock wait | 0 s (no other run held it; no "waiting" line) |
+| Preview server start + Playwright load | 5.4 s |
+| Suite (`stats.duration`) | 101.1 s |
+| **Total wall time, `make e2e`** | **109.0 s (1 min 49 s)**, within the 5-minute target |
+
+The longest cases: `m16-transcript.spec.ts` "sitting down opens the conversation …" 37.1 s, `m13-whiteboard.spec.ts`
+"draw, close, reload: …" 33.3 s, `h157-async-questions.spec.ts` 25.9 s.
+
+The two failures were `m4.spec.ts` "E on an empty desk: the hire dialog from the keyboard, then the worker drops in to its
+chair" and `hire-composer.spec.ts` "a failed upload blocks the hire, keeps the prompt and shows a retry; …", both at
+`expect.poll(() => dialog(page)).toBeNull()` after Enter: the dialog still said "The hire is on its way." after the
+poll's default 5 s. Both passed when run alone right after (`make e2e-prebuilt SPEC='e2e/m4.spec.ts
+e2e/hire-composer.spec.ts' PROFILE=smoke`, 2 passed, 17.6 s). They are load-dependent and older than #42: the
+#241 bench runs (`docs/research/e2e-bench/results/`) record the same `toBeNull()` failure of `hire-composer.spec.ts:232`
+at 6, 8, 12 and 16 workers and of `m4.spec.ts:108` at 12 and 16. The simulator's hire ack is timed on the game's clock,
+which runs slower than wall time when llvmpipe is loaded, against a fixed 5 s poll. Unfixed here (only tagged); they
+need their own issue. Not rerun to improve the number.
+
 ## The smoke suite
 
 The essential journeys of the issue's §4, one test each where one test proves the journey. `@smoke` marks them in
