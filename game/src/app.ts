@@ -2552,12 +2552,12 @@ export class App {
 
   /**
    * #248: "Resolve conflicts with a worker": the hire dialog at the nearest free desk with the resolve-and-merge prompt
-   * (the panel's merge method), the task levels from Trivial, never the reviewer's model, and a worktree of its own.
+   * (the panel's merge method), the task levels from the default one (#40), never the reviewer's model, and a worktree of its own.
    */
   private resolvePr(session: string, pr: PullRequest, method: MergeMethod): void {
     const desk = this.nearestFreeDesk(session);
     this.boardsPanel.close();
-    this.openHire(desk ?? undefined, { prompt: resolveConflictsPrompt(pr, method), level: 'trivial', worktree: true });
+    this.openHire(desk ?? undefined, { prompt: resolveConflictsPrompt(pr, method), level: 'default', worktree: true });
   }
 
   /** The note of a card leaves its board and is carried to an orchestrator's desk. */

@@ -5,7 +5,7 @@ import { HireDialog, type HireHost, type HirePrefill, type HireSummary } from '.
 import { HireModelPrefs } from './hireModelPrefs';
 import { TaskLevels } from './taskLevels';
 
-// #248: the Hire dialog in task-level mode. Fixture slugs only; nothing here is an app default.
+// #248, #40: the Hire dialog in task-level mode. Fixture slugs and names only; nothing here is an app default.
 
 const CAT: HireOptions = {
   codex: { models: ['x-1', 'x-2', 'x-3'], efforts: ['low', 'high'], extra_efforts: { 'x-2': ['ultra'] } },
@@ -30,7 +30,8 @@ const prepOf = (choice: Hire | null, git: HireGit | null): HirePrepare => ({
 
 function setup(o: { git?: HireGit | null; worktreeByDefault?: boolean } = {}) {
   const prefs = new HireModelPrefs(memory());
-  const levels = new TaskLevels(memory());
+  let n = 0;
+  const levels = new TaskLevels(memory(), () => `id-${++n}`);
   const store = { hireOptions: CAT, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null };
   const showTaskLevelSettings = vi.fn();
   const sent: Array<{ t: string; args: unknown }> = [];
@@ -57,15 +58,21 @@ function setup(o: { git?: HireGit | null; worktreeByDefault?: boolean } = {}) {
     dlg.open('floor', 0, prefill);
     await tick();
   };
-  return { dlg, prefs, levels, store, showTaskLevelSettings, sent, open, inner: dlg as unknown as { hire(): Promise<void> } };
+  /** Adds a level and sets it (none: left not set); its id. */
+  const level = (name: string, c?: { harness: string; model: string; effort: string }): string => {
+    const id = levels.add(name)!;
+    if (c) levels.set(id, c);
+    return id;
+  };
+  return { dlg, prefs, levels, level, store, showTaskLevelSettings, sent, open, inner: dlg as unknown as { hire(): Promise<void> } };
 }
 
 const summary = (dlg: HireDialog): HireSummary => dlg.summary() as HireSummary;
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
 const levelInput = (id: string) => q<HTMLInputElement>(`[data-key="level:${id}"]`);
-const RESOLVE: HirePrefill = { prompt: 'resolve it', level: 'trivial', worktree: true };
+const RESOLVE: HirePrefill = { prompt: 'resolve it', level: 'default', worktree: true };
 
-describe('HireDialog: task levels (#248)', () => {
+describe('HireDialog: task levels (#248, #40)', () => {
   beforeEach(() => {
     HTMLDialogElement.prototype.showModal = function () {
       this.setAttribute('open', '');
@@ -81,26 +88,63 @@ describe('HireDialog: task levels (#248)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows one chip per set level instead of the pickers, picks the one asked for, and a chip sets all three', async () => {
+  it('shows one chip per set level in the player’s order instead of the pickers, picks the default, and a chip sets all three', async () => {
     const s = setup();
-    s.levels.set('very_trivial', { harness: 'codex', model: 'x-1', effort: 'low' });
-    s.levels.set('trivial', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    const tiny = s.level('Tiny', { harness: 'codex', model: 'x-1', effort: 'low' });
+    // Not set yet: never a chip.
+    s.level('Someday');
+    const quick = s.level('Quick fix', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    s.levels.setDefault(quick);
     await s.open(RESOLVE);
     expect(q('[data-pick="harness"]')).toBeNull();
     expect(q('[data-pick="model"]')).toBeNull();
     expect(q('[data-pick="effort"]')).toBeNull();
-    expect([...document.querySelectorAll('[data-pick="level"] label')].map((l) => l.textContent)).toEqual(['Very trivial — x-1 · low', 'Trivial — Why One · medium']);
-    expect(summary(s.dlg).level).toMatchObject({ mode: 'levels', picked: 'trivial' });
+    expect([...document.querySelectorAll('[data-pick="level"] label')].map((l) => l.textContent)).toEqual(['Tiny — x-1 · low', 'Quick fix — Why One · medium']);
+    expect(summary(s.dlg).level).toMatchObject({ mode: 'levels', picked: quick });
     expect(summary(s.dlg).form).toMatchObject({ prompt: 'resolve it', harness: 'claude', model: 'y-1', effort: 'medium' });
-    levelInput('very_trivial')!.click();
+    levelInput(tiny)!.click();
     expect(summary(s.dlg).form).toMatchObject({ harness: 'codex', model: 'x-1', effort: 'low' });
-    expect(summary(s.dlg).level?.picked).toBe('very_trivial');
+    expect(summary(s.dlg).level?.picked).toBe(tiny);
     expect(summary(s.dlg).blocker).toBeNull();
+  });
+
+  it('with no level marked default, the first one is; the chips follow a move', async () => {
+    const s = setup();
+    const a = s.level('A', { harness: 'codex', model: 'x-1', effort: 'low' });
+    const b = s.level('B', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    await s.open(RESOLVE);
+    expect(summary(s.dlg).level?.picked).toBe(a);
+    s.levels.move(b, -1);
+    expect(summary(s.dlg).level?.chips.map((c) => c.id)).toEqual([b, a]);
+    s.dlg.close();
+    await s.open(RESOLVE);
+    expect(summary(s.dlg).level?.picked).toBe(b);
+  });
+
+  it('a default level that is not set yet: the nearest set one by position, the earlier first', async () => {
+    const s = setup();
+    const a = s.level('A', { harness: 'codex', model: 'x-1', effort: 'low' });
+    const b = s.level('B');
+    s.level('C', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    s.levels.setDefault(b);
+    await s.open(RESOLVE);
+    expect(summary(s.dlg).level?.picked).toBe(a);
+  });
+
+  it('asks for a level by id; an id no longer in the list asks for the default', async () => {
+    const s = setup();
+    const a = s.level('A', { harness: 'codex', model: 'x-1', effort: 'low' });
+    const b = s.level('B', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    await s.open({ ...RESOLVE, level: b });
+    expect(summary(s.dlg).level?.picked).toBe(b);
+    s.dlg.close();
+    await s.open({ ...RESOLVE, level: 'gone' });
+    expect(summary(s.dlg).level?.picked).toBe(a);
   });
 
   it('“Choose a more complex model…” shows the usual pickers holding the level; “Back to task levels” returns; neither is saved', async () => {
     const s = setup();
-    s.levels.set('trivial', { harness: 'codex', model: 'x-2', effort: 'ultra' });
+    s.level('Quick fix', { harness: 'codex', model: 'x-2', effort: 'ultra' });
     await s.open(RESOLVE);
     q<HTMLButtonElement>('[data-key="levels-more"]')!.click();
     expect(summary(s.dlg).level?.mode).toBe('more');
@@ -120,32 +164,42 @@ describe('HireDialog: task levels (#248)', () => {
     expect(summary(s.dlg).level?.mode).toBe('levels');
   });
 
-  it('an unusable level is shown off with its reason, and the nearest usable one is picked (smaller first)', async () => {
+  it('an unusable level is shown off with its reason, and the nearest usable one is picked (the earlier first)', async () => {
     const s = setup();
-    s.levels.set('very_trivial', { harness: 'codex', model: 'x-1', effort: 'low' });
-    s.levels.set('trivial', { harness: 'claude', model: 'y-1', effort: 'medium' });
-    s.levels.set('slightly_complex', { harness: 'claude', model: 'y-2', effort: 'high' });
+    const a = s.level('A', { harness: 'codex', model: 'x-1', effort: 'low' });
+    const b = s.level('B', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    const c = s.level('C', { harness: 'claude', model: 'y-2', effort: 'high' });
+    s.levels.setDefault(b);
     s.prefs.setShown('claude', 'y-1', false);
     await s.open(RESOLVE);
-    expect(summary(s.dlg).level?.picked).toBe('very_trivial');
-    expect(levelInput('trivial')!.disabled).toBe(true);
-    expect(levelInput('trivial')!.closest('label')!.title).toMatch(/hidden in Settings → Harness models/);
-    expect(summary(s.dlg).level?.chips.map((c) => c.id)).toEqual(['very_trivial', 'trivial', 'slightly_complex']);
+    expect(summary(s.dlg).level?.picked).toBe(a);
+    expect(levelInput(b)!.disabled).toBe(true);
+    expect(levelInput(b)!.closest('label')!.title).toMatch(/hidden in Settings → Harness models/);
+    expect(summary(s.dlg).level?.chips.map((x) => x.id)).toEqual([a, b, c]);
   });
 
   it('follows a change of the levels while open: a picked level that goes stale falls back, a fixed one comes back', async () => {
     const s = setup();
-    s.levels.set('trivial', { harness: 'claude', model: 'y-1', effort: 'medium' });
-    s.levels.set('slightly_complex', { harness: 'claude', model: 'y-2', effort: 'high' });
+    const a = s.level('A', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    const b = s.level('B', { harness: 'claude', model: 'y-2', effort: 'high' });
     await s.open(RESOLVE);
-    s.levels.set('trivial', { harness: 'claude', model: 'y-1', effort: 'max' });
-    expect(summary(s.dlg).level?.picked).toBe('slightly_complex');
+    s.levels.set(a, { harness: 'claude', model: 'y-1', effort: 'max' });
+    expect(summary(s.dlg).level?.picked).toBe(b);
     expect(summary(s.dlg).form).toMatchObject({ model: 'y-2', effort: 'high' });
-    expect(levelInput('trivial')!.disabled).toBe(true);
+    expect(levelInput(a)!.disabled).toBe(true);
+    // Renamed in Settings meanwhile: the chip says so.
+    s.levels.rename(b, 'Bigger');
+    expect(q('[data-pick="level"]')!.textContent).toContain('Bigger — y-2 · high');
+    // Removed: the next one left.
+    s.levels.set(a, { harness: 'claude', model: 'y-1', effort: 'low' });
+    s.levels.remove(b);
+    expect(summary(s.dlg).level?.picked).toBe(a);
   });
 
   it('no level set: the usual pickers with the floor’s choice, and no “Choose a more complex model…”', async () => {
     const s = setup();
+    // A level that is named but not set does not count.
+    s.level('Someday');
     await s.open(RESOLVE);
     expect(summary(s.dlg).level?.mode).toBe('none');
     expect(q('[data-pick="harness"]')).not.toBeNull();
@@ -156,7 +210,7 @@ describe('HireDialog: task levels (#248)', () => {
 
   it('levels set but none usable: the usual pickers, a note and the way to Settings → Task levels', async () => {
     const s = setup();
-    s.levels.set('trivial', { harness: 'claude', model: 'gone-1', effort: 'medium' });
+    const a = s.level('A', { harness: 'claude', model: 'gone-1', effort: 'medium' });
     await s.open(RESOLVE);
     expect(summary(s.dlg).level?.mode).toBe('none');
     expect(q('[data-pick="harness"]')).not.toBeNull();
@@ -164,20 +218,20 @@ describe('HireDialog: task levels (#248)', () => {
     q<HTMLButtonElement>('[data-key="show-levels"]')!.click();
     expect(s.showTaskLevelSettings).toHaveBeenCalledTimes(1);
     // Fixed in Settings while the dialog is open: the levels come back.
-    s.levels.set('trivial', { harness: 'claude', model: 'y-2', effort: 'medium' });
-    expect(summary(s.dlg).level).toMatchObject({ mode: 'levels', picked: 'trivial' });
+    s.levels.set(a, { harness: 'claude', model: 'y-2', effort: 'medium' });
+    expect(summary(s.dlg).level).toMatchObject({ mode: 'levels', picked: a });
   });
 
   it('never applies a reviewer’s choice in level mode', async () => {
     const s = setup();
-    s.levels.set('trivial', { harness: 'claude', model: 'y-1', effort: 'low' });
+    s.level('A', { harness: 'claude', model: 'y-1', effort: 'low' });
     await s.open({ ...RESOLVE, choice: { harness: 'codex', model: 'x-2', effort: 'ultra' } });
     expect(summary(s.dlg).form).toMatchObject({ harness: 'claude', model: 'y-1', effort: 'low' });
   });
 
   it('sends the level’s harness, model and effort as a plain worker.hire, with a worktree even when Settings says none', async () => {
     const s = setup({ worktreeByDefault: false });
-    s.levels.set('trivial', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    s.level('A', { harness: 'claude', model: 'y-1', effort: 'medium' });
     await s.open(RESOLVE);
     expect(summary(s.dlg).form.worktree).toBe(true);
     void s.inner.hire();
@@ -190,14 +244,14 @@ describe('HireDialog: task levels (#248)', () => {
 
   it('no worktree can be made: the hire goes out without one', async () => {
     const s = setup({ git: { ...GIT, fetched: false }, worktreeByDefault: true });
-    s.levels.set('trivial', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    s.level('A', { harness: 'claude', model: 'y-1', effort: 'medium' });
     await s.open(RESOLVE);
     expect(summary(s.dlg).form.worktree).toBe(false);
   });
 
   it('a plain hire knows nothing of levels, even with levels set', async () => {
     const s = setup({ worktreeByDefault: false });
-    s.levels.set('trivial', { harness: 'claude', model: 'y-1', effort: 'medium' });
+    s.level('A', { harness: 'claude', model: 'y-1', effort: 'medium' });
     await s.open({});
     expect(summary(s.dlg).level).toBeUndefined();
     expect(q('[data-pick="level"]')).toBeNull();

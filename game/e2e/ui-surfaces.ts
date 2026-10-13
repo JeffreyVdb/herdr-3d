@@ -141,14 +141,28 @@ async function openConflictingPr(page: Page): Promise<void> {
   await expect.poll(async () => (await boardState(page))?.item?.state, { timeout: 10_000 }).toBe('ready');
 }
 
-/** #248: two task levels set through Settings → Task levels (a harness chip sets its first shown model). */
-async function setTaskLevels(page: Page): Promise<void> {
+/**
+ * #248, #40: two task levels added, named and set through Settings → Task levels (a harness chip sets its first shown
+ * model); `open` leaves Settings open on the section with a third level, not set yet.
+ */
+async function setTaskLevels(page: Page, open = false): Promise<void> {
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const section = page.locator('[data-section="task-levels"]');
-  for (const [id, harness] of [['very_trivial', 'codex'], ['trivial', 'claude']] as const) {
-    await section.locator(`label:has([data-key="tl-${id}-harness:${harness}"])`).click();
-    await expect(section.locator(`.tl-level[data-level="${id}"] .settings-badge`)).toHaveText('Set');
+  const add = async (name: string) => {
+    await section.getByRole('button', { name: 'Add level' }).click();
+    await page.keyboard.type(name);
+    await page.keyboard.press('Enter');
+  };
+  for (const [name, harness] of [['Typo fix', 'codex'], ['Quick fix', 'claude']] as const) {
+    await add(name);
+    const row = section.locator('.tl-level').last();
+    await row.locator(`[data-pick$="-harness"] label:has(input[value="${harness}"])`).click();
+    await expect(row.locator('.settings-badge')).toHaveText('Set');
+  }
+  if (open) {
+    await add('Someday');
+    return;
   }
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeHidden();
@@ -200,6 +214,14 @@ export const SURFACES: Surface[] = [
       await page.getByRole('button', { name: 'Settings', exact: true }).click();
       await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
     },
+    root: 'dialog.settings',
+  },
+  {
+    // #40: Settings → Task levels: two set levels and one not set yet, with their names, Default, the row tools and Add level.
+    name: 'settings-task-levels',
+    fixture: 'demo-m6',
+    extra: '&open=none',
+    open: (page) => setTaskLevels(page, true),
     root: 'dialog.settings',
   },
   {
@@ -597,7 +619,7 @@ export const SURFACES: Surface[] = [
     root: 'dialog.desk-dlg--item',
   },
   {
-    // #248: the hire dialog of Resolve conflicts, on its task levels (Trivial picked).
+    // #248: the hire dialog of Resolve conflicts, on its task levels (the default, the first, picked).
     name: 'hire-levels',
     fixture: 'demo-m6',
     extra: '&open=none',

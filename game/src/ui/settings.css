@@ -2,6 +2,9 @@
  * #110: wide enough for the AI-backed sections (status line, threshold, test results); their rows reflow into it. */
 dialog.settings {
   width: min(640px, calc(100vw - 32px));
+  /* #40: clips like `.credits` but is no scroll container, so no focus or scrollIntoView can scroll the window itself
+     and hide its header and body: only its body scrolls. */
+  overflow: clip;
 }
 .settings .settings-body {
   padding-top: 14px;
@@ -791,6 +794,84 @@ dialog.settings {
   margin-left: auto;
 }
 
+/* #40: Settings → Task levels. One block per level (the AI section's `.settings-role`): its name in a field of its own
+ * with its state beside it, then its controls (Default, Move up / down, Clear, Remove) on the same line while they fit;
+ * then the Hire dialog's chips. Add level under the last one. */
+.tl-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.tl-title {
+  display: flex;
+  flex: 1 1 220px;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.tl-name-field {
+  flex: 1 1 auto;
+}
+.tl-name-field input {
+  font-weight: 700;
+}
+.tl-tools {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+.tl-tools-end {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tl-default {
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.tl-default:has(input:checked) {
+  color: var(--text);
+}
+.tl-name-error {
+  margin: -8px 0 0;
+  font-size: 12px;
+}
+.tl-empty {
+  margin: 0;
+}
+.tl-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-top: 16px;
+}
+.tl-add-row .settings-field-hint {
+  margin: 0;
+}
+.tl-levels:empty {
+  display: none;
+}
+/* A phone: the controls take a line of their own under the name, thumb-sized (the 44 px of `.settings-role .btn--sm`). */
+@media (max-width: 600px) {
+  .tl-tools {
+    flex: 1 1 100%;
+    justify-content: space-between;
+    margin-left: 0;
+  }
+  .tl-tools .btn--icon.btn--sm {
+    width: 44px;
+  }
+  .tl-add-row .btn--sm {
+    min-height: 44px;
+  }
+}
+
 /* ubuntu:begin */
 /*
  * #216 Ubuntu: the Settings window's controls. Fields, wells and borders come from the tokens above; what is here is what
@@ -889,6 +970,14 @@ dialog.settings {
 :root[data-ui-theme='ubuntu'] .settings-switch input:checked:disabled,
 :root[data-ui-theme='ubuntu'] .settings-check input:checked:disabled {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3.2 3.2L13 4.6' fill='none' stroke='%23cdb1c6' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+/* #40: a radio (Task levels' Default) is the same box made round, a dark dot on the orange instead of the tick. */
+:root[data-ui-theme='ubuntu'] .settings-switch input[type='radio'] {
+  border-radius: 50%;
+}
+:root[data-ui-theme='ubuntu'] .settings-switch input[type='radio']:checked {
+  background-size: 8px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Ccircle cx='4' cy='4' r='4' fill='%232c001e'/%3E%3C/svg%3E");
 }
 :root[data-ui-theme='ubuntu'] .hm-row {
   min-height: var(--ctl-h);

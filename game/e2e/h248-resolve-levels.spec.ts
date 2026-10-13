@@ -5,14 +5,26 @@ import { board, enter, wall } from './m7';
 // #248 on demo-m6 with the simulating fixture server: "Resolve conflicts with a worker" on the conflicting PR (#35),
 // the Hire dialog's task levels (seeded into localStorage as a browser that saved them), the switch to the usual
 // pickers, and what `worker.hire` carries. Levels never reach the bridge; the hire is a plain one with a worktree.
+// #40: the levels are the player's own (fixed opaque ids here so the hooks are stable); #248's stored value migrates.
 
 const SIM = 'play=none&sim=1&simms=150&simusage=0';
 const EXTRA = '&open=none';
 const HERDR = 'JeffreyVdb/herdr-3d';
-const LEVELS = {
+/** #248's stored value: three slots by fixed id. */
+const LEGACY = {
   very_trivial: { harness: 'codex', model: 'gpt-6-luna', effort: 'low' },
   trivial: { harness: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' },
   slightly_complex: { harness: 'codex', model: 'gpt-6-sol', effort: 'ultra' },
+};
+/** #40: the player's own levels, in their order, the middle one the default. */
+const LEVELS = {
+  v: 2,
+  levels: [
+    { id: 'tiny', name: 'Typo fix', ...LEGACY.very_trivial },
+    { id: 'quick', name: 'Quick fix', ...LEGACY.trivial },
+    { id: 'merge', name: 'Merge conflicts', ...LEGACY.slightly_complex },
+  ],
+  default: 'quick',
 };
 
 type Item = NonNullable<NonNullable<Awaited<ReturnType<Window['__h3d']['board']>>>['item']>;
@@ -37,10 +49,12 @@ async function openItem(page: Page, id: string): Promise<Item> {
   return item(page);
 }
 
-/** Seeds the levels (and Settings → Display's worktree default) before the game reads them. */
+/** Seeds the levels (and Settings → Display's worktree default) before the game reads them; once, so a reload keeps what was saved. */
 async function seed(page: Page, levels: object | null, worktree: 'on' | 'off' = 'on'): Promise<void> {
   await page.addInitScript(
     ([l, w]) => {
+      if (sessionStorage.getItem('h248.seeded')) return;
+      sessionStorage.setItem('h248.seeded', '1');
       if (l) localStorage.setItem('h3d.hire.taskLevels', JSON.stringify(l));
       if (w === 'off') localStorage.setItem('h3d.hire.worktree', 'off');
     },
@@ -76,7 +90,7 @@ async function resolve(page: Page): Promise<HireDialogView> {
   return (await dialog(page)) as HireDialogView;
 }
 
-test('Resolve conflicts: only on a conflicting PR; the dialog opens on the Trivial level and hires it with a worktree', async ({ page }) => {
+test('Resolve conflicts: only on a conflicting PR; the dialog opens on the default level and hires it with a worktree', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   // Settings → Display says no worktree: a resolve hire takes one anyway.
@@ -108,14 +122,15 @@ test('Resolve conflicts: only on a conflicting PR; the dialog opens on the Trivi
   expect(d.form.prompt).toContain('gh pr checkout 35 --detach');
   expect(d.form.prompt).toContain('git push origin HEAD:feat/lounge');
   expect(d.form.prompt).toContain('gh pr merge 35 --rebase');
-  expect(d.level).toMatchObject({ mode: 'levels', picked: 'trivial' });
-  expect(d.level?.chips.map((c) => c.id)).toEqual(['very_trivial', 'trivial', 'slightly_complex']);
+  expect(d.level).toMatchObject({ mode: 'levels', picked: 'quick' });
+  expect(d.level?.chips.map((c) => c.id)).toEqual(['tiny', 'quick', 'merge']);
   expect(d.form).toMatchObject({ harness: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', worktree: true });
-  // The levels instead of the pickers.
+  // The levels instead of the pickers, by their names.
   await expect(hire(page).locator('[data-pick="level"] label')).toHaveCount(3);
-  await expect(hire(page).locator('[data-key="level:trivial"]')).toBeChecked();
+  await expect(hire(page).locator('[data-key="level:quick"]')).toBeChecked();
   await expect(hire(page).locator('[data-pick="harness"]')).toHaveCount(0);
-  await expect(hire(page).locator('[data-pick="level"]')).toContainText('Trivial — ');
+  await expect(hire(page).locator('[data-pick="level"] label').first()).toContainText('Typo fix — ');
+  await expect(hire(page).locator('[data-pick="level"]')).toContainText('Quick fix — ');
   await shot(page, 'h248-hire-levels');
 
   // "Choose a more complex model…": the usual pickers, holding the level's choice.
@@ -127,7 +142,7 @@ test('Resolve conflicts: only on a conflicting PR; the dialog opens on the Trivi
   expect((await dialog(page))?.level?.mode).toBe('more');
   await shot(page, 'h248-hire-more');
   await hire(page).locator('[data-key="levels-back"]').click();
-  await expect(hire(page).locator('[data-key="level:trivial"]')).toBeChecked();
+  await expect(hire(page).locator('[data-key="level:quick"]')).toBeChecked();
 
   // Hire: a plain worker.hire with the level's harness, model and effort, and a worktree.
   await hire(page).locator('[data-key="hire"]').click();
@@ -194,38 +209,84 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
   });
 }
 
-test('Settings → Task levels: a level set there is what Resolve offers; a hidden model shows as stale', async ({ page }) => {
+test('#248’s saved levels migrate: named after their slots, in order, Trivial the default, and stored in the new shape', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await seed(page, LEGACY);
+  await openPrs(page);
+  await openItem(page, `${HERDR}#35`);
+  const d = await resolve(page);
+  const chips = d.level?.chips ?? [];
+  expect(chips.map((c) => c.text.split(' — ')[0])).toEqual(['Very trivial', 'Trivial', 'Slightly complex']);
+  expect(d.level?.picked).toBe(chips[1]?.id);
+  expect(d.form).toMatchObject({ harness: 'claude', model: 'claude-sonnet-5-5', effort: 'medium' });
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('h3d.hire.taskLevels') ?? 'null'));
+  expect(saved).toEqual({
+    v: 2,
+    levels: [
+      { id: chips[0]?.id, name: 'Very trivial', ...LEGACY.very_trivial },
+      { id: chips[1]?.id, name: 'Trivial', ...LEGACY.trivial },
+      { id: chips[2]?.id, name: 'Slightly complex', ...LEGACY.slightly_complex },
+    ],
+    default: chips[1]?.id,
+  });
+  // Opaque ids: never the old slot names.
+  for (const c of chips) expect(['very_trivial', 'trivial', 'slightly_complex']).not.toContain(c.id);
+  clean();
+});
+
+test('Settings → Task levels: a level added, named and set there is what Resolve offers; a gone model shows as stale', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
-  await seed(page, { slightly_complex: { harness: 'claude', model: 'claude-gone-1', effort: 'high' } });
+  await seed(page, { v: 2, levels: [{ id: 'old', name: 'Old one', harness: 'claude', model: 'claude-gone-1', effort: 'high' }], default: null });
   await openPrs(page);
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const section = page.locator('[data-section="task-levels"]');
   await section.scrollIntoViewIfNeeded();
-  const row = (id: string) => section.locator(`.tl-level[data-level="${id}"]`);
-  await expect(row('trivial').locator('.settings-badge')).toHaveText('Not set');
-  await row('trivial').locator('label:has([data-key="tl-trivial-harness:codex"])').click();
-  await row('trivial').locator('label:has([data-key="tl-trivial-model:gpt-6-luna"])').click();
-  await row('trivial').locator('label:has([data-key="tl-trivial-effort:low"])').click();
-  await expect(row('trivial').locator('.settings-badge')).toHaveText('Set');
   // The stored level whose model the bridge does not list: its slug and why.
-  await expect(row('slightly_complex').locator('.tl-stale code')).toHaveText('claude-gone-1');
-  await expect(row('slightly_complex').locator('.settings-badge')).toHaveText('Can’t be used');
+  const old = section.locator('.tl-level[data-level="old"]');
+  await expect(old.locator('.tl-stale code')).toHaveText('claude-gone-1');
+  await expect(old.locator('.settings-badge')).toHaveText('Can’t be used');
+
+  await section.getByRole('button', { name: 'Add level' }).click();
+  const row = section.locator('.tl-level').last();
+  await expect(row.locator('.settings-badge')).toHaveText('Not set');
+  await expect(row.locator('.tl-name')).toBeFocused();
+  await page.keyboard.type('Quick fix');
+  await page.keyboard.press('Enter');
+  const id = (await row.getAttribute('data-level')) ?? '';
+  await row.locator(`label:has([data-key="tl-${id}-harness:codex"])`).click();
+  await row.locator(`label:has([data-key="tl-${id}-model:gpt-6-luna"])`).click();
+  await row.locator(`label:has([data-key="tl-${id}-effort:low"])`).click();
+  await expect(row.locator('.settings-badge')).toHaveText('Set');
+  // Move it first and make it the default.
+  await row.getByRole('button', { name: 'Move Quick fix up' }).click();
+  await section.getByRole('radio', { name: 'Default level: Quick fix' }).click();
   await section.screenshot({ path: test.info().outputPath('task-levels.png') });
   await shot(page, 'h248-settings-task-levels');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('h3d.hire.taskLevels') ?? '{}'))).toEqual({
-    slightly_complex: { harness: 'claude', model: 'claude-gone-1', effort: 'high' },
-    trivial: { harness: 'codex', model: 'gpt-6-luna', effort: 'low' },
+    v: 2,
+    levels: [
+      { id, name: 'Quick fix', harness: 'codex', model: 'gpt-6-luna', effort: 'low' },
+      { id: 'old', name: 'Old one', harness: 'claude', model: 'claude-gone-1', effort: 'high' },
+    ],
+    default: id,
   });
   await page.keyboard.press('Escape');
 
+  // A reload keeps the names, the order and the default.
+  await page.reload();
+  await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3, undefined, { timeout: 60_000 });
+  await enter(page, 'herdr-3d');
+  await expect.poll(async () => (await wall(page))?.prs.length).toBe(4);
   await openItem(page, `${HERDR}#35`);
   const d = await resolve(page);
-  expect(d.level?.picked).toBe('trivial');
+  expect(d.level?.picked).toBe(id);
+  expect(d.level?.chips.map((c) => c.text.split(' — ')[0])).toEqual(['Quick fix', 'Old one']);
   expect(d.form).toMatchObject({ harness: 'codex', model: 'gpt-6-luna', effort: 'low' });
-  const stale = d.level?.chips.find((c) => c.id === 'slightly_complex');
+  const stale = d.level?.chips.find((c) => c.id === 'old');
   expect(stale?.problem).toMatch(/does not offer claude-gone-1/);
-  await expect(hire(page).locator('[data-key="level:slightly_complex"]')).toBeDisabled();
+  await expect(hire(page).locator('[data-key="level:old"]')).toBeDisabled();
   clean();
 });
