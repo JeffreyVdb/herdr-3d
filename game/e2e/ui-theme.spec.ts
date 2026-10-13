@@ -192,8 +192,9 @@ test('a saved Ubuntu survives a reload and no frame paints navy first', { tag: '
 });
 
 // #42: invalid and missing stored values (and the pre-frame script's reading of them) are src/ui/themePrefs.test.ts and
-// src/ui/uiTheme.test.ts; this is the integrated start-up with storage that throws.
-test('blocked and throwing storage is safe: Quiet at start-up, a working picker in memory, nothing persisted', async ({ page }) => {
+// src/ui/uiTheme.test.ts, the limits panel's src/ui/limitsPrefs.test.ts; this is the integrated start-up with storage
+// that throws, for the theme picker and for the plan-limits panel (once m10-limits' own boot).
+test('blocked and throwing storage is safe: Quiet at start-up, a working picker in memory, nothing persisted; the limits panel opens, closes and hides', async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   // Storage that throws on every access (private windows, blocked site data).
@@ -204,7 +205,7 @@ test('blocked and throwing storage is safe: Quiet at start-up, a working picker 
       },
     });
   });
-  await openGame(page, 'demo-m5');
+  await openGame(page, 'demo-m5', '', SIM);
   expect(await uiAttr(page)).toBe('quiet');
   const dialog = await openSettings(page);
   await dialog.getByRole('radio', { name: /^Ubuntu/ }).check();
@@ -213,6 +214,21 @@ test('blocked and throwing storage is safe: Quiet at start-up, a working picker 
   expect((await theme(page)).ui).toBe('ubuntu');
   await dialog.getByRole('radio', { name: /^Quiet/ }).check();
   expect(await uiAttr(page)).toBe('quiet');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  // The plan-limits panel: open and closed by a click and Shift+L, hidden and back, all in memory.
+  const limitsOpen = async () => (await page.evaluate(() => window.__h3d.limits()))?.open;
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.limits()))?.lines.length, { message: 'readings arrived', timeout: 10_000 }).toBe(2);
+  await page.locator('.lm-strip').click();
+  expect(await limitsOpen()).toBe(true);
+  await page.locator('.lm-strip').click();
+  expect(await limitsOpen()).toBe(false);
+  await page.keyboard.press('Shift+L');
+  expect(await limitsOpen()).toBe(true);
+  await page.locator('[data-key="limits-hide"]').click();
+  await expect(page.locator('.limits')).toBeHidden();
+  await page.keyboard.press('Shift+L'); // and back
+  await expect(page.locator('.limits')).toBeVisible();
   clean();
 });
 

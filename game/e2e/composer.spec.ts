@@ -499,24 +499,6 @@ test('Enter sends and adds no line; Shift+Enter adds one; both work at the start
   expect((await snap(page)).text).toContain('日本語');
 });
 
-test('refused files say why, and nothing is added; the limit stops at twenty', { tag: '@component' }, async ({ page }) => {
-  await open(page);
-  const claimed = await page.evaluate(() => {
-    const dt = new DataTransfer();
-    dt.items.add(new File(['<svg/>'], 'logo.svg', { type: 'image/svg+xml' }));
-    dt.items.add(new File([''], 'empty.png', { type: 'image/png' }));
-    const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
-    document.querySelector('.cmp-editor')?.dispatchEvent(ev);
-    return ev.defaultPrevented;
-  });
-  expect(claimed).toBe(true);
-  await expect(chips(page)).toHaveCount(0);
-  await expect(page.locator('.cmp-notice')).toHaveText('logo.svg is not a PNG, JPEG, GIF or WebP image. empty.png is empty.');
-  for (let i = 0; i < 21; i++) await paste(page, [{ name: `i${i}.png`, w: 40, h: 40 }]);
-  await expect(chips(page)).toHaveCount(20);
-  await expect(page.locator('.cmp-notice')).toHaveText('You can attach up to 20 images to one prompt.');
-});
-
 test('the draft survives closing and reopening the dialog: text, caret, images and their uploaded paths', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('first task ');

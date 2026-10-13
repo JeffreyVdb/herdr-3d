@@ -75,15 +75,6 @@ test('/ at the start opens an accessible popup under the caret; arrows move, Ent
   expect(errors).toEqual([]);
 });
 
-test('mid-word / and @ do not open; after a space they do', { tag: '@component' }, async ({ page }) => {
-  await open(page);
-  await page.keyboard.type('see a/b http://x/y me@x.com');
-  await expect(pop(page)).toBeHidden();
-  await page.keyboard.type(' @');
-  await expect(pop(page)).toBeVisible();
-  await expect(list(page)).toHaveAttribute('aria-label', 'Files');
-});
-
 test('Tab picks; one undo takes the pick back and redo puts it again', { tag: '@component' }, async ({ page }) => {
   await open(page);
   await page.keyboard.type('run /re');
@@ -140,33 +131,21 @@ test('the caret leaving the token closes it', { tag: '@component' }, async ({ pa
   await expect(pop(page)).toBeHidden();
 });
 
-test('an async source: loading, rows, a late reply dropped, a failure, No match', { tag: '@component' }, async ({ page }) => {
+// #42: the source's states (a late reply dropped, a failure, No match) are src/ui/composer/completion.dom.test.ts; here
+// one real asynchronous reply, picked from the keyboard.
+test('an async source: Loading… while the reply is on its way, then its rows; Enter picks one', { tag: '@component' }, async ({ page }) => {
   await open(page);
-  // "my" answers late: by then the query is "my n", whose reply is already shown.
   await page.evaluate(() => {
-    const s = (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).stub;
-    s.delays['my'] = 900;
-    s.delays['my n'] = 50;
+    (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).stub.delays['my n'] = 600;
   });
-  await page.keyboard.type('@my');
+  await page.keyboard.type('@my n');
   await expect(page.locator('.cmp-pop-status')).toHaveText('Loading…');
-  await page.keyboard.type(' n');
+  await expect(list(page)).toHaveAttribute('aria-label', 'Files');
   await expect(options(page)).toHaveText(['src/ui/composer/My Notes.md']);
-  await page.waitForTimeout(1100);
-  await expect(options(page)).toHaveText(['src/ui/composer/My Notes.md']);
-  const asked = await page.evaluate(() => (window.__h3dComposer as NonNullable<Window['__h3dComposer']>).stub.asked);
-  expect(asked.find((a) => a.query === 'my')?.aborted).toBe(true);
+  await expect(list(page)).toHaveAttribute('aria-busy', 'false');
   await shot(page, 'complete-files');
   await page.keyboard.press('Enter');
   expect(await text(page)).toBe('@src/ui/composer/My Notes.md ');
-
-  await page.keyboard.type('@zzz');
-  await expect(page.locator('.cmp-pop-status')).toHaveText('No match');
-  await page.keyboard.press('Escape');
-  await page.evaluate(() => ((window.__h3dComposer as NonNullable<Window['__h3dComposer']>).stub.fail = true));
-  await page.keyboard.type(' @x');
-  await expect(page.locator('.cmp-pop-status')).toHaveText('Could not load matches.');
-  await expect(list(page)).toHaveAttribute('aria-busy', 'false');
 });
 
 test('the popup flips above the caret when there is no room below, and stays inside the dialog', { tag: '@component' }, async ({ page }) => {

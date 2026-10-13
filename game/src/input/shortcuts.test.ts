@@ -206,6 +206,21 @@ describe('the shortcut table (#124)', () => {
     expect(pressesBinding(ev('KeyL', { shiftKey: true, key: 'Dead' }), 'limits', false)).toBe(false);
     expect(chordMatches(ev('Escape', { ctrlKey: true }), { code: 'Escape', ctrl: true }, true)).toBe(true);
   });
+
+  // #42: was a browser case of e2e/h124-fields.spec.ts, which types every character the table binds (derived the same
+  // way there) into each kind of field: the table must keep binding the ones the issue names.
+  it('binds the characters the field tests type: ? and , and the letters (both cases) and digits of the single keys', () => {
+    const typed = new Set<string>();
+    for (const b of ALL) {
+      for (const c of b.keys) {
+        if (c.mod || c.ctrl) continue;
+        if (c.key !== undefined) typed.add(c.key);
+        else if (c.code && /^Key[A-Z]$/.test(c.code)) typed.add(c.code.slice(3).toLowerCase()).add(c.code.slice(3));
+        else if (c.code && /^Digit\d$/.test(c.code)) typed.add(c.code.slice(5));
+      }
+    }
+    for (const ch of ['?', ',', 'h', 'H', 'i', 'g', 'R', 'N', 'L', 'T', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D', 'e', 'p', 'c', 'x', 'b', 'm', 'n', 'l', 'r', 't', '0', '1', '9']) expect(typed, ch).toContain(ch);
+  });
 });
 
 describe('the "At a laptop" group follows laptop/keys.ts (#124: seated keys are untouched, and there is no seated help key)', () => {

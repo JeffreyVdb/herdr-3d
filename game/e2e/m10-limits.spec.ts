@@ -308,30 +308,6 @@ test('the dialog’s limits include the chosen model’s own window and warn abo
   clean();
 });
 
-test('the panel opens and closes when browser storage is unavailable', async ({ page }) => {
-  test.setTimeout(120_000);
-  const clean = watchErrors(page);
-  await page.addInitScript(() => {
-    const boom = () => {
-      throw new Error('storage blocked');
-    };
-    for (const k of ['getItem', 'setItem', 'removeItem'] as const) Storage.prototype[k] = boom;
-  });
-  await openGame(page, 'demo-m4', '', SIM());
-  await withReadings(page);
-  await page.locator('.lm-strip').click();
-  expect((await widget(page))!.open).toBe(true);
-  await page.locator('.lm-strip').click();
-  expect((await widget(page))!.open).toBe(false);
-  await page.keyboard.press('Shift+L');
-  expect((await widget(page))!.open).toBe(true);
-  await page.locator('[data-key="limits-hide"]').click();
-  await expect(limits(page)).toBeHidden();
-  await page.keyboard.press('Shift+L'); // and back
-  await expect(limits(page)).toBeVisible();
-  clean();
-});
-
 // Narrow viewports: the open panel fits and keeps its buttons in reach, and it never sits over an open dialog.
 
 const inViewport = (b: { x: number; y: number; width: number; height: number }, vp: { width: number; height: number }) => b.x >= 0 && b.y >= 0 && b.x + b.width <= vp.width + 0.5 && b.y + b.height <= vp.height + 0.5;

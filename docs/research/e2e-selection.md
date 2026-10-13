@@ -55,6 +55,7 @@ Every test's selection is visible in its source as a Playwright tag: `test(title
 | (i) mechanism + smoke / component tags | 27 / 25 | 1236 / 86 | 0 | 0 | 28 / 2 | 1236 / 86 |
 | (ii) captures, tours and benches out | 27 / 25 | 946 / 79 | 281 / 5 | 11 / 10 | 28 / 2 | 1238 / 86 |
 | (iii) theme matrix reduced | 29 / 26 | 545 / 79 | 453 / 6 | 11 / 10 | 28 / 2 | 1009 / 86 |
+| (iv) duplicates removed | 29 / 26 | 540 / 79 | 453 / 6 | 11 / 10 | 26 / 2 | 1004 / 86 |
 
 ## The smoke suite
 
@@ -163,3 +164,34 @@ viewport that runs every check of that viewport (`expect.soft`, so one run repor
 32 extended theme cases is more than the issue's "roughly 25": seven of them are the family representatives the issue
 lists (Settings and Hire, transcript and terminal, board and overview, whiteboard), and the live-switch, font-loading and
 forced-colour cases are the real-CSS / data-loss regressions it asks to keep.
+
+### Duplicates removed (issue §3)
+
+| Case | Now | Coverage |
+| --- | --- | --- |
+| `ui-theme.spec.ts` copy / defaults, invalid storage values | see the theme matrix above | |
+| `composer-complete.spec.ts` "mid-word / and @ do not open; after a space they do" | deleted | `src/ui/composer/complete.test.ts` "never opens mid-word: paths, a/b, URLs, emails", "opens right after a space, a tab or a newline"; the `Files` list label is now asserted by the async case below. |
+| `composer-complete.spec.ts` "an async source: loading, rows, a late reply dropped, a failure, No match" | replaced | One real asynchronous pick stays (component): "an async source: Loading… while the reply is on its way, then its rows; Enter picks one" (no fixed 1.1 s wait). The state matrix: `src/ui/composer/completion.dom.test.ts` "shows loading, then the rows", "a late reply is dropped and its signal aborted; the latest wins", "a rejected reply says so and is not stuck loading; …", "filters as the query grows, and says "No match" for nothing". |
+| `composer.spec.ts` "refused files say why, and nothing is added; the limit stops at twenty" | deleted | `src/ui/composer/composer.test.ts` "refuses an unsupported or empty file with a message and adds nothing", "takes the good files of a mixed paste …" (SVG), and, **added**, "stops at twenty images by default, one paste at a time, and says so". Refusal shown by a real host: `prompt-images.spec.ts` "P: a file the note refused holds the send …", "transcript: a file the box refused holds the send …". |
+| `m10-limits.spec.ts` "the panel opens and closes when browser storage is unavailable" | folded | `src/ui/limitsPrefs.test.ts` "work without storage: missing, or throwing on every access, …"; the integrated start-up with throwing storage is now one shared case, `ui-theme.spec.ts` "blocked and throwing storage is safe: …; the limits panel opens, closes and hides" (click, Shift+L, Hide and back). |
+| `prompt-images.spec.ts` "terminal: a plain shell says an image can’t be pasted there and nothing is typed" | deleted | `src/laptop/pasteImages.test.ts` "a plain shell says it cannot take an image; nothing is uploaded, nothing is typed"; text paste in a terminal: `src/laptop/keys.test.ts`. The seat bar note, its error state and the error toast of a refused terminal paste stay in "terminal: a failed upload (Drop Zone down), a refused file and a pending upload: …" (kept, extended, the issue's one no-send-on-failure check); the paste-to-command integration "terminal: an image pasted at an agent’s laptop …" is kept. Not covered below the browser any more: the plain shell is told apart by the worker's `agent_kind` (`src/laptop/index.ts`, one line). |
+| `h124-fields.spec.ts` "the table binds the letters and digits the field tests type" | moved | `src/input/shortcuts.test.ts` "binds the characters the field tests type: …" (it opened no browser). The typing-in-fields cases stay. |
+
+### Left in extended on purpose
+
+The issue's further candidates (`m10-limits.spec.ts`' permutations, the editor permutations across `composer*`,
+`hire-composer` and `prompt-images`, `m59-themes` / `h172-ubuntu` font checks, the overview label specs, the
+`h157-async-questions.spec.ts` 290 / 303 / 320 / 340 / 883 px widths and `m16-ask.spec.ts`' three viewports) need a
+scenario-by-scenario check against their bug history. They are out of the smoke run already and stay in `extended`
+unchanged; none was deleted without that check.
+
+### Known failures (#32, #34, #35, #36)
+
+Moving a test does not fix its bug. Where each one is now:
+
+| Issue | Test | Profile |
+| --- | --- | --- |
+| #32 whiteboard save / upload race (load-dependent 422) | `m13-whiteboard.spec.ts` "draw, close, reload: …" | **smoke** (the issue's whiteboard journey): it can fail a smoke run under load until #32 is fixed |
+| #34 Codex 0.163 fallback / version | `h155-codex-server.spec.ts` "a hire that falls back to Codex’s built-in server is a warning, not an error" | extended |
+| #35 stale "shown in Hire" copy | `h194-harness-models.spec.ts` "a model hidden in Settings leaves the Hire dialog, …", "every model of the harness hidden: …" | extended |
+| #36 limits panel at 390x640 | `m10-limits.spec.ts` "at 390x640 an open panel folds away while a dialog is open, and comes back when it closes" | extended |

@@ -33,12 +33,6 @@ function bound(): Array<[string, string]> {
 const KEYS = bound();
 const TEXT = KEYS.map(([, t]) => t).join('');
 
-test('the table binds the letters and digits the field tests type', () => {
-  expect(TEXT).toContain('?');
-  expect(TEXT).toContain(',');
-  for (const ch of ['h', 'H', 'i', 'g', 'R', 'N', 'L', 'T', 'w', 'a', 's', 'd', 'W', 'A', 'S', 'D', 'e', 'p', 'c', 'x', 'b', 'm', 'n', 'l', 'r', 't', '0', '1', '9']) expect(TEXT, ch).toContain(ch);
-});
-
 const read = (field: Locator): Promise<string> => field.evaluate((e) => (e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement ? e.value : (e.textContent ?? '').replaceAll('\u200b', '')));  // (the composer keeps zero-width spaces around its chips)
 
 /** The state the shortcuts would change, to compare around the typing. */
