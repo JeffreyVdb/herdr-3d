@@ -274,6 +274,14 @@ describe('paste', () => {
     expect(env.editor.parentElement?.querySelector('.cmp-notice')?.textContent).toMatch(/a\.svg is not a PNG/);
   });
 
+  // #42: the default limit (the e2e pasted 21 images one by one to see it).
+  it('stops at twenty images by default, one paste at a time, and says so', () => {
+    const env = setup();
+    for (let i = 0; i < 21; i++) paste(env.editor, { files: [png(`i${i}.png`)] });
+    expect(chipsOf(env)).toHaveLength(20);
+    expect(env.editor.parentElement?.querySelector('.cmp-notice')?.textContent).toBe('You can attach up to 20 images to one prompt.');
+  });
+
   it('stops at the image limit and says so', () => {
     const env = setup({ maxImages: 2 });
     paste(env.editor, { files: [png(), png(), png()] });

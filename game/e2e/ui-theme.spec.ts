@@ -8,6 +8,9 @@ import { strays, targets, textSamples } from './ui-theme-probe';
 // the ones it must not), every surface of the inventory free of Quiet's navy / yellow / Recursive in Ubuntu, the
 // computed palette anchors, contrast on the rendered surfaces, the eight UI x transcript x terminal combinations, and
 // the narrow / zoomed / forced-colors / reduced-motion / touch layouts. The screenshots are ui-theme-shots.spec.ts.
+// #42: the per-surface audit and the finer state checks are @visual (make e2e-visual); a representative of each runs in
+// every functional run (docs/research/e2e-selection.md). Every audit and combination is @theme too, so make e2e-visual
+// runs all of them, the representatives included.
 
 const ALL_UBUNTU: Themes = { ui: 'ubuntu', transcript: 'ubuntu', terminal: 'ubuntu' };
 const ANCHOR = { surface: 'rgb(48, 10, 36)', chrome: 'rgb(44, 0, 30)', raised: 'rgb(59, 19, 48)', hover: 'rgb(94, 39, 80)', white: 'rgb(255, 255, 255)', orange: 'rgb(233, 84, 32)', focus: 'rgb(255, 155, 118)', text2: 'rgb(232, 213, 226)', text3: 'rgb(205, 177, 198)' };
@@ -38,34 +41,7 @@ const UBUNTU_MONO = /\/ubuntu-mono-latin(-ext)?-\d{3}-/i;
 
 // ---- Settings → Appearance ----------------------------------------------------------------------------------------
 
-test('Settings → Appearance (This browser): a labelled UI theme radio group of exactly Quiet and Ubuntu, Quiet selected, the exact copy', async ({ page }) => {
-  test.setTimeout(120_000);
-  const clean = watchErrors(page);
-  // A browser that only picked the transcript and the terminal: its UI theme is still Quiet (nothing is migrated).
-  await boot(page, 'demo-m5', { transcript: 'ubuntu', terminal: 'ubuntu' });
-  expect(await uiAttr(page)).toBe('quiet');
-  const dialog = await openSettings(page);
-  const section = dialog.locator('[data-section="appearance"]');
-  await expect(section.getByRole('heading', { name: 'Appearance', level: 3 })).toBeVisible();
-  await expect(section.locator('.settings-store')).toHaveText('This browser');
-  const group = section.getByRole('group', { name: 'UI theme' });
-  await expect(group).toBeVisible();
-  await expect(group).toHaveAccessibleDescription('Colors and fonts for menus, dialogs, bars, and controls. Transcript and terminal appearance are set separately.');
-  const radios = group.getByRole('radio');
-  await expect(radios).toHaveCount(2);
-  await expect(radios.nth(0)).toHaveAccessibleName(/^Quiet/);
-  await expect(radios.nth(1)).toHaveAccessibleName(/^Ubuntu/);
-  await expect(radios.nth(0)).toHaveAccessibleDescription('The current navy interface.');
-  await expect(radios.nth(1)).toHaveAccessibleDescription('Ubuntu purple, orange accents, Ubuntu and Ubuntu Mono.');
-  await expect(radios.nth(0)).toBeChecked();
-  await expect(radios.nth(1)).not.toBeChecked();
-  expect(await stored(page)).toBeNull();
-  // The picker is a section of the existing dialog, and Quiet stays the default of a fresh browser too.
-  expect((await theme(page)).ui).toBe('quiet');
-  clean();
-});
-
-test('keyboard: arrows move the UI theme between Quiet and Ubuntu, the pick applies at once, Esc closes only Settings and gives the focus back', async ({ page }) => {
+test('keyboard: arrows move the UI theme between Quiet and Ubuntu, the pick applies at once, Esc closes only Settings and gives the focus back', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await boot(page, 'demo-m5', {});
@@ -178,7 +154,7 @@ test('a seated switch leaves the transcript and the terminal exactly as they wer
 
 // ---- reload, first frame, blocked storage ------------------------------------------------------------------------
 
-test('a saved Ubuntu survives a reload and no frame paints navy first', async ({ page }) => {
+test('a saved Ubuntu survives a reload and no frame paints navy first', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await page.addInitScript(() => {
@@ -216,18 +192,12 @@ test('a saved Ubuntu survives a reload and no frame paints navy first', async ({
   clean();
 });
 
-test('missing, invalid, blocked and throwing storage is safe: Quiet, a working picker in memory, nothing persisted', async ({ page, browser }) => {
-  test.setTimeout(240_000);
+// #42: invalid and missing stored values (and the pre-frame script's reading of them) are src/ui/themePrefs.test.ts and
+// src/ui/uiTheme.test.ts, the limits panel's src/ui/limitsPrefs.test.ts; this is the integrated start-up with storage
+// that throws, for the theme picker and for the plan-limits panel (once m10-limits' own boot).
+test('blocked and throwing storage is safe: Quiet at start-up, a working picker in memory, nothing persisted; the limits panel opens, closes and hides', async ({ page }) => {
+  test.setTimeout(180_000);
   const clean = watchErrors(page);
-  // Invalid stored values are Quiet.
-  for (const bad of ['', 'solarized', 'UBUNTU', 'null']) {
-    const p = await browser.newPage();
-    await p.addInitScript((v) => localStorage.setItem('h3d.theme.ui', v), bad);
-    await openGame(p, 'demo-m5');
-    expect(await uiAttr(p), `stored ${JSON.stringify(bad)}`).toBe('quiet');
-    expect((await p.evaluate(() => window.__h3d.theme())).ui).toBe('quiet');
-    await p.close();
-  }
   // Storage that throws on every access (private windows, blocked site data).
   await page.addInitScript(() => {
     Object.defineProperty(window, 'localStorage', {
@@ -236,7 +206,7 @@ test('missing, invalid, blocked and throwing storage is safe: Quiet, a working p
       },
     });
   });
-  await openGame(page, 'demo-m5');
+  await openGame(page, 'demo-m5', '', SIM);
   expect(await uiAttr(page)).toBe('quiet');
   const dialog = await openSettings(page);
   await dialog.getByRole('radio', { name: /^Ubuntu/ }).check();
@@ -245,6 +215,21 @@ test('missing, invalid, blocked and throwing storage is safe: Quiet, a working p
   expect((await theme(page)).ui).toBe('ubuntu');
   await dialog.getByRole('radio', { name: /^Quiet/ }).check();
   expect(await uiAttr(page)).toBe('quiet');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  // The plan-limits panel: open and closed by a click and Shift+L, hidden and back, all in memory.
+  const limitsOpen = async () => (await page.evaluate(() => window.__h3d.limits()))?.open;
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.limits()))?.lines.length, { message: 'readings arrived', timeout: 10_000 }).toBe(2);
+  await page.locator('.lm-strip').click();
+  expect(await limitsOpen()).toBe(true);
+  await page.locator('.lm-strip').click();
+  expect(await limitsOpen()).toBe(false);
+  await page.keyboard.press('Shift+L');
+  expect(await limitsOpen()).toBe(true);
+  await page.locator('[data-key="limits-hide"]').click();
+  await expect(page.locator('.limits')).toBeHidden();
+  await page.keyboard.press('Shift+L'); // and back
+  await expect(page.locator('.limits')).toBeVisible();
   clean();
 });
 
@@ -364,47 +349,17 @@ const ALLOW = [
   '.logo-thumb',
 ].join(', ');
 
-for (const s of SURFACES) {
-  test(`coverage: ${s.name} has no Quiet navy, yellow or Recursive left in Ubuntu (all three themes Ubuntu)`, async ({ page }) => {
-    test.setTimeout(180_000);
-    const clean = watchErrors(page);
-    await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery);
-    await s.open(page);
-    await page.waitForTimeout(300);
-    const found = await strays(page, `${s.root}, .topbar, .limits, .hud .prompt, .hud .hint, .toast, .excalidraw-modal-container, .excalidraw .Island`, ALLOW);
-    expect(found.map((f) => `${f.at} ${f.prop}: ${f.value} (${f.why})`), `${s.name}: Quiet leftovers`).toEqual([]);
-    clean();
-  });
-}
-
-// ---- contrast on the rendered surfaces ---------------------------------------------------------------------------
-
-for (const s of SURFACES) {
-  test(`contrast: text on ${s.name} is 4.5:1 on what really sits behind it (Ubuntu), inside transcript and composer scopes too`, async ({ page }) => {
-    test.setTimeout(180_000);
-    const clean = watchErrors(page);
-    await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery);
-    await s.open(page);
-    await page.waitForTimeout(300);
-    // The editor's swatch hotkeys are drawn on the artwork colour in a colour Excalidraw picks for it, the same in both themes.
-    const samples = await textSamples(page, `${s.root}, .topbar, .limits, .hud .prompt, .hud .hint, .toast`, '.excalidraw canvas, canvas, img, .seat-swatch, .settings-theme-swatch, .color-picker__button__hotkey-label');
-    expect(samples.length, `${s.name}: the probe found text to measure`).toBeGreaterThan(5);
-    const bad = samples.filter((t) => (t.ratio !== null && t.ratio < (t.size >= 24 || (t.size >= 18.66 && Number(t.weight) >= 700) ? 3 : 4.5)) || t.bg === 'translucent');
-    expect(
-      bad.map((t) => `${t.at} "${t.text}" ${t.fg} on ${t.bg} = ${t.ratio?.toFixed(2)} (${t.size}px, from ${t.bgFrom})`),
-      `${s.name}: text under 4.5:1 or on a translucent surface`,
-    ).toEqual([]);
-    clean();
-  });
-}
-
 // ---- the eight combinations --------------------------------------------------------------------------------------
 
 const COMBOS: Themes[] = [];
 for (const ui of ['quiet', 'ubuntu'] as UiTheme[]) for (const transcript of ['quiet', 'ubuntu'] as UiTheme[]) for (const terminal of ['quiet', 'ubuntu'] as UiTheme[]) COMBOS.push({ ui, transcript, terminal });
 
+// #42: two combinations in every functional run, each pick apart from its neighbour (Ubuntu UI over Quiet transcript and
+// Ubuntu terminal, and the reverse); the other six are @visual. All eight are @theme, so the visual profile runs them all.
+const ROUTINE_COMBOS = ['ubuntu quiet ubuntu', 'quiet ubuntu quiet'];
 for (const c of COMBOS) {
-  test(`combination ui=${c.ui} transcript=${c.transcript} terminal=${c.terminal}: independent selections, each surface in its own fonts and colours`, async ({ page }) => {
+  const tag = ROUTINE_COMBOS.includes(`${c.ui} ${c.transcript} ${c.terminal}`) ? ['@theme'] : ['@theme', '@visual'];
+  test(`combination ui=${c.ui} transcript=${c.transcript} terminal=${c.terminal}: independent selections, each surface in its own fonts and colours`, { tag }, async ({ page }) => {
     test.setTimeout(240_000);
     const clean = watchErrors(page);
     await boot(page, 'demo-m5', c, '&prints=0');
@@ -438,7 +393,7 @@ for (const c of COMBOS) {
   });
 }
 
-test('view zoom and a mode switch leave the shell’s fonts, colours and sizes unchanged (Ubuntu UI)', async ({ page }) => {
+test('view zoom and a mode switch leave the shell’s fonts, colours and sizes unchanged (Ubuntu UI)', { tag: '@visual' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   await boot(page, 'demo-m5', { ui: 'ubuntu', transcript: 'ubuntu' }, '&prints=0');
@@ -519,7 +474,7 @@ test('transcript zoom 100 → 200 leaves the seated widgets (prompt box, Send, j
   clean();
 });
 
-test('the completion popup’s commands and paths are the UI’s Ubuntu Mono at 14px with a Quiet transcript, at any transcript zoom; the conversation’s code keeps the transcript’s mono', async ({ page }) => {
+test('the completion popup’s commands and paths are the UI’s Ubuntu Mono at 14px with a Quiet transcript, at any transcript zoom; the conversation’s code keeps the transcript’s mono', { tag: '@visual' }, async ({ page }) => {
   test.setTimeout(240_000);
   const clean = watchErrors(page);
   for (const name of ['completion-commands', 'completion-files']) {
@@ -584,22 +539,9 @@ async function noOverflow(page: Page, rootSel: string): Promise<string[]> {
   }, rootSel);
 }
 
-for (const size of [{ name: '390px wide', ...NARROW }, { name: '200% browser zoom (640x360)', width: 640, height: 360 }]) {
-  for (const s of SURFACES.filter((x) => !x.skipNarrow)) {
-    test(`layout at ${size.name}: ${s.name} has no sideways overflow or clipped control in Ubuntu`, async ({ page }) => {
-      test.setTimeout(180_000);
-      const clean = watchErrors(page);
-      await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery, size);
-      await s.open(page);
-      await page.waitForTimeout(300);
-      expect(await noOverflow(page, `${s.root}, .topbar`)).toEqual([]);
-      clean();
-    });
-  }
-}
-
 for (const size of [{ name: '1280x720', ...DESKTOP, floor: 150 }, { name: '200% browser zoom (640x360)', width: 640, height: 360, floor: 0 }]) {
-  test(`layout at ${size.name}: the seated conversation’s timeline and prompt box are on the screen or reached by scrolling it, never under the strip (Ubuntu)`, async ({ page }) => {
+  // #42: the 200% zoom one in every functional run, the laptop size @visual.
+  test(`layout at ${size.name}: the seated conversation’s timeline and prompt box are on the screen or reached by scrolling it, never under the strip (Ubuntu)`, { tag: size.floor ? ['@visual'] : [] }, async ({ page }) => {
     test.setTimeout(180_000);
     const clean = watchErrors(page);
     const s = SURFACES.find((x) => x.name === 'seat-transcript')!;
@@ -628,19 +570,6 @@ for (const size of [{ name: '1280x720', ...DESKTOP, floor: 150 }, { name: '200% 
     expect(got.pr.visible, `prompt box seen once reached: ${JSON.stringify(got)}`).toBeGreaterThanOrEqual(got.pr.h - 1);
     // On a laptop-sized screen the strip's second row does not squeeze the conversation: it is there without scrolling.
     expect(got.first.timeline, `timeline without scrolling: ${JSON.stringify(got)}`).toBeGreaterThanOrEqual(size.floor);
-    clean();
-  });
-}
-
-for (const s of SURFACES) {
-  test(`targets: every control of ${s.name} is >= 32 x 32 px in Ubuntu, labelled buttons and fields >= 36 px high`, async ({ page }) => {
-    test.setTimeout(180_000);
-    const clean = watchErrors(page);
-    await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery);
-    await s.open(page);
-    await page.waitForTimeout(300);
-    const small = (await targets(page, `${s.root}, .topbar, .limits, .hud .prompt, .hud .hint, .toast, .excalidraw-modal-container`)).filter((t) => t.w < 32 || t.h < (t.kind === 'standard' ? 36 : 32));
-    expect(small.map((t) => `${t.at} ${t.w}x${t.h} (${t.kind})`), `${s.name}: controls under the Ubuntu sizes`).toEqual([]);
     clean();
   });
 }
@@ -801,7 +730,7 @@ test('forced colors: the whiteboard’s tools stay visible (system text on the s
   clean();
 });
 
-test('the empty whiteboard’s welcome (heading, hints) is Ubuntu UI text in Ubuntu and Excalidraw’s hand in Quiet; the drawing’s own text is not touched', async ({ page }) => {
+test('the empty whiteboard’s welcome (heading, hints) is Ubuntu UI text in Ubuntu and Excalidraw’s hand in Quiet; the drawing’s own text is not touched', { tag: '@visual' }, async ({ page }) => {
   test.setTimeout(240_000);
   const clean = watchErrors(page);
   const s = SURFACES.find((x) => x.name === 'whiteboard-empty')!;
@@ -937,7 +866,7 @@ test('states: disabled controls keep their label readable (muted on raised, no o
   clean();
 });
 
-test('states: inside the transcript the composer’s Send, the selected tab and its count keep the UI theme’s colours (#111): dark on orange, never white', async ({ page }) => {
+test('states: inside the transcript the composer’s Send, the selected tab and its count keep the UI theme’s colours (#111): dark on orange, never white', { tag: '@visual' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   for (const tx of ['quiet', 'ubuntu'] as UiTheme[]) {
@@ -960,131 +889,180 @@ test('states: inside the transcript the composer’s Send, the selected tab and 
   clean();
 });
 
-// ---- focus: every keyboard-operable widget has the ring -----------------------------------------------------------
+// ---- the per-surface audit: palette, contrast, targets, focus and layout after one boot ----------------------------
+// #42: one page per surface and viewport for every check that reads it (they were a test each). A representative of
+// each component family runs in every functional run; the whole inventory (@theme) is in the visual profile (make
+// e2e-visual), for CSS and theme work.
 
-for (const size of [{ name: '1280x720', ...DESKTOP }, { name: '390x844', ...NARROW }]) {
-  for (const name of SURFACES.filter((x) => size.width > 400 || !x.skipNarrow).map((x) => x.name)) {
-    test(`focus at ${size.name}: every operable widget of ${name} shows a 3px ring in #FF9B76, 2px outside it, never clipped or under a sticky bar, in Ubuntu`, async ({ page }) => {
-      test.setTimeout(300_000);
+/** Every keyboard-operable widget of `root`, focused forwards then backwards: those without the issue's ring (3px #FF9B76, 2px outside), or with it clipped or covered; null when there is none. */
+async function focusRings(page: Page, root: string): Promise<string[] | null> {
+  await settle(page);
+  await page.keyboard.press('Shift');
+  const bad: string[] = [];
+  const n = await page.evaluate((root) => {
+    const els = [...document.querySelectorAll(`:is(${root}) :is(button, a[href], input, select, textarea, [contenteditable="true"], [tabindex="0"], [role="button"], [role="radio"], [role="tab"], [role="option"])`)] as HTMLElement[];
+    (window as unknown as { __focusables: HTMLElement[] }).__focusables = els.filter((e) => {
+      const r = e.getBoundingClientRect();
+      const cs = getComputedStyle(e);
+      return r.width > 3 && r.height > 3 && cs.visibility !== 'hidden' && cs.display !== 'none' && !(e as HTMLButtonElement).disabled && e.getAttribute('aria-hidden') !== 'true' && !e.closest('[inert], [hidden]');
+    });
+    (window as unknown as { __sticky: Element[] }).__sticky = [...document.querySelectorAll('*')].filter((x) => getComputedStyle(x).position === 'sticky');
+    return (window as unknown as { __focusables: HTMLElement[] }).__focusables.length;
+  }, root);
+  if (n === 0) return null;
+  // Forwards (Tab), then backwards (Shift+Tab): scrolling up brings a widget in at a scroller's top edge, under a
+  // sticky heading if there is one.
+  const order = [...Array(Math.min(n, 150)).keys()];
+  for (const i of [...order, ...order.slice(0, -1).reverse()]) {
+    const got = await page.evaluate(async (i) => {
+      const e = (window as unknown as { __focusables: HTMLElement[] }).__focusables[i]!;
+      e.scrollIntoView({ block: 'nearest' });
+      e.focus();
+      if (document.activeElement !== e) return null;
+      // Measured where the focus leaves it: a focus transition (the Overview row's lift) is let finish first.
+      void getComputedStyle(e).transform;
+      await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined)));
+      if (document.activeElement !== e) return null;
+      // A native input drawn invisible (the whiteboard's tool radios) shows its focus on the control it stands for.
+      let ringOn: HTMLElement = e;
+      const ringed = (x: Element) => {
+        const xc = getComputedStyle(x);
+        return (xc.outlineStyle !== 'none' && parseFloat(xc.outlineWidth) > 0) || /0px 0px 0px 3px/.test(xc.boxShadow);
+      };
+      // A widget that fills a box that clips (the whiteboard's editor in its board) may have that box wear its ring:
+      // an ancestor up to two levels up that draws one around it.
+      if (!ringed(e)) {
+        const up = [e.parentElement, e.parentElement?.parentElement].find((x) => x && ringed(x));
+        if (up) ringOn = up;
+      }
+      if (getComputedStyle(e).opacity === '0') {
+        const drawn = [e.nextElementSibling, e.closest('label'), e.parentElement].filter((x): x is HTMLElement => !!x && getComputedStyle(x).opacity !== '0');
+        const ringed = drawn.find((x) => {
+          const xc = getComputedStyle(x);
+          return (xc.outlineStyle !== 'none' && parseFloat(xc.outlineWidth) > 0) || /0px 0px 0px 3px/.test(xc.boxShadow);
+        });
+        if (ringed ?? drawn[0]) ringOn = (ringed ?? drawn[0])!;
+      }
+      const c = getComputedStyle(ringOn);
+      const rg = c.outlineColor.match(/(\d+)[ ,]+(\d+)[ ,]+(\d+)/);
+      const width = parseFloat(c.outlineWidth);
+      const offset = parseFloat(c.outlineOffset);
+      const outline = c.outlineStyle !== 'none' && width > 0;
+      // Never clipped: the ring's outer edge is inside every box between it and the page that clips (overflow other than visible).
+      // (An inset shadow ring is drawn inside its box.)
+      const reach = outline ? Math.max(0, offset) + width : / inset/.test(c.boxShadow) ? 0 : 3;
+      const r = ringOn.getBoundingClientRect();
+      const ring = { l: r.left - reach, t: r.top - reach, r: r.right + reach, b: r.bottom + reach };
+      let clipped = '';
+      let judgeX = true, judgeY = true;
+      // Only a box on the ring's containing-block chain clips it (a fixed or absolutely placed widget escapes the
+      // boxes between it and its containing block: the plan-limits tab inside a top-layer dialog).
+      const makesCb = (n: Element, fixed: boolean) => {
+        const ns = getComputedStyle(n);
+        return (!fixed && ns.position !== 'static') || ns.transform !== 'none' || ns.filter !== 'none' || ns.perspective !== 'none' || /paint|layout|strict|content/.test(ns.contain) || /transform|filter|perspective/.test(ns.willChange) || (ns.containerType ?? 'normal') !== 'normal';
+      };
+      const chain = new Set<Element>();
+      for (let x: Element | null = ringOn; x; ) {
+        const pos = getComputedStyle(x).position;
+        let next: Element | null = x.parentElement;
+        if (pos === 'fixed' || pos === 'absolute') while (next && !makesCb(next, pos === 'fixed')) next = next.parentElement;
+        if (next) chain.add(next);
+        x = next;
+      }
+      for (let n = ringOn.parentElement; n && !clipped; n = n.parentElement) {
+        if (!chain.has(n)) continue;
+        const ns = getComputedStyle(n);
+        if (ns.display === 'inline' || ns.display === 'contents') continue;
+        const cx = ns.overflowX !== 'visible', cy = ns.overflowY !== 'visible';
+        if (!cx && !cy) continue;
+        const b = n.getBoundingClientRect();
+        const box = { l: b.left + n.clientLeft, t: b.top + n.clientTop, r: b.left + n.clientLeft + n.clientWidth, b: b.top + n.clientTop + n.clientHeight };
+        // (Bigger than the box on an axis, e.g. a tall picture in the timeline, it is seen by scrolling: that axis is not judged.)
+        // (Once a nearer scroller cannot hold it on an axis, the boxes outside it are not judged on that axis either.)
+        if (cx && ring.r - ring.l > box.r - box.l + 1) judgeX = false;
+        if (cy && ring.b - ring.t > box.b - box.t + 1) judgeY = false;
+        const out = (cx && judgeX && (ring.l < box.l - 0.5 || ring.r > box.r + 0.5)) || (cy && judgeY && (ring.t < box.t - 0.5 || ring.b > box.b + 0.5));
+        const f = (q: { l: number; t: number; r: number; b: number }) => [q.l, q.t, q.r, q.b].map(Math.round).join(',');
+        if (out) clipped = `${n.tagName.toLowerCase()}.${String(n.className).split(' ').slice(0, 2).join('.')} (ring ${f(ring)}, box ${f(box)})`;
+      }
+      // Never covered: no sticky bar (a scroller's heading or Save foot) lies over the ring.
+      if (!clipped) {
+        for (const st of (window as unknown as { __sticky: Element[] }).__sticky) {
+          if (st.contains(ringOn) || ringOn.contains(st)) continue;
+          const sc = getComputedStyle(st);
+          if (sc.position !== 'sticky' || sc.display === 'none' || sc.visibility === 'hidden') continue;
+          const b = st.getBoundingClientRect();
+          if (b.width < 1 || b.height < 1) continue;
+          if (ring.l < b.right - 0.5 && ring.r > b.left + 0.5 && ring.t < b.bottom - 0.5 && ring.b > b.top + 0.5) {
+            clipped = `the sticky ${st.tagName.toLowerCase()}.${String(st.className).split(' ').slice(0, 2).join('.')} over it (ring ${[ring.l, ring.t, ring.r, ring.b].map(Math.round).join(',')})`;
+            break;
+          }
+        }
+      }
+      const tag = (x: Element) => `${x.tagName.toLowerCase()}.${String(x.className).split(' ').slice(0, 2).join('.')}`;
+      // The ring is the outline, or (a field / card that draws its ring as a shadow) a 3px spread in the colour.
+      // The issue's exact geometry on every widget: 3px, exactly 2px off, never clipped.
+      return { at: tag(e) + (ringOn !== e ? ` → ${tag(ringOn)}` : ''), outline, style: c.outlineStyle, width, offset, color: rg ? `${rg[1]},${rg[2]},${rg[3]}` : c.outlineColor, shadow: c.boxShadow, clipped };
+    }, i);
+    if (!got) continue;
+    const asOutline = got.style === 'solid' && got.width === 3 && got.color === '255,155,118' && got.offset === 2;
+    const asShadow = /rgb\(255, 155, 118\) 0px 0px 0px 3px/.test(got.shadow);
+    if (!asOutline && !asShadow) bad.push(`${got.at}: ${got.style} ${got.width}px offset ${got.offset}px ${got.color} / ${got.shadow.slice(0, 60)}`);
+    else if (got.clipped) bad.push(`${got.at}: its ring is clipped by ${got.clipped}`);
+  }
+  return [...new Set(bad)];
+}
+
+const AUDIT_ROOTS = '.topbar, .limits, .hud .prompt, .hud .hint, .toast';
+const ZOOMED = { width: 640, height: 360 } as const;
+type AuditSize = 'desktop' | 'narrow' | 'zoomed';
+const AUDIT_SIZES: Record<AuditSize, { label: string; size: { width: number; height: number }; checks: string }> = {
+  desktop: { label: '1280x720', size: DESKTOP, checks: 'no Quiet navy, yellow or Recursive; text 4.5:1 on what sits behind it; controls >= 32 x 32 px, labelled ones >= 36 px high; a 3px #FF9B76 ring 2px outside every operable widget, never clipped or under a sticky bar' },
+  narrow: { label: '390x844', size: NARROW, checks: 'no sideways overflow or clipped control; the focus ring on every operable widget, never clipped' },
+  zoomed: { label: '200% browser zoom (640x360)', size: ZOOMED, checks: 'no sideways overflow or clipped control' },
+};
+/** The family representatives every functional run audits (Settings and Hire, the seat's transcript and terminal, board and overview, the whiteboard); the rest are @visual only. */
+const AUDITED: Record<AuditSize, string[]> = {
+  desktop: ['settings', 'hire', 'seat-transcript', 'seat-terminal', 'board-issues', 'overview', 'whiteboard'],
+  narrow: ['hire'],
+  zoomed: ['settings'],
+};
+
+for (const kind of ['desktop', 'narrow', 'zoomed'] as AuditSize[]) {
+  const { label, size, checks } = AUDIT_SIZES[kind];
+  for (const s of SURFACES.filter((x) => kind === 'desktop' || !x.skipNarrow)) {
+    // The narrow Hire audit is the smoke run's one narrow layout / keyboard-focus journey. Every audit is @theme, so the
+    // visual profile runs every surface's, the representatives too.
+    const tag = ['@theme', ...(!AUDITED[kind].includes(s.name) ? ['@visual'] : kind === 'narrow' ? ['@smoke'] : [])];
+    test(`audit at ${label}: ${s.name} in Ubuntu: ${checks}`, { tag }, async ({ page }) => {
+      test.setTimeout(360_000);
       const clean = watchErrors(page);
-      const s = SURFACES.find((x) => x.name === name)!;
       await boot(page, s.fixture, ALL_UBUNTU, s.extra ?? '', s.wsQuery, size);
       await s.open(page);
-      await settle(page);
-      await page.keyboard.press('Shift');
-      const bad: string[] = [];
-      const n = await page.evaluate((root) => {
-        const els = [...document.querySelectorAll(`:is(${root}) :is(button, a[href], input, select, textarea, [contenteditable="true"], [tabindex="0"], [role="button"], [role="radio"], [role="tab"], [role="option"])`)] as HTMLElement[];
-        (window as unknown as { __focusables: HTMLElement[] }).__focusables = els.filter((e) => {
-          const r = e.getBoundingClientRect();
-          const cs = getComputedStyle(e);
-          return r.width > 3 && r.height > 3 && cs.visibility !== 'hidden' && cs.display !== 'none' && !(e as HTMLButtonElement).disabled && e.getAttribute('aria-hidden') !== 'true' && !e.closest('[inert], [hidden]');
-        });
-        (window as unknown as { __sticky: Element[] }).__sticky = [...document.querySelectorAll('*')].filter((x) => getComputedStyle(x).position === 'sticky');
-        return (window as unknown as { __focusables: HTMLElement[] }).__focusables.length;
-      }, s.root);
-      test.skip(n === 0, `${name} has no operable widget of its own (its bars are other surfaces')`);
-      // Forwards (Tab), then backwards (Shift+Tab): scrolling up brings a widget in at a scroller's top edge, under a
-      // sticky heading if there is one.
-      const order = [...Array(Math.min(n, 150)).keys()];
-      for (const i of [...order, ...order.slice(0, -1).reverse()]) {
-        const got = await page.evaluate(async (i) => {
-          const e = (window as unknown as { __focusables: HTMLElement[] }).__focusables[i]!;
-          e.scrollIntoView({ block: 'nearest' });
-          e.focus();
-          if (document.activeElement !== e) return null;
-          // Measured where the focus leaves it: a focus transition (the Overview row's lift) is let finish first.
-          void getComputedStyle(e).transform;
-          await Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined)));
-          if (document.activeElement !== e) return null;
-          // A native input drawn invisible (the whiteboard's tool radios) shows its focus on the control it stands for.
-          let ringOn: HTMLElement = e;
-          const ringed = (x: Element) => {
-            const xc = getComputedStyle(x);
-            return (xc.outlineStyle !== 'none' && parseFloat(xc.outlineWidth) > 0) || /0px 0px 0px 3px/.test(xc.boxShadow);
-          };
-          // A widget that fills a box that clips (the whiteboard's editor in its board) may have that box wear its ring:
-          // an ancestor up to two levels up that draws one around it.
-          if (!ringed(e)) {
-            const up = [e.parentElement, e.parentElement?.parentElement].find((x) => x && ringed(x));
-            if (up) ringOn = up;
-          }
-          if (getComputedStyle(e).opacity === '0') {
-            const drawn = [e.nextElementSibling, e.closest('label'), e.parentElement].filter((x): x is HTMLElement => !!x && getComputedStyle(x).opacity !== '0');
-            const ringed = drawn.find((x) => {
-              const xc = getComputedStyle(x);
-              return (xc.outlineStyle !== 'none' && parseFloat(xc.outlineWidth) > 0) || /0px 0px 0px 3px/.test(xc.boxShadow);
-            });
-            if (ringed ?? drawn[0]) ringOn = (ringed ?? drawn[0])!;
-          }
-          const c = getComputedStyle(ringOn);
-          const rg = c.outlineColor.match(/(\d+)[ ,]+(\d+)[ ,]+(\d+)/);
-          const width = parseFloat(c.outlineWidth);
-          const offset = parseFloat(c.outlineOffset);
-          const outline = c.outlineStyle !== 'none' && width > 0;
-          // Never clipped: the ring's outer edge is inside every box between it and the page that clips (overflow other than visible).
-          // (An inset shadow ring is drawn inside its box.)
-          const reach = outline ? Math.max(0, offset) + width : / inset/.test(c.boxShadow) ? 0 : 3;
-          const r = ringOn.getBoundingClientRect();
-          const ring = { l: r.left - reach, t: r.top - reach, r: r.right + reach, b: r.bottom + reach };
-          let clipped = '';
-          let judgeX = true, judgeY = true;
-          // Only a box on the ring's containing-block chain clips it (a fixed or absolutely placed widget escapes the
-          // boxes between it and its containing block: the plan-limits tab inside a top-layer dialog).
-          const makesCb = (n: Element, fixed: boolean) => {
-            const ns = getComputedStyle(n);
-            return (!fixed && ns.position !== 'static') || ns.transform !== 'none' || ns.filter !== 'none' || ns.perspective !== 'none' || /paint|layout|strict|content/.test(ns.contain) || /transform|filter|perspective/.test(ns.willChange) || (ns.containerType ?? 'normal') !== 'normal';
-          };
-          const chain = new Set<Element>();
-          for (let x: Element | null = ringOn; x; ) {
-            const pos = getComputedStyle(x).position;
-            let next: Element | null = x.parentElement;
-            if (pos === 'fixed' || pos === 'absolute') while (next && !makesCb(next, pos === 'fixed')) next = next.parentElement;
-            if (next) chain.add(next);
-            x = next;
-          }
-          for (let n = ringOn.parentElement; n && !clipped; n = n.parentElement) {
-            if (!chain.has(n)) continue;
-            const ns = getComputedStyle(n);
-            if (ns.display === 'inline' || ns.display === 'contents') continue;
-            const cx = ns.overflowX !== 'visible', cy = ns.overflowY !== 'visible';
-            if (!cx && !cy) continue;
-            const b = n.getBoundingClientRect();
-            const box = { l: b.left + n.clientLeft, t: b.top + n.clientTop, r: b.left + n.clientLeft + n.clientWidth, b: b.top + n.clientTop + n.clientHeight };
-            // (Bigger than the box on an axis, e.g. a tall picture in the timeline, it is seen by scrolling: that axis is not judged.)
-            // (Once a nearer scroller cannot hold it on an axis, the boxes outside it are not judged on that axis either.)
-            if (cx && ring.r - ring.l > box.r - box.l + 1) judgeX = false;
-            if (cy && ring.b - ring.t > box.b - box.t + 1) judgeY = false;
-            const out = (cx && judgeX && (ring.l < box.l - 0.5 || ring.r > box.r + 0.5)) || (cy && judgeY && (ring.t < box.t - 0.5 || ring.b > box.b + 0.5));
-            const f = (q: { l: number; t: number; r: number; b: number }) => [q.l, q.t, q.r, q.b].map(Math.round).join(',');
-            if (out) clipped = `${n.tagName.toLowerCase()}.${String(n.className).split(' ').slice(0, 2).join('.')} (ring ${f(ring)}, box ${f(box)})`;
-          }
-          // Never covered: no sticky bar (a scroller's heading or Save foot) lies over the ring.
-          if (!clipped) {
-            for (const st of (window as unknown as { __sticky: Element[] }).__sticky) {
-              if (st.contains(ringOn) || ringOn.contains(st)) continue;
-              const sc = getComputedStyle(st);
-              if (sc.position !== 'sticky' || sc.display === 'none' || sc.visibility === 'hidden') continue;
-              const b = st.getBoundingClientRect();
-              if (b.width < 1 || b.height < 1) continue;
-              if (ring.l < b.right - 0.5 && ring.r > b.left + 0.5 && ring.t < b.bottom - 0.5 && ring.b > b.top + 0.5) {
-                clipped = `the sticky ${st.tagName.toLowerCase()}.${String(st.className).split(' ').slice(0, 2).join('.')} over it (ring ${[ring.l, ring.t, ring.r, ring.b].map(Math.round).join(',')})`;
-                break;
-              }
-            }
-          }
-          const tag = (x: Element) => `${x.tagName.toLowerCase()}.${String(x.className).split(' ').slice(0, 2).join('.')}`;
-          // The ring is the outline, or (a field / card that draws its ring as a shadow) a 3px spread in the colour.
-          // The issue's exact geometry on every widget: 3px, exactly 2px off, never clipped.
-          return { at: tag(e) + (ringOn !== e ? ` → ${tag(ringOn)}` : ''), outline, style: c.outlineStyle, width, offset, color: rg ? `${rg[1]},${rg[2]},${rg[3]}` : c.outlineColor, shadow: c.boxShadow, clipped };
-        }, i);
-        if (!got) continue;
-        const asOutline = got.style === 'solid' && got.width === 3 && got.color === '255,155,118' && got.offset === 2;
-        const asShadow = /rgb\(255, 155, 118\) 0px 0px 0px 3px/.test(got.shadow);
-        if (!asOutline && !asShadow) bad.push(`${got.at}: ${got.style} ${got.width}px offset ${got.offset}px ${got.color} / ${got.shadow.slice(0, 60)}`);
-        else if (got.clipped) bad.push(`${got.at}: its ring is clipped by ${got.clipped}`);
+      await page.waitForTimeout(300);
+      if (kind === 'desktop') {
+        const found = await strays(page, `${s.root}, ${AUDIT_ROOTS}, .excalidraw-modal-container, .excalidraw .Island`, ALLOW);
+        expect.soft(found.map((f) => `${f.at} ${f.prop}: ${f.value} (${f.why})`), `${s.name}: Quiet leftovers`).toEqual([]);
+        // The editor's swatch hotkeys are drawn on the artwork colour in a colour Excalidraw picks for it, the same in both themes.
+        const samples = await textSamples(page, `${s.root}, ${AUDIT_ROOTS}`, '.excalidraw canvas, canvas, img, .seat-swatch, .settings-theme-swatch, .color-picker__button__hotkey-label');
+        expect.soft(samples.length, `${s.name}: the probe found text to measure`).toBeGreaterThan(5);
+        const bad = samples.filter((t) => (t.ratio !== null && t.ratio < (t.size >= 24 || (t.size >= 18.66 && Number(t.weight) >= 700) ? 3 : 4.5)) || t.bg === 'translucent');
+        expect
+          .soft(
+            bad.map((t) => `${t.at} "${t.text}" ${t.fg} on ${t.bg} = ${t.ratio?.toFixed(2)} (${t.size}px, from ${t.bgFrom})`),
+            `${s.name}: text under 4.5:1 or on a translucent surface`,
+          )
+          .toEqual([]);
+        const small = (await targets(page, `${s.root}, ${AUDIT_ROOTS}, .excalidraw-modal-container`)).filter((t) => t.w < 32 || t.h < (t.kind === 'standard' ? 36 : 32));
+        expect.soft(small.map((t) => `${t.at} ${t.w}x${t.h} (${t.kind})`), `${s.name}: controls under the Ubuntu sizes`).toEqual([]);
+      } else {
+        expect.soft(await noOverflow(page, `${s.root}, .topbar`), `${s.name} at ${label}: overflow`).toEqual([]);
       }
-      expect([...new Set(bad)], `${name} at ${size.name}: widgets without the 3px #FF9B76 ring 2px outside them, or with it clipped or covered`).toEqual([]);
+      // Last: walking the focus scrolls and moves it.
+      if (kind !== 'zoomed') {
+        const rings = await focusRings(page, s.root);
+        if (rings) expect.soft(rings, `${s.name} at ${label}: widgets without the 3px #FF9B76 ring 2px outside them, or with it clipped or covered`).toEqual([]);
+      }
       clean();
     });
   }
@@ -1115,7 +1093,7 @@ test('states: a hire in flight (the bridge’s ack held) keeps the primary orang
   clean();
 });
 
-test('states: the review’s Hire in flight (#212) is busy like the hire dialog’s: orange, dark label, spinner, focus kept, no second hire', async ({ page }) => {
+test('states: the review’s Hire in flight (#212) is busy like the hire dialog’s: orange, dark label, spinner, focus kept, no second hire', { tag: '@visual' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   const s = SURFACES.find((x) => x.name === 'hire-review-ready')!;
@@ -1136,7 +1114,7 @@ test('states: the review’s Hire in flight (#212) is busy like the hire dialog�
   clean();
 });
 
-test('states: a preset being deleted (natively disabled and busy) keeps the final destructive fill with a dark label and spinner, never the disabled look', async ({ page }) => {
+test('states: a preset being deleted (natively disabled and busy) keeps the final destructive fill with a dark label and spinner, never the disabled look', { tag: '@visual' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   const s = SURFACES.find((x) => x.name === 'presets-deleting')!;
@@ -1154,7 +1132,7 @@ test('states: a preset being deleted (natively disabled and busy) keeps the fina
   clean();
 });
 
-test('states: a reviewer’s verdict stamps are Ubuntu status chips: raised purple, the status colour as ink and border, the word kept (Quiet: white paper)', async ({ page }) => {
+test('states: a reviewer’s verdict stamps are Ubuntu status chips: raised purple, the status colour as ink and border, the word kept (Quiet: white paper)', { tag: '@visual' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   const s = SURFACES.find((x) => x.name === 'crew-stamp')!;
@@ -1174,7 +1152,7 @@ test('states: a reviewer’s verdict stamps are Ubuntu status chips: raised purp
   clean();
 });
 
-test('states: the elevator’s floor plates are Ubuntu controls: raised purple with a white number at rest, the lit ring on hover, orange with the dark number where you are and pressed', async ({ page }) => {
+test('states: the elevator’s floor plates are Ubuntu controls: raised purple with a white number at rest, the lit ring on hover, orange with the dark number where you are and pressed', { tag: '@visual' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   const s = SURFACES.find((x) => x.name === 'elevator')!;

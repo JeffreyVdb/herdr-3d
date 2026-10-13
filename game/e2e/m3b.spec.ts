@@ -278,7 +278,7 @@ test('top bar: same floor numbers with sim=1; the counts are numbers (their word
   clean();
 });
 
-test('screenshots: out of the windows, the fire escape, the facade, the lobby', async ({ page }) => {
+test('screenshots: out of the windows, the fire escape, the facade, the lobby', { tag: '@visual' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m3b');

@@ -48,7 +48,7 @@ async function confirm(page: Page): Promise<void> {
   await expect.poll(() => review(page)).toBeNull();
 }
 
-test('repeated Enter: in the bar while the answer is on its way one request and one review; on the review’s Hire one worker.hire', async ({ page }) => {
+test('repeated Enter: in the bar while the answer is on its way one request and one review; on the review’s Hire one worker.hire', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   await onPastry(page, { background: false }, async () => {

@@ -61,7 +61,7 @@ const overlayAnimations = (page: Page) =>
       .map(({ a, el }) => `${el?.className ?? ''}:${a.playState}`),
   );
 
-test('a prompt shows at once, Sending → Sent → its real item; the agent thinks, works, takes a queued prompt mid-turn', async ({ page }) => {
+test('a prompt shows at once, Sending → Sent → its real item; the agent thinks, works, takes a queued prompt mid-turn', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   const id = await sitAt(page, 'Pebble');

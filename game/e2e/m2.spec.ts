@@ -338,7 +338,7 @@ test('look-at HUD picks the right thing along a scripted camera path', async ({ 
   clean();
 });
 
-test('a status event from the fixture stream reaches the rendered state', async ({ page }) => {
+test('a status event from the fixture stream reaches the rendered state', { tag: '@smoke' }, async ({ page }) => {
   const clean = watchErrors(page);
   // Events every 400 ms after the snapshot: first, Nibble goes working → done.
   const ws = encodeURIComponent('/fixture/demo?play=400');

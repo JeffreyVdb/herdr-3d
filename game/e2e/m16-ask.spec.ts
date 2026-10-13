@@ -80,7 +80,7 @@ async function sitAtTranscript(page: Page, w: Worker): Promise<void> {
   await expect.poll(() => page.evaluate(async () => (await window.__h3d.simTranscripts())?.watches ?? 0)).toBeGreaterThan(0);
 }
 
-test('a two-question ask: needs you while herdr says idle, a pinned card, answered from the keyboard, recorded in the timeline', async ({ page }) => {
+test('a two-question ask: needs you while herdr says idle, a pinned card, answered from the keyboard, recorded in the timeline', { tag: '@smoke' }, async ({ page }) => {
   const clean = watchErrors(page);
   const w = demoWorker('Pebble'); // idle: herdr never said blocked
   await openGame(page, 'demo-m5', '', SIM);

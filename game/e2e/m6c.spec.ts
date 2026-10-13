@@ -445,7 +445,7 @@ test('the floor grows a desk mid-delivery: the pods re-flow, the walk ends at on
 test.describe('screenshots at the Mac’s resolution (1512 × 945 at 2×)', () => {
   test.use({ viewport: { width: 1512, height: 945 }, deviceScaleFactor: 2 });
 
-  test('stand-up, mid-walk, the hand-over, the tray and two reviewers queueing', async ({ page }) => {
+  test('stand-up, mid-walk, the hand-over, the tray and two reviewers queueing', { tag: '@visual' }, async ({ page }) => {
     test.setTimeout(240_000);
     const clean = watchErrors(page);
     await openGame(page, 'demo-m6', '', SIM);

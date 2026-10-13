@@ -137,7 +137,7 @@ async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator'
   expect((await watchLog(page)).filter((c) => c.t === 'transcript.image').every((c) => c.result?.ok)).toBe(true);
 }
 
-test('sitting down opens the conversation over the monitor, fed by transcript.watch; Ctrl+Esc to the terminal and back', async ({ page }) => {
+test('sitting down opens the conversation over the monitor, fed by transcript.watch; Ctrl+Esc to the terminal and back', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   const worker = await sitAt(page, 'Tofu');
@@ -439,7 +439,7 @@ test('#98: a bridge without transcripts opens the terminal at every worker', asy
   clean();
 });
 
-test('sit / toggle / stand cycles leave no transcript watches or overlays behind', async ({ page }) => {
+test('sit / toggle / stand cycles leave no transcript watches or overlays behind', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   const worker = await sitAt(page, 'Nibble');

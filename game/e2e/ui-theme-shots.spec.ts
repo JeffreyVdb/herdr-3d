@@ -17,7 +17,7 @@ for (const set of SETS) {
   for (const size of SIZES) {
     for (const s of SURFACES) {
       if (s.skipNarrow && size.name === 'narrow') continue;
-      test(`${set.name} ${size.name}: ${s.name}`, async ({ page }) => {
+      test(`${set.name} ${size.name}: ${s.name}`, { tag: '@visual' }, async ({ page }) => {
         test.setTimeout(180_000);
         const clean = watchErrors(page);
         await boot(page, s.fixture, { ui: set.ui }, s.extra ?? '', s.wsQuery, size);

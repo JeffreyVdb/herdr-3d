@@ -301,7 +301,21 @@ test('a freelancer drops in with its briefcase, onboards, works, reports and lea
   clean();
 });
 
-test('frame budget: crew parts are instanced, and a floor without a run draws none of them', async ({ page }) => {
+/** Makes every listed crew member a plain worker: a role the game does not know, no crew look (the label says nothing either). */
+async function plainRoles(page: Page, ids: string[]): Promise<void> {
+  await page.evaluate((list) => {
+    let seq = 9_000_000;
+    for (const f of window.__h3d.world()) {
+      for (const w of f.workers) {
+        if (!list.includes(w.id)) continue;
+        window.__h3d.inject({ t: 'worker.upsert', seq: seq++, worker: { id: w.id, session: f.session, workspace_id: `x${seq}`, label: 'plain', status: w.status, name: w.name, desk_index: w.desk, role: 'none' } } as never);
+      }
+    }
+  }, ids);
+  await frames(page, 4);
+}
+
+test('crew parts are instanced: one mesh per part kind for the floor, none on a floor without a run or once nobody is crew', async ({ page }) => {
   const clean = watchErrors(page);
   // No desk prints (?prints=0): they come and go with the workers' transcripts and are not what this counts.
   await openGame(page, 'demo-m6', '&prints=0', SIM);
@@ -312,21 +326,23 @@ test('frame budget: crew parts are instanced, and a floor without a run draws no
   // One InstancedMesh per part for the whole floor: at most one per crew part kind.
   expect(shown.length).toBeGreaterThan(10);
   expect(shown.length).toBeLessThanOrEqual(18);
+  await plainRoles(page, (await crew(page)).members.map((m) => m.id));
+  expect((await crew(page)).shown).toEqual([]);
+  clean();
+});
+
+// #42: the draw-call bench of the same instancing (the meshes themselves are checked above, in every functional run).
+test('frame budget: crew parts are instanced, and a floor without a run draws none of them', { tag: '@perf' }, async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '&prints=0', SIM);
+  await enter(page);
+  const shown = (await crew(page)).shown;
+  expect(shown.length).toBeGreaterThan(10);
   // The draw-call delta: the same view, benched with the crews and with every crew member made a plain worker.
   await viewDesks(page, [0, 1, 2, 3, 4, 5, 6, 7], 6, Math.PI / 2, -0.3);
   const withCrew = await page.evaluate(() => window.__h3d.bench({ frames: 20, warm: 5, pipelined: false, raf: false }));
   const ids = (await crew(page)).members.map((m) => m.id);
-  await page.evaluate((list) => {
-    let seq = 9_000_000;
-    for (const f of window.__h3d.world()) {
-      for (const w of f.workers) {
-        if (!list.includes(w.id)) continue;
-        // A role the game does not know: no crew look (the label says nothing either).
-        window.__h3d.inject({ t: 'worker.upsert', seq: seq++, worker: { id: w.id, session: f.session, workspace_id: `x${seq}`, label: 'plain', status: w.status, name: w.name, desk_index: w.desk, role: 'none' } } as never);
-      }
-    }
-  }, ids);
-  await frames(page, 4);
+  await plainRoles(page, ids);
   expect((await crew(page)).shown).toEqual([]);
   const plain = await page.evaluate(() => window.__h3d.bench({ frames: 20, warm: 5, pipelined: false, raf: false }));
   console.log(`m6 draw calls: ${JSON.stringify({ withCrew: withCrew.drawCalls, plain: plain.drawCalls, delta: withCrew.drawCalls - plain.drawCalls, crewParts: shown.length, crewMembers: ids.length })}`);

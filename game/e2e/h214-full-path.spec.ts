@@ -41,7 +41,7 @@ const reviewEl = (page: Page) => page.locator('.desk-dlg--review');
 /** Picks a chip of the open review (`what:value`, e.g. `model:claude-opus-5-5`): its radio is visually hidden, its label is what a player clicks. */
 const pick = (page: Page, key: string) => reviewEl(page).locator(`label:has(> input[data-key="${key}"])`).click();
 
-test('background on: dictated, reviewed and changed, Hire closes at once; while the ack is held you play on; then one toast, one beep, no go-to', async ({ page }) => {
+test('background on: dictated, reviewed and changed, Hire closes at once; while the ack is held you play on; then one toast, one beep, no go-to', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(200_000);
   const clean = watchErrors(page);
   await probe(page, { background: false });

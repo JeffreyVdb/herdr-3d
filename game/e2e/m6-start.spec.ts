@@ -66,7 +66,7 @@ const prompt = (page: Page) => page.locator('#run-prompt');
 /** What the First prompt composer shows (a contenteditable has no value): its text, line breaks kept. */
 const promptShown = (page: Page) => prompt(page).evaluate((e) => (e as HTMLElement).innerText.replace(/\u200B/g, '').replace(/\n$/, ''));
 
-test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, Ctrl+Enter starts the run and you face the orchestrator', async ({ page }) => {
+test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, Ctrl+Enter starts the run and you face the orchestrator', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m4', '', SIM);

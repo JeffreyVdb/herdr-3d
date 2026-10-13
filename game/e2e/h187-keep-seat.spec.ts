@@ -84,7 +84,7 @@ async function stillThere(page: Page, id: string, mode: 'terminal' | 'transcript
   await expect(page.locator('.seat')).toBeVisible();
 }
 
-test('the issue’s repro: a floor.upsert with more desks keeps you at the laptop, in its transcript, with your draft', async ({ page }) => {
+test('the issue’s repro: a floor.upsert with more desks keeps you at the laptop, in its transcript, with your draft', { tag: '@smoke' }, async ({ page }) => {
   const clean = watchErrors(page);
   const w = await sitAt(page, 0, 'transcript');
   await draft(page, 'half a sentence');

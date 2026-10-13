@@ -118,7 +118,7 @@ test('Open in the provider: through the helper when there is one, a new window w
   clean();
 });
 
-test('Hand to a worker: the start-run dialog with the card as work_item, the last team, the desk nearest you; then the note peels off to the desk', async ({ page }) => {
+test('Hand to a worker: the start-run dialog with the card as work_item, the last team, the desk nearest you; then the note peels off to the desk', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m6', EXTRA, SIM);
@@ -176,7 +176,7 @@ test('Ask a worker…: the plain hire dialog at the nearest free desk with the i
   clean();
 });
 
-test('Move to…, comment and Close issue… (confirm and reason) send the contract’s commands', async ({ page }) => {
+test('Move to…, comment and Close issue… (confirm and reason) send the contract’s commands', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m6', EXTRA, SIM);

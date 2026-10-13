@@ -132,7 +132,7 @@ test('a live screen is on the desk monitor, big, in its glance view; the docked 
 test.describe('screenshots at the Mac’s resolution (1512 × 945 at 2×)', () => {
   test.use({ viewport: { width: 1512, height: 945 }, deviceScaleFactor: 2 });
 
-  test('a row while walking, a desk up close, the stickers, an empty desk, the drop-in', async ({ page }) => {
+  test('a row while walking, a desk up close, the stickers, an empty desk, the drop-in', { tag: '@visual' }, async ({ page }) => {
     test.setTimeout(240_000);
     const clean = watchErrors(page);
     await openGame(page, 'demo-m4', '', SIM);

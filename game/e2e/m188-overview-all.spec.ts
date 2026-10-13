@@ -73,7 +73,7 @@ test('O in the city opens every floor: active only, the hidden line, F for every
   clean();
 });
 
-test('Enter on a worker on another floor sits you at its laptop; Enter on a floor goes there', async ({ page }) => {
+test('Enter on a worker on another floor sits you at its laptop; Enter on a floor goes there', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m188', '', SIM);

@@ -270,7 +270,7 @@ test('Settings → Display → Desk monitors: Terminal brings the glance back ev
   clean();
 });
 
-test('a floor of 60 desks animates every card with no canvas drawn and no texture uploaded; one draw for all of them', async ({ page }) => {
+test('a floor of 60 desks animates every card with no canvas drawn and no texture uploaded; one mesh for all of them', async ({ page }) => {
   test.setTimeout(240_000);
   const clean = watchErrors(page);
   // Count every 2D canvas draw on the page.
@@ -303,16 +303,39 @@ test('a floor of 60 desks animates every card with no canvas drawn and no textur
   await frames(page, 10);
   const after = await page.evaluate(() => ({ draws: (window as unknown as { __draws: number }).__draws, frames: window.__h3d.frames, m: window.__h3d.monitors()?.stats }));
   const drawn = after.frames - before.frames;
-  console.log(`m98 perf: ${cards} cards, ${drawn} frames, canvas draws ${after.draws - before.draws}, cells ${after.m?.ledger.cells} (+${(after.m?.ledger.cells ?? 0) - (before.m?.ledger.cells ?? 0)}), uploads +${(after.m?.ledger.uploads ?? 0) - (before.m?.ledger.uploads ?? 0)}, counter writes +${(after.m?.ledger.timerWrites ?? 0) - (before.m?.ledger.timerWrites ?? 0)}`);
+  console.log(`m98 ledger: ${cards} cards, ${drawn} frames, canvas draws ${after.draws - before.draws}, cells ${after.m?.ledger.cells} (+${(after.m?.ledger.cells ?? 0) - (before.m?.ledger.cells ?? 0)}), uploads +${(after.m?.ledger.uploads ?? 0) - (before.m?.ledger.uploads ?? 0)}, counter writes +${(after.m?.ledger.timerWrites ?? 0) - (before.m?.ledger.timerWrites ?? 0)}`);
   expect(drawn).toBeGreaterThan(10);
   expect(after.m?.ledger.cells).toBe(before.m?.ledger.cells);
   expect(after.m?.ledger.uploads).toBe(before.m?.ledger.uploads);
   expect(after.m?.textures).toEqual(before.m?.textures);
   // Nothing else on the page draws a canvas meanwhile either (the clock draws once a minute at most).
   expect(after.draws - before.draws).toBeLessThanOrEqual(40);
-  await shot(page, 'm98-perf-floor60');
   // One instanced draw for every card; with the Terminal preference (no cards) not even that.
   expect(after.m?.meshes).toBe(1);
+  await openMenu(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="display"]').getByLabel('Desk monitors').selectOption('terminal');
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await monitorsOf(page))?.desks.every((d) => d.mode === 'glance')).toBe(true);
+  await frames(page, 4);
+  expect((await monitorsOf(page))?.stats?.meshes).toBe(0);
+  clean();
+});
+
+// #42: the draw-call and frame-time bench of the same floor (the ledger, the canvas draws and the one mesh are checked above).
+test('bench: the cards of a 60-desk floor cost a draw or two and stay in the frame budget (Activity against Terminal)', { tag: '@perf' }, async ({ page }) => {
+  test.setTimeout(240_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'perf-floor60', '&screens=0', 'play=none&sim=1&simusage=0&simactivity=all');
+  const floor = await page.evaluate(() => window.__h3d.world()[0]?.session as string);
+  await page.evaluate((s) => window.__h3d.enterFloor(s), floor);
+  await frames(page, 6);
+  await expect.poll(async () => (await monitorsOf(page))?.desks.filter((d) => d.mode === 'card').length ?? 0).toBeGreaterThanOrEqual(30);
+  const m = (await monitorsOf(page)) as Monitors;
+  await lookAtMonitor(page, (m.desks.find((d) => d.mode === 'card') as DeskInfo).desk, { x: 1.6, z: -1.6 });
+  await page.waitForTimeout(800);
+  await frames(page, 4);
+  await shot(page, 'm98-perf-floor60');
   const bench = () => page.evaluate(() => window.__h3d.bench({ frames: 8, warm: 3, pipelined: false, raf: false }));
   const on = await bench();
   await openMenu(page);

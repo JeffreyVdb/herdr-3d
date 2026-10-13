@@ -51,7 +51,7 @@ async function faceDesk(page: Page, session: string, desk: number): Promise<void
 
 const cardAt = (page: Page, desk: number) => page.evaluate((d) => window.__h3d.cards().find((c) => c.desk === d) ?? null, desk);
 
-test('wrap up: delete preselected, Enter in the prompt adds lines, Enter on a delete asks first; CLEAN sends it home with its worktree deleted', async ({ page }) => {
+test('wrap up: delete preselected, Enter in the prompt adds lines, Enter on a delete asks first; CLEAN sends it home with its worktree deleted', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m4', '', SIM);

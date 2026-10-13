@@ -152,7 +152,7 @@ test('walking along the pod swaps live screens with hysteresis, the old ones sta
   clean();
 });
 
-test('E sits at a worker’s laptop: typed input echoes in its terminal, game keys stay in the terminal, Esc gets up', async ({ page }) => {
+test('E sits at a worker’s laptop: typed input echoes in its terminal, game keys stay in the terminal, Esc gets up', { tag: '@smoke' }, async ({ page }) => {
   const clean = watchErrors(page);
   const { L, ids } = await enter(page);
   const sprout = ids.Sprout as string; // desk 15, a plain shell
@@ -378,7 +378,7 @@ test('on an asleep floor the laptops are dark and E says why', async ({ page }) 
 
 // Opt-in (H3D_BENCH=1): frame time on the busy 60-worker floor with 4 live screens against none, and seated at a
 // laptop. WebGL2 on llvmpipe here: only the relative numbers mean something (the Mac jobs are in tools/mac-perf.ts).
-test('bench: 4 live screens on perf-floor60 against none', async ({ page }) => {
+test('bench: 4 live screens on perf-floor60 against none', { tag: '@perf' }, async ({ page }) => {
   test.skip(!process.env.H3D_BENCH, 'set H3D_BENCH=1 to run');
   test.setTimeout(600_000);
   const out: Record<string, unknown> = {};

@@ -223,7 +223,7 @@ describe('UI theme pref (#216)', () => {
   });
 
   it('falls back to Quiet for a missing or invalid stored value', () => {
-    for (const v of ['', 'solarized', 'Ubuntu', 'terminal', ' ubuntu', 'null']) expect(new ViewPrefs(memory({ 'h3d.theme.ui': v })).uiTheme(), JSON.stringify(v)).toBe('quiet');
+    for (const v of ['', 'solarized', 'Ubuntu', 'UBUNTU', 'terminal', ' ubuntu', 'null']) expect(new ViewPrefs(memory({ 'h3d.theme.ui': v })).uiTheme(), JSON.stringify(v)).toBe('quiet');
   });
 
   it('works in memory when storage is missing, blocked or throws, and tells listeners', () => {

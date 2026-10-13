@@ -110,7 +110,7 @@ async function pasteImage(page: Page): Promise<void> {
   });
 }
 
-test('draw, close, reload: the drawing is still there, the room shows its render, and nothing leaves the machine', async ({ page }) => {
+test('draw, close, reload: the drawing is still there, the room shows its render, and nothing leaves the machine', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(240_000);
   const clean = watchErrors(page);
   const external = await offline(page);

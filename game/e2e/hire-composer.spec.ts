@@ -229,7 +229,7 @@ test('an image alone is a valid first task', async ({ page }) => {
   clean();
 });
 
-test('a failed upload blocks the hire, keeps the prompt and shows a retry; then the retry and the hire go through', async ({ page }) => {
+test('a failed upload blocks the hire, keeps the prompt and shows a retry; then the retry and the hire go through', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   // The forced failure is a real 502 the browser logs by itself: only script errors count here.
   const errors: string[] = [];
@@ -269,7 +269,8 @@ test('a failed upload blocks the hire, keeps the prompt and shows a retry; then 
   expect(prompt).toMatch(/^look at this: \[Image #1: [^\]]+\]\[Image #2: [^\]]+\] thanks$/);
   const log = (await page.evaluate(async (k) => (await fetch(`/upload/_log?upload_key=${k}`)).json(), key)).data as Array<{ result: string; n: number }>;
   expect(log.map((e) => e.result)).toEqual(['dropzone_unavailable', 'ok', 'ok']);
-  await expect.poll(() => dialog(page)).toBeNull();
+  // #43: the simulated hire ack runs on game time, which lags wall time under a loaded llvmpipe; 5 s is too short.
+  await expect.poll(() => dialog(page), { timeout: 20_000 }).toBeNull();
   clean();
 });
 

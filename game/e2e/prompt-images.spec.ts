@@ -573,7 +573,7 @@ async function toTranscript(page: Page): Promise<void> {
   await expect(txBox(page)).toBeFocused();
 }
 
-test('transcript: a pasted screenshot is a chip in the prompt box; Enter sends worker.prompt with the marker; Shift+Enter is a new line', async ({ page }) => {
+test('transcript: a pasted screenshot is a chip in the prompt box; Enter sends worker.prompt with the marker; Shift+Enter is a new line', { tag: '@smoke' }, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 1280, height: 720 });
@@ -696,26 +696,8 @@ test('terminal: an image pasted at an agent’s laptop is uploaded and pasted as
   clean();
 });
 
-test('terminal: a plain shell says an image can’t be pasted there and nothing is typed', async ({ page }) => {
-  test.setTimeout(120_000);
-  const clean = watchErrors(page);
-  const { key } = await sitAt(page, 'Sprout');
-  await paste(page, '.seat-input', [{ name: 'shot.png' }]);
-  await expect.poll(() => seatNote(page)).toMatch(/Sprout runs a plain shell, not an agent: an image can.t be pasted there\. Nothing was typed\./);
-  expect((await page.evaluate(() => window.__h3d.seat())).state).toBe('error');
-  // The bar's note is a few words wide: the toast has the whole sentence.
-  await expect(page.locator('.toast')).toContainText('runs a plain shell, not an agent: an image can’t be pasted there. Nothing was typed.');
-  await shot(page, '08-terminal-plain-shell');
-  await page.waitForTimeout(500);
-  expect(await sentOf(page, 'worker.keys')).toHaveLength(0);
-  expect(await sentOf(page, 'worker.prompt')).toHaveLength(0);
-  expect((await page.evaluate(async (k) => (await fetch(`/upload/_log?upload_key=${k}`)).json(), key)).data).toEqual([]);
-  // A text paste still types.
-  await pasteText(page, '.seat-input', 'pwd');
-  await expect.poll(async () => (await sentOf(page, 'worker.keys')).at(-1)?.args).toMatchObject({ input: [{ text: 'pwd' }] });
-  clean();
-});
-
+// #42: a plain shell (no agent to read a picture) is src/laptop/pasteImages.test.ts "a plain shell says it cannot take an
+// image; …"; the seat bar's note, its error state and the toast of a refused paste are the case below.
 test('terminal: a failed upload (Drop Zone down), a refused file and a pending upload: nothing is pasted until every image is up', async ({ page }) => {
   test.setTimeout(120_000);
   const clean = scriptErrors(page);
