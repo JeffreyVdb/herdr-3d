@@ -198,7 +198,7 @@ async function frameGaps(page: Page, act: () => Promise<void>): Promise<number> 
 
 const now = (page: Page) => page.evaluate(() => performance.now());
 
-test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, "Show next", scrolling (off vs on)', async ({ browser }) => {
+test('highlighting causes no long task: the 2,000-line create, a ten-hunk edit, "Show next", scrolling (off vs on)', { tag: '@perf' }, async ({ browser }) => {
   test.setTimeout(400_000);
   const results: Record<string, Record<string, Window_>> = {};
   const geometry: Record<string, unknown> = {};

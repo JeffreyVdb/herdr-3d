@@ -103,7 +103,7 @@ const STATES: State[] = [
 for (const set of SET ? [{ name: SET, ui: 'quiet' as UiTheme }] : [{ name: 'quiet', ui: 'quiet' as UiTheme }, { name: 'ubuntu', ui: 'ubuntu' as UiTheme }]) {
   for (const size of SIZES) {
     for (const s of STATES) {
-      test(`${set.name} ${size.name}: ${s.name}`, async ({ page }) => {
+      test(`${set.name} ${size.name}: ${s.name}`, { tag: '@visual' }, async ({ page }) => {
         test.setTimeout(180_000);
         const clean = s.name === 'state-offline' ? () => undefined : watchErrors(page);
         await boot(page, s.fixture, { ui: set.ui }, s.extra ?? '', s.wsQuery, size);
@@ -127,7 +127,7 @@ if (!SET) {
     for (const size of SIZES) {
       for (const name of ['seat-transcript', 'seat-terminal', 'settings', 'hire']) {
         const s = SURFACES.find((x) => x.name === name)!;
-        test(`${m.name} ${size.name}: ${name}`, async ({ page }) => {
+        test(`${m.name} ${size.name}: ${name}`, { tag: '@visual' }, async ({ page }) => {
           test.setTimeout(180_000);
           const clean = watchErrors(page);
           await boot(page, s.fixture, m.themes, s.extra ?? '', s.wsQuery, size);
@@ -143,7 +143,7 @@ if (!SET) {
   for (const size of SIZES) {
     for (const name of ['settings', 'hire', 'seat-transcript', 'board-issues', 'palette']) {
       const s = SURFACES.find((x) => x.name === name)!;
-      test(`switch ${size.name}: ${name} before and after`, async ({ page }) => {
+      test(`switch ${size.name}: ${name} before and after`, { tag: '@visual' }, async ({ page }) => {
         test.setTimeout(180_000);
         const clean = watchErrors(page);
         await boot(page, s.fixture, {}, s.extra ?? '', s.wsQuery, size);

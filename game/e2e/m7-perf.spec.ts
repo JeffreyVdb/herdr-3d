@@ -24,7 +24,7 @@ async function run(page: Page, fail: string): Promise<{ bench: Awaited<ReturnTyp
   return { bench, wall: w };
 }
 
-test('100 issue notes and 20 PR notes stay in the frame budget: two instanced draws, nothing written on a quiet frame', async ({ page, browser }) => {
+test('100 issue notes and 20 PR notes stay in the frame budget: two instanced draws, nothing written on a quiet frame', { tag: '@perf' }, async ({ page, browser }) => {
   // Two 50-frame benches (serialized only: the pipelined and rAF phases are not read here) at 90-200 ms a frame on
   // llvmpipe, and `make e2e` runs six tests at once on the same CPUs.
   test.setTimeout(300_000);

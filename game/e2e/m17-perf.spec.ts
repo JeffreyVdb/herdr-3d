@@ -26,7 +26,7 @@ async function run(browser: Browser, time: string): Promise<{ bench: Bench; dayl
   return { bench, daylight: d?.daylight ?? null, lamps: d?.lamps ?? [] };
 }
 
-test('the office at night (its own lamps, the tinted street) stays in the frame budget of noon', async ({ browser }) => {
+test('the office at night (its own lamps, the tinted street) stays in the frame budget of noon', { tag: '@perf' }, async ({ browser }) => {
   // 50-frame serialized benches at 90-200 ms a frame on llvmpipe, and `make e2e` runs six tests at once.
   const runs = Math.max(1, Number(process.env.H3D_M17_RUNS) || 1);
   test.setTimeout(240_000 * runs);

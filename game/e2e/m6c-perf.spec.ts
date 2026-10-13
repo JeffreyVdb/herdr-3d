@@ -36,7 +36,7 @@ async function crews(page: Page): Promise<string[]> {
   });
 }
 
-test('two reports (one walking, one waiting) on a full floor stay in the frame budget of the same floor seated', async ({ page }) => {
+test('two reports (one walking, one waiting) on a full floor stay in the frame budget of the same floor seated', { tag: '@perf' }, async ({ page }) => {
   test.setTimeout(240_000);
   await openGame(page, 'perf-floor60', '', 'play=none');
   await page.evaluate(() => window.__h3d.enterFloor('perf-floor'));

@@ -271,7 +271,7 @@ test('the sound control has a music popover with a slider and mute of its own, a
 // WebGL2 on llvmpipe here: only the relative numbers mean something (the Mac jobs are in tools/mac-perf.ts). The
 // radio costs the render loop nothing of its own (streams decode off the main thread; a listener update only when the
 // camera moves), so the two should agree within the noise.
-test('bench: the radio playing on perf-floor60 against off', async ({ page }) => {
+test('bench: the radio playing on perf-floor60 against off', { tag: '@perf' }, async ({ page }) => {
   test.skip(!process.env.H3D_BENCH, 'set H3D_BENCH=1 to run');
   test.setTimeout(600_000);
   await serveClips(page);

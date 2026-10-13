@@ -146,7 +146,7 @@ async function phase(page: Page, cdp: CDPSession, layers: Layers, label: number 
   };
 }
 
-test('the live cue adds no paint, main-thread or GPU work beyond its 1 Hz time', async ({ page }) => {
+test('the live cue adds no paint, main-thread or GPU work beyond its 1 Hz time', { tag: '@perf' }, async ({ page }) => {
   test.setTimeout(MS * 3 + 180_000);
   const w = pebble();
   await openGame(page, 'demo-m5', '&prints=0', SIM);

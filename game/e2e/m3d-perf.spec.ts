@@ -27,7 +27,7 @@ async function run(page: Page, logos: boolean, where: 'city' | 'lobby'): Promise
 }
 
 for (const where of ['city', 'lobby'] as const) {
-  test(`logos on every building of the ${where} stay in the frame budget`, async ({ page, browser }) => {
+  test(`logos on every building of the ${where} stay in the frame budget`, { tag: '@perf' }, async ({ page, browser }) => {
     // Two 50-frame benches (serialized only: the pipelined and rAF phases are not read here) at 90-200 ms a frame on
     // llvmpipe, and `make e2e` runs six tests at once on the same CPUs.
     test.setTimeout(300_000);

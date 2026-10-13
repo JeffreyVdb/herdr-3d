@@ -53,6 +53,7 @@ Every test's selection is visible in its source as a Playwright tag: `test(title
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | baseline (`6d68d06`, no profiles) | — | — | — | — | — | 1236 / 86 |
 | (i) mechanism + smoke / component tags | 27 / 25 | 1236 / 86 | 0 | 0 | 28 / 2 | 1236 / 86 |
+| (ii) captures, tours and benches out | 27 / 25 | 946 / 79 | 281 / 5 | 11 / 10 | 28 / 2 | 1238 / 86 |
 
 ## The smoke suite
 
@@ -93,3 +94,37 @@ their files.
 
 Filled in as cases move. Columns: the case (file, title), where it went (profile, or deleted), and where its
 assertion lives now.
+
+### Theme captures (`@visual`)
+
+| Case | Now | Coverage |
+| --- | --- | --- |
+| `ui-theme-shots.spec.ts`, all 224 (`<set> <size>: <surface>`) | visual | Screenshot-only: no baseline comparison, its only assertions are a clean boot and no page error. Explicit decision: the PNGs are not a routine check; they stay for design work (`make e2e-visual`, `H3D_UI_SET` / `H3D_DIST` / `tools/ui-shot-diff.mjs`). Rendering without errors stays in smoke (`shot.spec.ts`, every smoke test's `watchErrors`). |
+| `ui-theme-shots-states.spec.ts` states (20: focus, busy, disabled, invalid, offline × 2 themes × 2 sizes) | visual | Their setup assertions are kept in functional tests: Hiring… busy and aria-busy in `ui-theme.spec.ts` "states: a hire in flight …"; disabled AI buttons and the invalid Timezone (`aria-invalid`) in "states: disabled controls keep their label readable …"; a lost connection in `h210-hire-background.spec.ts` / `h214-edge-cases.spec.ts` (reconnect) and `m7-*` (offline boards). |
+| `ui-theme-shots-states.spec.ts` mixed themes (24) | visual | Screenshot-only. The independence of UI / transcript / terminal themes is asserted by `ui-theme.spec.ts` "combination …" and "a seated switch leaves the transcript and the terminal exactly as they were …". |
+| `ui-theme-shots-states.spec.ts` switch before / after (10) | visual | Screenshot-only. Live switching without reload or loss: `ui-theme.spec.ts` "a switch restyles the open Settings dialog …", "a switch with the Hire dialog open …", "a live switch leaves the terminal’s screen, …", "a live switch leaves the whiteboard’s drawing …". |
+
+### Screenshot tours (`@visual`)
+
+| Case | Now | Coverage of its non-image assertions |
+| --- | --- | --- |
+| `m3b.spec.ts` "screenshots: out of the windows, the fire escape, the facade, the lobby" | visual | Only `lookAt()` null at the end. Walking the fire escape and the lobby: `m3b.spec.ts` "fire escape: …" and "lobby: …". |
+| `m6b.spec.ts` "a row while walking, a desk up close, the stickers, an empty desk, the drop-in" | visual | Live screens and the drop-in (look-at says the new worker): `m6b.spec.ts` "a hire drops in at an empty desk, …" and "a live screen is on the desk monitor, …". |
+| `m6c.spec.ts` "stand-up, mid-walk, the hand-over, the tray and two reviewers queueing" | visual | The delivery's phases and tray count: `m6c.spec.ts` "a report walks over to the orchestrator’s desk and back …"; the queue: "two reviewers finishing together queue: …". |
+
+### Benchmarks (`@perf`)
+
+`make e2e-perf` sets `H3D_PERF=1 H3D_BENCH=1`, so the cases that skip without them run there.
+
+| Case | Now | Structural invariant kept in a functional test |
+| --- | --- | --- |
+| `m3d-perf.spec.ts` "logos on every building of the city / lobby stay in the frame budget" (2) | perf | The logos showing and clearing: `m3d-logos.spec.ts`. The draw / triangle budget needs the 240-worker city twice (with and without logos): perf only. |
+| `m17-perf.spec.ts` "the office at night … stays in the frame budget of noon" | perf | Night lighting itself: `m17-daynight.spec.ts`. Equal day / night draws need two perf-floor60 boots: perf only. |
+| `m6c-perf.spec.ts` "two reports … on a full floor stay in the frame budget …" | perf | One walk at a time and the waiting tray: `m6c.spec.ts` "two orchestrators on one floor: … one walk at a time …", "two reviewers finishing together queue: …". |
+| `m7-perf.spec.ts` "100 issue notes and 20 PR notes stay in the frame budget: …" | perf | Two instanced batches: `m7-boards.spec.ts` "the wall boards are two instanced batches …"; nothing written on a quiet poll: "a board update animates by diff …". |
+| `m58-activity-perf.spec.ts` "the live cue adds no paint, …" | perf (already `H3D_PERF`-gated) | The cue's one opacity animation: `m16-transcript-activity.spec.ts`. |
+| `m15-radio.spec.ts` "bench: the radio playing on perf-floor60 against off" | perf (already `H3D_BENCH`-gated) | — (bench only). |
+| `m5-screen.spec.ts` "bench: 4 live screens on perf-floor60 against none" | perf (already `H3D_BENCH`-gated) | — (bench only). |
+| `h206-diff-highlight.spec.ts` "highlighting causes no long task: …" | perf | The highlighting itself (colours, plain context, unknown files): `h206-diff-highlight.spec.ts` "diff rows gain syntax colours: …". |
+| `m6-crew.spec.ts` "frame budget: crew parts are instanced, …" | perf (the draw-call bench) | Split: new functional `m6-crew.spec.ts` "crew parts are instanced: one mesh per part kind for the floor, none on a floor without a run or once nobody is crew" keeps every mesh assertion without the bench. |
+| `m98-monitor.spec.ts` "a floor of 60 desks animates every card …; one draw for all of them" | split | The functional case keeps its ledger, canvas-draw, texture and one-mesh / zero-mesh assertions (title now "… one mesh for all of them"); the draw-call and frame-time comparison is the new perf case "bench: the cards of a 60-desk floor cost a draw or two …". |
