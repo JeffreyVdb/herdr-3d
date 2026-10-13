@@ -100,17 +100,34 @@ make codex-shared-bridge  # #158 only: herdr-world itself (app.Serve) driven ove
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
-make e2e               # build, then the full Playwright suite (e2e/*.spec.ts), H3D_WORKERS parallel workers, one run per host:
-                       # ~38 min on the 32-vCPU dev host at the default (one measured run, 1179 tests; #241, docs/research/testing-performance.md)
-make e2e SPEC=e2e/m6b.spec.ts   # only that spec (same lock and portlease)
-make e2e-prebuilt      # the same suite against the bundle already in game/dist (no build; same lock and portlease; SPEC= too)
+make e2e               # build, then the smoke suite: the ~30 essential journeys tagged @smoke (H3D_WORKERS parallel, one run per host)
+make e2e SPEC=e2e/m6b.spec.ts   # every test of that spec, whatever its tags (same lock and portlease)
+make e2e-prebuilt      # the same against the bundle already in game/dist (no build; same lock and portlease; SPEC= PROFILE= GREP= too)
+make e2e-extended      # on request: every functional test (all but @visual and @perf; the old full suite minus captures and benches)
+make e2e-visual        # on request: theme captures (game/test-results/ui-theme/), the per-surface theme audit, screenshot tours
+make e2e-perf          # on request: frame benches and long-task measurements (sets H3D_PERF=1 H3D_BENCH=1), minutes each
+make e2e-component     # the composer in its test-only host (/?composer-demo), no 3D scene
+make e2e-list          # list a selection without building, leasing a port or starting a browser (PROFILE= SPEC= GREP=)
 make browsers          # download the Chromium revision the pinned Playwright expects (opt-in; make setup says when it is missing)
 ```
 
-- `make shot` (only `e2e/shot.spec.ts`) and `make e2e` (every spec) run Playwright against the **cached** Chromium in
+- Which checks to run (#42; agents too): while iterating, the Go packages and Vitest files you touch; `make lint test`
+  before you hand work over. Browser runs only for changes a browser can see (the game's UI, rendering, the protocol
+  between game and bridge): `make e2e` (smoke) once, plus `make e2e-prebuilt SPEC=e2e/<feature>.spec.ts` for the
+  feature you changed. A Go-only, docs-only or tooling change needs no browser run. `make e2e-extended`, `e2e-visual`,
+  `e2e-perf` and the live suites (`pnpm -C game test:live*`, `make integration`, `make codex-shared-*`) are for a task
+  that asks for them (CSS / theme work: `e2e-visual`; a frame-budget change: `e2e-perf`).
+- Selection is by Playwright tags in the specs (`test(title, { tag: '@smoke' }, ...)`): `@smoke`, `@visual`, `@perf`,
+  `@component`; an untagged test is in `extended` only. `H3D_E2E_PROFILE` (smoke by default, so `pnpm -C game e2e` is
+  smoke too) picks one in `game/playwright.config.ts`; make passes `PROFILE=`. `SPEC=` alone runs every test of the
+  file (profile `all`); with `PROFILE=` only that profile's tests of it; `GREP=<regex>` narrows further by title or tag
+  (`make e2e-prebuilt SPEC=e2e/ui-theme.spec.ts GREP='audit at 390'`). A new test is untagged (extended) unless it is an
+  essential journey (`@smoke`, keep the suite within 20–30), a capture or audit (`@visual`) or a bench (`@perf`).
+  `docs/research/e2e-selection.md` says why each test is where it is and maps every case #42 moved or removed.
+- `make shot` (only `e2e/shot.spec.ts`) and `make e2e` run Playwright against the **cached** Chromium in
   `~/.cache/ms-playwright` (`@playwright/test` is pinned to the version that matches it). Browsers are never downloaded (`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`) except by `make browsers`; `make setup` fails naming it when that revision is missing. It forces the
   WebGL2 backend (`?backend=webgl2`) because the server has no GPU; rendering goes through ANGLE → Vulkan → mesa llvmpipe.
-- `make e2e` runs `H3D_WORKERS` tests in parallel (default 6, a positive integer; anything else falls back to it).
+- Every e2e target runs `H3D_WORKERS` tests in parallel (default 6, a positive integer; anything else falls back to it).
   Playwright runs with `fullyParallel`, so the tests of one spec file are spread over the workers too. Every test opens
   its own page against the shared preview server and writes only its own `test-results/<name>.png`, so keep it that
   way: no shared files, no fixed ports, no order between tests (also within a file: no `describe.serial`, no pages
@@ -120,17 +137,17 @@ make browsers          # download the Chromium revision the pinned Playwright ex
   Each run writes a JSON report beside the list output, `game/test-results/e2e-report.json` (`H3D_E2E_REPORT` moves it);
   `H3D_E2E_TMPDIR` sets `TMPDIR` for the test run only (browser profiles), never `TMPDIR` around make, since portlease
   keeps its shared state there.
-- `make e2e` and `make shot` take a host-wide lock (`flock` on `$XDG_RUNTIME_DIR/herdr-3d-e2e.lock`, `/tmp` without
+- Every e2e target and `make shot` take a host-wide lock (`flock` on `$XDG_RUNTIME_DIR/herdr-3d-e2e.lock`, `/tmp` without
   it): one Playwright run at a time per host. Two suites side by side take about as long as two in a row, but both
   render below 10 fps on llvmpipe, where game time runs slower than wall time and fixed polls time out. A second run
   prints `waiting for another worktree's e2e run (…)` and starts when the first ends (or fails, or is interrupted).
-  Without `flock` (util-linux), or when the lock can't be taken, both targets fail before Playwright starts, never
-  run unlocked. Running `pnpm exec playwright` directly skips the lock.
+  Without `flock` (util-linux), or when the lock can't be taken, they fail before Playwright starts, never
+  run unlocked. Running `pnpm exec playwright` directly skips the lock (`make e2e-list` takes none: it runs nothing).
 - The page exposes `window.__h3d` (`backend`, `frames`, `error`) for tests.
 - M17: every spec's `openGame` pins the time (`&time=2026-09-30T12:00`, `NOON` in `e2e/game.ts`) unless the test passes its
   own `time=`, and `make shot` goes through it: no spec reads the wall clock's daylight. A test of the real clock fixes
   the browser's clock with `page.clock.setFixedTime` and its zone with `timezoneId` (`e2e/m17-daynight.spec.ts`).
-- #216: the application UI theme (Quiet / Ubuntu): a stylesheet change must keep Quiet as it was, so `node tools/ui-quiet-check.mjs <css files>` (from `game/`) expands the Quiet tokens and diffs each file against the commit before #216 (no output hunk but a deliberate one). `e2e/ui-theme-shots.spec.ts` writes a screenshot of every surface in Quiet and Ubuntu, at 1280 and 390 px, to `game/test-results/ui-theme/<set>/<size>/` (`H3D_UI_SET=before-quiet` with `H3D_DIST=<a build of the earlier commit>` records the "before" set), and `node tools/ui-shot-diff.mjs <before> <after>` says how much of each differs. `e2e/ui-surfaces.ts` lists the surfaces once for those screenshots and for `e2e/ui-theme.spec.ts`'s coverage, contrast and layout checks: a new dialog or panel belongs in it.
+- #216: the application UI theme (Quiet / Ubuntu): a stylesheet change must keep Quiet as it was, so `node tools/ui-quiet-check.mjs <css files>` (from `game/`) expands the Quiet tokens and diffs each file against the commit before #216 (no output hunk but a deliberate one). `e2e/ui-theme-shots.spec.ts` writes a screenshot of every surface in Quiet and Ubuntu, at 1280 and 390 px, to `game/test-results/ui-theme/<set>/<size>/` (`make e2e-visual SPEC=e2e/ui-theme-shots.spec.ts`; `H3D_UI_SET=before-quiet` with `H3D_DIST=<a build of the earlier commit>` and `make e2e-prebuilt` records the "before" set), and `node tools/ui-shot-diff.mjs <before> <after>` says how much of each differs. `e2e/ui-surfaces.ts` lists the surfaces once for those screenshots and for `e2e/ui-theme.spec.ts`'s per-surface audit (palette leftovers, contrast, targets, focus rings, narrow and zoomed layout, one boot per surface and size; a representative per component family runs in `extended`, every surface in `make e2e-visual`): a new dialog or panel belongs in it.
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
 - CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test and the darwin cross-build only when a branch changes a Go input against main (`cmd/`, `internal/`, `game/fixtures/`, `go.mod`/`go.sum`, the Makefile, the workflow); pushes to main always run them. tsc and vitest run only when a branch changes a game input (`game/`, `docs/shortcuts.md`, `internal/whiteboard/testdata/`, the Makefile, the workflow). The shell deploy test always runs. No Playwright in CI.
@@ -1347,7 +1364,8 @@ Tests:
 make test lint                # vitest + tsc (protocol client and requests, store, layout, collision, cards, frame
                               # policy, fixtures, settings validation/diffing, reordering, the command simulation)
 make shot                     # Playwright WebGL2, just the screenshot: game/test-results/shot.png
-make e2e                      # the whole Playwright suite, WebGL2 (H3D_WORKERS parallel, ~38 min measured, one per host):
+make e2e                      # the @smoke journeys of the specs below, WebGL2 (H3D_WORKERS parallel, one per host)
+make e2e-extended             # on request: every functional spec below (the whole suite before #42 took ~38 min):
                               # game/test-results/{shot,m2-city,m2-floor-plan,m2-desk-row}.png,
                               # scripted look-at path, floor entry, keyboard focus, live plan labels, events
                               # during the elevator ride, held keys across floors, small-window plan; M3 on the

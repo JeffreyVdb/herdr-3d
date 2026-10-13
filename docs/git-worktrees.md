@@ -30,6 +30,11 @@ WebGL2 work. It may wait for another worktree's e2e run (host-wide lock); that i
 - Ports only through `portlease` (`make dev`, `make shot`). Never hardcode one. Bind `127.0.0.1` only.
 - Prefer `make` targets over bare `pnpm`: they carry `deps`, the e2e lock and the Playwright env. For a bare
   `pnpm -C game ...`, run `make deps` first. `make e2e-prebuilt` reruns the suite on the bundle you already built.
+- Cheap checks first: the Go packages and Vitest files you touched while iterating, `make lint test` before handing
+  over. `make e2e` is the smoke suite (~30 journeys); run it once for a change the game can show, with
+  `make e2e-prebuilt SPEC=e2e/<feature>.spec.ts` for the feature itself (SPEC runs every test of the file). Go-only and
+  docs-only changes need no browser run. `make e2e-extended` / `e2e-visual` / `e2e-perf` and the live suites only when
+  the task asks for them; `make e2e-list PROFILE=<name>` shows what one would run (CONTRIBUTING.md, "Build and test").
 - The first `go test ./...` takes ~2 min (`internal/server`). Run the packages you touched while iterating.
 - `origin` is the public repository and the only push target. The private `JeffreyVdb/herdr-3d-archive` (the history
   before it; old `#NNN` references point there) may be added as a read-only extra remote for context, never pushed to
