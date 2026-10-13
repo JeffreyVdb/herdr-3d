@@ -31,7 +31,7 @@ Every test's selection is visible in its source as a Playwright tag: `test(title
 | --- | --- | --- |
 | `smoke` (default) | `@smoke` | `make e2e`, `make e2e-prebuilt`, `pnpm -C game e2e` |
 | `extended` | everything but `@visual` and `@perf` (smoke and component included) | `make e2e-extended`, `PROFILE=extended` |
-| `visual` | `@visual` | `make e2e-visual`, `PROFILE=visual` |
+| `visual` | `@visual` and `@theme` (`@theme`: every per-surface theme audit and all 8 theme combinations, the representatives `extended` runs included): what CSS / theme work runs | `make e2e-visual`, `PROFILE=visual` |
 | `perf` | `@perf` (with `H3D_PERF=1 H3D_BENCH=1` for the opt-in benches) | `make e2e-perf`, `PROFILE=perf` |
 | `component` | `@component`: the `/?composer-demo` host, no 3D scene | `make e2e-component`, `PROFILE=component` |
 | `all` | everything | `SPEC=...` alone, `PROFILE=all` |
@@ -56,8 +56,8 @@ Every test's selection is visible in its source as a Playwright tag: `test(title
 | (ii) captures, tours and benches out | 27 / 25 | 946 / 79 | 281 / 5 | 11 / 10 | 28 / 2 | 1238 / 86 |
 | (iii) theme matrix reduced | 29 / 26 | 545 / 79 | 453 / 6 | 11 / 10 | 28 / 2 | 1009 / 86 |
 | (iv) duplicates removed | 29 / 26 | 540 / 79 | 453 / 6 | 11 / 10 | 26 / 2 | 1004 / 86 |
-
 | (vi) the narrow Hire audit joins smoke | 30 / 26 | 540 / 79 | 453 / 6 | 11 / 10 | 26 / 2 | 1004 / 86 |
+| (vii) `@theme`: visual also runs the 9 representative audits and 2 routine combinations | 30 / 26 | 540 / 79 | 464 / 6 | 11 / 10 | 26 / 2 | 1004 / 86 |
 
 Since 1236 → 1004 discovered cases: 232 removed by merging or deleting (229 from the theme matrix, 5 duplicates, +2 from
 splitting the two mixed perf cases). Captures, audits and benches (464) left the routine selection; `make e2e` runs 30.
@@ -167,7 +167,7 @@ assertion lives now.
 | `m6-crew.spec.ts` "frame budget: crew parts are instanced, …" | perf (the draw-call bench) | Split: new functional `m6-crew.spec.ts` "crew parts are instanced: one mesh per part kind for the floor, none on a floor without a run or once nobody is crew" keeps every mesh assertion without the bench. |
 | `m98-monitor.spec.ts` "a floor of 60 desks animates every card …; one draw for all of them" | split | The functional case keeps its ledger, canvas-draw, texture and one-mesh / zero-mesh assertions (title now "… one mesh for all of them"); the draw-call and frame-time comparison is the new perf case "bench: the cards of a 60-desk floor cost a draw or two …". |
 
-### The theme matrix (`ui-theme.spec.ts`, 433 → 204: 2 smoke, 32 extended, 172 visual)
+### The theme matrix (`ui-theme.spec.ts`, 433 → 204: 2 smoke, 32 extended, 172 visual only; the visual profile runs 183)
 
 The five generated families were one full game boot per surface per check. They are now one boot per surface and
 viewport that runs every check of that viewport (`expect.soft`, so one run reports all of them), "audit at <size>:
@@ -182,10 +182,10 @@ viewport that runs every check of that viewport (`expect.soft`, so one run repor
 | "focus at 390x844: …" (54) | merged | "audit at 390x844: <surface> …" (focus ring) |
 | "layout at 390px wide: <surface> …" (54) | merged | "audit at 390x844: <surface> …" (overflow) |
 | "layout at 200% browser zoom (640x360): <surface> …" (54) | merged | "audit at 200% browser zoom (640x360): <surface> …" |
-| the audits above, per family | extended | Representatives: 1280x720 settings, hire, seat-transcript, seat-terminal, board-issues, overview, whiteboard (the issue's component families); 390x844 hire; 640x360 settings. Every other surface’s audit (157) is `@visual`. |
+| the audits above, per family | extended | Representatives: 1280x720 settings, hire, seat-transcript, seat-terminal, board-issues, overview, whiteboard (the issue's component families); 390x844 hire; 640x360 settings. Every other surface’s audit (157) is `@visual`. Every audit is `@theme` too, so `make e2e-visual` runs all 166 (`make e2e-list PROFILE=visual SPEC=e2e/ui-theme.spec.ts GREP='audit at'`). |
 | "Settings → Appearance (This browser): a labelled UI theme radio group of exactly Quiet and Ubuntu, Quiet selected, the exact copy" | deleted | Copy, legend, hint, labels, descriptions, the store and Quiet for a fresh browser: `src/ui/appearanceSection.dom.test.ts` "is a browser-scoped section titled Appearance …", "has Quiet selected for a fresh browser"; the copy in `src/ui/uiTheme.test.ts` "are exactly Quiet and Ubuntu, …"; transcript/terminal-only picks leave the UI Quiet: `src/ui/themePrefs.test.ts` "is Quiet for a fresh browser and for one with only transcript or terminal picks; …". The wiring is the smoke keyboard test. |
 | "missing, invalid, blocked and throwing storage is safe: …" | reduced | The four invalid-value page boots are gone: invalid / missing values in `src/ui/themePrefs.test.ts` "falls back to Quiet for a missing or invalid stored value" (now also `UBUNTU`) and, **added**, the pre-frame script of `index.html` in `src/ui/uiTheme.test.ts` "the pre-frame UI theme script in index.html": only a stored `ubuntu` marks the root, blocked or throwing storage is left alone. The integrated throwing-storage start-up stays: "blocked and throwing storage is safe: Quiet at start-up, …" (extended). |
-| "combination ui=… transcript=… terminal=…" (8) | 2 extended, 6 visual | `ubuntu/quiet/ubuntu` and `quiet/ubuntu/quiet` (every pick apart from its neighbour) run in every functional run; all eight with `make e2e-visual`. |
+| "combination ui=… transcript=… terminal=…" (8) | 2 extended, 6 visual | `ubuntu/quiet/ubuntu` and `quiet/ubuntu/quiet` (every pick apart from its neighbour) run in every functional run; all eight are `@theme`, so `make e2e-visual` runs all eight (`make e2e-list PROFILE=visual SPEC=e2e/ui-theme.spec.ts GREP=combination`: 8). |
 | "layout at 1280x720: the seated conversation’s timeline and prompt box …" | visual | The 200% zoom case of the same check stays extended. |
 | "view zoom and a mode switch leave the shell’s fonts, colours and sizes unchanged (Ubuntu UI)" | visual | Fine-grained theme regression for CSS work; the transcript zoom one ("transcript zoom 100 → 200 leaves the seated widgets …") stays extended. |
 | "the completion popup’s commands and paths are the UI’s Ubuntu Mono at 14px …" | visual | Popup behaviour: `composer-complete.spec.ts` (component), `h141-file-chips.spec.ts`. |

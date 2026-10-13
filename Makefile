@@ -133,8 +133,8 @@ e2e-extended: PROFILE = extended
 e2e-extended: game-build
 	$(E2E_RUN)
 
-## e2e-visual: build, then the @visual tests: theme captures (game/test-results/ui-theme/), the per-surface theme audit,
-## screenshot tours; for CSS / theme work
+## e2e-visual: build, then the @visual and @theme tests: theme captures (game/test-results/ui-theme/), every per-surface
+## theme audit and all 8 theme combinations (the extended representatives too), screenshot tours; for CSS / theme work
 e2e-visual: PROFILE = visual
 e2e-visual: game-build
 	$(E2E_RUN)

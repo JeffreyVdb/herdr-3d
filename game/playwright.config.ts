@@ -3,7 +3,8 @@ import { defineConfig } from '@playwright/test';
 // #42: which tests a run selects, by the tags in their source (`test(title, { tag: '@smoke' }, ...)`). H3D_E2E_PROFILE:
 //   smoke     (the default) the essential journeys tagged @smoke: what `make e2e` and `pnpm e2e` run
 //   extended  every test but the @visual and @perf ones (smoke included): broader functional coverage
-//   visual    @visual: the theme captures and audits, screenshot tours
+//   visual    @visual and @theme: the theme captures, every per-surface theme audit and all 8 theme combinations (@theme:
+//             the representatives extended runs too), screenshot tours: what CSS / theme work runs
 //   perf      @perf: frame benches and long-task measurements (the H3D_PERF / H3D_BENCH ones need those set too)
 //   component @component: the browser component host (/?composer-demo), no 3D scene
 //   all       every test of the files named (what `make e2e SPEC=...` uses)
@@ -12,7 +13,7 @@ import { defineConfig } from '@playwright/test';
 const PROFILES = {
   smoke: { grep: /@smoke\b/ },
   extended: { grepInvert: /@(visual|perf)\b/ },
-  visual: { grep: /@visual\b/ },
+  visual: { grep: /@(visual|theme)\b/ },
   perf: { grep: /@perf\b/ },
   component: { grep: /@component\b/ },
   all: {},

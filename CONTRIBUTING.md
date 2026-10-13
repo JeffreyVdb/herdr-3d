@@ -104,7 +104,7 @@ make e2e               # build, then the smoke suite: the 30 essential journeys 
 make e2e SPEC=e2e/m6b.spec.ts   # every test of that spec, whatever its tags (same lock and portlease)
 make e2e-prebuilt      # the same against the bundle already in game/dist (no build; same lock and portlease; SPEC= PROFILE= GREP= too)
 make e2e-extended      # on request: every functional test (all but @visual and @perf; the old full suite minus captures and benches)
-make e2e-visual        # on request: theme captures (game/test-results/ui-theme/), the per-surface theme audit, screenshot tours
+make e2e-visual        # on request (CSS / theme work): theme captures (game/test-results/ui-theme/), every per-surface theme audit, all 8 theme combinations, screenshot tours
 make e2e-perf          # on request: frame benches and long-task measurements (sets H3D_PERF=1 H3D_BENCH=1), minutes each
 make e2e-component     # the composer in its test-only host (/?composer-demo), no 3D scene
 make e2e-list          # list a selection without building, leasing a port or starting a browser (PROFILE= SPEC= GREP=)
@@ -118,7 +118,9 @@ make browsers          # download the Chromium revision the pinned Playwright ex
   `e2e-perf` and the live suites (`pnpm -C game test:live*`, `make integration`, `make codex-shared-*`) are for a task
   that asks for them (CSS / theme work: `e2e-visual`; a frame-budget change: `e2e-perf`).
 - Selection is by Playwright tags in the specs (`test(title, { tag: '@smoke' }, ...)`): `@smoke`, `@visual`, `@perf`,
-  `@component`; an untagged test is in `extended` only. `H3D_E2E_PROFILE` (smoke by default, so `pnpm -C game e2e` is
+  `@component`, `@theme`; an untagged test is in `extended` only. `@theme` marks every per-surface theme audit and theme
+  combination: the `visual` profile selects `@visual` and `@theme`, so `make e2e-visual` runs all of them, the
+  representatives `extended` runs too (`@theme` alone keeps a test in `extended`). `H3D_E2E_PROFILE` (smoke by default, so `pnpm -C game e2e` is
   smoke too) picks one in `game/playwright.config.ts`; make passes `PROFILE=`. `SPEC=` alone runs every test of the
   file (profile `all`); with `PROFILE=` only that profile's tests of it; `GREP=<regex>` narrows further by title or tag
   (`make e2e-prebuilt SPEC=e2e/ui-theme.spec.ts GREP='audit at 390'`). A new test is untagged (extended) unless it is an
@@ -147,7 +149,7 @@ make browsers          # download the Chromium revision the pinned Playwright ex
 - M17: every spec's `openGame` pins the time (`&time=2026-09-30T12:00`, `NOON` in `e2e/game.ts`) unless the test passes its
   own `time=`, and `make shot` goes through it: no spec reads the wall clock's daylight. A test of the real clock fixes
   the browser's clock with `page.clock.setFixedTime` and its zone with `timezoneId` (`e2e/m17-daynight.spec.ts`).
-- #216: the application UI theme (Quiet / Ubuntu): a stylesheet change must keep Quiet as it was, so `node tools/ui-quiet-check.mjs <css files>` (from `game/`) expands the Quiet tokens and diffs each file against the commit before #216 (no output hunk but a deliberate one). `e2e/ui-theme-shots.spec.ts` writes a screenshot of every surface in Quiet and Ubuntu, at 1280 and 390 px, to `game/test-results/ui-theme/<set>/<size>/` (`make e2e-visual SPEC=e2e/ui-theme-shots.spec.ts`; `H3D_UI_SET=before-quiet` with `H3D_DIST=<a build of the earlier commit>` and `make e2e-prebuilt` records the "before" set), and `node tools/ui-shot-diff.mjs <before> <after>` says how much of each differs. `e2e/ui-surfaces.ts` lists the surfaces once for those screenshots and for `e2e/ui-theme.spec.ts`'s per-surface audit (palette leftovers, contrast, targets, focus rings, narrow and zoomed layout, one boot per surface and size; a representative per component family runs in `extended`, every surface in `make e2e-visual`): a new dialog or panel belongs in it.
+- #216: the application UI theme (Quiet / Ubuntu): a stylesheet change must keep Quiet as it was, so `node tools/ui-quiet-check.mjs <css files>` (from `game/`) expands the Quiet tokens and diffs each file against the commit before #216 (no output hunk but a deliberate one). `e2e/ui-theme-shots.spec.ts` writes a screenshot of every surface in Quiet and Ubuntu, at 1280 and 390 px, to `game/test-results/ui-theme/<set>/<size>/` (`make e2e-visual SPEC=e2e/ui-theme-shots.spec.ts`; `H3D_UI_SET=before-quiet` with `H3D_DIST=<a build of the earlier commit>` and `make e2e-prebuilt` records the "before" set), and `node tools/ui-shot-diff.mjs <before> <after>` says how much of each differs. `e2e/ui-surfaces.ts` lists the surfaces once for those screenshots and for `e2e/ui-theme.spec.ts`'s per-surface audit (palette leftovers, contrast, targets, focus rings, narrow and zoomed layout, one boot per surface and size; a representative per component family runs in `extended`, every surface, with all 8 theme combinations, in `make e2e-visual`): a new dialog or panel belongs in it.
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
 - CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test and the darwin cross-build only when a branch changes a Go input against main (`cmd/`, `internal/`, `game/fixtures/`, `go.mod`/`go.sum`, the Makefile, the workflow); pushes to main always run them. tsc and vitest run only when a branch changes a game input (`game/`, `docs/shortcuts.md`, `internal/whiteboard/testdata/`, the Makefile, the workflow). The shell deploy test always runs. No Playwright in CI.

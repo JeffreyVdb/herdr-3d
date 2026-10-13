@@ -9,7 +9,8 @@ import { strays, targets, textSamples } from './ui-theme-probe';
 // computed palette anchors, contrast on the rendered surfaces, the eight UI x transcript x terminal combinations, and
 // the narrow / zoomed / forced-colors / reduced-motion / touch layouts. The screenshots are ui-theme-shots.spec.ts.
 // #42: the per-surface audit and the finer state checks are @visual (make e2e-visual); a representative of each runs in
-// every functional run (docs/research/e2e-selection.md).
+// every functional run (docs/research/e2e-selection.md). Every audit and combination is @theme too, so make e2e-visual
+// runs all of them, the representatives included.
 
 const ALL_UBUNTU: Themes = { ui: 'ubuntu', transcript: 'ubuntu', terminal: 'ubuntu' };
 const ANCHOR = { surface: 'rgb(48, 10, 36)', chrome: 'rgb(44, 0, 30)', raised: 'rgb(59, 19, 48)', hover: 'rgb(94, 39, 80)', white: 'rgb(255, 255, 255)', orange: 'rgb(233, 84, 32)', focus: 'rgb(255, 155, 118)', text2: 'rgb(232, 213, 226)', text3: 'rgb(205, 177, 198)' };
@@ -354,10 +355,10 @@ const COMBOS: Themes[] = [];
 for (const ui of ['quiet', 'ubuntu'] as UiTheme[]) for (const transcript of ['quiet', 'ubuntu'] as UiTheme[]) for (const terminal of ['quiet', 'ubuntu'] as UiTheme[]) COMBOS.push({ ui, transcript, terminal });
 
 // #42: two combinations in every functional run, each pick apart from its neighbour (Ubuntu UI over Quiet transcript and
-// Ubuntu terminal, and the reverse); all eight are @visual.
+// Ubuntu terminal, and the reverse); the other six are @visual. All eight are @theme, so the visual profile runs them all.
 const ROUTINE_COMBOS = ['ubuntu quiet ubuntu', 'quiet ubuntu quiet'];
 for (const c of COMBOS) {
-  const tag = ROUTINE_COMBOS.includes(`${c.ui} ${c.transcript} ${c.terminal}`) ? [] : ['@visual'];
+  const tag = ROUTINE_COMBOS.includes(`${c.ui} ${c.transcript} ${c.terminal}`) ? ['@theme'] : ['@theme', '@visual'];
   test(`combination ui=${c.ui} transcript=${c.transcript} terminal=${c.terminal}: independent selections, each surface in its own fonts and colours`, { tag }, async ({ page }) => {
     test.setTimeout(240_000);
     const clean = watchErrors(page);
@@ -890,8 +891,8 @@ test('states: inside the transcript the composer’s Send, the selected tab and 
 
 // ---- the per-surface audit: palette, contrast, targets, focus and layout after one boot ----------------------------
 // #42: one page per surface and viewport for every check that reads it (they were a test each). A representative of
-// each component family runs in every functional run; the whole inventory is the @visual profile (make e2e-visual),
-// for CSS and theme work.
+// each component family runs in every functional run; the whole inventory (@theme) is in the visual profile (make
+// e2e-visual), for CSS and theme work.
 
 /** Every keyboard-operable widget of `root`, focused forwards then backwards: those without the issue's ring (3px #FF9B76, 2px outside), or with it clipped or covered; null when there is none. */
 async function focusRings(page: Page, root: string): Promise<string[] | null> {
@@ -1020,7 +1021,7 @@ const AUDIT_SIZES: Record<AuditSize, { label: string; size: { width: number; hei
   narrow: { label: '390x844', size: NARROW, checks: 'no sideways overflow or clipped control; the focus ring on every operable widget, never clipped' },
   zoomed: { label: '200% browser zoom (640x360)', size: ZOOMED, checks: 'no sideways overflow or clipped control' },
 };
-/** The family representatives every functional run audits (Settings and Hire, the seat's transcript and terminal, board and overview, the whiteboard); the rest are @visual. */
+/** The family representatives every functional run audits (Settings and Hire, the seat's transcript and terminal, board and overview, the whiteboard); the rest are @visual only. */
 const AUDITED: Record<AuditSize, string[]> = {
   desktop: ['settings', 'hire', 'seat-transcript', 'seat-terminal', 'board-issues', 'overview', 'whiteboard'],
   narrow: ['hire'],
@@ -1030,8 +1031,9 @@ const AUDITED: Record<AuditSize, string[]> = {
 for (const kind of ['desktop', 'narrow', 'zoomed'] as AuditSize[]) {
   const { label, size, checks } = AUDIT_SIZES[kind];
   for (const s of SURFACES.filter((x) => kind === 'desktop' || !x.skipNarrow)) {
-    // The narrow Hire audit is the smoke run's one narrow layout / keyboard-focus journey.
-    const tag = !AUDITED[kind].includes(s.name) ? ['@visual'] : kind === 'narrow' ? ['@smoke'] : [];
+    // The narrow Hire audit is the smoke run's one narrow layout / keyboard-focus journey. Every audit is @theme, so the
+    // visual profile runs every surface's, the representatives too.
+    const tag = ['@theme', ...(!AUDITED[kind].includes(s.name) ? ['@visual'] : kind === 'narrow' ? ['@smoke'] : [])];
     test(`audit at ${label}: ${s.name} in Ubuntu: ${checks}`, { tag }, async ({ page }) => {
       test.setTimeout(360_000);
       const clean = watchErrors(page);
