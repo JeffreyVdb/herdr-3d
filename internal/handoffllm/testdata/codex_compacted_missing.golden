@@ -1,0 +1,31 @@
+=== note: conversation compacted here (Codex): no summary was recorded ===
+
+=== #1 user 2026-10-12T09:02:06Z ===
+Continue: finish the migration script.
+
+=== #2 assistant (final reply) 2026-10-12T09:02:07Z ===
+Migration script finished and dry-run clean.
+
+
+-------- coverage --------
+{
+  "Bytes": 254,
+  "EstTokens": 85,
+  "Coverage": {
+    "Messages": 2,
+    "Kept": 2,
+    "Omitted": null,
+    "Compaction": "missing",
+    "Gaps": [
+      "Codex compaction summary not readable; the history before it is reduced from the rows the transcript still holds",
+      "pre-compaction assistant replies unavailable (Codex)"
+    ],
+    "Abandoned": 0,
+    "Sidechains": 0,
+    "Deduplicated": 0,
+    "Skipped": 0,
+    "Complete": false
+  },
+  "Artifacts": null,
+  "Redactions": {}
+}
