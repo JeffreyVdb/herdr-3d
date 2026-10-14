@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -349,6 +350,133 @@ func TestReadEvidenceOutcome(t *testing.T) {
 			}
 			if c.keepsRunning && !slices.ContainsFunc(ev.lines, func(l string) bool { return runningLine.MatchString(l) }) {
 				t.Errorf("the running line was not kept: %q", ev.lines)
+			}
+		})
+	}
+}
+
+// codexRun is a synthetic Codex transcript of one turn: an apply_patch
+// edit of main.go and a shell command (go test, git commit, gh pr create),
+// each with its output and an exec_command_end carrying its exit, the exit
+// before the output when exitFirst.
+func codexRun(t *testing.T, prompt, patchOut, cmdOut string, exit int, exitFirst bool) string {
+	t.Helper()
+	cmd := `go test ./... && git commit -am "fix" && gh pr create --fill`
+	args, _ := json.Marshal(map[string]string{"cmd": cmd})
+	rows := []map[string]any{
+		{"type": "session_meta", "payload": map[string]any{"id": "00000000-0000-4000-8000-0000000000ee", "source": "cli"}},
+		{"type": "response_item", "payload": map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": prompt}}}},
+	}
+	call := func(id string, item, out map[string]any) {
+		end := map[string]any{"type": "event_msg", "payload": map[string]any{"type": "exec_command_end", "call_id": id, "exit_code": exit}}
+		item["call_id"], out["call_id"] = id, id
+		rows = append(rows, map[string]any{"type": "response_item", "payload": item})
+		if exitFirst {
+			rows = append(rows, end)
+		}
+		rows = append(rows, map[string]any{"type": "response_item", "payload": out})
+		if !exitFirst {
+			rows = append(rows, end)
+		}
+	}
+	call("call_p",
+		map[string]any{"type": "custom_tool_call", "name": "apply_patch", "input": "*** Begin Patch\n*** Update File: main.go\n@@\n-a\n+b\n*** End Patch\n"},
+		map[string]any{"type": "custom_tool_call_output", "output": patchOut})
+	call("call_c",
+		map[string]any{"type": "function_call", "name": "exec_command", "arguments": string(args)},
+		map[string]any{"type": "function_call_output", "output": cmdOut})
+	rows = append(rows, map[string]any{"type": "response_item", "payload": map[string]any{"type": "message", "role": "assistant", "phase": "final_answer", "content": []any{map[string]any{"type": "output_text", "text": "Done: see the command output."}}}})
+	var b []byte
+	for _, r := range rows {
+		l, err := json.Marshal(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b = append(append(b, l...), '\n')
+	}
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+const (
+	runCmd    = `go test ./... && git commit -am "fix" && gh pr create --fill`
+	runCommit = "1a2b3c4"
+	runPR     = "https://github.com/example/app/pull/42"
+)
+
+// TestReduceExitOrderSettlesAlike: a call's exit (Codex's exec_command_end)
+// may come before or after its output; either way the call settles the same
+// — its edit and test verified only on success, a failure in the output or
+// a non-zero exit winning over any success — and the commits and pull
+// requests its output shows are kept, verified.
+func TestReduceExitOrderSettlesAlike(t *testing.T) {
+	const (
+		patched = "Success. Updated the following files:\nM main.go\n"
+		shipped = "ok  \texample.com/app\t0.10s\n[main " + runCommit + "] fix\n 1 file changed\n" + runPR + "\n"
+	)
+	cases := []struct {
+		name             string
+		patchOut, cmdOut string
+		exit             int
+		ok               bool
+	}{
+		{"success", patched, shipped, 0, true},
+		{"empty output, exit 0", "", "[main " + runCommit + "] fix\n" + runPR + "\n", 0, true},
+		{"failure despite exit 0", "apply_patch verification failed: no such hunk", "--- FAIL: TestX (0.00s)\n[main " + runCommit + "] fix\n" + runPR + "\n", 0, false},
+		{"success despite exit 1", patched, shipped, 1, false},
+	}
+	for _, c := range cases {
+		var settled []Artifact
+		for _, exitFirst := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/exitFirst=%v", c.name, exitFirst), func(t *testing.T) {
+				p, err := reduceFile(t, harnessCodex, codexRun(t, "Fix it and open a PR.", c.patchOut, c.cmdOut, c.exit, exitFirst), 64<<10)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, want := range []Artifact{
+					{"file", "main.go", c.ok}, {"test", runCmd, c.ok},
+					{"commit", runCommit, true}, {"pr", runPR, true},
+				} {
+					if a, ok := artifact(p, want.Kind, want.Ref); !ok || a.Verified != want.Verified {
+						t.Errorf("%s %s: got %+v (found %v), want verified %v", want.Kind, want.Ref, a, ok, want.Verified)
+					}
+				}
+				if settled != nil && !slices.Equal(p.Artifacts, settled) {
+					t.Errorf("artifacts differ by event order:\n%+v\n%+v", settled, p.Artifacts)
+				}
+				settled = p.Artifacts
+			})
+		}
+	}
+}
+
+// TestReduceExitFirstArtifactsSurviveBudget: when the budget leaves the
+// tool evidence out of the Text, the commit and pull request the output
+// showed are still artifacts (the facts the prompt is told), whichever of
+// exit and output came first.
+func TestReduceExitFirstArtifactsSurviveBudget(t *testing.T) {
+	const budget = 16 << 10
+	// Long enough that the pinned prompt and final reply leave no room for
+	// the tool evidence, short enough that they fit (~1455-1480 repeats).
+	prompt := "Fix it and open a PR." + strings.Repeat(" constraint", 1470)
+	shipped := "ok  \texample.com/app\t0.10s\n[main " + runCommit + "] fix\n" + runPR + "\n"
+	for _, exitFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("exitFirst=%v", exitFirst), func(t *testing.T) {
+			p, err := reduceFile(t, harnessCodex, codexRun(t, prompt, "Success. Updated the following files:\nM main.go\n", shipped, 0, exitFirst), budget)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasNot(t, p.Text, runCommit, "/pull/42")
+			if len(p.Coverage.Omitted) == 0 {
+				t.Errorf("nothing omitted: %+v", p.Coverage)
+			}
+			for _, want := range []Artifact{{"file", "main.go", true}, {"test", runCmd, true}, {"commit", runCommit, true}, {"pr", runPR, true}} {
+				if a, ok := artifact(p, want.Kind, want.Ref); !ok || !a.Verified {
+					t.Errorf("lost verified %s %s: %+v", want.Kind, want.Ref, p.Artifacts)
+				}
 			}
 		})
 	}

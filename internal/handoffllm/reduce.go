@@ -268,9 +268,10 @@ func (m *msg) hasEvidence() bool {
 // result status and the bounded evidence kept from its result.
 type tool struct {
 	name, input string
-	status      string // "" (no result read) or a status of the result (statusOK…, "exit N")
-	failing     bool   // the result showed a failure
-	exit        *int   // the exit status the harness reported apart from the result
+	status      string    // "" (no result read) or a status of the result (statusOK…, "exit N")
+	failing     bool      // the result showed a failure
+	out         *evidence // what the result showed (nil: no result read)
+	exit        *int      // the exit status the harness reported apart from the result
 	evidence    []string
 	red, evRed  map[string]int
 	// What the call would produce (files it edits, the test run it is):
@@ -377,70 +378,86 @@ func (b *builder) runsTests(t *tool, cmd string) {
 	}
 }
 
-// result reads a tool's result into the call's status and evidence; the
-// artifacts it shows (commits, pull requests) are verified, and the call's
-// own when the result shows it succeeded (a test: that it ran and passed).
+// result reads a tool's result into the call's evidence. What it settles
+// (status, artifacts) waits for settle: an exit the harness reports apart
+// from the output may come before or after it.
 func (b *builder) result(id, text string, failed bool) {
 	t := b.calls[id]
 	if t == nil {
 		return
 	}
 	ev := readEvidence(text, failed)
-	t.status, t.evidence, t.failing = ev.status, ev.lines, ev.failing
-	if t.exit != nil {
-		b.exited(t) // the exit came first
-		return
+	if t.out != nil { // a result read again: what the first showed made stays observed
+		ev.commits = append(t.out.commits, ev.commits...)
+		ev.urls = append(t.out.urls, ev.urls...)
 	}
-	for _, f := range t.files {
-		b.arts.add("file", f, ev.ok())
-	}
-	if t.test != "" {
-		b.arts.set("test", t.test, ev.testPassed())
-	}
-	for _, c := range ev.commits {
-		b.arts.add("commit", c, true)
-	}
-	for _, u := range ev.urls {
-		b.arts.add(urlKind(u), u, true)
-	}
+	t.out, t.evidence, t.failing = &ev, ev.lines, ev.failing
 }
 
 // exit records an exit status a harness reported apart from the output
 // (Codex's exec_command_end): the command ended, whatever its output said.
 func (b *builder) exit(id string, code int) {
-	t := b.calls[id]
-	if t == nil {
-		return
+	if t := b.calls[id]; t != nil {
+		t.exit = &code
 	}
-	t.exit = &code
-	b.exited(t)
 }
 
-// exited settles a call by its reported exit: an exit 0 is a success unless
-// its output showed a failure.
-func (b *builder) exited(t *tool) {
-	ok := *t.exit == 0 && !t.failing
-	switch {
-	case *t.exit != 0:
-		t.status = fmt.Sprintf("exit %d", *t.exit)
-	case ok:
-		t.status = statusOK
+// settle reads a call's outcome once its result and exit are both read,
+// whichever came first: its status, and its artifacts — the ones its
+// result shows (commits, pull requests) are verified, and the call's own
+// when it succeeded (a test: that it ran and passed). An exit 0 is a
+// success unless the output showed a failure; without an exit, the result
+// must show the success.
+func (b *builder) settle(t *tool) {
+	if t.out == nil && t.exit == nil {
+		return // no result read: the call's own stay unverified
+	}
+	ok, passed := false, false
+	if t.out != nil {
+		t.status = t.out.status
+		ok, passed = t.out.ok(), t.out.testPassed()
+	}
+	if t.exit != nil {
+		ok = *t.exit == 0 && !t.failing
+		passed = ok
+		switch {
+		case *t.exit != 0:
+			t.status = fmt.Sprintf("exit %d", *t.exit)
+		case ok:
+			t.status = statusOK
+		}
 	}
 	for _, f := range t.files {
 		b.arts.add("file", f, ok)
 	}
 	if t.test != "" {
-		b.arts.set("test", t.test, ok)
+		b.arts.set("test", t.test, passed)
+	}
+	if t.out != nil {
+		for _, c := range t.out.commits {
+			b.arts.add("commit", c, true)
+		}
+		for _, u := range t.out.urls {
+			b.arts.add(urlKind(u), u, true)
+		}
 	}
 }
 
-// finish marks the final reply, then cleans and scrubs every kept string
-// (the text whole, then again after a clip) and the artifacts' refs.
+// finish marks the final reply, settles every call, then cleans and
+// scrubs every kept string (the text whole, then again after a clip) and
+// the artifacts' refs.
 func (b *builder) finish() {
 	for i := len(b.entries) - 1; i >= 0; i-- {
 		if m := b.entries[i].m; m != nil && m.role == roleAssistant && strings.TrimSpace(m.raw.String()) != "" {
 			m.final = true
 			break
+		}
+	}
+	for _, e := range b.entries {
+		if e.m != nil {
+			for _, t := range e.m.tools {
+				b.settle(t)
+			}
 		}
 	}
 	for _, e := range b.entries {
