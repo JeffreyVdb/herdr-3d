@@ -3915,7 +3915,8 @@ fit the budget; the transcript changed; a subagent's or an empty one).
    never the instruction, the transcript or the document) as `running`; the ack is `{job, existing?}` at once and the
    job follows on **`Worker.llm_handoff`**: `{op, state, code?, message?, started_at, updated_at, model?, host?,
    send_home?, handoff?, send_home_result?, send_home_reason?}`, `state` `queued`, `running`, `filed`, `failed` or
-   `cancelled`.
+   `cancelled`. The job and its audit row are stored together: when either cannot be, the command fails (`internal`)
+   with nothing stored or sent, and the op may be used again.
 3. **Reduce** (off the hub): the candidate checked to be the transcript's latest completed reply still, then the
    snapshot up to it (where the bridge read that reply to end) reduced and scrubbed within `input_bytes`
    (`internal/handoffllm`, its policy in `internal/handoffllm/doc.go`: the active branch only, no sidechains or

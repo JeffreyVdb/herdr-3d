@@ -515,15 +515,23 @@ func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command,
 	j := &llmJob{model: model, host: host, row: store.HandoffLLMJob{Op: a.Op, WorkerID: w.ID, Floor: w.Session, AgentSession: w.AgentSession,
 		Candidate: hc.c.ID, ArgsHash: hash, Config: svc.Fingerprint(), PromptVersion: handoffllm.PromptVersion, SendHome: a.SendHome,
 		State: store.HandoffJobRunning, CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}}
-	if err := h.st.AddHandoffLLMJob(ctx, j.row); err != nil {
-		if errors.Is(err, store.ErrRequestTaken) {
-			return fmt.Errorf("%w: op %q was used for another handoff", handoff.ErrOpReused, a.Op)
-		}
-		return err
-	}
+	// The audit row first, then the job row, then nothing that can fail
+	// before the job runs: a stored running job always has its goroutine.
+	// When either insert fails nothing is stored, nothing was sent, and the
+	// op may be used again (D6).
 	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, auditArgs(cmd))
 	if err != nil {
 		return err
+	}
+	if err := h.st.AddHandoffLLMJob(ctx, j.row); err != nil {
+		if errors.Is(err, store.ErrRequestTaken) {
+			err = fmt.Errorf("%w: op %q was used for another handoff", handoff.ErrOpReused, a.Op)
+		}
+		if e := h.st.AuditEnd(ctx, auditID, err, nil); e != nil {
+			h.log.Error("audit log write failed", "err", e)
+		}
+		h.reply(c, cmd, nil, err) // its audit row is the one begun
+		return nil
 	}
 	jctx, cancel := context.WithCancel(ctx)
 	j.cancel = cancel

@@ -2,7 +2,9 @@ package server_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -432,6 +434,74 @@ func TestLLMHandoffIdempotencyBusyAndCancel(t *testing.T) {
 	}
 	if all, _ := lb.st.AllHandoffs(context.Background()); len(all) != 0 {
 		t.Fatalf("filed %+v", all)
+	}
+	lb.noLeak(t, c)
+}
+
+// The job row and its audit row begin together: when either insert fails
+// the command fails, nothing is stored or sent, no running job is left
+// behind, and the op may be used again (D6).
+func TestLLMHandoffAuditFailureLeavesNoJob(t *testing.T) {
+	t.Parallel()
+	lb := newLLMBridge(t, yes(), nil)
+	c := lb.connect(proto.Hello{})
+	c.snapshot()
+	id := lb.ids["w1"]
+	cand := lb.candidate(t, c)
+	db, err := sql.Open("sqlite", "file:"+lb.db+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	exec := func(q string) {
+		t.Helper()
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := context.Background()
+	for _, f := range []struct{ table, when string }{
+		{"audit_log", "NEW.cmd = '" + proto.CmdWorkerHandoff + "'"},
+		{"handoff_llm_job", "1"},
+	} {
+		table := f.table
+		t.Run(table, func(t *testing.T) {
+			op := "op-" + table
+			exec(`CREATE TRIGGER fail_insert BEFORE INSERT ON ` + table + ` WHEN ` + f.when + ` BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
+			c.mustError(proto.CmdWorkerHandoff, llmArgs(id, cand, op), proto.ErrInternal)
+			exec(`DROP TRIGGER fail_insert`)
+			if _, err := lb.st.HandoffLLMJobByOp(ctx, op); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("job stored: %v", err)
+			}
+			log, _ := lb.st.AuditLog(ctx)
+			n := 0
+			for _, e := range log {
+				if e.Cmd == proto.CmdWorkerHandoff && strings.Contains(e.Args, op) {
+					n++
+					if e.OK || !e.Done {
+						t.Fatalf("audit row %+v", e)
+					}
+				}
+			}
+			if table == "handoff_llm_job" && n != 1 {
+				t.Fatalf("%d audit rows for the failed command, want its begun one", n)
+			}
+			if n := len(lb.llm.llm.Calls()); n != 0 {
+				t.Fatalf("%d LLM calls", n)
+			}
+			if n := len(lb.reduce.calls); n != 0 {
+				t.Fatalf("%d reductions", n)
+			}
+		})
+	}
+	// Nothing is running: the op is used again and the handoff is written.
+	_, m := c.command(proto.CmdWorkerHandoff, "retry", llmArgs(id, cand, "op-audit_log"))
+	if r := ackData[proto.WorkerHandoffJobResult](t, m); r.Existing || r.Job.State != proto.LLMHandoffRunning {
+		t.Fatalf("%s", m.raw)
+	}
+	upsertFor(c, id, llmJobState(proto.LLMHandoffFiled))
+	if n := len(lb.llm.llm.Calls()); n != 1 {
+		t.Fatalf("%d LLM calls", n)
 	}
 	lb.noLeak(t, c)
 }
