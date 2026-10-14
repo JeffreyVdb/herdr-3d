@@ -525,10 +525,10 @@ func (s *Service) ask(ctx context.Context, msgs []ai.Message, gated bool) (Resul
 	}
 	doc, err := Validate(out, outputCap(req.MaxTokens))
 	if err != nil {
-		return res, &Error{CodeInvalid, strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": ")}
+		return res, &Error{CodeInvalid, "the LLM's answer is not a handoff of the agreed shape (" + strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": ") + "); nothing was filed"}
 	}
 	if d := res.Diag; d != nil && d.CompletionTokens != nil && *d.CompletionTokens > req.MaxTokens {
-		return res, &Error{CodeInvalid, fmt.Sprintf("the answer used %d tokens, above the budget of %d", *d.CompletionTokens, req.MaxTokens)}
+		return res, &Error{CodeInvalid, fmt.Sprintf("the LLM's answer used %d tokens, above the budget of %d; nothing was filed", *d.CompletionTokens, req.MaxTokens)}
 	}
 	res.Doc = doc
 	return res, nil
@@ -601,7 +601,7 @@ func (s *Service) Test(ctx context.Context) (*TestResult, error) {
 	var fe *Error
 	switch {
 	case errors.As(err, &fe) && fe.Code == CodeInvalid:
-		out.Reason = "the LLM's handoff was not of the agreed shape: " + fe.Msg
+		out.Reason = strings.TrimSuffix(fe.Msg, "; nothing was filed")
 		return out, nil
 	case err != nil:
 		return nil, err
