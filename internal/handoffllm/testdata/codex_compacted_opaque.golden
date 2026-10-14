@@ -1,0 +1,36 @@
+=== #1 user 2026-10-12T09:01:55Z ===
+Goal: add retries to the HTTP client.
+
+=== #2 assistant 2026-10-12T09:01:56Z ===
+Added exponential backoff with 3 attempts.
+
+=== note: conversation compacted here (Codex): its summary is not readable ===
+
+=== #3 user 2026-10-12T09:02:00Z ===
+Make the attempt count configurable.
+
+=== #4 assistant (final reply) 2026-10-12T09:02:01Z ===
+RetryAttempts is now a client option (default 3).
+
+
+-------- coverage --------
+{
+  "Bytes": 423,
+  "EstTokens": 141,
+  "Coverage": {
+    "Messages": 4,
+    "Kept": 4,
+    "Omitted": null,
+    "Compaction": "opaque",
+    "Gaps": [
+      "Codex compaction summary not readable; the history before it is reduced from the rows the transcript still holds"
+    ],
+    "Abandoned": 0,
+    "Sidechains": 0,
+    "Deduplicated": 0,
+    "Skipped": 0,
+    "Complete": false
+  },
+  "Artifacts": null,
+  "Redactions": {}
+}
