@@ -8,10 +8,10 @@ import { HireDialog, type HireHost } from './hire';
 // context, and none of it ever holds the dialog: the lookups are asked only when a popup opens, answer only the popup,
 // and a reply for a context the dialog has left is never shown or put in.
 
-const prep = (cwd = '/home/test') => ({
+const prep = (cwd = '/home/test', git: Record<string, unknown> | null = null) => ({
   cwd,
   label: 'default',
-  git: null,
+  git,
   choice: { harness: 'codex', model: 'gpt', effort: 'high' },
   choice_source: 'floor_default',
   capacity: { floor: { count: 0, soft: 10, hard: 20 }, host: { count: 0, soft: 10, hard: 20 } },
@@ -26,7 +26,8 @@ interface Ask {
   settled: boolean;
 }
 
-function setup() {
+/** `git`: the opening `hire.prepare`'s repository (none: a plain folder). A folder check (`hire.prepare` with a cwd) is held, as any lookup. */
+function setup(git: Record<string, unknown> | null = null) {
   const asks: Ask[] = [];
   const host = {
     store: {
@@ -37,7 +38,7 @@ function setup() {
       repoRefs: { state: { all_buildings: false }, onChange: () => () => {} },
     },
     send: (t: string, args: Record<string, unknown>) => {
-      if (t === 'hire.prepare') return Promise.resolve({ ok: true, data: prep() });
+      if (t === 'hire.prepare' && !args.cwd) return Promise.resolve({ ok: true, data: prep('/home/test', git) });
       return new Promise<CommandResult>((res) => {
         const a: Ask = {
           t,
@@ -89,6 +90,18 @@ function type(s: string): void {
   document.getSelection()?.setBaseAndExtent(node, at + s.length, node, at + s.length);
   ed.dispatchEvent(new Event('input', { bubbles: true }));
 }
+/** A new Folder, typed (`commit`: then left, so the dialog checks it with `hire.prepare`). The First task keeps the focus. */
+function folder(v: string, commit = true): void {
+  const el = document.querySelector<HTMLInputElement>('#hire-cwd')!;
+  el.value = v;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  if (commit) el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+const skills = (...names: string[]): CommandResult => ({
+  ok: true,
+  data: { commands: names.map((name) => ({ name, description: '', argument_hint: '', kind: 'skill' })), partial: false },
+});
+const names = () => rows().map((r) => r.querySelector('.tx-cmd-name')?.textContent);
 const press = (k: string) => box().dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
 
 describe('HireDialog: completion in the First task (#39)', () => {
@@ -207,5 +220,101 @@ describe('HireDialog: completion in the First task (#39)', () => {
     expect(isOpen()).toBe(false);
     expect(dlg.lookupGeneration).toBeGreaterThan(gen + 1);
     expect(text()).not.toContain('/claude-skill');
+  });
+
+  // R1: the context is the folder the hire would get (`worker.hire`'s cwd), never the last folder checked: the Codex
+  // first prompt is translated with the skills of that folder, so a skill from another one would go in literally.
+  it('a new Folder is the context at once, while its check is pending: no reply or row of the old folder, and the hire gets the folder looked up', async () => {
+    const { dlg, of } = setup();
+    dlg.open('floor', 0);
+    await flush();
+    type('/');
+    expect(of('hire.commands').map((a) => a.args.cwd)).toEqual(['/home/test']);
+    folder('/home/other');
+    await flush();
+    expect(of('hire.prepare').map((a) => a.args.cwd)).toEqual(['/home/other']);
+    // The open popup asks again in the new folder, before its check answers.
+    expect(of('hire.commands').map((a) => a.args.cwd)).toEqual(['/home/test', '/home/other']);
+    await of('hire.commands')[0]!.answer(skills('old-checkout-only'));
+    expect(rows()).toHaveLength(0);
+    expect(status()).toBe('Loading skills…');
+    await of('hire.commands')[1]!.answer(skills('other-skill'));
+    expect(names()).toEqual(['/other-skill']);
+    press('Enter');
+    expect(text()).toBe('/other-skill ');
+    press('Enter');
+    await flush();
+    await flush();
+    const hire = of('worker.hire')[0]!.args;
+    expect(hire).toMatchObject({ cwd: '/home/other', prompt: '/other-skill ' });
+    expect(hire.cwd).toBe(of('hire.commands')[1]!.args.cwd);
+    expect(of('hire.prepare')[0]!.settled).toBe(false);
+  });
+
+  it('the Folder typed and left, then /: asks the new folder, never the checked one (the review’s case)', async () => {
+    const { dlg, of } = setup();
+    dlg.open('floor', 0);
+    await flush();
+    const gen = dlg.lookupGeneration;
+    document.querySelector<HTMLInputElement>('#hire-cwd')!.focus();
+    folder('/home/other');
+    type('/');
+    expect(dlg.lookupGeneration).toBeGreaterThan(gen);
+    expect(of('hire.commands').map((a) => a.args)).toEqual([{ session: 'floor', harness: 'codex', cwd: '/home/other' }]);
+    // A row listed before the next keystroke of the Folder is not put in after it.
+    await of('hire.commands')[0]!.answer(skills('other-skill'));
+    expect(names()).toEqual(['/other-skill']);
+    folder('/home/otherwise', false);
+    press('Enter');
+    expect(text()).not.toContain('/other-skill');
+    expect(of('hire.prepare')[0]!.settled).toBe(false);
+  });
+
+  it('the Folder cleared back to the floor’s default: the lookups and the hire leave the folder to the bridge', async () => {
+    const { dlg, of } = setup();
+    dlg.open('floor', 0);
+    await flush();
+    folder('/home/other');
+    await of('hire.prepare')[0]!.answer({ ok: true, data: prep('/home/other') });
+    type('/');
+    expect(of('hire.commands').map((a) => a.args.cwd)).toEqual(['/home/other']);
+    // Cleared (a change of an empty Folder checks nothing): the checked folder is no longer the hire's.
+    folder('');
+    await flush();
+    expect(of('hire.prepare')).toHaveLength(1);
+    expect(of('hire.commands')).toHaveLength(2);
+    expect(of('hire.commands')[1]!.args).toEqual({ session: 'floor', harness: 'codex' });
+    await of('hire.commands')[0]!.answer(skills('other-only'));
+    expect(rows()).toHaveLength(0);
+    await of('hire.commands')[1]!.answer(skills('home-skill'));
+    expect(names()).toEqual(['/home-skill']);
+    press('Enter');
+    press('Enter');
+    await flush();
+    await flush();
+    const hire = of('worker.hire')[0]!.args;
+    expect(hire.prompt).toBe('/home-skill ');
+    expect(hire).not.toHaveProperty('cwd');
+  });
+
+  it('the worktree box: the lookups follow it, as worker.hire’s worktree', async () => {
+    const { dlg, of } = setup({ repo_root: '/home/test', default_branch: 'main', base_sha: '1a2b3c4d', base_time: Date.now(), fetched: true });
+    dlg.open('floor', 0);
+    await flush();
+    type('/');
+    expect(of('hire.commands')[0]!.args).toEqual({ session: 'floor', harness: 'codex', cwd: '/home/test', worktree: true });
+    const wt = document.querySelector<HTMLInputElement>('#hire-worktree')!;
+    wt.checked = false;
+    wt.dispatchEvent(new Event('change'));
+    await flush();
+    expect(of('hire.commands')[1]!.args).toEqual({ session: 'floor', harness: 'codex', cwd: '/home/test' });
+    await of('hire.commands')[0]!.answer(skills('root-skill'));
+    expect(rows()).toHaveLength(0);
+    await of('hire.commands')[1]!.answer(skills('plain-skill'));
+    press('Enter');
+    press('Enter');
+    await flush();
+    await flush();
+    expect(of('worker.hire')[0]!.args).toMatchObject({ cwd: '/home/test', worktree: false, prompt: '/plain-skill ' });
   });
 });

@@ -2423,7 +2423,10 @@ the index are cached per harness and folder, so the context a dialog completed i
 translated with (below). The game asks nothing when a dialog opens: a lookup goes out only when a `/` or `@` popup
 opens, and holds only the popup ("Loading skills…", then the rows, or why it failed and "Try again"); the dialog, its
 typing and its Hire / Start run never wait for it. A change of the floor, harness, folder or worktree choice is a new
-context: the popup asks again, and a reply or a row of the old context is never shown or put in.
+context: the popup asks again, and a reply or a row of the old context is never shown or put in. The Hire dialog's
+`cwd` and `worktree` are the ones its `worker.hire` would carry at that moment: a Folder typed in is the context at once,
+before (or without) its `hire.prepare` check, and a Folder cleared sends no `cwd` (the floor's default), so the folder
+completed in is always the folder hired.
 
 `/` lists the harness's catalog (its skills, global ones too, and its commands); `@` the files of the context's folder
 only: a skill's own file outside it is not offered as a file. The popup's footers say which is which.

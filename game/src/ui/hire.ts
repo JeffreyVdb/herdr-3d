@@ -380,8 +380,8 @@ export class HireDialog {
   private readonly tabs = h('div', { class: 'dd-tabs-slot' });
   private readonly form = h('form', { class: 'dd-body', id: 'hire-form', novalidate: true });
   /**
-   * #39: what the first task's completion looks up: the floor, the harness and the checked folder (a worktree hire's
-   * repository root), once `hire.prepare` answered. Never asked before `/` or `@` opens a popup.
+   * #39: what the first task's completion looks up: the floor, the harness and the folder `worker.hire` would get now
+   * (a worktree hire's repository root), once `hire.prepare` answered. Never asked before `/` or `@` opens a popup.
    */
   private lookup: HireLookup | null = null;
   private ownCatalogs: CommandCatalogs | null = null;
@@ -539,11 +539,16 @@ export class HireDialog {
     return `Hire a worker at Desk ${this.desk + 1}`;
   }
 
-  /** #39: the key of the completion's context now (null: not prepared yet, or no harness). */
+  /**
+   * #39: the key of the completion's context now (null: not prepared yet, or no harness). Its folder and worktree are
+   * `worker.hire`'s (`hireArgs`), as typed: a Folder still being checked, or cleared back to the floor's default, is
+   * already the context (the bridge translates the first prompt with that folder's skills), never the last one checked.
+   */
   private lookupKey(): string | null {
     const p = this.prep;
     if (!this.dialog.open || !p || !this.f.harness || this.state === 'preparing' || this.state === 'failed') return (this.lookup = null);
-    this.lookup = { session: this.session, harness: this.f.harness, cwd: p.cwd, worktree: this.f.worktree && worktreeUsable(p.git) };
+    const a = hireArgs(this.session, this.desk, this.f, p.git);
+    this.lookup = { session: this.session, harness: this.f.harness, ...(a.cwd ? { cwd: a.cwd } : {}), worktree: !!a.worktree };
     return hireLookupKey(this.lookup);
   }
 
@@ -872,6 +877,8 @@ export class HireDialog {
       cwd.value = this.f.cwd;
       cwd.addEventListener('input', () => {
         this.f.cwd = cwd.value;
+        // #39: another folder is another completion context at once (its check may take a while, or never come: cleared).
+        this.lookups.check();
         this.renderActions();
       });
       // A new folder: check again whether it is a repo, and its base.

@@ -177,7 +177,7 @@ export class CompletionScope {
   }
 }
 
-/** What a hire would get, as its dialog knows it: `cwd` the checked folder (none: the floor's default). */
+/** What a hire would get, as its dialog knows it: `cwd` `worker.hire`'s, as typed (none: the floor's default). */
 export interface HireLookup {
   session: string;
   harness: string;

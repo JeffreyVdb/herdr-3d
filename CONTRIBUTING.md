@@ -1168,8 +1168,8 @@ switch between the key's connections; `e2e/h247-repo-completion.spec.ts` picks a
 the switch on, a URL from the other building.
 #39: the same `/`, `@` and `@r:` in the Hire worker First task, Start run's Extra instructions and First prompt, and the
 Prompt (P) overlay. `ui/dialogCompletion.ts` `CompletionScope` gives a composer one proxy source per trigger over the
-dialog's **lookup context**, read live: a hire's floor, harness, checked folder (`prep.cwd`) and worktree choice
-(`hireSources`: `hire.commands`, `hire.files`, `hire.repos`, see docs/protocol.md "Completion before a hire"), or the P
+dialog's **lookup context**, read live: a hire's floor, harness, and the folder and worktree choice `worker.hire` would carry
+(`hireArgs`: the Folder as typed, before its `hire.prepare` check; cleared: the floor's default; `hireSources`: `hire.commands`, `hire.files`, `hire.repos`, see docs/protocol.md "Completion before a hire"), or the P
 overlay's worker (`workerSources`: the transcript's `worker.*` sources and its shared list). Each context keeps its own
 sources (8 at most); a change bumps a generation: an open popup asks again (the new context's source is opened first),
 a reply of the old one is dropped (`stale lookup context`), and every row carries its generation so a pick of an older
@@ -1241,8 +1241,8 @@ top bar's **Hire** (on an office floor; Shift+Tab, then Tab past Elevator) for t
 bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line; paste a screenshot and it goes into the text as a
 thumbnail at the caret, click it to see it enlarged (**Esc** closes only that), the agent gets `[Image #n: <path>]` in its place (#64: the same in
 Start Run's Extra instructions and First prompt, the P overlay and the transcript view's prompt box, and a screenshot pasted at an agent's laptop;
-a prompt is sent once its images are uploaded, and not at all when one failed; #139: the hire task has no suggestion
-popup, only the transcript's prompt box can complete `/` and `@`, see the composer section);
+a prompt is sent once its images are uploaded, and not at all when one failed; #39: the hire task completes `/` skills,
+`@` files and `@r:` repositories of the hire's floor, harness and folder, see the composer section);
 the dialog is a near-full-screen sheet, #51: the task editor takes the space and grows with the window, the options
 sit beside it, or under it on a phone, and Hire / Cancel stay on screen; what you typed for a desk stays until a hire
 is acknowledged),
