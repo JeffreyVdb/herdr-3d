@@ -1,0 +1,43 @@
+=== #1 user 2026-10-12T09:04:02Z ===
+Run the tests.
+
+=== #2 assistant 2026-10-12T09:04:03Z ===
+[tool] exec_command: go test ./... -> running
+  | Process running with session ID 456
+  | ok example.com/a 0.10s
+[tool] exec_command: make test -> ok
+
+=== #3 assistant (final reply) 2026-10-12T09:04:17Z ===
+Tests are still running.
+
+
+-------- coverage --------
+{
+  "Bytes": 327,
+  "EstTokens": 109,
+  "Coverage": {
+    "Messages": 3,
+    "Kept": 3,
+    "Omitted": null,
+    "Compaction": "none",
+    "Gaps": null,
+    "Abandoned": 0,
+    "Sidechains": 0,
+    "Deduplicated": 0,
+    "Skipped": 0,
+    "Complete": true
+  },
+  "Artifacts": [
+    {
+      "Kind": "test",
+      "Ref": "go test ./...",
+      "Verified": false
+    },
+    {
+      "Kind": "test",
+      "Ref": "make test",
+      "Verified": true
+    }
+  ],
+  "Redactions": {}
+}

@@ -3925,7 +3925,8 @@ fit the budget; the transcript changed; a subagent's or an empty one).
    between `<<<NAME-<nonce>` and `NAME-<nonce>>>>` with a nonce drawn per request and absent from the data: the
    bridge's facts (time, floor, worker, its agent and model, session, the snapshot boundary, the checkout, the branch
    herdr reported, the git branch and `git status` captured now and labelled so, the skills the command catalog has
-   cached for the worker if any, the artifacts observed as verified or intent, the coverage gaps), the transcript, and
+   cached for the worker if any, the artifacts observed as verified or unverified (never verified by the absence of a
+   failure: a run still running or a result with no outcome is unverified), the coverage gaps), the transcript, and
    the instruction (scrubbed like the transcript). The configured key is replaced in the messages too.
 5. **Call.** One completion through the AI integration: at most one handoff call over the bridge, its own timeout
    (`timeout_s`, 90 s, provisional), no second attempt after an outcome the provider may have processed (a timeout, a

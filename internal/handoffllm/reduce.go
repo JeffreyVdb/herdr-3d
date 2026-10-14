@@ -268,11 +268,14 @@ func (m *msg) hasEvidence() bool {
 // result status and the bounded evidence kept from its result.
 type tool struct {
 	name, input string
-	status      string // "" (no result read), "ok", "error", "exit N"
+	status      string // "" (no result read) or a status of the result (statusOK…, "exit N")
+	failing     bool   // the result showed a failure
+	exit        *int   // the exit status the harness reported apart from the result
 	evidence    []string
 	red, evRed  map[string]int
 	// What the call would produce (files it edits, the test run it is):
-	// verified when its result shows success.
+	// verified only when its result shows success, never when it shows
+	// nothing (still running, no output).
 	files []string
 	test  string
 }
@@ -375,21 +378,24 @@ func (b *builder) runsTests(t *tool, cmd string) {
 }
 
 // result reads a tool's result into the call's status and evidence; the
-// artifacts it shows (commits, pull requests) and the call's own are
-// verified when it succeeded.
+// artifacts it shows (commits, pull requests) are verified, and the call's
+// own when the result shows it succeeded (a test: that it ran and passed).
 func (b *builder) result(id, text string, failed bool) {
 	t := b.calls[id]
 	if t == nil {
 		return
 	}
 	ev := readEvidence(text, failed)
-	t.status, t.evidence = ev.status, ev.lines
-	ok := !ev.failing
+	t.status, t.evidence, t.failing = ev.status, ev.lines, ev.failing
+	if t.exit != nil {
+		b.exited(t) // the exit came first
+		return
+	}
 	for _, f := range t.files {
-		b.arts.add("file", f, ok)
+		b.arts.add("file", f, ev.ok())
 	}
 	if t.test != "" {
-		b.arts.set("test", t.test, ok)
+		b.arts.set("test", t.test, ev.testPassed())
 	}
 	for _, c := range ev.commits {
 		b.arts.add("commit", c, true)
@@ -400,15 +406,31 @@ func (b *builder) result(id, text string, failed bool) {
 }
 
 // exit records an exit status a harness reported apart from the output
-// (Codex's exec_command_end).
+// (Codex's exec_command_end): the command ended, whatever its output said.
 func (b *builder) exit(id string, code int) {
 	t := b.calls[id]
-	if t == nil || code == 0 {
+	if t == nil {
 		return
 	}
-	t.status = fmt.Sprintf("exit %d", code)
+	t.exit = &code
+	b.exited(t)
+}
+
+// exited settles a call by its reported exit: an exit 0 is a success unless
+// its output showed a failure.
+func (b *builder) exited(t *tool) {
+	ok := *t.exit == 0 && !t.failing
+	switch {
+	case *t.exit != 0:
+		t.status = fmt.Sprintf("exit %d", *t.exit)
+	case ok:
+		t.status = statusOK
+	}
+	for _, f := range t.files {
+		b.arts.add("file", f, ok)
+	}
 	if t.test != "" {
-		b.arts.set("test", t.test, false)
+		b.arts.set("test", t.test, ok)
 	}
 }
 

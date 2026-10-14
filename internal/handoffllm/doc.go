@@ -83,7 +83,7 @@
 // compaction) with reminders and paste wrappers removed, assistant text,
 // compaction summaries, and for each tool call its name and a one-line
 // summary of its input (command, path, patch files; at most 300 bytes) with
-// the result's status ("ok", "error", "exit N") and at most 8 evidence lines
+// the result's status and at most 8 evidence lines
 // of at most 200 bytes from the result's first and last 64 KiB: exit status,
 // test outcomes and failure lines, error headers, apply_patch's file list,
 // git commit lines and pull request / issue URLs. Never a full log, thinking
@@ -95,6 +95,14 @@
 // commands. Verified is true only when a result shows success (the edit or
 // patch applied, the commit line printed, the URL in a result, the test
 // command's latest run passed); a call alone, or a URL in prose, is false.
+//
+// A status is three-valued, never success by default: "ok" only on terminal
+// evidence of success (an exit 0, the harness's exit 0, a pass line, an
+// edit's success line, a commit or URL it made) with no failure; "error",
+// "failed" or "exit N" on a failure; else unknown: "running" (a Codex
+// exec_command still running, a Claude Code background Bash: the line saying
+// so is kept), "no output" or "outcome unknown". A test is verified only by
+// an exit 0 or a pass line of a finished run, an edit only by "ok".
 //
 // # Budget
 //

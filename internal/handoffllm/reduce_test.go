@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -214,6 +215,31 @@ func TestReduceGolden(t *testing.T) {
 				t.Errorf("artifacts %+v", p.Artifacts)
 			}
 		}},
+		// A run that has not finished, a result with nothing in it, one that
+		// says neither pass nor fail, and a call with no result are never
+		// verified: the absence of a failure is not a success.
+		{"claude_background", "claude_background", harnessClaude, 64 << 10, func(t *testing.T, p Payload) {
+			has(t, p.Text, "[tool] Bash: go test ./... -> running", "| Command running in background with ID: bsynth01",
+				"[tool] Bash: make test-quiet -> no output", "[tool] Bash: pytest -q -> outcome unknown", "Tests are still running")
+			hasNot(t, p.Text, "-> ok")
+			for _, w := range []Artifact{{"test", "go test ./...", false}, {"test", "make test-quiet", false}, {"test", "pytest -q", false},
+				{"file", "src/slow.go", false}} {
+				if a, ok := artifact(p, w.Kind, w.Ref); !ok || a.Verified != w.Verified {
+					t.Errorf("artifact %+v: got %+v %v", w, a, ok)
+				}
+			}
+		}},
+		{"codex_running", "codex_running", harnessCodex, 64 << 10, func(t *testing.T, p Payload) {
+			has(t, p.Text, `[tool] exec_command: go test ./... -> running`, "| Process running with session ID 456",
+				"[tool] exec_command: make test -> ok", "Tests are still running.")
+			// A pass line in a run's partial output is not its outcome; the
+			// harness's exit 0 is.
+			for _, w := range []Artifact{{"test", "go test ./...", false}, {"test", "make test", true}} {
+				if a, ok := artifact(p, w.Kind, w.Ref); !ok || a.Verified != w.Verified {
+					t.Errorf("artifact %+v: got %+v %v", w, a, ok)
+				}
+			}
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -291,4 +317,39 @@ func pinnedBlocks(text string) []string {
 		}
 	}
 	return out
+}
+
+// TestReadEvidenceOutcome: a result's outcome is positive only on terminal
+// evidence of success; running, empty or silent results are unknown.
+func TestReadEvidenceOutcome(t *testing.T) {
+	cases := []struct {
+		name, text   string
+		failed       bool
+		status       string
+		ok, passed   bool
+		keepsRunning bool
+	}{
+		{"exit 0", "Process exited with code 0\nOutput:\n", false, statusOK, true, true, false},
+		{"pass line", "ok  \texample.com/p\t0.02s", false, statusOK, true, true, false},
+		{"edit", "The file src/a.go has been updated successfully.", false, statusOK, true, false, false},
+		{"commit", "[main 1a2b3c4] fix: x\n 1 file changed", false, statusOK, true, false, false},
+		{"codex running", "Chunk ID: a\nWall time: 30.0 seconds\nProcess running with session ID 456\nOutput:\nok  \tp\t0.1s\n", false, statusRunning, false, false, true},
+		{"claude background", "Command running in background with ID: b1. Output is being written to: /tmp/x", false, statusRunning, false, false, true},
+		{"no output", "", false, statusNoOutput, false, false, false},
+		{"silent", "collected 12 items", false, statusNoOutcome, false, false, false},
+		{"harness error", "boom", true, statusError, false, false, false},
+		{"exit 1", "Exit code 1\nok  \tp\t0.1s", false, "exit 1", false, false, false},
+		{"failure line", "--- FAIL: TestX (0.00s)", false, statusFailed, false, false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ev := readEvidence(c.text, c.failed)
+			if ev.status != c.status || ev.ok() != c.ok || ev.testPassed() != c.passed {
+				t.Errorf("status %q ok %v passed %v; want %q %v %v", ev.status, ev.ok(), ev.testPassed(), c.status, c.ok, c.passed)
+			}
+			if c.keepsRunning && !slices.ContainsFunc(ev.lines, func(l string) bool { return runningLine.MatchString(l) }) {
+				t.Errorf("the running line was not kept: %q", ev.lines)
+			}
+		})
+	}
 }

@@ -47,7 +47,7 @@ var SystemPrompt = "Write a handoff for a fresh agent to continue this work. The
 	"- Then these H2 sections, in this order, each with its heading written exactly so: " + sectionList() + ". " +
 	"Write \"None.\" under a section with nothing to say rather than leaving it out.\n" +
 	"- In Verification, say only what a result in the data shows (a test run and its outcome, an edit applied, a commit made); " +
-	"a tool call alone is an intent, not evidence. Say what was not verified.\n" +
+	"a tool call alone is an intent, not evidence, and a run still running or with no outcome shown is not a pass. Say what was not verified.\n" +
 	"- The bridge facts block is the bridge's own record: the git state in it was captured now, which can differ from what the " +
 	"worker reported earlier in the transcript; say which you rely on. A fact marked unknown stays unknown.\n" +
 	"- The coverage block says what of the transcript was left out; say what that leaves uncertain.\n" +
@@ -217,13 +217,13 @@ func factsText(f Facts, p Payload, scrub func(string) string) string {
 	if len(p.Artifacts) == 0 {
 		line("Artifacts observed in the transcript", "none")
 	} else {
-		b.WriteString("Artifacts observed in the transcript (verified: a result shows it succeeded; intent: only the tool call was seen):\n")
+		b.WriteString("Artifacts observed in the transcript (verified: a result shows it succeeded; unverified: no result shows it succeeded — only the call was seen, it was still running, or its result showed no outcome):\n")
 		for i, a := range p.Artifacts {
 			if i == maxArtifacts {
 				b.WriteString(fmt.Sprintf("  … %d more\n", len(p.Artifacts)-i))
 				break
 			}
-			v := "intent"
+			v := "unverified"
 			if a.Verified {
 				v = "verified"
 			}

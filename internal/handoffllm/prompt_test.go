@@ -62,7 +62,7 @@ func TestTheFactsSayWhatIsCurrentAndWhatIsUnknown(t *testing.T) {
 		"M e2e/auth.spec.ts",
 		"Branch as herdr reported it: fix/flaky-login",
 		"commit 0123456789abcdef0123456789abcdef01234567 (verified)",
-		"file a.go (intent)",
+		"file a.go (unverified)",
 		"12 of 40 messages kept",
 		"left out: messages 3–20 (older assistant detail)",
 		"gap: pre-compaction assistant replies unavailable (Codex)",
