@@ -310,6 +310,49 @@ func TestDigestUsesOnlyAIInterfaces(t *testing.T) {
 	}
 }
 
+// #9: the LLM handoffs' feature half (internal/handoffllm's generate*,
+// prompt* and validate* files) takes only internal/ai's interfaces: no vendor
+// client, no net, nothing else of the bridge (the reducer half has its own
+// rule, TestReducerIsALeaf), never the service or a provider.
+func TestHandoffLLMUsesOnlyAIInterfaces(t *testing.T) {
+	t.Parallel()
+	const mod = "github.com/JeffreyVdb/herdr-3d/"
+	files, _ := filepath.Glob("../handoffllm/*.go")
+	fset := token.NewFileSet()
+	checked := 0
+	for _, f := range files {
+		base := filepath.Base(f)
+		if strings.HasSuffix(f, "_test.go") || !(strings.HasPrefix(base, "generate") || strings.HasPrefix(base, "prompt") || strings.HasPrefix(base, "validate")) {
+			continue
+		}
+		checked++
+		file, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, im := range file.Imports {
+			p := strings.Trim(im.Path.Value, `"`)
+			if (strings.HasPrefix(p, mod) && p != mod+"internal/ai") || strings.HasPrefix(p, "net") {
+				t.Errorf("%s imports %s", base, p)
+			}
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if x, ok := sel.X.(*ast.Ident); ok && x.Name == "ai" {
+					switch sel.Sel.Name {
+					case "Service", "New", "Options", "Overrides", "Fields":
+						t.Errorf("%s uses ai.%s: only the interfaces", fset.Position(sel.Pos()), sel.Sel.Name)
+					}
+				}
+			}
+			return true
+		})
+	}
+	if checked < 3 {
+		t.Fatalf("checked %d files: the feature's files moved?", checked)
+	}
+}
+
 // #98: the activity's rules and its model service take only internal/ai's
 // interfaces: no vendor client, nothing of the bridge (only internal/ai from
 // this module, no net/http), never the service or a provider. The hub hands
