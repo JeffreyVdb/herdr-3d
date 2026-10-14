@@ -142,7 +142,13 @@ func TestPresets(t *testing.T) {
 // works in the repository /home/u/lab.
 func launchBridge(t *testing.T, workers ...world.WorkerObs) (*hireBridge, proto.World) {
 	t.Helper()
-	hb := startHireBridge(t, nil, workers...)
+	return launchBridgeWith(t, &fakePrompts{}, workers...)
+}
+
+// launchBridgeWith is launchBridge with fp as its prompt translator (#39).
+func launchBridgeWith(t *testing.T, fp *fakePrompts, workers ...world.WorkerObs) (*hireBridge, proto.World) {
+	t.Helper()
+	hb := startHireBridge(t, func(o *server.Options) { o.Prompts = fp }, workers...)
 	hb.git.repos["/home/u/lab"] = "/home/u/lab"
 	hb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Repo: proto.Some("JeffreyVdb/lab"),
 		DefaultCwd: proto.Some("/home/u/lab")})

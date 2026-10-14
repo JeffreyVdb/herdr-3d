@@ -19,9 +19,10 @@ import (
 // into "$grill" and drop an "@"; it records each ask.
 type fakePrompts struct {
 	mu    sync.Mutex
-	asks  []string // "harness dir text"
+	asks  []string // "harness dir text"; #39 "cached harness catalogDir checkout text"
 	err   error
 	block chan struct{}
+	cold  bool // #39: no catalog cached: TranslateCached leaves "/grill"
 }
 
 func (f *fakePrompts) Rewrites(harness string) bool { return harness == "codex" }
@@ -44,6 +45,23 @@ func (f *fakePrompts) Translate(ctx context.Context, harness, dir, text string) 
 	// A quoted mention loses its marker and both quotes, as the real rule does.
 	text = strings.ReplaceAll(text, `@"a"`, "a")
 	return strings.ReplaceAll(strings.ReplaceAll(text, "/grill", "$grill"), "@", ""), nil
+}
+
+// TranslateCached is Translate without the wait (#39): "/grill" only with a
+// catalog cached (not cold).
+func (f *fakePrompts) TranslateCached(harness, catalogDir, checkout, text string) string {
+	f.mu.Lock()
+	f.asks = append(f.asks, "cached "+harness+" "+catalogDir+" "+checkout+" "+text)
+	cold := f.cold
+	f.mu.Unlock()
+	if harness != "codex" {
+		return text
+	}
+	text = strings.ReplaceAll(text, `@"a"`, "a")
+	if !cold {
+		text = strings.ReplaceAll(text, "/grill", "$grill")
+	}
+	return strings.ReplaceAll(text, "@", "")
 }
 
 func (f *fakePrompts) Asks() []string {
@@ -287,6 +305,8 @@ func TestAnswerAskPromptIsTranslated(t *testing.T) {
 
 // What the bridge builds itself is not rewritten, whatever the text holds:
 // a follow-up's answers (their notes are free text) and a wrap-up's prompt.
+// #39: nor is the ticket of a run's composed prompt (only its extra is:
+// TestRunStartTranslatesTypedTextOnly).
 func TestBridgeBuiltPromptsAreNotTranslated(t *testing.T) {
 	t.Parallel()
 	t.Run("followup answers", func(t *testing.T) {
@@ -306,6 +326,19 @@ func TestBridgeBuiltPromptsAreNotTranslated(t *testing.T) {
 		}
 		if !strings.Contains(sent, "run /grill on @a.go") {
 			t.Fatalf("calls = %q: the answers were rewritten, or not sent", fb.term.Calls())
+		}
+		if asks := fp.Asks(); len(asks) != 0 {
+			t.Fatalf("the translator was asked: %q", asks)
+		}
+	})
+	t.Run("run ticket", func(t *testing.T) {
+		fp := &fakePrompts{}
+		hb, w := launchBridgeWith(t, fp)
+		_, m := hb.c.command(proto.CmdRunStart, "rs", map[string]any{"session": "s", "desk_index": 1, "text": "run /grill on @a.go",
+			"orch": proto.Hire{Harness: "codex", Model: "gpt-6-astra", Effort: "ultra"}, "preset": w.Presets[0].ID})
+		res := ackData[proto.RunStartResult](t, m)
+		if !strings.HasPrefix(res.Prompt, "$write-code run /grill on @a.go\n") {
+			t.Fatalf("prompt = %q", res.Prompt)
 		}
 		if asks := fp.Asks(); len(asks) != 0 {
 			t.Fatalf("the translator was asked: %q", asks)

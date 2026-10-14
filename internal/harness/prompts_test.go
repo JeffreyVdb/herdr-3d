@@ -70,3 +70,39 @@ func TestPromptsTranslateFailsOpen(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// #39: TranslateCached takes the skills cached for one folder and the files
+// of another, and never probes: with nothing cached, a skill stays.
+func TestPromptsTranslateCached(t *testing.T) {
+	root, checkout := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(checkout, "a.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.go"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var probes int
+	p := promptsFor(t, func(context.Context, string) ([]proto.CommandEntry, error) {
+		probes++
+		return []proto.CommandEntry{{Name: "grill", Kind: proto.CommandKindSkill}}, nil
+	})
+	in := "/grill @a.go @b.go"
+	if got := p.TranslateCached("codex", root, checkout, in); got != "/grill a.go @b.go" || probes != 0 {
+		t.Fatalf("cold: %q, %d probes", got, probes)
+	}
+	if _, err := p.Translate(context.Background(), "codex", root, "/grill"); err != nil {
+		t.Fatal(err)
+	}
+	if got := p.TranslateCached("codex", root, checkout, in); got != "$grill a.go @b.go" {
+		t.Fatalf("warm: %q", got)
+	}
+	if got := p.TranslateCached("codex", checkout, checkout, in); got != "/grill a.go @b.go" {
+		t.Fatalf("another folder's catalog: %q", got)
+	}
+	if got := p.TranslateCached("claude", root, checkout, in); got != in {
+		t.Fatalf("claude: %q", got)
+	}
+	if probes != 1 {
+		t.Fatalf("%d probes, want the one Translate made", probes)
+	}
+}

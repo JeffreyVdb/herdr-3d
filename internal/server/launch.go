@@ -381,7 +381,7 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 		if t != nil {
 			res.Label = runLabel(t)
 			if havePreset && orch != nil {
-				res.Prompt = TicketPrompt(orch.Harness, t, roles, a.Extra)
+				res.Prompt = TicketPrompt(h.writeCodeCall(orch.Harness), t, roles, a.Extra)
 			}
 		}
 	}
@@ -470,9 +470,15 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 	if !ok {
 		return fmt.Errorf("%w: preset %q", store.ErrNotFound, a.Preset)
 	}
+	// #39: what was typed (the extra, or an edited prompt whole) is
+	// translated for the orchestrator's harness when the hire sends it, never
+	// the ticket the bridge composes around the extra (an issue's text).
 	prompt := a.Prompt
+	var compose firstPrompt
 	if prompt == "" {
-		prompt = TicketPrompt(a.Orch.Harness, ticket, presetView(p).Roles, a.Extra)
+		call, roles := h.writeCodeCall(a.Orch.Harness), presetView(p).Roles
+		prompt = TicketPrompt(call, ticket, roles, a.Extra)
+		compose = func(tr func(string) string) string { return TicketPrompt(call, ticket, roles, tr(a.Extra)) }
 	}
 	label := a.Label
 	if label == "" {
@@ -490,7 +496,7 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 	}
 	hire := proto.WorkerHireArgs{Session: a.Session, DeskIndex: a.DeskIndex, Harness: a.Orch.Harness, Model: a.Orch.Model,
 		Effort: a.Orch.Effort, Label: label, Worktree: worktree, Prompt: prompt}
-	return h.beginHire(ctx, c, cmd, hire, func(ctx context.Context, res proto.HireResult, rep *hireReport) any {
+	return h.beginHire(ctx, c, cmd, hire, func(ctx context.Context, res proto.HireResult, rep *hireReport, sent string) any {
 		launch.OrchWorkerID = res.ID
 		rep.Launch = launch.ID
 		if err := h.st.RecordRunLaunch(ctx, launch); err != nil {
@@ -513,8 +519,8 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 				h.lastPreset[a.Session] = p.ID
 			}
 		}
-		return proto.RunStartResult{HireResult: res, LaunchID: launch.ID, Prompt: prompt}
-	})
+		return proto.RunStartResult{HireResult: res, LaunchID: launch.ID, Prompt: sent}
+	}, compose)
 }
 
 // fillRunIDs records the run id of launches whose orchestrator now shows

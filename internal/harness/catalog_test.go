@@ -379,3 +379,37 @@ func TestCatalogShutdownStopsProbes(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// #39: Cached answers what the catalog holds, however old, without
+// waiting or probing: nothing before a probe succeeded.
+func TestCatalogCached(t *testing.T) {
+	c, p, advance := testCatalog(t)
+	if _, ok := c.Cached("codex", "/w"); ok {
+		t.Fatal("cached before any ask")
+	}
+	res := async(c, context.Background(), "/w")
+	<-p.dirs
+	if _, ok := c.Cached("codex", "/w"); ok {
+		t.Fatal("cached while the first probe runs")
+	}
+	p.replies <- reply{list: listA}
+	<-res
+	advance(10 * catalogTTL)
+	got, ok := c.Cached("codex", "/w")
+	if !ok || !reflect.DeepEqual(got, listA) {
+		t.Fatalf("stale cached = %+v, %v", got, ok)
+	}
+	got[0].Name = "mutated"
+	if again, _ := c.Cached("codex", "/w"); again[0].Name != "a" {
+		t.Fatal("the cache shares its list")
+	}
+	if _, ok := c.Cached("codex", "/other"); ok {
+		t.Fatal("another folder is cached")
+	}
+	if _, ok := c.Cached("claude", "/w"); ok {
+		t.Fatal("another harness is cached")
+	}
+	if n := p.calls.Load(); n != 1 {
+		t.Fatalf("probes = %d: Cached probes nothing", n)
+	}
+}

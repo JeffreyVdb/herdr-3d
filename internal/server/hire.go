@@ -119,11 +119,22 @@ type hireOp struct {
 	workspaceID, pane          string
 	seen                       bool
 	launched                   hireLaunched // run.start's, else nil
+	// #39: compose builds the first prompt from its user-typed parts, each
+	// run through tr (run.start's composed prompt: its extra only); nil: the
+	// prompt is the user's text, translated whole. sent is the text the
+	// worker gets (set off the hub goroutine before the prompt goes).
+	compose firstPrompt
+	sent    string
 }
 
 // hireLaunched finishes a run.start's hire that succeeded (hub goroutine):
-// it records the launch and returns the ack data.
-type hireLaunched func(ctx context.Context, res proto.HireResult, rep *hireReport) any
+// it records the launch and returns the ack data. prompt is the first
+// prompt as it was sent.
+type hireLaunched func(ctx context.Context, res proto.HireResult, rep *hireReport, prompt string) any
+
+// firstPrompt composes a hire's first prompt, translating only what a
+// person typed with tr (#39).
+type firstPrompt func(tr func(string) string) string
 
 func (op *hireOp) signal() {
 	select {
@@ -363,14 +374,17 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	return h.beginHire(ctx, c, cmd, a, nil)
+	return h.beginHire(ctx, c, cmd, a, nil, nil)
 }
 
 // beginHire is the hire of worker.hire and run.start: it validates a,
 // reserves the desk and name, mints the worker id and starts the hire.
 // launched, if set, runs on the hub goroutine once the hire succeeded and
-// returns the ack data instead of the HireResult (run.start).
-func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs, launched hireLaunched) error {
+// returns the ack data instead of the HireResult (run.start). compose, if
+// set, rebuilds a.Prompt with its typed parts translated (run.start's
+// composed prompt); nil translates a.Prompt whole (#39).
+func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs, launched hireLaunched,
+	compose firstPrompt) error {
 	f, err := h.hireFloor(a.Session)
 	if err != nil {
 		return err
@@ -441,7 +455,7 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	op := &hireOp{id: id, session: a.Session, desk: desk, name: name, label: a.Label, marker: "h3d-" + hex[:12],
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
-		notify: make(chan struct{}, 1), launched: launched, shared: a.Harness == "codex" && h.cx.enabled}
+		notify: make(chan struct{}, 1), launched: launched, compose: compose, shared: a.Harness == "codex" && h.cx.enabled}
 	if a.Worktree {
 		op.branch = "h3d/" + op.agent
 	}
@@ -657,6 +671,11 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		res.Prompted, res.PromptError = &sent, "Codex asks to review its hooks: answer it in the terminal, then send the prompt"
 		rep.Prompt = "not sent: " + res.PromptError
 	} else if op.prompt != "" {
+		catalogDir := op.cwd
+		if op.worktree {
+			catalogDir = repo
+		}
+		op.sent = h.hirePromptFor(op, catalogDir, dir)
 		sent, how, perr := h.sendPrompt(ctx, op, created.PaneID)
 		res.Prompted = &sent
 		if perr != nil {
@@ -818,6 +837,40 @@ func (h *Hub) answerTrust(ctx context.Context, op *hireOp, pane, dir string) (tr
 	}
 }
 
+// hirePromptFor is the hire's first prompt as its harness takes it (#39),
+// off the hub goroutine: the typed parts translated against the skills the
+// catalog holds for catalogDir (the hire's folder; a worktree hire's
+// repository root, where the dialog's completion looked them up) and the
+// files of checkout (the new worker's), never waiting for a probe. It fails
+// open: a rewrite that is no longer a valid prompt sends the text as typed.
+func (h *Hub) hirePromptFor(op *hireOp, catalogDir, checkout string) string {
+	tr := func(text string) string {
+		if !h.rewrites(op.harness) || text == "" {
+			return text
+		}
+		return h.opts.Prompts.TranslateCached(op.harness, catalogDir, checkout, text)
+	}
+	var out string
+	if op.compose != nil {
+		out = op.compose(tr)
+	} else {
+		out = tr(op.prompt)
+	}
+	if !herdr.ValidPrompt(out) {
+		return op.prompt
+	}
+	return out
+}
+
+// delivered is the first prompt as the worker got it (as it was asked
+// for until it was sent).
+func (op *hireOp) delivered() string {
+	if op.sent != "" {
+		return op.sent
+	}
+	return op.prompt
+}
+
 // sendPrompt sends the hire's first prompt once the agent takes it,
 // retrying while herdr says the agent is not ready yet. An agent still
 // starting up (just past its trust dialog) can take the text but drop the
@@ -829,7 +882,7 @@ func (h *Hub) sendPrompt(ctx context.Context, op *hireOp, pane string) (sent boo
 	}
 	deadline := time.Now().Add(h.opts.TrustTimeout)
 	for tries := 1; ; tries++ {
-		err := h.opts.Hire.Prompt(ctx, op.session, pane, op.prompt)
+		err := h.opts.Hire.Prompt(ctx, op.session, pane, op.delivered())
 		if err == nil {
 			return true, fmt.Sprintf("sent (try %d)", tries), nil
 		}
@@ -872,10 +925,10 @@ func (h *Hub) typeHirePrompt(ctx context.Context, op *hireOp, pane string) (sent
 	var typedHow string
 	var typedErr error
 	if err := h.onLane(ctx, op.id, func(ctx context.Context) {
-		if typedErr = h.doWait(ctx, func() { h.noteTyped(op.id, op.prompt) }); typedErr != nil {
+		if typedErr = h.doWait(ctx, func() { h.noteTyped(op.id, op.delivered()) }); typedErr != nil {
 			return
 		}
-		if typedErr = h.opts.Hire.TypePrompt(ctx, op.session, pane, op.prompt); typedErr != nil {
+		if typedErr = h.opts.Hire.TypePrompt(ctx, op.session, pane, op.delivered()); typedErr != nil {
 			h.erasePartlyTyped(ctx, op.id, op.session, pane, typedErr, h.opts.Hire.EraseTyped)
 			return
 		}
@@ -891,9 +944,18 @@ func (h *Hub) typeHirePrompt(ctx context.Context, op *hireOp, pane string) (sent
 	return typedErr == nil, typedHow, typedErr
 }
 
-// pressUntilWorking presses Enter (at most 3 times) until the hired
-// worker's status moves to working, blocked or done.
+// pressUntilWorking presses submit (at most 3 times) until the hired
+// worker's status moves to working, blocked or done: Enter, or the
+// harness's retry keys for the prompt (#39: a Codex prompt that ends in a
+// "$skill" has its popup take the Enter: Esc, then Enter), as a follow-up's.
 func (h *Hub) pressUntilWorking(ctx context.Context, op *hireOp, pane string, stalled error) (int, error) {
+	keys := h.retryKeys(op.harness, op.delivered())
+	press := func() error {
+		if h.opts.Term != nil && !slices.Equal(keys, []string{"enter"}) {
+			return h.opts.Term.SendKeys(ctx, op.session, pane, keys...)
+		}
+		return h.opts.Hire.SendKey(ctx, op.session, pane, herdr.KeyEnter)
+	}
 	status := func() string {
 		s, _ := query(ctx, h, func() string {
 			if w := h.workers[op.id]; w != nil {
@@ -904,7 +966,7 @@ func (h *Hub) pressUntilWorking(ctx context.Context, op *hireOp, pane string, st
 		return s
 	}
 	for n := 1; n <= 3; n++ {
-		if err := h.opts.Hire.SendKey(ctx, op.session, pane, herdr.KeyEnter); err != nil {
+		if err := press(); err != nil {
 			return n, err
 		}
 		for end := time.Now().Add(h.opts.TrustTimeout / 5); time.Now().Before(end) && ctx.Err() == nil; {
@@ -1008,7 +1070,7 @@ func (h *Hub) finishHire(ctx context.Context, op *hireOp, res *proto.HireResult,
 		if res != nil {
 			data = *res
 			if op.launched != nil {
-				data = op.launched(ctx, *res, rep)
+				data = op.launched(ctx, *res, rep, op.delivered())
 			}
 		}
 		h.syncLayout()
