@@ -100,6 +100,7 @@ import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup
 import { activitySection } from './ui/activitySection';
 import { codexServerSection } from './ui/codexServerSection';
 import { repoRefsSection } from './ui/repoRefsSection';
+import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
 import { MonitorPrefs } from './ui/monitorPrefs';
@@ -574,9 +575,12 @@ export class App {
       now: () => Date.now(),
     };
     const upload = (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal);
+    // #39: one list of commands and skills per worker (and per hire context), for the transcript and every dialog's `/`.
+    const catalogs = new CommandCatalogs({ send: (t, args) => this.send(t, args) });
     const hireHost = {
       ...dialogHost,
       upload,
+      catalogs,
       reserve: (s: string, d: number) => this.reserve(s, d),
       held: (s: string) => this.heldDesks(s),
       modelPrefs: this.hireModelPrefs,
@@ -667,11 +671,12 @@ export class App {
         packup: (id, text, signal) => this.packupCheck(id, text, signal), // #110
         overview: () => this.openOverview(false), // #118
         handoff: (id) => this.openHandoff(id, true), // #223
+        catalogs, // #39
       },
       o.params,
     );
     // M5: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
-    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, packup: (id, text, signal) => this.packupCheck(id, text, signal) });
+    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, catalogs, packup: (id, text, signal) => this.packupCheck(id, text, signal) });
     this.openPr = new OpenPrDialog(o.host, {
       ...dialogHost,
       providerName: (session) => this.boardBook.get(session).prs?.provider_name ?? this.boardBook.get(session).issues?.provider_name ?? 'the provider',

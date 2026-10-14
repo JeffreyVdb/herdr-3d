@@ -1,3 +1,4 @@
+import './completionRows.css';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, RepoRef, RepoRefsState } from '../net/protocol';
 import type { Source } from '../ui/composer/complete';
@@ -191,6 +192,10 @@ export function repoSource(id: string, host: RepoSearchHost): Source<RepoItem> {
       });
     },
     render: repoRow,
+    loading: () => 'Loading repositories…',
+    failure: () => 'Could not load the other floors’ repositories.',
+    // #39: the next query asks again (a failed ask leaves nothing out).
+    retry: () => void (stale = true),
     insert(it, token, text) {
       // A space already after the word: the caret goes past it rather than a second one going in.
       return { text: `${repoInsert(it.item)} `, ...(text[token.end] === ' ' ? { end: token.end + 1 } : {}) };

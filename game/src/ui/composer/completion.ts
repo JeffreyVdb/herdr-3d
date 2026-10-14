@@ -27,6 +27,10 @@
  * #140: a source may be unavailable (its trigger opens nothing), hears when a session of it is about to open, may say
  * its items changed (an open session of it asks its query again, the active row kept by the source's `key`, or closes
  * when the source is now unavailable) and may put a note under the rows (`footer`).
+ *
+ * #39: a source may word its own loading and failure states ("Loading skills…") and offer "Try again" after a failure:
+ * a button in the popup (a press keeps the editor's focus, like the rows) that calls `retry` and asks the query again.
+ * The keys stay as they are: Enter closes a failed popup, typing asks again.
  */
 
 import { h } from '../dom';
@@ -94,19 +98,28 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
   let list: HTMLElement | null = null;
   let status: HTMLElement | null = null;
   let note: HTMLElement | null = null;
+  let again: HTMLButtonElement | null = null;
   let said = '';
   let recheck = 0;
   const listId = `${id}-pop`;
   const optId = (i: number) => `${id}-opt-${i}`;
 
   /** Made on the first open: a composer that never completes keeps its DOM as it was. */
-  function popup(): { pop: HTMLElement; list: HTMLElement; status: HTMLElement; note: HTMLElement } {
-    if (pop && list && status && note) return { pop, list, status, note };
+  function popup(): { pop: HTMLElement; list: HTMLElement; status: HTMLElement; note: HTMLElement; again: HTMLButtonElement } {
+    if (pop && list && status && note && again) return { pop, list, status, note, again };
     list = h('ul', { class: 'cmp-pop-list', id: listId, role: 'listbox' });
+    // #39: not focusable (the editor keeps the keyboard): a press asks the failed source again.
+    again = h('button', { type: 'button', class: 'cmp-pop-retry', tabindex: '-1', hidden: true }, 'Try again') as HTMLButtonElement;
+    again.addEventListener('click', () => {
+      const cur = s;
+      if (!cur || cur.state !== 'error' || !cur.source.retry) return;
+      cur.source.retry();
+      query(cur, cur.query ?? cur.token.query);
+    });
     status = h('p', { class: 'cmp-pop-status' });
     note = h('p', { class: 'cmp-pop-note', hidden: true });
     const hint = h('p', { class: 'cmp-pop-hint', 'aria-hidden': 'true' }, 'Tab or Enter picks, Esc closes');
-    pop = h('div', { class: 'cmp-pop', hidden: true }, list, status, note, hint);
+    pop = h('div', { class: 'cmp-pop', hidden: true }, list, h('div', { class: 'cmp-pop-state' }, status, again), note, hint);
     // A press anywhere on it keeps the focus (and the caret) in the editor.
     pop.addEventListener('mousedown', (e) => e.preventDefault());
     pop.addEventListener('click', (e) => {
@@ -117,7 +130,7 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     });
     element.classList.add('cmp--complete');
     element.append(pop);
-    return { pop, list, status, note };
+    return { pop, list, status, note, again };
   }
 
   /** #140: a source said its items changed: its open session asks again (or closes, the source now unavailable). */
@@ -223,10 +236,12 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
       else row.removeAttribute('aria-disabled');
     }
     const none = s.items.length === 0;
-    const text = s.state === 'error' ? 'Could not load matches.' : loading ? (none ? 'Loading…' : '') : none ? 'No match' : '';
+    const failure = s.source.failure?.() || 'Could not load matches.';
+    const text = s.state === 'error' ? failure : loading ? (none ? s.source.loading?.() || 'Loading…' : '') : none ? 'No match' : '';
     p.status.textContent = text;
     p.status.hidden = text === '';
     p.status.dataset.kind = s.state;
+    p.again.hidden = !(s.state === 'error' && s.source.retry);
     const foot = s.source.footer?.() ?? '';
     p.note.textContent = foot;
     p.note.hidden = foot === '';
@@ -237,7 +252,7 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     paintActive();
     if (rows && !loading) {
       const n = s.items.length;
-      const msg = s.state === 'error' ? 'Could not load matches.' : n === 0 ? 'No match' : `${n} ${n === 1 ? 'suggestion' : 'suggestions'}`;
+      const msg = s.state === 'error' ? failure : n === 0 ? 'No match' : `${n} ${n === 1 ? 'suggestion' : 'suggestions'}`;
       if (msg !== said) host.announce(msg);
       said = msg;
     }
@@ -418,11 +433,12 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
     editor.removeEventListener('scroll', follow);
     cancelFrame(recheck);
     for (const a of ['aria-autocomplete', 'aria-controls', 'aria-expanded', 'aria-activedescendant']) editor.removeAttribute(a);
-    if (pop && list && status && note) {
+    if (pop && list && status && note && again) {
       pop.hidden = true;
       list.replaceChildren();
       status.textContent = '';
       note.textContent = '';
+      again.hidden = true;
     }
     said = '';
   }
@@ -440,7 +456,7 @@ export function mountCompletion(host: CompletionHost, o: CompleteOptions): Compl
       for (const u of unsubs) u?.();
       pop?.remove();
       element.classList.remove('cmp--complete');
-      pop = list = status = note = null;
+      pop = list = status = note = again = null;
     },
   };
 }

@@ -1,3 +1,4 @@
+import './completionRows.css';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, FileMatch, WorkerFiles } from '../net/protocol';
 import type { Source } from '../ui/composer/complete';
@@ -88,6 +89,7 @@ export function fileSource(id: string, host: FileSearchHost): Source<FileMatch> 
   const later = host.setTimeout ?? ((f: () => void, ms: number) => setTimeout(f, ms));
   const cancel = host.clearTimeout ?? ((t: unknown) => clearTimeout(t as ReturnType<typeof setTimeout>));
   let note: string | null = null;
+  let failed: string | null = null;
 
   /** Resolves after the debounce, or rejects at once when the popup has moved on (nothing is asked then). */
   const pause = (signal: AbortSignal): Promise<void> =>
@@ -113,7 +115,11 @@ export function fileSource(id: string, host: FileSearchHost): Source<FileMatch> 
     async items(q, signal) {
       await pause(signal);
       const r = await host.send('worker.files', { id, query: q, limit: FILES_LIMIT });
-      if (!r.ok) throw new Error(r.message);
+      if (!r.ok) {
+        if (!signal.aborted) failed = r.message || r.code;
+        throw new Error(r.message);
+      }
+      failed = null;
       const data = (r.data ?? {}) as Partial<WorkerFiles>;
       // Only the latest query's answer may change what the footer says (the popup drops the others anyway).
       if (!signal.aborted) {
@@ -123,6 +129,10 @@ export function fileSource(id: string, host: FileSearchHost): Source<FileMatch> 
       return matches(data.files);
     },
     render: fileRow,
+    loading: () => 'Searching files…',
+    failure: () => (failed ? `Could not search the files: ${failed.replace(/\.$/, '')}.` : 'Could not search the files.'),
+    // #39: every query asks the bridge: asking the same one again is the retry.
+    retry: () => undefined,
     insert(m, token, text) {
       // A space already after the word: the caret goes past it rather than a second one going in.
       return { chip: { kind: 'file', path: m.path, dir: m.kind === 'dir' }, text: ' ', ...(text[token.end] === ' ' ? { end: token.end + 1 } : {}) };

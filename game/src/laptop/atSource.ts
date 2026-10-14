@@ -14,7 +14,8 @@ export type AtItem = { via: 'file'; item: FileMatch } | { via: 'repo'; item: Rep
 
 /** The prefix that turns an `@` query into a repository one. */
 export const REPO_PREFIX = /^(?:r|repo):/;
-export const REPO_HINT = 'Type r: for repositories on other floors';
+/** #39: the files' footer when they have nothing else to say: what `@` searches (never skills: those are `/`), and `r:`. */
+export const REPO_HINT = 'Files in this checkout · type r: for repositories on other floors';
 
 export function atSource(files: Source<FileMatch>, repos: Source<RepoItem>): Source<AtItem> {
   let mode: 'file' | 'repo' = 'file';
@@ -46,5 +47,8 @@ export function atSource(files: Source<FileMatch>, repos: Source<RepoItem>): Sou
     render: (x) => (x.via === 'repo' ? repos.render(x.item) : files.render(x.item)),
     insert: (x, token, text) => (x.via === 'repo' ? repos.insert(x.item, token, text) : files.insert(x.item, token, text)),
     footer: () => (mode === 'repo' ? (repos.footer?.() ?? null) : (files.footer?.() ?? REPO_HINT)),
+    loading: () => (mode === 'repo' ? repos.loading?.() : files.loading?.()) ?? 'Loading…',
+    failure: () => (mode === 'repo' ? repos.failure?.() : files.failure?.()) ?? 'Could not load matches.',
+    retry: () => (mode === 'repo' ? repos : files).retry?.(),
   };
 }

@@ -702,6 +702,12 @@ export interface CommandArgs {
   'worker.files': { id: string; query: string; limit?: number };
   /** #247: the repos and folders of the other floors of the worker's building (ack `WorkerRepos`). */
   'worker.repos': { id: string };
+  /** #39: `worker.commands` for a hire with no worker yet: the floor, the harness and the folder it would get (ack `WorkerCommands`). */
+  'hire.commands': { session: string; harness: string; cwd?: string; worktree?: boolean };
+  /** #39: `worker.files` for a hire with no worker yet (ack `WorkerFiles`). */
+  'hire.files': { session: string; cwd?: string; worktree?: boolean; query: string; limit?: number };
+  /** #39: `worker.repos` for a hire on `session` with no worker yet (ack `WorkerRepos`). */
+  'hire.repos': { session: string };
   /** #74: `fullscreen` asks the bridge to zoom the pane's herdr tab while the watch lasts (absent / false: as before). */
   'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number; fullscreen?: boolean };
   'terminal.unwatch': { id: string };

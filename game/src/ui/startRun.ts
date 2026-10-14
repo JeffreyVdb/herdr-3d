@@ -34,6 +34,9 @@ import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft } from './composer/draft';
 import { failedImagesText, heldRefusalText, markedText, notSentText, PASTE_HINT } from './composer/field';
 import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
+// #39 completion
+import { CommandCatalogs } from '../laptop/commandCatalog';
+import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
 
 /**
  * The start-run dialog (M6): the "Hire orchestrator" tab of the hire dialog
@@ -153,6 +156,26 @@ export class StartRunDialog {
    */
   private readonly extraEl: HTMLElement;
   private promptEl: HTMLElement | null = null;
+  /**
+   * #39: `/`, `@` and `@r:` in Extra instructions and the First prompt: the orchestrator's hire as it would be made (the
+   * floor, its harness, the floor's folder, a worktree's repository root), shared by both fields.
+   */
+  private lookup: HireLookup | null = null;
+  private ownCatalogs: CommandCatalogs | null = null;
+  private readonly lookups = new CompletionScope(
+    () => {
+      const p = this.prep;
+      const harness = this.f.orch?.harness;
+      if (!this.dialog.open || !p || !harness || this.state === 'preparing' || this.state === 'failed') return (this.lookup = null);
+      this.lookup = { session: this.session, harness, cwd: p.cwd, worktree: this.f.worktree && worktreeUsable(p.git) };
+      return hireLookupKey(this.lookup);
+    },
+    () => {
+      const host = this.host;
+      const catalogs = host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) }));
+      return hireSources({ send: host.send.bind(host), unsupported: (t) => host.unsupported(t), catalogs, repoRefs: host.store.repoRefs }, this.lookup as HireLookup);
+    },
+  );
 
   constructor(
     parent: HTMLElement,
@@ -171,6 +194,8 @@ export class StartRunDialog {
       placeholder: 'Anything the orchestrator should know: scope, constraints, taste',
       // Enter adds a line; Ctrl/⌘+Enter starts the run from anywhere in the dialog (its own key handler, below).
       submitPolicy: 'mod-enter',
+      // Inside the form, which scrolls (and would clip it): above the caret when below has no room.
+      complete: { sources: this.lookups.sources, bounds: () => this.form },
       onChange: (s) => {
         if (this.syncing) return;
         const text = markedText(s);
@@ -189,6 +214,8 @@ export class StartRunDialog {
       describedBy: 'run-prompt-note',
       placeholder: 'The first prompt appears here once there is a ticket.',
       submitPolicy: 'mod-enter',
+      // Inside the form, which scrolls (and would clip it): above the caret when below has no room.
+      complete: { sources: this.lookups.sources, bounds: () => this.form },
       onChange: (s) => {
         if (this.syncing) return;
         const text = markedText(s);
@@ -477,6 +504,8 @@ export class StartRunDialog {
   // ---- rendering ----------------------------------------------------------------------
 
   private render(): void {
+    // #39: another harness, folder or worktree choice: an open popup follows it (its old rows never go in).
+    this.lookups.check();
     const fv = this.host.store.floorView(this.session);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const book = this.host.store.presets;

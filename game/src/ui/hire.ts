@@ -41,6 +41,10 @@ import { backdropPolicy } from './dismiss';
 import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft, type DraftSnapshot, type ResolveResult, type Uploader } from './composer/draft';
 import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
+// #39 completion
+import type { Source } from './composer/complete';
+import { CommandCatalogs } from '../laptop/commandCatalog';
+import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
 
 /**
  * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
@@ -85,6 +89,8 @@ export interface HireHost extends DialogHost {
   beep?(): void;
   /** #210: a background hire's undelivered first task into the new worker's Prompt (P) note (`HireCoordinatorHost.holdTask`). */
   holdTask?: HireCoordinatorHost['holdTask'];
+  /** #39: the app's lists of commands and skills (shared with the transcript); absent: the dialog keeps its own. */
+  catalogs?: CommandCatalogs;
 }
 
 /** M7: what "Ask a worker…" and "Review with a worker" start the dialog with. */
@@ -303,9 +309,12 @@ class TaskEditor {
   readonly el: HTMLElement;
   private readonly composer: Composer;
 
-  constructor(handlers: { change(s: DraftSnapshot): void; send(): void; upload: Uploader }) {
+  constructor(handlers: { change(s: DraftSnapshot): void; send(): void; upload: Uploader; sources: readonly Source[]; bounds: () => Element | null }) {
     this.composer = mountComposer({
       draft: new PromptDraft({ upload: handlers.upload, maxPromptBytes: HIRE_PROMPT_MAX_BYTES }),
+      // #39: `/` skills, `@` files and `@r:` repositories of the hire's context (`dialogCompletion.ts`).
+      // The popup stays inside the dialog's body (it scrolls, and would clip it), above the caret when below has no room.
+      complete: { sources: handlers.sources, bounds: handlers.bounds },
       labelledBy: 'hire-task-label',
       describedBy: 'hire-task-hint',
       placeholder: 'What should they start on?',
@@ -370,11 +379,23 @@ export class HireDialog {
   /** M6 start: Hire worker | Hire orchestrator. */
   private readonly tabs = h('div', { class: 'dd-tabs-slot' });
   private readonly form = h('form', { class: 'dd-body', id: 'hire-form', novalidate: true });
+  /**
+   * #39: what the first task's completion looks up: the floor, the harness and the folder `worker.hire` would get now
+   * (a worktree hire's repository root), once `hire.prepare` answered. Never asked before `/` or `@` opens a popup.
+   */
+  private lookup: HireLookup | null = null;
+  private ownCatalogs: CommandCatalogs | null = null;
+  private readonly lookups = new CompletionScope(
+    () => this.lookupKey(),
+    () => hireSources(this.lookupHost(), this.lookup as HireLookup),
+  );
   /** The first task: its own pane, never re-rendered; harness, model, effort, folder and label sit in the options pane beside (or below) it. */
   private readonly editor = new TaskEditor({
     upload: (file, hint, signal) => this.host.upload(file, hint, signal),
     change: (s) => this.taskChanged(s),
     send: () => void this.hire(),
+    sources: this.lookups.sources,
+    bounds: () => this.form,
   });
   private readonly editorPane = h('div', { class: 'hire-editor-pane' }, this.editor.el);
   private readonly optionsPane = h('div', { class: 'hire-options-pane' });
@@ -516,6 +537,34 @@ export class HireDialog {
 
   private title(): string {
     return `Hire a worker at Desk ${this.desk + 1}`;
+  }
+
+  /**
+   * #39: the key of the completion's context now (null: not prepared yet, or no harness). Its folder and worktree are
+   * `worker.hire`'s (`hireArgs`), as typed: a Folder still being checked, or cleared back to the floor's default, is
+   * already the context (the bridge translates the first prompt with that folder's skills), never the last one checked.
+   */
+  private lookupKey(): string | null {
+    const p = this.prep;
+    if (!this.dialog.open || !p || !this.f.harness || this.state === 'preparing' || this.state === 'failed') return (this.lookup = null);
+    const a = hireArgs(this.session, this.desk, this.f, p.git);
+    this.lookup = { session: this.session, harness: this.f.harness, ...(a.cwd ? { cwd: a.cwd } : {}), worktree: !!a.worktree };
+    return hireLookupKey(this.lookup);
+  }
+
+  private lookupHost() {
+    const host = this.host;
+    return {
+      send: host.send.bind(host),
+      unsupported: (t: Parameters<HireHost['unsupported']>[0]) => host.unsupported(t),
+      catalogs: host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) })),
+      repoRefs: host.store.repoRefs,
+    };
+  }
+
+  /** The completion test hook: its context's generation (it steps on every change of floor, harness, folder or worktree). */
+  get lookupGeneration(): number {
+    return this.lookups.generation;
   }
 
   private async prepare(cwd?: string): Promise<void> {
@@ -743,6 +792,8 @@ export class HireDialog {
   // ---- rendering ---------------------------------------------------------------
 
   private render(): void {
+    // #39: a change of the floor, harness, folder or worktree box: an open popup follows it (its old rows never go in).
+    this.lookups.check();
     const fv = this.host.store.floorView(this.session);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
@@ -826,6 +877,8 @@ export class HireDialog {
       cwd.value = this.f.cwd;
       cwd.addEventListener('input', () => {
         this.f.cwd = cwd.value;
+        // #39: another folder is another completion context at once (its check may take a while, or never come: cleared).
+        this.lookups.check();
         this.renderActions();
       });
       // A new folder: check again whether it is a repo, and its base.

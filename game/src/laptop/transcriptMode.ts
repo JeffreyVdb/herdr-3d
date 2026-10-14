@@ -93,6 +93,8 @@ export interface TranscriptModeHost {
   handoff?(id: string, c: HandoffCandidate): void;
   /** #247: the shared "Repositories from other buildings" switch, for the prompt box's `@r:` (none: as if off). */
   repoRefs?: RepoSearchHost['refs'];
+  /** #39: the app's lists of commands and skills, shared with the Prompt overlay and the hire dialogs (none: its own). */
+  catalogs?: CommandCatalogs;
   /** #58: the clock of the pending prompts' "not seen yet" hint (default Date.now; tests pass their own). */
   now?(): number;
 }
@@ -239,7 +241,7 @@ export class TranscriptMode {
   /** #110: the pack-up check of the prompt being sent (aborted: Esc, standing up). */
   private checking: AbortController | null = null;
   /** #140: each worker's slash commands and skills, kept across seats (the popup shows the last list at once). */
-  private readonly catalogs = new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
+  private readonly catalogs: CommandCatalogs;
   /** #141: each worker's unsent prompt, kept across seats (and its text and file chips across a reload). */
   private readonly drafts: TranscriptDrafts;
   /** #157: what you wrote for Codex workers' async questions, kept across views, seats and reconnects. */
@@ -257,6 +259,7 @@ export class TranscriptMode {
   private readonly handoffOps = new Map<string, { text: string; op: string }>();
 
   constructor(private readonly host: TranscriptModeHost) {
+    this.catalogs = host.catalogs ?? new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
     this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage });
     this.asyncDrafts = new AsyncDrafts(host.storage);
   }

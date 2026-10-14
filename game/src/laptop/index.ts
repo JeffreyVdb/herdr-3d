@@ -1,6 +1,7 @@
 import { codexNotice, type CodexNotice } from '../world/codexServer';
 import * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
+import type { CommandCatalogs } from './commandCatalog';
 import type { Ask, CommandArgs, CommandName, ConnMessage, KeyItem } from '../net/protocol';
 import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
@@ -58,6 +59,8 @@ export type WatchCommand = 'terminal.watch' | 'terminal.unwatch' | 'terminal.zoo
 
 export interface LaptopHost {
   store: WorldStore;
+  /** #39: the app's lists of commands and skills (the transcript's `/`, shared with the dialogs). */
+  catalogs?: CommandCatalogs;
   send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** The watches the game makes by itself (kept out of the log of what you did). */
   watch<T extends WatchCommand>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
@@ -311,6 +314,7 @@ export class Laptops {
       ...(host.packup ? { packup: host.packup } : {}),
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
       repoRefs: host.store.repoRefs, // #247
+      ...(host.catalogs ? { catalogs: host.catalogs } : {}), // #39
       modeChanged: (mode) => this.onMode(mode),
       ...(host.themes ? { prefs: host.themes.prefs } : {}),
     });

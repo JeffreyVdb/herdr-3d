@@ -910,9 +910,9 @@ fixture's upload adds `fail_code=upload_busy` (the failures are the bridge's `42
 upload to look at).
 #139 completion: `mountComposer({ complete: { sources, bounds? } })` turns on a suggestion popup under the caret
 (`complete.ts`: token detection and the source interface, pure; `completion.ts`: the popup and its keys). Opt-in: without
-`complete` the composer, its keys and its DOM are unchanged; the popup's DOM is made on its first open. Only the transcript's
+`complete` the composer, its keys and its DOM are unchanged; the popup's DOM is made on its first open. The transcript's
 prompt box opts in: #140 gives it the `/` source (the worker's commands and skills, see the transcript section), #141
-the `@` source (the worker's files, see below). A
+the `@` source (the worker's files, see below); #39 the Hire, Start run and Prompt dialogs too (see #39 below). A
 token is a trigger (`/` or `@`) at the start of the text, after whitespace or right after a chip (`/usr/bin`,
 `a/b`, URLs and emails never open one), up to the caret: a `/` query has no whitespace; an `@` query may hold spaces
 (file names) but ends at a newline, a chip or 80 characters. The nearest trigger before the caret decides; a pick
@@ -925,7 +925,10 @@ range: the token), applied with one `Draft.replace` (with `chip`, #141: one `Dra
 `text`), so one undo takes the pick back and the caret lands after it. #140, optional, for a source whose items live elsewhere: `available()` false opens
 no popup (and closes an open one when the source says it changed), `opening()` hears that a session would open (to
 refresh), `subscribe(changed)` says the items changed (an open session asks its query again, the active row kept by
-`key(item)`), `footer()` is a note under the rows (`.cmp-pop-note`). `world/rank.ts` `rankByName` is the filter
+`key(item)`), `footer()` is a note under the rows (`.cmp-pop-note`). #39, optional: `loading()` words the pending
+state with no rows ("Loading skills…"), `failure()` the error, and `retry()` puts a "Try again" button (`.cmp-pop-retry`,
+not focusable, a press keeps the editor's focus) by a failed load: it calls `retry` and asks the query again (Enter
+still closes a failed popup). `world/rank.ts` `rankByName` is the filter
 for named items: prefix, then word start (after `:`, `-`, `_`), then substring, stable within a tier, with the matched
 characters for the row to highlight. A session opens only when text is typed (an `input`, an IME commit) into a token;
 it follows the caret inside the token and closes when the caret leaves it or is scrolled out of the editor's visible
@@ -1104,14 +1107,16 @@ animation, opacity only, none in terminal mode or once idle); `e2e/m58-activity-
 ~4 min) traces 60 s idle / cue / idle for paints, layouts, long tasks, thread time and the label layer's paint count.
 #140: `/` in the view's prompt box (at the start or mid-sentence, after whitespace) lists the worker's slash commands
 and skills (`worker.commands`, #136). `laptop/commandCatalog.ts` keeps one list per worker for the page's life (at most
-64): asked when the transcript view mounts (`TranscriptMode.sit(id, name, canRead, harness)`, a Claude or Codex harness
+64; #39: one `CommandCatalogs` for the app, shared with the Prompt overlay and the hire dialogs, whose lists are keyed by
+their context, `CommandCatalogs.context`): asked when the transcript view mounts (`TranscriptMode.sit(id, name, canRead, harness)`, a Claude or Codex harness
 only) and again when the popup opens, one ask at a time; the last list shows at once and the rows follow the refresh.
 `laptop/slashCommands.ts` is the source: `rankByName` on the name as you type; a row is `/name` (mono, matched letters
 in the preset's sun), the argument hint dimmed, the description's first line cut with an ellipsis (its whole text is
 the tooltip), and the kind (`command`, `skill`, `custom`); a pick puts `/name ` in as plain text (a space already after
 the word is taken instead of adding one). A Codex skill is offered as `/name` too (the bridge sends `$name`, #138), and
-the footer says "Codex: skills are sent as $name". States: no list yet "Loading…"; a failed first ask "Could not load
-matches." (the next popup asks again); a failed refresh keeps the rows with "Could not refresh: the list may be out of
+the footer says "Codex: skills are sent as $name"; #39: with nothing else to say it says "Skills and commands · type @
+for files" (`/` is the harness's catalog only, global skills too; files are `@`'s). States: no list yet "Loading
+skills…"; a failed first ask "Could not load skills: <why>." with "Try again" (the next popup asks again too); a failed refresh keeps the rows with "Could not refresh: the list may be out of
 date"; `partial: true` the built-ins with "Partial list: only the built-in commands so far"; `invalid_state` /
 `unknown_worker` (no Claude or Codex agent, an asleep floor) no popup at all, asked again at most every 10 s; a worker
 waiting on a question disables the box, so no popup. Terminal-only built-ins (the bridge's table,
@@ -1131,8 +1136,8 @@ folders"): each query goes to `worker.files` (#137, `limit` 30) after a `DEBOUNC
 query never outlives, and the popup keeps the last rows dimmed until the latest reply; the bridge's order is kept. A
 row is the icon, the basename bold (a folder's with `/`) and its folder dimmed, the bridge's `indices` (code points of
 the whole path) marked `.tx-file-hit`. A pick inserts a file chip and a space (consuming one already there). The
-bridge's `reason`, or "No file list for this checkout" for `source: 'none'`, is the footer; an error is "Could not load
-matches."; nothing turns the source off. Drafts: `TranscriptMode` keeps one composer `Draft` per worker
+bridge's `reason`, or "No file list for this checkout" for `source: 'none'`, is the footer; pending with no rows is
+"Searching files…", an error "Could not search the files: <why>." with "Try again" (#39); nothing turns the source off. Drafts: `TranscriptMode` keeps one composer `Draft` per worker
 (`laptop/transcriptDrafts.ts`, the 24 most recent live) and hands it to the view (`TranscriptRenderHost.draft`; the view
 does not dispose a host's draft), so a desk switch gives back text, chips, caret and history; every change writes the
 text and the file chips to `Drafts` (`h3d.draft.transcript.<worker id>`, `segments` typed and validated on read), so a
@@ -1145,9 +1150,10 @@ quoted path, Backspace and undo, the sent `@path` text) and the copy/paste, desk
 #247: `@r:` (or `@repo:`) in the same box lists the repositories and folders stored on the other floors of the worker's
 building (every building's with the shared "Repositories from other buildings" switch, `repo_refs`). It is a query
 prefix, not a trigger: `laptop/atSource.ts` `atSource(files, repos)` is the transcript's one `@` source (only when the
-host passes `TranscriptRenderHost.repos`), routing a query that starts `r:` / `repo:` to `laptop/repoSearch.ts`
+host passes `TranscriptRenderHost.repos`; #39: the dialogs' too), routing a query that starts `r:` / `repo:` to `laptop/repoSearch.ts`
 `repoSource` with the prefix taken off and anything else to `fileSource`; its label follows the query, its keys are
-`file:` / `repo:`-prefixed, and the files' empty footer becomes the `r:` hint (`REPO_HINT`). `repoSource` asks
+`file:` / `repo:`-prefixed, and the files' empty footer becomes the `r:` hint (`REPO_HINT`, #39: "Files in this checkout
+· type r: for repositories on other floors"). `repoSource` asks
 `worker.repos` once per popup (`opening` marks the list stale, the first `r:` query asks; the known rows show at once and
 follow the answer through `subscribe`), ranks with `rankByKeys` (`world/rank.ts`; keys: the repo name, `owner/repo`, the
 folder's basename, the folder, the floor; `subsequence: true`, the opt-in tier the palette and `/` do not use), and
@@ -1160,6 +1166,20 @@ with `"` or a line break is never offered (`filePathProblem`). The switch is `ui
 and a folder-only floor in Work, a repo in Personal; cloned when the folder's basename is the repo name) and shares the
 switch between the key's connections; `e2e/h247-repo-completion.spec.ts` picks a folder and, after another client turns
 the switch on, a URL from the other building.
+#39: the same `/`, `@` and `@r:` in the Hire worker First task, Start run's Extra instructions and First prompt, and the
+Prompt (P) overlay. `ui/dialogCompletion.ts` `CompletionScope` gives a composer one proxy source per trigger over the
+dialog's **lookup context**, read live: a hire's floor, harness, and the folder and worktree choice `worker.hire` would carry
+(`hireArgs`: the Folder as typed, before its `hire.prepare` check; cleared: the floor's default; `hireSources`: `hire.commands`, `hire.files`, `hire.repos`, see docs/protocol.md "Completion before a hire"), or the P
+overlay's worker (`workerSources`: the transcript's `worker.*` sources and its shared list). Each context keeps its own
+sources (8 at most); a change bumps a generation: an open popup asks again (the new context's source is opened first),
+a reply of the old one is dropped (`stale lookup context`), and every row carries its generation so a pick of an older
+one puts nothing in. Nothing is asked before a popup opens; the dialogs never go busy, lose focus or change their draft
+for a lookup (`ui/hire.completion.dom.test.ts` holds the lookups and hires before they answer; `prompt.completion` and
+`startRun.completion` likewise). The dialogs bound the popup to their scrolling form (it flips above the caret there).
+The rows' styles are `laptop/completionRows.css` (moved out of `transcript.css`, imported by the sources). The
+simulator answers the `hire.*` ops (`tools/fixture-sim.ts` `hireLookup`); `e2e/h39-dialog-completion.spec.ts` drives
+the Hire dialog, the P overlay, and "Hand to a worker" on a GitHub issue and a Kaneo task (`simkaneo=connected`) with a
+repository picked in Extra and carried by `run.prepare` and `run.start`.
 #147: ⌘P (Mac) / Ctrl+P (elsewhere) opens the command palette from every view: `Game.onPaletteKey`, a window **capture-phase**
 listener next to `onHelpKey` that always `preventDefault`s the chord (no print dialog, repeats and the previews included),
 calls `stopImmediatePropagation` (the seated terminal, the whiteboard's editor and the dialogs under it never see it) and
@@ -1221,8 +1241,8 @@ top bar's **Hire** (on an office floor; Shift+Tab, then Tab past Elevator) for t
 bridge first (`hire.prepare`), then offers: an optional first task (**Enter** hires, **Shift+Enter** adds a line; paste a screenshot and it goes into the text as a
 thumbnail at the caret, click it to see it enlarged (**Esc** closes only that), the agent gets `[Image #n: <path>]` in its place (#64: the same in
 Start Run's Extra instructions and First prompt, the P overlay and the transcript view's prompt box, and a screenshot pasted at an agent's laptop;
-a prompt is sent once its images are uploaded, and not at all when one failed; #139: the hire task has no suggestion
-popup, only the transcript's prompt box can complete `/` and `@`, see the composer section);
+a prompt is sent once its images are uploaded, and not at all when one failed; #39: the hire task completes `/` skills,
+`@` files and `@r:` repositories of the hire's floor, harness and folder, see the composer section);
 the dialog is a near-full-screen sheet, #51: the task editor takes the space and grows with the window, the options
 sit beside it, or under it on a phone, and Hire / Cancel stay on screen; what you typed for a desk stays until a hire
 is acknowledged),

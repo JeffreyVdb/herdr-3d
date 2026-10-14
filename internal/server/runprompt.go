@@ -24,18 +24,21 @@ const issueStatusLine = "Move the ticket status accordingly, pull request always
 const placementLine = "Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: " +
 	"a laptop shows a pane at its own size, and a fullscreen terminal is wanted."
 
+// writeCodeSkill is the skill an orchestrator's first prompt runs.
+const writeCodeSkill = "write-code"
+
 // RunPrompt composes an orchestrator's first prompt: the write-code skill
-// invoked the harness's way (claude /write-code, codex $write-code) on the
-// ticket (an issue URL, or free text, trimmed), the team of the preset,
+// invoked as call (the orchestrator harness's way, PromptTranslator's
+// SkillCall: claude /write-code, codex $write-code) on the ticket (an issue URL, or free text, trimmed), the team of the preset,
 // the line telling it where to start its agents, for an issue the line
 // telling it to move the status, and the extra instructions (trimmed; with the blank line before them left
 // out when empty).
-func RunPrompt(orchHarness, ticket string, isIssue bool, roles proto.PresetRoles, extra string) string {
+func RunPrompt(call, ticket string, isIssue bool, roles proto.PresetRoles, extra string) string {
 	status := ""
 	if isIssue {
 		status = issueStatusLine
 	}
-	return runPrompt(orchHarness, ticket, status, roles, extra)
+	return runPrompt(call, ticket, status, roles, extra)
 }
 
 // maxItemBody bounds how much of an item's description goes into a prompt
@@ -77,20 +80,25 @@ func itemLine(provider string) string {
 // TicketPrompt is RunPrompt for a run ticket: an issue or a text as before,
 // an item (#184) with its text inlined and the item line in place of the
 // status line.
-func TicketPrompt(orchHarness string, t *proto.RunTicket, roles proto.PresetRoles, extra string) string {
+func TicketPrompt(call string, t *proto.RunTicket, roles proto.PresetRoles, extra string) string {
 	if t.Kind == proto.TicketItem && t.Item != nil {
-		return runPrompt(orchHarness, ItemTicket(t), itemLine(t.ProviderName), roles, extra)
+		return runPrompt(call, ItemTicket(t), itemLine(t.ProviderName), roles, extra)
 	}
-	return RunPrompt(orchHarness, ticketRef(t), t.Kind == proto.TicketIssue, roles, extra)
+	return RunPrompt(call, ticketRef(t), t.Kind == proto.TicketIssue, roles, extra)
 }
 
-func runPrompt(orchHarness, ticket, status string, roles proto.PresetRoles, extra string) string {
-	skill := "/write-code"
-	if orchHarness == "codex" {
-		skill = "$write-code"
+// writeCodeCall is how an orchestrator of harness runs write-code: the
+// translator's SkillCall (none: "/write-code").
+func (h *Hub) writeCodeCall(harness string) string {
+	if h.opts.Prompts == nil {
+		return "/" + writeCodeSkill
 	}
+	return h.opts.Prompts.SkillCall(harness, writeCodeSkill)
+}
+
+func runPrompt(call, ticket, status string, roles proto.PresetRoles, extra string) string {
 	var b strings.Builder
-	b.WriteString(skill + " " + strings.TrimSpace(ticket) + "\n\nTeam:")
+	b.WriteString(call + " " + strings.TrimSpace(ticket) + "\n\nTeam:")
 	for _, r := range []struct {
 		what string
 		hire proto.Hire

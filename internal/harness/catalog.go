@@ -112,6 +112,19 @@ func (c *Catalog) Commands(ctx context.Context, harness, dir string) (*proto.Wor
 	return c.answer(harness, e), nil
 }
 
+// Cached is harness's list in dir as the catalog last probed it, however
+// old, without waiting or starting a probe (#39: a hire's first prompt is
+// never held for one). False when no probe of the key has succeeded.
+func (c *Catalog) Cached(harness, dir string) ([]proto.CommandEntry, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.entries[catalogKey{harness, dir}]
+	if e == nil || e.list == nil {
+		return nil, false
+	}
+	return slices.Clone(e.list), true
+}
+
 // Wait waits for the probes in flight (they end with the catalog's ctx).
 func (c *Catalog) Wait() { c.wg.Wait() }
 

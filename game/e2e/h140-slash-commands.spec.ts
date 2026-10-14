@@ -45,7 +45,8 @@ for (const c of [
     all: ['/compact', '/review', '/usage', '/model', '/caveman:caveman-commit', '/handoff', '/deploy', '/release:notes'],
     query: 'cav',
     picked: '/caveman:caveman-commit',
-    note: null,
+    // #39: with nothing else to say, the footer says files are @'s.
+    note: 'Skills and commands · type @ for files',
   },
   {
     harness: 'codex',

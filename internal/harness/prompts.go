@@ -49,6 +49,22 @@ func (p *Prompts) Translate(ctx context.Context, harness, dir, text string) (str
 	return Translate(harness, text, cmds, InCheckout(dir)), nil
 }
 
+// TranslateCached is Translate for a hire's first prompt (#39): the skills
+// from what the catalog already holds for harness in catalogDir (a worktree
+// hire's repository root, where completion looked them up), the files of
+// checkout (the new worker's). It never waits: with no list cached, a
+// "/skill" stays as typed and only the files are rewritten.
+func (p *Prompts) TranslateCached(harness, catalogDir, checkout, text string) string {
+	if !Rewrites(harness) || !strings.ContainsAny(text, "/@") {
+		return text
+	}
+	var cmds []proto.CommandEntry
+	if strings.Contains(text, "/") {
+		cmds, _ = p.catalog.Cached(harness, catalogDir)
+	}
+	return Translate(harness, text, cmds, InCheckout(checkout))
+}
+
 // InCheckout is the file check Translate takes for the checkout at dir: path
 // (relative to dir, or absolute) names a file or a directory that is inside
 // dir, before and after symlinks (as imgcache's allowlist: a "..", or a

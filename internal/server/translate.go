@@ -13,17 +13,21 @@ import (
 // input lane, just before it is sent. The rules live behind
 // PromptTranslator (*harness.Prompts), not here.
 //
-// Which routes translate (what the person typed in the composer) and which
+// Which routes translate (what the person typed in a composer) and which
 // do not (what the bridge wrote itself):
 //
 //	worker.prompt                      translated: the composer's text
 //	worker.answer_ask  prompt          translated: the composer's text, sent once the dialog is gone
+//	worker.hire        prompt          translated (#39): the dialog's first task, when the hire sends it
+//	run.start          extra           translated (#39): inside the composed prompt, never the ticket around it
+//	run.start          prompt          translated (#39): an edited First prompt, whole
 //	worker.answer_followup             not: the bridge builds it from the answers' fields
 //	worker.wrap_up                     not: the bridge's own instruction
-//	hire's first prompt, run prompts   not: the bridge builds or launches them
 //
-// h.prompt itself never translates, so a route that calls it sends its
-// text as it is.
+// A first prompt is translated once, in runHire against the new checkout,
+// from the skills the catalog already holds (TranslateCached: a hire never
+// waits for a probe). h.prompt itself never translates, so a route that
+// calls it sends its text as it is.
 
 // PromptTranslator rewrites a prompt for a worker's harness (the agent kind
 // of the worker) in its checkout. Rewrites says whether the harness has any
@@ -36,6 +40,10 @@ type PromptTranslator interface {
 	// dropped (a lone "enter", or more: a popup to close first).
 	RetryKeys(harness, text string) []string
 	Translate(ctx context.Context, harness, dir, text string) (string, error)
+	// TranslateCached is Translate for a hire's first prompt (#39): the
+	// skills catalog already holds for catalogDir, the files of checkout. It
+	// never waits for a probe: with none cached, "/skill" stays as typed.
+	TranslateCached(harness, catalogDir, checkout, text string) string
 	// TerminalOnly reports whether text, typed as a prompt, runs a built-in
 	// whose output shows only in the worker's terminal (#140).
 	TerminalOnly(harness, text string) bool
