@@ -1361,8 +1361,10 @@ export interface TranscriptDiff {
   hunks: unknown[];
   /** Lines were left out (`transcript.item` has them). */
   truncated?: boolean;
-  /** #171: what happened to the file, when the source says (absent: not known, e.g. a Codex patch, an older bridge). */
-  op?: 'edit' | 'create' | 'overwrite' | 'delete' | string;
+  /** #171: what happened to the file, when the source says (absent: not known, e.g. an older bridge); #21: `rename`. */
+  op?: 'edit' | 'create' | 'overwrite' | 'delete' | 'rename' | string;
+  /** #21: a renamed file's new path (`op` rename; `path` is the old one). */
+  to?: string;
   /** #171: the source recorded the change but no lines for it (`hunks` is empty): not a cut of ours (`truncated` is). */
   no_diff?: boolean;
 }
@@ -1382,6 +1384,11 @@ export interface TranscriptChanges {
   skipped?: boolean;
   /** Another Bash call ran in the same repository at the same time: some listed changes may be its. */
   shared?: boolean;
+  /**
+   * #21: how many patches a running Codex exec script builds itself (not written out as plain text): their changes show
+   * once Codex applies them, nothing is made up before.
+   */
+  computed?: number;
 }
 
 export interface TranscriptItem {

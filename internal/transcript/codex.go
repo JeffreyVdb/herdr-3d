@@ -131,9 +131,28 @@ type codexEvent struct {
 	CallID    string `json:"call_id"`
 	Result    string `json:"result"`
 	SavedPath string `json:"saved_path"`
-	// Item is item_started / item_completed's item (#151); only an
-	// McpToolCall is read.
+	// Item is item_started / item_completed's item (#151); an McpToolCall
+	// and (#21) a FileChange are read.
 	Item json.RawMessage `json:"item"`
+	// patch_apply_end (#21, codex-cli 0.145-0.146): what a patch did.
+	Stdout  string                 `json:"stdout"`
+	Stderr  string                 `json:"stderr"`
+	Success *bool                  `json:"success"`
+	Status  string                 `json:"status"`
+	Changes map[string]codexChange `json:"changes"`
+}
+
+// codexFileChange is the FileChange item of an item_completed event (#21,
+// codex-cli 0.147+): what a patch did. Its id is the call's for a direct
+// apply_patch, a nested id ("exec-<uuid>") for an exec script's
+// tools.apply_patch, which no field links to the script.
+type codexFileChange struct {
+	Type    string                 `json:"type"`
+	ID      string                 `json:"id"`
+	Changes map[string]codexChange `json:"changes"`
+	Status  string                 `json:"status"`
+	Stdout  string                 `json:"stdout"`
+	Stderr  string                 `json:"stderr"`
 }
 
 // codexMCPCall is the McpToolCall item of an item_started / item_completed
@@ -171,7 +190,7 @@ func parseCodex(off int64, b []byte) (cs []contrib, version string) {
 	case "event_msg":
 		var ev codexEvent
 		_ = json.Unmarshal(l.Payload, &ev)
-		cs := []contrib{codexEventItem(&ev, id, ts, pc)}
+		cs := codexEventItems(&ev, id, ts, pc)
 		if ev.Type == "turn_aborted" {
 			cs = append(cs, contrib{link: linkAbort, ts: ts, apply: func(b *builder) { b.interrupt() }})
 		}
@@ -279,13 +298,27 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 			input = callArguments(it.Arguments)
 		}
 		summary := summarize(input)
-		if it.Name == "exec" { // code mode: a script; its first command says most
+		var diffs []proto.TranscriptDiff
+		var changes *proto.TranscriptChanges
+		script := it.Name == "exec"
+		if script { // code mode: a script; its first command says most
 			var code string
 			if json.Unmarshal(input, &code) == nil {
-				summary = execSummary(code, summary)
+				// #21: the patches it passes as plain literals, proposed until its output; the others it computes.
+				patches, computed := patchLiterals(code)
+				for _, p := range patches {
+					diffs = append(diffs, parsePatch(p)...)
+				}
+				if computed > 0 {
+					changes = &proto.TranscriptChanges{Computed: computed}
+				}
+				if cmd := execSummary(code, ""); cmd != "" {
+					summary = cmd
+				} else if len(diffs) > 0 {
+					summary = diffPaths(diffs)
+				}
 			}
 		}
-		var diffs []proto.TranscriptDiff
 		if it.Name == "apply_patch" {
 			var patch string
 			if json.Unmarshal(input, &patch) != nil {
@@ -296,12 +329,8 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 				patch = in.Input
 			}
 			diffs = parsePatch(patch)
-			var paths []string
-			for _, d := range diffs {
-				paths = append(paths, d.Path)
-			}
-			if len(paths) > 0 {
-				summary = strings.Join(paths, ", ")
+			if len(diffs) > 0 {
+				summary = diffPaths(diffs)
 			}
 		}
 		viewPath := ""
@@ -318,14 +347,18 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 				ask = &a
 			}
 		}
-		return []contrib{{id: callID, kind: proto.ItemTool, ts: ts, maybeImg: viewPath != "", apply: func(b *builder) {
+		return []contrib{{id: callID, kind: proto.ItemTool, ts: ts, maybeImg: viewPath != "", script: script, apply: func(b *builder) {
 			b.call(name, input, summary)
+			b.script = script
 			if ask != nil {
 				b.ask = ask
 				b.tool().Ask = ask.card(Codex)
 			}
 			if diffs != nil {
-				b.diffs = diffs
+				b.diffs, b.literal = diffs, true
+			}
+			if changes != nil {
+				b.changes = changes
 			}
 			if viewPath != "" {
 				b.viewPath = viewPath
@@ -337,6 +370,12 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 			status = proto.ToolError
 		}
 		text := it.Output.text
+		// #21: a script that threw (a patch that failed verification among
+		// others), and a direct patch that failed verification.
+		patchFailed := strings.HasPrefix(text, "apply_patch verification failed")
+		if patchFailed || strings.HasPrefix(text, "Script failed\n") {
+			status = proto.ToolError
+		}
 		var images []imgRef
 		for _, u := range it.Output.images {
 			images = append(images, pc.codexImage(u, proto.OriginAgent, proto.KindViewed))
@@ -344,6 +383,15 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 		return []contrib{{link: linkResult, id: it.CallID, kind: proto.ItemTool, ts: ts, imgs: images,
 			apply: func(b *builder) {
 				b.result(status, text, images)
+				// #21: a script's own patches were only proposed: what it did is
+				// what Codex recorded (its own rows), never the script's text.
+				// A direct patch that failed verification changed nothing.
+				if b.literal && (b.script || patchFailed) {
+					b.diffs, b.literal = nil, false
+				}
+				if b.script {
+					b.changes = nil
+				}
 				if b.ask != nil && b.it.Tool.Ask != nil {
 					a := *b.it.Tool.Ask
 					a.Outcome, a.Answers = b.ask.codexResult(text)
@@ -466,6 +514,18 @@ func callArguments(raw json.RawMessage) json.RawMessage {
 		return b
 	}
 	return raw
+}
+
+// codexEventItems is what an event_msg line gives: a patch's record (#21),
+// else one item.
+func codexEventItems(ev *codexEvent, id string, ts int64, pc *parseCtx) []contrib {
+	switch ev.Type {
+	case "item_completed", "patch_apply_end":
+		if cs, ok := codexPatchEvent(ev, ts); ok {
+			return cs
+		}
+	}
+	return []contrib{codexEventItem(ev, id, ts, pc)}
 }
 
 func codexEventItem(ev *codexEvent, id string, ts int64, pc *parseCtx) contrib {
@@ -606,57 +666,83 @@ func codexMCPResult(m *codexMCPCall) (status, text string) {
 	return status, text
 }
 
-// parsePatch reads apply_patch's patch format ("*** Begin Patch", "***
-// Update File: p", "@@ …", "-old", "+new", " ctx") into diffs, one per
-// file; its hunks have no line numbers.
-func parsePatch(patch string) []proto.TranscriptDiff {
-	var out []proto.TranscriptDiff
-	var cur *proto.TranscriptDiff
-	var hunk *proto.TranscriptHunk
-	flush := func() {
-		if cur != nil && hunk != nil && len(hunk.Lines) > 0 {
-			cur.Hunks = append(cur.Hunks, *hunk)
+// codexPatchEvent is what Codex recorded a patch did (#21): a FileChange
+// item_completed (codex-cli 0.147+) or a patch_apply_end (0.145-0.146).
+// Its row is the item's id: a direct apply_patch's call (whose diffs it
+// replaces: these are real, the patch's text only proposed them), else a
+// row of its own named apply_patch, where the line is: after the exec
+// script that ran it, before the script's output. A nested one also
+// tells that script (linkScript) that its proposed patches are done.
+func codexPatchEvent(ev *codexEvent, ts int64) ([]contrib, bool) {
+	var id, status, stdout, stderr string
+	var changes map[string]codexChange
+	switch ev.Type {
+	case "patch_apply_end":
+		id, stdout, stderr, changes = ev.CallID, ev.Stdout, ev.Stderr, ev.Changes
+		status = codexPatchStatus(ev.Status, ev.Success)
+	default:
+		var fc codexFileChange
+		if !bytes.Contains(ev.Item, []byte(`"FileChange"`)) || json.Unmarshal(ev.Item, &fc) != nil || fc.Type != "FileChange" {
+			return nil, false
 		}
-		hunk = nil
+		id, stdout, stderr, changes = fc.ID, fc.Stdout, fc.Stderr, fc.Changes
+		status = codexPatchStatus(fc.Status, nil)
 	}
-	file := func(path string) {
-		flush()
-		out = append(out, proto.TranscriptDiff{Path: strings.TrimSpace(path), Hunks: []proto.TranscriptHunk{}})
-		cur = &out[len(out)-1]
+	if id == "" {
+		return nil, false
 	}
-	for _, line := range strings.Split(patch, "\n") {
-		switch {
-		case strings.HasPrefix(line, "*** Update File: "):
-			file(strings.TrimPrefix(line, "*** Update File: "))
-		case strings.HasPrefix(line, "*** Add File: "):
-			file(strings.TrimPrefix(line, "*** Add File: "))
-		case strings.HasPrefix(line, "*** Delete File: "):
-			file(strings.TrimPrefix(line, "*** Delete File: "))
-		case strings.HasPrefix(line, "*** Move to: "):
-			if cur != nil {
-				cur.Path += " → " + strings.TrimSpace(strings.TrimPrefix(line, "*** Move to: "))
+	diffs := fileChangeDiffs(changes)
+	text := strings.TrimRight(stdout, "\n")
+	if e := strings.TrimRight(stderr, "\n"); e != "" {
+		text = strings.TrimLeft(text+"\n"+e, "\n")
+	}
+	cs := []contrib{{link: linkResult, id: id, kind: proto.ItemTool, ts: ts, apply: func(b *builder) {
+		t := b.tool()
+		if t.Name == "" {
+			t.Name, t.InputSummary = "apply_patch", clipSummary(diffPaths(diffs))
+		}
+		b.diffs, b.literal = diffs, false
+		out := text
+		if t.OutputText != "" { // the call's own output came first
+			out = ""
+		}
+		b.result(status, out, nil)
+	}}}
+	if strings.HasPrefix(id, "exec-") {
+		cs = append(cs, contrib{link: linkScript, kind: proto.ItemTool, ts: ts, apply: func(b *builder) {
+			if b.script && b.literal {
+				b.diffs, b.literal = nil, false
 			}
-		case strings.HasPrefix(line, "***"): // Begin/End Patch, End of File
-		case cur == nil:
-		case strings.HasPrefix(line, "@@"):
-			flush()
-			hunk = &proto.TranscriptHunk{}
-		case line != "" && (line[0] == '+' || line[0] == '-' || line[0] == ' '):
-			if hunk == nil {
-				hunk = &proto.TranscriptHunk{}
+			if b.script {
+				b.changes = nil
 			}
-			hunk.Lines = append(hunk.Lines, line)
-			switch line[0] {
-			case '+':
-				hunk.NewLines++
-			case '-':
-				hunk.OldLines++
-			default:
-				hunk.OldLines++
-				hunk.NewLines++
-			}
+		}})
+	}
+	return cs, true
+}
+
+// codexPatchStatus is a patch's status (codex-rs PatchApplyStatus):
+// completed is ok, declined denied, failed (and anything else) an error;
+// none (an older patch_apply_end) is its success.
+func codexPatchStatus(status string, success *bool) string {
+	switch status {
+	case "completed":
+		return proto.ToolOK
+	case "declined":
+		return proto.ToolDenied
+	case "":
+		if success != nil && *success {
+			return proto.ToolOK
 		}
 	}
-	flush()
-	return out
+	return proto.ToolError
+}
+
+// diffPaths are a patch's files, for a summary.
+func diffPaths(diffs []proto.TranscriptDiff) string {
+	paths := make([]string, len(diffs))
+	for i, d := range diffs {
+		paths[i] = d.Path
+	}
+	return strings.Join(paths, ", ")
 }

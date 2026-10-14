@@ -159,4 +159,28 @@ describe('TranscriptSim', () => {
     other.handle({ t: 'transcript.watch', req_id: 'x', args: { id } }, (m) => o.push(m));
     expect(watchAck((o.find((m) => m.req_id === 'x') as { data: unknown }).data).items.some((it) => it.id === 'toolu_demo_edit')).toBe(true);
   });
+
+  it('#21 simtx: demo-h21 watches get Codex code changes, half of them past the window; a page brings them, each once', () => {
+    const { snapshot } = loadFixture('demo-h171');
+    const out: Msg[] = [];
+    let n = 0;
+    const sim = new SimWorld(snapshot as never, { stepMs: 100, transcript: 'demo-h21', now: () => 1_000_000, setTimeout: () => 0, clearTimeout: () => {} });
+    const cmd = (t: string, args: unknown) => {
+      const req_id = `r${++n}`;
+      sim.handle({ t, req_id, args }, (m) => out.push(m));
+      return out.find((m) => m.req_id === req_id) as Msg & { data?: Record<string, unknown>; code?: string };
+    };
+    const id = (snapshot as unknown as typeof world).world.workers.find((w) => w.name === 'Nibble')?.id as string;
+    const ack = cmd('transcript.watch', { id }).data as { has_more: boolean; cursor: string };
+    const items = watchAck(ack).items;
+    expect(ack.has_more).toBe(true);
+    expect(items.some((it) => it.id === 'call_c21direct0000000000000007')).toBe(true);
+    expect(items.some((it) => it.id === 'exec-0c210001-0000-4000-8000-000000000001')).toBe(false);
+    const older = (cmd('transcript.page', { id, before: ack.cursor }).data as { items: TranscriptItem[] }).items;
+    expect(older[0]?.id).toBe('h21-ask');
+    expect(older.find((it) => it.id === 'exec-0c210001-0000-4000-8000-000000000001')?.tool?.diff?.hunks[0]).toMatchObject({ old_start: 3, new_start: 3 });
+    const ids = [...older, ...items].map((it) => it.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect([...older, ...items].map((it) => it.seq)).toEqual(ids.map((_, i) => i + 1));
+  });
 });

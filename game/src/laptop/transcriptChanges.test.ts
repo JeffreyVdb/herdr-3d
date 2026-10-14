@@ -16,6 +16,8 @@ import { mountTranscript, toolHasChanges, type TranscriptRenderHost, type Transc
 
 const CHANGES = JSON.parse(readFileSync(join(import.meta.dirname, '../../fixtures/transcript/claude-changes.json'), 'utf8')) as TranscriptItem[];
 const CODEX = JSON.parse(readFileSync(join(import.meta.dirname, '../../fixtures/transcript/codex.json'), 'utf8')) as TranscriptItem[];
+/** #21: what the bridge makes of its Codex patch fixtures (internal/transcript/testdata/codex/patch_*.jsonl). */
+const CODEX_CHANGES = JSON.parse(readFileSync(join(import.meta.dirname, '../../fixtures/transcript/codex-changes.json'), 'utf8')) as TranscriptItem[];
 
 interface Host extends TranscriptRenderHost {
   itemLoads: Array<[string, string | undefined]>;
@@ -171,14 +173,14 @@ describe('code changes (#171)', () => {
     expect(state('p')).toEqual(['applied', null]);
   });
 
-  it('keep existing Codex diffs: no line numbers made up, no file fate made up, shown without opening the row', () => {
+  it('keep existing Codex diffs: no line numbers made up, the file fate the patch names (#21), shown without opening the row', () => {
     mount();
     view.setItems(CODEX);
     const patch = CODEX.find((it) => it.tool?.name === 'apply_patch') as TranscriptItem;
     const r = row(patch.id);
     expect(files(patch.id).map((f) => [f.path, f.op, f.open])).toEqual([
-      ['package.json', [], true],
-      ['tsconfig.json', [], true],
+      ['package.json', ['new'], true],
+      ['tsconfig.json', ['new'], true],
     ]);
     expect($('.tx-dh', r)).toBeNull();
     expect($$('.tx-dl .tx-dn', r).every((n) => n.textContent === '')).toBe(true);
@@ -682,3 +684,109 @@ describe('syntax colours in diff rows (#206)', () => {
     }
   });
 });
+
+/**
+ * #21: Codex's code changes through the same view: what Codex recorded each patch did (its own rows, real line numbers,
+ * created, deleted, edited and renamed files), a script's literal patches only while it runs, and every outcome's status.
+ */
+describe('Codex code changes (#21)', () => {
+  const exec = (n: string) => (CODEX_CHANGES.find((it) => it.id.startsWith(`call_c21exec0${n}`)) as TranscriptItem).id;
+  const nested = (n: string, k = 1) => `exec-0c2100${n}-0000-4000-8000-00000000000${k}`;
+
+  it('show by default under their own rows, with the record\'s line numbers; the scripts that ran them show none once done', () => {
+    mount();
+    view.setItems(CODEX_CHANGES);
+    const single = row(nested('01'));
+    expect(files(nested('01'))).toEqual([{ path: `${P}src/tide.ts`, op: [], stat: '+2 −1', open: true }]);
+    expect($('.tx-dh', single)?.textContent).toBe('@@ -3,3 +3,4 @@');
+    expect(single.querySelector('.tx-tool-body')?.hasAttribute('hidden')).toBe(true);
+    expect(files(nested('02', 2)).map((f) => [f.path?.slice(P.length), f.op, f.stat])).toEqual([
+      ['package.json', [], '+1 −0'],
+      ['tides.old.md', ['deleted'], '+0 −3'],
+      ['tides/.gitignore', ['new'], '+1 −0'],
+      ['tides/README.md', ['new'], '+3 −0'],
+    ]);
+    // Two patches in one script: a row each.
+    expect(files(nested('03')).map((f) => f.path)).toEqual([`${P}roles/buoy/tasks/main.yaml`]);
+    expect(files(nested('03', 3)).map((f) => f.path)).toEqual([`${P}roles/buoy/tasks/retire.yaml`]);
+    // Direct apply_patch: the record's numbers replaced the literal's none.
+    expect($$('.tx-dh', row('call_c21direct0000000000000007')).map((e) => e.textContent)).toEqual(['@@ -7,1 +7,1 @@', '@@ -0,0 +1,2 @@']);
+    for (const n of ['single', 'multi', 'calls', 'concat', 'escape', 'rename', 'nestfail']) expect(row(exec(n)).querySelector('.tx-changes'), n).toBeNull();
+  });
+
+  it('keep each outcome: a script that failed, a direct patch that failed, a nested one that failed under a script that completed, declined, interrupted', () => {
+    mount();
+    view.setItems(CODEX_CHANGES);
+    const status = (id: string) => row(id).querySelector('.tx-tool-status')?.textContent;
+    expect([status(exec('failed')), row(exec('failed')).querySelector('.tx-changes')]).toEqual(['error', null]);
+    expect([status('call_c21directfail00000000008'), row('call_c21directfail00000000008').querySelector('.tx-changes')]).toEqual(['error', null]);
+    expect(status(exec('nestfail'))).toBe('done');
+    expect(notes(nested('10', 2))).toEqual(['The call failed: these changes may not have been applied, or only in part.']);
+    expect(notes(nested('12'))).toEqual(['Denied: not applied.']);
+    expect(files(nested('12'))[0]?.op).toEqual(['deleted']);
+    expect([status(exec('interrupt')), row(exec('interrupt')).querySelector('.tx-changes')]).toEqual(['interrupted', null]);
+    expect($('.tx-changes', row(nested('13')))?.getAttribute('data-state')).toBe('applied');
+  });
+
+  it('a renamed file says where it went; with no lines changed, says so', () => {
+    mount();
+    view.setItems(CODEX_CHANGES);
+    const r = row(nested('11'));
+    expect(files(nested('11')).map((f) => [f.path?.slice(P.length), f.op, f.stat])).toEqual([
+      ['infra/buoy_cost.tf', ['renamed'], '+0 −0'],
+      ['infra/buoy_iam.tf', ['renamed'], '+1 −1'],
+    ]);
+    expect($$('.tx-chg-to', r).map((e) => e.textContent)).toEqual([`→ ${P}infra/buoy-cost.tf`, `→ ${P}infra/buoy-iam.tf`]);
+    expect($('.tx-chg-head', r)?.getAttribute('title')).toBe(`${P}infra/buoy_cost.tf → ${P}infra/buoy-cost.tf`);
+    expect($('.tx-chg-body', r)?.textContent).toBe('Renamed only: no lines changed.');
+  });
+
+  it('a running script: its literal patch proposed (no line numbers), its built one said, not made up; its output takes both away', () => {
+    mount();
+    view.setItems(CODEX_CHANGES);
+    const id = exec('running');
+    const r = row(id);
+    expect($('.tx-changes', r)?.getAttribute('data-state')).toBe('proposed');
+    expect(notes(id)).toEqual(['Proposed: not applied yet.', '1 more patch is built by the script, not written out: the changes show once Codex applies it.']);
+    expect($('.tx-dh', r)).toBeNull();
+    expect($$('.tx-dl .tx-dn', r).every((n) => n.textContent === '')).toBe(true);
+    const running = CODEX_CHANGES.find((it) => it.id === id) as TranscriptItem;
+    const { diff: _d, diffs: _ds, changes: _c, ...done } = running.tool as NonNullable<TranscriptItem['tool']>;
+    view.applyUpdates([{ ...running, tool: { ...done, status: 'ok' } }]);
+    expect(row(id).querySelector('.tx-changes')).toBeNull();
+    // A script whose only patch it builds itself, and a literal one that deletes a file (its lines are not in the patch).
+    const tool = (diff: TranscriptDiff | undefined, computed: number): TranscriptItem => ({ id: 'b', seq: 99, ts: 0, kind: 'tool', tool: { name: 'exec', input_summary: 'x', status: 'running', ...(diff ? { diff } : {}), changes: { computed } } });
+    view.applyUpdates([tool(undefined, 2)]);
+    expect(notes('b')).toEqual(['Proposed: not applied yet.', 'Its 2 patches are built by the script, not written out: the changes show once Codex applies them.']);
+    view.applyUpdates([tool({ path: 'old.md', op: 'delete', no_diff: true, hunks: [] }, 0)]);
+    expect(files('b').map((f) => [f.op, f.stat])).toEqual([[['deleted', 'no diff'], null]]);
+    expect($('.tx-chg-body', row('b'))?.textContent).toBe('No lines recorded: a patch that deletes a file does not carry its lines.');
+  });
+
+  it('"Hide tools" keeps Codex changes and hides the scripts; "Show code changes" is apart', () => {
+    mount();
+    view.setItems(CODEX_CHANGES);
+    prefs.hideTools = true;
+    expect(keptWhenHidden(nested('01'))).toBe(true);
+    expect(keptWhenHidden('call_c21direct0000000000000007')).toBe(true);
+    expect(keptWhenHidden(exec('running'))).toBe(true);
+    expect(keptWhenHidden(exec('single'))).toBe(false);
+    expect(keptWhenHidden('call_c21directfail00000000008')).toBe(false);
+    expect(files(nested('01'))[0]?.open).toBe(true);
+    prefs.showChanges = false;
+    expect(files(nested('01'))[0]?.open).toBe(false);
+    expect(keptWhenHidden(nested('01'))).toBe(true);
+  });
+
+  it('a restored history renders the same as the live one, each change once', () => {
+    mount();
+    view.setItems(CODEX_CHANGES.slice(0, 2));
+    view.applyUpdates(CODEX_CHANGES.slice(2));
+    const live = $$('.tx-chg-head').map((e) => e.textContent);
+    view.setItems(CODEX_CHANGES);
+    expect($$('.tx-chg-head').map((e) => e.textContent)).toEqual(live);
+    const ids = $$('[data-id]').map((e) => e.getAttribute('data-id'));
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+

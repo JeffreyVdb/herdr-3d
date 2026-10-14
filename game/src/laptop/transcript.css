@@ -1014,6 +1014,17 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* #21: a renamed file's new path right after its old one; short of room, both give way by their length (the new
+   one taking what is left), so a narrow view still shows some of each. */
+.tx-chg-from {
+  flex: 0 1 auto;
+}
+.tx-chg-to {
+  flex: 1 1 auto;
+}
+.tx-chg-arrow {
+  color: var(--tx-text-3);
+}
 .tx-diff-stat {
   flex: none;
   font-size: calc(11px * var(--tx-k, 1));

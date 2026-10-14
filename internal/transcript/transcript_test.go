@@ -488,7 +488,7 @@ func TestParsePatch(t *testing.T) {
 	ds := parsePatch("*** Begin Patch\n*** Update File: a.go\n@@ func a()\n ctx\n-old\n+new\n@@\n+more\n*** Delete File: b.go\n" +
 		"*** Update File: c.go\n*** Move to: d.go\n@@\n-x\n+y\n*** End Patch\n")
 	if len(ds) != 3 || ds[0].Path != "a.go" || len(ds[0].Hunks) != 2 || ds[1].Path != "b.go" || len(ds[1].Hunks) != 0 ||
-		ds[2].Path != "c.go → d.go" {
+		ds[2].Path != "c.go" || ds[2].Op != proto.DiffRename || ds[2].To != "d.go" {
 		t.Fatalf("diffs = %+v", ds)
 	}
 	if h := ds[0].Hunks[0]; h.OldLines != 2 || h.NewLines != 2 || strings.Join(h.Lines, "|") != " ctx|-old|+new" {

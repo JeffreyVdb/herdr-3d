@@ -40,6 +40,10 @@ const (
 	// linkAbort: an interruption: every call still running is
 	// interrupted.
 	linkAbort
+	// linkScript (#21): a line inside the newest Codex exec script still
+	// running (no output yet): it adds to that call, if there is one. The
+	// index is built in file order, so "still running" is where the line is.
+	linkScript
 )
 
 // contrib is what one line gives one item. Parsing is deterministic, so
@@ -58,7 +62,9 @@ type contrib struct {
 	// maybeImg: the item may get an image when it is built (a Codex
 	// view_image call, whose result names a file).
 	maybeImg bool
-	apply    func(b *builder)
+	// script: a Codex exec script's call, for linkScript (#21).
+	script bool
+	apply  func(b *builder)
 }
 
 // builder assembles an item from its contributions.
@@ -75,6 +81,10 @@ type builder struct {
 	viewPath string
 	// ask is an ask call's questions (#57), for its result's answers.
 	ask *askCall
+	// literal (#21): diffs is read from a Codex patch's own text, not what
+	// Codex recorded it did; script: the call is an exec script, whose
+	// patches' text only says what it proposes.
+	literal, script bool
 }
 
 type blockParts struct {

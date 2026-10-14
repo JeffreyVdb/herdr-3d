@@ -1093,7 +1093,11 @@ timeline when one has that name: `demo-h171` (`?ws=%2Ffixture%2Fdemo-h171%3Fsim%
 own output for its #171 Claude fixtures (`fixtures/transcript/claude-changes.json`: Edit, Write create / overwrite with
 and without hunks, Bash one / several files, files without a diff, incomplete, shared, skipped, failed, denied,
 interrupted), a Codex patch, one still running and an Edit whose diff the list cut (`transcript.item` answers it whole);
-`e2e/h171-changes.spec.ts` drives it. Code changes show under each call's header (`changesBlock` in
+`e2e/h171-changes.spec.ts` drives it. #21: `simtx=demo-h21` (`?ws=%2Ffixture%2Fdemo-h171%3Fsim%3D1%26simtx%3Ddemo-h21`, sit
+at Nibble) is the bridge's own output for its Codex patch fixtures (`fixtures/transcript/codex-changes.json`: exec
+scripts and the patches they ran, direct and legacy patches, failed, declined, renamed, interrupted, still running),
+half of it older than a watch's window (the screenshot's "Jump to message" pages it in); `e2e/h21-codex-changes.spec.ts`
+drives it. Code changes show under each call's header (`changesBlock` in
 `laptop/transcriptRender.ts`), "Code changes" in the strip folds them (`h3d.transcript.showChanges`). The demo's `Read` of a PNG shows its two thumbnails under its collapsed header, and still does with Hide tools on (#70). #59: the view's top strip has the transcript's preset (two swatches:
 Ubuntu, Quiet), Hide tools, the context meter (#101: `world/usage.ts` `contextMeter`, `TranscriptView.setUsage`, fed by `TranscriptMode.usageSeen`; `e2e/m101-context-meter.spec.ts`) and A− / 100% / A+; the seat bar has the terminal's own preset and zoom. Ctrl + = /
 − / 0 and Ctrl+wheel zoom the view that is up, while seated only; Ctrl+, puts the keyboard on the terminal's controls (Esc goes back). `e2e/m59-themes.spec.ts` drives them. The game's tests read what the bridge makes of its own fixtures from
