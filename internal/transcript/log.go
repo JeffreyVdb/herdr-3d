@@ -70,6 +70,7 @@ type entry struct {
 	kind   string
 	hidden bool
 	hasImg bool // a line of it has an image (or an [Image #n: path] marker)
+	script bool // a Codex exec script's call (#21: linkScript)
 	spans  []span
 }
 
@@ -397,6 +398,13 @@ func (l *Log) index(off int64, n int, cs []contrib, version string) {
 				l.addSpan(i, sp, c)
 			}
 			l.open = l.open[:0]
+		case linkScript:
+			for j := len(l.open) - 1; j >= 0; j-- {
+				if i := l.open[j]; l.entries[i].script {
+					l.addSpan(i, sp, c)
+					break
+				}
+			}
 		}
 	}
 }
@@ -426,7 +434,7 @@ func (l *Log) closeCall(i int32) {
 
 func (l *Log) newEntry(id string, c *contrib, sp span) int32 {
 	i := int32(len(l.entries))
-	l.entries = append(l.entries, entry{id: id, ts: c.ts, kind: c.kind, hidden: c.hidden, hasImg: c.hasImg(), spans: []span{sp}})
+	l.entries = append(l.entries, entry{id: id, ts: c.ts, kind: c.kind, hidden: c.hidden, hasImg: c.hasImg(), script: c.script, spans: []span{sp}})
 	l.byID[id] = i
 	for s := range l.subs {
 		s.signal()

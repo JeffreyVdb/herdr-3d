@@ -30,6 +30,11 @@ var gameFixtures = []struct {
 	{"codex.json", Codex, []string{"session.jsonl", "tools.jsonl", "apply_patch.jsonl", "image.jsonl", "view_image.jsonl", "generated.jsonl", "aborted.jsonl", "compacted.jsonl", "unknown.jsonl"}},
 	// #151: MCP calls that are events only, a failed one and the deduped ones.
 	{"codex-mcp.json", Codex, []string{"mcp_exec.jsonl", "mcp_failed.jsonl", "mcp_dup.jsonl"}},
+	// #21: Codex's code changes, every source and state (patch_declined, patch_interrupted and patch_running are
+	// synthetic: in Codex's source, never seen locally).
+	{"codex-changes.json", Codex, []string{"patch_exec.jsonl", "patch_exec_multi.jsonl", "patch_exec_calls.jsonl", "patch_exec_concat.jsonl",
+		"patch_exec_failed.jsonl", "patch_exec_escape.jsonl", "patch_direct.jsonl", "patch_direct_failed.jsonl", "patch_legacy.jsonl",
+		"patch_nested_failed.jsonl", "patch_rename.jsonl", "patch_declined.jsonl", "patch_interrupted.jsonl", "patch_running.jsonl"}},
 }
 
 func TestGameFixtures(t *testing.T) {

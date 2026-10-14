@@ -168,6 +168,7 @@ type TranscriptTool struct {
 	// its diffs: files it changed without a diff, and how complete and how
 	// much its own the list is. Absent: the source said nothing (an older
 	// Claude Code, recording off, not a Bash call): unknown, not "no changes".
+	// #21: a running Codex exec script's patches it cannot show (Computed).
 	Changes *TranscriptChanges `json:"changes,omitempty"`
 }
 
@@ -190,6 +191,11 @@ type TranscriptChanges struct {
 	// Shared: another Bash call ran in the same repository at the same time,
 	// so some of the listed changes may be its.
 	Shared bool `json:"shared,omitempty"`
+	// Computed (#21) is how many patches a Codex exec script that is still
+	// running passes to apply_patch in a form not read from its text (built
+	// by the script: a concatenation, a variable): their changes show once
+	// Codex records them, nothing is made up before.
+	Computed int `json:"computed,omitempty"`
 }
 
 // TranscriptDiff is a file's change as unified diff hunks.
@@ -198,9 +204,11 @@ type TranscriptDiff struct {
 	Hunks     []TranscriptHunk `json:"hunks"`
 	Truncated bool             `json:"truncated,omitempty"` // lines were left out (transcript.item has them)
 	// Op (#171) is what happened to the file, when the source says: edit,
-	// create, overwrite (a Write over a file that was there) or delete; ""
-	// is not known (Codex patches, older bridges).
+	// create, overwrite (a Write over a file that was there), delete or
+	// (#21) rename; "" is not known (older bridges).
 	Op string `json:"op,omitempty"`
+	// To (#21) is a renamed file's new path (Op rename; Path is the old one).
+	To string `json:"to,omitempty"`
 	// NoDiff (#171): the source recorded the change but no lines for it
 	// (Hunks is empty): Claude Code's Write over a file with no patch (no
 	// change, too large or timed out). Not a cut of ours (Truncated is).
@@ -213,10 +221,12 @@ const (
 	DiffCreate    = "create"
 	DiffOverwrite = "overwrite"
 	DiffDelete    = "delete"
+	DiffRename    = "rename" // #21: a Codex patch's "Move to"
 )
 
-// TranscriptHunk is one hunk: its lines start with ' ', '-' or '+'.
-// Codex patches have no line numbers (0).
+// TranscriptHunk is one hunk: its lines start with ' ', '-' or '+' (or a
+// backslash: "\ No newline at end of file"). A Codex patch's own text has no line
+// numbers (0); what Codex recorded it did has them (#21).
 type TranscriptHunk struct {
 	OldStart int      `json:"old_start"`
 	OldLines int      `json:"old_lines"`
