@@ -610,3 +610,64 @@ func TestHandoffInstructionIsNeverAudited(t *testing.T) {
 		}
 	}
 }
+
+// proto mirrors internal/handoffllm (it cannot import it: handoffllm reads
+// transcripts, which use proto): the same codes, states and fields.
+func TestHandoffLLMProtocolMirrorsTheFeature(t *testing.T) {
+	if proto.ErrHandoffLLMUnavailable != handoffllm.CodeUnavailable || proto.ErrHandoffLLMInvalid != handoffllm.CodeInvalid ||
+		proto.HandoffLLMOff != handoffllm.StateOff || proto.HandoffLLMIncomplete != handoffllm.StateIncomplete ||
+		proto.HandoffLLMUntested != handoffllm.StateUntested || proto.HandoffLLMReady != handoffllm.StateReady {
+		t.Fatal("codes or states drifted")
+	}
+	keys := func(v any) []string {
+		b, _ := json.Marshal(v)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		var out []string
+		for k := range m {
+			out = append(out, k)
+		}
+		slices.Sort(out)
+		return out
+	}
+	full := handoffllm.View{Missing: []string{"llm"}}
+	if a, b := keys(full), keys(proto.HandoffLLMState{Missing: []string{"llm"}}); !slices.Equal(a, b) {
+		t.Fatalf("View %v, proto %v", a, b)
+	}
+	if a, b := keys(handoffllm.TestResult{Reason: "r", Title: "t", Diag: &ai.Diagnostics{}}), keys(proto.HandoffLLMTestResult{Reason: "r", Title: "t", Diag: &ai.Diagnostics{}}); !slices.Equal(a, b) {
+		t.Fatalf("TestResult %v, proto %v", a, b)
+	}
+}
+
+// With the real reducer: a secret in the transcript is scrubbed before it
+// is sent, and neither it nor the transcript's text reaches a log, an audit
+// row, the wire or a job row; the preview's redaction counts say so.
+func TestLLMHandoffRealReducerScrubsTheTranscript(t *testing.T) {
+	t.Parallel()
+	lb := newLLMBridge(t, yes(), func(o *server.Options) { o.HandoffReduce = nil })
+	c := lb.connect(proto.Hello{})
+	c.snapshot()
+	id := lb.ids["w1"]
+	// Rows with their ancestry, as Claude Code writes them (the reducer follows the active branch).
+	row := func(m map[string]any) string { b, _ := json.Marshal(m); return string(b) + "\n" }
+	appendTo(t, lb.claude,
+		row(map[string]any{"type": "user", "uuid": "p1", "parentUuid": nil, "sessionId": wrapSess, "isSidechain": false,
+			"message": map[string]any{"role": "user", "content": "Fix the flaky login test. " + llmMarker + " my token is " + llmSecret}})+
+			row(map[string]any{"type": "assistant", "uuid": "a1", "parentUuid": "p1", "sessionId": wrapSess, "isSidechain": false, "requestId": "req_1",
+				"message": map[string]any{"id": "msg_1", "role": "assistant", "content": []map[string]any{{"type": "text", "text": "Fixed: the test waits for the form."}}, "stop_reason": "end_turn"}})+
+			row(map[string]any{"type": "system", "subtype": "turn_duration", "durationMs": 5, "uuid": "d1", "parentUuid": "a1", "sessionId": wrapSess, "isSidechain": false}))
+	cand := *handoffOf(c, id).Handoff
+	_, m := c.command(proto.CmdWorkerHandoffPreview, "p", proto.WorkerHandoffPreviewArgs{Worker: id, Mode: proto.HandoffModeLLM, Candidate: cand.ID})
+	pv := ackData[proto.WorkerHandoffPreviewResult](t, m)
+	if !pv.LLM.Ready || !pv.LLM.Reduced || pv.LLM.Redactions["github_token"] < 1 || pv.LLM.Coverage.Messages < 2 {
+		t.Fatalf("preview %s", m.raw)
+	}
+	c.mustAck(proto.CmdWorkerHandoff, llmArgs(id, cand, "op-real"))
+	upsertFor(c, id, llmJobState(proto.LLMHandoffFiled))
+	req := lb.llm.llm.Calls()[0]
+	user := req.Messages[1].Content
+	if strings.Contains(user, llmSecret) || !strings.Contains(user, "[redacted:github_token]") || !strings.Contains(user, llmMarker) {
+		t.Fatalf("sent:\n%s", user)
+	}
+	lb.noLeak(t, c)
+}

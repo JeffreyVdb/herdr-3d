@@ -53,6 +53,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/handoffllm"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 )
 
 const (
@@ -136,7 +137,7 @@ func (h *Hub) initHandoffLLM(ctx context.Context) error {
 		return fmt.Errorf("LLM handoffs: %w", err)
 	}
 	h.llm.svc, h.llm.roles = svc, roles
-	if b, err := json.Marshal(svc.View()); err == nil {
+	if b, err := json.Marshal(llmStateOf(svc.View())); err == nil {
 		h.llm.last = string(b)
 	}
 	now := h.opts.Now()
@@ -166,7 +167,7 @@ func (h *Hub) handoffLLMView() *proto.HandoffLLMState {
 	if h.llm.svc == nil {
 		return nil
 	}
-	v := h.llm.svc.View()
+	v := llmStateOf(h.llm.svc.View())
 	return &v
 }
 
@@ -177,7 +178,7 @@ func (h *Hub) publishHandoffLLMState() {
 		return
 	}
 	h.checkLLMJob()
-	v := h.llm.svc.View()
+	v := llmStateOf(h.llm.svc.View())
 	b, err := json.Marshal(v)
 	if err != nil || string(b) == h.llm.last {
 		return
@@ -294,7 +295,7 @@ func (h *Hub) startHandoffLLM(ctx context.Context, c *Client, cmd proto.Command)
 		}
 		work = func(ctx context.Context) (any, error) {
 			svc.Refresh(ctx)
-			return svc.View(), nil
+			return llmStateOf(svc.View()), nil
 		}
 	case proto.CmdHandoffLLMSet:
 		var a proto.HandoffLLMSetArgs
@@ -307,7 +308,7 @@ func (h *Hub) startHandoffLLM(ctx context.Context, c *Client, cmd proto.Command)
 				return nil, err
 			}
 			_ = h.doWait(ctx, h.publishHandoffLLMState)
-			return svc.View(), nil
+			return llmStateOf(svc.View()), nil
 		}
 	default: // handoff_llm.test
 		if err := decodeArgs(cmd.Args, &struct{}{}); err != nil {
@@ -319,7 +320,7 @@ func (h *Hub) startHandoffLLM(ctx context.Context, c *Client, cmd proto.Command)
 				return nil, err
 			}
 			_ = h.doWait(ctx, h.publishHandoffLLMState)
-			return res, nil
+			return testResultOf(res), nil
 		}
 	}
 	h.startAsync(ctx, c, cmd, work)
@@ -362,6 +363,17 @@ func reduceInput(hc *handoffCand, budget int) handoffllm.Input {
 	return handoffllm.Input{Harness: hc.c.Harness, Path: hc.path, File: hc.fi, Through: hc.c.Through, Budget: budget}
 }
 
+// reduceSnapshot reduces a candidate's snapshot (off the hub goroutine):
+// first the candidate checked to be the transcript's latest completed reply
+// still, its lines unchanged (the reducer checks the file and the snapshot's
+// end, not the candidate's region), then the reduction.
+func reduceSnapshot(ctx context.Context, reduce func(context.Context, handoffllm.Input) (handoffllm.Payload, error), hc *handoffCand, budget int) (handoffllm.Payload, error) {
+	if err := transcript.StillLatest(hc.path, hc.fi, &hc.c, hc.end); err != nil {
+		return handoffllm.Payload{}, err
+	}
+	return reduce(ctx, reduceInput(hc, budget))
+}
+
 // startLLMPreview answers worker.handoff_preview in mode "llm": what the
 // handoff would send and to whom; the reducer runs off the hub goroutine,
 // nothing is sent.
@@ -385,10 +397,10 @@ func (h *Hub) startLLMPreview(ctx context.Context, c *Client, cmd proto.Command,
 	src, reduce := *hc, h.opts.HandoffReduce
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
 		p := &proto.LLMHandoffPreview{Model: model, Host: host, BudgetBytes: v.InputBytes, MaxTokens: v.MaxTokens, TimeoutS: v.TimeoutS,
-			PromptVersion: v.PromptVersion, Categories: v.Categories, Redactions: map[string]int{}, Coverage: proto.CoverageOf(handoffllm.Coverage{})}
-		pl, err := reduce(ctx, reduceInput(&src, v.InputBytes))
+			PromptVersion: v.PromptVersion, Categories: v.Categories, Redactions: map[string]int{}, Coverage: coverageOf(handoffllm.Coverage{})}
+		pl, err := reduceSnapshot(ctx, reduce, &src, v.InputBytes)
 		if err == nil {
-			p.Reduced, p.PayloadBytes, p.EstTokens, p.Coverage = true, pl.Bytes, pl.EstTokens, proto.CoverageOf(pl.Coverage)
+			p.Reduced, p.PayloadBytes, p.EstTokens, p.Coverage = true, pl.Bytes, pl.EstTokens, coverageOf(pl.Coverage)
 			for k, n := range pl.Redactions {
 				p.Redactions[k] = n
 			}
@@ -411,11 +423,15 @@ func (h *Hub) startLLMPreview(ctx context.Context, c *Client, cmd proto.Command,
 func reduceWhy(err error) string {
 	switch {
 	case errors.Is(err, handoffllm.ErrTooLarge):
-		return "the goal, the corrections and the final reply alone do not fit the transcript budget: raise it in Settings, LLM handoffs"
-	case errors.Is(err, handoffllm.ErrChanged):
-		return "the transcript changed since its last read: reopen the dialog"
+		return "your prompts and the final reply alone do not fit the transcript budget (they are always sent whole): raise the budget in Settings, LLM handoffs, or save the last message instead"
+	case errors.Is(err, handoffllm.ErrChanged), errors.Is(err, transcript.ErrSourceReplaced), errors.Is(err, transcript.ErrSourceChanged):
+		return "the transcript changed since it was last read (replaced or cut): reopen the dialog"
+	case errors.Is(err, transcript.ErrNotLatest):
+		return "the worker finished another turn since: reopen the dialog for its latest reply"
+	case errors.Is(err, transcript.ErrSourceTooLarge):
+		return "the transcript has more since the reply than the bridge reads back"
 	case errors.Is(err, handoffllm.ErrUnsupported):
-		return "this transcript's format is not supported"
+		return "this conversation can't be read for an LLM handoff (a subagent's, an empty one, or a format the bridge does not know)"
 	}
 	return "the transcript could not be read"
 }
@@ -599,7 +615,7 @@ func (h *Hub) runLLMHandoff(jctx, hctx context.Context, j *llmJob, hc *handoffCa
 	var res handoffllm.Result
 	var filed store.Handoff
 	err := func() error {
-		pl, err := h.opts.HandoffReduce(jctx, reduceInput(hc, svc.InputBytes()))
+		pl, err := reduceSnapshot(jctx, h.opts.HandoffReduce, hc, svc.InputBytes())
 		if err != nil {
 			return err
 		}
@@ -713,6 +729,9 @@ func llmFailure(j *llmJob, err error) (state, code, msg string) {
 		return store.HandoffJobFailed, string(ae.Kind), msg + "; nothing was filed"
 	case handoffLLMErrorCode(err) != "":
 		return store.HandoffJobFailed, handoffLLMErrorCode(err), reduceWhy(err) + "; nothing was sent"
+	case errors.Is(err, transcript.ErrNotLatest), errors.Is(err, transcript.ErrSourceReplaced), errors.Is(err, transcript.ErrSourceChanged),
+		errors.Is(err, transcript.ErrSourceTooLarge):
+		return store.HandoffJobFailed, handoffErrorCode(err), reduceWhy(err) + "; nothing was sent"
 	case errors.Is(err, errHandoffFailed):
 		return store.HandoffJobFailed, proto.ErrHandoffFailed, "the handoff was written but could not be filed"
 	case errors.Is(err, context.Canceled):
@@ -783,6 +802,31 @@ func (h *Hub) llmHandoffCancel(ctx context.Context, c *Client, cmd proto.Command
 	h.audit(ctx, c, cmd, nil)
 	h.reply(c, cmd, j.view(), nil)
 	return true, nil
+}
+
+// coverageOf is a reduction's coverage as the protocol says it.
+func coverageOf(c handoffllm.Coverage) proto.HandoffCoverage {
+	out := proto.HandoffCoverage{Messages: c.Messages, Kept: c.Kept, Omitted: []proto.HandoffRange{}, Compaction: c.Compaction,
+		Gaps: append([]string{}, c.Gaps...), Abandoned: c.Abandoned, Sidechains: c.Sidechains, Deduplicated: c.Deduplicated,
+		Skipped: c.Skipped, Complete: c.Complete}
+	for _, r := range c.Omitted {
+		out.Omitted = append(out.Omitted, proto.HandoffRange{From: r.From, To: r.To, Why: r.Why})
+	}
+	return out
+}
+
+// llmStateOf is the feature's view as the protocol says it.
+func llmStateOf(v handoffllm.View) proto.HandoffLLMState {
+	s := proto.HandoffLLMState{Enabled: v.Enabled, State: v.State, Missing: v.Missing, Env: v.Env, Tested: v.Tested, InputBytes: v.InputBytes,
+		MaxTokens: v.MaxTokens, ReasoningEffort: v.ReasoningEffort, Reasoning: v.Reasoning, EffortStale: v.EffortStale, TimeoutS: v.TimeoutS,
+		PromptVersion: v.PromptVersion, Categories: v.Categories}
+	s.Roles.LLM = v.Roles.LLM
+	return s
+}
+
+// testResultOf is handoff_llm.test's ack.
+func testResultOf(r *handoffllm.TestResult) proto.HandoffLLMTestResult {
+	return proto.HandoffLLMTestResult{OK: r.OK, Reason: r.Reason, Title: r.Title, Bytes: r.Bytes, LatencyMS: r.LatencyMS, Diag: r.Diag}
 }
 
 // llmProvenanceOf is a handoff's LLM provenance from its front matter (nil:

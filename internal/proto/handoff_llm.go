@@ -1,6 +1,6 @@
 package proto
 
-import "github.com/JeffreyVdb/herdr-3d/internal/handoffllm"
+import "github.com/JeffreyVdb/herdr-3d/internal/ai"
 
 // #9 LLM handoffs (docs/protocol.md "LLM handoffs"): worker.handoff in mode
 // "llm" has the configured LLM (#92) write a handoff from the worker's
@@ -21,16 +21,45 @@ const (
 
 func init() { Commands = append(Commands, CmdHandoffLLMGet, CmdHandoffLLMSet, CmdHandoffLLMTest) }
 
-// HandoffLLMState is the feature's settings and state: handoff_llm.get's and
-// handoff_llm.set's ack, World.HandoffLLM, and flat in handoff_llm.update.
-type HandoffLLMState = handoffllm.View
+// HandoffLLMState is the feature's settings and state (internal/handoffllm's
+// View, which this package cannot import: handoffllm reads transcripts, which
+// use proto): handoff_llm.get's and handoff_llm.set's ack, World.HandoffLLM,
+// and flat in handoff_llm.update.
+type HandoffLLMState struct {
+	Enabled bool   `json:"enabled"`
+	State   string `json:"state"`
+	// Missing lists the roles that are not ready ("llm").
+	Missing []string `json:"missing,omitempty"`
+	Roles   struct {
+		LLM string `json:"llm"`
+	} `json:"roles"`
+	// Env lists the fields the bridge environment sets ("enabled").
+	Env []string `json:"env"`
+	// Tested: a passing handoff_llm.test, within 30 minutes, covers the LLM,
+	// effort and budget in use.
+	Tested bool `json:"tested"`
+	// InputBytes is the transcript budget, MaxTokens the completion budget,
+	// ReasoningEffort the effort sent ("": the provider's default).
+	InputBytes      int    `json:"input_bytes"`
+	MaxTokens       int    `json:"max_tokens"`
+	ReasoningEffort string `json:"reasoning_effort"`
+	// Reasoning is what the model's catalog says of its effort; EffortStale:
+	// the chosen one is not the model's, so it is not sent.
+	Reasoning   ai.Reasoning `json:"reasoning"`
+	EffortStale bool         `json:"effort_stale"`
+	// TimeoutS bounds a handoff call; PromptVersion is the bridge's prompt;
+	// Categories are what a handoff sends.
+	TimeoutS      int      `json:"timeout_s"`
+	PromptVersion string   `json:"prompt_version"`
+	Categories    []string `json:"categories"`
+}
 
-// Feature states (HandoffLLMState.State).
+// Feature states (HandoffLLMState.State), internal/handoffllm's.
 const (
-	HandoffLLMOff        = handoffllm.StateOff
-	HandoffLLMIncomplete = handoffllm.StateIncomplete
-	HandoffLLMUntested   = handoffllm.StateUntested
-	HandoffLLMReady      = handoffllm.StateReady
+	HandoffLLMOff        = "off"
+	HandoffLLMIncomplete = "incomplete"
+	HandoffLLMUntested   = "untested"
+	HandoffLLMReady      = "ready"
 )
 
 // HandoffLLMUpdate is the handoff_llm.update event (not an Event: the fields
@@ -52,17 +81,26 @@ type HandoffLLMSetArgs struct {
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 }
 
-// HandoffLLMTestResult is handoff_llm.test's ack.
-type HandoffLLMTestResult = handoffllm.TestResult
+// HandoffLLMTestResult is handoff_llm.test's ack: the sample handoff's
+// title, its size and time, and the call's sanitized diagnostics; OK false
+// with Reason when the answer was not of the agreed shape.
+type HandoffLLMTestResult struct {
+	OK        bool            `json:"ok"`
+	Reason    string          `json:"reason,omitempty"`
+	Title     string          `json:"title,omitempty"`
+	Bytes     int             `json:"bytes"`
+	LatencyMS int64           `json:"latency_ms"`
+	Diag      *ai.Diagnostics `json:"diag,omitempty"`
+}
 
 // Error codes of the LLM handoffs.
 const (
 	// ErrHandoffLLMUnavailable: the feature is off, its LLM not ready or
 	// untested; nothing was sent.
-	ErrHandoffLLMUnavailable = handoffllm.CodeUnavailable
+	ErrHandoffLLMUnavailable = "handoff_llm_unavailable"
 	// ErrHandoffLLMInvalid: the model's answer is not a handoff of the
 	// agreed shape; nothing was filed.
-	ErrHandoffLLMInvalid = handoffllm.CodeInvalid
+	ErrHandoffLLMInvalid = "handoff_llm_invalid"
 	// ErrHandoffLLMStale: the LLM config, the worker's agent session or the
 	// worker changed while the handoff was written; nothing was filed.
 	ErrHandoffLLMStale = "handoff_llm_stale"
@@ -91,17 +129,6 @@ type HandoffRange struct {
 	From int    `json:"from"`
 	To   int    `json:"to"`
 	Why  string `json:"why"`
-}
-
-// CoverageOf is a reduction's coverage as the protocol says it.
-func CoverageOf(c handoffllm.Coverage) HandoffCoverage {
-	out := HandoffCoverage{Messages: c.Messages, Kept: c.Kept, Omitted: []HandoffRange{}, Compaction: c.Compaction,
-		Gaps: append([]string{}, c.Gaps...), Abandoned: c.Abandoned, Sidechains: c.Sidechains, Deduplicated: c.Deduplicated,
-		Skipped: c.Skipped, Complete: c.Complete}
-	for _, r := range c.Omitted {
-		out.Omitted = append(out.Omitted, HandoffRange{From: r.From, To: r.To, Why: r.Why})
-	}
-	return out
 }
 
 // LLMHandoffPreview is what an LLM handoff would send, and to whom
