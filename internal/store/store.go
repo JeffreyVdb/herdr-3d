@@ -191,6 +191,8 @@ var migrations = []string{
 	migrationHandoffRequest,
 	// #247: the "Repositories from other buildings" switch.
 	migrationRepoRefs,
+	// #9: LLM handoffs: the settings and the jobs.
+	migrationHandoffLLM,
 }
 
 // Fingerprint kinds.
