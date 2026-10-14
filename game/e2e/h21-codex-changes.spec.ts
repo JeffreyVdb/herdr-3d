@@ -60,6 +60,15 @@ test('Codex changes show by default, direct and exec-wrapped, with every status;
   await rename.scrollIntoViewIfNeeded();
   await frames(page, 4);
   await shot(page, 'h21-codex-renamed');
+  // On a phone the long paths give way together: some of the new one still shows beside the old.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const widths = () =>
+    rename.locator('.tx-chg-head').first().evaluate((h) => ['.tx-chg-from', '.tx-chg-to'].map((s) => h.querySelector(s)!.getBoundingClientRect().width));
+  await expect.poll(async () => Math.min(...(await widths()))).toBeGreaterThan(40);
+  await rename.scrollIntoViewIfNeeded();
+  await frames(page, 4);
+  await shot(page, 'h21-codex-renamed-390');
+  await page.setViewportSize({ width: 1280, height: 720 });
   // A nested patch that failed under a script that completed; a declined one; an interrupted script.
   await expect(tx.locator('[data-id="exec-0c210010-0000-4000-8000-000000000002"] .tx-chg-state')).toHaveText('The call failed: these changes may not have been applied, or only in part.');
   await expect(tx.locator(`[data-id="${LEGACY_EXEC}"] .tx-tool-status`)).toHaveText('done');
