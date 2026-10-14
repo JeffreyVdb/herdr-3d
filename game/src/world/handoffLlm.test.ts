@@ -22,7 +22,7 @@ describe('LLM handoffs, in words (#9)', () => {
     const base = handoffLlmStateOf({ enabled: false, state: 'off', roles: { llm: 'ready' } })!;
     expect(llmModeWhy(base, true)).toContain('off');
     expect(llmModeWhy({ ...base, state: 'incomplete' }, true)).toContain('AI integration');
-    expect(llmModeWhy({ ...base, state: 'untested' }, true)).toContain('test again');
+    expect(llmModeWhy({ ...base, state: 'untested' }, true)).toContain('run it again');
     expect(llmModeWhy({ ...base, state: 'ready' }, true)).toBe('');
   });
 

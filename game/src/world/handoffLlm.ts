@@ -99,11 +99,11 @@ export function llmModeWhy(s: HandoffLLMState | null, known: boolean): string {
     case 'ready':
       return '';
     case 'off':
-      return 'LLM handoffs are off. Switch them on in Settings › LLM handoffs after a passing test.';
+      return 'Off: switch LLM handoffs on in Settings after a passing test.';
     case 'incomplete':
-      return 'The LLM is not ready. Set it up in Settings › AI integration.';
+      return 'The LLM is not set up: see Settings › AI integration.';
     case 'untested':
-      return 'The LLM or the handoff limits changed since the test. Run the test again in Settings › LLM handoffs.';
+      return 'The LLM or the limits changed since the test: run it again in Settings.';
   }
   return 'LLM handoffs are not available.';
 }

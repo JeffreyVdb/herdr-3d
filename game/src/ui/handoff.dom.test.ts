@@ -387,7 +387,7 @@ describe('HandoffDialog: Use configured LLM', () => {
     await e.flush();
     expect(d.summary().mode).toBe('literal');
     expect(document.querySelector<HTMLInputElement>('[data-key="mode:llm"]')!.disabled).toBe(true);
-    expect(e.hook('ho-modes')?.textContent).toContain('LLM handoffs are off. Switch them on in Settings › LLM handoffs after a passing test.');
+    expect(e.hook('ho-modes')?.textContent).toContain('Off: switch LLM handoffs on in Settings after a passing test.');
     e.q('llm-settings').click();
     expect(opened).toEqual(['handoff-llm']);
     expect(e.sent.every((x) => x.args.mode !== 'llm')).toBe(true);

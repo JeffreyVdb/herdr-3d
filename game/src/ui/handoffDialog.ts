@@ -883,13 +883,15 @@ export class HandoffDialog {
   private async cancelJob(): Promise<void> {
     const j = this.job;
     if (!j) return;
+    // A settled job is dismissed, a running one cancelled (its update may come before the ack).
+    const dismiss = this.state === 'failed';
     const res = await this.host.send('worker.handoff_cancel', { worker: this.id, op: j.op });
     if (!this.dialog.open || this.job?.op !== j.op) return;
     if (!res.ok) {
       this.setStatus(failureText('worker.handoff_cancel', res.code, res.message, { worker: this.name }), true);
       return;
     }
-    if (this.state === 'failed') {
+    if (dismiss) {
       // Dismissed: back to a fresh preview (nothing is sent until you write).
       this.startLlm();
       return;

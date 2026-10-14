@@ -169,7 +169,7 @@ export function handoffLlmSection(host: HandoffLlmSectionHost): (body: HTMLEleme
                   : 'Run the test below first: it has to pass with the LLM and the limits in use.';
       if (!kbDirty && document.activeElement !== kb.input) kb.input.value = String(Math.round(s.input_bytes / 1024));
       kb.input.disabled = busy;
-      kb.hint.textContent = `In use: ${sizeWord(s.input_bytes)} of reduced conversation, about ${figures(Math.ceil(s.input_bytes / 3))} tokens at most. The first goal, your corrections and the final reply always go; older detail is left out first, and the dialog says what was. ${HANDOFF_LLM_INPUT.default / 1024} KB by default.`;
+      kb.hint.textContent = `In use: ${sizeWord(s.input_bytes)} of reduced conversation, about ${figures(Math.ceil(s.input_bytes / 3))} tokens at most. Your prompts and the final reply always go whole (a handoff that can’t fit them is refused); older detail is left out first, and the dialog says what was. ${HANDOFF_LLM_INPUT.default / 1024} KB by default.`;
       if (!tkDirty && document.activeElement !== tk.input) tk.input.value = String(s.max_tokens);
       tk.input.disabled = busy;
       tk.hint.textContent = `In use: ${figures(s.max_tokens)}. The most the model may write for one handoff, its reasoning included. An answer cut off at it is refused, never filed short. ${figures(HANDOFF_LLM_TOKENS.default)} by default.`;
