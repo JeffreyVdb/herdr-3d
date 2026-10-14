@@ -197,15 +197,17 @@ func parsePatch(patch string) []proto.TranscriptDiff {
 // a substitution), decoded, in order; unread counts the calls whose
 // argument is anything else (a concatenation, a variable, an object): the
 // script computes those, and nothing is made up for them. The script is
-// only read, never run, by a lexical pass that is sure of every part of it
-// or reads none of it: a call is the name tools.apply_patch in its code,
-// never text in its comments, strings, templates or regular expressions,
-// and a computed argument is skipped whole, so call text inside it is not
-// a call. Where the pass can't be sure (a / that may be a division or a
-// regular expression, an escape, # or a character outside ASCII in the
-// code, anything unterminated, apply_patch named any other way), no patch
-// is read from the script and each apply_patch it names counts as unread:
-// a preview lost while it runs is cheap (Codex records what the patches
+// only read, never run, and only when it is simple enough to be sure of
+// every part of it: no / and no \ in its code (only in its strings' and
+// templates' text), so it has no comment, no regular expression and no
+// escaped name, and where its strings and templates start and end is
+// certain. A call is then the name tools.apply_patch in its code, never
+// text in its strings or templates, and a computed argument is skipped
+// whole, so call text inside it is not a call. Any other script (a / or
+// \, # or a character outside ASCII in its code, anything unterminated,
+// tools used other than as tools.…, with, apply_patch named any other
+// way) reads no patch, and each apply_patch it names counts as unread: a
+// preview lost while it runs is cheap (Codex records what the patches
 // did), a made-up one is not.
 func patchLiterals(code string) (patches []string, unread int) {
 	s := patchScan{src: code}
@@ -224,123 +226,93 @@ type patchScan struct {
 
 // code reads code from i up to the closer that ends its nesting level
 // (none at the top) and returns the index just past it; false if the code
-// ends first or the pass can't be sure of it. With count, the calls it
-// finds are patches or unread; without (inside a computed argument), they
-// are just code.
+// ends first or the script is not one the pass reads. With count, the
+// calls it finds are patches or unread; without (inside a computed
+// argument), they are just code.
 func (s *patchScan) code(i int, closer byte, count bool) (int, bool) {
 	src := s.src
-	last := "" // the previous token: a word, "0" for a value, or punctuation
+	prev := "" // the previous word, for new
 	for i < len(src) {
 		c := src[i]
 		switch {
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f':
 			i++
 			continue
-		case strings.HasPrefix(src[i:], "//"):
-			end, ok := skipLineComment(src, i)
-			if !ok {
-				return len(src), false
-			}
-			i = end
-			continue
-		case strings.HasPrefix(src[i:], "/*"):
-			end := strings.Index(src[i+2:], "*/")
-			if end < 0 {
-				return len(src), false
-			}
-			i += 2 + end + 2
-			continue
+		case c == '/' || c == '\\' || c == '#' || c >= 0x80:
+			return len(src), false // a comment, a regular expression or a division, an escape, a private or non-ASCII name
 		case strings.HasPrefix(src[i:], "<!--") || strings.HasPrefix(src[i:], "-->"):
 			return len(src), false // an HTML-like comment, or not
-		case c == '\\' || c == '#' || c >= 0x80:
-			return len(src), false // an escaped or non-ASCII name, a private one
 		case c == '"' || c == '\'':
 			end, ok := skipQuoted(src, i)
 			if !ok {
 				return len(src), false
 			}
-			i, last = end, "0"
+			i = end
 		case c == '`':
 			end, ok := s.template(i, count)
 			if !ok {
 				return len(src), false
 			}
-			i, last = end, "0"
-		case c == '/':
-			regex, sure := slashStartsRegex(last)
-			if !sure {
-				return len(src), false
-			}
-			if !regex {
-				i, last = i+1, "/"
-				continue
-			}
-			end, ok := skipRegex(src, i)
-			if !ok {
-				return len(src), false
-			}
-			i, last = end, "0"
-		case c >= '0' && c <= '9':
-			for i < len(src) && (identByte(src[i]) || src[i] == '.') {
-				i++
-			}
-			last = "0"
+			i = end
 		case identByte(c):
 			j := i
 			for j < len(src) && identByte(src[j]) {
 				j++
 			}
 			word := src[i:j]
-			property := last == "." || last == "?."
-			if count && word == "tools" && !property && strings.HasPrefix(src[j:], ".apply_patch") {
-				if k := j + len(".apply_patch"); k == len(src) || !identByte(src[k]) {
-					if last == "new" {
-						return len(src), false // a construction, not a call
+			property := lastByte(src, i) == '.' // x.tools, x?.tools, ...tools
+			switch {
+			case word == "with" && !property:
+				return len(src), false // a with statement may name anything tools
+			case word == "apply_patch":
+				return len(src), false // the tool named some way other than tools.apply_patch(
+			case word == "tools":
+				// Only ever tools.…: a declaration, a parameter, an
+				// assignment or an alias could make it another object.
+				if j == len(src) || src[j] != '.' {
+					return len(src), false
+				}
+				if k := j + len(".apply_patch"); strings.HasPrefix(src[j:], ".apply_patch") && (k == len(src) || !identByte(src[k])) {
+					if property || prev == "new" {
+						return len(src), false // a member named tools, a construction
 					}
-					end, ok := s.call(k)
+					end, ok := s.call(k, count)
 					if !ok {
 						return len(src), false
 					}
-					i, last = end, "0"
+					i, prev = end, ""
 					continue
 				}
 			}
-			if count && word == "apply_patch" {
-				return len(src), false // the tool named some other way
-			}
-			if property {
-				word = "0"
-			}
-			i, last = j, word
+			i, prev = j, word
+			continue
 		case c == '(' || c == '[' || c == '{':
 			end, ok := s.code(i+1, closing(c), count)
 			if !ok {
 				return len(src), false
 			}
-			i, last = end, string(closing(c))
+			i = end
 		case c == ')' || c == ']' || c == '}':
 			return i + 1, c == closer // a stray closer is not a script that runs
-		case (c == '+' || c == '-') && i+1 < len(src) && src[i+1] == c:
-			i, last = i+2, src[i:i+2]
-		case c == '?' && i+1 < len(src) && src[i+1] == '.' && !(i+2 < len(src) && src[i+2] >= '0' && src[i+2] <= '9'):
-			i, last = i+2, "?."
-		case strings.HasPrefix(src[i:], "..."):
-			i, last = i+3, "..."
 		default:
-			i, last = i+1, string(c)
+			i++
 		}
+		prev = ""
 	}
 	return len(src), closer == 0
 }
 
-// call reads a tools.apply_patch call whose name ends at i: a plain
-// literal argument is a patch; any other is unread and skipped whole.
-// false if the name is not called (then it is named some other way) or
-// the argument has no end.
-func (s *patchScan) call(i int) (int, bool) {
+// call reads a tools.apply_patch call whose name ends at i: with count, a
+// plain literal argument is a patch and any other is unread and skipped
+// whole; without, its arguments are just code. false if the name is not
+// called (then it is named some other way) or the arguments have no end.
+func (s *patchScan) call(i int, count bool) (int, bool) {
 	k := skipSpace(s.src, i)
 	if k >= len(s.src) || s.src[k] != '(' {
 		return len(s.src), false
+	}
+	if !count {
+		return s.code(k+1, ')', false)
 	}
 	if lit, end, ok := jsString(s.src, skipSpace(s.src, k+1)); ok {
 		if end = skipSpace(s.src, end); end < len(s.src) && s.src[end] == ')' {
@@ -375,48 +347,6 @@ func (s *patchScan) template(i int, count bool) (int, bool) {
 	return len(src), false
 }
 
-// slashStartsRegex is whether a / after the token last starts a regular
-// expression rather than a division, and whether that is sure. It is not
-// after ), ] or } (an if's condition or a call, a block or an object),
-// ++ or --, or a keyword that may be a name (await, yield, of) or is
-// followed by a statement (if, break, …).
-func slashStartsRegex(last string) (regex, sure bool) {
-	switch last {
-	case "":
-		return true, true
-	case "0":
-		return false, true
-	}
-	if identByte(last[0]) {
-		switch last {
-		case "return", "typeof", "instanceof", "in", "new", "delete", "void", "throw", "case", "do", "else":
-			return true, true
-		case "break", "catch", "class", "const", "continue", "debugger", "default", "enum", "export",
-			"extends", "finally", "for", "function", "if", "import", "switch", "try", "var", "while", "with",
-			"yield", "await", "of", "implements", "interface", "package", "private", "protected", "public":
-			return false, false
-		}
-		return false, true // a name, this, null, true, false: a value
-	}
-	if len(last) == 1 && strings.Contains("(,;:?=!~&|^+-*%<>/", last) {
-		return true, true
-	}
-	return false, false
-}
-
-// skipLineComment skips the // comment at i; false if it holds a line or
-// paragraph separator (which ends it in JavaScript).
-func skipLineComment(src string, i int) (int, bool) {
-	end := strings.IndexAny(src[i:], "\n\r\u2028\u2029")
-	if end < 0 {
-		return len(src), true
-	}
-	if c := src[i+end]; c != '\n' && c != '\r' {
-		return len(src), false
-	}
-	return i + end + 1, true
-}
-
 // skipQuoted skips the '…' or "…" string at i; false if it has no close
 // on its line.
 func skipQuoted(src string, i int) (int, bool) {
@@ -437,41 +367,6 @@ func skipQuoted(src string, i int) (int, bool) {
 		}
 	}
 	return len(src), false
-}
-
-// skipRegex skips the regular expression literal at i and its flags;
-// false if it has no close on its line or a class in it holds a [ (a
-// nested class with the v flag).
-func skipRegex(src string, i int) (int, bool) {
-	class := false
-	for i++; i < len(src); i++ {
-		if strings.HasPrefix(src[i:], "\u2028") || strings.HasPrefix(src[i:], "\u2029") {
-			return 0, false
-		}
-		switch src[i] {
-		case '\n', '\r':
-			return 0, false
-		case '\\':
-			if i+1 >= len(src) || src[i+1] == '\n' || src[i+1] == '\r' || src[i+1] >= 0x80 {
-				return 0, false
-			}
-			i++
-		case '[':
-			if class {
-				return 0, false
-			}
-			class = true
-		case ']':
-			class = false
-		case '/':
-			if !class {
-				for i++; i < len(src) && identByte(src[i]); i++ {
-				}
-				return i, true
-			}
-		}
-	}
-	return 0, false
 }
 
 // mentions counts the names apply_patch in a script's text.
@@ -502,6 +397,16 @@ func closing(c byte) byte {
 
 func identByte(c byte) bool {
 	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// lastByte is the byte before i, past spaces (0 at the start).
+func lastByte(s string, i int) byte {
+	for i--; i >= 0; i-- {
+		if c := s[i]; c != ' ' && c != '\t' && c != '\n' && c != '\r' && c != '\v' && c != '\f' {
+			return c
+		}
+	}
+	return 0
 }
 
 func skipSpace(s string, i int) int {

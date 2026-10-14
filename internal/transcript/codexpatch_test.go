@@ -36,23 +36,28 @@ func TestPatchLiterals(t *testing.T) {
 		{"one literal, one computed", `tools.apply_patch("a"); tools.apply_patch(p)`, []string{"a"}, 1},
 		{"a mention in a string is not a call", `log("use tools.apply_patch(\"x\") here")`, nil, 0},
 		// R1: only a call in the script's code counts, never text in its
-		// comments or strings, or inside a computed argument.
-		{"a call in a line comment", "// tools.apply_patch(\"*** Begin Patch\\n*** Add File: ghost.txt\\n+ghost\\n*** End Patch\")\nawait tools.exec_command({cmd: \"sleep 30\"})", nil, 0},
-		{"a call in a block comment", "/* example:\n tools.apply_patch(\"+ghost\")\n*/ tools.apply_patch(\"+real\")", []string{"+real"}, 0},
+		// strings or templates, or inside a computed argument.
 		{"a call in single quotes", `const usage = 'tools.apply_patch("+ghost")'; tools.apply_patch("+real")`, []string{"+real"}, 0},
 		{"a call in a template's text", "log(`tools.apply_patch(\"+ghost\")`); tools.apply_patch(`+real`)", []string{"+real"}, 0},
 		{"a call in a computed template argument", "tools.apply_patch(`${body}\ntools.apply_patch(\"+ghost\")`); tools.apply_patch(\"+real\")", []string{"+real"}, 1},
 		{"a call inside a computed argument is not read on its own", `tools.apply_patch(wrap(tools.apply_patch("+inner"))); tools.apply_patch("+real")`, []string{"+real"}, 1},
 		{"a call in a substitution is code", "log(`${await tools.apply_patch(\"+real\")}`)", []string{"+real"}, 0},
-		{"a call after a comment with ) and quotes", "f(1, // it's done) \"\n  2); /* ) ' ` */ tools.apply_patch(\"+real\")", []string{"+real"}, 0},
 		{"a call after a string with ) and //", `log(") // '"); tools.apply_patch("+real")`, []string{"+real"}, 0},
-		{"a regular expression with quotes and //", "const re = /[\"'`]\\/\\//g; tools.apply_patch(\"+real\")", []string{"+real"}, 0},
-		{"a division is not a regular expression", "const h = a / 2, s = \"/\"; tools.apply_patch(\"+real\")", []string{"+real"}, 0},
-		// Where the pass can't be sure, it reads no patch from the script:
-		// every apply_patch it names is unread.
-		{"a computed argument with no end: nothing is read", "tools.apply_patch(p + `${x`); tools.apply_patch(\"+ghost\")", nil, 2},
-		{"a string with no close: nothing is read", "log('abc\ntools.apply_patch(\"+ghost\")", nil, 1},
-		{"a member named tools (globalThis.tools?) is not read", `x.tools.apply_patch("+ghost")`, nil, 1},
+		{"/ and \\ in strings' and templates' text", "log('a/b\\\\c', \"/*\", `// ${\"\\\\\"} */`); tools.apply_patch(\"+real\")", []string{"+real"}, 0},
+		// The no-slash rule: a script with a / or \ in its code (a comment,
+		// a regular expression, a division, an escaped name), or any other
+		// the pass can't be sure of, reads no patch at all: every
+		// apply_patch it names is unread.
+		{"a call in a line comment", "// tools.apply_patch(\"*** Begin Patch\\n*** Add File: ghost.txt\\n+ghost\\n*** End Patch\")\nawait tools.exec_command({cmd: \"sleep 30\"})", nil, 1},
+		{"a call in a block comment", "/* example:\n tools.apply_patch(\"+ghost\")\n*/ tools.apply_patch(\"+real\")", nil, 2},
+		{"a call after a comment with ) and quotes", "f(1, // it's done) \"\n  2); /* ) ' ` */ tools.apply_patch(\"+real\")", nil, 1},
+		{"a regular expression with quotes and //", "const re = /[\"'`]\\/\\//g; tools.apply_patch(\"+real\")", nil, 1},
+		{"a division", "const h = a / 2, s = \"/\"; tools.apply_patch(\"+real\")", nil, 1},
+		{"an escaped name", `\u0074ools.apply_patch("+ghost"); tools.apply_patch("+real")`, nil, 2},
+		{"a computed argument with no end", "tools.apply_patch(p + `${x`); tools.apply_patch(\"+ghost\")", nil, 2},
+		{"a string with no close", "log('abc\ntools.apply_patch(\"+ghost\")", nil, 1},
+		{"a member named tools (globalThis.tools?)", `x.tools.apply_patch("+ghost")`, nil, 1},
+		{"tools bound by the script", `const tools = load(); tools.apply_patch("+ghost")`, nil, 1},
 		{"no call", `const r = await tools.exec_command({cmd: "ls"})`, nil, 0},
 		{"a longer name is not the tool", `tools.apply_patches("a")`, nil, 0},
 	}
@@ -66,8 +71,8 @@ func TestPatchLiterals(t *testing.T) {
 	}
 }
 
-// R1: a script that only mentions a patch in a comment proposes nothing,
-// read whole: no diff, no computed patch.
+// R1: a script with a comment is not read (the no-slash rule): a patch it
+// mentions proposes nothing and is counted as computed, never made up.
 func TestCodexPatchCommentedCall(t *testing.T) {
 	code := "// tools.apply_patch(\"*** Begin Patch\\n*** Add File: ghost.txt\\n+ghost\\n*** End Patch\")\nawait tools.exec_command({cmd: \"sleep 30\"})"
 	payload, err := json.Marshal(map[string]any{"type": "custom_tool_call", "call_id": "call_ghost", "status": "completed", "name": "exec", "input": code})
@@ -79,15 +84,16 @@ func TestCodexPatchCommentedCall(t *testing.T) {
 	if len(its) != 1 || its[0].Tool == nil {
 		t.Fatalf("items: %+v", its)
 	}
-	if tool := its[0].Tool; tool.Diff != nil || len(tool.Diffs) != 0 || tool.Changes != nil {
+	if tool := its[0].Tool; tool.Diff != nil || len(tool.Diffs) != 0 || tool.Changes == nil || tool.Changes.Computed != 1 {
 		t.Errorf("a commented call proposes %+v %+v, changes %+v", tool.Diff, tool.Diffs, tool.Changes)
 	}
 }
 
 // R1: call text anywhere but a real call in the script's code (a regular
 // expression after any token, a comment, a string, a template, an escaped
-// or longer name, a member, a label) never becomes a patch, read alone or
-// as a running exec. Where the pass can't be sure, it reads no patch at
+// or longer name, a member, a label, a tools the script binds itself)
+// never becomes a patch, read alone or as a running exec. A script with a
+// / or \ in its code, or that the pass can't be sure of, reads no patch at
 // all, even a real one: only the patches listed in real come out.
 func TestPatchLiteralsNeverInvent(t *testing.T) {
 	const call = `tools.apply_patch("*** Begin Patch\n*** Add File: ghost.txt\n+ghost\n*** End Patch")`
@@ -152,10 +158,41 @@ func TestPatchLiteralsNeverInvent(t *testing.T) {
 		{"a construction", `new CALL`, nil},
 		{"a computed name", `tools["apply_patch"]("+ghost")`, nil},
 		{"spaced", `tools .apply_patch("+ghost")`, nil},
-		// Real calls still read.
-		{"a label named tools", `tools: tools.apply_patch("+real")`, []string{"+real"}},
-		{"after a regex and a division", `const re = /["'` + "`" + `]\/\//g, h = n / 2; tools.apply_patch("+real")`, []string{"+real"}},
-		{"after typeof, a division by a call", `x = typeof y; z = f(1) + n / 2; tools.apply_patch("+real") / 1`, []string{"+real"}},
+		// The R3 review's cases: a regular expression after a name and a
+		// newline (automatic semicolon insertion).
+		{"regex after var and a newline", "var x\n/RE/.test(\"unused\");", nil},
+		{"regex after let and a newline", "let x\n/RE/.test(\"unused\");", nil},
+		{"regex after a labelled break and a newline", "outer: while (true) { break outer\n/RE/.test(\"unused\");\n}", nil},
+		{"regex after a labelled continue and a newline", "outer: while (false) { continue outer\n/RE/.test(\"unused\");\n}", nil},
+		// Real calls that a / or \ in the code keeps from being read.
+		{"a label named tools", `tools: tools.apply_patch("+real")`, nil},
+		{"after a regex and a division", `const re = /["'` + "`" + `]\/\//g, h = n / 2; tools.apply_patch("+real")`, nil},
+		{"after typeof, a division by a call", `x = typeof y; z = f(1) + n / 2; tools.apply_patch("+real") / 1`, nil},
+		{"after a comment", "// patch it\nCALL", nil},
+		{"a hashbang", "#!/usr/bin/env node\nCALL", nil},
+		// tools only ever as tools.…: the script's own binding, a with.
+		{"tools declared", `const tools = {apply_patch: f}; CALL`, nil},
+		{"tools declared without apply_patch", `let tools = load(); CALL`, nil},
+		{"tools assigned", `tools = load(); CALL`, nil},
+		{"tools.apply_patch assigned", `tools.apply_patch = f; CALL`, nil},
+		{"globalThis.tools assigned", `globalThis.tools = load(); CALL`, nil},
+		{"a parameter named tools", `function f(tools) { return CALL } f(load())`, nil},
+		{"an arrow parameter named tools", `(tools => CALL)(load())`, nil},
+		{"a destructured tools", `const {tools} = load(); CALL`, nil},
+		{"tools in a list", `f(tools, x); CALL`, nil},
+		{"a loop's tools", `for (const tools of all) CALL`, nil},
+		{"a caught tools", `try { f() } catch (tools) { CALL }`, nil},
+		{"with", `with (o) CALL`, nil},
+		{"with a block", `with (o) { CALL }`, nil},
+		{"a spread", `f(...tools.apply_patch("+ghost"))`, nil},
+		// Real calls still read: the forms Codex writes.
+		{"double quotes", `const r = await tools.apply_patch("+a\n+b");` + "\ntext(r);", []string{"+a\n+b"}},
+		{"single quotes, escapes", `text(await tools.apply_patch('+a\'b\+c\u00e9'))`, []string{"+a'b+c\u00e9"}},
+		{"a template", "await tools.apply_patch(`*** Begin Patch\n+a \\/ b\n*** End Patch`)", []string{"*** Begin Patch\n+a / b\n*** End Patch"}},
+		{"calls in order, other tools", `await tools.exec_command({cmd: "ls"}); await tools.apply_patch("+1"); await tools.apply_patch('+2')`, []string{"+1", "+2"}},
+		{"a call in a substitution", "log(`${await tools.apply_patch(\"+s\")}`)", []string{"+s"}},
+		{"/ and \\ in a string's text", `log("a/b // c \\ d"); tools.apply_patch("+a/b")`, []string{"+a/b"}},
+		{"withdraw and renew are names", `withdraw(); renew.x; tools.apply_patch("+w")`, []string{"+w"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
