@@ -33,7 +33,23 @@ func TestPatchLiterals(t *testing.T) {
 		{"a bad \\x is not read", `tools.apply_patch("\xZZ")`, nil, 1},
 		{"an unterminated string", `tools.apply_patch("abc`, nil, 1},
 		{"one literal, one computed", `tools.apply_patch("a"); tools.apply_patch(p)`, []string{"a"}, 1},
-		{"a mention in a string is not a call", `log("use tools.apply_patch(\"x\") here")`, nil, 1},
+		{"a mention in a string is not a call", `log("use tools.apply_patch(\"x\") here")`, nil, 0},
+		// R1: only a call in the script's code counts, never text in its
+		// comments or strings, or inside a computed argument.
+		{"a call in a line comment", "// tools.apply_patch(\"*** Begin Patch\\n*** Add File: ghost.txt\\n+ghost\\n*** End Patch\")\nawait tools.exec_command({cmd: \"sleep 30\"})", nil, 0},
+		{"a call in a block comment", "/* example:\n tools.apply_patch(\"+ghost\")\n*/ tools.apply_patch(\"+real\")", []string{"+real"}, 0},
+		{"a call in single quotes", `const usage = 'tools.apply_patch("+ghost")'; tools.apply_patch("+real")`, []string{"+real"}, 0},
+		{"a call in a template's text", "log(`tools.apply_patch(\"+ghost\")`); tools.apply_patch(`+real`)", []string{"+real"}, 0},
+		{"a call in a computed template argument", "tools.apply_patch(`${body}\ntools.apply_patch(\"+ghost\")`); tools.apply_patch(\"+real\")", []string{"+real"}, 1},
+		{"a call inside a computed argument is not read on its own", `tools.apply_patch(wrap(tools.apply_patch("+inner"))); tools.apply_patch("+real")`, []string{"+real"}, 1},
+		{"a call in a substitution is code", "log(`${await tools.apply_patch(\"+real\")}`)", []string{"+real"}, 0},
+		{"a call after a comment with ) and quotes", "f(1, // it's done) \"\n  2); /* ) ' ` */ tools.apply_patch(\"+real\")", []string{"+real"}, 0},
+		{"a call after a string with ) and //", `log(") // '"); tools.apply_patch("+real")`, []string{"+real"}, 0},
+		{"a regular expression with quotes and //", "const re = /[\"'`]\\/\\//g; tools.apply_patch(\"+real\")", []string{"+real"}, 0},
+		{"a division is not a regular expression", "const h = a / 2, s = \"/\"; tools.apply_patch(\"+real\")", []string{"+real"}, 0},
+		{"a computed argument with no end reads no further", "tools.apply_patch(p + `${x`); tools.apply_patch(\"+ghost\")", nil, 1},
+		{"a string with no close reads no further", "log('abc\ntools.apply_patch(\"+ghost\")", nil, 0},
+		{"a member named tools is not the tool", `x.tools.apply_patch("+ghost")`, nil, 0},
 		{"no call", `const r = await tools.exec_command({cmd: "ls"})`, nil, 0},
 		{"a longer name is not the tool", `tools.apply_patches("a")`, nil, 0},
 	}
@@ -44,6 +60,24 @@ func TestPatchLiterals(t *testing.T) {
 				t.Errorf("patchLiterals = %q, %d; want %q, %d", got, unread, c.patches, c.unread)
 			}
 		})
+	}
+}
+
+// R1: a script that only mentions a patch in a comment proposes nothing,
+// read whole: no diff, no computed patch.
+func TestCodexPatchCommentedCall(t *testing.T) {
+	code := "// tools.apply_patch(\"*** Begin Patch\\n*** Add File: ghost.txt\\n+ghost\\n*** End Patch\")\nawait tools.exec_command({cmd: \"sleep 30\"})"
+	payload, err := json.Marshal(map[string]any{"type": "custom_tool_call", "call_id": "call_ghost", "status": "completed", "name": "exec", "input": code})
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := `{"timestamp":"2026-10-14T08:00:00.000Z","type":"response_item","payload":` + string(payload) + "}\n"
+	its := itemsOf(t, Codex, line)
+	if len(its) != 1 || its[0].Tool == nil {
+		t.Fatalf("items: %+v", its)
+	}
+	if tool := its[0].Tool; tool.Diff != nil || len(tool.Diffs) != 0 || tool.Changes != nil {
+		t.Errorf("a commented call proposes %+v %+v, changes %+v", tool.Diff, tool.Diffs, tool.Changes)
 	}
 }
 

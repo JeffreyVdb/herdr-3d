@@ -200,31 +200,224 @@ const applyPatchCall = "tools.apply_patch"
 // a substitution), decoded, in order; unread counts the calls whose
 // argument is anything else (a concatenation, a variable, an object): the
 // script computes those, and nothing is made up for them. The script is
-// only read, never run.
+// only read, never run: a lexical pass finds the calls in its code, not in
+// its comments, strings, templates or regular expressions, and a computed
+// argument is skipped whole, so call text inside it is not a call. Where
+// the script can't be read on (an argument with no end, a string with no
+// close), the rest of it is not read.
 func patchLiterals(code string) (patches []string, unread int) {
-	for i := 0; ; {
-		j := strings.Index(code[i:], applyPatchCall)
-		if j < 0 {
-			return patches, unread
-		}
-		i += j + len(applyPatchCall)
-		if i < len(code) && identByte(code[i]) {
-			continue // tools.apply_patches: another name
-		}
-		k := skipSpace(code, i)
-		if k >= len(code) || code[k] != '(' {
-			continue // a mention, not a call
-		}
-		s, end, ok := jsString(code, skipSpace(code, k+1))
-		if ok {
-			if end = skipSpace(code, end); end < len(code) && code[end] == ')' {
-				patches = append(patches, s)
-				i = end + 1
+	s := patchScan{src: code}
+	s.code(0, 0, true)
+	return s.patches, s.unread
+}
+
+// patchScan reads a script's code for patchLiterals.
+type patchScan struct {
+	src     string
+	patches []string
+	unread  int
+}
+
+// code reads code from i up to the closer that ends its nesting level
+// (none at the top) and returns the index just past it; false if the code
+// ends first or a region in it can't be read. With count, the calls it
+// finds are patches or unread; without (inside a computed argument), they
+// are just code.
+func (s *patchScan) code(i int, closer byte, count bool) (int, bool) {
+	src := s.src
+	last := "" // the previous token: a word, a number ("0") or punctuation
+	for i < len(src) {
+		c := src[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			i++
+			continue
+		case c == '/' && i+1 < len(src) && src[i+1] == '/':
+			end := strings.IndexByte(src[i:], '\n')
+			if end < 0 {
+				return len(src), closer == 0
+			}
+			i += end + 1
+			continue
+		case c == '/' && i+1 < len(src) && src[i+1] == '*':
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				return len(src), false
+			}
+			i += 2 + end + 2
+			continue
+		case c == '"' || c == '\'':
+			end, ok := skipQuoted(src, i)
+			if !ok {
+				return len(src), false
+			}
+			i, last = end, "0"
+		case c == '`':
+			end, ok := s.template(i, count)
+			if !ok {
+				return len(src), false
+			}
+			i, last = end, "0"
+		case c == '/' && regexAllowed(last):
+			if end, ok := skipRegex(src, i); ok {
+				i, last = end, "0"
+			} else {
+				i, last = i+1, "/"
+			}
+		case c >= '0' && c <= '9':
+			for i < len(src) && (identByte(src[i]) || src[i] == '.') {
+				i++
+			}
+			last = "0"
+		case identByte(c) || c >= 0x80:
+			j := i
+			for j < len(src) && (identByte(src[j]) || src[j] >= 0x80) {
+				j++
+			}
+			word := src[i:j]
+			if count && word == "tools" && last != "." && strings.HasPrefix(src[j:], ".apply_patch") {
+				if end, call, ok := s.call(j + len(".apply_patch")); call {
+					if !ok {
+						return len(src), false
+					}
+					i, last = end, ")"
+					continue
+				}
+			}
+			i, last = j, word
+		case c == '(' || c == '[' || c == '{':
+			end, ok := s.code(i+1, closing(c), count)
+			if !ok {
+				return len(src), false
+			}
+			i, last = end, string(closing(c))
+		case c == ')' || c == ']' || c == '}':
+			if closer == 0 {
+				i, last = i+1, string(c) // a stray closer: not a script that runs
 				continue
 			}
+			return i + 1, c == closer
+		default:
+			i, last = i+1, string(c)
 		}
-		unread++
 	}
+	return len(src), closer == 0
+}
+
+// call reads a tools.apply_patch call whose name ends at i: call is false
+// if it is a longer name or only a mention. A plain literal argument is a
+// patch; any other is unread and skipped whole. ok is false if the
+// argument has no end.
+func (s *patchScan) call(i int) (end int, call, ok bool) {
+	if i < len(s.src) && identByte(s.src[i]) {
+		return 0, false, true // tools.apply_patches: another name
+	}
+	k := skipSpace(s.src, i)
+	if k >= len(s.src) || s.src[k] != '(' {
+		return 0, false, true // a mention, not a call
+	}
+	if lit, end, ok := jsString(s.src, skipSpace(s.src, k+1)); ok {
+		if end = skipSpace(s.src, end); end < len(s.src) && s.src[end] == ')' {
+			s.patches = append(s.patches, lit)
+			return end + 1, true, true
+		}
+	}
+	s.unread++
+	end, ok = s.code(k+1, ')', false)
+	return end, true, ok
+}
+
+// template skips the template literal at i, reading its substitutions as
+// code, and returns the index just past it.
+func (s *patchScan) template(i int, count bool) (int, bool) {
+	src := s.src
+	for i++; i < len(src); {
+		switch {
+		case src[i] == '\\':
+			i += 2
+		case src[i] == '`':
+			return i + 1, true
+		case src[i] == '$' && i+1 < len(src) && src[i+1] == '{':
+			end, ok := s.code(i+2, '}', count)
+			if !ok {
+				return len(src), false
+			}
+			i = end
+		default:
+			i++
+		}
+	}
+	return len(src), false
+}
+
+// skipQuoted skips the '…' or "…" string at i; false if it has no close
+// on its line.
+func skipQuoted(src string, i int) (int, bool) {
+	q := src[i]
+	for i++; i < len(src); {
+		switch src[i] {
+		case q:
+			return i + 1, true
+		case '\n', '\r':
+			return len(src), false
+		case '\\':
+			if strings.HasPrefix(src[i+1:], "\r\n") {
+				i++ // a line continuation
+			}
+			i += 2
+		default:
+			i++
+		}
+	}
+	return len(src), false
+}
+
+// skipRegex skips the regular expression literal at i and its flags;
+// false if it has no close on its line (then the / is a division).
+func skipRegex(src string, i int) (int, bool) {
+	class := false
+	for i++; i < len(src); i++ {
+		switch src[i] {
+		case '\n', '\r':
+			return 0, false
+		case '\\':
+			i++
+		case '[':
+			class = true
+		case ']':
+			class = false
+		case '/':
+			if !class {
+				for i++; i < len(src) && identByte(src[i]); i++ {
+				}
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// regexAllowed is whether a / after the token last starts a regular
+// expression rather than a division: not after a value.
+func regexAllowed(last string) bool {
+	switch last {
+	case "", "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+		"throw", "case", "do", "else", "yield", "await":
+		return true
+	case "0", ")", "]", "}":
+		return false
+	}
+	return !identByte(last[0]) && last[0] < 0x80
+}
+
+func closing(c byte) byte {
+	switch c {
+	case '(':
+		return ')'
+	case '[':
+		return ']'
+	}
+	return '}'
 }
 
 func identByte(c byte) bool {
