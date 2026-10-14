@@ -27,6 +27,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Role is one of the two models.
@@ -103,6 +104,20 @@ type Request struct {
 	// answer of the call (Diagnostics): after a retry, the last is the
 	// call's. It never sees text.
 	Report func(Diagnostics)
+	// Timeout bounds each attempt of this call instead of the service's
+	// LLMTimeout (0: that). Only a feature that measured a longer need sets
+	// it (#9, the LLM handoff); every other call keeps the shared bound.
+	Timeout time.Duration
+	// NoUncertainRetry: no second attempt after an outcome the provider may
+	// have processed (and billed): a timeout, a dropped connection, a 5xx.
+	// A retry stays only when the first request provably never reached it
+	// (the connection was refused, the name did not resolve) or was rejected
+	// as a whole (the response_format fallback). (#9)
+	NoUncertainRetry bool
+	// RedactKey replaces the role's own key, should it appear in a message,
+	// with "[key]" before the request is sent: for messages that carry
+	// third-party text (a transcript) the feature cannot see the key of. (#9)
+	RedactKey bool
 }
 
 // Kind classifies an error. The values are also the protocol's error codes.
@@ -131,6 +146,9 @@ type Error struct {
 	Kind   Kind
 	Msg    string
 	status int // the provider's HTTP status, when the error came from one
+	// unsent: the request provably never reached the provider (a refused
+	// connection, a name that did not resolve): retrying it bills nothing.
+	unsent bool
 }
 
 func (e *Error) Error() string { return e.Msg }
