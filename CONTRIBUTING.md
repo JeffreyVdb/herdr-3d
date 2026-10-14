@@ -52,7 +52,11 @@ reconcile; #224: `Reserve` / `Written` / `Adopt` / `Discard` / `CleanPending`, t
 `TestHandoffIsALeaf`; no model anywhere), and `transcript`'s `HandoffTracker` / `Resolve` (a transcript's latest
 completed final reply, its source identity and its whole text read back from its byte spans, on the same `TurnEvents`
 as `FollowupTracker`; #224: `NewMarkerTracker`, an agent handoff request's turn by its marker); #224: `usage`'s
-`Usage.cache` evidence and `CacheState` (pure, a fake clock's);
+`Usage.cache` evidence and `CacheState` (pure, a fake clock's); #9: `handoffllm` (LLM handoffs: the reducer, `Reduce`
+/ `Scrub` / `EstimateTokens`, a main-session snapshot to bounded scrubbed source data with its coverage, its policy in
+`doc.go`, the standard library, `jsonl` and `transcript` only, `TestReducerIsALeaf`; and the feature, the switch bound
+to a passing `handoff_llm.test`, the versioned prompt with nonce-delimited data, the answer's validation, one call at a
+time, `ai`'s interfaces only, `TestHandoffLLMUsesOnlyAIInterfaces`);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
