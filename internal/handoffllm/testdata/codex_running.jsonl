@@ -1,0 +1,10 @@
+{"timestamp":"2026-10-12T09:04:00.000Z","type":"session_meta","payload":{"id":"00000000-0000-4000-8000-0000000000dd","session_id":"00000000-0000-4000-8000-0000000000dd","cwd":"/work/fixture","originator":"codex_cli","cli_version":"0.162.1","source":"cli","model_provider":"openai","base_instructions":{"text":"Synthetic base instructions."}},"ordinal":1}
+{"timestamp":"2026-10-12T09:04:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"},"ordinal":2}
+{"timestamp":"2026-10-12T09:04:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Run the tests."}]},"ordinal":3}
+{"timestamp":"2026-10-12T09:04:03.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\": \"go test ./...\"}","call_id":"call_r1"},"ordinal":4}
+{"timestamp":"2026-10-12T09:04:13.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_r1","output":"Chunk ID: r1\nWall time: 10.0012 seconds\nProcess running with session ID 456\nOriginal token count: 9\nOutput:\nok  \texample.com/a\t0.10s\n"},"ordinal":5}
+{"timestamp":"2026-10-12T09:04:14.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\": \"make test\"}","call_id":"call_r2"},"ordinal":6}
+{"timestamp":"2026-10-12T09:04:15.000Z","type":"event_msg","payload":{"type":"exec_command_end","call_id":"call_r2","exit_code":0},"ordinal":7}
+{"timestamp":"2026-10-12T09:04:16.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_r2","output":"Chunk ID: r2\nWall time: 1.0 seconds\nOriginal token count: 0\nOutput:\n"},"ordinal":8}
+{"timestamp":"2026-10-12T09:04:17.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Tests are still running."}],"phase":"final_answer"},"ordinal":9}
+{"timestamp":"2026-10-12T09:04:18.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","last_agent_message":"Tests are still running."},"ordinal":10}

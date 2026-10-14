@@ -529,3 +529,42 @@
     grid-column: 1 / -1;
   }
 }
+
+/* ---- #9: Use configured LLM ------------------------------------------------------ */
+
+/* The way to Settings under a mode that is off: it sits with the row it explains. */
+.ho-llm-off {
+  margin-top: -6px;
+}
+/* Who receives it: the model reads first, the host after it. */
+.ho-llm-prov dd b {
+  color: var(--text);
+  font-weight: 700;
+}
+.ho-llm-omitted {
+  display: block;
+  margin-top: 2px;
+}
+/* What is sent: one disclosure, quiet until opened. */
+.ho-llm-sent {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.ho-llm-sent summary {
+  width: max-content;
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.ho-llm-sent summary:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.ho-llm-sent ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+.ho-llm-sent li {
+  margin: 2px 0;
+}

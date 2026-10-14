@@ -104,7 +104,8 @@ func (s *Service) Dir() string { return s.dir }
 // Source is what a handoff is of: the bridge's metadata, never the client's.
 type Source struct {
 	Floor, WorkerID, WorkerName, Label, Harness, Model, Cwd, Branch, AgentSession string
-	// Kind is store.HandoffLiteral or (#224) store.HandoffAgent (llm later).
+	// Kind is store.HandoffLiteral, (#224) store.HandoffAgent or (#9)
+	// store.HandoffLLM.
 	Kind string
 	// Turn, Items and Hash are the source's identity (literal: the
 	// transcript candidate's id, its ids and spans as JSON, its hash).
@@ -114,6 +115,11 @@ type Source struct {
 	// At is the handoff's date (zero: now). #224: an agent's is the
 	// request's, the date its prompt gave.
 	At time.Time
+	// Provenance (#9) is more of where it comes from, written in the front
+	// matter under ProvenanceKeys (any other key is left out): an LLM
+	// handoff's model, endpoint host, prompt version, snapshot, coverage and
+	// redaction counts. Never a secret.
+	Provenance map[string]string
 }
 
 // File files body as a handoff of src. existing: the operation (or the same
@@ -167,7 +173,7 @@ func (s *Service) File(ctx context.Context, src Source, body string) (h store.Ha
 	if err := s.mkdirs(dir); err != nil {
 		return store.Handoff{}, false, err
 	}
-	content := FrontMatter(h, now) + body
+	content := frontMatter(h, now, src.Provenance) + body
 	base := now.Format("20060102-1504") + "-" + nameOf(src.WorkerName) + "-" + Slug(h.Title)
 	path, err := writeNew(dir, base, ".md", []byte(content))
 	if err != nil {
@@ -314,19 +320,32 @@ func (s *Service) handoffFile(path string) error {
 // Read is a handoff and its body (the file without its front matter); the
 // file must be a regular one of at most MaxFile bytes.
 func (s *Service) Read(ctx context.Context, id int64) (store.Handoff, string, error) {
+	h, body, _, err := s.ReadProvenance(ctx, id)
+	return h, body, err
+}
+
+// ReadProvenance is Read with the front matter's ProvenanceKeys values
+// (#9; empty when the file has none).
+func (s *Service) ReadProvenance(ctx context.Context, id int64) (store.Handoff, string, map[string]string, error) {
 	h, err := s.idx.HandoffByID(ctx, id)
 	if err != nil {
-		return store.Handoff{}, "", err
+		return store.Handoff{}, "", nil, err
 	}
 	if err := s.handoffFile(h.Path); err != nil {
-		return store.Handoff{}, "", err
+		return store.Handoff{}, "", nil, err
 	}
 	b, _, err := readFile(h.Path)
 	if err != nil {
-		return store.Handoff{}, "", err
+		return store.Handoff{}, "", nil, err
 	}
-	_, body := SplitFrontMatter(string(b))
-	return h, body, nil
+	fm, body := SplitFrontMatter(string(b))
+	prov := map[string]string{}
+	for _, k := range ProvenanceKeys {
+		if v := fm[k]; v != "" {
+			prov[k] = v
+		}
+	}
+	return h, body, prov, nil
 }
 
 // readFile reads a regular file (no symlink) of at most MaxFile bytes.
@@ -543,18 +562,32 @@ func (s *Service) register(ctx context.Context, path string) (bool, error) {
 	return true, nil
 }
 
+// ProvenanceKeys are the front matter's keys of Source.Provenance (#9):
+// an LLM handoff's generating model, the endpoint's host (never its path or
+// a key), the bridge's prompt version, the snapshot it was written from, its
+// coverage and its redaction counts.
+var ProvenanceKeys = []string{"llm_model", "llm_host", "prompt_version", "snapshot", "coverage", "redactions"}
+
 // frontKeys are the front matter's keys, in order.
-var frontKeys = []string{"date", "floor", "worker", "worker_id", "label", "branch", "harness", "model", "session", "cwd", "source",
-	"source_turn", "source_items", "source_hash", "op"}
+var frontKeys = append([]string{"date", "floor", "worker", "worker_id", "label", "branch", "harness", "model", "session", "cwd", "source",
+	"source_turn", "source_items", "source_hash", "op"}, ProvenanceKeys...)
 
 // FrontMatter is the bridge's front matter of a handoff filed at: its
 // metadata as YAML, each value a JSON (so YAML) quoted string, empty ones
 // left out; the body follows it unchanged.
-func FrontMatter(h store.Handoff, at time.Time) string {
+func FrontMatter(h store.Handoff, at time.Time) string { return frontMatter(h, at, nil) }
+
+// frontMatter is FrontMatter with the provenance's values (#9).
+func frontMatter(h store.Handoff, at time.Time, prov map[string]string) string {
 	vals := map[string]string{"date": at.Local().Format(time.RFC3339), "floor": h.Floor, "worker": h.WorkerName,
 		"worker_id": h.WorkerID, "label": h.Label, "branch": h.Branch, "harness": h.Harness, "model": h.Model,
 		"session": h.AgentSession, "cwd": h.Cwd, "source": h.Source, "source_turn": h.SourceTurn, "source_items": h.SourceItems,
 		"source_hash": h.SourceHash, "op": h.Op}
+	for _, k := range ProvenanceKeys {
+		if v := prov[k]; v != "" {
+			vals[k] = v
+		}
+	}
 	var b strings.Builder
 	b.WriteString("---\n")
 	for _, k := range frontKeys {

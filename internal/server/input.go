@@ -591,6 +591,21 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 // lengths and the key names).
 func auditArgs(cmd proto.Command) json.RawMessage {
 	switch cmd.T {
+	case proto.CmdWorkerHandoff: // #224, #9: the instruction is free text: its length only
+		var a proto.WorkerHandoffArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		return mustJSON(struct {
+			Worker           string `json:"worker"`
+			Mode             string `json:"mode"`
+			Session          string `json:"session,omitempty"`
+			Candidate        string `json:"candidate,omitempty"`
+			Revision         string `json:"revision,omitempty"`
+			InstructionBytes int    `json:"instruction_bytes,omitempty"`
+			SendHome         bool   `json:"send_home,omitempty"`
+			Op               string `json:"op"`
+		}{clip(a.Worker), clip(a.Mode), clip(a.Session), clip(a.Candidate), clip(a.Revision), len(a.Instruction), a.SendHome, clip(a.Op)})
 	case proto.CmdWorkerKeys:
 		var a proto.WorkerKeysArgs
 		if json.Unmarshal(cmd.Args, &a) != nil {

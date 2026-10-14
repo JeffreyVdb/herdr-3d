@@ -207,6 +207,9 @@ type World struct {
 	// #118 phase 2: the floor overview summaries' settings and state. nil
 	// (left out) when the bridge has no AI service.
 	Digest *DigestState `json:"digest,omitempty"`
+	// #9: the LLM handoffs' settings and state. nil (left out) when the
+	// bridge has no AI service or no handoff directory.
+	HandoffLLM *HandoffLLMState `json:"handoff_llm,omitempty"`
 	// #106 inbox: the dismissed finished rows, worker id → the status_since
 	// of the done episode hidden. Always present ({} when none).
 	InboxDismissed map[string]int64 `json:"inbox_dismissed"`
@@ -380,6 +383,10 @@ type Worker struct {
 	// #224: AgentHandoff is the worker's agent handoff request while it
 	// runs, and after it failed (until dismissed or a new one starts).
 	AgentHandoff *AgentHandoff `json:"agent_handoff,omitempty"`
+	// #9: LLMHandoff is the worker's latest LLM handoff job: while it runs,
+	// and after it settled (filed, failed, cancelled) until a new one starts
+	// or the worker leaves.
+	LLMHandoff *LLMHandoff `json:"llm_handoff,omitempty"`
 	// #98: Activity is what the agent is doing right now: while Status is
 	// working, and while idle or done only as waiting on background tasks.
 	// Absent otherwise, and for harnesses other than claude and codex.

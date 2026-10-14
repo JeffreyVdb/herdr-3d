@@ -337,8 +337,26 @@ MacBook (M2 Max)                                   devbox (Linux)
   (`internal/usage`) is the main thread's prompt-cache evidence: Claude's direct 1h/5m writes per `requestId` with the
   request start as an interval, Codex's turn timing and model/route policy; its warm / expired / unknown state is
   estimated when shown (`usage.CacheState`, the game's `cacheState`), never published. The game: the F dialog's three
-  modes (literal default, Ask the agent, Use configured LLM disabled), the instruction, the estimate's copy, the
+  modes (literal default, Ask the agent, Use configured LLM), the instruction, the estimate's copy, the
   request followed on `Worker.agent_handoff`.
+- **LLM handoffs** (#9, part 3 of #3; `protocol.md` "LLM handoffs", `decisions.md` "#9"): `worker.handoff` mode `llm`
+  has the configured LLM write a handoff from the worker's transcript; the worker is not prompted. `internal/handoffllm`
+  holds both halves: the **reducer** (`Reduce`, `Scrub`, `EstimateTokens`; standard library, `internal/jsonl` and
+  `internal/transcript` only, `TestReducerIsALeaf`; its policy and text layout in `internal/handoffllm/doc.go`) turns an
+  immutable main-session snapshot ending at the worker's candidate into bounded, scrubbed source data with explicit
+  coverage; the **feature** (`Service`: the switch off by default and bound to the config a passing `handoff_llm.test`
+  ran with, the transcript and completion budgets, one call at a time, `Generate`; `Build`, the versioned prompt with
+  nonce-delimited data blocks and the bridge's facts; `Validate`, the title-and-sections check) talks to `ai.LLM` only.
+  It is not inside `internal/handoff`, which stays the cabinet's leaf writer. `internal/server/llmhandoff.go` owns the
+  flow: the preview (the reducer off the hub goroutine, nothing sent), the job (`handoff_llm_job`, op-keyed, persisted
+  before the call, failed at a restart and never resent), the call (its own 90 s timeout and no uncertain retry, both
+  per request in `internal/ai`), the checks again on the hub (stopped, the worker's agent session, the LLM's
+  fingerprint, the feature ready), the filing through `handoff.Service.File` with `source: llm` and the provenance
+  front-matter keys (`handoff.ProvenanceKeys`), then the send home. Cancelled by `worker.handoff_cancel`, an AI config
+  change (`trackAI`), another agent session (the worker's upsert) or the worker leaving. The game: the dialog's third
+  mode (`ui/handoffDialog.ts`: the recipient, size, coverage, gaps, redactions, the focus, the job), the Settings
+  section (`ui/handoffLlmSection.ts`, `world/handoffLlm.ts`), the cabinet's provenance line. `cmd/handoff-spike` is the
+  quality spike's harness (dry by default).
 - **Identity**: bridge-owned worker UUID; reconcile after restarts via persisted pane-label marker (written by the bridge
   on the workers it hires) → `agent_session` id → label+cwd → else new worker. Tokens vanish on herdr restart and workspace ids can be reused: re-apply tokens only
   after reconciliation.

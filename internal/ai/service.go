@@ -486,7 +486,18 @@ func (h llmHandle) Complete(ctx context.Context, req Request) (string, error) {
 		return "", err
 	}
 	defer release()
-	text, err := s.complete(ctx, c, req, s.opts.LLMTimeout)
+	timeout := s.opts.LLMTimeout
+	if req.Timeout > 0 {
+		timeout = req.Timeout
+	}
+	if req.RedactKey && c.key != "" {
+		msgs := make([]Message, len(req.Messages))
+		for i, m := range req.Messages {
+			msgs[i] = Message{Role: m.Role, Content: redact(m.Content, c.key)}
+		}
+		req.Messages = msgs
+	}
+	text, err := s.complete(ctx, c, req, timeout)
 	if err != nil {
 		err = s.scrubbed(err, c.key)
 		if KindOf(err) == KindAuthFailed {
@@ -516,17 +527,26 @@ func (s *Service) scrubbed(err error, key string) error {
 
 // complete runs a completion with the response_format fallback: an endpoint
 // that rejects it with a 400 is called again without it, once, and
-// remembered. That second call is the one retry a call gets.
+// remembered. That second call is the one retry a call gets. With
+// req.NoUncertainRetry a first attempt the provider may have processed gets
+// none (uncertain).
 func (s *Service) complete(ctx context.Context, c config, req Request, timeout time.Duration) (string, error) {
 	jsonMode := c.jsonMode == nil || *c.jsonMode
 	sent := req.JSON && jsonMode
 	fellBack := false
-	text, err := attempts(ctx, timeout, nil, func(actx context.Context, i int) (string, error) {
+	var last error
+	var again func() bool
+	if req.NoUncertainRetry {
+		again = func() bool { return !uncertain(last) }
+	}
+	text, err := attempts(ctx, timeout, again, func(actx context.Context, i int) (string, error) {
 		t, rejected, err := s.openAI.complete(actx, c.baseURL, c.key, c.model, c.extra, req, jsonMode)
 		if rejected && i == 0 {
 			jsonMode, fellBack = false, true
+			last = errRetryPlain
 			return "", errRetryPlain
 		}
+		last = err
 		return t, err
 	})
 	switch {

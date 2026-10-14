@@ -27,7 +27,7 @@ function rig(o = {}) {
     if (a.t !== 'ack') throw new Error(JSON.stringify(a));
     return { data: a.data as Record<string, unknown>, events: got.filter((m) => m.t !== 'ack') };
   };
-  return { sim, cmd, ack };
+  return { sim, cmd, ack, out };
 }
 
 describe('fixture handoffs', () => {
@@ -85,5 +85,58 @@ describe('fixture handoffs', () => {
     r.ack('sim.agent_skill', { missing: true });
     const err = r.cmd('worker.handoff', { worker: 'A', mode: 'agent', op: 'op-3' }).find((m) => m.t === 'error');
     expect(err).toMatchObject({ code: 'handoff_skill_missing' });
+  });
+});
+
+// #9: LLM handoffs with no endpoint (`simhandoffllm`, `simhandoffllmout`): the states the dialog shows, the preview, a
+// job filed or failed, an op replayed, cancel.
+describe('fixture LLM handoffs', () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** Worker A's job as its latest worker.upsert says (undefined: none). */
+  const job = (r: ReturnType<typeof rig>) => {
+    const ups = r.out.filter((m) => m.t === 'worker.upsert' && (m.worker as { id: string }).id === 'A');
+    return (ups.at(-1)?.worker as { llm_handoff?: Record<string, unknown> } | undefined)?.llm_handoff;
+  };
+
+  it('is absent without the AI integration or a knob, and fixed by the knob', () => {
+    const none = rig({ ai: 'off' });
+    expect(none.cmd('handoff_llm.get', {}).at(-1)).toMatchObject({ t: 'error', code: 'unsupported' });
+    const off = rig({ handoffLlm: 'off' });
+    expect(off.ack('handoff_llm.get', {}).data).toMatchObject({ enabled: false, state: 'off' });
+    const c = off.ack('sim.final', { id: 'A', text: 'Done.' }).data.candidate as Record<string, string>;
+    expect(off.cmd('worker.handoff', { worker: 'A', mode: 'llm', session: c.session, candidate: c.id, revision: c.revision, op: 'o1' }).at(-1)).toMatchObject({ t: 'error', code: 'handoff_llm_unavailable' });
+    const pv = off.ack('worker.handoff_preview', { worker: 'A', mode: 'llm', candidate: c.id }).data.llm as Record<string, unknown>;
+    expect(pv).toMatchObject({ ready: false, unavailable: 'LLM handoffs are switched off in Settings', model: 'gpt-handoff-sim', host: 'llm.sim.example' });
+  });
+
+  it('previews, files a job (once per op), then fails one with the knob’s code', async () => {
+    const r = rig({ handoffLlm: 'ready' });
+    const c = r.ack('sim.final', { id: 'A', text: 'Fixed it.' }).data.candidate as Record<string, string>;
+    const pv = r.ack('worker.handoff_preview', { worker: 'A', mode: 'llm', candidate: c.id }).data.llm as Record<string, unknown>;
+    expect(pv).toMatchObject({ ready: true, reduced: true, coverage: { messages: 24, kept: 9 }, redactions: { github_token: 1 } });
+    const args = { worker: 'A', mode: 'llm', session: c.session, candidate: c.id, revision: c.revision, instruction: 'the CI failure', op: 'o1' };
+    const first = r.ack('worker.handoff', args);
+    expect(first.data.job).toMatchObject({ op: 'o1', state: 'running', model: 'gpt-handoff-sim' });
+    expect(r.ack('worker.handoff', args).data.existing).toBe(true);
+    expect(r.cmd('worker.handoff', { ...args, instruction: 'other' }).at(-1)).toMatchObject({ code: 'bad_request' });
+    expect(r.cmd('worker.handoff', { ...args, op: 'o2' }).at(-1)).toMatchObject({ code: 'busy' });
+    await sleep(1000);
+    expect(job(r)).toMatchObject({ op: 'o1', state: 'filed' });
+    const got = r.ack('handoff.get', { id: job(r)!.handoff as number }).data;
+    expect(got).toMatchObject({ handoff: { source: 'llm' }, llm: { model: 'gpt-handoff-sim', prompt_version: 'h3d-handoff-llm-1' } });
+    expect(String(got.body)).toContain('## Suggested skills');
+    r.ack('sim.handoff_llm', { outcome: 'timeout' });
+    r.ack('worker.handoff', { ...args, op: 'o3' });
+    await sleep(1000);
+    expect(job(r)).toMatchObject({ op: 'o3', state: 'failed', code: 'timeout' });
+  });
+
+  it('keeps a slow job running until finished or cancelled', () => {
+    const r = rig({ handoffLlm: 'ready', handoffLlmOut: 'slow' });
+    const c = r.ack('sim.final', { id: 'A', text: 'Fixed it.' }).data.candidate as Record<string, string>;
+    r.ack('worker.handoff', { worker: 'A', mode: 'llm', session: c.session, candidate: c.id, revision: c.revision, op: 's1' });
+    expect(r.ack('worker.handoff_cancel', { worker: 'A', op: 's1' }).data).toMatchObject({ state: 'cancelled' });
+    r.ack('worker.handoff_cancel', { worker: 'A', op: 's1' });
+    expect(job(r)).toBeUndefined();
   });
 });

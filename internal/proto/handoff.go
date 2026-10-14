@@ -33,7 +33,8 @@ func init() {
 }
 
 // Handoff modes: literal (#223), agent (#224: the worker's agent writes it
-// with its own handoff skill); llm is a later part of #11.
+// with its own handoff skill), llm (#9: the configured LLM writes it from the
+// reduced transcript; the worker is not prompted).
 const (
 	HandoffModeLiteral = "literal"
 	HandoffModeAgent   = "agent"
@@ -192,6 +193,8 @@ type WorkerHandoffPreviewResult struct {
 	// agent's prompt cache as estimated now (absent: no evidence read).
 	Agent *AgentHandoffPreview `json:"agent,omitempty"`
 	Cache *CacheEstimate       `json:"cache,omitempty"`
+	// #9, llm previews: what the LLM handoff would send, and to whom.
+	LLM *LLMHandoffPreview `json:"llm,omitempty"`
 }
 
 // WorkerHandoffArgs are the args of worker.handoff: the worker, the mode
@@ -204,6 +207,11 @@ type WorkerHandoffPreviewResult struct {
 // MaxHandoffInstruction bytes; blank: DefaultHandoffInstruction) is what
 // the agent's handoff skill is asked to do. The ack is
 // WorkerHandoffRequestResult.
+//
+// #9, mode "llm": the candidate names the snapshot (the transcript up to
+// that completed turn); Instruction (optional, the same bound) is the focus
+// the model is given, as data. The ack is WorkerHandoffJobResult, at once:
+// the job is followed on Worker.LLMHandoff.
 type WorkerHandoffArgs struct {
 	Worker      string `json:"worker"`
 	Mode        string `json:"mode"`
@@ -299,9 +307,11 @@ type HandoffGetArgs struct {
 
 // HandoffGetResult is handoff.get's ack: the handoff and its body (the file
 // without its front matter; Markdown, to be sanitized before it is shown).
+// #9: LLM is an LLM handoff's provenance (absent for the others).
 type HandoffGetResult struct {
-	Handoff HandoffEntry `json:"handoff"`
-	Body    string       `json:"body"`
+	Handoff HandoffEntry          `json:"handoff"`
+	Body    string                `json:"body"`
+	LLM     *HandoffLLMProvenance `json:"llm,omitempty"`
 }
 
 // HandoffDeleteArgs are the args of handoff.delete.

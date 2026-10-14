@@ -198,6 +198,9 @@ without the AI service or from before #110.
 left out by a bridge without the AI service or from before #118 phase 2; a worker's own `digest` (its lines) is in the
 worker.
 
+`handoff_llm` (#9) is the LLM handoffs' state (see [LLM handoffs](#llm-handoffs)), left out by a bridge without the AI
+service or a handoff directory, or from before #9; a worker's job is its own `llm_handoff`.
+
 `activity` (#98) is "Classify unknown commands"' state (see [Activity](#activity)), left out by a bridge without the AI
 service or from before #98; a worker's own `activity` is in the worker.
 
@@ -287,6 +290,7 @@ floor with no workers and an `error`).
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
 | `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "question", "kind": "yes_no" \| "choice" \| "open", "options"?}], "score", "source": "model" \| "fallback", "at", "tail"?}`, until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
 | `handoff` | object, optional | #223: its agent's latest completed final reply a literal handoff can file, `{"id", "session", "revision", "harness", "message"?, "turn"?, "source": "message" \| "last_agent_message", "bytes", "images"?, "too_large"?}`: the bridge's identity of it, never its text (see [Handoffs](#handoffs)) |
+| `llm_handoff` | object, optional | #9: its latest LLM handoff job, `{"op", "state": "queued" \| "running" \| "filed" \| "failed" \| "cancelled", "code"?, "message"?, "started_at", "updated_at", "model"?, "host"?, "send_home"?, "handoff"?, "send_home_result"?, "send_home_reason"?}`, while it runs and once settled until a new one starts or the worker leaves (see [LLM handoffs](#llm-handoffs)) |
 | `activity` | object, optional | #98: what its agent is doing right now, `{"kind", "detail"?, "since", "source", "image"?, "tasks"?}`: while `status` is `working`, and while `idle` or `done` only as `waiting` on open background tasks; absent otherwise and for harnesses other than Claude and Codex (see [Activity](#activity)) |
 | `digest` | object, optional | #118: what the floor overview says of it, `{"task"?, "task_source"?, "now"?, "now_source", "now_at"?, "task_status"?, "now_status"?}`: its task and what it does now in words, each with its source, and (#174) what became of a model line that is awaited or failed; absent until its transcript has a prompt or an assistant step, and for harnesses other than Claude and Codex (see [Floor overview digest](#floor-overview-digest)) |
 | `wrapup` | object, optional | #83: its wrap-up, `{"state": "armed" \| "needs_you", "worktree": "keep" \| "delete" \| "delete_branch", "armed_at": int, "reason"?: string}` (unix ms, bridge clock; `reason` with `needs_you`), while armed or needing you (see [Wrap up](#wrap-up)) |
@@ -467,6 +471,7 @@ and remember the last `seq` applied.
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
 | `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
 | `digest.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `daily_cap`, `calls_today`, `reasoning_effort`, `max_tokens`, `reasoning`, `effort_stale` | #118: the floor overview summaries' state changed (a setting, a call counted, a passing test, the LLM's state); the whole state, flat in the event. Its `roles` has `llm` only: decode it by its `t` (see [Floor overview summaries](#floor-overview-summaries)) |
+| `handoff_llm.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `input_bytes`, `max_tokens`, `reasoning_effort`, `reasoning`, `effort_stale`, `timeout_s`, `prompt_version`, `categories` | #9: the LLM handoffs' state changed (a setting, a passing test, the LLM's state or config); the whole state, flat in the event (see [LLM handoffs](#llm-handoffs)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
@@ -593,10 +598,11 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `hire.interpret` | `{"text", "pending"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?}`: a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
 | `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…]}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
-| `worker.handoff_preview` | `{"worker", "candidate"}` | `{"candidate", "text", "truncated"?, "title", "provenance", "can_send_home", "send_home_blocked"?}` (see [Handoffs](#handoffs)) | — |
+| `worker.handoff_preview` | `{"worker", "candidate"}` (#224 `mode: "agent"`, #9 `mode: "llm"`: see [Ask the agent](#ask-the-agent), [LLM handoffs](#llm-handoffs)) | `{"candidate", "text", "truncated"?, "title", "provenance", "can_send_home", "send_home_blocked"?}` (see [Handoffs](#handoffs)) | — |
 | `worker.handoff` | `{"worker", "mode": "literal", "session", "candidate", "revision", "send_home"?, "op"}` | `{"handoff", "existing"?, "send_home"?: "started" \| "skipped", "send_home_reason"?}` | `handoff.added` (before the ack) when filed; `worker.removed` later when sent home |
+| `worker.handoff` (#9) | `{"worker", "mode": "llm", "session", "candidate", "revision", "instruction"?, "send_home"?, "op"}` | `{"job", "existing"?}` at once; the job follows on `Worker.llm_handoff` (see [LLM handoffs](#llm-handoffs)) | `worker.upsert` (the job), `handoff.added` when filed, `worker.removed` later when sent home |
 | `handoff.list` | `{"floor", "q"?, "limit"?: 1–500}` | `{"floor", "handoffs": [HandoffEntry…]}` | — |
-| `handoff.get` | `{"id"}` | `{"handoff", "body"}` | — |
+| `handoff.get` | `{"id"}` | `{"handoff", "body", "llm"?}` (#9: an LLM handoff's provenance) | — |
 | `handoff.delete` | `{"id", "confirm": true}` | `{"handoff"}`; the file goes to the trash | `handoff.removed` (before the ack) |
 | `inbox.dismiss` | `{"id", "status_since"}` | `{"dismissed": bool}` (see [Inbox](#inbox)) | `inbox.dismissed` (before the ack) when the dismissal is new |
 | `activity.get` | `{}` | "Classify unknown commands"' state (see [Activity](#activity)) | — |
@@ -609,6 +615,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `digest.set` | `{"enabled"?: bool, "daily_cap"?: 1–10000, "reasoning_effort"?: string, "max_tokens"?: 64–16384}` | its state; `reasoning_effort` `""` is the provider's default, else one the model's catalog lists (`bad_request` otherwise) (#174) | `digest.update` (before the ack) |
 | `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?, "diag"?}], "latency_ms"}` (`diag`: the call's sanitized [diagnostics](#floor-overview-summaries)) | `digest.update` when it changes `tested` |
 | `digest.retry` | `{"id"?: worker id}` | `{"retried": n}`: the failed lines of that worker (every worker without an id) are due again, their attempts counted anew; `incomplete` while the feature is off or the LLM not ready; `unknown_worker` (#174) | `worker.upsert` of the workers whose line status changed |
+| `handoff_llm.get` | `{}` | the LLM handoffs' state (see [LLM handoffs](#llm-handoffs)); it reads the LLM model's reasoning from its catalog when that was not read lately | — |
+| `handoff_llm.set` | `{"enabled"?: bool, "input_bytes"?: 16384–786432, "max_tokens"?: 1024–32768, "reasoning_effort"?: string}` | its state; switching on needs a passing `handoff_llm.test` of the config in use (`test_required`) and the LLM ready (`incomplete`); `env_locked` while the environment sets it | `handoff_llm.update` (before the ack) |
+| `handoff_llm.test` | `{}` | `{"ok", "reason"?, "title"?, "bytes", "latency_ms", "diag"?}`: the LLM wrote a handoff of a synthetic session | `handoff_llm.update` when it changes `tested` or the binding |
 | `whiteboard.get` | `{"floor"}` | the board's state, `{"floor", "version", "author", "at", "render_version", "render", "stale", "stale_pins"}` (its content is HTTP, see [Whiteboard](#whiteboard)) | — |
 | `whiteboard.clear` | `{"floor", "confirm": true, "author"?}` | the new state | `whiteboard.updated` |
 | `whiteboard.pin` | `{"floor", "author", "note", "request_id"?}` (an image: `POST /whiteboard/{floor}/pin`) | the new state plus `{"elements": [id…], "repeated"?}` | `whiteboard.updated` (none for a repeated `request_id`) |
@@ -3707,7 +3716,7 @@ The audit log keeps the ids, the indexes and each answer's length (`answer_bytes
 
 #223, part 1 of #11. A **literal handoff** files a worker's latest completed final reply, exactly as written, as a
 Markdown file in its floor's **filing cabinet**. No model is called and nothing is sent to the worker: the reply is
-already complete, so the worker is not woken. Later modes (#224: the agent writes one, [Ask the agent](#ask-the-agent); the configured LLM writes one) and
+already complete, so the worker is not woken. Later modes (#224: the agent writes one, [Ask the agent](#ask-the-agent); #9: the configured LLM writes one, [LLM handoffs](#llm-handoffs)) and
 `worker.fire`'s reserved `handoff` file through the same service: one path rule, front matter, index, audit and
 send-home rule.
 
@@ -3857,6 +3866,96 @@ answers `{provenance, can_send_home, send_home_blocked?, agent: {call?, can_ask,
 instruction}, cache?: {state, estimated, evidence}}` and, when `candidate` names the current one, its text as for a
 literal preview. The audit row has the op, nonce, path and offset, never the text of the instruction's request.
 
+#### LLM handoffs
+
+#9, part 3 of #3. The configured LLM (the [AI integration](#ai-integration)'s `llm` role; never the classifier, never
+the worker's agent) writes a handoff from the worker's transcript, which the bridge reduces and scrubs first; the
+worker is not prompted, whatever its cache estimate says. It is filed in #223's cabinet like the other modes. Opt-in
+and gated like the [floor overview summaries](#floor-overview-summaries): configuring the AI alone sends nothing.
+
+```json
+"handoff_llm":{"enabled":true,"state":"ready","roles":{"llm":"ready"},"env":[],"tested":true,"input_bytes":98304,"max_tokens":4096,"reasoning_effort":"","reasoning":{"support":"unknown","efforts":["low","medium","high"],"listed":false},"effort_stale":false,"timeout_s":90,"prompt_version":"h3d-handoff-llm-1","categories":["your prompts to the worker","…"]}
+{"t":"worker.handoff","req_id":"8","args":{"worker":"a58752ea-…","mode":"llm","session":"7a7b7c7d-…","candidate":"4a71102e7ae8ef34","revision":"9267469792d9bd31…","instruction":"the open review comments","send_home":true,"op":"ho-k3…"}}
+{"t":"ack","req_id":"8","data":{"job":{"op":"ho-k3…","state":"running","started_at":1790859600000,"updated_at":1790859600000,"model":"gpt-6-sol","host":"llm.example:8443","send_home":true}}}
+"llm_handoff":{"op":"ho-k3…","state":"filed","started_at":1790859600000,"updated_at":1790859641000,"model":"gpt-6-sol","host":"llm.example:8443","send_home":true,"handoff":13,"send_home_result":"started"}
+```
+
+**The feature** (`World.handoff_llm`, every change a `handoff_llm.update` event with the state flat in it; absent
+without the AI integration or a handoff directory). `state`: `off` (the default), `incomplete` (on, the LLM not
+ready), `untested` (on, but the LLM's config, the effort or the completion budget changed since the test the switch
+was turned on with: nothing is sent until a test passes again, which binds it to the config in use), `ready`.
+**`handoff_llm.get`**, **`handoff_llm.set {enabled?, input_bytes?, max_tokens?, reasoning_effort?}`** (a field left
+out is kept; `input_bytes` the transcript budget 16–768 KiB, default 96 KiB; `max_tokens` the completion budget,
+reasoning included, 1,024–32,768, default 4,096; `reasoning_effort` as for the summaries) and **`handoff_llm.test`**
+answer as `digest.*` do: switching on needs the LLM `ready` and a passing test, within 30 minutes, of exactly the
+config then in use (`incomplete`, `test_required`); `HERDR_WORLD_HANDOFF_LLM_ENABLED` (`--handoff-llm-enabled`) owns
+the switch while set (`env_locked`; it needs no test, still the LLM ready). The test writes a handoff of a short
+synthetic session (never a transcript) and acks `{ok, reason?, title?, bytes, latency_ms, diag?}`. Switching off
+cancels a handoff that is out. `categories` say what a handoff sends; `timeout_s` and `prompt_version` are the bridge's.
+
+**`worker.handoff_preview {worker, mode: "llm", candidate?}`** (the current candidate when none is named) runs the
+reducer and sends nothing: `{candidate, provenance, can_send_home, send_home_blocked?, llm}`, `llm` being `{ready,
+unavailable?, model, host, payload_bytes, est_tokens, budget_bytes, max_tokens, timeout_s, prompt_version, reduced,
+coverage, redactions, categories, artifacts, verified}`: the recipient (the model and the endpoint's host, never its
+path or key), the reduced transcript's size and conservative token estimate, the coverage (`{messages, kept, omitted:
+[{from, to, why}], compaction, gaps, abandoned?, sidechains?, deduplicated?, skipped?, complete}`: what of the
+snapshot is in it and what was left out), the redaction counts by category (never the text), and the observed
+artifact references (and how many a result showed succeeded). `ready` false says why in `unavailable`: the feature not
+ready, another LLM handoff out (one at a time), or the reduction refused (the prompts and the final reply alone do not
+fit the budget; the transcript changed; a subagent's or an empty one).
+
+**`worker.handoff {worker, mode: "llm", session, candidate, revision, instruction?, send_home?, op}`**:
+
+1. **Check.** `op` as for a literal handoff; the candidate the worker's current one under its agent session
+   (`handoff_unavailable` otherwise); `instruction` (the focus, optional) at most 4 KiB of UTF-8. A known `op` answers
+   its job (`existing: true`) and sends nothing; the same op with another worker or other arguments is `bad_request`.
+   The feature not ready: `handoff_llm_unavailable`, nothing sent; another LLM handoff out: `busy`.
+2. **Store.** The job (SQLite `handoff_llm_job`: op, worker, floor, agent session, candidate, a hash of the
+   arguments, the LLM config's fingerprint, the prompt version, send home, state, code, message, handoff id, times;
+   never the instruction, the transcript or the document) as `running`; the ack is `{job, existing?}` at once and the
+   job follows on **`Worker.llm_handoff`**: `{op, state, code?, message?, started_at, updated_at, model?, host?,
+   send_home?, handoff?, send_home_result?, send_home_reason?}`, `state` `queued`, `running`, `filed`, `failed` or
+   `cancelled`. The job and its audit row are stored together: when either cannot be, the command fails (`internal`)
+   with nothing stored or sent, and the op may be used again.
+3. **Reduce** (off the hub): the candidate checked to be the transcript's latest completed reply still, then the
+   snapshot up to it (where the bridge read that reply to end) reduced and scrubbed within `input_bytes`
+   (`internal/handoffllm`, its policy in `internal/handoffllm/doc.go`: the active branch only, no sidechains or
+   subagents, streamed copies merged, every genuine prompt and the final reply whole, bounded tool evidence, the
+   newest compaction summary or Codex's retained messages, omitted runs marked).
+4. **Prompt.** The bridge's versioned system prompt (`prompt_version`), then one user turn of data blocks, each
+   between `<<<NAME-<nonce>` and `NAME-<nonce>>>>` with a nonce drawn per request and absent from the data: the
+   bridge's facts (time, floor, worker, its agent and model, session, the snapshot boundary, the checkout, the branch
+   herdr reported, the git branch and `git status` captured now and labelled so, the skills the command catalog has
+   cached for the worker if any, the artifacts observed as verified or unverified (never verified by the absence of a
+   failure: a run still running or a result with no outcome is unverified), the coverage gaps), the transcript, and
+   the instruction (scrubbed like the transcript). The configured key is replaced in the messages too.
+5. **Call.** One completion through the AI integration: at most one handoff call over the bridge, its own timeout
+   (`timeout_s`, 90 s, provisional), no second attempt after an outcome the provider may have processed (a timeout, a
+   dropped connection, a 5xx; a refused connection may be retried), `max_tokens` with the budget winning over an
+   `extra_body` one, the effort; an answer cut off at the budget is `truncated`, never clipped.
+6. **Validate.** Markdown with exactly one leading `# ` title of at most 80 characters, every section `## Goal and
+   current state`, `## Decisions`, `## Verification`, `## Open questions`, `## Next steps`, `## Suggested skills`,
+   some text, at most the budget's bytes and 1 MiB (one code fence around the whole answer is taken off). Else
+   `handoff_llm_invalid` (the message says which rule, never the answer).
+7. **File**, after checking again on the hub that the job was not stopped, the worker is there under the same agent
+   session, the LLM's config is the one it started with and the feature still ready (`handoff_llm_stale`,
+   `handoff_llm_unavailable` otherwise): `source: "llm"`, its date the writing's, `op`, the worker's metadata, and in
+   the front matter `llm_model`, `llm_host`, `prompt_version`, `snapshot` (`<candidate>@<offset>`), `coverage` and
+   `redactions` (a JSON object of counts); `handoff.added`; then, with `send_home`, #223's send home.
+8. **Fail**, keeping the worker, filing nothing, never sending it home or trying another mode or model, the code and
+   a short message on the job: the AI's codes (`timeout`, `auth_failed`, `rate_limited`, `provider_failed`,
+   `truncated`, `empty_answer`, `unreachable`, …), `handoff_llm_invalid`, `handoff_llm_stale` (the LLM's config, the
+   agent session or the worker changed while it was written), `handoff_llm_unavailable`, `too_large`,
+   `handoff_source`, `handoff_unavailable`, `handoff_failed`, `cancelled` (state `cancelled`, by
+   **`worker.handoff_cancel {worker, op}`**, which dismisses a settled job). Trying again is a new job (a new op).
+9. **Restart.** A job that was out is failed (`handoff_llm_interrupted`) and never sent again; its op still answers it.
+   Settled jobs are kept 30 days.
+
+`handoff.get` of an LLM handoff adds `llm: {model, host, prompt_version, snapshot, coverage, redactions}` from its
+front matter. The audit row of `worker.handoff` keeps the instruction's length only (in every mode); an LLM job's
+result has the model, host, prompt version, sizes (payload, sent, answer, document), the elapsed time, the outcome
+code, the redaction counts, the coverage numbers and the call's sanitized diagnostics; never text.
+
 ### Inbox
 
 The game's inbox (#100) is derived in the client from the world: the workers that need you and the employees that are
@@ -3909,6 +4008,7 @@ dismissed_at)`.
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |
 | `drops_unavailable` | `drops.list` without a Drop Zone data directory, or one that cannot be read |
 | `too_large` | `transcript.image` with `size: "full"` for an image whose base64 is over 12 MiB (its thumbnail is still served); #223 `worker.handoff_preview` / `worker.handoff` for a reply over 1 MiB (never clipped) |
+| `handoff_llm_unavailable`, `handoff_llm_invalid`, `handoff_llm_stale`, `handoff_llm_interrupted` | #9 (see [LLM handoffs](#llm-handoffs)): LLM handoffs are off, their LLM not ready or untested (nothing was sent); the model's answer is not a handoff of the agreed shape; the LLM's config, the agent session or the worker changed while it was written; the bridge restarted while it was written (never sent again). Nothing was filed and nobody was sent home on any of them; the last three are a job's `code` |
 | `handoff_skill_missing` | #224: the worker's harness lists no `handoff` skill in its checkout (or its skills could not be listed), so its agent cannot be asked for a handoff; nothing was sent (see [Ask the agent](#ask-the-agent)) |
 | `handoff_unavailable`, `handoff_source`, `handoff_failed` | #223 (see [Handoffs](#handoffs)): the worker has no candidate or not the one named (stale: a newer turn, another session or revision); the candidate's lines in the transcript, or those that completed it, are not what they were (replaced, truncated, changed); writing or registering the file failed. Nothing was filed and nobody was sent home on any of them |
 | `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
