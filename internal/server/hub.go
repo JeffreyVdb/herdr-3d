@@ -846,6 +846,12 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startFiles
 		case proto.CmdWorkerRepos: // #247
 			start = h.startWorkerRepos
+		case proto.CmdHireCommands: // #39
+			start = h.startHireCommands
+		case proto.CmdHireFiles: // #39
+			start = h.startHireFiles
+		case proto.CmdHireRepos: // #39
+			start = h.startHireRepos
 		case proto.CmdRepoRefsGet, proto.CmdRepoRefsSet: // #247
 			start = h.startRepoRefs
 		// M5 term
