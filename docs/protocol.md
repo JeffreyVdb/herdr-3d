@@ -552,6 +552,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.commands` | `{"id": string}` | #136: the slash commands and skills of the worker's harness in its checkout, `{"commands": [{"name", "description", "argument_hint", "kind"}…], "partial": bool}` (see [Commands and skills](#commands-and-skills)) | — |
 | `worker.files` | `{"id": string, "query": string, "limit"?: 1–100}` (default 30) | #137: the files and directories of the worker's checkout ranked against `query`, `{"files": [{"path", "kind", "indices"}…], "source", "reason"}` (see [Files](#files)) | — |
 | `worker.repos` | `{"id": string}` | #247: the repositories and folders stored on the other floors of the worker's building (every building's with `repo_refs.all_buildings`), `{"repos": [{"session", "building", "same_building", "repo"?, "dir"?, "cloned"}…]}` (see [Repositories on other floors](#repositories-on-other-floors)) | — |
+| `hire.commands` | `{"session": string, "harness": string, "cwd"?: string, "worktree"?: bool}` | #39: `worker.commands` for a hire with no worker yet: `harness`'s commands and skills in the folder the hire would get (see [Completion before a hire](#completion-before-a-hire)) | — |
+| `hire.files` | `{"session": string, "cwd"?: string, "worktree"?: bool, "query": string, "limit"?: 1–100}` | #39: `worker.files` for a hire with no worker yet, in that folder | — |
+| `hire.repos` | `{"session": string}` | #39: `worker.repos` for a hire on `session` with no worker yet | — |
 | `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100, "fullscreen"?: bool}` | `{"pane", "cols", "rows", "zoom"?}` | `terminal.frame`s to this connection only; with `fullscreen` (true or false), also `terminal.state` (see [Fullscreen](#fullscreen-74)) |
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
@@ -793,7 +796,7 @@ client must not put a path in a marker that did not come from `POST /upload`. Th
 |---|---|---|---|
 | `worker.hire` | `prompt` | 32 KiB (`herdr.MaxPrompt`) | the hire dialog's first task |
 | `worker.prompt` | `text` | 16 KiB (`herdr.MaxMessage`) | the P overlay, the transcript view's prompt box, a paste at a laptop's terminal (an agent only: a plain shell answers `invalid_state`, so the game says an image cannot be pasted there before it uploads anything) |
-| `run.prepare`, `run.start` | `extra` | 8 KiB (`maxRunExtra`) | Start Run's Extra instructions; the bridge folds it, trimmed, into the orchestrator's first prompt, so `run.prepare`'s `prompt` shows the markers |
+| `run.prepare`, `run.start` | `extra` | 8 KiB (`maxRunExtra`) | Start Run's Extra instructions; the bridge folds it, trimmed, into the orchestrator's first prompt, so `run.prepare`'s `prompt` shows the markers (#39: and `/skill`, `@path` as typed; `run.start` rewrites them for Codex when it sends the prompt) |
 | `run.start` | `prompt` | 32 KiB (the hire's) | an edited First prompt, as it is; never sent when not edited (the bridge composes it) |
 
 An image is uploaded as soon as it is pasted (a chip shows the progress), under a label per surface so files from
@@ -1042,7 +1045,7 @@ remote-tracking refs) and is audited like any command.
 | `label` | 1–64 bytes, no control characters, not starting with `-`; default: the next generated name (`hire.prepare`'s `label`). The worker's name is the label when that is a free generated name, else the next generated name. |
 | `cwd` | absolute, existing directory; default as in `hire.prepare` |
 | `worktree` | `true`: hire into a new linked git worktree and branch of `cwd`'s repository (below); `cwd` must be in a git work tree with a known `origin/<default>` |
-| `prompt` | optional first task, 1–32768 bytes of UTF-8 without NUL, not starting with `--` (herdr's CLI would read it as a flag). Sent once the agent is ready. For Claude it is typed (#95, step 5): no control characters but line ends (`\r\n` and `\r` go as `\n`) and tabs (four spaces each), at most 32768 bytes as typed, else `bad_request`. The game sends pasted images as `[Image #n: <absolute path>]` markers in the text, after uploading them (`POST /upload`, above). |
+| `prompt` | optional first task, 1–32768 bytes of UTF-8 without NUL, not starting with `--` (herdr's CLI would read it as a flag). Sent once the agent is ready. For Claude it is typed (#95, step 5): no control characters but line ends (`\r\n` and `\r` go as `\n`) and tabs (four spaces each), at most 32768 bytes as typed, else `bad_request`. The game sends pasted images as `[Image #n: <absolute path>]` markers in the text, after uploading them (`POST /upload`, above). #39: it is what the dialog's composer holds (`/skill`, `@path`, plain repository paths and URLs): for Codex the bridge rewrites it once, when it sends it (see [Completion before a hire](#completion-before-a-hire)). |
 | `handoff`, `stop_services` | reserved (#11, #14); refused like any unknown field |
 
 Capacity: a hire that would put the floor above `--max-workers-per-floor` or the host above `--max-workers` is
@@ -1092,8 +1095,9 @@ checkout herdr may open with it (step 1) is not a worker. Then, in order (each s
    part way is erased from Claude's input box (`ctrl+u backspace` pairs, as for `worker.prompt`). **Codex**: `herdr
    agent prompt <pane> <prompt> --wait --until working --until blocked --timeout 8000`, retried while herdr says the
    agent is not ready; when it took the text but dropped the Enter (herdr: `agent_prompt_stalled`) the bridge presses
-   `Enter` (up to 3 times) until the worker is working. A prompt that fails does not undo the hire: the ack has
-   `prompted: false` and `prompt_error`.
+   `Enter` (up to 3 times) until the worker is working; #39: for a prompt that ends in a `$skill` (Codex's skill popup
+   takes the Enter) each press is `esc` then `enter`, as `worker.prompt`'s retry. A prompt that fails does not undo the
+   hire: the ack has `prompted: false` and `prompt_error`.
 6. The choice is remembered for the floor, the audit row completed, and the ack sent (after the worker's
    `worker.upsert`).
 
@@ -1310,7 +1314,7 @@ high, researchers codex sol low; the orchestrator claude opus medium), once: del
 | `preset`, `orch` | the defaults above, as used for `prompt` |
 | `cwd`, `git`, `capacity` | as in `hire.prepare` without a `cwd` (the floor's effective default cwd): where the orchestrator will work |
 
-The **prompt**:
+The **prompt** (#39: the skill call is the orchestrator harness's, `/write-code` for Claude, `$write-code` for Codex):
 
 ```
 /write-code https://github.com/JeffreyVdb/lab/issues/3
@@ -1364,6 +1368,12 @@ byte.) The game's "Ask a worker…" on a Kaneo task likewise puts the title and 
 | `worktree` | bool, default **true**: the orchestrator works in a new linked worktree of the cwd's repository |
 | `label` | optional, as `worker.hire`'s `label`; default `run.prepare`'s |
 | `prompt` | optional, the edited preview, as `worker.hire`'s `prompt`; absent: the bridge composes it from the ticket, the preset, `orch.harness` and `extra` |
+
+#39: what a person typed reaches a Codex orchestrator as `worker.hire`'s first task does (see [Completion before a
+hire](#completion-before-a-hire)): the `extra` inside the composed prompt, or an edited `prompt` whole, rewritten once
+when the hire sends it; the ticket the bridge composes around the extra (an issue's URL, a Kaneo task's title and
+description) never is, whatever it holds. The ack's `prompt` is the text sent (rewritten). `run.prepare`'s `prompt` is
+the preview as typed (never rewritten).
 
 It is the [`worker.hire`](#hire-and-send-home) hire, the same code path, events, rollback and audit: at `desk_index`,
 with `orch`'s harness, model and effort, the `label`, `worktree`, in the floor's effective default cwd, and the prompt
@@ -2065,6 +2075,17 @@ leaves Codex's skill popup open and its Enter is taken: the retry presses `esc` 
 unless the worker started meanwhile (the prompt was only slow): then nothing is pressed, as Esc aborts a running turn.
 The transcript view of a Codex worker shows the rewritten text (what Codex received).
 
+#39: a hire's first prompt is rewritten by the same rules, once, when the hire sends it (see [Completion before a
+hire](#completion-before-a-hire)):
+
+| Route | Rewritten for Codex |
+|---|---|
+| `worker.prompt` `text`, `worker.answer_ask` `prompt` | yes: the composer's text, on the worker's lane |
+| `worker.hire` `prompt` | #39 yes: the dialog's first task, when the hire sends it |
+| `run.start` `extra` | #39 yes: inside the composed prompt; the ticket around it never |
+| `run.start` `prompt` | #39 yes: an edited First prompt, whole |
+| `worker.answer_followup`, `worker.wrap_up` | no: the bridge builds them |
+
 #224: an exact top-level **`/handoff [instruction]`** (the text, trimmed, starts with `/handoff` and then a blank or
 its end; read before any translation) is not sent as typed: it becomes an agent handoff request (see [Ask the
 agent](#ask-the-agent)) with that instruction and the optional `op` (1–64 of `[A-Za-z0-9_-]`; none: the bridge makes
@@ -2372,6 +2393,50 @@ client (before the ack) and is one audit row.
 ```
 
 Errors: `unknown_worker`, `bad_request` (unknown `args` fields). Each call is one audit row.
+
+#### Completion before a hire
+
+#39. The Hire worker dialog's First task and Start run's Extra instructions and First prompt complete `/` skills, `@`
+files and `@r:` repositories before there is a worker: **`hire.commands`**, **`hire.files`** and **`hire.repos`** are
+`worker.commands`, `worker.files` and `worker.repos` keyed by what the hire would get instead of a worker id. They
+answer the same data (`{"commands", "partial"}`, `{"files", "source", "reason"}`, `{"repos"}`), from the same command
+catalog, file index and repository scope, read-only. (The Prompt overlay has a worker: it asks the `worker.*` ops, and
+shares the transcript's list of commands.)
+
+```json
+{"t":"hire.commands","req_id":"59","args":{"session":"lab","harness":"codex","cwd":"/home/me/src/lab","worktree":true}}
+{"t":"ack","req_id":"59","data":{"commands":[{"name":"write-code","description":"…","argument_hint":"","kind":"skill","terminal":""}],"partial":false}}
+{"t":"hire.files","req_id":"60","args":{"session":"lab","query":"read","limit":30}}
+{"t":"hire.repos","req_id":"61","args":{"session":"lab"}}
+```
+
+| arg | rule, else `bad_request` |
+|---|---|
+| `session` | a floor the bridge knows (`unknown_session`); for `hire.commands` and `hire.files` a running one (`invalid_state`), as `worker.commands` and `worker.files`. `hire.repos` lists stored settings only and answers for an asleep floor too, as `worker.repos`. None waits for the floor's wake, sleep or another hire (never `busy`): a lookup changes nothing |
+| `harness` | `hire.commands` only: `claude` or `codex` of `hire_options` |
+| `cwd` | as `worker.hire`'s: absolute, an existing folder; absent: the floor's effective default cwd |
+| `worktree` | true: the hire makes a worktree, which does not exist yet, so the lookups are made in the folder's **repository root** (`git rev-parse --show-toplevel`, as the hire does; not a git work tree: `bad_request`). Its files are the main checkout's: what is not committed there is not in the new worktree, and an `@path` to such a file reaches Codex as typed |
+| `query`, `limit` | `hire.files` only, as `worker.files` |
+
+A **lookup context** is the floor, the harness and the folder (with `worktree`, the repository root). The catalog and
+the index are cached per harness and folder, so the context a dialog completed in is the one the first prompt is
+translated with (below). The game asks nothing when a dialog opens: a lookup goes out only when a `/` or `@` popup
+opens, and holds only the popup ("Loading skills…", then the rows, or why it failed and "Try again"); the dialog, its
+typing and its Hire / Start run never wait for it. A change of the floor, harness, folder or worktree choice is a new
+context: the popup asks again, and a reply or a row of the old context is never shown or put in.
+
+`/` lists the harness's catalog (its skills, global ones too, and its commands); `@` the files of the context's folder
+only: a skill's own file outside it is not offered as a file. The popup's footers say which is which.
+
+**The first prompt.** What was typed (`worker.hire`'s `prompt`; `run.start`'s `extra` or edited `prompt`) is rewritten
+for a Codex hire once, by the [`worker.prompt` rules](#input), when the hire sends it: the skills from the catalog the
+bridge **already holds** for the lookup context (however old; the hire never waits for a probe: with none cached,
+`/skill` goes as typed), the files of the new worker's checkout (a worktree's own). Claude gets the text as typed. A
+repository picked with `@r:` is a plain path or URL in the text, and stays so.
+
+Errors: `unknown_session`, `invalid_state` (asleep), `bad_request` (unknown `args` fields, a bad harness, cwd, `limit`
+or `query`, a worktree outside a git work tree), `files_failed` (`hire.files`, as `worker.files`), `internal` (not
+configured, or the catalog failed). Each call is one audit row.
 
 #### Usage and cost
 
@@ -3854,7 +3919,7 @@ dismissed_at)`.
 | `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
-| `files_failed` | #137 `worker.files` whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |
+| `files_failed` | #137 `worker.files` (#39: `hire.files`) whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |
 | `confirmation_required` | `issue.close`, `pr.merge`, `worker.open_pr` or #223 `handoff.delete` without `confirm: true` (see [Boards](#boards-issues-and-pull-requests)) |
 | `unsupported` | the floor has no board (no repo linked, no provider), or the provider or the card cannot do it (a capability is off); `worker.open_pr*` on a floor that cannot open pull requests |
 | `provider_failed` | the provider call failed (`gh` missing, not logged in, the network, GitHub's refusal, a failed `git push`); the message is short and never has a token |
