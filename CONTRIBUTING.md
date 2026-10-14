@@ -182,6 +182,17 @@ make browsers          # download the Chromium revision the pinned Playwright ex
   evidence on a fake clock; `game/e2e/h224-agent-handoff.spec.ts` drives the fixture bridge (`sim.agent_turn`,
   `sim.agent_skill`, `sim.cache`). `make codex-shared-tui` includes `TestCodexShareBridgeAgentHandoff`: the real Codex
   TUI, mock inference, the fixture's own `handoff` skill.
+- #9: `go test ./internal/handoffllm` has the reducer's goldens (`-update` regenerates them) and the feature's gate,
+  prompt and validation on `ai.FakeLLM`; `go test ./internal/server -run 'LLMHandoff|HandoffLLM'` runs LLM handoffs
+  against transcript files with a fake LLM and a fake reducer (and once the real one), every failure, cancel, stale
+  config or session, restart and the logs, audit rows, wire and job rows checked free of the transcript, instruction,
+  document and secrets; `go test ./internal/ai -run 'Request|Uncertain'` the per-request timeout and no-uncertain-retry;
+  `game/e2e/h9-llm-handoff.spec.ts` drives the fixture bridge against a fake OpenAI-compatible server and with no
+  endpoint (`tools/fixture-handoff.ts`: `simhandoffllm=ready|off|untested|incomplete|none`, `simhandoffllmout=success|
+  slow|too_large|busy|<code>`, `sim.handoff_llm`, `sim.llm_finish`). For a UX look with no endpoint:
+  `make dev`, then `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simhandoffllm%3Dready%26simhandoffllmout%3Dslow&floor=herdr-3d`
+  (a worker needs a completed reply first: `window.__h3d.simHandoff('sim.final', {id, text})`).
+  `go run ./cmd/handoff-spike FILE.jsonl…` is the spike's dry run (numbers only); `--send` costs money.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
