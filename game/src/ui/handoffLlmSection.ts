@@ -27,7 +27,7 @@ export function handoffLlmPrivacy(categories: string[]): string {
 
 /** Which calls the limits reach, and what the first call costs. */
 export const HANDOFF_LLM_SCOPE =
-  'These limits apply to LLM handoffs only. The model reads the reduced conversation cold (your worker’s prompt cache does not carry over to another model or account), so a handoff is billed as one full input plus its output.';
+  'These limits apply to LLM handoffs only. The first handoff reads the reduced conversation cold (your worker’s prompt cache does not carry over to another model or account); the provider may cache a repeated stable prefix. Output and reasoning tokens count too, and a subscription’s quota is not the same as API dollars.';
 
 const ROLE_STATE: Record<AiRoleState, string> = { ready: 'Ready', off: 'Not set up', incomplete: 'Unfinished', invalid: 'Paused' };
 
