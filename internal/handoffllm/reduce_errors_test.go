@@ -195,6 +195,21 @@ func TestReduceSkipsUnreadableLines(t *testing.T) {
 	}
 }
 
+// TestReduceUnknownShapesAreNotSkipped: valid JSON of a shape the reducer
+// does not know (a future event type) is not an unreadable line.
+func TestReduceUnknownShapesAreNotSkipped(t *testing.T) {
+	path := copyFixture(t, "codex_dedup", 3,
+		`{"timestamp":"2026-10-12T09:00:00Z","type":"event_msg","payload":{"type":"future_event","message":{"nested":true},"id":7}}`,
+		`{"timestamp":"2026-10-12T09:00:00Z","type":"future_type","payload":[1,2]}`)
+	p, err := reduceFile(t, harnessCodex, path, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Coverage.Skipped != 0 || !p.Coverage.Complete {
+		t.Errorf("coverage %+v", p.Coverage)
+	}
+}
+
 func TestReduceBranchTipUncertain(t *testing.T) {
 	path := copyFixture(t, "claude_branch", 100, `{"type":"last-prompt","leafUuid":"00000000-0000-4000-8000-000000000005"}`)
 	p, err := reduceFile(t, harnessClaude, path, 1<<20)
@@ -304,4 +319,18 @@ func TestReduceCleansText(t *testing.T) {
 		t.Errorf("a delimiter-like line was not escaped:\n%s", p.Text)
 	}
 	has(t, p.Text, "Fix [31mred[0m", "\n === #9")
+}
+
+// TestReduceMisshapenKnownLinesAreSkipped: a line of a kind the reducer
+// reads whose shape it cannot read is counted, not silently dropped.
+func TestReduceMisshapenKnownLinesAreSkipped(t *testing.T) {
+	path := copyFixture(t, "codex_dedup", 3,
+		`{"timestamp":"2026-10-12T09:00:00Z","type":"event_msg","payload":{"type":"agent_message","message":{"text":"new shape"}}}`)
+	p, err := reduceFile(t, harnessCodex, path, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Coverage.Skipped != 1 || p.Coverage.Complete {
+		t.Errorf("coverage %+v", p.Coverage)
+	}
 }

@@ -16,6 +16,13 @@ import (
 // counts, turn context and world state are never text. A rollout is
 // append-only: a compaction leaves the rows before it in the file.
 
+// The line types and event_msg types the reducer reads.
+var (
+	codexRead       = map[string]bool{"session_meta": true, "compacted": true, "response_item": true}
+	codexReadEvents = map[string]bool{"user_message": true, "agent_message": true, "task_started": true, "task_complete": true,
+		"turn_aborted": true, "exec_command_end": true}
+)
+
 type codexLine struct {
 	Timestamp string          `json:"timestamp"`
 	Ordinal   *int64          `json:"ordinal"`
@@ -89,7 +96,13 @@ func (p *codexParser) line(_ int64, b []byte) bool {
 	}
 	var pl codexPayload
 	if len(l.Payload) > 0 && json.Unmarshal(l.Payload, &pl) != nil {
-		return false
+		// A shape the reducer does not know: lost (skipped) when it is a
+		// kind of line it reads, else not conversation.
+		var kind struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(l.Payload, &kind)
+		return !codexRead[l.Type] && !codexReadEvents[kind.Type]
 	}
 	r := &codexRow{ord: l.Ordinal, ts: l.Timestamp}
 	switch l.Type {

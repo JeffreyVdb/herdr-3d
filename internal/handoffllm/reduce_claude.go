@@ -153,7 +153,7 @@ func (p *claudeParser) read(r *claudeRow, l *claudeLine) {
 		if json.Unmarshal(l.Attachment, &a) == nil && a.Type == "queued_command" && a.CommandMode == "prompt" &&
 			(a.Origin == nil || a.Origin.Kind == "human") && strings.TrimSpace(a.Prompt) != "" {
 			r.kind = crUser
-			r.prompts = append(r.prompts, prompt(a.Prompt))
+			r.prompts = append(r.prompts, personText(a.Prompt))
 		}
 		return
 	case "user", "assistant":
@@ -188,7 +188,7 @@ func (p *claudeParser) read(r *claudeRow, l *claudeLine) {
 				r.images++
 			case bl.Type != "text", transcript.Interrupted(bl.Text):
 			case transcript.GenuinePrompt(bl.Text):
-				r.prompts = append(r.prompts, prompt(bl.Text))
+				r.prompts = append(r.prompts, personText(bl.Text))
 			}
 		}
 		return
@@ -217,8 +217,9 @@ func (p *claudeParser) read(r *claudeRow, l *claudeLine) {
 	r.block = sig.String()
 }
 
-// prompt is a person's text as they wrote it: no reminders, no paste wrapper.
-func prompt(s string) string {
+// personText is a person's text as they wrote it: no reminders, no paste
+// wrapper.
+func personText(s string) string {
 	return strings.TrimSpace(transcript.UnwrapPasted(transcript.StripReminders(s)))
 }
 
