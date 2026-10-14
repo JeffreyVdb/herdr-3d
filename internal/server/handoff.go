@@ -278,8 +278,11 @@ func (h *Hub) startHandoffPreview(ctx context.Context, c *Client, cmd proto.Comm
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if a.Mode == proto.HandoffModeAgent { // #224
+	switch a.Mode {
+	case proto.HandoffModeAgent: // #224
 		return h.startAgentPreview(ctx, c, cmd, a)
+	case proto.HandoffModeLLM: // #9
+		return h.startLLMPreview(ctx, c, cmd, a)
 	}
 	w, hc, err := h.handoffCandOf(a.Worker, "", a.Candidate, "")
 	if err != nil {
@@ -332,9 +335,12 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 				return proto.WorkerHandoffRequestResult{Request: r, Existing: existing}
 			}})
 	}
+	if a.Mode == proto.HandoffModeLLM { // #9
+		return h.startLLMHandoff(ctx, c, cmd, a)
+	}
 	switch {
 	case a.Mode != proto.HandoffModeLiteral:
-		return bad("mode must be %q or %q, got %q", proto.HandoffModeLiteral, proto.HandoffModeAgent, a.Mode)
+		return bad("mode must be %q, %q or %q, got %q", proto.HandoffModeLiteral, proto.HandoffModeAgent, proto.HandoffModeLLM, a.Mode)
 	case !handoffOp.MatchString(a.Op):
 		return bad("op must be 1–%d characters of A-Z, a-z, 0-9, _ and -", proto.MaxHandoffOp)
 	case a.Session == "" || a.Candidate == "" || a.Revision == "":
@@ -347,7 +353,7 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 	if h.ho.inflight[a.Op] {
 		return fmt.Errorf("%w: this handoff is being filed", errBusy)
 	}
-	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, cmd.Args)
+	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, auditArgs(cmd))
 	if err != nil {
 		return err
 	}
@@ -489,11 +495,11 @@ func (h *Hub) startHandoffs(ctx context.Context, c *Client, cmd proto.Command) e
 			return err
 		}
 		h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
-			got, body, err := svc.Read(ctx, a.ID)
+			got, body, fm, err := svc.ReadProvenance(ctx, a.ID)
 			if err != nil {
 				return nil, err
 			}
-			return proto.HandoffGetResult{Handoff: entryOf(got), Body: body}, nil
+			return proto.HandoffGetResult{Handoff: entryOf(got), Body: body, LLM: llmProvenanceOf(got.Source, fm)}, nil // #9
 		})
 	default: // handoff.delete
 		var a proto.HandoffDeleteArgs

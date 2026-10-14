@@ -81,7 +81,40 @@ func transportErr(ctx context.Context, err error, key string) error {
 	if errors.As(err, &ue) && ue.Unwrap() != nil {
 		msg = ue.Unwrap().Error()
 	}
-	return newErr(KindUnreachable, "the endpoint cannot be reached: "+clip(Scrub(msg, key), 160))
+	e := newErr(KindUnreachable, "the endpoint cannot be reached: "+clip(Scrub(msg, key), 160))
+	e.unsent = neverSent(err)
+	return e
+}
+
+// neverSent reports whether a failed round trip provably sent nothing: the
+// name did not resolve or the connection was never made. A connection that
+// broke later (reset, EOF, TLS after the dial) may have carried the request.
+func neverSent(err error) bool {
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return true
+	}
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
+}
+
+// uncertain reports whether a failed attempt may have been processed by the
+// provider: anything but a request that provably never reached it or that
+// it rejected whole (a 4xx).
+func uncertain(err error) bool {
+	var e *Error
+	if !errors.As(err, &e) {
+		return true
+	}
+	switch {
+	case e == errRetryPlain, e.unsent:
+		return false
+	case e.Kind == KindUnreachable, e.Kind == KindTimeout, e.Kind == KindBadResponse:
+		return true
+	case e.Kind == KindFailed:
+		return e.status == 0 || e.status >= 500
+	}
+	return false
 }
 
 // statusErr maps a non-2xx answer to an error; nil for 2xx. The provider's

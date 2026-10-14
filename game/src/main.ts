@@ -265,7 +265,7 @@ export interface H3DDebug {
   /** #90: the fixture simulator's `sim.turn {id, text}`: a worker's agent ends its turn with that message (`sim=1`). */
   simTurn(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #223: the fixture bridge's handoff plays: `sim.final`, `sim.prompt_turn`, `sim.handoff_fail`. */
-  simHandoff(t: 'sim.final' | 'sim.prompt_turn' | 'sim.handoff_fail' | 'sim.agent_turn' | 'sim.agent_skill' | 'sim.cache', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  simHandoff(t: 'sim.final' | 'sim.prompt_turn' | 'sim.handoff_fail' | 'sim.agent_turn' | 'sim.agent_skill' | 'sim.cache' | 'sim.handoff_llm' | 'sim.llm_finish', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #90: the follow-up questions feature's state as the bridge last sent it (null: none). */
   followups(): FollowupsState | null;
   /** #110: pack up on request's settings and state as the bridge sent them (null: none). */

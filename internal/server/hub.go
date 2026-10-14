@@ -24,6 +24,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
+	"github.com/JeffreyVdb/herdr-3d/internal/handoffllm"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
@@ -281,6 +282,13 @@ type Options struct {
 	DigestGap     time.Duration
 	DigestRoles   digest.Roles
 	DigestRetry   func(n int) (time.Duration, bool)
+	// #9 LLM handoffs: HandoffLLMEnabled is the environment's toggle
+	// (HERDR_WORLD_HANDOFF_LLM_ENABLED; nil: not set), HandoffLLMRoles the
+	// LLM (default AI; tests pass fakes), HandoffReduce the transcript
+	// reducer (default handoffllm.Reduce; tests pass fakes).
+	HandoffLLMEnabled *bool
+	HandoffLLMRoles   handoffllm.Roles
+	HandoffReduce     func(ctx context.Context, in handoffllm.Input) (handoffllm.Payload, error)
 
 	// #155 shared Codex server: CodexRun is the private directory of the
 	// shared launches' launchers and sockets ("" or no CodexHost: the switch
@@ -389,11 +397,12 @@ type Hub struct {
 
 	dismissed map[string]int64 // #106: inbox dismissals, worker id → status_since
 
-	fu followupState     // #90 follow-up questions
-	ho handoffState      // #223 handoffs
-	ah agentHandoffState // #224 agent handoff requests
-	pk packupState       // #110 pack up on request
-	kn kaneoState        // #184 Kaneo
+	fu  followupState     // #90 follow-up questions
+	ho  handoffState      // #223 handoffs
+	ah  agentHandoffState // #224 agent handoff requests
+	llm llmHandoffState   // #9 LLM handoffs
+	pk  packupState       // #110 pack up on request
+	kn  kaneoState        // #184 Kaneo
 
 	act activityHub // #98 activity
 
@@ -627,6 +636,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.loadAgentHandoffs(ctx); err != nil { // #224
+		return nil, err
+	}
+	if err := h.initHandoffLLM(ctx); err != nil { // #9
 		return nil, err
 	}
 	if err := h.initPackup(ctx); err != nil { // #110
@@ -911,8 +923,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startHandoff
 		case proto.CmdHandoffList, proto.CmdHandoffGet, proto.CmdHandoffDelete: // #223
 			start = h.startHandoffs
-		case proto.CmdWorkerHandoffCancel: // #224
-			start = h.startAgentHandoffCancel
+		case proto.CmdWorkerHandoffCancel: // #224, #9
+			start = h.startHandoffCancel
+		case proto.CmdHandoffLLMGet, proto.CmdHandoffLLMSet, proto.CmdHandoffLLMTest: // #9
+			start = h.startHandoffLLM
 		case proto.CmdActivityGet, proto.CmdActivitySet: // #98
 			start = h.startActivity
 		case proto.CmdDigestGet, proto.CmdDigestSet, proto.CmdDigestTest, proto.CmdDigestRetry: // #118, #174
@@ -1006,6 +1020,8 @@ func errorCode(err error) string {
 		return coded.code
 	case followupErrorCode(err) != "": // #90
 		return followupErrorCode(err)
+	case handoffLLMErrorCode(err) != "": // #9
+		return handoffLLMErrorCode(err)
 	case handoffErrorCode(err) != "": // #223
 		return handoffErrorCode(err)
 	case packupErrorCode(err) != "": // #110
@@ -1396,6 +1412,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			}
 			h.forgetWrapUp(ctx, id)       // #83: closed in herdr
 			h.forgetAgentHandoff(ctx, id) // #224
+			h.forgetLLMHandoff(id)        // #9
 			h.forgetDismissed(ctx, id)    // #106
 		}
 		ev := proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, WorkspaceID: w.WorkspaceID}
@@ -1406,6 +1423,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			op.signal()
 			h.forgetWrapUp(ctx, id)       // #83: sent home
 			h.forgetAgentHandoff(ctx, id) // #224
+			h.forgetLLMHandoff(id)        // #9
 		}
 		evs = append(evs, ev)
 	}
@@ -1507,8 +1525,10 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			h.dropFollowup(ctx, id, false)
 		}
 		next.Followup = h.followupView(id)
-		next.Handoff = h.handoffView(id, next.AgentSession)    // #223
-		next.AgentHandoff = h.agentHandoffView(id)             // #224
+		next.Handoff = h.handoffView(id, next.AgentSession) // #223
+		next.AgentHandoff = h.agentHandoffView(id)          // #224
+		h.llmSessionSeen(id, next.AgentSession)             // #9: another session stops its job
+		next.LLMHandoff = h.llmHandoffView(id)
 		next.Activity = h.activityFor(id, next, h.workers[id]) // #98: for its status, in the same event
 		next.Digest = h.workerDigest(id, next)                 // #118
 		h.noteCodexThread(ctx, id, next.AgentSession)          // #155
@@ -1905,6 +1925,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.Packup = h.packupView()                 // #110
 	w.Activity = h.activityView()             // #98
 	w.Digest = h.digestView()                 // #118
+	w.HandoffLLM = h.handoffLLMView()         // #9
 	w.InboxDismissed = h.inboxDismissedView() // #106
 	w.CodexServer = h.codexServerView()       // #155
 	w.RepoRefs = h.repoRefsView()             // #247

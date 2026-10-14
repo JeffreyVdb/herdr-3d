@@ -1,0 +1,6 @@
+{"timestamp":"2026-10-12T09:02:03.000Z","type":"session_meta","payload":{"id":"00000000-0000-4000-8000-0000000000cc","session_id":"00000000-0000-4000-8000-0000000000cc","cwd":"/work/fixture","originator":"codex_cli","cli_version":"0.162.1","source":"cli","model_provider":"openai","base_instructions":{"text":"Synthetic base instructions."}},"ordinal":1}
+{"timestamp":"2026-10-12T09:02:04.000Z","type":"compacted","payload":{"message":""},"ordinal":2}
+{"timestamp":"2026-10-12T09:02:05.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-2"},"ordinal":3}
+{"timestamp":"2026-10-12T09:02:06.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Continue: finish the migration script."}]},"ordinal":4}
+{"timestamp":"2026-10-12T09:02:07.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Migration script finished and dry-run clean."}],"phase":"final_answer"},"ordinal":5}
+{"timestamp":"2026-10-12T09:02:08.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn","last_agent_message":"Migration script finished and dry-run clean."},"ordinal":6}

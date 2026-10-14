@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { HandoffCandidate, HandoffEntry, HandoffPreviewAck, Worker } from '../net/protocol';
 import { HandoffBook } from '../world/handoff';
+import { HandoffLLMBook } from '../world/handoffLlm';
 import { Cabinet } from './cabinet';
 import { HandoffDialog } from './handoffDialog';
 
@@ -32,7 +33,14 @@ function setup(worker: Partial<Worker> = {}, replies: Record<string, Reply[]> = 
   const w: Worker = { id: 'A', session: 'herdr-3d', workspace_id: 'w1', label: 'h3d-223', agent_kind: 'claude', status: 'idle', handoff: CAND, ...worker } as Worker;
   const handoffs = new HandoffBook();
   handoffs.reset({ counts: { 'herdr-3d': 1 } });
-  const store = { workerView: (id: string) => (store.workers.get(id) ? { name: 'Pixel', desk: 2, harness: 'claude', display: 'idle', worker: store.workers.get(id) } : null), workers: new Map([['A', w]]), handoffs };
+  const handoffLlm = new HandoffLLMBook(); // #9: an older bridge's: no LLM handoffs
+  const store = {
+    workerView: (id: string) => (store.workers.get(id) ? { name: 'Pixel', desk: 2, harness: 'claude', display: 'idle', worker: store.workers.get(id) } : null),
+    workers: new Map([['A', w]]),
+    handoffs,
+    handoffLlm,
+    ai: { state: null as { llm: { model: string } } | null },
+  };
   const host = {
     store,
     unsupported: () => false,
@@ -240,7 +248,7 @@ describe('HandoffDialog: Ask the agent', () => {
     d.open('A');
     await e.flush();
     expect(d.summary().mode).toBe('literal');
-    expect(e.hook('ho-modes')?.textContent).toMatch(/Save last message.*Nothing is sent to any model.*Ask the agent.*Pixel’s agent \(claude\) writes it; its provider reads the conversation.*Use configured LLM.*The bridge sends selected transcript context to the LLM provider and model set in Settings, not Pixel’s agent\. Not available yet\./);
+    expect(e.hook('ho-modes')?.textContent).toMatch(/Save last message.*Nothing is sent to any model.*Ask the agent.*Pixel’s agent \(claude\) writes it; its provider reads the conversation.*Use configured LLM.*The bridge sends a reduced, scrubbed copy of the conversation to the LLM set in Settings, not Pixel’s agent\. This bridge can’t write handoffs with an LLM/);
     expect(document.querySelector<HTMLInputElement>('[data-key="mode:llm"]')!.disabled).toBe(true);
     expect(e.sent.map((x) => x.cmd)).toEqual(['worker.handoff_preview']);
   });
@@ -334,5 +342,158 @@ describe('HandoffDialog: one mode row', () => {
     const d = new HandoffDialog(document.body, e.host as never);
     d.open('A');
     expect(document.querySelectorAll('[data-hook="ho-modes"]')).toHaveLength(1);
+  });
+});
+
+// #9: "Use configured LLM": off with the exact reason and a way to Settings until the feature is ready; never chosen
+// for you; the preview names the recipient and what goes; the job is followed; a failure keeps the dialog.
+const LLM_STATE = { enabled: true, state: 'ready', roles: { llm: 'ready' }, env: [], tested: true, input_bytes: 98304, max_tokens: 4096, reasoning_effort: '', reasoning: { support: 'unknown', efforts: ['low'], listed: false }, effort_stale: false, timeout_s: 90, prompt_version: 'h3d-handoff-llm-1', categories: ['your prompts to the worker', 'your handoff instruction'] };
+const LLM_PREVIEW: HandoffPreviewAck = {
+  candidate: CAND,
+  provenance: { floor: 'herdr-3d', worker_name: 'Pixel', harness: 'claude', model: 'opus', session: 'sess-123456789' },
+  can_send_home: true,
+  llm: {
+    ready: true,
+    model: 'gpt-handoff',
+    host: 'llm.example:8443',
+    payload_bytes: 24_700,
+    est_tokens: 8_300,
+    budget_bytes: 98_304,
+    max_tokens: 4096,
+    timeout_s: 90,
+    prompt_version: 'h3d-handoff-llm-1',
+    reduced: true,
+    coverage: { messages: 40, kept: 12, omitted: [{ from: 3, to: 20, why: 'older assistant detail' }], compaction: 'none', gaps: ['older tool output left out'], complete: false },
+    redactions: { github_token: 2, url_credentials: 1 },
+    categories: ['your prompts to the worker', 'your handoff instruction'],
+    artifacts: 2,
+    verified: 1,
+  },
+};
+const RUNNING = { op: 'x', state: 'running', started_at: 1, updated_at: 1, model: 'gpt-handoff', host: 'llm.example:8443' } as const;
+
+function llmSetup(worker: Partial<Worker> = {}, replies: Record<string, Reply[]> = {}, state: unknown = LLM_STATE) {
+  const e = setup(worker, replies);
+  e.store.handoffLlm.reset(state);
+  return e;
+}
+
+describe('HandoffDialog: Use configured LLM', () => {
+  it('is off, with the exact reason and a way to Settings, until the feature is ready; literal stays the default', async () => {
+    const opened: string[] = [];
+    const e = llmSetup({}, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }] }, { ...LLM_STATE, enabled: false, state: 'off', tested: false });
+    const d = new HandoffDialog(document.body, { ...e.host, openSettings: (s: string) => opened.push(s) } as never);
+    d.open('A');
+    await e.flush();
+    expect(d.summary().mode).toBe('literal');
+    expect(document.querySelector<HTMLInputElement>('[data-key="mode:llm"]')!.disabled).toBe(true);
+    expect(e.hook('ho-modes')?.textContent).toContain('Off: switch LLM handoffs on in Settings after a passing test.');
+    e.q('llm-settings').click();
+    expect(opened).toEqual(['handoff-llm']);
+    expect(e.sent.every((x) => x.args.mode !== 'llm')).toBe(true);
+  });
+
+  it('previews the recipient, size, coverage and redactions, then writes with the instruction and follows the job', async () => {
+    const e = llmSetup({}, {
+      'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: LLM_PREVIEW }],
+      'worker.handoff': [{ ok: true, data: { job: RUNNING } }],
+      'handoff.get': [{ ok: true, data: { handoff: { ...ENTRY, source: 'llm' }, body: '# Loader', llm: { model: 'gpt-handoff' } } }],
+    });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    await e.flush();
+    const llm = document.querySelector<HTMLInputElement>('[data-key="mode:llm"]')!;
+    expect(llm.disabled).toBe(false);
+    llm.checked = true;
+    llm.dispatchEvent(new Event('change'));
+    await e.flush();
+    expect(e.sent.at(-1)).toEqual({ cmd: 'worker.handoff_preview', args: { worker: 'A', mode: 'llm', candidate: 'cand-1' } });
+    const s = d.summary();
+    expect(s.mode).toBe('llm');
+    expect(s.recipient).toBe('gpt-handoff at llm.example:8443');
+    expect(s.payload).toBe('24.1 KB of transcript, about 8,300 tokens (budget 96 KB)');
+    expect(s.coverage).toContain('12 of 40 messages.');
+    expect(s.coverage).toContain('Left out: messages 3–20 (older assistant detail).');
+    expect(e.hook('ho-gaps')?.textContent).toBe('older tool output left out');
+    expect(s.redactions).toBe('Removed before sending: 2 GitHub tokens, 1 password in a URL.');
+    expect(e.hook('ho-llm-sent')?.textContent).toContain('your handoff instruction');
+    (document.getElementById('ho-instruction') as HTMLTextAreaElement).value = '  the CI failure  ';
+    e.q('file').click();
+    await e.flush();
+    const sent = e.sent.find((x) => x.cmd === 'worker.handoff');
+    expect(sent?.args).toMatchObject({ worker: 'A', mode: 'llm', session: 'sess', candidate: 'cand-1', revision: 'rev-1', instruction: 'the CI failure' });
+    expect(String(sent?.args.op)).toMatch(/^ho-/);
+    expect(d.summary().state).toBe('pending');
+    expect(e.hook('ho-job')?.textContent).toContain('gpt-handoff at llm.example:8443 is writing the handoff');
+    e.w.llm_handoff = { ...RUNNING, state: 'filed', handoff: 7 }; // the ack's job (the fake acks op x)
+    d.refresh();
+    await e.flush();
+    expect(d.summary().state).toBe('filed');
+    expect(e.hook('ho-written-by')?.textContent).toBe('Written by gpt-handoff at llm.example:8443; Pixel was not asked.');
+  });
+
+  it('keeps the dialog on a refusal and on a failed job; Try again is a new request', async () => {
+    const e = llmSetup({}, {
+      'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: LLM_PREVIEW }],
+      'worker.handoff': [
+        { ok: false, code: 'handoff_llm_unavailable', message: 'the LLM is not ready: set it up in Settings, AI integration; nothing was sent' },
+        { ok: true, data: { job: RUNNING } },
+      ],
+    });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    await e.flush();
+    const llm = document.querySelector<HTMLInputElement>('[data-key="mode:llm"]')!;
+    llm.checked = true;
+    llm.dispatchEvent(new Event('change'));
+    await e.flush();
+    e.q('file').click();
+    await e.flush();
+    expect(d.summary().state).toBe('ready');
+    expect(d.summary().error).toBe(true);
+    expect(d.summary().status).toContain('Nothing was sent');
+    e.q('file').click();
+    await e.flush();
+    e.w.llm_handoff = { ...RUNNING, state: 'failed', code: 'timeout', message: 'the LLM did not answer within 90 s; it was not sent again; nothing was filed' };
+    d.refresh();
+    expect(d.summary().state).toBe('failed');
+    expect(e.hook('ho-reason')?.textContent).toContain('not sent again');
+    expect(e.hook('ho-job')?.textContent).toContain('nobody was sent home');
+    expect(e.q('retry').textContent).toBe('Try again (new request)');
+    const before = e.sent.filter((x) => x.cmd === 'worker.handoff').length;
+    e.q('retry').click();
+    await e.flush();
+    expect(e.sent.at(-1)?.args).toMatchObject({ mode: 'llm' }); // a new preview, nothing sent by itself
+    expect(e.sent.filter((x) => x.cmd === 'worker.handoff').length).toBe(before);
+    expect(d.summary().state).toBe('ready');
+  });
+
+  it('says why it can’t be written now (the preview’s reason) and keeps Write off', async () => {
+    const e = llmSetup({}, { 'worker.handoff_preview': [{ ok: true, data: PREVIEW }, { ok: true, data: { ...LLM_PREVIEW, llm: { ...LLM_PREVIEW.llm!, ready: false, reduced: false, unavailable: 'another LLM handoff is being written: one at a time' } } }] });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    await e.flush();
+    const llm = document.querySelector<HTMLInputElement>('[data-key="mode:llm"]')!;
+    llm.checked = true;
+    llm.dispatchEvent(new Event('change'));
+    await e.flush();
+    expect(e.hook('ho-llm-cannot')?.textContent).toContain('one at a time');
+    expect(e.q('file').getAttribute('aria-disabled')).toBe('true');
+    e.q('file').click();
+    await e.flush();
+    expect(e.sent.some((x) => x.cmd === 'worker.handoff')).toBe(false);
+  });
+
+  it('reopens on a running job and cancels it', async () => {
+    const e = llmSetup({ llm_handoff: RUNNING }, { 'worker.handoff_cancel': [{ ok: true, data: { ...RUNNING, state: 'cancelled', message: 'cancelled; nothing was filed' } }] });
+    const d = new HandoffDialog(document.body, e.host as never);
+    d.open('A');
+    expect(d.summary().state).toBe('pending');
+    expect(d.summary().mode).toBe('llm');
+    e.q('cancel-request').click();
+    await e.flush();
+    expect(e.sent[0]).toEqual({ cmd: 'worker.handoff_cancel', args: { worker: 'A', op: 'x' } });
+    expect(d.summary().state).toBe('failed');
+    expect(e.hook('ho-reason')?.textContent).toBe('cancelled; nothing was filed');
   });
 });

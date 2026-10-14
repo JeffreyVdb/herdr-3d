@@ -35,6 +35,9 @@ test('F, Ask the agent: who gets it, the estimate, the instruction; filed by the
   // Literal stays the default, even with nothing to save; nothing is chosen for you.
   expect((await dialog(page))?.mode).toBe('literal');
   await expect(dlg.getByRole('radio', { name: /Use configured LLM/ })).toBeDisabled();
+  // #9: off until LLM handoffs are switched on, and it says so with the way to Settings.
+  await expect(dlg.locator('[data-hook="ho-modes"]')).toContainText('Off: switch LLM handoffs on in Settings after a passing test.');
+  await expect(dlg.getByRole('button', { name: 'Open LLM handoffs settings' })).toBeVisible();
   await dlg.getByText('Ask the agent', { exact: true }).click();
   await expect.poll(async () => (await dialog(page))?.state).toBe('ready');
   const s = await dialog(page);

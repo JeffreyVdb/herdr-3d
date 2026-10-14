@@ -98,6 +98,9 @@ export interface SimOptions {
   transcript?: string;
   /** #223: this many handoffs in the first floor's cabinet to start with (`simhandoffs=<n>`). */
   handoffs?: number;
+  /** #9: the LLM handoffs' state and outcome with no endpoint (`simhandoffllm=`, `simhandoffllmout=`; tools/fixture-handoff.ts). */
+  handoffLlm?: string;
+  handoffLlmOut?: string;
   /** #247: `simrepos=<key>`: demo-m5's floors set up for `@r:`, the shared switch shared by the key's connections (tools/fixture-repos.ts). */
   repos?: string;
   now?: () => number;
@@ -200,6 +203,7 @@ export class SimWorld {
     this.caps = o.caps ?? {};
     this.handoffMode = o.fail === 'no_handoff' ? 'off' : 'on'; // #223
     this.handoffSeed = o.handoffs ?? 0;
+    this.handoffLlm = { ...(o.handoffLlm ? { state: o.handoffLlm } : {}), ...(o.handoffLlmOut ? { outcome: o.handoffLlmOut } : {}) }; // #9
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearT = o.clearTimeout ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
@@ -252,6 +256,7 @@ export class SimWorld {
       this.followups.changed(send); // #90: a model's state is the feature's
       this.packup.changed(send); // #110: and pack up's
       this.digest.changed(send); // #118: and the summaries' (the LLM's)
+      this.handoffs.llmChanged(send); // #9: and the LLM handoffs' 
       this.activitySettings.changed(send); // #98: the classifier's too
     };
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
@@ -333,6 +338,7 @@ export class SimWorld {
   private readonly transcripts: TranscriptSim;
   private readonly handoffMode: 'on' | 'off';
   private readonly handoffSeed: number;
+  private readonly handoffLlm: { state?: string; outcome?: string };
   /** #98: the agents' activities (tools/fixture-activity.ts). */
   private readonly activity: ActivitySim;
 
@@ -543,7 +549,7 @@ export class SimWorld {
       if (this.codexServer.handle(m.t, a, send, ack)) return; // #155
       if (this.repos.handle(m.t, a, send, ack)) return; // #247
       if (this.inbox.handle(m.t, a, send, ack)) return; // #106
-      if (this.handoffs.handle(m.t, a, send, ack)) return; // #223
+      if (this.handoffs.handle(m.t, a, send, ack, fail)) return; // #223, #9
       if (this.share.handle(m.t, a, send, ack, fail)) return; // M13
       switch (m.t) {
         case 'sim.advance':
@@ -915,9 +921,11 @@ export class SimWorld {
             () => undefined,
             () => undefined,
           ),
+        ai: this.ai, // #9
       },
       this.handoffMode !== 'off',
       this.handoffSeed,
+      this.handoffLlm,
     );
     return this.handoffSim;
   }

@@ -759,6 +759,21 @@ func (h *Hub) adoptAgentHandoff(ctx context.Context, ah *agentHandoff, w *proto.
 	}()
 }
 
+// startHandoffCancel answers worker.handoff_cancel: of an LLM job (#9)
+// when the op is the worker's latest one, else of an agent request.
+func (h *Hub) startHandoffCancel(ctx context.Context, c *Client, cmd proto.Command) error {
+	var a proto.WorkerHandoffCancelArgs
+	if err := decodeArgs(cmd.Args, &a); err != nil {
+		return err
+	}
+	if h.workers[a.Worker] != nil {
+		if ok, err := h.llmHandoffCancel(ctx, c, cmd, a); ok {
+			return err
+		}
+	}
+	return h.startAgentHandoffCancel(ctx, c, cmd)
+}
+
 // startAgentHandoffCancel answers worker.handoff_cancel: a running request
 // (not one being filed) fails as cancelled; a settled one is dismissed
 // from the worker.

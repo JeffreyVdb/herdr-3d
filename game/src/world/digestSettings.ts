@@ -21,7 +21,8 @@ export const DIGEST_TOKENS = { min: 64, max: 16_384, default: 1024 } as const;
 const SUPPORT: readonly string[] = ['supported', 'unsupported', 'unknown'];
 const GENERIC_EFFORTS = ['low', 'medium', 'high'];
 
-function reasoningOf(v: unknown): DigestReasoning {
+/** A well-formed reasoning description (#9's settings read it too). */
+export function reasoningOf(v: unknown): DigestReasoning {
   const r = isObj(v) ? v : {};
   const support = typeof r.support === 'string' && SUPPORT.includes(r.support) ? (r.support as DigestReasoning['support']) : 'unknown';
   const efforts = Array.isArray(r.efforts) ? r.efforts.filter((x): x is string => typeof x === 'string') : support === 'unsupported' ? [] : GENERIC_EFFORTS;
@@ -113,7 +114,7 @@ export interface EffortChoice {
  * when it lists none; none at all for a model without reasoning), and a saved effort the model does not take last,
  * marked, so it is surfaced rather than silently dropped.
  */
-export function effortChoices(s: DigestState): EffortChoice[] {
+export function effortChoices(s: Pick<DigestState, 'reasoning' | 'reasoning_effort'>): EffortChoice[] {
   const r = s.reasoning;
   const def = r.default_effort ? ` (the model uses ${effortWord(r.default_effort).toLowerCase()})` : '';
   const out: EffortChoice[] = [{ value: '', label: `Provider default${def}` }];
@@ -123,7 +124,7 @@ export function effortChoices(s: DigestState): EffortChoice[] {
 }
 
 /** What the effort control says about the model, under it. */
-export function effortNote(s: DigestState): string {
+export function effortNote(s: Pick<DigestState, 'reasoning' | 'reasoning_effort' | 'effort_stale'>): string {
   const r = s.reasoning;
   const model = r.model ? ` ${r.model}` : '';
   if (s.effort_stale) return `The saved effort “${effortWord(s.reasoning_effort)}” is not one${model || ' this model'} takes, so it is not sent: the provider's default applies. Pick another or the default.`;
