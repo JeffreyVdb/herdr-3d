@@ -227,6 +227,9 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             transcript: q.get('simtx') || name,
             // #223: the filing cabinet starts with this many handoffs on the first floor (tools/fixture-handoff.ts).
             ...(q.get('simhandoffs') ? { handoffs: Math.min(40, Math.max(0, Number(q.get('simhandoffs')) || 0)) } : {}),
+            // #9: LLM handoffs with no endpoint: the feature's state and the jobs' outcome (tools/fixture-handoff.ts).
+            ...(q.get('simhandoffllm') ? { handoffLlm: q.get('simhandoffllm') as string } : {}),
+            ...(q.get('simhandoffllmout') ? { handoffLlmOut: q.get('simhandoffllmout') as string } : {}),
             // #247: demo-m5's floors set up for `@r:`, the shared switch shared by the key's connections (tools/fixture-repos.ts).
             ...(q.get('simrepos') ? { repos: q.get('simrepos') as string } : {}),
           }
