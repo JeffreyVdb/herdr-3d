@@ -823,6 +823,9 @@ func TestZoomCommandReturnsWhatHerdrRefused(t *testing.T) {
 	c.mustAck(proto.CmdTerminalUnwatch, proto.WorkerArgs{ID: id})
 	waitFor(t, "the tab is put back", func() bool { return !floor.zoomed("w1") })
 
+	// The restore's row is written after the zoom it audits, so the tab can be
+	// back before its row lands: wait for the row, not the tab.
+	waitFor(t, "the restore is audited", func() bool { return len(zoomAudit(t, tb)) == 4 })
 	rows := zoomAudit(t, tb)
 	if len(rows) != 4 || !strings.HasPrefix(rows[0], "failed ") || !strings.HasPrefix(rows[2], "failed ") {
 		t.Fatalf("zoom audit = %q: every write has its row, the refused ones as failed", rows)
