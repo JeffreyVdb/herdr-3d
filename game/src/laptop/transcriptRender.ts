@@ -408,7 +408,11 @@ const moreFiles = (c: TranscriptChanges | null): number => (c && typeof c.more_f
  * #171: whether a record says something worth a line on its own: files changed without a diff, or that it is incomplete or
  * was not taken. `shared` alone (no changes listed) says nothing about this call's changes, so it does not.
  */
-const changesSay = (c: TranscriptChanges | null): boolean => !!c && (undiffed(c).length > 0 || moreFiles(c) > 0 || c.unavailable === true || c.skipped === true);
+const changesSay = (c: TranscriptChanges | null): boolean =>
+  !!c && (undiffed(c).length > 0 || moreFiles(c) > 0 || c.unavailable === true || c.skipped === true || computed(c) > 0);
+
+/** #21: the patches a running Codex script builds itself (none shown until applied). */
+const computed = (c: TranscriptChanges | null): number => (c && typeof c.computed === 'number' && Number.isFinite(c.computed) && c.computed > 0 ? Math.floor(c.computed) : 0);
 
 /** #171: what became of a call's changes, from its status. A running call's diffs are its input's (a Codex patch): not applied yet. */
 type ChangeState = 'proposed' | 'applied' | 'failed' | 'denied' | 'partial';
@@ -429,7 +433,20 @@ const CHANGE_STATE_TEXT: Record<ChangeState, string> = {
 };
 
 /** #171: the file's fate where the source says (an edit is the usual case: no tag). */
-const OP_TAG: Record<string, string> = { create: 'new', delete: 'deleted', overwrite: 'overwritten' };
+const OP_TAG: Record<string, string> = { create: 'new', delete: 'deleted', overwrite: 'overwritten', rename: 'renamed' };
+
+/** #171: what the body says of a file with no lines, by what happened to it. */
+function emptyNote(d: TranscriptDiff): string {
+  if (d.no_diff === true) {
+    // #21: a patch names a file it deletes, not its lines.
+    if (d.op === 'delete') return 'No lines recorded: a patch that deletes a file does not carry its lines.';
+    return 'No diff recorded: Claude Code keeps none when nothing changed, the old file was too large, or the diff timed out.';
+  }
+  if (d.op === 'create') return 'Empty file.';
+  if (d.op === 'delete') return 'The file was empty.';
+  if (d.op === 'rename') return 'Renamed only: no lines changed.';
+  return 'No lines recorded.';
+}
 
 const STATUS_TEXT: Record<string, string> = { running: 'running', ok: 'done', error: 'error', interrupted: 'interrupted', denied: 'denied' };
 
@@ -1644,6 +1661,12 @@ class Transcript implements TranscriptView {
       if (c.unavailable === true) box.append(h('div', { class: 'tx-chg-note' }, diffs.length || more ? 'Incomplete: Claude Code could not record all of this command’s changes.' : 'Not recorded: Claude Code could not take this command’s changes.'));
       // Only of changes it lists: with none, another command's work says nothing about this one.
       if (c.shared === true && (diffs.length || more)) box.append(h('div', { class: 'tx-chg-note' }, 'Another command ran in this repository at the same time: some of these changes may be its.'));
+      // #21: a running script's patches that are not plain text: nothing to show until Codex applies them.
+      const n = computed(c);
+      if (n > 0) {
+        const what = diffs.length ? (n === 1 ? '1 more patch is' : `${n} more patches are`) : n === 1 ? 'Its patch is' : `Its ${n} patches are`;
+        box.append(h('div', { class: 'tx-chg-note' }, `${what} built by the script, not written out: the changes show once Codex applies ${n === 1 ? 'it' : 'them'}.`));
+      }
     }
     return box;
   }
@@ -1654,11 +1677,14 @@ class Transcript implements TranscriptView {
     const { add, del } = diffStat(hunks);
     const op = typeof d.op === 'string' ? OP_TAG[d.op] : undefined;
     const path = String(d.path ?? '');
+    // #21: a renamed file says where it went (each path gives way on its own; the title has both whole).
+    const to = d.op === 'rename' && typeof d.to === 'string' && d.to !== '' ? d.to : '';
     const head = h(
       'button',
-      { class: 'tx-chg-head', title: path },
+      { class: 'tx-chg-head', title: to ? `${path} → ${to}` : path },
       h('span', { class: 'tx-caret' }, icon(TX_ICON.chevron)),
-      h('span', { class: 'tx-diff-path' }, path),
+      h('span', { class: to ? 'tx-diff-path tx-chg-from' : 'tx-diff-path' }, path),
+      to ? h('span', { class: 'tx-diff-path tx-chg-to' }, h('span', { class: 'tx-chg-arrow' }, '→ '), to) : null,
       op ? h('span', { class: 'tx-chg-op', 'data-op': String(d.op) }, op) : null,
       d.no_diff === true ? h('span', { class: 'tx-chg-op' }, 'no diff') : statEl(add, del),
       d.truncated === true ? h('span', { class: 'tx-chg-op tx-chg-cut', title: 'Cut to fit the list: counts are of the lines shown' }, 'cut') : null,
@@ -1670,8 +1696,7 @@ class Transcript implements TranscriptView {
       body.hidden = !open;
       if (!open || body.childNodes.length) return;
       // Drawn on first open: a long history of changes shown closed costs nothing.
-      if (d.no_diff === true) body.append(h('div', { class: 'tx-chg-note' }, 'No diff recorded: Claude Code keeps none when nothing changed, the old file was too large, or the diff timed out.'));
-      else if (!hunks.length) body.append(h('div', { class: 'tx-chg-note' }, d.op === 'create' ? 'Empty file.' : d.op === 'delete' ? 'The file was empty.' : 'No lines recorded.'));
+      if (d.no_diff === true || !hunks.length) body.append(h('div', { class: 'tx-chg-note' }, emptyNote(d)));
       else body.append(diffLines(d, this.diffShown.get(key) ?? MAX_DIFF_LINES, (change) => this.keepPlace(change), (n) => this.diffShown.set(key, n)));
       if (d.truncated === true) {
         const note = h('div', { class: 'tx-chg-note tx-chg-cutnote' }, 'Cut to fit the list: only the start is shown.');

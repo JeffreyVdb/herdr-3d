@@ -24,6 +24,8 @@
 // - #171: `simtx=<name>` (default: the fixture's name) picks another timeline for every watch, when there is one by that
 //   name: `demo-h171` is code changes in every shape and state (`h171Timeline`), and `transcript.item` answers its cut
 //   change in full; `demo-h206` puts the diff highlighter's worst cases before it (`h206Timeline`).
+// - #21: `demo-h21` is Codex's code changes in every source and state (`h21Timeline`), half of them older than a watch's
+//   window: "Jump to message" from its screenshot pages them in.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { createHash } from 'node:crypto';
@@ -197,7 +199,6 @@ export function demoTimeline(now: number): TranscriptItem[] {
  * for `transcript.item`).
  */
 export function h171Timeline(now: number): TranscriptItem[] {
-  const fixture = (name: string) => JSON.parse(readFileSync(join(FIXTURES, name), 'utf8')) as TranscriptItem[];
   const codexPatch = fixture('codex.json').find((it) => it.tool?.name === 'apply_patch') as TranscriptItem;
   const proposed: TranscriptItem = {
     id: 'h171-proposed',
@@ -220,6 +221,29 @@ export function h171Timeline(now: number): TranscriptItem[] {
     proposed,
   ];
   return all.map((it, i) => ({ ...it, seq: i + 1, ts: now - (all.length - i) * 15_000 }));
+}
+
+/** What the bridge makes of one of its own fixtures (fixtures/transcript, kept in step by internal/transcript's TestGameFixtures). */
+const fixture = (name: string) => JSON.parse(readFileSync(join(FIXTURES, name), 'utf8')) as TranscriptItem[];
+
+/**
+ * #21: Codex's code changes, every source and state: what the bridge makes of its own Codex fixtures
+ * (fixtures/transcript/codex-changes.json: exec scripts and the patches they ran, one or several files and calls, a built
+ * patch, failed, escaped, direct, legacy, a nested failure, renamed, declined, interrupted, one still running). A
+ * screenshot and the scripts' half come first, then 210 replies, then the direct and later patches: a watch's 200 items
+ * end before the first half, which "Jump to message" from the screenshot pages in.
+ */
+export function h21Timeline(now: number): TranscriptItem[] {
+  const changes = fixture('codex-changes.json');
+  const half = changes.findIndex((it) => it.id === 'call_c21direct0000000000000007');
+  const say = Array.from({ length: 210 }, (_, i): TranscriptItem => ({ id: `h21-say-${i + 1}`, seq: 0, ts: 0, kind: 'assistant', parts: [{ text: `Checked tide table ${i + 1}: no change needed.` }] }));
+  const all: TranscriptItem[] = [
+    { id: 'h21-ask', seq: 0, ts: 0, kind: 'user', parts: [{ text: 'Patch the tide tables and show me every change. This is the chart they came from:' }, { image: SHOT }] },
+    ...changes.slice(0, half),
+    ...say,
+    ...changes.slice(half),
+  ];
+  return all.map((it, i) => link({ ...it, seq: i + 1, ts: now - (all.length - i) * 15_000 }));
 }
 
 /** #171: an Edit with 2,500 changed lines (past the view's 2,000 a page); the list's copy has the first 200 and says it was cut. */
@@ -290,6 +314,7 @@ export function h206Timeline(now: number): TranscriptItem[] {
 const TIMELINES: Record<string, { items: (now: number) => TranscriptItem[]; full: () => TranscriptItem[] }> = {
   'demo-h171': { items: h171Timeline, full: () => [cutItem(true)] },
   'demo-h206': { items: h206Timeline, full: () => [cutItem(true)] },
+  'demo-h21': { items: h21Timeline, full: () => [] },
 };
 
 /** Every image ref of an item, in order. */
