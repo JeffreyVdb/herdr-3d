@@ -110,7 +110,6 @@ func newLLMBridge(t *testing.T, on *bool, tweak func(*server.Options)) *llmBridg
 	return lb
 }
 
-
 // candidate gives w1 a completed reply and returns its candidate.
 func (lb *llmBridge) candidate(t *testing.T, c *client) proto.HandoffCandidate {
 	t.Helper()
@@ -426,7 +425,9 @@ func TestLLMHandoffIdempotencyBusyAndCancel(t *testing.T) {
 		t.Fatalf("%s", m.raw)
 	}
 	evs, _ := c.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: id, Op: "op-1"})
-	if !slices.ContainsFunc(evs, func(ev proto.Event) bool { return ev.T == proto.EvWorkerUpsert && ev.Worker.ID == id && ev.Worker.LLMHandoff == nil }) {
+	if !slices.ContainsFunc(evs, func(ev proto.Event) bool {
+		return ev.T == proto.EvWorkerUpsert && ev.Worker.ID == id && ev.Worker.LLMHandoff == nil
+	}) {
 		t.Fatalf("not dismissed: %+v", evs)
 	}
 	if all, _ := lb.st.AllHandoffs(context.Background()); len(all) != 0 {
