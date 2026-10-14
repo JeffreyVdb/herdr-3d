@@ -207,6 +207,19 @@ func TestReduceBranchTipUncertain(t *testing.T) {
 	}
 }
 
+// TestReduceTrailingLeafAgrees: Claude Code's leaf is usually the row
+// after the last reply (turn_duration): a descendant of the tip, no gap.
+func TestReduceTrailingLeafAgrees(t *testing.T) {
+	path := copyFixture(t, "claude_branch", 100, `{"type":"last-prompt","leafUuid":"00000000-0000-4000-8000-000000000011"}`)
+	p, err := reduceFile(t, harnessClaude, path, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Coverage.Gaps) != 0 || !p.Coverage.Complete {
+		t.Errorf("coverage %+v", p.Coverage)
+	}
+}
+
 func TestReduceForkWithoutHistoryStart(t *testing.T) {
 	b, _ := os.ReadFile("testdata/codex_fork.jsonl")
 	path := filepath.Join(t.TempDir(), "fork.jsonl")
