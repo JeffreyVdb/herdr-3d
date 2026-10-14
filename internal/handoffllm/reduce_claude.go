@@ -306,8 +306,17 @@ func (p *claudeParser) build(b *builder) error {
 		}
 		r = parent
 	}
-	if p.leaf != "" {
-		if leaf := p.byUUID[p.leaf]; leaf != nil && !chain[leaf] {
+	// Claude Code's own leaf hint (stale in real files, so only a hint): a
+	// leaf that descends from the tip (a trailing row) agrees; one whose
+	// ancestry meets the branch below the tip names another branch.
+	if leaf := p.byUUID[p.leaf]; leaf != nil && !chain[leaf] {
+		seen := map[*claudeRow]bool{}
+		r := leaf
+		for r != nil && !chain[r] && !seen[r] {
+			seen[r] = true
+			r = p.byUUID[r.parent]
+		}
+		if r != tip {
 			b.gap("branch tip uncertain: Claude Code's last-prompt names a row off the latest branch; the latest row's branch was used")
 		}
 	}

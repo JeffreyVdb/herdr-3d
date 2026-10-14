@@ -92,9 +92,9 @@ const (
 // readChunk is how much of the transcript one read takes.
 const readChunk = 256 << 10
 
-// parser reads one harness's transcript lines (line: false when a line is
+// lineParser reads one harness's transcript lines (line: false when a line is
 // not readable JSON) and then builds the main thread's messages.
-type parser interface {
+type lineParser interface {
 	line(off int64, b []byte) bool
 	build(b *builder) error
 }
@@ -104,7 +104,7 @@ type parser interface {
 // in.Budget bytes of scrubbed, message-delimited text, with what it covers.
 // See the package documentation for the policy.
 func Reduce(ctx context.Context, in Input) (Payload, error) {
-	var p parser
+	var p lineParser
 	switch in.Harness {
 	case harnessClaude:
 		if filepath.Base(filepath.Dir(in.Path)) == "subagents" {
