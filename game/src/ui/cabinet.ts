@@ -1,6 +1,7 @@
 import './handoff.css';
-import type { HandoffEntry, HandoffGetAck, HandoffListAck } from '../net/protocol';
+import type { HandoffEntry, HandoffGetAck, HandoffListAck, HandoffLLMProvenance } from '../net/protocol';
 import { snippetRuns, sourceWord } from '../world/handoff';
+import { redactionText } from '../world/handoffLlm';
 import { setMarkdown } from './boards/markdown';
 import { backdropPolicy } from './dismiss';
 import { h, icon, ICON } from './dom';
@@ -50,6 +51,8 @@ export class Cabinet {
   private rows: HandoffEntry[] = [];
   private selected: HandoffEntry | null = null;
   private body = '';
+  /** #9: the selected LLM handoff's provenance (null: none, or another source). */
+  private llm: HandoffLLMProvenance | null = null;
   private confirming = false;
   private loading = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -125,6 +128,7 @@ export class Cabinet {
     this.rows = [];
     this.selected = null;
     this.body = '';
+    this.llm = null;
     this.confirming = false;
     this.pick = select ?? null;
     this.search.value = '';
@@ -226,6 +230,7 @@ export class Cabinet {
     this.selected = e;
     this.confirming = false;
     this.body = '';
+    this.llm = null;
     this.renderList();
     this.renderView(true);
     const r = await this.host.send('handoff.get', { id: e.id });
@@ -238,6 +243,7 @@ export class Cabinet {
     const a = r.data as HandoffGetAck;
     this.selected = a.handoff;
     this.body = a.body;
+    this.llm = a.llm ?? null;
     this.renderView();
     if (focus) this.view.querySelector<HTMLElement>('[data-key="copy"]')?.focus();
   }
@@ -258,7 +264,16 @@ export class Cabinet {
       e.branch ? h('dt', {}, 'Branch') : null,
       e.branch ? h('dd', {}, h('code', {}, e.branch)) : null,
       h('dt', {}, 'Source'),
-      h('dd', {}, sourceWord(e.source)),
+      h('dd', { 'data-hook': 'cab-source' }, sourceWord(e.source), e.source === 'llm' && this.llm?.model ? ` · ${this.llm.model}${this.llm.host ? ` at ${this.llm.host}` : ''}` : ''),
+      // #9: what an LLM handoff was written from, and with which prompt: provenance, never a claim it is right.
+      e.source === 'llm' && this.llm ? h('dt', {}, 'Written from') : null,
+      e.source === 'llm' && this.llm
+        ? h(
+            'dd',
+            { 'data-hook': 'cab-llm' },
+            [this.llm.coverage, this.llm.prompt_version ? `prompt ${this.llm.prompt_version}` : '', redactionText(this.llm.redactions) ? `scrubbed: ${redactionText(this.llm.redactions)}` : ''].filter(Boolean).join(' · ') || 'the worker’s conversation',
+          )
+        : null,
       h('dt', {}, 'File'),
       h('dd', {}, h('code', { class: 'ho-path' }, e.path)),
     );
@@ -299,6 +314,7 @@ export class Cabinet {
     this.setStatus(`Moved “${e.title}” to the trash.`);
     this.selected = null;
     this.body = '';
+    this.llm = null;
     this.rows = this.rows.filter((x) => x.id !== e.id);
     this.renderList();
     this.renderView();

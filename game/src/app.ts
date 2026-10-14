@@ -95,6 +95,7 @@ import { kaneoSection } from './ui/kaneoSection';
 import { followupsSection } from './ui/followupsSection';
 import { packupSection } from './ui/packupSection';
 import { digestSection } from './ui/digestSection';
+import { handoffLlmSection } from './ui/handoffLlmSection';
 import { digestFailureText } from './world/digestSettings';
 import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup';
 import { activitySection } from './ui/activitySection';
@@ -420,6 +421,13 @@ export class App {
       digestSection({ book: this.store.digestSettings, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
       { store: 'bridge' },
     );
+    // #9: the handoff dialog's "Use configured LLM": the LLM writes a handoff from the worker's reduced conversation.
+    settings.addSection(
+      'handoff-llm',
+      'LLM handoffs',
+      handoffLlmSection({ book: this.store.handoffLlm, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
+      { store: 'bridge' },
+    );
     // #155: whether new Codex workers get a Codex server of their own (the bridge's switch, off by default).
     settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
     // #247: whether a conversation's `@r:` lists every building's floors (the bridge's switch, off by default).
@@ -630,7 +638,15 @@ export class App {
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
-    this.handoffDialog = new HandoffDialog(o.host, { ...dialogHost, copy, openCabinet: (floor, select) => this.openCabinet(floor, select) });
+    this.handoffDialog = new HandoffDialog(o.host, {
+      ...dialogHost,
+      copy,
+      openCabinet: (floor, select) => this.openCabinet(floor, select),
+      openSettings: (section) => {
+        this.settings.open();
+        this.settings.reveal(section);
+      },
+    });
     this.cabinet = new Cabinet(o.host, { ...dialogHost, copy, hireFrom: (e) => this.hireFromHandoff(e) });
     this.boardsPanel = new BoardsPanel(o.host, {
       ...dialogHost,

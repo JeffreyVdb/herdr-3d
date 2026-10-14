@@ -188,6 +188,12 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   // #174: opening the settings reads the model's catalog (one call, 15 s on the bridge); setting an effort checks it.
   'digest.get': 25_000,
   'digest.set': 25_000,
+  // #9: the LLM handoffs' test is one handoff call (90 s on the bridge, never retried after a timeout), after any
+  // handoff that is out; get and set read the model's catalog like the summaries'. The preview reduces the transcript.
+  'handoff_llm.test': 120_000,
+  'handoff_llm.get': 25_000,
+  'handoff_llm.set': 25_000,
+  'worker.handoff_preview': 30_000,
 };
 
 interface Pending {

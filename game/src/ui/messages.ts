@@ -119,6 +119,10 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'digest.set': 'keep the floor overview summaries',
   'digest.test': 'test the floor overview summaries',
   'digest.retry': 'retry the floor overview summary',
+  // #9
+  'handoff_llm.get': 'write handoffs with the configured LLM',
+  'handoff_llm.set': 'write handoffs with the configured LLM',
+  'handoff_llm.test': 'test LLM handoffs',
   'issue.get': 'read issues',
   'issue.comment': 'comment on issues',
   'issue.close': 'close issues',
@@ -163,7 +167,15 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
       return `${ctx.worker ?? 'The worker'}’s agent can’t be asked for a handoff: ${why.replace(/^no handoff skill:\s*/, '') || 'it has no handoff skill'}. Nothing was sent; save its last message instead.`;
     case 'handoff_failed':
       return `The handoff was not filed: ${why.replace(/^filing the handoff failed:\s*/, '') || 'writing it failed'}. Nobody was sent home.`;
+    // #9 LLM handoffs: nothing was sent (unavailable) or filed (invalid, stale); the dialog stays open.
+    case 'handoff_llm_unavailable':
+      return `${why || 'LLM handoffs are not available'}. Nothing was sent; choose another way to file, or fix it in Settings › LLM handoffs.`;
+    case 'handoff_llm_invalid':
+    case 'handoff_llm_stale':
+    case 'handoff_llm_interrupted':
+      return why || 'The LLM handoff was not filed.';
     case 'too_large':
+      if (why && (t === 'worker.handoff' || t === 'worker.handoff_preview') && /budget/.test(why)) return `${why}.`;
       if (t === 'worker.handoff' || t === 'worker.handoff_preview') return 'That reply is larger than 1 MB: a literal handoff never cuts it, so it can’t be filed.';
       break;
     case 'offline':

@@ -218,6 +218,8 @@ export interface Worker {
   handoff?: HandoffCandidate;
   /** #224: its agent handoff request while it runs, and after it failed (until dismissed or a new one starts). */
   agent_handoff?: AgentHandoff;
+  /** #9: its latest LLM handoff job: while it runs, and once settled until a new one starts or it leaves. */
+  llm_handoff?: LLMHandoff;
   /** #155: how a Codex worker the bridge hired was launched (absent for other workers). */
   codex?: WorkerCodex;
 }
@@ -370,6 +372,8 @@ export interface World {
   activity?: ActivityState;
   /** #118 floor overview summaries: the feature's settings and state (absent from an older bridge, or one without the AI service). */
   digest?: DigestState;
+  /** #9 LLM handoffs: the feature's settings and state (absent from an older bridge, or one without the AI service or a cabinet). */
+  handoff_llm?: HandoffLLMState;
   /** #106 the inbox's dismissed finished rows: worker id → the `status_since` of the done episode hidden (absent from an older bridge: none). */
   inbox_dismissed?: Record<string, number>;
   /** #155 the shared Codex server switch (absent from an older bridge). */
@@ -481,6 +485,7 @@ export type WorldEvent =
   | ActivityUpdate
   // #118 floor overview summaries
   | DigestUpdate
+  | HandoffLLMUpdate
   // #106 the inbox: a finished row was dismissed
   | InboxDismissed
   // #223 the filing cabinet
@@ -793,6 +798,11 @@ export interface CommandArgs {
   'digest.test': Record<string, never>;
   /** #174: try the failed summary lines of a worker (every worker without an id) again; acks `{ retried }`. */
   'digest.retry': { id?: string };
+  // #9 LLM handoffs (docs/protocol.md "LLM handoffs"). `handoff_llm.test` acks `HandoffLLMTestAck`.
+  'handoff_llm.get': Record<string, never>;
+  /** `input_bytes` the transcript budget, `max_tokens` the completion budget (reasoning included), `reasoning_effort` "" the provider's default. */
+  'handoff_llm.set': { enabled?: boolean; input_bytes?: number; max_tokens?: number; reasoning_effort?: string };
+  'handoff_llm.test': Record<string, never>;
   'issue.get': { session: string; id: string };
   'issue.comment': { session: string; id: string; body: string };
   'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
@@ -816,13 +826,16 @@ export interface CommandArgs {
   // #223 handoffs (docs/protocol.md "Handoffs"). The candidate is the bridge's (`Worker.handoff`): never a path or a text.
   /** Acks `HandoffPreviewAck`: the candidate's exact text (the first 64 KiB), the title it would get, where it comes from. */
   /** #224: with `mode: 'agent'` no candidate is needed: what asking the agent would do, and its cache estimate. */
-  'worker.handoff_preview': { worker: string; candidate?: string; mode?: 'agent' };
+  /** #9: with `mode: 'llm'` (the current candidate when none is named): what the LLM handoff would send, and to whom. */
+  'worker.handoff_preview': { worker: string; candidate?: string; mode?: 'agent' | 'llm' };
   /** Files it (acks `HandoffAck`); `op` is one per dialog, so a repeated submit files nothing twice. */
   'worker.handoff':
     | { worker: string; mode: 'literal'; session: string; candidate: string; revision: string; send_home?: boolean; op: string }
     /** #224: asks the worker's agent (acks `AgentHandoffAck`); the outcome follows on `Worker.agent_handoff`. */
-    | { worker: string; mode: 'agent'; instruction?: string; send_home?: boolean; op: string };
-  /** #224: cancels a running agent handoff request, or dismisses a settled one (acks `AgentHandoff`). */
+    | { worker: string; mode: 'agent'; instruction?: string; send_home?: boolean; op: string }
+    /** #9: the configured LLM writes it from the snapshot up to the candidate (acks `LLMHandoffAck`); the job follows on `Worker.llm_handoff`. */
+    | { worker: string; mode: 'llm'; session: string; candidate: string; revision: string; instruction?: string; send_home?: boolean; op: string };
+  /** #224: cancels a running agent handoff request, or dismisses a settled one (acks `AgentHandoff`; #9: an LLM job's op acks `LLMHandoff`). */
   'worker.handoff_cancel': { worker: string; op: string };
   /** A floor's handoffs, newest first, or with `q` the matches (acks `HandoffListAck`). */
   'handoff.list': { floor: string; q?: string; limit?: number };
@@ -1093,6 +1106,7 @@ const EVENT_TYPES = new Set([
   'worker.activity', // #98 what the agent is doing
   'activity.update', // #98 activity settings
   'digest.update', // #118 floor overview summaries
+  'handoff_llm.update', // #9 LLM handoffs
   'inbox.dismissed', // #106 the inbox: a finished row dismissed
   'handoff.added', // #223 the filing cabinet
   'handoff.removed',
@@ -1180,6 +1194,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return typeof o.model_enabled === 'boolean' && typeof o.state === 'string';
     // #118 floor overview summaries: the fields of `DigestState` flat in the event.
     case 'digest.update':
+      return typeof o.enabled === 'boolean' && typeof o.state === 'string';
+    // #9 LLM handoffs: the fields of `HandoffLLMState` flat in the event.
+    case 'handoff_llm.update':
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
     // #155: the shared Codex server switch, flat.
     case 'codex_server.update':
@@ -2517,6 +2534,8 @@ export interface HandoffPreviewAck {
   send_home_blocked?: string;
   agent?: AgentHandoffPreview;
   cache?: CacheEstimate;
+  /** #9: an LLM preview: what the LLM handoff would send, and to whom. */
+  llm?: LLMHandoffPreview;
 }
 
 /** #224: what asking the worker's agent would do: its skill call ("/handoff", "$handoff"), whether it can be asked now. */
@@ -2545,6 +2564,118 @@ export interface AgentHandoff {
   handoff?: number;
   send_home_result?: 'started' | 'skipped';
   send_home_reason?: string;
+}
+
+// #9 LLM handoffs (docs/protocol.md "LLM handoffs"): the configured LLM writes a handoff from the worker's reduced,
+// scrubbed transcript; the worker is not prompted. Opt-in, gated on a passing `handoff_llm.test`.
+
+/** off: switched off; incomplete: on, the LLM not ready; untested: on, but the LLM or the limits changed since the test; ready. */
+export type HandoffLLMFeatureState = 'off' | 'incomplete' | 'untested' | 'ready';
+
+export interface HandoffLLMState {
+  enabled: boolean;
+  state: HandoffLLMFeatureState;
+  missing?: AiRole[];
+  roles: { llm: AiRoleState };
+  /** The fields the bridge's environment sets (`enabled`, HERDR_WORLD_HANDOFF_LLM_ENABLED): read-only here. */
+  env: string[];
+  /** A passing handoff_llm.test (within 30 minutes) covers the LLM and the limits in use: it can be switched on. */
+  tested: boolean;
+  /** The transcript budget (bytes of reduced transcript), the completion budget (tokens), the reasoning effort ('': the provider's default). */
+  input_bytes: number;
+  max_tokens: number;
+  reasoning_effort: string;
+  reasoning: DigestReasoning;
+  effort_stale: boolean;
+  /** The call's bound (seconds), the bridge's prompt version, and what a handoff sends. */
+  timeout_s: number;
+  prompt_version: string;
+  categories: string[];
+}
+
+/** `handoff_llm.update`: the whole state, flat. */
+export interface HandoffLLMUpdate extends HandoffLLMState {
+  t: 'handoff_llm.update';
+  seq: number;
+}
+
+/** `handoff_llm.test` ack: the sample handoff's title; ok false with `reason` when it was not of the agreed shape. */
+export interface HandoffLLMTestAck {
+  ok: boolean;
+  reason?: string;
+  title?: string;
+  bytes: number;
+  latency_ms: number;
+  diag?: CallDiagnostics;
+}
+
+/** #9: what of the transcript snapshot the reduced input holds. Ordinals from 1, inclusive. */
+export interface HandoffCoverage {
+  messages: number;
+  kept: number;
+  omitted: Array<{ from: number; to: number; why: string }>;
+  compaction: string;
+  gaps: string[];
+  abandoned?: number;
+  sidechains?: number;
+  deduplicated?: number;
+  skipped?: number;
+  complete: boolean;
+}
+
+/** #9: an LLM preview: the recipient, the reduced input's size, coverage and redaction counts. Nothing was sent. */
+export interface LLMHandoffPreview {
+  ready: boolean;
+  unavailable?: string;
+  model: string;
+  host: string;
+  payload_bytes: number;
+  est_tokens: number;
+  budget_bytes: number;
+  max_tokens: number;
+  timeout_s: number;
+  prompt_version: string;
+  reduced: boolean;
+  coverage: HandoffCoverage;
+  redactions: Record<string, number>;
+  categories: string[];
+  artifacts: number;
+  verified: number;
+}
+
+export type LLMHandoffState = 'queued' | 'running' | 'filed' | 'failed' | 'cancelled';
+
+/** #9: an LLM handoff job (`Worker.llm_handoff`). `message` is short and scrubbed; never the model's text. A retry is a new job (a new op). */
+export interface LLMHandoff {
+  op: string;
+  state: LLMHandoffState;
+  code?: string;
+  message?: string;
+  /** Unix ms. */
+  started_at: number;
+  updated_at: number;
+  model?: string;
+  host?: string;
+  send_home?: boolean;
+  handoff?: number;
+  send_home_result?: 'started' | 'skipped';
+  send_home_reason?: string;
+}
+
+/** #9: `worker.handoff` ack in mode `llm`. */
+export interface LLMHandoffAck {
+  job: LLMHandoff;
+  existing?: boolean;
+}
+
+/** #9: an LLM handoff's provenance, from its front matter (`HandoffGetAck.llm`). */
+export interface HandoffLLMProvenance {
+  model?: string;
+  host?: string;
+  prompt_version?: string;
+  snapshot?: string;
+  coverage?: string;
+  redactions?: Record<string, number>;
 }
 
 /** #224: `worker.handoff` ack in mode `agent`. */
@@ -2602,6 +2733,8 @@ export interface HandoffListAck {
 export interface HandoffGetAck {
   handoff: HandoffEntry;
   body: string;
+  /** #9: an LLM handoff's provenance (absent for the others). */
+  llm?: HandoffLLMProvenance;
 }
 
 /** `handoff.added`: filed (complete file, indexed). `session` is its floor; `handoff_count` the floor's count now. */
