@@ -60,6 +60,9 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'worker.commands': 'list slash commands and skills', // #136
   'worker.files': 'search files', // #137
   'worker.repos': 'list repositories on other floors', // #247
+  'hire.commands': 'list skills before a hire', // #39
+  'hire.files': 'search files before a hire', // #39
+  'hire.repos': 'list repositories before a hire', // #39
   // M6 start
   'preset.create': 'keep team presets',
   'preset.update': 'keep team presets',

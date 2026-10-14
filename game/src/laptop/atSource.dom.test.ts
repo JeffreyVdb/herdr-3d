@@ -148,7 +148,7 @@ describe('the `@` source: files, or repositories behind r:', () => {
     type('see @r:');
     expect(isOpen()).toBe(true);
     expect(list()?.getAttribute('aria-label')).toBe('Repositories on other floors');
-    expect(status()).toBe('Loading…');
+    expect(status()).toBe('Loading repositories…');
     expect(b.repos).toEqual([{ id: 'w1' }]);
     expect(b.files).toEqual([]);
     await b.answerRepos(0, okRepos(REPOS));

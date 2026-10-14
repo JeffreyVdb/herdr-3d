@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { CommandEntry } from '../net/protocol';
 import { CommandCatalogs, type WorkerCommandList } from './commandCatalog';
+import { SKILLS_HINT } from './slashCommands';
 import { offsetToPoint } from '../ui/composer/tree';
 import { mountTranscript, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
@@ -152,7 +153,7 @@ describe('the transcript composer lists the worker’s commands and skills', () 
     expect(cave.querySelector('.tx-cmd-desc')?.textContent).toBe('(caveman) Ultra-compressed commit message generator.');
     expect(cave.querySelector('.tx-cmd')?.getAttribute('title')).toContain('Second line.');
     expect(rows().map((r) => r.querySelector('.tx-cmd-kind')?.textContent)).toEqual(['command', 'command', 'skill', 'skill', 'custom']);
-    expect(note()).toBeNull();
+    expect(note()).toBe(SKILLS_HINT);
   });
 
   it('filters as I type, prefix and word starts before substrings, and highlights the matched characters', async () => {
@@ -226,7 +227,7 @@ describe('the list: cached, refreshed, and its states', () => {
     mount(host({ list: b.list, harness: 'claude' }));
     type('/');
     expect(b.asks).toBe(1);
-    expect(status()).toBe('Loading…');
+    expect(status()).toBe('Loading skills…');
     await b.answer(ok(CLAUDE));
     expect(names()).toHaveLength(5);
     expect(status()).toBeNull();
@@ -264,7 +265,7 @@ describe('the list: cached, refreshed, and its states', () => {
     mount(host({ list: b.list, harness: 'claude' }));
     type('/');
     await b.answer({ ok: false, code: 'timeout', message: 'no answer' });
-    expect(status()).toBe('Could not load matches.');
+    expect(status()).toBe('Could not load skills: no answer.');
     press('Escape');
     type(' /');
     expect(b.asks).toBe(2);
@@ -349,15 +350,15 @@ describe('per harness', () => {
     expect(text()).toBe('/humanizer:humanizer ');
   });
 
-  it('Codex with no skill in the list: no hint', async () => {
+  it('Codex with no skill in the list: only the hint that files are @', async () => {
     await ready('codex', CODEX.slice(1));
     type('/');
-    expect(note()).toBeNull();
+    expect(note()).toBe(SKILLS_HINT);
   });
 
-  it('Claude: no hint, a skill is typed as it is sent', async () => {
+  it('Claude: only the hint that files are @, a skill is typed as it is sent', async () => {
     await ready('claude');
     type('/han');
-    expect(note()).toBeNull();
+    expect(note()).toBe(SKILLS_HINT);
   });
 });

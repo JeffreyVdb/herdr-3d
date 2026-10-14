@@ -151,6 +151,10 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'worker.files': 35_000,
   // #247: a stat and an origin lookup (git, 3 s at most) per floor, at once.
   'worker.repos': 15_000,
+  // #39: the same lookups for a hire with no worker yet (a worktree hire's repository root is one git call first).
+  'hire.commands': 15_000,
+  'hire.files': 35_000,
+  'hire.repos': 15_000,
   // #57: an answer is a dialog driven step by step (each checked on the screen), then the transcript watched.
   'worker.answer_ask': 45_000,
   // M6 start: a run's prepare may `git fetch` like hire.prepare; its start is a hire.

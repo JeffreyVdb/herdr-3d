@@ -137,7 +137,7 @@ describe('the transcript composer searches the worker’s files', () => {
     type('@');
     expect(isOpen()).toBe(true);
     expect(list()?.getAttribute('aria-label')).toBe('Files and folders');
-    expect(status()).toBe('Loading…');
+    expect(status()).toBe('Searching files…');
     expect(b.asks).toEqual([]);
     expect(b.timers.map((t) => t.ms)).toEqual([DEBOUNCE_MS]);
     await b.fire();
@@ -273,7 +273,7 @@ describe('the transcript composer searches the worker’s files', () => {
     type('@a');
     await b.fire();
     await b.answer(0, { ok: false, code: 'invalid_state', message: 'asleep' });
-    expect(status()).toBe('Could not load matches.');
+    expect(status()).toBe('Could not search the files: asleep.');
   });
 
   it('a chip next to text keeps the text atomic around it: Backspace after it takes the chip whole', async () => {

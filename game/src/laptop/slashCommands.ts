@@ -17,6 +17,11 @@ import type { CommandsState } from './commandCatalog';
  *
  * #140: a built-in whose output or dialog shows only in the worker's terminal (the bridge's `terminal` mark) has a
  * "terminal" badge; sending one switches the seat to the terminal (`TranscriptMode`, on the prompt's ack).
+ *
+ * #39: also the Hire, Start run and Prompt dialogs' `/` (`ui/dialogCompletion.ts`), over a list of the hire's context
+ * (its harness may change: `harness` can be read live). The first ask says "Loading skills…" (a probe of the harness can
+ * take seconds; only this popup waits for it); a failed one names why and offers "Try again". `/` is the catalog only
+ * (the skills the harness finds, global ones too) and the footer says files are `@`'s: a skill's own file is not one.
  */
 
 /** What the source reads: one worker's list (`WorkerCommandList`). */
@@ -52,7 +57,10 @@ function nameOf(c: CommandItem): HTMLElement {
   return el;
 }
 
-export function commandSource(list: CommandList, harness: string): Source<CommandItem> {
+export const SKILLS_HINT = 'Skills and commands · type @ for files';
+
+export function commandSource(list: CommandList, harnessOf: string | (() => string)): Source<CommandItem> {
+  const harness = () => (typeof harnessOf === 'string' ? harnessOf : harnessOf());
   const ranked = (q: string): CommandItem[] | null => {
     const all = list.state.commands;
     return all ? rankByName(all, q, (c) => c.name) : null;
@@ -101,13 +109,19 @@ export function commandSource(list: CommandList, harness: string): Source<Comman
       // A space already after the word: the caret goes past it rather than a second one going in.
       return { text: `/${c.item.name} `, ...(text[token.end] === ' ' ? { end: token.end + 1 } : {}) };
     },
+    loading: () => 'Loading skills…',
+    failure: () => {
+      const why = list.state.error?.trim().replace(/\.$/, '');
+      return why ? `Could not load skills: ${why}.` : 'Could not load skills.';
+    },
+    retry: () => void list.refresh(),
     footer() {
       const s = list.state;
       const notes: string[] = [];
       if (s.partial) notes.push('Partial list: only the built-in commands so far');
       if (s.failed && s.commands) notes.push('Could not refresh: the list may be out of date');
-      if (harness === 'codex' && s.commands?.some((c) => c.kind === 'skill')) notes.push('Codex: skills are sent as $name');
-      return notes.join(' · ') || null;
+      if (harness() === 'codex' && s.commands?.some((c) => c.kind === 'skill')) notes.push('Codex: skills are sent as $name');
+      return notes.join(' · ') || SKILLS_HINT;
     },
   };
 }

@@ -11,12 +11,17 @@ import { Draft as PromptDraft, type Uploader } from './composer/draft';
 import { failedImagesText, hasContent, heldRefusalText, markedText, notSentText, PASTE_HINT } from './composer/field';
 import { WORKER_PROMPT_MAX_BYTES } from './composer/model';
 import type { PackupGate } from '../world/packup';
+// #39 completion
+import { CommandCatalogs } from '../laptop/commandCatalog';
+import { CompletionScope, workerSources } from './dialogCompletion';
 
 /** The overlay's host: the dialogs' plus one image to Drop Zone through the bridge (#64). */
 export interface PromptHost extends DialogHost {
   upload: Uploader;
   /** #110: the pack-up check before a prompt goes (none: it goes at once). */
   packup?: PackupGate;
+  /** #39: the app's lists of commands and skills, shared with the transcript (absent: the overlay keeps its own). */
+  catalogs?: CommandCatalogs;
 }
 
 /**
@@ -89,6 +94,25 @@ export class PromptOverlay {
   /** #110: the pack-up check of the prompt being sent (aborted: Esc, the overlay closed). */
   private checking: AbortController | null = null;
   private headKey = '';
+  /** #39: `/`, `@` and `@r:` of the worker the overlay is for, as its transcript has them (`dialogCompletion.ts`). */
+  private ownCatalogs: CommandCatalogs | null = null;
+  private lookupFor: { id: string; harness: string | undefined } | null = null;
+  private readonly lookups = new CompletionScope(
+    () => {
+      if (!this.dialog.open || !this.id) return (this.lookupFor = null);
+      this.lookupFor = { id: this.id, harness: this.host.store.workerView(this.id)?.harness };
+      return JSON.stringify(['worker', this.lookupFor.id, this.lookupFor.harness ?? '']);
+    },
+    () => {
+      const host = this.host;
+      const l = this.lookupFor as { id: string; harness: string | undefined };
+      return workerSources(
+        { send: host.send.bind(host), catalogs: host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) })), repoRefs: host.store.repoRefs },
+        l.id,
+        l.harness,
+      );
+    },
+  );
 
   constructor(
     parent: HTMLElement,
@@ -101,6 +125,7 @@ export class PromptOverlay {
       describedBy: 'prompt-keys',
       submitPolicy: 'enter',
       onSubmit: () => void this.send(),
+      complete: { sources: this.lookups.sources },
       onChange: (s) => {
         // Writing the next one: the last result steps back (and the "Will queue" chip is up again while it works).
         if (s.revision === this.seen) return;
@@ -274,6 +299,8 @@ export class PromptOverlay {
   }
 
   private render(): void {
+    // #39: another worker (or the same one's harness now known): an open popup follows it.
+    this.lookups.check();
     const v = this.host.store.workerView(this.id);
     if (!v) return;
     const f = this.host.store.floorView(v.worker.session);

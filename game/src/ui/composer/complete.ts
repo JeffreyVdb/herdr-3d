@@ -76,6 +76,12 @@ export interface Source<T = unknown> {
   key?(item: T): string;
   /** A short note under the rows (null or '': none), read on every draw. */
   footer?(): string | null;
+  /** #39: what the popup says while the first reply is out and no row shows (default "Loading…"). */
+  loading?(): string;
+  /** #39: what the popup says when the items failed to load (default "Could not load matches."). */
+  failure?(): string;
+  /** #39: a failed load can be asked again: the popup offers "Try again", which calls this and asks its query again. */
+  retry?(): void;
 }
 
 const isSpace = (c: string): boolean => /\s/.test(c);

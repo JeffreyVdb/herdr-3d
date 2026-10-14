@@ -510,6 +510,35 @@
 .cmp-pop-status[data-kind='error'] {
   color: var(--cmp-err);
 }
+/* #39: the status and, after a failed load, its "Try again" (the image chips' retry pill, on the status line). */
+.cmp-pop-state {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+.cmp-pop-state .cmp-pop-status {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.cmp-pop-retry {
+  flex: none;
+  height: 24px;
+  margin-right: 5px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--chip-btn-bg);
+  color: var(--text);
+  font: 700 11.5px/1 var(--font);
+  cursor: pointer;
+}
+.cmp-pop-retry:hover {
+  background: var(--chip-btn-bg-hover);
+}
+.cmp-pop-retry[hidden] {
+  display: none;
+}
 /* #140: the source's own note (a partial list, how a harness reads a pick), above the keys. */
 .cmp-pop-note {
   flex: none;
@@ -634,7 +663,8 @@
 @media (pointer: coarse) {
   :root[data-ui-theme='ubuntu'] .cmp-dismiss,
   :root[data-ui-theme='ubuntu'] .cmp-remove,
-  :root[data-ui-theme='ubuntu'] .cmp-retry {
+  :root[data-ui-theme='ubuntu'] .cmp-retry,
+  :root[data-ui-theme='ubuntu'] .cmp-pop-retry {
     min-width: 44px;
     min-height: 44px;
   }
