@@ -126,6 +126,8 @@ export class CompletionScope {
   private proxy(t: Trigger): Source<Tagged> {
     const src = (): Source | null => this.current()?.s[t] ?? null;
     const fallback = t === '/' ? 'Commands and skills' : 'Files and folders';
+    // The generation a popup last opened in: a popup still open in a newer one opens that context's source first (its list is asked then).
+    let opened = -1;
     return {
       trigger: t,
       get label() {
@@ -135,7 +137,10 @@ export class CompletionScope {
         const s = src();
         return !!s && s.available?.() !== false;
       },
-      opening: () => src()?.opening?.(),
+      opening: () => {
+        opened = this.current()?.gen ?? -1;
+        src()?.opening?.();
+      },
       subscribe: (f) => {
         this.listeners[t].add(f);
         return () => this.listeners[t].delete(f);
@@ -145,6 +150,10 @@ export class CompletionScope {
         const c = this.current();
         const s = c?.s[t];
         if (!c || !s) return Promise.reject(new Error('no lookup context'));
+        if (c.gen !== opened) {
+          opened = c.gen;
+          s.opening?.();
+        }
         const tag = (xs: readonly unknown[]): Tagged[] => xs.map((item) => ({ gen: c.gen, src: s, item }));
         const r = s.items(q, signal);
         if (Array.isArray(r)) return tag(r as readonly unknown[]);
