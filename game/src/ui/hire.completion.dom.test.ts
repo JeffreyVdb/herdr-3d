@@ -202,12 +202,10 @@ describe('HireDialog: completion in the First task (#39)', () => {
     expect(rows().map((r) => r.querySelector('.tx-cmd-name')?.textContent)).toEqual(['/claude-skill']);
 
     // Rows listed for one floor, then the dialog moves to another: a pick of them puts nothing in.
-    const before = text();
     dlg.open('other', 1);
     await flush();
     expect(isOpen()).toBe(false);
     expect(dlg.lookupGeneration).toBeGreaterThan(gen + 1);
     expect(text()).not.toContain('/claude-skill');
-    void before;
   });
 });
