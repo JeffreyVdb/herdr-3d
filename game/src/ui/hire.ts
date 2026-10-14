@@ -309,11 +309,12 @@ class TaskEditor {
   readonly el: HTMLElement;
   private readonly composer: Composer;
 
-  constructor(handlers: { change(s: DraftSnapshot): void; send(): void; upload: Uploader; sources: readonly Source[] }) {
+  constructor(handlers: { change(s: DraftSnapshot): void; send(): void; upload: Uploader; sources: readonly Source[]; bounds: () => Element | null }) {
     this.composer = mountComposer({
       draft: new PromptDraft({ upload: handlers.upload, maxPromptBytes: HIRE_PROMPT_MAX_BYTES }),
       // #39: `/` skills, `@` files and `@r:` repositories of the hire's context (`dialogCompletion.ts`).
-      complete: { sources: handlers.sources },
+      // The popup stays inside the dialog's body (it scrolls, and would clip it), above the caret when below has no room.
+      complete: { sources: handlers.sources, bounds: handlers.bounds },
       labelledBy: 'hire-task-label',
       describedBy: 'hire-task-hint',
       placeholder: 'What should they start on?',
@@ -394,6 +395,7 @@ export class HireDialog {
     change: (s) => this.taskChanged(s),
     send: () => void this.hire(),
     sources: this.lookups.sources,
+    bounds: () => this.form,
   });
   private readonly editorPane = h('div', { class: 'hire-editor-pane' }, this.editor.el);
   private readonly optionsPane = h('div', { class: 'hire-options-pane' });

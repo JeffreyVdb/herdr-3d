@@ -19,7 +19,7 @@ type Msg = Record<string, unknown>;
 type Send = (m: Msg) => void;
 type Obj = Record<string, unknown>;
 // M5: prompt, answer, changes and usage.
-import { PanelsSim } from './fixture-panels.ts';
+import { PanelsSim, simCommands, simFiles } from './fixture-panels.ts';
 // M6 start: team presets and starting a run.
 import { StartSim } from './fixture-start.ts';
 // M6 crew: a scripted freelancer (`sim.crew`, `simcrew=<ms>`).
@@ -591,6 +591,10 @@ export class SimWorld {
           return this.panels.commands(a, ack);
         case 'worker.files': // #137
           return this.panels.files(a, ack);
+        case 'hire.commands': // #39
+        case 'hire.files':
+        case 'hire.repos':
+          return this.hireLookup(m.t, a, ack);
         // M6 crew (tools/fixture-crew.ts): the simulator's own, not a bridge command.
         case 'sim.crew':
           return ack(this.crew.handle(a, send));
@@ -1116,6 +1120,48 @@ export class SimWorld {
     if (f.state !== 'running') throw new CmdError('invalid_state', `invalid state: ${f.session} is asleep`);
     if (f.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
     return f;
+  }
+
+  /**
+   * #39: worker.commands, worker.files and worker.repos for a hire with no worker yet: the floor (running for
+   * commands and files; a floor's wake or sleep does not hold them), the harness, the folder (absolute; a worktree
+   * hire's must be a repository), answered after half a step like the worker ones.
+   */
+  private hireLookup(t: string, a: Obj, ack: (d?: unknown) => void): void {
+    const reply = (d: unknown) => {
+      const h = this.setT(() => {
+        this.timers.delete(h);
+        ack(d);
+      }, Math.round(this.stepMs / 2));
+      this.timers.add(h);
+    };
+    if (t === 'hire.repos') {
+      onlyKeys(a, ['session']);
+      reply({ repos: this.repos.repos(this.floor(a).session) });
+      return;
+    }
+    onlyKeys(a, t === 'hire.commands' ? ['session', 'harness', 'cwd', 'worktree'] : ['session', 'cwd', 'worktree', 'query', 'limit']);
+    const f = this.floor(a);
+    if (f.state !== 'running') throw new CmdError('invalid_state', `invalid state: ${f.session} is asleep`);
+    if (a.cwd !== undefined && (typeof a.cwd !== 'string' || !a.cwd.startsWith('/'))) throw bad(`cwd must be an absolute path, got ${JSON.stringify(a.cwd)}`);
+    const cwd = (a.cwd as string | undefined) ?? this.defaultCwd(f);
+    if (a.worktree === true && !this.git(cwd, false)) throw bad(`worktree: ${cwd} is not in a git work tree`);
+    if (t === 'hire.commands') {
+      const data = simCommands(str(a, 'harness'));
+      if (!data) throw bad(`harness must be claude or codex, got ${JSON.stringify(a.harness)}`);
+      reply(data);
+      return;
+    }
+    const query = a.query ?? '';
+    const limit = a.limit ?? 0;
+    if (typeof query !== 'string') throw bad('query must be a string');
+    if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0) throw bad('limit must be an integer >= 0');
+    if (Array.from(query).length > 256) throw bad('query is longer than 256 characters');
+    reply(
+      cwd.includes('/scratch')
+        ? { files: [], source: 'none', reason: 'not a git work tree, and rg is not installed to list it; the checkout has no files to search' }
+        : { files: simFiles(query, limit === 0 ? 30 : Math.min(limit, 100)), source: 'git', reason: null },
+    );
   }
 
   private defaultCwd(f: Floor): string {

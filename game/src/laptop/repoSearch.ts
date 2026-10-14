@@ -1,3 +1,4 @@
+import './completionRows.css';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, RepoRef, RepoRefsState } from '../net/protocol';
 import type { Source } from '../ui/composer/complete';

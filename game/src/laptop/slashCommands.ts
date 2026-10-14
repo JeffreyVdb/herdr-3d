@@ -1,3 +1,4 @@
+import './completionRows.css';
 import type { CommandEntry } from '../net/protocol';
 import type { Source } from '../ui/composer/complete';
 import { rankByName, type Ranked } from '../world/rank';

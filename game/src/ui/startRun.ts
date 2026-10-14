@@ -194,7 +194,8 @@ export class StartRunDialog {
       placeholder: 'Anything the orchestrator should know: scope, constraints, taste',
       // Enter adds a line; Ctrl/⌘+Enter starts the run from anywhere in the dialog (its own key handler, below).
       submitPolicy: 'mod-enter',
-      complete: { sources: this.lookups.sources },
+      // Inside the form, which scrolls (and would clip it): above the caret when below has no room.
+      complete: { sources: this.lookups.sources, bounds: () => this.form },
       onChange: (s) => {
         if (this.syncing) return;
         const text = markedText(s);
@@ -213,7 +214,8 @@ export class StartRunDialog {
       describedBy: 'run-prompt-note',
       placeholder: 'The first prompt appears here once there is a ticket.',
       submitPolicy: 'mod-enter',
-      complete: { sources: this.lookups.sources },
+      // Inside the form, which scrolls (and would clip it): above the caret when below has no room.
+      complete: { sources: this.lookups.sources, bounds: () => this.form },
       onChange: (s) => {
         if (this.syncing) return;
         const text = markedText(s);

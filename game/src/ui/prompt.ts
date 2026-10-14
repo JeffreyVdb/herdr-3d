@@ -125,7 +125,8 @@ export class PromptOverlay {
       describedBy: 'prompt-keys',
       submitPolicy: 'enter',
       onSubmit: () => void this.send(),
-      complete: { sources: this.lookups.sources },
+      // Inside the form, which scrolls (and would clip it): above the caret when below has no room.
+      complete: { sources: this.lookups.sources, bounds: () => this.form },
       onChange: (s) => {
         // Writing the next one: the last result steps back (and the "Will queue" chip is up again while it works).
         if (s.revision === this.seen) return;

@@ -242,6 +242,27 @@ describe('SimWorld hire and send home (M4)', () => {
     expect(r.cmd('hire.prepare', { session: 'nope' }).got()[0]).toMatchObject({ code: 'unknown_session' });
   });
 
+  it('#39: answers the lookups of a hire with no worker yet (hire.commands, hire.files, hire.repos)', () => {
+    const r = m4();
+    const ask = (t: string, args: unknown) => {
+      const c = r.cmd(t, args);
+      r.settle();
+      return r.reply(c.req_id);
+    };
+    expect(data(ask('hire.commands', { session: 'pastry', harness: 'codex' })).commands.length).toBeGreaterThan(0);
+    expect(data(ask('hire.commands', { session: 'pastry', harness: 'claude', cwd: '/home/dev/pastry', worktree: true })).commands.length).toBeGreaterThan(0);
+    expect(data(ask('hire.files', { session: 'pastry', query: 'read' })).source).toBe('git');
+    expect(data(ask('hire.files', { session: 'scratchpad', query: '' }))).toMatchObject({ files: [], source: 'none' });
+    expect(data(ask('hire.repos', { session: 'pastry' })).repos).toEqual(expect.any(Array));
+    expect(ask('hire.commands', { session: 'pastry', harness: 'shell' })).toMatchObject({ code: 'bad_request' });
+    expect(ask('hire.commands', { session: 'pastry', harness: 'codex', cwd: 'rel' })).toMatchObject({ code: 'bad_request' });
+    expect(ask('hire.commands', { session: 'scratchpad', harness: 'codex', worktree: true })).toMatchObject({ code: 'bad_request' });
+    expect(ask('hire.commands', { session: 'depot-manager', harness: 'codex' })).toMatchObject({ code: 'invalid_state' });
+    expect(ask('hire.files', { session: 'nope', query: '' })).toMatchObject({ code: 'unknown_session' });
+    expect(ask('hire.files', { session: 'pastry', query: '', id: 'x' })).toMatchObject({ code: 'bad_request' });
+    expect(ask('hire.repos', { session: 'nope' })).toMatchObject({ code: 'unknown_session' });
+  });
+
   it('hires at a desk: worktree and branch, upsert before the ack, then the first task starts it', () => {
     const r = m4();
     const c = r.cmd('worker.hire', { session: 'pastry', desk_index: 14, harness: 'codex', model: 'gpt-6-sol', effort: 'ultra', label: 'Rye starter', worktree: true, prompt: 'Feed the starter\nat 8' });
