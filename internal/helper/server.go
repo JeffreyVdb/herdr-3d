@@ -186,6 +186,10 @@ func (s *Server) checkWS(next http.Handler) http.Handler {
 			s.forbid(w, r, "bad token")
 			return
 		}
+		// #57: the bridge the page's keys belong to; a BridgeSet dials only that one.
+		if id := r.URL.Query().Get("bridge"); id != "" {
+			r = r.WithContext(expectBridge(r.Context(), id))
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -203,8 +207,16 @@ func (s *Server) bridgeProxy() http.Handler {
 		},
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return s.cfg.Bridge.Dial(ctx) },
+			// Every /ws dials (#57): a kept connection would skip the check of
+			// the page's bridge.
+			DisableKeepAlives: true,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(err, ErrBridgeChanged) {
+				s.cfg.Log.Info("refused a page of another bridge", "page_bridge", r.URL.Query().Get("bridge"))
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
 			st := s.cfg.Bridge.Status()
 			s.cfg.Log.Warn("bridge unreachable", "tunnel", st.State, "err", err)
 			http.Error(w, "bridge unreachable (tunnel "+st.State+")", http.StatusBadGateway)

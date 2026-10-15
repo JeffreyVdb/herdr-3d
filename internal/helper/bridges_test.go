@@ -757,6 +757,72 @@ func TestSwitchClosesWS(t *testing.T) {
 	}
 }
 
+// TestWSKeepsThePagesBridge: a page's /ws names the bridge its keys belong
+// to (?bridge=<id>, "none" for a helper with none). After a switch made
+// elsewhere (another tab) its reconnects are refused, so it never shows the
+// new bridge's world under the old one's drafts and seats; a page naming the
+// bridge in use, or none at all (no helper scope), is let through.
+func TestWSKeepsThePagesBridge(t *testing.T) {
+	dir := shortDir(t)
+	sockA, sockB := filepath.Join(dir, "a", "b.sock"), filepath.Join(dir, "b", "b.sock")
+	startBridge(t, sockA)
+	startBridge(t, sockB)
+	a := BridgeEntry{ID: NewBridgeID(), Name: "A", Kind: KindLocal, Socket: sockA}
+	b := BridgeEntry{ID: NewBridgeID(), Name: "B", Kind: KindLocal, Socket: sockB}
+	set, err := NewBridgeSet(BridgeSetConfig{SocketDir: filepath.Join(dir, "tun"), Log: quietLog()}, BridgeList{Active: a.ID, Bridges: []BridgeEntry{a, b}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { set.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	ts := helperServer(t, set, nil)
+	ws := func(bridge string) (int, error) {
+		q := "?token=" + testToken
+		if bridge != "" {
+			q += "&bridge=" + bridge
+		}
+		c, resp, err := dialWS(ts, "127.0.0.1:7777", "http://127.0.0.1:7777", q)
+		if err != nil {
+			if resp != nil {
+				return resp.StatusCode, err
+			}
+			return 0, err
+		}
+		defer c.CloseNow()
+		expectWorld(t, c)
+		return http.StatusSwitchingProtocols, nil
+	}
+	if st, err := ws(a.ID); err != nil {
+		t.Fatalf("a page of A, A in use: %d %v", st, err)
+	}
+	if err := set.Activate(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, page := range []string{a.ID, "none"} {
+		if st, err := ws(page); err == nil || st != http.StatusConflict {
+			t.Errorf("a page of %s, B in use: %d %v, want 409", page, st, err)
+		}
+	}
+	for _, page := range []string{b.ID, ""} {
+		if st, err := ws(page); err != nil {
+			t.Errorf("a page of %q, B in use: %d %v", page, st, err)
+		}
+	}
+
+	// The check is the set's own, under its lock: a page of A never gets a
+	// connection dialled to B, nor one to A that a switch overtook.
+	if _, err := set.Dial(expectBridge(context.Background(), a.ID)); !errors.Is(err, ErrBridgeChanged) {
+		t.Errorf("dial for A with B in use: %v", err)
+	}
+	c, err := set.Dial(expectBridge(context.Background(), b.ID))
+	if err != nil {
+		t.Fatalf("dial for B with B in use: %v", err)
+	}
+	c.Close()
+}
+
 // TestRoutesFollowTheSwitch: every route the helper proxies reaches the bridge
 // in use, and right after a switch the next request reaches the new one, not
 // the old one over a kept-alive connection.

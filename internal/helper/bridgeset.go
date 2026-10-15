@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -95,6 +96,20 @@ func bridgeErr(status int, code, format string, args ...any) error {
 
 // ErrNoBridge is what Dial says while the list is empty.
 var ErrNoBridge = errors.New("no bridge configured: add one in Settings")
+
+// ErrBridgeChanged is what Dial says when the bridge in use is not the one the
+// dial was for: a page's keys and in-memory state belong to one bridge, and a
+// switch made elsewhere (another tab) must not hand it another's world.
+var ErrBridgeChanged = errors.New("the bridge in use changed: reload the game")
+
+type expectKey struct{}
+
+// expectBridge makes a dial a page's of bridge id ("none": a helper that had
+// no bridge when the page started): Dial refuses it unless that is the bridge
+// in use.
+func expectBridge(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, expectKey{}, id)
+}
 
 // NewBridgeSet supervises list (checked, as LoadBridgeList does) once Run starts.
 func NewBridgeSet(cfg BridgeSetConfig, list BridgeList) (*BridgeSet, error) {
@@ -245,10 +260,14 @@ func (s *BridgeSet) active() *entryRun {
 	return s.run(s.list.Bridges[s.list.find(s.list.Active)])
 }
 
-// Dial connects to the bridge in use. The connection is the entry's: a switch
-// closes it.
+// Dial connects to the bridge in use (for a ctx from expectBridge, only if it
+// is that one). The connection is the entry's: a switch closes it.
 func (s *BridgeSet) Dial(ctx context.Context) (net.Conn, error) {
 	s.mu.Lock()
+	if want, ok := ctx.Value(expectKey{}).(string); ok && want != cmp.Or(s.list.Active, "none") {
+		s.mu.Unlock()
+		return nil, ErrBridgeChanged
+	}
 	r := s.active()
 	s.mu.Unlock()
 	if r == nil {
@@ -262,7 +281,7 @@ func (s *BridgeSet) Dial(ctx context.Context) (net.Conn, error) {
 	defer s.mu.Unlock()
 	if s.active() != r { // switched while dialling: it belongs to no one
 		c.Close()
-		return nil, errors.New("the bridge in use changed")
+		return nil, ErrBridgeChanged
 	}
 	tc := &trackedConn{Conn: c, set: s, run: r}
 	r.conns[tc] = struct{}{}

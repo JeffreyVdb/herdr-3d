@@ -131,6 +131,14 @@ is not `up` can be activated (the game asks first). The bridge in use cannot be 
 list file, a helper given `-host` / `$H3D_HELPER_HOST` (and `-remote-socket`) makes that host the only bridge, named
 after it, in use; once the file exists it is the truth. With neither, the list is empty and the game says so.
 
+A page keeps the bridge its per-bridge keys were chosen for at start, and its `/ws` names it:
+`/ws?token=<token>&bridge=<id>` (`bridge=none` when the helper had no bridge). The helper dials that bridge only:
+another one in use (a switch made in another tab, or the first bridge added there) answers `409` with no connection to
+any bridge, so the page never shows another bridge's world under its drafts and seats. The page hears of the switch
+from the list (Settings and the palette poll it while open) or, when its connection drops, by asking for the list,
+and reloads on the bridge in use ("Switching to <name>…"). A `/ws` without `bridge` (a page no helper scope covers) is
+let through to the bridge in use, as before.
+
 ## Handshake
 
 The first client message must be `hello`. Anything else gets an `error` with code `hello_required` and the connection

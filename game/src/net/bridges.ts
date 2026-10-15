@@ -201,3 +201,26 @@ export class BridgeBook {
     return () => this.listeners.delete(fn);
   }
 }
+
+/**
+ * #57: a page keeps the bridge its per-bridge keys were chosen for (`bridgeScope()`, set once at start). When the helper
+ * names another one in use (a switch made in another tab, or the first bridge added there), the drafts, seats and
+ * overview state this page holds are the old bridge's: `moved` is called once, with the bridge now in use, and the page
+ * starts over on it (a reload). The helper refuses this page's `/ws` meanwhile (`?bridge=`), so the new bridge's world
+ * never shows under the old one's state.
+ *
+ * It hears of a switch from any list the book gets (Settings and the palette poll while open) and, since a tab in the
+ * background polls nothing, from `connLost`: a switch elsewhere closes this page's connection, and its reconnects are
+ * refused until it moves.
+ */
+export function followActiveBridge(book: BridgeBook, scope: () => string | null, moved: (to: BridgeEntry | null) => void): { connLost(): Promise<void> } {
+  let done = false;
+  const check = () => {
+    const l = book.list;
+    if (done || !book.api || !l || (l.active || null) === scope()) return;
+    done = true;
+    moved(book.active);
+  };
+  book.onChange(check);
+  return { connLost: () => (book.api && !done ? book.refresh() : Promise.resolve()) };
+}

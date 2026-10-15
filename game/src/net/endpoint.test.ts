@@ -71,4 +71,11 @@ describe('bridgeUrl', () => {
     );
     expect(bridgeUrl(loc({ search: '?ws=http://localhost:5000/ws' }), null)).toBe('ws://localhost:5000/ws');
   });
+  it('#57: names the bridge the page belongs to, for the helper to refuse it after a switch elsewhere', () => {
+    expect(bridgeUrl(loc(), 'abc', 'aaaaaaaaaa')).toBe('ws://127.0.0.1:7777/ws?token=abc&bridge=aaaaaaaaaa');
+    expect(bridgeUrl(loc(), 'abc', 'none')).toBe('ws://127.0.0.1:7777/ws?token=abc&bridge=none');
+    // No helper scope: as before.
+    expect(bridgeUrl(loc(), 'abc', null)).toBe('ws://127.0.0.1:7777/ws?token=abc');
+    expect(bridgeUrl(loc(), null, 'aaaaaaaaaa')).toBe('ws://127.0.0.1:7777/ws');
+  });
 });

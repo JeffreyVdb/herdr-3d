@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type WebSocketRoute } from '@playwright/test';
 import { fakeHelper, TOKEN, type FakeBridge } from './bridges';
 import { openGame, openMenu, settingsSection, watchErrors } from './game';
 
@@ -142,6 +142,55 @@ test('⌘P → Switch bridge: the others, online first; an offline one asks; the
   await page.waitForFunction(() => window.__h3d?.ready);
   expect(helper.state.active).toBe(devbox.id);
   await expect(page.locator('.conn')).toHaveAttribute('title', /· Bridge: devbox$/);
+  expectClean();
+});
+
+test('a switch made in another tab: this page starts over on the new bridge, from a dropped connection or the list it polls', async ({ page }) => {
+  const expectClean = watchErrors(page);
+  const helper = await fakeHelper(page, [devbox, { ...laptop, state: 'up' }], devbox.id);
+  // The page's /ws, passed through to the fixture: the test closes it the way the helper does on a switch.
+  const sockets: WebSocketRoute[] = [];
+  await page.routeWebSocket(/\/fixture\//, (ws) => {
+    ws.connectToServer();
+    sockets.push(ws);
+  });
+  const bridgeOf = (ws: WebSocketRoute | undefined) => (ws ? new URL(ws.url()).searchParams.get('bridge') : null);
+  // What the chip said, across the reload.
+  await page.addInitScript(() => {
+    let last = '';
+    new MutationObserver(() => {
+      const t = document.querySelector('.conn')?.textContent ?? '';
+      if (t === last) return;
+      last = t;
+      sessionStorage.setItem('h57-chips', JSON.stringify([...(JSON.parse(sessionStorage.getItem('h57-chips') ?? '[]') as string[]), t]));
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+  await openGame(page, 'demo-m6', '', SIM);
+  // The page names the bridge its drafts and seats belong to: the helper connects it to that one only.
+  expect(bridgeOf(sockets.at(-1))).toBe(devbox.id);
+
+  // Another tab switches to Laptop and the helper drops this page's connection. A tab in the background polls
+  // nothing: the drop is what tells it, and it starts over on Laptop instead of reconnecting under devbox's keys.
+  helper.state.active = laptop.id;
+  const load = page.waitForEvent('load');
+  await sockets.at(-1)!.close({ code: 1006 });
+  await load;
+  await page.waitForFunction(() => window.__h3d?.ready);
+  expect(await page.evaluate(() => JSON.parse(sessionStorage.getItem('h57-chips') ?? '[]') as string[])).toContain('Switching to Laptop…');
+  await expect(page.locator('.conn')).toHaveAttribute('title', /· Bridge: Laptop$/);
+  expect(bridgeOf(sockets.at(-1))).toBe(laptop.id);
+
+  // Back to devbox, elsewhere again: this time the switch list (it polls while open) says so first.
+  helper.state.active = devbox.id;
+  const back = page.waitForEvent('load');
+  await page.keyboard.press('Control+KeyP');
+  await page.keyboard.type('switch bridge');
+  await expect(names(page).first()).toHaveText('Switch bridge');
+  await page.keyboard.press('Enter');
+  await back;
+  await page.waitForFunction(() => window.__h3d?.ready);
+  await expect(page.locator('.conn')).toHaveAttribute('title', /· Bridge: devbox$/);
+  expect(bridgeOf(sockets.at(-1))).toBe(devbox.id);
   expectClean();
 });
 

@@ -126,7 +126,8 @@ import type { WhiteboardState } from './net/protocol';
 import { awayText, burstText, BURST_TAG, DesktopNotify, pingTitle } from './ui/desktopNotify';
 import { InboxPings, pingEntries, type PingEntry, type PingOut } from './world/inboxPings';
 // #57: the helper's bridges (Settings → Bridges, ⌘P → Switch bridge)
-import { BridgeBook, isOnline, type BridgeEntry } from './net/bridges';
+import { BridgeBook, followActiveBridge, isOnline, type BridgeEntry } from './net/bridges';
+import { bridgeScope } from './net/bridgeScope';
 import { bridgesSection } from './ui/bridgesSection';
 import { confirmSwitch } from './ui/bridgeSwitch';
 
@@ -319,6 +320,8 @@ export class App {
   private readonly buildInfo: BuildInfo | null;
   /** #57: a switch is under way (the page reloads when the helper has it). */
   private switching = false;
+  /** #57: moves the page to the bridge in use when another tab switched (or added the first). */
+  private readonly follow: { connLost(): Promise<void> };
   private readonly noOpen: boolean;
   /** The floor this connection watches for boards (null: none). */
   private watched: string | null = null;
@@ -530,8 +533,10 @@ export class App {
     this.token = token;
     this.noOpen = o.params.get('open') === 'none';
     this.url = bridgeUrl(window.location, token);
+    // #57: the helper lets this page's /ws through to the bridge its keys belong to only (`none`: it had none).
+    this.follow = followActiveBridge(this.bridges, bridgeScope, (b) => this.followSwitch(b));
     this.client = new BridgeClient({
-      url: this.url,
+      url: bridgeUrl(window.location, token, bridgeScope() ?? (this.bridges.list ? 'none' : null)),
       clientName: CLIENT,
       socket: (u) => new WebSocket(u) as unknown as SocketLike,
       handlers: {
@@ -561,6 +566,8 @@ export class App {
           this.laptops.setConnected(s.phase === 'live');
           this.screen.setConnected(s.phase === 'live'); // M13: a new connection is told whether this game shares
           this.hud.setConn(s, this.fixture, Date.now());
+          // #57: a switch in another tab drops this connection: ask the helper which bridge is in use now.
+          if (s.phase === 'waiting') void this.follow.connLost();
           this.palette.refresh(); // #147: the floors grey out without a connection
           this.updateNotice();
         },
@@ -1778,8 +1785,21 @@ export class App {
     this.reload();
   }
 
+  /**
+   * Another tab put another bridge in use (or added the first): this page's drafts, seats and overview state are the
+   * old one's, so it starts over on the new one, as if it had switched itself.
+   */
+  private followSwitch(b: BridgeEntry | null): void {
+    if (this.switching) return;
+    if (b) return this.reloadFor(b, 'Switching to');
+    this.switching = true;
+    this.client.stop();
+    this.reload();
+  }
+
   /** The bridge in use has a new address (or is the first): the page reloads to connect through it. */
   private reloadFor(b: BridgeEntry, verb: string): void {
+    if (this.switching) return; // already reloading (the first bridge added here: the list said so first)
     this.switching = true;
     this.hud.setConnOverride({ text: `${verb} ${b.name}…`, title: `${verb} ${b.name}: the game reloads`, phase: 'connecting' });
     this.client.stop();
