@@ -73,14 +73,14 @@ func (e *eventLog) methods() []string {
 // control is the bridge's write path aimed at the fixture's session, with
 // the fixture's run directory as its codex run directory.
 func (f *fx) control(run string) *herdr.Control {
-	return &herdr.Control{CodexRun: run, Timeout: 90 * time.Second}
+	return &herdr.Control{CodexRun: run, Timeout: 90 * time.Second, Shell: f.sh}
 }
 
 // startShared starts ws's server from its pane (the launcher typed with
 // `pane run`), waits for a supported server and finds its process.
 func (f *fx) startShared(ctl *herdr.Control, s *sharedLaunch) {
 	f.t.Helper()
-	l, err := codexapp.NewLaunch(ctl.CodexRun, s.l.Name, s.cwd)
+	l, err := codexapp.NewLaunchFor(ctl.Shell, ctl.CodexRun, s.l.Name, s.cwd)
 	if err != nil {
 		f.t.Fatal(err)
 	}

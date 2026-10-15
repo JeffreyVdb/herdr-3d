@@ -16,7 +16,7 @@
   generations; `server` reads its snapshot for `worker.repos`), `fuzzy` (#137: the pure fzf-style path scorer and bounded
   top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `codexapp` (#155: the bridge's side
   of a shared-server Codex worker's own app-server: the passive protocol adapter `Watcher` (initialize, `thread/resume`
-  by id only, bounded reconnect, `thread/unsubscribe`, never answers a server request), the fish launcher, the
+  by id only, bounded reconnect, `thread/unsubscribe`, never answers a server request), the launcher (bash by default, fish by option), the
   processes it may stop (only those carrying the launch's marker token), and the checks before a launch; every Codex
   protocol detail the bridge knows; `server` uses it), `codexreply` (#183: the native reply to Codex's async questions, its envelope built and recognised by one rule; standard library only, `codexapp` re-exports it and `transcript` reads the readable answer entries with it), `codexshare` (#154: test fixture only, imported by nothing; it
   imports `codexapp` (its dial, and #155's launch and adapter in the real-TUI suites): an isolated CODEX_HOME, a
@@ -211,8 +211,8 @@ parts:
   list --json`. `TestReadOnlyAllowlist` is the tripwire.
 - **Writes** (`herdr.Control`), for `floor.wake` / `floor.sleep`, `session.create` (#58), `worker.hire` /
   `worker.fire` and the laptops (M5) only: exactly the command shapes in `controlShapes`.
-  - Wake and sleep: `systemd-run --user --unit=herdr-s-<name> … /bin/fish -l -c "exec herdr --session '<name>'
-    server"`, `herdr session stop <name> --json`, `herdr --session <name> pane run <pane> "claude --resume <id>"` /
+  - Wake and sleep: `systemd-run --user --unit=herdr-s-<name> … <shell> -l -c "exec herdr --session '<name>'
+    server"` (`<shell>`: the bridge's shell policy, `--shell bash|fish`, bash by default: [protocol.md](docs/protocol.md#shell-policy)), `herdr session stop <name> --json`, `herdr --session <name> pane run <pane> "claude --resume <id>"` /
     `"codex resume <id>"`, `herdr --session <name> pane report-agent-session <pane> --source herdr:codex --agent codex
     --agent-session-id <id>`, and the read-only `herdr --session <name> pane process-info --pane <pane>`.
   - New session (#58, `create-session`): the wake's `systemd-run` shape for a name herdr has not seen, after
@@ -230,14 +230,14 @@ parts:
   - Send home: `pane send-text <pane> /exit` / `/quit`, `workspace close <ws>`, `worktree remove --workspace <ws>`
     (never `--force`, never `--group`).
   - #155 shared Codex server (a Codex hire with the `codex_server` switch on, its sleep and wake): `pane run <pane>
-    "setsid -f fish <launcher> </dev/null >/dev/null 2>&1"` (the launcher the bridge wrote), `agent start <name> --kind
+    "setsid -f <shell> <launcher> </dev/null >/dev/null 2>&1"` (the launcher the bridge wrote, in the policy's shell), `agent start <name> --kind
     codex --pane <pane> --timeout 30000 -- --remote unix://<socket> -C <dir> -m <m> -c model_reasoning_effort=<e>
     --dangerously-bypass-approvals-and-sandbox`, and on wake the same with `resume <id>` first and **no** bypass flag
     (a remote resume refuses permission overrides); a wake whose server does not start resumes on the embedded server
     with `agent start <name> --kind codex --pane <pane> --timeout 30000 -- resume <id> -m <m> -c
     model_reasoning_effort=<e> --dangerously-bypass-approvals-and-sandbox` (never an argument-free `codex resume`).
     The launcher and socket must sit directly in `Control.CodexRun`
-    (`--codex-run`, default `$XDG_RUNTIME_DIR/herdr-world/codex`), with only `[A-Za-z0-9._/-]` and a `.fish` / `.sock`
+    (`--codex-run`, default `$XDG_RUNTIME_DIR/herdr-world/codex`), with only `[A-Za-z0-9._/-]` and a `.sh` (`.fish` under the fish policy) / `.sock`
     name; `-C`'s directory only plain path characters (`ValidPlainDir`). Sleep quits the TUI with the send home's
     `/quit` + Enter, never Esc or Ctrl-C; a shared worker's send home sends no Ctrl-C either.
   - Laptops (M5, `terminal.watch`, `worker.keys` / `prompt` / `answer`): the read-only, long-running `terminal session
@@ -380,7 +380,7 @@ everyone works in. To try wake and sleep safely:
 ```sh
 s=h3d-mytask-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')
 systemd-run --user --unit=herdr-s-$s --collect -p KillMode=process --working-directory=$HOME \
-  /bin/fish -l -c "exec herdr --session '$s' server"            # the bridge's own start command
+  "$(command -v bash)" -l -c "exec herdr --session '$s' server"  # the bridge's own start command (--shell bash, the default)
 env -u HERDR_ENV -u HERDR_SESSION -u HERDR_SOCKET_PATH herdr --session $s workspace create --cwd /tmp --label demo --no-focus
 bin/herdr-world --socket "$sock" --db /tmp/h3d-mytask/world.db --sessions '^h3d-mytask-' &
 bin/herdr-world cmd --socket "$sock" floor.sleep "{\"session\":\"$s\"}"   # herdr session stop
@@ -476,6 +476,7 @@ that directory.
 | `--git` | `HERDR_WORLD_GIT` | `git` on `PATH`: worktree hires, send-home checks and the repo suggestion |
 | `--rg` | `HERDR_WORLD_RG` | `rg` on `PATH`: `worker.files` lists a checkout outside git with it (#137); without it such a checkout lists no files, with a reason |
 | `--gh` | `HERDR_WORLD_GH` | `gh` on `PATH`: the issue and pull request boards (M7); without it boards say `gh not found` |
+| `--shell` | `HERDR_WORLD_SHELL` | `bash`: the shell of a woken floor's login environment and of the shared Codex launchers (#68), `bash` or `fish` and nothing else; `$SHELL` is never read. A shell that is not installed refuses the start. See "Bash and Fish hosts" below |
 | `--max-watches` | `HERDR_WORLD_MAX_WATCHES` | `6`: laptop screens (`terminal.watch`) one connection may watch at once (`capacity` above) |
 | `--max-observers` | `HERDR_WORLD_MAX_OBSERVERS` | `16`: laptop screens watched at once over all connections, one `terminal session observe` each |
 | `--log-level`, `--log-format` | `HERDR_WORLD_LOG_LEVEL`, `HERDR_WORLD_LOG_FORMAT` | `info`, `text` (or `json`) |
@@ -488,6 +489,28 @@ install -Dm644 deploy/herdr-world.service ~/.config/systemd/user/herdr-world.ser
 systemctl --user daemon-reload && systemctl --user enable --now herdr-world
 journalctl --user -u herdr-world -f
 ```
+
+#### Bash and Fish hosts (#68)
+
+The bridge needs **bash, and no fish**. Wake runs `<bash> -l -c "exec herdr …"` and a shared Codex worker starts its
+server through a bash launcher; nothing starts fish unless you ask, however fish is installed and whatever `SHELL`
+the service inherits. On a Bash host:
+
+- `herdr` must be on the **login** shell's `PATH` (bash reads `/etc/profile`, then `~/.bash_profile` or `~/.profile`,
+  not `~/.bashrc`): `export PATH="$HOME/.local/bin:$PATH"` there. Set `HERDR_WORLD_HERDR` as the unit does for the
+  bridge's own calls.
+- The worker's server is started by an *interactive* bash, so a `codex` function or alias in `~/.bashrc` applies as it
+  does in the worker's pane (keep the usual `[[ $- != *i* ]] && return` guard; a `.bashrc` that execs another shell
+  or reads the terminal is not supported). Exported variables (direnv's, `PATH`, `HERDR_*`) always arrive; functions
+  and aliases defined only in a login file or by a prompt hook do not. Details: [protocol.md](docs/protocol.md#shell-policy).
+- An uninstalled bash refuses the start: `the configured shell "bash" was not found … install it, or set --shell (or
+  $HERDR_WORLD_SHELL) to fish`.
+
+To keep Fish's login environment and `config.fish` wrappers (v1.45.0's behaviour), opt in explicitly with
+`systemctl --user edit herdr-world` and `[Service]` `Environment=HERDR_WORLD_SHELL=fish` (fish must be installed;
+`/bin/fish` is used when it exists). In-flight Fish launches written by v1.45.0 are still recovered and cleaned up by a
+bash-default bridge. Test fixtures: `H3D_CODEXSHARE_SHELL=fish make codex-shared-tui` runs the integration suites
+under fish (skipped when fish is not installed; the default is bash).
 
 ### Integration test
 

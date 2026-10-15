@@ -8,6 +8,11 @@
 #   systemctl --user daemon-reload && systemctl --user enable --now herdr-world
 # Logs: journalctl --user -u herdr-world -f
 # Override settings with `systemctl --user edit herdr-world` (HERDR_WORLD_* variables).
+# Shell (#68): the bridge wakes floors and starts shared Codex servers through bash by
+# default; fish is not needed. To keep fish's login environment instead, add
+#   [Service]
+#   Environment=HERDR_WORLD_SHELL=fish
+# (CONTRIBUTING.md "Bash and Fish hosts"). herdr must be on the login shell's PATH.
 
 [Unit]
 Description=herdr-world bridge for herdr-3d

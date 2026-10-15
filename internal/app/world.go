@@ -36,6 +36,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/repodisc"
 	"github.com/JeffreyVdb/herdr-3d/internal/screenshare"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/upload"
@@ -85,6 +86,11 @@ const EnvScreenDir = "HERDR_WORLD_SCREEN_DIR"
 // EnvCodexRun names the private directory of the shared Codex servers'
 // launchers and sockets (#155).
 const EnvCodexRun = "HERDR_WORLD_CODEX_RUN"
+
+// EnvShell names the shell policy (#68): bash (the default) or fish. It picks
+// the login shell that starts a woken floor's herdr server and the shell
+// that runs a shared Codex worker's launcher. $SHELL is never read.
+const EnvShell = "HERDR_WORLD_SHELL"
 
 // DefaultCodexRun is $XDG_RUNTIME_DIR/herdr-world/codex (#155): short, so a
 // worker's socket path stays under the 108-byte limit.
@@ -300,6 +306,22 @@ func DefaultDB() string {
 	return filepath.Join(dir, "herdr-world", "world.db")
 }
 
+// resolveShell reads the shell policy (an explicit value, else bash: never
+// $SHELL, and never whichever shell happens to be installed) and finds its
+// executable. A shell that is not installed refuses the start with the option
+// to change, instead of failing at the first wake.
+func resolveShell(configured string) (shell.Kind, string, error) {
+	kind, err := shell.Parse(configured)
+	if err != nil {
+		return "", "", fmt.Errorf("-shell: %w", err)
+	}
+	bin, err := shell.Resolve(kind)
+	if err != nil {
+		return "", "", fmt.Errorf("-shell: %w", err)
+	}
+	return kind, bin, nil
+}
+
 // orNone is v, "" for "-".
 func orNone(v string) string {
 	if v == "-" {
@@ -430,6 +452,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	dropzoneData := fs.String("dropzone-data", envOr(EnvDropzoneData, DefaultDropzoneData()), "Drop Zone's data directory: a root a transcript's [Image #n: path] may be read under ($"+EnvDropzoneData+")") // M16 images
 	imageCache := fs.String("image-cache", os.Getenv(EnvImageCache), "directory of the transcript image disk cache, \"-\" for none (default $XDG_CACHE_HOME/herdr-world/img) ($"+EnvImageCache+")")          // M16 images
 	codexRun := fs.String("codex-run", envOr(EnvCodexRun, DefaultCodexRun()), "private directory of the shared Codex servers' launchers and sockets, \"-\" for none (#155) ($"+EnvCodexRun+")")
+	shellPolicy := fs.String("shell", os.Getenv(EnvShell), "shell of woken floors' login environment and of the shared Codex launchers: bash (the default) or fish, an explicit compatibility option; $SHELL is never used ($"+EnvShell+")")
 	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")")      // M13 screen
 	handoffDir := fs.String("handoff-dir", envOr(EnvHandoffDir, DefaultHandoffDir()), "directory of the filing cabinet's handoffs (<dir>/<floor>/*.md), \"-\" for none ($"+EnvHandoffDir+")") // #223
 	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")                    // M13 whiteboard
@@ -473,6 +496,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("serve takes no arguments, got %q", fs.Args())
+	}
+	shellKind, shellBin, err := resolveShell(*shellPolicy) // #68: refused before anything starts
+	if err != nil {
+		return err
 	}
 	if maxDesks < 1 {
 		return fmt.Errorf("-max-desks must be at least 1, got %d", maxDesks)
@@ -582,7 +609,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	return Serve(ctx, ServeConfig{
 		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
-		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only, CodexRun: orNone(*codexRun)},
+		Control:     &herdr.Control{Herdr: *herdrBin, SystemdRun: *systemdRun, Only: only, CodexRun: orNone(*codexRun), Shell: shellKind, ShellBin: shellBin},
 		CodexRun:    orNone(*codexRun), // #155 shared Codex server
 		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, WrapUpTimeout: wrapUpTimeout, CodexSessions: *codexSessions,
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
@@ -802,6 +829,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	opts.ScreenDir, opts.ScreenTimeout, opts.ScreenTTL = cfg.ScreenDir, cfg.ScreenTimeout, cfg.ScreenTTL // M13 screen
 	if cfg.CodexRun != "" && cfg.Control != nil {                                                        // #155
 		opts.CodexRun = cfg.CodexRun
+		opts.CodexShell = cfg.Control.Shell // #68: the launchers are written in the shell that runs them
 		opts.CodexHost = server.NewCodexHost(execpath.Resolve(cmp.Or(cfg.CodexCLI, "codex")), execpath.Resolve("direnv"))
 	}
 

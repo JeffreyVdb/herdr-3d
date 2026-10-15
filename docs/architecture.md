@@ -106,8 +106,9 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   safety re-snapshot; re-snapshot on any stream EOF. Unfiltered status subs send no initial event; `workspace.closed`
   may lack the final snapshot; event latency is not bounded at 100 ms.
 - **Stopped sessions**: parse `session.json` (guard `version==3`, tolerate unknown fields) for the sleeping floor.
-- **Wake a floor**: `systemd-run --user --unit=herdr-s-<name> --collect -p KillMode=process /bin/fish -l -c 'exec herdr --session <name> server'`
-  (login env → API-key wrappers, no CLAUDE* leakage). Agents auto-resumed in tests without a client attached; still
+- **Wake a floor**: `systemd-run --user --unit=herdr-s-<name> --collect -p KillMode=process <shell> -l -c 'exec herdr --session <name> server'`
+  (login env → API-key wrappers, no CLAUDE* leakage). `<shell>` is the bridge's **shell policy** (#68): `bash` by its
+  absolute path by default, `/bin/fish` only when `--shell fish` asks for it ([shell policy](protocol.md#shell-policy)). Agents auto-resumed in tests without a client attached; still
   confirm each, with a fallback. herdr 0.9 restores a pane's agent before it runs and sends no `pane.agent_detected` for
   a resume (M3, verified live), so the bridge confirms by the pane's foreground process (`pane process-info`) or a
   detection naming the agent; a detection without an agent means it exited. Codex may need `pane report-agent-session`
@@ -116,8 +117,8 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   first; `workspace create --cwd … --label … --no-focus`, or for a worktree `git fetch origin` (a failed fetch refuses the hire: `fetch_failed`) then `herdr worktree
   create --cwd <repo> --branch h3d/<name>-<id6> --base origin/<default> --label … --no-focus` (never the local HEAD,
   agent-office #119) → the workspace is bound to that id (so it sits at the chosen desk) → pane-label marker
-  `h3d-<12 hex>` → `agent start <name>-<id6> --kind claude|codex --pane … -- <args>` through the shell pane (fish
-  wrappers apply) → answer the trust dialog → optional first prompt. Capacity caps per floor and host (soft: warn,
+  `h3d-<12 hex>` → `agent start <name>-<id6> --kind claude|codex --pane … -- <args>` through the shell pane (the
+  pane's own shell wrappers apply) → answer the trust dialog → optional first prompt. Capacity caps per floor and host (soft: warn,
   hard: refuse); a worktree hire counts one: the repository's main checkout herdr may open with it holds only a shell and is hidden (not a worker) while it has no agent and a worktree of the repository is open. The branch is
   recorded as the bridge's for that worker (SQLite `hire_branch`, with its base commit). A failed hire rolls back:
   the workspace closes; the checkout goes only if clean, the branch only if still at its base; then the idle main checkout herdr opened for it is closed too.
@@ -158,8 +159,9 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
     home). A Codex hire made with it off writes no record and starts byte-for-byte as before; Claude hires never look
     at it. Orchestrator-created Codex workers (write-code, through the herdr CLI) bypass the bridge and stay embedded.
   - **Server ownership.** One `codex app-server` per worker, never the CODEX_HOME daemon (findings B1–B3). The bridge
-    writes a launcher into the run directory and types `setsid -f fish <launcher>` into the worker's pane, so the
-    server has that pane's fish, direnv and herdr environment; the launcher marks its processes with a per-launch
+    writes a launcher into the run directory and types `setsid -f <shell> <launcher>` into the worker's pane (`<shell>`
+    is the [shell policy](protocol.md#shell-policy): bash's absolute path, or `fish`), so the server has that pane's exports,
+    direnv and herdr environment and its `codex` wrapper; the launcher marks its processes with a per-launch
     token, records the pid and listens on `unix://<run>/<marker hex>.sock` with the cwd trusted in memory and
     `-c features.instant_interrupt=false` (`codexapp.ServerFeatures`, below). Then the
     TUI: `agent start … -- --remote unix://<socket> -C <dir> -m … -c model_reasoning_effort=…

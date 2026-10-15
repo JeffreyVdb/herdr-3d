@@ -445,7 +445,7 @@ func (h *Hub) startSharedServer(ctx context.Context, sl *sharedLaunch, hh interf
 	StartCodexServer(ctx context.Context, session, pane, launcher string) error
 }) error {
 	host := h.opts.CodexHost
-	l, err := codexapp.NewLaunch(h.opts.CodexRun, sl.rec.Name, sl.rec.Cwd)
+	l, err := codexapp.NewLaunchFor(h.opts.CodexShell, h.opts.CodexRun, sl.rec.Name, sl.rec.Cwd)
 	if err != nil {
 		return err
 	}

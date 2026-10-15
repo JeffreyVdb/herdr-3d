@@ -66,7 +66,7 @@ func TestCodexShareRealModelSmoke(t *testing.T) {
 
 	// The user's own login environment, minus Herdr, Codex and Claude
 	// variables, plus the owner marker: no CODEX_HOME, so the real one.
-	f.h, err = StartHerdr(ctx, root, os.Environ(), OwnerVar+"="+f.owner)
+	f.h, err = StartHerdr(ctx, root, fixtureShell(t), os.Environ(), OwnerVar+"="+f.owner)
 	if err != nil {
 		t.Fatal(err)
 	}

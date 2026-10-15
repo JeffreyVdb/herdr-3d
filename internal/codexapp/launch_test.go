@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 )
 
 func testLaunch(t *testing.T) Launch {
@@ -27,8 +29,26 @@ func testLaunch(t *testing.T) Launch {
 	return l
 }
 
-func TestLaunchScript(t *testing.T) {
+func TestLaunchScriptBash(t *testing.T) {
 	l := testLaunch(t)
+	want := "# herdr-3d (#68): this worker's own Codex app-server, started from its pane (bash).\n" +
+		"export H3D_CODEX_SERVER=" + l.Token + "\n" +
+		"echo $$ >'" + l.Dir + "/a58752ea6511.pid'\n" +
+		`exec "$BASH" -i +H -c 'unset HISTFILE; codex app-server -c '\''projects={"/home/u/repo"={trust_level="trusted"}}'\'' -c '\''features.instant_interrupt=false'\'' --listen '\''unix://` +
+		l.Dir + `/a58752ea6511.sock'\'' </dev/null >'\''` + l.Dir + `/a58752ea6511.log'\'' 2>&1'` + "\n"
+	if got := l.Render(); got != want {
+		t.Fatalf("script =\n%s\nwant\n%s", got, want)
+	}
+	if got, want := l.Script(), filepath.Join(l.Dir, "a58752ea6511.sh"); got != want {
+		t.Fatalf("Script() = %s, want %s", got, want)
+	}
+	assertInvalidLaunches(t, l)
+}
+
+// The fish launcher is v1.45.0's, byte for byte.
+func TestLaunchScriptFish(t *testing.T) {
+	l := testLaunch(t)
+	l.Shell = shell.Fish
 	want := "# herdr-3d (#155): this worker's own Codex app-server, started from its pane.\n" +
 		"set -gx H3D_CODEX_SERVER " + l.Token + "\n" +
 		"echo $fish_pid >'" + l.Dir + "/a58752ea6511.pid'\n" +
@@ -37,15 +57,36 @@ func TestLaunchScript(t *testing.T) {
 	if got := l.Render(); got != want {
 		t.Fatalf("script =\n%s\nwant\n%s", got, want)
 	}
+	if got, want := l.Script(), filepath.Join(l.Dir, "a58752ea6511.fish"); got != want {
+		t.Fatalf("Script() = %s, want %s", got, want)
+	}
+	assertInvalidLaunches(t, l)
+}
+
+func assertInvalidLaunches(t *testing.T, l Launch) {
+	t.Helper()
 	for _, bad := range []Launch{
-		{Dir: l.Dir, Name: l.Name, Token: l.Token, Cwd: "/r/a b"},
-		{Dir: l.Dir, Name: l.Name, Token: l.Token, Cwd: "/r/a'b"},
-		{Dir: l.Dir, Name: "../x", Token: l.Token, Cwd: "/r"},
-		{Dir: l.Dir, Name: l.Name, Token: "short", Cwd: "/r"},
-		{Dir: "rel", Name: l.Name, Token: l.Token, Cwd: "/r"},
+		{Dir: l.Dir, Name: l.Name, Token: l.Token, Cwd: "/r/a b", Shell: l.Shell},
+		{Dir: l.Dir, Name: l.Name, Token: l.Token, Cwd: "/r/a'b", Shell: l.Shell},
+		{Dir: l.Dir, Name: "../x", Token: l.Token, Cwd: "/r", Shell: l.Shell},
+		{Dir: l.Dir, Name: l.Name, Token: "short", Cwd: "/r", Shell: l.Shell},
+		{Dir: "rel", Name: l.Name, Token: l.Token, Cwd: "/r", Shell: l.Shell},
+		{Dir: l.Dir, Name: l.Name, Token: l.Token, Cwd: "/r", Shell: "zsh"},
+		{Dir: l.Dir + "\x00", Name: l.Name, Token: l.Token, Cwd: "/r", Shell: l.Shell},
 	} {
 		if bad.Valid() == nil || bad.Write() == nil {
 			t.Errorf("launch %+v accepted", bad)
+		}
+	}
+}
+
+// bashQuote is exact for what a path may hold, run through a real bash.
+func TestBashQuote(t *testing.T) {
+	bash := requireBash(t)
+	for _, s := range []string{"", "plain", "a b", `it's`, `''`, `"dq"`, `$HOME $(id) ${x}`, "`id`", `back\slash\`, "a\nb", "!history !!", "*?[a]~", ";|&<>(){}", "tab\t", "é✓"} {
+		out, err := exec.Command(bash, "-c", "printf %s "+bashQuote(s)).Output()
+		if err != nil || string(out) != s {
+			t.Errorf("bashQuote(%q) = %s -> %q, %v", s, bashQuote(s), out, err)
 		}
 	}
 }

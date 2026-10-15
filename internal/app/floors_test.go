@@ -18,6 +18,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr/herdrtest"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
@@ -141,6 +142,10 @@ func TestWakeSleepThroughControl(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(root) })
+	bash := filepath.Join(root, "bash") // (the wake revalidates the shell it is given)
+	if err := os.WriteFile(bash, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	name := "h3d-m3go-t1"
 	host := &fakeHost{t: t, name: name, dir: filepath.Join(root, name), codexCwd: filepath.Join(root, "codex-work"),
 		resumes: map[string]string{"w1:p1": "claude --resume " + claudeID, "w2:p1": "codex resume x"}}
@@ -184,7 +189,7 @@ func TestWakeSleepThroughControl(t *testing.T) {
 		served <- Serve(ctx, ServeConfig{
 			Socket: sock, DB: db, Herdr: lister, Only: only, Poll: 50 * time.Millisecond, Resnapshot: time.Hour,
 			Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Name: "herdr-world", Ready: func() { close(ready) },
-			Control:       &herdr.Control{Herdr: "fake-herdr", SystemdRun: "fake-systemd-run", Home: "/home/u", Only: only, Run: host.run},
+			Control:       &herdr.Control{Herdr: "fake-herdr", SystemdRun: "fake-systemd-run", Home: "/home/u", Only: only, Run: host.run, Shell: shell.Bash, ShellBin: bash},
 			CodexSessions: rollouts, WakeTimeout: 2 * time.Second, ResumeTimeout: 500 * time.Millisecond,
 			ResumePoll: 10 * time.Millisecond, ResumeSettle: 30 * time.Millisecond,
 		})
@@ -258,7 +263,7 @@ func TestWakeSleepThroughControl(t *testing.T) {
 	argv = filterOps(host.Argv())
 	want = [][]string{
 		{"fake-systemd-run", "--user", "--unit=herdr-s-" + name, "--collect", "-p", "KillMode=process", "--working-directory=/home/u",
-			"/bin/fish", "-l", "-c", "exec herdr --session '" + name + "' server"},
+			bash, "-l", "-c", "exec herdr --session '" + name + "' server"},
 		{"fake-herdr", "--session", name, "pane", "run", "w2:p1", "codex resume " + codexID},
 	}
 	if !slices.EqualFunc(argv[2:], want, slices.Equal) {

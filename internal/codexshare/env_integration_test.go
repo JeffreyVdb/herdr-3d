@@ -17,9 +17,9 @@ import (
 
 // probeCmd is the harmless command the mock has the model run: it prints
 // the fixture's sentinels as the execution host sees them.
-const probeCmd = `printf 'H3DENV direnv=%s pane=%s wrapper=%s fish=%s herdrpane=%s cwd=%s tool=%s fishfn=%s\n' ` +
-	`"$H3D_DIRENV_SENTINEL" "$H3D_PANE_SENTINEL" "$H3D_WRAPPER_SENTINEL" "$H3D_FISH_SENTINEL" "$HERDR_PANE_ID" "$PWD" ` +
-	`"$(h3d-tool 2>/dev/null || echo missing)" "$(type h3d_fish_fn >/dev/null 2>&1 && echo yes || echo no)"`
+const probeCmd = `printf 'H3DENV direnv=%s pane=%s wrapper=%s shell=%s herdrpane=%s cwd=%s tool=%s shellfn=%s\n' ` +
+	`"$H3D_DIRENV_SENTINEL" "$H3D_PANE_SENTINEL" "$H3D_WRAPPER_SENTINEL" "$H3D_SHELL_SENTINEL" "$HERDR_PANE_ID" "$PWD" ` +
+	`"$(h3d-tool 2>/dev/null || echo missing)" "$(type h3d_shell_fn >/dev/null 2>&1 && echo yes || echo no)"`
 
 var probeRe = regexp.MustCompile(`H3DENV ([^\n\\]*)`)
 var shellRe = regexp.MustCompile(`<shell>([^<]*)</shell>`)
@@ -73,7 +73,7 @@ func (f *fx) mcpDumps(label string) []EnvDump {
 // expectWorkspace checks a probe saw workspace ws's environment.
 func expectWorkspace(t *testing.T, label string, p map[string]string, ws string, wrapper bool) {
 	t.Helper()
-	want := map[string]string{"direnv": "direnv-" + ws, "pane": "pane-" + ws, "fish": "fish-config"}
+	want := map[string]string{"direnv": "direnv-" + ws, "pane": "pane-" + ws, "shell": "shell-config"}
 	if strings.HasPrefix(ws, "blocked") {
 		want["direnv"] = ""
 	}
@@ -97,8 +97,8 @@ func expectWorkspace(t *testing.T, label string, p map[string]string, ws string,
 // their environment: today's terminal launch (Codex's embedded server), a
 // worker-owned server started from the initialized pane, and the shared
 // managed daemon. Sentinels: a direnv .envrc per workspace (allowed, or
-// blocked), the pane's Herdr env, an exported fish config variable, the
-// `codex` wrapper function's variable, and a tool on fish's PATH.
+// blocked), the pane's Herdr env, an exported shell config variable, the
+// `codex` wrapper function's variable, and a tool on the shell's PATH.
 func TestCodexShareEnvironment(t *testing.T) {
 	f := newFx(t, fxOptions{}, "ws-a", "ws-b", "blocked-c")
 

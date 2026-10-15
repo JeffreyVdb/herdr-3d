@@ -33,6 +33,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/repodisc"
 	"github.com/JeffreyVdb/herdr-3d/internal/runs"
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
@@ -311,6 +312,7 @@ type Options struct {
 	// CodexRejoin is how long a join that gave up after its retries waits
 	// before it is tried again (default DefaultCodexRejoin).
 	CodexRun          string
+	CodexShell        shell.Kind // #68: the launchers' shell (default bash); Control's policy
 	CodexHost         CodexHost
 	CodexPoll         time.Duration
 	CodexStartTimeout time.Duration

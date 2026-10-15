@@ -20,9 +20,10 @@ func (c *Control) inRun(path string) bool {
 }
 
 // StartCodexServer types the shared Codex launch's server start into a
-// pane at its shell prompt (`pane run`): `setsid -f fish <launcher>`, the
-// bridge-written script under CodexRun that starts `codex app-server`
-// with the pane's environment and leaves the pane free.
+// pane at its shell prompt (`pane run`): `setsid -f <shell> <launcher>`, the
+// bridge-written script under CodexRun (in the policy's shell: .sh for bash,
+// .fish for fish) that starts `codex app-server` with the pane's environment
+// and leaves the pane free.
 func (c *Control) StartCodexServer(ctx context.Context, session, pane, launcher string) error {
 	if !c.inRun(launcher) {
 		return fmt.Errorf("%w: launcher %q is not in the codex run directory", ErrNotAllowed, launcher)

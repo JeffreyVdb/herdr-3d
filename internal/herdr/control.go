@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 )
 
 // Control is the bridge's only write path to herdr: waking and putting
@@ -21,8 +23,9 @@ import (
 // laptops: watching a pane's screen and typing into it. It is as narrow
 // as Client is read-only: it runs exactly the commands in controlShapes,
 // with every variable part validated and passed as its own argv element
-// (no shell, except the one fish -c line that systemd-run starts, whose
-// only variable is a validated session name in single quotes). It creates
+// (no shell, except the one `<shell> -l -c` line that systemd-run starts,
+// whose only variable is a validated session name in single quotes, and the
+// one `setsid -f <shell> <launcher>` line typed into a pane). It creates
 // and closes only single workspaces (never a group), renames only a hired
 // worker's root pane (its identity marker), types into a pane only a
 // resume command, a hire's first prompt, the agents' exit commands, a
@@ -58,6 +61,19 @@ type Control struct {
 	// launcher scripts and sockets live in. A launcher or socket outside it
 	// is refused; empty refuses them all.
 	CodexRun string
+
+	// #68: Shell is the shell policy: bash (the default) or fish, an
+	// explicit compatibility option. It picks the interpreter of a woken
+	// floor's login environment and of the shared Codex launcher, and the
+	// launcher's extension. Only that shell is ever used: Control never
+	// reads $SHELL and never switches to the other one.
+	Shell shell.Kind
+	// ShellBin is the absolute path of Shell's executable. Empty, it is
+	// resolved when first needed (shell.Resolve). Either way it is checked
+	// again before every wake and launch (shell.Verify): a shell that is not
+	// installed, or was removed since, is an error naming the option, not
+	// a fallback.
+	ShellBin string
 }
 
 // Runner runs one command and returns its stdout and stderr.
@@ -122,20 +138,21 @@ const (
 )
 
 // controlShapes is the complete set of commands Control may run, as argv
-// templates. {herdr} and {systemd-run} are the configured executables;
+// templates. {herdr} and {systemd-run} are the configured executables and
+// {shell} and {launcher-shell} the shell policy's (shellBin);
 // {session}, {pane}, {id} and {home} are validated placeholders (see
 // placeholders); everything else is literal. TestControlAllowlist is the
 // tripwire: widening this needs review.
 var controlShapes = map[string][]string{
-	// Wake: a supervised headless server with Theo's login environment
-	// (docs/research/herdr-followup.md §2b).
+	// Wake: a supervised headless server with the user's login environment
+	// (docs/research/herdr-followup.md §2b), in the policy's shell (#68).
 	opStart: {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
-		"--working-directory={home}", "/bin/fish", "-l", "-c", "exec herdr --session '{session}' server"},
+		"--working-directory={home}", "{shell}", "-l", "-c", "exec herdr --session '{session}' server"},
 	// #58 Create: a new named session is a server started under a name herdr
 	// has not seen (`herdr session` has no create verb), the wake's launch.
 	// CreateSession refuses a name herdr already knows.
 	opCreateSession: {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
-		"--working-directory={home}", "/bin/fish", "-l", "-c", "exec herdr --session '{session}' server"},
+		"--working-directory={home}", "{shell}", "-l", "-c", "exec herdr --session '{session}' server"},
 	// Sleep: herdr's orderly stop (saves state, keeps agent_session).
 	opStop: {"{herdr}", "session", "stop", "{session}", "--json"},
 	// Wake fallback for an agent herdr did not resume.
@@ -207,11 +224,12 @@ var controlShapes = map[string][]string{
 
 	// #155. A shared-server Codex worker: its own app-server, started from
 	// its pane's initialized shell (the bridge-written launcher script under
-	// CodexRun; setsid keeps it off the pane's foreground job), then the
+	// CodexRun, run by the policy's shell: bash by its absolute path, fish as
+	// `fish`; setsid keeps it off the pane's foreground job), then the
 	// TUI attached to it, and on wake the remote resume, which takes no
 	// permission override (a remote resume refuses one and exits).
 	opStartCodexServer: {"{herdr}", "--session", "{session}", "pane", "run", "{pane}",
-		"setsid -f fish {launcher} </dev/null >/dev/null 2>&1"},
+		"setsid -f {launcher-shell} {launcher} </dev/null >/dev/null 2>&1"},
 	opStartCodexRemote: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
 		"--pane", "{pane}", "--timeout", "30000", "--", "--remote", "unix://{socket}", "-C", "{cwd}",
 		"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
@@ -350,7 +368,7 @@ var resumeOps = map[string]string{"claude": opResumeClaude, "codex": opResumeCod
 func CanResume(harness string) bool { _, ok := resumeOps[harness]; return ok }
 
 // StartSession starts a stopped session's server as the transient user
-// unit herdr-s-<session>, with a login fish environment.
+// unit herdr-s-<session>, with a login environment of the policy's shell.
 func (c *Control) StartSession(ctx context.Context, session string) error {
 	home, err := c.home()
 	if err != nil {
@@ -484,7 +502,8 @@ var placeholders = map[string]func(string) bool{
 	"chunk": validTypedChunk,
 
 	// #155
-	"launcher": func(s string) bool { return validRunFile(s, ".fish") },
+	// Either format (argv also requires the policy's own, see launcherFits).
+	"launcher": func(s string) bool { return validRunFile(s, ".sh") || validRunFile(s, ".fish") },
 	"socket":   func(s string) bool { return validRunFile(s, ".sock") },
 	"cwd":      ValidPlainDir,
 }
@@ -558,6 +577,10 @@ func (c *Control) argv(op string, vars map[string]string) ([]string, error) {
 	if s := vars["session"]; c.Only != nil && !c.Only.MatchString(s) {
 		return nil, fmt.Errorf("%w: session %q is not watched", ErrNotAllowed, s)
 	}
+	if l, ok := vars["launcher"]; ok && !c.launcherFits(l) {
+		return nil, fmt.Errorf("%w: launcher %q is not a %s launcher (shell policy %s)", ErrNotAllowed, l,
+			c.Shell.Or().LauncherExt(), c.Shell.Or())
+	}
 	argv := make([]string, 0, len(shape))
 	var missing error
 	for _, tmpl := range shape {
@@ -575,6 +598,12 @@ func (c *Control) argv(op string, vars map[string]string) ([]string, error) {
 				return c.bin(c.Herdr, "herdr")
 			case "systemd-run":
 				return c.bin(c.SystemdRun, "systemd-run")
+			case "shell", "launcher-shell":
+				bin, err := c.shellBin(name == "launcher-shell")
+				if err != nil {
+					missing = err
+				}
+				return bin
 			default:
 				v, ok := vars[name]
 				if !ok {
@@ -588,6 +617,44 @@ func (c *Control) argv(op string, vars map[string]string) ([]string, error) {
 		return nil, missing
 	}
 	return argv, nil
+}
+
+// launcherFits reports whether the launcher file is in the format the
+// policy's shell runs.
+func (c *Control) launcherFits(path string) bool {
+	return strings.HasSuffix(path, c.Shell.Or().LauncherExt())
+}
+
+// shellBin is the policy's shell as the argv names it: for the wake the
+// absolute path of its executable; for the launcher typed into a pane, bash
+// by that path too and fish (as in v1.45.0) as `fish`. The path is typed
+// into a shell, so it must be plain characters. A shell that is not
+// installed is an error that names the option.
+func (c *Control) shellBin(launcher bool) (string, error) {
+	k := c.Shell.Or()
+	if _, err := shell.Parse(string(k)); err != nil {
+		return "", fmt.Errorf("%w: %v", ErrNotAllowed, err)
+	}
+	bin := c.ShellBin
+	if bin == "" {
+		var err error
+		if bin, err = shell.Resolve(k); err != nil {
+			return "", err
+		}
+	}
+	if !ValidPlainDir(bin) {
+		return "", fmt.Errorf("%w: the %s executable %q is not a plain absolute path (set %s to a shell installed at one)",
+			ErrNotAllowed, k, bin, shell.Option)
+	}
+	// A path cached at startup may have lost its shell since: a command
+	// dispatched with it would exit with its error discarded.
+	if err := shell.Verify(k, bin); err != nil {
+		return "", err
+	}
+	if launcher && k == shell.Fish {
+		return "fish", nil
+	}
+	return bin, nil
 }
 
 func (c *Control) bin(configured, def string) string {
