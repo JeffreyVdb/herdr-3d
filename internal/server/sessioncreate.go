@@ -87,6 +87,9 @@ func (h *Hub) startSessionCreate(ctx context.Context, c *Client, cmd proto.Comma
 	if _, ok := h.floors[a.Name]; ok {
 		return &codedError{proto.ErrNameTaken, fmt.Errorf("“%s” is already a floor.", a.Name)}
 	}
+	if _, ok := h.vfloors[a.Name]; ok { // #58: also while its base session is away
+		return &codedError{proto.ErrNameTaken, fmt.Errorf("“%s” is already a floor's id.", a.Name)}
+	}
 	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, cmd.Args)
 	if err != nil {
 		return err

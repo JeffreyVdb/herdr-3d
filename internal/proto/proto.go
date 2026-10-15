@@ -254,9 +254,23 @@ type Building struct {
 	Logo string `json:"logo,omitempty"`
 }
 
-// Floor is one herdr session.
+// Floor is a floor: a herdr session's real floor, or (#58) a virtual floor
+// on a base session.
 type Floor struct {
-	Session  string  `json:"session"`
+	// ID is the floor id (the key): a real floor's is its session's name, a
+	// virtual floor's "v-" and 12 hex digits.
+	ID string `json:"id"`
+	// Name is the display name: a real floor's session name, a virtual
+	// floor's free text.
+	Name string `json:"name"`
+	// Session is the herdr session the floor lives in; BaseSession is the
+	// same (named for virtual floors).
+	Session     string `json:"session"`
+	BaseSession string `json:"base_session"`
+	Virtual     bool   `json:"virtual"`
+	// Hidden is the floor's stored hidden setting (decision 2): the client
+	// hides it unless it has workers.
+	Hidden   bool    `json:"hidden"`
 	State    string  `json:"state"` // running | asleep
 	Default  bool    `json:"default,omitempty"`
 	Building *string `json:"building"` // null: in the unassigned lot
@@ -329,8 +343,11 @@ type Suggested struct {
 
 // Worker is one herdr workspace, keyed by a bridge-owned id.
 type Worker struct {
-	ID           string            `json:"id"`
-	Session      string            `json:"session"`
+	ID      string `json:"id"`
+	Session string `json:"session"` // the herdr session of its workspace
+	// Floor (#58) is the floor id it belongs to: its session's real floor
+	// (== Session) or a virtual floor on it.
+	Floor        string            `json:"floor"`
 	WorkspaceID  string            `json:"workspace_id"`
 	Label        string            `json:"label"`
 	Cwd          string            `json:"cwd,omitempty"`
@@ -566,17 +583,20 @@ type Worktree struct {
 //	followups.update the fields of Followups (#90)
 //	inbox.dismissed  id, status_since (#106)
 type Event struct {
-	T           string    `json:"t"`
-	Seq         uint64    `json:"seq"`
-	Building    *Building `json:"building,omitempty"`
-	Floor       *Floor    `json:"floor,omitempty"`
-	Worker      *Worker   `json:"worker,omitempty"`
-	ID          string    `json:"id,omitempty"`
-	Session     string    `json:"session,omitempty"`
-	WorkspaceID string    `json:"workspace_id,omitempty"`
-	Status      string    `json:"status,omitempty"`
-	PrevStatus  string    `json:"prev_status,omitempty"`
-	StatusSince int64     `json:"status_since,omitempty"`
+	T        string    `json:"t"`
+	Seq      uint64    `json:"seq"`
+	Building *Building `json:"building,omitempty"`
+	Floor    *Floor    `json:"floor,omitempty"`
+	Worker   *Worker   `json:"worker,omitempty"`
+	ID       string    `json:"id,omitempty"`
+	Session  string    `json:"session,omitempty"`
+	// FloorID (#58) is the floor id on floor.removed, worker.removed and
+	// worker.status (the key "floor" is the floor.upsert's Floor).
+	FloorID     string `json:"floor_id,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	Status      string `json:"status,omitempty"`
+	PrevStatus  string `json:"prev_status,omitempty"`
+	StatusSince int64  `json:"status_since,omitempty"`
 	// Title is set (possibly to "") on worker.status only.
 	Title *string `json:"title,omitempty"`
 	// Reason is set on worker.removed when worker.fire removed it
@@ -641,6 +661,7 @@ type BuildingReorderArgs struct {
 // floor to the unassigned lot; a missing index appends.
 type FloorAssignArgs struct {
 	Session  string  `json:"session"`
+	Floor    string  `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	Building *string `json:"building"`
 	Index    *int    `json:"index,omitempty"`
 }
@@ -648,6 +669,7 @@ type FloorAssignArgs struct {
 // FloorArgs are the args of floor.wake and floor.sleep.
 type FloorArgs struct {
 	Session string `json:"session"`
+	Floor   string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 }
 
 // WakeResult is the ack data of floor.wake: every worker of the floor, in
@@ -666,6 +688,7 @@ type WorkerResume struct {
 // leaves that setting unchanged, null clears it, a value sets it.
 type FloorSettingsArgs struct {
 	Session     string                `json:"session"`
+	Floor       string                `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	Repo        Optional[string]      `json:"repo,omitzero"`
 	Project     Optional[Project]     `json:"project,omitzero"`
 	StatusField Optional[StatusField] `json:"status_field,omitzero"`
@@ -687,6 +710,7 @@ type KaneoLinkArgs struct {
 // HirePrepareArgs are the args of hire.prepare.
 type HirePrepareArgs struct {
 	Session string `json:"session"`
+	Floor   string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	Cwd     string `json:"cwd,omitempty"`
 }
 
@@ -737,6 +761,7 @@ type HostLoad struct {
 // WorkerHireArgs are the args of worker.hire. DeskIndex is required.
 type WorkerHireArgs struct {
 	Session   string `json:"session"`
+	Floor     string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	DeskIndex *int   `json:"desk_index"`
 	Harness   string `json:"harness"`
 	Model     string `json:"model"`

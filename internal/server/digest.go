@@ -558,7 +558,7 @@ func (h *Hub) pumpDigest(ctx context.Context) {
 	}
 	for id, l := range h.dgs.ws {
 		w, d := h.workers[id], h.dg[id]
-		if w == nil || d == nil || !h.floorViewed(w.Session) {
+		if w == nil || d == nil || !h.floorViewed(workerFloor(w)) {
 			continue
 		}
 		if oneOff(w) && d.PromptHash != "" && l.taskHash != d.PromptHash {

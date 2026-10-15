@@ -101,11 +101,14 @@ func (h *Hub) notBusy(session string, f *floorState) error {
 	return nil
 }
 
-// floorFor returns a known floor the bridge may act on.
-func (h *Hub) floorFor(session string) (*floorState, error) {
-	f, ok := h.floors[session]
-	if !ok || (h.opts.Sessions != nil && !h.opts.Sessions.MatchString(session)) {
-		return nil, fmt.Errorf("%w: %q", errUnknownSession, session)
+// floorFor returns a known floor the bridge may act on, by floor id (#58):
+// a session's real floor or a virtual floor on it. Its session (f.session,
+// never a virtual floor's id) is what herdr is called with, and what
+// --sessions must allow.
+func (h *Hub) floorFor(floor string) (*floorState, error) {
+	f, ok := h.floors[floor]
+	if !ok || (h.opts.Sessions != nil && !h.opts.Sessions.MatchString(f.session)) {
+		return nil, fmt.Errorf("%w: %q", errUnknownSession, floor)
 	}
 	return f, nil
 }
@@ -143,24 +146,25 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	f, err := h.floorFor(a.Session)
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	f, err := h.floorFor(a.Floor)
 	if err != nil {
 		return err
 	}
-	if err := h.notBusy(a.Session, f); err != nil {
+	if err := h.notBusy(a.Floor, f); err != nil {
 		return err
 	}
 	if len(f.hires) > 0 || len(f.fires) > 0 {
-		return fmt.Errorf("%w: floor %q is hiring or sending a worker home", errBusy, a.Session)
+		return fmt.Errorf("%w: floor %q is hiring or sending a worker home", errBusy, a.Floor)
 	}
 	wake := cmd.T == proto.CmdFloorWake
 	switch {
 	case wake && f.running:
-		return fmt.Errorf("%w: floor %q is running", errInvalidState, a.Session)
+		return fmt.Errorf("%w: floor %q is running", errInvalidState, a.Floor)
 	case !wake && !f.running:
-		return fmt.Errorf("%w: floor %q is asleep", errInvalidState, a.Session)
-	case !herdr.ValidSessionName(a.Session):
-		return &badArgsError{fmt.Errorf("session %q cannot be woken or put to sleep by the bridge", a.Session)}
+		return fmt.Errorf("%w: floor %q is asleep", errInvalidState, a.Floor)
+	case !herdr.ValidSessionName(f.session):
+		return &badArgsError{fmt.Errorf("session %q cannot be woken or put to sleep by the bridge", f.session)}
 	case h.opts.Herdr == nil:
 		return errors.New("waking and sleeping floors is not configured")
 	}
@@ -168,14 +172,17 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	if err != nil {
 		return err
 	}
-	op := &floorOp{session: a.Session, client: c, cmd: cmd, auditID: auditID, notify: make(chan struct{}, 1)}
+	// #58: a floor's wake or sleep is its session's: every floor of it
+	// wakes or sleeps (herdr is only ever called with the session).
+	op := &floorOp{session: f.session, client: c, cmd: cmd, auditID: auditID, notify: make(chan struct{}, 1)}
 	f.op = op
-	h.log.Info("floor operation started", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID, "session", a.Session)
+	h.log.Info("floor operation started", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID, "session", f.session,
+		"floor", a.Floor)
 	if wake {
 		op.kind = proto.TransitionWaking
 		op.waits = map[string]*resumeWait{}
 		h.syncLayout() // the transition first, then the workers
-		for _, id := range f.order {
+		for _, id := range f.all {
 			w := h.workers[id]
 			if l, ok := h.cx.launches[id]; ok && w != nil && l.Mode == store.CodexShared { // #155
 				// Also without a thread (it slept before herdr reported
@@ -204,7 +211,7 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	known := map[string]bool{}
 	var backfills []backfill
 	var shared []sharedSleep
-	for _, id := range f.order {
+	for _, id := range f.all {
 		h.setResume(id, "")
 		w := h.workers[id]
 		if w == nil {
@@ -296,7 +303,7 @@ func (h *Hub) floorOrder(op *floorOp) []string {
 	var ids []string
 	seen := map[string]bool{}
 	if f := h.floors[op.session]; f != nil {
-		for _, id := range f.order {
+		for _, id := range f.all {
 			ids = append(ids, id)
 			seen[id] = true
 		}

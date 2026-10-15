@@ -67,6 +67,7 @@ type WorkItemRef struct {
 type BoardIssues struct {
 	T            string `json:"t"`
 	Session      string `json:"session"`
+	Floor        string `json:"floor"` // #58: the floor id; Session is its herdr session
 	Provider     string `json:"provider"`
 	ProviderName string `json:"provider_name"`
 	Initial      bool   `json:"initial"`
@@ -91,6 +92,7 @@ type BoardIssues struct {
 type BoardPRs struct {
 	T            string                `json:"t"`
 	Session      string                `json:"session"`
+	Floor        string                `json:"floor"` // #58: the floor id; Session is its herdr session
 	Provider     string                `json:"provider"`
 	ProviderName string                `json:"provider_name"`
 	Initial      bool                  `json:"initial"`
@@ -107,6 +109,7 @@ type BoardPRs struct {
 // BoardArgs are the args of board.watch, board.unwatch and board.refresh.
 type BoardArgs struct {
 	Session string `json:"session"`
+	Floor   string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 }
 
 // BoardWatchResult is the ack data of board.watch.
@@ -123,12 +126,14 @@ type BoardRefreshResult struct {
 // ItemArgs are the args of issue.get and pr.get.
 type ItemArgs struct {
 	Session string `json:"session"`
+	Floor   string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	ID      string `json:"id"`
 }
 
 // CommentArgs are the args of issue.comment and pr.comment.
 type CommentArgs struct {
 	Session string `json:"session"`
+	Floor   string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	ID      string `json:"id"`
 	Body    string `json:"body"`
 }
@@ -141,6 +146,7 @@ type CommentResult struct {
 // IssueCloseArgs are the args of issue.close.
 type IssueCloseArgs struct {
 	Session string `json:"session"`
+	Floor   string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	ID      string `json:"id"`
 	Reason  string `json:"reason"`
 	Confirm bool   `json:"confirm"`
@@ -151,6 +157,7 @@ type IssueCloseArgs struct {
 // top, a card id of that column is right after it. Absent: the status only.
 type IssueSetStatusArgs struct {
 	Session string           `json:"session"`
+	Floor   string           `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	ID      string           `json:"id"`
 	Column  string           `json:"column"`
 	After   Optional[string] `json:"after,omitzero"`
@@ -161,6 +168,7 @@ type IssueSetStatusArgs struct {
 // then needs ConfirmOverride too; a conflicting one is never merged.
 type PRMergeArgs struct {
 	Session         string `json:"session"`
+	Floor           string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	ID              string `json:"id"`
 	Method          string `json:"method"`
 	Confirm         bool   `json:"confirm"`

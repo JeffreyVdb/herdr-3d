@@ -101,15 +101,15 @@ func (h *Hub) startWorkerRepos(ctx context.Context, c *Client, cmd proto.Command
 	if w == nil {
 		return fmt.Errorf("%w: %q", errUnknownWorker, a.ID)
 	}
-	h.startAsync(ctx, c, cmd, h.reposFor(w.Session))
+	h.startAsync(ctx, c, cmd, h.reposFor(workerFloor(w)))
 	return nil
 }
 
-// reposFor is worker.repos's answer for a worker of session: the floors in
+// reposFor is worker.repos's answer for a worker of a floor: the floors in
 // scope and order and the discovered catalog now (hub goroutine), the
 // folders checked and the two merged off it.
-func (h *Hub) reposFor(session string) func(context.Context) (any, error) {
-	refs := h.repoCandidates(session)
+func (h *Hub) reposFor(floor string) func(context.Context) (any, error) {
+	refs := h.repoCandidates(floor)
 	stat := h.opts.StatDir
 	var cat *repodisc.Catalog
 	if h.opts.RepoDiscovery != nil {
@@ -126,19 +126,24 @@ func (h *Hub) reposFor(session string) func(context.Context) (any, error) {
 // then, with the switch on, the other buildings' floors by sort and the
 // unassigned lot by name. Only the stored repo and folder count (never the
 // suggestions); a floor with neither is left out.
-func (h *Hub) repoCandidates(session string) []proto.RepoRef {
+func (h *Hub) repoCandidates(floor string) []proto.RepoRef {
 	own := ""
-	if a, ok := h.assign[session]; ok {
+	if a, ok := h.assign[floor]; ok {
 		if _, ok := h.buildings[a.BuildingID]; ok {
 			own = a.BuildingID
 		}
 	}
 	add := func(out []proto.RepoRef, s string, building *string, same bool) []proto.RepoRef {
 		st := h.settings[s]
-		if s == session || (st.Repo == "" && st.DefaultCwd == "") {
+		if s == floor || (st.Repo == "" && st.DefaultCwd == "") {
 			return out
 		}
-		return append(out, proto.RepoRef{Session: s, Building: building, SameBuilding: same, Repo: st.Repo, Dir: st.DefaultCwd})
+		session := s
+		if f := h.floors[s]; f != nil {
+			session = f.session
+		}
+		return append(out, proto.RepoRef{Session: session, Floor: s, Building: building, SameBuilding: same, Repo: st.Repo,
+			Dir: st.DefaultCwd})
 	}
 	var same, other []proto.RepoRef
 	placed := map[string]bool{}

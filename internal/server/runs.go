@@ -147,19 +147,24 @@ func memberOf(id, floor string, role, run string, tokens map[string]string, tick
 	return runs.Member{ID: id, Floor: floor, Role: role, Run: run, RunToken: tokens["h3d_run"] != "", Ticket: ticket}
 }
 
-// members lists every worker for the links, floors by name and workers in
-// sidebar order; floor session is taken from obs/ids instead of its views.
-func (h *Hub) members(session string, obs []world.WorkerObs, ids []string) []runs.Member {
+// members lists every worker for the links, floors by id and workers in
+// sidebar order; floor is taken from obs/ids instead of its views (#58:
+// a worker in ids that its old floor still lists is only floor's).
+func (h *Hub) members(floor string, obs []world.WorkerObs, ids []string) []runs.Member {
 	var ms []runs.Member
+	moving := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		moving[id] = true
+	}
 	for _, s := range sortedFloors(h.floors) {
-		if s == session {
+		if s == floor {
 			for i, w := range obs {
 				ms = append(ms, memberOf(ids[i], s, w.Role, w.Run, w.Tokens, w.RunInfo.Ticket))
 			}
 			continue
 		}
 		for _, id := range h.floors[s].order {
-			if w := h.workers[id]; w != nil {
+			if w := h.workers[id]; w != nil && !moving[id] {
 				ms = append(ms, memberOf(id, s, w.Role, w.Run, w.Tokens, w.Ticket))
 			}
 		}
@@ -244,7 +249,7 @@ func (h *Hub) relink() {
 	ls := h.links(ms)
 	for _, m := range ms {
 		w, l := h.workers[m.ID], ls[m.ID]
-		issue, item := h.ticketRefs(w.Session, l.Issue, l.Item) // M7 boards; #118: with the ticket's title
+		issue, item := h.ticketRefs(workerFloor(w), l.Issue, l.Item) // M7 boards; #118: with the ticket's title
 		if w.OrchID == l.OrchID && reflect.DeepEqual(w.Issue, issue) && reflect.DeepEqual(w.WorkItem, item) {
 			continue
 		}
@@ -280,7 +285,9 @@ func (h *Hub) seatNearOrch(f *floorState, desks map[string]int, obs []world.Work
 		used[d] = true
 	}
 	for _, op := range f.hires {
-		used[op.desk] = true
+		if op.floor == f.id {
+			used[op.desk] = true
+		}
 	}
 	moved := map[string]bool{}
 	// An orchestrator with no desk yet, first seen together with its
