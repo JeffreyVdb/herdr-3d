@@ -19,7 +19,7 @@ The bridge (`herdr-world`) serves one WebSocket to game clients. This document i
   256 KiB (M7: a comment body is up to 64 KiB of text, escaped).
 - The bridge reads herdr (`ping`, `session.snapshot`, `events.subscribe`, `herdr session list`, and for the laptop
   screens the read-only `herdr terminal session observe`). Its only writes to herdr are `floor.wake` / `floor.sleep`
-  (see [Wake and sleep](#wake-and-sleep)), `worker.hire` / `worker.fire` / `worker.wrapup` (see [Hire and send
+  (see [Wake and sleep](#wake-and-sleep)), #58 `session.create` (see [New herdr sessions](#new-herdr-sessions)), `worker.hire` / `worker.fire` / `worker.wrapup` (see [Hire and send
   home](#hire-and-send-home)) and typing into a pane for `worker.keys`, `worker.prompt` and `worker.answer` (see
   [Laptops](#laptops-screens-input-changes-and-usage)), through a narrow allowlist of `herdr` / `systemd-run` command
   shapes (CONTRIBUTING "Bridge" lists them), plus (M10) two read-only probes of the `claude` and `codex` CLIs for the [plan
@@ -551,6 +551,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `floor.settings.set` | `{"session": string, "repo"?, "project"?, "status_field"?, "default_cwd"?, "default_hire"?}`: an absent key stays as it is, `null` clears it, a value sets it (see [Floor settings](#floor-settings)) | — | `floor.upsert` carrying the new `settings` (and `suggested`, when the chosen repo changes it); none when nothing changed |
 | `floor.wake` | `{"session": string}` | `{"workers": [{"id", "resume"}]}`: every worker of the floor in sidebar order, `resume` one of `confirmed`, `fallback`, `failed`, or `none` (no `agent_session`: nothing to resume) | `floor.upsert` with `transition: "waking"`, `worker.upsert` (`resume: "pending"`) for each resumable worker, then the floor running and its workers as the watcher sees them, `worker.upsert` as each `resume` settles, and a final `floor.upsert` without `transition` |
 | `floor.sleep` | `{"session": string}` | — | `floor.upsert` with `transition: "sleeping"` (and `worker.upsert` for workers whose `resume` is cleared), then `floor.upsert` with `state: "asleep"` and no `transition`, then the asleep workers |
+| `session.create` | `{"name": string}`: #58, a new herdr session (see [New herdr sessions](#new-herdr-sessions)) | `{"session": string}`, once its floor is in the world | the new floor's `floor.upsert` (`state: "running"`, in the unassigned lot), before the ack |
 | `hire.prepare` | `{"session": string, "cwd"?: string}` | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity"}` (see [Hire and send home](#hire-and-send-home)) | — |
 | `worker.hire` | `{"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
@@ -1009,6 +1010,37 @@ outcome and a JSON `result`: for a wake the time until `ping` answered and, per 
 what happened (`agent process running`, `pane.agent_detected`, `fallback: ran the resume command`, `no fallback: the
 pane is not at its shell prompt`, …); for a sleep each backfill (`agent_session`, `skipped` or `error`), herdr's `stop`
 output and whether the floor was seen asleep. Rejected commands are logged like any other.
+
+### New herdr sessions
+
+#58: the Add floor dialog's "New herdr session". herdr has no `session create`: a session is created by starting a
+server under a name herdr has not seen, so `session.create` runs the wake's launch (step 1 of the wake, the
+`create-session` shape) for a new name, and the floor comes in through discovery like any other, empty and in the
+unassigned lot. It never goes through the floor checks of the other floor commands: the floor does not exist yet.
+
+```json
+{"t":"session.create","req_id":"21","args":{"name":"billing-api"}}
+{"t":"floor.upsert","seq":1110,"floor":{"session":"billing-api","state":"running","building":null,"index":null,"desks":6}}
+{"t":"ack","req_id":"21","data":{"session":"billing-api"}}
+```
+
+1. **The name** (`bad_request`, the message says why in words a person can act on): `^[a-z0-9_-]+$` (stricter than
+   herdr: no uppercase, no dots), no leading `-`, not `default`, and at most as long as this host allows: the
+   session's `herdr-client.sock` must fit the 108-byte `sun_path`, so the cap is `108 − len(<sessions folder>) − 1 −
+   len("/herdr-client.sock")` (56 for `/home/jeff/.config/herdr/sessions`). The sessions folder comes from `herdr
+   session list` (a named session's parent folder, else `sessions/` in the default session's). With `--sessions` set,
+   the name must match it too: a session outside it would never show as a floor.
+2. **Free** (`name_taken`): not a floor, not in `herdr session list` in any state (starting a known name would wake
+   that session instead: an asleep one is refused too), nothing at `<sessions folder>/<name>` (a stale folder, a
+   backup), and no transient unit `herdr-s-<name>.service` still loaded (its unit file under `$XDG_RUNTIME_DIR`).
+3. **One at a time** (`busy`): a second `session.create` of a name being created is refused.
+4. **Started**: the server starts in its transient unit, the bridge asks the watcher to look again (every 250 ms) and
+   acks once it sees the floor running. herdr lists a new session ~90 ms after the start. Not seen within
+   `--wake-timeout` (10 s), or `systemd-run` fails: `session_create_failed` with herdr's error, after the bridge stopped
+   the session (`herdr session stop`) and removed the session folder it made (there was none before, step 2).
+
+The audit log row starts with the command and ends with the sessions folder, whether herdr was asked to start it, how
+long until the floor was seen, and what a rollback did.
 
 ### Hire and send home
 
@@ -4090,10 +4122,10 @@ dismissed_at)`.
 | `bad_url`, `key_required`, `not_configured`, `unauthorized`, `forbidden` | #184 `kaneo.*` and a floor's Kaneo link (see [Kaneo](#kaneo)); `unauthorized` (the provider refused the key, HTTP 401, maybe its quota) and `forbidden` (a permission problem, HTTP 403) also from the board commands of a provider that tells them apart; `unreachable`, `timeout`, `test_required`, `rate_limited` and `provider_failed` are used there too |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
-| `name_taken` | another building, or another team preset, already has that name (ignoring case) |
+| `name_taken` | another building, or another team preset, already has that name (ignoring case); #58 `session.create`: a floor, a herdr session (also an asleep one), a session folder or a loaded `herdr-s-<name>` unit has that name |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
-| `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started; #224: an agent handoff for a worker with a request running or a wrap-up armed, a wrap-up while a request runs, `worker.handoff_cancel` while it is being filed |
+| `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started; #224: an agent handoff for a worker with a request running or a wrap-up armed, a wrap-up while a request runs, `worker.handoff_cancel` while it is being filed; #58: `session.create` of a name already being created |
 | `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
@@ -4108,6 +4140,7 @@ dismissed_at)`.
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
 | `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
+| `session_create_failed` | #58 `session.create`: `herdr session list` could not be read, `systemd-run` failed, or the new floor was not seen running within `--wake-timeout`; the message carries herdr's error, and whatever the call started was stopped and removed |
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `input_failed` | #156 `worker.answer_async`: the worker's app-server refused the answer (nothing delivered; the question is `pending` again with its `error`); `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
@@ -4116,7 +4149,7 @@ dismissed_at)`.
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `files_failed` | #137 `worker.files` (#39: `hire.files`) whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |
 | `confirmation_required` | `issue.close`, `pr.merge`, `worker.open_pr` or #223 `handoff.delete` without `confirm: true` (see [Boards](#boards-issues-and-pull-requests)) |
-| `unsupported` | the floor has no board (no repo linked, no provider), or the provider or the card cannot do it (a capability is off); `worker.open_pr*` on a floor that cannot open pull requests |
+| `unsupported` | the floor has no board (no repo linked, no provider), or the provider or the card cannot do it (a capability is off); `worker.open_pr*` on a floor that cannot open pull requests; #58 `session.create` on a bridge without herdr control |
 | `provider_failed` | the provider call failed (`gh` missing, not logged in, the network, GitHub's refusal, a failed `git push`); the message is short and never has a token |
 | `rate_limited` | the provider's rate limit |
 | `checks_not_green`, `not_mergeable` | `pr.merge` of a pull request whose checks are not green, or that is not mergeable (also a conflicting one, always); an override is `override` and `confirm_override` together |
@@ -4155,6 +4188,7 @@ herdr-world cmd floor.assign '{"session":"code-review","building":"b_3f09a1c2d4e
 herdr-world cmd floor.settings.set '{"session":"herdr-3d","repo":"JeffreyVdb/herdr-3d","default_cwd":null}'
 herdr-world cmd floor.sleep '{"session":"h3d-scratch"}'
 herdr-world cmd floor.wake '{"session":"h3d-scratch"}'
+herdr-world cmd session.create '{"name":"h3d-scratch2"}'
 herdr-world cmd hire.prepare '{"session":"h3d-scratch"}'
 herdr-world cmd worker.hire '{"session":"h3d-scratch","desk_index":0,"harness":"codex","model":"gpt-6-luna","effort":"low"}'
 herdr-world cmd worker.fire.prepare '{"id":"a58752ea-…"}'
