@@ -645,6 +645,45 @@ test('an M3 panel (settings) at any width also gets the edge tab; the hire sheet
   clean();
 });
 
+// #49: Settings is a workspace (up to 1200 px wide, 90 % of the height), so it is a screen for the corner: on a laptop the
+// plate would sit on its header and Close. It steps out into the edge tab in the gutter beside it, and the inbox chip goes
+// with it; both are back when Settings closes. Demo-m5 has workers waiting on you, so the chip is up to begin with.
+for (const theme of ['quiet', 'ubuntu'] as const) {
+  test(`at 1366x768 (${theme}) Settings keeps its header and Close clear: the plate is an edge tab beside it, the inbox chip steps out`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.addInitScript((t) => localStorage.setItem('h3d.theme.ui', t), theme);
+    await openGame(page, 'demo-m5', '&prints=0', SIM());
+    await withReadings(page);
+    const chipBefore = (await page.evaluate(() => window.__h3d.inbox()))?.shown;
+    await openMenu(page);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
+    await expect(dialog).toBeVisible();
+
+    await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+    await expect(limits(page)).toHaveAttribute('data-fit', 'full');
+    await expect(page.locator('.inbox')).toBeHidden();
+    const hud = (await limits(page).boundingBox())!;
+    const dlg = (await dialog.boundingBox())!;
+    const close = dialog.getByRole('button', { name: 'Close' });
+    expect(apart(hud, dlg), `hud ${JSON.stringify(hud)} dialog ${JSON.stringify(dlg)}`).toBe(true);
+    expect(apart(hud, (await close.boundingBox())!)).toBe(true);
+    expect(await reachable(page, 'dialog.settings .panel-close')).toBe(true);
+    // The tab, inside Settings (the top modal), is still a control: a click peeks the plate.
+    expect(await reachable(page, '.limits')).toBe(true);
+    await shot(page, `m10-settings-1366-${theme}`);
+
+    await close.click();
+    await expect(dialog).toBeHidden();
+    await expect(limits(page)).toHaveAttribute('data-dock', '');
+    await expect(page.locator('.lm-strip')).toBeVisible();
+    await expect.poll(async () => (await page.evaluate(() => window.__h3d.inbox()))?.shown).toBe(chipBefore);
+    clean();
+  });
+}
+
 // Seated at a worker's laptop (#53): the laptop's screen fills the view, so the plate is its edge tab, and standing up gives
 // back what the prefs say. Peeks (the tab, Shift+L) leave the prefs alone. demo-m5 has the floor and the workers to sit at.
 

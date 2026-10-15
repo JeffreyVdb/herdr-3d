@@ -274,3 +274,42 @@ describe('the plan-limits plate over the command palette (#147)', () => {
     w.dispose();
   });
 });
+
+// #49: Settings is a workspace now (up to 1200 px wide, 90 % of the height): a screen for the corner, so the plate and the
+// inbox chip step out of it like they do for the boards; the About window, its small sibling, keeps the plate above it.
+describe('the plan-limits plate over Settings (#49)', () => {
+  /** Settings on a 1366 px laptop: 1200 px, centred, leaves 83 px right of it. */
+  const SETTINGS_RIGHT = WIDTH - 83;
+
+  it('Settings is a screen for the corner; the About window is not', async () => {
+    const corner = new CornerWatch(() => undefined);
+    const about = dialog('credits', 700);
+    openIt(about);
+    await settle();
+    expect(corner.screen).toBe(false);
+    closeIt(about);
+    const settings = dialog('credits settings', SETTINGS_RIGHT);
+    openIt(settings);
+    await settle();
+    expect(corner.screen).toBe(true);
+    expect(corner.topScreen()).toBe(settings);
+    corner.dispose();
+  });
+
+  it('steps out into the edge tab inside Settings where there is room, away where there is none, and back when it closes', async () => {
+    const { w, parent } = widget();
+    const settings = dialog('credits settings', SETTINGS_RIGHT);
+    openIt(settings);
+    await settle();
+    expect([w.root.dataset.dock, w.root.dataset.fit]).toEqual(['tab', 'full']);
+    expect(w.root.parentElement).toBe(settings);
+    settings.dataset.right = String(WIDTH - 16); // a laptop narrower than 1232 px: Settings is the viewport less 16 px a side
+    window.dispatchEvent(new Event('resize'));
+    expect(w.root.dataset.dock).toBe('away');
+    closeIt(settings);
+    await settle();
+    expect(w.root.dataset.dock).toBe('');
+    expect(w.root.parentElement).toBe(parent);
+    w.dispose();
+  });
+});

@@ -10,7 +10,8 @@ export const NARROW = '(max-width: 760px)';
 
 /**
  * The dialogs that fill the screen (the M3 panels, the Issues / Pull requests boards and their item modal, and since
- * #51 the hire dialog, a near-full-screen sheet, and #124 the shortcut list, as tall as the window): at any viewport width the plate steps out of them. The confirm,
+ * #51 the hire dialog, a near-full-screen sheet, #124 the shortcut list, as tall as the window, and #49 Settings, up to
+ * 1200 px by 90 % of the window): at any viewport width the plate steps out of them. The About window, the confirm,
  * start-run, send-home, prompt, presets and open-PR dialogs are small and centred; they keep today's behaviour (the
  * plate stays above them in the top layer, and the start-run one shows the limits inline as well). The hire dialog
  * shows the chosen harness's limits inline too, so nothing is lost when the plate folds away over it.
@@ -22,7 +23,7 @@ export const NARROW = '(max-width: 760px)';
 // #213: so is the dictation bar, the palette's sibling (dictation.css keeps the same gutter). #223: the filing cabinet
 // fills the screen like a board does.
 export const PALETTE = 'dialog.palette[open], dialog.dictation[open]';
-export const SCREEN = `dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], dialog.shortcuts[open], dialog.cab[open], .wb[open], .ov[open], ${PALETTE}`;
+export const SCREEN = `dialog.panel[open], dialog.desk-dlg--board[open], dialog.desk-dlg--item[open], dialog.desk-dlg--hire[open], dialog.shortcuts[open], dialog.settings[open], dialog.cab[open], .wb[open], .ov[open], ${PALETTE}`;
 
 /**
  * The seated reading overlay (the conversation, the Images tab; laptop/index.ts marks the page with `data-reading`) is a
