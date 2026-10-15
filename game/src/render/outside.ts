@@ -58,7 +58,7 @@ export interface BuildingLook {
   name: string;
   tint: number;
   /** Ground floor first. */
-  floors: Array<{ session: string; asleep: boolean }>;
+  floors: Array<{ id: string; name: string; asleep: boolean }>;
 }
 
 const color = new THREE.Color();
@@ -116,7 +116,7 @@ export class OutsideView {
     this.buildFireEscape(b);
     this.buildStreet(b, glow, pools);
     this.buildNeighbours(b, glow);
-    this.lobby = new LobbyView(plan, b, inner, look.name, tint, look.floors.map((f) => f.session));
+    this.lobby = new LobbyView(plan, b, inner, look.name, tint, look.floors.map((f) => f.name));
     this.baked = new THREE.Mesh(b.build(), bakedMaterial());
     this.baked.name = 'outside.baked';
     this.panes = new THREE.Mesh(panes.build(), this.paneMaterial());

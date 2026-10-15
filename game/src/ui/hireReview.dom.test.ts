@@ -41,6 +41,7 @@ function setup(over: Partial<Env> = {}, background = false) {
   const prefs = new HirePrefs(null);
   prefs.hireInBackground = background;
   const store = {
+    floorName: (id: string) => id,
     get hireOptions() {
       return env.catalog;
     },
@@ -386,7 +387,7 @@ describe('HireReviewDialog', () => {
       enter(q('#review-label')!);
       await tick();
       expect(hires).toHaveLength(1);
-      expect(hires[0]!.args).toEqual({ session: 'floor', desk_index: 0, harness: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', label: 'Nibble', cwd: '/home/test', prompt: 'fix the login bug.\nAnd its tests.' });
+      expect(hires[0]!.args).toEqual({ floor: 'floor', desk_index: 0, harness: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', label: 'Nibble', cwd: '/home/test', prompt: 'fix the login bug.\nAnd its tests.' });
       expect(reserved).toEqual([0]);
       // an edit after Hire does not reach the hire on its way
       area.value = 'too late';

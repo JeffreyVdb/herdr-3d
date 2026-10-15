@@ -74,6 +74,7 @@ type PresetDeleteArgs struct {
 // "#3", "3" or "https://github.com/<owner>/<repo>/issues/<n>".
 type RunPrepareArgs struct {
 	Session string          `json:"session"`
+	Floor   string          `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	Issue   json.RawMessage `json:"issue,omitempty"`
 	Text    string          `json:"text,omitempty"`
 	// WorkItem (M7) is a third, exclusive way to name the ticket: an item of
@@ -120,6 +121,7 @@ type RunPrepareResult struct {
 // Prompt, when set, is sent instead of the composed one.
 type RunStartArgs struct {
 	Session   string          `json:"session"`
+	Floor     string          `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	DeskIndex *int            `json:"desk_index"`
 	Issue     json.RawMessage `json:"issue,omitempty"`
 	Text      string          `json:"text,omitempty"`

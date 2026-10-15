@@ -60,7 +60,7 @@ func (h *Hub) openPRTarget(ctx context.Context, id string) (*openPRPlan, error) 
 	if f.hires[id] != nil {
 		return nil, fmt.Errorf("%w: %s is still being hired", errBusy, w.Name)
 	}
-	bf := h.boardOf(w.Session)
+	bf := h.boardOf(workerFloor(w))
 	if bf == nil || bf.set.Host == nil || !bf.host.Capabilities.OpenFromBranch || h.opts.PRGit == nil {
 		return nil, fmt.Errorf("%w: the floor cannot open pull requests (no repo linked, or no code host)", errUnsupported)
 	}

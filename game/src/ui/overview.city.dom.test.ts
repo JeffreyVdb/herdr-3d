@@ -50,6 +50,7 @@ function setup(workers: Worker[] = CITY, over: Partial<OverviewHost> = {}, filte
     hire: vi.fn(),
     calm: () => true,
     screenRect: () => null,
+    floorName: (f) => f,
     closed: vi.fn(),
     now: () => NOW,
     ...over,

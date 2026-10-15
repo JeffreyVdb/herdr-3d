@@ -25,7 +25,7 @@ const city = () =>
     ['scratch'],
   );
 
-const sessions = (s: WorldStore, q = '') => floorList(s, q).map((i) => i.session);
+const sessions = (s: WorldStore, q = '') => floorList(s, q).map((i) => i.floor);
 
 describe('floors: order', () => {
   it('floors that need you first, then the rest, both by "Building › floor" without regard to case', () => {
@@ -51,8 +51,8 @@ describe('floors: order', () => {
 
   it('matches the building or the floor, and says which characters', () => {
     const s = city();
-    expect(floorList(s, 'acme').map((i) => i.session)).toEqual(['a-one', 'a-two']);
-    expect(floorList(s, 'one')).toEqual([{ session: 'a-one', label: 'acme › a-one', hits: [9, 10, 11] }]);
+    expect(floorList(s, 'acme').map((i) => i.floor)).toEqual(['a-one', 'a-two']);
+    expect(floorList(s, 'one')).toEqual([{ floor: 'a-one', label: 'acme › a-one', hits: [9, 10, 11] }]);
     expect(floorList(s, 'zzz')).toEqual([]);
     expect(floorList(s, '  ')).toHaveLength(5);
   });
@@ -60,14 +60,14 @@ describe('floors: order', () => {
   it('stays put while counts change: the list is the order, the rows are read live', () => {
     const s = city();
     const list = floorList(s, '');
-    const before = list.map((i) => i.session);
+    const before = list.map((i) => i.floor);
     // a-one's worker starts needing you, z-low's stops: a re-read of the rows changes their counts, not their places.
     s.applyEvent({ t: 'worker.status', seq: 2, id: 'w3', session: 'a-one', workspace_id: 'ws-w3', status: 'blocked' });
     s.applyEvent({ t: 'worker.status', seq: 3, id: 'w1', session: 'z-low', workspace_id: 'ws-w1', status: 'working' });
     const rows = list.map((i) => floorRow(s, i, null));
-    expect(rows.map((r) => r?.session)).toEqual(before);
-    expect(rows.find((r) => r?.session === 'a-one')?.counts.needsYou).toBe(1);
-    expect(rows.find((r) => r?.session === 'z-low')?.counts).toMatchObject({ needsYou: 0, working: 1 });
+    expect(rows.map((r) => r?.floor)).toEqual(before);
+    expect(rows.find((r) => r?.floor === 'a-one')?.counts.needsYou).toBe(1);
+    expect(rows.find((r) => r?.floor === 'z-low')?.counts).toMatchObject({ needsYou: 0, working: 1 });
     // Built again (a new query, a reopen), the order follows the counts.
     expect(sessions(s)).toEqual(['a-one', 'z-top', 'a-two', 'scratch', 'z-low']);
   });
@@ -79,7 +79,7 @@ describe('floors: order', () => {
     expect(floorRow(s, list[1]!, 'z-low')?.here).toBe(false);
     s.applyEvent({ t: 'floor.removed', seq: 2, session: 'z-low' });
     expect(floorRow(s, list[0]!, null)).toBeNull();
-    expect(floorRow(s, list[1]!, null)?.session).toBe('z-top');
+    expect(floorRow(s, list[1]!, null)?.floor).toBe('z-top');
   });
 
   it('carries the asleep state, and no floors at all is an empty list', () => {

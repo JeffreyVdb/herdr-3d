@@ -231,7 +231,7 @@ test('the hire dialog has no warning below 85 %, and the start-run dialog shows 
   await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
 
   // Build team: a Claude orchestrator with Codex reviewers: both providers.
-  await page.evaluate(() => window.__h3d.openStartRun({ session: 'herdr-3d', desk: 5 }));
+  await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind === 'start-run' && (await page.evaluate(() => window.__h3d.dialog()))!.state).toBe('ready');
   const run = page.locator('dialog.desk-dlg--run [data-hook="plan-limits"]');
   await expect(run.locator('.lm-line')).toHaveCount(2);
@@ -276,7 +276,7 @@ test('a bridge with limits off (--no-limits) shows no widget and no inline limit
   await expect(page.locator('[data-hook="plan-limits"]')).toBeHidden();
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
-  await page.evaluate(() => window.__h3d.openStartRun({ session: 'herdr-3d', desk: 5 }));
+  await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind === 'start-run' && (await page.evaluate(() => window.__h3d.dialog()))!.state).toBe('ready');
   await expect(page.locator('dialog.desk-dlg--run [data-hook="plan-limits"]')).toBeHidden();
 
@@ -637,7 +637,7 @@ test('an M3 panel (settings) at any width also gets the edge tab; the hire sheet
   await expect(limits(page)).toHaveAttribute('data-dock', '');
 
   // A small dialog (start-run) keeps the plate as it was, above it.
-  await page.evaluate(() => window.__h3d.openStartRun({ session: 'herdr-3d', desk: 5 }));
+  await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind).toBe('start-run');
   await expect(limits(page)).toHaveAttribute('data-dock', ''); // today's behaviour: the plate stays, above the dialog
   await expect(page.locator('.lm-strip')).toBeVisible();

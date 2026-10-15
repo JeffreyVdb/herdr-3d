@@ -70,8 +70,10 @@ type RepoRef struct {
 	// Source is RepoSourceFloor (Session is the floor it comes from) or
 	// RepoSourceDiscovered (no floor names it: Session is absent).
 	Source string `json:"source"`
-	// Session is the floor (absent for a discovered row).
+	// Session is the floor's herdr session and Floor (#58) its floor id
+	// (both absent for a discovered row).
 	Session string `json:"session,omitempty"`
+	Floor   string `json:"floor,omitempty"`
 	// Building is the name of the floor's building (null: the unassigned
 	// lot, or a discovered row). SameBuilding: it is the worker's own
 	// building.

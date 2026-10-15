@@ -138,7 +138,8 @@ func TestHandoffLiteralClaude(t *testing.T) {
 			added = &evs[i]
 		}
 	}
-	if added == nil || added.Handoff.ID != res.Handoff.ID || *added.HandoffCount != 1 || added.Session != "s" {
+	if added == nil || added.Handoff.ID != res.Handoff.ID || *added.HandoffCount != 1 || added.Session != "s" ||
+		added.FloorID != "s" {
 		t.Fatalf("events %+v", evs)
 	}
 	raw, err := os.ReadFile(res.Handoff.Path)

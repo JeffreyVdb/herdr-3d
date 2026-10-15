@@ -67,7 +67,7 @@ const kaneoGate = TrackerKaneo
 // the Kaneo fields name the connection by its instance and generation, so
 // a new key or instance is a new source.
 type BoardSource struct {
-	Session       string
+	Session       string // the floor id (#58: a real floor's is its session's name)
 	Repo          string // the floor's effective repo (settings, else the suggestion)
 	ProjectOwner  string // GitHub's project and status field (GitHub tracker only)
 	ProjectNumber int
@@ -143,7 +143,8 @@ func (h *Hub) initBoards(ctx context.Context) error {
 
 // boardFloor is one board-enabled floor.
 type boardFloor struct {
-	session string
+	session string // the floor id
+	base    string // #58: its herdr session
 	src     BoardSource
 	set     BoardSet
 	info    tracker.Info
@@ -239,7 +240,7 @@ func (h *Hub) boardOf(session string) *boardFloor {
 		}
 		h.dropBoard(bf)
 	}
-	bf = &boardFloor{session: session, src: src, set: set, info: set.Tracker.Info(), announced: map[string]bool{}}
+	bf = &boardFloor{session: session, base: h.sessionOf(session), src: src, set: set, info: set.Tracker.Info(), announced: map[string]bool{}}
 	if set.Host != nil {
 		i := set.Host.Info()
 		bf.host = &i
@@ -330,11 +331,12 @@ func (h *Hub) boardInterval(session string) time.Duration {
 // --- messages ---
 
 func (bf *boardFloor) issuesMsg(initial bool) proto.BoardIssues {
-	m := proto.BoardIssues{T: proto.TBoardIssues, Session: bf.session, Provider: bf.info.ID, ProviderName: bf.info.Name,
+	m := proto.BoardIssues{T: proto.TBoardIssues, Provider: bf.info.ID, ProviderName: bf.info.Name,
 		Capabilities: bf.info.Capabilities, Columns: []tracker.Column{}, Cards: []tracker.Card{}}
 	if bf.issues != nil {
 		m = *bf.issues
 	}
+	m.Session, m.Floor = bf.base, bf.session // #58
 	m.Initial, m.Stale, m.Error, m.ErrorCode, m.PausedUntil = initial, bf.stale, "", "", 0
 	if bf.stale {
 		m.Error, m.ErrorCode = bf.lastErr, bf.lastCode
@@ -346,7 +348,7 @@ func (bf *boardFloor) issuesMsg(initial bool) proto.BoardIssues {
 }
 
 func (bf *boardFloor) prsMsg(initial bool) proto.BoardPRs {
-	m := proto.BoardPRs{T: proto.TBoardPRs, Session: bf.session, Provider: bf.info.ID, ProviderName: bf.info.Name,
+	m := proto.BoardPRs{T: proto.TBoardPRs, Provider: bf.info.ID, ProviderName: bf.info.Name,
 		PRs: []codehost.Request{}}
 	if bf.host != nil {
 		m.Provider, m.ProviderName, m.Capabilities = bf.host.ID, bf.host.Name, bf.host.Capabilities
@@ -354,6 +356,7 @@ func (bf *boardFloor) prsMsg(initial bool) proto.BoardPRs {
 	if bf.prs != nil {
 		m = *bf.prs
 	}
+	m.Session, m.Floor = bf.base, bf.session // #58
 	m.Initial, m.Stale, m.Error, m.Merged = initial, bf.stale, "", []codehost.Merged{}
 	if bf.stale {
 		m.Error = bf.lastErr
@@ -598,7 +601,7 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 	}
 	bf.fetchedAt = now
 	bf.nextAt = now.Add(h.boardInterval(bf.session))
-	is := proto.BoardIssues{T: proto.TBoardIssues, Session: bf.session, Provider: bf.info.ID, ProviderName: bf.info.Name,
+	is := proto.BoardIssues{T: proto.TBoardIssues, Session: bf.base, Floor: bf.session, Provider: bf.info.ID, ProviderName: bf.info.Name,
 		FetchedAt: now.UnixMilli(), Truncated: res.issues.Truncated, Rate: rate, Capabilities: bf.info.Capabilities,
 		Columns: res.issues.Columns, Cards: res.issues.Cards}
 	if is.Columns == nil {
@@ -621,7 +624,7 @@ func (h *Hub) finishPoll(ctx context.Context, bf *boardFloor, key string, writes
 	var open []string
 	var prPayload []byte
 	if res.prs != nil {
-		p := proto.BoardPRs{T: proto.TBoardPRs, Session: bf.session, Provider: bf.host.ID, ProviderName: bf.host.Name,
+		p := proto.BoardPRs{T: proto.TBoardPRs, Session: bf.base, Floor: bf.session, Provider: bf.host.ID, ProviderName: bf.host.Name,
 			FetchedAt: now.UnixMilli(), Truncated: res.prs.Truncated, Rate: prRate, Capabilities: bf.host.Capabilities,
 			PRs: res.prs.Requests, Merged: []codehost.Merged{}}
 		if p.PRs == nil {
@@ -719,21 +722,22 @@ func (h *Hub) startBoardWatch(ctx context.Context, c *Client, cmd proto.Command)
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if _, err := h.floorFor(a.Session); err != nil {
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	if _, err := h.floorFor(a.Floor); err != nil {
 		return err
 	}
-	h.standsOn(ctx, c, a.Session)             // #98: the floor the connection stands on, board or not
+	h.standsOn(ctx, c, a.Floor)               // #98: the floor the connection stands on, board or not
 	if prev, ok := h.boards.watchers[c]; ok { // one floor per connection
 		delete(h.boards.watchers, c)
 		h.unwatched(prev)
 	}
-	bf := h.boardOf(a.Session)
+	bf := h.boardOf(a.Floor)
 	if bf == nil {
 		h.audit(ctx, c, cmd, nil)
-		h.reply(c, cmd, proto.BoardWatchResult{Enabled: false, Reason: h.noBoard(a.Session)}, nil)
+		h.reply(c, cmd, proto.BoardWatchResult{Enabled: false, Reason: h.noBoard(a.Floor)}, nil)
 		return nil
 	}
-	h.boards.watchers[c] = a.Session
+	h.boards.watchers[c] = a.Floor
 	h.audit(ctx, c, cmd, nil)
 	h.reply(c, cmd, proto.BoardWatchResult{Enabled: true}, nil)
 	h.sendBoards(c, bf, true)
@@ -754,11 +758,12 @@ func (h *Hub) startBoardUnwatch(ctx context.Context, c *Client, cmd proto.Comman
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if h.boards.watchers[c] == a.Session {
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	if h.boards.watchers[c] == a.Floor {
 		delete(h.boards.watchers, c)
-		h.unwatched(a.Session)
+		h.unwatched(a.Floor)
 	}
-	if h.act.views[c] == a.Session { // #98
+	if h.act.views[c] == a.Floor { // #98
 		h.standsOn(ctx, c, "")
 	}
 	h.audit(ctx, c, cmd, nil)
@@ -771,12 +776,13 @@ func (h *Hub) startBoardRefresh(ctx context.Context, c *Client, cmd proto.Comman
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if _, err := h.floorFor(a.Session); err != nil {
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	if _, err := h.floorFor(a.Floor); err != nil {
 		return err
 	}
-	bf := h.boardOf(a.Session)
+	bf := h.boardOf(a.Floor)
 	if bf == nil {
-		return fmt.Errorf("%w: the floor has no board (%s)", errUnsupported, h.noBoard(a.Session))
+		return fmt.Errorf("%w: the floor has no board (%s)", errUnsupported, h.noBoard(a.Floor))
 	}
 	now := h.opts.Now()
 	queued := false
@@ -791,7 +797,7 @@ func (h *Hub) startBoardRefresh(ctx context.Context, c *Client, cmd proto.Comman
 	}
 	h.audit(ctx, c, cmd, nil)
 	h.reply(c, cmd, proto.BoardRefreshResult{Queued: queued}, nil)
-	if !queued && h.boards.watchers[c] == a.Session {
+	if !queued && h.boards.watchers[c] == a.Floor {
 		h.sendBoards(c, bf, true)
 	}
 	return nil

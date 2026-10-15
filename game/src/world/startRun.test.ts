@@ -205,16 +205,16 @@ describe('run args and blockers', () => {
   const prep = { git: { repo_root: '/r', default_branch: 'main', base_sha: 'abc', base_time: 0, fetched: true } } as unknown as RunPrepare;
 
   it('prepare sends the ticket, the preset and orch once known, and extra', () => {
-    expect(prepareArgs('lab', form({ preset: '', orch: null }), parseTicket('', null))).toEqual({ session: 'lab' });
-    expect(prepareArgs('lab', form({ extra: 'Keep it small' }), t)).toEqual({ session: 'lab', issue: 3, preset: BUILD.id, orch: opus, extra: 'Keep it small' });
+    expect(prepareArgs('lab', form({ preset: '', orch: null }), parseTicket('', null))).toEqual({ floor: 'lab' });
+    expect(prepareArgs('lab', form({ extra: 'Keep it small' }), t)).toEqual({ floor: 'lab', issue: 3, preset: BUILD.id, orch: opus, extra: 'Keep it small' });
   });
 
   it('start sends a prompt only when custom, a label only when typed', () => {
     const gen = previewGenerated(emptyPreview(), '/write-code …');
-    expect(startArgs('lab', form(), t, gen, prep, true)).toEqual({ session: 'lab', desk_index: 4, issue: 3, orch: opus, preset: BUILD.id, worktree: true });
+    expect(startArgs('lab', form(), t, gen, prep, true)).toEqual({ floor: 'lab', desk_index: 4, issue: 3, orch: opus, preset: BUILD.id, worktree: true });
     const custom = previewEdited(gen, '/write-code … and more');
     expect(startArgs('lab', form({ label: ' ORCH|lab ', worktree: false }), parseTicket('Make it purple', null), custom, prep, true)).toEqual({
-      session: 'lab',
+      floor: 'lab',
       desk_index: 4,
       text: 'Make it purple',
       orch: opus,
@@ -338,10 +338,10 @@ describe('a work item as the ticket', () => {
 
   it('is a ticket for prepare and start, with no other ticket field', () => {
     const f = form({ ticket: '', workItem: item });
-    expect(prepareArgs('lab', f, t)).toEqual({ session: 'lab', work_item: { provider: 'github', id: 'JeffreyVdb/lab#7' }, preset: BUILD.id, orch: { ...opus } });
+    expect(prepareArgs('lab', f, t)).toEqual({ floor: 'lab', work_item: { provider: 'github', id: 'JeffreyVdb/lab#7' }, preset: BUILD.id, orch: { ...opus } });
     expect(startBlocker(f, t, emptyPreview(), H, book(BUILD))).toBeNull();
     const a = startArgs('lab', f, t, emptyPreview(), null, false);
-    expect(a).toMatchObject({ session: 'lab', desk_index: 4, work_item: { provider: 'github', id: 'JeffreyVdb/lab#7' } });
+    expect(a).toMatchObject({ floor: 'lab', desk_index: 4, work_item: { provider: 'github', id: 'JeffreyVdb/lab#7' } });
     expect(a).not.toHaveProperty('issue');
     expect(a).not.toHaveProperty('text');
   });

@@ -2,6 +2,8 @@ package whiteboard
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -373,11 +375,21 @@ func TestClearKeepsHistory(t *testing.T) {
 	}
 }
 
-// A floor is a herdr session: the names are the same set.
-func TestFloorNamesAreSessionNames(t *testing.T) {
-	for _, f := range []string{"", ".", "..", "-x", "x-", "a.b", "a/b", "A_z-9", strings.Repeat("s", 64), strings.Repeat("s", 65), "é", "a b", "..x"} {
+// #58: a board is keyed by floor id, a herdr session's name (its real
+// floor) or a virtual floor's "v-<12 hex>": a floor id is exactly a session
+// name, and every virtual floor id is one.
+func TestFloorIDsAreSessionNamesOrVirtualIDs(t *testing.T) {
+	for _, f := range []string{"", ".", "..", "-x", "x-", "a.b", "a/b", "A_z-9", strings.Repeat("s", 64), strings.Repeat("s", 65), "é", "a b", "..x",
+		"v-0123456789ab", "v-", "v-../x"} {
 		if ValidFloor(f) != herdr.ValidSessionName(f) {
 			t.Errorf("%q: floor %v, session %v", f, ValidFloor(f), herdr.ValidSessionName(f))
+		}
+	}
+	for range 100 {
+		var b [6]byte
+		_, _ = rand.Read(b[:])
+		if id := "v-" + hex.EncodeToString(b[:]); !ValidFloor(id) {
+			t.Errorf("virtual floor id %q is no floor", id)
 		}
 	}
 }

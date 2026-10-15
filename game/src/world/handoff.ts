@@ -123,14 +123,14 @@ export class HandoffBook {
 
   added(e: HandoffAdded): void {
     this.known = true;
-    this.counts.set(e.session, Math.max(0, e.handoff_count));
+    this.counts.set(e.floor_id ?? e.session, Math.max(0, e.handoff_count));
     this.filed.push(e.handoff);
     this.version++;
   }
 
   removed(e: HandoffRemoved): void {
     this.known = true;
-    this.counts.set(e.session, Math.max(0, e.handoff_count));
+    this.counts.set(e.floor_id ?? e.session, Math.max(0, e.handoff_count));
     this.version++;
   }
 

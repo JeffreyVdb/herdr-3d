@@ -461,7 +461,7 @@ export class Hud {
 
   /** A floor: the one you are on, or (`fire-escape`) the one whose landing you stand on. */
   setFloor(v: FloorView, at: 'floor' | 'fire-escape' = 'floor'): void {
-    this.name.textContent = v.session;
+    this.name.textContent = v.name;
     this.setPlate(v.level ? { floor: v.level.number, of: v.level.count } : null);
     const where = v.level ? (v.building?.name ?? '') : 'Unassigned lot';
     const state = v.transition === 'waking' ? ' · waking up…' : v.transition === 'sleeping' ? ' · going to sleep…' : v.asleep ? ' · asleep' : '';

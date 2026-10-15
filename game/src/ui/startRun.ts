@@ -54,7 +54,7 @@ import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './
 
 export interface StartRunHost extends HireHost {
   /** The Worker tab: the M4 hire dialog for the same desk. */
-  hireAt(session: string, desk: number): void;
+  hireAt(floor: string, desk: number): void;
   /** The presets panel, over this dialog (focus comes back to `from`). */
   openPresets(from: HTMLElement | null): void;
   /** The run started: the view follows the new orchestrator. M7: `workItem` when it started on a board card. */
@@ -62,7 +62,7 @@ export interface StartRunHost extends HireHost {
 }
 
 export interface StartRunOptions {
-  session: string;
+  floor: string;
   /** M7: an issue to start on (a number of the floor's repo, `#n`, or an issue URL). */
   issue?: number | string;
   /** M7: "Hand to a worker": a card of the issue board to start on (the ticket is this card, sent as `work_item`). */
@@ -76,7 +76,7 @@ export type StartRunState = 'preparing' | 'ready' | 'starting' | 'failed';
 /** What the start-run dialog shows (test hook). */
 export interface StartRunSummary {
   kind: 'start-run';
-  session: string;
+  floor: string;
   desk: number;
   title: string;
   state: StartRunState;
@@ -119,7 +119,9 @@ export class StartRunDialog {
   private readonly notices = h('div', { class: 'dd-notices' });
   private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.statusEl, this.alertEl, this.actions);
 
-  private session = '';
+  private floor = '';
+  /** What `run.start` is doing, once it is sent (null: not yet): the status line under "Waking floor…" (#58). */
+  private startingText: string | null = null;
   private desk = 0;
   private state: StartRunState = 'preparing';
   private prep: RunPrepare | null = null;
@@ -167,13 +169,13 @@ export class StartRunDialog {
       const p = this.prep;
       const harness = this.f.orch?.harness;
       if (!this.dialog.open || !p || !harness || this.state === 'preparing' || this.state === 'failed') return (this.lookup = null);
-      this.lookup = { session: this.session, harness, cwd: p.cwd, worktree: this.f.worktree && worktreeUsable(p.git) };
+      this.lookup = { floor: this.floor, harness, cwd: p.cwd, worktree: this.f.worktree && worktreeUsable(p.git) };
       return hireLookupKey(this.lookup);
     },
     () => {
       const host = this.host;
       const catalogs = host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) }));
-      return hireSources({ send: host.send.bind(host), unsupported: (t) => host.unsupported(t), catalogs, repoRefs: host.store.repoRefs, repoDiscovery: host.store.repoDiscovery }, this.lookup as HireLookup);
+      return hireSources({ send: host.send.bind(host), unsupported: (t) => host.unsupported(t), catalogs, repoRefs: host.store.repoRefs, repoDiscovery: host.store.repoDiscovery, floorName: (id) => host.store.floorName(id) }, this.lookup as HireLookup);
     },
   );
 
@@ -284,7 +286,7 @@ export class StartRunDialog {
       const a = document.activeElement;
       this.returnTo = a instanceof HTMLElement && a !== document.body ? a : null;
     }
-    this.session = o.session;
+    this.floor = o.floor;
     this.desk = o.desk;
     this.prep = null;
     this.f = blankForm();
@@ -326,7 +328,7 @@ export class StartRunDialog {
   }
 
   private repo(): string | null {
-    const fv = this.host.store.floorView(this.session);
+    const fv = this.host.store.floorView(this.floor);
     return fv?.settings.repo ?? fv?.suggested.repo ?? null;
   }
 
@@ -351,7 +353,7 @@ export class StartRunDialog {
   private async prepare(): Promise<void> {
     const gen = ++this.gen;
     this.inFlight = true;
-    const r = await this.host.send('run.prepare', prepareArgs(this.session, this.f, this.ticket()));
+    const r = await this.host.send('run.prepare', prepareArgs(this.floor, this.f, this.ticket()));
     if (gen !== this.gen || !this.dialog.open || this.state === 'starting') return;
     this.inFlight = false;
     if (!r.ok) {
@@ -365,10 +367,10 @@ export class StartRunDialog {
         this.preview = previewGenerated(this.preview, '');
       } else if (this.prep) {
         this.state = 'ready';
-        this.setStatus(failureText('run.prepare', r.code, r.message, { floor: this.session }), true);
+        this.setStatus(failureText('run.prepare', r.code, r.message, { floor: this.floorName() }), true);
       } else {
         this.state = 'failed';
-        this.setStatus(failureText('run.prepare', r.code, r.message, { floor: this.session }), true);
+        this.setStatus(failureText('run.prepare', r.code, r.message, { floor: this.floorName() }), true);
       }
       this.render();
       return;
@@ -388,18 +390,35 @@ export class StartRunDialog {
     this.render();
   }
 
+  /** #58: the floor's name (never its id). */
+  private floorName(): string {
+    return this.host.store.floorName(this.floor);
+  }
+
+  /** The status line while `run.start` is on its way: "Waking floor…" first while the floor's session wakes (#58 decision 3). */
+  private startingStatus(): void {
+    const fv = this.host.store.floorView(this.floor);
+    const wakes = !!fv && (fv.transition === 'waking' || (fv.asleep && fv.virtual));
+    this.setStatus(wakes ? `Waking floor ${this.floorName()}… then ${this.startingText ?? 'starting'}` : (this.startingText ?? ''));
+  }
+
   /** The world changed: the desk may be taken, the floor gone or asleep, a preset changed or gone. */
   refresh(): void {
-    if (!this.dialog.open || this.state === 'starting') return;
-    const fv = this.host.store.floorView(this.session);
-    if (!fv) {
-      this.close();
-      this.host.toast(`${this.session} is gone.`, 'info');
+    if (!this.dialog.open) return;
+    // #58 decision 3: a run on an asleep virtual floor wakes its session first: the status follows the wake.
+    if (this.state === 'starting') {
+      if (this.startingText !== null) this.startingStatus();
       return;
     }
-    if (fv.asleep) {
+    const fv = this.host.store.floorView(this.floor);
+    if (!fv) {
       this.close();
-      this.host.toast(`${this.session} went to sleep; wake it to start a run.`, 'info');
+      this.host.toast(`${this.floorName()} is gone.`, 'info');
+      return;
+    }
+    if (fv.asleep && !fv.virtual) {
+      this.close();
+      this.host.toast(`${this.floorName()} went to sleep; wake it to start a run.`, 'info');
       return;
     }
     const book = this.host.store.presets;
@@ -430,13 +449,13 @@ export class StartRunDialog {
   }
 
   private capacity(): CapacityView | null {
-    return this.prep ? capacityView(this.prep.capacity, this.session) : null;
+    return this.prep ? capacityView(this.prep.capacity, this.floorName()) : null;
   }
 
   private takenBy(): { why: string; next: number | null } | null {
-    const fv = this.host.store.floorView(this.session);
+    const fv = this.host.store.floorView(this.floor);
     if (!fv || this.state === 'starting') return null;
-    const held = this.host.held(this.session);
+    const held = this.host.held(this.floor);
     const seat = fv.seats[this.f.desk];
     const why = seat ? `${seat.name} just sat down at Desk ${this.f.desk + 1}.` : held.has(this.f.desk) ? `Another hire is already on its way to Desk ${this.f.desk + 1}.` : this.f.desk >= fv.desks ? `Desk ${this.f.desk + 1} is gone.` : null;
     return why ? { why, next: firstFreeDesk(fv, held) } : null;
@@ -506,11 +525,11 @@ export class StartRunDialog {
   private render(): void {
     // #39: another harness, folder or worktree choice: an open popup follows it (its old rows never go in).
     this.lookups.check();
-    const fv = this.host.store.floorView(this.session);
+    const fv = this.host.store.floorView(this.floor);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const book = this.host.store.presets;
-    const free = fv ? freeDesks(fv).filter((d) => d === this.f.desk || !this.host.held(this.session).has(d)) : [];
-    const key = JSON.stringify([this.session, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null, this.host.store.limits.version, this.host.modelPrefs?.version, this.f.orch && labelsOf(this.host.store.hireOptions, this.f.orch.harness)]);
+    const free = fv ? freeDesks(fv).filter((d) => d === this.f.desk || !this.host.held(this.floor).has(d)) : [];
+    const key = JSON.stringify([this.floor, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null, this.host.store.limits.version, this.host.modelPrefs?.version, this.f.orch && labelsOf(this.host.store.hireOptions, this.f.orch.harness)]);
     if (key === this.renderedKey) {
       this.renderLive();
       return;
@@ -523,7 +542,7 @@ export class StartRunDialog {
 
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--desk', 'aria-hidden': 'true' }, icon(DESK_PLUS), h('b', {}, String(this.desk + 1))),
-      h('div', { class: 'dd-titles' }, h('h2', { id: 'run-title' }, this.title()), h('p', { id: 'run-sub' }, `${this.session} · ${where}`)),
+      h('div', { class: 'dd-titles' }, h('h2', { id: 'run-title' }, this.title()), h('p', { id: 'run-sub' }, `${this.floorName()} · ${where}`)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
     this.tabsSlot.replaceChildren(
@@ -534,7 +553,7 @@ export class StartRunDialog {
           // The Worker tab takes over, focus and all; what opened this dialog is the hire dialog's to restore.
           this.returnTo = null;
           this.close();
-          this.host.hireAt(this.session, this.f.desk);
+          this.host.hireAt(this.floor, this.f.desk);
         },
         null,
       ),
@@ -806,7 +825,7 @@ export class StartRunDialog {
   private capacityBlock(): HTMLElement {
     const c = this.capacity() as CapacityView;
     const p = this.prep as RunPrepare;
-    const facts = `${this.session}: ${p.capacity.floor.count} of ${p.capacity.floor.soft} · host: ${p.capacity.host.count} of ${p.capacity.host.soft}${c.load ? ` · ${c.load}` : ''}`;
+    const facts = `${this.floorName()}: ${p.capacity.floor.count} of ${p.capacity.floor.soft} · host: ${p.capacity.host.count} of ${p.capacity.host.soft}${c.load ? ` · ${c.load}` : ''}`;
     if (c.level === 'ok') return h('p', { class: 'dd-capacity', 'data-level': 'ok' }, facts);
     const tape = c.level === 'full' ? 'At the hard cap' : 'Over the soft cap';
     return h(
@@ -893,7 +912,7 @@ export class StartRunDialog {
       return;
     }
     this.clearTimer();
-    const session = this.session;
+    const floor = this.floor;
     const desk = this.f.desk;
     const t = this.ticket();
     // #64: the images first. Uploads still on their way are waited for (the fields are read-only meanwhile); one that
@@ -921,12 +940,13 @@ export class StartRunDialog {
     // What the bridge is sent: the extra with its final markers, and (edited prompts only) the prompt as resolved.
     const form: RunForm = { ...this.f, extra: extra.text };
     const preview: Preview = prompt ? { ...this.preview, text: prompt.text } : this.preview;
-    const args: CommandArgs['run.start'] = startArgs(session, form, t, preview, this.prep, worktreeUsable(this.prep.git));
+    const args: CommandArgs['run.start'] = startArgs(floor, form, t, preview, this.prep, worktreeUsable(this.prep.git));
     const who = args.label ?? this.prep.label;
     this.state = 'starting';
-    const release = this.host.reserve(session, desk);
+    const release = this.host.reserve(floor, desk);
     const steps = [args.worktree ? 'creating the worktree' : null, `starting ${args.orch.harness}`, 'handing over the prompt'].filter(Boolean);
-    this.setStatus(`Starting ${who}: ${steps.join(', ')}…`);
+    this.startingText = `Starting ${who}: ${steps.join(', ')}…`;
+    this.startingStatus();
     this.render();
     const gen = this.gen;
     const r = await this.host.send('run.start', args);
@@ -951,7 +971,7 @@ export class StartRunDialog {
       if (ack?.id) this.host.started(ack.id, t.kind === 'work_item' ? { provider: t.item.provider, id: t.item.id } : undefined);
       return;
     }
-    const msg = r.code === 'not_found' ? 'That team preset was deleted meanwhile: pick another one.' : failureText('run.start', r.code, r.message, { floor: session, desk: desk + 1 }).replace('hire without a worktree', 'start without one');
+    const msg = r.code === 'not_found' ? 'That team preset was deleted meanwhile: pick another one.' : failureText('run.start', r.code, r.message, { floor: this.host.store.floorName(floor), desk: desk + 1 }).replace('hire without a worktree', 'start without one');
     if (!still) {
       this.host.toast(msg, 'error');
       return;
@@ -968,7 +988,7 @@ export class StartRunDialog {
     const t = this.ticket();
     return {
       kind: 'start-run',
-      session: this.session,
+      floor: this.floor,
       desk: this.f.desk,
       title: this.title(),
       state: this.state,

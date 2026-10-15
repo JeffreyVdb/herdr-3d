@@ -244,7 +244,7 @@ describe('#54 discovered repositories', () => {
     );
     const got = (await p) as RepoItem[];
     expect(got.map((x) => src.key?.(x))).toEqual(['floor:old', 'gh:acme/web', 'git:/d/a/.git', 'git:/d/b/.git', 'y']);
-    expect(got[0]?.item).toEqual({ id: 'floor:old', source: 'floor', session: 'old', building: 'Work', same_building: true, repo: 'acme/old', cloned: false });
+    expect(got[0]?.item).toEqual({ id: 'floor:old', source: 'floor', session: 'old', floor: 'old', where: 'old', building: 'Work', same_building: true, repo: 'acme/old', cloned: false });
     expect(got[1]?.item.checkouts).toBe(2);
     expect(got[4]?.item).toEqual({ id: 'y', source: 'discovered', building: null, same_building: false, dir: '/d/y', cloned: false });
     // The folder is a match key: `b/api` finds the other api.

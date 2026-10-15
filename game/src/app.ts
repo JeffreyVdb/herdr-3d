@@ -47,12 +47,12 @@ import { buildingPlan, floorY, loadedFloor, placeAt, walkWorld, type Area, type 
 import { EYE_HEIGHT, floorLayout as floorLayoutIn, openingsFor, outlineOf, overlookReach, seatRect, type Opening, type Outline } from './world/layout';
 import { STAND_LIFT, type ArrivalKind } from './world/arrival';
 import { displayName, resolveHarness, type Display } from './world/derive';
-import { firstFreeDesk, freeDesks, isFreshHire, Reservations, resolveHireDesk } from './world/hire';
+import { firstFreeDesk, floorClosed, freeDesks, isFreshHire, Reservations, resolveHireDesk } from './world/hire';
 import { cabinetSpot, deskToCabinetRoute, deskToDeskRoute, handOver, walkOutRoute, type Dest, type Waypoint } from './world/route';
 // M6c: reports walk over to the orchestrator's desk.
 import { DeliveryBook, reportArrived, reportFact, trayFolderAt, TRAY_CAP, type Entry, type ReportFact, type TrayPose } from './world/delivery';
 import { toneColor } from './render/tray';
-import { WorldStore, type Change, type Counts, type FloorView, type WorkerView } from './world/store';
+import { floorOf, WorldStore, type Change, type Counts, type FloorView, type WorkerView } from './world/store';
 // M5: P prompt, C changes, N next, 1–9 / 0 quick replies.
 import { ChangesPanel } from './ui/changes';
 import { failureText as commandFailure } from './ui/messages';
@@ -65,6 +65,8 @@ import { promptBlocker } from './world/prompt';
 // M6 start: starting a run from an empty desk or the top bar; team presets.
 import { m6StartButtons, type M6StartButtons } from './ui/startButtons';
 import { PresetsPanel } from './ui/presets';
+import { AddFloorDialog, addFloorButton } from './ui/addFloor';
+import { addedFloorText } from './world/addFloor';
 import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/startRun';
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, inputRequired, isFreelancer } from './world/crew';
@@ -101,6 +103,7 @@ import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup
 import { activitySection } from './ui/activitySection';
 import { codexServerSection } from './ui/codexServerSection';
 import { repoDiscoverySection } from './ui/repoDiscoverySection';
+import { floorsSection } from './ui/floorsSection';
 import { repoRefsSection } from './ui/repoRefsSection';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
@@ -294,6 +297,8 @@ export class App {
   /** M6 start: the start-run dialog, the team presets panel and their top bar buttons. */
   readonly startRun: StartRunDialog;
   readonly presetsPanel: PresetsPanel;
+  /** #58: the Add floor dialog (the top bar in the city, the Buildings panel's lot). */
+  readonly addFloor: AddFloorDialog;
   private readonly m6Buttons: M6StartButtons;
   /** M7: the boards' state (last messages per floor), their overlay and item modals. */
   readonly boardBook = new BoardBook();
@@ -359,7 +364,7 @@ export class App {
   private tween: { from: [THREE.Vector3, THREE.Vector3]; to: [THREE.Vector3, THREE.Vector3]; t0: number; ms: number } | null = null;
   private target: Target | null = null;
   /** #124: a worker, desk or prop picked with T instead of aimed at, and where the walker looked when it was: moving or turning lets it go. */
-  private keyTarget: { target: Target; session: string; pose: { x: number; z: number; yaw: number; pitch: number } } | null = null;
+  private keyTarget: { target: Target; floor: string; pose: { x: number; z: number; yaw: number; pitch: number } } | null = null;
   private transitioning = false;
   private readonly fixture: boolean;
   private readonly vp = { width: 1, height: 1 };
@@ -390,7 +395,7 @@ export class App {
       // #57: Switch bridge only where a helper serves the page.
       commands: () => paletteCommands(this.activeScopes()).filter((c) => c.id !== 'bridge.switch' || this.bridges.available),
       store: this.store,
-      here: () => this.hereSession(),
+      here: () => this.hereFloor(),
       online: () => this.conn.phase === 'live',
       run: (c, floor) => void this.runPaletteCommand(c, floor),
       goTo: (s) => void this.goToFloor(s),
@@ -398,9 +403,9 @@ export class App {
     });
     this.dictation = new DictationBar(o.host, {
       submit: (text, live) => this.interpretDictation(text, live),
-      pickFloor: (session, hire, live) => this.openDictatedReview(session, hire, live),
+      pickFloor: (floor, hire, live) => this.openDictatedReview(floor, hire, live),
       store: this.store,
-      here: () => this.hereSession(),
+      here: () => this.hereFloor(),
       online: () => this.conn.phase === 'live',
     });
     // #216: the application UI theme (Quiet or Ubuntu), first, where the look of everything else is chosen.
@@ -410,6 +415,18 @@ export class App {
     this.settings.addSection('harness-models', 'Harness models', harnessModelsSection({ prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser', group: 'workers' });
     // #248: the named harness / model / effort combinations for small jobs, beside the models they choose from.
     this.settings.addSection('task-levels', 'Task levels', taskLevelsSection({ levels: this.taskLevels, prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser', group: 'workers' });
+    // #58 stage 4: every session's floor and the virtual floors on it: add, rename, delete, hide (kept on the bridge).
+    this.settings.addSection(
+      'floors',
+      'Floors',
+      floorsSection({
+        book: this.store.floorList,
+        send: (t, args) => this.send(t, args),
+        unsupported: (t) => this.unsupported.has(t),
+        addFloor: (from, added) => this.addFloor.open(from, { kind: 'virtual', added }),
+      }),
+      { store: 'bridge', group: 'general' },
+    );
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser', group: 'general' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
     this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser', group: 'general' });
@@ -596,7 +613,7 @@ export class App {
     this.panels = new Panels(o.host, {
       store: this.store,
       modelPrefs: this.hireModelPrefs,
-      here: () => this.hereSession(),
+      here: () => this.hereFloor(),
       inLobby: () => this.mode === 'floor' && this.place.area === 'lobby',
       send: (t, args) => this.send(t, args),
       unsupported: (t) => this.unsupported.has(t),
@@ -613,6 +630,7 @@ export class App {
       logoFailed: (hash) => this.logos.unavailable(hash),
       setLogo: (b, f) => this.setLogo(b, f),
       clearLogo: (b) => this.clearLogo(b),
+      addFloor: (from) => this.openAddFloor(from), // #58
     });
 
     const dialogHost = {
@@ -656,11 +674,21 @@ export class App {
       hirePrefs: this.hirePrefs,
       hires: this.hires,
       goTo: (id) => this.goToNewHire(id),
-      orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ session: s, desk: d }, true) },
+      orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ floor: s, desk: d }, true) },
     });
     this.hireReview = new HireReviewDialog(o.host, { ...hireHost, hirePrefs: this.hirePrefs, hires: this.hires, goTo: (id) => this.goToNewHire(id) });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, { ...dialogHost, modelPrefs: this.hireModelPrefs });
+    // #58: a new session's floor waits in the lot: the Buildings panel opens on its Move menu. A virtual floor already
+    // stands in its session's building (decision 4): a toast says where.
+    this.addFloor = new AddFloorDialog(o.host, {
+      ...dialogHost,
+      added: (id, kind) => (kind === 'session' ? this.panels.openBuildings(id) : this.virtualFloorAdded(id)),
+      here: () => {
+        const f = this.hereFloor();
+        return f ? (this.store.floors.get(f)?.base_session ?? null) : null;
+      },
+    });
     this.startRun = new StartRunDialog(o.host, {
       ...hireHost,
       hirePrefs: this.hirePrefs,
@@ -690,16 +718,16 @@ export class App {
     this.cabinet = new Cabinet(o.host, { ...dialogHost, copy, hireFrom: (e) => this.hireFromHandoff(e) });
     this.boardsPanel = new BoardsPanel(o.host, {
       ...dialogHost,
-      session: () => this.hereSession(),
-      state: (session) => this.boardState(session),
-      refresh: (session) => void this.sendBoard('board.refresh', { session }),
+      floor: () => this.hereFloor(),
+      state: (floor) => this.boardState(floor),
+      refresh: (floor) => void this.sendBoard('board.refresh', { floor }),
       external: (url) => this.external(url),
-      handTo: (session, card, provider) => this.handTo(session, card, provider),
-      ask: (session, card, provider, body) => this.askAbout(session, card, provider, body),
-      review: (session, pr) => this.reviewPr(session, pr),
-      resolve: (session, pr, method) => this.resolvePr(session, pr, method),
-      whyNoRun: (session) => this.whyNoRun(session),
-      whyNoHire: (session) => this.whyNoHire(session),
+      handTo: (floor, card, provider) => this.handTo(floor, card, provider),
+      ask: (floor, card, provider, body) => this.askAbout(floor, card, provider, body),
+      review: (floor, pr) => this.reviewPr(floor, pr),
+      resolve: (floor, pr, method) => this.resolvePr(floor, pr, method),
+      whyNoRun: (floor) => this.whyNoRun(floor),
+      whyNoHire: (floor) => this.whyNoHire(floor),
       goTo: (id) => void this.goToWorker(id),
     });
     this.arrivals = new Arrivals(this.shadows);
@@ -735,7 +763,7 @@ export class App {
     this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, catalogs, packup: (id, text, signal) => this.packupCheck(id, text, signal) });
     this.openPr = new OpenPrDialog(o.host, {
       ...dialogHost,
-      providerName: (session) => this.boardBook.get(session).prs?.provider_name ?? this.boardBook.get(session).issues?.provider_name ?? 'the provider',
+      providerName: (floor) => this.boardBook.get(floor).prs?.provider_name ?? this.boardBook.get(floor).issues?.provider_name ?? 'the provider',
       external: (url) => this.external(url),
     });
     this.whiteboard = new WhiteboardOverlay(o.host, {
@@ -752,18 +780,19 @@ export class App {
     this.overview = new OverviewOverlay(
       o.host,
       {
-        data: (session) => this.overviewData(session),
+        data: (floor) => this.overviewData(floor),
         cityData: () => this.cityOverviewData(), // #188
-        goToFloor: (session) => void this.goToFloor(session),
+        goToFloor: (floor) => void this.goToFloor(floor),
         goTo: (id) => void this.goToWorker(id, 'transcript'),
-        openTicket: (session, id) => this.boardsPanel.openItem('issues', session, id, { pin: true }),
+        openTicket: (floor, id) => this.boardsPanel.openItem('issues', floor, id, { pin: true }),
         retrySummary: (id) =>
           void this.send('digest.retry', { id }).then((r) => {
             if (!r.ok) this.hud.toast(digestFailureText(r.code, r.message), 6500, 'error');
           }),
         hire: () => this.openHire(),
         calm: () => this.batterySaver,
-        screenRect: (session) => this.overviewScreenRect(session),
+        screenRect: (floor) => this.overviewScreenRect(floor),
+        floorName: (floor) => this.store.floorName(floor),
         closed: () => {
           this.updateHint();
           this.activity(true);
@@ -789,6 +818,7 @@ export class App {
     this.hud.on('prs', () => this.openBoard('prs'));
     this.hud.on('overview', () => this.openOverview(false));
     this.hud.on('overview.all', () => this.openCityOverview()); // #188
+    addFloorButton(this.hud, (b) => this.openAddFloor(b)); // #58, before Presets
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
     this.bindInput();
     // #124: the keys' names as this keyboard labels them (Chromium's layout map), in the titles that name a key.
@@ -840,9 +870,9 @@ export class App {
         const v = this.store.workerView(id);
         if (!v) continue;
         this.city.updateWorker(v);
-        if (this.office?.session === v.worker.session) this.office.updateWorker(v);
+        if (this.office?.id === v.worker.floor) this.office.updateWorker(v);
       }
-      for (const s of c.sessions) {
+      for (const s of c.floors) {
         const fv = this.store.floorView(s);
         if (fv) this.city.updateFloor(fv);
       }
@@ -865,6 +895,7 @@ export class App {
     this.playFilings();
     this.startRun.refresh();
     this.presetsPanel.refresh();
+    this.addFloor.refresh(); // #58
     this.limitsWidget.update();
     this.inbox.set(this.inboxEntries());
     this.m6Buttons.sync();
@@ -917,19 +948,19 @@ export class App {
    */
   private pumpDeliveries(): void {
     // (A walk is under way until its freelancer has sat down again, whatever the book says of its folder.)
-    const busy = this.deliveries.activeSessions();
-    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.kind === 'deliver') busy.add(a.session);
+    const busy = this.deliveries.activeFloors();
+    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.kind === 'deliver') busy.add(a.floor);
     for (const orch of this.deliveries.queuedOrchs()) {
       for (;;) {
         const e = this.deliveries.next(orch, busy);
         if (!e) break;
         if (this.startDelivery(e)) {
-          busy.add(e.session);
+          busy.add(e.floor);
           break;
         }
         // Nobody can see it (another floor, the city, a sleeping floor, no way): it resolves at once.
         this.deliveries.land(e.key);
-        this.arrivals.skip({ id: `deliver:${e.key}`, kind: 'deliver', session: e.session, desk: e.desk });
+        this.arrivals.skip({ id: `deliver:${e.key}`, kind: 'deliver', floor: e.floor, desk: e.desk });
       }
     }
     this.syncTrays();
@@ -946,10 +977,10 @@ export class App {
     const ctx = this.building;
     const v = this.store.workerView(e.id);
     const ov = this.store.workerView(e.orch);
-    const fv = this.store.floorView(e.session);
-    if (!o || !ctx || !v || !ov || !fv || this.mode !== 'floor' || o.session !== e.session || ov.worker.session !== e.session || fv.asleep) return false;
+    const fv = this.store.floorView(e.floor);
+    if (!o || !ctx || !v || !ov || !fv || this.mode !== 'floor' || o.id !== e.floor || ov.worker.floor !== e.floor || fv.asleep) return false;
     if (v.crew?.life !== 'reporting' || this.arrivals.has(e.id) || o.awayDesks().has(v.desk) || o.awayDesks().has(ov.desk)) return false;
-    const storey = ctx.floors.findIndex((f) => f.session === e.session);
+    const storey = ctx.floors.findIndex((f) => f.id === e.floor);
     const L = o.layout;
     const slot = L.slots[v.desk];
     const dest = this.destOf(ov);
@@ -976,7 +1007,7 @@ export class App {
     const spec: ArrivalSpec = {
       id: `deliver:${e.key}`,
       kind: 'deliver',
-      session: e.session,
+      floor: e.floor,
       desk: v.desk,
       name: v.name,
       route,
@@ -1012,7 +1043,7 @@ export class App {
     for (const e of this.deliveries.pending()) {
       // A queued report waits at its freelancer's desk, wherever that is now; an "active" one with no walk is over.
       const v = this.store.workerView(e.id);
-      if (v) Object.assign(e, { session: v.worker.session, desk: v.desk });
+      if (v) Object.assign(e, { floor: v.worker.floor, desk: v.desk });
       if (e.stage === 'active' && !live.has(e.key)) this.deliveries.land(e.key);
     }
     this.pumpDeliveries();
@@ -1024,7 +1055,7 @@ export class App {
     if (a.key?.includes(FILING)) {
       const v = this.store.workerView(a.key.slice(0, a.key.indexOf(FILING)));
       const o = this.office;
-      return !o || this.mode !== 'floor' || o.session !== a.session || (!!v && (v.worker.session !== a.session || v.desk !== a.desk));
+      return !o || this.mode !== 'floor' || o.id !== a.floor || (!!v && (v.worker.floor !== a.floor || v.desk !== a.desk));
     }
     const e = this.deliveries.get(a.key as string);
     const c = this.deliveryCtx.get(a.key as string);
@@ -1034,10 +1065,10 @@ export class App {
     const v = this.store.workerView(e.id);
     if (!v) return false;
     const ov = this.store.workerView(e.orch);
-    const fv = this.store.floorView(a.session);
+    const fv = this.store.floorView(a.floor);
     const o = this.office;
-    if (!ov || !fv || !c || !o || fv.asleep || this.mode !== 'floor' || o.session !== a.session || o.layout !== c.layout) return true;
-    return v.worker.session !== a.session || v.desk !== a.desk || ov.worker.session !== a.session || ov.desk !== c.orchDesk || (ov.worker.corner === true && ov.crew?.role === 'orch') !== c.corner;
+    if (!ov || !fv || !c || !o || fv.asleep || this.mode !== 'floor' || o.id !== a.floor || o.layout !== c.layout) return true;
+    return v.worker.floor !== a.floor || v.desk !== a.desk || ov.worker.floor !== a.floor || ov.desk !== c.orchDesk || (ov.worker.corner === true && ov.crew?.role === 'orch') !== c.corner;
   }
 
   /** Ends a delivery where it stands: its folder is on the tray, its desk and the orchestrator's chair are as the world says. */
@@ -1049,7 +1080,7 @@ export class App {
       this.deliveryCtx.delete(a.key);
     }
     const o = this.office;
-    if (o?.session !== a.session) return;
+    if (o?.id !== a.floor) return;
     o.setOut(a.desk, null);
     if (c) o.setSwivel(c.orchDesk, null);
   }
@@ -1059,7 +1090,7 @@ export class App {
     const o = this.office;
     if (!o) return;
     const waiting: number[] = [];
-    for (const e of this.deliveries.pending()) if (e.stage === 'queued' && e.session === o.session) waiting.push(e.desk);
+    for (const e of this.deliveries.pending()) if (e.stage === 'queued' && e.floor === o.id) waiting.push(e.desk);
     o.setWaiting(waiting);
     for (let i = 0; i < o.desksCount; i++) {
       const v = o.seat(i);
@@ -1070,11 +1101,11 @@ export class App {
   /** The reports on your floor stop: what is on their way lands on the tray. `keep`: the floor that stays in view. */
   private endDeliveries(keep: string | null): void {
     for (const a of this.arrivals.info(performance.now() / 1000)) {
-      if (a.kind !== 'deliver' || a.session === keep) continue;
+      if (a.kind !== 'deliver' || a.floor === keep) continue;
       this.arrivals.cancel(a.id); // (a freelancer leaving behind it is settled with it: `takeEnded`)
       if (a.key) this.deliveryCtx.delete(a.key);
     }
-    for (const e of this.deliveries.pending()) if (e.session !== keep) this.deliveries.land(e.key);
+    for (const e of this.deliveries.pending()) if (e.floor !== keep) this.deliveries.land(e.key);
   }
 
   /**
@@ -1143,7 +1174,7 @@ export class App {
         this.arrivals.cancel(e.id);
         if (spec) this.beginArrival(spec);
         else {
-          if (v) this.arrivals.skip({ id: e.id, kind: 'out', session: v.worker.session, desk: v.desk });
+          if (v) this.arrivals.skip({ id: e.id, kind: 'out', floor: v.worker.floor, desk: v.desk });
           this.deliveries.settle(e.id);
         }
       }
@@ -1152,7 +1183,7 @@ export class App {
       if (e.t === 'worker.removed') this.arrivals.cancel(e.id);
     } else if (e.t === 'worker.upsert' && this.arrivals.has(e.worker.id)) {
       const old = this.store.workers.get(e.worker.id);
-      if (old && (old.session !== e.worker.session || old.desk_index !== e.worker.desk_index)) this.arrivals.cancel(e.worker.id);
+      if (old && (old.floor !== floorOf(e.worker) || old.desk_index !== e.worker.desk_index)) this.arrivals.cancel(e.worker.id);
     }
     this.wrapUpToasts(e); // #83
     const was = e.t === 'worker.upsert' ? this.store.workers.get(e.worker.id) : undefined;
@@ -1198,7 +1229,7 @@ export class App {
   private pingInbox(c: Change): void {
     const snapshot = this.store.snapshots !== this.pingSnapshots;
     this.pingSnapshots = this.store.snapshots;
-    if (!snapshot && !c.structure && !c.workers.size && !c.sessions.size) return;
+    if (!snapshot && !c.structure && !c.workers.size && !c.floors.size) return;
     const entries = pingEntries(this.needCandidates(), this.store.inboxDismissed);
     this.pings.update(entries, snapshot);
   }
@@ -1233,7 +1264,7 @@ export class App {
    * `inboxWhere` / `inboxReason`).
    */
   private pingText(e: PingEntry): { title: string; body: string } {
-    const where = inboxWhere(this.store, e.session);
+    const where = inboxWhere(this.store, e.floor);
     const v = this.store.workerView(e.id);
     const why = e.reason === 'done' || !v ? null : inboxReason(v).toLowerCase();
     return { title: pingTitle(e.reason === 'blocked' ? 'needs' : 'finished', e.name), body: why ? `${where} · ${why}` : where };
@@ -1256,8 +1287,8 @@ export class App {
     const now = performance.now() / 1000;
     for (const id of ids) {
       const v = this.store.workerView(id);
-      if (!v || !this.arrivals.yieldDesk(v.worker.session, v.desk, id, now)) continue;
-      if (this.office?.session === v.worker.session) this.office.setAway(v.desk, null);
+      if (!v || !this.arrivals.yieldDesk(v.worker.floor, v.desk, id, now)) continue;
+      if (this.office?.id === v.worker.floor) this.office.setAway(v.desk, null);
     }
   }
 
@@ -1271,11 +1302,11 @@ export class App {
     const v = this.store.workerView(id);
     const ctx = this.building;
     if (!v || this.mode !== 'floor' || !ctx) return null;
-    const session = v.worker.session;
-    const storey = ctx.floors.findIndex((f) => f.session === session);
+    const floor = v.worker.floor;
+    const storey = ctx.floors.findIndex((f) => f.id === floor);
     if (storey < 0) return null;
-    if (kind === 'in' && this.office?.session !== session) return null;
-    const L = this.office?.session === session ? this.office.layout : this.layoutOf(session);
+    if (kind === 'in' && this.office?.id !== floor) return null;
+    const L = this.office?.id === floor ? this.office.layout : this.layoutOf(floor);
     const slot = L?.slots[v.desk];
     if (!L || !slot) return null;
     const route = kind === 'out' ? walkOutRoute(L, ctx.plan, storey, v.desk, from) : [{ x: slot.seat.x, y: floorY(storey), z: slot.seat.z }];
@@ -1283,7 +1314,7 @@ export class App {
     const spec: ArrivalSpec = {
       id,
       kind,
-      session,
+      floor,
       desk: v.desk,
       name: v.name,
       route,
@@ -1307,25 +1338,25 @@ export class App {
     if (spec) this.beginArrival(spec);
     else {
       const v = this.store.workerView(id);
-      if (v) this.arrivals.skip({ id, kind, session: v.worker.session, desk: v.desk });
+      if (v) this.arrivals.skip({ id, kind, floor: v.worker.floor, desk: v.desk });
     }
   }
 
   private beginArrival(spec: ArrivalSpec): void {
     if (!this.arrivals.start(spec, performance.now() / 1000)) return;
     // The desk changes at once (no "+" flash before the next frame); a hire is at its desk already (M6b), only its figure drops in.
-    if (this.office?.session === spec.session && spec.kind === 'out' && !spec.standing) this.office.setAway(spec.desk, { show: 'busy', display: spec.display, cue: spec.cue.color, harness: spec.harness, packed: 0 });
+    if (this.office?.id === spec.floor && spec.kind === 'out' && !spec.standing) this.office.setAway(spec.desk, { show: 'busy', display: spec.display, cue: spec.cue.color, harness: spec.harness, packed: 0 });
     this.activity(true);
   }
 
   /** A hire is on its way to `desk`; the returned function ends this hire's hold (its ack came). */
-  private reserve(session: string, desk: number): () => void {
-    const release = this.reserved.add(session, desk);
+  private reserve(floor: string, desk: number): () => void {
+    const release = this.reserved.add(floor, desk);
     this.applyReserve();
     return () => {
       // Another hire still holding the desk, or a walk on it, keeps it as it is.
-      if (!release() || this.office?.session !== session) return;
-      const walking = this.arrivals.info(performance.now() / 1000).some((a) => a.session === session && a.desk === desk);
+      if (!release() || this.office?.id !== floor) return;
+      const walking = this.arrivals.info(performance.now() / 1000).some((a) => a.floor === floor && a.desk === desk);
       if (!walking) this.office.setAway(desk, null);
     };
   }
@@ -1333,41 +1364,44 @@ export class App {
   private applyReserve(): void {
     const o = this.office;
     if (!o) return;
-    for (const r of this.reserved.all()) if (o.session === r.session && !o.seat(r.desk)) o.setAway(r.desk, { show: 'empty', display: 'idle', cue: 0xffffff });
+    for (const r of this.reserved.all()) if (o.id === r.floor && !o.seat(r.desk)) o.setAway(r.desk, { show: 'empty', display: 'idle', cue: 0xffffff });
   }
 
   /** Desks of a floor that are not free for another hire: a hire or a walk is on its way there. */
-  heldDesks(session: string): Set<number> {
-    const out = this.reserved.desks(session);
-    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.session === session) out.add(a.desk);
+  heldDesks(floor: string): Set<number> {
+    const out = this.reserved.desks(floor);
+    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.floor === floor) out.add(a.desk);
     return out;
   }
 
-  /** The hire dialog for a desk of the floor you are on; no desk: the first free one (the top bar's Hire). */
-  openHire(desk?: number, prefill?: HirePrefill): void {
-    const d = this.hireSeat(desk);
+  /**
+   * The hire dialog for a desk of the floor you are on (#58: or of `floor`, a board pinned to another floor); no desk:
+   * the first free one (the top bar's Hire).
+   */
+  openHire(desk?: number, prefill?: HirePrefill, floor: string | null = this.hereFloor()): void {
+    const d = this.hireSeat(desk, floor);
     if (d === null) return;
     this.walker.release();
     this.walker.stop();
     this.panels.close();
-    this.hire.open(this.hereSession() as string, d, prefill);
+    this.hire.open(floor as string, d, prefill);
   }
 
   /**
    * #212: the review dialog for a dictated hire on the floor you are on, at `desk` or the first free one. Nothing is sent:
    * the hire happens when the human presses Hire in it. False when the floor or desk cannot take a hire (a toast says why).
    */
-  openHireReview(interp: HireInterpretation, desk?: number, session: string | null = this.hereSession()): boolean {
-    const d = this.hireSeat(desk, session);
+  openHireReview(interp: HireInterpretation, desk?: number, floor: string | null = this.hereFloor()): boolean {
+    const d = this.hireSeat(desk, floor);
     if (d === null) return false;
     this.walker.release();
     this.walker.stop();
     this.panels.close();
-    return this.hireReview.open(session as string, interp, d);
+    return this.hireReview.open(floor as string, interp, d);
   }
 
   /** The desk a hire opens for on a floor (the one you are on unless `s` says), or null with a toast saying why not. */
-  private hireSeat(desk?: number, s: string | null = this.hereSession()): number | null {
+  private hireSeat(desk?: number, s: string | null = this.hereFloor()): number | null {
     const seat = resolveHireDesk(s, s ? this.store.floorView(s) : null, s ? this.heldDesks(s) : new Set(), desk);
     if (!seat.ok) this.hud.toast(seat.msg, seat.ms);
     return seat.ok ? seat.desk : null;
@@ -1437,23 +1471,23 @@ export class App {
    * catalog has them (else the review asks; the effort is never guessed) and a task that reads the handoff.
    */
   private hireFromHandoff(e: HandoffEntry): void {
-    const session = e.floor;
+    const floor = e.floor;
     const choice = fromHandoff(e, hireTask(e.path), this.store.hireOptions);
-    const d = this.hireSeat(undefined, session);
+    const d = this.hireSeat(undefined, floor);
     if (d === null) return;
     this.cabinet.close();
     this.walker.release();
     this.walker.stop();
     this.panels.close();
     const interp = { sources: [], harness: { provenance: 'missing' as const }, model: { provenance: 'missing' as const }, effort: { provenance: 'missing' as const }, task: { provenance: 'missing' as const }, questions: [], ready_for_review: true };
-    this.hireReview.open(session, interp, d, { choice, ...(e.cwd ? { cwd: e.cwd } : {}) });
+    this.hireReview.open(floor, interp, d, { choice, ...(e.cwd ? { cwd: e.cwd } : {}) });
   }
 
   /** The drawers of the floor you see fill with its handoffs. */
   private syncDrawers(): void {
     const o = this.office;
     if (!o) return;
-    const n = this.store.handoffs.count(o.session);
+    const n = this.store.handoffs.count(o.id);
     o.setDrawers(drawerFill(n));
     this.hud.setPropInfo('filing', !this.store.handoffs.known ? 'No cabinet on this bridge (--handoff-dir)' : n === 0 ? 'Empty: file a reply with F at a worker' : `${n === 1 ? '1 handoff' : `${n} handoffs`} · search, read, hire from one`);
   }
@@ -1469,9 +1503,9 @@ export class App {
     const ctx = this.building;
     const v = this.store.workerView(id);
     const fv = this.store.floorView(e.floor);
-    if (!o || !ctx || !v || !fv || this.mode !== 'floor' || o.session !== e.floor || v.worker.session !== e.floor || fv.asleep) return false;
+    if (!o || !ctx || !v || !fv || this.mode !== 'floor' || o.id !== e.floor || v.worker.floor !== e.floor || fv.asleep) return false;
     if (this.arrivals.has(id) || o.awayDesks().has(v.desk)) return false;
-    const storey = ctx.floors.findIndex((f) => f.session === e.floor);
+    const storey = ctx.floors.findIndex((f) => f.id === e.floor);
     const L = o.layout;
     const slot = L.slots[v.desk];
     const spot = cabinetSpot(L);
@@ -1491,7 +1525,7 @@ export class App {
       tray: { x: spot.drop.x, y: fy + spot.drop.y, z: spot.drop.z, yaw: spot.yaw },
       edge: MANILA,
     };
-    const spec: ArrivalSpec = { id: `deliver:${key}`, kind: 'deliver', session: e.floor, desk: v.desk, name: v.name, route, seatYaw: slot.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: resolveHarness(v.worker), deliver };
+    const spec: ArrivalSpec = { id: `deliver:${key}`, kind: 'deliver', floor: e.floor, desk: v.desk, name: v.name, route, seatYaw: slot.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: resolveHarness(v.worker), deliver };
     if (m.crew) spec.crew = m.crew;
     if (!this.arrivals.start(spec, performance.now() / 1000)) return false;
     o.setOut(v.desk, { chair: 0 });
@@ -1510,7 +1544,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -1587,20 +1621,22 @@ export class App {
    * (default: its first free one). M7's "Hand to a worker" calls it with an issue.
    */
   openStartRun(o: Partial<StartRunOptions> = {}): void {
-    const s = o.session ?? this.hereSession();
+    const s = o.floor ?? this.hereFloor();
     const fv = s ? this.store.floorView(s) : null;
     if (!s || !fv) {
       this.hud.toast('Walk onto an office floor to start a run there.', 2400);
       return;
     }
-    if (fv.asleep || fv.transition) {
-      this.hud.toast(`${s} is ${fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep'}. Wake it from the elevator (L) to start a run.`, 3200);
+    // #58 decision 3: an asleep virtual floor takes a run (its session wakes first).
+    const closed = floorClosed(fv, 'start a run');
+    if (closed) {
+      this.hud.toast(closed, 3200);
       return;
     }
     const held = this.heldDesks(s);
     const d = o.desk ?? firstFreeDesk(fv, held);
     if (d === null) {
-      this.hud.toast(`No free desk on ${s} right now.`, 2400);
+      this.hud.toast(`No free desk on ${fv.name} right now.`, 2400);
       return;
     }
     const seat = fv.seats[d];
@@ -1611,7 +1647,7 @@ export class App {
     this.walker.release();
     this.walker.stop();
     this.panels.close();
-    const opts: StartRunOptions & { desk: number } = { session: s, desk: d };
+    const opts: StartRunOptions & { desk: number } = { floor: s, desk: d };
     if (o.issue !== undefined) opts.issue = o.issue;
     // M7: "Hand to a worker" starts on a card of the board.
     if (o.workItem) opts.workItem = o.workItem;
@@ -1647,7 +1683,7 @@ export class App {
       acted: () => acted || w.x !== pose[0] || w.z !== pose[1] || w.yaw !== pose[2] || w.sitting !== pose[3],
       check: () => {
         const v = this.store.workerView(id);
-        const here = this.mode === 'floor' && this.place.area === 'floor' && (!v || this.office?.session === v.worker.session);
+        const here = this.mode === 'floor' && this.place.area === 'floor' && (!v || this.office?.id === v.worker.floor);
         const busy = this.dialogOpen || this.panels.open || this.hud.sheetOpen || !!document.querySelector('dialog:modal') || this.transitioning || !!this.laptops.seated;
         if (!this.hirePrefs.goToNew || !here || busy) return 'drop';
         return v && !this.arrivals.has(id) && !this.office?.awayDesks().has(v.desk) ? 'go' : 'wait';
@@ -1664,7 +1700,7 @@ export class App {
   /** A run started: you turn to its orchestrator's desk on the floor you are on, and watch it drop in. */
   private followOrch(id: string): void {
     const v = this.store.workerView(id);
-    if (!v || this.mode !== 'floor' || this.office?.session !== v.worker.session) return;
+    if (!v || this.mode !== 'floor' || this.office?.id !== v.worker.floor) return;
     this.faceWorker(id);
   }
 
@@ -1682,18 +1718,31 @@ export class App {
     this.panels.openBuildings();
   }
 
+  /** #58 stage 4: a virtual floor added from the city: where it stands. */
+  private virtualFloorAdded(id: string): void {
+    if (!this.store.floors.has(id)) return;
+    this.hud.toast(addedFloorText(this.store, id, 'virtual'), 5000, 'info');
+  }
+
+  /** #58: the Add floor dialog (over the Buildings panel when opened from it). */
+  openAddFloor(from: HTMLElement | null = null): void {
+    this.walker.release();
+    this.walker.stop();
+    this.addFloor.open(from);
+  }
+
   private refreshTopbar(): void {
     if (this.mode === 'floor') {
       // On a floor, or its landing: that floor. In the lobby, on the street or the stairs: the building.
       const ctx = this.building;
       const p = this.place;
-      const s = p.storey !== null ? ctx?.floors[p.storey]?.session : undefined;
+      const s = p.storey !== null ? ctx?.floors[p.storey]?.id : undefined;
       const fv = s ? this.store.floorView(s) : null;
       if (fv) this.hud.setFloor(fv, p.area === 'fire-escape' ? 'fire-escape' : 'floor');
       else if (ctx) {
         const total = zero();
         for (const f of ctx.floors) {
-          const v = this.store.floorView(f.session);
+          const v = this.store.floorView(f.id);
           if (!v || v.asleep) continue;
           total.working += v.counts.working;
           total.needsYou += v.counts.needsYou;
@@ -1815,21 +1864,23 @@ export class App {
 
   // ---- modes -------------------------------------------------------------------
 
-  async enterFloor(session: string, opts: { transition?: boolean; pose?: Pose } = {}): Promise<void> {
-    const fv = this.store.floorView(session);
+  async enterFloor(floor: string, opts: { transition?: boolean; pose?: Pose } = {}): Promise<void> {
+    const fv = this.store.floorView(floor);
     if (!fv || this.transitioning) return;
     const swap = () => {
+      // #58: the floor you enter is listed while you are on it, hidden or not (pinned before its building is read).
+      if (this.store.pin(floor)) this.city.build(this.store.city());
       // Read the floor again: events keep arriving while the doors close, and
       // until the office exists nothing else applies them to it.
-      const now = this.store.floorView(session);
-      const ctx = now ? this.buildingFor(session) : null;
+      const now = this.store.floorView(floor);
+      const ctx = now ? this.buildingFor(floor) : null;
       if (!now || !ctx) {
-        this.hud.toast(`${session} is gone.`);
+        this.hud.toast(`${this.store.floorName(floor)} is gone.`);
         return;
       }
       this.walker.stop();
       this.setBuilding(ctx);
-      const storey = ctx.floors.findIndex((f) => f.session === session);
+      const storey = ctx.floors.findIndex((f) => f.id === floor);
       this.loadFloor(storey, now);
       this.enterWalk();
       const L = (this.office as OfficeView).layout;
@@ -1837,7 +1888,7 @@ export class App {
       this.walker.place(p.x, p.z, p.yaw, p.pitch ?? 0, p.y ?? floorY(storey));
       this.afterPlace();
     };
-    await this.ride(fv.level ? `${fv.level.number}` : fv.session, swap, opts.transition);
+    await this.ride(fv.level ? `${fv.level.number}` : fv.name, swap, opts.transition);
   }
 
   /** The elevator to a building's lobby (null: the unassigned lot's). */
@@ -1894,7 +1945,7 @@ export class App {
 
   async leaveFloor(): Promise<void> {
     if (this.mode !== 'floor' || this.transitioning) return;
-    const session = this.office?.session ?? this.building?.floors[0]?.session ?? null;
+    const floor = this.office?.id ?? this.building?.floors[0]?.id ?? null;
     const swap = () => {
       this.walker.release();
       this.walker.stop();
@@ -1904,11 +1955,13 @@ export class App {
       this.endDeliveries(null); // M6c
       this.building = null;
       this.mode = 'city';
+      // #58: a hidden floor you were on leaves the lists with you (its building is looked up first).
+      const b = floor ? this.city.buildingOf(floor) : null;
+      if (this.store.pin(null)) this.city.build(this.store.city());
       this.setPlan(false);
       this.hud.setMode('city');
       this.city.setVisible(true);
       this.refreshTopbar();
-      const b = session ? this.city.buildingOf(session) : null;
       if (b !== null) this.focusBuilding(b, false);
       this.statusDirty = true;
       this.cameraMoved = true;
@@ -1921,8 +1974,8 @@ export class App {
   // ---- the building around you -------------------------------------------------------
 
   /** The building a floor is in (the unassigned lot's floors make one too). */
-  private buildingFor(session: string): BuildingCtx | null {
-    return this.store.floors.has(session) ? this.buildingById(this.panels.buildingOf(session)) : null;
+  private buildingFor(floor: string): BuildingCtx | null {
+    return this.store.floors.has(floor) ? this.buildingById(this.panels.buildingOf(floor)) : null;
   }
 
   private buildingById(id: string | null): BuildingCtx | null {
@@ -1938,7 +1991,7 @@ export class App {
     const door = openings.find((o) => o.kind === 'door') as Opening;
     const plan = buildingPlan(outline, floors.length, { z0: door.u0, z1: door.u1, height: door.y1 });
     const name = id === null ? 'Unassigned lot' : (store.buildings.get(id)?.name ?? 'Building');
-    return { id, name, tint, floors, outline, openings, plan, shape: JSON.stringify([id, name, tint, outline, floors.map((f) => f.session)]) };
+    return { id, name, tint, floors, outline, openings, plan, shape: JSON.stringify([id, name, tint, outline, floors.map((f) => f.id)]) };
   }
 
   /** Switches to a building (or a new shape of it): rebuilds the outside only when its shape changed. */
@@ -1953,7 +2006,7 @@ export class App {
     let o = this.walk.outside;
     if (!o || !prev || prev.shape !== ctx.shape) {
       this.dropOutside();
-      o = new OutsideView(ctx.plan, ctx.openings, { name: ctx.name, tint: ctx.tint, floors: ctx.floors.map((f) => ({ session: f.session, asleep: f.asleep })) });
+      o = new OutsideView(ctx.plan, ctx.openings, { name: ctx.name, tint: ctx.tint, floors: ctx.floors.map((f) => ({ id: f.id, name: f.name, asleep: f.asleep })) });
       o.lobby.setReceptionist(this.reception.object);
       this.walk.setOutside(o);
       o.setLoaded(this.loaded);
@@ -2027,10 +2080,10 @@ export class App {
   private loadFloor(storey: number, view?: FloorView): void {
     const ctx = this.building;
     const f = ctx?.floors[storey];
-    const fv = view ?? (f ? this.store.floorView(f.session) : null);
+    const fv = view ?? (f ? this.store.floorView(f.id) : null);
     if (!ctx || !fv) return;
     const old = this.office;
-    this.endDeliveries(fv.session); // M6c: the reports on the floor you leave resolve at once
+    this.endDeliveries(fv.id); // M6c: the reports on the floor you leave resolve at once
     this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner });
     this.loaded = storey;
     this.mezzDoor = 0;
@@ -2066,10 +2119,18 @@ export class App {
 
   /** The world changed while walking: follow the building (floors moved, added, resized, asleep). */
   private syncWalk(): void {
-    const session = this.office?.session ?? null;
-    const ctx = session ? this.buildingFor(session) : this.building ? this.buildingById(this.building.id) : null;
-    const fv = session ? this.store.floorView(session) : null;
-    if (!ctx || (session && !fv)) {
+    const floor = this.office?.id ?? null;
+    const ctx = floor ? this.buildingFor(floor) : this.building ? this.buildingById(this.building.id) : null;
+    const fv = floor ? this.store.floorView(floor) : null;
+    // #58: the floor with the interior left its building's stack (hidden and empty, not pinned; its building may have
+    // no other): list it again (you are on it or by it) rather than put you on no storey; still out of it, it is gone.
+    const storey = fv && ctx ? ctx.floors.findIndex((f) => f.id === fv.id) : -1;
+    if (fv && storey < 0 && this.store.pin(fv.id)) {
+      this.city.build(this.store.city());
+      this.syncWalk();
+      return;
+    }
+    if (!ctx || (floor && (!fv || storey < 0))) {
       // #187: not while you sit at a laptop of it: the floor you were reading stays as it was (its worker is away, see
       // `Laptops.whyAway`) until you get up yourself; `step` then comes back here and leaves.
       if (this.laptops.seated) {
@@ -2077,17 +2138,17 @@ export class App {
         return;
       }
       this.orphaned = false;
-      this.hud.toast(`${session ?? this.building?.name ?? 'That building'} is gone.`);
+      this.hud.toast(`${floor ? this.store.floorName(floor) : (this.building?.name ?? 'That building')} is gone.`);
       void this.leaveFloor();
       return;
     }
     const was = this.loaded;
     this.setBuilding(ctx);
     if (this.office && fv) {
-      const storey = ctx.floors.findIndex((f) => f.session === fv.session);
       if (storey !== was && was !== null) {
-        // The floor moved in its building: inside it, you move with it.
+        // The floor moved in its building: inside it, or on the fire escape by it, you move with it.
         if (this.place.area === 'floor') this.walker.place(this.walker.x, this.walker.z, this.walker.yaw, this.walker.pitch, floorY(storey));
+        else if (this.place.area === 'fire-escape') this.walker.place(this.walker.x, this.walker.z, this.walker.yaw, this.walker.pitch, this.walker.y + floorY(storey) - floorY(was));
         this.loaded = storey;
         this.walk.setOffice(this.office, floorY(storey));
         this.walk.outside?.setLoaded(storey);
@@ -2115,7 +2176,7 @@ export class App {
   private rebuildOffice(): void {
     const ctx = this.building;
     if (!this.office || this.loaded === null || !ctx) return;
-    const fv = this.store.floorView(this.office.session);
+    const fv = this.store.floorView(this.office.id);
     if (!fv) return;
     const old = this.office;
     this.rebuilds++;
@@ -2174,11 +2235,25 @@ export class App {
     this.updateHint();
     this.panels.refresh();
     this.statusDirty = true;
+    this.pinHere();
   }
 
-  /** The session of the floor you are on (inside it), else null. */
-  hereSession(): string | null {
-    return this.mode === 'floor' && this.place.area === 'floor' && this.office ? this.office.session : null;
+  /**
+   * #58: the floor you stand in stays listed (`WorldStore.pin`), however you got in (the elevator, the stairs, a pose),
+   * so a hide or its last worker leaving never takes it away under you; the lobby keeps none. On the fire escape and
+   * the street the last one stays, so the building does not change shape under the stairs. When the lists change, the
+   * city is rebuilt and the walk follows the building (`syncWalk`, whose own `updatePlace` finds the pin as it is).
+   */
+  private pinHere(): void {
+    const here = this.place.area === 'floor' ? (this.office?.id ?? null) : this.place.area === 'lobby' ? null : undefined;
+    if (here === undefined || !this.store.pin(here)) return;
+    this.city.build(this.store.city());
+    if (this.mode === 'floor') this.syncWalk();
+  }
+
+  /** #58: the id of the floor you are on (inside it), else null. */
+  hereFloor(): string | null {
+    return this.mode === 'floor' && this.place.area === 'floor' && this.office ? this.office.id : null;
   }
 
   private receptionEvent(ev: ReceptionEvent): void {
@@ -2208,7 +2283,7 @@ export class App {
       const dx = (m.door.x0 + m.door.x1) / 2;
       const up = this.walker.y - floorY(this.loaded);
       // M6c: it opens for a freelancer carrying a report up there (or coming down) the same way.
-      const walkerAtDoor = this.arrivals.count > 0 && this.arrivals.info(performance.now() / 1000).some((a) => a.session === o.session && a.y - floorY(this.loaded as number) > m.y - 1.2 && a.y - floorY(this.loaded as number) < m.y + 0.5 && Math.hypot(a.x - dx, a.z - m.door.z) < 1.9);
+      const walkerAtDoor = this.arrivals.count > 0 && this.arrivals.info(performance.now() / 1000).some((a) => a.floor === o.id && a.y - floorY(this.loaded as number) > m.y - 1.2 && a.y - floorY(this.loaded as number) < m.y + 0.5 && Math.hypot(a.x - dx, a.z - m.door.z) < 1.9);
       const atDoor = (up > m.y - 1.2 && up < m.y + 0.5 && Math.hypot(this.walker.x - dx, this.walker.z - m.door.z) < 1.9) || walkerAtDoor;
       const mWant = atDoor ? 1 : 0;
       if (this.mezzDoor !== mWant) {
@@ -2250,7 +2325,7 @@ export class App {
     this.planOpen = open;
     this.office?.setPlan(open);
     this.walk.setPlan(open);
-    this.hud.setPlan(open, this.office?.session ?? '');
+    this.hud.setPlan(open, this.office?.name ?? '');
     if (open) this.walker.release();
     this.planLabelsKey = '';
     this.cameraMoved = true;
@@ -2281,7 +2356,7 @@ export class App {
    * the all-floors overview instead.
    */
   openOverview(fromScreen: boolean): void {
-    const s = this.hereSession();
+    const s = this.hereFloor();
     if (!s) {
       this.openCityOverview();
       return;
@@ -2318,11 +2393,11 @@ export class App {
   }
 
   /** What the page and the wall screen show of a floor (null: no such floor). */
-  private overviewData(session: string): OverviewData | null {
-    const fv = this.store.floorView(session);
+  private overviewData(floor: string): OverviewData | null {
+    const fv = this.store.floorView(floor);
     if (!fv) return null;
     return {
-      tree: buildOverview(this.store, session),
+      tree: buildOverview(this.store, floor),
       where: fv.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot',
       counts: countItems(fv.counts, fv.asleep),
       asleep: fv.asleep,
@@ -2330,9 +2405,9 @@ export class App {
   }
 
   /** Where the wall screen of a floor is on your view (CSS px), or null when that floor is not around you or it is out of view. */
-  private overviewScreenRect(session: string): ViewRect | null {
+  private overviewScreenRect(floor: string): ViewRect | null {
     const o = this.office;
-    const p = o?.session === session ? o.layout.props.find((x) => x.id === 'screen.overview') : null;
+    const p = o?.id === floor ? o.layout.props.find((x) => x.id === 'screen.overview') : null;
     if (!o || !p || this.mode !== 'floor') return null;
     o.root.updateMatrixWorld(true);
     this.fpCam.updateMatrixWorld();
@@ -2372,7 +2447,7 @@ export class App {
       this.overviewAt = now;
       this.overviewOffice = o;
       const calm = this.batterySaver || reducedMotionTest();
-      if (o) o.setOverview(o.isAsleep ? null : this.overviewData(o.session), calm, Date.now());
+      if (o) o.setOverview(o.isAsleep ? null : this.overviewData(o.id), calm, Date.now());
       if (this.overview.isOpen) this.overview.refresh();
     }
     o?.tickOverview(Date.now(), this.fpCam);
@@ -2387,7 +2462,7 @@ export class App {
 
   /** E on the whiteboard: the floor's board in the editor (an older bridge has none). */
   openWhiteboard(): void {
-    const s = this.hereSession();
+    const s = this.hereFloor();
     if (!s) {
       this.hud.toast('Walk onto an office floor to use its whiteboard.', 2400);
       return;
@@ -2400,7 +2475,7 @@ export class App {
     this.walker.stop();
     this.panels.close();
     this.updateHint();
-    void this.whiteboard.open(s);
+    void this.whiteboard.open(s, this.store.floorName(s));
   }
 
   /** A floor's board changed (an event, a save of ours): the open editor merges it, the room shows its render. */
@@ -2409,7 +2484,7 @@ export class App {
     if (old && old.version > st.version) return;
     this.wbStates.set(st.floor, st);
     this.whiteboard.updated(st);
-    if (this.office?.session === st.floor) {
+    if (this.office?.id === st.floor) {
       this.syncWhiteboard();
       this.hud.setWhiteboard(st);
     }
@@ -2417,7 +2492,7 @@ export class App {
 
   /** Reads the board of the floor with an interior again (after a reconnect, or the first time). */
   private refreshWhiteboard(): void {
-    const s = this.office?.session;
+    const s = this.office?.id;
     if (!s || this.unsupported.has('whiteboard.get')) return;
     void this.fetchWhiteboard(s);
   }
@@ -2449,7 +2524,7 @@ export class App {
   private syncWhiteboard(): void {
     const o = this.office;
     if (!o) return;
-    const st = this.wbStates.get(o.session);
+    const st = this.wbStates.get(o.id);
     if (!st) {
       if (this.conn.phase === 'live') this.refreshWhiteboard();
       return;
@@ -2476,7 +2551,7 @@ export class App {
 
   /** M13: what the room's whiteboard shows (test hook). */
   whiteboardInfo(): { state: WhiteboardState | null; shown: string | null; overlay: ReturnType<WhiteboardOverlay['info']> } {
-    const s = this.office?.session;
+    const s = this.office?.id;
     return { state: s ? (this.wbStates.get(s) ?? null) : null, shown: this.office?.whiteboardShown ?? null, overlay: this.whiteboard.info() };
   }
 
@@ -2484,7 +2559,7 @@ export class App {
 
   /** The overlay of the floor you are on: the Issues or Pull requests list. An older bridge has none. */
   openBoard(which: 'issues' | 'prs'): void {
-    const s = this.hereSession();
+    const s = this.hereFloor();
     if (!s) {
       this.hud.toast('Walk onto an office floor to see its boards.', 2400);
       return;
@@ -2503,7 +2578,7 @@ export class App {
   private onBoard(m: BoardMessage): void {
     const u = this.boardBook.apply(m);
     const o = this.office;
-    if (!o || m.session !== o.session) return;
+    if (!o || u.floor !== o.id) return;
     if (u.kind === 'prs' && u.merged.length) this.merged(u.merged);
     this.pushBoards();
   }
@@ -2532,7 +2607,7 @@ export class App {
 
   /** Watches the floor you stand on for boards, and only that one (one per connection); nothing on the street or in the city. */
   private syncBoardWatch(): void {
-    const want = this.office && this.conn.phase === 'live' ? this.office.session : null;
+    const want = this.office && this.conn.phase === 'live' ? this.office.id : null;
     if (want === this.watched) return;
     const prev = this.watched;
     this.watched = want;
@@ -2540,20 +2615,20 @@ export class App {
       this.boardBook.drop(prev);
       this.boardWatch.delete(prev);
       // Watching another floor replaces this watch by itself; only leaving for nowhere unwatches.
-      if (!want) void this.sendBoard('board.unwatch', { session: prev });
+      if (!want) void this.sendBoard('board.unwatch', { floor: prev });
     }
     if (want && !this.unsupported.has('board.watch')) void this.watchBoard(want);
     else this.pushBoards();
   }
 
-  private async watchBoard(session: string): Promise<void> {
-    const r = await this.sendBoard('board.watch', { session });
-    if (this.watched !== session) return;
+  private async watchBoard(floor: string): Promise<void> {
+    const r = await this.sendBoard('board.watch', { floor });
+    if (this.watched !== floor) return;
     if (r.ok) {
       const d = (r.data ?? {}) as Partial<WatchBoardAck>;
-      this.boardWatch.set(session, d.enabled === false ? { enabled: false, ...(d.reason ? { reason: d.reason } : {}) } : { enabled: true });
+      this.boardWatch.set(floor, d.enabled === false ? { enabled: false, ...(d.reason ? { reason: d.reason } : {}) } : { enabled: true });
     } else if (r.code !== 'unknown_command') {
-      this.boardWatch.set(session, { enabled: false, reason: commandFailure('board.watch', r.code, r.message, { floor: session }) });
+      this.boardWatch.set(floor, { enabled: false, reason: commandFailure('board.watch', r.code, r.message, { floor: this.store.floorName(floor) }) });
     }
     this.pushBoards();
   }
@@ -2572,9 +2647,9 @@ export class App {
     return r;
   }
 
-  private boardOff(session: string): BoardOff | null {
+  private boardOff(floor: string): BoardOff | null {
     if (this.unsupported.has('board.watch')) return { text: 'Update the bridge to use boards', sub: 'This herdr-world does not know the issues and pull request boards yet.' };
-    const w = this.boardWatch.get(session);
+    const w = this.boardWatch.get(floor);
     if (w && !w.enabled) {
       const why = w.reason ? `${w.reason.charAt(0).toUpperCase()}${w.reason.slice(1).replace(/\.$/, '')}.` : 'No issue provider is linked to this floor.';
       return { text: 'No board on this floor', sub: `${why} Link a repository in the floor’s settings (elevator, then the gear).` };
@@ -2582,9 +2657,9 @@ export class App {
     return null;
   }
 
-  private boardState(session: string): BoardState {
-    const b = this.boardBook.get(session);
-    return { issues: b.issues, prs: b.prs, off: this.boardOff(session) };
+  private boardState(floor: string): BoardState {
+    const b = this.boardBook.get(floor);
+    return { issues: b.issues, prs: b.prs, off: this.boardOff(floor) };
   }
 
   /** Shows what the boards say now: on the wall, on the look-at prompt, on the top bar, and in the overlay. */
@@ -2592,7 +2667,7 @@ export class App {
     const o = this.office;
     this.hud.setBoardButtons(this.unsupported.has('board.watch') ? 'Update the bridge to use boards.' : null);
     if (o) {
-      const s = o.session;
+      const s = o.id;
       const st = this.boardState(s);
       const workers = this.store.floorView(s)?.workers ?? [];
       const now = performance.now();
@@ -2616,38 +2691,39 @@ export class App {
   }
 
   /** The free desk nearest to you on a floor (not the first one), else null. */
-  private nearestFreeDesk(session: string): number | null {
-    const fv = this.store.floorView(session);
-    const L = this.office?.session === session ? this.office.layout : this.layoutOf(session);
+  private nearestFreeDesk(floor: string): number | null {
+    const fv = this.store.floorView(floor);
+    const L = this.office?.id === floor ? this.office.layout : this.layoutOf(floor);
     if (!fv || !L) return null;
-    const held = this.heldDesks(session);
+    const held = this.heldDesks(floor);
     return nearestDesk(L.slots, freeDesks(fv).filter((d) => !held.has(d)), { x: this.walker.x, z: this.walker.z });
   }
 
-  private whyFloorBusy(session: string): string | null {
-    const fv = this.store.floorView(session);
-    if (!fv) return `${session} is gone.`;
-    if (fv.asleep || fv.transition) return `${session} is ${fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep'}: wake it from the elevator (L) first.`;
-    if (this.nearestFreeDesk(session) === null) return `No free desk on ${session} right now.`;
+  private whyFloorBusy(floor: string): string | null {
+    const fv = this.store.floorView(floor);
+    if (!fv) return `${this.store.floorName(floor)} is gone.`;
+    // #58 decision 3: an asleep virtual floor takes a hire or a run (its session wakes first).
+    if (fv.transition || (fv.asleep && !fv.virtual)) return `${fv.name} is ${fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep'}: wake it from the elevator (L) first.`;
+    if (this.nearestFreeDesk(floor) === null) return `No free desk on ${fv.name} right now.`;
     return null;
   }
 
-  private whyNoRun(session: string): string | null {
-    return runUnsupported({ store: this.store, unsupported: (t) => this.unsupported.has(t) }) ?? this.whyFloorBusy(session);
+  private whyNoRun(floor: string): string | null {
+    return runUnsupported({ store: this.store, unsupported: (t) => this.unsupported.has(t) }) ?? this.whyFloorBusy(floor);
   }
 
-  private whyNoHire(session: string): string | null {
+  private whyNoHire(floor: string): string | null {
     if (this.unsupported.has('hire.prepare') || this.unsupported.has('worker.hire')) return commandFailure('worker.hire', 'unknown_command', '');
-    return this.whyFloorBusy(session);
+    return this.whyFloorBusy(floor);
   }
 
   /** "Hand to a worker": the start-run dialog with the card, the floor's last team, at the free desk nearest to you. */
-  private handTo(session: string, card: IssueCard, provider: string): void {
-    const desk = this.nearestFreeDesk(session);
-    const b = this.boardBook.get(session).issues;
+  private handTo(floor: string, card: IssueCard, provider: string): void {
+    const desk = this.nearestFreeDesk(floor);
+    const b = this.boardBook.get(floor).issues;
     this.boardsPanel.close();
     this.openStartRun({
-      session,
+      floor,
       ...(desk !== null ? { desk } : {}),
       workItem: { provider: provider || (b?.provider ?? ''), id: card.id, key: card.key, title: card.title, url: card.url, provider_name: b?.provider_name },
     });
@@ -2660,7 +2736,7 @@ export class App {
   private canOpenPr(id: string): boolean {
     const v = this.store.workerView(id);
     if (!v || crewRole(v.worker) !== null || this.unsupported.has('worker.open_pr')) return false;
-    return can(this.boardBook.get(v.worker.session).prs, null, 'open_from_branch');
+    return can(this.boardBook.get(v.worker.floor).prs, null, 'open_from_branch');
   }
 
   private openPrFor(id: string): void {
@@ -2675,39 +2751,39 @@ export class App {
    * issue goes by its link (the worker can read it with gh); a Kaneo task carries its title and description, which
    * the worker could not read itself.
    */
-  private askAbout(session: string, card: IssueCard, provider: string, body: string | null): void {
+  private askAbout(floor: string, card: IssueCard, provider: string, body: string | null): void {
     if (askInlinesItem(provider) && body === null) return; // the board offers it only once the description is read
-    const desk = this.nearestFreeDesk(session);
+    const desk = this.nearestFreeDesk(floor);
     this.boardsPanel.close();
     const prompt = askInlinesItem(provider) ? askItemPrompt(this.boardsPanel.providerLabel(), card, body) : askPrompt(card.key, card.url);
-    this.openHire(desk ?? undefined, { prompt });
+    this.openHire(desk ?? undefined, { prompt }, floor);
   }
 
   /** "Review with a worker": the hire dialog with the last team's reviewer and the code-review prompt for the PR. */
-  private reviewPr(session: string, pr: PullRequest): void {
-    const desk = this.nearestFreeDesk(session);
-    const fv = this.store.floorView(session);
+  private reviewPr(floor: string, pr: PullRequest): void {
+    const desk = this.nearestFreeDesk(floor);
+    const fv = this.store.floorView(floor);
     const preset = this.store.presets.defaultFor(fv?.floor.last_preset);
     const reviewer = preset?.roles.reviewer;
     this.boardsPanel.close();
-    this.openHire(desk ?? undefined, { prompt: reviewPrompt(reviewer?.harness ?? 'claude', { key: pr.key, ...(pr.url ? { url: pr.url } : {}) }), ...(reviewer ? { choice: reviewer } : {}) });
+    this.openHire(desk ?? undefined, { prompt: reviewPrompt(reviewer?.harness ?? 'claude', { key: pr.key, ...(pr.url ? { url: pr.url } : {}) }), ...(reviewer ? { choice: reviewer } : {}) }, floor);
   }
 
   /**
    * #248: "Resolve conflicts with a worker": the hire dialog at the nearest free desk with the resolve-and-merge prompt
    * (the panel's merge method), the task levels from the default one (#40), never the reviewer's model, and a worktree of its own.
    */
-  private resolvePr(session: string, pr: PullRequest, method: MergeMethod): void {
-    const desk = this.nearestFreeDesk(session);
+  private resolvePr(floor: string, pr: PullRequest, method: MergeMethod): void {
+    const desk = this.nearestFreeDesk(floor);
     this.boardsPanel.close();
-    this.openHire(desk ?? undefined, { prompt: resolveConflictsPrompt(pr, method), level: 'default', worktree: true });
+    this.openHire(desk ?? undefined, { prompt: resolveConflictsPrompt(pr, method), level: 'default', worktree: true }, floor);
   }
 
   /** The note of a card leaves its board and is carried to an orchestrator's desk. */
   private peelNote(cardId: string, orchId: string): void {
     const o = this.office;
     const v = this.store.workerView(orchId);
-    if (!o || !v || o.session !== v.worker.session) return;
+    if (!o || !v || o.id !== v.worker.floor) return;
     const slot = o.layout.slots[v.desk];
     if (!slot) return;
     o.boards.peel(cardId, new THREE.Vector3(slot.desk.x, 1.05, slot.desk.z), performance.now());
@@ -2715,10 +2791,10 @@ export class App {
   }
 
   /** Everything the boards show on the wall (test hook). */
-  boardsInfo(): (ReturnType<OfficeView['boards']['info']> & { session: string; watched: string | null; off: string | null; batches: number; office: number }) | null {
+  boardsInfo(): (ReturnType<OfficeView['boards']['info']> & { floor: string; watched: string | null; off: string | null; batches: number; office: number }) | null {
     const o = this.office;
     if (!o) return null;
-    return { session: o.session, watched: this.watched, off: this.boardOff(o.session)?.text ?? null, ...o.boards.info(performance.now()), batches: o.boards.noteBatches, office: o.serial };
+    return { floor: o.id, watched: this.watched, off: this.boardOff(o.id)?.text ?? null, ...o.boards.info(performance.now()), batches: o.boards.noteBatches, office: o.serial };
   }
 
   /** Applies a board message as if the bridge had sent it (test hook). */
@@ -2748,7 +2824,7 @@ export class App {
       this.hud.setHint(this.walker.locked ? null : `${look}WASD walks · a floor's door opens as you walk up to it · <strong>L</strong> elevator${more}`);
       return;
     }
-    const fv = this.office ? this.store.floorView(this.office.session) : null;
+    const fv = this.office ? this.store.floorView(this.office.id) : null;
     const asleep = fv?.asleep && !fv.transition ? 'This floor is asleep: the elevator (<strong>L</strong>) wakes it · ' : '';
     if (this.walker.sitting && !this.planOpen) this.hud.setHint(this.walker.locked ? `At your desk · <strong>WASD</strong> gets up${more}` : `At your desk · ${look}<strong>WASD</strong> or <strong>Esc</strong> gets up${more}`);
     else if (this.planOpen) this.hud.setHint(`<strong>Click</strong> the floor to walk there · WASD walks · <strong>L</strong> elevator · <strong>Tab</strong> back to first person${more}`);
@@ -2899,7 +2975,7 @@ export class App {
     'worker.changes': () => this.toggleChanges(this.target?.kind === 'worker' ? this.target.id : null),
     'worker.home': () => this.aimed('worker', (t) => this.openSendHome(t.id)),
     'worker.handoff': () => this.aimed('worker', (t) => this.openHandoff(t.id, false)), // #223
-    'cabinet.open': () => this.openCabinet(this.hereSession()), // #223
+    'cabinet.open': () => this.openCabinet(this.hereFloor()), // #223
     'worker.answer': (m) => this.aimed('worker', (t) => this.answerKey(t.id, Number(m.code.slice(-1)))),
     'desk.hire': () => this.aimed('desk', (t) => this.openHire(t.desk)),
     'own-desk.sit': () => this.sit(),
@@ -3017,30 +3093,30 @@ export class App {
     }
     // (The bar is modal: a review cannot open under it meanwhile. Never a second one over it, silently.)
     if (this.hireReview.isOpen) return { kind: 'say', text: 'A hire review is open already. Press Enter again to change it.', error: true };
-    const here = this.hereSession();
+    const here = this.hereFloor();
     if (!here) return { kind: 'floor', hire: o.hire };
     return this.openDictatedReview(here, o.hire, live);
   }
 
   /**
-   * #213: a dictated hire's review on `session`: the floor and desk are checked first (asleep, waking, full: the bar says
+   * #213: a dictated hire's review on `floor`: the floor and desk are checked first (asleep, waking, full: the bar says
    * so with the dialog's own words and keeps the text, nothing is sent); then the bar closes without handing the keyboard
    * back, the modals go and you stand up, as for a palette command, the elevator takes you there when it is another floor,
    * and the review opens at its first free desk.
    */
-  private async openDictatedReview(session: string, hire: HireInterpretation, live: DictationLive): Promise<DictationReply> {
+  private async openDictatedReview(floor: string, hire: HireInterpretation, live: DictationLive): Promise<DictationReply> {
     if (!live()) return { kind: 'done' };
-    const seat = resolveHireDesk(session, this.store.floorView(session), this.heldDesks(session));
+    const seat = resolveHireDesk(floor, this.store.floorView(floor), this.heldDesks(floor));
     if (!seat.ok) return { kind: 'say', text: seat.msg, error: true };
     if (this.transitioning) return { kind: 'say', text: 'Wait until you get there, then press Enter again.', error: false };
     this.dictation.close(false);
     if (!(await this.dismissOverlays()) || this.transitioning) return { kind: 'done' };
     if (this.laptops.seated) this.laptops.stand(null, true);
-    if (this.hereSession() !== session) {
-      await this.enterFloor(session);
-      if (this.hereSession() !== session) return { kind: 'done' }; // the floor went meanwhile
+    if (this.hereFloor() !== floor) {
+      await this.enterFloor(floor);
+      if (this.hereFloor() !== floor) return { kind: 'done' }; // the floor went meanwhile
     }
-    this.openHireReview(hire, undefined, session);
+    this.openHireReview(hire, undefined, floor);
     return { kind: 'done' };
   }
 
@@ -3055,9 +3131,9 @@ export class App {
     // #213: the bar answers wherever you are, a seat included: nothing to stand up for.
     if (command.id === 'dictate') return this.openDictation();
     if (this.laptops.seated) this.laptops.stand(null, true);
-    if (floor !== null && this.hereSession() !== floor) {
+    if (floor !== null && this.hereFloor() !== floor) {
       await this.enterFloor(floor);
-      if (this.hereSession() !== floor) return; // the floor went meanwhile
+      if (this.hereFloor() !== floor) return; // the floor went meanwhile
     }
     if (command.id === 'presets') return this.openPresets();
     if (command.id === 'about') return this.hud.openAbout();
@@ -3068,12 +3144,12 @@ export class App {
   }
 
   /** #147: a floor picked from the palette's `@` list: the modals go, you get up from a seat, the elevator takes you there. */
-  private async goToFloor(session: string): Promise<void> {
+  private async goToFloor(floor: string): Promise<void> {
     if (this.transitioning || !(await this.dismissOverlays()) || this.transitioning) return;
     if (this.laptops.seated) this.laptops.stand(null, true);
     this.walker.release();
     this.walker.stop();
-    await this.enterFloor(session);
+    await this.enterFloor(floor);
   }
 
   /** The `?` reference: grouped, per platform, over whatever is up. */
@@ -3372,12 +3448,12 @@ export class App {
     this.arrivals.group.position.y = -this.walk.base;
     const o = this.office;
     for (const d of this.arrivals.update(performance.now() / 1000, t)) {
-      if (o?.session !== d.session) continue;
+      if (o?.id !== d.floor) continue;
       o.setAway(d.desk, d.away);
       if (d.drop !== undefined) o.setDrop(d.desk, d.drop);
       if (d.out !== undefined) o.setOut(d.desk, d.out);
     }
-    for (const w of this.arrivals.swivels) if (o?.session === w.session) o.setSwivel(w.desk, w.swivel);
+    for (const w of this.arrivals.swivels) if (o?.id === w.floor) o.setSwivel(w.desk, w.swivel);
     this.applyReserve();
     // M6c: folders that landed, freelancers that have left, and the next report in line.
     let moved = false;
@@ -3507,7 +3583,7 @@ export class App {
     const w = this.walker;
     const o = this.office;
     const same = Math.abs(w.x - k.pose.x) < 1e-6 && Math.abs(w.z - k.pose.z) < 1e-6 && Math.abs(w.yaw - k.pose.yaw) < 1e-6 && Math.abs(w.pitch - k.pose.pitch) < 1e-6;
-    if (this.mode === 'floor' && this.place.area === 'floor' && o?.session === k.session && same && o.stillPickable(k.target)) return k.target;
+    if (this.mode === 'floor' && this.place.area === 'floor' && o?.id === k.floor && same && o.stillPickable(k.target)) return k.target;
     this.keyTarget = null;
     return null;
   }
@@ -3550,7 +3626,7 @@ export class App {
     this.walker.lookToward(pick.at[0] - eye.x, pick.at[1] - eye.y, pick.at[2] - eye.z);
     this.walker.applyTo(this.fpCam, this.walk.base);
     const w = this.walker;
-    this.keyTarget = { target: pick.target, session: o.session, pose: { x: w.x, z: w.z, yaw: w.yaw, pitch: w.pitch } };
+    this.keyTarget = { target: pick.target, floor: o.id, pose: { x: w.x, z: w.z, yaw: w.yaw, pitch: w.pitch } };
     this.activity(true);
     this.updateLookAt();
   }
@@ -3562,7 +3638,7 @@ export class App {
     this.office?.setFocus(w?.worker.id ?? null);
     if (!w) return;
     // Every frame: only the floor's state, not a whole floor view.
-    const fl = this.store.floors.get(w.worker.session);
+    const fl = this.store.floors.get(w.worker.floor);
     const f = fl ? { asleep: fl.state === 'asleep', transition: fl.transition ?? null } : null;
     const p = promptBlocker(w, f, this.unsupported.has('worker.prompt'));
     this.hud.setKeyState('P', p ? { live: false, why: p } : { live: true });
@@ -3573,7 +3649,7 @@ export class App {
 
   private changesBlocker(w: WorkerView, f: Pick<FloorView, 'asleep' | 'transition'> | null): string | null {
     if (this.unsupported.has('worker.changes')) return 'This herdr-world can’t show changes yet. Update the bridge to use it.';
-    if (f?.asleep || f?.transition) return `${w.worker.session} is ${f.transition === 'waking' ? 'waking up' : f.transition === 'sleeping' ? 'going to sleep' : 'asleep'}: wake it from the elevator (L) first.`;
+    if (f?.asleep || f?.transition) return `${this.store.floorName(w.worker.floor)} is ${f.transition === 'waking' ? 'waking up' : f.transition === 'sleeping' ? 'going to sleep' : 'asleep'}: wake it from the elevator (L) first.`;
     if (!w.worker.cwd) return `${w.name} has no folder to look at.`;
     return null;
   }
@@ -3582,7 +3658,7 @@ export class App {
   openPrompt(id: string): void {
     const v = this.store.workerView(id);
     if (!v) return;
-    const why = promptBlocker(v, this.store.floorView(v.worker.session), this.unsupported.has('worker.prompt'));
+    const why = promptBlocker(v, this.store.floorView(v.worker.floor), this.unsupported.has('worker.prompt'));
     if (why) {
       this.hud.toast(why, 3600);
       return;
@@ -3601,7 +3677,7 @@ export class App {
     }
     const v = id ? this.store.workerView(id) : null;
     if (!v) return;
-    const why = this.changesBlocker(v, this.store.floorView(v.worker.session));
+    const why = this.changesBlocker(v, this.store.floorView(v.worker.floor));
     if (why) {
       this.hud.toast(why, 3600);
       return;
@@ -3724,7 +3800,7 @@ export class App {
   private needCandidates(): InboxCandidate[] {
     return this.store.city().flatMap((b) =>
       b.floors.flatMap((f) =>
-        f.workers.map((w) => ({ id: w.worker.id, session: f.session, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name, role: crewRole(w.worker) })),
+        f.workers.map((w) => ({ id: w.worker.id, floor: f.id, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name, role: crewRole(w.worker) })),
       ),
     );
   }
@@ -3744,7 +3820,7 @@ export class App {
   private inboxEntries(): InboxEntry[] {
     return this.inboxItems().flatMap((item) => {
       const v = this.store.workerView(item.id);
-      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.session), reason: inboxReason(v), blocked: item.reason === 'blocked', dismissable: item.reason === 'done', since: item.since, request: inboxRequest(v) }] : [];
+      return v ? [{ id: item.id, name: item.name, harness: v.harness, where: inboxWhere(this.store, item.floor), reason: inboxReason(v), blocked: item.reason === 'blocked', dismissable: item.reason === 'done', since: item.since, request: inboxRequest(v) }] : [];
     });
   }
 
@@ -3781,14 +3857,14 @@ export class App {
     const finished = was.display === 'done' ? was.since : null;
     // A notification's click can come with any dialog up (the window was in the background): it goes first.
     if (!(await this.dismissOverlays()) || this.transitioning) return false;
-    const session = this.store.workerView(id)?.worker.session;
-    if (!session) return false;
+    const floor = this.store.workerView(id)?.worker.floor;
+    if (!floor) return false;
     if (this.laptops.seated) this.laptops.stand(null, true);
     this.walker.release();
     this.walker.stop();
     this.pendingNeed = null;
-    if (!(this.mode === 'floor' && this.place.area === 'floor' && this.office?.session === session)) await this.enterFloor(session);
-    if (this.mode !== 'floor' || this.office?.session !== session) return false; // the floor went meanwhile
+    if (!(this.mode === 'floor' && this.place.area === 'floor' && this.office?.id === floor)) await this.enterFloor(floor);
+    if (this.mode !== 'floor' || this.office?.id !== floor) return false; // the floor went meanwhile
     if (this.planOpen) this.setPlan(false);
     this.faceWorker(id);
     // The conversation for this sit only: what E opens next time stays as you left it.
@@ -3837,7 +3913,7 @@ export class App {
     const ask = v && item.reason === 'blocked' ? askOf(v.worker) : null;
     const q = v && item.reason === 'blocked' && !ask ? answerable(v.worker.question) : null;
     const about = ask ? `: asks “${askLine(ask)}”` : q ? `: “${questionLine(q)}”` : v ? `: ${v.worker.title?.trim() || v.worker.label}` : '';
-    if (this.mode === 'floor' && this.place.area === 'floor' && this.office?.session === item.session) {
+    if (this.mode === 'floor' && this.place.area === 'floor' && this.office?.id === item.floor) {
       this.pendingNeed = null;
       this.faceWorker(item.id);
       this.hud.toast(`${item.name} ${what}${about} · N: the next one`, 3600);
@@ -3845,27 +3921,27 @@ export class App {
     }
     // Another floor: the elevator, that floor picked (no teleporting between floors).
     this.pendingNeed = item;
-    const level = this.store.floorView(item.session)?.level;
-    const where = level ? `floor ${level.number} (${item.session})` : item.session;
+    const level = this.store.floorView(item.floor)?.level;
+    const where = level ? `floor ${level.number} (${this.store.floorName(item.floor)})` : this.store.floorName(item.floor);
     this.walker.release();
     this.walker.stop();
-    this.panels.openElevator(this.panels.buildingOf(item.session), { session: item.session, note: `${item.name} ${what} on ${where}${about}. Enter rides there.` });
+    this.panels.openElevator(this.panels.buildingOf(item.floor), { floor: item.floor, note: `${item.name} ${what} on ${where}${about}. Enter rides there.` });
     return item;
   }
 
   /** Arrived by elevator: N's worker on this floor gets faced. */
-  private afterTravel(session: string): void {
+  private afterTravel(floor: string): void {
     const p = this.pendingNeed;
-    if (!p || p.session !== session) return;
+    if (!p || p.floor !== floor) return;
     this.pendingNeed = null;
-    if (this.office?.session === session) this.faceWorker(p.id);
+    if (this.office?.id === floor) this.faceWorker(p.id);
   }
 
   /** Stands you facing a worker of the floor you are on (behind its chair, else beside it, else across the desk). */
   faceWorker(id: string): boolean {
     const v = this.store.workerView(id);
     const o = this.office;
-    if (!v || !o || o.session !== v.worker.session || this.loaded === null) return false;
+    if (!v || !o || o.id !== v.worker.floor || this.loaded === null) return false;
     const slot = o.layout.slots[v.desk];
     if (!slot) return false;
     if (this.walker.sitting) this.walker.stand();
@@ -4002,7 +4078,7 @@ export class App {
       y: this.walker.y,
       area: this.place.area,
       storey: s,
-      floor: s !== null ? (this.building?.floors[s]?.session ?? null) : null,
+      floor: s !== null ? (this.building?.floors[s]?.id ?? null) : null,
       seated: this.walker.sitting,
     };
   }
@@ -4010,13 +4086,13 @@ export class App {
   /** The building you walk around in (test hook). */
   get where(): { building: string | null; name: string; floors: string[]; loaded: string | null } | null {
     const b = this.building;
-    return this.mode === 'floor' && b ? { building: b.id, name: b.name, floors: b.floors.map((f) => f.session), loaded: this.office?.session ?? null } : null;
+    return this.mode === 'floor' && b ? { building: b.id, name: b.name, floors: b.floors.map((f) => f.id), loaded: this.office?.id ?? null } : null;
   }
 
   /** The layout of a floor as walked: in its building's outline. */
-  layoutOf(session: string): OfficeView['layout'] | null {
-    const f = this.store.floorView(session);
-    const ctx = f ? this.buildingFor(session) : null;
+  layoutOf(floor: string): OfficeView['layout'] | null {
+    const f = this.store.floorView(floor);
+    const ctx = f ? this.buildingFor(floor) : null;
     return f ? floorLayoutIn(f.desks, ctx?.outline) : null;
   }
 
@@ -4038,8 +4114,8 @@ export class App {
   }
 
   /** Screen point (CSS px) of a floor itself in the city view (to click its building). */
-  floorPoint(session: string): { x: number; y: number } | null {
-    return this.mode === 'city' ? this.city.floorPoint(this.cityCam, session, this.vp) : null;
+  floorPoint(floor: string): { x: number; y: number } | null {
+    return this.mode === 'city' ? this.city.floorPoint(this.cityCam, floor, this.vp) : null;
   }
 
   /** Lights of the office on screen: off on an asleep floor. */
@@ -4048,8 +4124,8 @@ export class App {
   }
 
   /** Screen point (CSS px) of a floor's badge in the city view. */
-  badgePoint(session: string): { x: number; y: number } | null {
-    return this.mode === 'city' ? this.city.badgePoint(this.cityCam, session, this.vp) : null;
+  badgePoint(floor: string): { x: number; y: number } | null {
+    return this.mode === 'city' ? this.city.badgePoint(this.cityCam, floor, this.vp) : null;
   }
 }
 

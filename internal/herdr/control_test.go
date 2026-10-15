@@ -20,7 +20,10 @@ func TestControlAllowlist(t *testing.T) {
 	want := map[string][]string{
 		"start": {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
 			"--working-directory={home}", "/bin/fish", "-l", "-c", "exec herdr --session '{session}' server"},
-		"stop":          {"{herdr}", "session", "stop", "{session}", "--json"},
+		"stop": {"{herdr}", "session", "stop", "{session}", "--json"},
+		// #58: a new session is a server started under a new name.
+		"create-session": {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
+			"--working-directory={home}", "/bin/fish", "-l", "-c", "exec herdr --session '{session}' server"},
 		"resume-claude": {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "claude --resume {id}"},
 		"resume-codex":  {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "codex resume {id}"},
 		"report-codex-session": {"{herdr}", "--session", "{session}", "pane", "report-agent-session", "{pane}",
@@ -87,7 +90,7 @@ func TestControlAllowlist(t *testing.T) {
 	for i := range typ.NumMethod() {
 		methods = append(methods, typ.Method(i).Name)
 	}
-	if w := []string{"CloseWorkspace", "CreateWorkspace", "CreateWorktree", "EraseTyped", "MarkPane", "Observe", "PaneProcesses", "Prompt",
+	if w := []string{"CloseWorkspace", "CreateSession", "CreateWorkspace", "CreateWorktree", "EraseTyped", "MarkPane", "Observe", "PaneProcesses", "Prompt",
 		"QueuePrompt", "ReadPane", "RemoveWorktree", "ReportCodexSession", "ResumeAgent", "ResumeCodexEmbedded", "ResumeCodexRemote", "SendKey", "SendKeys",
 		"SendSequence", "SendText", "SetZoom", "StartAgent", "StartCodexRemote", "StartCodexServer", "StartSession", "StopSession",
 		"SubmitPrompt", "TypeExit", "TypePrompt"}; !slices.Equal(methods, w) {
@@ -118,6 +121,7 @@ func TestControlAllowlist(t *testing.T) {
 	must(c.StartSession(ctx, "h3d-it-1"))
 	_, err := c.StopSession(ctx, "h3d-it-1")
 	must(err)
+	must(c.CreateSession(ctx, "h3d-it-new_1")) // #58
 	must(c.ResumeAgent(ctx, "h3d-it-1", "w1:p2", "claude", id))
 	must(c.ResumeAgent(ctx, "h3d-it-1", "w1:p2", "codex", id))
 	must(c.ReportCodexSession(ctx, "h3d-it-1", "w1:p2", id))
@@ -168,6 +172,8 @@ func TestControlAllowlist(t *testing.T) {
 		{"/usr/bin/systemd-run", "--user", "--unit=herdr-s-h3d-it-1", "--collect", "-p", "KillMode=process",
 			"--working-directory=/home/u", "/bin/fish", "-l", "-c", "exec herdr --session 'h3d-it-1' server"},
 		{"/opt/herdr", "session", "stop", "h3d-it-1", "--json"},
+		{"/usr/bin/systemd-run", "--user", "--unit=herdr-s-h3d-it-new_1", "--collect", "-p", "KillMode=process",
+			"--working-directory=/home/u", "/bin/fish", "-l", "-c", "exec herdr --session 'h3d-it-new_1' server"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w1:p2", "claude --resume " + id},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w1:p2", "codex resume " + id},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "report-agent-session", "w1:p2",
@@ -232,12 +238,19 @@ func TestControlRefusesBadArgumentsBeforeRunning(t *testing.T) {
 	ctx := context.Background()
 	id := "8cb4e8a5-0000-4000-8000-000000000000"
 	for name, call := range map[string]func() error{
-		"unwatched session":      func() error { return c.StartSession(ctx, "herdr-3d") },
-		"stop unwatched":         func() error { _, err := c.StopSession(ctx, "code-review"); return err },
-		"quote in session":       func() error { return c.StartSession(ctx, "h3d-it-'x") },
-		"space in session":       func() error { return c.StartSession(ctx, "h3d-it- x") },
-		"flag session":           func() error { _, err := c.StopSession(ctx, "--all"); return err },
-		"long session":           func() error { return c.StartSession(ctx, "h3d-it-"+strings.Repeat("x", 60)) },
+		"unwatched session": func() error { return c.StartSession(ctx, "herdr-3d") },
+		"stop unwatched":    func() error { _, err := c.StopSession(ctx, "code-review"); return err },
+		"quote in session":  func() error { return c.StartSession(ctx, "h3d-it-'x") },
+		"space in session":  func() error { return c.StartSession(ctx, "h3d-it- x") },
+		"flag session":      func() error { _, err := c.StopSession(ctx, "--all"); return err },
+		"long session":      func() error { return c.StartSession(ctx, "h3d-it-"+strings.Repeat("x", 60)) },
+		// #58: a new session's name is stricter than an existing one's.
+		"new session unwatched":  func() error { return c.CreateSession(ctx, "herdr-3d") },
+		"new session uppercase":  func() error { return c.CreateSession(ctx, "h3d-it-Up") },
+		"new session dot":        func() error { return c.CreateSession(ctx, "h3d-it-a.b") },
+		"new session flag":       func() error { return c.CreateSession(ctx, "-h3d-it-x") },
+		"new session default":    func() error { return (&Control{Run: c.Run, Home: c.Home}).CreateSession(ctx, "default") },
+		"new session long":       func() error { return c.CreateSession(ctx, "h3d-it-"+strings.Repeat("x", 58)) },
 		"bad pane":               func() error { return c.ResumeAgent(ctx, "h3d-it-1", "w1:p1;rm", "claude", id) },
 		"flag pane":              func() error { return c.ReportCodexSession(ctx, "h3d-it-1", "--x", id) },
 		"shell in id":            func() error { return c.ResumeAgent(ctx, "h3d-it-1", "w1:p1", "claude", id+"; rm -rf ~") },

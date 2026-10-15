@@ -81,7 +81,7 @@ describe('a floor bigger than one canvas (#118)', () => {
 
 describe('the wall’s what column (#118)', () => {
   const row = (over: Partial<OverviewWorkerRow>): OverviewWorkerRow => ({
-    kind: 'worker', key: 'w', id: 'w', session: 's', name: 'Sprout', display: 'working', since: 0, harness: 'claude', model: 'Opus 5.5 high',
+    kind: 'worker', key: 'w', id: 'w', floorId: 's', name: 'Sprout', display: 'working', since: 0, harness: 'claude', model: 'Opus 5.5 high',
     role: null, tag: null, runColor: null, orch: null, ticket: null, task: null, now: null, activity: null, act: null, floor: null, ...over,
   });
   const ticket = { key: '#118', title: 'Floor overview', item: null, url: null };

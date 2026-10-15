@@ -53,7 +53,7 @@ describe('OfficeView while a hire drops in (M6b)', () => {
     const v = store.workerView('new')!;
     const s = office.layout.slots[3]!;
     const m = memberOf(v);
-    const spec: ArrivalSpec = { id: 'new', kind: 'in', session: 'top', desk: 3, name: v.name, route: [{ x: s.seat.x, y: 0, z: s.seat.z }], seatYaw: s.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: 'codex' };
+    const spec: ArrivalSpec = { id: 'new', kind: 'in', floor: 'top', desk: 3, name: v.name, route: [{ x: s.seat.x, y: 0, z: s.seat.z }], seatYaw: s.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: 'codex' };
     const arrivals = new Arrivals(false);
     expect(arrivals.start(spec, 0)).toBe(true);
     // As the app's frame loop does: what the arrivals say each desk shows.
@@ -93,7 +93,7 @@ function sendHome(store: WorldStore, office: OfficeView, arrivals: Arrivals, now
     { x: s.seat.x, y: 0, z: s.seat.z },
     { x: s.seat.x + 6, y: 0, z: s.seat.z },
   ];
-  const spec: ArrivalSpec = { id: 'old', kind: 'out', session: 'top', desk: 0, name: v.name, route, seatYaw: s.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: 'claude' };
+  const spec: ArrivalSpec = { id: 'old', kind: 'out', floor: 'top', desk: 0, name: v.name, route, seatYaw: s.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: 'claude' };
   expect(arrivals.start(spec, now)).toBe(true);
   office.setAway(0, { show: 'busy', display: spec.display, cue: spec.cue.color, harness: spec.harness, packed: 0 });
   store.applyEvent({ t: 'worker.removed', seq: 10, id: 'old', session: 'top', workspace_id: 'ws-old', reason: 'sent_home' });
@@ -175,7 +175,7 @@ describe('OfficeView: a new worker at the desk of one still packing up (M6b)', (
       const s = office.layout.slots[0]!;
       const v = store.workerView('new')!;
       const m = memberOf(v);
-      const spec: ArrivalSpec = { id: 'new', kind: 'in', session: 'top', desk: 0, name: v.name, route: [{ x: s.seat.x, y: 0, z: s.seat.z }], seatYaw: s.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: 'codex' };
+      const spec: ArrivalSpec = { id: 'new', kind: 'in', floor: 'top', desk: 0, name: v.name, route: [{ x: s.seat.x, y: 0, z: s.seat.z }], seatYaw: s.yaw, tint: m.tint, cue: m.cue, display: m.display, phase: m.phase, harness: 'codex' };
       expect(arrivals.start(spec, 10.1)).toBe(true);
       for (const t of samples) {
         step(t);

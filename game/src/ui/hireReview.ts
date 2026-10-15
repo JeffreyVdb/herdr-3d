@@ -63,7 +63,7 @@ export interface ReviewTicket {
 /** What the review shows (test hook). */
 export interface ReviewSummary {
   kind: 'hire-review';
-  session: string;
+  floor: string;
   desk: number;
   state: ReviewState;
   choice: ReviewChoice;
@@ -91,7 +91,9 @@ export class HireReviewDialog {
   private readonly taskEl = h('textarea', { id: 'review-task', class: 'rv-task', 'data-key': 'task', rows: 6, spellcheck: 'true', 'aria-describedby': 'review-task-hint', 'aria-label': 'Task, the complete text' });
   private readonly panelKeys = new Map<string, string>();
 
-  private session = '';
+  private floor = '';
+  /** What `worker.hire` is doing, once it is sent (null: not yet): the status line under "Waking floor…" (#58). */
+  private hiringText: string | null = null;
   private desk = 0;
   private state: ReviewState = 'preparing';
   private prep: HirePrepare | null = null;
@@ -175,14 +177,14 @@ export class HireReviewDialog {
    * `hire.prepare` (the folder, the name, the caps).
    */
   /** #223 `seed`: "Hire from handoff": the starting choice (`fromHandoff`) and the folder, instead of the proposal's. */
-  open(session: string, interp: HireInterpretation, desk?: number, seed?: { choice?: ReviewChoice; cwd?: string }): boolean {
-    const seat = resolveHireDesk(session, this.host.store.floorView(session), this.host.held(session), desk);
+  open(floor: string, interp: HireInterpretation, desk?: number, seed?: { choice?: ReviewChoice; cwd?: string }): boolean {
+    const seat = resolveHireDesk(floor, this.host.store.floorView(floor), this.host.held(floor), desk);
     if (!seat.ok) {
       this.host.toast(seat.msg, 'info');
       return false;
     }
     this.epoch++;
-    this.session = session;
+    this.floor = floor;
     this.desk = seat.desk;
     this.prep = null;
     this.pending = interp;
@@ -268,7 +270,7 @@ export class HireReviewDialog {
       this.render();
       return;
     }
-    const args: CommandArgs['hire.prepare'] = { session: this.session };
+    const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (cwd) args.cwd = cwd;
     this.checking = !!cwd && !!this.prep;
     const r = await this.host.send('hire.prepare', args);
@@ -277,7 +279,7 @@ export class HireReviewDialog {
     this.checking = false;
     if (!r.ok) {
       this.state = this.prep && cwd ? 'ready' : 'failed';
-      this.setStatus(failureText('hire.prepare', r.code, r.message, { floor: this.session }), true);
+      this.setStatus(failureText('hire.prepare', r.code, r.message, { floor: this.floorName() }), true);
       this.render();
       return;
     }
@@ -342,18 +344,40 @@ export class HireReviewDialog {
     if (this.dialog.open) this.render();
   }
 
+  /** #58: the floor's name (never its id). */
+  private floorName(): string {
+    return this.host.store.floorName(this.floor);
+  }
+
+  /** #58 decision 3: a hire here wakes the floor's session first (an asleep virtual floor, or one already waking up). */
+  private wakes(): boolean {
+    const fv = this.host.store.floorView(this.floor);
+    return !!fv && (fv.transition === 'waking' || (fv.asleep && fv.virtual));
+  }
+
+  /** The status line while `worker.hire` is on its way: "Waking floor…" first while the floor's session wakes. */
+  private hiringStatus(): void {
+    this.setStatus(this.wakes() ? `Waking floor ${this.floorName()}… then ${this.hiringText ?? 'hiring'}` : `${this.hiringText ?? ''}`);
+  }
+
   /** The world changed: the desk may have been taken, the floor gone or asleep, a model left the catalog. */
   refresh(): void {
-    if (!this.dialog.open || this.state === 'hiring') return;
-    const fv = this.host.store.floorView(this.session);
-    if (!fv) {
-      this.close();
-      this.host.toast(`${this.session} is gone.`, 'info');
+    if (!this.dialog.open) return;
+    // #58 decision 3: the hire on an asleep virtual floor wakes its session first: the status follows the wake.
+    if (this.state === 'hiring') {
+      if (this.hiringText !== null) this.hiringStatus();
+      this.render();
       return;
     }
-    if (fv.asleep) {
+    const fv = this.host.store.floorView(this.floor);
+    if (!fv) {
       this.close();
-      this.host.toast(`${this.session} went to sleep; wake it to hire.`, 'info');
+      this.host.toast(`${this.floorName()} is gone.`, 'info');
+      return;
+    }
+    if (fv.asleep && !fv.virtual) {
+      this.close();
+      this.host.toast(`${this.floorName()} went to sleep; wake it to hire.`, 'info');
       return;
     }
     // A model or harness that left the catalog is cleared and asked for again; what is still there stays as the human left it.
@@ -367,16 +391,16 @@ export class HireReviewDialog {
 
   /** Someone sat down at the desk meanwhile, or another hire is on its way there: why, and the desk to offer instead. */
   private takenBy(): { why: string; next: number | null } | null {
-    const fv = this.host.store.floorView(this.session);
+    const fv = this.host.store.floorView(this.floor);
     if (!fv || this.state === 'hiring') return null;
-    const held = this.host.held(this.session);
+    const held = this.host.held(this.floor);
     const seat = fv.seats[this.desk];
     const why = seat ? `${seat.name} just sat down at Desk ${this.desk + 1}.` : held.has(this.desk) ? `Another hire is already on its way to Desk ${this.desk + 1}.` : null;
     return why ? { why, next: firstFreeDesk(fv, held) } : null;
   }
 
   private capacity(): CapacityView | null {
-    return this.prep ? capacityView(this.prep.capacity, this.session) : null;
+    return this.prep ? capacityView(this.prep.capacity, this.floorName()) : null;
   }
 
   private setStatus(msg: string, error = false): void {
@@ -508,10 +532,10 @@ export class HireReviewDialog {
       case 'task':
         return { sum: c.task.trim() ? taskPreview(c.task) : 'No task yet', origins: [c.origin.task] };
       case 'where': {
-        const fv = this.host.store.floorView(this.session);
+        const fv = this.host.store.floorView(this.floor);
         const label = this.f.label.trim() || this.prep?.label;
         const wt = this.prep?.git ? (this.f.worktree && worktreeUsable(this.prep.git) ? 'own worktree' : 'no worktree') : null;
-        const sum = [`Desk ${this.desk + 1}`, fv?.level ? `Floor ${fv.level.number}` : this.session, label, this.f.cwd.trim(), wt].filter(Boolean).join(' · ');
+        const sum = [`Desk ${this.desk + 1}`, fv?.level ? `Floor ${fv.level.number}` : this.floorName(), label, this.f.cwd.trim(), wt].filter(Boolean).join(' · ');
         const mine = this.changed.label || this.changed.cwd || this.changed.worktree;
         return { sum, origins: [mine ? 'chosen' : 'default'] };
       }
@@ -561,11 +585,11 @@ export class HireReviewDialog {
   }
 
   private render(): void {
-    const fv = this.host.store.floorView(this.session);
+    const fv = this.host.store.floorView(this.floor);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--desk', 'aria-hidden': 'true' }, icon('<path d="M12 5v14M5 12h14"/>'), h('b', {}, String(this.desk + 1))),
-      h('div', { class: 'dd-titles' }, h('h2', { id: 'review-title' }, `Review the hire at Desk ${this.desk + 1}`), h('p', { id: 'review-sub' }, `${this.session} · ${where}`)),
+      h('div', { class: 'dd-titles' }, h('h2', { id: 'review-title' }, `Review the hire at Desk ${this.desk + 1}`), h('p', { id: 'review-sub' }, `${this.floorName()} · ${where}`)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
     const busy = this.state === 'hiring';
@@ -576,7 +600,7 @@ export class HireReviewDialog {
 
     this.panel('agent', [c.harness, c.model, c.origin.harness, c.origin.model, c.said.harness, c.said.model, labelsOf(cat, c.harness), this.host.modelPrefs?.version, busy, this.keep.length], () => this.agentPanel(offered));
     this.panel('effort', [c.harness, c.model, c.effort, c.origin.effort, c.said.effort, busy, this.pending?.questions.find((q) => q.field === 'effort')?.text], () => this.effortPanel());
-    this.panel('where', [this.session, this.desk, this.state, this.prep, this.f.worktree, this.refetching, taken, this.host.store.limits.version, busy, where], () => this.wherePanel(taken));
+    this.panel('where', [this.floor, this.desk, this.state, this.prep, this.f.worktree, this.refetching, taken, this.host.store.limits.version, busy, where], () => this.wherePanel(taken));
     this.taskEl.disabled = busy;
     this.syncSections();
 
@@ -602,7 +626,7 @@ export class HireReviewDialog {
           h('button', { class: 'btn btn--sm', 'data-key': 'refetch', disabled: this.refetching || this.state !== 'ready', onclick: () => void this.refetch() }, this.refetching ? 'Fetching…' : 'Fetch again'),
         ),
       );
-    if (this.prep) notices.push(capacityBlock(this.capacity() as CapacityView, this.prep, this.session));
+    if (this.prep) notices.push(capacityBlock(this.capacity() as CapacityView, this.prep, this.floorName()));
     this.notices.replaceChildren(...notices);
     this.renderActions();
   }
@@ -645,9 +669,9 @@ export class HireReviewDialog {
   }
 
   private wherePanel(taken: { why: string; next: number | null } | null): Node[] {
-    const fv = this.host.store.floorView(this.session);
+    const fv = this.host.store.floorView(this.floor);
     const nodes: Node[] = [];
-    const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : this.session;
+    const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : this.floorName();
     nodes.push(
       h(
         'dl',
@@ -775,38 +799,42 @@ export class HireReviewDialog {
       this.renderActions();
       return;
     }
-    const session = this.session;
+    const floor = this.floor;
     const desk = this.desk;
-    const args = hireArgs(session, desk, this.form(), this.prep.git);
+    const args = hireArgs(floor, desk, this.form(), this.prep.git);
     const who = args.label ?? this.prep.label;
     const epoch = this.epoch;
     // Read once, here: a change in Settings while the hire is on its way does not change how it ends.
     const background = this.host.hirePrefs?.hireInBackground === true;
     this.state = 'hiring';
+    this.hiringText = null;
     this.setStatus('');
     const op = this.hires.start(
-      { key: `review:${this.id}:${epoch}`, session, desk, args, who, prompt: null, background },
+      { key: `review:${this.id}:${epoch}`, floor, where: this.floorName(), desk, args, who, prompt: null, background },
       {
         hiring: (sent) => {
           if (background || !this.dialog.open || epoch !== this.epoch) return;
           const steps = [sent.worktree ? 'creating the worktree' : null, `starting ${sent.harness}`, sent.prompt ? 'handing over the first task' : null].filter(Boolean);
-          this.setStatus(`Hiring ${who}: ${steps.join(', ')}…`);
+          this.hiringText = `Hiring ${who}: ${steps.join(', ')}…`;
+          this.hiringStatus();
           this.render();
         },
       },
     );
     if (background) {
       // The review goes now and the player plays on; the coordinator says how it ended (one toast, a beep on success).
+      // #58 decision 3: a hire on an asleep virtual floor wakes it first, which takes a while: say so now.
+      if (this.wakes()) this.host.toast(`Waking floor ${this.floorName()}… ${who} is hired once it is up.`, 'info');
       this.close();
       await op.done;
       return;
     }
     this.render();
-    this.landed(await op.done, { session, desk, who, epoch });
+    this.landed(await op.done, { floor, desk, who, epoch });
   }
 
   /** A hire waited for here ended: this dialog, or (closed meanwhile) a toast, says how; the go-to on success. */
-  private landed(o: HireOutcome, hh: { session: string; desk: number; who: string; epoch: number }): void {
+  private landed(o: HireOutcome, hh: { floor: string; desk: number; who: string; epoch: number }): void {
     const still = this.dialog.open && hh.epoch === this.epoch;
     if (still) this.state = 'ready';
     if (o.kind === 'hired' || o.kind === 'not_prompted') {
@@ -820,7 +848,7 @@ export class HireReviewDialog {
       this.host.toast(t.text, t.kind);
       return;
     }
-    const msg = o.kind === 'not_sent' ? o.message : o.kind === 'unknown' ? o.message : failureText('worker.hire', o.code, o.message, { floor: hh.session, desk: hh.desk + 1 });
+    const msg = o.kind === 'not_sent' ? o.message : o.kind === 'unknown' ? o.message : failureText('worker.hire', o.code, o.message, { floor: this.host.store.floorName(hh.floor), desk: hh.desk + 1 });
     if (!still) {
       if (msg) this.host.toast(msg, 'error');
       return;
@@ -836,7 +864,7 @@ export class HireReviewDialog {
     if (!this.dialog.open) return null;
     return {
       kind: 'hire-review',
-      session: this.session,
+      floor: this.floor,
       desk: this.desk,
       state: this.state,
       choice: { ...this.choice },

@@ -17,6 +17,8 @@ import {
   resolveHarness,
   type Display,
 } from './derive';
+// #58: floor names
+import { floorName, floorNameOf } from './floorName';
 // #57: asks
 import { askOf } from './ask';
 // #83: wrap-ups
@@ -36,6 +38,7 @@ import { RepoDiscoveryBook } from './repoDiscovery';
 import { RepoRefsBook } from './repoRefs';
 import { KaneoBook } from './kaneo';
 import { HandoffBook } from './handoff';
+import { floorGroups, FloorListBook } from './floorList';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
@@ -45,8 +48,10 @@ import { isWaiting } from './activity';
 // #157: a Codex worker herdr calls blocked only because of an async question keeps working.
 import { asyncAttention, effectiveStatus } from './codexQuestions';
 
+export { floorName, floorNameOf, floorOf, isVirtualFloorId } from './floorName';
+
 export interface WorkerView {
-  worker: Worker;
+  worker: StoredWorker;
   name: string;
   desk: number;
   harness: string | undefined;
@@ -79,9 +84,38 @@ export interface ResumeCounts {
   total: number;
 }
 
+/** #58: a floor as the store keeps it: its id, name and base session are always set (an older bridge: the session's). */
+export type StoredFloor = Floor & { id: string; name: string; base_session: string; virtual: boolean; hidden: boolean };
+/** #58: a worker as the store keeps it: its floor is always set (an older bridge: its session). */
+export type StoredWorker = Worker & { floor: string };
+
+
+/** #58: fills in what an older bridge leaves out of a floor. */
+function storedFloor(f: Floor): StoredFloor {
+  return {
+    ...f,
+    id: f.id ?? f.session,
+    name: f.name ?? f.session,
+    base_session: f.base_session ?? f.session,
+    virtual: f.virtual === true,
+    hidden: f.hidden === true,
+  };
+}
+
+const storedWorker = (w: Worker): StoredWorker => (typeof w.floor === 'string' && w.floor ? (w as StoredWorker) : { ...w, floor: w.session });
+
 export interface FloorView {
-  session: string;
-  floor: Floor;
+  /** #58: the floor id (the key everywhere: commands, maps, the URL). */
+  id: string;
+  /** #58: the name a person sees (never the id). */
+  name: string;
+  /** #58: the herdr session the floor lives in (a virtual floor's base session): wake and sleep are its. */
+  baseSession: string;
+  /** #58: a user-defined floor on `baseSession`. */
+  virtual: boolean;
+  /** #58: the stored hidden setting (decision 2); a hidden floor with workers still shows. */
+  hidden: boolean;
+  floor: StoredFloor;
   /** M3: a wake/sleep in progress, null otherwise (and from an older bridge). */
   transition: FloorTransition | null;
   /** M3: stored settings ({} from an older bridge). */
@@ -111,13 +145,13 @@ export interface BuildingView {
 export interface Change {
   /** Buildings/floors/desks/worker membership changed: rebuild what shows them. */
   structure: boolean;
-  /** Sessions whose floor views changed in any way. */
-  sessions: Set<string>;
+  /** Floors (ids) whose floor views changed in any way. */
+  floors: Set<string>;
   /** Workers whose shown state (status, title, …) changed without moving desks. */
   workers: Set<string>;
 }
 
-const emptyChange = (): Change => ({ structure: false, sessions: new Set(), workers: new Set() });
+const emptyChange = (): Change => ({ structure: false, floors: new Set(), workers: new Set() });
 
 /** `world.hire_options` of an older bridge: the lists in the M3 contract. */
 export const DEFAULT_HIRE_OPTIONS: HireOptions = {
@@ -175,9 +209,10 @@ const objectOf = <T extends object>(v: unknown): T => (typeof v === 'object' && 
  */
 export class WorldStore {
   readonly buildings = new Map<string, Building>();
-  readonly floors = new Map<string, Floor>();
+  /** #58: keyed by floor id. */
+  readonly floors = new Map<string, StoredFloor>();
   /** In arrival order (snapshot order, then new workers). */
-  readonly workers = new Map<string, Worker>();
+  readonly workers = new Map<string, StoredWorker>();
   seq = 0;
   snapshots = 0;
   /** Bumped on every structural change. */
@@ -205,6 +240,10 @@ export class WorldStore {
   readonly repoDiscovery = new RepoDiscoveryBook(); // #54
   readonly kaneo = new KaneoBook(); // #184
   readonly handoffs = new HandoffBook(); // #223
+  /** #58 stage 4: Settings → Floors' rows, refreshed after every change that moves floors or workers. */
+  readonly floorList = new FloorListBook(() => floorGroups(this.floors.values(), this.workers.values()));
+  /** #58: the floor you stand on, listed even while hidden and empty (see `pin`). */
+  private pinned: string | null = null;
   /** #106: the inbox's dismissed finished rows, worker id → the `status_since` of the done episode hidden. */
   readonly inboxDismissed = new Map<string, number>();
   private readonly localDesks = new Map<string, number>();
@@ -224,10 +263,14 @@ export class WorldStore {
     this.since.clear();
     this.deskCache.clear();
     for (const b of s.world.buildings) if (b && typeof b.id === 'string') this.buildings.set(b.id, b);
-    for (const f of s.world.floors) if (f && typeof f.session === 'string') this.floors.set(f.session, f);
+    for (const f of s.world.floors) {
+      if (!f || typeof f.session !== 'string') continue;
+      const sf = storedFloor(f);
+      this.floors.set(sf.id, sf);
+    }
     for (const w of s.world.workers) {
       if (!w || typeof w.id !== 'string' || typeof w.session !== 'string') continue;
-      this.workers.set(w.id, w);
+      this.workers.set(w.id, storedWorker(w));
       const keep = prevStatus.get(w.id) === w.status ? prevSince.get(w.id) : undefined;
       this.since.set(w.id, w.status_since ?? keep ?? (this.snapshots === 0 ? this.loadedAt : now));
     }
@@ -254,7 +297,8 @@ export class WorldStore {
     this.structureVersion++;
     const c = emptyChange();
     c.structure = true;
-    for (const f of this.floors.keys()) c.sessions.add(f);
+    for (const f of this.floors.keys()) c.floors.add(f);
+    this.floorList.refresh();
     return c;
   }
 
@@ -265,41 +309,51 @@ export class WorldStore {
       case 'building.upsert':
         this.buildings.set(e.building.id, e.building);
         c.structure = true;
-        for (const s of e.building.floors ?? []) c.sessions.add(s);
+        for (const s of e.building.floors ?? []) c.floors.add(s);
         break;
       case 'building.removed':
         c.structure = this.buildings.delete(e.id);
         break;
       case 'floor.upsert': {
-        this.floors.set(e.floor.session, e.floor);
+        const f = storedFloor(e.floor);
+        this.floors.set(f.id, f);
         c.structure = true;
-        c.sessions.add(e.floor.session);
-        this.deskCache.delete(e.floor.session);
+        c.floors.add(f.id);
+        this.deskCache.delete(f.id);
         break;
       }
-      case 'floor.removed':
-        if (this.floors.delete(e.session)) {
-          c.structure = true;
-          c.sessions.add(e.session);
-          for (const [id, w] of this.workers) if (w.session === e.session) this.dropWorker(id);
-          this.deskCache.delete(e.session);
+      case 'floor.removed': {
+        // #58: by its id (an older bridge names the session: its real floor). A real floor goes with its session, and
+        // so do the virtual floors on it (the bridge sends theirs too; none is left behind if one went missing).
+        const id = e.floor_id ?? e.session;
+        const f = this.floors.get(id);
+        if (!f) break;
+        const gone = f.virtual ? [f] : [...this.floors.values()].filter((x) => x.id === id || x.base_session === f.base_session);
+        for (const x of gone) {
+          this.floors.delete(x.id);
+          c.floors.add(x.id);
+          this.deskCache.delete(x.id);
+          for (const [wid, w] of this.workers) if (w.floor === x.id) this.dropWorker(wid);
         }
+        c.structure = true;
         break;
+      }
       case 'worker.upsert': {
-        const w = e.worker;
+        const w = storedWorker(e.worker);
         const old = this.workers.get(w.id);
         if (!old || old.status !== w.status) this.since.set(w.id, w.status_since ?? now);
         else if (w.status_since !== undefined) this.since.set(w.id, w.status_since);
         this.workers.set(w.id, w);
         this.crewSeen.observe(w);
-        c.sessions.add(w.session);
-        if (!old || old.session !== w.session || old.desk_index !== w.desk_index) {
+        c.floors.add(w.floor);
+        // #58: a worker can move between floors of one session (a deleted virtual floor's workers go to the real one).
+        if (!old || old.floor !== w.floor || old.desk_index !== w.desk_index) {
           c.structure = true;
           if (old) {
-            c.sessions.add(old.session);
-            this.deskCache.delete(old.session);
+            c.floors.add(old.floor);
+            this.deskCache.delete(old.floor);
           }
-          this.deskCache.delete(w.session);
+          this.deskCache.delete(w.floor);
         } else {
           c.workers.add(w.id);
         }
@@ -308,7 +362,7 @@ export class WorldStore {
       case 'worker.status': {
         const old = this.workers.get(e.id);
         if (!old) break;
-        const next: Worker = { ...old, status: e.status };
+        const next: StoredWorker = { ...old, status: e.status };
         if (typeof e.title === 'string') {
           if (e.title) next.title = e.title;
           else delete next.title;
@@ -320,16 +374,16 @@ export class WorldStore {
         this.workers.set(e.id, next);
         this.crewSeen.observe(next);
         c.workers.add(e.id);
-        c.sessions.add(old.session);
+        c.floors.add(old.floor);
         break;
       }
       case 'worker.removed': {
         const old = this.workers.get(e.id);
         if (!old) break;
         this.dropWorker(e.id);
-        this.deskCache.delete(old.session);
+        this.deskCache.delete(old.floor);
         c.structure = true;
-        c.sessions.add(old.session);
+        c.floors.add(old.floor);
         break;
       }
       // M5: usage and cost changed; the rest of the worker stays.
@@ -338,7 +392,7 @@ export class WorldStore {
         if (!old) break;
         this.workers.set(e.id, { ...old, usage: e.usage });
         c.workers.add(e.id);
-        c.sessions.add(old.session);
+        c.floors.add(old.floor);
         break;
       }
       // M6 start: presets are no part of the scene; dialogs re-render on `presets.version`.
@@ -366,12 +420,12 @@ export class WorldStore {
       case 'worker.activity': {
         const old = this.workers.get(e.id);
         if (!old) break;
-        const next: Worker = { ...old };
+        const next: StoredWorker = { ...old };
         if (e.activity && typeof e.activity === 'object') next.activity = e.activity;
         else delete next.activity;
         this.workers.set(e.id, next);
         c.workers.add(e.id);
-        c.sessions.add(old.session);
+        c.floors.add(old.floor);
         break;
       }
       case 'activity.update': // #98 activity settings
@@ -398,11 +452,11 @@ export class WorldStore {
       // #223: the floor's drawers fill (the scene shows them), and a filing walk may follow.
       case 'handoff.added':
         this.handoffs.added(e);
-        c.sessions.add(e.session);
+        c.floors.add(e.floor_id ?? e.session);
         break;
       case 'handoff.removed':
         this.handoffs.removed(e);
-        c.sessions.add(e.session);
+        c.floors.add(e.floor_id ?? e.session);
         break;
       // #106: the inbox hides that worker's done episode. Not part of the scene, but the inbox's pings follow it (a
       // dismissed done must not ping when its settle delay ends), so the worker counts as changed.
@@ -411,11 +465,12 @@ export class WorldStore {
         const w = this.workers.get(e.id);
         if (!w) break;
         c.workers.add(e.id);
-        c.sessions.add(w.session);
+        c.floors.add(w.floor);
         break;
       }
     }
     if (c.structure) this.structureVersion++;
+    if (c.structure || c.workers.size) this.floorList.refresh();
     return c;
   }
 
@@ -427,24 +482,24 @@ export class WorldStore {
     this.crewSeen.forget(id);
   }
 
-  private desksFor(session: string): Map<string, number> {
-    let m = this.deskCache.get(session);
+  private desksFor(floor: string): Map<string, number> {
+    let m = this.deskCache.get(floor);
     if (m) return m;
-    const ws = [...this.workers.values()].filter((w) => w.session === session);
+    const ws = [...this.workers.values()].filter((w) => w.floor === floor);
     m = assignDesks(ws, this.localDesks);
     for (const w of ws) {
       const d = m.get(w.id);
       if (d !== undefined && d !== w.desk_index) this.localDesks.set(w.id, d);
     }
-    this.deskCache.set(session, m);
+    this.deskCache.set(floor, m);
     return m;
   }
 
   workerView(id: string): WorkerView | null {
     const w = this.workers.get(id);
     if (!w) return null;
-    const f = this.floors.get(w.session);
-    const desk = this.desksFor(w.session).get(id) ?? 0;
+    const f = this.floors.get(w.floor);
+    const desk = this.desksFor(w.floor).get(id) ?? 0;
     const asleep = f?.state === 'asleep';
     // M6: an over-cap orchestrator, or a freelancer whose report asks, needs you whatever its agent's status.
     const orch = w.orch_id ? this.workers.get(w.orch_id) : undefined;
@@ -468,38 +523,85 @@ export class WorldStore {
     };
   }
 
+  /** #58: the name a person sees for a floor id, also once the floor is gone (a `v-` id never shows). */
+  floorName(id: string): string {
+    return floorNameOf(this.floors, id);
+  }
+
+  /** #58: every floor of a herdr session, its real floor first, then its virtual floors in building order: a wake or a sleep is theirs. */
+  sessionFloors(session: string): StoredFloor[] {
+    return [...this.floors.values()]
+      .filter((f) => f.base_session === session)
+      .sort((a, b) => Number(a.virtual) - Number(b.virtual) || (a.index ?? 0) - (b.index ?? 0) || floorName(a).localeCompare(floorName(b)));
+  }
+
+  /**
+   * #58: keeps floor `id` in the lists while you stand on it (null: none), so hiding it, or its last worker leaving,
+   * never takes the floor away under you; a `?floor=` link to a hidden floor opens it too. True when the lists change.
+   */
+  pin(id: string | null): boolean {
+    if (id === this.pinned) return false;
+    // Only a floor that shows by nothing but the pin comes or goes with it.
+    const pinOnly = (x: string | null) => {
+      const f = x === null ? undefined : this.floors.get(x);
+      return !!f && !this.shownUnpinned(f);
+    };
+    const changed = pinOnly(this.pinned) || pinOnly(id);
+    this.pinned = id;
+    if (changed) this.structureVersion++;
+    return changed;
+  }
+
+  /** Whether a floor shows by its own setting and workers, pin aside. */
+  private shownUnpinned(f: StoredFloor): boolean {
+    if (!f.hidden) return true;
+    for (const w of this.workers.values()) if (w.floor === f.id) return true;
+    return false;
+  }
+
+  /**
+   * #58 decision 2: a floor the lists show: not hidden, or hidden with a worker on it (an unattributed workspace on a
+   * hidden base floor shows it again), or the floor you stand on (`pin`).
+   */
+  private shown(f: StoredFloor): boolean {
+    return f.id === this.pinned || this.shownUnpinned(f);
+  }
+
   /** Floor position within its building: number counts from the ground. */
-  level(session: string): { number: number; count: number } | null {
-    const f = this.floors.get(session);
+  level(id: string): { number: number; count: number } | null {
+    const f = this.floors.get(id);
     if (!f || f.building === null) return null;
     const b = this.buildings.get(f.building);
     if (!b) return null;
     const order = this.buildingFloors(b, f.building);
-    const i = order.indexOf(session);
+    const i = order.indexOf(id);
     if (i < 0) return null;
     return { number: order.length - i, count: order.length };
   }
 
-  /** Sessions of a building, top floor first (bridge order, else by `index`). */
+  /** Floor ids of a building the lists show, top floor first (bridge order, else by `index`). */
   private buildingFloors(b: Building, id: string): string[] {
-    const known = (s: string) => this.floors.get(s)?.building === id;
+    const known = (s: string) => {
+      const f = this.floors.get(s);
+      return f?.building === id && this.shown(f);
+    };
     const listed = (b.floors ?? []).filter(known);
     const extra = [...this.floors.values()]
-      .filter((f) => f.building === id && !listed.includes(f.session))
+      .filter((f) => f.building === id && !listed.includes(f.id) && this.shown(f))
       .sort((x, y) => (x.index ?? 0) - (y.index ?? 0))
-      .map((f) => f.session);
+      .map((f) => f.id);
     return [...listed, ...extra];
   }
 
-  floorView(session: string): FloorView | null {
-    const floor = this.floors.get(session);
+  floorView(id: string): FloorView | null {
+    const floor = this.floors.get(id);
     if (!floor) return null;
     const asleep = floor.state === 'asleep';
-    const desks = this.desksFor(session);
+    const desks = this.desksFor(id);
     const workers: WorkerView[] = [];
     let maxDesk = -1;
     for (const w of this.workers.values()) {
-      if (w.session !== session) continue;
+      if (w.floor !== id) continue;
       const v = this.workerView(w.id);
       if (!v) continue;
       workers.push(v);
@@ -528,14 +630,18 @@ export class WorldStore {
       else if (v.display === 'waiting') counts.waiting++;
     }
     return {
-      session,
+      id,
+      name: floorName(floor),
+      baseSession: floor.base_session,
+      virtual: floor.virtual,
+      hidden: floor.hidden,
       floor,
       transition: transitionOf(floor.transition),
       settings: objectOf<FloorSettings>(floor.settings),
       suggested: objectOf<FloorSuggested>(floor.suggested),
       resume,
       building: floor.building === null ? null : (this.buildings.get(floor.building) ?? null),
-      level: this.level(session),
+      level: this.level(id),
       asleep,
       desks: n,
       seats,
@@ -561,10 +667,9 @@ export class WorldStore {
 
   private lot(): FloorView[] {
     return [...this.floors.values()]
-      .filter((f) => f.building === null || !this.buildings.has(f.building))
-      .map((f) => f.session)
-      .sort()
-      .map((s) => this.floorView(s))
+      .filter((f) => (f.building === null || !this.buildings.has(f.building)) && this.shown(f))
+      .sort((a, b) => (floorName(a) < floorName(b) ? -1 : floorName(a) > floorName(b) ? 1 : a.id < b.id ? -1 : 1))
+      .map((f) => this.floorView(f.id))
       .filter((v): v is FloorView => v !== null);
   }
 

@@ -147,20 +147,48 @@ func memberOf(id, floor string, role, run string, tokens map[string]string, tick
 	return runs.Member{ID: id, Floor: floor, Role: role, Run: run, RunToken: tokens["h3d_run"] != "", Ticket: ticket}
 }
 
-// members lists every worker for the links, floors by name and workers in
-// sidebar order; floor session is taken from obs/ids instead of its views.
-func (h *Hub) members(session string, obs []world.WorkerObs, ids []string) []runs.Member {
+// members lists every worker for the links, floors by id and workers in
+// sidebar order; floor is taken from obs/ids instead of its views (#58:
+// a worker in ids that its old floor still lists is only floor's).
+func (h *Hub) members(floor string, obs []world.WorkerObs, ids []string) []runs.Member {
 	var ms []runs.Member
+	moving := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		moving[id] = true
+	}
 	for _, s := range sortedFloors(h.floors) {
-		if s == session {
+		if s == floor {
 			for i, w := range obs {
 				ms = append(ms, memberOf(ids[i], s, w.Role, w.Run, w.Tokens, w.RunInfo.Ticket))
 			}
 			continue
 		}
 		for _, id := range h.floors[s].order {
-			if w := h.workers[id]; w != nil {
+			if w := h.workers[id]; w != nil && !moving[id] {
 				ms = append(ms, memberOf(id, s, w.Role, w.Run, w.Tokens, w.Ticket))
+			}
+		}
+	}
+	return ms
+}
+
+// sessionMembers is members for one observation of a whole session (obs,
+// ids and their metas): its workers on the floors their metas name, every
+// other floor's from its views.
+func (h *Hub) sessionMembers(session string, obs []world.WorkerObs, ids []string, metas []workerMeta) []runs.Member {
+	var ms []runs.Member
+	for _, s := range sortedFloors(h.floors) {
+		if h.floors[s].session != session {
+			for _, id := range h.floors[s].order {
+				if w := h.workers[id]; w != nil {
+					ms = append(ms, memberOf(id, s, w.Role, w.Run, w.Tokens, w.Ticket))
+				}
+			}
+			continue
+		}
+		for i, w := range obs {
+			if metas[i].floor == s {
+				ms = append(ms, memberOf(ids[i], s, w.Role, w.Run, w.Tokens, w.RunInfo.Ticket))
 			}
 		}
 	}
@@ -211,7 +239,8 @@ func (h *Hub) launched(id string) (runs.Launch, bool) {
 }
 
 // storeRunLaunch is the default Options.RunLaunch: the store's run_launch
-// record of an orchestrator, when it names an issue or (#184) an item.
+// record of an orchestrator, with its issue or (#184) item when it names
+// one, and (#58) its floor.
 func storeRunLaunch(st *store.Store, log *slog.Logger) func(context.Context, string) (runs.Launch, bool) {
 	return func(ctx context.Context, id string) (runs.Launch, bool) {
 		l, ok, err := st.RunLaunchByWorker(ctx, id)
@@ -219,15 +248,17 @@ func storeRunLaunch(st *store.Store, log *slog.Logger) func(context.Context, str
 			log.Error("loading run launch failed", "worker", id, "err", err)
 			return runs.Launch{}, false
 		}
-		switch {
-		case !ok:
+		if !ok {
 			return runs.Launch{}, false
-		case l.ItemProvider != "" && l.ItemID != "":
-			return runs.Launch{Item: &proto.WorkItemRef{Provider: l.ItemProvider, ID: l.ItemID, Key: l.ItemKey}}, true
-		case l.Repo != "" && l.IssueNumber >= 1:
-			return runs.Launch{Issue: &proto.IssueRef{Repo: l.Repo, Number: l.IssueNumber}}, true
 		}
-		return runs.Launch{}, false
+		out := runs.Launch{Floor: l.FloorID}
+		switch {
+		case l.ItemProvider != "" && l.ItemID != "":
+			out.Item = &proto.WorkItemRef{Provider: l.ItemProvider, ID: l.ItemID, Key: l.ItemKey}
+		case l.Repo != "" && l.IssueNumber >= 1:
+			out.Issue = &proto.IssueRef{Repo: l.Repo, Number: l.IssueNumber}
+		}
+		return out, true
 	}
 }
 
@@ -244,7 +275,7 @@ func (h *Hub) relink() {
 	ls := h.links(ms)
 	for _, m := range ms {
 		w, l := h.workers[m.ID], ls[m.ID]
-		issue, item := h.ticketRefs(w.Session, l.Issue, l.Item) // M7 boards; #118: with the ticket's title
+		issue, item := h.ticketRefs(workerFloor(w), l.Issue, l.Item) // M7 boards; #118: with the ticket's title
 		if w.OrchID == l.OrchID && reflect.DeepEqual(w.Issue, issue) && reflect.DeepEqual(w.WorkItem, item) {
 			continue
 		}
@@ -253,6 +284,78 @@ func (h *Hub) relink() {
 		h.workers[m.ID] = &next
 		h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: &next})
 	}
+}
+
+// --- floors ---
+
+// floorToken is the token an orchestrator's first prompt asks it to tag the
+// workspaces it creates with: its floor's id (#58).
+const floorToken = "h3d_floor"
+
+// attributed reports whether a worker's floor was given to it (#58): by
+// its hire (the bridge hired it, on whichever floor), or as a virtual floor
+// stored with it (by a hire, an inheritance or an h3d_floor token). Anyone
+// else is on its session's real floor only because nothing said otherwise.
+func (h *Hub) attributed(f *floorState, id string, m workerMeta) bool {
+	if m.hiredAt > 0 || f.hires[id] != nil {
+		return true
+	}
+	g := h.floors[m.floor]
+	return g != nil && g.virtual
+}
+
+// inheritFloors gives each worker of an observation of a session (obs, ids
+// and metas, whose floors it sets) that has no attributed floor one (#58
+// stage 3): a freelancer its orchestrator's, as soon as its run links it to
+// one, else the floor its h3d_floor token names; only a floor of the same
+// session. Workers no link places take their token's floor first, so the
+// links see an orchestrator that tagged itself on its floor. persist then
+// stores the floor with the worker, so a restart (herdr drops the tokens)
+// keeps it.
+func (h *Hub) inheritFloors(session string, f *floorState, obs []world.WorkerObs, ids []string, metas []workerMeta) {
+	place := func(i int, floor string) bool {
+		if g := h.floors[floor]; g != nil && g.session == session {
+			metas[i].floor = floor
+			return true
+		}
+		return false
+	}
+	var crew []int // freelancers with no attributed floor
+	for i, w := range obs {
+		switch {
+		case h.attributed(f, ids[i], metas[i]):
+		case world.Freelancer(w.Role):
+			crew = append(crew, i)
+		default:
+			place(i, w.Tokens[floorToken])
+		}
+	}
+	if len(crew) == 0 {
+		return
+	}
+	ms := h.sessionMembers(session, obs, ids, metas)
+	ls := h.links(ms)
+	floorOf := make(map[string]string, len(ms)) // member id → its floor
+	for _, m := range ms {
+		floorOf[m.ID] = m.Floor
+	}
+	for _, i := range crew {
+		if orch := ls[ids[i]].OrchID; orch != "" && place(i, h.orchFloor(orch, floorOf[orch])) {
+			continue
+		}
+		place(i, obs[i].Tokens[floorToken])
+	}
+}
+
+// orchFloor is the floor of the orchestrator id, seen on floor: the one its
+// launch record names (run.start) while that is a floor, else floor
+// (floor.delete moving workers leaves a record naming the deleted floor,
+// and the orchestrator on the real floor).
+func (h *Hub) orchFloor(id, floor string) string {
+	if l, ok := h.launched(id); ok && h.floors[l.Floor] != nil {
+		return l.Floor
+	}
+	return floor
 }
 
 // --- desks ---
@@ -280,7 +383,9 @@ func (h *Hub) seatNearOrch(f *floorState, desks map[string]int, obs []world.Work
 		used[d] = true
 	}
 	for _, op := range f.hires {
-		used[op.desk] = true
+		if op.floor == f.id {
+			used[op.desk] = true
+		}
 	}
 	moved := map[string]bool{}
 	// An orchestrator with no desk yet, first seen together with its

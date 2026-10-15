@@ -35,6 +35,7 @@ function setup(worker: Partial<Worker> = {}, replies: Record<string, Reply[]> = 
   handoffs.reset({ counts: { 'herdr-3d': 1 } });
   const handoffLlm = new HandoffLLMBook(); // #9: an older bridge's: no LLM handoffs
   const store = {
+    floorName: (id: string) => id,
     workerView: (id: string) => (store.workers.get(id) ? { name: 'Pixel', desk: 2, harness: 'claude', display: 'idle', worker: store.workers.get(id) } : null),
     workers: new Map([['A', w]]),
     handoffs,

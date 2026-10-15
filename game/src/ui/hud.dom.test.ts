@@ -5,7 +5,7 @@ import type { WorkerView } from '../world/store';
 import { workerShown } from './hud';
 
 const view = (over: Partial<Worker>, harness?: string): WorkerView => ({
-  worker: { id: 'w', session: 's', workspace_id: 'ws', label: 'l', name: 'Pip', status: 'idle', status_since: 0, ...over },
+  worker: { id: 'w', session: 's', floor: 's', workspace_id: 'ws', label: 'l', name: 'Pip', status: 'idle', status_since: 0, ...over },
   name: 'Pip',
   desk: 0,
   harness,

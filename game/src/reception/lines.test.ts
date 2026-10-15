@@ -9,7 +9,7 @@ import { RECEPTIONIST_LINES } from './manifest';
 
 const at = (h: number, m = 0) => new Date(2026, 8, 28, h, m, 0);
 
-const floor = (session: string, state: 'running' | 'asleep' = 'running', needsYou = 0) => ({ session, name: session, state, needsYou });
+const floor = (session: string, state: 'running' | 'asleep' = 'running', needsYou = 0) => ({ id: session, name: session, state, needsYou });
 
 const ctx = (now: Date, floors: ReceptionContext['floors'] = [floor('top'), floor('bottom')]): ReceptionContext => ({
   now,
@@ -164,8 +164,8 @@ describe('nudgeBubble', () => {
     const c = receptionContext(store, work?.id ?? null, at(9));
     expect(c.building).toEqual({ id: work?.id, name: 'Work' });
     expect(c.floors).toEqual([
-      { session: 'herdr-3d', name: 'herdr-3d', state: 'running', needsYou: 3 },
-      { session: 'depot-manager', name: 'depot-manager', state: 'asleep', needsYou: 0 },
+      { id: 'herdr-3d', name: 'herdr-3d', state: 'running', needsYou: 3 },
+      { id: 'depot-manager', name: 'depot-manager', state: 'asleep', needsYou: 0 },
     ]);
     const said = new LineBook(RECEPTIONIST_LINES, () => 0).handle('arrive-street', c);
     expect(said.map((s) => s.kind)).toEqual(['welcome-morning', 'nudge']);
@@ -182,7 +182,7 @@ describe('nudgeBubble', () => {
     store.applySnapshot(snap);
     const c = receptionContext(store, null, at(23));
     expect(c.building.id).toBeNull();
-    expect(c.floors.map((f) => f.session)).toEqual(['scratchpad']);
+    expect(c.floors.map((f) => f.id)).toEqual(['scratchpad']);
     expect(new LineBook(RECEPTIONIST_LINES, () => 0).handle('arrive-street', c).map((s) => s.kind)).toEqual(['welcome-night', 'quiet']);
   });
 });

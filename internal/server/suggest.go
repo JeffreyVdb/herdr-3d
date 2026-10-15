@@ -18,15 +18,15 @@ type suggestJob struct {
 	cwds    []string
 }
 
-// askOrigins queues a lookup of the floor's cwds when they changed since the
-// last one, or it is older than suggestTTL. Never blocks: a full queue is
-// retried at the next observation.
+// askOrigins queues a lookup of the session's cwds (every floor of it, #58)
+// when they changed since the last one, or it is older than suggestTTL.
+// Never blocks: a full queue is retried at the next observation.
 func (h *Hub) askOrigins(session string, f *floorState) {
 	if h.opts.RepoOf == nil {
 		return
 	}
 	var cwds []string
-	for _, id := range f.order {
+	for _, id := range f.all {
 		if w := h.workers[id]; w != nil && w.Cwd != "" && !slices.Contains(cwds, w.Cwd) {
 			cwds = append(cwds, w.Cwd)
 		}
@@ -66,7 +66,7 @@ func (h *Hub) suggester(ctx context.Context) {
 					return
 				}
 				f.origins = origins
-				h.refreshSuggested(job.session, f)
+				h.refreshSuggestions(job.session)
 				h.syncLayout()
 				h.relink() // M6 runs: the floor's repo may have changed
 			})
@@ -76,14 +76,22 @@ func (h *Hub) suggester(ctx context.Context) {
 
 // refreshSuggested recomputes a floor's suggestion (the floor view shows it
 // at the next syncLayout).
-func (h *Hub) refreshSuggested(session string, f *floorState) {
-	f.suggested = h.suggestion(session, f)
+func (h *Hub) refreshSuggested(floor string, f *floorState) {
+	f.suggested = h.suggestion(floor, f)
+}
+
+// refreshSuggestions recomputes the suggestion of every floor of a session
+// (#58: each from its own workers).
+func (h *Hub) refreshSuggestions(session string) {
+	for _, g := range h.sessionFloors(session) {
+		h.refreshSuggested(g.id, g)
+	}
 }
 
 // suggestion is the most common GitHub repo among the floor's workers' cwds
 // (ties: the first in sidebar order), and the root checkout of the first
 // worker of the effective repo (the setting, else the suggestion).
-func (h *Hub) suggestion(session string, f *floorState) *proto.Suggested {
+func (h *Hub) suggestion(floor string, f *floorState) *proto.Suggested {
 	counts, first := map[string]int{}, map[string]int{}
 	for i, id := range f.order {
 		w := h.workers[id]
@@ -105,7 +113,7 @@ func (h *Hub) suggestion(session string, f *floorState) *proto.Suggested {
 			best = repo
 		}
 	}
-	effective := h.settings[session].Repo
+	effective := h.settings[floor].Repo
 	if effective == "" {
 		effective = best
 	}

@@ -83,8 +83,8 @@ async function walker(page: Page, fn: (a: Arrival) => boolean, what: string, tim
 }
 
 /** M6b: the drop-in at `desk` (it lasts under a second: caught while it plays, or from the log once it did). */
-async function arrived(page: Page, desk: number, timeout = 15_000): Promise<{ id: string; kind: string; session: string; desk: number; name?: string | undefined }> {
-  let hit: { id: string; kind: string; session: string; desk: number; name?: string | undefined } | undefined;
+async function arrived(page: Page, desk: number, timeout = 15_000): Promise<{ id: string; kind: string; floor: string; desk: number; name?: string | undefined }> {
+  let hit: { id: string; kind: string; floor: string; desk: number; name?: string | undefined } | undefined;
   await expect
     .poll(
       async () => {
@@ -96,7 +96,7 @@ async function arrived(page: Page, desk: number, timeout = 15_000): Promise<{ id
       { message: `a hire drops in at desk ${desk}`, timeout, intervals: [30] },
     )
     .toBe(true);
-  return hit as { id: string; kind: string; session: string; desk: number; name?: string | undefined };
+  return hit as { id: string; kind: string; floor: string; desk: number; name?: string | undefined };
 }
 
 const focusedKey = (page: Page) =>
@@ -170,7 +170,7 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker dro
   await page.keyboard.press('Enter');
   const hire = (await sent(page)).filter((c) => c.t === 'worker.hire');
   expect(hire.map((c) => c.args)).toEqual([
-    { session: 'pastry', desk_index: 14, harness: 'codex', model: 'gpt-6-sol', effort: 'xhigh', label: 'Gumdrop', cwd: '/home/dev/pastry', worktree: true, prompt: 'Label the loaves, extra seeds\nthen bake' },
+    { floor: 'pastry', desk_index: 14, harness: 'codex', model: 'gpt-6-sol', effort: 'xhigh', label: 'Gumdrop', cwd: '/home/dev/pastry', worktree: true, prompt: 'Label the loaves, extra seeds\nthen bake' },
   ]);
   // The "+" goes as the hire starts, and stays gone until the worker is there.
   expect((await desks(page))[14]).toMatchObject({ plus: false, away: 'empty' });
@@ -179,7 +179,7 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker dro
   await expect(page.locator('.toast')).toHaveText(/^Hired Gumdrop at Desk 15 on h3d\/gumdrop-[0-9a-f]{6}\. Here they come\.$/);
   // M6b: it drops in to its chair (no walk from the street), and its desk is its own from the first frame.
   const w = await arrived(page, 14);
-  expect(w).toMatchObject({ kind: 'in', session: 'pastry', name: 'Gumdrop', desk: 14 });
+  expect(w).toMatchObject({ kind: 'in', floor: 'pastry', name: 'Gumdrop', desk: 14 });
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === w.id), { timeout: 10_000 }).toMatchObject({ kind: 'in', played: true });
   // Sitting at its desk, with its card; the desk is the world's.
   expect((await desks(page))[14]).toEqual({ desk: 14, worker: w.id, plus: false, away: null });
@@ -347,7 +347,7 @@ test('the top bar’s Hire opens the first free desk; a worker with no worktree 
   await page.keyboard.press('Enter');
   const d = await hireDialog(page);
   // Desks 5 and 12 are free: the first.
-  expect(d).toMatchObject({ session: 'herdr-3d', desk: 5, title: 'Hire a worker at Desk 6' });
+  expect(d).toMatchObject({ floor: 'herdr-3d', desk: 5, title: 'Hire a worker at Desk 6' });
   expect((await desks(page))[5]).toMatchObject({ plus: true });
   await page.keyboard.press('Escape');
   await expect.poll(() => dialog(page)).toBeNull();
@@ -386,7 +386,7 @@ test('capacity: a warning above the soft cap, a refusal at the hard cap; no work
   await enter(page, 'scratchpad');
   await page.evaluate(() => window.__h3d.openHire());
   let d = await hireDialog(page);
-  expect(d).toMatchObject({ session: 'scratchpad', desk: 3, git: null, blocker: null });
+  expect(d).toMatchObject({ floor: 'scratchpad', desk: 3, git: null, blocker: null });
   expect(d.form).toMatchObject({ cwd: '/home/dev/scratch', worktree: false });
   expect(d.capacity).toMatchObject({ level: 'warn', floor: 'warn', lines: ['scratchpad will have 4 workers, over its soft cap of 3 (hard cap 4).'] });
   await expect(page.locator('#hire-worktree')).toHaveCount(0);
@@ -399,7 +399,7 @@ test('capacity: a warning above the soft cap, a refusal at the hard cap; no work
   await page.locator('dialog.desk-dlg--hire [data-key="hire"]').click();
   await expect.poll(() => dialog(page)).toBeNull();
   expect((await sent(page)).filter((c) => c.t === 'worker.hire').map((c) => c.args)).toEqual([
-    { session: 'scratchpad', desk_index: 3, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Gumdrop', cwd: '/home/dev/scratch' },
+    { floor: 'scratchpad', desk_index: 3, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Gumdrop', cwd: '/home/dev/scratch' },
   ]);
 
   // Now at the hard cap: Hire is off and says why; Enter in the task sends nothing.
@@ -499,7 +499,7 @@ test('a failed git fetch: no worktree from a stale origin, the error and Fetch a
   await page.locator('#hire-task').fill('Tidy the fixtures');
   await page.locator('[data-key="refetch"]').click();
   await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'hire.prepare').length).toBe(2);
-  expect((await sent(page)).filter((c) => c.t === 'hire.prepare').map((c) => c.args)).toEqual([{ session: 'herdr-3d' }, { session: 'herdr-3d', cwd: '/home/dev/devel/herdr-3d' }]);
+  expect((await sent(page)).filter((c) => c.t === 'hire.prepare').map((c) => c.args)).toEqual([{ floor: 'herdr-3d' }, { floor: 'herdr-3d', cwd: '/home/dev/devel/herdr-3d' }]);
   await expect.poll(async () => ((await dialog(page)) as Hire).refetching).toBe(false);
   d = (await dialog(page)) as Hire;
   expect(d).toMatchObject({ state: 'ready', blocker: null, form: { prompt: 'Tidy the fixtures', worktree: false }, git: { usable: false } });
@@ -509,7 +509,7 @@ test('a failed git fetch: no worktree from a stale origin, the error and Fetch a
   await expect.poll(() => dialog(page)).toBeNull();
   const hire = (await sent(page)).filter((c) => c.t === 'worker.hire');
   expect(hire.map((c) => c.args)).toEqual([
-    { session: 'herdr-3d', desk_index: 5, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Gumdrop', cwd: '/home/dev/devel/herdr-3d', worktree: false, prompt: 'Tidy the fixtures' },
+    { floor: 'herdr-3d', desk_index: 5, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Gumdrop', cwd: '/home/dev/devel/herdr-3d', worktree: false, prompt: 'Tidy the fixtures' },
   ]);
   await expect(page.locator('.toast')).toHaveText('Hired Gumdrop at Desk 6. Here they come.');
   clean();
@@ -542,7 +542,7 @@ test('walks you cannot see resolve at once; only a fresh hire drops in, on the f
   // A worker of the lot sent home while you are in Work: nothing to watch.
   const hopper = world.find((f) => f.session === 'scratchpad')?.workers.find((w) => w.name === 'Hopper');
   await page.evaluate((id) => window.__h3d.inject({ t: 'worker.removed', seq: 9001, id, session: 'scratchpad', workspace_id: 'w1', reason: 'sent_home' } as never), hopper?.id as string);
-  expect(await page.evaluate(() => window.__h3d.arrivalLog())).toEqual([{ id: hopper?.id, kind: 'out', played: false, session: 'scratchpad', desk: 0 }]);
+  expect(await page.evaluate(() => window.__h3d.arrivalLog())).toEqual([{ id: hopper?.id, kind: 'out', played: false, floor: 'scratchpad', desk: 0 }]);
   expect(await arrivals(page)).toEqual([]);
   // M6b: a fresh hire on another floor of this building drops in where you cannot see it: at once. An old one
   // (hired an hour ago) is no arrival at all.
@@ -553,7 +553,7 @@ test('walks you cannot see resolve at once; only a fresh hire drops in, on the f
     window.__h3d.inject({ t: 'worker.upsert', seq: 9003, worker: b } as never);
   }, [fresh, stale] as const);
   expect(await arrivals(page)).toEqual([]);
-  expect((await page.evaluate(() => window.__h3d.arrivalLog())).filter((l) => l.kind === 'in')).toEqual([{ id: 'fresh-1', kind: 'in', played: false, session: 'herdr-3d', desk: 5 }]);
+  expect((await page.evaluate(() => window.__h3d.arrivalLog())).filter((l) => l.kind === 'in')).toEqual([{ id: 'fresh-1', kind: 'in', played: false, floor: 'herdr-3d', desk: 5 }]);
   // The walk-out route still climbs every flight to the top floor.
   const route = await page.evaluate(() => window.__h3d.route('herdr-3d', 5));
   const storey = (await page.evaluate(() => window.__h3d.building()))?.storey ?? 0;

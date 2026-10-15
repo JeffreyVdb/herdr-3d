@@ -112,7 +112,8 @@ export class SendHomeDialog {
   private id = '';
   private name = '';
   private desk = 0;
-  private session = '';
+  /** #58: the floor's name (the messages, the sub line). */
+  private floorName = '';
   private state: SendHomeState = 'preparing';
   private prep: FirePrepare | null = null;
   private choice: FireWorktree = 'keep';
@@ -216,7 +217,7 @@ export class SendHomeDialog {
     this.id = workerId;
     this.name = v.name;
     this.desk = v.desk;
-    this.session = v.worker.session;
+    this.floorName = this.host.store.floorName(v.worker.floor);
     this.prep = null;
     this.choice = 'keep';
     this.mode = mode;
@@ -261,7 +262,7 @@ export class SendHomeDialog {
     if (gen !== this.gen || !this.dialog.open) return;
     if (!r.ok) {
       this.state = 'failed';
-      this.setStatus(failureText('worker.fire.prepare', r.code, r.message, { worker: this.name, floor: this.session }), true);
+      this.setStatus(failureText('worker.fire.prepare', r.code, r.message, { worker: this.name, floor: this.floorName }), true);
       this.render();
       return;
     }
@@ -319,7 +320,7 @@ export class SendHomeDialog {
 
   private render(): void {
     const v = this.host.store.workerView(this.id);
-    const sub = [`Desk ${this.desk + 1}`, this.session, v?.worker.label && v.worker.label !== this.name ? v.worker.label : null].filter(Boolean).join(' · ');
+    const sub = [`Desk ${this.desk + 1}`, this.floorName, v?.worker.label && v.worker.label !== this.name ? v.worker.label : null].filter(Boolean).join(' · ');
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--box', 'aria-hidden': 'true' }, icon(BOX)),
       h('div', { class: 'dd-titles' }, h('h2', { id: 'home-title' }, this.title()), h('p', { id: 'home-sub' }, sub)),
@@ -665,7 +666,7 @@ export class SendHomeDialog {
       this.host.toast(`Sent ${name} home.${what}${how}${note}`, 'info');
       return;
     }
-    const msg = failureText('worker.fire', r.code, r.message, { worker: name, floor: this.session });
+    const msg = failureText('worker.fire', r.code, r.message, { worker: name, floor: this.floorName });
     if (!still) {
       this.host.toast(msg, 'error');
       return;
@@ -708,7 +709,7 @@ export class SendHomeDialog {
       );
       return;
     }
-    const msg = failureText('worker.wrapup', r.code, r.message, { worker: name, floor: this.session });
+    const msg = failureText('worker.wrapup', r.code, r.message, { worker: name, floor: this.floorName });
     if (!still) {
       this.host.toast(msg, 'error');
       return;
@@ -727,7 +728,7 @@ export class SendHomeDialog {
     const name = this.name;
     const r = await this.host.send('worker.wrapup.cancel', { id: this.id });
     if (!r.ok) {
-      this.setStatus(failureText('worker.wrapup.cancel', r.code, r.message, { worker: name, floor: this.session }), true);
+      this.setStatus(failureText('worker.wrapup.cancel', r.code, r.message, { worker: name, floor: this.floorName }), true);
       return;
     }
     this.setStatus(how === 'cancel' ? `Cancelled ${name}’s wrap-up. It stays at its desk.` : `Dismissed. ${name} stays at its desk.`);

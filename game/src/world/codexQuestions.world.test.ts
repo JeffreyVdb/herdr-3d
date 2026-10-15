@@ -49,7 +49,7 @@ describe('a Codex worker blocked only by an async question (#157)', () => {
   });
 
   it('is not in the inbox or N’s queue (it does not need you); the real block is', () => {
-    const cands = [asking, real].map((v) => ({ id: v?.worker.id ?? '', session: 'top', building: 'b1', display: v?.display ?? 'idle', since: 0, desk: 0, name: v?.name ?? '', role: null }));
+    const cands = [asking, real].map((v) => ({ id: v?.worker.id ?? '', floor: 'top', building: 'b1', display: v?.display ?? 'idle', since: 0, desk: 0, name: v?.name ?? '', role: null }));
     expect(inboxQueue(cands).map((x) => x.id)).toEqual(['b']);
   });
 

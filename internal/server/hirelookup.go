@@ -66,14 +66,15 @@ func (h *Hub) startHireCommands(ctx context.Context, c *Client, cmd proto.Comman
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	f, err := h.lookupFloor(a.Session)
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	f, err := h.lookupFloor(a.Floor)
 	if err != nil {
 		return err
 	}
 	if _, ok := hireCatalog(h.hireOptions()).Harness(a.Harness); !ok || !herdr.CanStart(a.Harness) {
 		return bad("harness must be claude or codex, got %q", a.Harness)
 	}
-	cwd, err := h.hireCwd(a.Session, f, a.Cwd)
+	cwd, err := h.hireCwd(a.Floor, f, a.Cwd)
 	if err != nil {
 		return err
 	}
@@ -97,6 +98,7 @@ func (h *Hub) startHireFiles(ctx context.Context, c *Client, cmd proto.Command) 
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
 	switch {
 	case a.Limit < 0:
 		return bad("limit %d is negative", a.Limit)
@@ -108,11 +110,11 @@ func (h *Hub) startHireFiles(ctx context.Context, c *Client, cmd proto.Command) 
 	if n := utf8.RuneCountInString(a.Query); n > proto.FilesMaxQuery {
 		return bad("query is %d characters, the most is %d", n, proto.FilesMaxQuery)
 	}
-	f, err := h.lookupFloor(a.Session)
+	f, err := h.lookupFloor(a.Floor)
 	if err != nil {
 		return err
 	}
-	cwd, err := h.hireCwd(a.Session, f, a.Cwd)
+	cwd, err := h.hireCwd(a.Floor, f, a.Cwd)
 	if err != nil {
 		return err
 	}
@@ -141,9 +143,10 @@ func (h *Hub) startHireRepos(ctx context.Context, c *Client, cmd proto.Command) 
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if _, err := h.floorFor(a.Session); err != nil {
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	if _, err := h.floorFor(a.Floor); err != nil {
 		return err
 	}
-	h.startAsync(ctx, c, cmd, h.reposFor(a.Session))
+	h.startAsync(ctx, c, cmd, h.reposFor(a.Floor))
 	return nil
 }

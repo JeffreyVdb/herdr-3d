@@ -44,11 +44,11 @@ function setup() {
   let snapshots = 0;
   // App.needCandidates / App.pingInbox.
   const candidates = (): InboxCandidate[] =>
-    store.city().flatMap((b) => b.floors.flatMap((f) => f.workers.map((w) => ({ id: w.worker.id, session: f.session, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name, role: crewRole(w.worker) }))));
+    store.city().flatMap((b) => b.floors.flatMap((f) => f.workers.map((w) => ({ id: w.worker.id, floor: f.id, building: b.building?.id ?? null, display: w.display, since: w.since, desk: w.desk, name: w.name, role: crewRole(w.worker) }))));
   const feed = (c: Change) => {
     const snap = store.snapshots !== snapshots;
     snapshots = store.snapshots;
-    if (!snap && !c.structure && !c.workers.size && !c.sessions.size) return;
+    if (!snap && !c.structure && !c.workers.size && !c.floors.size) return;
     pings.update(pingEntries(candidates(), store.inboxDismissed), snap);
   };
   let seq = 11;
@@ -71,10 +71,10 @@ describe('a dismissed finished row and its ping (#106)', () => {
     load([worker()]);
     const c = store.applyEvent({ t: 'inbox.dismissed', seq: 20, id: 'w', status_since: 5 });
     expect([...c.workers]).toEqual(['w']);
-    expect([...c.sessions]).toEqual(['s1']);
+    expect([...c.floors]).toEqual(['s1']);
     // Nothing to redraw for a worker this browser does not know.
     const gone = store.applyEvent({ t: 'inbox.dismissed', seq: 21, id: 'nobody', status_since: 5 });
-    expect(gone.workers.size + gone.sessions.size).toBe(0);
+    expect(gone.workers.size + gone.floors.size).toBe(0);
   });
 
   it('does not ping when the finished row is dismissed within the settle delay', () => {

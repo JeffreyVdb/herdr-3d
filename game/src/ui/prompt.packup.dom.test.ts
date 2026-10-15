@@ -11,7 +11,7 @@ function setup(gate: ((id: string, text: string, signal: AbortSignal) => Promise
   const sent: Array<{ cmd: string; args: unknown }> = [];
   const view = (id: string) => ({ name: id, desk: 0, harness: 'claude', display: 'idle', worker: { id, session: 's', agent_kind: 'claude', status: 'idle' } });
   const host = {
-    store: { workerView: view, floorView: () => ({ asleep: false }), workers: new Map([['A', {}]]) },
+    store: { floorName: (id: string) => id, workerView: view, floorView: () => ({ asleep: false }), workers: new Map([['A', {}]]) },
     unsupported: () => false,
     toast: () => {},
     upload: () => Promise.resolve({ ok: true, data: { path: '/drops/image.png' } }),

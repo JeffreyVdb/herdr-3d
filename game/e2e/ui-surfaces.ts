@@ -112,7 +112,7 @@ async function reportRequest(page: Page, long: boolean): Promise<string> {
   const id = (hire.data as { id: string }).id;
   await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
   await page.evaluate((t) => window.__h3d.simCrew({ step: 'report', summary: 'Implemented; head 3f9c2e1.', input_required: t, input_for: 'orchestrator' }), text);
-  await expect.poll(() => page.evaluate(() => window.__h3d.needs().some((n) => n.session === 'lab' && n.desk === 13 && n.reason === 'blocked')), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__h3d.needs().some((n) => n.floor === 'lab' && n.desk === 13 && n.reason === 'blocked')), { timeout: 10_000 }).toBe(true);
   return id;
 }
 
@@ -240,6 +240,19 @@ export const SURFACES: Surface[] = [
     root: 'dialog.settings',
   },
   {
+    // #58 stage 4: Settings → Floors on demo-h58: each session's floor and its virtual floors, Frontend's delete open.
+    name: 'settings-floors',
+    fixture: 'demo-h58',
+    open: async (page) => {
+      await openMenu(page);
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      const section = await settingsSection(page, 'floors');
+      await section.getByRole('button', { name: 'Delete Frontend' }).click();
+      await expect(section.locator('.settings-fl-confirm')).toBeVisible();
+    },
+    root: 'dialog.settings',
+  },
+  {
     // #57: Settings → Bridges with a faked helper: one in use, one offline with its error, the add form.
     name: 'settings-bridges',
     fixture: 'demo-m5',
@@ -250,6 +263,19 @@ export const SURFACES: Surface[] = [
       await settingsSection(page, 'bridges');
     },
     root: 'dialog.settings',
+  },
+  {
+    // #58 stage 4: Add floor on its second choice, a virtual floor on an existing session (name and base session).
+    name: 'add-floor-virtual',
+    fixture: 'demo-h58',
+    open: async (page) => {
+      await openMenu(page);
+      await page.getByRole('button', { name: 'Add floor' }).click();
+      const dlg = page.locator('dialog.desk-dlg--addfloor');
+      await dlg.getByRole('radio', { name: /Virtual floor on an existing session/ }).check();
+      await dlg.getByLabel('Floor name').fill('Ops');
+    },
+    root: 'dialog.desk-dlg--addfloor',
   },
   {
     // #57: "Laptop is offline. Switch anyway?" from ⌘P → Switch bridge.
@@ -463,7 +489,7 @@ export const SURFACES: Surface[] = [
     fixture: 'demo-m4',
     open: async (page) => {
       await onFloor(page);
-      await page.evaluate(() => window.__h3d.openStartRun({ session: 'herdr-3d', desk: 5 }));
+      await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
       await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
     },
     root: 'dialog.desk-dlg--run',

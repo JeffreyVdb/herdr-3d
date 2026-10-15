@@ -156,7 +156,7 @@ export class Cabinet {
     const n = this.host.store.handoffs.count(this.floor);
     this.head.replaceChildren(
       h('div', { class: 'cab-plate', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
-      h('div', { class: 'dd-titles' }, h('h2', { id: 'cab-title' }, 'Filing cabinet'), h('p', { id: 'cab-sub' }, `${this.floor} · ${n === 1 ? '1 handoff' : `${n} handoffs`}`)),
+      h('div', { class: 'dd-titles' }, h('h2', { id: 'cab-title' }, 'Filing cabinet'), h('p', { id: 'cab-sub' }, `${this.host.store.floorName(this.floor)} · ${n === 1 ? '1 handoff' : `${n} handoffs`}`)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
   }
@@ -175,7 +175,7 @@ export class Cabinet {
     this.loading = false;
     if (!r.ok) {
       this.rows = [];
-      this.setStatus(failureText('handoff.list', r.code, r.message, { floor: this.floor }), true);
+      this.setStatus(failureText('handoff.list', r.code, r.message, { floor: this.host.store.floorName(this.floor) }), true);
       this.renderList();
       return;
     }
@@ -236,7 +236,7 @@ export class Cabinet {
     const r = await this.host.send('handoff.get', { id: e.id });
     if (gen !== this.getGen || !this.dialog.open) return;
     if (!r.ok) {
-      this.setStatus(failureText('handoff.get', r.code, r.message, { floor: this.floor }), true);
+      this.setStatus(failureText('handoff.get', r.code, r.message, { floor: this.host.store.floorName(this.floor) }), true);
       this.renderView();
       return;
     }
@@ -307,7 +307,7 @@ export class Cabinet {
     if (!this.dialog.open) return;
     this.confirming = false;
     if (!r.ok) {
-      this.setStatus(failureText('handoff.delete', r.code, r.message, { floor: this.floor }), true);
+      this.setStatus(failureText('handoff.delete', r.code, r.message, { floor: this.host.store.floorName(this.floor) }), true);
       this.renderView();
       return;
     }

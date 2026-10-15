@@ -35,6 +35,8 @@ export interface LookupHost {
   repoRefs: NonNullable<RepoSearchHost['refs']> | null;
   /** #54: repository discovery (`@r:`'s label and notes, and a new revision asks again; none: as if off). */
   repoDiscovery?: NonNullable<RepoSearchHost['discovery']> | null;
+  /** #58: a floor id's name, for `@r:` rows (absent: their session). */
+  floorName?(id: string): string;
 }
 
 /** The sources of one context, per trigger (null: that trigger opens nothing here). */
@@ -181,20 +183,24 @@ export class CompletionScope {
 
 /** What a hire would get, as its dialog knows it: `cwd` `worker.hire`'s, as typed (none: the floor's default). */
 export interface HireLookup {
-  session: string;
+  /** #58: the floor id. */
+  floor: string;
   harness: string;
   cwd?: string;
   worktree: boolean;
 }
 
+/** #58: `RepoSearchHost.floorName` from a lookup host that has one. */
+const floorNamer = (host: LookupHost): Pick<RepoSearchHost, 'floorName'> => (host.floorName ? { floorName: (id) => host.floorName?.(id) ?? id } : {});
+
 /** The key of a hire's lookup context. */
 export function hireLookupKey(l: HireLookup): string {
-  return JSON.stringify(['hire', l.session, l.harness, l.cwd ?? '', l.worktree]);
+  return JSON.stringify(['hire', l.floor, l.harness, l.cwd ?? '', l.worktree]);
 }
 
 /** A hire's sources: `hire.commands` for its harness (Claude or Codex), `hire.files` in its folder, `hire.repos` of its floor. */
 export function hireSources(host: LookupHost, l: HireLookup): ContextSources {
-  const where = { session: l.session, ...(l.cwd ? { cwd: l.cwd } : {}), ...(l.worktree ? { worktree: true } : {}) };
+  const where = { floor: l.floor, ...(l.cwd ? { cwd: l.cwd } : {}), ...(l.worktree ? { worktree: true } : {}) };
   const key = hireLookupKey(l);
   const has = (t: CommandName) => !host.unsupported?.(t);
   const commands =
@@ -205,7 +211,7 @@ export function hireSources(host: LookupHost, l: HireLookup): ContextSources {
         )
       : null;
   const files = has('hire.files') ? fileSource(key, { send: (_t, a) => host.send('hire.files', { ...where, query: a.query, ...(a.limit !== undefined ? { limit: a.limit } : {}) }) }) : null;
-  const repos = has('hire.repos') ? repoSource(key, { send: () => host.send('hire.repos', { session: l.session }), refs: host.repoRefs, discovery: host.repoDiscovery ?? null }) : null;
+  const repos = has('hire.repos') ? repoSource(key, { send: () => host.send('hire.repos', { floor: l.floor }), refs: host.repoRefs, discovery: host.repoDiscovery ?? null, ...floorNamer(host) }) : null;
   return { '/': commands, '@': files && repos ? atSource(files, repos) : files };
 }
 
@@ -214,6 +220,6 @@ export function workerSources(host: LookupHost, id: string, harness: string | un
   const send = <T extends 'worker.files' | 'worker.repos'>(t: T, a: CommandArgs[T]) => host.send(t, a);
   return {
     '/': harness && SKILL_HARNESSES.has(harness) ? commandSource(host.catalogs.get(id), harness) : null,
-    '@': atSource(fileSource(id, { send }), repoSource(id, { send, refs: host.repoRefs, discovery: host.repoDiscovery ?? null })),
+    '@': atSource(fileSource(id, { send }), repoSource(id, { send, refs: host.repoRefs, discovery: host.repoDiscovery ?? null, ...floorNamer(host) })),
   };
 }

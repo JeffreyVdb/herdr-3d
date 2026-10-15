@@ -104,7 +104,8 @@ export class HandoffDialog {
   private job: LLMHandoff | null = null;
   private id = '';
   private name = '';
-  private session = '';
+  /** #58: the worker's floor's name (the messages, the sub line; never its id). */
+  private floorName = '';
   private state: State = 'loading';
   private cand: HandoffCandidate | null = null;
   private preview: HandoffPreviewAck | null = null;
@@ -152,7 +153,7 @@ export class HandoffDialog {
     if (!v) return;
     this.id = workerId;
     this.name = v.name;
-    this.session = v.worker.session;
+    this.floorName = this.host.store.floorName(v.worker.floor);
     this.seated = opts.seated === true;
     this.ack = null;
     this.sendBox.checked = false;
@@ -192,7 +193,7 @@ export class HandoffDialog {
     this.stale = false;
     this.setStatus('');
     this.why = v ? (c ? '' : noCandidateWhy(v.worker, this.name, this.host.store.handoffs.known)) : `${this.name} has left.`;
-    if (c?.too_large) this.why = noCandidateWhy({ ...(v?.worker ?? { id: this.id, session: this.session, workspace_id: '', label: '', status: '' }), handoff: c }, this.name, true);
+    if (c?.too_large) this.why = noCandidateWhy({ ...(v?.worker ?? { id: this.id, session: '', workspace_id: '', label: '', status: '' }), handoff: c }, this.name, true);
     if (this.why || !c) {
       this.state = 'none';
       this.render();
@@ -216,7 +217,7 @@ export class HandoffDialog {
     if (op !== this.op || this.state !== 'loading' || !this.dialog.open) return;
     if (!r.ok) {
       this.state = 'failed';
-      this.setStatus(failureText('worker.handoff_preview', r.code, r.message, { worker: this.name, floor: this.session }), true);
+      this.setStatus(failureText('worker.handoff_preview', r.code, r.message, { worker: this.name, floor: this.floorName }), true);
       this.render();
       return;
     }
@@ -261,7 +262,7 @@ export class HandoffDialog {
     if (op !== this.op || this.mode !== 'agent' || this.state !== 'loading' || !this.dialog.open) return;
     if (!r.ok) {
       this.state = 'failed';
-      this.setStatus(failureText('worker.handoff_preview', r.code, r.message, { worker: this.name, floor: this.session }), true);
+      this.setStatus(failureText('worker.handoff_preview', r.code, r.message, { worker: this.name, floor: this.floorName }), true);
       this.render();
       return;
     }
@@ -303,7 +304,7 @@ export class HandoffDialog {
     if (op !== this.op || this.mode !== 'llm' || this.state !== 'loading' || !this.dialog.open) return;
     if (!r.ok) {
       this.state = 'failed';
-      this.setStatus(failureText('worker.handoff_preview', r.code, r.message, { worker: this.name, floor: this.session }), true);
+      this.setStatus(failureText('worker.handoff_preview', r.code, r.message, { worker: this.name, floor: this.floorName }), true);
       this.render();
       return;
     }
@@ -356,7 +357,7 @@ export class HandoffDialog {
     if (!r.ok) {
       this.state = 'filed';
       this.ack = null;
-      this.setStatus(`Filed, but it could not be read back: ${failureText('handoff.get', r.code, r.message, { floor: this.session })}`, true);
+      this.setStatus(`Filed, but it could not be read back: ${failureText('handoff.get', r.code, r.message, { floor: this.floorName })}`, true);
       this.render();
       return;
     }
@@ -446,7 +447,7 @@ export class HandoffDialog {
 
   private render(): void {
     const v = this.host.store.workerView(this.id);
-    const sub = [this.session, v ? `Desk ${v.desk + 1}` : null, v?.worker.branch ?? null].filter(Boolean).join(' · ');
+    const sub = [this.floorName, v ? `Desk ${v.desk + 1}` : null, v?.worker.branch ?? null].filter(Boolean).join(' · ');
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--folder', 'aria-hidden': 'true' }, icon(ICON.folder)),
       h('div', { class: 'dd-titles' }, h('h2', { id: 'ho-title' }, `File a handoff from ${this.name}`), h('p', { id: 'ho-sub' }, sub)),
@@ -546,7 +547,7 @@ export class HandoffDialog {
         h('dt', {}, 'Source'),
         h('dd', {}, `Last completed reply · ${kb(c.bytes)}`, pr.session ? ` · session ${shortId(pr.session)}` : ''),
         h('dt', {}, 'Into'),
-        h('dd', {}, `The ${pr.floor} cabinet`),
+        h('dd', {}, `The ${this.host.store.floorName(pr.floor)} cabinet`),
       ),
     );
     nodes.push(this.homeNode(p));
@@ -596,7 +597,7 @@ export class HandoffDialog {
       ];
     }
     const p = this.agentPv;
-    const lede = h('p', { class: 'ho-lede' }, h('b', {}, 'Written by the agent'), ` · one request to its handoff skill; herdr-world files the result in the ${this.session} cabinet.`);
+    const lede = h('p', { class: 'ho-lede' }, h('b', {}, 'Written by the agent'), ` · one request to its handoff skill; herdr-world files the result in the ${this.floorName} cabinet.`);
     if (!p || !p.agent) return [...this.modeNodes(), lede, this.state === 'loading' ? h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')) : null].filter((n): n is HTMLElement => !!n);
     const a = p.agent;
     const nodes: Node[] = [...this.modeNodes(), lede];
@@ -659,7 +660,7 @@ export class HandoffDialog {
       'p',
       { class: 'ho-lede' },
       h('b', {}, 'Written by the configured LLM'),
-      ` · one request from herdr-world; ${this.name}’s agent is not asked. It is filed in the ${this.session} cabinet once it has a title and every section.`,
+      ` · one request from herdr-world; ${this.name}’s agent is not asked. It is filed in the ${this.floorName} cabinet once it has a title and every section.`,
     );
     const p = this.llmPv;
     const l = p?.llm;
@@ -696,7 +697,7 @@ export class HandoffDialog {
         h('dt', {}, 'From'),
         h('dd', {}, `${this.name}’s conversation up to its latest completed reply${sess ? ` · session ${shortId(sess)}` : ''}`),
         h('dt', {}, 'Into'),
-        h('dd', {}, `The ${p.provenance.floor} cabinet`),
+        h('dd', {}, `The ${this.host.store.floorName(p.provenance.floor)} cabinet`),
       ),
     );
     nodes.push(
@@ -732,7 +733,7 @@ export class HandoffDialog {
           ? `${this.name} was not sent home: ${a.send_home_reason ?? 'it can’t go now'}.`
           : null;
     const out: Node[] = [
-      h('p', { class: 'ho-lede' }, a.existing ? 'Already in the cabinet: this reply was filed before, so nothing was filed twice.' : `In the ${a.handoff.floor} cabinet as “${a.handoff.title}”.`),
+      h('p', { class: 'ho-lede' }, a.existing ? 'Already in the cabinet: this reply was filed before, so nothing was filed twice.' : `In the ${this.host.store.floorName(a.handoff.floor)} cabinet as “${a.handoff.title}”.`),
       h('div', { class: 'ho-where' }, path, h('button', { class: 'btn btn--sm', 'data-key': 'copy', onclick: () => void this.copyPath(a.handoff.path) }, 'Copy path')),
     ];
     if (this.mode === 'llm' && this.job?.model) out.push(h('p', { class: 'ho-hint', 'data-hook': 'ho-written-by' }, `Written by ${this.job.model}${this.job.host ? ` at ${this.job.host}` : ''}; ${this.name} was not asked.`));
@@ -861,7 +862,7 @@ export class HandoffDialog {
     if (!r.ok) {
       this.state = 'ready';
       if (r.code === 'handoff_unavailable' || r.code === 'handoff_source') this.stale = true;
-      this.setStatus(failureText('worker.handoff', r.code, r.message, { worker: this.name, floor: this.session }), true);
+      this.setStatus(failureText('worker.handoff', r.code, r.message, { worker: this.name, floor: this.floorName }), true);
       this.render();
       this.focusFirst();
       return;
@@ -915,7 +916,7 @@ export class HandoffDialog {
     }
     if (!r.ok) {
       this.state = 'ready';
-      this.setStatus(failureText('worker.handoff', r.code, r.message, { worker: this.name, floor: this.session }), true);
+      this.setStatus(failureText('worker.handoff', r.code, r.message, { worker: this.name, floor: this.floorName }), true);
       this.render();
       this.focusFirst();
       return;
@@ -977,7 +978,7 @@ export class HandoffDialog {
       this.state = 'ready';
       // The bridge said the candidate is not current: the preview is stale (File stays off until the new one).
       if (r.code === 'handoff_unavailable' || r.code === 'handoff_source') this.stale = true;
-      this.setStatus(failureText('worker.handoff', r.code, r.message, { worker: this.name, floor: this.session }), true);
+      this.setStatus(failureText('worker.handoff', r.code, r.message, { worker: this.name, floor: this.floorName }), true);
       this.render();
       this.focusFirst();
       return;

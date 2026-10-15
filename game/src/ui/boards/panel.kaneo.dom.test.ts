@@ -50,8 +50,8 @@ function setup(issues: BoardIssues, get?: () => Promise<Answer>) {
   const asked: unknown[][] = [];
   const opened: string[] = [];
   const host = {
-    store: { floorView: () => ({ workers: [] }) },
-    session: () => 'floor',
+    store: { floorName: (id: string) => id, floorView: () => ({ workers: [] }) },
+    floor: () => 'floor',
     state: () => state,
     refresh: () => {},
     external: (u: string) => opened.push(u),
@@ -153,7 +153,7 @@ describe('a Kaneo board (#184)', () => {
     expect(document.querySelector('.bd-notice, [class*="notice"]')!.textContent).toContain('some items are missing');
     (panel as unknown as { dropCard(id: string, column: string, after: string | null): void }).dropCard('t1', 'done', 't3');
     await tick();
-    expect(sent.at(-1)).toEqual({ t: 'issue.set_status', args: { session: 'floor', id: 't1', column: 'done' } });
+    expect(sent.at(-1)).toEqual({ t: 'issue.set_status', args: { floor: 'floor', id: 't1', column: 'done' } });
   });
 
   it('a refused key pauses the board and says how to resume', () => {

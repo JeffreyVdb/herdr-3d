@@ -22,6 +22,7 @@ func init() { Commands = append(Commands, CmdHireCommands, CmdHireFiles, CmdHire
 // repository root (the worktree does not exist yet).
 type HireCommandsArgs struct {
 	Session  string `json:"session"`
+	Floor    string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	Harness  string `json:"harness"`
 	Cwd      string `json:"cwd,omitempty"`
 	Worktree bool   `json:"worktree,omitempty"`
@@ -32,6 +33,7 @@ type HireCommandsArgs struct {
 // worker.files's limits.
 type HireFilesArgs struct {
 	Session  string `json:"session"`
+	Floor    string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	Cwd      string `json:"cwd,omitempty"`
 	Worktree bool   `json:"worktree,omitempty"`
 	Query    string `json:"query"`
@@ -42,4 +44,5 @@ type HireFilesArgs struct {
 // floors, scoped as worker.repos is for a worker of Session.
 type HireReposArgs struct {
 	Session string `json:"session"`
+	Floor   string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 }

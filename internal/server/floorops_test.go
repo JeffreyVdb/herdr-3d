@@ -39,6 +39,15 @@ type fakeHerdr struct {
 	// and ResumeCodexEmbedded with embeddedErr (after starting Codex).
 	remoteErr, embeddedErr error
 	gate                   chan struct{} // StartSession waits for it when set
+	// #58 session.create: what `session list` says, CreateSession's error
+	// and hook (after it "started" the server), and the gate a create of
+	// holdCreate waits for.
+	sessions   []herdr.Session
+	listErr    error
+	createErr  error
+	onCreate   func(name string)
+	holdCreate string
+	createGate chan struct{}
 }
 
 func newFakeHerdr() *fakeHerdr {
@@ -92,6 +101,31 @@ func (f *fakeHerdr) StartSession(ctx context.Context, session string) error {
 	}
 	if f.onStart != nil {
 		f.onStart()
+	}
+	return nil
+}
+
+func (f *fakeHerdr) ListSessions(context.Context) ([]herdr.Session, error) {
+	f.record("list")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.sessions), f.listErr
+}
+
+func (f *fakeHerdr) CreateSession(ctx context.Context, name string) error {
+	f.record("create %s", name)
+	if name == f.holdCreate {
+		select {
+		case <-f.createGate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if f.createErr != nil {
+		return f.createErr
+	}
+	if f.onCreate != nil {
+		f.onCreate(name)
 	}
 	return nil
 }
@@ -681,6 +715,62 @@ func TestWakeWithoutAgentsAcksOnceRunning(t *testing.T) {
 	}
 }
 
+// #58: a wake right after a sleep waits for the last server's transient unit
+// to unload before it starts the new one (systemd-run refuses a unit name
+// that is still loaded; processes herdr's server left behind, its curls,
+// keep the unit loaded for a while after `session stop`), and a unit that
+// stays loaded is a readable wake_failed with nothing started.
+func TestWakeWaitsForTheLastServersUnit(t *testing.T) {
+	t.Parallel()
+	fh := newFakeHerdr()
+	var checks atomic.Int32
+	opts := fastOps(fh)
+	opts.UnitLoaded = func(unit string) bool {
+		if unit != "herdr-s-s.service" {
+			t.Errorf("unit checked = %q", unit)
+		}
+		return checks.Add(1) <= 3 // the leftovers exit after three looks
+	}
+	b := startBridge(t, "", opts)
+	plain := []world.WorkerObs{worker("w1", "notes", "", "unknown")}
+	b.floorAt("s", false, plain)
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	fh.onStart = func() {
+		if n := checks.Load(); n < 4 {
+			t.Errorf("started after %d unit checks, while the unit was still loaded", n)
+		}
+		fh.setUp("sock-s", true)
+		b.floorAt("s", true, plain)
+	}
+	_, m := c.command(proto.CmdFloorWake, "w", proto.FloorArgs{Session: "s"})
+	ackData[proto.WakeResult](t, m)
+	log, _ := b.st.AuditLog(context.Background())
+	if len(log) != 1 || !log[0].OK || !strings.Contains(log[0].Result, `"unit_wait_ms"`) {
+		t.Fatalf("audit = %+v", log)
+	}
+
+	// The unit never unloads: wake_failed once SleepTimeout is over.
+	fh2 := newFakeHerdr()
+	opts2 := fastOps(fh2)
+	opts2.SleepTimeout = 200 * time.Millisecond
+	opts2.UnitLoaded = func(string) bool { return true }
+	b2 := startBridge(t, "", opts2)
+	b2.floorAt("s", false, plain)
+	c2 := b2.connect(proto.Hello{})
+	c2.snapshot()
+	evs, m := c2.command(proto.CmdFloorWake, "w", proto.FloorArgs{Session: "s"})
+	if e := errorOf(m); e.Code != proto.ErrWakeFailed || !strings.Contains(e.Message, "herdr-s-s.service is still loaded") {
+		t.Fatalf("reply = %s", m.raw)
+	}
+	if calls := fh2.Calls(); len(calls) != 0 {
+		t.Errorf("herdr calls = %v, want none", calls)
+	}
+	if f := lastFloor(t, evs); f.Transition != "" || f.State != "asleep" {
+		t.Errorf("final floor = %+v", f)
+	}
+}
+
 // A server that answers ping but that the watcher never sees running is no
 // wake: the command fails, the transition ends and the audit row says so.
 func TestWakeFailsWhenTheFloorIsNotSeenRunning(t *testing.T) {
@@ -752,6 +842,8 @@ func (r *runnerHerdr) Ping(context.Context, string) error {
 	}
 	return nil
 }
+
+func (r *runnerHerdr) ListSessions(context.Context) ([]herdr.Session, error) { return nil, nil }
 
 // Each resume phase has one deadline, however many panes there are and
 // however long herdr takes to say what runs in them: panes are watched

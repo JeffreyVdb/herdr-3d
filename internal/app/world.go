@@ -627,6 +627,9 @@ type ServeConfig struct {
 	// hires workers and sends them home (nil: those commands fail). Pings
 	// go through Herdr.
 	Control *herdr.Control
+	// Hire, if set, replaces Control as the hires' and send-homes' write
+	// path (the integration tests: herdr's own, but no agent starts).
+	Hire server.HireHerdr
 	// Git runs the git commands of hires and send-homes (nil: no git info,
 	// no worktree hires or deletes).
 	Git *gitops.Git
@@ -746,6 +749,9 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Herdr = floorHerdr{Control: cfg.Control, read: cfg.Herdr}
 		opts.Hire = cfg.Control
 		opts.Term = cfg.Control // M5 term
+	}
+	if cfg.Hire != nil {
+		opts.Hire = cfg.Hire
 	}
 	opts.Fresh = freshWorkers(cfg.Herdr)
 	opts.MaxWatches, opts.MaxObservers, opts.PaneSize = cfg.MaxWatches, cfg.MaxObservers, paneSize(cfg.Herdr) // M5 term
@@ -886,6 +892,12 @@ type floorHerdr struct {
 func (f floorHerdr) Ping(ctx context.Context, socket string) error {
 	_, err := f.read.Ping(ctx, socket)
 	return err
+}
+
+// ListSessions is `herdr session list` (read only), for session.create's
+// checks (#58).
+func (f floorHerdr) ListSessions(ctx context.Context) ([]herdr.Session, error) {
+	return f.read.ListSessions(ctx)
 }
 
 // paneState reads a pane's size and what its tab does with it (zoomed,
@@ -1030,6 +1042,7 @@ func cmdMain(ctx context.Context, name string, args []string, stdout, stderr io.
 		fmt.Fprintf(stderr, "  %s cmd floor.assign '{\"session\":\"herdr-3d\",\"building\":\"b_…\",\"index\":0}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd floor.settings.set '{\"session\":\"herdr-3d\",\"repo\":\"JeffreyVdb/herdr-3d\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd floor.sleep '{\"session\":\"h3d-scratch\"}'\n", name)
+		fmt.Fprintf(stderr, "  %s cmd session.create '{\"name\":\"h3d-scratch\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd worker.hire '{\"session\":\"h3d-scratch\",\"desk_index\":0,\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd worker.fire '{\"id\":\"…\",\"worktree\":\"keep\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd issue.comment '{\"session\":\"h3d-scratch\",\"id\":\"JeffreyVdb/h3d-lab#3\",\"body\":\"hi\"}'\n\nflags:\n", name)

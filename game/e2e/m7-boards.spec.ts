@@ -19,8 +19,8 @@ test('the corkboard shows the provider’s columns and cards, and E on it opens 
   await waitNotes(page, 8, 2);
   const w = (await wall(page)) as Wall;
   // The floor was watched once, and only it; the game asked before it drew.
-  expect(w).toMatchObject({ session: 'lab', watched: 'lab', off: null, batches: 2 });
-  expect(await page.evaluate(() => window.__h3d.boardLog().map((l) => [l.t, (l.args as { session: string }).session]))).toEqual([['board.watch', 'lab']]);
+  expect(w).toMatchObject({ floor: 'lab', watched: 'lab', off: null, batches: 2 });
+  expect(await page.evaluate(() => window.__h3d.boardLog().map((l) => [l.t, (l.args as { floor: string }).floor]))).toEqual([['board.watch', 'lab']]);
   // One note per card of the visible columns, each in its own cell of the one atlas, tinted by the first non-priority label.
   expect(w.issues.map((n) => n.id).sort()).toEqual(['JeffreyVdb/lab#1', 'JeffreyVdb/lab#2', 'JeffreyVdb/lab#3', 'JeffreyVdb/lab#4', 'JeffreyVdb/lab#5', 'JeffreyVdb/lab#6', 'JeffreyVdb/lab#7', 'JeffreyVdb/lab#8']);
   expect(new Set(w.issues.map((n) => n.cell)).size).toBe(8);
@@ -48,7 +48,7 @@ test('the corkboard shows the provider’s columns and cards, and E on it opens 
   await page.keyboard.press('e');
   await expect.poll(async () => (await board(page))?.kind).toBe('issues');
   const b = (await board(page))!;
-  expect(b).toMatchObject({ session: 'lab', title: 'Issues · lab', provider: 'GitHub', notice: null, off: null });
+  expect(b).toMatchObject({ floor: 'lab', title: 'Issues · lab', provider: 'GitHub', notice: null, off: null });
   expect(await columns(page)).toEqual({ Todo: ['#7', '#6', '#5'], Doing: ['#3', '#4'], QA: ['#8'], Done: ['#2', '#1'] });
   await expect(page.locator('dialog.desk-dlg--board .dd-titles p')).toContainText('lab · GitHub · 6 open');
   await shot(page, 'm7-issues-overlay');
@@ -167,7 +167,7 @@ test('the game watches the floor you are on and only that one, again after a rec
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   await openGame(page, 'demo-m6', EXTRA, SIM);
-  const log = () => page.evaluate(() => window.__h3d.boardLog().map((l) => `${l.t}:${(l.args as { session: string }).session}`));
+  const log = () => page.evaluate(() => window.__h3d.boardLog().map((l) => `${l.t}:${(l.args as { floor: string }).floor}`));
   expect(await log()).toEqual([]);
   await enter(page, 'lab');
   await waitNotes(page, 8, 2);

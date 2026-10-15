@@ -38,9 +38,9 @@ export interface DictationHost {
    */
   submit(text: string, live: DictationLive): Promise<DictationReply>;
   /** The floor picked for a hire that had none: the game checks it can take the hire, then opens the review there. */
-  pickFloor(session: string, hire: HireInterpretation, live: DictationLive): Promise<DictationReply>;
+  pickFloor(floor: string, hire: HireInterpretation, live: DictationLive): Promise<DictationReply>;
   store: FloorSource;
-  /** The session of the office floor you are on, else null. */
+  /** The floor id of the office floor you are on, else null. */
   here(): string | null;
   /** The bridge answers: floors can be reached. */
   online(): boolean;
@@ -58,10 +58,10 @@ export interface DictationSummary {
   error: boolean;
   /** The floor list's question and rows, while it asks. */
   question: string;
-  floors: Array<{ session: string; label: string; enabled: boolean; active: boolean }>;
+  floors: Array<{ floor: string; label: string; enabled: boolean; active: boolean }>;
 }
 
-type Row = { session: string; el: HTMLElement; enabled: boolean };
+type Row = { floor: string; el: HTMLElement; enabled: boolean };
 
 export class DictationBar {
   private readonly dialog = h('dialog', { class: 'credits dictation', 'aria-labelledby': 'dict-label' });
@@ -125,7 +125,7 @@ export class DictationBar {
     this.list.addEventListener('mousedown', (e) => e.preventDefault());
     this.list.addEventListener('click', (e) => {
       const row = this.rows[this.rowAt(e.target)];
-      if (row?.enabled) void this.pick(row.session);
+      if (row?.enabled) void this.pick(row.floor);
     });
     // (The `close` event of a `close()` comes a task later: by then the bar may be open again, and that one is not closed.)
     this.dialog.addEventListener('close', () => {
@@ -190,7 +190,7 @@ export class DictationBar {
       status: this.statusText,
       error: this.statusError,
       question: this.state === 'floor' ? FLOOR_QUESTION : '',
-      floors: this.state === 'floor' ? this.rows.map((r) => ({ session: r.session, label: r.el.querySelector('.pal-name')?.textContent ?? r.session, enabled: r.enabled, active: r.session === this.active })) : [],
+      floors: this.state === 'floor' ? this.rows.map((r) => ({ floor: r.floor, label: r.el.querySelector('.pal-name')?.textContent ?? r.floor, enabled: r.enabled, active: r.floor === this.active })) : [],
     };
   }
 
@@ -209,13 +209,13 @@ export class DictationBar {
   private key(e: KeyboardEvent): void {
     if (this.composing && (e.key === 'Enter' || e.key === 'Escape')) return;
     if (this.state === 'floor') {
-      const ix = this.rows.findIndex((r) => r.session === this.active);
+      const ix = this.rows.findIndex((r) => r.floor === this.active);
       const k = listKey(e, { rows: this.rows.some((r) => r.enabled), can: ix >= 0 && !!this.rows[ix]?.enabled });
       if (k === 'next' || k === 'prev') {
         e.preventDefault();
         const live = this.rows.filter((r) => r.enabled);
-        const to = live[wrapIndex(live.findIndex((r) => r.session === this.active), live.length, k === 'next' ? 1 : -1)];
-        if (to) this.setActive(to.session);
+        const to = live[wrapIndex(live.findIndex((r) => r.floor === this.active), live.length, k === 'next' ? 1 : -1)];
+        if (to) this.setActive(to.floor);
         return;
       }
       if (k === 'pick' && !e.isComposing && e.keyCode !== 229) {
@@ -256,11 +256,11 @@ export class DictationBar {
     this.answer(reply);
   }
 
-  private async pick(session: string): Promise<void> {
+  private async pick(floor: string): Promise<void> {
     const hire = this.hire;
-    if (this.state !== 'floor' || !hire || !session) return;
+    if (this.state !== 'floor' || !hire || !floor) return;
     const live = this.liveFor(this.gen);
-    const reply = await this.host.pickFloor(session, hire, live);
+    const reply = await this.host.pickFloor(floor, hire, live);
     if (!live()) return;
     // A floor that cannot take the hire: the list stays up to pick another, with the reason.
     if (reply.kind === 'say') return this.say(reply.text, reply.error);
@@ -324,7 +324,7 @@ export class DictationBar {
     }
     this.rows = rows;
     this.list.replaceChildren(...rows.map((r, i) => ((r.el.id = `dict-floor-${i}`), r.el)));
-    if (!rows.some((r) => r.session === this.active && r.enabled)) this.active = rows.find((r) => r.enabled)?.session ?? '';
+    if (!rows.some((r) => r.floor === this.active && r.enabled)) this.active = rows.find((r) => r.enabled)?.floor ?? '';
     this.field.setAttribute('aria-controls', 'dict-floors');
     this.paintActive();
   }
@@ -333,20 +333,20 @@ export class DictationBar {
     const state = f.transition === 'waking' ? 'Waking up' : f.transition === 'sleeping' ? 'Going to sleep' : f.asleep ? 'Asleep' : '';
     const el = h(
       'li',
-      { class: 'pal-opt pal-opt--floor', role: 'option', 'aria-selected': 'false', 'aria-disabled': online ? null : 'true', 'data-session': f.session },
+      { class: 'pal-opt pal-opt--floor', role: 'option', 'aria-selected': 'false', 'aria-disabled': online ? null : 'true', 'data-floor': f.floor },
       h('span', { class: 'pal-name' }, f.label),
       h('span', { class: 'pal-meta' }, state ? h('span', { class: `tape tape--${f.asleep && !f.transition ? 'asleep' : (f.transition ?? 'asleep')}` }, state) : null),
     );
-    return { session: f.session, el, enabled: online };
+    return { floor: f.floor, el, enabled: online };
   }
 
-  private setActive(session: string): void {
-    this.active = session;
+  private setActive(floor: string): void {
+    this.active = floor;
     this.paintActive();
   }
 
   private paintActive(): void {
-    const row = paintActiveRow(this.list, this.rows.findIndex((r) => r.session === this.active));
+    const row = paintActiveRow(this.list, this.rows.findIndex((r) => r.floor === this.active));
     if (row) this.field.setAttribute('aria-activedescendant', row.id);
     else this.field.removeAttribute('aria-activedescendant');
   }

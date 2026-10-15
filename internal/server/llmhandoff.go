@@ -512,7 +512,7 @@ func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command,
 	}
 	now := h.opts.Now()
 	model, host := llmRecipient(h.llm.roles)
-	j := &llmJob{model: model, host: host, row: store.HandoffLLMJob{Op: a.Op, WorkerID: w.ID, Floor: w.Session, AgentSession: w.AgentSession,
+	j := &llmJob{model: model, host: host, row: store.HandoffLLMJob{Op: a.Op, WorkerID: w.ID, Floor: workerFloor(w), AgentSession: w.AgentSession,
 		Candidate: hc.c.ID, ArgsHash: hash, Config: svc.Fingerprint(), PromptVersion: handoffllm.PromptVersion, SendHome: a.SendHome,
 		State: store.HandoffJobRunning, CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}}
 	// The audit row first, then the job row, then nothing that can fail
@@ -540,10 +540,10 @@ func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command,
 	h.publishLLMHandoff(w.ID)
 	h.reply(c, cmd, proto.WorkerHandoffJobResult{Job: j.view()}, nil)
 	h.log.Info("LLM handoff started", "worker", w.ID, "op", a.Op, "model", clip(model), "host", clip(host))
-	facts := handoffllm.Facts{Now: now, Floor: w.Session, Worker: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
+	facts := handoffllm.Facts{Now: now, Floor: h.workerFloorName(w), Worker: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
 		Session: hc.c.Session, Candidate: hc.c.ID, Through: hc.c.Through, Cwd: checkoutOf(w), ReportedBranch: w.Branch}
 	facts.Skills = h.cachedSkills(w)
-	src := handoff.Source{Floor: w.Session, WorkerID: w.ID, WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
+	src := handoff.Source{Floor: workerFloor(w), WorkerID: w.ID, WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
 		Cwd: checkoutOf(w), Branch: w.Branch, AgentSession: hc.c.Session, Kind: store.HandoffLLM, Turn: hc.c.ID, Op: a.Op}
 	rep := &llmReport{Worker: w.ID, Candidate: hc.c.ID, Op: a.Op, Model: clip(model), Host: clip(host), PromptVersion: handoffllm.PromptVersion}
 	cand := *hc
@@ -763,7 +763,7 @@ func (h *Hub) settleLLMJob(ctx context.Context, j *llmJob, filed store.Handoff, 
 		h.ho.counts[filed.Floor]++
 		n := h.ho.counts[filed.Floor]
 		e := entryOf(filed)
-		h.emit(proto.Event{T: proto.EvHandoffAdded, Session: filed.Floor, Handoff: &e, HandoffCount: &n})
+		h.emit(proto.Event{T: proto.EvHandoffAdded, Session: h.sessionOf(filed.Floor), FloorID: filed.Floor, Handoff: &e, HandoffCount: &n})
 		h.log.Info("LLM handoff filed", "worker", j.row.WorkerID, "op", j.row.Op, "handoff", filed.ID, "path", filed.Path, "bytes", rep.DocBytes)
 		if j.row.SendHome {
 			j.homeResult, j.homeWhy = h.handoffSendHome(ctx, by, j.row.WorkerID, filed.ID)

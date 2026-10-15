@@ -12,12 +12,14 @@ import type { FloorView, WorkerView } from './store';
 export const PROMPT_MAX_BYTES = 16 * 1024;
 
 /** Why `v` cannot be prompted now, null when it can. */
-export function promptBlocker(v: WorkerView | null, floor: Pick<FloorView, 'asleep' | 'transition'> | null, unsupported: boolean): string | null {
+export function promptBlocker(v: WorkerView | null, floor: (Pick<FloorView, 'asleep' | 'transition'> & { name?: string }) | null, unsupported: boolean): string | null {
   if (!v) return 'That worker is no longer on the floor.';
   if (unsupported) return 'This herdr-world can’t send prompts yet. Update the bridge to use it.';
-  if (floor?.transition === 'waking') return `${v.worker.session} is waking up: prompt ${v.name} once it is awake.`;
-  if (floor?.transition === 'sleeping') return `${v.worker.session} is going to sleep.`;
-  if (floor?.asleep) return `${v.worker.session} is asleep. Wake it from the elevator (L) to prompt ${v.name}.`;
+  // #58: the floor's name (a virtual floor's own), never its id.
+  const where = floor?.name ?? 'This floor';
+  if (floor?.transition === 'waking') return `${where} is waking up: prompt ${v.name} once it is awake.`;
+  if (floor?.transition === 'sleeping') return `${where} is going to sleep.`;
+  if (floor?.asleep) return `${where} is asleep. Wake it from the elevator (L) to prompt ${v.name}.`;
   if (!v.worker.agent_kind && !v.harness) return `${v.name} is a plain shell, not a coding agent: sit at its laptop (E) to type there.`;
   // #57: an agent waiting on its structured question takes no prompt either (its dialog would get the text).
   const ask = askOf(v.worker);

@@ -179,8 +179,8 @@ export interface RunForm {
 }
 
 /** `run.prepare` args for the form as it is. */
-export function prepareArgs(session: string, f: RunForm, t: TicketInput): CommandArgs['run.prepare'] {
-  const a: CommandArgs['run.prepare'] = { session, ...ticketArgs(t) };
+export function prepareArgs(floor: string, f: RunForm, t: TicketInput): CommandArgs['run.prepare'] {
+  const a: CommandArgs['run.prepare'] = { floor, ...ticketArgs(t) };
   if (f.preset) a.preset = f.preset;
   if (f.orch) a.orch = { ...f.orch };
   const extra = f.extra.trim();
@@ -209,8 +209,8 @@ export function startBlocker(f: RunForm, t: TicketInput, p: Preview, options: Hi
 }
 
 /** `run.start` args: the label only when typed, the worktree only when the folder is a repo, the prompt only when custom. */
-export function startArgs(session: string, f: RunForm, t: TicketInput, p: Preview, prep: RunPrepare | null, worktreeOk: boolean): CommandArgs['run.start'] {
-  const a: CommandArgs['run.start'] = { session, desk_index: f.desk, ...ticketArgs(t), orch: { ...(f.orch as Hire) }, preset: f.preset };
+export function startArgs(floor: string, f: RunForm, t: TicketInput, p: Preview, prep: RunPrepare | null, worktreeOk: boolean): CommandArgs['run.start'] {
+  const a: CommandArgs['run.start'] = { floor, desk_index: f.desk, ...ticketArgs(t), orch: { ...(f.orch as Hire) }, preset: f.preset };
   if (f.extra.trim()) a.extra = f.extra;
   a.worktree = !!prep?.git && f.worktree && worktreeOk;
   const label = f.label.trim();

@@ -9,7 +9,8 @@ import type { Display } from './derive';
 
 export interface NeedCandidate {
   id: string;
-  session: string;
+  /** #58: the floor id it is on. */
+  floor: string;
   /** Building id, null for the unassigned lot. */
   building: string | null;
   display: Display;
@@ -38,7 +39,7 @@ export function needQueue(workers: Iterable<NeedCandidate>, here?: string | null
     else if (w.display === 'done') out.push({ ...w, reason: 'done' });
   }
   const tier = (w: NeedItem) => (here !== undefined && w.building !== here ? 2 : 0) + (w.reason === 'blocked' ? 0 : 1);
-  return out.sort((a, b) => tier(a) - tier(b) || a.since - b.since || a.session.localeCompare(b.session) || a.desk - b.desk || a.id.localeCompare(b.id));
+  return out.sort((a, b) => tier(a) - tier(b) || a.since - b.since || a.floor.localeCompare(b.floor) || a.desk - b.desk || a.id.localeCompare(b.id));
 }
 
 /** The next one after `last` (the one N visited before), wrapping; the first when `last` left the queue. */

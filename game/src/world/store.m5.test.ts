@@ -30,7 +30,7 @@ describe('WorldStore usage and questions (M5)', () => {
     const c = s.applyEvent({ t: 'worker.usage', seq: 11, id: 'a', session: 'top', usage: usage(2000) });
     expect(c).toMatchObject({ structure: false });
     expect([...c.workers]).toEqual(['a']);
-    expect([...c.sessions]).toEqual(['top']);
+    expect([...c.floors]).toEqual(['top']);
     expect(s.workers.get('a')).toMatchObject({ title: 'Wire the HUD', status: 'working', usage: { tokens: 2000 } });
     expect(s.seq).toBe(11);
     // An unknown worker is ignored.

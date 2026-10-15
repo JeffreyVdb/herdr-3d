@@ -97,12 +97,12 @@ test('buildings panel: create, rename, assign, reorder and delete (with confirma
   await page.keyboard.press('Enter');
   await until(page, (p) => p.kind === 'buildings' && p.lot.length === 0, 'scratchpad left the lot');
   expect((await summary(page, 'buildings')).buildings.find((b) => b.id === lab)?.floors).toEqual(['scratchpad']);
-  expect((await sent(page)).at(-1)).toMatchObject({ t: 'floor.assign', args: { session: 'scratchpad', building: lab, index: 0 }, result: { ok: true } });
+  expect((await sent(page)).at(-1)).toMatchObject({ t: 'floor.assign', args: { floor: 'scratchpad', building: lab, index: 0 }, result: { ok: true } });
 
   // Reorder floors within Work: herdr-3d down, and back up.
   await press(page, 'fdown:herdr-3d');
   await until(page, (p) => p.kind === 'buildings' && p.buildings[0]?.floors.join() === 'depot-manager,herdr-3d', 'herdr-3d moved down');
-  expect((await sent(page)).at(-1)).toMatchObject({ t: 'floor.assign', args: { session: 'herdr-3d', building: WORK, index: 1 } });
+  expect((await sent(page)).at(-1)).toMatchObject({ t: 'floor.assign', args: { floor: 'herdr-3d', building: WORK, index: 1 } });
   // Focus stays on the arrow, now at the end (disabled, still focusable).
   expect(await page.evaluate(() => (document.activeElement as HTMLElement).dataset.key)).toBe('fdown:herdr-3d');
   await expect(key(page, 'fdown:herdr-3d')).toHaveAttribute('aria-disabled', 'true');
@@ -175,7 +175,9 @@ test('elevator: E at the elevator lists the building’s floors with state and c
   expect(p).toMatchObject({ building: WORK, title: 'Work' });
   expect(p.rows).toEqual([
     {
-      session: 'herdr-3d',
+      floor: 'herdr-3d',
+      name: 'herdr-3d',
+      virtual: false,
       number: 2,
       state: 'running',
       transition: null,
@@ -185,7 +187,9 @@ test('elevator: E at the elevator lists the building’s floors with state and c
       resume: null,
     },
     {
-      session: 'depot-manager',
+      floor: 'depot-manager',
+      name: 'depot-manager',
+      virtual: false,
       number: 1,
       state: 'asleep',
       transition: null,
@@ -239,7 +243,7 @@ test('city: clicking a building opens its elevator, picking a floor goes inside;
   await page.mouse.click(pt.x, pt.y);
   await expect(page.locator('dialog.panel h2')).toHaveText('Personal');
   const p = await summary(page, 'elevator');
-  expect(p.rows.map((r) => [r.session, r.number, r.current])).toEqual([['pastry', 1, false]]);
+  expect(p.rows.map((r) => [r.floor, r.number, r.current])).toEqual([['pastry', 1, false]]);
   await expect(page.locator('dialog.panel .lift-display')).toHaveText('L');
   await page.locator('.lift-row[data-session="pastry"] .lift-go').click();
   await page.waitForFunction(() => window.__h3d.view().floor === 'pastry' && !window.__h3d.view().busy);
@@ -251,7 +255,7 @@ test('city: clicking a building opens its elevator, picking a floor goes inside;
   await expect(page.locator('.building-list button[data-building="lot"]')).toHaveText('Unassigned lot: 1 floor. Open the elevator');
   await page.keyboard.press('Enter');
   await expect(page.locator('dialog.panel h2')).toHaveText('Unassigned lot');
-  expect((await summary(page, 'elevator')).rows.map((r) => [r.session, r.number])).toEqual([['scratchpad', null]]);
+  expect((await summary(page, 'elevator')).rows.map((r) => [r.floor, r.number])).toEqual([['scratchpad', null]]);
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.__h3d.view().floor === 'scratchpad' && !window.__h3d.view().busy);
   await expect(page.locator('.topbar-sub')).toHaveText('Unassigned lot');
@@ -301,7 +305,7 @@ test('floor settings: the suggestion is marked until saved, validation like the 
     {
       t: 'floor.settings.set',
       args: {
-        session: 'herdr-3d',
+        floor: 'herdr-3d',
         repo: 'JeffreyVdb/herdr-3d',
         project: { owner: 'JeffreyVdb', number: 3 },
         default_hire: { harness: 'claude', model: 'claude-opus-5-5', effort: 'xhigh' },
@@ -321,11 +325,11 @@ test('floor settings: the suggestion is marked until saved, validation like the 
   await page.locator('#set-defaultCwd').fill('/home/missing/dir');
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.locator('dialog.panel .panel-status--error')).toHaveText('herdr-world refused it: bad args: default_cwd /home/missing/dir: no such directory');
-  expect((await sent(page)).at(-1)?.args).toEqual({ session: 'herdr-3d', repo: null, default_cwd: '/home/missing/dir' });
+  expect((await sent(page)).at(-1)?.args).toEqual({ floor: 'herdr-3d', repo: null, default_cwd: '/home/missing/dir' });
   await page.locator('#set-defaultCwd').fill('');
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Saved the repo.');
-  expect((await sent(page)).at(-1)?.args).toEqual({ session: 'herdr-3d', repo: null });
+  expect((await sent(page)).at(-1)?.args).toEqual({ floor: 'herdr-3d', repo: null });
   // The suggestion is back once nothing is stored.
   await expect(page.locator('.tape--suggested')).toHaveText('Suggested');
 
@@ -458,7 +462,7 @@ test('floor settings: one status per row, from the keyboard; commas survive; unt
   await expect(page.locator('#set-statusOptions-hint')).toHaveText('In board order. Remove them all and empty the name to go back to the defaults.');
   await shot(page, 'm3-statuses');
   expect(await saved('Saved the repo, status field.')).toEqual({
-    session: 'herdr-3d',
+    floor: 'herdr-3d',
     repo: 'JeffreyVdb/herdr-3d',
     status_field: { name: 'Status', options: ['Todo', 'Doing', 'Review, QA', 'Done'] },
   });
@@ -466,7 +470,7 @@ test('floor settings: one status per row, from the keyboard; commas survive; unt
   // Stored now, with no project: saving something else leaves the statuses alone.
   expect(await summary(page, 'settings')).toMatchObject({ statusDefault: false, form: { projectOwner: '', statusOptions: ['Todo', 'Doing', 'Review, QA', 'Done'] } });
   await page.locator('#set-defaultCwd').fill('/srv/herdr-3d');
-  expect(await saved('Saved the default folder.')).toEqual({ session: 'herdr-3d', default_cwd: '/srv/herdr-3d' });
+  expect(await saved('Saved the default folder.')).toEqual({ floor: 'herdr-3d', default_cwd: '/srv/herdr-3d' });
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.locator('dialog.panel .panel-status[role="status"]')).toHaveText('Nothing changed, so nothing was saved.');
 
@@ -487,7 +491,7 @@ test('floor settings: one status per row, from the keyboard; commas survive; unt
   await page.locator('#set-statusName').fill('');
   for (let n = 4; n > 0; n--) await page.getByRole('button', { name: /^Remove / }).first().click();
   await expect(page.locator('.opts .dir-empty')).toHaveText('No statuses.');
-  expect(await saved('Saved the status field.')).toEqual({ session: 'herdr-3d', status_field: null });
+  expect(await saved('Saved the status field.')).toEqual({ floor: 'herdr-3d', status_field: null });
   expect(await summary(page, 'settings')).toMatchObject({ statusDefault: true, form: { statusName: 'Status', statusOptions: ['Todo', 'Doing', 'QA', 'Done'] } });
   clean();
 });
@@ -526,14 +530,14 @@ test('floor settings: twin statuses that differ by a space stay apart when one i
   // Remove the first twin: the second stays.
   await open();
   await press(page, 'odel:0');
-  expect(await saved()).toEqual({ session: 'herdr-3d', status_field: { name: 'Status', options: ['Done'] } });
+  expect(await saved()).toEqual({ floor: 'herdr-3d', status_field: { name: 'Status', options: ['Done'] } });
   await page.keyboard.press('Escape');
   await expect(page.locator('dialog.panel')).toBeHidden();
 
   // Swap them: the new order is sent.
   await open();
   await press(page, 'oup:1');
-  expect(await saved()).toEqual({ session: 'herdr-3d', status_field: { name: 'Status', options: ['Done', ' Done'] } });
+  expect(await saved()).toEqual({ floor: 'herdr-3d', status_field: { name: 'Status', options: ['Done', ' Done'] } });
   clean();
 });
 
@@ -632,7 +636,7 @@ test('a failed wake says why; the floor stays asleep', async ({ page }) => {
   await expect(page.locator('dialog.panel .panel-status--error')).toHaveText(
     'depot-manager did not wake up: herdr server for depot-manager did not answer ping within 10s (simulated).',
   );
-  expect((await summary(page, 'elevator')).rows[1]).toMatchObject({ session: 'depot-manager', state: 'asleep', transition: null, action: 'wake' });
+  expect((await summary(page, 'elevator')).rows[1]).toMatchObject({ floor: 'depot-manager', state: 'asleep', transition: null, action: 'wake' });
   // Closed panel: a late result becomes a HUD toast instead.
   await page.keyboard.press('Escape');
   clean();
@@ -653,7 +657,7 @@ test('an older bridge: the M2 world still works, the new buttons explain what is
 
   await page.evaluate((b) => window.__h3d.openElevator(b), WORK);
   const rows = (await summary(page, 'elevator')).rows;
-  expect(rows.map((r) => [r.session, r.state, r.transition, r.resume])).toEqual([
+  expect(rows.map((r) => [r.floor, r.state, r.transition, r.resume])).toEqual([
     ['herdr-3d', 'running', null, null],
     ['depot-manager', 'asleep', null, null],
   ]);
