@@ -7,7 +7,7 @@ import { kaneoFailureText } from '../world/kaneo';
 export type LogoAction = 'logo.set' | 'logo.clear';
 
 export interface FailureContext {
-  /** The floor (session) the command was about. */
+  /** The floor the command was about: its name (#58: never a virtual floor's id). */
   floor?: string;
   /** M4: the desk (as shown, 1-based) or the worker the command was about. */
   desk?: number;

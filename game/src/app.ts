@@ -2083,7 +2083,7 @@ export class App {
     this.statusDirty = true;
   }
 
-  /** The floor of the floor you are on (inside it), else null. */
+  /** #58: the id of the floor you are on (inside it), else null. */
   hereFloor(): string | null {
     return this.mode === 'floor' && this.place.area === 'floor' && this.office ? this.office.id : null;
   }
