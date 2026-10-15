@@ -2683,7 +2683,8 @@ export class App {
     }
     // Open dialogs (sheet, panels, confirmations, hire / send home) handle their own keys.
     // (#124: so does the shortcut list, even with the focus out on the page behind it: Tab there is not the floor plan.)
-    if (this.hud.sheetOpen || this.panels.open || this.dialogOpen || this.shortcuts.isOpen) return;
+    // (#49: Settings lets Shift+L out for the peek above; one that is no peek, the plate hidden or folded, ends here.)
+    if (this.hud.sheetOpen || this.panels.open || this.dialogOpen || this.shortcuts.isOpen || this.settings.isOpen) return;
     // M5: at a worker's laptop every key goes to its terminal (Esc gets you up).
     if (this.laptops.key(e)) return;
     // #124: a text field's keys are its own (the shortcut list from inside one is `onHelpKey`'s).

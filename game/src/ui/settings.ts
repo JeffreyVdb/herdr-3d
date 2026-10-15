@@ -1,4 +1,6 @@
 import './settings.css';
+import { pressesBinding } from '../input/shortcuts';
+import { typingIn } from '../input/typing';
 import { backdropPolicy } from './dismiss';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -168,7 +170,11 @@ export class SettingsDialog {
     this.body.tabIndex = -1;
     this.dialog.setAttribute('aria-labelledby', h.id);
     this.dialog.append(head, frame);
-    this.dialog.addEventListener('keydown', (e) => e.stopPropagation());
+    // What is pressed here is Settings' (the game must not walk or open something behind it), all but Shift+L outside a
+    // text field: Settings is a screen for the corner (ui/corner.ts), and that key peeks the plan limits over it (#47).
+    this.dialog.addEventListener('keydown', (e) => {
+      if (!pressesBinding(e, 'limits') || typingIn(e.target)) e.stopPropagation();
+    });
     this.dialog.addEventListener('close', () => {
       this.opener?.focus();
       this.opener = null;

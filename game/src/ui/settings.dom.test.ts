@@ -116,6 +116,31 @@ describe('SettingsDialog section registry (#91)', () => {
     expect(d.getAttribute('aria-labelledby')).toBe(d.querySelector('h2')!.id);
   });
 
+  it('keeps its keys from the game, but Shift+L outside a text field goes on to the plan limits peek (#47)', () => {
+    const s = make();
+    five(s);
+    s.open();
+    const seen: string[] = [];
+    const onWindow = (e: KeyboardEvent) => seen.push(`${e.shiftKey ? 'Shift+' : ''}${e.code}`);
+    window.addEventListener('keydown', onWindow);
+    const press = (el: HTMLElement, code: string, shiftKey = false) =>
+      el.dispatchEvent(new KeyboardEvent('keydown', { code, key: shiftKey ? code.slice(3) : code.slice(3).toLowerCase(), shiftKey, bubbles: true, cancelable: true }));
+    try {
+      const close = document.querySelector<HTMLElement>('.panel-close')!;
+      press(tab('a'), 'KeyL', true);
+      press(close, 'KeyL', true);
+      expect(seen).toEqual(['Shift+KeyL', 'Shift+KeyL']);
+      seen.length = 0;
+      press(panel('a').querySelector('input')!, 'KeyL', true); // typed into the field
+      press(tab('a'), 'KeyL'); // the elevator
+      press(close, 'KeyF', true);
+      press(tab('a'), 'KeyW');
+      expect(seen).toEqual([]);
+    } finally {
+      window.removeEventListener('keydown', onWindow);
+    }
+  });
+
   it('calls a section’s open hook each time the dialog opens, and never on a switch', () => {
     const s = make();
     const openA = vi.fn();
