@@ -166,6 +166,9 @@ export function repoRow(it: RepoItem): HTMLElement {
 
 const keysOf = (r: RepoRef): (string | undefined)[] => [r.repo?.slice(r.repo.indexOf('/') + 1), r.repo, r.dir ? base(r.dir) : undefined, r.dir, r.session];
 
+/** #54: the list's label with repository discovery on (else "Repositories on other floors"). */
+export const REPOS_LABEL = 'Repositories';
+
 export function repoSource(id: string, host: RepoSearchHost): Source<RepoItem> {
   let list: RepoRef[] | null = null;
   let loading = false;
@@ -205,7 +208,7 @@ export function repoSource(id: string, host: RepoSearchHost): Source<RepoItem> {
   return {
     trigger: '@',
     get label() {
-      return scanning() ? 'Repositories' : 'Repositories on other floors';
+      return scanning() ? REPOS_LABEL : 'Repositories on other floors';
     },
     key: (it) => it.item.id,
     // A new popup asks again, when it first lists repositories.
