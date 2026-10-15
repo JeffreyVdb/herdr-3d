@@ -222,6 +222,7 @@ export class SettingsDialog {
       const i = this.sections.indexOf(section);
       if (i < 0) return;
       const focused = this.holdsFocus(section);
+      section.unavailable = true; // out of the running for what shows next, even when it was the only one
       if (this.active === section) this.fallBack(section);
       if (this.remembered === section) this.remembered = null;
       this.sections.splice(i, 1);

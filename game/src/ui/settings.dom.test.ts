@@ -97,6 +97,18 @@ describe('SettingsDialog section registry (#91)', () => {
     expect(document.querySelector('dialog')).toBeNull();
   });
 
+  it('removing the only section leaves none showing, and the next one added shows', () => {
+    const s = make();
+    const removeA = s.addSection('a', 'A', () => {}, { store: 'browser', group: 'general' });
+    removeA();
+    expect(s.activeSection).toBeNull();
+    expect(picker().closest<HTMLElement>('.settings-pick')!.hidden).toBe(true);
+    s.addSection('b', 'B', () => {}, { store: 'browser', group: 'general' });
+    expect(s.activeSection).toBe('b');
+    expect(panel('b').hidden).toBe(false);
+    expect(document.querySelectorAll('[role="tab"][aria-selected="true"]')).toHaveLength(1);
+  });
+
   it('is a dialog that only Esc and the close button dismiss: the backdrop policy is none', () => {
     make();
     const d = document.querySelector('dialog')!;
