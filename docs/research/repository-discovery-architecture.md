@@ -2,7 +2,9 @@
 
 Implementation ticket: [#54](https://github.com/JeffreyVdb/herdr-3d/issues/54).
 
-Checked 2026-10-15 against repository source. Investigation only; no product implementation or application tests. See the [benchmark results and traversal policy](repository-scan-bench/README.md) for measurements on both requested roots and temporary-fixture verification.
+Checked 2026-10-15 against repository source, before the implementation (the pointers are to the code as it was
+then). #54 shipped it: see docs/decisions.md "#54: Repository discovery" and the benchmark README's production
+measurements. See the [benchmark results and traversal policy](repository-scan-bench/README.md) for measurements on both requested roots and temporary-fixture verification.
 
 ## Existing behavior
 

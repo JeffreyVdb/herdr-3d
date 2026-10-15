@@ -214,6 +214,9 @@ client reads that as `{}`.
 `repo_refs` (#247) is the "Repositories from other buildings" switch, `{"all_buildings": bool}` (see
 [Repositories on other floors](#repositories-on-other-floors)); a bridge from before #247 leaves it out.
 
+`repo_discovery` (#54) is repository discovery's settings and status, `{"roots", "interval_minutes", "status"}` (see
+[Repository discovery](#repository-discovery)); a bridge from before #54, or one that cannot run git, leaves it out.
+
 `kaneo` (#184) is the Kaneo connection, never a key (see [Kaneo](#kaneo)); a bridge without the settings, or from
 before #184, leaves it out.
 
@@ -477,6 +480,7 @@ and remember the last `seq` applied.
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
 | `codex_server.update` | `enabled`, `available` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
 | `repo_refs.update` | `all_buildings` | #247: the "Repositories from other buildings" switch changed (flat in the event, see [Repositories on other floors](#repositories-on-other-floors)) |
+| `repo_discovery.update` | `roots`, `interval_minutes`, `status` | #54: repository discovery's settings or a scan's status changed (a scan started, progressed, ended); flat in the event. `status.revision` moves only when the discovered repositories did (see [Repository discovery](#repository-discovery)) |
 | `handoff.added` | `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (`session` is its floor, `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
 | `handoff.removed` | `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
 | `kaneo.update` | the fields of the Kaneo state | #184: the Kaneo connection changed (saved, cleared, paused by a refused key, resumed); flat in the event, never a key (see [Kaneo](#kaneo)). Like `packup.update`, decode it by its `t`: its `state` and `last_error` are not `ai.update`'s |
@@ -556,7 +560,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
 | `worker.commands` | `{"id": string}` | #136: the slash commands and skills of the worker's harness in its checkout, `{"commands": [{"name", "description", "argument_hint", "kind"}…], "partial": bool}` (see [Commands and skills](#commands-and-skills)) | — |
 | `worker.files` | `{"id": string, "query": string, "limit"?: 1–100}` (default 30) | #137: the files and directories of the worker's checkout ranked against `query`, `{"files": [{"path", "kind", "indices"}…], "source", "reason"}` (see [Files](#files)) | — |
-| `worker.repos` | `{"id": string}` | #247: the repositories and folders stored on the other floors of the worker's building (every building's with `repo_refs.all_buildings`), `{"repos": [{"session", "building", "same_building", "repo"?, "dir"?, "cloned"}…]}` (see [Repositories on other floors](#repositories-on-other-floors)) | — |
+| `worker.repos` | `{"id": string}` | #247: the repositories and folders stored on the other floors of the worker's building (every building's with `repo_refs.all_buildings`), then (#54) the discovered repositories no floor names, one row per repository: `{"repos": [{"id", "source", "session"?, "building", "same_building", "repo"?, "dir"?, "cloned", "checkouts"?}…]}` (see [Repositories on other floors](#repositories-on-other-floors)) | — |
 | `hire.commands` | `{"session": string, "harness": string, "cwd"?: string, "worktree"?: bool}` | #39: `worker.commands` for a hire with no worker yet: `harness`'s commands and skills in the folder the hire would get (see [Completion before a hire](#completion-before-a-hire)) | — |
 | `hire.files` | `{"session": string, "cwd"?: string, "worktree"?: bool, "query": string, "limit"?: 1–100}` | #39: `worker.files` for a hire with no worker yet, in that folder | — |
 | `hire.repos` | `{"session": string}` | #39: `worker.repos` for a hire on `session` with no worker yet | — |
@@ -611,6 +615,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `codex_server.set` | `{"enabled": bool}` | the switch; switching on without `available` is `unsupported` | `codex_server.update` (before the ack) when it changes |
 | `repo_refs.get` | `{}` | `{"all_buildings"}`, the "Repositories from other buildings" switch (see [Repositories on other floors](#repositories-on-other-floors)) | — |
 | `repo_refs.set` | `{"all_buildings": bool}` | the switch | `repo_refs.update` (before the ack) when it changes |
+| `repo_discovery.get` | `{}` | `{"roots", "interval_minutes", "status"}` (see [Repository discovery](#repository-discovery)) | — |
+| `repo_discovery.set` | `{"roots"?: [absolute path…], "interval_minutes"?: 1–1440}` (at least one) | the state; a change of roots scans at once | `repo_discovery.update` (before the ack) when it changes |
+| `repo_discovery.refresh` | `{}` | the state; a scan starts (after the one in flight) | `repo_discovery.update` (before the ack) |
 | `digest.get` | `{}` | the floor overview summaries' state (see [Floor overview summaries](#floor-overview-summaries)); it reads the LLM model's reasoning from its catalog when that was not read lately (#174) | — |
 | `digest.set` | `{"enabled"?: bool, "daily_cap"?: 1–10000, "reasoning_effort"?: string, "max_tokens"?: 64–16384}` | its state; `reasoning_effort` `""` is the provider's default, else one the model's catalog lists (`bad_request` otherwise) (#174) | `digest.update` (before the ack) |
 | `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?, "diag"?}], "latency_ms"}` (`diag`: the call's sanitized [diagnostics](#floor-overview-summaries)) | `digest.update` when it changes `tested` |
@@ -2361,33 +2368,49 @@ call is one audit row.
 #### Repositories on other floors
 
 #247. **`worker.repos`** lists the repositories and folders configured on the **other floors of the worker's
-building**, read-only, for the composer's `@r:` (the game asks once per popup and ranks the rows itself):
+building**, read-only, for the composer's `@r:` (the game asks once per popup and ranks the rows itself). #54 merges in
+the repositories [discovered](#repository-discovery) under the bridge's scan roots, one row per repository:
 
 ```json
 {"t":"worker.repos","req_id":"58","args":{"id":"a58752ea-6511-4318-be9a-59e41c09d7c5"}}
 {"t":"ack","req_id":"58","data":{"repos":[
-  {"session":"api","building":"Work","same_building":true,"repo":"acme/api-server","dir":"/home/me/src/api","cloned":true},
-  {"session":"web","building":"Work","same_building":true,"repo":"acme/web","cloned":false},
-  {"session":"notes","building":"Work","same_building":true,"dir":"/home/me/notes","cloned":false},
-  {"session":"lib","building":"Home","same_building":false,"repo":"acme/lib","dir":"/home/me/src/other","cloned":false}]}}
+  {"id":"gh:acme/api-server","source":"floor","session":"api","building":"Work","same_building":true,"repo":"acme/api-server","dir":"/home/me/src/api","cloned":true},
+  {"id":"gh:acme/web","source":"floor","session":"web","building":"Work","same_building":true,"repo":"acme/web","dir":"/home/me/devel/web","cloned":true,"checkouts":2},
+  {"id":"dir:/home/me/notes","source":"floor","session":"notes","building":"Work","same_building":true,"dir":"/home/me/notes","cloned":false},
+  {"id":"gh:acme/lib","source":"floor","session":"lib","building":"Home","same_building":false,"repo":"acme/lib","dir":"/home/me/src/other","cloned":false},
+  {"id":"git:/home/me/devel/tool/.git","source":"discovered","building":null,"same_building":false,"dir":"/home/me/devel/tool","cloned":false,"checkouts":1}]}}
 ```
 
 | field | |
 |---|---|
-| `repos` | never `null`, in display order: the worker's building's floors by their index in it, then, with the switch on, the other buildings' floors (buildings by `sort`, floors by index) and the unassigned lot's (by name). The worker's own floor is never listed |
-| `session` | the floor |
-| `building` | the floor's building's **name** (not its id); `null` for the unassigned lot |
+| `repos` | never `null`, in display order: the worker's building's floors by their index in it, then, with the switch on, the other buildings' floors (buildings by `sort`, floors by index) and the unassigned lot's (by name), then (#54) the discovered repositories no listed floor names, by name (case-insensitively), then `id`. The worker's own floor is never listed (its repository can be, discovered) |
+| `id` | #54: the row's identity, stable across asks, opaque (it is the repository's merge key: `gh:<owner/repo>` lowercased, `git:<common dir>`, `checkout:<path>`, `dir:<path>`). A bridge from before #54 sends none: the game keys such a row `floor:<session>` |
+| `source` | #54: `floor` (a floor names it: `session` is the floor) or `discovered` (no floor names it) |
+| `session` | the floor; absent from a discovered row |
+| `building` | the floor's building's **name** (not its id); `null` for the unassigned lot and a discovered row |
 | `same_building` | the floor is in the worker's building (false for every row of a worker in the unassigned lot, which is in no building) |
 | `repo` | the floor's stored `settings.repo` (`owner/repo`); absent when it has none |
-| `dir` | the floor's stored `settings.default_cwd`; absent when it has none |
-| `cloned` | `repo` is set, `dir` exists (the bridge's `StatDir`) and its GitHub origin (`git -C <dir> remote get-url origin`, the lookup of the floor suggestions) is `repo`, ignoring case and a `.git` suffix. A subfolder of the checkout counts (git finds the origin from it) |
+| `dir` | the folder a pick puts in: the floor's stored `settings.default_cwd`, or (#54), when no floor of the row has a usable checkout of its `repo` and one was discovered, that checkout (below); absent when there is none |
+| `cloned` | `repo` is set, `dir` exists (the bridge's `StatDir`) and its GitHub origin (`git -C <dir> remote get-url origin`, the lookup of the floor suggestions) is `repo`, ignoring case and a `.git` suffix. A subfolder of the checkout counts (git finds the origin from it). A discovered checkout of `repo` is cloned |
+| `checkouts` | #54: how many checkouts of the repository were discovered (clones and worktrees); absent when none |
+
+**One row per repository** (#54). Rows merge by identity: a floor with a `repo` is that GitHub repository (`gh:`); a
+floor with only a folder is the discovered repository of the checkout the folder is in (the nearest folder up from it
+with a `.git` marker, symlinks resolved: a subfolder or an alias of a checkout matches it), else that checkout's GitHub
+origin, else the checkout, else the folder itself. A discovered repository is its checkouts that share a Git common
+directory (worktrees) or a GitHub origin (clones, whatever the remote's spelling). The merged row stands at the first
+floor's place and offers, in order: the first of its floors (in floor order) with a usable folder (a checkout of its
+`repo`, or an existing folder of a folder-only floor), else the discovered checkout (the main checkout first, then by
+path), else the GitHub address (`cloned` false). Its `session` is the floor whose folder it offers, else the first.
+Repositories that cannot be told apart safely stay apart: two folders named `api` with different common directories
+and no GitHub origin, or two clones of one non-GitHub remote, are two rows.
 
 Only **stored** settings count: a floor's `suggested` values (what the bridge guessed from its workers' checkouts) are
 ignored, and a floor with neither a stored `repo` nor a stored `default_cwd` is not listed. A floor with only a folder
 is listed only when the folder exists. Asleep floors are listed (their settings persist), and so is a Kaneo-tracked
 floor that still carries a GitHub `repo`.
 
-The stat and the origin lookups run off the hub, all at once, each origin lookup at most 3 s (a slower one is "not
+The stat, the checkout lookups (an `Lstat` walk up from each folder) and the origin lookups run off the hub, all at once, each origin lookup at most 3 s (a slower one is "not
 cloned" for this answer) and reused for 30 s; a lookup that fails is "not cloned", never an error of the list.
 
 **The switch** "Repositories from other buildings" (bridge-wide, SQLite `repo_refs_settings`, off by default and when
@@ -2402,6 +2425,56 @@ client (before the ack) and is one audit row.
 ```
 
 Errors: `unknown_worker`, `bad_request` (unknown `args` fields). Each call is one audit row.
+
+#### Repository discovery
+
+#54. The bridge scans folders **on its host** (scan roots) for Git working checkouts and merges what it finds into
+`worker.repos` and `hire.repos` (above). The roots and the refresh interval are bridge-wide settings (SQLite
+`repo_discovery_settings`, one row: none set is no roots and 10 minutes); no roots is discovery off (the floors are
+listed as before). `repo_discovery.get` answers the state, the snapshot's `repo_discovery` holds it (absent on a bridge
+without discovery), and `repo_discovery.update` carries it flat whenever the settings or a scan's status change.
+
+```json
+{"t":"repo_discovery.set","req_id":"r1","args":{"roots":["/home/me/devel","/mnt/usb/src"],"interval_minutes":10}}
+{"t":"repo_discovery.update","seq":2212,"roots":["/home/me/devel","/mnt/usb/src"],"interval_minutes":10,"status":{"state":"scanning","revision":7,"repositories":61,"checkouts":134,"last_scan_at":1760520000000,"last_success_at":1760520000000,"last_duration_ms":152,"progress":{"phase":"walking","done":0,"total":2},"roots":[{"path":"/home/me/devel","state":"ok","checkouts":134,"last_success_at":1760520000000},{"path":"/mnt/usb/src","state":"pending","checkouts":0,"last_success_at":null}]}}
+{"t":"ack","req_id":"r1","data":{"roots":["/home/me/devel","/mnt/usb/src"],"interval_minutes":10,"status":{"state":"scanning","…":"…"}}}
+```
+
+| field | |
+|---|---|
+| `roots` | the scan roots as set: absolute paths, cleaned (`filepath.Clean`: a trailing slash goes), in the order set; never `null` |
+| `interval_minutes` | how often they are scanned again, 1–1440 |
+| `status.state` | `off` (no roots), `idle`, `scanning` |
+| `status.revision` | moves whenever the discovered repositories change (a new or removed checkout, origin or root), never for progress or timestamps: a client listing them (an open `@r:` popup) asks `worker.repos` again then |
+| `status.repositories`, `status.checkouts` | what is discovered now (one repository can have several checkouts) |
+| `status.last_scan_at`, `status.last_success_at` | unix ms of the end of the last scan, and of the last one in which no root failed; `null` before |
+| `status.last_duration_ms` | how long the last scan took |
+| `status.next_scan_at` | unix ms of the next scheduled scan (absent: off or scanning) |
+| `status.progress` | the scan in flight: `{"phase": "walking", "done", "total"}` over the roots, then `{"phase": "checking", …}` over the checkouts found; at most every 250 ms |
+| `status.roots[]` | per root, in `roots` order: `path`, `canonical` (the folder it resolves to, when another), `state` (`pending` not scanned yet, `ok`, `stale` its last scan failed and its previous result is kept, `error` failed and never succeeded), `error` (why, in words), `warning` (folders below it that could not be read), `checkouts` (its checkouts in the catalog), `last_success_at` |
+
+**Settings.** `repo_discovery.set {roots?, interval_minutes?}` needs at least one (`bad_request`); a root must be
+absolute, without a line break, at most 4096 bytes and listed once after cleaning; at most 32 roots. The refusal is
+`bad_request` with the field in words (`Scan folder 2 is the same as folder 1 (/home/me/devel).`). Whether a root
+exists is not checked: a missing one (an unmounted disk) is a scan error. A change of roots drops the removed roots'
+repositories at once, cancels the scan in flight (its result is thrown away, so a removed root never comes back) and
+scans again; an interval change only moves the next scan. `repo_discovery.refresh` asks for a scan now (one in flight
+first finishes). Each call is one audit row; a bridge without discovery answers all three `unsupported`.
+
+**Scans.** After the bridge starts (from the stored settings), after a change of roots, on `repo_discovery.refresh`,
+and `interval_minutes` after the last one ended. One at a time, off the hub (commands never wait for one), bounded to
+a minute (past it, the roots not finished fail). Each root is resolved (`EvalSymlinks`: aliases of one folder are
+walked once) and walked: a folder with a `.git` marker (a folder, a file, a link: linked worktrees and submodules
+have a file) is a candidate checkout and the walk **stops there**, never listing a checkout's contents; any other
+folder is walked into, at any depth, whatever its name (no dependency-folder exclusions); symlinked subfolders are not
+followed. A repository inside a checkout (a submodule, a vendored repo) is found only from a root of its own, which is
+always walked even when another root's checkout encloses it. Bare repositories (no `.git`) are not listed. Then git,
+for the candidates only, at most 8 calls at once, 2 s each, local (no network), in a clean environment (no inherited
+`GIT_DIR` and the like): `rev-parse --path-format=absolute --show-toplevel --git-common-dir` (a candidate whose top
+level is not itself is dropped) and `remote get-url origin` (optional: a repository without an origin, or with a
+non-GitHub one, is listed all the same). A candidate git could not answer for (a timeout) keeps its previous entry;
+a root where git answered for none, or that cannot be read, fails: its previous result stays, marked `stale`, and the
+other roots are not touched. A folder below a root that cannot be read is skipped (`warning`).
 
 #### Completion before a hire
 

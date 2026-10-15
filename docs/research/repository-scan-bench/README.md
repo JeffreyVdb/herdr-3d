@@ -2,7 +2,9 @@
 
 Implementation ticket: [#54](https://github.com/JeffreyVdb/herdr-3d/issues/54).
 
-Measured 2026-10-15 on the requested local directories, Linux 6.12.0-211.38.1.el10_2.x86_64, Go 1.27. Research only: no product behavior changed.
+Measured 2026-10-15 on the requested local directories, Linux 6.12.0-211.38.1.el10_2.x86_64, Go 1.27. The first
+sections are the research harness (no product code); [Production measurements](#production-measurements-54) are the
+shipped `internal/repodisc` on the same roots.
 
 ## Method and results
 
@@ -27,6 +29,40 @@ Use this algorithm in an asynchronous bridge-owned catalog, with **eight metadat
 Repository-boundary pruning is essential to the measured speed. It discovers arbitrarily nested grouping directories and `.git`-file worktrees, but does **not** search inside a checkout for embedded repositories/submodules. Add those paths as explicit additional roots when needed; explicitly configured roots are always scanned even when inside another root's checkout. Bare repositories without a `.git` marker are outside this initial working-checkout scope. Document both choices in Settings/help. Do not add arbitrary dependency-folder exclusions unless their coverage tradeoff is separately approved and measured.
 
 Production must additionally canonicalize explicit roots and checkout paths (including symlink aliases), normalize repository identities without conflating same-name repos, clear inherited Git context as existing Git helpers do, cancel obsolete scans, bound pathological traversal duration, and report per-root errors. The harness is intentionally a small research comparison, not the production service.
+
+## Production measurements (#54)
+
+Measured 2026-10-15 with the shipped `internal/repodisc` code, same host, warm cache, other agents' work running
+(load average ≈ 0.7 for run 1, ≈ 4 for runs 2–4). `TestBenchRoots` times the whole production scan the service
+runs: the boundary walk, `git rev-parse --path-format=absolute --show-toplevel --git-common-dir` and
+`git remote get-url origin` per candidate through `gitops` (8 workers, 2 s timeout each, clean environment), the
+per-root assembly, and the identity merge into a `Catalog`. One warm-up scan, then 20 timed ones per row; four runs
+([production-results.jsonl](production-results.jsonl)).
+
+| Roots | Candidates / valid | Not main (worktrees, submodules) | With origin | Repositories | Median | p95 | Max |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `/home/jeff/devel/jeffreyvdb` | 34 / 34 | 9 | 19 | 25 | 29.3–31.2 ms | 30.1–33.5 ms | 49.5 ms |
+| `/home/jeff/devel/kiswe` | 101 / 100 | 64 | 93 | 36 | 126.9–145.1 ms | 130.4–151.4 ms | 152.3 ms |
+| Both roots | 135 / 134 | 73 | 112 | **61** | **151.5–168.9 ms** | 155.1–176.0 ms | 182.3 ms |
+
+The target, **under one second for a warm combined scan including validation, metadata and identity merging**, holds
+with a wide margin (≈ 0.17 s worst median). Git work is bounded: at most 8 calls at once (asserted in
+`TestServiceCancel`), only for the 135 candidates, never per ordinary directory.
+
+Coverage is the research harness's: the same 1,826 grouping folders and 17,515 entries read, the same 135 candidates,
+the one candidate that is not a checkout of its own dropped, and the same **61 repository identities** (the harness
+counted them in a separate inventory). The harness's 74 `.git` file markers are 73 non-main checkouts here: the
+invalid candidate had a `.git` file. Production adds what the harness lacked, none of which changes these counts:
+explicit roots are resolved (`EvalSymlinks`) and an alias walked once; a symlinked `.git` also counts as a marker
+(it stops the walk; git then decides); a candidate's top level must be itself (resolved), else it is dropped; the
+inherited `GIT_DIR` family is cleared; the scan is bounded (a minute) and cancellable. A walk of one root at a time
+(rather than a shared visited set) is what lets an explicit root inside another root's checkout always be scanned.
+
+To reproduce:
+
+```sh
+H3D_REPODISC_BENCH=/home/jeff/devel/jeffreyvdb:/home/jeff/devel/kiswe go test -count=1 -run TestBenchRoots -v ./internal/repodisc
+```
 
 ## Reproduce
 

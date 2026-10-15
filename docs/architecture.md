@@ -258,6 +258,19 @@ MacBook (M2 Max)                                   devbox (Linux)
   a Kaneo task keep `{provider, id}` in `run_launch` and inline the task in the prompt (an agent cannot read Kaneo).
   "Open in Kaneo" from the Mac helper works for the saved instance's host only, which the bridge names on its own
   `/healthz` for the helper.
+- **Repository discovery** (#54, built; details in `protocol.md` "Repository discovery"): the bridge scans folders on
+  its own host (scan roots, bridge-wide in SQLite with a refresh interval, 10 minutes by default) for Git working
+  checkouts, so `@r:` offers local repositories no floor names. `internal/repodisc` owns a background catalog (wired
+  by `app` with the bridge's context, like `fileindex`): one scan at a time, after startup, a change of roots, on
+  request and on the interval; a settings change bumps a generation, cancels the scan in flight and drops its result.
+  The walk checks `<dir>/.git` (folder, file or link) before listing a folder and stops at each checkout, with no
+  depth cap and no name exclusions, never following a symlinked subfolder; git runs only for the candidates (8 at once,
+  2 s each, local, `gitops` shapes in a clean environment). Checkouts merge into repositories by common directory and
+  normalized GitHub origin; readers get an immutable snapshot whose revision moves only when its content does. A root
+  that fails keeps its last result (stale). `worker.repos` / `hire.repos` merge the floors' rows with the snapshot off
+  the hub goroutine, one row per repository (`RepoRef.id`, `source`); `repo_discovery.update` tells an open popup to
+  ask again. Warm full scan of the two benchmark roots (135 candidates, 61 repositories): ~150 ms
+  (`docs/research/repository-scan-bench`).
 - **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
   bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
   the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket
@@ -380,11 +393,13 @@ MacBook (M2 Max)                                   devbox (Linux)
   columns, cards | prs, merged}` are connection-scoped like `terminal.frame` (no `seq`, not in the replay ring or the
   snapshot); workers carry `work_item{provider, id}` next to `issue` (#184: alone, with its `key`, for a Kaneo task).
   #184: `kaneo.update` (the Kaneo connection, never a key) and `world.snapshot`'s `kaneo`.
+  #54: `repo_discovery.update` (settings and scan status, a catalog `revision`) and `world.snapshot`'s `repo_discovery`.
 - Commands (each with `req_id`, ack/err): `building.create/rename/delete`, `floor.assign`, `floor.wake/sleep`,
   `worker.hire{floor, harness, model, effort, label, cwd}`, `worker.fire`, `worker.prompt`, `worker.keys`,
   `terminal.watch/unwatch/zoom`, `terminal.open` (see below). M7: `board.watch/unwatch/refresh`, `issue.get/comment/close/
   set_status`, `pr.get/comment/merge`, `worker.open_pr.prepare/open_pr`; `run.prepare/start` take a `work_item`.
   #184: `kaneo.get/test/set/clear/workspaces/projects`; `floor.settings.set` takes `tracker` and `kaneo`.
+  #54: `repo_discovery.get/set/refresh`; `worker.repos` / `hire.repos` rows gain `id`, `source` and `checkouts`.
 - **Open in Ghostty (optional escape hatch, not needed to play)**: all normal interaction happens in-game —
   laptop screen = live read-only terminal via `observe`; prompts, approvals and keys via `worker.prompt` / `worker.keys`.
   herdr servers run headless on the server; nothing on the Mac needs a terminal. Only for "let me type in the raw
