@@ -1269,10 +1269,11 @@ export class Laptops {
     const out: Array<{ id: string; pane: string | null; desk: number; state: ScreenState; fps: number | null; shows: string | null }> = [];
     const o = this.attached;
     if (!o) return out;
-    // #52: whose screen each desk's glass shows (`<worker id>@<pane>`): its live plane's terminal, else its frozen image.
+    // #52: whose screen each desk's glass shows (`<worker id>@<pane>`): its live plane's terminal, else its frozen image
+    // once the GPU has it (a frozen image waiting for its atlas upload shows nothing yet).
     const shows = new Map<number, string>();
     for (let i = 0; i < o.desksCount; i++) {
-      const f = this.meshes?.frozenOwner(i);
+      const f = this.meshes?.shownOwner(i);
       if (f) shows.set(i, `${f.id}@${f.pane}`);
     }
     for (const [id, d] of this.liveAt) if (this.meshes?.isLive(d)) shows.set(d, `${id}@${this.terms.get(id)?.pane ?? ''}`);

@@ -18,6 +18,8 @@ const ATLAS_UPLOAD_MS = 400;
 
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 
+const ownerKey = (o: ScreenOwner): string => `${o.id}@${o.pane}`;
+
 /** #52: whose screen an image is: the worker, and the pane its frames came from. */
 export interface ScreenOwner {
   id: string;
@@ -50,6 +52,9 @@ export class ScreenMeshes {
   private readonly frozen = new Map<number, number>();
   /** #52: desk → whose screen its frozen image is. */
   private readonly owners = new Map<number, ScreenOwner>();
+  /** #52: per atlas cell, whose image was last drawn into it (canvas), and whose the GPU has (the last upload's). */
+  private readonly drawn: (string | null)[] = new Array<string | null>(FROZEN_CELLS).fill(null);
+  private readonly uploaded: (string | null)[] = new Array<string | null>(FROZEN_CELLS).fill(null);
   /** #98: desks whose monitor shows the activity card (or an image): their screens are hidden, frozen copies kept. */
   private readonly covered = new Set<number>();
   private atlasDirty = false;
@@ -159,7 +164,7 @@ export class ScreenMeshes {
         const [oldDesk, oldCell] = this.frozen.entries().next().value as [number, number];
         this.frozen.delete(oldDesk);
         this.owners.delete(oldDesk);
-        this.frozenMesh.setMatrixAt(oldDesk, ZERO);
+        this.place(oldDesk);
         cell = oldCell;
       } else cell = this.freeCell();
     } else this.frozen.delete(desk);
@@ -168,12 +173,29 @@ export class ScreenMeshes {
     const x = (cell % COLS) * CELL_W;
     const y = Math.floor(cell / COLS) * CELL_H;
     this.g.drawImage(src, x, y, CELL_W, CELL_H);
+    this.drawn[cell] = ownerKey(owner);
     const H = this.canvas.height;
     this.cell.setXYZW(desk, x / this.canvas.width, 1 - (y + CELL_H) / H, CELL_W / this.canvas.width, CELL_H / H);
     this.cell.needsUpdate = true;
-    this.frozenMesh.setMatrixAt(desk, this.covered.has(desk) ? ZERO : this.slotMatrix(desk));
-    this.frozenMesh.instanceMatrix.needsUpdate = true;
+    this.place(desk);
     this.atlasDirty = true;
+  }
+
+  /**
+   * #52: whether a desk's frozen instance is on the glass: frozen, not covered, and its cell on the GPU holds its
+   * owner's image. A reused cell keeps the previous owner's pixels until the (throttled) upload that carries the new
+   * ones, so until then the desk shows its glow, never someone else's screen.
+   */
+  private shown(desk: number): boolean {
+    const cell = this.frozen.get(desk);
+    const owner = this.owners.get(desk);
+    return cell !== undefined && !!owner && this.uploaded[cell] === ownerKey(owner);
+  }
+
+  /** Puts a desk's frozen instance where `shown` and `covered` say (its slot, or nowhere). */
+  private place(desk: number): void {
+    this.frozenMesh.setMatrixAt(desk, this.shown(desk) && !this.covered.has(desk) ? this.slotMatrix(desk) : ZERO);
+    this.frozenMesh.instanceMatrix.needsUpdate = true;
   }
 
   /**
@@ -186,10 +208,7 @@ export class ScreenMeshes {
     else this.covered.delete(desk);
     const live = this.live.get(desk);
     if (live) live.visible = !on;
-    if (this.frozen.has(desk)) {
-      this.frozenMesh.setMatrixAt(desk, on ? ZERO : this.slotMatrix(desk));
-      this.frozenMesh.instanceMatrix.needsUpdate = true;
-    }
+    if (this.frozen.has(desk)) this.place(desk);
   }
 
   isCovered(desk: number): boolean {
@@ -211,7 +230,19 @@ export class ScreenMeshes {
     return this.owners.get(desk) ?? null;
   }
 
-  /** Forgets a desk's frozen screen (its worker left; a new one there starts with a glow). */
+  /**
+   * #52: whose screen the desk's frozen image on the glass is: its owner once the GPU has that image (null: not frozen,
+   * or its image not uploaded yet). Covered or asleep is not considered (test hook).
+   */
+  shownOwner(desk: number): ScreenOwner | null {
+    return this.shown(desk) ? (this.owners.get(desk) ?? null) : null;
+  }
+
+  /** Test hook: the frozen atlas texture's version (it goes up with each upload). */
+  atlasVersion(): number {
+    return this.tex.version;
+  }
+
   /** Test hook: the share (0–1) of a desk's frozen screen that is not black; null when it is not frozen. */
   frozenInk(desk: number): number | null {
     const cell = this.frozen.get(desk);
@@ -222,19 +253,24 @@ export class ScreenMeshes {
     return ink / (px.length / 4);
   }
 
+  /** Forgets a desk's frozen screen (its worker left; a new one there starts with a glow). */
   unfreeze(desk: number): void {
     this.owners.delete(desk);
     if (!this.frozen.delete(desk)) return;
-    this.frozenMesh.setMatrixAt(desk, ZERO);
-    this.frozenMesh.instanceMatrix.needsUpdate = true;
+    this.place(desk);
   }
 
-  /** Once per frame: uploads the atlas if a screen froze (throttled). */
+  /**
+   * Once per frame: uploads the atlas if a screen froze (throttled). #52: the frozen screens whose images this upload
+   * carries go on the glass in the same frame (the texture and the instance matrices reach the GPU in the same render).
+   */
   update(now: number): void {
     if (!this.atlasDirty || now - this.lastUpload < ATLAS_UPLOAD_MS) return;
     this.atlasDirty = false;
     this.lastUpload = now;
     this.tex.needsUpdate = true;
+    for (let i = 0; i < FROZEN_CELLS; i++) this.uploaded[i] = this.drawn[i] ?? null;
+    for (const desk of this.frozen.keys()) this.place(desk);
   }
 
   /** Asleep: every screen dark (the desks show their asleep colour). */
