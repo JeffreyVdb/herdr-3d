@@ -135,6 +135,8 @@ dialog.settings {
   dialog.settings {
     width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
     height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    /* (The UA's modal dialog keeps 2em + 6px off the sides and foot: the 8px gutters here are the clearance.) */
+    max-width: none;
     max-height: none;
   }
   .settings .settings-pick select {
