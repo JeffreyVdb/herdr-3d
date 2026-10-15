@@ -1,6 +1,7 @@
 import { expect, type Page } from '@playwright/test';
 import { frames, leftInTerminal, openGame, openMenu, seatMode, settingsSection } from './game';
 import { board as boardState, enter, faceBoard, waitNotes, wall } from './m7';
+import { fakeHelper } from './bridges';
 
 // #216: the application surfaces, one opener each, shared by the screenshot spec, the coverage inventory and the
 // contrast / font checks. A surface is opened on a fresh page (`boot`) with the UI, transcript and terminal themes seeded
@@ -168,6 +169,20 @@ async function setTaskLevels(page: Page, open = false): Promise<void> {
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeHidden();
 }
 
+/** #57: the page again, served by a (faked) helper with two bridges: devbox in use, Laptop offline. */
+async function withBridges(page: Page): Promise<void> {
+  await fakeHelper(
+    page,
+    [
+      { id: 'aaaaaaaaaa', name: 'devbox', kind: 'ssh', host: 'dev@devbox', state: 'up', version: 'v1.2.0' },
+      { id: 'bbbbbbbbbb', name: 'Laptop', kind: 'local', socket: '/run/user/1000/herdr-world/bridge.sock', state: 'backoff', last_error: 'dial unix /run/user/1000/herdr-world/bridge.sock: connect: no such file or directory' },
+    ],
+    'aaaaaaaaaa',
+  );
+  await page.reload();
+  await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3, undefined, { timeout: 60_000 });
+}
+
 const said = (task: string) => ({ provenance: 'dictated', value: task, span: { source: 0, start: 0, end: task.length } });
 
 export const SURFACES: Surface[] = [
@@ -223,6 +238,33 @@ export const SURFACES: Surface[] = [
     extra: '&open=none',
     open: (page) => setTaskLevels(page, true),
     root: 'dialog.settings',
+  },
+  {
+    // #57: Settings → Bridges with a faked helper: one in use, one offline with its error, the add form.
+    name: 'settings-bridges',
+    fixture: 'demo-m5',
+    open: async (page) => {
+      await withBridges(page);
+      await openMenu(page);
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      await settingsSection(page, 'bridges');
+    },
+    root: 'dialog.settings',
+  },
+  {
+    // #57: "Laptop is offline. Switch anyway?" from ⌘P → Switch bridge.
+    name: 'bridge-confirm',
+    fixture: 'demo-m5',
+    open: async (page) => {
+      await withBridges(page);
+      await page.keyboard.press('Control+KeyP');
+      await page.keyboard.type('switch bridge');
+      await page.keyboard.press('Enter');
+      await page.keyboard.type('laptop');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('dialog.confirm--bridge')).toBeVisible();
+    },
+    root: 'dialog.confirm--bridge',
   },
   {
     name: 'about',

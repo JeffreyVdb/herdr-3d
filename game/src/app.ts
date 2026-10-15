@@ -125,6 +125,10 @@ import type { WhiteboardState } from './net/protocol';
 // #100: the inbox's pings (desktop notifications, the chime)
 import { awayText, burstText, BURST_TAG, DesktopNotify, pingTitle } from './ui/desktopNotify';
 import { InboxPings, pingEntries, type PingEntry, type PingOut } from './world/inboxPings';
+// #57: the helper's bridges (Settings → Bridges, ⌘P → Switch bridge)
+import { BridgeBook, isOnline, type BridgeEntry } from './net/bridges';
+import { bridgesSection } from './ui/bridgesSection';
+import { confirmSwitch } from './ui/bridgeSwitch';
 
 export interface AppOptions {
   renderer: THREE.WebGPURenderer;
@@ -134,6 +138,10 @@ export interface AppOptions {
   buildInfo?: BuildInfo;
   /** The bridge's build version, from each welcome (null when it does not say). */
   onBridgeVersion?: (version: string | null) => void;
+  /** The helper token, when main.ts already took it from the address (else the App takes it). */
+  token?: string | null;
+  /** #57: the helper's bridges, as main.ts read them before anything else (absent: no helper serves this page). */
+  bridges?: BridgeBook;
 }
 
 export interface LookAt {
@@ -306,6 +314,11 @@ export class App {
   /** M7: pages the game asked to open, and how (test hook). */
   readonly opened: Array<{ url: string; via: string }> = [];
   private readonly token: string | null;
+  /** #57: the helper's bridges (unavailable on a page the helper does not serve). */
+  readonly bridges: BridgeBook;
+  private readonly buildInfo: BuildInfo | null;
+  /** #57: a switch is under way (the page reloads when the helper has it). */
+  private switching = false;
   private readonly noOpen: boolean;
   /** The floor this connection watches for boards (null: none). */
   private watched: string | null = null;
@@ -359,6 +372,8 @@ export class App {
     this.batterySaver = o.params.get('battery') === '1';
     this.timeOfDay = new TimeOfDay(this.timePrefs, overridesFrom(o.params, (m) => console.warn(m)));
     this.hud = new Hud(o.host);
+    this.bridges = o.bridges ?? new BridgeBook(null);
+    this.buildInfo = o.buildInfo ?? null;
     this.hud.hireOptions = () => this.store.hireOptions;
     this.hud.setBattery(this.batterySaver);
     // Sound (the first click, key or pointer lock unlocks it) and the receptionist in every lobby.
@@ -368,12 +383,14 @@ export class App {
     this.settings = this.hud.mountSettings();
     this.shortcuts = new ShortcutsDialog(o.host);
     this.palette = new Palette(o.host, {
-      commands: () => paletteCommands(this.activeScopes()),
+      // #57: Switch bridge only where a helper serves the page.
+      commands: () => paletteCommands(this.activeScopes()).filter((c) => c.id !== 'bridge.switch' || this.bridges.available),
       store: this.store,
       here: () => this.hereSession(),
       online: () => this.conn.phase === 'live',
       run: (c, floor) => void this.runPaletteCommand(c, floor),
       goTo: (s) => void this.goToFloor(s),
+      bridges: { book: this.bridges, switchTo: (b) => void this.switchBridge(b), openSettings: () => this.openSettingsAt('bridges') },
     });
     this.dictation = new DictationBar(o.host, {
       submit: (text, live) => this.interpretDictation(text, live),
@@ -392,6 +409,11 @@ export class App {
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser', group: 'general' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
     this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser', group: 'general' });
+    // #57: the machines this game can show, kept by the helper (absent on a page it does not serve).
+    this.settings.addSection('bridges', 'Bridges', bridgesSection({ book: this.bridges, switchTo: (b) => void this.switchBridge(b), reconnect: (b) => this.reloadFor(b, 'Reconnecting to') }), {
+      store: 'helper',
+      group: 'general',
+    });
     // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
     this.settings.addSection(
       'ai',
@@ -504,7 +526,7 @@ export class App {
     );
 
     this.fixture = /\/fixture\//.test(o.params.get('ws') ?? '');
-    const token = takeToken(window.location, safeStorage(), (u) => history.replaceState(null, '', u));
+    const token = o.token !== undefined ? o.token : takeToken(window.location, safeStorage(), (u) => history.replaceState(null, '', u));
     this.token = token;
     this.noOpen = o.params.get('open') === 'none';
     this.url = bridgeUrl(window.location, token);
@@ -772,6 +794,9 @@ export class App {
   }
 
   start(): void {
+    // #57: the bridge in use on the chip and in About, and what the game says without one.
+    this.syncBridgeName();
+    this.bridges.onChange(() => this.syncBridgeName());
     this.client.start();
     void this.r.setAnimationLoop((t) => this.tick(t));
   }
@@ -1687,6 +1712,11 @@ export class App {
   }
 
   private updateNotice(): void {
+    // #57: a helper with no bridge: nothing to connect to until one is added.
+    if (this.noBridge()) {
+      this.hud.setNotice('No bridge configured', 'Add one in Settings → Bridges: the machine that runs herdr-world, over ssh or on this machine.');
+      return;
+    }
     if (this.store.snapshots > 0) {
       if (this.city.isEmpty && this.mode === 'city') this.hud.setNotice('No floors yet', 'herdr-world is connected but sees no herdr sessions. Start one with <code>herdr</code> and it shows up here.');
       else this.hud.setNotice(null);
@@ -1697,6 +1727,63 @@ export class App {
     if (s.phase === 'failed') this.hud.setNotice('The bridge refused this game', `${escapeHtml(s.reason)}. Update the game or the bridge so their protocol versions match.`);
     else if (s.phase === 'waiting') this.hud.setNotice('Waiting for herdr-world', `No answer from ${where}. Retrying with backoff; check that the helper tunnel is up.`);
     else this.hud.setNotice('Connecting to herdr-world', `Opening ${where}…`);
+  }
+
+  // ---- bridges (#57) -----------------------------------------------------------
+
+  /** The helper serves this page and knows no bridge. */
+  private noBridge(): boolean {
+    return this.bridges.available && (this.bridges.list?.bridges.length ?? 0) === 0;
+  }
+
+  /** The bridge in use's name on the connection chip's tooltip and in About; the chip says when there is none. */
+  private syncBridgeName(): void {
+    const b = this.bridges.active;
+    this.hud.setBridgeName(b?.name ?? null);
+    this.buildInfo?.setBridgeName(b?.name ?? null);
+    if (!this.switching) this.hud.setConnOverride(this.noBridge() ? { text: 'No bridge', title: 'No bridge configured: add one in Settings', phase: 'none' } : null);
+    this.updateNotice();
+  }
+
+  /** Opens Settings on one section (the palette's "No other bridges" row). */
+  private openSettingsAt(id: string): void {
+    void this.dismissOverlays().then((ok) => {
+      if (!ok) return;
+      this.settings.open();
+      this.settings.reveal(id);
+    });
+  }
+
+  /**
+   * #57: puts bridge `b` in use. A bridge that is not up is asked about first. The helper switches (and closes this
+   * page's connection to the old one); the page reloads, and its `/ws` then reaches the new bridge's world.
+   */
+  async switchBridge(b: BridgeEntry): Promise<void> {
+    const api = this.bridges.api;
+    if (!api || this.switching || b.active) return;
+    if (!isOnline(b) && !(await confirmSwitch(this.hud.root.parentElement ?? document.body, b.name))) return;
+    this.switching = true;
+    this.hud.setConnOverride({ text: `Switching to ${b.name}…`, title: `Switching to ${b.name}: the game reloads on its world`, phase: 'connecting' });
+    const r = await api.activate(b.id);
+    if (!r.ok) {
+      this.switching = false;
+      this.syncBridgeName();
+      this.hud.toast(`Could not switch to ${b.name}: ${r.message}`, 7000, 'error');
+      return;
+    }
+    this.bridges.set(r.list);
+    this.reload();
+  }
+
+  /** The bridge in use has a new address (or is the first): the page reloads to connect through it. */
+  private reloadFor(b: BridgeEntry, verb: string): void {
+    this.switching = true;
+    this.hud.setConnOverride({ text: `${verb} ${b.name}…`, title: `${verb} ${b.name}: the game reloads`, phase: 'connecting' });
+    this.reload();
+  }
+
+  private reload(): void {
+    window.location.reload();
   }
 
   // ---- modes -------------------------------------------------------------------
@@ -2936,6 +3023,7 @@ export class App {
    * then the very action its key would run.
    */
   private async runPaletteCommand(command: PaletteCommand, floor: string | null): Promise<void> {
+    if (command.id === 'bridge.switch') return; // #57: the palette lists the bridges itself
     if (this.transitioning || !(await this.dismissOverlays()) || this.transitioning) return;
     // #213: the bar answers wherever you are, a seat included: nothing to stand up for.
     if (command.id === 'dictate') return this.openDictation();

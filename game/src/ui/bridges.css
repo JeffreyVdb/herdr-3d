@@ -1,0 +1,137 @@
+/* #57: bridges. The state dot is the connection chip's (.conn i): green online, amber on its way, grey offline, so a
+ * bridge in Settings, in ⌘P and in the top bar reads the same. */
+.br-dot {
+  flex: none;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--idle);
+}
+.br-dot[data-tone='up'] {
+  background: var(--plus);
+}
+.br-dot[data-tone='wait'] {
+  background: var(--warn);
+}
+
+/* Settings → Bridges: a short ruled list like Repository discovery's, the name first, its address in the code face
+ * (it is typed as such) and its state in words under it, the actions on the name's line. */
+.settings-br-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.settings-br-list[hidden],
+.settings-br-empty[hidden],
+.settings-br-error[hidden] {
+  display: none;
+}
+.settings-br-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.settings-br-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.settings-br-who {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.settings-br-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+  color: var(--text);
+}
+.settings-br-buttons {
+  flex: none;
+  display: flex;
+  gap: 6px;
+}
+.settings-br-buttons .btn:disabled,
+.settings-br-buttons .btn[aria-disabled='true'],
+.settings-br-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.settings-br-meta {
+  margin: 4px 0 0 16px;
+  overflow-wrap: anywhere;
+}
+.settings-br-addr {
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.settings-br-state--up {
+  color: var(--ok-text);
+}
+.settings-br-why {
+  margin: 2px 0 0 16px;
+  overflow-wrap: anywhere;
+}
+.settings-br-empty {
+  margin: 0;
+}
+.settings-br .settings-status {
+  margin: -6px 0 0;
+}
+.settings-br-add-title {
+  margin-top: 6px;
+}
+.settings-br-form {
+  display: grid;
+  gap: 10px;
+}
+.settings-br-form--edit {
+  margin: 10px 0 4px 16px;
+}
+.settings-br-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 14px;
+}
+.settings-br-fields > [hidden] {
+  display: none;
+}
+.settings-br-code {
+  font-family: var(--font-code);
+  font-size: 12.5px;
+}
+.settings-br-error {
+  margin: 0;
+}
+.settings-br-actions {
+  display: flex;
+  gap: 8px;
+}
+@media (max-width: 600px) {
+  .settings-br .btn--sm {
+    min-height: 44px;
+  }
+  .settings-br-line {
+    flex-wrap: wrap;
+  }
+}
+
+/* ⌘P → Switch bridge: the dot leads the row like a floor's name; the address and state follow in the meta column. */
+.pal-opt--bridge .br-dot {
+  margin-right: 2px;
+}
+.pal-br-addr {
+  font-family: var(--font-code);
+  font-size: 12px;
+}
+.pal-br-state--up {
+  color: var(--ok-text);
+}
