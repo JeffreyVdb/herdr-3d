@@ -627,6 +627,9 @@ type ServeConfig struct {
 	// hires workers and sends them home (nil: those commands fail). Pings
 	// go through Herdr.
 	Control *herdr.Control
+	// Hire, if set, replaces Control as the hires' and send-homes' write
+	// path (the integration tests: herdr's own, but no agent starts).
+	Hire server.HireHerdr
 	// Git runs the git commands of hires and send-homes (nil: no git info,
 	// no worktree hires or deletes).
 	Git *gitops.Git
@@ -746,6 +749,9 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.Herdr = floorHerdr{Control: cfg.Control, read: cfg.Herdr}
 		opts.Hire = cfg.Control
 		opts.Term = cfg.Control // M5 term
+	}
+	if cfg.Hire != nil {
+		opts.Hire = cfg.Hire
 	}
 	opts.Fresh = freshWorkers(cfg.Herdr)
 	opts.MaxWatches, opts.MaxObservers, opts.PaneSize = cfg.MaxWatches, cfg.MaxObservers, paneSize(cfg.Herdr) // M5 term
