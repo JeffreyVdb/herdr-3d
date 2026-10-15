@@ -230,7 +230,10 @@ run](#team-presets-and-starting-a-run)); `[]` when there are none.
 game shares its screen (see [Screen share](#screen-share)); a bridge from before M13 leaves it out.
 
 Order is meaningful: `buildings` are in `sort` order and each lists its floors top to bottom (`index` order);
-`unassigned` is the lot of sessions that are in no building, by name. `floors` follows the same order (buildings, then the
+`unassigned` is the lot of floors that are in no building, by floor id. #58: `floors`, `unassigned` and every
+building's `floors` hold **floor ids** (a real floor's id is its session's name, so the examples here read the same);
+every floor also carries `id`, `name`, `base_session`, `virtual` and `hidden`, and every worker `floor`, left out of the
+examples (see [Virtual floors](#virtual-floors)). `floors` follows the same order (buildings, then the
 lot), and `workers` follows the floors, each floor's workers in herdr's sidebar order.
 
 ### Building
@@ -240,14 +243,22 @@ lot), and `workers` follows the floors, each floor's workers in herdr's sidebar 
 | `id` | string | bridge-generated, `b_<hex>` |
 | `name` | string | 1–64 bytes, unique ignoring case |
 | `sort` | int | 0-based position among buildings |
-| `floors` | string[] | known sessions in this building, in floor order (derived) |
+| `floors` | string[] | floor ids (#58) of the known floors in this building, in floor order (derived); a virtual floor stands in its base session's floor's building |
 | `logo` | string? | M3d: the hash (lower-case hex sha256) of the building's logo PNG; absent without one. The image itself is `GET /logo/{id}`, never in an event or the snapshot. It changes when the image does, and is what a client caches the texture by. |
 
 ### Floor (a herdr session)
 
+A floor is a herdr session's own floor (its **real floor**) or, #58, a **virtual floor** on it (see
+[Virtual floors](#virtual-floors)).
+
 | field | type | |
 |---|---|---|
-| `session` | string | herdr session name (the key) |
+| `id` | string | #58: the floor id (the key): a real floor's is its session's name, a virtual floor's `v-` and 12 lower-case hex digits |
+| `name` | string | #58: the display name: a real floor's session name, a virtual floor's own (free text, 1–64 bytes) |
+| `session` | string | the herdr session the floor lives in (before #58 the key: on a real floor it still equals `id`) |
+| `base_session` | string | #58: the same as `session` (named for virtual floors) |
+| `virtual` | bool | #58: a virtual floor |
+| `hidden` | bool | #58: the floor's stored hidden setting (decision 2): a client hides a hidden floor from its lists unless it has at least one worker, so a hidden floor never hides a worker |
 | `state` | `running` \| `asleep` | `running` = its server answers on its socket; a leftover socket file does not count |
 | `default` | bool, optional | herdr's default session |
 | `building` | string \| null | building id, `null` = in the unassigned lot |
@@ -268,6 +279,7 @@ floor with no workers and an `error`).
 |---|---|---|
 | `id` | string | bridge-owned UUID, stable across bridge and herdr restarts (see below) |
 | `session`, `workspace_id` | string | where it is now (`workspace_id` alone is not an identity: herdr can reuse ids) |
+| `floor` | string | #58: the floor id it belongs to: its session's real floor (`== session`) or a virtual floor on it (see [Virtual floors](#virtual-floors)) |
 | `label` | string | workspace label (herdr's automatic label when unnamed) |
 | `cwd` | string, optional | working directory of the primary pane |
 | `pane_id` | string, optional | primary pane: the first pane with an agent, else the first pane |
@@ -460,10 +472,10 @@ and remember the last `seq` applied.
 | `building.upsert` | `building` | a building was created, renamed, reordered, its floor list changed, or (M3d) its `logo` was set, replaced or cleared |
 | `building.removed` | `id` | a building was deleted (its floors got `floor.upsert` with `building: null` first) |
 | `floor.upsert` | `floor` | a session appeared, started, stopped, was (re)assigned, or its `error`, `transition`, `settings` or `suggested` changed |
-| `floor.removed` | `session` | the session was deleted in herdr (its workers get `worker.removed` first) |
+| `floor.removed` | `session`, `floor_id` | the session was deleted in herdr (its workers get `worker.removed` first), or (#58) a virtual floor was deleted. `floor_id` is the floor's id (`floor` is taken by `floor.upsert`'s object), `session` its herdr session: a session that goes away removes its real floor and every virtual floor on it, each with its own `floor.removed` (a client drops floors by `floor_id`, never the base floor by `session`) |
 | `worker.upsert` | `worker` | a worker appeared, or anything besides `status`/`title` changed, e.g. its `resume` (full object) |
-| `worker.status` | `id`, `session`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
-| `worker.removed` | `id`, `session`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` or a wrap-up's CLEAN (#83; the game plays the walk-out); absent otherwise. |
+| `worker.status` | `id`, `session`, `floor_id`, `workspace_id`, `status`, `prev_status`, `status_since`, `title` | only `status` and/or `title` changed (the hot path). `title` is always present, `""` when cleared; on a title-only change `prev_status` equals `status` and `status_since` does not move. |
+| `worker.removed` | `id`, `session`, `floor_id`, `workspace_id`, `reason`? | the workspace closed, the session was deleted, or the identity changed. `reason` is `"sent_home"` when the removal comes from `worker.fire` or a wrap-up's CLEAN (#83; the game plays the walk-out); absent otherwise. |
 | `worker.usage` | `id`, `session`, `usage` | the worker's `usage` changed; at most once per 5 s per worker (see [Usage and cost](#usage-and-cost)) |
 | `whiteboard.updated` | `floor`, `version`, `author`, `at`, `render_version`, `render`, `stale`, `stale_pins` | M13: a floor's whiteboard has a new version (a save, a clear, an agent's pin; flat in the event, see [Whiteboard](#whiteboard)) |
 | `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
@@ -547,13 +559,16 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `building.rename` | `{"id": string, "name": string}` | — | `building.upsert` |
 | `building.delete` | `{"id": string}` | — | `floor.upsert` for each of its floors (now unassigned), `building.upsert` for buildings whose `sort` shifted, then `building.removed` |
 | `building.reorder` | `{"ids": [string…]}`: every building id exactly once, in the new order | — | `building.upsert` for each moved building |
-| `floor.assign` | `{"session": string, "building": string \| null, "index"?: int}`: `null` moves the floor to the unassigned lot; `index` inserts at that position (clamped), omitted appends | — | `floor.upsert` for every floor whose position changed, `building.upsert` for the buildings involved |
-| `floor.settings.set` | `{"session": string, "repo"?, "project"?, "status_field"?, "default_cwd"?, "default_hire"?}`: an absent key stays as it is, `null` clears it, a value sets it (see [Floor settings](#floor-settings)) | — | `floor.upsert` carrying the new `settings` (and `suggested`, when the chosen repo changes it); none when nothing changed |
-| `floor.wake` | `{"session": string}` | `{"workers": [{"id", "resume"}]}`: every worker of the floor in sidebar order, `resume` one of `confirmed`, `fallback`, `failed`, or `none` (no `agent_session`: nothing to resume) | `floor.upsert` with `transition: "waking"`, `worker.upsert` (`resume: "pending"`) for each resumable worker, then the floor running and its workers as the watcher sees them, `worker.upsert` as each `resume` settles, and a final `floor.upsert` without `transition` |
-| `floor.sleep` | `{"session": string}` | — | `floor.upsert` with `transition: "sleeping"` (and `worker.upsert` for workers whose `resume` is cleared), then `floor.upsert` with `state: "asleep"` and no `transition`, then the asleep workers |
+| `floor.assign` | `{"floor"|"session": string, "building": string \| null, "index"?: int}`: `null` moves the floor to the unassigned lot; `index` inserts at that position (clamped), omitted appends | — | `floor.upsert` for every floor whose position changed, `building.upsert` for the buildings involved |
+| `floor.settings.set` | `{"floor"|"session": string, "repo"?, "project"?, "status_field"?, "default_cwd"?, "default_hire"?}`: an absent key stays as it is, `null` clears it, a value sets it (see [Floor settings](#floor-settings)) | — | `floor.upsert` carrying the new `settings` (and `suggested`, when the chosen repo changes it); none when nothing changed |
+| `floor.wake` | `{"floor"|"session": string}` | `{"workers": [{"id", "resume"}]}`: every worker of the floor in sidebar order, `resume` one of `confirmed`, `fallback`, `failed`, or `none` (no `agent_session`: nothing to resume) | `floor.upsert` with `transition: "waking"`, `worker.upsert` (`resume: "pending"`) for each resumable worker, then the floor running and its workers as the watcher sees them, `worker.upsert` as each `resume` settles, and a final `floor.upsert` without `transition` |
+| `floor.sleep` | `{"floor"|"session": string}` | — | `floor.upsert` with `transition: "sleeping"` (and `worker.upsert` for workers whose `resume` is cleared), then `floor.upsert` with `state: "asleep"` and no `transition`, then the asleep workers |
 | `session.create` | `{"name": string}`: #58, a new herdr session (see [New herdr sessions](#new-herdr-sessions)) | `{"session": string}`, once its floor is in the world | the new floor's `floor.upsert` (`state: "running"`, in the unassigned lot), before the ack |
-| `hire.prepare` | `{"session": string, "cwd"?: string}` | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity"}` (see [Hire and send home](#hire-and-send-home)) | — |
-| `worker.hire` | `{"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent) |
+| `floor.create` | `{"name": string, "base_session": string}`: #58, a virtual floor on a discovered session (see [Virtual floors](#virtual-floors)) | the new floor (a `Floor`) | its `floor.upsert` (and `building.upsert` when it joined its base's building), to every client |
+| `floor.rename` | `{"floor": string, "name": string}`: a virtual floor's display name | — | `floor.upsert` |
+| `floor.delete` | `{"floor": string, "move_workers"?: bool}`: a virtual floor; refused while it has workers (`move_workers` is reserved: `unsupported`) | — | `floor.removed` (with `floor_id`), `building.upsert` when it was in a building |
+| `hire.prepare` | `{"floor"|"session": string, "cwd"?: string}` | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity"}` (see [Hire and send home](#hire-and-send-home)) | — |
+| `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
 | `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
@@ -562,9 +577,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.commands` | `{"id": string}` | #136: the slash commands and skills of the worker's harness in its checkout, `{"commands": [{"name", "description", "argument_hint", "kind"}…], "partial": bool}` (see [Commands and skills](#commands-and-skills)) | — |
 | `worker.files` | `{"id": string, "query": string, "limit"?: 1–100}` (default 30) | #137: the files and directories of the worker's checkout ranked against `query`, `{"files": [{"path", "kind", "indices"}…], "source", "reason"}` (see [Files](#files)) | — |
 | `worker.repos` | `{"id": string}` | #247: the repositories and folders stored on the other floors of the worker's building (every building's with `repo_refs.all_buildings`), then (#54) the discovered repositories no floor names, one row per repository: `{"repos": [{"id", "source", "session"?, "building", "same_building", "repo"?, "dir"?, "cloned", "checkouts"?}…]}` (see [Repositories on other floors](#repositories-on-other-floors)) | — |
-| `hire.commands` | `{"session": string, "harness": string, "cwd"?: string, "worktree"?: bool}` | #39: `worker.commands` for a hire with no worker yet: `harness`'s commands and skills in the folder the hire would get (see [Completion before a hire](#completion-before-a-hire)) | — |
-| `hire.files` | `{"session": string, "cwd"?: string, "worktree"?: bool, "query": string, "limit"?: 1–100}` | #39: `worker.files` for a hire with no worker yet, in that folder | — |
-| `hire.repos` | `{"session": string}` | #39: `worker.repos` for a hire on `session` with no worker yet | — |
+| `hire.commands` | `{"floor"|"session": string, "harness": string, "cwd"?: string, "worktree"?: bool}` | #39: `worker.commands` for a hire with no worker yet: `harness`'s commands and skills in the folder the hire would get (see [Completion before a hire](#completion-before-a-hire)) | — |
+| `hire.files` | `{"floor"|"session": string, "cwd"?: string, "worktree"?: bool, "query": string, "limit"?: 1–100}` | #39: `worker.files` for a hire with no worker yet, in that folder | — |
+| `hire.repos` | `{"floor"|"session": string}` | #39: `worker.repos` for a hire on `session` with no worker yet | — |
 | `terminal.watch` | `{"id": string, "fps"?: 1–30, "cols"?: 40–300, "rows"?: 10–100, "fullscreen"?: bool}` | `{"pane", "cols", "rows", "zoom"?}` | `terminal.frame`s to this connection only; with `fullscreen` (true or false), also `terminal.state` (see [Fullscreen](#fullscreen-74)) |
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
@@ -579,8 +594,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `preset.create` | `{"name": string, "roles": {…}}` | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
 | `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
-| `run.prepare` | `{"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
-| `run.start` | `{"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
+| `run.prepare` | `{"floor"|"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
+| `run.start` | `{"floor"|"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
 | `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers when queued (see [Plan limits](#plan-limits)) |
 | `ai.get` | `{}` | the AI state (see [AI integration](#ai-integration)) | — |
 | `ai.models` | `{"role", "key"?, "base_url"?}` | `{"models": [{"id", "description"?}], "base_url"?}` | — |
@@ -630,16 +645,16 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `whiteboard.clear` | `{"floor", "confirm": true, "author"?}` | the new state | `whiteboard.updated` |
 | `whiteboard.pin` | `{"floor", "author", "note", "request_id"?}` (an image: `POST /whiteboard/{floor}/pin`) | the new state plus `{"elements": [id…], "repeated"?}` | `whiteboard.updated` (none for a repeated `request_id`) |
 | `drops.list` | `{"limit"?: 1–50}` (default 20) | `{"drops": [{"path", "name", "size", "mtime", "mime", "image", "reason"?}…]}` | — |
-| `board.watch` | `{"session"}` | `{"enabled": bool, "reason"?}`, then `board.issues` and `board.prs` to this connection (see [Boards](#boards-issues-and-pull-requests)) | — |
-| `board.unwatch` | `{"session"}` | — | — |
-| `board.refresh` | `{"session"}` | `{"queued": bool}` | the boards of the poll, to the watchers |
-| `issue.get` | `{"session", "id"}` | `{"card", "body", "author", "created_at", "comments", "comments_truncated"}` | — |
-| `issue.comment` | `{"session", "id", "body"}` | `{"comment"}` | boards after the refresh |
-| `issue.close` | `{"session", "id", "reason", "confirm": true}` | — | boards after the refresh |
-| `issue.set_status` | `{"session", "id", "column", "after"?}` (`after`: null or a card id, with the `order` capability) | — | boards after the refresh |
-| `pr.get` | `{"session", "id"}` | `{"pr", "body", "author", "created_at", "files", "files_truncated", "checks", "comments", "comments_truncated"}` | — |
-| `pr.comment` | `{"session", "id", "body"}` | `{"comment"}` | boards after the refresh |
-| `pr.merge` | `{"session", "id", "method", "confirm": true, "override"?, "confirm_override"?}` | `{"merged": true}` | boards after the refresh |
+| `board.watch` | `{"floor"|"session"}` | `{"enabled": bool, "reason"?}`, then `board.issues` and `board.prs` to this connection (see [Boards](#boards-issues-and-pull-requests)) | — |
+| `board.unwatch` | `{"floor"|"session"}` | — | — |
+| `board.refresh` | `{"floor"|"session"}` | `{"queued": bool}` | the boards of the poll, to the watchers |
+| `issue.get` | `{"floor"|"session", "id"}` | `{"card", "body", "author", "created_at", "comments", "comments_truncated"}` | — |
+| `issue.comment` | `{"floor"|"session", "id", "body"}` | `{"comment"}` | boards after the refresh |
+| `issue.close` | `{"floor"|"session", "id", "reason", "confirm": true}` | — | boards after the refresh |
+| `issue.set_status` | `{"floor"|"session", "id", "column", "after"?}` (`after`: null or a card id, with the `order` capability) | — | boards after the refresh |
+| `pr.get` | `{"floor"|"session", "id"}` | `{"pr", "body", "author", "created_at", "files", "files_truncated", "checks", "comments", "comments_truncated"}` | — |
+| `pr.comment` | `{"floor"|"session", "id", "body"}` | `{"comment"}` | boards after the refresh |
+| `pr.merge` | `{"floor"|"session", "id", "method", "confirm": true, "override"?, "confirm_override"?}` | `{"merged": true}` | boards after the refresh |
 | `worker.open_pr.prepare` | `{"id"}` (worker id) | `{"can_open", "reason"?, "branch", "base", "ahead", "dirty", "existing"?, "title", "body"}` | — |
 | `worker.open_pr` | `{"id", "title", "body", "confirm": true}` | `{"pr": {"id", "key", "url"}, "pushed", "existed"}` | boards after the refresh |
 
@@ -657,7 +672,14 @@ that are currently gone, so a re-created session returns to its floor with its s
 Floor commands (`floor.assign`, `floor.settings.set`, `floor.wake`, `floor.sleep`) and the hire and fire commands on a
 floor whose wake or sleep is in progress answer `busy`; so do `floor.wake` / `floor.sleep` while a hire or a send-home on
 that floor is in progress. They only act on sessions the bridge watches (`--sessions`); any other name, known to herdr or
-not, is `unknown_session`.
+not, is `unknown_session`. #58: a virtual floor's checks are its base session's (it wakes, sleeps and is busy with it).
+
+**Floor ids in commands (#58).** Every floor-scoped command (`floor.assign`, `floor.settings.set`, `floor.wake`,
+`floor.sleep`, `hire.prepare`, `hire.commands`, `hire.files`, `hire.repos`, `worker.hire`, `run.prepare`, `run.start`,
+`board.*`, `issue.*`, `pr.*`, and `whiteboard.*`, `screen.grab` and `handoff.list`, which always took `floor`) names its
+floor by `floor`, a floor id. A client from before #58 sends `session` instead: the bridge reads it as that session's
+real floor (`floor` wins when both are set). The bridge resolves the floor's herdr session itself: herdr is only ever
+called with a session, never with a virtual floor's id.
 
 ### Building logos
 
@@ -1030,7 +1052,7 @@ unassigned lot. It never goes through the floor checks of the other floor comman
    len("/herdr-client.sock")` (56 for `/home/jeff/.config/herdr/sessions`). The sessions folder comes from `herdr
    session list` (a named session's parent folder, else `sessions/` in the default session's). With `--sessions` set,
    the name must match it too: a session outside it would never show as a floor.
-2. **Free** (`name_taken`): not a floor, not in `herdr session list` in any state (starting a known name would wake
+2. **Free** (`name_taken`): not a floor (nor, #58, a virtual floor's id, also while its base session is away), not in `herdr session list` in any state (starting a known name would wake
    that session instead: an asleep one is refused too), nothing at `<sessions folder>/<name>` (a stale folder, a
    backup), and no transient unit `herdr-s-<name>.service` still loaded (its unit file under `$XDG_RUNTIME_DIR`).
 3. **One at a time** (`busy`): a second `session.create` of a name being created is refused.
@@ -1041,6 +1063,50 @@ unassigned lot. It never goes through the floor checks of the other floor comman
 
 The audit log row starts with the command and ends with the sessions folder, whether herdr was asked to start it, how
 long until the floor was seen, and what a rollback did.
+
+### Virtual floors
+
+#58: a **virtual floor** is a user-defined floor inside an existing **base session**: its own name, desks, names,
+settings (repository, board, default folder, default hire), last hire, last preset and whiteboard, while its workers'
+workspaces live in the base session. Every discovered session keeps its **real floor** (floor id = session name).
+
+```json
+{"t":"floor.create","req_id":"31","args":{"name":"Frontend","base_session":"herdr-3d"}}
+{"t":"floor.upsert","seq":1201,"floor":{"id":"v-3fa9c1d2e4b5","name":"Frontend","session":"herdr-3d",
+  "base_session":"herdr-3d","virtual":true,"hidden":false,"state":"running","building":"b_3f09a1c2d4e5","index":2,"desks":6}}
+{"t":"ack","req_id":"31","data":{"id":"v-3fa9c1d2e4b5","name":"Frontend","session":"herdr-3d", …}}
+```
+
+**Identity.** A virtual floor's id is `v-` and 12 lower-case hex digits, minted by the bridge: never a discovered or
+starting session's name, and a safe single path component (its whiteboard folder is named by it). The definition
+(`virtual_floor`: id, name, base session) is stored and kept while the base session is away; the floor is in the world
+(`floor.upsert`) only while its base session is: a session that goes away removes its real floor and its virtual floors
+(`floor.removed` for each, `floor_id` naming it, after its workers' `worker.removed`), and they come back with it.
+Every definition change goes to every client.
+
+**Workers.** The bridge's store, never herdr, says which floor a worker is on (herdr keeps no session metadata, and
+loses workspace tokens on a restart). `worker.hire` and `run.start` on a virtual floor create the workspace in the base
+session and record the floor with the worker from its first observation, so it never shows on the base floor, and its
+stored floor brings it back to its floor after a herdr restart, a sleep and wake, or a bridge restart (identity as in
+[Worker](#worker-a-herdr-workspace)). A workspace with no stored floor (made in the herdr TUI, a helper an agent
+spawned) is on its session's real floor; so is one whose stored floor was deleted (and the store is told). Nothing is
+hidden. Desks, names, capacity (`--max-workers-per-floor`), repository suggestions and run links are per floor.
+
+**Buildings (decision 4).** A virtual floor always stands in its base session's floor's building: `floor.create` puts it
+last in that building (unassigned when the base is), `floor.assign` of a virtual floor only moves it within that
+building (another building or `null`: `bad_request`), assigning the base floor to another building takes its virtual
+floors along right after it, and unassigning it unassigns them.
+
+**Wake and sleep.** A floor's wake and sleep are its session's: `floor.wake` / `floor.sleep` on a virtual floor wake or
+put to sleep the base session, and with it every floor on it; their `state` and `transition` are the base session's.
+
+| command | rule, else |
+|---|---|
+| `floor.create` | `name`: trimmed, 1–64 bytes, no control characters (`bad_request`); `base_session`: a discovered session (`unknown_session`) the bridge watches (`--sessions`, `unknown_session`) |
+| `floor.rename` | `floor`: a virtual floor (a real floor: `bad_request`; unknown: `not_found`); `name` as above |
+| `floor.delete` | `floor` as above; refused with `invalid_state` while workers are on it ("floor “Frontend” has 2 workers: …", hires in flight count; while its base session is away, the workers stored on it). `move_workers: true` is reserved (`unsupported`). Its desks, names, settings, last hire, last preset, board cache, building place and hidden setting go; its handoffs stay |
+
+`hidden` is stored per floor (real or virtual); its setter comes with the Settings → Floors section.
 
 ### Hire and send home
 
@@ -1087,7 +1153,7 @@ remote-tracking refs) and is audited like any command.
 
 | arg | rule, else `bad_request` |
 |---|---|
-| `session` | a running, watched floor |
+| `floor` (or `session`) | a running, watched floor (#58: a floor id; a virtual floor's base session must run) |
 | `desk_index` | `0 ≤ desk_index < floor.desks`, and free: no worker holds it and no other hire in flight reserved it (else `desk_taken`, also for an out-of-range desk). Two hires to one desk: the first accepted wins, the other is `desk_taken`. |
 | `harness`, `model`, `effort` | one of `hire_options` (as `default_hire`) |
 | `label` | 1–64 bytes, no control characters, not starting with `-`; default: the next generated name (`hire.prepare`'s `label`). The worker's name is the label when that is a free generated name, else the next generated name. |
@@ -1347,7 +1413,7 @@ high, researchers codex sol low; the orchestrator claude opus medium), once: del
 
 | arg | rule, else `bad_request` |
 |---|---|
-| `session` | a running, watched floor (as `hire.prepare`) |
+| `floor` (or `session`) | a running, watched floor (as `hire.prepare`) |
 | `issue` | an int ≥ 1, or a string `"3"`, `"#3"` or `https://github.com/<owner>/<repo>/issues/<n>`. A number is an issue of the floor's effective repo (`settings.repo ?? suggested.repo`; none: `bad_request` "the floor has no linked repo"); a URL names its own. |
 | `text` | free text instead of an issue: 1–4096 bytes once trimmed, may span lines. At most one of `issue` / `text` / `work_item` (a board card's `{provider, id}`, see [Boards](#boards-issues-and-pull-requests): it gives the same ticket as its issue URL); with neither, `prompt` and `label` are `""` and `ticket` is `null` (the dialog is not ready yet). |
 | `preset` | a preset id (`not_found`); default: the floor's `last_preset`, else the preset named "Build team" (ignoring case), else the first by name; `""` when there is no preset (then no `prompt` either) |
@@ -1482,7 +1548,8 @@ connection watches one floor at a time; a new `board.watch` replaces the old one
 
 | field | |
 |---|---|
-| `session` | the floor |
+| `session` | the floor's herdr session |
+| `floor` | #58: the floor id whose board it is (a virtual floor has its own board) |
 | `provider`, `provider_name` | the adapter's id and display name (the game says "Open in GitHub") |
 | `initial` | `true`: the replay of the cache on `board.watch`; **never ring the gong for it** |
 | `fetched_at` | unix ms of the data's poll; `0`: nothing fetched yet |
@@ -1529,9 +1596,9 @@ on a floor with no board (no repo, no provider) is `unsupported`.
 
 | `t` | args | `ack.data` |
 |---|---|---|
-| `board.watch` | `{session}` | `{"enabled": bool, "reason"?}`: `enabled: false` with a `reason` (`"no repo linked"`, `"boards are not configured"`; #184, a Kaneo floor: `"Kaneo is not connected: connect it in Settings"`, `"no Kaneo project linked"`, `"this bridge has no Kaneo settings"`, `"this bridge cannot read Kaneo boards"`: no tracker could be made of the saved connection, e.g. it changed meanwhile; watch again) and no messages; else the messages follow (`board.prs` only with a code host) |
-| `board.unwatch` | `{session}` | — |
-| `board.refresh` | `{session}` | `{"queued": bool}`; `unsupported` on a floor with no board |
+| `board.watch` | `{floor\|session}` | `{"enabled": bool, "reason"?}`: `enabled: false` with a `reason` (`"no repo linked"`, `"boards are not configured"`; #184, a Kaneo floor: `"Kaneo is not connected: connect it in Settings"`, `"no Kaneo project linked"`, `"this bridge has no Kaneo settings"`, `"this bridge cannot read Kaneo boards"`: no tracker could be made of the saved connection, e.g. it changed meanwhile; watch again) and no messages; else the messages follow (`board.prs` only with a code host) |
+| `board.unwatch` | `{floor\|session}` | — |
+| `board.refresh` | `{floor\|session}` | `{"queued": bool}`; `unsupported` on a floor with no board |
 | `issue.get` | `{session, id}` | `{"card", "body": markdown, "author": {name, avatar_url}, "created_at", "comments": [{id, author, body, created_at}], "comments_truncated"}`: the first 100 comments; the body is raw markdown, **the client sanitises** |
 | `issue.comment` | `{session, id, body}` | `{"comment": {id, author, body, created_at}}` |
 | `issue.close` | `{session, id, reason: "completed" \| "not_planned" \| "duplicate", confirm: true}` | — |
@@ -2418,7 +2485,8 @@ the repositories [discovered](#repository-discovery) under the bridge's scan roo
 | `repos` | never `null`, in display order: the worker's building's floors by their index in it, then, with the switch on, the other buildings' floors (buildings by `sort`, floors by index) and the unassigned lot's (by name), then (#54) the discovered repositories no listed floor names, by name (case-insensitively), then `id`. The worker's own floor is never listed (its repository can be, discovered) |
 | `id` | #54: the row's identity, stable across asks, opaque (it is the repository's merge key: `gh:<owner/repo>` lowercased, `git:<common dir>`, `checkout:<path>`, `dir:<path>`). A bridge from before #54 sends none: the game keys such a row `floor:<session>` |
 | `source` | #54: `floor` (a floor names it: `session` is the floor) or `discovered` (no floor names it) |
-| `session` | the floor; absent from a discovered row |
+| `session` | the floor's herdr session; absent from a discovered row |
+| `floor` | #58: the floor id; absent from a discovered row |
 | `building` | the floor's building's **name** (not its id); `null` for the unassigned lot and a discovered row |
 | `same_building` | the floor is in the worker's building (false for every row of a worker in the unassigned lot, which is in no building) |
 | `repo` | the floor's stored `settings.repo` (`owner/repo`); absent when it has none |

@@ -133,6 +133,10 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'floor.sleep': 30_000,
   // #58: the bridge lists herdr's sessions, starts the server and waits up to its wake timeout (10 s) for the floor.
   'session.create': 30_000,
+  // #58: virtual floors are store writes on the bridge (a delete counts the floor's stored workers first).
+  'floor.create': 15_000,
+  'floor.rename': 15_000,
+  'floor.delete': 15_000,
   // M4: prepare runs `git fetch`; a hire creates a worktree, starts the agent and waits out its trust dialog;
   // a send-home waits for the agent to exit.
   'hire.prepare': 30_000,

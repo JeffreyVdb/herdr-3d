@@ -46,6 +46,9 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'floor.sleep': 'put floors to sleep',
   'floor.settings.set': 'store floor settings',
   'session.create': 'start new herdr sessions', // #58
+  'floor.create': 'add virtual floors', // #58
+  'floor.rename': 'rename virtual floors',
+  'floor.delete': 'delete virtual floors',
   'hire.prepare': 'hire workers',
   'hire.interpret': 'understand dictated commands',
   'worker.hire': 'hire workers',

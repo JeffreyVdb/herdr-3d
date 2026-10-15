@@ -27,7 +27,18 @@ export function logoHashOf(b: Pick<Building, 'logo'> | null | undefined): string
 }
 
 export interface Floor {
+  /** #58: the floor id (the key from C3 on): a real floor's is its session's name, a virtual floor's `v-<12 hex>`. Absent from an older bridge: `session`. */
+  id?: string;
+  /** #58: display name (a real floor's session name; a virtual floor's own). */
+  name?: string;
+  /** The herdr session the floor lives in (a virtual floor's base session). */
   session: string;
+  /** #58: same as `session`. */
+  base_session?: string;
+  /** #58: a user-defined floor on `base_session` (docs/protocol.md "Virtual floors"). */
+  virtual?: boolean;
+  /** #58: the stored hidden setting (decision 2): hide it unless it has workers. */
+  hidden?: boolean;
   state: string; // running | asleep
   default?: boolean;
   building: string | null;
@@ -171,7 +182,10 @@ export interface Worktree {
 
 export interface Worker {
   id: string;
+  /** The herdr session of its workspace. */
   session: string;
+  /** #58: the floor id it belongs to (== `session` on a real floor). Absent from an older bridge. */
+  floor?: string;
   workspace_id: string;
   label: string;
   cwd?: string;
@@ -366,8 +380,10 @@ export interface RepoRef {
   id: string;
   /** #54: `floor`, a floor names it (`session`); `discovered`, found under the scan roots and no floor names it. */
   source: 'floor' | 'discovered';
-  /** The floor (absent from a discovered row). */
+  /** The floor's herdr session (absent from a discovered row). */
   session?: string;
+  /** #58: the floor id (absent from a discovered row and from an older bridge). */
+  floor?: string;
   /** The floor's building's name; null: the unassigned lot, or a discovered row. */
   building: string | null;
   /** The worker's own building. */
@@ -485,7 +501,10 @@ export interface FloorUpsert {
 export interface FloorRemoved {
   t: 'floor.removed';
   seq: number;
+  /** The floor's herdr session (a virtual floor's base session: do not drop the base floor by it). */
   session: string;
+  /** #58: the removed floor's id. */
+  floor_id?: string;
 }
 export interface WorkerUpsert {
   t: 'worker.upsert';
@@ -497,6 +516,8 @@ export interface WorkerStatusEvent {
   seq: number;
   id: string;
   session: string;
+  /** #58: the worker's floor id. */
+  floor_id?: string;
   workspace_id: string;
   status: string;
   prev_status?: string;
@@ -510,6 +531,8 @@ export interface WorkerRemoved {
   seq: number;
   id: string;
   session: string;
+  /** #58: the floor id it was on. */
+  floor_id?: string;
   workspace_id: string;
   /** M4: `sent_home` when the removal comes from `worker.fire`. */
   reason?: string;
@@ -727,23 +750,37 @@ export interface SessionCreateAck {
   session: string;
 }
 
+/**
+ * #58: every floor-scoped command takes `floor` (a floor id). While the client still sends `session`, the bridge
+ * reads it as that session's real floor; `floor` wins when both are set.
+ */
+export interface FloorRef {
+  floor?: string;
+}
+
 /** Commands and their args (docs/protocol.md "Commands", M3, M4 and M5 additions). */
 export interface CommandArgs {
   'building.create': { name: string };
   'building.rename': { id: string; name: string };
   'building.delete': { id: string };
   'building.reorder': { ids: string[] };
-  'floor.assign': { session: string; building: string | null; index?: number };
-  'floor.wake': { session: string };
-  'floor.sleep': { session: string };
+  'floor.assign': FloorRef & { session: string; building: string | null; index?: number };
+  'floor.wake': FloorRef & { session: string };
+  'floor.sleep': FloorRef & { session: string };
   /** #58: a new herdr session, and with it a floor (docs/protocol.md "New herdr sessions"); acks `SessionCreateAck` once the floor is in the world. */
   'session.create': { name: string };
-  'floor.settings.set': { session: string } & SettingsPatch;
+  /** #58: a virtual floor on a discovered, watched session (docs/protocol.md "Virtual floors"); acks the new `Floor`. */
+  'floor.create': { name: string; base_session: string };
+  /** #58: a virtual floor's display name. */
+  'floor.rename': { floor: string; name: string };
+  /** #58: deletes a virtual floor; refused (`invalid_state`) while it has workers. `move_workers` is reserved. */
+  'floor.delete': { floor: string; move_workers?: boolean };
+  'floor.settings.set': FloorRef & { session: string } & SettingsPatch;
   /** M4 */
-  'hire.prepare': { session: string; cwd?: string };
+  'hire.prepare': FloorRef & { session: string; cwd?: string };
   /** #213: a dictated sentence to a hire proposal (docs/protocol.md "Hire interpretation"); a follow-up carries the review's proposal as `pending`. Acks `HireInterpretAck`. */
   'hire.interpret': { text: string; pending?: HireInterpretation };
-  'worker.hire': {
+  'worker.hire': FloorRef & {
     session: string;
     desk_index: number;
     harness: string;
@@ -775,11 +812,11 @@ export interface CommandArgs {
   /** #247: the repos and folders of the other floors of the worker's building (ack `WorkerRepos`). */
   'worker.repos': { id: string };
   /** #39: `worker.commands` for a hire with no worker yet: the floor, the harness and the folder it would get (ack `WorkerCommands`). */
-  'hire.commands': { session: string; harness: string; cwd?: string; worktree?: boolean };
+  'hire.commands': FloorRef & { session: string; harness: string; cwd?: string; worktree?: boolean };
   /** #39: `worker.files` for a hire with no worker yet (ack `WorkerFiles`). */
-  'hire.files': { session: string; cwd?: string; worktree?: boolean; query: string; limit?: number };
+  'hire.files': FloorRef & { session: string; cwd?: string; worktree?: boolean; query: string; limit?: number };
   /** #39: `worker.repos` for a hire on `session` with no worker yet (ack `WorkerRepos`). */
-  'hire.repos': { session: string };
+  'hire.repos': FloorRef & { session: string };
   /** #74: `fullscreen` asks the bridge to zoom the pane's herdr tab while the watch lasts (absent / false: as before). */
   'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number; fullscreen?: boolean };
   'terminal.unwatch': { id: string };
@@ -802,8 +839,8 @@ export interface CommandArgs {
   /** `roles` replaces all five. */
   'preset.update': { id: string; name?: string; roles?: PresetRoles };
   'preset.delete': { id: string };
-  'run.prepare': RunTicketArgs & { session: string; preset?: string; orch?: Hire; extra?: string };
-  'run.start': RunTicketArgs & {
+  'run.prepare': RunTicketArgs & FloorRef & { session: string; preset?: string; orch?: Hire; extra?: string };
+  'run.start': RunTicketArgs & FloorRef & {
     session: string;
     desk_index: number;
     orch: Hire;
@@ -815,9 +852,9 @@ export interface CommandArgs {
     prompt?: string;
   };
   // M7: boards (docs/protocol.md "Boards: issues and pull requests").
-  'board.watch': { session: string };
-  'board.unwatch': { session: string };
-  'board.refresh': { session: string };
+  'board.watch': FloorRef & { session: string };
+  'board.unwatch': FloorRef & { session: string };
+  'board.refresh': FloorRef & { session: string };
   /** M10 limits: read the plan limits now (at most every 20 s). */
   'limits.refresh': Record<string, never>;
   // #92 AI integration (docs/protocol.md "AI integration"). A key is sent here and nowhere else, and never comes back.
@@ -874,14 +911,14 @@ export interface CommandArgs {
   /** `input_bytes` the transcript budget, `max_tokens` the completion budget (reasoning included), `reasoning_effort` "" the provider's default. */
   'handoff_llm.set': { enabled?: boolean; input_bytes?: number; max_tokens?: number; reasoning_effort?: string };
   'handoff_llm.test': Record<string, never>;
-  'issue.get': { session: string; id: string };
-  'issue.comment': { session: string; id: string; body: string };
-  'issue.close': { session: string; id: string; reason: CloseReason; confirm: true };
+  'issue.get': FloorRef & { session: string; id: string };
+  'issue.comment': FloorRef & { session: string; id: string; body: string };
+  'issue.close': FloorRef & { session: string; id: string; reason: CloseReason; confirm: true };
   /** #52: `after` (with the `order` capability) also places the card: null the top of the column, a card id right after it. */
-  'issue.set_status': { session: string; id: string; column: string; after?: string | null };
-  'pr.get': { session: string; id: string };
-  'pr.comment': { session: string; id: string; body: string };
-  'pr.merge': { session: string; id: string; method: MergeMethod; confirm: true; override?: boolean; confirm_override?: true };
+  'issue.set_status': FloorRef & { session: string; id: string; column: string; after?: string | null };
+  'pr.get': FloorRef & { session: string; id: string };
+  'pr.comment': FloorRef & { session: string; id: string; body: string };
+  'pr.merge': FloorRef & { session: string; id: string; method: MergeMethod; confirm: true; override?: boolean; confirm_override?: true };
   'worker.open_pr.prepare': { id: string };
   'worker.open_pr': { id: string; title: string; body: string; confirm: true };
   // M13 screen (docs/protocol.md "Screen share").
@@ -1828,7 +1865,10 @@ export interface BoardRate {
 
 /** Fields both board messages carry. */
 export interface BoardBase {
+  /** The floor's herdr session. */
   session: string;
+  /** #58: the floor id whose board this is. */
+  floor?: string;
   provider: string;
   /** "GitHub": the game says "Open in GitHub". */
   provider_name: string;
