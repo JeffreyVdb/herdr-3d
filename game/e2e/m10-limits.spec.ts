@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, leftInTerminal, openGame, shot, watchErrors, openMenu } from './game';
+import { frames, leftInTerminal, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // M10 (#12) on demo-m4 and the simulating fixture server (tools/fixture-limits.ts): the always-on plan limits widget in the
 // city, on a floor, over an overlay; its colours, panel, staleness, refresh and switch-off; and the limits inside the
@@ -170,6 +170,7 @@ test('it can be hidden from the panel, comes back in Settings and with Shift+L, 
   // Settings has the switch (Display).
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await settingsSection(page, 'display'); // #49: one section at a time
   const box = page.locator('#settings-limits');
   await expect(box).not.toBeChecked();
   await box.check();

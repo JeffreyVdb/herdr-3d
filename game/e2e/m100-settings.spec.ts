@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { openGame, shot, watchErrors, openMenu } from './game';
+import { openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // #100: Settings → Notifications. The browser's notification permission is stubbed before the page loads (a
 // headless Chromium has no prompt to answer), and AudioContext.createOscillator is counted, so Test is seen to
@@ -34,8 +34,8 @@ async function openSection(page: Page) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
-  const section = dialog.locator('[data-section="notifications"]');
-  await section.scrollIntoViewIfNeeded();
+  // #49: one section at a time: show Notifications.
+  const section = await settingsSection(page, 'notifications');
   return { dialog, section };
 }
 

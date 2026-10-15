@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { openGame, shot, watchErrors, openMenu } from './game';
+import { openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // #92: the "AI integration" section of Settings, against the fixture bridge (`sim=1`, tools/fixture-ai.ts) which calls
 // fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports. Keys are typed once, sent to the
@@ -64,6 +64,8 @@ async function setup(page: Page, jev: Fake): Promise<{ dialog: Locator; classifi
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
+  // #49: one section at a time; reopening (and the AI chip) shows it again.
+  await settingsSection(page, 'ai');
   return { dialog, classifier: dialog.getByRole('group', { name: /Classification model/ }), llm: dialog.getByRole('group', { name: /^LLM/ }) };
 }
 

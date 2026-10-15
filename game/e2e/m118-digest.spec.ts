@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { expect, test, type Locator } from '@playwright/test';
-import { frames, openGame, shot, watchErrors, openMenu } from './game';
+import { expect, test, type Locator, type Page } from '@playwright/test';
+import { frames, openGame, settingsSection, shot, watchErrors, openMenu } from './game';
 
 // #118 phase 2, floor overview summaries, against the fixture bridge (`sim=1`, tools/fixture-digest.ts) on demo-m118,
 // whose AI integration calls a fake OpenAI-compatible server started here on an OS-leased loopback port: no spec
@@ -59,8 +59,9 @@ function fakeOpenAI(): Promise<Fake> {
   );
 }
 
-/** The LLM set up through the AI integration section. */
-async function setUpLLM(dialog: Locator, llm: Fake): Promise<void> {
+/** The LLM set up through the AI integration section, then back to the summaries (#49: one section at a time). */
+async function setUpLLM(page: Page, dialog: Locator, llm: Fake): Promise<void> {
+  await settingsSection(page, 'ai');
   const box = dialog.getByRole('group', { name: /^LLM/ });
   await box.getByLabel('Base URL').fill(`${llm.url}/v1`);
   await box.getByLabel('API key').fill(LLM_KEY);
@@ -69,6 +70,7 @@ async function setUpLLM(dialog: Locator, llm: Fake): Promise<void> {
   await expect(box).toContainText('Test passed');
   await box.getByRole('button', { name: 'Save' }).click();
   await expect(box.locator('.settings-badge')).toHaveText('Ready');
+  await settingsSection(page, 'digest');
 }
 
 test('summaries: off until a test passed, then the LLM writes the floor’s lines and the overview marks them AI', async ({ page }) => {
@@ -80,7 +82,7 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
-    const section = dialog.locator('[data-section="digest"]');
+    const section = await settingsSection(page, 'digest');
     await expect(section.getByRole('heading', { name: 'Floor overview summaries', level: 3 })).toBeVisible();
     await expect(section.locator('.settings-store')).toHaveText('Bridge');
     const order = await dialog.locator('section.settings-section').evaluateAll((s) => s.map((x) => (x as HTMLElement).dataset.section));
@@ -93,7 +95,7 @@ test('summaries: off until a test passed, then the LLM writes the floor’s line
     await expect(section.locator('.settings-fu-privacy')).toContainText('the last 5 assistant turns of every worker');
     const [note, sw] = await Promise.all([section.locator('.settings-fu-privacy').boundingBox(), toggle.boundingBox()]);
     expect(note && sw && note.y + note.height <= sw.y).toBe(true);
-    await setUpLLM(dialog, llm);
+    await setUpLLM(page, dialog, llm);
     await expect(toggle).toBeDisabled();
     // Nothing of the floor went before the switch.
     expect(llm.bodies).toHaveLength(0);

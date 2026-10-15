@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, openMenu, watchErrors } from './game';
+import { frames, openGame, openMenu, settingsSection, watchErrors } from './game';
 import { advance, beeps, forgetToasts, notes, pose, probe, SPAWNED, toasts } from './hireProbe';
 
 // #210 on demo-m4 with the simulator on a manual clock (sim=1, simclock=manual): a hire's ack is held until the test
@@ -70,7 +70,8 @@ test('the setting is off by default, kept across a reload; on, Hire closes at on
   // Settings → Display: the row sits right after "Go to a new hire after hiring", off.
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const display = page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="display"]');
+  // #49: one section at a time: show Display.
+  const display = await settingsSection(page, 'display');
   await display.scrollIntoViewIfNeeded();
   const box = display.getByLabel(/^Hire in background/);
   await expect(box).not.toBeChecked();
@@ -85,7 +86,7 @@ test('the setting is off by default, kept across a reload; on, Hire closes at on
   await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3);
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="display"]').getByLabel(/^Hire in background/)).toBeChecked();
+  await expect((await settingsSection(page, 'display')).getByLabel(/^Hire in background/)).toBeChecked();
 
   const at = await onPastry(page);
   const inbox = (await page.evaluate(() => window.__h3d.inboxItems())).length;

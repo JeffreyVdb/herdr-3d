@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, type Page } from '@playwright/test';
-import { frames, openMenu } from './game';
+import { frames, openMenu, settingsSection } from './game';
 
 // #213, #214: the dictation bar's e2e helpers, shared by h213-dictation.spec.ts and the h214 specs. The fixture's
 // interpreter (`sim=1`, tools/fixture-interpret.ts) calls the LLM the game set up in Settings: a fake OpenAI-compatible
@@ -115,6 +115,7 @@ export async function setUpLlm(page: Page, llm: Fake): Promise<void> {
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await settingsSection(page, 'ai');
   const box = dialog.getByRole('group', { name: /^LLM/ });
   await box.getByLabel('Base URL').fill(`${llm.url}/v1`);
   await box.getByLabel('API key').fill(LLM_KEY);

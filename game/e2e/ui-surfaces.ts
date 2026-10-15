@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import { frames, leftInTerminal, openGame, openMenu, seatMode } from './game';
+import { frames, leftInTerminal, openGame, openMenu, seatMode, settingsSection } from './game';
 import { board as boardState, enter, faceBoard, waitNotes, wall } from './m7';
 
 // #216: the application surfaces, one opener each, shared by the screenshot spec, the coverage inventory and the
@@ -148,7 +148,7 @@ async function openConflictingPr(page: Page): Promise<void> {
 async function setTaskLevels(page: Page, open = false): Promise<void> {
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const section = page.locator('[data-section="task-levels"]');
+  const section = await settingsSection(page, 'task-levels');
   const add = async (name: string) => {
     await section.getByRole('button', { name: 'Add level' }).click();
     await page.keyboard.type(name);

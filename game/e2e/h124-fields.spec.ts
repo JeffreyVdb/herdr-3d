@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Ask, Worker } from '../src/net/protocol';
 import { BINDINGS, type Binding } from '../src/input/shortcuts';
-import { frames, openGame, seatMode, watchErrors } from './game';
+import { frames, openGame, seatMode, settingsSection, watchErrors } from './game';
 
 // #124: single keys pause while a text field has focus (WCAG 2.1.4). Every character the shortcut table binds, lower and
 // upper case, is typed into each kind of field the game has, and nothing fires (no dialog, no board, no inbox, no plan,
@@ -129,6 +129,8 @@ test('Settings: a text input', async ({ page }) => {
   await page.keyboard.press(',');
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
+  // #49: one section at a time: Timezone is in Day and night.
+  await settingsSection(page, 'time');
   const zone = dialog.getByLabel('Timezone');
   await typeAll(page, zone, 'settings timezone');
   await chordOpensHelp(page, zone, 'settings timezone');

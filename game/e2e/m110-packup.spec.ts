@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { frames, openGame, seatMode, shot, watchErrors, openMenu } from './game';
+import { frames, openGame, seatMode, settingsSection, shot, watchErrors, openMenu } from './game';
 
 // #110 pack up on request against the fixture bridge (`sim=1`, tools/fixture-packup.ts), whose AI integration calls
 // fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports: no spec reaches a real provider.
@@ -85,8 +85,9 @@ function fakeOpenAI(): Promise<Fake> {
   );
 }
 
-/** Both models set up through the AI integration section. */
-async function setUpModels(dialog: Locator, llm: Fake): Promise<void> {
+/** Both models set up through the AI integration section, then back to Pack up on request (#49: one section at a time). */
+async function setUpModels(page: Page, dialog: Locator, llm: Fake): Promise<void> {
+  await settingsSection(page, 'ai');
   const classifier = dialog.getByRole('group', { name: /Classification model/ });
   await classifier.getByLabel('Key', { exact: true }).fill(JEV_KEY);
   await classifier.getByRole('button', { name: 'Load models' }).click();
@@ -103,6 +104,7 @@ async function setUpModels(dialog: Locator, llm: Fake): Promise<void> {
   await expect(box).toContainText('Test passed');
   await box.getByRole('button', { name: 'Save' }).click();
   await expect(box.locator('.settings-badge')).toHaveText('Ready');
+  await settingsSection(page, 'packup');
 }
 
 /** Settings: the models, the pack-up test, the switch on. Returns the section. */
@@ -111,7 +113,7 @@ async function switchOn(page: Page, llm: Fake): Promise<Locator> {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   const section = dialog.locator('[data-section="packup"]');
-  await setUpModels(dialog, llm);
+  await setUpModels(page, dialog, llm);
   await section.getByRole('button', { name: 'Test' }).click();
   await expect(section).toContainText('Test passed');
   await section.getByRole('checkbox', { name: 'Pack up on request' }).check();
@@ -144,9 +146,9 @@ test('Settings: the switch is off until a test passed, beside the follow-up ques
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
-    // About 640 px wide on a desktop.
-    expect(Math.round((await dialog.boundingBox())!.width)).toBe(640);
-    const section = dialog.locator('[data-section="packup"]');
+    // #49: far wider than the old 640 px on a desktop, the section picked from the list.
+    expect(Math.round((await dialog.boundingBox())!.width)).toBeGreaterThan(900);
+    const section = await settingsSection(page, 'packup');
     await expect(section.getByRole('heading', { name: 'Pack up on request', level: 3 })).toBeVisible();
     await expect(section.locator('.settings-store')).toHaveText('Bridge');
     // Right after the follow-up questions.
@@ -160,7 +162,7 @@ test('Settings: the switch is off until a test passed, beside the follow-up ques
     await expect(toggle).toBeDisabled();
     const [note, sw] = await Promise.all([section.locator('.settings-fu-privacy').boundingBox(), toggle.boundingBox()]);
     expect(note && sw && note.y + note.height <= sw.y).toBe(true);
-    await setUpModels(dialog, llm);
+    await setUpModels(page, dialog, llm);
     await expect(toggle).toBeDisabled();
     expect(await sent(page, 'packup.set')).toHaveLength(0);
     expect(await sent(page, 'packup.detect')).toHaveLength(0);
@@ -173,10 +175,12 @@ test('Settings: the switch is off until a test passed, beside the follow-up ques
     expect(await page.evaluate(() => window.__h3d.packup())).toMatchObject({ enabled: true, state: 'ready', tested: true });
     await section.scrollIntoViewIfNeeded();
     await shot(page, 'settings-packup');
-    // A phone: the dialog keeps its 16 px margins, the section its one column.
+    // A phone: the dialog takes nearly the whole width (#49: 8 px margins), the section its one column, still showing.
     await page.setViewportSize({ width: 320, height: 640 });
-    await expect.poll(async () => Math.round((await dialog.boundingBox())!.width)).toBeLessThanOrEqual(288);
-    expect((await dialog.boundingBox())!.width).toBeGreaterThan(270);
+    await expect.poll(async () => Math.round((await dialog.boundingBox())!.width)).toBeLessThanOrEqual(304);
+    expect((await dialog.boundingBox())!.width).toBeGreaterThan(290);
+    await expect(section).toBeVisible();
+    await expect(dialog.getByLabel('Section', { exact: true })).toHaveValue('packup');
     const scroll = await dialog.locator('.settings-body').evaluate((e) => e.scrollWidth - e.clientWidth);
     expect(scroll).toBeLessThanOrEqual(0);
     await section.scrollIntoViewIfNeeded();

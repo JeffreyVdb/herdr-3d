@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors, openMenu } from './game';
+import { frames, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // M6 start on demo-m4 with the simulating fixture server (tools/fixture-sim.ts,
 // tools/fixture-start.ts): herdr-3d (top floor of Work, repo JeffreyVdb/herdr-3d
@@ -370,6 +370,7 @@ for (const width of [1280, 360]) {
     await openGame(page, 'demo-m4', '', SIM);
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await settingsSection(page, 'display'); // #49: one section at a time
     const setting = page.locator('#settings-hire-worktree');
     await expect(setting).toBeChecked();
     await setting.scrollIntoViewIfNeeded();

@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { frames, openGame, openMenu, shot, watchErrors } from './game';
+import { frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
 
 // #40 on demo-m4 with the simulator: Settings → Task levels and the Hire dialog's chips keep their dialog's header and
 // body where they are, whatever is clicked or pressed. The bug: a chip's visually hidden radio had no containing block
@@ -123,8 +123,8 @@ function settingsCheck(page: Page) {
 async function openSettings(page: Page): Promise<Locator> {
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
-  return page.locator('[data-section="task-levels"]');
+  // #49: one section at a time; Task levels is picked from the list (the picker on a phone).
+  return settingsSection(page, 'task-levels');
 }
 
 async function setup(page: Page, theme: (typeof THEMES)[number], size: (typeof SIZES)[number]): Promise<void> {
@@ -227,6 +227,13 @@ for (const theme of THEMES) {
       const overflow = await section.locator('.tl-level').evaluateAll((rows) => rows.map((r) => r.scrollWidth - r.clientWidth));
       for (const o of overflow) expect(o).toBeLessThanOrEqual(0);
       expect(await page.locator('dialog.settings .settings-body').evaluate((b) => b.scrollWidth - b.clientWidth)).toBeLessThanOrEqual(0);
+
+      // #49: picking another section and coming back (a click on its tab, the picker on a phone) moves nothing either.
+      await check.ready(row('a'));
+      await settingsSection(page, 'harness-models');
+      await check.after('another section', false);
+      await settingsSection(page, 'task-levels');
+      await check.after('back to Task levels', false);
       clean();
     });
 
@@ -289,6 +296,24 @@ for (const theme of THEMES) {
       await focus('tl-b-remove');
       await page.keyboard.press('Enter');
       await check.after('Enter on Remove');
+
+      // #49: the section list from the keyboard (wide only: a phone has the picker): Shift+Tab out of the body reaches the
+      // selected tab, arrows move along the list and show each section, and the dialog stays put throughout.
+      if (size.width >= 800) {
+        await check.ready(key('tl-add'));
+        const tab = page.locator('[role="tab"][data-tab="task-levels"]');
+        await tab.focus();
+        await page.keyboard.press('ArrowDown');
+        await check.after('ArrowDown on the section list');
+        await expect(page.locator('[role="tab"][aria-selected="true"]')).toBeFocused();
+        await expect(section).toBeHidden();
+        await page.keyboard.press('ArrowUp');
+        await check.after('ArrowUp on the section list');
+        await expect(tab).toBeFocused();
+        await expect(section).toBeVisible();
+        await page.keyboard.press('Tab');
+        await check.after('Tab from the list into the section');
+      }
       clean();
     });
 

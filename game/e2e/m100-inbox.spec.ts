@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, shot, watchErrors, openMenu } from './game';
+import { frames, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // #100 on demo-m5 with the simulator (it answers transcript.watch, so a plain sit opens the conversation) and the plan
 // limits (tools/fixture-limits.ts): the inbox chip under the plate and its list. Work holds herdr-3d (top),
@@ -151,6 +151,7 @@ test('the inbox takes the plate’s spot when the plate is switched off, and Set
   // Show inbox off (Settings → Display): the chip goes, and that is remembered; on again, it is back.
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await settingsSection(page, 'display'); // #49: one section at a time
   const sw = page.locator('#settings-inbox');
   await expect(sw).toBeChecked();
   await sw.uncheck();
@@ -160,6 +161,7 @@ test('the inbox takes the plate’s spot when the plate is switched off, and Set
   await expect.poll(() => inbox(page)).toMatchObject({ shown: false });
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await settingsSection(page, 'display');
   await sw.check();
   await page.keyboard.press('Escape');
   await expect.poll(() => inbox(page)).toMatchObject({ shown: true });

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, openMenu, watchErrors } from './game';
+import { frames, openGame, openMenu, settingsSection, watchErrors } from './game';
 import { dictate, enterFloor, fakeOpenAI, hires, openBar, review, reviewReady, sentOf, setUpLlm } from './dictation';
 import { advance, beeps, forgetToasts, notes, pose, probe, SPAWNED, toasts } from './hireProbe';
 
@@ -16,7 +16,8 @@ async function setBackground(page: Page, on: boolean): Promise<void> {
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
-  const box = dialog.locator('[data-section="display"]').getByLabel(/^Hire in background/);
+  // #49: one section at a time: show Display.
+  const box = (await settingsSection(page, 'display')).getByLabel(/^Hire in background/);
   await box.scrollIntoViewIfNeeded();
   await box.setChecked(on);
   expect(await page.evaluate(() => localStorage.getItem('h3d.hire.background'))).toBe(on ? 'on' : null);

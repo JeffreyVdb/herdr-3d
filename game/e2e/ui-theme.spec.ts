@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, openMenu, watchErrors } from './game';
+import { frames, openGame, openMenu, settingsSection, watchErrors } from './game';
 import { boot, DESKTOP, NARROW, seed, SIM, sitAtTofu, SURFACES, type Themes, type UiTheme } from './ui-surfaces';
 import { strays, targets, textSamples } from './ui-theme-probe';
 
@@ -25,6 +25,8 @@ async function openSettings(page: Page) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
+  // #49: one section at a time; these tests start on Appearance (the theme picker).
+  await settingsSection(page, 'appearance');
   return dialog;
 }
 
@@ -600,7 +602,13 @@ test('touch targets: Ubuntu standard controls are >= 36 px, icon controls >= 32 
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
     const tooSmall = async (root: string) => (await sizes(page, root)).filter((t) => (coarse ? t.w < 44 || t.h < 44 : t.icon || t.dense ? t.w < 32 || t.h < 32 : t.h < 36)).map((t) => `${t.at} ${t.w}x${t.h}`);
-    expect(await tooSmall('dialog.settings'), `settings, ${coarse ? 'coarse' : 'fine'} pointer`).toEqual([]);
+    // #49: one section shows at a time: every section the bridge offers, each in turn (the tabs, or the picker on a phone).
+    const ids = await page.locator('dialog.settings [role="tab"]:not([hidden])').evaluateAll((ts) => ts.map((t) => (t as HTMLElement).dataset.tab!));
+    expect(ids.length).toBeGreaterThan(5);
+    for (const id of ids) {
+      await settingsSection(page, id);
+      expect(await tooSmall('dialog.settings'), `settings ${id}, ${coarse ? 'coarse' : 'fine'} pointer`).toEqual([]);
+    }
     await page.keyboard.press('Escape');
     // The Hire dialog and the top bar's menu.
     await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
@@ -637,6 +645,8 @@ test('forced colors keep the picker, focus and controls legible; reduced motion 
     return { bg: c.backgroundColor, fg: c.color };
   });
   expect(checked.bg).not.toBe(checked.fg);
+  // #49: the selected section's tab keeps an outline (its ring is a box shadow, which forced colors drop).
+  expect(await dialog.locator('[role="tab"][aria-selected="true"]').evaluate((e) => getComputedStyle(e).outlineStyle)).not.toBe('none');
   // Switching has no transition on the page: a colour change is one frame.
   const dur = await page.evaluate(() => [...document.querySelectorAll('.topbar, dialog.settings, .btn')].map((e) => getComputedStyle(e).transitionDuration));
   for (const d of dur) for (const t of d.split(',')) expect(parseFloat(t) * (t.trim().endsWith('ms') ? 0.001 : 1)).toBeLessThanOrEqual(0.2);
@@ -837,9 +847,9 @@ test('states: disabled controls keep their label readable (muted on raised, no o
   test.setTimeout(180_000);
   const clean = watchErrors(page);
   await boot(page, 'demo-m5', { ui: 'ubuntu' });
-  const dlg = await openSettings(page);
-  // A disabled button: any in the dialog (Test, Save and Clear wait for a configured model).
-  const dis = dlg.locator('button:disabled, button[aria-disabled="true"]').first();
+  await openSettings(page);
+  // A disabled button: any in AI integration (Test, Save and Clear wait for a configured model; #49: its section shown).
+  const dis = (await settingsSection(page, 'ai')).locator('button:disabled, button[aria-disabled="true"]').first();
   await dis.scrollIntoViewIfNeeded();
   const d = await dis.evaluate((b) => {
     const c = getComputedStyle(b);
@@ -847,7 +857,8 @@ test('states: disabled controls keep their label readable (muted on raised, no o
   });
   expect(d.opacity).toBe('1');
   expect([rgbToHex(d.bg), rgbToHex(d.fg), rgbToHex(d.border)]).toEqual(['#3b1330', '#cdb1c6', '#ae93a7']);
-  // A field's placeholder: muted text on the recessed well, 4.5:1.
+  // A field's placeholder: muted text on the recessed well, 4.5:1 (Day and night's fields).
+  const dlg = await settingsSection(page, 'time');
   const zone = dlg.locator('input[placeholder]').first();
   await zone.scrollIntoViewIfNeeded();
   const ph = await zone.evaluate((i) => ({ fg: getComputedStyle(i, '::placeholder').color, bg: getComputedStyle(i).backgroundColor, border: getComputedStyle(i).borderTopColor, caret: getComputedStyle(i).caretColor }));

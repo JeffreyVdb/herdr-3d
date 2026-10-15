@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, openGame, shot, watchErrors, openMenu } from './game';
+import { frames, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 import { pixelStats } from './pixels';
 
 // M17 (#50): day and night follow the operator's local time; the office has a wall clock. Nothing here reads the wall
@@ -161,6 +161,7 @@ test.describe('the real clock (page.clock, Brussels)', () => {
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
+    await settingsSection(page, 'time'); // #49: one section at a time
     const zone = dialog.getByLabel('Timezone');
     await expect(dialog.getByText('In effect: Europe/Brussels, this browser’s zone.')).toBeVisible();
     // Refused: an offset, then a made-up place. Nothing stored, the clock unchanged.

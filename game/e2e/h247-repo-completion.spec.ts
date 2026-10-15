@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, openMenu, RESULTS, seatMode, watchErrors } from './game';
+import { frames, openGame, openMenu, RESULTS, seatMode, settingsSection, watchErrors } from './game';
 
 // #247: `@r:` in the transcript's prompt box lists the repositories and folders of the other floors of the worker's
 // building, against the simulating fixture server with demo-m5 set up for it (`simrepos`, tools/fixture-repos.ts):
@@ -87,7 +87,8 @@ test('@r: lists this building’s other floors; a pick puts in the folder; the s
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const section = page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="repos"]');
+  // #49: one section at a time: show Repositories.
+  const section = await settingsSection(page, 'repos');
   await expect(section.locator('.settings-store')).toHaveText('Bridge');
   const toggle = section.getByRole('checkbox', { name: 'Repositories from other buildings' });
   await expect(toggle).not.toBeChecked();
