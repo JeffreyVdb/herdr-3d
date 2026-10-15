@@ -100,6 +100,7 @@ import { digestFailureText } from './world/digestSettings';
 import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup';
 import { activitySection } from './ui/activitySection';
 import { codexServerSection } from './ui/codexServerSection';
+import { repoDiscoverySection } from './ui/repoDiscoverySection';
 import { repoRefsSection } from './ui/repoRefsSection';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
@@ -434,6 +435,11 @@ export class App {
     settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'workers' });
     // #247: whether a conversation's `@r:` lists every building's floors (the bridge's switch, off by default).
     settings.addSection('repos', 'Repositories', repoRefsSection({ book: this.store.repoRefs, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'integrations' });
+    // #54: the folders on the bridge host scanned for Git checkouts, which `@r:` lists too (absent without discovery).
+    settings.addSection('repo-discovery', 'Repository discovery', repoDiscoverySection({ book: this.store.repoDiscovery, send: (t, args) => this.send(t, args) }), {
+      store: 'bridge',
+      group: 'integrations',
+    });
     // #184: the Kaneo instance a floor can use as its issue board instead of GitHub.
     settings.addSection('kaneo', 'Kaneo', kaneoSection({ book: this.store.kaneo, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'integrations' });
     this.store.ai.onChange((notice) => {

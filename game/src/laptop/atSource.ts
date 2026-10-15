@@ -1,6 +1,6 @@
 import type { FileMatch } from '../net/protocol';
 import type { Source } from '../ui/composer/complete';
-import type { RepoItem } from './repoSearch';
+import { REPOS_LABEL, type RepoItem } from './repoSearch';
 
 /**
  * #247: the transcript composer's one `@` source (the popup has one source per trigger, `completion.ts`): a query
@@ -16,6 +16,8 @@ export type AtItem = { via: 'file'; item: FileMatch } | { via: 'repo'; item: Rep
 export const REPO_PREFIX = /^(?:r|repo):/;
 /** #39: the files' footer when they have nothing else to say: what `@` searches (never skills: those are `/`), and `r:`. */
 export const REPO_HINT = 'Files in this checkout · type r: for repositories on other floors';
+/** #54: the same with repository discovery on: `r:` lists more than the other floors. */
+export const REPO_HINT_ALL = 'Files in this checkout · type r: for repositories';
 
 export function atSource(files: Source<FileMatch>, repos: Source<RepoItem>): Source<AtItem> {
   let mode: 'file' | 'repo' = 'file';
@@ -46,7 +48,7 @@ export function atSource(files: Source<FileMatch>, repos: Source<RepoItem>): Sou
     },
     render: (x) => (x.via === 'repo' ? repos.render(x.item) : files.render(x.item)),
     insert: (x, token, text) => (x.via === 'repo' ? repos.insert(x.item, token, text) : files.insert(x.item, token, text)),
-    footer: () => (mode === 'repo' ? (repos.footer?.() ?? null) : (files.footer?.() ?? REPO_HINT)),
+    footer: () => (mode === 'repo' ? (repos.footer?.() ?? null) : (files.footer?.() ?? (repos.label === REPOS_LABEL ? REPO_HINT_ALL : REPO_HINT))),
     loading: () => (mode === 'repo' ? repos.loading?.() : files.loading?.()) ?? 'Loading…',
     failure: () => (mode === 'repo' ? repos.failure?.() : files.failure?.()) ?? 'Could not load matches.',
     retry: () => (mode === 'repo' ? repos : files).retry?.(),

@@ -161,16 +161,16 @@ func TestWorkerRepos(t *testing.T) {
 		return got.Repos
 	}
 	same := []proto.RepoRef{
-		{Session: "web", Building: &work1, SameBuilding: true, Repo: "acme/web"},
-		{Session: "api", Building: &work1, SameBuilding: true, Repo: "acme/api", Dir: "/src/api", Cloned: true},
-		{Session: "docs", Building: &work1, SameBuilding: true, Dir: "/src/docs"},
-		{Session: "kaneo", Building: &work1, SameBuilding: true, Repo: "acme/board"},
+		{ID: "gh:acme/web", Source: "floor", Session: "web", Building: &work1, SameBuilding: true, Repo: "acme/web"},
+		{ID: "gh:acme/api", Source: "floor", Session: "api", Building: &work1, SameBuilding: true, Repo: "acme/api", Dir: "/src/api", Cloned: true},
+		{ID: "dir:/src/docs", Source: "floor", Session: "docs", Building: &work1, SameBuilding: true, Dir: "/src/docs"},
+		{ID: "gh:acme/board", Source: "floor", Session: "kaneo", Building: &work1, SameBuilding: true, Repo: "acme/board"},
 	}
 	if got := ask(ids["own"]); !reflect.DeepEqual(got, same) {
 		t.Fatalf("own floor's repos:\n got %+v\nwant %+v", got, same)
 	}
 	_, m := c.command(proto.CmdWorkerRepos, "shape", proto.WorkerReposArgs{ID: ids["web"]})
-	if !strings.Contains(string(m.raw), `{"session":"own","building":"Work","same_building":true,"repo":"acme/own","dir":"/src/own","cloned":false}`) {
+	if !strings.Contains(string(m.raw), `{"id":"gh:acme/own","source":"floor","session":"own","building":"Work","same_building":true,"repo":"acme/own","dir":"/src/own","cloned":false}`) {
 		t.Errorf("shape: %s", m.raw)
 	}
 	// An unassigned worker's floor is in no building: nothing, with the switch off.
@@ -184,18 +184,18 @@ func TestWorkerRepos(t *testing.T) {
 		t.Fatalf("set: %s, events %+v", sm.raw, evs)
 	}
 	all := append(append([]proto.RepoRef{}, same...),
-		proto.RepoRef{Session: "lib", Building: &home1, Repo: "acme/lib", Dir: "/src/other"},
-		proto.RepoRef{Session: "lot", Dir: "/src/lot"})
+		proto.RepoRef{ID: "gh:acme/lib", Source: "floor", Session: "lib", Building: &home1, Repo: "acme/lib", Dir: "/src/other"},
+		proto.RepoRef{ID: "dir:/src/lot", Source: "floor", Session: "lot", Dir: "/src/lot"})
 	if got := ask(ids["own"]); !reflect.DeepEqual(got, all) {
 		t.Fatalf("switch on:\n got %+v\nwant %+v", got, all)
 	}
 	lot := []proto.RepoRef{
-		{Session: "own", Building: &work1, Repo: "acme/own", Dir: "/src/own"},
-		{Session: "web", Building: &work1, Repo: "acme/web"},
-		{Session: "api", Building: &work1, Repo: "acme/api", Dir: "/src/api", Cloned: true},
-		{Session: "docs", Building: &work1, Dir: "/src/docs"},
-		{Session: "kaneo", Building: &work1, Repo: "acme/board"},
-		{Session: "lib", Building: &home1, Repo: "acme/lib", Dir: "/src/other"},
+		{ID: "gh:acme/own", Source: "floor", Session: "own", Building: &work1, Repo: "acme/own", Dir: "/src/own"},
+		{ID: "gh:acme/web", Source: "floor", Session: "web", Building: &work1, Repo: "acme/web"},
+		{ID: "gh:acme/api", Source: "floor", Session: "api", Building: &work1, Repo: "acme/api", Dir: "/src/api", Cloned: true},
+		{ID: "dir:/src/docs", Source: "floor", Session: "docs", Building: &work1, Dir: "/src/docs"},
+		{ID: "gh:acme/board", Source: "floor", Session: "kaneo", Building: &work1, Repo: "acme/board"},
+		{ID: "gh:acme/lib", Source: "floor", Session: "lib", Building: &home1, Repo: "acme/lib", Dir: "/src/other"},
 	}
 	// From the lot, every building is another one: Work's floors come in building order.
 	if got := ask(ids["lot"]); !reflect.DeepEqual(got, reorder(lot, "web", "own", "api", "docs", "kaneo", "lib")) {

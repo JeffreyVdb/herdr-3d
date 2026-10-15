@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, FileMatch, RepoRef } from '../net/protocol';
 import type { FileSearchHost } from './fileSearch';
-import { REPO_HINT } from './atSource';
-import type { RepoSearchHost } from './repoSearch';
+import { atSource, REPO_HINT, REPO_HINT_ALL } from './atSource';
+import { REPOS_LABEL, type RepoSearchHost } from './repoSearch';
 import { mountTranscript, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 // #247: the transcript's one `@` source: `@r:` / `@repo:` list the other floors' repositories (the prefix taken off),
@@ -59,7 +59,7 @@ function bridge(): Bridge {
 
 const file = (path: string): FileMatch => ({ path, kind: 'file', indices: [] });
 const okFiles = (fs: FileMatch[]): CommandResult => ({ ok: true, data: { files: fs, source: 'git', reason: null } });
-const ref = (session: string, o: Partial<RepoRef>): RepoRef => ({ session, building: 'Work', same_building: true, cloned: false, ...o });
+const ref = (session: string, o: Partial<RepoRef>): RepoRef => ({ id: `floor:${session}`, source: 'floor', session, building: 'Work', same_building: true, cloned: false, ...o });
 const okRepos = (rs: RepoRef[]): CommandResult => ({ ok: true, data: { repos: rs } });
 
 function host(b: Bridge): TranscriptRenderHost {
@@ -233,5 +233,25 @@ describe('the `@` source: files, or repositories behind r:', () => {
     await b.answerRepos(0, okRepos([]));
     expect(status()).toBe('No match');
     expect(note()).toBe('No other floors in this building have a repository or folder');
+  });
+});
+
+describe('#54 the r: hint with repository discovery', () => {
+  it('names the other floors only when discovery is off', () => {
+    let label = 'Repositories on other floors';
+    const files = { trigger: '@', items: () => [], render: () => '', insert: () => ({ text: '' }) } as unknown as Parameters<typeof atSource>[0];
+    const repos = {
+      trigger: '@',
+      get label() {
+        return label;
+      },
+      items: () => [],
+      render: () => '',
+      insert: () => ({ text: '' }),
+    } as unknown as Parameters<typeof atSource>[1];
+    const src = atSource(files, repos);
+    expect(src.footer?.()).toBe(REPO_HINT);
+    label = REPOS_LABEL;
+    expect(src.footer?.()).toBe(REPO_HINT_ALL);
   });
 });

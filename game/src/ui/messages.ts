@@ -112,6 +112,9 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'codex_server.set': 'give Codex workers their own server',
   'repo_refs.get': 'list repositories from other buildings', // #247
   'repo_refs.set': 'list repositories from other buildings',
+  'repo_discovery.get': 'scan for repositories', // #54
+  'repo_discovery.set': 'scan for repositories',
+  'repo_discovery.refresh': 'scan for repositories',
   'worker.answer_async': "answer a Codex worker's question", // #156
   'worker.dismiss_async': "dismiss a Codex worker's question",
   // #118

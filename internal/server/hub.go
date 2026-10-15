@@ -31,6 +31,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/repodisc"
 	"github.com/JeffreyVdb/herdr-3d/internal/runs"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
@@ -240,6 +241,11 @@ type Options struct {
 	// unsupported, the snapshot has no kaneo, and no floor gets a Kaneo
 	// board).
 	Kaneo *kaneoconf.Service
+	// #54: repository discovery (nil: the repo_discovery.* commands fail
+	// with unsupported, the snapshot has no repo_discovery, and
+	// worker.repos lists the floors only). NewHub configures it from the
+	// stored settings.
+	RepoDiscovery *repodisc.Service
 	// #90 follow-up questions: FollowupsEnabled is the environment's toggle
 	// (HERDR_WORLD_FOLLOWUPS_ENABLED; nil: not set), FollowupDebounce how
 	// long an ended turn and herdr's not-working status hold before the
@@ -414,6 +420,7 @@ type Hub struct {
 	cx codexState // #155 shared Codex server
 
 	rr repoRefsState // #247 repositories on other floors
+	rd repoDiscState // #54 repository discovery
 }
 
 type floorState struct {
@@ -662,6 +669,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initRepoRefs(ctx); err != nil { // #247
 		return nil, err
 	}
+	if err := h.initRepoDiscovery(ctx); err != nil { // #54
+		return nil, err
+	}
 	if err := h.initDigest(ctx); err != nil { // #118
 		return nil, err
 	}
@@ -730,6 +740,10 @@ func (h *Hub) Run(ctx context.Context) error {
 	if h.opts.Kaneo != nil { // #184 Kaneo
 		h.wg.Add(1)
 		go h.trackKaneo(ctx)
+	}
+	if h.opts.RepoDiscovery != nil { // #54
+		h.wg.Add(1)
+		go h.trackRepoDiscovery(ctx)
 	}
 	var codexC <-chan time.Time // #155
 	if h.codexAvailable() || len(h.cx.launches) > 0 {
@@ -866,6 +880,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startHireRepos
 		case proto.CmdRepoRefsGet, proto.CmdRepoRefsSet: // #247
 			start = h.startRepoRefs
+		case proto.CmdRepoDiscoveryGet, proto.CmdRepoDiscoverySet, proto.CmdRepoDiscoveryRefresh: // #54
+			start = h.startRepoDiscovery
 		// M5 term
 		case proto.CmdTerminalWatch:
 			start = h.startWatch
@@ -1929,6 +1945,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.InboxDismissed = h.inboxDismissedView() // #106
 	w.CodexServer = h.codexServerView()       // #155
 	w.RepoRefs = h.repoRefsView()             // #247
+	w.RepoDiscovery = h.repoDiscoveryView()   // #54
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

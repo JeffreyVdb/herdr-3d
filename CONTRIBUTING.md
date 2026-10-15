@@ -11,7 +11,9 @@
   origin of a directory, for the repo suggestion), `gitops` (the typed git runner of hires, send-homes and the Changes
   panel; #137: a checkout's file listing), `fileindex` (#137 `worker.files`: an index of each worker checkout's files
   and directories from `git ls-files` or `rg --files`, cached per checkout and rebuilt in the background when git's
-  index file changes or it grows old; never walks the disk), `fuzzy` (#137: the pure fzf-style path scorer and bounded
+  index file changes or it grows old; never walks the disk), `repodisc` (#54 repository discovery: the scan roots'
+  boundary walk, the bounded git lookups of the candidates, the identity merge and the background catalog with its
+  generations; `server` reads its snapshot for `worker.repos`), `fuzzy` (#137: the pure fzf-style path scorer and bounded
   top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `codexapp` (#155: the bridge's side
   of a shared-server Codex worker's own app-server: the passive protocol adapter `Watcher` (initialize, `thread/resume`
   by id only, bounded reconnect, `thread/unsubscribe`, never answers a server request), the fish launcher, the
@@ -488,7 +490,8 @@ journalctl --user -u herdr-world -f
 
 `go test ./...` never touches herdr or systemd (fake socket server + recorded fixtures; `herdr.Control` gets a fake
 `Runner` that plays herdr and systemd-run; hires and send-homes run against an in-memory herdr floor and git). Only
-`internal/gitops` and `internal/fileindex` (#137, which also runs the real `rg` when installed) run the real `git`, on repositories in a temp dir (M5: `worker.changes` is checked against `git
+`internal/gitops`, `internal/fileindex` (#137, which also runs the real `rg` when installed), `internal/repodisc` (#54)
+and the #54 hub tests (`internal/server/repodiscovery_test.go`) run the real `git`, on repositories in a temp dir (M5: `worker.changes` is checked against `git
 status` and `git diff --stat` there, byte for byte against `git diff`). `internal/usage` reads synthetic transcripts
 (`testdata/`, no real content) and temp files; `internal/runs` and the M6 hub tests read temp run directories and a
 synthetic over-cap run (`game/fixtures/runs/20260928-1400-overcap`, the very run the game's `demo-m6` floor is built
@@ -1185,6 +1188,18 @@ with `"` or a line break is never offered (`filePathProblem`). The switch is `ui
 and a folder-only floor in Work, a repo in Personal; cloned when the folder's basename is the repo name) and shares the
 switch between the key's connections; `e2e/h247-repo-completion.spec.ts` picks a folder and, after another client turns
 the switch on, a URL from the other building.
+#54: the bridge merges in the repositories it **discovered** under its scan roots (`internal/repodisc`, docs/protocol.md
+"Repository discovery"), one row per repository: rows carry `id` (the popup's `key`) and `source`; a discovered row has
+no floor (`repoRow` draws no `.tx-repo-floor`, its title says "found on the bridge host"), and every cloned row shows
+the folder a pick puts in (`.tx-repo-dir`). A row without `id` (an older bridge) is keyed `floor:<session>`.
+`repoSource` also listens to `RepoDiscoveryBook` (`world/repoDiscovery.ts`, the snapshot's `repo_discovery` and
+`repo_discovery.update`): a new `status.revision` marks the list stale and tells an open popup, progress alone does not;
+with roots set the label is "Repositories" and the empty notes name the scanned folders. Every surface passes the book
+(`TranscriptModeHost.repoDiscovery`, `LookupHost.repoDiscovery`). The settings are `ui/repoDiscoverySection.ts`
+(Settings → Integrations → Repository discovery, `store: 'bridge'`, hidden without the feature). The simulator's
+`simrepos=<key>` simulates discovery too (`DISK`, `SCAN_MS` in `tools/fixture-repos.ts`; without a key it is an older
+bridge); `e2e/h54-repo-discovery.spec.ts` adds the folder in one client and checks the other's open popup, Hire and
+Prompt.
 #39: the same `/`, `@` and `@r:` in the Hire worker First task, Start run's Extra instructions and First prompt, and the
 Prompt (P) overlay. `ui/dialogCompletion.ts` `CompletionScope` gives a composer one proxy source per trigger over the
 dialog's **lookup context**, read live: a hire's floor, harness, and the folder and worktree choice `worker.hire` would carry

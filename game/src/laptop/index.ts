@@ -314,6 +314,7 @@ export class Laptops {
       ...(host.packup ? { packup: host.packup } : {}),
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
       repoRefs: host.store.repoRefs, // #247
+      repoDiscovery: host.store.repoDiscovery, // #54
       ...(host.catalogs ? { catalogs: host.catalogs } : {}), // #39
       modeChanged: (mode) => this.onMode(mode),
       ...(host.themes ? { prefs: host.themes.prefs } : {}),

@@ -1182,3 +1182,76 @@ dialog.settings {
   outline-offset: 2px;
 }
 /* ubuntu:end */
+
+/* #54: repository discovery. The scanned folders as a short ruled list: each path in the code face (it is a path on
+ * the bridge host, typed as such), its state tag and Remove on one line, and what went wrong under it. */
+.settings-rd-roots {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.settings-rd-roots[hidden],
+.settings-rd-empty[hidden] {
+  display: none;
+}
+.settings-rd-root {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.settings-rd-root .settings-field-hint {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.settings-rd-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.settings-rd-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  color: var(--text);
+}
+.settings-rd-line .btn {
+  flex: none;
+}
+.settings-rd-actions {
+  display: flex;
+  gap: 8px;
+}
+.settings-rd-line .btn:disabled,
+.settings-rd-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.settings-rd-empty {
+  margin: 0;
+}
+.settings-rd .settings-status {
+  margin: -6px 0 0;
+}
+.settings-rd .settings-field input[type='text'] {
+  font-family: var(--font-code);
+  font-size: 12.5px;
+}
+.settings-rd-policy > summary {
+  margin-bottom: 0;
+}
+.settings-rd-policy[open] > summary {
+  margin-bottom: 6px;
+}
+@media (max-width: 600px) {
+  .settings-rd .btn--sm {
+    min-height: 44px;
+  }
+  .settings-rd-line {
+    flex-wrap: wrap;
+  }
+}

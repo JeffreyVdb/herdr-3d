@@ -43,28 +43,50 @@ type WorkerReposArgs struct {
 	ID string `json:"id"`
 }
 
-// WorkerRepos is worker.repos's ack: the other floors with a stored repo or
-// folder, in display order (the worker's building's floors by index, then,
-// with RepoRefs.AllBuildings, the other buildings' by sort and the
-// unassigned lot by name). Never null.
+// WorkerRepos is worker.repos's ack: one row per repository (or folder),
+// in display order: the other floors with a stored repo or folder (the
+// worker's building's floors by index, then, with RepoRefs.AllBuildings,
+// the other buildings' by sort and the unassigned lot by name), then (#54)
+// the discovered repositories no floor names, by name. Never null.
 type WorkerRepos struct {
 	Repos []RepoRef `json:"repos"`
 }
 
-// RepoRef is one floor of worker.repos: its stored settings.repo and
-// settings.default_cwd (never the suggestions). A floor with only a folder
-// is listed only when the folder exists.
+// Values of RepoRef.Source.
+const (
+	RepoSourceFloor      = "floor"
+	RepoSourceDiscovered = "discovered"
+)
+
+// RepoRef is one row of worker.repos: a floor's stored settings.repo and
+// settings.default_cwd (never the suggestions), or (#54) a repository
+// discovered under the scan roots. A floor with only a folder is listed only
+// when the folder exists. Rows for one repository merge into one (#54): the
+// floors naming the same GitHub repository or folders in the same checkout,
+// and a discovered checkout of it.
 type RepoRef struct {
-	Session string `json:"session"`
+	// ID is the row's identity, stable across asks (opaque).
+	ID string `json:"id"`
+	// Source is RepoSourceFloor (Session is the floor it comes from) or
+	// RepoSourceDiscovered (no floor names it: Session is absent).
+	Source string `json:"source"`
+	// Session is the floor (absent for a discovered row).
+	Session string `json:"session,omitempty"`
 	// Building is the name of the floor's building (null: the unassigned
-	// lot). SameBuilding: it is the worker's own building.
+	// lot, or a discovered row). SameBuilding: it is the worker's own
+	// building.
 	Building     *string `json:"building"`
 	SameBuilding bool    `json:"same_building"`
-	// Repo is the floor's GitHub "owner/repo" (absent: none).
+	// Repo is the GitHub "owner/repo" (absent: none).
 	Repo string `json:"repo,omitempty"`
-	// Dir is the floor's folder (absent: none).
+	// Dir is the folder a pick puts in (absent: none): the floor's folder,
+	// or, when the floor has no usable checkout of Repo and one was
+	// discovered, that checkout (the main one first, then by path).
 	Dir string `json:"dir,omitempty"`
-	// Cloned: Repo is set and Dir exists and is a checkout of it (its
-	// origin, ignoring case and a ".git" suffix; a subfolder counts).
+	// Cloned: Repo is set and Dir is a checkout of it (its origin, ignoring
+	// case and a ".git" suffix; a subfolder counts).
 	Cloned bool `json:"cloned"`
+	// Checkouts is how many checkouts of the repository were discovered
+	// (clones and worktrees; absent: none).
+	Checkouts int `json:"checkouts,omitempty"`
 }
