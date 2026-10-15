@@ -6,6 +6,8 @@
  * unit-tested on its own.
  */
 
+import { bridgeKey } from '../net/bridgeScope';
+
 /** A file a draft's images use: Excalidraw's BinaryFileData. */
 export interface DraftFile {
   id: string;
@@ -57,13 +59,13 @@ export function keepDraft(key: string, d: Draft, store: Storage | null = storage
   try {
     const s = JSON.stringify(d);
     if (store && s.length <= MAX_STORED_DRAFT) {
-      store.setItem(PREFIX + key, s);
+      store.setItem(bridgeKey(PREFIX) + key, s);
       return 'stored';
     }
-    store?.removeItem(PREFIX + key); // an older, smaller draft must not come back instead
+    store?.removeItem(bridgeKey(PREFIX) + key); // an older, smaller draft must not come back instead
   } catch {
     try {
-      store?.removeItem(PREFIX + key);
+      store?.removeItem(bridgeKey(PREFIX) + key);
     } catch {
       // nothing more to do: the memory copy stays
     }
@@ -76,7 +78,7 @@ export function readDraft(key: string, store: Storage | null = storage()): Draft
   const m = memory.get(key);
   if (m) return m;
   try {
-    const raw = store?.getItem(PREFIX + key);
+    const raw = store?.getItem(bridgeKey(PREFIX) + key);
     if (!raw) return null;
     const d: unknown = JSON.parse(raw);
     return isDraft(d) ? d : null;
@@ -97,10 +99,10 @@ export function dropDraftIf(key: string, covered: (d: Draft) => boolean, store: 
     else left = true;
   }
   try {
-    const raw = store?.getItem(PREFIX + key);
+    const raw = store?.getItem(bridgeKey(PREFIX) + key);
     if (raw) {
       const d: unknown = JSON.parse(raw);
-      if (!isDraft(d) || covered(d)) store?.removeItem(PREFIX + key);
+      if (!isDraft(d) || covered(d)) store?.removeItem(bridgeKey(PREFIX) + key);
       else left = true;
     }
   } catch {
@@ -113,7 +115,7 @@ export function dropDraftIf(key: string, covered: (d: Draft) => boolean, store: 
 export function dropDraft(key: string, store: Storage | null = storage()): void {
   memory.delete(key);
   try {
-    store?.removeItem(PREFIX + key);
+    store?.removeItem(bridgeKey(PREFIX) + key);
   } catch {
     // blocked storage has nothing to drop
   }

@@ -5,6 +5,8 @@
  * Guarded like `hirePrefs.ts`: storage can be missing, throw or hold something malformed, and then nothing is hidden.
  */
 
+import { bridgeKey } from '../net/bridgeScope';
+
 const KEY = 'h3d.hire.hiddenModels';
 
 /** Hidden slugs per harness, as stored: only harnesses with something hidden appear. */
@@ -47,7 +49,7 @@ export class HireModelPrefs {
   constructor(private readonly storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null = defaultStorage()) {
     let raw: string | null = null;
     try {
-      raw = this.storage?.getItem(KEY) ?? null;
+      raw = this.storage?.getItem(bridgeKey(KEY)) ?? null;
     } catch {
       raw = null;
     }
@@ -98,8 +100,8 @@ export class HireModelPrefs {
     this.rev++;
     try {
       // Only what is hidden is stored: nothing hidden leaves no key behind.
-      if (Object.keys(next).length) this.storage?.setItem(KEY, JSON.stringify(next));
-      else this.storage?.removeItem(KEY);
+      if (Object.keys(next).length) this.storage?.setItem(bridgeKey(KEY), JSON.stringify(next));
+      else this.storage?.removeItem(bridgeKey(KEY));
     } catch {
       /* not remembered past this page */
     }

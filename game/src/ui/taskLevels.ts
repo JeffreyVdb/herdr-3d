@@ -12,6 +12,7 @@
  */
 
 import { effectiveDefault, isComplete, MAX_LEVELS, nameProblem, type TaskLevel, type TaskLevelCombination, type TaskLevelId } from '../world/taskLevels';
+import { bridgeKey } from '../net/bridgeScope';
 
 export type { TaskLevel, TaskLevelCombination, TaskLevelId } from '../world/taskLevels';
 
@@ -116,7 +117,7 @@ export class TaskLevels {
   ) {
     let raw: string | null = null;
     try {
-      raw = this.storage?.getItem(KEY) ?? null;
+      raw = this.storage?.getItem(bridgeKey(KEY)) ?? null;
     } catch {
       raw = null;
     }
@@ -258,8 +259,8 @@ export class TaskLevels {
   private persist(): void {
     try {
       // No levels leaves no key behind.
-      if (this.levels.length) this.storage?.setItem(KEY, JSON.stringify({ v: 2, levels: this.levels, default: this.mark }));
-      else this.storage?.removeItem(KEY);
+      if (this.levels.length) this.storage?.setItem(bridgeKey(KEY), JSON.stringify({ v: 2, levels: this.levels, default: this.mark }));
+      else this.storage?.removeItem(bridgeKey(KEY));
     } catch {
       /* not remembered past this page */
     }
