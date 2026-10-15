@@ -355,3 +355,40 @@ func TestFloorCreateRespectsSessions(t *testing.T) {
 	hb.c.mustError(proto.CmdFloorCreate, proto.FloorCreateArgs{Name: "Web", BaseSession: "x"}, proto.ErrUnknownSession)
 	hb.c.mustAck(proto.CmdFloorCreate, proto.FloorCreateArgs{Name: "Web", BaseSession: "s"})
 }
+
+// run.start on a virtual floor: the orchestrator is on it from its first
+// event, its launch records the floor, and the floor's last preset is its
+// own.
+func TestRunStartOnVirtualFloor(t *testing.T) {
+	t.Parallel()
+	hb, w := launchBridge(t)
+	c := hb.c
+	_, ack := c.mustAck(proto.CmdFloorCreate, proto.FloorCreateArgs{Name: "Web", BaseSession: "s"})
+	id := ack.Data.(map[string]any)["id"].(string)
+	// Its settings are its own: none until set.
+	if v, _ := floorByID(hb.connect(proto.Hello{}).snapshot().World, id); v.Settings != nil {
+		t.Fatalf("new floor settings = %+v", v.Settings)
+	}
+	c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Floor: id, Repo: proto.Some("JeffreyVdb/lab"),
+		DefaultCwd: proto.Some("/home/u/lab")})
+	orch := buildTeam.Orch
+	evs, ack := c.mustAck(proto.CmdRunStart, proto.RunStartArgs{Floor: id, DeskIndex: ptr(0), Text: "go", Orch: &orch,
+		Preset: w.Presets[0].ID})
+	worker := ack.Data.(map[string]any)["id"].(string)
+	for _, ev := range evs {
+		if ev.T == proto.EvWorkerUpsert && ev.Worker.ID == worker && ev.Worker.Floor != id {
+			t.Fatalf("orchestrator upsert = %+v", ev.Worker)
+		}
+	}
+	l, ok, err := hb.st.RunLaunchByWorker(context.Background(), worker)
+	if err != nil || !ok || l.FloorID != id || l.Session != "s" {
+		t.Fatalf("launch = %+v, %v, %v", l, ok, err)
+	}
+	w = hb.connect(proto.Hello{}).snapshot().World
+	if v, _ := floorByID(w, id); v.LastPreset != w.Presets[0].ID {
+		t.Fatalf("virtual floor = %+v", v)
+	}
+	if real, _ := floorByID(w, "s"); real.LastPreset != "" {
+		t.Fatalf("real floor = %+v", real)
+	}
+}
