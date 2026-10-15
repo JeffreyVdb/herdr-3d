@@ -24,21 +24,31 @@ const issueStatusLine = "Move the ticket status accordingly, pull request always
 const placementLine = "Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: " +
 	"a laptop shows a pane at its own size, and a fullscreen terminal is wanted."
 
+// floorLine tells the orchestrator to tag the workspaces it creates with its
+// floor (#58). It is a hint: the bridge places a freelancer on its
+// orchestrator's floor once its run links it, and honours the token only
+// on a workspace nothing else attributed.
+func floorLine(floor string) string {
+	return "Also tag every herdr workspace you create with the token " + floorToken + "=" + floor +
+		", in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor."
+}
+
 // writeCodeSkill is the skill an orchestrator's first prompt runs.
 const writeCodeSkill = "write-code"
 
 // RunPrompt composes an orchestrator's first prompt: the write-code skill
 // invoked as call (the orchestrator harness's way, PromptTranslator's
 // SkillCall: claude /write-code, codex $write-code) on the ticket (an issue URL, or free text, trimmed), the team of the preset,
-// the line telling it where to start its agents, for an issue the line
+// the line telling it where to start its agents, the line telling it to tag
+// them with its floor (the floor id), for an issue the line
 // telling it to move the status, and the extra instructions (trimmed; with the blank line before them left
 // out when empty).
-func RunPrompt(call, ticket string, isIssue bool, roles proto.PresetRoles, extra string) string {
+func RunPrompt(call, ticket string, isIssue bool, roles proto.PresetRoles, floor, extra string) string {
 	status := ""
 	if isIssue {
 		status = issueStatusLine
 	}
-	return runPrompt(call, ticket, status, roles, extra)
+	return runPrompt(call, ticket, status, roles, floor, extra)
 }
 
 // maxItemBody bounds how much of an item's description goes into a prompt
@@ -80,11 +90,11 @@ func itemLine(provider string) string {
 // TicketPrompt is RunPrompt for a run ticket: an issue or a text as before,
 // an item (#184) with its text inlined and the item line in place of the
 // status line.
-func TicketPrompt(call string, t *proto.RunTicket, roles proto.PresetRoles, extra string) string {
+func TicketPrompt(call string, t *proto.RunTicket, roles proto.PresetRoles, floor, extra string) string {
 	if t.Kind == proto.TicketItem && t.Item != nil {
-		return runPrompt(call, ItemTicket(t), itemLine(t.ProviderName), roles, extra)
+		return runPrompt(call, ItemTicket(t), itemLine(t.ProviderName), roles, floor, extra)
 	}
-	return RunPrompt(call, ticketRef(t), t.Kind == proto.TicketIssue, roles, extra)
+	return RunPrompt(call, ticketRef(t), t.Kind == proto.TicketIssue, roles, floor, extra)
 }
 
 // writeCodeCall is how an orchestrator of harness runs write-code: the
@@ -96,7 +106,7 @@ func (h *Hub) writeCodeCall(harness string) string {
 	return h.opts.Prompts.SkillCall(harness, writeCodeSkill)
 }
 
-func runPrompt(call, ticket, status string, roles proto.PresetRoles, extra string) string {
+func runPrompt(call, ticket, status string, roles proto.PresetRoles, floor, extra string) string {
 	var b strings.Builder
 	b.WriteString(call + " " + strings.TrimSpace(ticket) + "\n\nTeam:")
 	for _, r := range []struct {
@@ -114,7 +124,7 @@ func runPrompt(call, ticket, status string, roles proto.PresetRoles, extra strin
 		}
 		fmt.Fprintf(&b, "\n- %s: %s %s, %s %s", r.what, r.hire.Harness, r.hire.Model, knob, r.hire.Effort)
 	}
-	b.WriteString("\n\n" + placementLine)
+	b.WriteString("\n\n" + placementLine + "\n\n" + floorLine(floor))
 	if status != "" {
 		b.WriteString("\n\n" + status)
 	}

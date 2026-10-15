@@ -30,8 +30,14 @@ const buildTeamLines = `Team:
 const placementLine = "Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: " +
 	"a laptop shows a pane at its own size, and a fullscreen terminal is wanted."
 
-// buildHead is the team of buildTeam and the placement rule.
-const buildHead = buildTeamLines + "\n\n" + placementLine
+// floorLineS asks the orchestrator to tag its agents' workspaces with its
+// floor (#58), here the real floor of session "s".
+const floorLineS = "Also tag every herdr workspace you create with the token h3d_floor=s, " +
+	"in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor."
+
+// buildHead is the team of buildTeam, the placement rule and the floor line
+// of floor "s".
+const buildHead = buildTeamLines + "\n\n" + placementLine + "\n\n" + floorLineS
 
 func TestRunPrompt(t *testing.T) {
 	t.Parallel()
@@ -79,13 +85,26 @@ func TestRunPrompt(t *testing.T) {
 				"- coders: codex gpt-6-luna, reasoning xhigh\n" +
 				"- reviewers: claude claude-fable-5-1, effort max\n" +
 				"- ux reviewers: claude claude-opus-5-5, effort low\n" +
-				"- researchers: codex gpt-6-astra, reasoning ultra\n\n" + placementLine + "\n\n" + statusLine},
+				"- researchers: codex gpt-6-astra, reasoning ultra\n\n" + placementLine + "\n\n" + floorLineS + "\n\n" + statusLine},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := server.RunPrompt(tc.call, tc.ticket, tc.issue, tc.roles, tc.extra); got != tc.want {
+			if got := server.RunPrompt(tc.call, tc.ticket, tc.issue, tc.roles, "s", tc.extra); got != tc.want {
 				t.Fatalf("RunPrompt =\n%s\n---\nwant\n%s", got, tc.want)
 			}
 		})
+	}
+}
+
+// #58: the floor line names the orchestrator's floor, a virtual one too,
+// right after the placement rule.
+func TestRunPromptNamesTheFloor(t *testing.T) {
+	t.Parallel()
+	got := server.RunPrompt("/write-code", "Fix the lobby.", false, buildTeam, "v-0123456789ab", "")
+	want := "/write-code Fix the lobby.\n\n" + buildTeamLines + "\n\n" + placementLine + "\n\n" +
+		"Also tag every herdr workspace you create with the token h3d_floor=v-0123456789ab, " +
+		"in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor."
+	if got != want {
+		t.Fatalf("prompt =\n%s\nwant\n%s", got, want)
 	}
 }
 
@@ -95,7 +114,7 @@ func TestItemPrompt(t *testing.T) {
 	t.Parallel()
 	ticket := &proto.RunTicket{Kind: proto.TicketItem, ProviderName: "Kaneo", Body: "Do it.",
 		Item: &proto.WorkItemRef{Provider: "kaneo", ID: "t1", Key: "HRD-3", Title: " Lobby ", URL: "https://tasks.example.test/x"}}
-	got := server.TicketPrompt("$write-code", ticket, buildTeam, "")
+	got := server.TicketPrompt("$write-code", ticket, buildTeam, "s", "")
 	want := "$write-code Kaneo task HRD-3: Lobby\nhttps://tasks.example.test/x\n\nDo it.\n\n" + buildHead +
 		"\n\nThis ticket is a Kaneo task, not a GitHub issue: everything the bridge read of it is above. Don't look it up with gh, and leave its status on the Kaneo board to people."
 	if got != want {
@@ -107,7 +126,7 @@ func TestItemPrompt(t *testing.T) {
 	}
 	// An issue's prompt is the one it always was.
 	issue := &proto.RunTicket{Kind: proto.TicketIssue, Repo: "JeffreyVdb/lab", Number: 3, URL: server.IssueURL("JeffreyVdb/lab", 3)}
-	if got := server.TicketPrompt("/write-code", issue, buildTeam, ""); got != server.RunPrompt("/write-code", issue.URL, true, buildTeam, "") {
+	if got := server.TicketPrompt("/write-code", issue, buildTeam, "s", ""); got != server.RunPrompt("/write-code", issue.URL, true, buildTeam, "s", "") {
 		t.Fatalf("issue prompt = %q", got)
 	}
 }

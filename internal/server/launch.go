@@ -382,7 +382,7 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 		if t != nil {
 			res.Label = runLabel(t)
 			if havePreset && orch != nil {
-				res.Prompt = TicketPrompt(h.writeCodeCall(orch.Harness), t, roles, a.Extra)
+				res.Prompt = TicketPrompt(h.writeCodeCall(orch.Harness), t, roles, a.Floor, a.Extra)
 			}
 		}
 	}
@@ -493,8 +493,8 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 	var compose firstPrompt
 	if prompt == "" {
 		call, roles := h.writeCodeCall(a.Orch.Harness), presetView(p).Roles
-		prompt = TicketPrompt(call, ticket, roles, a.Extra)
-		compose = func(tr func(string) string) string { return TicketPrompt(call, ticket, roles, tr(a.Extra)) }
+		prompt = TicketPrompt(call, ticket, roles, a.Floor, a.Extra)
+		compose = func(tr func(string) string) string { return TicketPrompt(call, ticket, roles, a.Floor, tr(a.Extra)) }
 	}
 	label := a.Label
 	if label == "" {

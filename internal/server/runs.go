@@ -172,6 +172,29 @@ func (h *Hub) members(floor string, obs []world.WorkerObs, ids []string) []runs.
 	return ms
 }
 
+// sessionMembers is members for one observation of a whole session (obs,
+// ids and their metas): its workers on the floors their metas name, every
+// other floor's from its views.
+func (h *Hub) sessionMembers(session string, obs []world.WorkerObs, ids []string, metas []workerMeta) []runs.Member {
+	var ms []runs.Member
+	for _, s := range sortedFloors(h.floors) {
+		if h.floors[s].session != session {
+			for _, id := range h.floors[s].order {
+				if w := h.workers[id]; w != nil {
+					ms = append(ms, memberOf(id, s, w.Role, w.Run, w.Tokens, w.Ticket))
+				}
+			}
+			continue
+		}
+		for i, w := range obs {
+			if metas[i].floor == s {
+				ms = append(ms, memberOf(ids[i], s, w.Role, w.Run, w.Tokens, w.RunInfo.Ticket))
+			}
+		}
+	}
+	return ms
+}
+
 func (h *Hub) links(ms []runs.Member) map[string]runs.Link {
 	return runs.Links(ms, h.issueRepoOf, h.launched)
 }
@@ -216,7 +239,8 @@ func (h *Hub) launched(id string) (runs.Launch, bool) {
 }
 
 // storeRunLaunch is the default Options.RunLaunch: the store's run_launch
-// record of an orchestrator, when it names an issue or (#184) an item.
+// record of an orchestrator, with its issue or (#184) item when it names
+// one, and (#58) its floor.
 func storeRunLaunch(st *store.Store, log *slog.Logger) func(context.Context, string) (runs.Launch, bool) {
 	return func(ctx context.Context, id string) (runs.Launch, bool) {
 		l, ok, err := st.RunLaunchByWorker(ctx, id)
@@ -224,15 +248,17 @@ func storeRunLaunch(st *store.Store, log *slog.Logger) func(context.Context, str
 			log.Error("loading run launch failed", "worker", id, "err", err)
 			return runs.Launch{}, false
 		}
-		switch {
-		case !ok:
+		if !ok {
 			return runs.Launch{}, false
-		case l.ItemProvider != "" && l.ItemID != "":
-			return runs.Launch{Item: &proto.WorkItemRef{Provider: l.ItemProvider, ID: l.ItemID, Key: l.ItemKey}}, true
-		case l.Repo != "" && l.IssueNumber >= 1:
-			return runs.Launch{Issue: &proto.IssueRef{Repo: l.Repo, Number: l.IssueNumber}}, true
 		}
-		return runs.Launch{}, false
+		out := runs.Launch{Floor: l.FloorID}
+		switch {
+		case l.ItemProvider != "" && l.ItemID != "":
+			out.Item = &proto.WorkItemRef{Provider: l.ItemProvider, ID: l.ItemID, Key: l.ItemKey}
+		case l.Repo != "" && l.IssueNumber >= 1:
+			out.Issue = &proto.IssueRef{Repo: l.Repo, Number: l.IssueNumber}
+		}
+		return out, true
 	}
 }
 
@@ -258,6 +284,70 @@ func (h *Hub) relink() {
 		h.workers[m.ID] = &next
 		h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: &next})
 	}
+}
+
+// --- floors ---
+
+// floorToken is the token an orchestrator's first prompt asks it to tag the
+// workspaces it creates with: its floor's id (#58).
+const floorToken = "h3d_floor"
+
+// attributed reports whether a worker's floor was given to it (#58): by
+// its hire (the bridge hired it, on whichever floor), or as a virtual floor
+// stored with it (by a hire, an inheritance or an h3d_floor token). Anyone
+// else is on its session's real floor only because nothing said otherwise.
+func (h *Hub) attributed(f *floorState, id string, m workerMeta) bool {
+	if m.hiredAt > 0 || f.hires[id] != nil {
+		return true
+	}
+	g := h.floors[m.floor]
+	return g != nil && g.virtual
+}
+
+// inheritFloors gives each worker of an observation of a session (obs, ids
+// and metas, whose floors it sets) that has no attributed floor one (#58
+// stage 3): a freelancer its orchestrator's, as soon as its run links it to
+// one, else the floor its h3d_floor token names; only a floor of the same
+// session. persist then stores it with the worker, so a restart (herdr
+// drops the tokens) keeps it.
+func (h *Hub) inheritFloors(session string, f *floorState, obs []world.WorkerObs, ids []string, metas []workerMeta) {
+	var ls map[string]runs.Link
+	floorOf := map[string]string{} // member id → its floor
+	for i, w := range obs {
+		if h.attributed(f, ids[i], metas[i]) {
+			continue
+		}
+		floor := ""
+		if world.Freelancer(w.Role) {
+			if ls == nil {
+				ms := h.sessionMembers(session, obs, ids, metas)
+				ls = h.links(ms)
+				for _, m := range ms {
+					floorOf[m.ID] = m.Floor
+				}
+			}
+			if orch := ls[ids[i]].OrchID; orch != "" {
+				floor = h.orchFloor(orch, floorOf[orch])
+			}
+		}
+		if g := h.floors[floor]; g == nil || g.session != session {
+			floor = w.Tokens[floorToken]
+		}
+		if g := h.floors[floor]; g != nil && g.session == session {
+			metas[i].floor = floor
+		}
+	}
+}
+
+// orchFloor is the floor of the orchestrator id, seen on floor: the one its
+// launch record names (run.start) while that is a floor, else floor
+// (floor.delete moving workers leaves a record naming the deleted floor,
+// and the orchestrator on the real floor).
+func (h *Hub) orchFloor(id, floor string) string {
+	if l, ok := h.launched(id); ok && h.floors[l.Floor] != nil {
+		return l.Floor
+	}
+	return floor
 }
 
 // --- desks ---

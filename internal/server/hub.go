@@ -1491,6 +1491,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			metas[i].floor = session
 		}
 	}
+	h.inheritFloors(session, f, obs, ids, metas) // #58 stage 3
 
 	var evs []proto.Event
 	sentHome := map[string]bool{} // deliberate departures: no hold for their names
