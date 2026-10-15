@@ -1,4 +1,6 @@
-import { filterCommands, floorList, floorRow, floorsNeedingYou, needsFloorPick, parseQuery, type CommandMatch, type FloorItem, type FloorRow, type FloorSource, type PaletteCommand } from '../world/palette';
+import type { BridgeBook, BridgeEntry } from '../net/bridges';
+import { bridgeList, bridgeRow, filterCommands, floorList, floorRow, floorsNeedingYou, needsFloorPick, otherBridges, parseQuery, type BridgeItem, type BridgeRow, type CommandMatch, type FloorItem, type FloorRow, type FloorSource, type PaletteCommand } from '../world/palette';
+import { bridgeDot, bridgeStateText } from './bridgeState';
 import { backdropPolicy } from './dismiss';
 import { h } from './dom';
 import { listKey, paintActiveRow, wrapIndex } from './listbox';
@@ -18,6 +20,11 @@ import './palette.css';
  * under the cursor. A floor that goes drops out; one that appears waits for the next query. A floor-scoped command
  * chosen off an office floor ("Hire") turns the list into the floor list under the question it asks ("Hire on which
  * floor?"); the pick runs it there. Without a connection the floor rows are greyed and cannot be picked; commands run.
+ *
+ * #57: Switch bridge turns the list into the helper's other bridges ("Switch to which bridge?"), the text filtering them
+ * by name. Their order is fixed like the floors' and their dots are read again whenever the list is (every two seconds
+ * while it shows; the helper answers from what it last saw, so opening it never waits on ssh). Enter switches. With no
+ * other bridge, one row says so and opens Settings → Bridges.
  */
 
 export interface PaletteHost {
@@ -32,6 +39,16 @@ export interface PaletteHost {
   run(command: PaletteCommand, floor: string | null): void;
   /** The palette is closed: take the user to another floor. */
   goTo(floor: string): void;
+  /** #57: the helper's bridges (absent: no Switch bridge). */
+  bridges?: PaletteBridges;
+}
+
+export interface PaletteBridges {
+  book: BridgeBook;
+  /** The palette is closed: switch to `b` (the game asks first when it is offline). */
+  switchTo(b: BridgeEntry): void;
+  /** The palette is closed: Settings → Bridges. */
+  openSettings(): void;
 }
 
 type Row = { key: string; el: HTMLElement; enabled: boolean; act(): void };
@@ -95,6 +112,11 @@ export class Palette {
   private matches: CommandMatch[] = [];
   private floors: FloorItem[] = [];
   private pick: PaletteCommand | null = null;
+  /** #57: listing bridges (after Switch bridge), their fixed order, and the poll that keeps their dots live. */
+  private bridgeMode = false;
+  private bridgeItems: BridgeItem[] = [];
+  private stopBridges: (() => void) | null = null;
+  private offBridges: (() => void) | null = null;
   private rows: Row[] = [];
   private active = '';
   private shown = '';
@@ -144,6 +166,7 @@ export class Palette {
     this.opener = from;
     this.commands = this.host.commands();
     this.pick = null;
+    this.bridgeMode = false;
     this.input.value = '';
     this.active = '';
     this.shown = '';
@@ -183,34 +206,48 @@ export class Palette {
   // ---- the list ------------------------------------------------------------------------------
 
   private floorsMode(): boolean {
-    return parseQuery(this.input.value).mode === 'floors';
+    return this.q().mode === 'floors';
+  }
+
+  private q() {
+    return parseQuery(this.input.value, this.bridgeMode);
   }
 
   /** The query changed (or the palette opened): the order is made again. */
   private query(): void {
-    const q = parseQuery(this.input.value);
+    const q = this.q();
     if (q.mode === 'commands') {
       this.pick = null;
       this.matches = filterCommands(this.commands, q.query);
-    } else this.floors = floorList(this.host.store, q.query);
+    } else if (q.mode === 'bridges') this.bridgeItems = bridgeList(this.host.bridges?.book.list ?? null, q.query);
+    else this.floors = floorList(this.host.store, q.query);
     this.draw(true);
-    this.input.placeholder = this.pick ? 'Filter the floors' : 'Type a command, or @ for floors';
-    this.input.setAttribute('aria-label', this.pick ? this.pick.pick : 'Command palette');
-    this.list.setAttribute('aria-label', q.mode === 'floors' ? 'Floors' : 'Commands');
-    this.title.hidden = !this.pick;
-    this.title.textContent = this.pick?.pick ?? '';
+    const question = q.mode === 'bridges' ? 'Switch to which bridge?' : (this.pick?.pick ?? '');
+    this.input.placeholder = q.mode === 'bridges' ? 'Filter the bridges' : this.pick ? 'Filter the floors' : 'Type a command, or @ for floors';
+    this.input.setAttribute('aria-label', question || 'Command palette');
+    this.list.setAttribute('aria-label', q.mode === 'floors' ? 'Floors' : q.mode === 'bridges' ? 'Bridges' : 'Commands');
+    this.title.hidden = !question;
+    this.title.textContent = question;
     this.drawHint();
   }
 
   /** Rows from the listed order and the live counts. `fresh`: a new list (the active row restarts at the top). */
   private draw(fresh: boolean): void {
-    const q = parseQuery(this.input.value);
+    const q = this.q();
     const rows: Row[] = [];
     let empty = '';
     let note = '';
     if (q.mode === 'commands') {
       for (const m of this.matches) rows.push(this.commandRow(m));
       if (rows.length === 0) empty = `No command matches “${q.query}”.`;
+    } else if (q.mode === 'bridges') {
+      const list = this.host.bridges?.book.list ?? null;
+      for (const item of this.bridgeItems) {
+        const b = bridgeRow(list, item);
+        if (b) rows.push(this.bridgeRow(b));
+      }
+      if (rows.length === 0 && otherBridges(list) === 0) rows.push(this.noBridgesRow());
+      else if (rows.length === 0) empty = `No bridge matches “${q.query}”.`;
     } else {
       const online = this.host.online();
       const here = this.host.here();
@@ -234,7 +271,7 @@ export class Palette {
     this.note.textContent = note;
     this.note.hidden = note === '';
     this.paintActive();
-    if (fresh) this.announce(empty || plural(rows.length, q.mode === 'floors' ? 'floor' : 'command'));
+    if (fresh) this.announce(empty || plural(rows.length, q.mode === 'floors' ? 'floor' : q.mode === 'bridges' ? 'bridge' : 'command'));
   }
 
   private commandRow(m: CommandMatch): Row {
@@ -266,9 +303,49 @@ export class Palette {
     return { key: `f:${f.floor}`, el, enabled: online, act: () => this.goTo(f) };
   }
 
+  /** #57: a bridge as it is now: its dot, name, address and state; Enter switches to it. */
+  private bridgeRow(b: BridgeRow): Row {
+    const st = bridgeStateText(b);
+    const el = h(
+      'li',
+      { class: 'pal-opt pal-opt--bridge', role: 'option', 'aria-selected': 'false', 'data-kind': 'bridge', 'data-bridge': b.id, 'data-state': b.state },
+      bridgeDot(b),
+      marked('pal-name', b.name, b.hits),
+      h('span', { class: 'pal-meta' }, h('span', { class: 'pal-br-addr' }, b.address), h('span', { class: `pal-br-state pal-br-state--${st.tone}` }, st.text)),
+    );
+    el.title = st.tone === 'up' || !b.lastError ? `${b.name}: ${st.text}` : `${b.name}: ${st.text}. ${b.lastError}`;
+    el.dataset.sig = `${b.name}|${b.state}|${b.address}`;
+    return {
+      key: `b:${b.id}`,
+      el,
+      enabled: true,
+      act: () => {
+        const entry = this.host.bridges?.book.list?.bridges.find((x) => x.id === b.id);
+        if (!entry) return;
+        this.close(false);
+        this.host.bridges?.switchTo(entry);
+      },
+    };
+  }
+
+  /** #57: the one row when the helper knows no other bridge: it opens Settings → Bridges. */
+  private noBridgesRow(): Row {
+    const el = h('li', { class: 'pal-opt pal-opt--empty', role: 'option', 'aria-selected': 'false', 'data-kind': 'no-bridges' }, h('span', { class: 'pal-name' }, 'No other bridges: add one in Settings'));
+    el.dataset.sig = 'none';
+    return {
+      key: 'b:none',
+      el,
+      enabled: true,
+      act: () => {
+        this.close(false);
+        this.host.bridges?.openSettings();
+      },
+    };
+  }
+
   /** "2 floors need you, type @": under an empty list of commands, when it is news. */
   private drawHint(): void {
-    const n = this.floorsMode() || this.input.value !== '' ? 0 : floorsNeedingYou(this.host.store);
+    const n = this.floorsMode() || this.bridgeMode || this.input.value !== '' ? 0 : floorsNeedingYou(this.host.store);
     this.hint.hidden = n === 0;
     if (n === 0) return;
     this.hint.replaceChildren(h('b', {}, String(n)), ` ${n === 1 ? 'floor needs' : 'floors need'} you · type `, h('kbd', {}, '@'));
@@ -320,6 +397,7 @@ export class Palette {
   }
 
   private runCommand(c: PaletteCommand): void {
+    if (c.id === 'bridge.switch' && this.host.bridges) return this.listBridges(this.host.bridges);
     if (needsFloorPick(c, this.host.here())) {
       this.pick = c;
       this.setText('@');
@@ -327,6 +405,17 @@ export class Palette {
     }
     this.close(false);
     this.host.run(c, null);
+  }
+
+  /** #57: the list becomes the bridges: what the game knows now, read again while it shows. */
+  private listBridges(b: PaletteBridges): void {
+    this.bridgeMode = true;
+    this.pick = null;
+    this.offBridges ??= b.book.onChange(() => {
+      if (this.dialog.open && this.bridgeMode) this.draw(false);
+    });
+    this.stopBridges ??= b.book.watch();
+    this.setText('');
   }
 
   private goTo(f: FloorRow): void {
@@ -342,6 +431,10 @@ export class Palette {
     const back = this.opener;
     this.opener = null;
     this.pick = null;
+    this.bridgeMode = false;
+    this.stopBridges?.();
+    this.offBridges?.();
+    this.stopBridges = this.offBridges = null;
     this.rows = [];
     this.list.replaceChildren();
     // Back to where the keyboard was (the seat's input, a dialog's field, the canvas); gone: the page.

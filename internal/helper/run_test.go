@@ -29,14 +29,18 @@ func TestRunEndToEnd(t *testing.T) {
 	bridgeSock := filepath.Join(dir, "remote", "bridge.sock")
 	startBridge(t, bridgeSock)
 
-	tun := &Tunnel{SSH: os.Args[0], Host: "dev@example", Remote: bridgeSock, Local: filepath.Join(dir, "local.sock")}
+	e := BridgeEntry{ID: NewBridgeID(), Name: "dev", Kind: KindSSH, Host: "dev@example", RemoteSocket: bridgeSock}
+	tun, err := NewBridgeSet(BridgeSetConfig{SSH: os.Args[0], SocketDir: filepath.Join(dir, "bridges"), Log: quietLog()}, BridgeList{Active: e.ID, Bridges: []BridgeEntry{e}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	opened := make(chan string, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	var runErr error
 	stopped := make(chan struct{})
 	go func() {
 		runErr = Run(ctx, Config{
-			Listen: "127.0.0.1:0", Tunnel: tun, Bundle: writeBundle(t), Log: quietLog(),
+			Listen: "127.0.0.1:0", Bridges: tun, Bundle: writeBundle(t), Log: quietLog(),
 			Open: func(_ context.Context, u string) error { opened <- u; return nil },
 		})
 		close(stopped)

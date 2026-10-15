@@ -26,13 +26,17 @@ function closeIcon(): SVGSVGElement {
   return s;
 }
 
-/** Where a section's settings live: this browser's `localStorage`, or the bridge (shared by every client). */
-export type SettingsStore = 'browser' | 'bridge';
+/**
+ * Where a section's settings live: this browser's `localStorage`, the bridge (shared by every client), or (#57) the
+ * h3d-helper that serves this page (its bridge list: every browser on this machine sees the same, whichever bridge is in use).
+ */
+export type SettingsStore = 'browser' | 'bridge' | 'helper';
 
-const STORE_LABEL: Record<SettingsStore, string> = { browser: 'This browser', bridge: 'Bridge' };
+const STORE_LABEL: Record<SettingsStore, string> = { browser: 'This browser', bridge: 'Bridge', helper: 'This helper' };
 const STORE_TITLE: Record<SettingsStore, string> = {
   browser: 'Kept in this browser only',
   bridge: 'Kept on the bridge: every client sees the same',
+  helper: 'Kept by the h3d-helper on this machine: every browser it serves sees the same, whichever bridge is in use',
 };
 
 /** What a section's `render` hands back: both parts are optional. */

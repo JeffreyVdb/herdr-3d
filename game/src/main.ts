@@ -34,6 +34,9 @@ import type { BoardSummary } from './ui/boards/panel';
 import type { OpenPrSummary } from './ui/boards/openPr';
 import type { NeedItem } from './world/next';
 import { BuildInfo, loadHelperVersion } from './version';
+import { takeToken } from './net/endpoint';
+import { BridgeApi, BridgeBook } from './net/bridges';
+import { migrateBridgeKeys, setBridgeScope } from './net/bridgeScope';
 import type { Area, BuildingPlan } from './world/building';
 import type { floorLayout } from './world/layout';
 import { walkOutRoute, type Waypoint } from './world/route';
@@ -646,6 +649,33 @@ const h3d: H3DDebug = {
 };
 window.__h3d = h3d;
 
+function safeLocalStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** #57: the bridge in use when the helper last said (shared; only read when it does not answer at start). */
+const LAST_BRIDGE_KEY = 'h3d.bridges.active';
+
+function rememberBridge(id: string): void {
+  try {
+    safeLocalStorage()?.setItem(LAST_BRIDGE_KEY, id);
+  } catch {
+    // not remembered
+  }
+}
+
+function rememberedBridge(): string | null {
+  try {
+    return safeLocalStorage()?.getItem(LAST_BRIDGE_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
 async function start(): Promise<void> {
   const r = new THREE.WebGPURenderer({
     antialias: true,
@@ -666,14 +696,31 @@ async function start(): Promise<void> {
   const overlay = document.getElementById('debug');
   if (overlay) overlay.textContent = `backend: ${h3d.backend}`;
 
-  // Canvas text (boards, cards) needs the font before it is drawn.
-  await Promise.race([
-    Promise.all(['800 32px "Recursive Variable"', '500 25px "Recursive Variable"'].map((f) => document.fonts.load(f))),
-    new Promise((res) => setTimeout(res, 1500)),
+  // #57: a page the helper serves (it has a token) asks it which bridge is in use, alongside the font, before anything
+  // reads the per-bridge keys; the helper answers from memory (never after an ssh handshake), within 2.5 s or not at all.
+  const token = takeToken(window.location, safeLocalStorage(), (u) => history.replaceState(null, '', u));
+  const bridges = new BridgeBook(token ? new BridgeApi(token) : null);
+  const [list] = await Promise.all([
+    bridges.api?.load() ?? Promise.resolve(null),
+    // Canvas text (boards, cards) needs the font before it is drawn.
+    Promise.race([
+      Promise.all(['800 32px "Recursive Variable"', '500 25px "Recursive Variable"'].map((f) => document.fonts.load(f))),
+      new Promise((res) => setTimeout(res, 1500)),
+    ]),
   ]);
+  if (list) {
+    // The keys kept before #57 belong to the first bridge (the one an install from before came up with).
+    if (list.bridges[0]) migrateBridgeKeys(safeLocalStorage(), list.bridges[0].id);
+    setBridgeScope(list.active || null);
+    rememberBridge(list.active);
+    bridges.set(list);
+  } else if (token) {
+    // The helper did not answer in time: the bridge it last named, so drafts never land in another bridge's keys.
+    setBridgeScope(rememberedBridge());
+  }
 
   void loadHelperVersion().then((v) => buildInfo.setHelper(v));
-  app = new App({ renderer: r, host: document.body, params, buildInfo, onBridgeVersion: (v) => buildInfo.setBridge(v) });
+  app = new App({ renderer: r, host: document.body, params, buildInfo, onBridgeVersion: (v) => buildInfo.setBridge(v), token, bridges });
   const a = app;
   const origRender = a.render.bind(a);
   a.render = () => {

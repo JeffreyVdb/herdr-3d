@@ -6,6 +6,7 @@
  * the grab with the same code). docs/protocol.md "Screen share".
  */
 
+import { routeRefusal } from './bridgeChanged';
 import type { CommandResult } from './client';
 import type { Fetcher } from './upload';
 
@@ -39,6 +40,5 @@ export async function postFrame(wsUrl: string, reqId: string, jpeg: Blob, fetche
   }
   const o = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
   if (res.ok) return { ok: true, data: o.data ?? null };
-  const code = typeof o.code === 'string' ? o.code : res.status === 502 ? 'offline' : 'internal';
-  return { ok: false, code, message: typeof o.message === 'string' ? o.message : `HTTP ${res.status}` };
+  return { ok: false, ...routeRefusal(typeof o.code === 'string' ? o.code : res.status === 502 ? 'offline' : 'internal', typeof o.message === 'string' ? o.message : `HTTP ${res.status}`) };
 }

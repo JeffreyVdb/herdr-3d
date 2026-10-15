@@ -9,6 +9,7 @@
  * the type from the sniffed bytes); the pre-check only gives a friendly message before a 25 MiB upload.
  */
 
+import { routeRefusal } from './bridgeChanged';
 import type { CommandResult } from './client';
 
 /** The bridge's cap per image (`upload.MaxBytes`), enforced there on the actual bytes. */
@@ -99,8 +100,10 @@ async function result(fetcher: Fetcher, url: string, init: RequestInit, outer: A
     if (isImage(o.data)) return { ok: true, data: { path: o.data.path, mime: o.data.mime, size: o.data.size } satisfies UploadedImage };
     return { ok: false, code: 'dropzone_bad_response', message: 'the upload answered with something that is not an image path' };
   }
-  const code = typeof o.code === 'string' ? o.code : res.status === 502 ? 'offline' : res.status === 403 ? 'forbidden' : 'internal';
-  const message = typeof o.message === 'string' ? o.message : `HTTP ${res.status}`;
+  const { code, message } = routeRefusal(
+    typeof o.code === 'string' ? o.code : res.status === 502 ? 'offline' : res.status === 403 ? 'forbidden' : 'internal',
+    typeof o.message === 'string' ? o.message : `HTTP ${res.status}`,
+  );
   return { ok: false, code, message };
 }
 

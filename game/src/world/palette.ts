@@ -10,9 +10,14 @@
  * regard to case. A query only filters: it never reorders. The order is fixed when the list opens or the query changes
  * (`floorList`); the counts of its rows are read live (`floorRow`), so a count moves and the row stays put (the rule of
  * the floor overview, world/overview.ts).
+ *
+ * #57: Switch bridge lists the helper's other bridges (`bridgeList`): the online ones, then the rest, each by name
+ * without regard to case, the one in use left out. The same rule: the order is fixed when the list opens or the query
+ * changes, and each row's state is read live (`bridgeRow`), so a dot changes colour and the row stays put.
  */
 
 import { BINDINGS, PALETTE_ONLY, bindingCaps, isMac, scopesOf, type ActionId, type Binding, type PaletteOnlyId, type Scope } from '../input/shortcuts';
+import { isOnline, type BridgeList, type BridgeState } from '../net/bridges';
 import { inboxWhere } from './inbox';
 import { rankByName } from './rank';
 import type { Counts, FloorView, WorldStore } from './store';
@@ -49,6 +54,7 @@ export const COMMAND_ORDER: readonly PaletteCommandId[] = [
   'plan',
   'leave',
   'look.level',
+  'bridge.switch',
   'settings',
   'limits',
   'battery',
@@ -103,13 +109,17 @@ export function filterCommands(commands: readonly PaletteCommand[], query: strin
 // ---- modes --------------------------------------------------------------------------------------------
 
 export interface PaletteQuery {
-  mode: 'commands' | 'floors';
+  mode: 'commands' | 'floors' | 'bridges';
   /** What is searched for: the text, or what follows the `@`. */
   query: string;
 }
 
-/** A leading `@` lists floors; take it away and it is commands again. */
-export function parseQuery(text: string): PaletteQuery {
+/**
+ * A leading `@` lists floors; take it away and it is commands again. #57: after Switch bridge (`bridges`) the whole
+ * text filters the bridges: there is no character that leads there, only the command.
+ */
+export function parseQuery(text: string, bridges = false): PaletteQuery {
+  if (bridges) return { mode: 'bridges', query: text.trim() };
   return text.startsWith('@') ? { mode: 'floors', query: text.slice(1).trim() } : { mode: 'commands', query: text.trim() };
 }
 
@@ -171,3 +181,47 @@ export function floorRow(store: FloorSource, item: FloorItem, here: string | nul
 export function floorsNeedingYou(store: Pick<WorldStore, 'city'>): number {
   return store.city().reduce((n, b) => n + b.floors.filter((f) => f.counts.needsYou > 0).length, 0);
 }
+
+// ---- bridges (#57) ------------------------------------------------------------------------------------
+
+/** A bridge as the list fixed it. */
+export interface BridgeItem {
+  id: string;
+  /** Its name when it was listed. */
+  label: string;
+  hits: number[];
+}
+
+/** A listed bridge as it is now. */
+export interface BridgeRow {
+  id: string;
+  name: string;
+  address: string;
+  state: BridgeState | string;
+  online: boolean;
+  lastError: string;
+  hits: number[];
+}
+
+/**
+ * Every bridge but the one in use whose name holds `query`, in the order the list keeps until it is built again: the
+ * online ones, then the rest, each by name without regard to case. The query filters and never reorders.
+ */
+export function bridgeList(list: BridgeList | null, query: string): BridgeItem[] {
+  const items = (list?.bridges ?? []).filter((b) => b.id !== list?.active).map((b) => ({ id: b.id, label: b.name, up: isOnline(b) }));
+  items.sort((a, b) => +b.up - +a.up || a.label.toLowerCase().localeCompare(b.label.toLowerCase()) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const q = query.trim();
+  if (q === '') return items.map(({ id, label }) => ({ id, label, hits: [] }));
+  const hit = new Map(rankByName(items, q, (i) => i.label).map((r) => [r.item.id, r.hits]));
+  return items.filter((i) => hit.has(i.id)).map(({ id, label }) => ({ id, label, hits: hit.get(id) as number[] }));
+}
+
+/** The row of a listed bridge with its state as it is now; null when it is gone (removed, or now the one in use). */
+export function bridgeRow(list: BridgeList | null, item: BridgeItem): BridgeRow | null {
+  const b = list?.bridges.find((x) => x.id === item.id);
+  if (!b || b.id === list?.active) return null;
+  return { id: b.id, name: b.name, address: b.address, state: b.state, online: isOnline(b), lastError: b.last_error ?? '', hits: b.name === item.label ? item.hits : [] };
+}
+
+/** Are there bridges besides the one in use? */
+export const otherBridges = (list: BridgeList | null): number => (list?.bridges ?? []).filter((b) => b.id !== list?.active).length;

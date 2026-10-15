@@ -137,6 +137,8 @@ export const PALETTE_ONLY = [
   { id: 'about', name: 'About', aliases: ['version', 'build', 'credits'] },
   // #188: every floor's workers from anywhere (O does it off an office floor).
   { id: 'overview.all', name: 'All-floors overview', aliases: ['all floors', 'every floor', 'city overview', 'still running'] },
+  // #57: the helper's other bridges, online first (only on a page the helper serves).
+  { id: 'bridge.switch', name: 'Switch bridge', aliases: ['bridge', 'server', 'machine', 'host', 'connect'] },
 ] as const satisfies readonly (PaletteEntry & { id: string })[];
 
 export type PaletteOnlyId = (typeof PALETTE_ONLY)[number]['id'];

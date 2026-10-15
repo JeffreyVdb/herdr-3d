@@ -9,23 +9,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
 	"math/rand/v2"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
-	"strings"
-	"sync"
 	"syscall"
 	"time"
-
-	"github.com/JeffreyVdb/herdr-3d/internal/proto"
-	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
 
 // Tunnel states.
@@ -35,6 +27,10 @@ const (
 	StateDegraded   = "degraded"   // ssh runs but the bridge stopped answering
 	StateBackoff    = "backoff"    // waiting to restart ssh
 	StateStopped    = "stopped"
+	// #57: a local bridge's socket does not answer, and a helper with no
+	// bridge configured has nothing to reach.
+	StateDown = "down"
+	StateNone = "none"
 )
 
 // MaxSocketPath is the longest unix socket path we accept (macOS sun_path is
@@ -98,8 +94,7 @@ type Tunnel struct {
 	wait func(ctx context.Context, d time.Duration) error
 	rand func() float64
 
-	mu     sync.Mutex
-	status Status
+	health
 }
 
 // Args is the ssh command line (without the executable).
@@ -159,25 +154,6 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// Status returns the current state.
-func (t *Tunnel) Status() Status {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.status
-}
-
-func (t *Tunnel) set(state string, err error, pid int) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.status.State != state {
-		t.status.Since = time.Now()
-	}
-	t.status.State, t.status.PID = state, pid
-	if err != nil {
-		t.status.LastError = err.Error()
-	}
-}
-
 // Dial connects to the bridge through the tunnel.
 func (t *Tunnel) Dial(ctx context.Context) (net.Conn, error) {
 	var d net.Dialer
@@ -204,9 +180,7 @@ func (t *Tunnel) Run(ctx context.Context) error {
 		}
 		d := t.Backoff.Delay(attempt, t.rand())
 		attempt++
-		t.mu.Lock()
-		t.status.Restarts++
-		t.mu.Unlock()
+		t.restarted()
 		t.set(StateBackoff, err, 0)
 		t.Log.Warn("tunnel down, restarting", "err", err, "up_for", up.Round(time.Millisecond), "retry_in", d.Round(time.Millisecond), "attempt", attempt)
 		if t.wait(ctx, d) != nil {
@@ -283,90 +257,13 @@ func (t *Tunnel) runOnce(ctx context.Context) (time.Duration, error) {
 
 // check asks the bridge's /healthz through the tunnel.
 func (t *Tunnel) check(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	c := &http.Client{Transport: &http.Transport{
-		DialContext:       func(ctx context.Context, _, _ string) (net.Conn, error) { return t.Dial(ctx) },
-		DisableKeepAlives: true,
-	}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://herdr-world/healthz", nil)
+	v, hosts, err := probeBridge(ctx, t.Dial)
 	if err != nil {
 		return err
 	}
-	resp, err := c.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64))
-	if resp.StatusCode != http.StatusOK || strings.TrimSpace(string(body)) != "ok" {
-		return fmt.Errorf("healthz: %s %q", resp.Status, body)
-	}
-	t.noteBridge(resp.Header.Get(proto.VersionHeader))
-	t.noteOpenHosts(resp.Header.Get(proto.OpenHostsHeader))
+	t.noteBridge(t.Log, v)
+	t.noteOpenHosts(t.Log, hosts)
 	return nil
-}
-
-// noteOpenHosts records the hosts the bridge trusts for POST /api/open
-// (#184): plain host names only (no scheme, port or path), at most eight,
-// each checked again with every URL. A check without the header clears
-// them, so a disconnected instance stops being opened within one check.
-func (t *Tunnel) noteOpenHosts(header string) {
-	var hosts []string
-	for _, h := range strings.Split(header, ",") {
-		h = strings.ToLower(strings.TrimSpace(h))
-		if validHostName(h) && !slices.Contains(hosts, h) && len(hosts) < 8 {
-			hosts = append(hosts, h)
-		}
-	}
-	t.mu.Lock()
-	changed := !slices.Equal(t.status.OpenHosts, hosts)
-	t.status.OpenHosts = hosts
-	t.mu.Unlock()
-	if changed {
-		t.Log.Info("bridge open hosts", "hosts", strings.Join(hosts, ","))
-	}
-}
-
-// validHostName is a DNS name: dot-separated labels of letters, digits and
-// dashes, at most 253 bytes.
-func validHostName(h string) bool {
-	if h == "" || len(h) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(h, ".") {
-		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-		for _, r := range label {
-			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// noteBridge records the bridge's version and logs when it changes: a warning
-// if it is not the helper's own (the two ship in one release, so they should
-// match).
-func (t *Tunnel) noteBridge(v string) {
-	if v == "" {
-		v = "unknown"
-	}
-	t.mu.Lock()
-	changed := t.status.Bridge != v
-	t.status.Bridge = v
-	t.mu.Unlock()
-	switch {
-	case !changed:
-	case v == "unknown":
-		t.Log.Warn("bridge does not report its version (older release)", "helper", version.Version)
-	case v != version.Version:
-		t.Log.Warn("bridge and helper versions differ", "bridge", v, "helper", version.Version)
-	default:
-		t.Log.Info("bridge version", "version", v)
-	}
 }
 
 // prepareSocket makes the socket's directory (0700) and removes a leftover

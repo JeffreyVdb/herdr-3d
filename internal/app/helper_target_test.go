@@ -3,11 +3,18 @@ package app
 import (
 	"bytes"
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/helper"
 )
+
+func quietLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 // helperEnv sets the helper's host/socket environment (empty: unset).
 func helperEnv(t *testing.T, host, remote string) {
@@ -43,21 +50,6 @@ func TestResolveHelperTargetPrecedence(t *testing.T) {
 	}
 }
 
-// noHostMessage checks a missing-host error names the flag and the env var, and nothing else to set.
-func noHostMessage(t *testing.T, msg string) {
-	t.Helper()
-	for _, want := range []string{"no bridge host", "-host", "$" + EnvHelperHost} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("%q must name %q", msg, want)
-		}
-	}
-	for _, unwanted := range []string{"config", "helper.env", "deprecated"} {
-		if strings.Contains(msg, unwanted) {
-			t.Errorf("%q must not mention %q: flag and environment are the only sources", msg, unwanted)
-		}
-	}
-}
-
 // oldHelperConfig writes a helper.env where the removed config-file fallback looked for it.
 func oldHelperConfig(t *testing.T) {
 	t.Helper()
@@ -80,19 +72,18 @@ func oldHelperConfig(t *testing.T) {
 
 func TestResolveHelperTargetMissingHost(t *testing.T) {
 	helperEnv(t, "", "")
-	_, err := resolveHelperTarget("", "")
-	if err == nil {
-		t.Fatal("want an error: the helper has no built-in host")
+	// #57: no host is no error: the bridge list may name some, or the game asks for one.
+	if got, err := resolveHelperTarget("", ""); err != nil || got.Host != "" {
+		t.Fatalf("got %+v, %v", got, err)
 	}
-	noHostMessage(t, err.Error())
 	// A private config file is not a source: only the flag and the environment are.
 	oldHelperConfig(t)
-	if got, err := resolveHelperTarget("", ""); err == nil {
+	if got, err := resolveHelperTarget("", ""); err != nil || got.Host != "" {
 		t.Errorf("a helper.env on disk must not name the host, got %+v", got)
 	}
 	helperEnv(t, "@H3D_HELPER_HOST@", "@H3D_HELPER_REMOTE_SOCKET@")
-	if _, err := resolveHelperTarget("", ""); err == nil || !strings.Contains(err.Error(), "no bridge host") {
-		t.Errorf("an unfilled plist placeholder is no host: %v", err)
+	if got, err := resolveHelperTarget("", ""); err != nil || got.Host != "" {
+		t.Errorf("an unfilled plist placeholder is no host: %+v %v", got, err)
 	}
 	helperEnv(t, "dev@devbox", "@H3D_HELPER_REMOTE_SOCKET@")
 	if got, err := resolveHelperTarget("", ""); err != nil || got.Remote != "" {
@@ -104,18 +95,110 @@ func TestResolveHelperTargetMissingHost(t *testing.T) {
 	}
 }
 
-func TestHelperExitsWithoutHost(t *testing.T) {
+// TestResolveBridgeListPrecedence (#57): the flag, then the environment,
+// seed a missing (or empty) list file; once the file exists it is the truth
+// and neither changes it.
+func TestResolveBridgeListPrecedence(t *testing.T) {
+	file := func() string { return filepath.Join(t.TempDir(), "h3d-helper", "bridges.json") }
+	entry := func(l helper.BridgeList) helper.BridgeEntry {
+		t.Helper()
+		if len(l.Bridges) != 1 || l.Active != l.Bridges[0].ID {
+			t.Fatalf("want one entry in use, got %+v", l)
+		}
+		return l.Bridges[0]
+	}
+
+	helperEnv(t, "env@devbox", "/env/b.sock")
+	tgt, _ := resolveHelperTarget("", "")
+	f := file()
+	l, err := resolveBridgeList(f, tgt, quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := entry(l); e.Name != "env@devbox" || e.Host != "env@devbox" || e.RemoteSocket != "/env/b.sock" || e.Kind != helper.KindSSH {
+		t.Fatalf("env seeds the list: %+v", e)
+	}
+	saved, ok, err := helper.LoadBridgeList(f)
+	if err != nil || !ok || entry(saved) != entry(l) {
+		t.Fatalf("seeded list saved: %+v %v %v", saved, ok, err)
+	}
+	if fi, _ := os.Stat(f); fi.Mode().Perm() != 0o600 {
+		t.Errorf("list file mode %v", fi.Mode().Perm())
+	}
+
+	// The flag wins over the environment for a new list.
+	tgt, _ = resolveHelperTarget("flag@devbox", "")
+	l, err = resolveBridgeList(file(), tgt, quietLog())
+	if err != nil || entry(l).Host != "flag@devbox" || entry(l).RemoteSocket != "/env/b.sock" {
+		t.Fatalf("flag over env: %+v %v", l, err)
+	}
+
+	// An existing list is the truth: the same start again, or another host, change nothing.
+	for _, flagHost := range []string{"", "other@host"} {
+		tgt, _ = resolveHelperTarget(flagHost, "")
+		again, err := resolveBridgeList(f, tgt, quietLog())
+		if err != nil || entry(again) != entry(saved) {
+			t.Fatalf("host %q over an existing list: %+v %v", flagHost, again, err)
+		}
+	}
+
+	// Neither: an empty list, nothing written.
+	helperEnv(t, "", "")
+	tgt, _ = resolveHelperTarget("", "")
+	nf := file()
+	if l, err := resolveBridgeList(nf, tgt, quietLog()); err != nil || len(l.Bridges) != 0 {
+		t.Fatalf("no host, no list: %+v %v", l, err)
+	}
+	if _, err := os.Stat(nf); !os.IsNotExist(err) {
+		t.Errorf("no list file should be written without a bridge: %v", err)
+	}
+
+	// A relative remote socket is refused before anything is written; a broken file is an error naming it.
+	helperEnv(t, "dev@devbox", "run/b.sock")
+	tgt, _ = resolveHelperTarget("", "")
+	if _, err := resolveBridgeList(nf, tgt, quietLog()); err == nil || !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("relative remote socket: %v", err)
+	}
+	if err := os.WriteFile(f, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveBridgeList(f, tgt, quietLog()); err == nil || !strings.Contains(err.Error(), f) {
+		t.Errorf("broken list file: %v", err)
+	}
+}
+
+// TestHelperStartsWithoutHost (#57): with neither a list nor a host the helper
+// serves the game (which says to add a bridge), and writes no list.
+func TestHelperStartsWithoutHost(t *testing.T) {
 	helperEnv(t, "", "")
 	oldHelperConfig(t)
-	var out, errOut bytes.Buffer
-	// The missing host is reported before the bundle is even looked at.
-	code := Helper("h3d-helper", []string{"-no-open", "-bundle", t.TempDir(), "-token-file", filepath.Join(t.TempDir(), "token")}, &out, &errOut)
-	if code != 1 {
-		t.Fatalf("code %d, stderr %q", code, errOut.String())
+	bundle := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bundle, "index.html"), []byte("<!doctype html>"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	noHostMessage(t, errOut.String())
-	// -version and -print-url need no host.
-	errOut.Reset()
+	list := filepath.Join(t.TempDir(), "bridges.json")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan error, 1)
+	go func() {
+		var out, errOut bytes.Buffer // read only after it returned
+		ready <- helperMain(ctx, "h3d-helper", []string{"-no-open", "-bundle", bundle, "-listen", "127.0.0.1:0",
+			"-token-file", filepath.Join(t.TempDir(), "token"), "-bridges-file", list, "-local-socket", filepath.Join(t.TempDir(), "b.sock")}, &out, &errOut)
+	}()
+	select {
+	case err := <-ready:
+		t.Fatalf("the helper stopped without a host: %v", err)
+	case <-time.After(500 * time.Millisecond): // still serving
+	}
+	cancel()
+	if err := <-ready; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(list); !os.IsNotExist(err) {
+		t.Errorf("a list was written without a bridge: %v", err)
+	}
+	// -version and -print-url need no host either.
+	var out, errOut bytes.Buffer
 	args := []string{"-print-url", "-token-file", filepath.Join(t.TempDir(), "token")}
 	if code := Helper("h3d-helper", args, &out, &errOut); code != 0 {
 		t.Errorf("-print-url without a host: code %d, stderr %q", code, errOut.String())
@@ -167,29 +250,37 @@ func TestDiscoverRemoteSocket(t *testing.T) {
 	}
 }
 
-// TestHelperDiscoversRemoteSocket: with no socket named anywhere, the helper asks the host and
-// tunnels to what it reports; a socket named by env skips the question.
-func TestHelperRemoteSocketExplicitOrDiscovered(t *testing.T) {
+// TestHelperDefersDiscovery (#57): an install with only a host comes up as
+// before, on that host, named after it, in use; asking the host for its socket
+// waits for that bridge's own supervisor (it never holds up the start), and a
+// socket named by env goes into the list as it is.
+func TestHelperDefersDiscovery(t *testing.T) {
 	bin, argsFile := fakeSSH(t, "/run/user/4321", 0)
 	bundle := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bundle, "index.html"), []byte("<!doctype html>"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A bad listen address stops the helper right after the target is resolved, before any tunnel.
-	run := func() (string, string) {
+	// A bad listen address stops the helper right after the list is resolved, before any tunnel.
+	run := func() helper.BridgeList {
 		var out, errOut bytes.Buffer
+		file := filepath.Join(t.TempDir(), "bridges.json")
 		Helper("h3d-helper", []string{"-no-open", "-bundle", bundle, "-ssh", bin, "-listen", "0.0.0.0:1",
-			"-token-file", filepath.Join(t.TempDir(), "token")}, &out, &errOut)
-		args, _ := os.ReadFile(argsFile)
-		return errOut.String(), string(args)
+			"-token-file", filepath.Join(t.TempDir(), "token"), "-bridges-file", file}, &out, &errOut)
+		l, _, err := helper.LoadBridgeList(file)
+		if err != nil || len(l.Bridges) != 1 {
+			t.Fatalf("list: %+v %v (%s)", l, err, errOut.String())
+		}
+		return l
 	}
 	helperEnv(t, "dev@devbox", "")
-	if _, args := run(); !strings.Contains(args, "dev@devbox") {
-		t.Errorf("no socket named: the helper should ask the host over ssh, ssh got %q", args)
+	if l := run(); l.Bridges[0].Host != "dev@devbox" || l.Bridges[0].RemoteSocket != "" || l.Bridges[0].Name != "dev@devbox" || l.Active != l.Bridges[0].ID {
+		t.Errorf("no socket named: %+v", l)
 	}
-	os.Remove(argsFile)
+	if args, _ := os.ReadFile(argsFile); len(args) != 0 {
+		t.Errorf("ssh asked at start: %q", args)
+	}
 	helperEnv(t, "dev@devbox", "/run/user/1/herdr-world/bridge.sock")
-	if _, args := run(); args != "" {
-		t.Errorf("socket named by env: ssh must not be asked, got %q", args)
+	if l := run(); l.Bridges[0].RemoteSocket != "/run/user/1/herdr-world/bridge.sock" {
+		t.Errorf("socket named by env: %+v", l)
 	}
 }

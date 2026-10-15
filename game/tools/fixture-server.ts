@@ -246,6 +246,12 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
 export function startFixtureServer(port: number | string, o: FixtureOptions = {}): Promise<Server> {
   const handler = fixtureUpgradeHandler(o);
   const srv = createServer((req, res) => {
+    // #57: what h3d-helper checks a bridge with (`GET /healthz` → `ok`), so a fixture server on a unix socket can stand
+    // in for a bridge behind a helper's local entry.
+    if (req.method === 'GET' && req.url === '/healthz') {
+      res.writeHead(200, { 'content-type': 'text/plain', 'x-h3d-version': `fixture ${o.defaultFixture ?? 'demo'}` }).end('ok\n');
+      return;
+    }
     if (logoRoute(req, res) || uploadRoute(req, res) || screenRoute(req, res) || whiteboardRoute(req, res)) return;
     res.writeHead(404, { 'content-type': 'text/plain' }).end('herdr-3d fixture server: WebSocket only (/fixture/<name>, /ws), /logo/<building> and /upload\n');
   });
@@ -265,13 +271,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const i = args.indexOf(k);
     return i >= 0 ? args[i + 1] : undefined;
   };
+  // #57: `--socket <path>` listens on a unix socket instead: a stand-in bridge for a helper's local entry.
+  const socket = opt('--socket');
   const port = Number(opt('--port') ?? process.env.PORTLEASE_FIXTURE_PORT);
-  if (!Number.isInteger(port) || port <= 0) {
-    console.error('usage: fixture-server.ts --port <port> [--fixture demo] [--simulate]  (or PORTLEASE_FIXTURE_PORT)');
+  if (!socket && (!Number.isInteger(port) || port <= 0)) {
+    console.error('usage: fixture-server.ts --port <port> | --socket <path> [--fixture demo] [--simulate]  (or PORTLEASE_FIXTURE_PORT)');
     process.exit(2);
   }
   const defaultFixture = opt('--fixture') ?? 'demo';
   const simulate = args.includes('--simulate');
-  await startFixtureServer(port, { defaultFixture, simulate, log: (m) => console.log(m) });
-  console.log(`fixture server on ws://127.0.0.1:${port}/ws (${defaultFixture}) and /fixture/<name>${simulate ? ', simulating commands' : ''}`);
+  await startFixtureServer(socket ?? port, { defaultFixture, simulate, log: (m) => console.log(m) });
+  console.log(`fixture server on ${socket ? `unix:${socket}` : `ws://127.0.0.1:${port}`}/ws (${defaultFixture}) and /fixture/<name>${simulate ? ', simulating commands' : ''}`);
 }

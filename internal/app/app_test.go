@@ -28,7 +28,15 @@ func TestMain(m *testing.M) {
 	if os.Getenv(childEnv) == "1" {
 		os.Exit(Helper("h3d-helper", strings.Split(os.Getenv(helperArgsEnv), "\n"), os.Stdout, os.Stderr))
 	}
-	os.Exit(m.Run())
+	// #57: never the user's own bridge list (children inherit it).
+	dir, err := os.MkdirTemp("", "h3d-app-test")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv(EnvHelperBridgesFile, filepath.Join(dir, "bridges.json"))
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 func TestHelperVersionAndFlags(t *testing.T) {
@@ -67,6 +75,8 @@ func TestDefaultHelperPaths(t *testing.T) {
 		DefaultLocalSocket():   "h3d-helper/bridge.sock",
 		DefaultBundle():        "h3d-helper/dist",
 		DefaultChromeProfile(): "h3d-helper/chrome",
+		DefaultBridgesFile():   "h3d-helper/bridges.json",
+		DefaultTokenFile():     "h3d-helper/token",
 	} {
 		if !strings.HasPrefix(got, "/home/u/") || !strings.HasSuffix(got, suffix) {
 			t.Errorf("%q, want /home/u/…/%s", got, suffix)
@@ -74,6 +84,10 @@ func TestDefaultHelperPaths(t *testing.T) {
 	}
 	if len(DefaultLocalSocket()) > 103 {
 		t.Errorf("default socket path too long for a unix socket: %s", DefaultLocalSocket())
+	}
+	// #57: each ssh bridge's tunnel ends next to it, under bridges/.
+	if got := filepath.Join(tunnelSocketDir(DefaultLocalSocket()), "0123456789-zzzzzz.sock"); !strings.HasSuffix(got, "h3d-helper/bridges/0123456789-zzzzzz.sock") || len(got) > 103 {
+		t.Errorf("tunnel socket %s", got)
 	}
 }
 

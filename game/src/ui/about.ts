@@ -102,7 +102,8 @@ export class AboutDialog {
     const rows: Array<[string, string | null]> = [
       ['Game', info.game],
       ['Helper', info.helper],
-      ['Bridge', info.bridge],
+      // #57: which of the helper's bridges, next to its version.
+      ['Bridge', info.bridgeName ? `${info.bridge ?? 'not connected'} · ${info.bridgeName}` : info.bridge],
       ['Renderer', info.backend],
     ];
     this.list.replaceChildren(

@@ -15,6 +15,7 @@ import { AsyncDrafts } from './asyncDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 import { handoffCommand, newOp } from '../world/handoff';
+import { bridgeKey } from '../net/bridgeScope';
 
 export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost, TranscriptView };
 
@@ -122,7 +123,7 @@ const UNANSWERED = new Set(['timeout', 'disconnected', 'offline']);
 
 function readModes(s: Storage | null, key = MODES_KEY): string[] {
   try {
-    const v: unknown = JSON.parse(s?.getItem(key) ?? '[]');
+    const v: unknown = JSON.parse(s?.getItem(bridgeKey(key)) ?? '[]');
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
   } catch {
     return [];
@@ -131,8 +132,8 @@ function readModes(s: Storage | null, key = MODES_KEY): string[] {
 
 function writeModes(s: Storage | null, ids: string[], key = MODES_KEY): void {
   try {
-    if (ids.length) s?.setItem(key, JSON.stringify(ids.slice(-MODES_MAX)));
-    else s?.removeItem(key);
+    if (ids.length) s?.setItem(bridgeKey(key), JSON.stringify(ids.slice(-MODES_MAX)));
+    else s?.removeItem(bridgeKey(key));
   } catch {
     /* not remembered past this page */
   }

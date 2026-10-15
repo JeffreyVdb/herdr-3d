@@ -605,16 +605,29 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
   `502` when `open` failed; `go test ./internal/helper` covers it with a fake opener. A page not served by the helper
   (Vite on the server) has no endpoint, and the game opens a new window instead (`https://` only); a page the helper
   serves never falls back to a window: a URL it refuses gets a notice and is not opened.
+- (#57) it keeps a **list of bridges** and tunnels the game to one at a time, the one in use. The list is a 0600
+  `bridges.json` next to the token (`--bridges-file`), edited through `GET|POST /api/bridges`, `PUT|DELETE
+  /api/bridges/{id}` and `POST /api/bridges/{id}/activate` (guarded like `/api/open`; an absent `Origin` passes on
+  `GET`; docs/protocol.md "The helper's bridges"). `helper.BridgeSet` is the server's `Bridge`: every proxied route,
+  `/healthz` and `/api/open`'s open hosts follow the bridge in use. Each bridge keeps its own supervised connection
+  (`internal/helper/bridgeset.go`): an ssh bridge its own tunnel ending at `<dir of --local-socket>/bridges/<id>-<n>.sock`,
+  a local bridge (`kind: local`, a socket on this machine: a Linux laptop running the bridge too) its socket dialled
+  directly, `/healthz` checked every 5 s (`LocalBridge`, `internal/helper/health.go`). So the list always has each
+  state and nothing waits on ssh. A switch closes every connection dialled to the old bridge (the game's `/ws`, the
+  proxies' idle keep-alive ones) and the game reloads. Tests: `go test ./internal/helper -run 'Bridge|Switch|Health|Seed|Local'`
+  (fake `Bridge`s, the list file, the API's guards and CRUD, one tunnel per entry through the fake ssh, a `/ws`
+  closed by a switch), `go test ./internal/app -run 'Resolve|Helper'` (flag, env and list precedence).
 
 It needs non-interactive SSH from the Mac to the host (`BatchMode=yes`: a key in the agent/keychain, host key known).
-State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,
-`tunnel down, restarting … retry_in=…`. `curl http://127.0.0.1:7777/healthz` shows the tunnel state and both versions (`version` is the helper's, `tunnel.bridge` the bridge's); the helper logs a warning when they differ. The game shows `game … · helper … · bridge …` above the backend line, in amber when they differ.
+State goes to the log (stderr), each line with its `bridge=<name>`: `tunnel connecting`, `tunnel up`, `bridge not answering through the tunnel`,
+`tunnel down, restarting … retry_in=…`, `local bridge up`, `local bridge not answering`, `bridge switched from=… to=…`. `curl http://127.0.0.1:7777/healthz` shows the tunnel state and both versions (`version` is the helper's, `tunnel.bridge` the bridge's); the helper logs a warning when they differ. The game shows `game … · helper … · bridge …` above the backend line, in amber when they differ.
 
 | flag | env | default |
 |---|---|---|
-| `--host` | `H3D_HELPER_HOST` | **none: required.** Flag, then env; without either the helper exits naming both |
-| `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | flag, then env; else the helper asks the host for its `$XDG_RUNTIME_DIR` over ssh and uses `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` (the bridge's default) |
-| `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock` |
+| `--bridges-file` | `H3D_HELPER_BRIDGES_FILE` | `~/Library/Application Support/h3d-helper/bridges.json` (0600): the bridge list Settings → Bridges edits; once it exists it is the truth |
+| `--host` | `H3D_HELPER_HOST` | none. Flag, then env: seeds a missing or empty list (that host, named after it, in use); ignored once the list exists. Without any, the helper serves the game and the game asks for a bridge |
+| `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | flag, then env, for that first bridge; else the helper asks the host for its `$XDG_RUNTIME_DIR` over ssh (in that bridge's supervisor, with backoff) and uses `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` (the bridge's default) |
+| `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock`: #57, its directory holds the tunnels' local ends, one per ssh bridge, `<dir>/bridges/<id>-<n>.sock` (`<n>` a new one per tunnel the helper starts, so an edited address never shares the old tunnel's socket) |
 | `--listen` | `H3D_HELPER_LISTEN` | `127.0.0.1:7777`; anything but a loopback IP is refused |
 | `--bundle` | `H3D_HELPER_BUNDLE` | the game embedded in the binary; else `~/Library/Application Support/h3d-helper/dist` |
 | `--token-file` | `H3D_HELPER_TOKEN_FILE` | `~/Library/Application Support/h3d-helper/token` (0600, created on first start) |
@@ -626,15 +639,17 @@ State goes to the log (stderr): `tunnel connecting`, `tunnel up`, `bridge not an
 | `--ssh` | `H3D_HELPER_SSH` | `ssh` on `PATH` |
 | `--log-level`, `--log-format` | `H3D_HELPER_LOG_LEVEL`, `H3D_HELPER_LOG_FORMAT` | `info`, `text` (or `json`) |
 
-**No built-in machine.** The helper never guesses where the bridge is. Set `H3D_HELPER_HOST` (`user@host`) in the
+**No built-in machine.** The helper never guesses where the bridge is. #57: its bridges are its list
+(`bridges.json`), which the game edits. A helper with no list takes `H3D_HELPER_HOST` (`user@host`) from the
 LaunchAgent's `EnvironmentVariables` (launchd does not see shell exports; `deploy/com.jeffreyvdb.h3d-helper.plist`
-carries `@H3D_HELPER_HOST@` and `@H3D_HELPER_REMOTE_SOCKET@` placeholders and its header says how to `sed` them in) or pass
-`-host`. These are the helper's only configuration: it reads no config file. Without a host it exits at once with
-`no bridge host: pass -host [user@]host or set $H3D_HELPER_HOST (on the Mac: in the LaunchAgent's EnvironmentVariables)`;
-`-version` and `-print-url` need none. Without a socket it runs
-`ssh <host> 'printf %s "$XDG_RUNTIME_DIR"'` (same no-multiplexing options as the tunnel) once at start and refuses an empty,
-relative or odd answer, telling you to pass `-remote-socket`. Real values live only in the installed plist on the Mac,
-never in the repository; `docs/releasing.md` ("Changing the Mac's bridge host") has the steps.
+carries `@H3D_HELPER_HOST@` and `@H3D_HELPER_REMOTE_SOCKET@` placeholders and its header says how to `sed` them in) or
+`-host` as its first bridge, and writes the list; after that neither is read (a host the list does not have is logged).
+It reads no other configuration (`helper.env` is still not one). Without a list or a host it starts, serves the game
+and logs `no bridge configured`; the game says "No bridge configured" and to add one in Settings. An ssh bridge
+without a socket runs `ssh <host> 'printf %s "$XDG_RUNTIME_DIR"'` (same no-multiplexing options as the tunnel) in its
+own supervisor and refuses an empty, relative or odd answer (its state is `backoff`, the error its `last_error`;
+set the socket in Settings). Real values live only in the installed plist and the list on the Mac, never in the
+repository; `docs/releasing.md` ("Changing the Mac's bridge host") has the steps.
 
 Installing and updating are one command, `deploy/h3d-update`, from a GitHub release: see
 [`docs/releasing.md`](docs/releasing.md) (first install, updating, rolling back, installing the game as a Dock app).
@@ -657,8 +672,29 @@ ssh -o ControlMaster=no -o ControlPath=none -N -L 5173:127.0.0.1:<leased dev por
 
 Agents test it without launchd and without a window: copy the binary and a `game/dist` to a temp dir such as
 `~/h3d-tools/helper-<task>/`, run `./h3d-helper -no-open -host <user@server> -remote-socket <private bridge socket> -bundle <dir>/dist
--local-socket <dir>/bridge.sock` (it logs the game URL with its token), drive headless Chrome from `~/h3d-tools`
+-local-socket <dir>/bridge.sock -bridges-file <dir>/bridges.json -token-file <dir>/token` (it logs the game URL with its
+token; the last two keep it off the real list and token), drive headless Chrome from `~/h3d-tools`
 (`playwright-core`), and stop it with SIGTERM when done. Mac port 7777 is the helper's; others use their own.
+
+#57, two bridges without a real one: the fixture server stands in for a bridge on a unix socket (`--socket`; it
+answers `/healthz` like one). On Linux, with a short socket directory (unix socket paths are at most 103 bytes) and a
+port of your own, from the repository root:
+
+```sh
+R=$XDG_RUNTIME_DIR/h3d-bridges-mytask; mkdir -p -m 700 $R; rm -f $R/*.sock
+(cd game && node --experimental-transform-types tools/fixture-server.ts --socket $R/a.sock --fixture demo-m6 --simulate) &
+(cd game && node --experimental-transform-types tools/fixture-server.ts --socket $R/b.sock --fixture demo --simulate) &
+printf '%s\n' '{"active": "a0a0a0a0a0", "bridges": [' \
+  "{\"id\": \"a0a0a0a0a0\", \"name\": \"Office A\", \"kind\": \"local\", \"socket\": \"$R/a.sock\"}," \
+  "{\"id\": \"b0b0b0b0b0\", \"name\": \"Office B\", \"kind\": \"local\", \"socket\": \"$R/b.sock\"}," \
+  '{"id": "c0c0c0c0c0", "name": "Nowhere", "kind": "ssh", "host": "nobody@bogus.invalid", "remote_socket": "/run/b.sock"}]}' \
+  > $R/bridges.json && chmod 600 $R/bridges.json
+go build -o $R/h3d-helper ./cmd/h3d-helper   # and a game/dist (make build, or make e2e built one)
+$R/h3d-helper -no-open -listen 127.0.0.1:PORT -bundle game/dist -bridges-file $R/bridges.json -token-file $R/token -local-socket $R/tun/bridge.sock
+```
+
+Open the URL it logs, ⌘/Ctrl+P → Switch bridge: Office A's city has five floors (`lab` among them), Office B's three,
+and Nowhere stays `backoff` without holding anything up.
 
 ## Rule: never serve the game to the Mac over plain `http://<tailnet-host>`
 
@@ -1255,6 +1291,25 @@ floor pick without a command is `dismissOverlays()` then `enterFloor`, and on th
 `world/palette.test.ts`, `ui/palette.dom.test.ts`, `ui/listbox.test.ts`, the chord cases of `input/shortcuts.test.ts`, and
 `e2e/palette.spec.ts` (city, floor, plan, lobby, seated terminal, whiteboard, floor overview, image preview, over the hire dialog, ⌘P on a Mac, the limits tab on each; each view
 asserts the chord's keydown is `defaultPrevented`, since Playwright cannot see the print dialog).
+
+#57: the helper's bridges in the game (`net/bridges.ts`: `BridgeApi` over `/api/bridges`, `BridgeBook` the list as last
+read, polled every 2 s while something shows it). **Settings → Bridges** (`ui/bridgesSection.ts`, general group, store
+"This helper") lists them with a state dot (the connection chip's colours, `ui/bridgeState.ts`), "In use", address and
+state in words, Use / Rename / Edit / Remove (the bridge in use's Remove is `aria-disabled` and says why), and an add
+form (ssh: host, optional remote socket; local: socket); the helper's refusals show under the form as it words them.
+A poll redraws only a row that changed and never one with an open form. **⌘P → Switch bridge** (`PALETTE_ONLY`
+`bridge.switch`) turns the palette into a third mode (`parseQuery(text, true)`, "Switch to which bridge?"): every
+bridge but the one in use, online first, each group by name without regard to case (`bridgeList`), the order fixed
+while it shows and the dots live (`bridgeRow`); with no other bridge one row, "No other bridges: add one in Settings",
+opens Settings → Bridges. A pick (`App.switchBridge`) asks first for a bridge that is not up (`ui/bridgeSwitch.ts`,
+"<name> is offline. Switch anyway?"), puts "Switching to <name>…" on the chip, activates it and reloads. The chip's
+tooltip and About name the bridge in use; a helper with none gets the "No bridge configured" notice and a "No bridge"
+chip. Neither the section nor the command exists on a page no helper serves (no token, or no list). `main.ts` reads
+the list before the App so the per-bridge keys (`net/bridgeScope.ts`: drafts, the seat's tabs, the overview's
+collapsed orchestrators, the hidden models and task levels, under `h3d.b.<id>.`) are scoped from the first read;
+without a helper they stay unscoped, so specs that seed them are unchanged. Tests: `ui/bridgesSection.dom.test.ts`,
+`ui/paletteBridges.dom.test.ts`, `net/bridgeScope.test.ts`, and `e2e/h57-bridges.spec.ts` (the helper faked with
+`page.route`, `e2e/bridges.ts`).
 
 Controls: in the city, drag to orbit, scroll to zoom, click a building to focus it and open its elevator panel, and a
 floor of the focused building (or any floor's badge) to go inside. **M** or the Buildings button opens the buildings

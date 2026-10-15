@@ -52,8 +52,12 @@ export function takeToken(
   }
 }
 
-/** The bridge WebSocket URL: `?ws=` override (absolute or path), else same-origin `/ws`. */
-export function bridgeUrl(loc: LocationLike, token: string | null): string {
+/**
+ * The bridge WebSocket URL: `?ws=` override (absolute or path), else same-origin `/ws`. #57: a page the helper serves
+ * names the bridge its per-bridge keys belong to (`bridge`, `none` for a helper that had none), and the helper connects
+ * it to that bridge only: after a switch made in another tab it is refused until it reloads.
+ */
+export function bridgeUrl(loc: LocationLike, token: string | null, bridge: string | null = null): string {
   const wsScheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
   const override = new URLSearchParams(loc.search).get('ws');
   let url: URL;
@@ -65,5 +69,6 @@ export function bridgeUrl(loc: LocationLike, token: string | null): string {
     url = new URL(`${wsScheme}//${loc.host}/ws`);
   }
   if (token && !url.searchParams.has('token')) url.searchParams.set('token', token);
+  if (token && bridge) url.searchParams.set('bridge', bridge);
   return url.toString();
 }

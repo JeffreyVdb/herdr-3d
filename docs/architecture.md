@@ -60,12 +60,43 @@ MacBook (M2 Max)                                   devbox (Linux)
   falls back to WebGL2 (verified), so never use it for real play.
 - The helper's tunnel must use `-o ControlMaster=no -o ControlPath=none`: a tunnel that becomes the shared ControlMaster
   gets killed along with everyone's multiplexed sessions (happened during research, see §7).
-- **No machine is built in.** The helper finds the bridge through `H3D_HELPER_HOST` (and optionally
-  `H3D_HELPER_REMOTE_SOCKET`; unset, it asks the host for `$XDG_RUNTIME_DIR` over ssh), from its flags or the
-  environment, which on the Mac is the LaunchAgent's `EnvironmentVariables` and nothing else. `h3d-update` finds the
-  Mac through `H3D_MAC`, from the environment or the private `~/.config/h3d/update.env` on the server. Both live outside
-  the repository; `deploy/update.env.example` and the plist's placeholders show the shape with fictional values, and
-  `docs/releasing.md` has the procedure.
+- **No machine is built in.** The helper keeps a list of bridges (#57, below) in a 0600 `bridges.json` next to its
+  token; Settings → Bridges edits it. An install from before has none yet: on its first start the helper takes
+  `H3D_HELPER_HOST` (and optionally `H3D_HELPER_REMOTE_SOCKET`; unset, it asks the host for `$XDG_RUNTIME_DIR` over
+  ssh) from its flags or the environment (on the Mac the LaunchAgent's `EnvironmentVariables`) as the list's only
+  entry, named after the host, in use; from then on the file is the truth. With neither, the helper starts and serves
+  the game, which says to add a bridge. `h3d-update` finds the Mac through `H3D_MAC`, from the environment or the
+  private `~/.config/h3d/update.env` on the server. Both live outside the repository; `deploy/update.env.example` and
+  the plist's placeholders show the shape with fictional values, and `docs/releasing.md` has the procedure.
+
+### N bridges (#57)
+
+```
+Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz, /api/open ──▶ h3d-helper
+                                                                                          │ BridgeSet: the one in use
+  Settings → Bridges, ⌘P → Switch bridge ── /api/bridges (list, add, edit, remove, activate) ─┤
+                                                                                          ├─ devbox  ssh -N -L <cache>/bridges/<id>-<n>.sock (up)
+                                                                                          ├─ gpu     ssh -N -L <cache>/bridges/<id>-<n>.sock (backoff)
+                                                                                          └─ laptop  local unix socket, /healthz every 5 s
+```
+
+- The helper owns the list, because it owns the connection: a bridge cannot hold the list (it is unreachable while
+  down) and the browser cannot (the helper must act on it). `helper.BridgeSet` implements the one seam every proxied
+  route already went through (`helper.Bridge { Dial; Status }`) by handing it to the bridge in use, so all of them,
+  `/healthz` and `/api/open`'s Kaneo host (#184) follow a switch.
+- **Standby connections.** Every bridge keeps its own supervised connection: an ssh entry its own `Tunnel` (one idle
+  `ssh -N` each, the same backoff and checks, `ControlMaster=no`), a local entry (a Linux machine running both the
+  helper and the bridge) its socket dialled directly with a `/healthz` check every 5 s. The list therefore always has
+  each bridge's state at hand: the palette and Settings read it, nothing waits on an ssh handshake, and switching to a
+  bridge that is up is instant. With a handful of bridges that costs a handful of idle ssh processes
+  (`docs/decisions.md`, #57). The set's lock never spans a dial, an ssh start or a check: one unreachable bridge holds
+  up neither the others nor the helper.
+- **A switch is a reload.** `activate` changes the bridge in use and closes every connection dialled to the old one
+  (the game's `/ws` and the proxies' idle keep-alive ones); the game reloads and its same-origin `/ws` reaches the new
+  bridge. Switching in place would need `App.url`, the closures that captured it and the resume epoch to change.
+- **Per-bridge browser state.** Drafts, the seat's tab per worker, the overview's collapsed orchestrators and the hire
+  dialog's model and level choices are kept under `h3d.b.<id>.` in the browser (`net/bridgeScope.ts`); client
+  preferences and the helper token stay shared. A page no helper serves keeps the plain keys.
 
 ## 3. Server: `herdr-world` bridge (Go)
 
