@@ -58,7 +58,7 @@ export function floorsSection(host: FloorsSectionHost): (body: HTMLElement, sect
     const block = el('div', 'settings-role settings-fl');
     block.setAttribute('role', 'group');
     const head = el('div', 'settings-role-head');
-    const title = el('h4', 'settings-role-title', 'Floors');
+    const title = el('h4', 'settings-role-title', 'By herdr session');
     title.id = `${id}-h`;
     block.setAttribute('aria-labelledby', title.id);
     const add = button('Add floor', 'add-floor');

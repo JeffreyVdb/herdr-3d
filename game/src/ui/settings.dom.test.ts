@@ -407,12 +407,12 @@ describe('the game’s Settings sections (#49)', () => {
     const src = readFileSync(join(import.meta.dirname, '../app.ts'), 'utf8');
     const calls = [...src.matchAll(/addSection\(\s*'([\w-]+)'/g)].map((m) => m[1]);
     const groups = [...src.matchAll(/addSection\(\s*'([\w-]+)'[\s\S]*?\{\s*store: '\w+',\s*group: '(\w+)',?\s*\}/g)].map((m) => [m[1], m[2]]);
-    expect(calls).toHaveLength(16);
+    expect(calls).toHaveLength(17);
     expect(groups.map(([id]) => id)).toEqual(calls);
     const table: Record<string, string[]> = {};
     for (const [id, g] of groups) (table[g!] ??= []).push(id!);
     expect(table).toEqual({
-      general: ['appearance', 'display', 'time', 'notifications'],
+      general: ['appearance', 'display', 'floors', 'time', 'notifications'],
       workers: ['harness-models', 'task-levels', 'codex'],
       ai: ['ai', 'followups', 'packup', 'activity', 'digest', 'handoff-llm'],
       integrations: ['repos', 'repo-discovery', 'kaneo'],
