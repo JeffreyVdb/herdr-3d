@@ -350,7 +350,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 		return err
 	}
 	now := h.opts.Now()
-	ah := &agentHandoff{req: store.HandoffRequest{Op: a.op, WorkerID: w.ID, Floor: w.Session, Harness: w.AgentKind,
+	ah := &agentHandoff{req: store.HandoffRequest{Op: a.op, WorkerID: w.ID, Floor: workerFloor(w), Harness: w.AgentKind,
 		AgentSession: w.AgentSession, Offset: -1, Nonce: randHex(8), Instruction: instruction, SendHome: a.sendHome,
 		State: store.HandoffRequestPending, CreatedAt: now.UnixMilli()}, at: now, state: proto.AgentHandoffStarting,
 		checking: true, client: c, cmd: cmd, auditID: auditID, answer: a.answer, by: c.name, lines: -1}
@@ -728,7 +728,7 @@ func (h *Hub) adoptAgentHandoff(ctx context.Context, ah *agentHandoff, w *proto.
 		Transcript  string `json:"transcript"`
 		Offset      int64  `json:"offset"`
 	}{ah.req.Harness, ah.req.Nonce, ah.req.Instruction, ah.req.Transcript, ah.req.Offset})
-	src := handoff.Source{Floor: w.Session, WorkerID: w.ID, WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
+	src := handoff.Source{Floor: workerFloor(w), WorkerID: w.ID, WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
 		Cwd: checkoutOf(w), Branch: w.Branch, AgentSession: ah.req.AgentSession, Kind: store.HandoffAgent, Turn: ah.req.Op,
 		Items: string(items), Op: ah.req.Op, At: ah.at}
 	svc, path := h.ho.svc, ah.req.Path
@@ -748,7 +748,7 @@ func (h *Hub) adoptAgentHandoff(ctx context.Context, ah *agentHandoff, w *proto.
 				h.ho.counts[filed.Floor]++
 				n := h.ho.counts[filed.Floor]
 				e := entryOf(filed)
-				h.emit(proto.Event{T: proto.EvHandoffAdded, Session: filed.Floor, Handoff: &e, HandoffCount: &n})
+				h.emit(proto.Event{T: proto.EvHandoffAdded, Session: h.sessionOf(filed.Floor), FloorID: filed.Floor, Handoff: &e, HandoffCount: &n})
 				h.log.Info("agent handoff filed", "worker", ah.req.WorkerID, "op", ah.req.Op, "handoff", filed.ID, "path", filed.Path)
 			}
 			if ah.req.SendHome {

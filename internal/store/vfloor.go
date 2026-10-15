@@ -196,10 +196,11 @@ func (s *Store) SetWorkerFloor(ctx context.Context, workerID, floor string) erro
 
 // DeleteVirtualFloor removes a virtual floor and the rows keyed by it:
 // desks, names, settings, last hire, last preset, board caches, its place in
-// a building and its hidden flag. It refuses (ErrFloorHasWorkers) while an
-// open stored worker is attributed to it; closed ones go back to their
-// session's real floor. Handoffs are kept.
-func (s *Store) DeleteVirtualFloor(ctx context.Context, id string) error {
+// a building and its hidden flag. Unless moveWorkers, it refuses
+// (ErrFloorHasWorkers) while an open stored worker is attributed to it;
+// with it, they go back to their session's real floor, as closed ones
+// always do. Handoffs are kept.
+func (s *Store) DeleteVirtualFloor(ctx context.Context, id string, moveWorkers bool) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		var n int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM virtual_floor WHERE id = ?`, id).Scan(&n); err != nil {
@@ -208,7 +209,9 @@ func (s *Store) DeleteVirtualFloor(ctx context.Context, id string) error {
 		if n == 0 {
 			return fmt.Errorf("%w: virtual floor %q", ErrNotFound, id)
 		}
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM worker WHERE floor_id = ? AND closed_at IS NULL`, id).Scan(&n); err != nil {
+		if moveWorkers {
+			n = 0
+		} else if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM worker WHERE floor_id = ? AND closed_at IS NULL`, id).Scan(&n); err != nil {
 			return err
 		}
 		if n > 0 {

@@ -308,7 +308,7 @@ func (h *Hub) startHirePrepare(ctx context.Context, c *Client, cmd proto.Command
 		return err
 	}
 	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
-	f, err := h.hireFloor(a.Floor)
+	f, err := h.prepareFloor(a.Floor)
 	if err != nil {
 		return err
 	}
@@ -377,7 +377,38 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 		return err
 	}
 	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	if err := h.hireShape(a); err != nil {
+		return err
+	}
+	// #58 decision 3: an asleep virtual floor's session wakes first.
+	if waking, err := h.wakeForHire(ctx, c, cmd, a.Floor, func(ctx context.Context) error {
+		return h.beginHire(ctx, c, cmd, a, nil, nil)
+	}); waking || err != nil {
+		return err
+	}
 	return h.beginHire(ctx, c, cmd, a, nil, nil)
+}
+
+// hireShape checks what a hire asks for that needs no floor: the desk is
+// named, the harness, model and effort can be hired and started, and the
+// prompt is well formed.
+func (h *Hub) hireShape(a proto.WorkerHireArgs) error {
+	if a.DeskIndex == nil {
+		return bad("desk_index is required")
+	}
+	if err := validHireIn(h.hireOptions(), proto.Hire{Harness: a.Harness, Model: a.Model, Effort: a.Effort}); err != nil {
+		return &badArgsError{err}
+	}
+	if !herdr.CanStart(a.Harness) {
+		return bad("cannot start harness %q", a.Harness)
+	}
+	if a.Prompt != "" && !herdr.ValidPrompt(a.Prompt) {
+		return bad("prompt must be 1-%d bytes of text, not starting with \"--\"", herdr.MaxPrompt)
+	}
+	if a.Prompt != "" {
+		return checkTyped(a.Harness, a.Prompt, herdr.MaxPrompt, "prompt") // #95
+	}
+	return nil
 }
 
 // beginHire is the hire of worker.hire and run.start: it validates a,
@@ -392,14 +423,8 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	if err != nil {
 		return err
 	}
-	if a.DeskIndex == nil {
-		return bad("desk_index is required")
-	}
-	if err := validHireIn(h.hireOptions(), proto.Hire{Harness: a.Harness, Model: a.Model, Effort: a.Effort}); err != nil {
-		return &badArgsError{err}
-	}
-	if !herdr.CanStart(a.Harness) {
-		return bad("cannot start harness %q", a.Harness)
+	if err := h.hireShape(a); err != nil {
+		return err
 	}
 	at := h.opts.Now()
 	held, released := h.heldNames(a.Floor, at)
@@ -408,14 +433,6 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	}
 	if !herdr.ValidLabel(a.Label) {
 		return bad("label must be 1-%d bytes without control characters, not starting with \"-\"", herdr.MaxLabel)
-	}
-	if a.Prompt != "" && !herdr.ValidPrompt(a.Prompt) {
-		return bad("prompt must be 1-%d bytes of text, not starting with \"--\"", herdr.MaxPrompt)
-	}
-	if a.Prompt != "" {
-		if err := checkTyped(a.Harness, a.Prompt, herdr.MaxPrompt, "prompt"); err != nil { // #95
-			return err
-		}
 	}
 	cwd, err := h.hireCwd(a.Floor, f, a.Cwd)
 	if err != nil {

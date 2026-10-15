@@ -75,6 +75,9 @@ type floorOp struct {
 	asleep bool
 	// running: a wake has seen the floor running.
 	running bool
+	// then, if set, is a hire's wake (#58 decision 3): it runs instead of
+	// the wake's reply, on the hub goroutine, with the wake's error.
+	then func(ctx context.Context, err error)
 }
 
 // resumeWait is one worker a wake expects to resume.
@@ -179,31 +182,7 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	h.log.Info("floor operation started", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID, "session", f.session,
 		"floor", a.Floor)
 	if wake {
-		op.kind = proto.TransitionWaking
-		op.waits = map[string]*resumeWait{}
-		h.syncLayout() // the transition first, then the workers
-		for _, id := range f.all {
-			w := h.workers[id]
-			if l, ok := h.cx.launches[id]; ok && w != nil && l.Mode == store.CodexShared { // #155
-				// Also without a thread (it slept before herdr reported
-				// one): sleep quit its TUI, so it is launched afresh.
-				op.waits[id] = &resumeWait{pane: w.PaneID, harness: "codex", agentSession: l.Thread,
-					state: proto.ResumePending, shared: true}
-				h.setResume(id, proto.ResumePending)
-				continue
-			}
-			if w == nil || w.AgentSession == "" {
-				continue
-			}
-			harness := w.AgentKind
-			if harness == "" {
-				harness = w.Harness
-			}
-			op.waits[id] = &resumeWait{pane: w.PaneID, harness: harness, agentSession: w.AgentSession, state: proto.ResumePending}
-			h.setResume(id, proto.ResumePending)
-		}
-		h.wg.Add(1)
-		go h.runWake(ctx, op, f.socket)
+		h.beginWake(ctx, op, f)
 		return nil
 	}
 	op.kind = proto.TransitionSleeping
@@ -236,6 +215,37 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	h.wg.Add(1)
 	go h.runSleep(ctx, op, shared, backfills, known)
 	return nil
+}
+
+// beginWake starts a wake op on f (op holds f): the transition goes out at
+// once, the resumable workers turn pending and runWake does the rest off
+// the hub goroutine.
+func (h *Hub) beginWake(ctx context.Context, op *floorOp, f *floorState) {
+	op.kind = proto.TransitionWaking
+	op.waits = map[string]*resumeWait{}
+	h.syncLayout() // the transition first, then the workers
+	for _, id := range f.all {
+		w := h.workers[id]
+		if l, ok := h.cx.launches[id]; ok && w != nil && l.Mode == store.CodexShared { // #155
+			// Also without a thread (it slept before herdr reported
+			// one): sleep quit its TUI, so it is launched afresh.
+			op.waits[id] = &resumeWait{pane: w.PaneID, harness: "codex", agentSession: l.Thread,
+				state: proto.ResumePending, shared: true}
+			h.setResume(id, proto.ResumePending)
+			continue
+		}
+		if w == nil || w.AgentSession == "" {
+			continue
+		}
+		harness := w.AgentKind
+		if harness == "" {
+			harness = w.Harness
+		}
+		op.waits[id] = &resumeWait{pane: w.PaneID, harness: harness, agentSession: w.AgentSession, state: proto.ResumePending}
+		h.setResume(id, proto.ResumePending)
+	}
+	h.wg.Add(1)
+	go h.runWake(ctx, op, f.socket)
 }
 
 // agentDetected resolves a waking worker whose pane herdr reports its
@@ -675,6 +685,10 @@ func (h *Hub) finishOp(ctx context.Context, op *floorOp, opErr error, report any
 		h.syncLayout()
 		if aerr := h.st.AuditEnd(ctx, op.auditID, opErr, report); aerr != nil {
 			h.log.Error("audit log write failed", "err", aerr)
+		}
+		if op.then != nil {
+			op.then(ctx, opErr)
+			return
 		}
 		h.reply(op.client, op.cmd, data, opErr)
 	})

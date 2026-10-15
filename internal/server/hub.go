@@ -1207,6 +1207,11 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 		if err = decodeArgs(cmd.Args, &a); err == nil {
 			err = h.floorDelete(ctx, a)
 		}
+	case proto.CmdFloorHide:
+		var a proto.FloorHideArgs
+		if err = decodeArgs(cmd.Args, &a); err == nil {
+			err = h.floorHide(ctx, a)
+		}
 	// M6 launch
 	case proto.CmdPresetCreate, proto.CmdPresetUpdate, proto.CmdPresetDelete:
 		data, err = h.presetCommand(ctx, cmd)

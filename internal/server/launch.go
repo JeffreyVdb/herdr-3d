@@ -344,7 +344,7 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 		return err
 	}
 	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
-	f, err := h.hireFloor(a.Floor)
+	f, err := h.prepareFloor(a.Floor)
 	if err != nil {
 		return err
 	}
@@ -413,6 +413,20 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 		return err
 	}
 	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	switch {
+	case a.DeskIndex == nil:
+		return bad("desk_index is required")
+	case a.Orch == nil:
+		return bad("orch is required")
+	case a.Preset == "":
+		return bad("preset is required")
+	}
+	// #58 decision 3: an asleep virtual floor's session wakes first.
+	if waking, err := h.wakeForHire(ctx, c, cmd, a.Floor, func(ctx context.Context) error {
+		return h.runStart(ctx, c, cmd, a, nil)
+	}); waking || err != nil {
+		return err
+	}
 	return h.runStart(ctx, c, cmd, a, nil)
 }
 

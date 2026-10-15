@@ -248,7 +248,7 @@ func (h *Hub) sendHomeBlocked(w *proto.Worker) string {
 }
 
 func provenanceOf(w *proto.Worker) proto.HandoffProvenance {
-	return proto.HandoffProvenance{Floor: w.Session, WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
+	return proto.HandoffProvenance{Floor: workerFloor(w), WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
 		Branch: w.Branch, Cwd: checkoutOf(w), Session: w.AgentSession}
 }
 
@@ -367,7 +367,7 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 		Source  string            `json:"source"`
 		Spans   []transcript.Span `json:"spans"`
 	}{hc.c.Harness, hc.c.Message, hc.c.Request, hc.c.Line, hc.c.Turn, hc.c.Source, hc.c.Spans})
-	src := handoff.Source{Floor: w.Session, WorkerID: w.ID, WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
+	src := handoff.Source{Floor: workerFloor(w), WorkerID: w.ID, WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
 		Cwd: checkoutOf(w), Branch: w.Branch, AgentSession: hc.c.Session, Kind: store.HandoffLiteral, Turn: hc.c.ID,
 		Items: string(items), Hash: hc.c.Hash, Op: a.Op}
 	svc, cand := h.ho.svc, *hc
@@ -395,7 +395,7 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 					h.ho.counts[filed.Floor]++
 					n := h.ho.counts[filed.Floor]
 					e := entryOf(filed)
-					h.emit(proto.Event{T: proto.EvHandoffAdded, Session: filed.Floor, Handoff: &e, HandoffCount: &n})
+					h.emit(proto.Event{T: proto.EvHandoffAdded, Session: h.sessionOf(filed.Floor), FloorID: filed.Floor, Handoff: &e, HandoffCount: &n})
 					h.log.Info("handoff filed", "worker", w.ID, "handoff", filed.ID, "path", filed.Path, "bytes", rep.Bytes)
 				}
 				if a.SendHome {
@@ -519,7 +519,8 @@ func (h *Hub) startHandoffs(ctx context.Context, c *Client, cmd proto.Command) e
 					h.ho.counts[gone.Floor]--
 				}
 				n := h.ho.counts[gone.Floor]
-				h.emit(proto.Event{T: proto.EvHandoffRemoved, Session: gone.Floor, HandoffID: gone.ID, HandoffCount: &n})
+				h.emit(proto.Event{T: proto.EvHandoffRemoved, Session: h.sessionOf(gone.Floor), FloorID: gone.Floor, HandoffID: gone.ID,
+					HandoffCount: &n})
 				h.log.Info("handoff deleted", "handoff", gone.ID, "path", gone.Path)
 			})
 			return proto.HandoffDeleteResult{Handoff: entryOf(gone)}, nil

@@ -2,6 +2,8 @@ package server_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -330,7 +332,6 @@ func TestVirtualFloorCommands(t *testing.T) {
 	if e := errorOf(m); e.Code != proto.ErrInvalidState || !strings.Contains(e.Message, "1 worker") {
 		t.Fatalf("delete with a worker: %s", m.raw)
 	}
-	c.mustError(proto.CmdFloorDelete, proto.FloorDeleteArgs{Floor: id, MoveWorkers: true}, proto.ErrUnsupported)
 	c.mustError(proto.CmdFloorDelete, proto.FloorDeleteArgs{Floor: "s"}, proto.ErrBadRequest)
 
 	// An empty one goes: floor.removed names it.
@@ -390,5 +391,315 @@ func TestRunStartOnVirtualFloor(t *testing.T) {
 	}
 	if real, _ := floorByID(w, "s"); real.LastPreset != "" {
 		t.Fatalf("real floor = %+v", real)
+	}
+}
+
+// sleepHireFloor puts the hire bridge's session to sleep with its workers
+// (as herdr lists them asleep) and makes its next wake bring it back.
+func sleepHireFloor(t *testing.T, hb *hireBridge) {
+	t.Helper()
+	hb.fl.mu.Lock()
+	ws := slices.Clone(hb.fl.workers)
+	hb.fl.mu.Unlock()
+	hb.floorAt("s", false, ws)
+	hb.world(func(w proto.World) bool { f, _ := floorByID(w, "s"); return f.State == "asleep" })
+	hb.fl.onStart = func() {
+		hb.fl.setUp("sock-s", true)
+		hb.fl.publish()
+	}
+}
+
+// floorStates is each floor's state and transition, in event order, from
+// floor.upsert events.
+func floorStates(evs []proto.Event) map[string][]string {
+	out := map[string][]string{}
+	for _, ev := range evs {
+		if ev.T == proto.EvFloorUpsert {
+			st := ev.Floor.State
+			if ev.Floor.Transition != "" {
+				st += "/" + ev.Floor.Transition
+			}
+			if l := out[ev.Floor.ID]; len(l) == 0 || l[len(l)-1] != st {
+				out[ev.Floor.ID] = append(l, st)
+			}
+		}
+	}
+	return out
+}
+
+// floor.sleep on a virtual floor puts its base session to sleep: herdr is
+// stopped with the session, every floor of it goes asleep, and its workers
+// stay on their floors.
+func TestSleepVirtualFloorSleepsBase(t *testing.T) {
+	t.Parallel()
+	db := seedFloors(t, map[string]string{vWeb: "Web"}, map[string]string{"u1": vWeb})
+	fh := newFakeHerdr()
+	b := startBridge(t, db, fastOps(fh))
+	ws := []world.WorkerObs{worker("w1", "CODE|a", "sess-u1", "idle"), worker("w2", "tui", "", "idle")}
+	b.floorAt("s", true, ws)
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	fh.onStop = func() { fh.setUp("sock-s", false); b.floorAt("s", false, withStatus(ws, "unknown")) }
+	evs, _ := c.mustAck(proto.CmdFloorSleep, proto.FloorArgs{Floor: vWeb})
+	if calls := fh.Calls(); !slices.Equal(calls, []string{"stop s"}) {
+		t.Fatalf("herdr calls = %v", calls)
+	}
+	got := floorStates(evs)
+	for _, id := range []string{"s", vWeb} {
+		if l := got[id]; len(l) < 2 || l[0] != "running/sleeping" || l[len(l)-1] != "asleep" {
+			t.Fatalf("floor %s went %v", id, l)
+		}
+	}
+	w := b.connect(proto.Hello{}).snapshot().World
+	if v, _ := floorByID(w, vWeb); v.State != "asleep" {
+		t.Fatalf("virtual floor = %+v", v)
+	}
+	if u1, ok := workerByID(w, "u1"); !ok || u1.Floor != vWeb {
+		t.Fatalf("u1 asleep = %+v", u1)
+	}
+	if tui := workersOf(w, "s")["w2"]; tui.Floor != "s" {
+		t.Fatalf("unattributed asleep = %+v", tui)
+	}
+}
+
+// Decision 3: a hire on a virtual floor whose session is asleep wakes the
+// session (every floor of it shows waking, then running), then hires; the
+// hire dialog opens there meanwhile. An asleep real floor still refuses.
+func TestHireOnAsleepVirtualFloorWakesItsSession(t *testing.T) {
+	t.Parallel()
+	db := seedFloors(t, map[string]string{vWeb: "Web"}, nil)
+	hb := startHireBridgeAt(t, db, nil, worker("w1", "CODE|a", "", "idle"))
+	c := hb.c
+	sleepHireFloor(t, hb)
+
+	c.mustError(proto.CmdWorkerHire, hireArgs(1), proto.ErrInvalidState) // the real floor
+	c.mustError(proto.CmdHirePrepare, proto.HirePrepareArgs{Session: "s"}, proto.ErrInvalidState)
+	_, m := c.command(proto.CmdHirePrepare, "p", proto.HirePrepareArgs{Floor: vWeb})
+	if res := ackData[proto.HirePrepareResult](t, m); res.Label == "" || res.Cwd == "" {
+		t.Fatalf("prepare on the asleep virtual floor = %+v", res)
+	}
+	// A request that cannot be a hire does not wake anything.
+	bad := hireArgs(0)
+	bad.Session, bad.Floor, bad.Harness = "", vWeb, "nope"
+	c.mustError(proto.CmdWorkerHire, bad, proto.ErrBadRequest)
+	if calls := hb.fl.Calls(); slices.Contains(calls, "start s") {
+		t.Fatalf("woken by a bad hire: %v", calls)
+	}
+
+	args := hireArgs(0)
+	args.Session, args.Floor = "", vWeb
+	evs, ack := c.mustAck(proto.CmdWorkerHire, args)
+	id := ack.Data.(map[string]any)["id"].(string)
+	calls := hb.fl.Calls()
+	start := slices.Index(calls, "start s")
+	create := slices.IndexFunc(calls, func(c string) bool { return strings.HasPrefix(c, "create s ") })
+	if start < 0 || create < start {
+		t.Fatalf("herdr calls = %v", calls)
+	}
+	for _, call := range calls {
+		if strings.Contains(call, "v-") {
+			t.Fatalf("a virtual floor id reached herdr: %v", calls)
+		}
+	}
+	got := floorStates(evs)
+	for _, fid := range []string{"s", vWeb} {
+		if l := got[fid]; len(l) < 2 || l[0] != "asleep/waking" || l[len(l)-1] != "running" {
+			t.Fatalf("floor %s went %v", fid, l)
+		}
+	}
+	if i := slices.IndexFunc(evs, func(ev proto.Event) bool { return ev.T == proto.EvWorkerUpsert && ev.Worker.ID == id }); i < 0 ||
+		evs[i].Worker.Floor != vWeb {
+		t.Fatalf("hired worker events = %+v", evs)
+	}
+	if got := storedFloors(t, hb.bridge); got[id] != vWeb {
+		t.Fatalf("stored floors = %v", got)
+	}
+	// The wake is audited as the hire's floor.wake.
+	if row := auditRow(t, hb.bridge, proto.CmdFloorWake); !row.OK || !row.Done {
+		t.Fatalf("wake audit = %+v", row)
+	}
+}
+
+// A hire whose wake fails fails with the wake's error and hires nothing.
+func TestHireOnAsleepVirtualFloorWakeFails(t *testing.T) {
+	t.Parallel()
+	db := seedFloors(t, map[string]string{vWeb: "Web"}, nil)
+	hb := startHireBridgeAt(t, db, nil, worker("w1", "CODE|a", "", "idle"))
+	sleepHireFloor(t, hb)
+	hb.fl.fakeHerdr.startErr = errors.New("systemd-run: boom") // the session's start, not the agent's
+	args := hireArgs(0)
+	args.Session, args.Floor = "", vWeb
+	_, m := hb.c.command(proto.CmdWorkerHire, "h", args)
+	if e := errorOf(m); e.Code != proto.ErrWakeFailed || !strings.Contains(e.Message, "waking floor “Web” (session s) before the hire") ||
+		!strings.Contains(e.Message, "boom") {
+		t.Fatalf("hire = %s", m.raw)
+	}
+	if slices.ContainsFunc(hb.fl.Calls(), func(c string) bool { return strings.HasPrefix(c, "create ") }) {
+		t.Fatalf("hired anyway: %v", hb.fl.Calls())
+	}
+	w := hb.connect(proto.Hello{}).snapshot().World
+	if v, _ := floorByID(w, vWeb); v.State != "asleep" || v.Transition != "" {
+		t.Fatalf("virtual floor = %+v", v)
+	}
+	if row := auditRow(t, hb.bridge, proto.CmdWorkerHire); row.OK || !strings.Contains(row.Error, "boom") {
+		t.Fatalf("hire audit = %+v", row)
+	}
+}
+
+// run.start on an asleep virtual floor wakes its session too.
+func TestRunStartOnAsleepVirtualFloor(t *testing.T) {
+	t.Parallel()
+	hb, w := launchBridge(t)
+	c := hb.c
+	_, ack := c.mustAck(proto.CmdFloorCreate, proto.FloorCreateArgs{Name: "Web", BaseSession: "s"})
+	id := ack.Data.(map[string]any)["id"].(string)
+	c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Floor: id, Repo: proto.Some("JeffreyVdb/lab"),
+		DefaultCwd: proto.Some("/home/u/lab")})
+	sleepHireFloor(t, hb)
+	orch := buildTeam.Orch
+	if res := runPrepare(t, c, proto.RunPrepareArgs{Floor: id}); res.Preset == "" {
+		t.Fatalf("run.prepare = %+v", res)
+	}
+	_, ack = c.mustAck(proto.CmdRunStart, proto.RunStartArgs{Floor: id, DeskIndex: ptr(0), Text: "go", Orch: &orch,
+		Preset: w.Presets[0].ID})
+	worker := ack.Data.(map[string]any)["id"].(string)
+	if l, ok, err := hb.st.RunLaunchByWorker(context.Background(), worker); err != nil || !ok || l.FloorID != id {
+		t.Fatalf("launch = %+v, %v, %v", l, ok, err)
+	}
+	if !slices.Contains(hb.fl.Calls(), "start s") {
+		t.Fatalf("herdr calls = %v", hb.fl.Calls())
+	}
+}
+
+// floor.hide stores a floor's hidden flag (decision 2) and every client
+// hears of it; it survives a restart.
+func TestFloorHide(t *testing.T) {
+	t.Parallel()
+	db := seedFloors(t, map[string]string{vWeb: "Web"}, nil)
+	hb := startHireBridgeAt(t, db, nil, worker("w1", "CODE|a", "", "idle"))
+	c := hb.c
+	other := hb.connect(proto.Hello{Client: "other"})
+	other.snapshot()
+	c.mustAck(proto.CmdFloorHide, proto.FloorHideArgs{Floor: "s", Hidden: true})
+	if ev := other.until(proto.EvFloorUpsert); ev.Floor.ID != "s" || !ev.Floor.Hidden {
+		t.Fatalf("other client: %+v", ev.Floor)
+	}
+	c.mustAck(proto.CmdFloorHide, proto.FloorHideArgs{Floor: vWeb, Hidden: true})
+	c.mustAck(proto.CmdFloorHide, proto.FloorHideArgs{Floor: vWeb, Hidden: false})
+	c.mustError(proto.CmdFloorHide, proto.FloorHideArgs{Floor: "nope", Hidden: true}, proto.ErrUnknownSession)
+	c.mustError(proto.CmdFloorHide, proto.FloorHideArgs{Hidden: true}, proto.ErrBadRequest)
+	if hidden, err := hb.st.HiddenFloors(context.Background()); err != nil || !hidden["s"] || hidden[vWeb] {
+		t.Fatalf("stored = %v, %v", hidden, err)
+	}
+	hb.stop()
+	again := startHireBridgeAt(t, db, nil, worker("w1", "CODE|a", "", "idle"))
+	w := again.connect(proto.Hello{}).snapshot().World
+	if f, _ := floorByID(w, "s"); !f.Hidden {
+		t.Fatalf("after a restart: %+v", f)
+	}
+	if v, _ := floorByID(w, vWeb); v.Hidden {
+		t.Fatalf("virtual floor after a restart: %+v", v)
+	}
+}
+
+// floor.delete with move_workers: the virtual floor's workers go to the
+// base session's real floor (its desks and names), running or asleep, and
+// the store says so.
+func TestDeleteVirtualFloorMovingWorkers(t *testing.T) {
+	t.Parallel()
+	for _, running := range []bool{true, false} {
+		t.Run(fmt.Sprintf("running=%v", running), func(t *testing.T) {
+			t.Parallel()
+			db := seedFloors(t, map[string]string{vWeb: "Web"}, map[string]string{"u1": vWeb, "u2": vWeb, "u3": "s"})
+			fh := newFakeHerdr()
+			b := startBridge(t, db, fastOps(fh))
+			b.floorAt("s", running, []world.WorkerObs{worker("w1", "CODE|a", "sess-u1", "idle"),
+				worker("w2", "CODE|b", "sess-u2", "idle"), worker("w3", "CODE|c", "sess-u3", "idle")})
+			c := b.connect(proto.Hello{})
+			c.snapshot()
+			evs, _ := c.mustAck(proto.CmdFloorDelete, proto.FloorDeleteArgs{Floor: vWeb, MoveWorkers: true})
+			removed := slices.IndexFunc(evs, func(ev proto.Event) bool { return ev.T == proto.EvFloorRemoved && ev.FloorID == vWeb })
+			moved := slices.IndexFunc(evs, func(ev proto.Event) bool {
+				return ev.T == proto.EvWorkerUpsert && ev.Worker.ID == "u1" && ev.Worker.Floor == "s"
+			})
+			if removed < 0 || moved < 0 {
+				t.Fatalf("events = %+v", evs)
+			}
+			w := b.connect(proto.Hello{}).snapshot().World
+			if _, ok := floorByID(w, vWeb); ok {
+				t.Fatal("the virtual floor is still there")
+			}
+			desks, names := map[int]bool{}, map[string]bool{}
+			for _, id := range []string{"u1", "u2", "u3"} {
+				wk, ok := workerByID(w, id)
+				if !ok || wk.Floor != "s" || desks[wk.DeskIndex] || names[wk.Name] || wk.Name == "" {
+					t.Fatalf("%s = %+v (desks %v, names %v)", id, wk, desks, names)
+				}
+				desks[wk.DeskIndex], names[wk.Name] = true, true
+			}
+			if got := storedFloors(t, b); got["u1"] != "s" || got["u2"] != "s" || got["u3"] != "s" {
+				t.Fatalf("stored floors = %v", got)
+			}
+			if vs, _ := b.st.VirtualFloors(context.Background()); len(vs) != 0 {
+				t.Fatalf("definitions = %+v", vs)
+			}
+		})
+	}
+}
+
+// A handoff of a worker on a virtual floor is that floor's: its directory,
+// its cabinet, its count, and handoff.added names it (floor_id).
+func TestHandoffOnVirtualFloor(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	db := filepath.Join(t.TempDir(), "world.db")
+	st, err := store.Open(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateVirtualFloor(ctx, vWeb, "Web", "s"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveWorker(ctx, store.Worker{ID: "u1", Session: "s", FloorID: vWeb,
+		Fingerprints: []store.Fingerprint{{Kind: store.FPAgentSession, Value: wrapSess}}}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	dir := filepath.Join(t.TempDir(), "handoff")
+	svc := hoService(t, dir, db)
+	off := false
+	fb := startFuBridgeWith(t, db, "", newFuRoles(), &off, "", func(o *server.Options) {
+		o.Handoffs = svc
+		o.DigestEnabled, o.PackupEnabled, o.ActivityModel = &off, &off, &off
+	})
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	id := fb.ids["w1"]
+	if id != "u1" {
+		t.Fatalf("w1 is %q", id)
+	}
+	appendTo(t, fb.claude, wrapUser("Refactor the loader.")+claudeReply("msg_1", "u1", "# Loader\n\nDone.", "end_turn")+turnDone)
+	w := handoffOf(c, id)
+	if w.Floor != vWeb {
+		t.Fatalf("worker floor %q", w.Floor)
+	}
+	cand := *w.Handoff
+	evs, m := c.command(proto.CmdWorkerHandoff, "h", proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeLiteral,
+		Session: cand.Session, Candidate: cand.ID, Revision: cand.Revision, Op: "op-1"})
+	res := ackData[proto.WorkerHandoffResult](t, m)
+	if res.Handoff.Floor != vWeb || filepath.Dir(res.Handoff.Path) != filepath.Join(dir, vWeb) {
+		t.Fatalf("handoff = %+v", res.Handoff)
+	}
+	if !slices.ContainsFunc(evs, func(ev proto.Event) bool {
+		return ev.T == proto.EvHandoffAdded && ev.FloorID == vWeb && ev.Session == "s" && *ev.HandoffCount == 1
+	}) {
+		t.Fatalf("events = %+v", evs)
+	}
+	_, m = c.command(proto.CmdHandoffList, "l", proto.HandoffListArgs{Floor: vWeb})
+	if list := ackData[proto.HandoffListResult](t, m); len(list.Handoffs) != 1 {
+		t.Fatalf("cabinet = %s", m.raw)
+	}
+	if counts := fb.connect(proto.Hello{}).snapshot().World.Handoffs.Counts; counts[vWeb] != 1 || counts["s"] != 0 {
+		t.Fatalf("counts = %v", counts)
 	}
 }

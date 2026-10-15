@@ -590,8 +590,9 @@ type Event struct {
 	Worker   *Worker   `json:"worker,omitempty"`
 	ID       string    `json:"id,omitempty"`
 	Session  string    `json:"session,omitempty"`
-	// FloorID (#58) is the floor id on floor.removed, worker.removed and
-	// worker.status (the key "floor" is the floor.upsert's Floor).
+	// FloorID (#58) is the floor id on floor.removed, worker.removed,
+	// worker.status, handoff.added and handoff.removed (the key "floor" is
+	// the floor.upsert's Floor).
 	FloorID     string `json:"floor_id,omitempty"`
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	Status      string `json:"status,omitempty"`
@@ -621,8 +622,8 @@ type Event struct {
 	// are flat in the event.
 	*Followups
 	// #223 handoffs: Handoff is set on handoff.added, HandoffID on
-	// handoff.removed (Session: its floor); HandoffCount is the floor's
-	// count after either.
+	// handoff.removed (FloorID: its floor, #58; Session: that floor's
+	// session); HandoffCount is the floor's count after either.
 	Handoff      *HandoffEntry `json:"handoff,omitempty"`
 	HandoffID    int64         `json:"handoff_id,omitempty"`
 	HandoffCount *int          `json:"handoff_count,omitempty"`

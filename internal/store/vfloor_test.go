@@ -126,10 +126,10 @@ func TestVirtualFloorCRUD(t *testing.T) {
 	if err != nil || len(vs) != 2 || vs[0].ID != "v-0123456789ab" || vs[0].Name != "Web" || vs[1].BaseSession != "t" {
 		t.Fatalf("virtual floors = %+v, %v", vs, err)
 	}
-	if err := st.DeleteVirtualFloor(ctx, "v-00000000000f"); err != nil {
+	if err := st.DeleteVirtualFloor(ctx, "v-00000000000f", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.DeleteVirtualFloor(ctx, "v-00000000000f"); !errors.Is(err, store.ErrNotFound) {
+	if err := st.DeleteVirtualFloor(ctx, "v-00000000000f", false); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("second delete: %v", err)
 	}
 	if vs, _ := st.VirtualFloors(ctx); len(vs) != 1 {
@@ -164,7 +164,7 @@ func TestDeleteVirtualFloorRefusesWorkersAndDropsItsRows(t *testing.T) {
 	if ids, err := st.FloorWorkers(ctx, "s"); err != nil || !slices.Equal(ids, []string{"u3"}) {
 		t.Fatalf("real floor workers = %v, %v", ids, err)
 	}
-	err := st.DeleteVirtualFloor(ctx, vf)
+	err := st.DeleteVirtualFloor(ctx, vf, false)
 	if !errors.Is(err, store.ErrFloorHasWorkers) || !strings.Contains(err.Error(), "2 workers") {
 		t.Fatalf("delete with workers: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestDeleteVirtualFloorRefusesWorkersAndDropsItsRows(t *testing.T) {
 	if err := st.SetFloorHidden(ctx, vf, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.DeleteVirtualFloor(ctx, vf); err != nil {
+	if err := st.DeleteVirtualFloor(ctx, vf, false); err != nil {
 		t.Fatal(err)
 	}
 	ws, _ := st.SessionWorkers(ctx, "s")
@@ -225,6 +225,37 @@ func TestDeleteVirtualFloorRefusesWorkersAndDropsItsRows(t *testing.T) {
 	}
 	if got := floorsOf(t, st, "b1"); !slices.Equal(got, []string{"s"}) {
 		t.Errorf("building floors = %v", got)
+	}
+}
+
+// With moveWorkers, a virtual floor with open workers goes too: they are
+// back on its session's real floor.
+func TestDeleteVirtualFloorMovingItsWorkers(t *testing.T) {
+	ctx := context.Background()
+	st := open(t, filepath.Join(t.TempDir(), "w.db"))
+	const vf = "v-0123456789ab"
+	if _, err := st.CreateVirtualFloor(ctx, vf, "Web", "s"); err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []store.Worker{{ID: "u1", Session: "s", FloorID: vf}, {ID: "u2", Session: "s"}} {
+		if err := st.SaveWorker(ctx, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.AssignDesk(ctx, vf, 0, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteVirtualFloor(ctx, vf, true); err != nil {
+		t.Fatal(err)
+	}
+	if ids, err := st.FloorWorkers(ctx, "s"); err != nil || !slices.Equal(ids, []string{"u1", "u2"}) {
+		t.Fatalf("real floor workers = %v, %v", ids, err)
+	}
+	if ds, _ := st.Desks(ctx); len(ds) != 0 {
+		t.Errorf("desks = %+v", ds)
+	}
+	if vs, _ := st.VirtualFloors(ctx); len(vs) != 0 {
+		t.Errorf("virtual floors = %+v", vs)
 	}
 }
 

@@ -92,10 +92,12 @@ const maxUses = int64(MaxElements)*68 + 1024
 var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
 
 // floorRe is herdr's session name rule (herdr.ValidSessionName): a floor
-// name is one path component, never "." or "..".
+// id (#58: a real floor's session name, or a virtual floor's "v-<12 hex>",
+// itself such a name) is one path component, never "." or "..".
 var floorRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
-// ValidFloor reports whether name can be a floor (a herdr session name).
+// ValidFloor reports whether name can be a floor id (a herdr session name
+// or a virtual floor's id).
 func ValidFloor(name string) bool {
 	return floorRe.MatchString(name) && name[0] != '-' && strings.Trim(name, ".") != ""
 }
