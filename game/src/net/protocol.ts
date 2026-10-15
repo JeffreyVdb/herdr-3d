@@ -722,6 +722,11 @@ export interface FireAck {
   note?: string;
 }
 
+/** #58: `session.create` ack: the new floor's session (its `floor.upsert` came first). */
+export interface SessionCreateAck {
+  session: string;
+}
+
 /** Commands and their args (docs/protocol.md "Commands", M3, M4 and M5 additions). */
 export interface CommandArgs {
   'building.create': { name: string };
@@ -731,6 +736,8 @@ export interface CommandArgs {
   'floor.assign': { session: string; building: string | null; index?: number };
   'floor.wake': { session: string };
   'floor.sleep': { session: string };
+  /** #58: a new herdr session, and with it a floor (docs/protocol.md "New herdr sessions"); acks `SessionCreateAck` once the floor is in the world. */
+  'session.create': { name: string };
   'floor.settings.set': { session: string } & SettingsPatch;
   /** M4 */
   'hire.prepare': { session: string; cwd?: string };

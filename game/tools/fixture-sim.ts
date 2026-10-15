@@ -68,6 +68,7 @@ export interface SimOptions {
    * M4: `hire_failed` / `fire_failed` the next hire / send-home (#210: `prompt_undelivered` the next hire with a first task
    * starts its worker but acks `prompted: false`); `fetch_failed`: origin is unreachable for the
    * whole run (every prepare reports the failed `git fetch`, every worktree hire is refused with `fetch_failed`).
+   * #58: `session_create_failed` the next `session.create`; `no_sessions`: an older bridge without it.
    */
   fail?: string | undefined;
   /** M4: per-floor caps `{session: {soft, hard}}` (default 24 / 32); the host's are 60 / 80. */
@@ -154,6 +155,11 @@ function cleanName(v: string): string {
   return n;
 }
 
+/** #58: sessions herdr has (asleep) that are not floors: session.create refuses their names. */
+const SIM_HERDR_ONLY = ['old-notes'];
+/** #58: the sim host's sun_path cap on a new session's name. */
+const SIM_MAX_SESSION = 56;
+
 export class SimWorld {
   seq: number;
   private readonly buildings = new Map<string, Omit<Building, 'floors'>>();
@@ -163,6 +169,8 @@ export class SimWorld {
   private readonly hireSent: boolean;
   /** Worker statuses from before a sleep, restored on wake. */
   private readonly beforeSleep = new Map<string, string>();
+  /** #58: the names a `session.create` is starting. */
+  private readonly creating = new Set<string>();
   private readonly timers = new Set<unknown>();
   private readonly stepMs: number;
   private fail: string | undefined;
@@ -569,6 +577,8 @@ export class SimWorld {
           return ack(this.assign(a, send));
         case 'floor.settings.set':
           return ack(this.settings(a, send));
+        case 'session.create': // #58
+          return this.createSession(a, send, ack, fail);
         case 'floor.wake':
           return this.wake(a, send, ack, fail);
         case 'floor.sleep':
@@ -830,6 +840,38 @@ export class SimWorld {
 
   private upsertWorker(send: Send, w: Worker): void {
     this.emit(send, { t: 'worker.upsert', worker: w });
+  }
+
+  /**
+   * #58 `session.create`, with herdr-world's rule (`herdr.CheckNewSessionName`; this host's sun_path cap is 56) and its
+   * taken checks: a floor, or a herdr session the bridge does not show (SIM_HERDR_ONLY). The floor comes up in the lot a
+   * step later, then the ack.
+   */
+  private createSession(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
+    if (this.fail === 'no_sessions') throw new CmdError('unknown_command', 'unknown command: "session.create"');
+    onlyKeys(a, ['name']);
+    const name = str(a, 'name');
+    if (!name) throw new CmdError('bad_request', 'Give the floor a name.');
+    if (name === 'default') throw new CmdError('bad_request', '“default” is herdr’s own session: pick another name.');
+    if (!/^[a-z0-9_-]+$/.test(name)) throw new CmdError('bad_request', 'Use only lowercase letters, digits, “_” and “-”.');
+    if (name.startsWith('-')) throw new CmdError('bad_request', 'The name cannot start with “-”.');
+    if (name.length > SIM_MAX_SESSION) throw new CmdError('bad_request', `Keep the name to at most ${SIM_MAX_SESSION} characters (herdr’s socket path on this host).`);
+    if (this.creating.has(name)) throw new CmdError('busy', `“${name}” is being created already.`);
+    if (this.floors.has(name)) throw new CmdError('name_taken', `“${name}” is already a floor.`);
+    if (SIM_HERDR_ONLY.includes(name)) throw new CmdError('name_taken', `“${name}” is already a herdr session (asleep): wake its floor instead.`);
+    this.creating.add(name);
+    const failing = this.fail === 'session_create_failed';
+    if (failing) this.fail = undefined;
+    this.later([
+      () => {
+        this.creating.delete(name);
+        if (failing) return fail(new CmdError('session_create_failed', `herdr started ${name}, but its floor was not seen running within 10s; it was stopped and removed again.`));
+        const f: Floor = { session: name, state: 'running', building: null, index: null };
+        this.floors.set(name, f);
+        this.floorEvent(send, f);
+        ack({ session: name });
+      },
+    ]);
   }
 
   private wake(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {

@@ -65,6 +65,7 @@ import { promptBlocker } from './world/prompt';
 // M6 start: starting a run from an empty desk or the top bar; team presets.
 import { m6StartButtons, type M6StartButtons } from './ui/startButtons';
 import { PresetsPanel } from './ui/presets';
+import { AddFloorDialog, addFloorButton } from './ui/addFloor';
 import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/startRun';
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, inputRequired, isFreelancer } from './world/crew';
@@ -284,6 +285,8 @@ export class App {
   /** M6 start: the start-run dialog, the team presets panel and their top bar buttons. */
   readonly startRun: StartRunDialog;
   readonly presetsPanel: PresetsPanel;
+  /** #58: the Add floor dialog (the top bar in the city, the Buildings panel's lot). */
+  readonly addFloor: AddFloorDialog;
   private readonly m6Buttons: M6StartButtons;
   /** M7: the boards' state (last messages per floor), their overlay and item modals. */
   readonly boardBook = new BoardBook();
@@ -581,6 +584,7 @@ export class App {
       logoFailed: (hash) => this.logos.unavailable(hash),
       setLogo: (b, f) => this.setLogo(b, f),
       clearLogo: (b) => this.clearLogo(b),
+      addFloor: (from) => this.openAddFloor(from), // #58
     });
 
     const dialogHost = {
@@ -629,6 +633,8 @@ export class App {
     this.hireReview = new HireReviewDialog(o.host, { ...hireHost, hirePrefs: this.hirePrefs, hires: this.hires, goTo: (id) => this.goToNewHire(id) });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, { ...dialogHost, modelPrefs: this.hireModelPrefs });
+    // #58: the new floor waits in the lot; the Buildings panel opens on its Move menu.
+    this.addFloor = new AddFloorDialog(o.host, { ...dialogHost, added: (s) => this.panels.openBuildings(s) });
     this.startRun = new StartRunDialog(o.host, {
       ...hireHost,
       hirePrefs: this.hirePrefs,
@@ -757,6 +763,7 @@ export class App {
     this.hud.on('prs', () => this.openBoard('prs'));
     this.hud.on('overview', () => this.openOverview(false));
     this.hud.on('overview.all', () => this.openCityOverview()); // #188
+    addFloorButton(this.hud, (b) => this.openAddFloor(b)); // #58, before Presets
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
     this.bindInput();
     // #124: the keys' names as this keyboard labels them (Chromium's layout map), in the titles that name a key.
@@ -830,6 +837,7 @@ export class App {
     this.playFilings();
     this.startRun.refresh();
     this.presetsPanel.refresh();
+    this.addFloor.refresh(); // #58
     this.limitsWidget.update();
     this.inbox.set(this.inboxEntries());
     this.m6Buttons.sync();
@@ -1475,7 +1483,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -1645,6 +1653,13 @@ export class App {
     this.walker.release();
     this.walker.stop();
     this.panels.openBuildings();
+  }
+
+  /** #58: the Add floor dialog (over the Buildings panel when opened from it). */
+  openAddFloor(from: HTMLElement | null = null): void {
+    this.walker.release();
+    this.walker.stop();
+    this.addFloor.open(from);
   }
 
   private refreshTopbar(): void {

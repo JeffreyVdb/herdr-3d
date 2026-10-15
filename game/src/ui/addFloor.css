@@ -1,0 +1,21 @@
+/*
+ * #58 Add floor, in the M4 desk dialogs' navy signage (hire.css): the plate is
+ * the free desk's green "+" set beside a building, and the name is typed in
+ * the mono face it will carry on the elevator's panel and in herdr.
+ */
+
+.desk-dlg--addfloor {
+  width: min(480px, calc(100vw - 32px));
+}
+.dd-plate--floor svg + svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.8;
+  color: var(--text);
+  filter: none;
+}
+.desk-dlg .af-name {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0;
+}

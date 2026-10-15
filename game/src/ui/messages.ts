@@ -45,6 +45,7 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'floor.wake': 'wake floors',
   'floor.sleep': 'put floors to sleep',
   'floor.settings.set': 'store floor settings',
+  'session.create': 'start new herdr sessions', // #58
   'hire.prepare': 'hire workers',
   'hire.interpret': 'understand dictated commands',
   'worker.hire': 'hire workers',
@@ -151,6 +152,14 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
   if (t === 'worker.answer_async' || t === 'worker.dismiss_async') {
     const asyncWhy = asyncFailure(t, code, why);
     if (asyncWhy) return asyncWhy;
+  }
+  // #58: the bridge words a refused or failed new session itself (the name rule, what took the name, herdr's error).
+  if (t === 'session.create') {
+    const which = ctx.name ? `“${ctx.name}”` : 'The floor';
+    if (code === 'bad_request' || code === 'name_taken') return why || `${which} can’t be used as a session name. Pick another one.`;
+    if (code === 'busy') return why ? `${why} Wait for it to finish.` : `${which} is being started already. Wait for it to finish.`;
+    if (code === 'session_create_failed') return why || `herdr did not start ${which}.`;
+    if (code === 'unsupported') return `This herdr-world can’t start herdr sessions${why ? ` (${why})` : ''}.`;
   }
   // #184: the Kaneo connection's own failures, and a floor's Kaneo link checked at save.
   if ((t.startsWith('kaneo.') || t === 'floor.settings.set') && KANEO_CODES.has(code)) return kaneoFailureText(code, why);

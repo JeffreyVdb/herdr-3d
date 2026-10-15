@@ -45,6 +45,8 @@ export interface PanelHost {
   clearLogo(building: string): Promise<CommandResult>;
   /** Settings → Harness models: the default-hire model picker offers the models it leaves shown (absent: every model). */
   modelPrefs?: HireModelPrefs;
+  /** #58: opens the Add floor dialog (absent: the Buildings panel offers none). */
+  addFloor?(from: HTMLElement): void;
 }
 
 type View = { kind: 'elevator'; building: string | null } | { kind: 'buildings' } | { kind: 'settings'; session: string; from: View | null };
@@ -167,8 +169,14 @@ export class Panels {
     if (pick) this.setStatus(pick.note);
   }
 
-  openBuildings(): void {
+  /** #58: `added` is a floor just made: its Move menu opens, to put it into a building. */
+  openBuildings(added?: string): void {
     this.show({ kind: 'buildings' });
+    if (!added || !this.host.store.floors.has(added)) return;
+    this.moving = added;
+    this.setStatus(`Added ${added}. It is in the ${LOT}: pick a building to move it into.`);
+    this.refresh();
+    this.list?.querySelector<HTMLElement>(`[data-key^="to:${CSS.escape(added)}:"]`)?.focus();
   }
 
   openSettings(session: string): void {
@@ -796,7 +804,20 @@ export class Panels {
     return h(
       'section',
       { class: 'dir-building dir-building--lot', 'aria-label': LOT },
-      h('div', { class: 'dir-bhead' }, h('h3', { class: 'dir-bname' }, LOT), h('span', { class: 'dir-bcount' }, `${plural(lot.length, 'floor')} · sessions in no building`)),
+      h(
+        'div',
+        { class: 'dir-bhead' },
+        h('h3', { class: 'dir-bname' }, LOT),
+        h('span', { class: 'dir-bcount' }, `${plural(lot.length, 'floor')} · sessions in no building`),
+        // #58: a new floor starts here.
+        this.host.addFloor
+          ? h(
+              'div',
+              { class: 'dir-tools' },
+              h('button', { class: 'btn btn--sm', 'data-key': 'add-floor', onclick: (e: Event) => this.host.addFloor?.(e.currentTarget as HTMLElement) }, icon(ICON.plus), h('span', {}, 'Add floor')),
+            )
+          : null,
+      ),
       list,
     );
   }

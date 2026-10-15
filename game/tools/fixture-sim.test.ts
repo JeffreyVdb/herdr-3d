@@ -95,6 +95,41 @@ describe('SimWorld buildings', () => {
     expect(r.cmd('floor.assign', { session: 'pastry', building: 'b_nope' }).got()[0]).toMatchObject({ code: 'not_found' });
   });
 
+  it('#58: session.create starts a floor in the lot a step later, refusing names like the bridge', () => {
+    const r = rig();
+    for (const [name, code] of [
+      ['Billing', 'bad_request'],
+      ['default', 'bad_request'],
+      ['-x', 'bad_request'],
+      ['x'.repeat(57), 'bad_request'],
+      ['pastry', 'name_taken'],
+      ['old-notes', 'name_taken'],
+    ] as const) {
+      expect(r.cmd('session.create', { name }).got()[0], name).toMatchObject({ t: 'error', code });
+    }
+    expect(r.cmd('session.create', { name: 'x', building: W }).got()[0]).toMatchObject({ code: 'bad_request' });
+    const c = r.cmd('session.create', { name: 'billing-api' });
+    expect(c.got()).toEqual([]);
+    expect(r.cmd('session.create', { name: 'billing-api' }).got()[0]).toMatchObject({ code: 'busy' });
+    r.tick();
+    // (the busy refusal of the second create sits in between)
+    expect(c.got().filter((m) => m.req_id === c.req_id || m.t === 'floor.upsert').map((m) => m.t)).toEqual(['floor.upsert', 'ack']);
+    expect(r.reply(c.req_id)).toEqual({ t: 'ack', req_id: c.req_id, data: { session: 'billing-api' } });
+    expect(r.store.stack(null).map((f) => f.session)).toContain('billing-api');
+    expect(r.cmd('session.create', { name: 'billing-api' }).got()[0]).toMatchObject({ code: 'name_taken' });
+    r.cmd('floor.assign', { session: 'billing-api', building: W });
+    expect(r.store.stack(W).map((f) => f.session)).toContain('billing-api');
+  });
+
+  it('#58: session.create fails once with simfail=session_create_failed, and is unknown with no_sessions', () => {
+    const r = rig('demo', 'session_create_failed');
+    const c = r.cmd('session.create', { name: 'crash' });
+    r.tick();
+    expect(r.reply(c.req_id)).toMatchObject({ t: 'error', code: 'session_create_failed' });
+    expect(r.store.floors.has('crash')).toBe(false);
+    expect(rig('demo', 'no_sessions').cmd('session.create', { name: 'x' }).got()[0]).toMatchObject({ code: 'unknown_command' });
+  });
+
   it('answers unknown commands and a missing req_id like the bridge', () => {
     const r = rig();
     expect(r.cmd('worker.teleport', {}).got()[0]).toMatchObject({ t: 'error', code: 'unknown_command' });
