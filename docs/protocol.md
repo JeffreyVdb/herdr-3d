@@ -392,6 +392,9 @@ report-metadata`); runs started without them are read from the labels (`ORCH|des
   started it with (`run.start`), else its own numeric `ticket`, else the most common numeric ticket of its
   freelancers (ties: the lowest) in its floor's repo. Without a repo there is no issue; a ticket like `m6` gives none.
   The orchestrator's issue is on the wire (`worker.upsert` with `issue` and `work_item`) **before** `run.start`'s ack.
+- **Floor** (#58): a freelancer nothing attributed takes its orchestrator's floor (a virtual floor too) on the
+  observation its link resolves, and keeps it, stored, across restarts (see Freelancers in
+  [Virtual floors](#virtual-floors)).
 - **Phase and pass**: an orchestrator's `phase` and `pass` are remembered (SQLite `worker_run`) when herdr drops the
   tokens, until new values show up; `over_cap` follows from them.
 - **Desks**: desks come in pods of 4 (`desk_index / 4`). A freelancer new to a floor whose orchestrator is on that
@@ -1093,6 +1096,23 @@ stored floor brings it back to its floor after a herdr restart, a sleep and wake
 spawned) is on its session's real floor; so is one whose stored floor was deleted (and the store is told). Nothing is
 hidden. Desks, names, capacity (`--max-workers-per-floor`), repository suggestions and run links are per floor.
 
+**Freelancers (stage 3).** A worker's floor is **attributed** when the bridge hired it (`hired_at`, whichever floor) or
+its stored floor is a virtual floor; any other worker is on its session's real floor only because nothing said
+otherwise. A worker that is not attributed takes, on the observation that decides it:
+
+1. a freelancer (`code`, `review`, `ux`, `ground`), its orchestrator's floor as soon as its run links it to one (the
+   `orch_id` link of [Runs and freelancers](#runs-and-freelancers): by run, `h3d_run` token or label); the
+   orchestrator's floor is the one its `run.start` launch record names while that is a floor, else the floor it is on
+   (`floor.delete` with `move_workers` leaves the record naming the deleted floor);
+2. else the floor its `h3d_floor` token names (the prompt in
+   [Team presets and starting a run](#team-presets-and-starting-a-run) asks the orchestrator for it), when that is a
+   floor of the same session.
+
+Only a floor of the workspace's own session counts (a run linking across sessions moves nobody; a token naming
+another session's floor, an unknown floor or anything else is ignored). The floor is stored with the worker at once,
+so the first `worker.upsert` after the link already names it, and after a herdr restart (tokens gone, the link may not
+resolve again) or a bridge restart the stored floor keeps it there. An attributed worker is never moved by either.
+
 **Buildings (decision 4).** A virtual floor always stands in its base session's floor's building: `floor.create` puts it
 last in that building (unassigned when the base is), `floor.assign` of a virtual floor only moves it within that
 building (another building or `null`: `bad_request`), assigning the base floor to another building takes its virtual
@@ -1457,6 +1477,8 @@ Team:
 
 Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: a laptop shows a pane at its own size, and a fullscreen terminal is wanted.
 
+Also tag every herdr workspace you create with the token h3d_floor=<floor id>, in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor.
+
 Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.
 
 <extra, trimmed>
@@ -1465,7 +1487,10 @@ Move the ticket status accordingly, pull request always means QA, merging the PR
 The first line is `/write-code <ticket>` for a Claude orchestrator and `$write-code <ticket>` for a Codex one;
 `<ticket>` is the issue URL, or the text. A role line says `effort <e>` for a claude role and `reasoning <e>` for a codex
 one. The placement line (#74: a laptop shows a pane at its own size, so every agent goes in its own workspace or tab,
-never in a split) is always there. The status line is there for an issue ticket only (the orchestrator then moves the issue's status:
+never in a split) is always there, and after it the floor line (#58) naming the floor the run starts on (its id: a
+session name or a virtual floor's `v-…`). The floor line is a hint for the run's workspaces nothing else places (see
+Freelancers in [Virtual floors](#virtual-floors)): freelancers land on their orchestrator's floor through their run
+link whether or not the orchestrator tags them, and the write-code skill itself never names a floor. The status line is there for an issue ticket only (the orchestrator then moves the issue's status:
 a pull request means QA, its merge means Done); a free-text ticket has none. With no `extra`, the blank line before it is
 left out too. (A pure function, `server.RunPrompt`.)
 
