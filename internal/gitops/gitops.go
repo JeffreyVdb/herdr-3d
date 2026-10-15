@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +84,9 @@ const (
 	// #137 worker.files (read-only): a checkout's index file and its files.
 	opIndexPath = "index-path"
 	opListFiles = "ls-files"
+	// #54 repository discovery (read-only, local).
+	opCheckout  = "checkout"
+	opOriginURL = "origin-url"
 )
 
 // shapes is the complete set of git commands the bridge runs. {git} is
@@ -121,6 +125,11 @@ var shapes = map[string][]string{
 	// Neither writes the index (and GIT_OPTIONAL_LOCKS=0 besides).
 	opIndexPath: {"{git}", "-C", "{dir}", "rev-parse", "--path-format=absolute", "--git-path", "index"},
 	opListFiles: {"{git}", "-C", "{dir}", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--deduplicate"},
+	// #54 repository discovery: where a candidate checkout's top level and
+	// common directory are (a linked worktree shares its repository's), and
+	// its origin's URL (config only: no network).
+	opCheckout:  {"{git}", "-C", "{dir}", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"},
+	opOriginURL: {"{git}", "-C", "{dir}", "remote", "get-url", "origin"},
 }
 
 var placeholders = map[string]func(string) bool{
@@ -464,7 +473,24 @@ func execPipe(ctx context.Context, argv []string, w io.Writer) ([]byte, error) {
 }
 
 func gitEnv() []string {
-	return append(herdr.CleanEnv(os.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
+	return append(withoutRepoEnv(herdr.CleanEnv(os.Environ())), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
+}
+
+// repoEnv are the variables that point git at a repository other than the
+// one -C names (a bridge started from a git hook inherits them): every
+// command here names its checkout, so they go.
+var repoEnv = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM"}
+
+func withoutRepoEnv(env []string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(repoEnv, k) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 type capped struct{ bytes.Buffer }
