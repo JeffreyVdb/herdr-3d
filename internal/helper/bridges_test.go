@@ -733,3 +733,65 @@ func TestSwitchClosesWS(t *testing.T) {
 		t.Fatalf("connections through B: %d, want the new /ws", onB)
 	}
 }
+
+// TestRoutesFollowTheSwitch: every route the helper proxies reaches the bridge
+// in use, and right after a switch the next request reaches the new one, not
+// the old one over a kept-alive connection.
+func TestRoutesFollowTheSwitch(t *testing.T) {
+	dir := shortDir(t)
+	named := func(name string) string {
+		sock := filepath.Join(dir, name+".sock")
+		ln, err := net.Listen("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"bridge":"` + name + `","path":"` + r.URL.Path + `"}`))
+		})}
+		go srv.Serve(ln)
+		t.Cleanup(func() { srv.Close() })
+		return sock
+	}
+	a := BridgeEntry{ID: NewBridgeID(), Name: "A", Kind: KindLocal, Socket: named("a")}
+	b := BridgeEntry{ID: NewBridgeID(), Name: "B", Kind: KindLocal, Socket: named("b")}
+	set, err := NewBridgeSet(BridgeSetConfig{SocketDir: filepath.Join(dir, "tun"), Log: quietLog()}, BridgeList{Active: a.ID, Bridges: []BridgeEntry{a, b}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := helperServer(t, set, nil)
+	client := &http.Client{Transport: &http.Transport{}} // keeps its connections to the helper alive
+	routes := []struct{ method, path string }{
+		{"GET", "/logo/b1"},
+		{"POST", "/upload"},
+		{"POST", "/screen/frame/" + strings.Repeat("ab", 16)},
+		{"GET", "/whiteboard/herdr-3d"},
+		{"GET", "/drops/file"},
+	}
+	reach := func() []string {
+		var got []string
+		for _, rt := range routes {
+			req, _ := http.NewRequest(rt.method, ts.URL+rt.path+"?token="+testToken, strings.NewReader("x"))
+			req.Host = "127.0.0.1:7777"
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var body struct{ Bridge string }
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			resp.Body.Close()
+			got = append(got, body.Bridge)
+		}
+		return got
+	}
+	if got := reach(); !slices.Equal(got, []string{"a", "a", "a", "a", "a"}) {
+		t.Fatalf("before the switch: %v", got)
+	}
+	if err := set.Activate(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := reach(); !slices.Equal(got, []string{"b", "b", "b", "b", "b"}) {
+		t.Fatalf("after the switch: %v", got)
+	}
+}

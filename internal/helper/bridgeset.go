@@ -148,6 +148,7 @@ func (s *BridgeSet) run(e BridgeEntry) *entryRun {
 func (s *BridgeSet) start(r *entryRun, after <-chan struct{}) {
 	ctx, cancel := context.WithCancel(s.ctx)
 	r.cancel, r.done = cancel, make(chan struct{})
+	name := r.entry.Name // r.entry changes on a rename, under mu
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -160,7 +161,7 @@ func (s *BridgeSet) start(r *entryRun, after <-chan struct{}) {
 			}
 		}
 		if err := r.bridge.Run(ctx); err != nil {
-			s.log.Error("bridge connection stopped", "bridge", r.entry.Name, "err", err)
+			s.log.Error("bridge connection stopped", "bridge", name, "err", err)
 		}
 	}()
 }
@@ -272,15 +273,16 @@ type BridgeInfo struct {
 func (s *BridgeSet) List() (active string, out []BridgeInfo) {
 	s.mu.Lock()
 	active = s.list.Active
-	runs := make([]*entryRun, len(s.list.Bridges))
-	for i, e := range s.list.Bridges {
-		runs[i] = s.run(e)
+	entries := append([]BridgeEntry(nil), s.list.Bridges...)
+	bridges := make([]entryBridge, len(entries))
+	for i, e := range entries {
+		bridges[i] = s.run(e).bridge
 	}
 	s.mu.Unlock()
-	out = make([]BridgeInfo, 0, len(runs))
-	for _, r := range runs {
-		st := normalStatus(r.bridge.Status())
-		out = append(out, BridgeInfo{BridgeEntry: r.entry, Address: r.entry.Address(), Active: r.entry.ID == active, State: st.State, Since: st.Since, LastError: st.LastError, Version: st.Bridge})
+	out = make([]BridgeInfo, 0, len(entries))
+	for i, e := range entries {
+		st := normalStatus(bridges[i].Status())
+		out = append(out, BridgeInfo{BridgeEntry: e, Address: e.Address(), Active: e.ID == active, State: st.State, Since: st.Since, LastError: st.LastError, Version: st.Bridge})
 	}
 	return active, out
 }
@@ -450,15 +452,13 @@ func (s *BridgeSet) Activate(id string) error {
 		return err
 	}
 	var drop []*trackedConn
+	from := ""
 	if prev != nil {
 		drop = prev.takeConns()
+		from = prev.entry.Name
 	}
 	s.mu.Unlock()
 	closeAll(drop)
-	from := ""
-	if prev != nil {
-		from = prev.entry.Name
-	}
 	s.log.Info("bridge switched", "from", from, "to", to, "closed", len(drop))
 	return nil
 }

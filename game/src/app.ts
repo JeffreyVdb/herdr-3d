@@ -1764,9 +1764,12 @@ export class App {
     if (!isOnline(b) && !(await confirmSwitch(this.hud.root.parentElement ?? document.body, b.name))) return;
     this.switching = true;
     this.hud.setConnOverride({ text: `Switching to ${b.name}…`, title: `Switching to ${b.name}: the game reloads on its world`, phase: 'connecting' });
+    // No reconnect in between: the helper closes this connection, and a resume on the new bridge would carry the old one's epoch.
+    this.client.stop();
     const r = await api.activate(b.id);
     if (!r.ok) {
       this.switching = false;
+      this.client.start();
       this.syncBridgeName();
       this.hud.toast(`Could not switch to ${b.name}: ${r.message}`, 7000, 'error');
       return;
@@ -1779,6 +1782,7 @@ export class App {
   private reloadFor(b: BridgeEntry, verb: string): void {
     this.switching = true;
     this.hud.setConnOverride({ text: `${verb} ${b.name}…`, title: `${verb} ${b.name}: the game reloads`, phase: 'connecting' });
+    this.client.stop();
     this.reload();
   }
 
