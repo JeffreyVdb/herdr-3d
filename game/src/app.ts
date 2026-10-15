@@ -127,6 +127,7 @@ import { awayText, burstText, BURST_TAG, DesktopNotify, pingTitle } from './ui/d
 import { InboxPings, pingEntries, type PingEntry, type PingOut } from './world/inboxPings';
 // #57: the helper's bridges (Settings → Bridges, ⌘P → Switch bridge)
 import { BridgeBook, followActiveBridge, isOnline, type BridgeEntry } from './net/bridges';
+import { onBridgeChanged } from './net/bridgeChanged';
 import { bridgeScope } from './net/bridgeScope';
 import { bridgesSection } from './ui/bridgesSection';
 import { confirmSwitch } from './ui/bridgeSwitch';
@@ -532,11 +533,13 @@ export class App {
     const token = o.token !== undefined ? o.token : takeToken(window.location, safeStorage(), (u) => history.replaceState(null, '', u));
     this.token = token;
     this.noOpen = o.params.get('open') === 'none';
-    this.url = bridgeUrl(window.location, token);
-    // #57: the helper lets this page's /ws through to the bridge its keys belong to only (`none`: it had none).
+    // #57: the helper lets this page through to the bridge its keys belong to only (`none`: it had none): its /ws and
+    // every HTTP route (logos, uploads, frames, whiteboards, drops), whose URLs derive from this one.
+    this.url = bridgeUrl(window.location, token, bridgeScope() ?? (this.bridges.list ? 'none' : null));
     this.follow = followActiveBridge(this.bridges, bridgeScope, (b) => this.followSwitch(b));
+    onBridgeChanged(() => void this.follow.connLost());
     this.client = new BridgeClient({
-      url: bridgeUrl(window.location, token, bridgeScope() ?? (this.bridges.list ? 'none' : null)),
+      url: this.url,
       clientName: CLIENT,
       socket: (u) => new WebSocket(u) as unknown as SocketLike,
       handlers: {

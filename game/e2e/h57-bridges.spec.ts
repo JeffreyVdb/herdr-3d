@@ -194,6 +194,35 @@ test('a switch made in another tab: this page starts over on the new bridge, fro
   expectClean();
 });
 
+test('a request the helper refuses for a switch made elsewhere (409 bridge_changed): this page starts over on the new bridge', async ({ page }) => {
+  // The refused PUT is a 409 the browser logs; only script errors count here.
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const helper = await fakeHelper(page, [devbox, { ...laptop, state: 'up' }], devbox.id);
+  await openGame(page, 'demo-m3', '&open=none', `${SIM}&simlogo=h57-${Date.now().toString(36)}`);
+  // Another tab switched to Laptop; this page's connection is still up and it polls nothing. Its HTTP routes name its
+  // bridge, as its /ws does, and the helper refuses them: here a logo set in the Buildings panel.
+  helper.state.active = laptop.id;
+  const named: Array<string | null> = [];
+  await page.route('**/logo/**', (route) => {
+    if (route.request().method() !== 'PUT') return route.fallback();
+    named.push(new URL(route.request().url()).searchParams.get('bridge'));
+    return route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ t: 'error', code: 'bridge_changed', message: 'the bridge in use changed: reload the game' }) });
+  });
+  await page.evaluate(() => window.__h3d.openBuildings());
+  await expect(page.locator('dialog.panel h2')).toHaveText('Buildings');
+  const chooser = page.waitForEvent('filechooser');
+  await page.locator('dialog.panel [data-key="logo-set:b_3f09a1c2d4e5"]').focus();
+  await page.keyboard.press('Enter');
+  const load = page.waitForEvent('load');
+  await (await chooser).setFiles(new URL('./fixtures/test-logo.png', import.meta.url).pathname);
+  await load;
+  await page.waitForFunction(() => window.__h3d?.ready);
+  expect(named).toEqual([devbox.id]);
+  await expect(page.locator('.conn')).toHaveAttribute('title', /· Bridge: Laptop$/);
+  expect(errors).toEqual([]);
+});
+
 test('on a phone the switch list keeps a bridge’s state in view next to a long address', async ({ page }) => {
   const expectClean = watchErrors(page);
   await page.setViewportSize({ width: 390, height: 844 });
