@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadFixture } from './fixture-server.ts';
 import { SimWorld } from './fixture-sim.ts';
-import { ReposSim } from './fixture-repos.ts';
+import { ReposSim, SCAN_MS } from './fixture-repos.ts';
 
 // #247: the fixture's `worker.repos` and shared switch, on demo-m5 set up for `@r:` (`simrepos`).
 
@@ -34,8 +34,8 @@ describe('the fixture’s repositories on other floors (#247)', () => {
     // Pebble is on herdr-3d (Work): depot-manager (repo, its folder a checkout) and pastry (a folder only).
     expect(run('worker.repos', { id: id('Pebble') }).data).toEqual({
       repos: [
-        { session: 'depot-manager', building: 'Work', same_building: true, repo: 'fomra/depot-manager', dir: '/home/dev/devel/fomra/depot-manager', cloned: true },
-        { session: 'pastry', building: 'Work', same_building: true, dir: '/home/dev/pastry', cloned: false },
+        { id: 'gh:fomra/depot-manager', source: 'floor', session: 'depot-manager', building: 'Work', same_building: true, repo: 'fomra/depot-manager', dir: '/home/dev/devel/fomra/depot-manager', cloned: true },
+        { id: 'dir:/home/dev/pastry', source: 'floor', session: 'pastry', building: 'Work', same_building: true, dir: '/home/dev/pastry', cloned: false },
       ],
     });
   });
@@ -91,3 +91,51 @@ it('a folder-only floor whose folder went missing is hidden; a repo whose folder
   );
   expect(s.repos('me')).toEqual([{ session: 'api', building: 'B', same_building: true, repo: 'o/api', dir: '/src/missing/api', cloned: false }]);
 });
+
+describe('the fixture’s repository discovery (#54)', () => {
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it('a keyed bridge scans: settings checked and shared, the scan merged into worker.repos', async () => {
+    const a = world('disc1');
+    const b = world('disc1');
+    const snap = a.snap.world as { repo_discovery?: { roots: string[]; interval_minutes: number; status: { state: string } } };
+    expect(snap.repo_discovery).toMatchObject({ roots: [], interval_minutes: 10, status: { state: 'off' } });
+    expect(a.run('repo_discovery.set', { roots: ['devel'] }).reply).toMatchObject({ t: 'error', code: 'bad_request', message: expect.stringMatching(/absolute path/) });
+    expect(a.run('repo_discovery.set', { roots: ['/a', '/a/'] }).reply).toMatchObject({ code: 'bad_request', message: expect.stringMatching(/same as folder 1/) });
+    expect(a.run('repo_discovery.set', { interval_minutes: 0 }).reply).toMatchObject({ code: 'bad_request' });
+    expect(a.run('repo_discovery.set', {}).reply).toMatchObject({ code: 'bad_request' });
+    const set = a.run('repo_discovery.set', { roots: ['/home/dev/devel/', '/media/missing'], interval_minutes: 25 });
+    expect(set.data).toMatchObject({ roots: ['/home/dev/devel', '/media/missing'], interval_minutes: 25, status: { state: 'scanning', revision: 0 } });
+    expect(set.events.map((e) => e.t)).toEqual(['repo_discovery.update']);
+    expect(b.heard.filter((m) => m.t === 'repo_discovery.update')).toHaveLength(1);
+    await wait(SCAN_MS + 100);
+    const done = b.heard.filter((m) => m.t === 'repo_discovery.update').at(-1) as { status: Record<string, unknown> };
+    expect(done.status).toMatchObject({ state: 'idle', revision: 1, repositories: 6, checkouts: 7 });
+    expect((done.status.roots as { state: string }[]).map((r) => r.state)).toEqual(['ok', 'error']);
+    const rows = a.run('worker.repos', { id: a.id('Pebble') }).data.repos as Msg[];
+    expect(rows.map((r) => [r.id, r.source, r.session, r.dir, r.cloned, r.checkouts])).toEqual([
+      ['gh:fomra/depot-manager', 'floor', 'depot-manager', '/home/dev/devel/fomra/depot-manager', true, 2],
+      ['dir:/home/dev/pastry', 'floor', 'pastry', '/home/dev/pastry', false, undefined],
+      ['git:/home/dev/devel/scratch/api/.git', 'discovered', undefined, '/home/dev/devel/scratch/api', false, 1],
+      ['git:/home/dev/devel/work/api/.git', 'discovered', undefined, '/home/dev/devel/work/api', false, 1],
+      ['gh:jeffreyvdb/field-notes', 'discovered', undefined, '/home/dev/devel/JeffreyVdb/field-notes', true, 1],
+      ['gh:jeffreyvdb/herdr-3d', 'discovered', undefined, '/home/dev/devel/JeffreyVdb/herdr-3d', true, 1],
+      ['git:/home/dev/devel/notes/.git', 'discovered', undefined, '/home/dev/devel/notes', false, 1],
+    ]);
+    // The other building's scratchpad names field-notes (no folder): with the switch on, its row is the scan's checkout.
+    a.run('repo_refs.set', { all_buildings: true });
+    const merged = (a.run('worker.repos', { id: a.id('Pebble') }).data.repos as Msg[]).find((r) => r.id === 'gh:jeffreyvdb/field-notes');
+    expect(merged).toMatchObject({ source: 'floor', session: 'scratchpad', dir: '/home/dev/devel/JeffreyVdb/field-notes', cloned: true });
+    // A removed root's repositories go at once.
+    a.run('repo_discovery.set', { roots: ['/media/missing'] });
+    expect((a.run('worker.repos', { id: a.id('Pebble') }).data.repos as Msg[]).filter((r) => r.source === 'discovered')).toEqual([]);
+  });
+
+  it('without a key the bridge is an older one: no discovery, rows without ids', () => {
+    const p = world();
+    expect((p.snap.world as Record<string, unknown>).repo_discovery).toBeUndefined();
+    expect(p.run('repo_discovery.get').reply).toMatchObject({ t: 'error', code: 'unknown_command' });
+    expect((p.run('worker.repos', { id: p.id('Pebble') }).data.repos as Msg[])[0]).not.toHaveProperty('id');
+  });
+});
+
