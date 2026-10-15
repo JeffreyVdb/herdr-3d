@@ -278,6 +278,8 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
     await expect(appearance).toBeFocused();
     await page.keyboard.press('End');
     await page.keyboard.press('Home');
+    // Past Display and Floors (#58).
+    await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowDown');
     await expect(dialog.getByRole('tab', { name: 'Day and night' })).toBeFocused();
