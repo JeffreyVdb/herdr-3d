@@ -155,6 +155,30 @@ describe('AddFloorDialog (#58)', () => {
     expect(t.host.toast).toHaveBeenCalledWith('herdr did not start later: exit status 1', 'error');
   });
 
+  it('closed while the floor starts: its success is a toast, and no opener reopens anything', async () => {
+    const t = setup();
+    const mine = vi.fn();
+    t.dlg.open(t.opener, { added: mine });
+    t.type('later');
+    t.submit();
+    t.dlg.close();
+    t.store.applyEvent({ t: 'floor.upsert', seq: 2, floor: floor('later') });
+    t.replies[0]!.done({ ok: true, data: { session: 'later' } });
+    await t.flush();
+    expect(t.host.toast).toHaveBeenCalledWith('Added herdr session later, in the Unassigned lot.', 'info');
+    expect(mine).not.toHaveBeenCalled();
+    expect(t.host.added).not.toHaveBeenCalled();
+    expect(t.el.open).toBe(false);
+    // The opener's added went with the dialog: the next success goes to the host's.
+    t.dlg.open(t.opener);
+    t.type('next');
+    t.submit();
+    t.replies[1]!.done({ ok: true, data: { session: 'next' } });
+    await t.flush();
+    expect(t.host.added).toHaveBeenCalledWith('next', 'session');
+    expect(mine).not.toHaveBeenCalled();
+  });
+
   it('says so on a bridge without session.create, and sends nothing', () => {
     const t = setup({ unsupported: true });
     t.dlg.open();
@@ -242,6 +266,25 @@ describe('AddFloorDialog (#58)', () => {
       t.replies[1]!.done({ ok: true, data: { session: 'next' } });
       await t.flush();
       expect(t.host.added).toHaveBeenCalledWith('next', 'session');
+    });
+
+    it('closed before floor.create answers: its success is a toast saying where the floor stands', async () => {
+      const t = setup();
+      const mine = vi.fn();
+      t.dlg.open(t.opener, { kind: 'virtual', added: mine });
+      t.base.value = 'pastry';
+      t.base.dispatchEvent(new Event('change', { bubbles: true }));
+      t.type('Docs');
+      t.submit();
+      t.dlg.close();
+      const docs: Floor = { id: 'v-0000000000ac', name: 'Docs', session: 'pastry', base_session: 'pastry', virtual: true, state: 'running', building: null, index: null };
+      t.store.applyEvent({ t: 'floor.upsert', seq: 2, floor: docs });
+      t.replies[0]!.done({ ok: true, data: docs });
+      await t.flush();
+      expect(t.host.toast).toHaveBeenCalledWith('Added Docs on herdr session pastry, in the Unassigned lot.', 'info');
+      expect(mine).not.toHaveBeenCalled();
+      expect(t.host.added).not.toHaveBeenCalled();
+      expect(t.el.open).toBe(false);
     });
 
     it('puts the bridge’s refusals where they belong: the name, the session, else the footer', async () => {

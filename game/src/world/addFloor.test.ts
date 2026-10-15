@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { StoredFloor } from './store';
-import { baseSessions, FLOOR_KINDS, floorNameError, MAX_FLOOR_NAME, newSessionNameError, MAX_SESSION_NAME } from './addFloor';
+import { addedFloorText, baseSessions, FLOOR_KINDS, floorNameError, MAX_FLOOR_NAME, newSessionNameError, MAX_SESSION_NAME } from './addFloor';
 
 describe('newSessionNameError (#58, the bridge’s rule for a new herdr session)', () => {
   const taken = ['herdr-3d', 'pastry'];
@@ -57,5 +57,19 @@ describe('baseSessions (#58 stage 4)', () => {
       { session: 'herdr-3d', name: 'herdr-3d', asleep: false },
       { session: 'pastry', name: 'pastry', asleep: true },
     ]);
+  });
+});
+
+describe('addedFloorText (#58: what a toast says of a floor Add floor made)', () => {
+  const f = (id: string, o: Partial<StoredFloor> = {}): StoredFloor => ({ id, session: id, name: id, base_session: id, virtual: false, hidden: false, state: 'running', building: null, index: null, ...o });
+  const floors = new Map([
+    ['billing', f('billing')],
+    ['v-0000000000aa', f('v-0000000000aa', { name: 'Docs', session: 'pastry', base_session: 'pastry', virtual: true, building: 'b1' })],
+  ]);
+  const store = { floors, buildings: new Map([['b1', { id: 'b1', name: 'Work', sort: 0, floors: ['pastry', 'v-0000000000aa'] }]]), floorName: (id: string) => floors.get(id)?.name ?? 'That floor' };
+  it('names the floor, its session and where it stands', () => {
+    expect(addedFloorText(store, 'billing', 'session')).toBe('Added herdr session billing, in the Unassigned lot.');
+    expect(addedFloorText(store, 'v-0000000000aa', 'virtual')).toBe('Added Docs on herdr session pastry, in Work.');
+    expect(addedFloorText(store, 'v-0000000000ff', 'virtual')).toBe('Added the virtual floor.');
   });
 });

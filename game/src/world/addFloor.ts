@@ -6,7 +6,7 @@
  */
 
 import { floorName, isVirtualFloorId } from './floorName';
-import type { StoredFloor } from './store';
+import type { StoredFloor, WorldStore } from './store';
 
 /** herdr's own cap on a session name; the bridge's host may allow fewer (its sun_path cap). */
 export const MAX_SESSION_NAME = 64;
@@ -53,6 +53,15 @@ export function baseSessions(floors: Iterable<StoredFloor>): BaseSession[] {
   const out: BaseSession[] = [];
   for (const f of floors) if (!f.virtual) out.push({ session: f.base_session, name: floorName(f), asleep: f.state === 'asleep' });
   return out.sort((a, b) => a.name.localeCompare(b.name) || (a.session < b.session ? -1 : 1));
+}
+
+/** What a toast says of a floor Add floor made (its id): its name, its herdr session, where it stands. */
+export function addedFloorText(store: Pick<WorldStore, 'floors' | 'buildings' | 'floorName'>, id: string, kind: FloorKind['id']): string {
+  const f = store.floors.get(id);
+  const b = f && f.building !== null ? store.buildings.get(f.building) : undefined;
+  const where = b ? b.name : 'the Unassigned lot';
+  if (kind === 'session') return `Added herdr session ${id}, in ${where}.`;
+  return f ? `Added ${store.floorName(id)} on herdr session ${f.base_session}, in ${where}.` : 'Added the virtual floor.';
 }
 
 /** A kind of floor the Add floor dialog can make. */

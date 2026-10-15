@@ -66,6 +66,7 @@ import { promptBlocker } from './world/prompt';
 import { m6StartButtons, type M6StartButtons } from './ui/startButtons';
 import { PresetsPanel } from './ui/presets';
 import { AddFloorDialog, addFloorButton } from './ui/addFloor';
+import { addedFloorText } from './world/addFloor';
 import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/startRun';
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, inputRequired, isFreelancer } from './world/crew';
@@ -1684,10 +1685,8 @@ export class App {
 
   /** #58 stage 4: a virtual floor added from the city: where it stands. */
   private virtualFloorAdded(id: string): void {
-    const f = this.store.floors.get(id);
-    if (!f) return;
-    const b = f.building !== null ? this.store.buildings.get(f.building) : undefined;
-    this.hud.toast(`Added ${this.store.floorName(id)} on herdr session ${f.base_session}, in ${b ? b.name : 'the Unassigned lot'}.`, 5000, 'info');
+    if (!this.store.floors.has(id)) return;
+    this.hud.toast(addedFloorText(this.store, id, 'virtual'), 5000, 'info');
   }
 
   /** #58: the Add floor dialog (over the Buildings panel when opened from it). */

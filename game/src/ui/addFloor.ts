@@ -1,7 +1,7 @@
 import './addFloor.css';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName, Floor } from '../net/protocol';
-import { baseSessions, FLOOR_KINDS, floorNameError, MAX_FLOOR_NAME, MAX_SESSION_NAME, newSessionNameError, type FloorKind } from '../world/addFloor';
+import { addedFloorText, baseSessions, FLOOR_KINDS, floorNameError, MAX_FLOOR_NAME, MAX_SESSION_NAME, newSessionNameError, type FloorKind } from '../world/addFloor';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
@@ -342,7 +342,7 @@ export class AddFloorDialog {
       this.setStatus('');
       this.render();
       this.close();
-      this.added(name, 'session');
+      this.added(name, 'session', open);
       return;
     }
     const msg = failureText('session.create', r.code, r.message, { name });
@@ -366,11 +366,15 @@ export class AddFloorDialog {
     }
   }
 
-  /** The new floor goes to the opener's `added`, else the host's. */
-  private added(floor: string, kind: FloorKind['id']): void {
+  /**
+   * The new floor goes to the opener's `added`, else the host's; once the dialog was closed (`open` false when the
+   * answer came), to a toast instead: nothing reopens or updates what the person left.
+   */
+  private added(floor: string, kind: FloorKind['id'], open: boolean): void {
     const to = this.onAdded;
     this.onAdded = null;
-    if (to) to(floor, kind);
+    if (!open) this.host.toast(addedFloorText(this.host.store, floor, kind), 'info');
+    else if (to) to(floor, kind);
     else this.host.added(floor, kind);
   }
 
@@ -394,7 +398,7 @@ export class AddFloorDialog {
       this.setStatus('');
       this.render();
       this.close();
-      if (id) this.added(id, 'virtual');
+      if (id) this.added(id, 'virtual', open);
       return;
     }
     const msg = failureText('floor.create', r.code, r.message, { floor: name });
