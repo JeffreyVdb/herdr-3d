@@ -71,7 +71,7 @@ func (s *Server) bridgeRoute(pathOf func(*http.Request) string, keep []string) h
 				}
 			}
 			p := pathOf(pr.In)
-			pr.Out.URL = &url.URL{Scheme: "http", Host: "herdr-world", Path: p, RawQuery: q.Encode()}
+			pr.Out.URL = &url.URL{Scheme: "http", Host: proxyHost(pr.In), Path: p, RawQuery: q.Encode()}
 			pr.Out.Host = "herdr-world"
 			pr.Out.Header.Del("Origin")
 			pr.Out.Header.Del("Cookie")
@@ -82,6 +82,10 @@ func (s *Server) bridgeRoute(pathOf func(*http.Request) string, keep []string) h
 			ResponseHeaderTimeout: 90 * time.Second, // a save writes up to 32 MiB
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(err, ErrBridgeChanged) {
+				s.refuseChanged(w, r)
+				return
+			}
 			var tooBig *http.MaxBytesError
 			if errors.As(err, &tooBig) {
 				uploadError(w, http.StatusRequestEntityTooLarge, "whiteboard_too_large", "the body is too large")

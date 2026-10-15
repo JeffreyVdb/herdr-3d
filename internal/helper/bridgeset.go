@@ -113,6 +113,18 @@ func expectBridge(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, expectKey{}, id)
 }
 
+// Serves reports whether a page of bridge id (as for expectBridge) may reach
+// the bridge in use: Dial's own check, for the HTTP routes to make before
+// their proxies take a kept-alive connection.
+func (s *BridgeSet) Serves(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.serves(id)
+}
+
+// serves: callers hold mu.
+func (s *BridgeSet) serves(id string) bool { return id == cmp.Or(s.list.Active, "none") }
+
 // NewBridgeSet supervises list (checked, as LoadBridgeList does) once Run starts.
 func NewBridgeSet(cfg BridgeSetConfig, list BridgeList) (*BridgeSet, error) {
 	if err := checkList(list); err != nil {
@@ -288,7 +300,7 @@ func (s *BridgeSet) active() *entryRun {
 // is that one). The connection is the entry's: a switch closes it.
 func (s *BridgeSet) Dial(ctx context.Context) (net.Conn, error) {
 	s.mu.Lock()
-	if want, ok := ctx.Value(expectKey{}).(string); ok && want != cmp.Or(s.list.Active, "none") {
+	if want, ok := ctx.Value(expectKey{}).(string); ok && !s.serves(want) {
 		s.mu.Unlock()
 		return nil, ErrBridgeChanged
 	}

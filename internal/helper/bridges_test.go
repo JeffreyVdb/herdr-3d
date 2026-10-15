@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -883,6 +884,180 @@ func TestRoutesFollowTheSwitch(t *testing.T) {
 	}
 	if got := reach(); !slices.Equal(got, []string{"b", "b", "b", "b", "b"}) {
 		t.Fatalf("after the switch: %v", got)
+	}
+}
+
+// TestRoutesKeepThePagesBridge: like /ws, every HTTP route a page uses names
+// its bridge (?bridge=) and reaches only that one. After a switch made in
+// another tab, a page of the old bridge is refused (409 bridge_changed) on each
+// of them, also over the kept-alive connections a page of the new bridge left
+// in the proxies' pools, and the parameter never goes on to the bridge.
+func TestRoutesKeepThePagesBridge(t *testing.T) {
+	dir := shortDir(t)
+	var mu sync.Mutex
+	got := map[string][]string{} // by bridge: path?query of each request it was handed
+	named := func(name string) string {
+		sock := filepath.Join(dir, name+".sock")
+		ln, err := net.Listen("unix", sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			mu.Lock()
+			got[name] = append(got[name], r.URL.RequestURI())
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"bridge":"` + name + `"}`))
+		})}
+		go srv.Serve(ln)
+		t.Cleanup(func() { srv.Close() })
+		return sock
+	}
+	handed := func(name string) []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(got[name])
+	}
+	a := BridgeEntry{ID: NewBridgeID(), Name: "A", Kind: KindLocal, Socket: named("a")}
+	b := BridgeEntry{ID: NewBridgeID(), Name: "B", Kind: KindLocal, Socket: named("b")}
+	set, err := NewBridgeSet(BridgeSetConfig{SocketDir: filepath.Join(dir, "tun"), Log: quietLog()}, BridgeList{Active: a.ID, Bridges: []BridgeEntry{a, b}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := helperServer(t, set, nil)
+	client := &http.Client{Transport: &http.Transport{}} // keeps its connections to the helper alive
+	routes := []struct{ method, path string }{
+		{"GET", "/logo/b1"},
+		{"PUT", "/logo/b1"},
+		{"DELETE", "/logo/b1"},
+		{"POST", "/upload"},
+		{"POST", "/screen/frame/" + strings.Repeat("ab", 16)},
+		{"GET", "/whiteboard/herdr-3d"},
+		{"POST", "/whiteboard/herdr-3d/save"},
+		{"GET", "/whiteboard/herdr-3d/render.png"},
+		{"GET", "/whiteboard/herdr-3d/files/f1"},
+		{"PUT", "/whiteboard/herdr-3d/files/f1"},
+		{"GET", "/drops/file"},
+	}
+	// reach sends every route as a page of bridge (none: no parameter) and
+	// returns, per route, the bridge that answered or the helper's error code.
+	reach := func(bridge string) []string {
+		var out []string
+		for _, rt := range routes {
+			q := "?token=" + testToken
+			if bridge != "" {
+				q += "&bridge=" + bridge
+			}
+			req, _ := http.NewRequest(rt.method, ts.URL+rt.path+q, strings.NewReader("x"))
+			req.Host = "127.0.0.1:7777"
+			req.Header.Set("Origin", "http://127.0.0.1:7777")
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var body struct{ Bridge, Code string }
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			resp.Body.Close()
+			switch {
+			case resp.StatusCode == http.StatusOK:
+				out = append(out, body.Bridge)
+			case resp.StatusCode == http.StatusConflict && body.Code == "bridge_changed":
+				out = append(out, "409")
+			default:
+				t.Fatalf("%s %s as a page of %q: %d %+v", rt.method, rt.path, bridge, resp.StatusCode, body)
+			}
+		}
+		return out
+	}
+	all := func(v string) []string { return slices.Repeat([]string{v}, len(routes)) }
+
+	if r := reach(a.ID); !slices.Equal(r, all("a")) {
+		t.Fatalf("a page of A, A in use: %v", r)
+	}
+	for _, u := range handed("a") {
+		if strings.Contains(u, "bridge=") || strings.Contains(u, "token=") {
+			t.Errorf("the bridge was handed %s", u)
+		}
+	}
+	if err := set.Activate(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := reach(b.ID); !slices.Equal(r, all("b")) { // and the pools now hold connections to B
+		t.Fatalf("a page of B, B in use: %v", r)
+	}
+	before := len(handed("b"))
+	if r := reach(a.ID); !slices.Equal(r, all("409")) {
+		t.Errorf("a page of A, B in use: %v", r)
+	}
+	if r := reach("none"); !slices.Equal(r, all("409")) {
+		t.Errorf("a page of a helper with no bridge, B in use: %v", r)
+	}
+	if n := len(handed("b")); n != before {
+		t.Errorf("B was handed %d requests of pages of other bridges: %v", n-before, handed("b")[before:])
+	}
+	if r := reach(""); !slices.Equal(r, all("b")) {
+		t.Errorf("a page that names no bridge, B in use: %v", r)
+	}
+
+	// A switch right after that check (lateSwitch lets every page by): the
+	// connections the proxies keep to B are still not a page of A's.
+	ts = helperServer(t, lateSwitch{set}, nil)
+	if r := reach(b.ID); !slices.Equal(r, all("b")) {
+		t.Fatalf("a page of B, B in use: %v", r)
+	}
+	before = len(handed("b"))
+	if r := reach(a.ID); !slices.Equal(r, all("409")) {
+		t.Errorf("a page of A past the check, B in use: %v", r)
+	}
+	if n := len(handed("b")); n != before {
+		t.Errorf("B was handed %d requests of a page of A: %v", n-before, handed("b")[before:])
+	}
+}
+
+// lateSwitch is a set whose switch comes just after the HTTP routes' check.
+type lateSwitch struct{ *BridgeSet }
+
+func (lateSwitch) Serves(string) bool { return true }
+
+// TestStaleWhiteboardSaveIsRefused: a tab of A that has not reloaded yet after
+// another tab switched to B saves its board; the save never reaches B (whose
+// floor of the same name and version would take A's scene).
+func TestStaleWhiteboardSaveIsRefused(t *testing.T) {
+	reached := make(chan string, 1)
+	set := newFakeSet(t, "", func(e BridgeEntry) *fakeEntry {
+		return &fakeEntry{st: Status{State: StateUp}, dial: func(context.Context) (net.Conn, error) {
+			c, s := net.Pipe()
+			go func() {
+				defer s.Close()
+				r, err := http.ReadRequest(bufio.NewReader(s))
+				if err != nil {
+					return
+				}
+				body, _ := io.ReadAll(r.Body)
+				r.Body.Close()
+				reached <- e.Name + ":" + r.URL.Path + ":" + string(body)
+				fmt.Fprint(s, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+			}()
+			return c, nil
+		}}
+	}, BridgeEntry{Name: "A", Kind: KindLocal, Socket: "/a.sock"}, BridgeEntry{Name: "B", Kind: KindLocal, Socket: "/b.sock"})
+	pageOf := idOf(t, set.BridgeSet, "A")
+	if err := set.Activate(idOf(t, set.BridgeSet, "B")); err != nil {
+		t.Fatal(err)
+	}
+	h := NewServer(ServerConfig{Bridge: set, Port: 7777, Token: testToken, Log: quietLog()}).Handler()
+	r := httptest.NewRequest("POST", "http://127.0.0.1:7777/whiteboard/shared/save?token="+testToken+"&base=1&bridge="+pageOf, strings.NewReader("scene-from-A"))
+	r.Header.Set("Origin", "http://127.0.0.1:7777")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"bridge_changed"`) {
+		t.Errorf("the stale save: %d %s", w.Code, w.Body)
+	}
+	select {
+	case got := <-reached:
+		t.Errorf("the stale save reached %s", got)
+	default:
 	}
 }
 
