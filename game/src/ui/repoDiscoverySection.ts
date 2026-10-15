@@ -147,7 +147,11 @@ export function repoDiscoverySection(host: RepoDiscoverySectionHost): (body: HTM
       const found = `${plural(t.repositories, 'repository', 'repositories')} in ${plural(t.checkouts, 'checkout')}`;
       if (t.last_scan_at === null) return found;
       const took = t.last_duration_ms !== undefined ? ` in ${seconds(t.last_duration_ms)}` : '';
-      return `${found}. Last scanned at ${when(t.last_scan_at, now())}${took}.`;
+      const latest = `${when(t.last_scan_at, now())}${took}`;
+      // A scan succeeds when no folder fails: a later one that did is said apart, its folders' errors below.
+      if (t.last_success_at === t.last_scan_at) return `${found}. Last scanned successfully at ${latest}.`;
+      if (t.last_success_at === null) return `${found}. No scan has succeeded yet: the latest, at ${latest}, failed for some folders (see below).`;
+      return `${found}. Last scanned successfully at ${when(t.last_success_at, now())}. The latest scan, at ${latest}, failed for some folders (see below).`;
     }
 
     function badgeOf(s: RepoDiscoveryState): { state: string; text: string } {

@@ -145,7 +145,8 @@ describe('the “Repository discovery” section (#54)', () => {
         },
       ),
     );
-    expect(m.text('.settings-used')).toBe('61 repositories in 134 checkouts. Last scanned at 10:24 in 152 ms.');
+    // No scan without a failing folder yet: said so, with the latest attempt.
+    expect(m.text('.settings-used')).toBe('61 repositories in 134 checkouts. No scan has succeeded yet: the latest, at 10:24 in 152 ms, failed for some folders (see below).');
     expect(m.text('.settings-role-head .settings-badge')).toBe('Needs attention');
     const items = [...m.root.querySelectorAll('.settings-rd-root')];
     expect(items.map((i) => i.querySelector('.settings-badge')?.textContent)).toEqual(['134 checkouts', 'Last scan failed', 'Not readable']);
@@ -159,6 +160,13 @@ describe('the “Repository discovery” section (#54)', () => {
     await m.flush();
     expect(m.sent.at(-1)).toEqual({ t: 'repo_discovery.refresh', args: {} });
     expect(m.text('.settings-status')).toBe('Scanning now. New clones show up in @r: when it ends.');
+
+    // The last successful scan, and a later one that failed for a folder.
+    const idle = { state: 'idle' as const, revision: 3, repositories: 61, checkouts: 134, last_duration_ms: 152, roots: [] };
+    m.book.upsert(state({ roots }, { ...idle, last_scan_at: AT, last_success_at: AT - 12 * 60_000 }));
+    expect(m.text('.settings-used')).toBe('61 repositories in 134 checkouts. Last scanned successfully at 10:12. The latest scan, at 10:24 in 152 ms, failed for some folders (see below).');
+    m.book.upsert(state({ roots }, { ...idle, last_scan_at: AT, last_success_at: AT }));
+    expect(m.text('.settings-used')).toBe('61 repositories in 134 checkouts. Last scanned successfully at 10:24 in 152 ms.');
 
     // A scan in flight, after an earlier one: what is listed meanwhile.
     m.book.upsert(state({ roots }, { state: 'scanning', revision: 3, repositories: 61, checkouts: 134, last_scan_at: AT, progress: { phase: 'checking', done: 40, total: 135 }, roots: [] }));

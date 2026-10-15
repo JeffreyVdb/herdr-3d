@@ -74,7 +74,7 @@ test('Repository discovery: folders set in Settings on one client; the scan join
   await add.fill('/home/dev/devel/');
   await add.press('Enter');
   await expect(section.locator('.settings-status')).toHaveText('Added /home/dev/devel. Scanning it now.');
-  await expect(section.locator('.settings-used')).toContainText('6 repositories in 7 checkouts. Last scanned at');
+  await expect(section.locator('.settings-used')).toContainText('6 repositories in 7 checkouts. Last scanned successfully at');
   await expect(section.locator('.settings-rd-root .settings-badge')).toHaveText(['7 checkouts']);
   await expect(section.locator('.settings-role-head .settings-badge')).toHaveText('Up to date');
   await add.fill('/media/missing/usb');
@@ -82,6 +82,8 @@ test('Repository discovery: folders set in Settings on one client; the scan join
   await expect(section.locator('.settings-rd-root .settings-badge')).toHaveText(['7 checkouts', 'Not readable']);
   await expect(section.locator('.settings-rd-root').nth(1).locator('.settings-field-error')).toHaveText('The folder does not exist on the bridge host.');
   await expect(section.locator('.settings-role-head .settings-badge')).toHaveText('Needs attention');
+  // The last successful scan stays in view after one that failed for a folder.
+  await expect(section.locator('.settings-used')).toContainText(/Last scanned successfully at \d\d:\d\d\. The latest scan, at .+, failed for some folders \(see below\)\./);
   await section.getByLabel('Refresh every (minutes)').fill('25');
   await section.getByRole('button', { name: 'Save', exact: true }).click();
   await expect(section.locator('.settings-status')).toHaveText('Saved. The folders are scanned every 25 minutes.');
