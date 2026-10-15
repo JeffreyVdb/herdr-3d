@@ -193,6 +193,8 @@ var migrations = []string{
 	migrationRepoRefs,
 	// #9: LLM handoffs: the settings and the jobs.
 	migrationHandoffLLM,
+	// #54: repository discovery: the scan roots and the refresh interval.
+	migrationRepoDiscovery,
 }
 
 // Fingerprint kinds.

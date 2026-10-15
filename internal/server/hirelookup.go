@@ -144,10 +144,6 @@ func (h *Hub) startHireRepos(ctx context.Context, c *Client, cmd proto.Command) 
 	if _, err := h.floorFor(a.Session); err != nil {
 		return err
 	}
-	refs := h.repoCandidates(a.Session)
-	stat := h.opts.StatDir
-	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
-		return proto.WorkerRepos{Repos: resolveRepoRefs(ctx, refs, stat, h.cachedOrigin)}, nil
-	})
+	h.startAsync(ctx, c, cmd, h.reposFor(a.Session))
 	return nil
 }

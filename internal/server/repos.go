@@ -12,11 +12,13 @@ package server
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/repodisc"
 )
 
 const (
@@ -99,12 +101,24 @@ func (h *Hub) startWorkerRepos(ctx context.Context, c *Client, cmd proto.Command
 	if w == nil {
 		return fmt.Errorf("%w: %q", errUnknownWorker, a.ID)
 	}
-	refs := h.repoCandidates(w.Session)
-	stat := h.opts.StatDir
-	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
-		return proto.WorkerRepos{Repos: resolveRepoRefs(ctx, refs, stat, h.cachedOrigin)}, nil
-	})
+	h.startAsync(ctx, c, cmd, h.reposFor(w.Session))
 	return nil
+}
+
+// reposFor is worker.repos's answer for a worker of session: the floors in
+// scope and order and the discovered catalog now (hub goroutine), the
+// folders checked and the two merged off it.
+func (h *Hub) reposFor(session string) func(context.Context) (any, error) {
+	refs := h.repoCandidates(session)
+	stat := h.opts.StatDir
+	var cat *repodisc.Catalog
+	if h.opts.RepoDiscovery != nil {
+		cat = h.opts.RepoDiscovery.Catalog()
+	}
+	return func(ctx context.Context) (any, error) {
+		rows := resolveRepoRefs(ctx, refs, stat, h.cachedOrigin, repodisc.CheckoutRoot)
+		return proto.WorkerRepos{Repos: mergeRepos(rows, cat)}, nil
+	}
 }
 
 // repoCandidates are the floors worker.repos may list for a worker of
@@ -149,32 +163,169 @@ func (h *Hub) repoCandidates(session string) []proto.RepoRef {
 	return append(same, other...)
 }
 
+// floorRepo is a floor's row checked: where its folder is.
+type floorRepo struct {
+	ref proto.RepoRef
+	// root is the checkout the folder is in, canonical ("": none, or the
+	// folder does not resolve).
+	root string
+	// gh is the GitHub repository of a folder-only floor's checkout ("":
+	// none, or not looked up).
+	gh string
+}
+
 // resolveRepoRefs checks every candidate's folder at once: a floor with a
 // repo is cloned when its folder is a checkout of it; a floor with only a
-// folder is dropped when the folder does not exist.
-func resolveRepoRefs(ctx context.Context, refs []proto.RepoRef, stat func(string) error, origin func(context.Context, string) string) []proto.RepoRef {
+// folder is dropped when the folder does not exist. root finds the
+// checkout a folder is in (repodisc.CheckoutRoot); a folder-only floor's
+// checkout's origin is looked up too, so it merges with a floor naming the
+// same repository.
+func resolveRepoRefs(ctx context.Context, refs []proto.RepoRef, stat func(string) error, origin func(context.Context, string) string,
+	root func(string) string) []floorRepo {
+	rows := make([]floorRepo, len(refs))
 	keep := make([]bool, len(refs))
 	var wg sync.WaitGroup
 	for i := range refs {
 		wg.Add(1)
-		go func(r *proto.RepoRef) {
+		go func(f *floorRepo) {
 			defer wg.Done()
+			f.ref = refs[i]
+			r := &f.ref
+			if r.Dir != "" {
+				f.root = root(r.Dir)
+			}
 			if r.Repo == "" {
 				keep[i] = stat(r.Dir) == nil
+				if keep[i] && f.root != "" {
+					f.gh = lookupRepo(ctx, f.root, origin, repoLookupTimeout)
+				}
 				return
 			}
 			keep[i] = true
 			r.Cloned = repoCloned(ctx, r.Dir, r.Repo, stat, origin, repoLookupTimeout)
-		}(&refs[i])
+		}(&rows[i])
 	}
 	wg.Wait()
-	out := make([]proto.RepoRef, 0, len(refs))
-	for i, r := range refs {
+	out := make([]floorRepo, 0, len(refs))
+	for i, r := range rows {
 		if keep[i] {
 			out = append(out, r)
 		}
 	}
 	return out
+}
+
+// mergeRepos is worker.repos's rows: the floors' (in their order) and the
+// discovered repositories', one row per repository. A floor's identity is
+// its GitHub repository; a folder-only floor's, the discovered repository
+// of the checkout it is in, else that checkout's GitHub repository, else
+// the checkout, else the folder. The floors that share one are one row at
+// the first one's place, offering the first of them (in floor order) with
+// a usable folder (a checkout of its repo, or an existing folder), else the
+// discovered checkout (main first, then by path), else the GitHub address.
+// The discovered repositories no floor names follow, by name.
+func mergeRepos(floors []floorRepo, cat *repodisc.Catalog) []proto.RepoRef {
+	type group struct {
+		id     string
+		floors []floorRepo
+	}
+	var groups []*group
+	byID := map[string]*group{}
+	for _, f := range floors {
+		id := floorRepoID(f, cat)
+		g := byID[id]
+		if g == nil {
+			g = &group{id: id}
+			byID[id] = g
+			groups = append(groups, g)
+		}
+		g.floors = append(g.floors, f)
+	}
+	out := make([]proto.RepoRef, 0, len(groups)+cat.Len())
+	for _, g := range groups {
+		disc, found := cat.Repo(g.id)
+		var win *floorRepo
+		for i := range g.floors {
+			if f := &g.floors[i]; f.ref.Repo == "" || f.ref.Cloned {
+				win = f
+				break
+			}
+		}
+		from := &g.floors[0]
+		if win != nil {
+			from = win
+		}
+		row := from.ref
+		row.ID, row.Source = g.id, proto.RepoSourceFloor
+		if row.Repo == "" { // a folder-only floor: the repository the others or the scan name
+			for _, f := range g.floors {
+				if f.ref.Repo != "" {
+					row.Repo = f.ref.Repo
+					break
+				}
+			}
+			if row.Repo == "" && found {
+				row.Repo = disc.GitHub
+			}
+			if row.Repo == "" && from.gh != "" {
+				row.Repo = from.gh
+			}
+			row.Cloned = row.Repo != "" && from.root != ""
+		}
+		if win == nil && found {
+			row.Dir, row.Cloned = disc.Path(), row.Repo != ""
+		}
+		if found {
+			row.Checkouts = len(disc.Checkouts)
+		}
+		out = append(out, row)
+	}
+	for _, r := range cat.List() {
+		if byID[r.ID] != nil {
+			continue
+		}
+		out = append(out, proto.RepoRef{ID: r.ID, Source: proto.RepoSourceDiscovered, Repo: r.GitHub, Dir: r.Path(), Cloned: r.GitHub != "",
+			Checkouts: len(r.Checkouts)})
+	}
+	return out
+}
+
+// floorRepoID is a floor row's repository identity (mergeRepos).
+func floorRepoID(f floorRepo, cat *repodisc.Catalog) string {
+	switch {
+	case f.ref.Repo != "":
+		return repodisc.GitHubID(f.ref.Repo)
+	case f.root != "":
+		if r, ok := cat.ByPath(f.root); ok {
+			return r.ID
+		}
+		if f.gh != "" {
+			return repodisc.GitHubID(f.gh)
+		}
+		return "checkout:" + f.root
+	}
+	dir := f.ref.Dir
+	if p, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = p
+	}
+	return "dir:" + filepath.Clean(dir)
+}
+
+// lookupRepo is the GitHub repository of dir's origin, "" when it has
+// none or the lookup does not answer within timeout (it is still cached).
+func lookupRepo(ctx context.Context, dir string, origin func(context.Context, string) string, timeout time.Duration) string {
+	got := make(chan string, 1)
+	go func() { got <- origin(ctx, dir) }()
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case o := <-got:
+		return strings.TrimSuffix(strings.TrimSpace(o), ".git")
+	case <-t.C:
+		return ""
+	case <-ctx.Done():
+		return ""
+	}
 }
 
 // repoCloned reports whether dir exists and its GitHub origin is repo

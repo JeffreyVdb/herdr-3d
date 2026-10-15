@@ -217,6 +217,9 @@ type World struct {
 	CodexServer *CodexServer `json:"codex_server,omitempty"`
 	// #247: the "Repositories from other buildings" switch. Always present.
 	RepoRefs *RepoRefs `json:"repo_refs,omitempty"`
+	// #54: repository discovery's settings and status. nil (left out) when
+	// the bridge does not scan for repositories.
+	RepoDiscovery *RepoDiscovery `json:"repo_discovery,omitempty"`
 	// #184: the Kaneo connection (never a key). nil (left out) when the
 	// bridge has no Kaneo settings.
 	Kaneo *Kaneo `json:"kaneo,omitempty"`

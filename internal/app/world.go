@@ -33,6 +33,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/repodisc"
 	"github.com/JeffreyVdb/herdr-3d/internal/screenshare"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -773,6 +774,15 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 			files.Wait()
 		}()
 		opts.Files = files
+	}
+	if cfg.Git != nil { // #54 repository discovery: its own short git timeout, a few calls at a time
+		dctx, cancel := context.WithCancel(ctx)
+		disc := repodisc.New(dctx, repodisc.Options{Git: &gitops.Git{Bin: cfg.Git.Bin, Timeout: repodisc.DefaultGitTimeout}, Log: log})
+		defer func() {
+			cancel()
+			disc.Wait()
+		}()
+		opts.RepoDiscovery = disc
 	}
 	if cfg.ClaudeProjects != "" || cfg.CodexSessions != "" { // M5 usage
 		opts.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: cfg.ClaudeProjects, CodexSessions: cfg.CodexSessions},
