@@ -503,7 +503,7 @@ the service inherits. On a Bash host:
 - An uninstalled bash refuses the start: `the configured shell "bash" was not found … install it, or set --shell (or
   $HERDR_WORLD_SHELL) to fish`.
 
-To keep Fish's login environment and `config.fish` wrappers (the pre-v1.46 behaviour), opt in explicitly with
+To keep Fish's login environment and `config.fish` wrappers (v1.45.0's behaviour), opt in explicitly with
 `systemctl --user edit herdr-world` and `[Service]` `Environment=HERDR_WORLD_SHELL=fish` (fish must be installed;
 `/bin/fish` is used when it exists). In-flight Fish launches written by v1.45.0 are still recovered and cleaned up by a
 bash-default bridge. Test fixtures: `H3D_CODEXSHARE_SHELL=fish make codex-shared-tui` runs the integration suites
