@@ -11,6 +11,8 @@
  * #188: and the filter, Active only or All, one setting per view (`OverviewFilterPrefs`).
  */
 
+import { bridgeKey } from '../net/bridgeScope';
+
 const KEY = 'h3d.overview.collapsed';
 const MAX = 200;
 
@@ -40,7 +42,7 @@ export class OverviewPrefs {
   constructor(private readonly storage: Pick<Storage, 'getItem' | 'setItem'> | null = defaultStorage()) {
     let raw: string | null = null;
     try {
-      raw = this.storage?.getItem(KEY) ?? null;
+      raw = this.storage?.getItem(bridgeKey(KEY)) ?? null;
     } catch {
       /* none */
     }
@@ -83,7 +85,7 @@ export class OverviewPrefs {
     if (!changed) return;
     while (this.set.size > MAX) this.set.delete(this.set.values().next().value as string);
     try {
-      this.storage?.setItem(KEY, JSON.stringify([...this.set]));
+      this.storage?.setItem(bridgeKey(KEY), JSON.stringify([...this.set]));
     } catch {
       /* this page only */
     }

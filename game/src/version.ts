@@ -52,6 +52,8 @@ export async function loadHelperVersion(fetchFn: typeof fetch = fetch): Promise<
 export class BuildInfo {
   helper: string | null = null;
   bridge: string | null = null;
+  /** #57: the name of the helper's bridge in use (null: none, or no helper). */
+  bridgeName: string | null = null;
   backend: string | null = null;
   private readonly listeners = new Set<() => void>();
 
@@ -64,6 +66,12 @@ export class BuildInfo {
 
   setBridge(v: string | null): void {
     this.bridge = v;
+    this.emit();
+  }
+
+  setBridgeName(v: string | null): void {
+    if (v === this.bridgeName) return;
+    this.bridgeName = v;
     this.emit();
   }
 

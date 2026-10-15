@@ -62,6 +62,9 @@ type ServerConfig struct {
 	// browser (default SystemOpen; OpenHosts default DefaultOpenHosts).
 	Open      Opener
 	OpenHosts []string
+	// #57: the bridge list behind /api/bridges (nil: none, the routes say so).
+	// Bridge is usually the same set.
+	Bridges *BridgeSet
 }
 
 // Server is the helper's HTTP front: the game, /ws to the bridge, /healthz.
@@ -100,8 +103,8 @@ func NewServer(cfg ServerConfig) *Server {
 }
 
 // Handler serves everything. Every request must name the helper in its
-// Host header (no DNS rebinding); /ws and /api/open also need a same-origin
-// Origin and the token; /logo, POST /upload and POST /screen/frame/{id} need the token, and an Origin, when the browser
+// Host header (no DNS rebinding); /ws, /api/open and /api/bridges also need a same-origin
+// Origin (an absent one passes on GET /api/bridges) and the token; /logo, POST /upload and POST /screen/frame/{id} need the token, and an Origin, when the browser
 // sends one, must be the helper's own.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -143,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	})
+	s.bridgeRoutes(mux)
 	var site http.Handler
 	if s.cfg.Dev != nil {
 		site = s.devProxy()
@@ -164,7 +168,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) forbid(w http.ResponseWriter, r *http.Request, why string) {
 	s.cfg.Log.Warn("request refused", "why", why, "path", r.URL.Path, "host", r.Host, "origin", r.Header.Get("Origin"), "remote", r.RemoteAddr)
-	if r.URL.Path == "/upload" || strings.HasPrefix(r.URL.Path, "/screen/") || isWhiteboardPath(r.URL.Path) { // the game reads its error code
+	if r.URL.Path == "/upload" || strings.HasPrefix(r.URL.Path, "/screen/") || isWhiteboardPath(r.URL.Path) || isBridgesPath(r.URL.Path) { // the game reads its error code
 		uploadError(w, http.StatusForbidden, "forbidden", "the helper refused the request ("+why+")")
 		return
 	}
@@ -181,6 +185,10 @@ func (s *Server) checkWS(next http.Handler) http.Handler {
 		if got := []byte(r.URL.Query().Get("token")); len(want) == 0 || subtle.ConstantTimeCompare(got, want) != 1 {
 			s.forbid(w, r, "bad token")
 			return
+		}
+		// #57: the bridge the page's keys belong to; a BridgeSet dials only that one.
+		if id := r.URL.Query().Get("bridge"); id != "" {
+			r = r.WithContext(expectBridge(r.Context(), id))
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -199,8 +207,16 @@ func (s *Server) bridgeProxy() http.Handler {
 		},
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return s.cfg.Bridge.Dial(ctx) },
+			// Every /ws dials (#57): a kept connection would skip the check of
+			// the page's bridge.
+			DisableKeepAlives: true,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(err, ErrBridgeChanged) {
+				s.cfg.Log.Info("refused a page of another bridge", "page_bridge", r.URL.Query().Get("bridge"))
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
 			st := s.cfg.Bridge.Status()
 			s.cfg.Log.Warn("bridge unreachable", "tunnel", st.State, "err", err)
 			http.Error(w, "bridge unreachable (tunnel "+st.State+")", http.StatusBadGateway)
@@ -366,6 +382,12 @@ const maxLogoUpload = 1 << 20
 // Origin passes, and a present one must be the helper's own. A PUT or DELETE
 // is a non-GET request: a browser always sends Origin, and it is checked the
 // same way; a client that sends none (curl) still needs the token.
+//
+// #57: a page's request names its bridge (?bridge=, as its /ws does) and
+// reaches that one only. Another one in use (a switch made in another tab)
+// is refused here, before the proxy takes a kept-alive connection, and Dial
+// refuses a switch made after. A request that names none reaches the bridge
+// in use, as before.
 func (s *Server) checkLogo(next http.Handler) http.Handler {
 	want := []byte(s.cfg.Token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -377,8 +399,39 @@ func (s *Server) checkLogo(next http.Handler) http.Handler {
 			s.forbid(w, r, "bad token")
 			return
 		}
+		if id := r.URL.Query().Get("bridge"); id != "" {
+			if !pageBridgeRe.MatchString(id) {
+				uploadError(w, http.StatusBadRequest, "bad_request", "bridge is a bridge id, or none")
+				return
+			}
+			if set, ok := s.cfg.Bridge.(interface{ Serves(id string) bool }); ok && !set.Serves(id) {
+				s.refuseChanged(w, r)
+				return
+			}
+			r = r.WithContext(expectBridge(r.Context(), id))
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// pageBridgeRe is a page's ?bridge=: a bridge id, or none.
+var pageBridgeRe = regexp.MustCompile(`^[0-9a-z]{1,32}$`)
+
+// refuseChanged answers a page of another bridge than the one in use (#57):
+// the game reads the code and reloads on the bridge in use.
+func (s *Server) refuseChanged(w http.ResponseWriter, r *http.Request) {
+	s.cfg.Log.Info("refused a page of another bridge", "path", r.URL.Path, "page_bridge", r.URL.Query().Get("bridge"))
+	uploadError(w, http.StatusConflict, "bridge_changed", ErrBridgeChanged.Error())
+}
+
+// proxyHost is the host of a proxied request's URL. A proxy keeps its idle
+// connections per host, so a page's request (#57) only ever reuses one
+// dialled for its own bridge, which passed Dial's check.
+func proxyHost(r *http.Request) string {
+	if id, ok := r.Context().Value(expectKey{}).(string); ok {
+		return id + ".herdr-world"
+	}
+	return "herdr-world"
 }
 
 // limitLogo refuses an upload over maxLogoUpload, by Content-Length at once
@@ -411,7 +464,7 @@ func (s *Server) logoProxy() http.Handler {
 			if h := pr.In.URL.Query().Get("h"); h != "" {
 				q.Set("h", h)
 			}
-			pr.Out.URL = &url.URL{Scheme: "http", Host: "herdr-world", Path: "/logo/" + pr.In.PathValue("id"), RawQuery: q.Encode()}
+			pr.Out.URL = &url.URL{Scheme: "http", Host: proxyHost(pr.In), Path: "/logo/" + pr.In.PathValue("id"), RawQuery: q.Encode()}
 			pr.Out.Host = "herdr-world"
 			pr.Out.Header.Del("Origin")
 			pr.Out.Header.Del("Cookie")
@@ -422,6 +475,10 @@ func (s *Server) logoProxy() http.Handler {
 			ResponseHeaderTimeout: 45 * time.Second, // a conversion waits up to 10 s for a slot and 10 s to run
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(err, ErrBridgeChanged) {
+				s.refuseChanged(w, r)
+				return
+			}
 			var tooBig *http.MaxBytesError
 			if errors.As(err, &tooBig) {
 				logoTooLarge(w)
@@ -480,7 +537,7 @@ func (s *Server) uploadProxy() http.Handler {
 					q.Set(k, v[0])
 				}
 			}
-			pr.Out.URL = &url.URL{Scheme: "http", Host: "herdr-world", Path: "/upload", RawQuery: q.Encode()}
+			pr.Out.URL = &url.URL{Scheme: "http", Host: proxyHost(pr.In), Path: "/upload", RawQuery: q.Encode()}
 			pr.Out.Host = "herdr-world"
 			pr.Out.Header.Del("Origin")
 			pr.Out.Header.Del("Cookie")
@@ -492,6 +549,10 @@ func (s *Server) uploadProxy() http.Handler {
 			ResponseHeaderTimeout: upload.DefaultTimeout + 15*time.Second,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(err, ErrBridgeChanged) {
+				s.refuseChanged(w, r)
+				return
+			}
 			var tooBig *http.MaxBytesError
 			if errors.As(err, &tooBig) {
 				uploadTooLarge(w)
@@ -541,7 +602,7 @@ func frameTooLarge(w http.ResponseWriter) {
 func (s *Server) frameProxy() http.Handler {
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
-			pr.Out.URL = &url.URL{Scheme: "http", Host: "herdr-world", Path: "/screen/frame/" + pr.In.PathValue("id")}
+			pr.Out.URL = &url.URL{Scheme: "http", Host: proxyHost(pr.In), Path: "/screen/frame/" + pr.In.PathValue("id")}
 			pr.Out.Host = "herdr-world"
 			pr.Out.Header.Del("Origin")
 			pr.Out.Header.Del("Cookie")
@@ -552,6 +613,10 @@ func (s *Server) frameProxy() http.Handler {
 			ResponseHeaderTimeout: 20 * time.Second, // the bridge reads for at most 10 s
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if errors.Is(err, ErrBridgeChanged) {
+				s.refuseChanged(w, r)
+				return
+			}
 			var tooBig *http.MaxBytesError
 			if errors.As(err, &tooBig) {
 				frameTooLarge(w)

@@ -194,7 +194,7 @@ func TestNoteBridgeVersion(t *testing.T) {
 	var buf strings.Builder
 	tun := &Tunnel{Log: slog.New(slog.NewTextHandler(&buf, nil))}
 
-	tun.noteBridge(version.Version)
+	tun.noteBridge(tun.Log, version.Version)
 	if got := tun.Status().Bridge; got != version.Version {
 		t.Fatalf("Bridge = %q, want %q", got, version.Version)
 	}
@@ -203,18 +203,18 @@ func TestNoteBridgeVersion(t *testing.T) {
 	}
 
 	buf.Reset()
-	tun.noteBridge(version.Version) // unchanged: silent
+	tun.noteBridge(tun.Log, version.Version) // unchanged: silent
 	if buf.Len() != 0 {
 		t.Errorf("repeat logged: %s", buf.String())
 	}
 
-	tun.noteBridge("v9.9.9-other")
+	tun.noteBridge(tun.Log, "v9.9.9-other")
 	if !strings.Contains(buf.String(), "versions differ") || tun.Status().Bridge != "v9.9.9-other" {
 		t.Errorf("mismatch: status %q, log %q", tun.Status().Bridge, buf.String())
 	}
 
 	buf.Reset()
-	tun.noteBridge("") // a bridge from before the header existed
+	tun.noteBridge(tun.Log, "") // a bridge from before the header existed
 	if !strings.Contains(buf.String(), "does not report") || tun.Status().Bridge != "unknown" {
 		t.Errorf("old bridge: status %q, log %q", tun.Status().Bridge, buf.String())
 	}
@@ -224,11 +224,11 @@ func TestNoteBridgeVersion(t *testing.T) {
 // plain host names, and none once the header is gone.
 func TestNoteOpenHosts(t *testing.T) {
 	tun := &Tunnel{Log: quietLog()}
-	tun.noteOpenHosts("Tasks.Example.Test, bad host, https://x.test, x.test:443, ,-bad.test, ok-2.example.test, tasks.example.test")
+	tun.noteOpenHosts(tun.Log, "Tasks.Example.Test, bad host, https://x.test, x.test:443, ,-bad.test, ok-2.example.test, tasks.example.test")
 	if got := tun.Status().OpenHosts; !slices.Equal(got, []string{"tasks.example.test", "ok-2.example.test"}) {
 		t.Fatalf("hosts = %q", got)
 	}
-	tun.noteOpenHosts("")
+	tun.noteOpenHosts(tun.Log, "")
 	if got := tun.Status().OpenHosts; len(got) != 0 {
 		t.Fatalf("hosts after the header went = %q", got)
 	}

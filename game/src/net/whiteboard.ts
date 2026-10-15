@@ -12,6 +12,7 @@
  * - `GET  /drops/file?path=…[&thumb=1]`        a recent drop's bytes (M11's picker)
  */
 
+import { routeRefusal } from './bridgeChanged';
 import type { CommandResult } from './client';
 import type { WhiteboardState } from './protocol';
 
@@ -77,8 +78,10 @@ async function result(fetcher: Fetcher, url: string, init: RequestInit = {}): Pr
   }
   const o = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {};
   if (res.ok) return { ok: true, data: o.data ?? null };
-  const code = typeof o.code === 'string' ? o.code : res.status === 502 ? 'offline' : res.status === 403 ? 'forbidden' : 'internal';
-  const message = typeof o.message === 'string' ? o.message : `HTTP ${res.status}`;
+  const { code, message } = routeRefusal(
+    typeof o.code === 'string' ? o.code : res.status === 502 ? 'offline' : res.status === 403 ? 'forbidden' : 'internal',
+    typeof o.message === 'string' ? o.message : `HTTP ${res.status}`,
+  );
   return { ok: false, code, message, ...(typeof o.version === 'number' ? { version: o.version } : {}) };
 }
 

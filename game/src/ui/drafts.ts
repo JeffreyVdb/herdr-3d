@@ -10,6 +10,7 @@
  */
 
 import { readSavedParts, type SavedPart } from './composer/model';
+import { bridgeKey } from '../net/bridgeScope';
 
 export interface Draft {
   text: string;
@@ -65,7 +66,7 @@ export class Drafts {
   ) {}
 
   private k(key: string): string {
-    return `${PREFIX}${this.ns}.${key}`;
+    return `${bridgeKey(PREFIX)}${this.ns}.${key}`;
   }
 
   /** The draft for `key`: this session's copy first, else what storage kept from an earlier one. */

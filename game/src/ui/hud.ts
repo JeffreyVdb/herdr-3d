@@ -131,6 +131,10 @@ export class Hud {
   /** M4: on a floor, hire at its first free desk. */
   private readonly hire = el('button', 'btn btn--hire', `${svg(ICON.hire)}<span>Hire</span>`);
   private readonly conn = el('span', 'conn', '<i></i><span></span>');
+  /** #57: the bridge in use's name, what the chip says instead of the connection, and the connection last shown. */
+  private bridgeName: string | null = null;
+  private connOverride: { text: string; title: string; phase: string } | null = null;
+  private lastConn: [ConnState, boolean, number] | null = null;
   private readonly reticle = el('div', 'reticle');
   private readonly prompt = el('div', 'prompt');
   private readonly hint = el('div', 'hint');
@@ -359,8 +363,21 @@ export class Hud {
     this.battery.setAttribute('aria-pressed', String(on));
   }
 
+  /** #57: the name of the bridge in use, on the chip's tooltip (null: none, or no helper). */
+  setBridgeName(name: string | null): void {
+    this.bridgeName = name;
+    if (this.lastConn) this.setConn(...this.lastConn);
+  }
+
+  /** #57: what the chip says instead of the connection (a switch under way, no bridge configured); null: the connection again. */
+  setConnOverride(o: { text: string; title: string; phase: string } | null): void {
+    this.connOverride = o;
+    if (this.lastConn) this.setConn(...this.lastConn);
+    else this.paintConn('', '', 'stopped');
+  }
+
   setConn(s: ConnState, fixture: boolean, now: number): void {
-    const span = this.conn.querySelector('span');
+    this.lastConn = [s, fixture, now];
     let text = '';
     switch (s.phase) {
       case 'live':
@@ -379,9 +396,17 @@ export class Hud {
         text = 'Offline';
         break;
     }
-    this.conn.dataset.phase = s.phase;
     // M13: under 1100 px the words go (screenShare.css) and the title carries them.
-    this.conn.title = s.phase === 'waiting' || s.phase === 'failed' ? s.reason : text;
+    this.paintConn(text, s.phase === 'waiting' || s.phase === 'failed' ? s.reason : text, s.phase);
+  }
+
+  private paintConn(text: string, title: string, phase: string): void {
+    const o = this.connOverride;
+    if (o) [text, title, phase] = [o.text, o.title, o.phase];
+    else if (this.bridgeName) title = `${title} · Bridge: ${this.bridgeName}`;
+    this.conn.dataset.phase = phase;
+    this.conn.title = title;
+    const span = this.conn.querySelector('span');
     if (span && span.textContent !== text) span.textContent = text;
   }
 
