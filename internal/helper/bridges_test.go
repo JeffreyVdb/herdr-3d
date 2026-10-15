@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -371,6 +372,26 @@ func TestBridgeSetChanges(t *testing.T) {
 	saved, _, err := LoadBridgeList(file)
 	if err != nil || saved.Active != a.ID || len(saved.Bridges) != 1 || saved.Bridges[0].ID != a.ID {
 		t.Fatalf("saved: %+v %v", saved, err)
+	}
+}
+
+// TestBridgeSetAnyNumber: the list has no cap ("as many as I like"): every
+// add is kept, saved, and loads again.
+func TestBridgeSetAnyNumber(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "bridges.json")
+	set := newFakeSet(t, file, nil)
+	const n = 40
+	for i := range n {
+		if _, err := set.Add(BridgeEntry{Name: fmt.Sprintf("bridge %d", i), Kind: KindLocal, Socket: fmt.Sprintf("/run/b%d.sock", i)}); err != nil {
+			t.Fatalf("add #%d: %v", i+1, err)
+		}
+	}
+	if _, list := set.List(); len(list) != n {
+		t.Fatalf("listed %d, want %d", len(list), n)
+	}
+	saved, ok, err := LoadBridgeList(file)
+	if err != nil || !ok || len(saved.Bridges) != n {
+		t.Fatalf("saved %d bridges (%v, %v), want %d", len(saved.Bridges), ok, err, n)
 	}
 }
 

@@ -333,9 +333,6 @@ func (s *BridgeSet) checkNew(e BridgeEntry, id string) (BridgeEntry, error) {
 func (s *BridgeSet) Add(e BridgeEntry) (BridgeEntry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.list.Bridges) >= MaxBridges {
-		return e, bridgeErr(http.StatusBadRequest, "invalid", "the helper keeps at most %d bridges: remove one first", MaxBridges)
-	}
 	e, err := s.checkNew(e, NewBridgeID())
 	if err != nil {
 		return e, err

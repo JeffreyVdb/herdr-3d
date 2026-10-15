@@ -26,9 +26,6 @@ const (
 	KindLocal = "local" // a bridge socket on this machine, dialled directly
 )
 
-// MaxBridges bounds the list: each ssh entry is one standby ssh process.
-const MaxBridges = 32
-
 // maxBridgeName is the longest name, in characters.
 const maxBridgeName = 40
 
@@ -181,9 +178,6 @@ func CheckBridgeEntry(e BridgeEntry) (BridgeEntry, error) {
 // checkList is the file's invariants: valid entries with distinct ids and
 // names, and an active entry whenever there is one at all.
 func checkList(l BridgeList) error {
-	if len(l.Bridges) > MaxBridges {
-		return fmt.Errorf("%d bridges, at most %d", len(l.Bridges), MaxBridges)
-	}
 	ids, names := map[string]bool{}, map[string]bool{}
 	for _, e := range l.Bridges {
 		if !validBridgeID(e.ID) {
