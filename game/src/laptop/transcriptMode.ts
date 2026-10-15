@@ -93,6 +93,8 @@ export interface TranscriptModeHost {
   handoff?(id: string, c: HandoffCandidate): void;
   /** #247: the shared "Repositories from other buildings" switch, for the prompt box's `@r:` (none: as if off). */
   repoRefs?: RepoSearchHost['refs'];
+  /** #54: repository discovery, for the prompt box's `@r:` (none: as if off). */
+  repoDiscovery?: RepoSearchHost['discovery'];
   /** #39: the app's lists of commands and skills, shared with the Prompt overlay and the hire dialogs (none: its own). */
   catalogs?: CommandCatalogs;
   /** #58: the clock of the pending prompts' "not seen yet" hint (default Date.now; tests pass their own). */
@@ -710,8 +712,8 @@ export class TranscriptMode {
       sending: this.drafts.sending(s.id),
       asyncDrafts: this.asyncDrafts,
       files: { id: s.id, search: { send: (t, args) => this.host.send(t, args) } },
-      // #247: `@r:` lists the repositories and folders of the other floors.
-      repos: { id: s.id, search: { send: (t, args) => this.host.send(t, args), refs: this.host.repoRefs ?? null } },
+      // #247: `@r:` lists the repositories and folders of the other floors (#54: and the ones the bridge discovered).
+      repos: { id: s.id, search: { send: (t, args) => this.host.send(t, args), refs: this.host.repoRefs ?? null, discovery: this.host.repoDiscovery ?? null } },
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');

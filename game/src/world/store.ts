@@ -32,6 +32,7 @@ import { DigestBook } from './digestSettings';
 import { HandoffLLMBook } from './handoffLlm';
 // #155: the shared Codex server switch
 import { CodexServerBook } from './codexServer';
+import { RepoDiscoveryBook } from './repoDiscovery';
 import { RepoRefsBook } from './repoRefs';
 import { KaneoBook } from './kaneo';
 import { HandoffBook } from './handoff';
@@ -201,6 +202,7 @@ export class WorldStore {
   readonly handoffLlm = new HandoffLLMBook();
   readonly codexServer = new CodexServerBook(); // #155
   readonly repoRefs = new RepoRefsBook(); // #247
+  readonly repoDiscovery = new RepoDiscoveryBook(); // #54
   readonly kaneo = new KaneoBook(); // #184
   readonly handoffs = new HandoffBook(); // #223
   /** #106: the inbox's dismissed finished rows, worker id → the `status_since` of the done episode hidden. */
@@ -242,6 +244,7 @@ export class WorldStore {
     this.handoffLlm.reset(s.world.handoff_llm); // #9
     this.codexServer.reset(s.world.codex_server); // #155
     this.repoRefs.reset(s.world.repo_refs); // #247
+    this.repoDiscovery.reset(s.world.repo_discovery); // #54
     this.kaneo.reset(s.world.kaneo); // #184
     this.handoffs.reset(s.world.handoffs); // #223
     this.inboxDismissed.clear(); // #106
@@ -385,6 +388,9 @@ export class WorldStore {
         break;
       case 'repo_refs.update': // #247 the "Repositories from other buildings" switch
         this.repoRefs.upsert(e);
+        break;
+      case 'repo_discovery.update': // #54 repository discovery
+        this.repoDiscovery.upsert(e);
         break;
       case 'kaneo.update': // #184 the Kaneo connection
         this.kaneo.upsert(e);

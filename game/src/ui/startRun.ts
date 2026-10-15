@@ -173,7 +173,7 @@ export class StartRunDialog {
     () => {
       const host = this.host;
       const catalogs = host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) }));
-      return hireSources({ send: host.send.bind(host), unsupported: (t) => host.unsupported(t), catalogs, repoRefs: host.store.repoRefs }, this.lookup as HireLookup);
+      return hireSources({ send: host.send.bind(host), unsupported: (t) => host.unsupported(t), catalogs, repoRefs: host.store.repoRefs, repoDiscovery: host.store.repoDiscovery }, this.lookup as HireLookup);
     },
   );
 

@@ -1,18 +1,21 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
-import type { RepoRef, RepoRefsState } from '../net/protocol';
+import type { RepoDiscoveryState, RepoRef, RepoRefsState } from '../net/protocol';
 import type { Token } from '../ui/composer/complete';
 import { repoInsert, repoRow, repoSource, type RepoItem, type RepoSearchHost } from './repoSearch';
 
 // #247: the `@r:` source on its own: the bridge's rows (each row of the issue's table), what a pick puts in, the
 // ranking and the list's states.
 
-const ref = (session: string, o: Partial<RepoRef> = {}): RepoRef => ({ session, building: 'Work', same_building: true, cloned: false, ...o });
+const ref = (session: string, o: Partial<RepoRef> = {}): RepoRef => ({ id: `floor:${session}`, source: 'floor', session, building: 'Work', same_building: true, cloned: false, ...o });
 const ok = (repos: unknown): CommandResult => ({ ok: true, data: { repos } });
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-function bridge(refs: { state: RepoRefsState | null; onChange(f: () => void): () => void } | null = null) {
+function bridge(
+  refs: { state: RepoRefsState | null; onChange(f: () => void): () => void } | null = null,
+  discovery: { state: RepoDiscoveryState | null; onChange(f: () => void): () => void } | null = null,
+) {
   const waiting: ((r: CommandResult) => void)[] = [];
   const asks: unknown[] = [];
   const host: RepoSearchHost = {
@@ -21,6 +24,7 @@ function bridge(refs: { state: RepoRefsState | null; onChange(f: () => void): ()
       return new Promise<CommandResult>((res) => waiting.push(res));
     },
     refs,
+    discovery,
   };
   return {
     host,
@@ -190,5 +194,119 @@ describe('the bridge’s list', () => {
     expect(src.footer?.()).toBe('No other floors have a repository or folder');
     off?.();
     expect(fs.size).toBe(0);
+  });
+});
+
+// #54: the repositories the bridge discovered under its scan roots, merged in by the bridge.
+const found = (id: string, dir: string, o: Partial<RepoRef> = {}): RepoRef => ({ id, source: 'discovered', building: null, same_building: false, dir, cloned: false, ...o });
+const discovery = (revision: number, o: Partial<RepoDiscoveryState['status']> = {}, roots = ['/home/me/dev']): RepoDiscoveryState => ({
+  roots,
+  interval_minutes: 10,
+  status: { state: 'idle', revision, repositories: 1, checkouts: 1, last_scan_at: 1, last_success_at: 1, roots: [], ...o },
+});
+
+describe('#54 discovered repositories', () => {
+  it('a discovered row has no floor; a cloned row shows the folder a pick puts in', () => {
+    const local = repoRow({ item: found('git:/d/tool/.git', '/home/me/dev/tool'), hits: [], key: 0 });
+    expect(local.dataset.source).toBe('discovered');
+    expect(local.querySelector('.tx-repo-label')?.textContent).toBe('tool');
+    expect(local.querySelector('.tx-repo-dir')?.textContent).toBe('/home/me/dev/tool');
+    expect(local.querySelector('.tx-repo-floor')).toBeNull();
+    expect(local.title).toBe('/home/me/dev/tool found on the bridge host');
+    const gh = repoRow({ item: found('gh:acme/api', '/home/me/dev/api', { repo: 'acme/api', cloned: true, checkouts: 3 }), hits: [], key: 0 });
+    expect(gh.querySelector('.tx-repo-label')?.textContent).toBe('acme/api');
+    expect(gh.querySelector('.tx-repo-dir')?.textContent).toBe('/home/me/dev/api');
+    expect(gh.querySelector('.tx-repo-note')).toBeNull();
+    expect(gh.title).toBe('acme/api found on the bridge host: puts in /home/me/dev/api (one of 3 checkouts found)');
+    expect(repoInsert(found('x', '/home/me/my dev/x', { repo: 'a/x', cloned: true }))).toBe('"/home/me/my dev/x"');
+    // A floor's repo with a discovered checkout: the floor and the checkout.
+    const web = ref('url', { id: 'gh:acme/web', repo: 'acme/web', dir: '/home/me/dev/web', cloned: true });
+    expect(repoRow({ item: web, hits: [], key: 0 }).textContent).toBe('acme/web /home/me/dev/web url');
+    expect(repoInsert(web)).toBe('/home/me/dev/web');
+  });
+
+  it('reads the merged rows: ids as keys, an older bridge’s rows keyed by floor, one row per id', async () => {
+    const b = bridge();
+    const src = repoSource('w1', b.host);
+    const p = src.items('', signal);
+    await b.answer(
+      0,
+      ok([
+        { session: 'old', building: 'Work', same_building: true, repo: 'acme/old', cloned: false }, // no id: an older bridge
+        ref('url', { id: 'gh:acme/web', repo: 'acme/web', dir: '/d/web', cloned: true, checkouts: 2 }),
+        found('git:/d/a/.git', '/d/a/api'),
+        found('git:/d/b/.git', '/d/b/api'), // the same name, another repository
+        found('git:/d/a/.git', '/d/a/again'), // the same id again
+        { id: 'x', source: 'discovered', repo: 'acme/nodir', cloned: false }, // a discovered row is its checkout
+        { id: 'y', source: 'discovered', session: 'sneaky', dir: '/d/y', building: 'Work', same_building: true, cloned: false },
+        { id: 'z', source: 'floor', dir: '/d/z', cloned: false }, // a floor row without its floor
+      ]),
+    );
+    const got = (await p) as RepoItem[];
+    expect(got.map((x) => src.key?.(x))).toEqual(['floor:old', 'gh:acme/web', 'git:/d/a/.git', 'git:/d/b/.git', 'y']);
+    expect(got[0]?.item).toEqual({ id: 'floor:old', source: 'floor', session: 'old', building: 'Work', same_building: true, repo: 'acme/old', cloned: false });
+    expect(got[1]?.item.checkouts).toBe(2);
+    expect(got[4]?.item).toEqual({ id: 'y', source: 'discovered', building: null, same_building: false, dir: '/d/y', cloned: false });
+    // The folder is a match key: `b/api` finds the other api.
+    expect((src.items('b/api', signal) as RepoItem[]).map((x) => x.item.dir)).toEqual(['/d/b/api']);
+  });
+
+  it('a new revision asks again (an open popup follows a scan); progress alone does not', async () => {
+    let state: RepoDiscoveryState | null = discovery(3);
+    const fs = new Set<() => void>();
+    const b = bridge(null, {
+      get state() {
+        return state;
+      },
+      onChange: (f) => (fs.add(f), () => fs.delete(f)),
+    });
+    const src = repoSource('w1', b.host);
+    expect(src.label).toBe('Repositories');
+    let told = 0;
+    const off = src.subscribe?.(() => told++);
+    const p = src.items('', signal);
+    await b.answer(0, ok([found('git:/a/.git', '/a')]));
+    expect((await p).length).toBe(1);
+    const tell = () => {
+      for (const f of fs) f();
+    };
+    const before = told; // the answer told it
+    state = discovery(3, { state: 'scanning', progress: { phase: 'checking', done: 1, total: 4 } });
+    tell();
+    expect(told).toBe(before);
+    state = discovery(4);
+    tell();
+    expect(told).toBe(before + 1);
+    // The rows already known answer at once while it asks.
+    expect((src.items('', signal) as RepoItem[]).length).toBe(1);
+    expect(b.asks).toHaveLength(2);
+    await b.answer(1, ok([found('git:/a/.git', '/a'), found('git:/b/.git', '/b')]));
+    expect((src.items('', signal) as RepoItem[]).length).toBe(2);
+    // No roots: the other floors only again, and the label says so.
+    state = discovery(5, {}, []);
+    tell();
+    expect(src.label).toBe('Repositories on other floors');
+    off?.();
+    expect(fs.size).toBe(0);
+  });
+
+  it('the empty list names the scanned folders too, and the first scan', async () => {
+    let state: RepoDiscoveryState | null = discovery(0, { state: 'scanning', last_scan_at: null, last_success_at: null, repositories: 0 });
+    const b = bridge(null, {
+      get state() {
+        return state;
+      },
+      onChange: () => () => {},
+    });
+    const src = repoSource('w1', b.host);
+    const p = src.items('', signal);
+    await b.answer(0, ok([]));
+    await p;
+    expect(src.footer?.()).toBe('Scanning the bridge’s folders for repositories…');
+    state = discovery(0);
+    expect(src.footer?.()).toBe('No repositories on this building’s other floors or in the scanned folders');
+    state = null;
+    expect(src.footer?.()).toBe('No other floors in this building have a repository or folder');
+    expect(src.failure?.()).toBe('Could not load the other floors’ repositories.');
   });
 });

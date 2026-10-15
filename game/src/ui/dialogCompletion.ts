@@ -33,6 +33,8 @@ export interface LookupHost {
   catalogs: CommandCatalogs;
   /** The shared "Repositories from other buildings" switch (`@r:`'s empty-list note, and a change asks again). */
   repoRefs: NonNullable<RepoSearchHost['refs']> | null;
+  /** #54: repository discovery (`@r:`'s label and notes, and a new revision asks again; none: as if off). */
+  repoDiscovery?: NonNullable<RepoSearchHost['discovery']> | null;
 }
 
 /** The sources of one context, per trigger (null: that trigger opens nothing here). */
@@ -203,7 +205,7 @@ export function hireSources(host: LookupHost, l: HireLookup): ContextSources {
         )
       : null;
   const files = has('hire.files') ? fileSource(key, { send: (_t, a) => host.send('hire.files', { ...where, query: a.query, ...(a.limit !== undefined ? { limit: a.limit } : {}) }) }) : null;
-  const repos = has('hire.repos') ? repoSource(key, { send: () => host.send('hire.repos', { session: l.session }), refs: host.repoRefs }) : null;
+  const repos = has('hire.repos') ? repoSource(key, { send: () => host.send('hire.repos', { session: l.session }), refs: host.repoRefs, discovery: host.repoDiscovery ?? null }) : null;
   return { '/': commands, '@': files && repos ? atSource(files, repos) : files };
 }
 
@@ -212,6 +214,6 @@ export function workerSources(host: LookupHost, id: string, harness: string | un
   const send = <T extends 'worker.files' | 'worker.repos'>(t: T, a: CommandArgs[T]) => host.send(t, a);
   return {
     '/': harness && SKILL_HARNESSES.has(harness) ? commandSource(host.catalogs.get(id), harness) : null,
-    '@': atSource(fileSource(id, { send }), repoSource(id, { send, refs: host.repoRefs })),
+    '@': atSource(fileSource(id, { send }), repoSource(id, { send, refs: host.repoRefs, discovery: host.repoDiscovery ?? null })),
   };
 }

@@ -59,7 +59,7 @@ function bridge(): Bridge {
 
 const file = (path: string): FileMatch => ({ path, kind: 'file', indices: [] });
 const okFiles = (fs: FileMatch[]): CommandResult => ({ ok: true, data: { files: fs, source: 'git', reason: null } });
-const ref = (session: string, o: Partial<RepoRef>): RepoRef => ({ session, building: 'Work', same_building: true, cloned: false, ...o });
+const ref = (session: string, o: Partial<RepoRef>): RepoRef => ({ id: `floor:${session}`, source: 'floor', session, building: 'Work', same_building: true, cloned: false, ...o });
 const okRepos = (rs: RepoRef[]): CommandResult => ({ ok: true, data: { repos: rs } });
 
 function host(b: Bridge): TranscriptRenderHost {

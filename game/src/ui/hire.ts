@@ -559,6 +559,7 @@ export class HireDialog {
       unsupported: (t: Parameters<HireHost['unsupported']>[0]) => host.unsupported(t),
       catalogs: host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) })),
       repoRefs: host.store.repoRefs,
+      repoDiscovery: host.store.repoDiscovery,
     };
   }
 

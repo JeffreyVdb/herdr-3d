@@ -107,7 +107,7 @@ export class PromptOverlay {
       const host = this.host;
       const l = this.lookupFor as { id: string; harness: string | undefined };
       return workerSources(
-        { send: host.send.bind(host), catalogs: host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) })), repoRefs: host.store.repoRefs },
+        { send: host.send.bind(host), catalogs: host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) })), repoRefs: host.store.repoRefs, repoDiscovery: host.store.repoDiscovery },
         l.id,
         l.harness,
       );

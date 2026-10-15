@@ -311,19 +311,75 @@ export interface RepoRefsUpdate extends RepoRefsState {
   seq: number;
 }
 
-/** #247: one floor of `worker.repos`: its stored repo and folder (never the bridge's suggestions). */
+/** #54: the repository-discovery settings and the scans' status (`repo_discovery` in the snapshot, `repo_discovery.update`). */
+export interface RepoDiscoveryState {
+  /** The absolute folders on the bridge host that are scanned; empty: discovery is off. */
+  roots: string[];
+  /** How often they are scanned again. */
+  interval_minutes: number;
+  status: RepoDiscoveryStatus;
+}
+
+export interface RepoDiscoveryStatus {
+  state: 'off' | 'idle' | 'scanning';
+  /** Changes whenever the discovered repositories do: an open `@r:` popup asks again. */
+  revision: number;
+  repositories: number;
+  checkouts: number;
+  /** Unix ms; null: none yet. `last_success_at`: the last scan in which no root failed. */
+  last_scan_at: number | null;
+  last_success_at: number | null;
+  last_duration_ms?: number;
+  next_scan_at?: number;
+  /** The scan in flight: walking the roots' folders (roots done of total), then checking what it found with git. */
+  progress?: { phase: 'walking' | 'checking'; done: number; total: number };
+  /** One per root, in the order of `roots`. */
+  roots: RepoDiscoveryRoot[];
+}
+
+export interface RepoDiscoveryRoot {
+  path: string;
+  /** The folder `path` resolves to, when it is another (a symlink). */
+  canonical?: string;
+  /** `stale`: the last scan of it failed, its previous result is kept; `error`: it failed and never succeeded. */
+  state: 'pending' | 'ok' | 'stale' | 'error';
+  error?: string;
+  /** What its last successful scan could not read. */
+  warning?: string;
+  checkouts: number;
+  last_success_at: number | null;
+}
+
+/** #54: `repo_discovery.update`: the state, flat. */
+export interface RepoDiscoveryUpdate extends RepoDiscoveryState {
+  t: 'repo_discovery.update';
+  seq: number;
+}
+
+/**
+ * #247: one row of `worker.repos`: a floor's stored repo and folder (never the bridge's suggestions), or (#54) a
+ * repository discovered under the scan roots. One row per repository: floors naming the same one and its discovered
+ * checkouts are merged.
+ */
 export interface RepoRef {
-  session: string;
-  /** The floor's building's name; null: the unassigned lot. */
+  /** #54: the row's identity, stable across asks (an older bridge sends none: `floor:<session>`). */
+  id: string;
+  /** #54: `floor`, a floor names it (`session`); `discovered`, found under the scan roots and no floor names it. */
+  source: 'floor' | 'discovered';
+  /** The floor (absent from a discovered row). */
+  session?: string;
+  /** The floor's building's name; null: the unassigned lot, or a discovered row. */
   building: string | null;
   /** The worker's own building. */
   same_building: boolean;
   /** GitHub `owner/repo` (absent: none). */
   repo?: string;
-  /** The floor's folder (absent: none); a folder-only floor is listed only when it exists. */
+  /** The folder a pick puts in (absent: none): the floor's, or a discovered checkout of `repo`. */
   dir?: string;
   /** `repo` is set and `dir` is a checkout of it. */
   cloned: boolean;
+  /** #54: how many checkouts of it were discovered, clones and worktrees (absent: none). */
+  checkouts?: number;
 }
 
 /** #247: `worker.repos` ack: in display order. */
@@ -380,6 +436,8 @@ export interface World {
   codex_server?: CodexServerState;
   /** #247 the "Repositories from other buildings" switch (absent from an older bridge). */
   repo_refs?: RepoRefsState;
+  /** #54 repository discovery's settings and status (absent from an older bridge, or one that cannot scan). */
+  repo_discovery?: RepoDiscoveryState;
   /** #184 the Kaneo connection (absent from an older bridge). Never a key. */
   kaneo?: KaneoState;
   /** #223 the filing cabinet: each floor's handoff count (absent from an older bridge, or one without a handoff directory). */
@@ -495,6 +553,8 @@ export type WorldEvent =
   | CodexServerUpdate
   // #247 the "Repositories from other buildings" switch
   | RepoRefsUpdate
+  // #54 repository discovery
+  | RepoDiscoveryUpdate
   // #184 the Kaneo connection
   | KaneoUpdate
   // M13 whiteboard
@@ -787,6 +847,10 @@ export interface CommandArgs {
   'codex_server.set': { enabled: boolean };
   'repo_refs.get': Record<string, never>; // #247
   'repo_refs.set': { all_buildings: boolean };
+  // #54 repository discovery (docs/protocol.md "Repository discovery"): each acks `RepoDiscoveryState`.
+  'repo_discovery.get': Record<string, never>;
+  'repo_discovery.set': { roots?: string[]; interval_minutes?: number };
+  'repo_discovery.refresh': Record<string, never>;
   // #156 Codex async questions. `worker.answer_async` acks `AsyncAnswerAck`.
   'worker.answer_async': { id: string; thread: string; batch: string; answers: { index: number; answer: string }[] };
   'worker.dismiss_async': { id: string; thread: string; batch: string; indexes?: number[] };
@@ -1112,6 +1176,7 @@ const EVENT_TYPES = new Set([
   'handoff.removed',
   'codex_server.update', // #155 the shared Codex server switch
   'repo_refs.update', // #247 the "Repositories from other buildings" switch
+  'repo_discovery.update', // #54 repository discovery
   'kaneo.update', // #184 the Kaneo connection
   'screen.state', // M13 screen
   // M13 whiteboard
@@ -1204,6 +1269,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #247: the "Repositories from other buildings" switch, flat.
     case 'repo_refs.update':
       return typeof o.all_buildings === 'boolean';
+    // #54: repository discovery, flat (the book checks the rest).
+    case 'repo_discovery.update':
+      return Array.isArray(o.roots) && isObj(o.status);
     // #184: the Kaneo connection, flat.
     case 'kaneo.update':
       return typeof o.state === 'string' && typeof o.key_set === 'boolean';

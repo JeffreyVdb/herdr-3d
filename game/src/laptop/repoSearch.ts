@@ -1,6 +1,6 @@
 import './completionRows.css';
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, RepoRef, RepoRefsState } from '../net/protocol';
+import type { CommandArgs, RepoDiscoveryState, RepoRef, RepoRefsState } from '../net/protocol';
 import type { Source } from '../ui/composer/complete';
 import { filePathProblem } from '../ui/composer/model';
 import { h, ICON, icon } from '../ui/dom';
@@ -24,38 +24,60 @@ import { rankByKeys, type KeyRanked } from '../world/rank';
  *
  * Plain text, never a file chip (chips are paths inside the worker's checkout, #138): a path with whitespace goes in
  * double quotes, one with a `"` or a line break is not offered (`filePathProblem`), a space follows the pick.
+ *
+ * #54: the bridge merges in the repositories it discovered under its scan roots, one row per repository (`id`, the
+ * popup's key): a floor's row whose repo has a discovered checkout puts that checkout in (`dir`, shown), and the
+ * repositories no floor names follow without a floor (`source: 'discovered'`). A new `revision` of the discovered
+ * repositories (`repo_discovery.update`) asks again, so an open popup follows a scan; the scan's progress does not.
+ * A bridge without discovery sends neither `id` nor `source`: its rows are the floors', keyed `floor:<session>`.
  */
 
 export interface RepoSearchHost {
   send(t: 'worker.repos', args: CommandArgs['worker.repos']): Promise<CommandResult>;
   /** The shared "Repositories from other buildings" switch: the empty list's note names the floors looked at; a change asks again. */
   refs?: { readonly state: RepoRefsState | null; onChange(f: () => void): () => void } | null;
+  /** #54: repository discovery: the label and notes say whether it is on; a new revision asks again. */
+  discovery?: { readonly state: RepoDiscoveryState | null; onChange(f: () => void): () => void } | null;
 }
 
-/** A floor's row, ranked: `key` is the match key (0 the repo name, 1 `owner/repo`, 2 the folder's basename, 3 the folder, 4 the floor). */
+/** A row, ranked: `key` is the match key (0 the repo name, 1 `owner/repo`, 2 the folder's basename, 3 the folder, 4 the floor). */
 export type RepoItem = KeyRanked<RepoRef>;
 
 const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 
-/** The bridge's rows that can be offered: a known floor, a well-formed repo, a folder a pick can carry whole. */
+/**
+ * The bridge's rows that can be offered: a known floor (or a discovered repository), a well-formed repo, a folder a pick
+ * can carry whole; each identity once.
+ */
 function refs(v: unknown): RepoRef[] | null {
   if (!Array.isArray(v)) return null;
   const out: RepoRef[] = [];
+  const seen = new Set<string>();
   for (const r of v) {
     if (!r || typeof r !== 'object') continue;
     const o = r as Record<string, unknown>;
-    if (typeof o.session !== 'string' || !o.session) continue;
+    const discovered = o.source === 'discovered';
+    const session = typeof o.session === 'string' && o.session ? o.session : undefined;
+    if (!discovered && !session) continue;
+    const id = typeof o.id === 'string' && o.id ? o.id : session ? `floor:${session}` : '';
+    if (!id || seen.has(id)) continue;
     const repo = typeof o.repo === 'string' && REPO.test(o.repo) ? o.repo : undefined;
     const dir = typeof o.dir === 'string' && o.dir && filePathProblem(o.dir) === null ? o.dir : undefined;
     if (!repo && !dir) continue;
+    if (discovered && !dir) continue; // a discovered repository is its checkout
+    seen.add(id);
+    const checkouts = typeof o.checkouts === 'number' && Number.isInteger(o.checkouts) && o.checkouts > 0 ? o.checkouts : undefined;
     out.push({
-      session: o.session,
-      building: typeof o.building === 'string' ? o.building : null,
-      same_building: o.same_building === true,
+      id,
+      source: discovered ? 'discovered' : 'floor',
+      ...(!discovered && session ? { session } : {}),
+      building: !discovered && typeof o.building === 'string' ? o.building : null,
+      same_building: !discovered && o.same_building === true,
       ...(repo ? { repo } : {}),
       ...(dir ? { dir } : {}),
       // A folder no pick can carry is no checkout to offer: the URL goes in instead.
       cloned: !!repo && !!dir && o.cloned === true,
+      ...(checkouts ? { checkouts } : {}),
     });
   }
   return out;
@@ -90,39 +112,54 @@ function marked(cls: string, text: string, hits: readonly number[], shift = 0): 
   return el;
 }
 
-/** One row: the glyph, the label (the matched characters marked), the floor dimmed, a repo that is not cloned says so. */
+/** Where a row comes from, as it reads: the floor (and its building, when not the worker's), or null (discovered). */
+function whereOf(r: RepoRef): string | null {
+  if (!r.session) return null;
+  return r.same_building || r.building === null ? r.session : `${r.session} · ${r.building}`;
+}
+
+/** The title's last words: how many checkouts were discovered, when more than one. */
+const more = (r: RepoRef): string => (r.checkouts && r.checkouts > 1 ? ` (one of ${r.checkouts} checkouts found)` : '');
+
+/**
+ * One row: the glyph, the label (the matched characters marked), the folder a pick puts in, the floor dimmed (a
+ * discovered row has none); a repo that is not cloned says so.
+ */
 export function repoRow(it: RepoItem): HTMLElement {
   const r = it.item;
   const hit = (k: number) => (it.key === k ? it.hits : []);
-  const where = r.same_building || r.building === null ? r.session : `${r.session} · ${r.building}`;
-  const floor = marked('tx-repo-floor', where, hit(4));
+  const where = whereOf(r);
+  const floor = where === null ? null : marked('tx-repo-floor', where, hit(4));
+  const from = where === null ? 'found on the bridge host' : `on ${where}`;
   const pick = repoInsert(r);
+  const dir = r.dir ?? '';
   if (r.repo) {
     const slash = r.repo.indexOf('/');
     const owner = r.repo.slice(0, slash + 1);
     const name = r.repo.slice(slash + 1);
     return h(
       'span',
-      { class: 'tx-repo', 'data-kind': 'repo', 'data-cloned': String(r.cloned), title: `${r.repo} on ${where}: puts in ${pick}` },
+      { class: 'tx-repo', 'data-kind': 'repo', 'data-cloned': String(r.cloned), 'data-source': r.source, title: `${r.repo} ${from}: puts in ${pick}${more(r)}` },
       icon(ICON.repo),
       h('span', { class: 'tx-repo-label' }, marked('tx-repo-owner', owner, hit(1)), it.key === 0 ? marked('tx-repo-name', name, it.hits) : marked('tx-repo-name', name, hit(1), slash + 1)),
       // Spaces between the parts, for the option's accessible name (a flex row draws none).
-      ' ',
+      r.cloned ? ' ' : null,
+      r.cloned ? marked('tx-repo-dir', dir, hit(3)) : null,
+      floor ? ' ' : null,
       floor,
       r.cloned ? null : ' ',
       r.cloned ? null : h('span', { class: 'tx-repo-note' }, 'not cloned'),
     );
   }
-  const dir = r.dir ?? '';
   const name = base(dir);
   return h(
     'span',
-    { class: 'tx-repo', 'data-kind': 'dir', title: `${dir} on ${where}` },
+    { class: 'tx-repo', 'data-kind': 'dir', 'data-source': r.source, title: `${dir} ${from}${more(r)}` },
     icon(ICON.folder),
     h('span', { class: 'tx-repo-label' }, marked('tx-repo-name', name, hit(2))),
     ' ',
     marked('tx-repo-dir', dir, hit(3)),
-    ' ',
+    floor ? ' ' : null,
     floor,
   );
 }
@@ -161,11 +198,16 @@ export function repoSource(id: string, host: RepoSearchHost): Source<RepoItem> {
 
   const ranked = (q: string): RepoItem[] | null => (list ? rankByKeys(list, q, keysOf, { subsequence: true }) : null);
   const all = () => host.refs?.state?.all_buildings === true;
+  /** #54: discovery has roots: the list is more than the other floors. */
+  const scanning = () => (host.discovery?.state?.roots.length ?? 0) > 0;
+  let revision = host.discovery?.state?.status.revision ?? null;
 
   return {
     trigger: '@',
-    label: 'Repositories on other floors',
-    key: (it) => it.item.session,
+    get label() {
+      return scanning() ? 'Repositories' : 'Repositories on other floors';
+    },
+    key: (it) => it.item.id,
     // A new popup asks again, when it first lists repositories.
     opening: () => void (stale = true),
     subscribe(f) {
@@ -174,9 +216,18 @@ export function repoSource(id: string, host: RepoSearchHost): Source<RepoItem> {
         stale = true;
         f();
       });
+      // #54: a scan that changed the discovered repositories (a new revision, or roots taken away) asks again.
+      const offScan = host.discovery?.onChange(() => {
+        const now = host.discovery?.state?.status.revision ?? null;
+        if (now === revision) return;
+        revision = now;
+        stale = true;
+        f();
+      });
       return () => {
         subs.delete(f);
         off?.();
+        offScan?.();
       };
     },
     items(q) {
@@ -193,7 +244,7 @@ export function repoSource(id: string, host: RepoSearchHost): Source<RepoItem> {
     },
     render: repoRow,
     loading: () => 'Loading repositories…',
-    failure: () => 'Could not load the other floors’ repositories.',
+    failure: () => (scanning() ? 'Could not load the repositories.' : 'Could not load the other floors’ repositories.'),
     // #39: the next query asks again (a failed ask leaves nothing out).
     retry: () => void (stale = true),
     insert(it, token, text) {
@@ -202,7 +253,12 @@ export function repoSource(id: string, host: RepoSearchHost): Source<RepoItem> {
     },
     footer() {
       if (failed && list) return 'Could not refresh: the list may be out of date';
-      if (list && list.length === 0 && !loading) return all() ? 'No other floors have a repository or folder' : 'No other floors in this building have a repository or folder';
+      const st = host.discovery?.state?.status;
+      if (list && list.length === 0 && !loading) {
+        if (!scanning()) return all() ? 'No other floors have a repository or folder' : 'No other floors in this building have a repository or folder';
+        if (st?.state === 'scanning' && st.last_scan_at === null) return 'Scanning the bridge’s folders for repositories…';
+        return all() ? 'No repositories on other floors or in the scanned folders' : 'No repositories on this building’s other floors or in the scanned folders';
+      }
       return null;
     },
   };
