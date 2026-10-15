@@ -1002,6 +1002,51 @@ saved floor keeps its own `(workspace_id, project_id)` whatever the default beco
 
 Either is absent when there is nothing to suggest.
 
+### Shell policy
+
+Two commands of the bridge run a shell of the user's: the wake's login shell (`systemd-run … <shell> -l -c
+"exec herdr --session '<name>' server"`) and a shared Codex worker's launcher (`setsid -f <shell> <launcher>`, typed
+into the worker's pane). Which shell is a **two-value policy**, never a command (#68):
+
+| Policy | Wake argv | Launcher (`<--codex-run>/<marker hex>…`) | Typed into the pane |
+|---|---|---|---|
+| `bash` (default) | `<abs bash> -l -c "exec herdr …"` | `.sh` | `setsid -f <abs bash> <launcher> </dev/null >/dev/null 2>&1` |
+| `fish` (explicit compatibility) | `/bin/fish -l -c "exec herdr …"` | `.fish` | `setsid -f fish <launcher> </dev/null >/dev/null 2>&1` |
+
+- **Setting it.** `herdr-world serve --shell bash|fish`, or `HERDR_WORLD_SHELL` (the flag wins); empty is `bash`. Any
+  other value refuses the start. `$SHELL` is never read, and a fish that is merely installed, or an inherited
+  `SHELL=…/fish`, never selects fish.
+- **Finding it.** The absolute path of the policy's executable: `bash` is the first of `$PATH`, `/usr/bin`, `/bin` and
+  `/usr/local/bin`; `fish` is `/bin/fish` when it exists (so its argv stays v1.45.0's), else the same search. It is
+  resolved and checked **at startup**: a shell that is not installed refuses the start with an error that names the
+  option and both fixes (install it, or choose the other one), and the same error surfaces from a wake or launch if
+  the shell disappears later. The bridge never falls back to the other shell. The path is typed into a pane, so it
+  must be plain characters (`ValidPlainDir`); `fish` is typed as `fish` (the pane's `PATH`), as before.
+- **Wake.** Unchanged apart from the interpreter: `--working-directory`, `KillMode=process`, the unit name and
+  `CleanEnv` are as before. A login shell reads the *login* files (`/etc/profile`, `~/.bash_profile` or `~/.profile`
+  for bash; `config.fish` for fish), and the inner bare `herdr` is looked up on that shell's `PATH`: on a bash host
+  `herdr` must be reachable from the login files (for example `~/.local/bin` added in `~/.profile`).
+- **Launcher.** `Launch.Script()` follows the policy's shell; placeholder validation, `Write`, `Remove` and recovery
+  agree on it. `Remove` deletes the launcher of **every** shell's format, so a launch v1.45.0 recorded (a `.fish`
+  file; the stored record has no shell) is still cleaned up, stopped and recovered by a bash-default bridge; a
+  launch is always started afresh from a new launcher, never by re-running an old one. The extension `.sh` is only
+  a name: the launcher is always run explicitly by the policy's shell (`bash <file>`), never as `sh`.
+- **Bash launcher.** A script run as `bash <file>` reads no startup file, so a `codex` function or alias of the
+  user's `~/.bashrc` would silently be lost (fish reads `config.fish` even then). The bash launcher marks and
+  records itself, then **re-executes itself as an interactive bash** (`exec "$BASH" -i +H -c '<one command line>'`):
+  `~/.bashrc` is read as the pane's own shell reads it (behind the usual `[[ $- != *i* ]] && return` guard), the
+  pane's exports (`PATH`, direnv's values, `HERDR_PANE_ID`) are inherited, and no terminal is needed. The pid in
+  the pid file is that process: it stays the supervisor (a `codex` function runs as its child) and its own
+  environment carries the `H3D_CODEX_SERVER` marker. `HISTFILE` is unset (a launch never rewrites the user's
+  history) and history expansion is off. Supported: a `codex` shell function or alias defined in `~/.bashrc` (or
+  the system's interactive startup file), also one that calls `command codex`. Not supported: anything that needs a
+  controlling terminal or a prompt (a `.bashrc` that `exec`s another shell, asks a question or reads the tty),
+  and functions or aliases that only a login file (`~/.bash_profile`) or the prompt (`PROMPT_COMMAND`, a direnv
+  hook) defines: the pane's *exported* environment, direnv's included, reaches the server, but only `~/.bashrc`'s
+  functions and aliases are re-created.
+- **Fish compatibility.** `--shell fish` keeps v1.45.0's wake argv, launcher and `fish` wrapper loading exactly.
+  It is a compatibility option for users whose `config.fish` holds their wrappers; nothing else changes.
+
 ### Wake and sleep
 
 A floor wakes and sleeps through herdr itself. The bridge acts only on sessions it watches, with validated names
@@ -1021,9 +1066,9 @@ A floor wakes and sleeps through herdr itself. The bridge acts only on sessions 
 
 **Wake** (the floor must be asleep, else `invalid_state`):
 
-1. `systemd-run --user --unit=herdr-s-<name> --collect -p KillMode=process --working-directory=$HOME /bin/fish -l -c
-   "exec herdr --session '<name>' server"`: a supervised headless server with the user's login environment (their fish
-   wrappers and API keys, none of the bridge's `CLAUDE*`/`HERDR_*` variables). It fails (`wake_failed`) if the unit
+1. `systemd-run --user --unit=herdr-s-<name> --collect -p KillMode=process --working-directory=$HOME <shell> -l -c
+   "exec herdr --session '<name>' server"` (`<shell>`: the [shell policy](#shell-policy), bash by default): a
+   supervised headless server with the user's login environment (their login-shell wrappers and API keys, none of the bridge's `CLAUDE*`/`HERDR_*` variables). It fails (`wake_failed`) if the unit
    cannot start, e.g. a `herdr-s-<name>` unit still exists.
 2. `ping` on the session's socket, backing off up to 1 s: no answer is `wake_failed` (the message says why). The
    workers' `resume` is then cleared again; the floor stays asleep.
@@ -1136,7 +1181,7 @@ checkout herdr may open with it (step 1) is not a worker. Then, in order (each s
    `hired_at`, `harness`, `model` and `effort` (`worker.upsert`). Its root pane gets the identity marker
    `herdr pane rename <pane> h3d-<12 hex>`.
 3. `herdr agent start <name>-<id6> --kind claude|codex --pane <pane> --timeout 30000 -- <native args>`. herdr types the
-   command into the pane's shell, so the user's fish wrappers apply. Native args, exactly:
+   command into the pane's shell, so the user's own shell wrappers apply. Native args, exactly:
    - claude: `--model <model> --effort <effort> --permission-mode bypassPermissions --name <label>`
    - codex: `-m <model> -c model_reasoning_effort=<effort> --dangerously-bypass-approvals-and-sandbox`
 4. **Trust dialog.** Both agents ask whether to trust a folder they have not seen, and a fresh worktree is always new
@@ -3634,9 +3679,10 @@ old way keeps today's exact resume. Claude hires are not affected.
    worktree's checkout for a worktree hire) passes the launch's path rule (letters, digits and `._/+@,=:-`), and its
    `.envrc`, if any, is allowed (`direnv status --json`; a blocked one would leave the server without its variables
    and Codex would say nothing).
-2. The bridge writes the worker's launcher, `<--codex-run>/<marker hex>.fish` (0600, directory 0700), and types
-   `setsid -f fish <launcher> </dev/null >/dev/null 2>&1` into the pane (`pane run`): the server starts from the
-   pane's initialized fish, so it has the pane's direnv exports, the user's `codex` wrapper function and herdr's
+2. The bridge writes the worker's launcher, `<--codex-run>/<marker hex>.sh` (`.fish` under `--shell fish`; 0600,
+   directory 0700), and types `setsid -f <shell> <launcher> </dev/null >/dev/null 2>&1` into the pane (`pane run`;
+   `<shell>`: the [shell policy](#shell-policy)): the server starts from the pane's initialized shell, so it has the
+   pane's direnv exports, the user's `codex` wrapper function and herdr's
    `HERDR_PANE_ID` (whose session-id hook then reports to this pane). The launcher marks every process of the server
    with a random token, records its pid, and runs `codex app-server -c 'projects={"<dir>"={trust_level="trusted"}}'
    --listen unix://<--codex-run>/<marker hex>.sock` (the directory is trusted in memory; `config.toml` is not written).
