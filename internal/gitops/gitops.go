@@ -128,7 +128,7 @@ var shapes = map[string][]string{
 	// #54 repository discovery: where a candidate checkout's top level and
 	// common directory are (a linked worktree shares its repository's), and
 	// its origin's URL (config only: no network).
-	opCheckout:  {"{git}", "-C", "{dir}", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"},
+	opCheckout:  {"{git}", "-C", "{dir}", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"},
 	opOriginURL: {"{git}", "-C", "{dir}", "remote", "get-url", "origin"},
 }
 

@@ -2394,8 +2394,8 @@ the repositories [discovered](#repository-discovery) under the bridge's scan roo
 | `cloned` | `repo` is set, `dir` exists (the bridge's `StatDir`) and its GitHub origin (`git -C <dir> remote get-url origin`, the lookup of the floor suggestions) is `repo`, ignoring case and a `.git` suffix. A subfolder of the checkout counts (git finds the origin from it). A discovered checkout of `repo` is cloned |
 | `checkouts` | #54: how many checkouts of the repository were discovered (clones and worktrees); absent when none |
 
-**One row per repository** (#54). Rows merge by identity: a floor with a `repo` is that GitHub repository (`gh:`); a
-floor with only a folder is the discovered repository of the checkout the folder is in (the nearest folder up from it
+**One row per repository** (#54). Rows merge by identity: a floor with a `repo` is that GitHub repository (`gh:`,
+case and a `.git` suffix ignored, as for an origin); a floor with only a folder is the discovered repository of the checkout the folder is in (the nearest folder up from it
 with a `.git` marker, symlinks resolved: a subfolder or an alias of a checkout matches it), else that checkout's GitHub
 origin, else the checkout, else the folder itself. A discovered repository is its checkouts that share a Git common
 directory (worktrees) or a GitHub origin (clones, whatever the remote's spelling). The merged row stands at the first
@@ -2470,8 +2470,9 @@ folder is walked into, at any depth, whatever its name (no dependency-folder exc
 followed. A repository inside a checkout (a submodule, a vendored repo) is found only from a root of its own, which is
 always walked even when another root's checkout encloses it. Bare repositories (no `.git`) are not listed. Then git,
 for the candidates only, at most 8 calls at once, 2 s each, local (no network), in a clean environment (no inherited
-`GIT_DIR` and the like): `rev-parse --path-format=absolute --show-toplevel --git-common-dir` (a candidate whose top
-level is not itself is dropped) and `remote get-url origin` (optional: a repository without an origin, or with a
+`GIT_DIR` and the like): `rev-parse --path-format=absolute --show-toplevel --git-dir --git-common-dir` (a candidate
+whose top level is not itself is dropped; it is a main checkout when its Git directory is the common one, wherever
+that is, so a `--separate-git-dir` checkout is one, and a linked worktree otherwise) and `remote get-url origin` (optional: a repository without an origin, or with a
 non-GitHub one, is listed all the same). A candidate git could not answer for (a timeout) keeps its previous entry;
 a root where git answered for none, or that cannot be read, fails: its previous result stays, marked `stale`, and the
 other roots are not touched. A folder below a root that cannot be read is skipped (`warning`).

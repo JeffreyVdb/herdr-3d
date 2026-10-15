@@ -38,7 +38,7 @@ func TestGitAllowlist(t *testing.T) {
 		"index-path": {"{git}", "-C", "{dir}", "rev-parse", "--path-format=absolute", "--git-path", "index"},
 		"ls-files":   {"{git}", "-C", "{dir}", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--deduplicate"},
 		// #54: repository discovery, read-only and local.
-		"checkout":   {"{git}", "-C", "{dir}", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-common-dir"},
+		"checkout":   {"{git}", "-C", "{dir}", "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"},
 		"origin-url": {"{git}", "-C", "{dir}", "remote", "get-url", "origin"},
 	}
 	if !reflect.DeepEqual(shapes, want) {

@@ -17,6 +17,32 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
+// #54 review: a main checkout whose .git is a file (git init
+// --separate-git-dir) is still the main one: it is put in before a linked
+// worktree whose path sorts first.
+func TestScanSeparateGitDir(t *testing.T) {
+	fixture(t)
+	root := tmp(t)
+	main, wt := mkdir(t, root, "z-main"), filepath.Join(root, "a-worktree")
+	git(t, main, "init", "-q", "-b", "main", "--separate-git-dir", filepath.Join(root, "metadata"))
+	git(t, main, "commit", "-q", "--allow-empty", "-m", "one")
+	git(t, main, "worktree", "add", "-q", "-b", "side", wt)
+
+	out := scanRoots(context.Background(), &gitops.Git{Timeout: DefaultGitTimeout}, []string{wt, main}, 2, nil, func(string, int, int) {})
+	var all []Checkout
+	for _, r := range []string{wt, main} {
+		all = append(all, out.roots[r].checkouts...)
+	}
+	cat := NewCatalog(1, all)
+	if cat.Len() != 1 {
+		t.Fatalf("repos = %q", paths(cat))
+	}
+	r := cat.Repos[0]
+	if r.Path() != main || !r.Checkouts[0].Main || r.Checkouts[1].Main {
+		t.Fatalf("checkouts = %+v", r.Checkouts)
+	}
+}
+
 // tmp is a canonical temporary folder (the platform's may be a symlink).
 func tmp(t *testing.T) string {
 	t.Helper()
@@ -134,16 +160,16 @@ func TestWalkUnreadable(t *testing.T) {
 // repository (any spelling); nothing else merges.
 func TestCatalog(t *testing.T) {
 	cat := NewCatalog(3, []Checkout{
-		newCheckout("/w/x-feature", "/a/x/.git", "git@github.com:Owner/X.git"),
-		newCheckout("/a/x", "/a/x/.git", "git@github.com:Owner/X.git"),
-		newCheckout("/b/x", "/b/x/.git", "https://github.com/owner/x"),
-		newCheckout("/b/x", "/b/x/.git", "https://github.com/owner/x"), // two roots found it
-		newCheckout("/c/api", "/c/api/.git", ""),
-		newCheckout("/d/api", "/d/api/.git", ""),
-		newCheckout("/e/lib", "/e/lib/.git", "https://gitlab.com/o/lib.git"),
-		newCheckout("/f/lib", "/f/lib/.git", "https://gitlab.com/o/lib.git"),
-		newCheckout("/w2", "/m/.git", ""),
-		newCheckout("/w1", "/m/.git", ""),
+		newCheckout("/w/x-feature", "/a/x/.git", false, "git@github.com:Owner/X.git"),
+		newCheckout("/a/x", "/a/x/.git", true, "git@github.com:Owner/X.git"),
+		newCheckout("/b/x", "/b/x/.git", true, "https://github.com/owner/x"),
+		newCheckout("/b/x", "/b/x/.git", true, "https://github.com/owner/x"), // two roots found it
+		newCheckout("/c/api", "/c/api/.git", true, ""),
+		newCheckout("/d/api", "/d/api/.git", true, ""),
+		newCheckout("/e/lib", "/e/lib/.git", true, "https://gitlab.com/o/lib.git"),
+		newCheckout("/f/lib", "/f/lib/.git", true, "https://gitlab.com/o/lib.git"),
+		newCheckout("/w2", "/m/.git", false, ""),
+		newCheckout("/w1", "/m/.git", false, ""),
 	})
 	type row struct {
 		id, gh string

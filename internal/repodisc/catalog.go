@@ -15,8 +15,8 @@ type Checkout struct {
 	// Common is its Git common directory, canonical: every worktree of one
 	// repository shares it.
 	Common string
-	// Main: the checkout is its repository's main one (Common is its own
-	// .git), not a linked worktree.
+	// Main: the checkout is its repository's main one (its Git directory
+	// is Common, wherever that is), not a linked worktree.
 	Main bool
 	// Origin is the URL of its origin remote ("" when it has none).
 	Origin string
@@ -25,10 +25,10 @@ type Checkout struct {
 	GitHub string
 }
 
-// newCheckout fills Main and GitHub from the rest.
-func newCheckout(path, common, origin string) Checkout {
+// newCheckout fills GitHub from origin.
+func newCheckout(path, common string, main bool, origin string) Checkout {
 	gh, _ := gitremote.ParseGitHub(origin)
-	return Checkout{Path: path, Common: common, Main: common == filepath.Join(path, ".git"), Origin: origin, GitHub: gh}
+	return Checkout{Path: path, Common: common, Main: main, Origin: origin, GitHub: gh}
 }
 
 // Repo is one repository identity: the checkouts that share a Git common

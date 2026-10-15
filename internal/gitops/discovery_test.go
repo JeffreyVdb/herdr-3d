@@ -42,11 +42,11 @@ func TestCheckoutAndOrigin(t *testing.T) {
 	ctx := context.Background()
 	g := &Git{}
 	got, err := g.Checkout(ctx, main)
-	if err != nil || got != (CheckoutInfo{TopLevel: main, CommonDir: filepath.Join(main, ".git")}) {
+	if err != nil || got != (CheckoutInfo{TopLevel: main, GitDir: filepath.Join(main, ".git"), CommonDir: filepath.Join(main, ".git")}) {
 		t.Fatalf("Checkout(main) = %+v, %v", got, err)
 	}
 	got, err = g.Checkout(ctx, wt)
-	if err != nil || got != (CheckoutInfo{TopLevel: wt, CommonDir: filepath.Join(main, ".git")}) {
+	if err != nil || got != (CheckoutInfo{TopLevel: wt, GitDir: filepath.Join(main, ".git", "worktrees", "wt"), CommonDir: filepath.Join(main, ".git")}) {
 		t.Fatalf("Checkout(worktree) = %+v, %v", got, err)
 	}
 	if _, err := g.Checkout(ctx, root); !errors.Is(err, ErrNotRepo) {

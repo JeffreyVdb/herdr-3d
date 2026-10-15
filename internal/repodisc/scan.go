@@ -112,7 +112,7 @@ func scanRoots(ctx context.Context, git Git, roots []string, workers int, prev m
 			switch {
 			case in.ok:
 				if p, ok := prev[c]; ok && in.noOrigin && p.Common == in.co.Common {
-					in.co = newCheckout(c, in.co.Common, p.Origin) // keep its identity through a slow lookup
+					in.co = newCheckout(c, in.co.Common, in.co.Main, p.Origin) // keep its identity through a slow lookup
 				}
 				rs.checkouts = append(rs.checkouts, in.co)
 				answered++
@@ -193,12 +193,19 @@ func inspect(ctx context.Context, git Git, dir string) inspected {
 			return inspected{} // the marker is not a checkout's: git found an enclosing one
 		}
 	}
-	common := info.CommonDir
-	if c, err := filepath.EvalSymlinks(common); err == nil {
-		common = c
+	canon := func(p string) string {
+		if c, err := filepath.EvalSymlinks(p); err == nil {
+			return c
+		}
+		return p
 	}
+	// A main checkout's Git directory is the common one, wherever it is (a
+	// .git file points at it with --separate-git-dir); a linked worktree's
+	// is under it.
+	common := canon(info.CommonDir)
+	main := canon(info.GitDir) == common
 	origin, err := git.Origin(ctx, dir)
-	return inspected{co: newCheckout(dir, common, origin), ok: true, noOrigin: err != nil}
+	return inspected{co: newCheckout(dir, common, main, origin), ok: true, noOrigin: err != nil}
 }
 
 func plural(n int, one, many string) string {
