@@ -86,7 +86,7 @@ func TestDefaultHelperPaths(t *testing.T) {
 		t.Errorf("default socket path too long for a unix socket: %s", DefaultLocalSocket())
 	}
 	// #57: each ssh bridge's tunnel ends next to it, under bridges/.
-	if got := filepath.Join(tunnelSocketDir(DefaultLocalSocket()), "0123456789.sock"); !strings.HasSuffix(got, "h3d-helper/bridges/0123456789.sock") || len(got) > 103 {
+	if got := filepath.Join(tunnelSocketDir(DefaultLocalSocket()), "0123456789-zzzzzz.sock"); !strings.HasSuffix(got, "h3d-helper/bridges/0123456789-zzzzzz.sock") || len(got) > 103 {
 		t.Errorf("tunnel socket %s", got)
 	}
 }

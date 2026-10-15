@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,12 +39,14 @@ type BridgeSet struct {
 	socketDir string
 	log       *slog.Logger
 	discover  func(ctx context.Context, host string) (string, error)
-	// newBridge makes the supervised connection of an entry (tests use fakes).
-	newBridge func(e BridgeEntry) entryBridge
+	// newBridge makes the supervised connection of an entry, an ssh one's
+	// tunnel ending at socket (tests use fakes).
+	newBridge func(e BridgeEntry, socket string) entryBridge
 
 	mu   sync.Mutex
 	list BridgeList
 	runs map[string]*entryRun
+	gen  uint64          // runners made so far: each ssh runner's socket is <id>-<gen>.sock
 	ctx  context.Context // Run's: nil until it starts
 	wg   sync.WaitGroup
 }
@@ -50,7 +56,8 @@ type BridgeSetConfig struct {
 	// File is the list file: every change is saved there before it takes effect.
 	File string
 	SSH  string // ssh executable
-	// SocketDir holds the tunnels' local ends, one per ssh entry: <SocketDir>/<id>.sock.
+	// SocketDir holds the tunnels' local ends, one per ssh entry's runner:
+	// <SocketDir>/<id>-<gen>.sock.
 	SocketDir string
 	Log       *slog.Logger
 	// Discover finds the bridge socket of an ssh entry that names none (it asks
@@ -70,7 +77,6 @@ type entryRun struct {
 	entry  BridgeEntry
 	bridge entryBridge
 	cancel context.CancelFunc
-	done   chan struct{} // closed when its Run returned (started runs only)
 	conns  map[*trackedConn]struct{}
 }
 
@@ -108,25 +114,58 @@ func NewBridgeSet(cfg BridgeSetConfig, list BridgeList) (*BridgeSet, error) {
 	return s, nil
 }
 
-func (s *BridgeSet) socketPath(id string) string { return filepath.Join(s.socketDir, id+".sock") }
+// A runner's tunnel ends at a socket of its own, <id>-<gen>.sock, never at one
+// an earlier runner of the same entry used: after an address edit the old
+// tunnel may still be shutting down (ssh gets KillGrace), and a shared path
+// would let the new runner's dials reach the old host, or the old runner's
+// cleanup unlink the new one's socket. So nothing waits for the old runner.
+func (s *BridgeSet) socketPath(id, gen string) string {
+	return filepath.Join(s.socketDir, id+"-"+gen+".sock")
+}
+
+// genReserve is the widest generation the length check allows for (base 36:
+// two billion runners in one helper run).
+const genReserve = "zzzzzz"
+
+// socketName matches the tunnels' sockets, <id>-<gen>.sock (and <id>.sock
+// from helpers before generations).
+var socketName = regexp.MustCompile(`^[0-9a-f]{10}(-[0-9a-z]+)?\.sock$`)
+
+// removeStaleSockets removes the tunnels' sockets an earlier helper run left
+// (it was killed before its tunnels removed them). Run calls it before any
+// runner starts.
+func (s *BridgeSet) removeStaleSockets() {
+	if s.socketDir == "" {
+		return
+	}
+	entries, err := os.ReadDir(s.socketDir)
+	if err != nil {
+		return
+	}
+	for _, d := range entries {
+		if d.Type() == fs.ModeSocket && socketName.MatchString(d.Name()) {
+			_ = os.Remove(filepath.Join(s.socketDir, d.Name()))
+		}
+	}
+}
 
 // checkSocketDir: an ssh entry's local end must fit a unix socket address.
 func (s *BridgeSet) checkSocketDir(e BridgeEntry) error {
 	if e.Kind != KindSSH {
 		return nil
 	}
-	if p := s.socketPath(e.ID); len(p) > MaxSocketPath {
+	if p := s.socketPath(e.ID, genReserve); len(p) > MaxSocketPath {
 		return fmt.Errorf("the helper's tunnel socket %s is %d bytes, unix sockets allow %d: start the helper with a shorter -local-socket", p, len(p), MaxSocketPath)
 	}
 	return nil
 }
 
-func (s *BridgeSet) defaultBridge(e BridgeEntry) entryBridge {
+func (s *BridgeSet) defaultBridge(e BridgeEntry, socket string) entryBridge {
 	log := s.log.With("bridge", e.Name, "bridge_id", e.ID)
 	if e.Kind == KindLocal {
 		return &LocalBridge{Socket: e.Socket, Log: log}
 	}
-	b := &sshBridge{discover: s.discover, log: log, tun: &Tunnel{SSH: s.ssh, Host: e.Host, Remote: e.RemoteSocket, Local: s.socketPath(e.ID), Log: log}}
+	b := &sshBridge{discover: s.discover, log: log, tun: &Tunnel{SSH: s.ssh, Host: e.Host, Remote: e.RemoteSocket, Local: socket, Log: log}}
 	if e.RemoteSocket != "" {
 		b.ready.Store(true)
 	}
@@ -137,43 +176,36 @@ func (s *BridgeSet) defaultBridge(e BridgeEntry) entryBridge {
 func (s *BridgeSet) run(e BridgeEntry) *entryRun {
 	r := s.runs[e.ID]
 	if r == nil {
-		r = &entryRun{entry: e, bridge: s.newBridge(e), conns: map[*trackedConn]struct{}{}}
+		s.gen++
+		socket := s.socketPath(e.ID, strconv.FormatUint(s.gen, 36))
+		r = &entryRun{entry: e, bridge: s.newBridge(e, socket), conns: map[*trackedConn]struct{}{}}
 		s.runs[e.ID] = r
 	}
 	return r
 }
 
-// start runs r's connection once after (the runner it replaces) has stopped.
-// Callers hold mu and have checked s.ctx.
-func (s *BridgeSet) start(r *entryRun, after <-chan struct{}) {
+// start runs r's connection. Callers hold mu and have checked s.ctx.
+func (s *BridgeSet) start(r *entryRun) {
 	ctx, cancel := context.WithCancel(s.ctx)
-	r.cancel, r.done = cancel, make(chan struct{})
+	r.cancel = cancel
 	name := r.entry.Name // r.entry changes on a rename, under mu
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		defer close(r.done)
-		if after != nil {
-			select {
-			case <-after: // the socket path is free again
-			case <-ctx.Done():
-				return
-			}
-		}
 		if err := r.bridge.Run(ctx); err != nil {
 			s.log.Error("bridge connection stopped", "bridge", name, "err", err)
 		}
 	}()
 }
 
-// stop ends r's connection and closes what was dialled through it; it returns
-// the channel closed once it has stopped (nil for a runner never started).
-// Callers hold mu; the connections are closed by the caller after unlocking.
-func (r *entryRun) stop() (done <-chan struct{}, conns []*trackedConn) {
+// stop ends r's connection (in its own time) and hands back what was dialled
+// through it. Callers hold mu; the connections are closed by the caller after
+// unlocking.
+func (r *entryRun) stop() []*trackedConn {
 	if r.cancel != nil {
 		r.cancel()
 	}
-	return r.done, r.takeConns()
+	return r.takeConns()
 }
 
 func (r *entryRun) takeConns() []*trackedConn {
@@ -195,8 +227,9 @@ func closeAll(conns []*trackedConn) {
 func (s *BridgeSet) Run(ctx context.Context) error {
 	s.mu.Lock()
 	s.ctx = ctx
+	s.removeStaleSockets()
 	for _, e := range s.list.Bridges {
-		s.start(s.run(e), nil)
+		s.start(s.run(e))
 	}
 	s.mu.Unlock()
 	<-ctx.Done()
@@ -347,15 +380,15 @@ func (s *BridgeSet) Add(e BridgeEntry) (BridgeEntry, error) {
 	}
 	r := s.run(e)
 	if s.ctx != nil {
-		s.start(r, nil)
+		s.start(r)
 	}
 	s.log.Info("bridge added", "bridge", e.Name, "bridge_id", e.ID, "kind", e.Kind, "address", e.Address())
 	return e, nil
 }
 
 // Update changes an entry's name, kind or address; its id stays. A new
-// address restarts its connection (the old one stops first: they share the
-// socket path) and, for the entry in use, drops what was dialled through it.
+// address replaces its connection at once (the old one stops in its own time,
+// on its own socket) and drops what was dialled through the old one.
 func (s *BridgeSet) Update(id string, e BridgeEntry) (BridgeEntry, error) {
 	s.mu.Lock()
 	i := s.list.find(id)
@@ -380,12 +413,11 @@ func (s *BridgeSet) Update(id string, e BridgeEntry) (BridgeEntry, error) {
 		if old.sameTarget(e) {
 			r.entry = e // a rename: the connection stays
 		} else {
-			var done <-chan struct{}
-			done, drop = r.stop()
+			drop = r.stop()
 			delete(s.runs, id)
 			nr := s.run(e)
 			if s.ctx != nil {
-				s.start(nr, done)
+				s.start(nr)
 			}
 		}
 	}
@@ -417,7 +449,7 @@ func (s *BridgeSet) Remove(id string) error {
 	}
 	var drop []*trackedConn
 	if r := s.runs[id]; r != nil {
-		_, drop = r.stop()
+		drop = r.stop()
 		delete(s.runs, id)
 	}
 	s.mu.Unlock()

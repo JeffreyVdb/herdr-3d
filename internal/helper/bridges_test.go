@@ -196,7 +196,7 @@ func newFakeSet(t *testing.T, file string, mk func(e BridgeEntry) *fakeEntry, en
 		mk = func(BridgeEntry) *fakeEntry { return &fakeEntry{st: Status{State: StateUp}} }
 	}
 	fs := &fakeSet{BridgeSet: set, fakes: map[string]*fakeEntry{}, make: mk}
-	set.newBridge = func(e BridgeEntry) entryBridge {
+	set.newBridge = func(e BridgeEntry, _ string) entryBridge {
 		f := mk(e)
 		fs.mu.Lock()
 		fs.fakes[e.Name] = f
@@ -491,9 +491,11 @@ func TestBridgeSetTunnels(t *testing.T) {
 		t.Errorf("discovery asked %d times, want a failure then the answer", asked.Load())
 	}
 	for _, e := range []BridgeEntry{a, b} {
-		p := filepath.Join(socketDir, e.ID+".sock")
-		if fi, err := os.Lstat(p); err != nil || fi.Mode().Type() != os.ModeSocket {
-			t.Errorf("tunnel of %s: no socket at %s (%v)", e.Name, p, err)
+		p, _ := filepath.Glob(filepath.Join(socketDir, e.ID+"-*.sock"))
+		if len(p) != 1 {
+			t.Errorf("tunnel of %s: sockets %v, want one", e.Name, p)
+		} else if fi, err := os.Lstat(p[0]); err != nil || fi.Mode().Type() != os.ModeSocket {
+			t.Errorf("tunnel of %s: no socket at %s (%v)", e.Name, p[0], err)
 		}
 	}
 	if entries, _ := os.ReadDir(socketDir); len(entries) != 2 {
@@ -814,5 +816,231 @@ func TestRoutesFollowTheSwitch(t *testing.T) {
 	}
 	if got := reach(); !slices.Equal(got, []string{"b", "b", "b", "b", "b"}) {
 		t.Fatalf("after the switch: %v", got)
+	}
+}
+
+// sockTunnel stands in for an ssh entry's tunnel as far as its local end
+// goes: Run listens there and answers every connection with its name; once
+// stopped it holds on (ssh's KillGrace) until release, then removes the
+// socket as Tunnel does.
+type sockTunnel struct {
+	name, sock string
+	started    chan struct{}
+	release    chan struct{}
+	stopped    chan struct{}
+}
+
+func newSockTunnel(name, sock string, hold bool) *sockTunnel {
+	b := &sockTunnel{name: name, sock: sock, started: make(chan struct{}), release: make(chan struct{}), stopped: make(chan struct{})}
+	if !hold {
+		close(b.release)
+	}
+	return b
+}
+
+func (b *sockTunnel) Dial(ctx context.Context) (net.Conn, error) {
+	var d net.Dialer
+	return d.DialContext(ctx, "unix", b.sock)
+}
+
+func (b *sockTunnel) Status() Status { return Status{State: StateUp} }
+
+func (b *sockTunnel) Run(ctx context.Context) error {
+	defer close(b.stopped)
+	if err := prepareSocket(b.sock); err != nil {
+		return err
+	}
+	ln, err := net.Listen("unix", b.sock)
+	if err != nil {
+		return err
+	}
+	ln.(*net.UnixListener).SetUnlinkOnClose(false)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = c.Write([]byte(b.name))
+			c.Close()
+		}
+	}()
+	close(b.started)
+	<-ctx.Done()
+	<-b.release
+	ln.Close()
+	os.Remove(b.sock)
+	return nil
+}
+
+// sockTunnels runs set with a sockTunnel per runner, named after its entry's
+// host; hold names the hosts whose tunnel holds on once stopped.
+func sockTunnels(t *testing.T, set *BridgeSet, hold ...string) func(host string) *sockTunnel {
+	t.Helper()
+	var mu sync.Mutex
+	made := map[string]*sockTunnel{}
+	set.newBridge = func(e BridgeEntry, socket string) entryBridge {
+		b := newSockTunnel(e.Host, socket, slices.Contains(hold, e.Host))
+		mu.Lock()
+		made[e.Host] = b
+		mu.Unlock()
+		return b
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { set.Run(ctx); close(done) }()
+	t.Cleanup(func() {
+		mu.Lock()
+		for _, b := range made {
+			select {
+			case <-b.release:
+			default:
+				close(b.release)
+			}
+		}
+		mu.Unlock()
+		cancel()
+		<-done
+	})
+	return func(host string) *sockTunnel {
+		mu.Lock()
+		defer mu.Unlock()
+		return made[host]
+	}
+}
+
+// reached dials the bridge in use and says which tunnel answered ("" for none).
+func reached(set *BridgeSet) string {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	c, err := set.Dial(ctx)
+	if err != nil {
+		return ""
+	}
+	defer c.Close()
+	b, _ := io.ReadAll(c)
+	return string(b)
+}
+
+func sshSet(t *testing.T, host string) (*BridgeSet, BridgeEntry) {
+	t.Helper()
+	e := BridgeEntry{ID: NewBridgeID(), Name: "devbox", Kind: KindSSH, Host: host, RemoteSocket: "/run/b.sock"}
+	set, err := NewBridgeSet(BridgeSetConfig{SocketDir: shortDir(t), Log: quietLog()}, BridgeList{Active: e.ID, Bridges: []BridgeEntry{e}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return set, e
+}
+
+func waitStarted(t *testing.T, tunnel func(string) *sockTunnel, host string) {
+	t.Helper()
+	waitFor(t, host+"'s tunnel", func() bool { b := tunnel(host); return b != nil && isClosed(b.started) })
+}
+
+func waitClosed(t *testing.T, what string, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// TestAddressEditNeverReachesTheOldHost: while the old host's tunnel is
+// still shutting down (and listening), the edited entry's connections never
+// reach it; they reach the new host once its tunnel is up.
+func TestAddressEditNeverReachesTheOldHost(t *testing.T) {
+	set, e := sshSet(t, "dev@old")
+	tunnel := sockTunnels(t, set, "dev@old")
+	waitStarted(t, tunnel, "dev@old")
+	if got := reached(set); got != "dev@old" {
+		t.Fatalf("before the edit: reached %q", got)
+	}
+	e.Host = "dev@new"
+	if _, err := set.Update(e.ID, e); err != nil {
+		t.Fatal(err)
+	}
+	if got := reached(set); got == "dev@old" {
+		t.Fatal("after the edit a dial reached the old host's tunnel, still shutting down")
+	}
+	waitStarted(t, tunnel, "dev@new")
+	if got := reached(set); got != "dev@new" {
+		t.Fatalf("after the edit: reached %q, want the new host", got)
+	}
+}
+
+// TestRapidAddressEditsKeepTheirSockets: edits A→B→C while A's tunnel is
+// still shutting down: each tunnel has its own local end, so A's cleanup
+// cannot take C's away, and C stays reachable after it.
+func TestRapidAddressEditsKeepTheirSockets(t *testing.T) {
+	set, e := sshSet(t, "dev@a")
+	tunnel := sockTunnels(t, set, "dev@a")
+	waitStarted(t, tunnel, "dev@a")
+	for _, h := range []string{"dev@b", "dev@c"} {
+		e.Host = h
+		if _, err := set.Update(e.ID, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitStarted(t, tunnel, "dev@c")
+	a, c := tunnel("dev@a"), tunnel("dev@c")
+	close(a.release)
+	waitClosed(t, "A's tunnel to stop", a.stopped)
+	if b := tunnel("dev@b"); b != nil && (b.sock == a.sock || b.sock == c.sock) || a.sock == c.sock {
+		t.Errorf("tunnels share a local end: %s %s", a.sock, c.sock)
+	}
+	if fi, err := os.Lstat(c.sock); err != nil || fi.Mode().Type() != os.ModeSocket {
+		t.Errorf("C's socket is gone after A stopped: %v", err)
+	}
+	if got := reached(set); got != "dev@c" {
+		t.Fatalf("reached %q, want C", got)
+	}
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
+// TestStaleTunnelSocketsGo: the tunnels' sockets an earlier helper run left
+// behind (killed before its tunnels removed them) go when the set starts;
+// anything else in the directory stays.
+func TestStaleTunnelSocketsGo(t *testing.T) {
+	set, e := sshSet(t, "dev@a")
+	dir := set.socketDir
+	stale := []string{e.ID + "-7.sock", e.ID + ".sock", "0123456789-1z.sock"}
+	keep := []string{"notes.sock", "0123456789-1.txt"}
+	for _, n := range stale {
+		ln, err := net.Listen("unix", filepath.Join(dir, n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ln.(*net.UnixListener).SetUnlinkOnClose(false)
+		ln.Close()
+	}
+	for _, n := range keep {
+		if err := os.WriteFile(filepath.Join(dir, n), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitStarted(t, sockTunnels(t, set), "dev@a")
+	var left []string
+	entries, _ := os.ReadDir(dir)
+	for _, d := range entries {
+		left = append(left, d.Name())
+	}
+	for _, n := range stale {
+		if slices.Contains(left, n) {
+			t.Errorf("stale socket %s left: %v", n, left)
+		}
+	}
+	for _, n := range keep {
+		if !slices.Contains(left, n) {
+			t.Errorf("%s removed: %v", n, left)
+		}
 	}
 }

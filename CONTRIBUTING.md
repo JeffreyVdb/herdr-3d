@@ -604,7 +604,7 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
   /api/bridges/{id}` and `POST /api/bridges/{id}/activate` (guarded like `/api/open`; an absent `Origin` passes on
   `GET`; docs/protocol.md "The helper's bridges"). `helper.BridgeSet` is the server's `Bridge`: every proxied route,
   `/healthz` and `/api/open`'s open hosts follow the bridge in use. Each bridge keeps its own supervised connection
-  (`internal/helper/bridgeset.go`): an ssh bridge its own tunnel ending at `<dir of --local-socket>/bridges/<id>.sock`,
+  (`internal/helper/bridgeset.go`): an ssh bridge its own tunnel ending at `<dir of --local-socket>/bridges/<id>-<n>.sock`,
   a local bridge (`kind: local`, a socket on this machine: a Linux laptop running the bridge too) its socket dialled
   directly, `/healthz` checked every 5 s (`LocalBridge`, `internal/helper/health.go`). So the list always has each
   state and nothing waits on ssh. A switch closes every connection dialled to the old bridge (the game's `/ws`, the
@@ -621,7 +621,7 @@ State goes to the log (stderr), each line with its `bridge=<name>`: `tunnel conn
 | `--bridges-file` | `H3D_HELPER_BRIDGES_FILE` | `~/Library/Application Support/h3d-helper/bridges.json` (0600): the bridge list Settings → Bridges edits; once it exists it is the truth |
 | `--host` | `H3D_HELPER_HOST` | none. Flag, then env: seeds a missing or empty list (that host, named after it, in use); ignored once the list exists. Without any, the helper serves the game and the game asks for a bridge |
 | `--remote-socket` | `H3D_HELPER_REMOTE_SOCKET` | flag, then env, for that first bridge; else the helper asks the host for its `$XDG_RUNTIME_DIR` over ssh (in that bridge's supervisor, with backoff) and uses `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` (the bridge's default) |
-| `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock`: #57, its directory holds the tunnels' local ends, one per ssh bridge, `<dir>/bridges/<id>.sock` |
+| `--local-socket` | `H3D_HELPER_LOCAL_SOCKET` | `~/Library/Caches/h3d-helper/bridge.sock`: #57, its directory holds the tunnels' local ends, one per ssh bridge, `<dir>/bridges/<id>-<n>.sock` (`<n>` a new one per tunnel the helper starts, so an edited address never shares the old tunnel's socket) |
 | `--listen` | `H3D_HELPER_LISTEN` | `127.0.0.1:7777`; anything but a loopback IP is refused |
 | `--bundle` | `H3D_HELPER_BUNDLE` | the game embedded in the binary; else `~/Library/Application Support/h3d-helper/dist` |
 | `--token-file` | `H3D_HELPER_TOKEN_FILE` | `~/Library/Application Support/h3d-helper/token` (0600, created on first start) |

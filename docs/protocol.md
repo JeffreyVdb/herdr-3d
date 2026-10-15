@@ -114,7 +114,7 @@ the host for `$XDG_RUNTIME_DIR` over ssh, in that bridge's own supervisor); `kin
 helper's machine (absolute, at most 103 bytes), dialled directly. `state` is that bridge's connection now (`up`,
 `connecting`, `degraded`, `backoff`, `stopped`, or `down` for a local socket that does not answer), `version` its
 build from its `/healthz`. The helper keeps one supervised connection per bridge (an ssh tunnel ending at
-`<dir of --local-socket>/bridges/<id>.sock`, or the local socket's `/healthz` checked every 5 s), so the list
+`<dir of --local-socket>/bridges/<id>-<n>.sock`, or the local socket's `/healthz` checked every 5 s), so the list
 answers at once from what it last saw: no request waits on ssh.
 
 The guards are `/api/open`'s: `Host`, the token in `X-H3D-Token` (never in a URL) and the page's own `Origin`; a

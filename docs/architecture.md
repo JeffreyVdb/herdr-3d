@@ -75,8 +75,8 @@ MacBook (M2 Max)                                   devbox (Linux)
 Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz, /api/open ──▶ h3d-helper
                                                                                           │ BridgeSet: the one in use
   Settings → Bridges, ⌘P → Switch bridge ── /api/bridges (list, add, edit, remove, activate) ─┤
-                                                                                          ├─ devbox  ssh -N -L <cache>/bridges/<id>.sock (up)
-                                                                                          ├─ gpu     ssh -N -L <cache>/bridges/<id>.sock (backoff)
+                                                                                          ├─ devbox  ssh -N -L <cache>/bridges/<id>-<n>.sock (up)
+                                                                                          ├─ gpu     ssh -N -L <cache>/bridges/<id>-<n>.sock (backoff)
                                                                                           └─ laptop  local unix socket, /healthz every 5 s
 ```
 

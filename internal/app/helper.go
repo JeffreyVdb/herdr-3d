@@ -60,7 +60,7 @@ func helperDir(base func() (string, error), fallback string) string {
 }
 
 // DefaultLocalSocket anchors the tunnels' local ends (#57): each ssh bridge's
-// is <dir of it>/bridges/<id>.sock.
+// is <dir of it>/bridges/<id>-<n>.sock.
 func DefaultLocalSocket() string {
 	return filepath.Join(helperDir(os.UserCacheDir, ".cache"), "bridge.sock")
 }
@@ -232,7 +232,7 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 	fs.SetOutput(stderr)
 	host := fs.String("host", "", "ssh destination running the bridge, [user@]host: the first entry of a new bridge list, ignored once the list exists ($"+EnvHelperHost+")")
 	remote := fs.String("remote-socket", "", "bridge socket on -host; default: $XDG_RUNTIME_DIR/herdr-world/bridge.sock as the host reports it over ssh ($"+EnvHelperRemoteSocket+")")
-	local := fs.String("local-socket", envOr(EnvHelperLocalSocket, DefaultLocalSocket()), "the tunnels' local ends go next to it, one per ssh bridge: <its dir>/bridges/<id>.sock ($"+EnvHelperLocalSocket+")")
+	local := fs.String("local-socket", envOr(EnvHelperLocalSocket, DefaultLocalSocket()), "the tunnels' local ends go next to it, one per ssh bridge: <its dir>/bridges/<id>-<n>.sock ($"+EnvHelperLocalSocket+")")
 	bridgesFile := fs.String("bridges-file", envOr(EnvHelperBridgesFile, DefaultBridgesFile()), "the bridge list Settings → Bridges edits (0600 JSON) ($"+EnvHelperBridgesFile+")")
 	listen := fs.String("listen", envOr(EnvHelperListen, DefaultHelperListen), "loopback address serving the game ($"+EnvHelperListen+")")
 	bundle := fs.String("bundle", os.Getenv(EnvHelperBundle), "serve this built game directory (a copy of game/dist) instead of the game embedded in the binary; default: the embedded game, else "+DefaultBundle()+" ($"+EnvHelperBundle+")")
