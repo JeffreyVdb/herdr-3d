@@ -35,7 +35,7 @@ function setup() {
   const prefs = new HirePrefs(null);
   prefs.hireInBackground = true;
   const host = {
-    store: { hireOptions: { codex: { models: ['gpt'], efforts: ['high'] } }, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null },
+    store: { floorName: (id: string) => id, hireOptions: { codex: { models: ['gpt'], efforts: ['high'] } }, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null },
     send: (t: string, args: Record<string, unknown>) => (t === 'hire.prepare' ? Promise.resolve({ ok: true, data: prep }) : new Promise((answer) => hires.push({ args, answer }))),
     unsupported: () => false,
     reserve: (_s: string, d: number) => {

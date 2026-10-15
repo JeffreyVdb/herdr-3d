@@ -66,7 +66,7 @@ test('the review opens collapsed or open as its values say, and only Hire hires'
   await hire.click({ force: true }).catch(() => {});
   await expect.poll(async () => (await hires(page)).length).toBe(1);
   const sent = (await hires(page))[0] as { args: Record<string, unknown> };
-  expect(sent.args).toMatchObject({ session: 'pastry', desk_index: 14, harness: form.harness, model: form.model, prompt: 'fix the login bug.\n' }); // (Enter in the task added a line, and sent nothing)
+  expect(sent.args).toMatchObject({ floor: 'pastry', desk_index: 14, harness: form.harness, model: form.model, prompt: 'fix the login bug.\n' }); // (Enter in the task added a line, and sent nothing)
   expect(typeof sent.args.effort).toBe('string');
   expect(await hires(page)).toHaveLength(1);
   clean();

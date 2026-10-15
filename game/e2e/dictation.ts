@@ -159,7 +159,7 @@ export async function dictate(page: Page, text: string, how: 'fill' | 'paste' = 
 export async function reviewReady(page: Page, session?: string): Promise<Review> {
   await expect.poll(async () => (await review(page))?.state, { timeout: 20_000 }).toBe('ready');
   const r = (await review(page)) as Review;
-  if (session) expect(r.session).toBe(session);
+  if (session) expect(r.floor).toBe(session);
   return r;
 }
 

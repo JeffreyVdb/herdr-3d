@@ -63,6 +63,8 @@ export class WhiteboardOverlay {
   private readonly pinBtn: HTMLButtonElement;
   private readonly clearBtn: HTMLButtonElement;
   private floor: string | null = null;
+  /** #58: the floor's name (the title; never its id). */
+  private floorName = '';
   private session: BoardSession | null = null;
   /** Bumped on every open and close: a load that finishes after its overlay closed is dropped. */
   private gen = 0;
@@ -110,8 +112,8 @@ export class WhiteboardOverlay {
     return this.floor !== null;
   }
 
-  /** Opens the floor's board (loading the editor the first time). */
-  async open(floor: string): Promise<void> {
+  /** Opens the floor's board (loading the editor the first time); `name`: the floor's name (#58: `floor` is its id). */
+  async open(floor: string, name = floor): Promise<void> {
     if (this.closing) await this.closing;
     if (this.floor === floor) return;
     if (this.floor) await this.close();
@@ -119,8 +121,9 @@ export class WhiteboardOverlay {
     const gen = ++this.gen;
     this.floor = floor;
     this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    this.title.textContent = floor;
-    this.root.setAttribute('aria-label', `Whiteboard · ${floor}`);
+    this.floorName = name;
+    this.title.textContent = name;
+    this.root.setAttribute('aria-label', `Whiteboard · ${name}`);
     this.pins = [];
     this.renderPins();
     this.picker.hidden = true;
@@ -138,6 +141,7 @@ export class WhiteboardOverlay {
       const session = mod.openSession({
         wsUrl: this.host.wsUrl(),
         floor,
+        floorName: name,
         mount: this.mount,
         author: () => this.host.author(),
         status: (s) => {
@@ -354,7 +358,7 @@ export class WhiteboardOverlay {
     const no = h('button', { class: 'wb-btn wb-btn--quiet', onclick: () => (this.hideConfirm(), this.focusEditor()) }, 'Keep it');
     this.confirmEl.setAttribute('aria-label', 'Clear the whiteboard');
     this.confirmEl.replaceChildren(
-      h('p', { class: 'wb-confirm-text' }, h('strong', {}, `Clear the whiteboard for everyone on ${floor}?`), ' The last 20 versions stay in its history.'),
+      h('p', { class: 'wb-confirm-text' }, h('strong', {}, `Clear the whiteboard for everyone on ${this.floorName}?`), ' The last 20 versions stay in its history.'),
       h('div', { class: 'wb-confirm-actions' }, no, yes),
     );
     this.confirmKind = 'clear';

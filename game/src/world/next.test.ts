@@ -4,7 +4,7 @@ import { faceSpots, needQueue, nextNeed, type NeedCandidate } from './next';
 
 const w = (id: string, display: Display, since: number, over: Partial<NeedCandidate> = {}): NeedCandidate => ({
   id,
-  session: 'top',
+  floor: 'top',
   building: 'work',
   display,
   since,
@@ -17,13 +17,13 @@ describe('needQueue', () => {
   const all = [
     w('busy', 'working', 1),
     w('done-new', 'done', 500),
-    w('blocked-new', 'needs_you', 400, { session: 'bottom' }),
-    w('done-old', 'done', 100, { session: 'bottom' }),
+    w('blocked-new', 'needs_you', 400, { floor: 'bottom' }),
+    w('done-old', 'done', 100, { floor: 'bottom' }),
     w('blocked-old', 'needs_you', 300),
     w('idle', 'idle', 2),
     w('asleep', 'asleep', 3),
-    w('lot-blocked', 'needs_you', 50, { building: null, session: 'lot' }),
-    w('lot-done', 'done', 10, { building: null, session: 'lot' }),
+    w('lot-blocked', 'needs_you', 50, { building: null, floor: 'lot' }),
+    w('lot-done', 'done', 10, { building: null, floor: 'lot' }),
   ];
 
   it('visits blocked (oldest first), then done (oldest first), in your building before the rest', () => {
@@ -42,7 +42,7 @@ describe('needQueue', () => {
   });
 
   it('breaks ties by floor, then desk', () => {
-    const q = needQueue([w('b', 'needs_you', 5, { session: 'top', desk: 3 }), w('a', 'needs_you', 5, { session: 'top', desk: 1 }), w('c', 'needs_you', 5, { session: 'bottom', desk: 9 })], 'work');
+    const q = needQueue([w('b', 'needs_you', 5, { floor: 'top', desk: 3 }), w('a', 'needs_you', 5, { floor: 'top', desk: 1 }), w('c', 'needs_you', 5, { floor: 'bottom', desk: 9 })], 'work');
     expect(q.map((x) => x.id)).toEqual(['c', 'a', 'b']);
   });
 });

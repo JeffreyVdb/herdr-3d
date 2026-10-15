@@ -506,8 +506,8 @@ function boxPoseAt(tl: Timeline, t: number): ArrivalPose {
  * `Arrivals.yieldDesk`: it is not in `walking` any more, so it cannot take
  * the desk back once the drop is over.)
  */
-export function deskOwners<T extends { session: string; desk: number }>(ended: readonly T[], walking: readonly T[]): T[] {
+export function deskOwners<T extends { floor: string; desk: number }>(ended: readonly T[], walking: readonly T[]): T[] {
   const by = new Map<string, T>();
-  for (const d of [...ended, ...walking]) by.set(`${d.session}\u0000${d.desk}`, d);
+  for (const d of [...ended, ...walking]) by.set(`${d.floor}\u0000${d.desk}`, d);
   return [...by.values()];
 }

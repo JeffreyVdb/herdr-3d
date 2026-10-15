@@ -4,7 +4,7 @@
  * last, at most `MAX` (orchestrators come and go). localStorage can be missing or throw (private windows, blocked site
  * data): every access is guarded and the page works without it, remembering for this page only.
  *
- * #188: the all-floors page adds its floors (`floor:<session>`) and each floor's Unlinked group (`unlinked:<session>`).
+ * #188: the all-floors page adds its floors (`floor:<floor id>`) and each floor's Unlinked group (`unlinked:<floor id>`); #58: a real floor's id is its session's name, so keys saved before #58 still apply.
  * An asleep floor starts collapsed: a group collapsed by default is open only with an `open:<key>` marker, which the
  * viewer opening it leaves (and folding it again takes away). The same list, so the same cap.
  *

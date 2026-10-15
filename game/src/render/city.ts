@@ -33,7 +33,8 @@ const GAP = 3.2;
 const SLAB = 0.07;
 
 interface FloorSlot {
-  session: string;
+  /** #58: the floor id. */
+  id: string;
   building: number;
   view: FloorView;
   layout: FloorLayout;
@@ -90,7 +91,7 @@ export class CityView {
   readonly scene = new THREE.Scene();
   readonly applied = new Map<string, Display>();
   private floors: FloorSlot[] = [];
-  private readonly bySession = new Map<string, FloorSlot>();
+  private readonly byFloor = new Map<string, FloorSlot>();
   private buildings: BuildingFrame[] = [];
   private bounds = new THREE.Box3();
   private crowd: Crowd | null = null;
@@ -124,7 +125,7 @@ export class CityView {
   constructor(
     private readonly badgeParent: HTMLElement,
     private readonly shadows: boolean,
-    private readonly onEnter: (session: string) => void,
+    private readonly onEnter: (floor: string) => void,
     private readonly buildingParent: HTMLElement | null = null,
     private readonly onBuilding: (building: string | null) => void = () => {},
   ) {
@@ -210,7 +211,7 @@ export class CityView {
         const origin = new THREE.Vector3(bx0 + (p.w - layout.width * S) / 2, oy + SLAB / 2, bz0 + (p.d - layout.depth * S) / 2);
         const button = this.makeButton(view);
         const slot: FloorSlot = {
-          session: view.session,
+          id: view.id,
           building: p.bi,
           view,
           layout,
@@ -222,7 +223,7 @@ export class CityView {
           anchor: new THREE.Vector3(bx0 + p.w + 0.12, oy + FH * 0.45, bz0 + p.d),
         };
         this.floors.push(slot);
-        this.bySession.set(view.session, slot);
+        this.byFloor.set(view.id, slot);
         this.placeFloor(fi, slot, tint);
         this.fillFloor(slot);
         this.paintBadge(slot);
@@ -360,9 +361,11 @@ export class CityView {
   private makeButton(view: FloorView): HTMLButtonElement {
     const b = document.createElement('button');
     b.type = 'button';
-    b.dataset.session = view.session;
-    b.addEventListener('click', () => this.onEnter(view.session));
-    b.addEventListener('focus', () => this.setHover(view.session));
+    // #58: the floor id (a virtual floor's `v-…`); `data-session` stays its herdr session.
+    b.dataset.floor = view.id;
+    b.dataset.session = view.baseSession;
+    b.addEventListener('click', () => this.onEnter(view.id));
+    b.addEventListener('focus', () => this.setHover(view.id));
     b.addEventListener('blur', () => this.setHover(null));
     this.label(b, view);
     this.badgeParent.appendChild(b);
@@ -374,17 +377,17 @@ export class CityView {
     b.dataset.state = v.asleep ? 'asleep' : 'running';
     const doing = v.transition === 'waking' ? 'waking up, ' : v.transition === 'sleeping' ? 'going to sleep, ' : '';
     b.textContent = v.asleep
-      ? `${v.session}: ${doing}asleep, ${c.total} workers. Enter floor`
-      : `${v.session}: ${doing}${c.working} working, ${c.needsYou} need you, ${c.idle} idle${c.waiting > 0 ? `, ${c.waiting} waiting on background tasks` : ''}. Enter floor`;
+      ? `${v.name}: ${doing}asleep, ${c.total} workers. Enter floor`
+      : `${v.name}: ${doing}${c.working} working, ${c.needsYou} need you, ${c.idle} idle${c.waiting > 0 ? `, ${c.waiting} waiting on background tasks` : ''}. Enter floor`;
   }
 
   private paintBadge(f: FloorSlot): void {
-    this.badgeLayer?.set(f.index, f.anchor, { session: f.session, asleep: f.view.asleep, counts: f.view.counts, hover: this.hover === f.session, transition: f.view.transition });
+    this.badgeLayer?.set(f.index, f.anchor, { name: f.view.name, asleep: f.view.asleep, counts: f.view.counts, hover: this.hover === f.id, transition: f.view.transition });
   }
 
   /** A floor's counts or a worker changed without structure changes. */
   updateFloor(v: FloorView): void {
-    const f = this.bySession.get(v.session);
+    const f = this.byFloor.get(v.id);
     if (!f) return;
     f.view = v;
     this.label(f.button, v);
@@ -393,7 +396,7 @@ export class CityView {
   }
 
   updateWorker(v: WorkerView): void {
-    const f = this.bySession.get(v.worker.session);
+    const f = this.byFloor.get(v.worker.floor);
     if (!f || f.view.seats[v.desk]?.worker.id !== v.worker.id) return;
     this.setDesk(f, v.desk, v);
   }
@@ -553,7 +556,7 @@ export class CityView {
     this.buildingIds = [];
     this.badgeLayer = null;
     this.floors = [];
-    this.bySession.clear();
+    this.byFloor.clear();
     this.workerSlot.clear();
     this.applied.clear();
     this.dynamic.traverse((o) => {
@@ -585,8 +588,8 @@ export class CityView {
     return this.buildings[i] ?? null;
   }
 
-  buildingOf(session: string): number | null {
-    return this.bySession.get(session)?.building ?? null;
+  buildingOf(floor: string): number | null {
+    return this.byFloor.get(floor)?.building ?? null;
   }
 
   get buildingCount(): number {
@@ -598,17 +601,17 @@ export class CityView {
     let best: { s: string; t: number } | null = null;
     for (const f of this.floors) {
       const t = rayBox([origin.x, origin.y, origin.z], [dir.x, dir.y, dir.z], f.box);
-      if (t !== null && (!best || t < best.t)) best = { s: f.session, t };
+      if (t !== null && (!best || t < best.t)) best = { s: f.id, t };
     }
     return best?.s ?? null;
   }
 
-  setHover(session: string | null): void {
-    if (this.hover === session) return;
-    const prev = this.hover ? this.bySession.get(this.hover) : undefined;
-    this.hover = session;
+  setHover(floor: string | null): void {
+    if (this.hover === floor) return;
+    const prev = this.hover ? this.byFloor.get(this.hover) : undefined;
+    this.hover = floor;
     if (prev) this.paintBadge(prev);
-    const next = session ? this.bySession.get(session) : undefined;
+    const next = floor ? this.byFloor.get(floor) : undefined;
     if (next) this.paintBadge(next);
   }
 
@@ -622,8 +625,8 @@ export class CityView {
   }
 
   /** Screen point (CSS px) of the middle of a floor's box, null when off screen. */
-  floorPoint(camera: THREE.PerspectiveCamera, session: string, vp: { width: number; height: number }): { x: number; y: number } | null {
-    const f = this.bySession.get(session);
+  floorPoint(camera: THREE.PerspectiveCamera, floor: string, vp: { width: number; height: number }): { x: number; y: number } | null {
+    const f = this.byFloor.get(floor);
     if (!f) return null;
     const [x0, y0, z0] = f.box.min;
     const [x1, y1, z1] = f.box.max;
@@ -646,11 +649,11 @@ export class CityView {
   pickBadge(camera: THREE.PerspectiveCamera, x: number, y: number, vp: { width: number; height: number }): string | null {
     if (!this.badges || !this.badgeLayer) return null;
     const i = this.badgeLayer.hit(camera, x, y, vp);
-    return i === null ? null : (this.floors[i]?.session ?? null);
+    return i === null ? null : (this.floors[i]?.id ?? null);
   }
 
-  badgePoint(camera: THREE.PerspectiveCamera, session: string, vp: { width: number; height: number }): { x: number; y: number } | null {
-    const f = this.bySession.get(session);
+  badgePoint(camera: THREE.PerspectiveCamera, floor: string, vp: { width: number; height: number }): { x: number; y: number } | null {
+    const f = this.byFloor.get(floor);
     return f && this.badgeLayer ? this.badgeLayer.center(camera, f.index, vp) : null;
   }
 }

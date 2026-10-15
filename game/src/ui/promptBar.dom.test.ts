@@ -4,7 +4,8 @@ import type { Worker } from '../net/protocol';
 import type { WorkerView } from '../world/store';
 import { askChip, promptBarAria, promptBarKey } from './promptBar';
 
-const worker: Worker = {
+const worker: Worker & { floor: string } = {
+  floor: 'top',
   id: 'a',
   session: 'top',
   workspace_id: 'w1',

@@ -7,7 +7,7 @@ import { nextNeed } from './next';
 
 const w = (id: string, display: Display, since: number, over: Partial<InboxCandidate> = {}): InboxCandidate => ({
   id,
-  session: 'top',
+  floor: 'top',
   building: 'work',
   display,
   since,
@@ -47,10 +47,10 @@ describe('inboxQueue', () => {
   it('needs-you before done, the longest wait first, with no building of yours first', () => {
     const q = inboxQueue([
       w('here-done', 'done', 10),
-      w('lot-done', 'done', 5, { building: null, session: 'lot' }),
-      w('there-blocked', 'needs_you', 40, { building: 'other', session: 'far' }),
+      w('lot-done', 'done', 5, { building: null, floor: 'lot' }),
+      w('there-blocked', 'needs_you', 40, { building: 'other', floor: 'far' }),
       w('here-blocked', 'needs_you', 30),
-      w('lot-blocked', 'needs_you', 20, { building: null, session: 'lot' }),
+      w('lot-blocked', 'needs_you', 20, { building: null, floor: 'lot' }),
     ]);
     expect(q.map((x) => x.id)).toEqual(['lot-blocked', 'here-blocked', 'there-blocked', 'lot-done', 'here-done']);
   });
@@ -90,7 +90,7 @@ describe('isDismissed', () => {
 });
 
 describe('inboxReason', () => {
-  const worker = (over: Partial<Worker> = {}): Worker => ({ id: 'w1', session: 's', workspace_id: 'w1', label: 'Chirp', status: 'idle', ...over });
+  const worker = (over: Partial<Worker> = {}): Worker & { floor: string } => ({ id: 'w1', session: 's', floor: 's', workspace_id: 'w1', label: 'Chirp', status: 'idle', ...over });
   const view = (display: Display, over: Partial<Worker> = {}) => {
     const wk = worker(over);
     return { display, worker: wk, crew: crewView(wk, true) };
@@ -143,6 +143,12 @@ describe('inboxWhere', () => {
   };
   it('names the building and the floor’s session', () => {
     expect(inboxWhere(store, 'h3d-sesame-3')).toBe('Herdr 3D › h3d-sesame-3');
+  });
+
+  it('names a virtual floor by its name, never its id (#58)', () => {
+    const floors = new Map<string, Floor>([['v-0123456789ab', { id: 'v-0123456789ab', name: 'Frontend', session: 'h3d-sesame-3', virtual: true, state: 'running', building: 'work', index: 1 }]]);
+    expect(inboxWhere({ buildings: store.buildings, floors }, 'v-0123456789ab')).toBe('Herdr 3D › Frontend');
+    expect(inboxWhere({ buildings: store.buildings, floors }, 'v-ffffffffffff')).toBe('Unassigned › That floor');
   });
   it('the unassigned lot (or a building the store no longer has) is Unassigned', () => {
     expect(inboxWhere(store, 'scratch')).toBe('Unassigned › scratch');

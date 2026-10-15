@@ -37,7 +37,7 @@ function setup(o: { gates?: Partial<PingGates>; focus?: string | null } = {}) {
   return { clock, out, state, pings };
 }
 
-const entry = (id: string, reason: 'blocked' | 'done', since = 1, role: CrewRole | null = null): PingEntry => ({ id, name: id.toUpperCase(), session: 's1', role, reason, since });
+const entry = (id: string, reason: 'blocked' | 'done', since = 1, role: CrewRole | null = null): PingEntry => ({ id, name: id.toUpperCase(), floor: 's1', role, reason, since });
 const kinds = (out: PingOut[]) => out.map((p) => (p.t === 'ping' ? `${p.kind}:${p.entry.id}${p.chime ? '!' : ''}` : p.t === 'burst' ? `burst:${p.entries.length}` : `away:${p.needs}/${p.finished}`));
 
 describe('InboxPings', () => {

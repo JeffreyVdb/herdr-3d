@@ -77,7 +77,14 @@ export interface H3DDebug {
    * what the bridge sent for them (null from a bridge without those fields).
    */
   world(): Array<{
+    /** #58: the floor id (a real floor's is its session's name). */
+    id: string;
+    /** #58: the floor's name. */
+    name: string;
+    /** The herdr session it lives in (a virtual floor's base session). */
     session: string;
+    virtual: boolean;
+    hidden: boolean;
     /** M3: the building's name, null in the lot. */
     building: string | null;
     asleep: boolean;
@@ -85,7 +92,7 @@ export interface H3DDebug {
     workers: Array<{ id: string; name: string; label: string; desk: number; status: string; bridgeName: string | null; bridgeDesk: number | null; harness: string | null }>;
   }>;
   /** The office layout of a floor, in its building's outline (for scripted camera paths). */
-  layout(session: string): ReturnType<typeof floorLayout> | null;
+  layout(floor: string): ReturnType<typeof floorLayout> | null;
   /** M3b: the building you walk around in (fire escape, lobby, street), null in the city. */
   building(): BuildingPlan | null;
   /** M3b: the building's id (null: the lot), name, floors ground first, and the floor with an interior. */
@@ -93,7 +100,7 @@ export interface H3DDebug {
   /** M3b: rides the elevator to a building's lobby (null: the lot); no argument: the current building's. */
   enterLobby(building?: string | null): Promise<void>;
   /** M3b: the walk-out route (M4) from a desk of a floor, as waypoints. */
-  route(session: string, desk: number): Waypoint[];
+  route(floor: string, desk: number): Waypoint[];
   /** M3b: the receptionist's state: what it said (and when), the clip ids played, the cooldown ends, the bubble text. */
   reception(): ReturnType<import('./reception').Reception['debug']> | null;
   /** M3b: reception events the game detected (front door in / out, elevator arrival, E at the desk). */
@@ -102,7 +109,7 @@ export interface H3DDebug {
   radio(): { genre: string; trackId: string | null; playing: boolean; volume: number; muted: boolean } | null;
   /** M15: what the radio did, in order: genre changes, tracks picked and started, skipped files, fades in and out. */
   radioEvents(): Array<{ at: number; kind: string; genre?: string; trackId?: string; detail?: string }>;
-  enterFloor(session: string, pose?: Pose): Promise<void>;
+  enterFloor(floor: string, pose?: Pose): Promise<void>;
   /** Applies a protocol event as if the bridge had sent it (drives live updates deterministically). */
   inject(e: WorldEvent): void;
   /** The world's worker as the bridge sent it (a copy; null: none). */
@@ -117,7 +124,7 @@ export interface H3DDebug {
   /** Speech-bubble cards on screen and what they say; M5: a question (`ask`), the looked-at one's `usage`, `tall` when drawn with room for them. */
   cards(): Array<{ desk: number; name: string; display: string; task: string; ask?: { text: string; about?: string[]; choices: Array<{ n: number; label: string }>; selected?: number | undefined } | null; usage?: string | null; tall: boolean; tag?: { text: string; color: string } | null; stamp?: { tone: string; text: string } | null; crew?: string[] | null; tape?: { text: string; color: string; box?: boolean } | null }>;
   /** Screen point of a floor's badge in the city (to click it). */
-  badgePoint(session: string): { x: number; y: number } | null;
+  badgePoint(floor: string): { x: number; y: number } | null;
   /** M5: per worker of the floor you are on, what its laptop shows (live / pending / frozen / glow / dark) and its watch fps; #52: its pane, and whose screen is on its glass (`<worker id>@<pane>`, null: none). */
   screens(): Array<{ id: string; pane: string | null; desk: number; state: string; fps: number | null; shows: string | null }>;
   /**
@@ -198,7 +205,7 @@ export interface H3DDebug {
   /** M3: opens the buildings panel. */
   openBuildings(): void;
   /** M3: opens a floor's settings panel. */
-  openSettings(session: string): void;
+  openSettings(floor: string): void;
   /** #216: shows a toast of that kind (the UI theme's coverage and screenshots). */
   toast(message: string, kind?: 'info' | 'warn' | 'error', ms?: number): void;
   /** #216: picks the application UI theme as Settings → Appearance does (the live-switch tests). */
@@ -208,7 +215,7 @@ export interface H3DDebug {
   /** M3: commands sent to the bridge so far, with their result once answered. */
   sent(): Array<{ t: CommandName; args: unknown; result?: { ok: boolean; code?: string } }>;
   /** M3: screen point of a floor itself in the city (to click its building). */
-  floorPoint(session: string): { x: number; y: number } | null;
+  floorPoint(floor: string): { x: number; y: number } | null;
   /** M3: connection phase and the bridge epoch (changes when the bridge restarts). */
   connection(): { phase: string; epoch: string | null };
   /** M4: opens the hire dialog for a desk (0-based) of the floor you are on; no desk: the first free one (the top bar's Hire). */
@@ -232,7 +239,7 @@ export interface H3DDebug {
   /** M4: workers walking out (M6b: or dropping in) right now (phase, position, how far along, what their desk shows). */
   arrivals(): ArrivalInfo[];
   /** M4: walks that ended: `played` false when nobody could see it (it resolved at once). */
-  arrivalLog(): Array<{ id: string; kind: 'in' | 'out' | 'deliver'; played: boolean; session: string; desk: number }>;
+  arrivalLog(): Array<{ id: string; kind: 'in' | 'out' | 'deliver'; played: boolean; floor: string; desk: number }>;
   /** M6c: how far the corner office's glass door is open (0..1; it opens for a walker up the stair like for you). */
   mezzDoor(): number;
   /** M6c: the in-trays of the floor with an interior: per orchestrator desk, the folders in it (edge colours, oldest first); `waiting`: reports queued behind a delivery; `pending`: deliveries not yet on a tray. */
@@ -349,7 +356,7 @@ const h3d: H3DDebug = {
   ready: false,
   view: () => ({
     mode: app?.mode ?? 'city',
-    floor: app?.office?.session ?? null,
+    floor: app?.office?.id ?? null,
     plan: app?.plan ?? false,
     busy: app?.busy ?? false,
     asleep: app?.officeAsleep ?? null,
@@ -369,7 +376,11 @@ const h3d: H3DDebug = {
           .city()
           .flatMap((b) => b.floors)
           .map((f) => ({
-            session: f.session,
+            id: f.id,
+            name: f.name,
+            session: f.baseSession,
+            virtual: f.virtual,
+            hidden: f.hidden,
             building: f.building?.name ?? null,
             asleep: f.asleep,
             desks: f.desks,
@@ -536,7 +547,7 @@ const h3d: H3DDebug = {
   cabinet: () => app?.cabinet.summary() ?? null,
   filing: () => app?.filingStates() ?? { drawers: null, walks: [] },
   openHandoff: (id) => app?.openHandoff(id, false),
-  openCabinet: (floor) => app?.openCabinet(floor ?? app.hereSession()),
+  openCabinet: (floor) => app?.openCabinet(floor ?? app.hereFloor()),
   mezzDoor: () => app?.office?.mezzDoor01 ?? 0,
   desks: () => app?.deskStates() ?? [],
   deskArt: (d) => {
@@ -587,13 +598,13 @@ const h3d: H3DDebug = {
   },
   injectBoard: (m) => app?.injectBoard(m),
   boardMessage: (w) => {
-    const s = app?.hereSession();
+    const s = app?.hereFloor();
     const b = s ? app?.boardBook.get(s) : null;
     return structuredClone((w === 'issues' ? b?.issues : b?.prs) ?? null);
   },
   openBoard: (w) => app?.openBoard(w),
   openBoardItem: (w, id) => {
-    const s = app?.hereSession();
+    const s = app?.hereFloor();
     if (s) app?.boardsPanel.openItem(w, s, id);
   },
   boardLog: () => structuredClone(app?.boardLog ?? []),

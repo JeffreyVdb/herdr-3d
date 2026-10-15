@@ -11,7 +11,8 @@ const COLS = 3;
 export const BADGE_H = 0.42;
 
 export interface BadgeData {
-  session: string;
+  /** #58: the floor's name (what the badge says; never a `v-` id). */
+  name: string;
   asleep: boolean;
   counts: Counts;
   hover: boolean;
@@ -21,7 +22,7 @@ export interface BadgeData {
 
 const same = (a: BadgeData | undefined, b: BadgeData) =>
   !!a &&
-  a.session === b.session &&
+  a.name === b.name &&
   a.asleep === b.asleep &&
   a.hover === b.hover &&
   (a.transition ?? null) === (b.transition ?? null) &&
@@ -36,7 +37,7 @@ function drawBadge(g: CanvasRenderingContext2D, x: number, y: number, b: BadgeDa
   g.clearRect(x, y, CELL_W, CELL_H);
   g.save();
   g.font = `800 42px ${FONT}`;
-  const nameW = Math.min(g.measureText(b.session).width, 300);
+  const nameW = Math.min(g.measureText(b.name).width, 300);
   g.font = `700 38px ${FONT}`;
   const items: Array<[string, string]> = b.transition
     ? [[b.transition === 'waking' ? '#ffc233' : STATUS_CSS.asleep, b.transition === 'waking' ? 'waking up…' : 'going to sleep…']]
@@ -74,7 +75,7 @@ function drawBadge(g: CanvasRenderingContext2D, x: number, y: number, b: BadgeDa
   g.textBaseline = 'middle';
   g.fillStyle = '#eef2fb';
   g.font = `800 42px ${FONT}`;
-  g.fillText(b.session, cx, mid, 300);
+  g.fillText(b.name, cx, mid, 300);
   cx += nameW + 22;
   g.font = `700 38px ${FONT}`;
   for (const [color, text] of items) {

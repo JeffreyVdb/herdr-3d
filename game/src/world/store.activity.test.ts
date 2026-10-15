@@ -38,7 +38,7 @@ describe('worker.activity', () => {
     const s = store([worker('a', { status: 'working', activity: testing, status_since: 900 })]);
     expect(s.workers.get('a')?.activity).toEqual(testing);
     const c = s.applyEvent(ev('a', { ...testing, kind: 'writing', detail: 'store.ts' }), 5_000);
-    expect(c).toEqual({ structure: false, sessions: new Set(['top']), workers: new Set(['a']) });
+    expect(c).toEqual({ structure: false, floors: new Set(['top']), workers: new Set(['a']) });
     expect(s.workers.get('a')?.activity?.kind).toBe('writing');
     expect(s.workers.get('a')?.status).toBe('working');
     expect(s.workerView('a')?.since).toBe(900);
@@ -52,7 +52,7 @@ describe('worker.activity', () => {
 
   it('ignores the event for an unknown worker', () => {
     const s = store([worker('a')]);
-    expect(s.applyEvent(ev('nobody', testing))).toEqual({ structure: false, sessions: new Set(), workers: new Set() });
+    expect(s.applyEvent(ev('nobody', testing))).toEqual({ structure: false, floors: new Set(), workers: new Set() });
   });
 
   it('keeps the activity across a worker.status (the bridge clears it with its own event)', () => {
@@ -100,7 +100,7 @@ describe('the waiting display status', () => {
     ]);
     const f = s.floorView('top');
     expect(f?.counts).toEqual({ working: 1, needsYou: 0, idle: 2, done: 1, waiting: 2, total: 5 });
-    const q = needQueue((f?.workers ?? []).map((v) => ({ id: v.worker.id, session: 'top', building: 'b1', display: v.display, since: v.since, desk: v.desk, name: v.name })), 'b1');
+    const q = needQueue((f?.workers ?? []).map((v) => ({ id: v.worker.id, floor: 'top', building: 'b1', display: v.display, since: v.since, desk: v.desk, name: v.name })), 'b1');
     expect(q.map((x) => x.id)).toEqual(['d']);
     // The last task reports back: idle again, back in the idle count.
     s.applyEvent(ev('w1', null, 7));

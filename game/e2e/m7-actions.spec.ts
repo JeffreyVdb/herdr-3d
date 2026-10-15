@@ -131,8 +131,8 @@ test('Hand to a worker: the start-run dialog with the card as work_item, the las
   await act(page, 'hand').click();
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.dialog()))?.kind).toBe('start-run');
   await expect.poll(async () => { const d = (await page.evaluate(() => window.__h3d.dialog())) as { state: string; preparing: boolean }; return d.state === 'ready' && !d.preparing; }).toBe(true);
-  const d = (await page.evaluate(() => window.__h3d.dialog())) as { session: string; desk: number; ticket: { kind: string; item: { id: string; key: string; title: string } }; form: { preset: string; workItem: { id: string } | null; ticket: string }; ticketLine: string; blocker: string | null; title: string };
-  expect(d).toMatchObject({ session: 'herdr-3d', desk: 12, title: 'Start a run at Desk 13', blocker: null });
+  const d = (await page.evaluate(() => window.__h3d.dialog())) as { floor: string; desk: number; ticket: { kind: string; item: { id: string; key: string; title: string } }; form: { preset: string; workItem: { id: string } | null; ticket: string }; ticketLine: string; blocker: string | null; title: string };
+  expect(d).toMatchObject({ floor: 'herdr-3d', desk: 12, title: 'Start a run at Desk 13', blocker: null });
   expect(d.ticket).toMatchObject({ kind: 'work_item', item: { id: `${HERDR}#12`, key: '#12' } });
   expect(d.ticketLine).toBe('#12 · M8: Lounge, coffee machine and the wandering worker');
   expect(d.form).toMatchObject({ preset: 'p_5eedb0000001', ticket: '' });
@@ -144,7 +144,7 @@ test('Hand to a worker: the start-run dialog with the card as work_item, the las
   await page.keyboard.press('ControlOrMeta+Enter');
   await expect.poll(async () => (await sentOf(page, 'run.start')).length).toBe(1);
   const start = (await sentOf(page, 'run.start'))[0]?.args as Record<string, unknown>;
-  expect(start).toMatchObject({ session: 'herdr-3d', desk_index: 12, work_item: { provider: 'github', id: `${HERDR}#12` }, preset: 'p_5eedb0000001' });
+  expect(start).toMatchObject({ floor: 'herdr-3d', desk_index: 12, work_item: { provider: 'github', id: `${HERDR}#12` }, preset: 'p_5eedb0000001' });
   expect(start).not.toHaveProperty('issue');
   expect(start).not.toHaveProperty('text');
   // The peel-off: the note leaves the board, flies to the orchestrator's desk, and is back in its column afterwards.
@@ -188,14 +188,14 @@ test('Move to…, comment and Close issue… (confirm and reason) send the contr
   await act(page, 'move-to').selectOption({ label: 'Doing' });
   await act(page, 'move').click();
   await expect.poll(async () => (await sentOf(page, 'issue.set_status')).length).toBe(1);
-  expect((await sentOf(page, 'issue.set_status'))[0]?.args).toEqual({ session: 'lab', id: `${lab}#5`, column: 'ae6334b4' });
+  expect((await sentOf(page, 'issue.set_status'))[0]?.args).toEqual({ floor: 'lab', id: `${lab}#5`, column: 'ae6334b4' });
   await expect(page.locator('.toast')).toHaveText('Moved #5 to Doing.');
   await expect.poll(async () => (await board(page))?.columns.find((c) => c.name === 'Doing')?.keys).toContain('#5');
   // Comment.
   await modal(page).locator('#bd-comment').fill('Looks **good** to me.');
   await modal(page).locator('#bd-comment').press('ControlOrMeta+Enter');
   await expect.poll(async () => (await sentOf(page, 'issue.comment')).length).toBe(1);
-  expect((await sentOf(page, 'issue.comment'))[0]?.args).toEqual({ session: 'lab', id: `${lab}#5`, body: 'Looks **good** to me.' });
+  expect((await sentOf(page, 'issue.comment'))[0]?.args).toEqual({ floor: 'lab', id: `${lab}#5`, body: 'Looks **good** to me.' });
   await expect.poll(async () => (await item(page)).comments).toBe(2);
   await expect(modal(page).locator('.bd-comment strong', { hasText: 'good' })).toHaveText('good');
   await expect(modal(page).locator('#bd-comment')).toHaveValue('');
@@ -207,7 +207,7 @@ test('Move to…, comment and Close issue… (confirm and reason) send the contr
   await shot(page, 'm7-issue-close-confirm');
   await act(page, 'close-confirm').click();
   await expect.poll(async () => (await sentOf(page, 'issue.close')).length).toBe(1);
-  expect((await sentOf(page, 'issue.close'))[0]?.args).toEqual({ session: 'lab', id: `${lab}#5`, reason: 'not_planned', confirm: true });
+  expect((await sentOf(page, 'issue.close'))[0]?.args).toEqual({ floor: 'lab', id: `${lab}#5`, reason: 'not_planned', confirm: true });
   await expect.poll(async () => (await item(page)).kind ?? null, { message: 'the modal closed' }).toBeNull();
   // The next poll: it is closed, in Done, and its note has the check mark.
   await expect.poll(async () => (await board(page))?.columns.find((c) => c.name === 'Done')?.keys).toContain('#5');
@@ -299,7 +299,7 @@ test('Merge: confirmation first; red checks disable it, and Merge anyway asks tw
   await act(page, 'merge-method').selectOption('rebase');
   await act(page, 'merge-override-2').click();
   await expect.poll(async () => (await sentOf(page, 'pr.merge')).length).toBe(1);
-  expect((await sentOf(page, 'pr.merge'))[0]?.args).toEqual({ session: 'herdr-3d', id: `${HERDR}#33`, method: 'squash', confirm: true, override: true, confirm_override: true });
+  expect((await sentOf(page, 'pr.merge'))[0]?.args).toEqual({ floor: 'herdr-3d', id: `${HERDR}#33`, method: 'squash', confirm: true, override: true, confirm_override: true });
   await expect.poll(async () => (await item(page)).kind ?? null).toBeNull();
 
   // The happy path: one confirmation, no override fields.
@@ -312,7 +312,7 @@ test('Merge: confirmation first; red checks disable it, and Merge anyway asks tw
   expect((await sentOf(page, 'pr.merge')).length).toBe(1);
   await act(page, 'merge-confirm').click();
   await expect.poll(async () => (await sentOf(page, 'pr.merge')).length).toBe(2);
-  expect((await sentOf(page, 'pr.merge'))[1]?.args).toEqual({ session: 'herdr-3d', id: `${HERDR}#32`, method: 'merge', confirm: true });
+  expect((await sentOf(page, 'pr.merge'))[1]?.args).toEqual({ floor: 'herdr-3d', id: `${HERDR}#32`, method: 'merge', confirm: true });
   clean();
 });
 
@@ -500,7 +500,7 @@ test('#52 drag with the mouse: the line above a card in its top half, below it i
   expect(await setStatus(page)).toEqual([]);
   await page.mouse.up();
   await expect.poll(async () => (await setStatus(page)).length).toBe(1);
-  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.doing, after: `${lab}#3` });
+  expect((await setStatus(page))[0]).toEqual({ floor: 'lab', id: `${lab}#5`, column: COL.doing, after: `${lab}#3` });
   // At once, and no card opened for the release.
   expect((await keysOf(page)).Doing).toEqual(['#3', '#5', '#4']);
   expect((await keysOf(page)).Todo).toEqual(['#7', '#6']);
@@ -531,7 +531,7 @@ test('#52 drag to the end of a column and into an empty one', async ({ page }) =
   expect(await lineAt(page, COL.done)).toBeGreaterThan(one.y + one.height);
   await page.mouse.up();
   await expect.poll(async () => (await setStatus(page)).length).toBe(1);
-  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#8`, column: COL.done, after: `${lab}#1` });
+  expect((await setStatus(page))[0]).toEqual({ floor: 'lab', id: `${lab}#8`, column: COL.done, after: `${lab}#1` });
   expect(await keysOf(page)).toMatchObject({ QA: [], Done: ['#2', '#1', '#8'] });
   await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.ok).toBe(true);
   // QA is empty now: #6 into it, at the top (after: null).
@@ -542,7 +542,7 @@ test('#52 drag to the end of a column and into an empty one', async ({ page }) =
   await expect(colEl(page, COL.qa)).toHaveAttribute('data-over', 'true');
   await page.mouse.up();
   await expect.poll(async () => (await setStatus(page)).length).toBe(2);
-  expect((await setStatus(page))[1]).toEqual({ session: 'lab', id: `${lab}#6`, column: COL.qa, after: null });
+  expect((await setStatus(page))[1]).toEqual({ floor: 'lab', id: `${lab}#6`, column: COL.qa, after: null });
   await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[1]?.result?.ok).toBe(true);
   await page.evaluate(() => window.__h3d.simBoards({ poll: true }));
   await frames(page, 10);
@@ -595,7 +595,7 @@ test('#52 Esc, a drop outside the columns or on its own place cancel: nothing se
   await act(page, 'move-to').selectOption({ label: 'QA' });
   await act(page, 'move').click();
   await expect.poll(async () => (await setStatus(page)).length).toBe(1);
-  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.qa });
+  expect((await setStatus(page))[0]).toEqual({ floor: 'lab', id: `${lab}#5`, column: COL.qa });
   clean();
 });
 
@@ -666,7 +666,7 @@ test('#52 a board polled before the write never makes the card jump back; no pro
   await lineAt(page, COL.doing);
   await page.mouse.up();
   await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.ok).toBe(true);
-  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.doing, after: null });
+  expect((await setStatus(page))[0]).toEqual({ floor: 'lab', id: `${lab}#5`, column: COL.doing, after: null });
   await page.evaluate((m) => window.__h3d.injectBoard({ ...(m as object), initial: false, fetched_at: Date.now() } as never), old);
   await frames(page, 4);
   expect((await keysOf(page)).Doing).toEqual(['#5', '#3', '#4']);
@@ -710,7 +710,7 @@ test('#52 far columns: the board scrolls sideways near its edge to reach Done', 
   await lineAt(page, COL.done);
   await page.mouse.up();
   await expect.poll(async () => (await setStatus(page)).length).toBe(1);
-  expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.done, after: null });
+  expect((await setStatus(page))[0]).toEqual({ floor: 'lab', id: `${lab}#5`, column: COL.done, after: null });
   clean();
 });
 
@@ -788,7 +788,7 @@ test.describe('#52 touch', () => {
     expect(await body.evaluate((e) => e.scrollTop)).toBe(0);
     await touch('touchEnd');
     await expect.poll(async () => (await setStatus(page)).length).toBe(1);
-    expect((await setStatus(page))[0]).toEqual({ session: 'lab', id: `${lab}#5`, column: COL.doing, after: `${lab}#3` });
+    expect((await setStatus(page))[0]).toEqual({ floor: 'lab', id: `${lab}#5`, column: COL.doing, after: `${lab}#3` });
     expect((await board(page))?.item ?? null).toBeNull();
     // The browser takes the finger back (pointercancel): the drag ends, nothing is sent and nothing opens; a tap still opens.
     await expect.poll(async () => (await sentOf(page, 'issue.set_status'))[0]?.result?.ok).toBe(true);

@@ -63,7 +63,7 @@ describe('SimWorld buildings', () => {
     // Deleting Work sends its floors to the lot and shifts the later buildings up.
     const d = r.cmd('building.delete', { id: W }).got();
     expect(d.map((m) => m.t)).toEqual(['floor.upsert', 'floor.upsert', 'building.upsert', 'building.upsert', 'building.removed', 'ack']);
-    expect(r.store.stack(null).map((f) => f.session)).toEqual(['depot-manager', 'herdr-3d']);
+    expect(r.store.stack(null).map((f) => f.id)).toEqual(['depot-manager', 'herdr-3d']);
     expect(r.store.city().map((b) => b.building?.name ?? 'lot')).toEqual(['Personal', 'Studio', 'lot']);
   });
 
@@ -77,17 +77,17 @@ describe('SimWorld buildings', () => {
   it('assigns floors: into a building at an index, out to the lot, unknown sessions refused', () => {
     const r = rig();
     r.cmd('floor.assign', { session: 'pastry', building: W, index: 0 });
-    expect(r.store.stack(W).map((f) => f.session)).toEqual(['pastry', 'herdr-3d', 'depot-manager']);
+    expect(r.store.stack(W).map((f) => f.id)).toEqual(['pastry', 'herdr-3d', 'depot-manager']);
     expect(r.store.stack(P)).toEqual([]);
     r.cmd('floor.assign', { session: 'pastry', building: W, index: 2 });
-    expect(r.store.stack(W).map((f) => [f.session, f.floor.index])).toEqual([
+    expect(r.store.stack(W).map((f) => [f.id, f.floor.index])).toEqual([
       ['herdr-3d', 0],
       ['depot-manager', 1],
       ['pastry', 2],
     ]);
     r.cmd('floor.assign', { session: 'herdr-3d', building: null });
-    expect(r.store.stack(null).map((f) => f.session)).toEqual(['herdr-3d']);
-    expect(r.store.stack(W).map((f) => [f.session, f.floor.index])).toEqual([
+    expect(r.store.stack(null).map((f) => f.id)).toEqual(['herdr-3d']);
+    expect(r.store.stack(W).map((f) => [f.id, f.floor.index])).toEqual([
       ['depot-manager', 0],
       ['pastry', 1],
     ]);
@@ -115,10 +115,10 @@ describe('SimWorld buildings', () => {
     // (the busy refusal of the second create sits in between)
     expect(c.got().filter((m) => m.req_id === c.req_id || m.t === 'floor.upsert').map((m) => m.t)).toEqual(['floor.upsert', 'ack']);
     expect(r.reply(c.req_id)).toEqual({ t: 'ack', req_id: c.req_id, data: { session: 'billing-api' } });
-    expect(r.store.stack(null).map((f) => f.session)).toContain('billing-api');
+    expect(r.store.stack(null).map((f) => f.id)).toContain('billing-api');
     expect(r.cmd('session.create', { name: 'billing-api' }).got()[0]).toMatchObject({ code: 'name_taken' });
     r.cmd('floor.assign', { session: 'billing-api', building: W });
-    expect(r.store.stack(W).map((f) => f.session)).toContain('billing-api');
+    expect(r.store.stack(W).map((f) => f.id)).toContain('billing-api');
   });
 
   it('#58: session.create fails once with simfail=session_create_failed, and is unknown with no_sessions', () => {
@@ -475,5 +475,88 @@ describe('SimWorld hire and send home (M4)', () => {
 
   it('reads caps from the query', () => {
     expect(parseCaps('scratchpad:3:4,pastry:10:12,bad:5:1,x')).toEqual({ scratchpad: { soft: 3, hard: 4 }, pastry: { soft: 10, hard: 12 } });
+  });
+});
+
+describe('SimWorld: virtual floors (#58)', () => {
+  const FRONT = 'v-00000000f0e1';
+  const DOCS = 'v-00000000f0e2';
+  const ARCHIVE = 'v-00000000f0e3';
+
+  it('sends the floor ids, names and flags, and each worker’s floor, in the snapshot', () => {
+    const r = rig('demo-h58');
+    const snap = r.sim.snapshot() as { world: { floors: Array<Record<string, unknown>>; workers: Array<Record<string, unknown>> } };
+    expect(snap.world.floors.find((f) => f.id === FRONT)).toMatchObject({ name: 'Frontend', session: 'herdr-3d', base_session: 'herdr-3d', virtual: true, hidden: false });
+    expect(snap.world.floors.find((f) => f.id === 'pastry')).toMatchObject({ name: 'pastry', session: 'pastry', virtual: false, hidden: false });
+    expect(snap.world.workers.filter((w) => w.floor === FRONT).map((w) => w.session)).toEqual(['herdr-3d', 'herdr-3d']);
+    expect(r.store.stack(W).map((f) => f.name)).toEqual(['herdr-3d', 'Frontend', 'depot-manager', 'Depot docs', 'pastry']);
+    expect(r.store.floorView(FRONT)?.workers.map((w) => w.desk)).toEqual([0, 1]);
+  });
+
+  it('hires on a virtual floor: the workspace is its session’s, the worker its floor’s', () => {
+    const r = rig('demo-h58');
+    const before = r.store.floorView('herdr-3d')?.workers.length;
+    const c = r.cmd('worker.hire', { floor: FRONT, desk_index: 3, harness: 'claude', model: 'claude-opus-5-5', effort: 'high' });
+    r.settle();
+    const up = c.got().find((m) => m.t === 'worker.upsert') as { worker: { floor: string; session: string; desk_index: number } };
+    expect(up.worker).toMatchObject({ floor: FRONT, session: 'herdr-3d', desk_index: 3 });
+    expect(r.reply(c.req_id)).toMatchObject({ t: 'ack' });
+    expect(r.store.floorView(FRONT)?.workers.map((w) => w.desk)).toEqual([0, 1, 3]);
+    expect(r.store.floorView('herdr-3d')?.workers.length).toBe(before);
+  });
+
+  it('wakes and puts to sleep a whole session from any of its floors', () => {
+    const r = rig('demo-h58');
+    const w = r.cmd('floor.wake', { floor: DOCS });
+    r.settle();
+    expect(r.reply(w.req_id)).toMatchObject({ t: 'ack' });
+    expect([r.store.floors.get('depot-manager')?.state, r.store.floors.get(DOCS)?.state]).toEqual(['running', 'running']);
+    const s = r.cmd('floor.sleep', { floor: FRONT });
+    r.settle();
+    expect(r.reply(s.req_id)).toMatchObject({ t: 'ack' });
+    expect([r.store.floors.get('herdr-3d')?.state, r.store.floors.get(FRONT)?.state]).toEqual(['asleep', 'asleep']);
+    expect(r.store.workerView(r.store.floorView(FRONT)?.workers[0]?.worker.id ?? '')?.display).toBe('asleep');
+  });
+
+  it('creates, renames, hides and deletes virtual floors; a virtual floor stays in its base’s building', () => {
+    const r = rig('demo-h58');
+    const c = r.cmd('floor.create', { name: ' Docs site ', base_session: 'pastry' });
+    const id = ((r.reply(c.req_id) as { data: { id: string } }).data).id;
+    expect(r.store.floorView(id)).toMatchObject({ name: 'Docs site', baseSession: 'pastry', virtual: true, building: { id: W } });
+    expect(r.store.stack(W).at(-1)?.id).toBe(id);
+    r.cmd('floor.rename', { floor: id, name: 'Docs' });
+    expect(r.store.floorName(id)).toBe('Docs');
+    expect(r.cmd('floor.rename', { floor: 'pastry', name: 'x' }).got()[0]).toMatchObject({ t: 'error', code: 'bad_request' });
+    expect(r.cmd('floor.assign', { floor: id, building: P }).got()[0]).toMatchObject({ t: 'error', code: 'bad_request' });
+    expect(r.cmd('floor.assign', { floor: id, building: null }).got()[0]).toMatchObject({ t: 'error', code: 'bad_request' });
+    r.cmd('floor.assign', { floor: id, building: W, index: 0 });
+    expect(r.store.stack(W)[0]?.id).toBe(id);
+    r.cmd('floor.hide', { floor: id, hidden: true });
+    expect(r.store.stack(W).some((f) => f.id === id)).toBe(false);
+    expect(r.store.floors.get(ARCHIVE)?.hidden).toBe(true);
+    r.cmd('floor.delete', { floor: id });
+    expect(r.store.floors.has(id)).toBe(false);
+  });
+
+  it('refuses to delete a virtual floor with workers, unless they move to the real floor', () => {
+    const r = rig('demo-h58');
+    expect(r.cmd('floor.delete', { floor: FRONT }).got()[0]).toMatchObject({ t: 'error', code: 'invalid_state', message: expect.stringContaining('has 2 workers') });
+    const ids = r.store.floorView(FRONT)?.workers.map((w) => w.worker.id) ?? [];
+    r.cmd('floor.delete', { floor: FRONT, move_workers: true });
+    expect(r.store.floors.has(FRONT)).toBe(false);
+    expect(ids.every((id) => r.store.workers.get(id)?.floor === 'herdr-3d')).toBe(true);
+  });
+
+  it('moves a real floor with its virtual floors, right after it', () => {
+    const r = rig('demo-h58');
+    r.cmd('floor.assign', { floor: 'herdr-3d', building: P });
+    expect(r.store.stack(P).map((f) => f.id)).toEqual(['herdr-3d', FRONT]);
+    expect(r.store.stack(W).map((f) => f.id)).toEqual(['depot-manager', DOCS, 'pastry']);
+  });
+
+  it('reads an older client’s session arg as that session’s real floor', () => {
+    const r = rig('demo-h58');
+    const c = r.cmd('hire.prepare', { session: 'herdr-3d' });
+    expect(r.reply(c.req_id)).toMatchObject({ t: 'ack' });
   });
 });

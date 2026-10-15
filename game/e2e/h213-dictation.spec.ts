@@ -39,7 +39,7 @@ test('each of the five phrases, filled or pasted: the populated review first, th
       await page.locator('.desk-dlg--review [data-key="hire"]').click();
       await expect.poll(async () => (await hires(page)).length).toBe(i + 1);
       const sent = (await hires(page))[i] as { args: Record<string, unknown> };
-      expect(sent.args).toMatchObject({ session: c.floor, harness: c.tuple[0], model: c.tuple[1], effort: c.tuple[2], prompt: c.task });
+      expect(sent.args).toMatchObject({ floor: c.floor, harness: c.tuple[0], model: c.tuple[1], effort: c.tuple[2], prompt: c.task });
       // The hire lands and the review goes.
       await expect.poll(() => review(page), { timeout: 30_000 }).toBeNull();
     }
@@ -271,10 +271,10 @@ test('no floor in context asks which; an asleep floor is refused with the hireâ€
     await dictate(page, 'Hire an agent on Sonnet 5.5 with high effort. Task: fix the login bug.');
     await expect.poll(() => page.evaluate(() => window.__h3d.dictation()?.state)).toBe('floor');
     await expect(bar(page).locator('.dict-question')).toHaveText('Hire on which floor?');
-    const floors = (await page.evaluate(() => window.__h3d.dictation()))?.floors.map((f) => f.session) ?? [];
+    const floors = (await page.evaluate(() => window.__h3d.dictation()))?.floors.map((f) => f.floor) ?? [];
     expect(floors).toEqual(expect.arrayContaining(['pastry', 'depot-manager', 'herdr-3d', 'scratchpad']));
     // Keyboard: â†“ to the asleep floor, Enter: refused, the text and the list stay.
-    const active = async () => (await page.evaluate(() => window.__h3d.dictation()))?.floors.find((f) => f.active)?.session;
+    const active = async () => (await page.evaluate(() => window.__h3d.dictation()))?.floors.find((f) => f.active)?.floor;
     for (let i = 0; i < floors.length && (await active()) !== 'depot-manager'; i++) await field(page).press('ArrowDown');
     expect(await active()).toBe('depot-manager');
     await field(page).press('Enter');
@@ -282,7 +282,7 @@ test('no floor in context asks which; an asleep floor is refused with the hireâ€
     expect(await page.evaluate(() => window.__h3d.dictation()?.state)).toBe('floor');
     expect(await sentOf(page, 'hire.prepare')).toHaveLength(0);
     // A floor that can take the hire: the bar goes, the elevator takes you there, and the review opens at its first free desk.
-    await bar(page).locator('[data-session="pastry"]').click();
+    await bar(page).locator('[data-floor="pastry"]').click();
     await expect(bar(page)).toBeHidden();
     const r = await reviewReady(page, 'pastry');
     expect(await page.evaluate(() => window.__h3d.pose()?.floor)).toBe('pastry');

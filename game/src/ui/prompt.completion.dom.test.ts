@@ -31,7 +31,7 @@ function setup() {
   const catalogs = new CommandCatalogs({ send: (t, args) => send(t, args as Record<string, unknown>) });
   const view = (id: string) => ({ name: id, desk: 0, harness: id === 'S' ? undefined : 'claude', display: 'idle', worker: { id, session: 's', agent_kind: 'claude', status: 'idle' } });
   const host = {
-    store: { workerView: view, floorView: () => ({ asleep: false }), workers: new Map([['A', {}], ['S', {}]]), repoRefs: { state: null, onChange: () => () => {} } },
+    store: { floorName: (id: string) => id, workerView: view, floorView: () => ({ asleep: false }), workers: new Map([['A', {}], ['S', {}]]), repoRefs: { state: null, onChange: () => () => {} } },
     unsupported: () => false,
     toast: () => {},
     upload: () => Promise.resolve({ ok: true, data: { path: '/drops/image.png' } }),

@@ -111,7 +111,7 @@ async function reportRequest(page: Page, long: boolean): Promise<string> {
   const id = (hire.data as { id: string }).id;
   await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
   await page.evaluate((t) => window.__h3d.simCrew({ step: 'report', summary: 'Implemented; head 3f9c2e1.', input_required: t, input_for: 'orchestrator' }), text);
-  await expect.poll(() => page.evaluate(() => window.__h3d.needs().some((n) => n.session === 'lab' && n.desk === 13 && n.reason === 'blocked')), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__h3d.needs().some((n) => n.floor === 'lab' && n.desk === 13 && n.reason === 'blocked')), { timeout: 10_000 }).toBe(true);
   return id;
 }
 
@@ -421,7 +421,7 @@ export const SURFACES: Surface[] = [
     fixture: 'demo-m4',
     open: async (page) => {
       await onFloor(page);
-      await page.evaluate(() => window.__h3d.openStartRun({ session: 'herdr-3d', desk: 5 }));
+      await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
       await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
     },
     root: 'dialog.desk-dlg--run',

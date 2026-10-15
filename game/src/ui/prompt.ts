@@ -107,7 +107,7 @@ export class PromptOverlay {
       const host = this.host;
       const l = this.lookupFor as { id: string; harness: string | undefined };
       return workerSources(
-        { send: host.send.bind(host), catalogs: host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) })), repoRefs: host.store.repoRefs, repoDiscovery: host.store.repoDiscovery },
+        { send: host.send.bind(host), catalogs: host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) })), repoRefs: host.store.repoRefs, repoDiscovery: host.store.repoDiscovery, floorName: (id) => host.store.floorName(id) },
         l.id,
         l.harness,
       );
@@ -267,7 +267,7 @@ export class PromptOverlay {
 
   private blocker(): string | null {
     const v = this.host.store.workerView(this.id);
-    const f = v ? this.host.store.floorView(v.worker.session) : null;
+    const f = v ? this.host.store.floorView(v.worker.floor) : null;
     return promptBlocker(v, f, this.host.unsupported('worker.prompt'));
   }
 
@@ -304,8 +304,8 @@ export class PromptOverlay {
     this.lookups.check();
     const v = this.host.store.workerView(this.id);
     if (!v) return;
-    const f = this.host.store.floorView(v.worker.session);
-    const sub = [`Desk ${v.desk + 1}`, v.worker.session, modelText(v.harness, v.worker.model, v.worker.effort, this.host.store.hireOptions) || null].filter(Boolean).join(' · ');
+    const f = this.host.store.floorView(v.worker.floor);
+    const sub = [`Desk ${v.desk + 1}`, this.host.store.floorName(v.worker.floor), modelText(v.harness, v.worker.model, v.worker.effort, this.host.store.hireOptions) || null].filter(Boolean).join(' · ');
     const key = JSON.stringify([v.name, sub, v.display]);
     if (key !== this.headKey) {
       this.headKey = key;

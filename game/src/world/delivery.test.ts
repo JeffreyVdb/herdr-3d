@@ -3,7 +3,7 @@ import type { Worker } from '../net/protocol';
 import { crewView } from './crew';
 import { DeliveryBook, deliveryKey, reportArrived, reportFact, TRAY_CAP, type ReportFact } from './delivery';
 
-const fact = (id: string, at: number, orch = 'o1', extra: Partial<ReportFact> = {}): ReportFact => ({ id, session: 's', desk: 1, orch, at, tone: null, ...extra });
+const fact = (id: string, at: number, orch = 'o1', extra: Partial<ReportFact> = {}): ReportFact => ({ id, floor: 's', desk: 1, orch, at, tone: null, ...extra });
 
 describe('reportArrived', () => {
   it('pending → ready, or a new ready report, is an arrival; the same one again is not', () => {
@@ -17,10 +17,10 @@ describe('reportArrived', () => {
 });
 
 describe('reportFact', () => {
-  const w = (report: Worker['report'], extra: Partial<Worker> = {}): Worker => ({ id: 'f1', session: 's', workspace_id: 'w', label: 'REVIEW|x|1|r1', status: 'done', role: 'review', orch_id: 'o1', report, ...extra }) as Worker;
-  const view = (worker: Worker) => ({ worker, desk: 3, crew: crewView(worker, true) });
+  const w = (report: Worker['report'], extra: Partial<Worker> = {}): Worker & { floor: string } => ({ id: 'f1', session: 's', floor: 's', workspace_id: 'w', label: 'REVIEW|x|1|r1', status: 'done', role: 'review', orch_id: 'o1', report, ...extra }) as Worker & { floor: string };
+  const view = (worker: Worker & { floor: string }) => ({ worker, desk: 3, crew: crewView(worker, true) });
   it('a ready report of a freelancer to its orchestrator, with the verdict’s tone', () => {
-    expect(reportFact(view(w({ state: 'ready', at: 7, verdict: 'CHANGES_REQUIRED', blockers: 2 })))).toEqual({ id: 'f1', session: 's', desk: 3, orch: 'o1', at: 7, tone: 'changes' });
+    expect(reportFact(view(w({ state: 'ready', at: 7, verdict: 'CHANGES_REQUIRED', blockers: 2 })))).toEqual({ id: 'f1', floor: 's', desk: 3, orch: 'o1', at: 7, tone: 'changes' });
     expect(reportFact(view(w({ state: 'ready', at: 7, summary: 'done' })))?.tone).toBeNull();
   });
   it('none for a pending one, one that asks (it stays at the desk), no orchestrator, or an orchestrator itself', () => {
@@ -85,7 +85,7 @@ describe('DeliveryBook', () => {
     b.add(fact('f1', 10), true);
     b.add(fact('f2', 11), true);
     b.next('o1');
-    b.add(fact('f3', 12, 'o2', { session: 'other' }), true);
+    b.add(fact('f3', 12, 'o2', { floor: 'other' }), true);
     expect(b.resolve('s').map((e) => e.id).sort()).toEqual(['f1', 'f2']);
     expect(b.tray('o1')).toHaveLength(2);
     expect(b.pending()).toHaveLength(1);
@@ -156,17 +156,17 @@ describe('DeliveryBook', () => {
     const b = new DeliveryBook();
     b.add(fact('f1', 10), true);
     b.add(fact('f2', 11, 'o2'), true);
-    b.add(fact('f3', 12, 'o3', { session: 'other' }), true);
-    const busy = b.activeSessions();
+    b.add(fact('f3', 12, 'o3', { floor: 'other' }), true);
+    const busy = b.activeFloors();
     expect([...busy]).toEqual([]);
     expect(b.next('o1', busy)?.id).toBe('f1');
     busy.add('s');
     expect(b.next('o2', busy)).toBeNull();
     expect(b.next('o3', busy)?.id).toBe('f3');
-    expect(b.activeSessions()).toEqual(new Set(['s', 'other']));
+    expect(b.activeFloors()).toEqual(new Set(['s', 'other']));
     // When the first has landed, the second goes; it was never lost.
     b.land(deliveryKey('f1', 10));
-    expect(b.next('o2', b.activeSessions())?.id).toBe('f2');
+    expect(b.next('o2', b.activeFloors())?.id).toBe('f2');
   });
 
   it('a reconnect snapshot with the report pending, then ready again with the same time: it does not play again, its folder is back on the tray', () => {

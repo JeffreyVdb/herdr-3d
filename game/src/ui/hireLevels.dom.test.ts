@@ -32,7 +32,8 @@ function setup(o: { git?: HireGit | null; worktreeByDefault?: boolean } = {}) {
   const prefs = new HireModelPrefs(memory());
   let n = 0;
   const levels = new TaskLevels(memory(), () => `id-${++n}`);
-  const store = { hireOptions: CAT, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null };
+  const store = {
+    floorName: (id: string) => id, hireOptions: CAT, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null };
   const showTaskLevelSettings = vi.fn();
   const sent: Array<{ t: string; args: unknown }> = [];
   const send = vi.fn(async (t: string, args: unknown) => {

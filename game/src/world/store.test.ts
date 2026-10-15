@@ -95,7 +95,7 @@ describe('WorldStore snapshot', () => {
     const s = new WorldStore();
     s.applySnapshot(snap());
     const city = s.city();
-    expect(city.map((b) => [b.building?.name ?? 'lot', b.floors.map((f) => f.session)])).toEqual([
+    expect(city.map((b) => [b.building?.name ?? 'lot', b.floors.map((f) => f.id)])).toEqual([
       ['Work', ['bottom', 'top']],
       ['lot', ['lot']],
     ]);
@@ -201,7 +201,7 @@ describe('WorldStore events', () => {
     const s = base();
     const c = s.applyEvent({ t: 'worker.upsert', seq: 11, worker: worker('b', 'bottom', { name: 'Pixel' }) });
     expect(c.structure).toBe(true);
-    expect([...c.sessions].sort()).toEqual(['bottom', 'top']);
+    expect([...c.floors].sort()).toEqual(['bottom', 'top']);
     expect(s.floorView('top')?.workers.map((w) => w.name)).toEqual(['Nibble']);
     expect(s.floorView('bottom')?.workers.map((w) => w.name)).toEqual(['Pixel']);
   });
@@ -346,8 +346,8 @@ describe('WorldStore M3 fields', () => {
   it('lists a building’s floors top to bottom, and the lot by name', () => {
     const s = new WorldStore();
     s.applySnapshot(snap({ floors: [floor('top'), floor('bottom', { index: 1 }), floor('lot', { building: null, index: null }), floor('alpha', { building: null, index: null })] }));
-    expect(s.stack('b1').map((f) => f.session)).toEqual(['top', 'bottom']);
-    expect(s.stack(null).map((f) => f.session)).toEqual(['alpha', 'lot']);
+    expect(s.stack('b1').map((f) => f.id)).toEqual(['top', 'bottom']);
+    expect(s.stack(null).map((f) => f.id)).toEqual(['alpha', 'lot']);
     expect(s.stack('nope')).toEqual([]);
   });
 });

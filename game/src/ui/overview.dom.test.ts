@@ -44,6 +44,7 @@ function setup(workers: Worker[] = CREW, over: Partial<OverviewHost> = {}) {
     hire: vi.fn(),
     calm: () => false,
     screenRect: () => null,
+    floorName: (f) => f,
     closed: vi.fn(),
     now: () => NOW,
     ...over,

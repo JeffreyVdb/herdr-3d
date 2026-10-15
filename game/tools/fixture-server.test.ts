@@ -87,7 +87,7 @@ describe('demo fixture', () => {
   it('demo-m3 adds the M3 fields and a floor in the unassigned lot', () => {
     const store = new WorldStore(0);
     store.applySnapshot(loadFixture('demo-m3').snapshot as unknown as Snapshot);
-    expect(store.stack(null).map((f) => [f.session, f.counts.total])).toEqual([['scratchpad', 3]]);
+    expect(store.stack(null).map((f) => [f.id, f.counts.total])).toEqual([['scratchpad', 3]]);
     expect(store.floorView('herdr-3d')).toMatchObject({ settings: {}, suggested: { repo: 'JeffreyVdb/herdr-3d' } });
     expect(store.floorView('depot-manager')?.settings.repo).toBe('fomra/depot-manager');
     expect(store.hireOptions.codex?.extra_efforts).toEqual({ 'gpt-6-sol': ['ultra'], 'gpt-6-astra': ['ultra'] });
@@ -119,17 +119,19 @@ describe('every fixture', () => {
   it.each(names)('%s: every building lists its floors in index order, and the sim builds the same one', (name) => {
     const { snapshot, events } = loadFixture(name);
     const w = (snapshot as unknown as Snapshot).world;
-    const floors = new Map<string, Floor>(w.floors.map((f) => [f.session, f]));
+    // #58: keyed by floor id (an older fixture's floors by their session).
+    const idOf = (f: Floor) => f.id ?? f.session;
+    const floors = new Map<string, Floor>(w.floors.map((f) => [idOf(f), f]));
     const buildings = new Map<string, Building>(w.buildings.map((b) => [b.id, b]));
     const check = (when: string) => {
       for (const b of buildings.values()) {
         const mine = [...floors.values()].filter((f) => f.building === b.id).sort((x, y) => (x.index ?? 0) - (y.index ?? 0));
-        expect(b.floors, `${name} ${when}: ${b.name}'s floors vs their index`).toEqual(mine.map((f) => f.session));
+        expect(b.floors, `${name} ${when}: ${b.name}'s floors vs their index`).toEqual(mine.map(idOf));
         expect(new Set(mine.map((f) => f.index)).size, `${name} ${when}: two floors of ${b.name} at one index`).toBe(mine.length);
       }
     };
     check('snapshot');
-    expect(w.floors.map((f) => f.session), `${name}: world.floors follows the buildings, then the lot`).toEqual([
+    expect(w.floors.map(idOf), `${name}: world.floors follows the buildings, then the lot`).toEqual([
       ...w.buildings.flatMap((b) => b.floors),
       ...w.unassigned,
     ]);
@@ -137,11 +139,11 @@ describe('every fixture', () => {
     const levels = (snap: unknown) => {
       const store = new WorldStore(0);
       store.applySnapshot(snap as Snapshot);
-      return w.floors.map((f) => [f.session, store.level(f.session)]);
+      return w.floors.map((f) => [idOf(f), store.level(idOf(f))]);
     };
     expect(levels(new SimWorld(snapshot as never).snapshot()), `${name}: floor numbers with sim=1`).toEqual(levels(snapshot));
     for (const e of events as unknown as WorldEvent[]) {
-      if (e.t === 'floor.upsert') floors.set(e.floor.session, e.floor);
+      if (e.t === 'floor.upsert') floors.set(idOf(e.floor), e.floor);
       if (e.t === 'building.upsert') buildings.set(e.building.id, e.building);
     }
     check('after its events');

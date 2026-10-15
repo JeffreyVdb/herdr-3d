@@ -38,7 +38,7 @@ export const LINE_KINDS: readonly LineKind[] = [
 export interface ReceptionContext {
   now: Date; // the browser's local clock (the Mac's)
   building: { id: string | null; name: string };
-  floors: Array<{ session: string; name: string; state: 'running' | 'asleep'; needsYou: number }>;
+  floors: Array<{ id: string; name: string; state: 'running' | 'asleep'; needsYou: number }>;
 }
 
 export interface Said {

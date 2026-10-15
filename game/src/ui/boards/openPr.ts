@@ -14,7 +14,8 @@ import { backdropPolicy } from '../dismiss';
 
 export interface OpenPrHost extends DialogHost {
   /** What the provider is called (`GitHub`) on this floor. */
-  providerName(session: string): string;
+  /** #58: of floor `floor` (an id). */
+  providerName(floor: string): string;
   external(url: string): void;
 }
 
@@ -49,7 +50,7 @@ export class OpenPrDialog {
   private readonly foot = h('footer', { class: 'dd-foot' }, this.statusEl, this.alertEl, this.actions);
   private worker = '';
   private name = '';
-  private session = '';
+  private floor = '';
   private state: OpenPrState = 'preparing';
   private prep: OpenPrPrepare | null = null;
   private title = '';
@@ -113,7 +114,7 @@ export class OpenPrDialog {
     }
     this.worker = workerId;
     this.name = v.name;
-    this.session = v.worker.session;
+    this.floor = v.worker.floor;
     this.state = 'preparing';
     this.prep = null;
     this.result = null;
@@ -136,7 +137,7 @@ export class OpenPrDialog {
     const r = await this.host.send('worker.open_pr.prepare', { id: this.worker });
     if (gen !== this.gen || !this.dialog.open) return;
     if (!r.ok) {
-      this.fail(failureText('worker.open_pr.prepare', r.code, r.message, { worker: this.name, provider: this.host.providerName(this.session) }));
+      this.fail(failureText('worker.open_pr.prepare', r.code, r.message, { worker: this.name, provider: this.host.providerName(this.floor) }));
       return;
     }
     const p = r.data as OpenPrPrepare;
@@ -180,7 +181,7 @@ export class OpenPrDialog {
   }
 
   private render(): void {
-    const name = this.host.providerName(this.session);
+    const name = this.host.providerName(this.floor);
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--board', 'aria-hidden': 'true' }, icon(PR)),
       h('div', { class: 'dd-titles' }, h('h2', { id: 'openpr-title' }, `Open a pull request for ${this.name}`), h('p', { id: 'openpr-sub' }, this.prep?.branch ? `${this.prep.branch} → ${this.prep.base ?? '…'} on ${name}` : `On ${name}`)),
@@ -211,8 +212,8 @@ export class OpenPrDialog {
     const p = this.prep;
     const blocker = this.blocker();
     const nodes: HTMLElement[] = [h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, this.state === 'done' ? 'Close' : 'Cancel')];
-    if (this.state === 'done' && this.result?.url) nodes.push(h('button', { class: 'btn', 'data-key': 'open-result', onclick: () => this.host.external(this.result?.url as string) }, `Open ${this.result.key} in ${this.host.providerName(this.session)}`));
-    else if (p?.existing?.url) nodes.push(h('button', { class: 'btn btn--primary', 'data-key': 'open-existing', onclick: () => this.host.external(p.existing?.url as string) }, `Open ${p.existing.key} in ${this.host.providerName(this.session)}`));
+    if (this.state === 'done' && this.result?.url) nodes.push(h('button', { class: 'btn', 'data-key': 'open-result', onclick: () => this.host.external(this.result?.url as string) }, `Open ${this.result.key} in ${this.host.providerName(this.floor)}`));
+    else if (p?.existing?.url) nodes.push(h('button', { class: 'btn btn--primary', 'data-key': 'open-existing', onclick: () => this.host.external(p.existing?.url as string) }, `Open ${p.existing.key} in ${this.host.providerName(this.floor)}`));
     if (this.state !== 'done' && !p?.existing) {
       nodes.push(
         h('button', { class: 'btn btn--primary', 'data-key': 'confirm', 'aria-disabled': blocker ? 'true' : null, 'aria-busy': this.state === 'opening' ? 'true' : null, title: blocker ?? 'Push the branch and open the pull request (Ctrl+Enter)', onclick: () => void this.confirm() }, this.state === 'opening' ? 'Opening…' : 'Push and open PR'),
@@ -239,7 +240,7 @@ export class OpenPrDialog {
     }
     if (!r.ok) {
       this.state = 'ready';
-      this.setStatus(failureText('worker.open_pr', r.code, r.message, { worker: this.name, provider: this.host.providerName(this.session) }), true);
+      this.setStatus(failureText('worker.open_pr', r.code, r.message, { worker: this.name, provider: this.host.providerName(this.floor) }), true);
       this.render();
       return;
     }

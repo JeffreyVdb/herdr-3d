@@ -4,11 +4,11 @@ import { promptBlocker, promptTextError, willQueue } from './prompt';
 import type { FloorView, WorkerView } from './store';
 
 const view = (over: Partial<Worker> = {}, display: WorkerView['display'] = 'idle', shell = false): WorkerView => {
-  const worker: Worker = { id: 'w1', session: 'herdr-3d', workspace_id: 'w1', label: 'x', status: 'idle', agent_kind: 'claude', ...over };
+  const worker: Worker & { floor: string } = { id: 'w1', session: 'herdr-3d', floor: 'herdr-3d', workspace_id: 'w1', label: 'x', status: 'idle', agent_kind: 'claude', ...over };
   if (shell) delete worker.agent_kind;
   return { worker, name: 'Nibble', desk: 0, harness: shell ? undefined : 'claude', since: 0, display };
 };
-const floor = (over: Partial<FloorView> = {}) => ({ asleep: false, transition: null, ...over }) as FloorView;
+const floor = (over: Partial<FloorView> = {}) => ({ name: 'herdr-3d', asleep: false, transition: null, ...over }) as FloorView;
 
 describe('promptBlocker', () => {
   it('lets an agent on an awake floor be prompted', () => {

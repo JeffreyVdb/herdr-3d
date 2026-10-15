@@ -104,7 +104,7 @@ test('H, I, G, Shift+R and Shift+N each open their thing without aiming, and the
   }
   await page.keyboard.press('h');
   await expect.poll(async () => (await dialog(page))?.kind === 'hire' && (await dialog(page))?.state, { timeout: 10_000 }).toBe('ready');
-  expect(await dialog(page)).toMatchObject({ kind: 'hire', session: 'herdr-3d', desk: free });
+  expect(await dialog(page)).toMatchObject({ kind: 'hire', floor: 'herdr-3d', desk: free });
   await page.keyboard.press('Escape');
   await expect.poll(() => dialog(page)).toBeNull();
   await expect(page.locator('dialog[open]')).toHaveCount(0);
@@ -127,7 +127,7 @@ test('H, I, G, Shift+R and Shift+N each open their thing without aiming, and the
   expect(await dialog(page)).toBeNull();
   await page.keyboard.press('Shift+R');
   await expect.poll(async () => (await dialog(page))?.kind).toBe('start-run');
-  expect(await dialog(page)).toMatchObject({ session: 'herdr-3d', desk: free });
+  expect(await dialog(page)).toMatchObject({ floor: 'herdr-3d', desk: free });
   await page.keyboard.press('Escape');
   await expect.poll(() => dialog(page)).toBeNull();
   await expect(page.locator('dialog[open]')).toHaveCount(0);

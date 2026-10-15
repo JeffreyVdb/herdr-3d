@@ -322,6 +322,7 @@ export class Laptops {
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
       repoRefs: host.store.repoRefs, // #247
       repoDiscovery: host.store.repoDiscovery, // #54
+      floorName: (id: string) => host.store.floorName(id), // #58
       ...(host.catalogs ? { catalogs: host.catalogs } : {}), // #39
       modeChanged: (mode) => this.onMode(mode),
       ...(host.themes ? { prefs: host.themes.prefs } : {}),
@@ -640,7 +641,7 @@ export class Laptops {
   whyNot(id: string, office: OfficeView | null): string | null {
     if (this.watches.disabled || this.host.unsupported('terminal.watch')) return failureText('terminal.watch', 'unknown_command', '');
     const v = this.host.store.workerView(id);
-    if (!v || !office || office.session !== v.worker.session) return 'Walk up to its desk first.';
+    if (!v || !office || office.id !== v.worker.floor) return 'Walk up to its desk first.';
     if (office.isAsleep) return 'This floor is asleep: wake it from the elevator (L) to use its laptops.';
     if (!v.worker.pane_id) return `${v.name} has no terminal to sit at.`;
     if (office.awayDesks().has(v.desk)) return `${v.name} is not at the desk right now.`;
@@ -958,7 +959,7 @@ export class Laptops {
     if (office === this.attached) return;
     // A floor's screens are its own: the old floor's watches go, and a seat there ends. #187: not when the floor is
     // the same one in a new OfficeView (its desks or outline changed, so the scene was rebuilt): the seat moves over.
-    const keep = this.seat && office && this.seat.office.session === office.session ? this.seat : null;
+    const keep = this.seat && office && this.seat.office.id === office.id ? this.seat : null;
     if (this.seat && !keep) this.stand(null, true);
     this.meshes?.dispose();
     this.meshes = null;
@@ -991,7 +992,7 @@ export class Laptops {
     this.meshes?.unfreeze(s.desk);
     s.office.setLean(null);
     s.office.setAtLaptop(false);
-    if (v && v.worker.session === office.session) s.desk = v.desk;
+    if (v && v.worker.floor === office.id) s.desk = v.desk;
     s.office = office;
     // The new scene has not been drawn yet: the pose and the glass are read from its matrices.
     office.root.updateMatrixWorld(true);
@@ -1046,7 +1047,7 @@ export class Laptops {
       if (moved || f.blocked) this.stand(null, true);
       else {
         // #187: a worker that left, a floor asleep or a pane gone does not get you up: the view stays, away.
-        this.syncAway(s, whyAway(s.name, v, s.office.session, s.office.isAsleep));
+        this.syncAway(s, whyAway(s.name, v, s.office.id, s.office.isAsleep));
         if (v && !s.away && v.desk !== s.desk) this.rebind(s, s.office); // the desk moved under you (a floor reshuffle): the seat follows
         if (v) {
           // #157: a Codex worker herdr calls blocked only because of an async question works on: no screen question

@@ -24,14 +24,14 @@ export interface PaletteHost {
   /** The commands of the scopes live now. */
   commands(): PaletteCommand[];
   store: FloorSource;
-  /** The session of the office floor you are on, else null. */
+  /** The floor id of the office floor you are on, else null. */
   here(): string | null;
   /** The bridge answers: floors can be reached. */
   online(): boolean;
   /** The palette is closed: run `command` (`floor`: the floor picked for it, or null for the one you are on). */
   run(command: PaletteCommand, floor: string | null): void;
   /** The palette is closed: take the user to another floor. */
-  goTo(session: string): void;
+  goTo(floor: string): void;
 }
 
 type Row = { key: string; el: HTMLElement; enabled: boolean; act(): void };
@@ -257,13 +257,13 @@ export class Palette {
     ];
     const el = h(
       'li',
-      { class: 'pal-opt pal-opt--floor', role: 'option', 'aria-selected': 'false', 'aria-disabled': online ? null : 'true', 'aria-current': f.here ? 'location' : null, 'data-kind': 'floor', 'data-session': f.session },
+      { class: 'pal-opt pal-opt--floor', role: 'option', 'aria-selected': 'false', 'aria-disabled': online ? null : 'true', 'aria-current': f.here ? 'location' : null, 'data-kind': 'floor', 'data-floor': f.floor },
       marked('pal-name', f.label, f.hits),
       h('span', { class: 'pal-meta' }, ...tags),
       chips.length ? h('span', { class: 'pal-chips' }, ...chips) : null,
     );
     el.dataset.sig = `${f.label}|${f.here}|${f.asleep}|${f.transition ?? ''}|${CHIPS.map((x) => x.n(f.counts)).join('.')}`;
-    return { key: `f:${f.session}`, el, enabled: online, act: () => this.goTo(f) };
+    return { key: `f:${f.floor}`, el, enabled: online, act: () => this.goTo(f) };
   }
 
   /** "2 floors need you, type @": under an empty list of commands, when it is news. */
@@ -334,8 +334,8 @@ export class Palette {
     // The floor you are on: nothing to run it for or travel to; the palette just closes.
     if (f.here && !pick) return this.close();
     this.close(false);
-    if (pick) this.host.run(pick, f.here ? null : f.session);
-    else this.host.goTo(f.session);
+    if (pick) this.host.run(pick, f.here ? null : f.floor);
+    else this.host.goTo(f.floor);
   }
 
   private closed(): void {

@@ -177,18 +177,27 @@ export function firstFreeDesk(v: FloorView, taken: ReadonlySet<number> = new Set
 export type HireSeat = { ok: true; desk: number } | { ok: false; msg: string; ms: number };
 
 /**
- * The floor and desk a hire opens for, by the rules the Hire dialog has always had (App.openHire, and the review dialog):
- * a floor that is gone, asleep or changing state takes nobody, no `desk` is the first free one, and a desk somebody
- * sits at or another hire is on its way to is not offered.
+ * #58 decision 3: why a floor takes no hire (or run) now, null when it does. A floor that is waking up or going to sleep
+ * takes nobody; an asleep real floor neither (wake it first), but an asleep virtual floor does: the bridge wakes its
+ * session first ("Waking floor…"). `what`: "hire" or "start a run".
  */
-export function resolveHireDesk(session: string | null, fv: FloorView | null, held: ReadonlySet<number>, desk?: number): HireSeat {
-  if (!session || !fv) return { ok: false, msg: 'Walk onto an office floor to hire someone there.', ms: 2400 };
-  if (fv.asleep || fv.transition) {
-    const state = fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep';
-    return { ok: false, msg: `${session} is ${state}. Wake it from the elevator (L) to hire.`, ms: 3200 };
-  }
+export function floorClosed(fv: Pick<FloorView, 'name' | 'asleep' | 'transition' | 'virtual'>, what = 'hire'): string | null {
+  if (!fv.transition && (!fv.asleep || fv.virtual)) return null;
+  const state = fv.transition === 'waking' ? 'waking up' : fv.transition === 'sleeping' ? 'going to sleep' : 'asleep';
+  return `${fv.name} is ${state}. Wake it from the elevator (L) to ${what}.`;
+}
+
+/**
+ * The floor and desk a hire opens for, by the rules the Hire dialog has always had (App.openHire, and the review dialog):
+ * a floor that is gone or changing state takes nobody (an asleep one: `floorClosed`), no `desk` is the first free one,
+ * and a desk somebody sits at or another hire is on its way to is not offered.
+ */
+export function resolveHireDesk(floor: string | null, fv: FloorView | null, held: ReadonlySet<number>, desk?: number): HireSeat {
+  if (!floor || !fv) return { ok: false, msg: 'Walk onto an office floor to hire someone there.', ms: 2400 };
+  const closed = floorClosed(fv);
+  if (closed) return { ok: false, msg: closed, ms: 3200 };
   const d = desk ?? firstFreeDesk(fv, held);
-  if (d === null) return { ok: false, msg: `No free desk on ${session} right now.`, ms: 2400 };
+  if (d === null) return { ok: false, msg: `No free desk on ${fv.name} right now.`, ms: 2400 };
   if (held.has(d) && !fv.seats[d]) return { ok: false, msg: `Someone is already on the way to Desk ${d + 1}.`, ms: 2000 };
   const seat = fv.seats[d];
   if (seat) return { ok: false, msg: `${seat.name} sits at Desk ${d + 1}.`, ms: 2000 };
@@ -202,29 +211,29 @@ export function resolveHireDesk(session: string | null, fv: FloorView | null, he
  * frees a newer hire's desk, and no hire picks a desk another one holds.
  */
 export class Reservations {
-  private readonly held = new Map<number, { session: string; desk: number }>();
+  private readonly held = new Map<number, { floor: string; desk: number }>();
   private next = 0;
 
-  /** Holds `desk` of `session`; the returned function lets go of this hold only (true: the desk is no longer held by anyone). */
-  add(session: string, desk: number): () => boolean {
+  /** Holds `desk` of floor `floor` (an id); the returned function lets go of this hold only (true: the desk is no longer held by anyone). */
+  add(floor: string, desk: number): () => boolean {
     const id = ++this.next;
-    this.held.set(id, { session, desk });
-    return () => this.held.delete(id) && !this.has(session, desk);
+    this.held.set(id, { floor, desk });
+    return () => this.held.delete(id) && !this.has(floor, desk);
   }
 
-  has(session: string, desk: number): boolean {
-    for (const r of this.held.values()) if (r.session === session && r.desk === desk) return true;
+  has(floor: string, desk: number): boolean {
+    for (const r of this.held.values()) if (r.floor === floor && r.desk === desk) return true;
     return false;
   }
 
   /** Desks of a floor some hire holds. */
-  desks(session: string): Set<number> {
+  desks(floor: string): Set<number> {
     const out = new Set<number>();
-    for (const r of this.held.values()) if (r.session === session) out.add(r.desk);
+    for (const r of this.held.values()) if (r.floor === floor) out.add(r.desk);
     return out;
   }
 
-  all(): Array<{ session: string; desk: number }> {
+  all(): Array<{ floor: string; desk: number }> {
     return [...this.held.values()];
   }
 }
@@ -286,8 +295,8 @@ export function hireBlocker(f: HireForm, options: HireOptions, cap: CapacityView
 }
 
 /** `worker.hire` args: the label and cwd only when set, the worktree only when the cwd is a repo (and never after a failed fetch), the prompt only when there is one. */
-export function hireArgs(session: string, desk: number, f: HireForm, git: HireGit | null): CommandArgs['worker.hire'] {
-  const a: CommandArgs['worker.hire'] = { session, desk_index: desk, harness: f.harness, model: f.model, effort: f.effort };
+export function hireArgs(floor: string, desk: number, f: HireForm, git: HireGit | null): CommandArgs['worker.hire'] {
+  const a: CommandArgs['worker.hire'] = { floor, desk_index: desk, harness: f.harness, model: f.model, effort: f.effort };
   const label = f.label.trim();
   if (label) a.label = label;
   const cwd = f.cwd.trim();

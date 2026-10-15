@@ -203,13 +203,13 @@ describe('the command palette (#147)', () => {
     t.type('@');
     const before = t.names();
     t.press('ArrowDown');
-    const keyed = t.active()?.dataset.session;
+    const keyed = t.active()?.dataset.floor;
     t.store.applyEvent({ t: 'worker.status', seq: 2, id: 'w4', session: 'a-one', workspace_id: 'ws-w4', status: 'blocked' });
     t.store.applyEvent({ t: 'worker.status', seq: 3, id: 'w1', session: 'z-low', workspace_id: 'ws-w1', status: 'idle' });
     t.palette.refresh();
     expect(t.names()).toEqual(before);
-    expect(t.active()?.dataset.session).toBe(keyed);
-    const chips = (s: string) => [...(t.dlg.querySelector(`[data-session="${s}"]`) as HTMLElement).querySelectorAll('.pal-chip')].map((c) => c.textContent);
+    expect(t.active()?.dataset.floor).toBe(keyed);
+    const chips = (s: string) => [...(t.dlg.querySelector(`[data-floor="${s}"]`) as HTMLElement).querySelectorAll('.pal-chip')].map((c) => c.textContent);
     expect(chips('a-one')).toEqual(['1 need you']);
     expect(chips('z-low')).toEqual(['1 idle']);
   });
@@ -218,11 +218,11 @@ describe('the command palette (#147)', () => {
     const t = setup();
     t.palette.open(null);
     t.type('@');
-    expect(t.active()?.dataset.session).toBe('z-low');
+    expect(t.active()?.dataset.floor).toBe('z-low');
     t.store.applyEvent({ t: 'floor.removed', seq: 2, session: 'z-low' });
     t.palette.refresh();
     expect(t.names()).toEqual(['Acme › a-one', 'Acme › a-two', 'Zeta › z-top']);
-    expect(t.active()?.dataset.session).toBe('a-one');
+    expect(t.active()?.dataset.floor).toBe('a-one');
   });
 
   it('without the bridge the floors grey out and cannot be picked, and the commands still run', () => {

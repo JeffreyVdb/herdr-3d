@@ -751,22 +751,17 @@ export interface SessionCreateAck {
 }
 
 /**
- * #58: every floor-scoped command takes `floor` (a floor id). While the client still sends `session`, the bridge
- * reads it as that session's real floor; `floor` wins when both are set.
+ * Commands and their args (docs/protocol.md "Commands", M3, M4 and M5 additions). #58: every floor-scoped command names
+ * its floor by `floor`, a floor id (a virtual floor's too); the bridge resolves the herdr session itself.
  */
-export interface FloorRef {
-  floor?: string;
-}
-
-/** Commands and their args (docs/protocol.md "Commands", M3, M4 and M5 additions). */
 export interface CommandArgs {
   'building.create': { name: string };
   'building.rename': { id: string; name: string };
   'building.delete': { id: string };
   'building.reorder': { ids: string[] };
-  'floor.assign': FloorRef & { session: string; building: string | null; index?: number };
-  'floor.wake': FloorRef & { session: string };
-  'floor.sleep': FloorRef & { session: string };
+  'floor.assign': { floor: string; building: string | null; index?: number };
+  'floor.wake': { floor: string };
+  'floor.sleep': { floor: string };
   /** #58: a new herdr session, and with it a floor (docs/protocol.md "New herdr sessions"); acks `SessionCreateAck` once the floor is in the world. */
   'session.create': { name: string };
   /** #58: a virtual floor on a discovered, watched session (docs/protocol.md "Virtual floors"); acks the new `Floor`. */
@@ -780,13 +775,13 @@ export interface CommandArgs {
   'floor.delete': { floor: string; move_workers?: boolean };
   /** #58 decision 2: a floor's stored hidden setting (any floor). */
   'floor.hide': { floor: string; hidden: boolean };
-  'floor.settings.set': FloorRef & { session: string } & SettingsPatch;
+  'floor.settings.set': { floor: string } & SettingsPatch;
   /** M4 */
-  'hire.prepare': FloorRef & { session: string; cwd?: string };
+  'hire.prepare': { floor: string; cwd?: string };
   /** #213: a dictated sentence to a hire proposal (docs/protocol.md "Hire interpretation"); a follow-up carries the review's proposal as `pending`. Acks `HireInterpretAck`. */
   'hire.interpret': { text: string; pending?: HireInterpretation };
-  'worker.hire': FloorRef & {
-    session: string;
+  'worker.hire': {
+    floor: string;
     desk_index: number;
     harness: string;
     model: string;
@@ -817,11 +812,11 @@ export interface CommandArgs {
   /** #247: the repos and folders of the other floors of the worker's building (ack `WorkerRepos`). */
   'worker.repos': { id: string };
   /** #39: `worker.commands` for a hire with no worker yet: the floor, the harness and the folder it would get (ack `WorkerCommands`). */
-  'hire.commands': FloorRef & { session: string; harness: string; cwd?: string; worktree?: boolean };
+  'hire.commands': { floor: string; harness: string; cwd?: string; worktree?: boolean };
   /** #39: `worker.files` for a hire with no worker yet (ack `WorkerFiles`). */
-  'hire.files': FloorRef & { session: string; cwd?: string; worktree?: boolean; query: string; limit?: number };
+  'hire.files': { floor: string; cwd?: string; worktree?: boolean; query: string; limit?: number };
   /** #39: `worker.repos` for a hire on `session` with no worker yet (ack `WorkerRepos`). */
-  'hire.repos': FloorRef & { session: string };
+  'hire.repos': { floor: string };
   /** #74: `fullscreen` asks the bridge to zoom the pane's herdr tab while the watch lasts (absent / false: as before). */
   'terminal.watch': { id: string; fps?: number; cols?: number; rows?: number; fullscreen?: boolean };
   'terminal.unwatch': { id: string };
@@ -844,9 +839,9 @@ export interface CommandArgs {
   /** `roles` replaces all five. */
   'preset.update': { id: string; name?: string; roles?: PresetRoles };
   'preset.delete': { id: string };
-  'run.prepare': RunTicketArgs & FloorRef & { session: string; preset?: string; orch?: Hire; extra?: string };
-  'run.start': RunTicketArgs & FloorRef & {
-    session: string;
+  'run.prepare': RunTicketArgs & { floor: string; preset?: string; orch?: Hire; extra?: string };
+  'run.start': RunTicketArgs & {
+    floor: string;
     desk_index: number;
     orch: Hire;
     preset: string;
@@ -857,9 +852,9 @@ export interface CommandArgs {
     prompt?: string;
   };
   // M7: boards (docs/protocol.md "Boards: issues and pull requests").
-  'board.watch': FloorRef & { session: string };
-  'board.unwatch': FloorRef & { session: string };
-  'board.refresh': FloorRef & { session: string };
+  'board.watch': { floor: string };
+  'board.unwatch': { floor: string };
+  'board.refresh': { floor: string };
   /** M10 limits: read the plan limits now (at most every 20 s). */
   'limits.refresh': Record<string, never>;
   // #92 AI integration (docs/protocol.md "AI integration"). A key is sent here and nowhere else, and never comes back.
@@ -916,14 +911,14 @@ export interface CommandArgs {
   /** `input_bytes` the transcript budget, `max_tokens` the completion budget (reasoning included), `reasoning_effort` "" the provider's default. */
   'handoff_llm.set': { enabled?: boolean; input_bytes?: number; max_tokens?: number; reasoning_effort?: string };
   'handoff_llm.test': Record<string, never>;
-  'issue.get': FloorRef & { session: string; id: string };
-  'issue.comment': FloorRef & { session: string; id: string; body: string };
-  'issue.close': FloorRef & { session: string; id: string; reason: CloseReason; confirm: true };
+  'issue.get': { floor: string; id: string };
+  'issue.comment': { floor: string; id: string; body: string };
+  'issue.close': { floor: string; id: string; reason: CloseReason; confirm: true };
   /** #52: `after` (with the `order` capability) also places the card: null the top of the column, a card id right after it. */
-  'issue.set_status': FloorRef & { session: string; id: string; column: string; after?: string | null };
-  'pr.get': FloorRef & { session: string; id: string };
-  'pr.comment': FloorRef & { session: string; id: string; body: string };
-  'pr.merge': FloorRef & { session: string; id: string; method: MergeMethod; confirm: true; override?: boolean; confirm_override?: true };
+  'issue.set_status': { floor: string; id: string; column: string; after?: string | null };
+  'pr.get': { floor: string; id: string };
+  'pr.comment': { floor: string; id: string; body: string };
+  'pr.merge': { floor: string; id: string; method: MergeMethod; confirm: true; override?: boolean; confirm_override?: true };
   'worker.open_pr.prepare': { id: string };
   'worker.open_pr': { id: string; title: string; body: string; confirm: true };
   // M13 screen (docs/protocol.md "Screen share").

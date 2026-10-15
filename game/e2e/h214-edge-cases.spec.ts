@@ -95,8 +95,8 @@ test('two dictated hires on their way at once: each ends with its own toast and 
     expect((await dictateReview(page, 'Hire a worker on Fable 5.1 with medium effort. Task: proof the second batch.')).desk).toBe(15);
     await confirm(page);
     expect(await hireArgs(page)).toEqual([
-      expect.objectContaining({ session: 'pastry', desk_index: 14, harness: 'claude', model: 'claude-opus-5-5', effort: 'low', prompt: 'proof the first batch.' }),
-      expect.objectContaining({ session: 'pastry', desk_index: 15, harness: 'claude', model: 'claude-fable-5-1', effort: 'medium', prompt: 'proof the second batch.' }),
+      expect.objectContaining({ floor: 'pastry', desk_index: 14, harness: 'claude', model: 'claude-opus-5-5', effort: 'low', prompt: 'proof the first batch.' }),
+      expect.objectContaining({ floor: 'pastry', desk_index: 15, harness: 'claude', model: 'claude-fable-5-1', effort: 'medium', prompt: 'proof the second batch.' }),
     ]);
     expect(await toasts(page)).toEqual([]);
     expect(await beeps(page)).toBe(0);
@@ -148,7 +148,7 @@ test('a review being edited while an earlier dictated hire completes is not clos
     await expect.poll(() => beeps(page)).toBe(1);
     await expect.poll(() => deskWorker(page, 14)).not.toBeNull();
     const after = await now(page);
-    expect(after).toMatchObject({ kind: 'hire-review', session: 'pastry', desk: 15, state: 'ready', status: '', error: false });
+    expect(after).toMatchObject({ kind: 'hire-review', floor: 'pastry', desk: 15, state: 'ready', status: '', error: false });
     expect(after.choice).toEqual(before.choice);
     expect(after.sections).toEqual(before.sections);
     // The keyboard is still in the task.

@@ -56,6 +56,7 @@ describe('Start run: the orchestrator model chips', () => {
   const setup = (prefs: HireModelPrefs, orch: Hire = PRESET.roles.orch) => {
     const prep: RunPrepare = { prompt: '', label: '', preset: PRESET.id, orch, cwd: '/home/test', git: null, capacity: { floor: { count: 0, soft: 10, hard: 20 }, host: { count: 0, soft: 10, hard: 20 } } };
     const store = {
+    floorName: (id: string) => id,
       hireOptions: CAT,
       presets: bookOf(PRESET),
       floorView: () => ({ seats: Array(10).fill(null), floor: {}, settings: {}, suggested: {} }),
@@ -86,7 +87,7 @@ describe('Start run: the orchestrator model chips', () => {
 
   it('names the models, keeps the exact id as the value, and renders labels as text', async () => {
     const { dlg } = setup(new HireModelPrefs(memory()));
-    dlg.open({ session: 'floor', desk: 0 });
+    dlg.open({ floor: 'floor', desk: 0 });
     await tick();
     expect(chipTexts()).toEqual(['Opus 5', 'Opus 5.5', 'Fable 5.1', '<b>Lab</b>']);
     expect(chipValues()).toEqual(['claude-opus-5', 'claude-opus-5-5', 'claude-fable-5-1', 'claude-lab']);
@@ -100,7 +101,7 @@ describe('Start run: the orchestrator model chips', () => {
     prefs.setShown('claude', 'claude-opus-5', false);
     prefs.setShown('claude', 'claude-fable-5-1', false);
     const { dlg } = setup(prefs);
-    dlg.open({ session: 'floor', desk: 0 });
+    dlg.open({ floor: 'floor', desk: 0 });
     await tick();
     expect(chipValues()).toEqual(['claude-opus-5-5', 'claude-fable-5-1', 'claude-lab']);
     expect(orch(dlg)).toEqual(PRESET.roles.orch);
@@ -109,7 +110,7 @@ describe('Start run: the orchestrator model chips', () => {
   it('follows Settings while open: a newly hidden model goes, an orchestrator on it takes the first shown one', async () => {
     const prefs = new HireModelPrefs(memory());
     const { dlg } = setup(prefs, role('claude-opus-5-5'));
-    dlg.open({ session: 'floor', desk: 0 });
+    dlg.open({ floor: 'floor', desk: 0 });
     await tick();
     expect(orch(dlg)?.model).toBe('claude-opus-5-5');
     prefs.setShown('claude', 'claude-opus-5-5', false);
@@ -121,7 +122,7 @@ describe('Start run: the orchestrator model chips', () => {
     const prefs = new HireModelPrefs(memory());
     for (const m of CAT.codex!.models) prefs.setShown('codex', m, false);
     const { dlg, host } = setup(prefs);
-    dlg.open({ session: 'floor', desk: 0 });
+    dlg.open({ floor: 'floor', desk: 0 });
     await tick();
     document.querySelector<HTMLInputElement>('[data-key="orch-harness:codex"]')!.click();
     expect(orch(dlg)).toEqual({ harness: 'codex', model: '', effort: '' });

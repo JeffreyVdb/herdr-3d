@@ -147,7 +147,7 @@ describe('buildOverview: a row', () => {
     expect(r).toMatchObject({ role: 'orch', tag: 'ORCH', model: 'Opus 5.5 high', orch: { round: 2, overCap: true } });
     expect(r.orch).toEqual({ round: 2, overCap: true });
     expect(row(store([orch('o', 'top', 0)]), 'o').orch).toEqual({ round: null, overCap: false });
-    expect(r.ticket).toEqual({ key: '#118', title: 'Floor overview', item: { session: 'top', id: 'o/r#118' }, url: 'https://example.test/118' });
+    expect(r.ticket).toEqual({ key: '#118', title: 'Floor overview', item: { floor: 'top', id: 'o/r#118' }, url: 'https://example.test/118' });
     expect(r.display).toBe('needs_you');
   });
 

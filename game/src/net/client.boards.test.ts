@@ -63,9 +63,9 @@ describe('board messages', () => {
 
   it('answers board.watch by req_id, and an older bridge’s unknown_command', async () => {
     const h = live();
-    const p = h.client.request('board.watch', { session: 'herdr-3d' });
+    const p = h.client.request('board.watch', { floor: 'herdr-3d' });
     const sent = h.sock.sent.at(-1);
-    expect(sent).toMatchObject({ t: 'board.watch', args: { session: 'herdr-3d' } });
+    expect(sent).toMatchObject({ t: 'board.watch', args: { floor: 'herdr-3d' } });
     h.sock.recv({ t: 'error', req_id: sent?.req_id, code: 'unknown_command', message: 'unknown command "board.watch"' });
     expect(await p).toEqual({ ok: false, code: 'unknown_command', message: 'unknown command "board.watch"' });
   });

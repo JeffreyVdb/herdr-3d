@@ -192,7 +192,7 @@ export async function runBench(app: App, r: THREE.WebGPURenderer, o: BenchOption
   app.resume();
   return {
     backend: name,
-    view: app.mode === 'floor' ? `floor:${app.office?.session ?? ''}` : 'city',
+    view: app.mode === 'floor' ? `floor:${app.office?.id ?? ''}` : 'city',
     area: app.mode === 'floor' ? app.place.area : null,
     workers,
     px: `${size.x}x${size.y}`,

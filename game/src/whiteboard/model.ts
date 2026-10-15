@@ -17,7 +17,10 @@ export type BoardStatus =
 export interface EditorHost {
   /** The bridge WebSocket URL (the HTTP routes derive from it). */
   wsUrl: string;
+  /** #58: the floor id (the board's key, the HTTP routes). */
   floor: string;
+  /** #58: the floor's name (what the editor calls the board; absent: the id). */
+  floorName?: string;
   /** The element the editor mounts in. */
   mount: HTMLElement;
   /** Who saves (the `?me=` name). */

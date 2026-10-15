@@ -83,7 +83,7 @@ test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, 
   expect(await focusedKey(page)).toBe('tab:worker');
   await page.keyboard.press('ArrowRight');
   let d = await runDialog(page);
-  expect(d).toMatchObject({ session: 'herdr-3d', desk: 5, title: 'Start a run at Desk 6' });
+  expect(d).toMatchObject({ floor: 'herdr-3d', desk: 5, title: 'Start a run at Desk 6' });
   expect(await focusedKey(page)).toBe('tab:orch');
   await expect(page.locator('dialog.desk-dlg--run [role="tab"][aria-selected="true"]')).toHaveText('Hire orchestrator');
   // Defaults from run.prepare: Build team and its orchestrator; nothing to prompt yet.
@@ -125,7 +125,7 @@ test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, 
   await page.locator('#run-ticket').focus();
   await page.keyboard.press('Control+Enter');
   await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'run.start').map((c) => c.args)).toEqual([
-    { session: 'herdr-3d', desk_index: 5, issue: 7, orch: { harness: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, preset: 'p_5eedb0000001', worktree: true },
+    { floor: 'herdr-3d', desk_index: 5, issue: 7, orch: { harness: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, preset: 'p_5eedb0000001', worktree: true },
   ]);
   await expect.poll(() => dialog(page), { timeout: 15_000 }).toBeNull();
   await expect(page.locator('.toast')).toHaveText(/^Started a run on #7: Gumdrop takes Desk 6\. Here they come\.$/);

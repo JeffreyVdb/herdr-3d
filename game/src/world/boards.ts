@@ -312,13 +312,17 @@ export function mergeBlocker(pr: Pick<PullRequest, 'checks' | 'mergeable' | 'dra
 
 // ---- the store ----------------------------------------------------------------------------------------------
 
+/** #58: the floor id a board message is for (an older bridge sends only `session`, which was the floor). */
+export const boardFloor = (m: Pick<BoardMessage, 'floor' | 'session'>): string => m.floor ?? m.session;
+
 export interface FloorBoards {
   issues: BoardIssues | null;
   prs: BoardPrs | null;
 }
 
 export interface BoardUpdate {
-  session: string;
+  /** #58: the floor id. */
+  floor: string;
   kind: 'issues' | 'prs';
   /** PRs merged since the last poll (never on `initial`), each announced once. */
   merged: MergedPullRequest[];
@@ -332,25 +336,27 @@ export class BoardBook {
   version = 0;
 
   apply(m: BoardMessage): BoardUpdate {
-    const cur = this.floors.get(m.session) ?? { issues: null, prs: null };
+    // #58: keyed by floor id (an older bridge's `session` is the floor).
+    const floor = boardFloor(m);
+    const cur = this.floors.get(floor) ?? { issues: null, prs: null };
     this.version++;
     if (m.t === 'board.issues') {
-      this.floors.set(m.session, { ...cur, issues: m });
-      return { session: m.session, kind: 'issues', merged: [] };
+      this.floors.set(floor, { ...cur, issues: m });
+      return { floor, kind: 'issues', merged: [] };
     }
-    this.floors.set(m.session, { ...cur, prs: m });
-    const merged = m.initial ? [] : (m.merged ?? []).filter((x) => !this.announced.has(`${m.session}\u0000${m.provider}\u0000${x.id}`));
-    for (const x of merged) this.announced.add(`${m.session}\u0000${m.provider}\u0000${x.id}`);
-    return { session: m.session, kind: 'prs', merged };
+    this.floors.set(floor, { ...cur, prs: m });
+    const merged = m.initial ? [] : (m.merged ?? []).filter((x) => !this.announced.has(`${floor}\u0000${m.provider}\u0000${x.id}`));
+    for (const x of merged) this.announced.add(`${floor}\u0000${m.provider}\u0000${x.id}`);
+    return { floor, kind: 'prs', merged };
   }
 
-  get(session: string): FloorBoards {
-    return this.floors.get(session) ?? { issues: null, prs: null };
+  get(floor: string): FloorBoards {
+    return this.floors.get(floor) ?? { issues: null, prs: null };
   }
 
   /** The game stopped watching a floor: what it had is stale until it watches again. */
-  drop(session: string): void {
-    if (this.floors.delete(session)) this.version++;
+  drop(floor: string): void {
+    if (this.floors.delete(floor)) this.version++;
   }
 }
 

@@ -289,7 +289,7 @@ describe('BridgeClient.request', () => {
 
   it('applies the events a command causes before its promise resolves', async () => {
     const h = live();
-    const p = h.client.request('floor.assign', { session: 's', building: null });
+    const p = h.client.request('floor.assign', { floor: 's', building: null });
     const { req_id } = h.s.sent.at(-1) as { req_id: string };
     h.s.recv(status(6));
     h.s.recv({ t: 'ack', req_id });
@@ -299,7 +299,7 @@ describe('BridgeClient.request', () => {
 
   it('resolves an error reply as a failure with its code, and keeps the connection', async () => {
     const h = live();
-    const p = h.client.request('floor.wake', { session: 's' });
+    const p = h.client.request('floor.wake', { floor: 's' });
     const { req_id } = h.s.sent.at(-1) as { req_id: string };
     h.s.recv({ t: 'error', req_id, code: 'unknown_command', message: 'unknown command "floor.wake"' });
     expect(await p).toEqual({ ok: false, code: 'unknown_command', message: 'unknown command "floor.wake"' });
@@ -316,7 +316,7 @@ describe('BridgeClient.request', () => {
 
   it('times out per command: a slow floor.wake ack is not a failure at the default timeout', async () => {
     const h = live();
-    const wake = h.client.request('floor.wake', { session: 's' });
+    const wake = h.client.request('floor.wake', { floor: 's' });
     const create = h.client.request('building.create', { name: 'x' });
     const timeouts = h.timers.queue.map((t) => t.ms).sort((a, b) => a - b);
     expect(timeouts[0]).toBe(DEFAULT_COMMAND_TIMEOUT_MS);
@@ -356,7 +356,7 @@ describe('BridgeClient.request', () => {
 
   it('fails pending commands when the connection drops (they may still have run)', async () => {
     const h = live();
-    const p = h.client.request('floor.sleep', { session: 's' });
+    const p = h.client.request('floor.sleep', { floor: 's' });
     h.s.drop(1001, 'going away');
     expect(await p).toMatchObject({ ok: false, code: 'disconnected' });
     expect(h.timers.queue.map((t) => t.ms)).toEqual([500]); // only the reconnect timer is left

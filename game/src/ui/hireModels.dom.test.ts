@@ -42,7 +42,8 @@ function setup(
   upload: () => Promise<unknown> = () => new Promise(() => {}),
 ): Setup {
   const prefs = new HireModelPrefs(memory());
-  const store = { hireOptions: CAT, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null };
+  const store = {
+    floorName: (id: string) => id, hireOptions: CAT, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null };
   const showModelSettings = vi.fn();
   const send = vi.fn(async (t: string) => (t === 'hire.prepare' ? { ok: true, data: prepOf(choice, source) } : await new Promise(() => {})));
   const host = {

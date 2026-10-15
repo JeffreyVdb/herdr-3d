@@ -203,7 +203,7 @@ test('lobby: in from the sidewalk through the front door, the reception desk, th
   await expect.poll(() => page.evaluate(() => window.__h3d.panel()?.kind)).toBe('elevator');
   const panel = await page.evaluate(() => window.__h3d.panel());
   expect(panel).toMatchObject({ kind: 'elevator', title: 'Work', lobby: { current: true } });
-  expect(panel?.kind === 'elevator' && panel.rows.map((r) => [r.session, r.current])).toEqual([
+  expect(panel?.kind === 'elevator' && panel.rows.map((r) => [r.floor, r.current])).toEqual([
     ['herdr-3d', false],
     ['depot-manager', false],
     ['pastry', false],

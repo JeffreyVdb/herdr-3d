@@ -2,7 +2,7 @@ import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName } from '../net/protocol';
 import { buildingOrder, floorMove } from '../world/arrange';
 import { DEFAULT_STATUS_FIELD, effortsFor, formFrom, parseForm, settingsPatch, type FieldKey, type SettingsForm, type StatusRow } from '../world/settings';
-import type { FloorView, WorldStore } from '../world/store';
+import { floorName, type FloorView, type StoredFloor, type WorldStore } from '../world/store';
 import { h, icon, ICON, replaceKeepingFocus, type Child } from './dom';
 import { LOGO_ACCEPT, precheckLogo } from '../net/logo';
 import { logoHashOf } from '../net/protocol';
@@ -30,8 +30,8 @@ export interface PanelHost {
   send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** The bridge answered `unknown_command` for it before. */
   unsupported(t: CommandName): boolean;
-  /** Close the panels and ride the elevator to a floor. */
-  travel(session: string): void;
+  /** Close the panels and ride the elevator to a floor (an id). */
+  travel(floor: string): void;
   /** Close the panels and ride the elevator down to a building's lobby (null: the unassigned lot's). */
   travelLobby(building: string | null): void;
   /** HUD toast, for results that arrive after the panel closed. */
@@ -49,10 +49,15 @@ export interface PanelHost {
   addFloor?(from: HTMLElement): void;
 }
 
-type View = { kind: 'elevator'; building: string | null } | { kind: 'buildings' } | { kind: 'settings'; session: string; from: View | null };
+type View = { kind: 'elevator'; building: string | null } | { kind: 'buildings' } | { kind: 'settings'; floor: string; from: View | null };
 
 export interface ElevatorRow {
-  session: string;
+  /** #58: the floor id. */
+  floor: string;
+  /** #58: the floor's name. */
+  name: string;
+  /** #58: the floor is a virtual floor. */
+  virtual: boolean;
   /** From the ground, null in the lot. */
   number: number | null;
   state: 'running' | 'asleep';
@@ -68,7 +73,7 @@ export interface ElevatorRow {
 export type PanelSummary = (
   | { kind: 'elevator'; building: string | null; title: string; rows: ElevatorRow[]; lobby: { current: boolean } | null; /** M5: the floor N preselected. */ pick?: string }
   | { kind: 'buildings'; buildings: Array<{ id: string; name: string; floors: string[]; logo: string | null; logoBusy: string | null }>; lot: string[] }
-  | { kind: 'settings'; session: string; form: ShownForm; repoSuggested: boolean; statusDefault: boolean }
+  | { kind: 'settings'; floor: string; form: ShownForm; repoSuggested: boolean; statusDefault: boolean }
 ) & { status: string; confirm: { title: string; body: string } | null };
 
 /** The settings form as its inputs show it: each status by its text. */
@@ -83,6 +88,36 @@ function stateOf(v: FloorView): ElevatorRow['state'] {
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** "A", "A and B", "A, B and C". */
+export function namesList(names: readonly string[]): string {
+  return names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * #58: the wake / sleep button of a floor. Wake and sleep are its herdr session's (`all`: every floor on it), so on a
+ * floor that shares its session the button says "session" and its label names every floor it wakes or puts to sleep;
+ * on a virtual floor, which session that is.
+ */
+export function wakeSleepWords(f: Pick<FloorView, 'name' | 'virtual' | 'baseSession'>, all: readonly Pick<StoredFloor, 'name' | 'session' | 'virtual' | 'id'>[], kind: 'wake' | 'sleep'): { text: string; title: string; aria: string } {
+  const verb = kind === 'wake' ? 'Wake' : 'Sleep';
+  if (all.length < 2 && !f.virtual) {
+    return {
+      text: `${verb} floor`,
+      title: kind === 'wake' ? `Start ${f.name}'s herdr server and resume its agents` : `Stop ${f.name}'s herdr session; its agents resume on the next wake`,
+      aria: `${verb} floor ${f.name}`,
+    };
+  }
+  const names = namesList(all.map(floorName));
+  return {
+    text: `${verb} session`,
+    title:
+      kind === 'wake'
+        ? `${f.virtual ? `${f.name} is a virtual floor on herdr session ${f.baseSession}: waking it starts that session` : `Start herdr session ${f.baseSession}`} and wakes every floor on it: ${names}`
+        : `${f.virtual ? `${f.name} is a virtual floor on herdr session ${f.baseSession}: ` : ''}stops herdr session ${f.baseSession} and puts every floor on it to sleep: ${names}`,
+    aria: `${verb} session ${f.baseSession} (${names})`,
+  };
+}
 
 function countsText(v: FloorView): string {
   if (v.asleep) return `asleep, ${plural(v.counts.total, 'worker')}`;
@@ -108,16 +143,16 @@ export class Panels {
   private readonly confirmEl = h('dialog', { class: 'confirm', 'aria-labelledby': 'confirm-title', 'aria-describedby': 'confirm-body' });
   private view: View | null = null;
   private renderKey = '';
-  /** Commands in flight, by what they are about (`wake:<session>`, `b:<id>`, `f:<session>`). */
+  /** Commands in flight, by what they are about (`floor:<floor id>`, `b:<id>`, `f:<floor id>`). */
   private readonly busy = new Map<string, string>();
   private renaming: { id: string; value: string; error: string } | null = null;
   private moving: string | null = null;
   private list: HTMLElement | null = null;
-  private settingsForm: { el: HTMLFormElement; read(): SettingsForm; session: string; repoSuggested: boolean; statusDefault: boolean; dispose(): void } | null = null;
+  private settingsForm: { el: HTMLFormElement; read(): SettingsForm; floor: string; repoSuggested: boolean; statusDefault: boolean; dispose(): void } | null = null;
   private confirmState: { title: string; body: () => string; resolve(ok: boolean): void } | null = null;
   private statusText = '';
   /** M5: the floor N preselected in the elevator, with why. */
-  private pick: { session: string; note: string } | null = null;
+  private pick: { floor: string; note: string } | null = null;
   /** M3d: the one file input all the "Set logo" buttons use, and the building it is for. */
   private readonly logoInput = h('input', { type: 'file', accept: LOGO_ACCEPT, hidden: true, tabindex: '-1', 'aria-hidden': 'true', 'data-key': 'logo-file' });
   private logoFor: string | null = null;
@@ -163,7 +198,7 @@ export class Panels {
   }
 
   /** M5: `pick` preselects a floor (N: someone there needs you), its note shown on the row and as the status. */
-  openElevator(building: string | null, pick?: { session: string; note: string }): void {
+  openElevator(building: string | null, pick?: { floor: string; note: string }): void {
     this.pick = pick ?? null;
     this.show({ kind: 'elevator', building });
     if (pick) this.setStatus(pick.note);
@@ -174,18 +209,18 @@ export class Panels {
     this.show({ kind: 'buildings' });
     if (!added || !this.host.store.floors.has(added)) return;
     this.moving = added;
-    this.setStatus(`Added ${added}. It is in the ${LOT}: pick a building to move it into.`);
+    this.setStatus(`Added ${this.host.store.floorName(added)}. It is in the ${LOT}: pick a building to move it into.`);
     this.refresh();
     this.list?.querySelector<HTMLElement>(`[data-key^="to:${CSS.escape(added)}:"]`)?.focus();
   }
 
-  openSettings(session: string): void {
-    this.show({ kind: 'settings', session, from: this.view && this.view.kind !== 'settings' ? this.view : null });
+  openSettings(floor: string): void {
+    this.show({ kind: 'settings', floor, from: this.view && this.view.kind !== 'settings' ? this.view : null });
   }
 
   /** Building (id, or null for the lot) a floor belongs to, as the city shows it. */
-  buildingOf(session: string): string | null {
-    const b = this.host.store.floors.get(session)?.building ?? null;
+  buildingOf(floor: string): string | null {
+    const b = this.host.store.floors.get(floor)?.building ?? null;
     return b !== null && this.host.store.buildings.has(b) ? b : null;
   }
 
@@ -205,7 +240,7 @@ export class Panels {
     const v = this.view;
     if (!v) return;
     let el: HTMLElement | null = null;
-    const picked = v.kind === 'elevator' && this.pick ? this.body.querySelector<HTMLElement>(`[data-key="go:${CSS.escape(this.pick.session)}"]`) : null;
+    const picked = v.kind === 'elevator' && this.pick ? this.body.querySelector<HTMLElement>(`[data-key="go:${CSS.escape(this.pick.floor)}"]`) : null;
     if (picked) el = picked;
     else if (v.kind === 'elevator') el = this.body.querySelector<HTMLElement>('.lift-go[aria-current="location"]') ?? this.body.querySelector<HTMLElement>('.lift-go');
     else if (v.kind === 'buildings') el = this.body.querySelector<HTMLElement>('#dir-new-name');
@@ -271,12 +306,14 @@ export class Panels {
   rows(building: string | null): ElevatorRow[] {
     const here = this.host.here();
     return this.host.store.stack(building).map((f) => ({
-      session: f.session,
+      floor: f.id,
+      name: f.name,
+      virtual: f.virtual,
       number: f.level?.number ?? null,
       state: stateOf(f),
       transition: f.transition,
       counts: { working: f.counts.working, needsYou: f.counts.needsYou, idle: f.counts.idle, waiting: f.counts.waiting, total: f.counts.total },
-      current: f.session === here,
+      current: f.id === here,
       action: f.transition ? null : f.asleep ? 'wake' : 'sleep',
       resume: f.resume,
     }));
@@ -295,13 +332,13 @@ export class Panels {
     }
     const floors = store.stack(building);
     const here = this.host.here();
-    const hereView = here ? floors.find((f) => f.session === here) : undefined;
+    const hereView = here ? floors.find((f) => f.id === here) : undefined;
     const key = JSON.stringify([
       building,
       this.elevatorTitle(building),
       here,
       [...this.busy],
-      floors.map((f) => [f.session, f.level?.number, f.asleep, f.transition, f.counts, f.workers.map((w) => [w.name, w.worker.resume ?? ''])]),
+      floors.map((f) => [f.id, f.name, f.level?.number, f.asleep, f.transition, f.counts, f.workers.map((w) => [w.name, w.worker.resume ?? ''])]),
       this.host.unsupported('floor.wake'),
       this.host.unsupported('floor.sleep'),
       this.host.inLobby(),
@@ -319,7 +356,7 @@ export class Panels {
     const sub =
       floors.length === 0
         ? 'No floors here yet'
-        : `${plural(floors.length, 'floor')} · ${hereView ? `you are on ${hereView.level ? `floor ${hereView.level.number}` : hereView.session}` : this.host.inLobby() ? 'you are in the lobby' : building === null ? 'sessions in no building' : 'top floor first'}`;
+        : `${plural(floors.length, 'floor')} · ${hereView ? `you are on ${hereView.level ? `floor ${hereView.level.number}` : hereView.name}` : this.host.inLobby() ? 'you are in the lobby' : building === null ? 'sessions in no building' : 'top floor first'}`;
     replaceKeepingFocus(this.head, this.headFor(this.elevatorTitle(building), sub, display, null));
 
     if (!floors.length) {
@@ -327,7 +364,7 @@ export class Panels {
       return;
     }
     const list = h('ol', { class: 'lift-floors', 'aria-label': 'Floors, top to bottom' });
-    for (const f of floors) list.append(this.elevatorRow(f, f.session === here));
+    for (const f of floors) list.append(this.elevatorRow(f, f.id === here));
     list.append(this.lobbyRow(building, this.host.inLobby()));
     replaceKeepingFocus(this.body, [list]);
   }
@@ -358,7 +395,7 @@ export class Panels {
   private elevatorRow(f: FloorView, current: boolean): HTMLElement {
     const num = f.level ? String(f.level.number) : '';
     const state = f.transition ? TRANSITION_TAPE[f.transition].toLowerCase() : countsText(f);
-    const label = `${num ? `Floor ${num}, ` : ''}${f.session}: ${state}. ${current ? 'You are here.' : 'Go there.'}`;
+    const label = `${num ? `Floor ${num}, ` : ''}${f.name}: ${state}. ${current ? 'You are here.' : 'Go there.'}`;
     const meta: Child = f.transition
       ? h('span', { class: `tape tape--${f.transition}` }, TRANSITION_TAPE[f.transition])
       : f.asleep
@@ -368,11 +405,11 @@ export class Panels {
       'button',
       {
         class: 'lift-go',
-        'data-key': `go:${f.session}`,
+        'data-key': `go:${f.id}`,
         'aria-label': label,
         'aria-current': current ? 'location' : null,
         title: f.floor.error ? `This floor cannot be read: ${f.floor.error}` : null,
-        onclick: () => this.goTo(f.session),
+        onclick: () => this.goTo(f.id),
         onkeydown: (e: Event) => this.rowKeys(e as KeyboardEvent),
       },
       h('span', { class: 'lift-num', 'data-empty': num ? null : 'true' }, num),
@@ -382,47 +419,50 @@ export class Panels {
         h(
           'span',
           { class: 'lift-title' },
-          h('span', { class: 'lift-session' }, f.session),
+          h('span', { class: 'lift-session' }, f.name),
           current ? h('span', { class: 'lift-here' }, 'You are here') : null,
           // M5: N picked this floor: someone here needs you.
-          this.pick?.session === f.session ? h('span', { class: 'tape tape--needs_you lift-need' }, 'Next up') : null,
+          this.pick?.floor === f.id ? h('span', { class: 'tape tape--needs_you lift-need' }, 'Next up') : null,
         ),
         meta,
       ),
     );
     const actions = h('div', { class: 'lift-actions' });
-    const busy = this.busy.get(`floor:${f.session}`);
+    const busy = this.busy.get(`floor:${f.id}`);
     const wakeSleep = f.transition ? null : f.asleep ? 'wake' : 'sleep';
     const t: CommandName = wakeSleep === 'wake' ? 'floor.wake' : 'floor.sleep';
     if (busy || f.transition) {
-      actions.append(h('button', { class: 'btn btn--sm', 'aria-disabled': 'true', 'data-key': `ws:${f.session}` }, busy ?? (f.transition === 'waking' ? 'Waking…' : 'Going to sleep…')));
+      actions.append(h('button', { class: 'btn btn--sm', 'aria-disabled': 'true', 'data-key': `ws:${f.id}` }, busy ?? (f.transition === 'waking' ? 'Waking…' : 'Going to sleep…')));
     } else if (wakeSleep) {
       const no = this.host.unsupported(t);
+      // #58: wake and sleep are the session's: on a floor that shares it (a virtual floor, or a real one with virtual
+      // floors) the button says so, and names every floor it wakes or puts to sleep.
+      const ws = wakeSleepWords(f, this.host.store.sessionFloors(f.baseSession), wakeSleep);
       actions.append(
         h(
           'button',
           {
             class: `btn btn--sm${wakeSleep === 'wake' ? ' btn--wake' : ''}`,
-            'data-key': `ws:${f.session}`,
+            'data-key': `ws:${f.id}`,
             'aria-disabled': no ? 'true' : null,
-            title: no ? failureText(t, 'unknown_command', '') : wakeSleep === 'wake' ? `Start ${f.session}'s herdr server and resume its agents` : `Stop ${f.session}'s herdr session; its agents resume on the next wake`,
-            'aria-label': `${wakeSleep === 'wake' ? 'Wake' : 'Sleep'} floor ${f.session}`,
-            onclick: () => (no ? this.notify(failureText(t, 'unknown_command', ''), 'error') : wakeSleep === 'wake' ? void this.wake(f.session) : void this.sleep(f.session)),
+            title: no ? failureText(t, 'unknown_command', '') : ws.title,
+            'aria-label': ws.aria,
+            onclick: () => (no ? this.notify(failureText(t, 'unknown_command', ''), 'error') : wakeSleep === 'wake' ? void this.wake(f.id) : void this.sleep(f.id)),
           },
           icon(wakeSleep === 'wake' ? ICON.sun : ICON.moon),
-          h('span', {}, wakeSleep === 'wake' ? 'Wake floor' : 'Sleep floor'),
+          h('span', {}, ws.text),
         ),
       );
     }
     actions.append(
       h(
         'button',
-        { class: 'btn btn--sm', 'data-key': `set:${f.session}`, 'aria-label': `Settings for ${f.session}`, onclick: () => this.openSettings(f.session) },
+        { class: 'btn btn--sm', 'data-key': `set:${f.id}`, 'aria-label': `Settings for ${f.name}`, onclick: () => this.openSettings(f.id) },
         icon(ICON.gear),
         h('span', {}, 'Settings'),
       ),
     );
-    const li = h('li', { class: 'lift-row', 'data-session': f.session, 'data-state': stateOf(f), 'data-transition': f.transition }, go, actions);
+    const li = h('li', { class: 'lift-row', 'data-floor': f.id, 'data-session': f.baseSession, 'data-state': stateOf(f), 'data-transition': f.transition }, go, actions);
     const progress = this.progress(f);
     if (progress) li.append(progress);
     return li;
@@ -432,7 +472,7 @@ export class Panels {
   private progress(f: FloorView): HTMLElement | null {
     const r = f.resume;
     if (!f.transition && !r) return null;
-    const box = h('div', { class: 'lift-progress', 'data-key': `progress:${f.session}` });
+    const box = h('div', { class: 'lift-progress', 'data-key': `progress:${f.id}` });
     let line: string;
     if (f.transition === 'sleeping') line = 'Saving the agents’ sessions and stopping herdr…';
     else if (f.transition === 'waking' && f.asleep) line = 'Starting the herdr server…';
@@ -446,7 +486,7 @@ export class Panels {
       box.append(
         h(
           'div',
-          { class: 'lift-bar', role: 'progressbar', 'aria-label': `Agents resumed on ${f.session}`, 'aria-valuemin': 0, 'aria-valuemax': r.total, 'aria-valuenow': done },
+          { class: 'lift-bar', role: 'progressbar', 'aria-label': `Agents resumed on ${f.name}`, 'aria-valuemin': 0, 'aria-valuemax': r.total, 'aria-valuenow': done },
           h('i', { style: `transform:scaleX(${(done / r.total).toFixed(3)})` }),
         ),
       );
@@ -476,56 +516,71 @@ export class Panels {
     }
   }
 
-  private goTo(session: string): void {
-    if (session === this.host.here()) {
+  private goTo(floor: string): void {
+    if (floor === this.host.here()) {
       this.close();
       return;
     }
-    this.host.travel(session);
+    this.host.travel(floor);
   }
 
-  private async wake(session: string): Promise<void> {
-    const k = `floor:${session}`;
+  private async wake(floor: string): Promise<void> {
+    const k = `floor:${floor}`;
     if (this.busy.has(k)) return;
+    const store = this.host.store;
+    const name = store.floorName(floor);
+    // #58: a floor's wake is its session's: every floor on it wakes.
+    const all = store.sessionFloors(store.floors.get(floor)?.base_session ?? floor);
+    const what = all.length > 1 ? namesList(all.map(floorName)) : name;
     this.busy.set(k, 'Waking…');
-    this.setStatus(`Waking ${session}…`);
+    this.setStatus(`Waking ${what}…`);
     this.refresh();
-    const r = await this.host.send('floor.wake', { session });
+    const r = await this.host.send('floor.wake', { floor });
     this.busy.delete(k);
     if (r.ok) {
       const ws = (r.data as { workers?: Array<{ resume?: string }> } | undefined)?.workers ?? [];
       const n = (s: string) => ws.filter((w) => w.resume === s).length;
       const parts = [n('confirmed') && `${n('confirmed')} resumed`, n('fallback') && `${n('fallback')} relaunched`, n('failed') && `${n('failed')} did not resume`].filter(Boolean);
-      this.notify(`${session} is awake${parts.length ? `: ${parts.join(', ')}` : ''}.`, n('failed') ? 'error' : 'info');
-    } else this.notify(failureText('floor.wake', r.code, r.message, { floor: session }), 'error');
+      this.notify(`${what} ${all.length > 1 ? 'are' : 'is'} awake${parts.length ? `: ${parts.join(', ')}` : ''}.`, n('failed') ? 'error' : 'info');
+    } else this.notify(failureText('floor.wake', r.code, r.message, { floor: name }), 'error');
     this.refresh();
   }
 
-  private async sleep(session: string): Promise<void> {
-    const k = `floor:${session}`;
+  private async sleep(floor: string): Promise<void> {
+    const k = `floor:${floor}`;
     if (this.busy.has(k)) return;
-    const counts = () => this.host.store.floorView(session)?.counts;
+    const store = this.host.store;
+    const name = store.floorName(floor);
+    const session = store.floors.get(floor)?.base_session ?? floor;
+    // #58: a floor's sleep is its session's: the confirmation lists every floor it puts to sleep.
+    const all = () => store.sessionFloors(session);
+    const shared = all().length > 1;
     const ok = await this.confirm({
-      title: `Put ${session} to sleep?`,
+      title: shared ? `Put ${namesList(all().map(floorName))} to sleep?` : `Put ${name} to sleep?`,
       body: () => {
-        const c = counts();
+        const views = all()
+          .map((f) => store.floorView(f.id))
+          .filter((v): v is FloorView => v !== null);
+        const c = views.reduce((a, v) => ({ working: a.working + v.counts.working, needsYou: a.needsYou + v.counts.needsYou }), { working: 0, needsYou: 0 });
         const now =
-          !c || (!c.working && !c.needsYou)
+          !c.working && !c.needsYou
             ? 'No agent is working or waiting on you right now.'
             : `${plural(c.working, 'agent is', 'agents are')} working and ${plural(c.needsYou, 'needs', 'need')} you right now.`;
-        return `${now} herdr saves and stops the session; the agents pick their conversations back up when you wake the floor.`;
+        const floors = shared ? `These floors share herdr session ${session} and all go to sleep: ${views.map((v) => v.name).join(', ')}. ` : '';
+        return `${floors}${now} herdr saves and stops the session; the agents pick their conversations back up when you wake the floor.`;
       },
-      ok: 'Sleep floor',
+      ok: shared ? `Sleep ${plural(all().length, 'floor')}` : 'Sleep floor',
       cancel: 'Keep running',
     });
     if (!ok) return;
+    const what = shared ? namesList(all().map(floorName)) : name;
     this.busy.set(k, 'Going to sleep…');
-    this.setStatus(`Putting ${session} to sleep…`);
+    this.setStatus(`Putting ${what} to sleep…`);
     this.refresh();
-    const r = await this.host.send('floor.sleep', { session });
+    const r = await this.host.send('floor.sleep', { floor });
     this.busy.delete(k);
-    if (r.ok) this.notify(`${session} is asleep. Its agents resume when you wake it.`);
-    else this.notify(failureText('floor.sleep', r.code, r.message, { floor: session }), 'error');
+    if (r.ok) this.notify(shared ? `${what} are asleep. Their agents resume when you wake them.` : `${what} is asleep. Its agents resume when you wake it.`);
+    else this.notify(failureText('floor.sleep', r.code, r.message, { floor: name }), 'error');
     this.refresh();
   }
 
@@ -536,8 +591,8 @@ export class Panels {
     const bs = store.sortedBuildings();
     const lot = store.stack(null);
     const key = JSON.stringify([
-      bs.map((b) => [b.id, b.name, logoHashOf(b), this.logoPreview.has(b.id), store.stack(b.id).map((f) => [f.session, f.floor.index, f.asleep])]),
-      lot.map((f) => [f.session, f.asleep]),
+      bs.map((b) => [b.id, b.name, logoHashOf(b), this.logoPreview.has(b.id), store.stack(b.id).map((f) => [f.id, f.name, f.virtual, f.floor.index, f.asleep])]),
+      lot.map((f) => [f.id, f.name, f.virtual, f.asleep]),
       [...this.busy],
       this.renaming && { id: this.renaming.id, error: this.renaming.error },
       this.moving,
@@ -823,13 +878,14 @@ export class Panels {
   }
 
   private floorItem(f: FloorView, building: string | null, j: number, n: number): HTMLElement {
-    const s = f.session;
+    const s = f.id;
+    const name = f.name;
     const busy = this.busy.has(`f:${s}`);
     const tools = h('div', { class: 'dir-tools' });
     if (building !== null) {
       tools.append(
-        this.tool(`Move ${s} up a floor`, ICON.up, `fup:${s}`, () => void this.moveFloor(s, building, -1), busy || j === 0),
-        this.tool(`Move ${s} down a floor`, ICON.down, `fdown:${s}`, () => void this.moveFloor(s, building, 1), busy || j === n - 1),
+        this.tool(`Move ${name} up a floor`, ICON.up, `fup:${s}`, () => void this.moveFloor(s, building, -1), busy || j === 0),
+        this.tool(`Move ${name} down a floor`, ICON.down, `fdown:${s}`, () => void this.moveFloor(s, building, 1), busy || j === n - 1),
       );
     }
     tools.append(
@@ -839,7 +895,8 @@ export class Panels {
           class: 'btn btn--sm',
           'data-key': `move:${s}`,
           'aria-expanded': this.moving === s ? 'true' : 'false',
-          'aria-label': `Move ${s} to another building`,
+          // #58 decision 4: a virtual floor stays in its session's building: its menu only reorders it there.
+          'aria-label': f.virtual ? `Move ${name} within ${building === null ? LOT : (this.host.store.buildings.get(building)?.name ?? 'its building')}` : `Move ${name} to another building`,
           'aria-disabled': busy ? 'true' : null,
           onclick: () => {
             if (busy) return;
@@ -854,14 +911,16 @@ export class Panels {
     );
     const li = h(
       'li',
-      { class: 'dir-floor', 'data-session': s },
+      { class: 'dir-floor', 'data-floor': s, 'data-session': f.baseSession },
       h('span', { class: 'lift-num lift-num--sm', 'data-empty': f.level ? null : 'true', 'aria-hidden': 'true' }, f.level ? String(f.level.number) : ''),
-      h('span', { class: 'dir-fname' }, h('span', { class: 'visually-hidden' }, f.level ? `Floor ${f.level.number}: ` : ''), s),
+      h('span', { class: 'dir-fname' }, h('span', { class: 'visually-hidden' }, f.level ? `Floor ${f.level.number}: ` : ''), name),
       f.asleep ? h('span', { class: 'tape tape--asleep' }, 'Asleep') : h('span', { class: 'dir-fstate' }, plural(f.counts.total, 'worker')),
       tools,
     );
-    if (this.moving === s) {
-      const menu = h('div', { class: 'dir-move', role: 'group', 'aria-label': `Move ${s} to` }, h('span', { class: 'dir-move-label' }, 'Move to'));
+    if (this.moving === s && f.virtual) {
+      li.append(this.virtualMoveMenu(f, building, j, n, busy));
+    } else if (this.moving === s) {
+      const menu = h('div', { class: 'dir-move', role: 'group', 'aria-label': `Move ${name} to` }, h('span', { class: 'dir-move-label' }, 'Move to'));
       for (const b of this.host.store.sortedBuildings()) {
         if (b.id === building) continue;
         menu.append(h('button', { class: 'btn btn--sm', 'data-key': `to:${s}:${b.id}`, onclick: () => void this.assign(s, b.id, b.name) }, b.name));
@@ -888,6 +947,38 @@ export class Panels {
     return li;
   }
 
+  /**
+   * #58 decision 4: a virtual floor's Move menu. It stands in its session's floor's building (and goes where that floor
+   * goes), so the menu offers no building and no lot: only up and down within that building.
+   */
+  private virtualMoveMenu(f: FloorView, building: string | null, j: number, n: number, busy: boolean): HTMLElement {
+    const s = f.id;
+    const where = building === null ? LOT : (this.host.store.buildings.get(building)?.name ?? 'its building');
+    const menu = h('div', { class: 'dir-move', role: 'group', 'aria-label': `Move ${f.name} within ${where}` }, h('span', { class: 'dir-move-label' }, `Within ${where}`));
+    if (building !== null) {
+      const step = (dir: -1 | 1, label: string, off: boolean) =>
+        h('button', { class: 'btn btn--sm', 'data-key': `to:${s}:${dir < 0 ? 'up' : 'down'}`, 'aria-disabled': off ? 'true' : null, onclick: () => (off ? undefined : void this.moveFloor(s, building, dir)) }, label);
+      menu.append(step(-1, 'Up a floor', busy || j === 0), step(1, 'Down a floor', busy || j === n - 1));
+    }
+    menu.append(
+      h('span', { class: 'dir-move-label', 'data-key': `to:${s}:note` }, `A virtual floor stays with session ${f.baseSession}'s floor${building === null ? ', in the lot' : ''}.`),
+      h(
+        'button',
+        {
+          class: 'btn btn--sm btn--quiet',
+          'data-key': `to:${s}:cancel`,
+          onclick: () => {
+            this.moving = null;
+            this.refresh();
+            this.list?.querySelector<HTMLElement>(`[data-key="move:${CSS.escape(s)}"]`)?.focus();
+          },
+        },
+        'Cancel',
+      ),
+    );
+    return menu;
+  }
+
   /** Runs a command for `key` (disabling its controls meanwhile) and reports a failure. */
   private async run<T extends CommandName>(key: string, t: T, args: CommandArgs[T], ctx: { floor?: string; name?: string } = {}): Promise<boolean> {
     if (this.busy.has(key)) return false;
@@ -911,22 +1002,24 @@ export class Panels {
     if (await this.run(`b:${id}`, 'building.reorder', { ids }, { name })) this.setStatus(`Moved ${name} ${dir < 0 ? 'up' : 'down'}.`);
   }
 
-  private async moveFloor(session: string, building: string, dir: -1 | 1): Promise<void> {
-    const args = floorMove(this.host.store.stack(building), session, building, dir);
+  private async moveFloor(floor: string, building: string, dir: -1 | 1): Promise<void> {
+    const args = floorMove(this.host.store.stack(building), floor, building, dir);
     if (!args) return;
-    if (await this.run(`f:${session}`, 'floor.assign', args, { floor: session })) {
-      this.setStatus(`Moved ${session} ${dir < 0 ? 'up' : 'down'} a floor.`);
+    const name = this.host.store.floorName(floor);
+    if (await this.run(`f:${floor}`, 'floor.assign', args, { floor: name })) {
+      this.setStatus(`Moved ${name} ${dir < 0 ? 'up' : 'down'} a floor.`);
     }
   }
 
-  private async assign(session: string, building: string | null, name: string): Promise<void> {
+  private async assign(floor: string, building: string | null, buildingName: string): Promise<void> {
     this.moving = null;
+    const name = this.host.store.floorName(floor);
     // A new floor goes on top of its building.
-    const args: CommandArgs['floor.assign'] = building === null ? { session, building: null } : { session, building, index: 0 };
-    if (await this.run(`f:${session}`, 'floor.assign', args, { floor: session })) {
-      this.setStatus(building === null ? `Moved ${session} to the unassigned lot.` : `Moved ${session} to the top of ${name}.`);
+    const args: CommandArgs['floor.assign'] = building === null ? { floor, building: null } : { floor, building, index: 0 };
+    if (await this.run(`f:${floor}`, 'floor.assign', args, { floor: name })) {
+      this.setStatus(building === null ? `Moved ${name} to the unassigned lot.` : `Moved ${name} to the top of ${buildingName}.`);
     }
-    this.list?.querySelector<HTMLElement>(`[data-key="move:${CSS.escape(session)}"]`)?.focus();
+    this.list?.querySelector<HTMLElement>(`[data-key="move:${CSS.escape(floor)}"]`)?.focus();
   }
 
   private startRename(id: string, name: string): void {
@@ -971,7 +1064,7 @@ export class Panels {
     const ok = await this.confirm({
       title: `Delete ${name}?`,
       body: () => {
-        const fs = store.stack(id).map((f) => f.session);
+        const fs = store.stack(id).map((f) => f.name);
         const what = fs.length ? `Its ${plural(fs.length, 'floor')} (${fs.join(', ')}) ${fs.length === 1 ? 'goes' : 'go'} back to the unassigned lot.` : 'It has no floors.';
         return `${what} The herdr sessions keep running; only the building goes.`;
       },
@@ -988,15 +1081,15 @@ export class Panels {
   // ---- settings ----------------------------------------------------------------
 
   private renderSettings(v: Extract<View, { kind: 'settings' }>, first: boolean): void {
-    const f = this.host.store.floorView(v.session);
+    const f = this.host.store.floorView(v.floor);
     if (!f) {
       this.close();
-      this.host.toast(`${v.session} is gone.`, 'info');
+      this.host.toast(`${this.host.store.floorName(v.floor)} is gone.`, 'info');
       return;
     }
     const where = f.level ? `Floor ${f.level.number} of ${f.building?.name ?? ''}` : LOT;
-    replaceKeepingFocus(this.head, this.headFor('Floor settings', `${f.session} · ${where}`, h('div', { class: 'lift-display', 'aria-hidden': 'true' }, icon(ICON.gear)), v.from));
-    if (!first && this.settingsForm?.session === v.session) return;
+    replaceKeepingFocus(this.head, this.headFor('Floor settings', `${f.name} · ${where}`, h('div', { class: 'lift-display', 'aria-hidden': 'true' }, icon(ICON.gear)), v.from));
+    if (!first && this.settingsForm?.floor === v.floor) return;
     this.setSettingsForm(this.buildSettings(f));
     this.body.replaceChildren(this.settingsForm!.el);
   }
@@ -1008,7 +1101,7 @@ export class Panels {
   }
 
   private buildSettings(f: FloorView): NonNullable<Panels['settingsForm']> {
-    const session = f.session;
+    const floor = f.id;
     const kaneoBook = this.host.store.kaneo;
     const init = formFrom(f.settings, f.suggested, kaneoBook.state?.default_workspace?.id ?? null);
     const errs = new Map<FieldKey, HTMLElement>();
@@ -1112,7 +1205,7 @@ export class Panels {
       clearError('kaneoProject');
     });
     let tracker = init.form.tracker;
-    const trackerName = `set-tracker-${session}`;
+    const trackerName = `set-tracker-${floor}`;
     const radio = (value: 'github' | 'kaneo', label: string, note: string) => {
       const input = h('input', { type: 'radio', name: trackerName, value, 'data-key': `tracker:${value}`, checked: tracker === value ? true : null });
       input.addEventListener('change', () => {
@@ -1151,7 +1244,7 @@ export class Panels {
 
     const form = h(
       'form',
-      { class: 'settings', novalidate: true, 'aria-label': `Settings for ${session}` },
+      { class: 'settings', novalidate: true, 'aria-label': `Settings for ${f.name}` },
       h('fieldset', { class: 'tracker-set' }, h('legend', {}, 'Issue tracker'), trackerGroup, picker.el),
       h('fieldset', {}, h('legend', {}, 'Linked GitHub repo', repoNote), repoField),
       projectFieldset,
@@ -1216,7 +1309,7 @@ export class Panels {
         if (this.host.unsupported('floor.settings.set')) this.setStatus(failureText('floor.settings.set', 'unknown_command', ''), 'error');
         return;
       }
-      const cur = this.host.store.floorView(session);
+      const cur = this.host.store.floorView(floor);
       if (!cur) return;
       const p = parseForm(read(), hire, cur.settings);
       show(p.errors, p.badOption);
@@ -1238,12 +1331,12 @@ export class Panels {
       save.setAttribute('aria-busy', 'true');
       save.textContent = 'Saving…';
       this.setStatus('Saving…');
-      void this.host.send('floor.settings.set', { session, ...patch }).then((r) => {
+      void this.host.send('floor.settings.set', { floor, ...patch }).then((r) => {
         save.removeAttribute('aria-disabled');
         save.removeAttribute('aria-busy');
         save.textContent = 'Save settings';
         if (!r.ok) {
-          this.setStatus(failureText('floor.settings.set', r.code, r.message, { floor: session }), 'error');
+          this.setStatus(failureText('floor.settings.set', r.code, r.message, { floor: this.host.store.floorName(floor) }), 'error');
           if (r.code === 'unknown_command') {
             save.setAttribute('aria-disabled', 'true');
             save.title = failureText('floor.settings.set', 'unknown_command', '');
@@ -1251,8 +1344,8 @@ export class Panels {
           return;
         }
         // Rebuild from what is stored now: the suggestion mark goes, values normalise.
-        const now = this.host.store.floorView(session);
-        if (now && this.view?.kind === 'settings' && this.view.session === session) {
+        const now = this.host.store.floorView(floor);
+        if (now && this.view?.kind === 'settings' && this.view.floor === floor) {
           this.setSettingsForm(this.buildSettings(now));
           this.body.replaceChildren(this.settingsForm!.el);
           this.body.querySelector<HTMLElement>('.settings-actions .btn--primary')?.focus();
@@ -1261,7 +1354,7 @@ export class Panels {
         this.setStatus(`Saved the ${Object.keys(patch).map((k) => names[k] ?? k).join(', ')}.`);
       });
     });
-    return { el: form, read, session, repoSuggested: init.repoSuggested, statusDefault: init.statusDefault, dispose: () => picker.dispose() };
+    return { el: form, read, floor, repoSuggested: init.repoSuggested, statusDefault: init.statusDefault, dispose: () => picker.dispose() };
   }
 
   /**
@@ -1426,13 +1519,13 @@ export class Panels {
     const store = this.host.store;
     if (v.kind === 'elevator') {
       const rows = this.rows(v.building);
-      return { kind: 'elevator', building: v.building, title: this.elevatorTitle(v.building), rows, lobby: rows.length ? { current: this.host.inLobby() } : null, ...(this.pick ? { pick: this.pick.session } : {}), ...base };
+      return { kind: 'elevator', building: v.building, title: this.elevatorTitle(v.building), rows, lobby: rows.length ? { current: this.host.inLobby() } : null, ...(this.pick ? { pick: this.pick.floor } : {}), ...base };
     }
     if (v.kind === 'buildings') {
       return {
         kind: 'buildings',
-        buildings: store.sortedBuildings().map((b) => ({ id: b.id, name: b.name, floors: store.stack(b.id).map((f) => f.session), logo: logoHashOf(b), logoBusy: this.busy.get(`l:${b.id}`) ?? null })),
-        lot: store.stack(null).map((f) => f.session),
+        buildings: store.sortedBuildings().map((b) => ({ id: b.id, name: b.name, floors: store.stack(b.id).map((f) => f.id), logo: logoHashOf(b), logoBusy: this.busy.get(`l:${b.id}`) ?? null })),
+        lot: store.stack(null).map((f) => f.id),
         ...base,
       };
     }
@@ -1440,7 +1533,7 @@ export class Panels {
     const form = sf ? sf.read() : formFrom({}, {}).form;
     return {
       kind: 'settings',
-      session: v.session,
+      floor: v.floor,
       form: { ...form, statusOptions: form.statusOptions.map((r) => r.text) },
       repoSuggested: sf?.repoSuggested ?? false,
       statusDefault: sf?.statusDefault ?? false,

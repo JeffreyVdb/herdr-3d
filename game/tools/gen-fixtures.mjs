@@ -280,6 +280,37 @@ function demoM4() {
   return [snap];
 }
 
+// ---- demo-h58: demo-m4 with virtual floors (#58) -------------------------------
+// The bridge's shape since #58: every floor has its id, name, base session and the virtual and hidden flags, every
+// worker its floor. Work, top to bottom: herdr-3d, its virtual floor "Frontend" (two of herdr-3d's workers were hired
+// there: their workspaces live in herdr-3d), depot-manager (asleep) and its virtual floor "Depot docs" (asleep with
+// it, no workers), pastry, and pastry's hidden virtual floor "Archive" (no workers: no list shows it). scratchpad stays
+// in the lot. For the simulating fixture server (`?sim=1`).
+
+function demoH58() {
+  const [base] = demoM4();
+  const snap = structuredClone(base);
+  const w = snap.world;
+  const work = w.buildings.find((b) => b.name === 'Work');
+  const FRONT = 'v-00000000f0e1';
+  const DOCS = 'v-00000000f0e2';
+  const ARCHIVE = 'v-00000000f0e3';
+  const real = (f) => Object.assign(f, { id: f.session, name: f.session, base_session: f.session, virtual: false, hidden: false });
+  const virtual = (id, name, session, state, hidden = false) => ({ id, name, session, base_session: session, virtual: true, hidden, state, building: work.id, index: 0, desks: 6 });
+  const floors = w.floors.map((f) => ({ id: f.session, name: f.session, ...real(f) }));
+  const at = (id) => floors.findIndex((f) => f.id === id);
+  floors.splice(at('herdr-3d') + 1, 0, virtual(FRONT, 'Frontend', 'herdr-3d', 'running'));
+  floors.splice(at('depot-manager') + 1, 0, virtual(DOCS, 'Depot docs', 'depot-manager', 'asleep'));
+  floors.splice(at('pastry') + 1, 0, virtual(ARCHIVE, 'Archive', 'pastry', 'running', true));
+  work.floors = ['herdr-3d', FRONT, 'depot-manager', DOCS, 'pastry', ARCHIVE];
+  work.floors.forEach((id, index) => Object.assign(floors[at(id)], { building: work.id, index }));
+  w.floors = floors;
+  for (const x of w.workers) x.floor = x.session;
+  // Hired on Frontend: their workspaces are herdr-3d's, their desks Frontend's.
+  ['UX|m2-hud', 'helper-tunnel'].forEach((label, desk) => Object.assign(w.workers.find((x) => x.label === label), { floor: FRONT, desk_index: desk }));
+  return [snap];
+}
+
 // ---- demo-m5: demo-m4 with questions and usage --------------------------------
 // For the M5 panels on the simulating fixture server (`?sim=1`): the blocked
 // workers carry the question the bridge read off their screen, in the forms
@@ -700,6 +731,8 @@ FIXTURES['demo-m118'] = demoM118;
 FIXTURES['demo-m188'] = demoM188;
 // #171 code changes in the transcript
 FIXTURES['demo-h171'] = demoH171;
+// #58 virtual floors
+FIXTURES['demo-h58'] = demoH58;
 
 const check = process.argv.includes('--check');
 let stale = false;

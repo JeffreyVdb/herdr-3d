@@ -103,7 +103,7 @@ test('freelancer looks, model cues, stamps, the input_required bubble and the ov
   await shot(page, 'm6-overcap-orch');
 
   // The over-cap orchestrator counts for "N need you": N goes to it.
-  const needs = await page.evaluate(() => window.__h3d.needs().filter((n) => n.session === 'lab').map((n) => n.desk));
+  const needs = await page.evaluate(() => window.__h3d.needs().filter((n) => n.floor === 'lab').map((n) => n.desk));
   expect(needs).toEqual(expect.arrayContaining([0, 8]));
 
   // The lobby run: INCOMPLETE, the input_required bubble, working / onboarding / hired.
@@ -140,7 +140,7 @@ test('#215: a report request is labelled, readable in full, and stops counting o
   const id = (hire.data as { id: string }).id;
   await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
   await page.evaluate((t) => window.__h3d.simCrew({ step: 'report', summary: 'Implemented; head 3f9c2e1.', input_required: t, input_for: 'orchestrator' }), text);
-  const needsDesk = () => page.evaluate(() => window.__h3d.needs().some((n) => n.session === 'lab' && n.desk === 13 && n.reason === 'blocked'));
+  const needsDesk = () => page.evaluate(() => window.__h3d.needs().some((n) => n.floor === 'lab' && n.desk === 13 && n.reason === 'blocked'));
   await expect.poll(needsDesk, { timeout: 10_000 }).toBe(true);
   expect(await member(page, 13)).toMatchObject({ id, life: 'blocked', display: 'needs_you' });
 
@@ -184,7 +184,7 @@ test('#215: with "Show the inbox" off the whole request is still one keystroke a
   const id = (hire.data as { id: string }).id;
   await page.evaluate(() => window.__h3d.simCrew({ step: 'onboard' }));
   await page.evaluate((t) => window.__h3d.simCrew({ step: 'report', summary: 'Implemented.', input_required: t, input_for: 'orchestrator' }), text);
-  await expect.poll(() => page.evaluate(() => window.__h3d.needs().some((n) => n.session === 'lab' && n.desk === 13)), { timeout: 10_000 }).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__h3d.needs().some((n) => n.floor === 'lab' && n.desk === 13)), { timeout: 10_000 }).toBe(true);
   expect(await page.evaluate((w) => window.__h3d.face(w), id)).toBe(true);
   await frames(page, 4);
 

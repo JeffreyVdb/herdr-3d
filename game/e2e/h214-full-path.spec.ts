@@ -76,7 +76,7 @@ test('background on: dictated, reviewed and changed, Hire closes at once; while 
     await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
     await expect.poll(async () => (await hires(page)).length).toBe(1);
     expect((await hires(page))[0]?.args).toEqual(
-      expect.objectContaining({ session: 'pastry', desk_index: 14, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', prompt: 'label the loaves and list the flour bags.' }),
+      expect.objectContaining({ floor: 'pastry', desk_index: 14, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', prompt: 'label the loaves and list the flour bags.' }),
     );
     expect(await page.evaluate(() => window.__h3d.desks()[14]?.plus)).toBe(false);
     expect(await page.evaluate(() => window.__h3d.desks()[14]?.worker ?? null)).toBeNull();
@@ -140,7 +140,7 @@ test('background off (the default): the same dictated hire waits in the review, 
     await reviewEl(page).locator('[data-key="hire"]').click();
     await expect.poll(async () => (await hires(page)).length).toBe(1);
     expect((await hires(page))[0]?.args).toEqual(
-      expect.objectContaining({ session: 'pastry', desk_index: 14, harness: 'codex', model: 'gpt-6-sol', effort: 'high', prompt: 'count the grills on the bottom floor.' }),
+      expect.objectContaining({ floor: 'pastry', desk_index: 14, harness: 'codex', model: 'gpt-6-sol', effort: 'high', prompt: 'count the grills on the bottom floor.' }),
     );
     await expect.poll(async () => (await review(page))?.status).toMatch(/^Hiring .*: (creating the worktree, )?starting codex, handing over the first task…$/);
     expect((await review(page))?.state).toBe('hiring');
