@@ -69,8 +69,10 @@ type Control struct {
 	// reads $SHELL and never switches to the other one.
 	Shell shell.Kind
 	// ShellBin is the absolute path of Shell's executable. Empty, it is
-	// resolved when first needed (shell.Resolve); a shell that is not
-	// installed is an error naming the option, not a fallback.
+	// resolved when first needed (shell.Resolve). Either way it is checked
+	// again before every wake and launch (shell.Verify): a shell that is not
+	// installed, or was removed since, is an error naming the option, not
+	// a fallback.
 	ShellBin string
 }
 
@@ -631,6 +633,11 @@ func (c *Control) shellBin(launcher bool) (string, error) {
 	if !ValidPlainDir(bin) {
 		return "", fmt.Errorf("%w: the %s executable %q is not a plain absolute path (set %s to a shell installed at one)",
 			ErrNotAllowed, k, bin, shell.Option)
+	}
+	// A path cached at startup may have lost its shell since: a command
+	// dispatched with it would exit with its error discarded.
+	if err := shell.Verify(k, bin); err != nil {
+		return "", err
 	}
 	if launcher && k == shell.Fish {
 		return "fish", nil

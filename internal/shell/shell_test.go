@@ -101,3 +101,42 @@ func TestResolveFishKeepsLegacyPath(t *testing.T) {
 		t.Fatalf("Resolve(Fish) = %q, %v; the compatibility argv keeps /bin/fish", got, err)
 	}
 }
+
+// Verify is what Control re-runs before every wake and launch on a path
+// resolved at startup: the same MissingError as a shell never installed.
+func TestVerifyCachedPath(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bash")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(Bash, bin); err != nil {
+		t.Fatalf("Verify of an executable file = %v", err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(bin, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify("", link); err != nil {
+		t.Fatalf("Verify of a link to an executable = %v", err)
+	}
+	if err := os.Chmod(bin, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, p := range map[string]string{"not executable": bin, "link to it": link, "directory": dir, "missing": filepath.Join(dir, "nope")} {
+		err := Verify(Fish, p)
+		var me *MissingError
+		if !errors.As(err, &me) || me.Kind != Fish || me.Path != p {
+			t.Errorf("%s: Verify = %v, want a *MissingError for %s", name, err, p)
+			continue
+		}
+		for _, want := range []string{p, "--shell", "HERDR_WORLD_SHELL", "bash"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: %q does not mention %q", name, err, want)
+			}
+		}
+	}
+	if err := Verify("", dir); err == nil || !strings.Contains(err.Error(), `"bash"`) {
+		t.Errorf("the empty policy is bash: %v", err)
+	}
+}

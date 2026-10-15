@@ -1019,8 +1019,9 @@ into the worker's pane). Which shell is a **two-value policy**, never a command 
 - **Finding it.** The absolute path of the policy's executable: `bash` is the first of `$PATH`, `/usr/bin`, `/bin` and
   `/usr/local/bin`; `fish` is `/bin/fish` when it exists (so its argv stays v1.45.0's), else the same search. It is
   resolved and checked **at startup**: a shell that is not installed refuses the start with an error that names the
-  option and both fixes (install it, or choose the other one), and the same error surfaces from a wake or launch if
-  the shell disappears later. The bridge never falls back to the other shell. The path is typed into a pane, so it
+  option and both fixes (install it, or choose the other one), and the path is checked again (one stat: it exists, is a
+  regular file once symlinks are followed, has an execute bit) before every wake and launch, so the same error
+  surfaces, with nothing dispatched, if the shell disappears or loses its execute bit later. The bridge never falls back to the other shell. The path is typed into a pane, so it
   must be plain characters (`ValidPlainDir`); `fish` is typed as `fish` (the pane's `PATH`), as before.
 - **Wake.** Unchanged apart from the interpreter: `--working-directory`, `KillMode=process`, the unit name and
   `CleanEnv` are as before. A login shell reads the *login* files (`/etc/profile`, `~/.bash_profile` or `~/.profile`

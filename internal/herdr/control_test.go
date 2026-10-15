@@ -98,13 +98,36 @@ func TestControlAllowlist(t *testing.T) {
 
 	// #68: the argv of every operation under each shell policy.
 	for _, pol := range []shellPolicy{
-		{name: "bash", kind: shell.Bash, bin: "/usr/bin/bash", wake: "/usr/bin/bash", typed: "/usr/bin/bash", ext: ".sh"},
-		{name: "default is bash", kind: "", bin: "/usr/bin/bash", wake: "/usr/bin/bash", typed: "/usr/bin/bash", ext: ".sh"},
-		// Fish keeps v1.45.0's argv exactly: /bin/fish to wake, a bare `fish` for the launcher.
-		{name: "fish", kind: shell.Fish, bin: "/bin/fish", wake: "/bin/fish", typed: "fish", ext: ".fish"},
+		{name: "bash", kind: shell.Bash, ext: ".sh"},
+		{name: "default is bash", kind: "", ext: ".sh"},
+		// Fish keeps v1.45.0's argv: its path to wake, a bare `fish` for the launcher.
+		{name: "fish", kind: shell.Fish, ext: ".fish", typed: "fish"},
 	} {
-		t.Run(pol.name, func(t *testing.T) { checkAllowlistArgv(t, pol) })
+		t.Run(pol.name, func(t *testing.T) {
+			pol.bin = fakeShell(t, string(pol.kind.Or()))
+			pol.wake = pol.bin
+			if pol.typed == "" {
+				pol.typed = pol.bin
+			}
+			checkAllowlistArgv(t, pol)
+		})
 	}
+}
+
+// fakeShell is an executable file named name in a fresh plain directory: a
+// shell as far as Control's revalidation (shell.Verify) can tell.
+func fakeShell(t *testing.T, name string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "h3d-shell-") // (t.TempDir is named after the test)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	bin := filepath.Join(dir, name)
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin
 }
 
 // shellPolicy is one shell policy's expected argv.
@@ -465,7 +488,8 @@ func TestControlAPIErrors(t *testing.T) {
 func TestControlRefusesUnsafeCodexLaunch(t *testing.T) {
 	ran := false
 	run := "/run/user/7/herdr-world/codex"
-	c := &Control{CodexRun: run, Shell: shell.Bash, ShellBin: "/usr/bin/bash",
+	bash := fakeShell(t, "bash")
+	c := &Control{CodexRun: run, Shell: shell.Bash, ShellBin: bash,
 		Run: func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, nil }}
 	ctx := context.Background()
 	codex := Agent{Harness: "codex", Model: "gpt-6-sol", Effort: "low"}
@@ -486,10 +510,10 @@ func TestControlRefusesUnsafeCodexLaunch(t *testing.T) {
 		"launcher dotdot":        func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/../a1.sh") },
 		"launcher too long":      func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/"+strings.Repeat("a", 80)+".sh") },
 		"no run dir": func() error {
-			return (&Control{Run: c.Run, ShellBin: "/usr/bin/bash"}).StartCodexServer(ctx, "s", "w1:p1", run+"/a1.sh")
+			return (&Control{Run: c.Run, ShellBin: bash}).StartCodexServer(ctx, "s", "w1:p1", run+"/a1.sh")
 		},
 		"fish launcher, fish too": func() error {
-			return (&Control{CodexRun: run, Shell: shell.Fish, ShellBin: "/bin/fish", Run: c.Run}).StartCodexServer(ctx, "s", "w1:p1", run+"/a1.sh")
+			return (&Control{CodexRun: run, Shell: shell.Fish, ShellBin: fakeShell(t, "fish"), Run: c.Run}).StartCodexServer(ctx, "s", "w1:p1", run+"/a1.sh")
 		},
 		"socket outside run": func() error {
 			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: "/tmp/a1.sock", Cwd: "/r"})
@@ -600,11 +624,12 @@ func TestControlShellPolicy(t *testing.T) {
 
 	t.Run("fish only when asked", func(t *testing.T) {
 		var got [][]string
-		c := &Control{Home: "/home/u", CodexRun: run, Shell: shell.Fish, ShellBin: "/bin/fish", Run: record(&got)}
+		fish := fakeShell(t, "fish")
+		c := &Control{Home: "/home/u", CodexRun: run, Shell: shell.Fish, ShellBin: fish, Run: record(&got)}
 		if err := bothOps(c); err != nil {
 			t.Fatal(err)
 		}
-		if got[0][7] != "/bin/fish" || got[1][6] != "setsid -f fish "+run+"/a58752ea6511.fish </dev/null >/dev/null 2>&1" {
+		if got[0][7] != fish || got[1][6] != "setsid -f fish "+run+"/a58752ea6511.fish </dev/null >/dev/null 2>&1" {
 			t.Fatalf("argv = %q", got)
 		}
 	})
@@ -627,6 +652,63 @@ func TestControlShellPolicy(t *testing.T) {
 			if len(got) != 0 {
 				t.Errorf("shell %q: ran %q without a shell", k, got)
 			}
+		}
+	})
+
+	t.Run("a cached shell that vanished since startup is the same actionable error and nothing runs", func(t *testing.T) {
+		for _, k := range []shell.Kind{"", shell.Bash, shell.Fish} {
+			for how, breakShell := range map[string]func(bin string) error{
+				"removed":        os.Remove,
+				"not executable": func(bin string) error { return os.Chmod(bin, 0o644) },
+				"now a directory": func(bin string) error {
+					if err := os.Remove(bin); err != nil {
+						return err
+					}
+					return os.Mkdir(bin, 0o755)
+				},
+				"dangling link": func(bin string) error {
+					if err := os.Remove(bin); err != nil {
+						return err
+					}
+					return os.Symlink(bin+"-gone", bin)
+				},
+			} {
+				bin := fakeShell(t, string(k.Or()))
+				var got [][]string
+				c := &Control{Home: "/home/u", CodexRun: run, Shell: k, ShellBin: bin, Run: record(&got)}
+				if err := bothOps(c); err != nil { // (it is there at startup)
+					t.Fatal(err)
+				}
+				got = nil
+				if err := breakShell(bin); err != nil {
+					t.Fatal(err)
+				}
+				for name, err := range map[string]error{
+					"wake":   c.StartSession(ctx, "h3d-it-1"),
+					"launch": c.StartCodexServer(ctx, "h3d-it-1", "w1:p1", run+"/a58752ea6511"+k.LauncherExt()),
+				} {
+					var me *shell.MissingError
+					if !errors.As(err, &me) || !strings.Contains(err.Error(), "--shell") || !strings.Contains(err.Error(), "HERDR_WORLD_SHELL") ||
+						!strings.Contains(err.Error(), bin) {
+						t.Errorf("%s, shell %q %s: error %v is not the actionable missing-shell error", name, k, how, err)
+					}
+				}
+				if len(got) != 0 {
+					t.Errorf("shell %q %s: ran %q without a shell", k, how, got)
+				}
+			}
+		}
+	})
+
+	t.Run("a shell reached through a symlink to an executable is fine", func(t *testing.T) {
+		bin := fakeShell(t, "real-bash")
+		link := filepath.Join(filepath.Dir(bin), "bash")
+		if err := os.Symlink(bin, link); err != nil {
+			t.Fatal(err)
+		}
+		var got [][]string
+		if err := bothOps(&Control{Home: "/home/u", CodexRun: run, Shell: shell.Bash, ShellBin: link, Run: record(&got)}); err != nil || got[0][7] != link {
+			t.Fatalf("argv = %q, err = %v", got, err)
 		}
 	})
 

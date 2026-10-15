@@ -65,12 +65,19 @@ var Known = []Kind{Bash, Fish}
 type MissingError struct {
 	Kind     Kind
 	Searched []string
+	// Path is set when the shell was resolved earlier, at this path, and
+	// is no longer an executable file there.
+	Path string
 }
 
 func (e *MissingError) Error() string {
 	other := Fish
 	if e.Kind.Or() == Fish {
 		other = Bash
+	}
+	if e.Path != "" {
+		return fmt.Sprintf("the configured shell %q at %s is no longer an executable file: install it again, or set %s to %s; "+
+			"the bridge never falls back to another shell on its own", string(e.Kind.Or()), e.Path, Option, other)
 	}
 	return fmt.Sprintf("the configured shell %q was not found (looked in $PATH and %v): install it, or set %s to %s; "+
 		"the bridge never falls back to another shell on its own", string(e.Kind.Or()), e.Searched, Option, other)
@@ -116,6 +123,18 @@ func locate(k Kind) (string, error) {
 	return "", &MissingError{Kind: k, Searched: searched}
 }
 
+// Verify reports whether bin, a path Resolve returned earlier, is still
+// the executable of k: it exists, is a regular file once symlinks are
+// followed and has an execute bit. If not, the error is the same
+// *MissingError a shell that was never installed gets. One stat.
+func Verify(k Kind, bin string) error {
+	if !executable(bin) {
+		return &MissingError{Kind: k.Or(), Path: bin}
+	}
+	return nil
+}
+
+// executable stats p, which follows symlinks.
 func executable(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.Mode().IsRegular() && st.Mode().Perm()&0o111 != 0
