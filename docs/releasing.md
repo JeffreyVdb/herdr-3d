@@ -15,12 +15,13 @@ hostnames, users or IPs into the repository, a commit message, a PR or an issue*
 | What | Where it comes from |
 |---|---|
 | The Mac `h3d-update` updates (`H3D_MAC`) | the environment, else `${XDG_CONFIG_HOME:-~/.config}/h3d/update.env` on the bridge server |
-| The bridge host the Mac's helper tunnels to (`H3D_HELPER_HOST`, `user@host`) | on the Mac only: the LaunchAgent's `EnvironmentVariables` in `~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist` (or `-host`). Nothing else is read |
-| The bridge socket (`H3D_HELPER_REMOTE_SOCKET`) | the same plist (or `-remote-socket`); if unset the helper asks the host for `$XDG_RUNTIME_DIR` and uses `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` |
+| The bridges the Mac's helper can tunnel to (#57) | on the Mac only: the helper's list, `~/Library/Application Support/h3d-helper/bridges.json` (0600; Settings → Bridges edits it, `curl -s -H "X-H3D-Token: $(cat ~/Library/Application\ Support/h3d-helper/token)" http://127.0.0.1:7777/api/bridges` lists it) |
+| The bridge host of a list that does not exist yet (`H3D_HELPER_HOST`, `user@host`) | the LaunchAgent's `EnvironmentVariables` in `~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist` (or `-host`): on its first start the helper makes it the list's only bridge; once the list exists it is not read |
+| The bridge socket (`H3D_HELPER_REMOTE_SOCKET`) | the same plist (or `-remote-socket`), for that first bridge; if unset the helper asks the host for `$XDG_RUNTIME_DIR` and uses `$XDG_RUNTIME_DIR/herdr-world/bridge.sock` |
 
 So: `cat ~/.config/h3d/update.env` (you are on the bridge server; it is private, mode 600, not in git) and read the Mac
 from `H3D_MAC`; do not ask for or invent one. If the file is missing, `h3d-update` says so and stops. For the bridge host,
-read the installed plist on the Mac. `deploy/update.env.example` and the plist's header show the shape with fictional
+read the helper's list (or the installed plist, for a helper that has none yet) on the Mac. `deploy/update.env.example` and the plist's header show the shape with fictional
 values (`dev@devbox`, `devmac`).
 `game/tools/mac-perf.ts` (`pnpm perf:mac`) reads the same `H3D_MAC`, from the environment or that file, and exits 2
 without one. A private wrapper that runs these steps for you may sit next to the config, outside the repository.
@@ -34,8 +35,9 @@ other keys are ignored); a variable set in the environment wins. `.gitignore` ke
 |---|---|
 | `h3d-update: no Mac to update: set H3D_MAC=…` | no `H3D_MAC` in the environment or `update.env`. Nothing was downloaded or touched. Set it, or pass `--server-only` to update the bridge alone |
 | `h3d-update: …/update.env: want KEY=VALUE` | a line of the config that is neither a comment nor `KEY=VALUE` |
-| `h3d-helper: no bridge host: pass -host [user@]host or set $H3D_HELPER_HOST (on the Mac: in the LaunchAgent's EnvironmentVariables)` | the helper started with no host (flag and environment empty, or the plist still has its `@H3D_HELPER_HOST@` placeholder). Fill in the plist ("Changing the Mac's bridge host" below) |
-| `h3d-helper: … reported no usable $XDG_RUNTIME_DIR …` / `asking <host> for its runtime dir over ssh: …` | no socket was named and the host's answer was empty, relative or ssh failed. Name it: `-remote-socket` / `H3D_HELPER_REMOTE_SOCKET` |
+| The game says **No bridge configured**; the log says `no bridge configured: the game asks to add one in Settings → Bridges` | #57: the helper has no list and started with no host (flag and environment empty, or the plist still has its `@H3D_HELPER_HOST@` placeholder). It serves the game anyway: add a bridge in Settings → Bridges (or fill in the plist before the first start, "Changing the Mac's bridge host" below) |
+| `h3d-helper: bridge list …: …(fix or remove the file)` | `bridges.json` is not a list the helper can use (hand-edited?). Fix it, or remove it and add the bridges again in Settings |
+| A bridge's state `backoff` with `… reported no usable $XDG_RUNTIME_DIR …` / `asking <host> for its runtime dir over ssh: …` | that ssh bridge names no socket and the host's answer was empty, relative or ssh failed. Set its socket in Settings → Bridges → Edit (the helper keeps trying meanwhile, and the other bridges are unaffected) |
 
 ## What a release contains
 
@@ -106,8 +108,12 @@ are `H3D_*` variables at the top of the script (`H3D_MAC` also from `update.env`
 
 ### Changing the Mac's bridge host
 
-The helper reads `H3D_HELPER_HOST` and `H3D_HELPER_REMOTE_SOCKET` from its LaunchAgent's `EnvironmentVariables` only
-(launchd does not see shell exports). To set or change them, reinstall the plist from
+#57: with a bridge list (every helper that has started once with a host, or where one was added), bridges are added,
+edited, renamed, removed and switched in the game: Settings → Bridges and ⌘P → Switch bridge. No restart, no plist.
+
+Before the list exists, the helper reads `H3D_HELPER_HOST` and `H3D_HELPER_REMOTE_SOCKET` from its LaunchAgent's
+`EnvironmentVariables` only (launchd does not see shell exports) and makes that host the list's first bridge. To set
+them for a first start, reinstall the plist from
 `deploy/com.jeffreyvdb.h3d-helper.plist` with the `sed` in its header (or the `sed` under "First install" from the
 server), then reload it:
 
@@ -116,8 +122,9 @@ launchctl bootout gui/$(id -u)/com.jeffreyvdb.h3d-helper
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jeffreyvdb.h3d-helper.plist
 ```
 
-Check: `curl -s http://127.0.0.1:7777/healthz` on the Mac (tunnel `up`), `tail ~/Library/Logs/h3d-helper.log` (no
-`no bridge host`), and `h3d-update --check` on the server (shows both versions).
+Check: `curl -s http://127.0.0.1:7777/healthz` on the Mac (tunnel `up`: the bridge in use), `tail
+~/Library/Logs/h3d-helper.log` (`h3d-helper serving … bridge=<name> (<address>)`), and `h3d-update --check` on the
+server (shows both versions).
 
 ## The radio's music
 

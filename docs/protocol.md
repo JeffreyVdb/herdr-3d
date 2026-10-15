@@ -74,7 +74,9 @@ let through up to 32 MiB + 128 KiB, a file up to 8 MiB + 4 KiB (`413` `whiteboar
 `/whiteboard/` or `/drops/` answer `404` there and never reach the bridge.
 
 A `502` means the tunnel is down; the helper's own `GET /healthz` reports the tunnel state
-(`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`).
+(`{"tunnel":{"state":"up|connecting|degraded|backoff",…}}`, `503` unless `up`). #57: it is the state of the bridge in
+use (a local one is `up` or `down`); with no bridge configured it is `{"state":"none","last_error":"no bridge
+configured: add one in Settings"}` (`503`), and `version` is always the helper's.
 
 The helper also answers one request of its own, for the game's "Open in <provider>" buttons and the links in issue
 bodies (M7): `POST /api/open` with `{"url":"https://github.com/…"}` opens that page in the Mac's default browser
@@ -88,6 +90,46 @@ check). No client can set it: the helper does not proxy `/healthz`. `204` opened
 `403` a failed check; `502` the Mac's `open` failed. A game not served by the helper has no such endpoint (it has no
 token either) and opens a new window itself (`https://` only); a game the helper serves opens nothing the helper
 refuses and says so.
+
+#### The helper's bridges (#57)
+
+The helper can reach several bridges and tunnels the game to one at a time: the one **in use**. Every route above
+(`/ws`, `/logo`, `/upload`, `/screen/frame`, the whiteboard's, `/drops`), `GET /healthz` and `/api/open`'s open hosts
+are the bridge in use's. The list is the helper's, in a 0600 JSON file next to its token (`bridges.json`,
+`--bridges-file`), and the game reads and edits it through `/api/bridges`:
+
+| Request | Body | Answer |
+|---|---|---|
+| `GET /api/bridges` | | the list |
+| `POST /api/bridges` | `{"name", "kind", "host"?, "remote_socket"?, "socket"?}` | the list (the first bridge added is put in use) |
+| `PUT /api/bridges/{id}` | the same fields | the list (the id stays; a new address restarts that bridge's connection) |
+| `DELETE /api/bridges/{id}` | | the list; `409` `in_use` for the bridge in use |
+| `POST /api/bridges/{id}/activate` | | the list, with `{id}` in use |
+
+The list is `{"active": "<id>", "bridges": [{"id", "name", "kind", "host"?, "remote_socket"?, "socket"?, "address",
+"active", "state", "since"?, "last_error"?, "version"?}]}` in the order added: `id` is 10 random hex digits that never
+change, `name` (1-40 characters, unique without regard to case) is display only. `kind` `ssh` has a `host`
+(`[user@]host`, not starting with `-`, no whitespace) and an optional `remote_socket` (absolute; empty: the helper asks
+the host for `$XDG_RUNTIME_DIR` over ssh, in that bridge's own supervisor); `kind` `local` has a `socket` on the
+helper's machine (absolute, at most 103 bytes), dialled directly. `state` is that bridge's connection now (`up`,
+`connecting`, `degraded`, `backoff`, `stopped`, or `down` for a local socket that does not answer), `version` its
+build from its `/healthz`. The helper keeps one supervised connection per bridge (an ssh tunnel ending at
+`<dir of --local-socket>/bridges/<id>.sock`, or the local socket's `/healthz` checked every 5 s), so the list
+answers at once from what it last saw: no request waits on ssh.
+
+The guards are `/api/open`'s: `Host`, the token in `X-H3D-Token` (never in a URL) and the page's own `Origin`; a
+`GET` may come without one, since a browser sends none on a same-origin `GET`, and the token header keeps it a request
+no other site can make (it is not a simple request, and the helper answers no CORS preflight). `POST` and `PUT` need
+`Content-Type: application/json` and a body of at most 4 KiB with no other field. A refusal is the error object
+(`{"t":"error","code","message"}`): `400` `invalid` (the message names the field and is shown as it is under the
+Settings form), `400` `bad_request`, `403` `forbidden`, `404` `not_found`, `409` `in_use`, `415`, `500` `save_failed`;
+other methods get `405`. The list is saved before a change takes effect.
+
+`activate` closes every connection the helper dialled to the bridge in use before (the game's `/ws` and the proxies'
+idle keep-alive connections), and the game reloads: its same-origin `/ws` then reaches the new bridge. A bridge that
+is not `up` can be activated (the game asks first). The bridge in use cannot be removed. On its first start with no
+list file, a helper given `-host` / `$H3D_HELPER_HOST` (and `-remote-socket`) makes that host the only bridge, named
+after it, in use; once the file exists it is the truth. With neither, the list is empty and the game says so.
 
 ## Handshake
 
