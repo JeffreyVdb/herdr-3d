@@ -12,10 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -147,19 +149,32 @@ const genReserve = "zzzzzz"
 var socketName = regexp.MustCompile(`^[0-9a-f]{10}(-[0-9a-z]+)?\.sock$`)
 
 // removeStaleSockets removes the tunnels' sockets an earlier helper run left
-// (it was killed before its tunnels removed them). Run calls it before any
-// runner starts.
-func (s *BridgeSet) removeStaleSockets() {
-	if s.socketDir == "" {
+// in dir (it was killed before its tunnels removed them). A name alone proves
+// nothing: a socket goes only when nothing listens on it (the connection is
+// refused), and a local entry's own path (keep) never does, so a live local
+// bridge or another helper's tunnel is left alone. Run calls it before any
+// runner starts, not under mu (it dials).
+func (s *BridgeSet) removeStaleSockets(dir string, keep []string) {
+	if dir == "" {
 		return
 	}
-	entries, err := os.ReadDir(s.socketDir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, d := range entries {
-		if d.Type() == fs.ModeSocket && socketName.MatchString(d.Name()) {
-			_ = os.Remove(filepath.Join(s.socketDir, d.Name()))
+		p := filepath.Join(dir, d.Name())
+		if d.Type() != fs.ModeSocket || !socketName.MatchString(d.Name()) || slices.Contains(keep, p) {
+			continue
+		}
+		c, err := net.DialTimeout("unix", p, time.Second)
+		if err == nil {
+			c.Close()
+			continue
+		}
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			_ = os.Remove(p)
+			s.log.Info("removed a stale tunnel socket", "socket", p)
 		}
 	}
 }
@@ -241,8 +256,17 @@ func closeAll(conns []*trackedConn) {
 // Run supervises every entry's connection until ctx is done.
 func (s *BridgeSet) Run(ctx context.Context) error {
 	s.mu.Lock()
+	var locals []string
+	for _, e := range s.list.Bridges {
+		if e.Kind == KindLocal {
+			locals = append(locals, filepath.Clean(e.Socket))
+		}
+	}
+	s.mu.Unlock()
+	// No runner starts before s.ctx is set, so none of this run's sockets exists yet.
+	s.removeStaleSockets(s.socketDir, locals)
+	s.mu.Lock()
 	s.ctx = ctx
-	s.removeStaleSockets()
 	for _, e := range s.list.Bridges {
 		s.start(s.run(e))
 	}

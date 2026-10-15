@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1108,5 +1109,53 @@ func TestStaleTunnelSocketsGo(t *testing.T) {
 		if !slices.Contains(left, n) {
 			t.Errorf("%s removed: %v", n, left)
 		}
+	}
+}
+
+// TestStartupKeepsLiveSockets: startup removes only tunnel sockets nobody
+// listens on. A live one (a local bridge's that happens to sit in the socket
+// directory, another helper's tunnel) and a local entry's own path, live or
+// not, stay.
+func TestStartupKeepsLiveSockets(t *testing.T) {
+	dir := shortDir(t)
+	listen := func(name string, live bool) string {
+		p := filepath.Join(dir, name)
+		ln, err := net.Listen("unix", p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if live {
+			t.Cleanup(func() { ln.Close() })
+		} else {
+			ln.(*net.UnixListener).SetUnlinkOnClose(false)
+			ln.Close()
+		}
+		return p
+	}
+	liveLocal := listen("0123456789.sock", true)
+	deadLocal := listen("abcdefabcd.sock", false)
+	liveOther := listen("fedcba9876-1.sock", true)
+	dead := listen("fedcba9876-2.sock", false)
+	l := BridgeList{Bridges: []BridgeEntry{
+		{ID: NewBridgeID(), Name: "live", Kind: KindLocal, Socket: liveLocal},
+		{ID: NewBridgeID(), Name: "restarting", Kind: KindLocal, Socket: deadLocal},
+	}}
+	l.Active = l.Bridges[0].ID
+	set, err := NewBridgeSet(BridgeSetConfig{SocketDir: dir, Log: quietLog()}, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := set.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{liveLocal, deadLocal, liveOther} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s removed: %v", filepath.Base(p), err)
+		}
+	}
+	if _, err := os.Stat(dead); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the stale %s stayed: %v", filepath.Base(dead), err)
 	}
 }
