@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { FirePrepare, HireGit, HirePrepare } from '../net/protocol';
 import {
+  floorClosed,
+  resolveHireDesk,
   ageText,
   baseText,
   capacityView,
@@ -131,8 +133,8 @@ describe('hire form', () => {
   });
   it('sends only what is set', () => {
     const f = formFromPrepare(prep(), H);
-    expect(hireArgs('herdr-3d', 5, f, git)).toEqual({ session: 'herdr-3d', desk_index: 5, harness: 'codex', model: 'gpt-6-sol', effort: 'ultra', label: 'Gumdrop', cwd: '/home/dev/devel/herdr-3d', worktree: true });
-    expect(hireArgs('s', 0, { ...f, label: '  ', cwd: '', prompt: 'Fix the\nflaky test', worktree: false }, git)).toEqual({ session: 's', desk_index: 0, harness: 'codex', model: 'gpt-6-sol', effort: 'ultra', worktree: false, prompt: 'Fix the\nflaky test' });
+    expect(hireArgs('herdr-3d', 5, f, git)).toEqual({ floor: 'herdr-3d', desk_index: 5, harness: 'codex', model: 'gpt-6-sol', effort: 'ultra', label: 'Gumdrop', cwd: '/home/dev/devel/herdr-3d', worktree: true });
+    expect(hireArgs('s', 0, { ...f, label: '  ', cwd: '', prompt: 'Fix the\nflaky test', worktree: false }, git)).toEqual({ floor: 's', desk_index: 0, harness: 'codex', model: 'gpt-6-sol', effort: 'ultra', worktree: false, prompt: 'Fix the\nflaky test' });
     // No repo: no worktree key at all.
     expect(hireArgs('s', 0, { ...f, worktree: true }, null)).not.toHaveProperty('worktree');
     expect(hireArgs('s', 0, { ...f, prompt: '   ' }, null)).not.toHaveProperty('prompt');
@@ -326,5 +328,20 @@ describe('offered options: what a model picker other than Hire offers', () => {
     expect(o.codex?.models).toEqual(['x-2', 'x-3']);
     expect(o.claude?.models).toEqual(['y-1', 'y-2']);
     expect(Object.keys(o)).toEqual(['codex', 'claude']);
+  });
+});
+
+describe('#58 decision 3: an asleep virtual floor takes a hire', () => {
+  const fv = (over: Partial<FloorView>) => ({ id: 'v-0123456789ab', name: 'Frontend', asleep: false, transition: null, virtual: true, seats: [null, null], ...over }) as unknown as FloorView;
+  it('opens on an asleep virtual floor (its session wakes first), never on an asleep real one', () => {
+    expect(floorClosed(fv({ asleep: true }))).toBeNull();
+    expect(resolveHireDesk('v-0123456789ab', fv({ asleep: true }), new Set())).toEqual({ ok: true, desk: 0 });
+    expect(floorClosed(fv({ asleep: true, virtual: false, name: 'main' }))).toBe('main is asleep. Wake it from the elevator (L) to hire.');
+    expect(floorClosed(fv({ asleep: true, virtual: false, name: 'main' }), 'start a run')).toBe('main is asleep. Wake it from the elevator (L) to start a run.');
+  });
+  it('waits while the session is waking up or going to sleep, by the floor’s name', () => {
+    expect(floorClosed(fv({ asleep: true, transition: 'waking' }))).toBe('Frontend is waking up. Wake it from the elevator (L) to hire.');
+    expect(resolveHireDesk('v-0123456789ab', fv({ transition: 'sleeping' }), new Set())).toMatchObject({ ok: false, msg: 'Frontend is going to sleep. Wake it from the elevator (L) to hire.' });
+    expect(resolveHireDesk('v-0123456789ab', fv({ seats: [{} as never] }), new Set())).toMatchObject({ ok: false, msg: 'No free desk on Frontend right now.' });
   });
 });

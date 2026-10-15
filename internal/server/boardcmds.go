@@ -173,15 +173,16 @@ func (h *Hub) startIssueGet(ctx context.Context, c *Client, cmd proto.Command) e
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
 	if err := validItemID(a.ID); err != nil {
 		return err
 	}
-	bf, err := h.boardCmdFloor(a.Session)
+	bf, err := h.boardCmdFloor(a.Floor)
 	if err != nil {
 		return err
 	}
 	tr := bf.set.Tracker
-	return h.startBoardAsync(ctx, c, cmd, a.Session, false, func(ctx context.Context) (any, any, error) {
+	return h.startBoardAsync(ctx, c, cmd, a.Floor, false, func(ctx context.Context) (any, any, error) {
 		d, err := tr.Get(ctx, a.ID)
 		if err != nil {
 			return nil, nil, err
@@ -195,13 +196,14 @@ func (h *Hub) startIssueComment(ctx context.Context, c *Client, cmd proto.Comman
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
 	if err := validItemID(a.ID); err != nil {
 		return err
 	}
 	if err := validBoardText("body", a.Body, 1); err != nil {
 		return err
 	}
-	bf, err := h.boardCmdFloor(a.Session)
+	bf, err := h.boardCmdFloor(a.Floor)
 	if err != nil {
 		return err
 	}
@@ -209,7 +211,7 @@ func (h *Hub) startIssueComment(ctx context.Context, c *Client, cmd proto.Comman
 		return fmt.Errorf("%w: %s issues cannot be commented on", errUnsupported, bf.info.Name)
 	}
 	tr := bf.set.Tracker
-	return h.startBoardAsync(ctx, c, cmd, a.Session, true, func(ctx context.Context) (any, any, error) {
+	return h.startBoardAsync(ctx, c, cmd, a.Floor, true, func(ctx context.Context) (any, any, error) {
 		cm, err := tr.Comment(ctx, a.ID, a.Body)
 		if err != nil {
 			return nil, nil, err
@@ -223,6 +225,7 @@ func (h *Hub) startIssueClose(ctx context.Context, c *Client, cmd proto.Command)
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
 	if err := validItemID(a.ID); err != nil {
 		return err
 	}
@@ -232,7 +235,7 @@ func (h *Hub) startIssueClose(ctx context.Context, c *Client, cmd proto.Command)
 	if !a.Confirm {
 		return fmt.Errorf("%w: closing an issue needs confirm: true", errConfirmation)
 	}
-	bf, err := h.boardCmdFloor(a.Session)
+	bf, err := h.boardCmdFloor(a.Floor)
 	if err != nil {
 		return err
 	}
@@ -240,7 +243,7 @@ func (h *Hub) startIssueClose(ctx context.Context, c *Client, cmd proto.Command)
 		return fmt.Errorf("%w: this issue cannot be closed", errUnsupported)
 	}
 	tr := bf.set.Tracker
-	return h.startBoardAsync(ctx, c, cmd, a.Session, true, func(ctx context.Context) (any, any, error) {
+	return h.startBoardAsync(ctx, c, cmd, a.Floor, true, func(ctx context.Context) (any, any, error) {
 		if err := tr.Close(ctx, a.ID, a.Reason); err != nil {
 			return nil, nil, err
 		}
@@ -253,13 +256,14 @@ func (h *Hub) startIssueSetStatus(ctx context.Context, c *Client, cmd proto.Comm
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
 	if err := validItemID(a.ID); err != nil {
 		return err
 	}
 	if a.Column == "" || len(a.Column) > maxItemID || strings.IndexFunc(a.Column, unicode.IsControl) >= 0 {
 		return bad("column must be 1-%d bytes", maxItemID)
 	}
-	bf, err := h.boardCmdFloor(a.Session)
+	bf, err := h.boardCmdFloor(a.Floor)
 	if err != nil {
 		return err
 	}
@@ -276,7 +280,7 @@ func (h *Hub) startIssueSetStatus(ctx context.Context, c *Client, cmd proto.Comm
 	if at != nil {
 		report["after"] = at.After
 	}
-	return h.startBoardWork(ctx, c, cmd, a.Session, true, func(ctx context.Context) (any, any, error) {
+	return h.startBoardWork(ctx, c, cmd, a.Floor, true, func(ctx context.Context) (any, any, error) {
 		if err := tr.SetStatus(ctx, a.ID, a.Column, at); err != nil {
 			return nil, nil, err
 		}
@@ -284,7 +288,7 @@ func (h *Hub) startIssueSetStatus(ctx context.Context, c *Client, cmd proto.Comm
 	}, func() {
 		// Until the refresh lands, the last board knows the card's new
 		// column: a move anchored on it right away is checked against that.
-		if bf := h.boards.floors[a.Session]; bf != nil {
+		if bf := h.boards.floors[a.Floor]; bf != nil {
 			bf.moved(a.ID, a.Column)
 		}
 	})
@@ -344,10 +348,11 @@ func (h *Hub) startPRGet(ctx context.Context, c *Client, cmd proto.Command) erro
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
 	if err := validItemID(a.ID); err != nil {
 		return err
 	}
-	bf, err := h.boardCmdFloor(a.Session)
+	bf, err := h.boardCmdFloor(a.Floor)
 	if err != nil {
 		return err
 	}
@@ -355,7 +360,7 @@ func (h *Hub) startPRGet(ctx context.Context, c *Client, cmd proto.Command) erro
 		return bf.noHost()
 	}
 	host := bf.set.Host
-	return h.startBoardAsync(ctx, c, cmd, a.Session, false, func(ctx context.Context) (any, any, error) {
+	return h.startBoardAsync(ctx, c, cmd, a.Floor, false, func(ctx context.Context) (any, any, error) {
 		d, err := host.Get(ctx, a.ID)
 		if err != nil {
 			return nil, nil, err
@@ -369,13 +374,14 @@ func (h *Hub) startPRComment(ctx context.Context, c *Client, cmd proto.Command) 
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
 	if err := validItemID(a.ID); err != nil {
 		return err
 	}
 	if err := validBoardText("body", a.Body, 1); err != nil {
 		return err
 	}
-	bf, err := h.boardCmdFloor(a.Session)
+	bf, err := h.boardCmdFloor(a.Floor)
 	if err != nil {
 		return err
 	}
@@ -383,7 +389,7 @@ func (h *Hub) startPRComment(ctx context.Context, c *Client, cmd proto.Command) 
 		return fmt.Errorf("%w: pull requests cannot be commented on", errUnsupported)
 	}
 	host := bf.set.Host
-	return h.startBoardAsync(ctx, c, cmd, a.Session, true, func(ctx context.Context) (any, any, error) {
+	return h.startBoardAsync(ctx, c, cmd, a.Floor, true, func(ctx context.Context) (any, any, error) {
 		cm, err := host.Comment(ctx, a.ID, a.Body)
 		if err != nil {
 			return nil, nil, err
@@ -410,6 +416,7 @@ func (h *Hub) startPRMerge(ctx context.Context, c *Client, cmd proto.Command) er
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
 	if err := validItemID(a.ID); err != nil {
 		return err
 	}
@@ -419,7 +426,7 @@ func (h *Hub) startPRMerge(ctx context.Context, c *Client, cmd proto.Command) er
 	if !a.Confirm {
 		return fmt.Errorf("%w: merging needs confirm: true", errConfirmation)
 	}
-	bf, err := h.boardCmdFloor(a.Session)
+	bf, err := h.boardCmdFloor(a.Floor)
 	if err != nil {
 		return err
 	}
@@ -429,7 +436,7 @@ func (h *Hub) startPRMerge(ctx context.Context, c *Client, cmd proto.Command) er
 	host := bf.set.Host
 	// An override needs its own confirmation: one flag alone changes nothing.
 	override := a.Override && a.ConfirmOverride
-	return h.startBoardAsync(ctx, c, cmd, a.Session, true, func(ctx context.Context) (any, any, error) {
+	return h.startBoardAsync(ctx, c, cmd, a.Floor, true, func(ctx context.Context) (any, any, error) {
 		rep := &mergeReport{ID: a.ID, Method: a.Method}
 		// Fresh, right before merging: the board may be a minute old.
 		d, err := host.Get(ctx, a.ID)

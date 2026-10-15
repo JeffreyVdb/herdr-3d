@@ -32,7 +32,7 @@ export const SPAWNED_NOTICE_GAP_MS = 3800;
 export interface HireCoordinatorHost {
   send(t: 'worker.hire', args: CommandArgs['worker.hire']): Promise<CommandResult>;
   /** A hire is on its way to `desk` (its "+" goes); the returned function ends this hire's hold only. */
-  reserve(session: string, desk: number): () => void;
+  reserve(floor: string, desk: number): () => void;
   toast(msg: string, kind: ToastKind): void;
   /** The background success beep (under the master mute and volume). */
   beep(): void;
@@ -57,7 +57,10 @@ export interface HirePrompt {
 export interface HireRequest {
   /** The submission: starting the same key again while it runs is the same operation (a second Enter). */
   key: string;
-  session: string;
+  /** #58: the floor id. */
+  floor: string;
+  /** #58: the floor's name, for the messages (absent: the id). */
+  where?: string;
   desk: number;
   /** `prompt` here is the form's text; with `prompt` below it is replaced by the resolved text. */
   args: CommandArgs['worker.hire'];
@@ -144,7 +147,7 @@ export class HireCoordinator {
     const snap: Readonly<HireRequest> = Object.freeze({ ...req, args: Object.freeze({ ...req.args }) });
     const op = new Operation(snap);
     this.running.set(snap.key, op);
-    if (snap.background) op.release = this.host.reserve(snap.session, snap.desk);
+    if (snap.background) op.release = this.host.reserve(snap.floor, snap.desk);
     op.done = this.run(op, on).then(
       (o) => this.finish(op, o),
       (e: unknown) => this.finish(op, { kind: 'failed', code: 'internal', message: String(e) }),
@@ -165,7 +168,7 @@ export class HireCoordinator {
       revision = r.revision;
     }
     // The foreground's hold, as the dialog always took it: once the images are up, for `worker.hire`.
-    op.release ??= this.host.reserve(req.session, req.desk);
+    op.release ??= this.host.reserve(req.floor, req.desk);
     op.phase = 'hiring';
     on.hiring?.(args);
     const r = await this.host.send('worker.hire', args);
@@ -189,8 +192,9 @@ export class HireCoordinator {
   /** The background hire's one message (and the success's one beep). */
   private notify(req: Readonly<HireRequest>, o: HireOutcome): void {
     const desk = `Desk ${req.desk + 1}`;
+    const floor = req.where ?? req.floor;
     // Hires on their way end in any order: a message names its desk.
-    const which = (msg: string) => (msg.includes(desk) ? msg : `${desk} of ${req.session} · ${msg}`);
+    const which = (msg: string) => (msg.includes(desk) ? msg : `${desk} of ${floor} · ${msg}`);
     switch (o.kind) {
       case 'hired': {
         this.host.toast(SPAWNED_TEXT, 'info');
@@ -211,12 +215,12 @@ export class HireCoordinator {
         this.host.toast(o.message ? which(o.message) : `Nothing was hired at ${desk}. Your prompt is kept in its hire dialog.`, 'error');
         return;
       case 'failed':
-        this.host.toast(which(failureText('worker.hire', o.code, o.message, { floor: req.session, desk: req.desk + 1 })), 'error');
+        this.host.toast(which(failureText('worker.hire', o.code, o.message, { floor, desk: req.desk + 1 })), 'error');
         return;
       case 'unknown':
         // (#214: a dictated review hands over no draft: no hire dialog keeps its task.)
         this.host.toast(
-          `No answer about the hire at ${desk} of ${req.session}: ${o.code === 'timeout' ? 'herdr-world did not answer in time' : 'the connection dropped'}. It may still have gone through: look at the desk before you hire again.${req.prompt ? ' The task stays in its hire dialog.' : ''}`,
+          `No answer about the hire at ${desk} of ${floor}: ${o.code === 'timeout' ? 'herdr-world did not answer in time' : 'the connection dropped'}. It may still have gone through: look at the desk before you hire again.${req.prompt ? ' The task stays in its hire dialog.' : ''}`,
           'warn',
         );
         return;

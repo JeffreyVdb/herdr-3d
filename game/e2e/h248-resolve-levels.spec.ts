@@ -148,7 +148,7 @@ test('Resolve conflicts: only on a conflicting PR; the dialog opens on the defau
   await hire(page).locator('[data-key="hire"]').click();
   await expect.poll(async () => (await sentOf(page, 'worker.hire')).length).toBe(1);
   const args = (await sentOf(page, 'worker.hire'))[0]?.args as Record<string, unknown>;
-  expect(args).toMatchObject({ session: 'herdr-3d', harness: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', worktree: true });
+  expect(args).toMatchObject({ floor: 'herdr-3d', harness: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', worktree: true });
   expect(String(args.prompt)).toContain('gh pr merge 35 --rebase');
   expect(Object.keys(args).filter((k) => k.includes('level'))).toEqual([]);
   clean();

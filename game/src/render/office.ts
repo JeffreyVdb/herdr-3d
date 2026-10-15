@@ -158,7 +158,10 @@ export class OfficeView {
   /** Counts the offices built (test hook: a board update must not build another). */
   readonly serial = ++officeSerial;
   readonly layout: FloorLayout;
-  readonly session: string;
+  /** #58: the floor id. */
+  readonly id: string;
+  /** #58: the floor's name (the overview screen's head). */
+  readonly name: string;
   readonly cards: AtlasCards;
   /** Worker id → status as last applied to the scene. */
   readonly applied = new Map<string, Display>();
@@ -215,12 +218,13 @@ export class OfficeView {
   private focusId: string | null = null;
 
   constructor(view: FloorView, o: OfficeOptions) {
-    this.session = view.session;
+    this.id = view.id;
+    this.name = view.name;
     const L = (this.layout = floorLayout(view.desks, o.outline));
     this.outlineKey = outlineKey(o.outline);
     this.seats = Array.from({ length: L.desks }, () => null);
     this.anchors = Array.from({ length: L.desks }, () => null);
-    this.root.name = `office:${view.session}`;
+    this.root.name = `office:${view.id}`;
 
     // Floor: office carpet, a lighter lobby south of the board wall.
     const boardZ = L.walls[4]?.min[2] ?? L.depth - 4.3;
@@ -738,7 +742,7 @@ export class OfficeView {
 
   /** #118: what the lounge wall's overview screen shows (null: the floor sleeps); `calm`: no blinking. */
   setOverview(data: OverviewData | null, calm: boolean, now: number): void {
-    this.props.overview?.set(data, this.session, calm, now);
+    this.props.overview?.set(data, this.name, calm, now);
   }
 
   /** #118: the wall screen's blink and paging (only while `camera` sees it); true when its picture changed. */

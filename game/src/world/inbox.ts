@@ -12,6 +12,7 @@
 import type { Building, Floor } from '../net/protocol';
 import { askOf } from './ask';
 import { isFreelancer, type CrewRole } from './crew';
+import { floorNameOf } from './floorName';
 import { followupOf } from './followup';
 import { needQueue, type NeedCandidate, type NeedItem } from './next';
 import type { WorkerView } from './store';
@@ -72,13 +73,13 @@ export function inboxRequest(view: Pick<WorkerView, 'display' | 'worker' | 'crew
 }
 
 /**
- * Where a floor is, as you know it: `Herdr 3D › h3d-sesame-3` (the building, then the floor's session), and
- * `Unassigned › scratch` in the unassigned lot (or a building the store does not have). Takes the store's maps
- * (`WorldStore` fits).
+ * Where a floor is, as you know it: `Herdr 3D › h3d-sesame-3` (the building, then the floor's name: #58, a virtual
+ * floor's own, never its id), and `Unassigned › scratch` in the unassigned lot (or a building the store does not have).
+ * Takes the store's maps (`WorldStore` fits) and a floor id.
  */
-export function inboxWhere(store: { readonly buildings: ReadonlyMap<string, Building>; readonly floors: ReadonlyMap<string, Floor> }, session: string): string {
-  const b = store.floors.get(session)?.building;
-  return `${(b ? store.buildings.get(b)?.name : null) ?? 'Unassigned'} › ${session}`;
+export function inboxWhere(store: { readonly buildings: ReadonlyMap<string, Building>; readonly floors: ReadonlyMap<string, Floor> }, floor: string): string {
+  const b = store.floors.get(floor)?.building;
+  return `${(b ? store.buildings.get(b)?.name : null) ?? 'Unassigned'} › ${floorNameOf(store.floors, floor)}`;
 }
 
 /** How long it has been in the inbox, coarsely: `now`, `4 min`, `2 h`, `3 d` (`since`, `now`: unix ms). */

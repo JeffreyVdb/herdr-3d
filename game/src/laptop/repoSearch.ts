@@ -29,7 +29,8 @@ import { rankByKeys, type KeyRanked } from '../world/rank';
  * popup's key): a floor's row whose repo has a discovered checkout puts that checkout in (`dir`, shown), and the
  * repositories no floor names follow without a floor (`source: 'discovered'`). A new `revision` of the discovered
  * repositories (`repo_discovery.update`) asks again, so an open popup follows a scan; the scan's progress does not.
- * A bridge without discovery sends neither `id` nor `source`: its rows are the floors', keyed `floor:<session>`.
+ * A bridge without discovery sends neither `id` nor `source`: its rows are the floors', keyed `floor:<floor id>`.
+ * #58: a row's floor shows by its name (`RepoSearchHost.floorName`), never a virtual floor's id.
  */
 
 export interface RepoSearchHost {
@@ -38,10 +39,15 @@ export interface RepoSearchHost {
   refs?: { readonly state: RepoRefsState | null; onChange(f: () => void): () => void } | null;
   /** #54: repository discovery: the label and notes say whether it is on; a new revision asks again. */
   discovery?: { readonly state: RepoDiscoveryState | null; onChange(f: () => void): () => void } | null;
+  /** #58: a floor id's name (absent: the row's session is shown). */
+  floorName?(id: string): string;
 }
 
+/** #58: a bridge row and the name its floor shows by. */
+export type RepoRow = RepoRef & { where?: string };
+
 /** A row, ranked: `key` is the match key (0 the repo name, 1 `owner/repo`, 2 the folder's basename, 3 the folder, 4 the floor). */
-export type RepoItem = KeyRanked<RepoRef>;
+export type RepoItem = KeyRanked<RepoRow>;
 
 const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 
@@ -49,9 +55,9 @@ const REPO = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
  * The bridge's rows that can be offered: a known floor (or a discovered repository), a well-formed repo, a folder a pick
  * can carry whole; each identity once.
  */
-function refs(v: unknown): RepoRef[] | null {
+function refs(v: unknown, floorName?: (id: string) => string): RepoRow[] | null {
   if (!Array.isArray(v)) return null;
-  const out: RepoRef[] = [];
+  const out: RepoRow[] = [];
   const seen = new Set<string>();
   for (const r of v) {
     if (!r || typeof r !== 'object') continue;
@@ -59,7 +65,9 @@ function refs(v: unknown): RepoRef[] | null {
     const discovered = o.source === 'discovered';
     const session = typeof o.session === 'string' && o.session ? o.session : undefined;
     if (!discovered && !session) continue;
-    const id = typeof o.id === 'string' && o.id ? o.id : session ? `floor:${session}` : '';
+    // #58: the floor id (an older bridge's session is the floor).
+    const floor = typeof o.floor === 'string' && o.floor ? o.floor : session;
+    const id = typeof o.id === 'string' && o.id ? o.id : floor ? `floor:${floor}` : '';
     if (!id || seen.has(id)) continue;
     const repo = typeof o.repo === 'string' && REPO.test(o.repo) ? o.repo : undefined;
     const dir = typeof o.dir === 'string' && o.dir && filePathProblem(o.dir) === null ? o.dir : undefined;
@@ -71,6 +79,7 @@ function refs(v: unknown): RepoRef[] | null {
       id,
       source: discovered ? 'discovered' : 'floor',
       ...(!discovered && session ? { session } : {}),
+      ...(!discovered && floor ? { floor, where: floorName?.(floor) ?? session ?? floor } : {}),
       building: !discovered && typeof o.building === 'string' ? o.building : null,
       same_building: !discovered && o.same_building === true,
       ...(repo ? { repo } : {}),
@@ -113,9 +122,10 @@ function marked(cls: string, text: string, hits: readonly number[], shift = 0): 
 }
 
 /** Where a row comes from, as it reads: the floor (and its building, when not the worker's), or null (discovered). */
-function whereOf(r: RepoRef): string | null {
-  if (!r.session) return null;
-  return r.same_building || r.building === null ? r.session : `${r.session} · ${r.building}`;
+function whereOf(r: RepoRow): string | null {
+  const name = r.where ?? r.session;
+  if (!name) return null;
+  return r.same_building || r.building === null ? name : `${name} · ${r.building}`;
 }
 
 /** The title's last words: how many checkouts were discovered, when more than one. */
@@ -164,13 +174,13 @@ export function repoRow(it: RepoItem): HTMLElement {
   );
 }
 
-const keysOf = (r: RepoRef): (string | undefined)[] => [r.repo?.slice(r.repo.indexOf('/') + 1), r.repo, r.dir ? base(r.dir) : undefined, r.dir, r.session];
+const keysOf = (r: RepoRow): (string | undefined)[] => [r.repo?.slice(r.repo.indexOf('/') + 1), r.repo, r.dir ? base(r.dir) : undefined, r.dir, r.where ?? r.session];
 
 /** #54: the list's label with repository discovery on (else "Repositories on other floors"). */
 export const REPOS_LABEL = 'Repositories';
 
 export function repoSource(id: string, host: RepoSearchHost): Source<RepoItem> {
-  let list: RepoRef[] | null = null;
+  let list: RepoRow[] | null = null;
   let loading = false;
   let failed = false;
   let stale = true;
@@ -190,7 +200,7 @@ export function repoSource(id: string, host: RepoSearchHost): Source<RepoItem> {
       .then((r) => {
         out = null;
         loading = false;
-        const got = r.ok ? refs(((r.data ?? {}) as { repos?: unknown }).repos) : null;
+        const got = r.ok ? refs(((r.data ?? {}) as { repos?: unknown }).repos, host.floorName?.bind(host)) : null;
         failed = !got;
         if (got) list = got;
         tell();

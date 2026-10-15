@@ -17,7 +17,7 @@ function setup() {
   const toasts: Array<[string, string]> = [];
   const view = (id: string) => ({ name: id, desk: 0, harness: 'claude', display: 'idle', worker: { id, session: 's', agent_kind: 'claude', status: 'idle' } });
   const host = {
-    store: { workerView: view, floorView: () => ({ asleep: false }), workers: new Map([['A', {}], ['B', {}]]) },
+    store: { floorName: (id: string) => id, workerView: view, floorView: () => ({ asleep: false }), workers: new Map([['A', {}], ['B', {}]]) },
     unsupported: () => false,
     toast: (m: string, k: string) => toasts.push([m, k]),
     upload: () => Promise.resolve({ ok: true, data: { path: '/drops/image.png' } }),

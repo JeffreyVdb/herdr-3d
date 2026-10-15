@@ -43,8 +43,8 @@ function setup() {
   return { hires, sends, answer, held, toasts, timers, handed, noteTakes, beeps: () => beeps };
 }
 
-const args = (desk: number, prompt?: string): CommandArgs['worker.hire'] => ({ session: 'pastry', desk_index: desk, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', ...(prompt ? { prompt } : {}) });
-const req = (o: Partial<HireRequest> = {}): HireRequest => ({ key: 'k1', session: 'pastry', desk: 14, args: args(14), who: 'Gumdrop', prompt: null, background: true, ...o });
+const args = (desk: number, prompt?: string): CommandArgs['worker.hire'] => ({ floor: 'pastry', desk_index: desk, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', ...(prompt ? { prompt } : {}) });
+const req = (o: Partial<HireRequest> = {}): HireRequest => ({ key: 'k1', floor: 'pastry', desk: 14, args: args(14), who: 'Gumdrop', prompt: null, background: true, ...o });
 const draft = (text: string, upload: ConstructorParameters<typeof Draft>[0]['upload'] = async () => ({ ok: true, data: { path: '/tmp/x.png' } })) => {
   const d = new Draft({ upload });
   d.replace(0, 0, text);

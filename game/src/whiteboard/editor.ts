@@ -242,7 +242,7 @@ export class BoardSession {
               canvasActions: { export: false, loadScene: false, saveToActiveFile: false, saveAsImage: false, toggleTheme: null, clearCanvas: false },
               tools: { image: true },
             },
-            name: `${this.host.floor} whiteboard`,
+            name: `${this.host.floorName ?? this.host.floor} whiteboard`,
           },
           // Our own menu and welcome: Excalidraw's defaults link to its website, socials and help.
           h(MainMenu, null, h(MainMenu.DefaultItems.ChangeCanvasBackground), h(MainMenu.DefaultItems.SearchMenu)),

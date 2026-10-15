@@ -23,10 +23,12 @@ type Link struct {
 }
 
 // Launch is the ticket of an orchestrator the game started (its launch
-// record): a GitHub issue, or a provider's item.
+// record): a GitHub issue, or a provider's item, and (#58) the floor it was
+// started on.
 type Launch struct {
 	Issue *proto.IssueRef
 	Item  *proto.WorkItemRef
+	Floor string
 }
 
 // Links links every freelancer to its orchestrator and finds the issue of

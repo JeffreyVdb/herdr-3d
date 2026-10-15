@@ -7,7 +7,7 @@ import { kaneoFailureText } from '../world/kaneo';
 export type LogoAction = 'logo.set' | 'logo.clear';
 
 export interface FailureContext {
-  /** The floor (session) the command was about. */
+  /** The floor the command was about: its name (#58: never a virtual floor's id). */
   floor?: string;
   /** M4: the desk (as shown, 1-based) or the worker the command was about. */
   desk?: number;
@@ -45,6 +45,11 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'floor.wake': 'wake floors',
   'floor.sleep': 'put floors to sleep',
   'floor.settings.set': 'store floor settings',
+  'session.create': 'start new herdr sessions', // #58
+  'floor.create': 'add virtual floors', // #58
+  'floor.rename': 'rename virtual floors',
+  'floor.delete': 'delete virtual floors',
+  'floor.hide': 'hide floors',
   'hire.prepare': 'hire workers',
   'hire.interpret': 'understand dictated commands',
   'worker.hire': 'hire workers',
@@ -151,6 +156,31 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
   if (t === 'worker.answer_async' || t === 'worker.dismiss_async') {
     const asyncWhy = asyncFailure(t, code, why);
     if (asyncWhy) return asyncWhy;
+  }
+  // #58: the bridge words a refused or failed new session itself (the name rule, what took the name, herdr's error).
+  if (t === 'session.create') {
+    const which = ctx.name ? `“${ctx.name}”` : 'The floor';
+    if (code === 'bad_request' || code === 'name_taken') return why || `${which} can’t be used as a session name. Pick another one.`;
+    if (code === 'busy') return why ? `${why} Wait for it to finish.` : `${which} is being started already. Wait for it to finish.`;
+    if (code === 'session_create_failed') return why || `herdr did not start ${which}.`;
+    if (code === 'unsupported') return `This herdr-world can’t start herdr sessions${why ? ` (${why})` : ''}.`;
+  }
+  // #58 stage 4: virtual floors. The bridge says what is wrong (the name rule, who works on a floor); its error's
+  // prefix ("invalid state: ") is no word for a person.
+  if (t === 'floor.create' || t === 'floor.rename' || t === 'floor.delete' || t === 'floor.hide') {
+    const which = ctx.floor ? `“${ctx.floor}”` : 'That floor';
+    const said = sentence(why.replace(/^(?:invalid state|busy|not found|invalid argument|unknown session|name taken):\s*/i, ''));
+    switch (code) {
+      case 'bad_request':
+      case 'invalid_state':
+        return said || 'herdr-world refused it. Nothing changed.';
+      case 'busy':
+        return said || `${which} is hiring. Try again once the hire is done.`;
+      case 'not_found':
+        return `${which} no longer exists. The list shows the floors there are now.`;
+      case 'unknown_session':
+        return t === 'floor.create' ? said || 'That session is gone, or this bridge does not watch it.' : `${which} is gone: its herdr session is away.`;
+    }
   }
   // #184: the Kaneo connection's own failures, and a floor's Kaneo link checked at save.
   if ((t.startsWith('kaneo.') || t === 'floor.settings.set') && KANEO_CODES.has(code)) return kaneoFailureText(code, why);
@@ -304,4 +334,11 @@ function asyncFailure(t: 'worker.answer_async' | 'worker.dismiss_async', code: s
       return `Not sent: ${why.replace(/^bad (request|args):\s*/, '') || 'herdr-world refused the answer'}.`;
   }
   return null;
+}
+
+/** `s` as a sentence: a capital first letter, a full stop at the end ('' stays ''). */
+function sentence(s: string): string {
+  const t = s.trim();
+  if (!t) return '';
+  return `${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?…]$/.test(t) ? '' : '.'}`;
 }

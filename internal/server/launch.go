@@ -343,18 +343,19 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	f, err := h.hireFloor(a.Session)
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	f, err := h.prepareFloor(a.Floor)
 	if err != nil {
 		return err
 	}
-	ticket, resolve, err := h.runTicketOf(a.Session, f, a.Issue, a.Text, a.WorkItem)
+	ticket, resolve, err := h.runTicketOf(a.Floor, f, a.Issue, a.Text, a.WorkItem)
 	if err != nil {
 		return err
 	}
 	if err := validExtra(a.Extra); err != nil {
 		return err
 	}
-	p, havePreset, err := h.runPreset(a.Session, a.Preset)
+	p, havePreset, err := h.runPreset(a.Floor, a.Preset)
 	if err != nil {
 		return err
 	}
@@ -370,18 +371,18 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 		o := presetView(p).Roles.Orch
 		orch = &o
 	}
-	cwd, err := h.hireCwd(a.Session, f, "")
+	cwd, err := h.hireCwd(a.Floor, f, "")
 	if err != nil {
 		return err
 	}
-	res := proto.RunPrepareResult{Preset: p.ID, Orch: orch, Cwd: cwd, Capacity: h.capacity(a.Session)}
+	res := proto.RunPrepareResult{Preset: p.ID, Orch: orch, Cwd: cwd, Capacity: h.capacity(a.Floor)}
 	roles := presetView(p).Roles
 	compose := func(t *proto.RunTicket) {
 		res.Ticket = t
 		if t != nil {
 			res.Label = runLabel(t)
 			if havePreset && orch != nil {
-				res.Prompt = TicketPrompt(h.writeCodeCall(orch.Harness), t, roles, a.Extra)
+				res.Prompt = TicketPrompt(h.writeCodeCall(orch.Harness), t, roles, a.Floor, a.Extra)
 			}
 		}
 	}
@@ -411,6 +412,21 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	switch {
+	case a.DeskIndex == nil:
+		return bad("desk_index is required")
+	case a.Orch == nil:
+		return bad("orch is required")
+	case a.Preset == "":
+		return bad("preset is required")
+	}
+	// #58 decision 3: an asleep virtual floor's session wakes first.
+	if waking, err := h.wakeForHire(ctx, c, cmd, a.Floor, func(ctx context.Context) error {
+		return h.runStart(ctx, c, cmd, a, nil)
+	}); waking || err != nil {
+		return err
+	}
 	return h.runStart(ctx, c, cmd, a, nil)
 }
 
@@ -420,25 +436,25 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 // stale when the floor's board source changed meanwhile (#184: another
 // tracker, Kaneo connection or project), the item being of the old one.
 func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a proto.RunStartArgs, resolved *proto.RunTicket) error {
-	f, err := h.hireFloor(a.Session)
+	f, err := h.hireFloor(a.Floor)
 	if err != nil {
 		return err
 	}
 	ticket, resolve, err := resolved, (func(context.Context) (*proto.RunTicket, error))(nil), error(nil)
 	if ticket == nil {
-		ticket, resolve, err = h.runTicketOf(a.Session, f, a.Issue, a.Text, a.WorkItem)
+		ticket, resolve, err = h.runTicketOf(a.Floor, f, a.Issue, a.Text, a.WorkItem)
 	}
 	if err != nil {
 		return err
 	}
 	if resolve != nil {
-		source := h.boardKey(a.Session)
+		source := h.boardKey(a.Floor)
 		h.wg.Add(1)
 		go func() {
 			defer h.wg.Done()
 			t, err := resolve(ctx)
 			if derr := h.doWait(ctx, func() {
-				if err == nil && h.boardKey(a.Session) != source {
+				if err == nil && h.boardKey(a.Floor) != source {
 					err = fmt.Errorf("%w: the floor's issue board changed while its item was read: pick the item again", errStale)
 				}
 				if err == nil {
@@ -477,15 +493,15 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 	var compose firstPrompt
 	if prompt == "" {
 		call, roles := h.writeCodeCall(a.Orch.Harness), presetView(p).Roles
-		prompt = TicketPrompt(call, ticket, roles, a.Extra)
-		compose = func(tr func(string) string) string { return TicketPrompt(call, ticket, roles, tr(a.Extra)) }
+		prompt = TicketPrompt(call, ticket, roles, a.Floor, a.Extra)
+		compose = func(tr func(string) string) string { return TicketPrompt(call, ticket, roles, a.Floor, tr(a.Extra)) }
 	}
 	label := a.Label
 	if label == "" {
 		label = runLabel(ticket)
 	}
 	worktree := a.Worktree == nil || *a.Worktree
-	launch := store.RunLaunch{ID: "l_" + randHex(8), Session: a.Session, PresetID: p.ID, PresetName: p.Name}
+	launch := store.RunLaunch{ID: "l_" + randHex(8), Session: f.session, FloorID: a.Floor, PresetID: p.ID, PresetName: p.Name}
 	switch {
 	case ticket.Kind == proto.TicketIssue:
 		launch.Repo, launch.IssueNumber = ticket.Repo, ticket.Number
@@ -494,7 +510,7 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 	default:
 		launch.TicketText = ticket.Text
 	}
-	hire := proto.WorkerHireArgs{Session: a.Session, DeskIndex: a.DeskIndex, Harness: a.Orch.Harness, Model: a.Orch.Model,
+	hire := proto.WorkerHireArgs{Floor: a.Floor, Session: f.session, DeskIndex: a.DeskIndex, Harness: a.Orch.Harness, Model: a.Orch.Model,
 		Effort: a.Orch.Effort, Label: label, Worktree: worktree, Prompt: prompt}
 	return h.beginHire(ctx, c, cmd, hire, func(ctx context.Context, res proto.HireResult, rep *hireReport, sent string) any {
 		launch.OrchWorkerID = res.ID
@@ -513,10 +529,10 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 			h.relink()
 		}
 		if _, ok := h.presets[p.ID]; ok { // not deleted meanwhile
-			if err := h.st.SetLastPreset(ctx, a.Session, p.ID); err != nil {
-				h.log.Error("saving the last preset failed", "session", a.Session, "err", err)
+			if err := h.st.SetLastPreset(ctx, a.Floor, p.ID); err != nil {
+				h.log.Error("saving the last preset failed", "session", a.Floor, "err", err)
 			} else {
-				h.lastPreset[a.Session] = p.ID
+				h.lastPreset[a.Floor] = p.ID
 			}
 		}
 		return proto.RunStartResult{HireResult: res, LaunchID: launch.ID, Prompt: sent}

@@ -162,8 +162,8 @@ func TestRepoDiscovery(t *testing.T) {
 	}
 	work1 := "Work"
 	want := []proto.RepoRef{
-		{ID: "gh:acme/x", Source: "floor", Session: "url", Building: &work1, SameBuilding: true, Repo: "acme/x", Dir: x, Cloned: true, Checkouts: 1},
-		{ID: "dir:/src/w", Source: "floor", Session: "plain", Building: &work1, SameBuilding: true, Dir: "/src/w"},
+		{ID: "gh:acme/x", Source: "floor", Session: "url", Floor: "url", Building: &work1, SameBuilding: true, Repo: "acme/x", Dir: x, Cloned: true, Checkouts: 1},
+		{ID: "dir:/src/w", Source: "floor", Session: "plain", Floor: "plain", Building: &work1, SameBuilding: true, Dir: "/src/w"},
 		{ID: "git:" + filepath.Join(local, ".git"), Source: "discovered", Dir: local, Checkouts: 1},
 	}
 	repos := func(cmd string, args any) []proto.RepoRef {

@@ -9,6 +9,13 @@
 // out before the ack, with consecutive seqs. Nothing touches herdr or a
 // database.
 //
+// #58 virtual floors: inside the sim a floor's and a worker's `session` is the FLOOR ID (a real floor's is its session's
+// name, so every fixture keeps working as it was), and `base_session` the herdr session. `emit` and `snapshot` turn that
+// into the wire's shape (`Floor.id` / `session`, `Worker.floor` / `session`, `floor_id` on the floor and worker events),
+// and the floor-scoped commands' `floor` arg is read as that id (an older client's `session` too). Virtual floors are
+// made, renamed, hidden and deleted with `floor.create` / `floor.rename` / `floor.hide` / `floor.delete`; their wake and
+// sleep are their session's (every floor of it), and a virtual floor stays in its base floor's building.
+//
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, TranscriptItem, Worker } from '../src/net/protocol.ts';
 import { screensOf, type SimScreens } from './fixture-screen.ts';
@@ -68,6 +75,7 @@ export interface SimOptions {
    * M4: `hire_failed` / `fire_failed` the next hire / send-home (#210: `prompt_undelivered` the next hire with a first task
    * starts its worker but acks `prompted: false`); `fetch_failed`: origin is unreachable for the
    * whole run (every prepare reports the failed `git fetch`, every worktree hire is refused with `fetch_failed`).
+   * #58: `session_create_failed` the next `session.create`; `no_sessions`: an older bridge without it.
    */
   fail?: string | undefined;
   /** M4: per-floor caps `{session: {soft, hard}}` (default 24 / 32); the host's are 60 / 80. */
@@ -148,11 +156,51 @@ function str(a: Obj, k: string): string {
   return v;
 }
 
+/** #58: a virtual floor's name: trimmed, 1-64 bytes, no control characters. */
+function vfloorName(a: Obj): string {
+  const n = str(a, 'name').trim();
+  if (!n || bytes(n) > 64 || /[\u0000-\u001f\u007f]/.test(n)) throw new CmdError('bad_request', 'A floor name is 1-64 bytes, no control characters.');
+  return n;
+}
+
 function cleanName(v: string): string {
   const n = v.trim();
   if (!n || bytes(n) > 64) throw new CmdError('bad_request', 'invalid argument: building name must be 1-64 bytes');
   return n;
 }
+
+/** #58: the floor-scoped commands whose floor arg was `session` before #58 (`floor` now; the sim reads either). */
+const FLOOR_ARG = new Set([
+  'floor.assign',
+  'floor.wake',
+  'floor.sleep',
+  'floor.settings.set',
+  'hire.prepare',
+  'hire.commands',
+  'hire.files',
+  'hire.repos',
+  'worker.hire',
+  'run.prepare',
+  'run.start',
+  'board.watch',
+  'board.unwatch',
+  'board.refresh',
+  'issue.get',
+  'issue.comment',
+  'issue.close',
+  'issue.set_status',
+  'pr.get',
+  'pr.comment',
+  'pr.merge',
+]);
+
+/** #58: events naming a worker's floor by `session` inside the sim (`floor_id` on the wire). */
+const WORKER_FLOOR_EVENTS = new Set(['worker.status', 'worker.removed', 'worker.usage', 'worker.activity', 'floor.removed', 'handoff.added', 'handoff.removed']);
+
+/** #58: sessions herdr has (asleep) that are not floors: session.create refuses their names. */
+const SIM_HERDR_ONLY = ['old-notes'];
+/** #58: the sim host's sun_path cap on a new session's name. */
+const SIM_MAX_SESSION = 56;
 
 export class SimWorld {
   seq: number;
@@ -163,6 +211,8 @@ export class SimWorld {
   private readonly hireSent: boolean;
   /** Worker statuses from before a sleep, restored on wake. */
   private readonly beforeSleep = new Map<string, string>();
+  /** #58: the names a `session.create` is starting. */
+  private readonly creating = new Set<string>();
   private readonly timers = new Set<unknown>();
   private readonly stepMs: number;
   private fail: string | undefined;
@@ -189,8 +239,18 @@ export class SimWorld {
     const w = structuredClone(snapshot.world) as { buildings: Building[]; floors: Floor[]; workers: Worker[]; hire_options?: HireOptions };
     this.seq = snapshot.seq;
     for (const b of w.buildings) this.buildings.set(b.id, { id: b.id, name: b.name, sort: b.sort });
-    for (const f of w.floors) this.floors.set(f.session, f);
+    // #58: inside the sim `session` is the floor id (see the top).
+    for (const f of w.floors) {
+      const id = f.id ?? f.session;
+      const x: Floor = { ...f, session: id, base_session: f.base_session ?? f.session, name: f.name ?? f.session };
+      delete x.id;
+      this.floors.set(id, x);
+    }
     this.workers = w.workers;
+    for (const x of this.workers) {
+      if (x.floor) x.session = x.floor;
+      delete x.floor;
+    }
     const base = structuredClone(w.hire_options ?? SIM_HIRE_OPTIONS);
     if (o.models && base.claude) base.claude.models.push(...Array.from({ length: o.models }, (_, i) => `claude-lab-${String(i + 1).padStart(2, '0')}`));
     this.hire = base;
@@ -467,11 +527,46 @@ export class SimWorld {
     this.handoffs.decorate(world); // #223
     this.inbox.decorate(world); // #106
     this.share.decorate(world); // M13
-    return { t: 'world.snapshot', seq: this.seq, world: structuredClone(world) };
+    const out = structuredClone(world);
+    // #58: the wire's shape (see the top).
+    out.floors = (out.floors as Floor[]).map((f) => this.wireFloor(f));
+    out.workers = (out.workers as Worker[]).map((x) => this.wireWorker(x));
+    return { t: 'world.snapshot', seq: this.seq, world: out };
+  }
+
+  /** #58: a floor's herdr session (a virtual floor's base session; the sim's `session` is the floor id). */
+  private baseOf(id: string): string {
+    return this.floors.get(id)?.base_session ?? this.goneBase.get(id) ?? id;
+  }
+
+  /** #58: the herdr sessions of floors that went (their `floor.removed`). */
+  private readonly goneBase = new Map<string, string>();
+
+  /** #58: a sim floor as the wire has it: `id` the floor id, `session` its herdr session. */
+  wireFloor(f: Floor): Floor {
+    const base = f.base_session ?? f.session;
+    return { ...f, id: f.session, name: f.name ?? f.session, session: base, base_session: base, virtual: f.virtual === true, hidden: f.hidden === true };
+  }
+
+  /** #58: a sim worker as the wire has it: `floor` the floor id, `session` its herdr session. */
+  private wireWorker(w: Worker): Worker {
+    return { ...w, floor: w.session, session: this.baseOf(w.session) };
   }
 
   private emit(send: Send, m: Msg): void {
-    send({ ...structuredClone(m), seq: ++this.seq });
+    const x = structuredClone(m);
+    // #58: the wire's shape (see the top).
+    if (x.floor && typeof x.floor === 'object') x.floor = this.wireFloor(x.floor as Floor);
+    if (x.worker && typeof x.worker === 'object') x.worker = this.wireWorker(x.worker as Worker);
+    if (typeof x.t === 'string' && WORKER_FLOOR_EVENTS.has(x.t) && typeof x.session === 'string') {
+      x.floor_id = x.session;
+      x.session = this.baseOf(x.session);
+    }
+    if ((x.t === 'board.issues' || x.t === 'board.prs') && typeof x.session === 'string') {
+      x.floor = x.session;
+      x.session = this.baseOf(x.session);
+    }
+    send({ ...x, seq: ++this.seq });
   }
 
   private floorEvent(send: Send, f: Floor): void {
@@ -483,6 +578,12 @@ export class SimWorld {
     const f = this.floors.get(s);
     if (!f) throw new CmdError('unknown_session', `unknown session: "${s}"`);
     return f;
+  }
+
+  /** #58: every floor of `f`'s herdr session (its real floor and its virtual floors): a wake or a sleep is theirs. */
+  private sessionFloors(f: Floor): Floor[] {
+    const base = f.base_session ?? f.session;
+    return [...this.floors.values()].filter((x) => (x.base_session ?? x.session) === base);
   }
 
   // ---- commands ------------------------------------------------------------
@@ -502,6 +603,11 @@ export class SimWorld {
     try {
       const a = m.args === undefined || m.args === null ? {} : m.args;
       if (!isObj(a)) throw bad('args must be an object');
+      // #58: the floor id goes where the sim reads it (`session`: see the top); `floor` wins over an older client's `session`.
+      if (typeof m.t === 'string' && FLOOR_ARG.has(m.t) && typeof a.floor === 'string') {
+        a.session = a.floor;
+        delete a.floor;
+      }
       // M5: laptop screens and seated input (tools/fixture-screen.ts); world events close the watches they end.
       const screens = screensOf(this, () => ({
         worker: (id: string) => this.workers.find((w) => w.id === id),
@@ -569,6 +675,16 @@ export class SimWorld {
           return ack(this.assign(a, send));
         case 'floor.settings.set':
           return ack(this.settings(a, send));
+        case 'session.create': // #58
+          return this.createSession(a, send, ack, fail);
+        case 'floor.create': // #58
+          return ack(this.createFloor(a, send));
+        case 'floor.rename':
+          return ack(this.renameFloor(a, send));
+        case 'floor.hide':
+          return ack(this.hideFloor(a, send));
+        case 'floor.delete':
+          return ack(this.deleteFloor(a, send));
         case 'floor.wake':
           return this.wake(a, send, ack, fail);
         case 'floor.sleep':
@@ -689,6 +805,8 @@ export class SimWorld {
     if (a.index !== undefined && (typeof a.index !== 'number' || !Number.isInteger(a.index))) throw bad('index must be an int');
     if (to !== null) this.building(to);
     if (f.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
+    // #58 decision 4: a virtual floor only moves within its base floor's building.
+    if (f.virtual && (to === null || to !== f.building)) throw bad('a virtual floor stays in its base session’s building: only its position can change');
     const from = f.building;
     const before = new Map([...this.floors.values()].map((x) => [x.session, `${x.building}:${x.index}`]));
     const reindex = (id: string, list: string[]) =>
@@ -707,8 +825,103 @@ export class SimWorld {
       list.splice(i, 0, f.session);
       reindex(to, list);
     }
+    // #58 decision 4: a real floor takes its virtual floors along, right after it (unassigned: they are too).
+    if (!f.virtual && from !== to) {
+      const vs = this.sessionFloors(f).filter((x) => x.virtual);
+      if (from !== null) reindex(from, this.floorsOf(from).filter((s) => !vs.some((v) => v.session === s)));
+      for (const v of vs) {
+        v.building = null;
+        v.index = null;
+      }
+      if (to !== null) {
+        const list = this.floorsOf(to);
+        list.splice(list.indexOf(f.session) + 1, 0, ...vs.map((v) => v.session));
+        reindex(to, list);
+      }
+    }
     for (const x of this.floors.values()) if (before.get(x.session) !== `${x.building}:${x.index}`) this.floorEvent(send, x);
     for (const id of new Set([from, to])) if (id !== null && this.buildings.has(id)) this.emit(send, { t: 'building.upsert', building: this.building(id) });
+    return undefined;
+  }
+
+  // ---- #58: virtual floors -------------------------------------------------------
+
+  /** `floor.create {name, base_session}`: a virtual floor, last in its base floor's building (the lot with it). */
+  private createFloor(a: Obj, send: Send): Floor {
+    onlyKeys(a, ['name', 'base_session']);
+    const name = vfloorName(a);
+    const base = str(a, 'base_session');
+    const real = this.floors.get(base);
+    if (!real || real.virtual) throw new CmdError('unknown_session', `unknown session: "${base}"`);
+    let id = '';
+    do id = `v-${(++this.nextId).toString(16).padStart(12, '0')}`;
+    while (this.floors.has(id));
+    const f: Floor = { session: id, name, base_session: base, virtual: true, hidden: false, state: real.state, building: real.building, index: null, desks: 6 };
+    if (real.transition) f.transition = real.transition;
+    this.floors.set(id, f);
+    if (real.building !== null) {
+      const list = this.floorsOf(real.building).filter((s) => s !== id);
+      list.push(id);
+      list.forEach((s, i) => ((this.floors.get(s) as Floor).index = i));
+    }
+    this.floorEvent(send, f);
+    if (real.building !== null) this.emit(send, { t: 'building.upsert', building: this.building(real.building) });
+    return this.wireFloor(f);
+  }
+
+  private virtualFloor(a: Obj): Floor {
+    const id = str(a, 'floor');
+    const f = this.floors.get(id);
+    if (!f) throw new CmdError('not_found', `no floor “${id}”`);
+    if (!f.virtual) throw bad('only a virtual floor can be renamed or deleted');
+    return f;
+  }
+
+  private renameFloor(a: Obj, send: Send): undefined {
+    onlyKeys(a, ['floor', 'name']);
+    const f = this.virtualFloor(a);
+    f.name = vfloorName(a);
+    this.floorEvent(send, f);
+    return undefined;
+  }
+
+  /** `floor.hide {floor, hidden}` (decision 2): stored and broadcast; the client hides it while it has no worker. */
+  private hideFloor(a: Obj, send: Send): undefined {
+    onlyKeys(a, ['floor', 'hidden']);
+    const id = str(a, 'floor');
+    const f = this.floors.get(id);
+    if (!f) throw new CmdError('unknown_session', `unknown session: "${id}"`);
+    if (typeof a.hidden !== 'boolean') throw bad('hidden must be a bool');
+    if ((f.hidden === true) === a.hidden) return undefined;
+    f.hidden = a.hidden;
+    this.floorEvent(send, f);
+    return undefined;
+  }
+
+  /** `floor.delete {floor, move_workers?}`: refused while it has workers, unless they move to the real floor. */
+  private deleteFloor(a: Obj, send: Send): undefined {
+    onlyKeys(a, ['floor', 'move_workers']);
+    const f = this.virtualFloor(a);
+    const ws = this.workers.filter((w) => w.session === f.session);
+    if (ws.length && a.move_workers !== true) throw new CmdError('invalid_state', `floor “${f.name ?? f.session}” has ${ws.length} worker${ws.length === 1 ? '' : 's'}: ${ws.map((w) => w.name ?? w.label).join(', ')}`);
+    const base = f.base_session ?? f.session;
+    const from = f.building;
+    this.floors.delete(f.session);
+    this.goneBase.set(f.session, base);
+    if (from !== null) this.floorsOf(from).forEach((s, i) => ((this.floors.get(s) as Floor).index = i));
+    this.emit(send, { t: 'floor.removed', session: f.session });
+    for (const w of ws) {
+      // The real floor seats them at its lowest free desks.
+      const taken = new Set(this.workers.filter((x) => x.session === base).map((x) => x.desk_index));
+      let desk = 0;
+      while (taken.has(desk)) desk++;
+      w.session = base;
+      w.desk_index = desk;
+      this.upsertWorker(send, w);
+    }
+    const real = this.floors.get(base);
+    if (real && ws.length) this.resize(send, real);
+    if (from !== null && this.buildings.has(from)) this.emit(send, { t: 'building.upsert', building: this.building(from) });
     return undefined;
   }
 
@@ -832,20 +1045,58 @@ export class SimWorld {
     this.emit(send, { t: 'worker.upsert', worker: w });
   }
 
+  /**
+   * #58 `session.create`, with herdr-world's rule (`herdr.CheckNewSessionName`; this host's sun_path cap is 56) and its
+   * taken checks: a floor, or a herdr session the bridge does not show (SIM_HERDR_ONLY). The floor comes up in the lot a
+   * step later, then the ack.
+   */
+  private createSession(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
+    if (this.fail === 'no_sessions') throw new CmdError('unknown_command', 'unknown command: "session.create"');
+    onlyKeys(a, ['name']);
+    const name = str(a, 'name');
+    if (!name) throw new CmdError('bad_request', 'Give the floor a name.');
+    if (name === 'default') throw new CmdError('bad_request', '“default” is herdr’s own session: pick another name.');
+    if (!/^[a-z0-9_-]+$/.test(name)) throw new CmdError('bad_request', 'Use only lowercase letters, digits, “_” and “-”.');
+    if (name.startsWith('-')) throw new CmdError('bad_request', 'The name cannot start with “-”.');
+    if (name.length > SIM_MAX_SESSION) throw new CmdError('bad_request', `Keep the name to at most ${SIM_MAX_SESSION} characters (herdr’s socket path on this host).`);
+    if (this.creating.has(name)) throw new CmdError('busy', `“${name}” is being created already.`);
+    if (this.floors.has(name)) throw new CmdError('name_taken', `“${name}” is already a floor.`);
+    if (SIM_HERDR_ONLY.includes(name)) throw new CmdError('name_taken', `“${name}” is already a herdr session (asleep): wake its floor instead.`);
+    this.creating.add(name);
+    const failing = this.fail === 'session_create_failed';
+    if (failing) this.fail = undefined;
+    this.later([
+      () => {
+        this.creating.delete(name);
+        if (failing) return fail(new CmdError('session_create_failed', `herdr started ${name}, but its floor was not seen running within 10s; it was stopped and removed again.`));
+        const f: Floor = { session: name, name, base_session: name, state: 'running', building: null, index: null };
+        this.floors.set(name, f);
+        this.floorEvent(send, f);
+        ack({ session: name });
+      },
+    ]);
+  }
+
   private wake(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
     onlyKeys(a, ['session']);
     const f = this.floor(a);
     if (f.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
     if (f.state === 'running') throw new CmdError('invalid_state', `invalid state: ${f.session} is running`);
-    f.transition = 'waking';
-    this.floorEvent(send, f);
-    const ws = this.workers.filter((w) => w.session === f.session);
+    // #58: a wake is the session's: every floor of it wakes.
+    const fs = this.sessionFloors(f);
+    const each = (fn: (x: Floor) => void) => {
+      for (const x of fs) {
+        fn(x);
+        this.floorEvent(send, x);
+      }
+    };
+    each((x) => (x.transition = 'waking'));
+    const ws = this.workers.filter((w) => fs.some((x) => x.session === w.session));
     if (this.fail === 'wake_failed') {
       this.fail = undefined;
       this.later([
         () => {
-          delete f.transition;
-          this.floorEvent(send, f);
+          each((x) => delete x.transition);
           fail(new CmdError('wake_failed', `herdr server for ${f.session} did not answer ping within 10s (simulated)`));
         },
       ]);
@@ -854,8 +1105,7 @@ export class SimWorld {
     const resumable = ws.filter((w) => w.agent_session);
     const steps: Array<() => void> = [
       () => {
-        f.state = 'running';
-        this.floorEvent(send, f);
+        each((x) => (x.state = 'running'));
         ws.forEach((w, i) => {
           w.status = this.beforeSleep.get(w.id) ?? (i % 3 === 0 ? 'working' : 'idle');
           this.beforeSleep.delete(w.id);
@@ -869,9 +1119,8 @@ export class SimWorld {
         this.upsertWorker(send, w);
       }),
       () => {
-        delete f.transition;
-        this.floorEvent(send, f);
-        ack({ workers: ws.map((w) => ({ id: w.id, resume: w.resume ?? 'none' })) });
+        each((x) => delete x.transition);
+        ack({ workers: ws.filter((w) => w.session === f.session).map((w) => ({ id: w.id, resume: w.resume ?? 'none' })) });
       },
     ];
     this.later(steps);
@@ -882,14 +1131,20 @@ export class SimWorld {
     const f = this.floor(a);
     if (f.transition) throw new CmdError('busy', `busy: ${f.session} is ${f.transition}`);
     if (f.state === 'asleep') throw new CmdError('invalid_state', `invalid state: ${f.session} is asleep`);
-    f.transition = 'sleeping';
-    this.floorEvent(send, f);
+    // #58: a sleep is the session's: every floor of it goes to sleep.
+    const fs = this.sessionFloors(f);
+    const each = (fn: (x: Floor) => void) => {
+      for (const x of fs) {
+        fn(x);
+        this.floorEvent(send, x);
+      }
+    };
+    each((x) => (x.transition = 'sleeping'));
     if (this.fail === 'sleep_failed') {
       this.fail = undefined;
       this.later([
         () => {
-          delete f.transition;
-          this.floorEvent(send, f);
+          each((x) => delete x.transition);
           fail(new CmdError('sleep_failed', `herdr session stop ${f.session}: exit status 1 (simulated)`));
         },
       ]);
@@ -897,11 +1152,12 @@ export class SimWorld {
     }
     this.later([
       () => {
-        f.state = 'asleep';
-        delete f.transition;
-        this.floorEvent(send, f);
+        each((x) => {
+          x.state = 'asleep';
+          delete x.transition;
+        });
         for (const w of this.workers) {
-          if (w.session !== f.session) continue;
+          if (!fs.some((x) => x.session === w.session)) continue;
           this.beforeSleep.set(w.id, w.status);
           w.status = 'unknown';
           delete w.resume;

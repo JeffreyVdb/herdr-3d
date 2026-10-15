@@ -64,13 +64,13 @@ export interface DialogHost {
 
 export interface HireHost extends DialogHost {
   /** A hire is on its way to `desk` (its "+" goes); the returned function ends this hire's hold only. */
-  reserve(session: string, desk: number): () => void;
+  reserve(floor: string, desk: number): () => void;
   /** Desks of a floor a hire (or a walk) is already on its way to: not free for this one. */
-  held(session: string): ReadonlySet<number>;
+  held(floor: string): ReadonlySet<number>;
   /** #51: one image to Drop Zone through the bridge (`net/upload.ts`), for the first task's composer. */
   upload: Uploader;
   /** M6 start: the "Hire orchestrator" tab (ui/startRun.ts): why it is off, and opening it for the same desk. */
-  orchestrate?: { off(): string | null; open(session: string, desk: number): void };
+  orchestrate?: { off(): string | null; open(floor: string, desk: number): void };
   /** #116: a hire was acknowledged while this dialog was still the one that sent it: take the player to the new worker (the host decides whether, and when it is ready). */
   goTo?(id: string): void;
   /** Settings → Harness models: which models this dialog offers (all of them without it). */
@@ -126,7 +126,7 @@ export type HireState = 'preparing' | 'ready' | 'hiring' | 'failed';
 /** What the hire dialog shows (test hook). */
 export interface HireSummary {
   kind: 'hire';
-  session: string;
+  floor: string;
   desk: number;
   title: string;
   state: HireState;
@@ -189,8 +189,9 @@ export function chips(
 }
 
 /** The caps of a floor and the host, and what one more hire does to them: a line, or a callout past a cap. */
-export function capacityBlock(c: CapacityView, p: HirePrepare, session: string): HTMLElement {
-  const facts = `${session}: ${p.capacity.floor.count} of ${p.capacity.floor.soft} · host: ${p.capacity.host.count} of ${p.capacity.host.soft}${c.load ? ` · ${c.load}` : ''}`;
+export function capacityBlock(c: CapacityView, p: HirePrepare, floor: string): HTMLElement {
+  // (`floor`: the floor's name.)
+  const facts = `${floor}: ${p.capacity.floor.count} of ${p.capacity.floor.soft} · host: ${p.capacity.host.count} of ${p.capacity.host.soft}${c.load ? ` · ${c.load}` : ''}`;
   if (c.level === 'ok') return h('p', { class: 'dd-capacity', 'data-level': 'ok' }, facts);
   const tape = c.level === 'full' ? 'At the hard cap' : 'Over the soft cap';
   return h(
@@ -405,10 +406,12 @@ export class HireDialog {
   /** What must be seen before pressing Hire (a failed fetch, the caps, a taken desk): by the buttons, never scrolled away. */
   private readonly notices = h('div', { class: 'dd-notices' });
   private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.statusEl, this.alertEl, this.actions);
-  private session = '';
+  private floor = '';
   private desk = 0;
   private prefill: HirePrefill = {};
   private state: HireState = 'preparing';
+  /** What `worker.hire` is doing, once it is sent (null: not yet): the status line under "Waking floor…" (#58). */
+  private hiringText: string | null = null;
   private prep: HirePrepare | null = null;
   private f: HireForm = { prompt: '', harness: '', model: '', effort: '', label: '', cwd: '', worktree: false };
   /** The choice as prepared: the note ("Floor default") shows while the form still has it. */
@@ -509,8 +512,8 @@ export class HireDialog {
    * Opens the dialog for a desk of a floor and asks the bridge for the defaults. M7: `prefill` starts the form with a
    * first task ("Ask a worker…", "Review with a worker") and, for the review, the reviewer's harness / model / effort.
    */
-  open(session: string, desk: number, prefill: HirePrefill = {}): void {
-    this.session = session;
+  open(floor: string, desk: number, prefill: HirePrefill = {}): void {
+    this.floor = floor;
     this.desk = desk;
     this.prep = null;
     this.prepared = null;
@@ -547,8 +550,8 @@ export class HireDialog {
   private lookupKey(): string | null {
     const p = this.prep;
     if (!this.dialog.open || !p || !this.f.harness || this.state === 'preparing' || this.state === 'failed') return (this.lookup = null);
-    const a = hireArgs(this.session, this.desk, this.f, p.git);
-    this.lookup = { session: this.session, harness: this.f.harness, ...(a.cwd ? { cwd: a.cwd } : {}), worktree: !!a.worktree };
+    const a = hireArgs(this.floor, this.desk, this.f, p.git);
+    this.lookup = { floor: this.floor, harness: this.f.harness, ...(a.cwd ? { cwd: a.cwd } : {}), worktree: !!a.worktree };
     return hireLookupKey(this.lookup);
   }
 
@@ -560,6 +563,7 @@ export class HireDialog {
       catalogs: host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) })),
       repoRefs: host.store.repoRefs,
       repoDiscovery: host.store.repoDiscovery,
+      floorName: (id: string) => host.store.floorName(id),
     };
   }
 
@@ -576,7 +580,7 @@ export class HireDialog {
       this.render();
       return;
     }
-    const args: CommandArgs['hire.prepare'] = { session: this.session };
+    const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (cwd) args.cwd = cwd;
     const r = await this.host.send('hire.prepare', args);
     // A hire sent meanwhile: its form stays as sent.
@@ -585,12 +589,12 @@ export class HireDialog {
       // A folder that did not check out keeps the rest of the form.
       if (this.prep && cwd) {
         this.state = 'ready';
-        this.setStatus(failureText('hire.prepare', r.code, r.message, { floor: this.session }), true);
+        this.setStatus(failureText('hire.prepare', r.code, r.message, { floor: this.floorName() }), true);
         this.render();
         return;
       }
       this.state = 'failed';
-      this.setStatus(failureText('hire.prepare', r.code, r.message, { floor: this.session }), true);
+      this.setStatus(failureText('hire.prepare', r.code, r.message, { floor: this.floorName() }), true);
       this.render();
       return;
     }
@@ -652,26 +656,48 @@ export class HireDialog {
 
   /** The world changed: the desk may have been taken, the floor gone or asleep. */
   refresh(): void {
-    if (!this.dialog.open || this.state === 'hiring') return;
-    const fv = this.host.store.floorView(this.session);
-    if (!fv) {
-      this.close();
-      this.host.toast(`${this.session} is gone.`, 'info');
+    if (!this.dialog.open) return;
+    const fv = this.host.store.floorView(this.floor);
+    // #58 decision 3: the hire on an asleep virtual floor wakes its session first: the status follows the wake.
+    if (this.state === 'hiring') {
+      if (this.hiringText !== null) this.hiringStatus();
+      this.render();
       return;
     }
-    if (fv.asleep) {
+    if (!fv) {
       this.close();
-      this.host.toast(`${this.session} went to sleep; wake it to hire.`, 'info');
+      this.host.toast(`${this.host.store.floorName(this.floor)} is gone.`, 'info');
+      return;
+    }
+    if (fv.asleep && !fv.virtual) {
+      this.close();
+      this.host.toast(`${this.floorName()} went to sleep; wake it to hire.`, 'info');
       return;
     }
     this.render();
   }
 
+  /** #58: the floor's name (never its id). */
+  private floorName(): string {
+    return this.host.store.floorName(this.floor);
+  }
+
+  /** #58 decision 3: a hire here wakes the floor's session first (an asleep virtual floor, or one already waking up). */
+  private wakes(): boolean {
+    const fv = this.host.store.floorView(this.floor);
+    return !!fv && (fv.transition === 'waking' || (fv.asleep && fv.virtual));
+  }
+
+  /** The status line while `worker.hire` is on its way: "Waking floor…" first while the floor's session wakes. */
+  private hiringStatus(): void {
+    this.setStatus(this.wakes() ? `Waking floor ${this.floorName()}… then ${this.hiringText ?? 'hiring'}` : `${this.hiringText ?? ''}`);
+  }
+
   /** Someone else sat down at this desk meanwhile, or another hire is on its way there: why, and the desk to offer instead. */
   private takenBy(): { why: string; next: number | null } | null {
-    const fv = this.host.store.floorView(this.session);
+    const fv = this.host.store.floorView(this.floor);
     if (!fv || this.state === 'hiring') return null;
-    const held = this.host.held(this.session);
+    const held = this.host.held(this.floor);
     const seat = fv.seats[this.desk];
     const why = seat ? `${seat.name} just sat down at Desk ${this.desk + 1}.` : held.has(this.desk) ? `Another hire is already on its way to Desk ${this.desk + 1}.` : null;
     return why ? { why, next: firstFreeDesk(fv, held) } : null;
@@ -687,7 +713,7 @@ export class HireDialog {
   }
 
   private capacity(): CapacityView | null {
-    return this.prep ? capacityView(this.prep.capacity, this.session) : null;
+    return this.prep ? capacityView(this.prep.capacity, this.floorName()) : null;
   }
 
   /** The catalog as the dialog offers it: the models Settings leaves shown (the whole catalog without Settings). */
@@ -795,10 +821,10 @@ export class HireDialog {
   private render(): void {
     // #39: a change of the floor, harness, folder or worktree box: an open popup follows it (its old rows never go in).
     this.lookups.check();
-    const fv = this.host.store.floorView(this.session);
+    const fv = this.host.store.floorView(this.floor);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.session, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null]);
+    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -810,7 +836,7 @@ export class HireDialog {
 
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--desk', 'aria-hidden': 'true' }, icon(DESK_PLUS), h('b', {}, String(this.desk + 1))),
-      h('div', { class: 'dd-titles' }, h('h2', { id: 'hire-title' }, this.title()), h('p', { id: 'hire-sub' }, `${this.session} · ${where}`)),
+      h('div', { class: 'dd-titles' }, h('h2', { id: 'hire-title' }, this.title()), h('p', { id: 'hire-sub' }, `${this.floorName()} · ${where}`)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
     // M6 start: the orchestrator tab opens the start-run dialog for this desk.
@@ -823,7 +849,7 @@ export class HireDialog {
           () => {
             if (this.state === 'hiring') return;
             this.close();
-            orch.open(this.session, this.desk);
+            orch.open(this.floor, this.desk);
           },
           orch.off(),
         ),
@@ -916,7 +942,7 @@ export class HireDialog {
             ),
           );
       }
-      notices.push(capacityBlock(this.capacity() as CapacityView, this.prep, this.session));
+      notices.push(capacityBlock(this.capacity() as CapacityView, this.prep, this.floorName()));
     } else {
       nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')));
     }
@@ -977,8 +1003,8 @@ export class HireDialog {
     return modelField(this.f.harness, models, this.f.model, labelsOf(this.host.store.hireOptions, this.f.harness), this.modelQuery, (v) => this.pick({ model: v }), (q) => (this.modelQuery = q));
   }
 
-  private draftKey(session = this.session, desk = this.desk): string {
-    return `${session}:${desk}`;
+  private draftKey(floor = this.floor, desk = this.desk): string {
+    return `${floor}:${desk}`;
   }
 
   /** What the form holds that is worth keeping across a reload: the task's text (not its images), and a label the user typed. */
@@ -1099,35 +1125,39 @@ export class HireDialog {
       this.renderActions();
       return;
     }
-    const session = this.session;
+    const floor = this.floor;
     const desk = this.desk;
     // The draft as sent: an acknowledged hire clears exactly this (a newer edit after Esc stays).
     const sent = this.draftNow();
     const doc = this.editor.draft;
-    const args = hireArgs(session, desk, this.f, this.prep.git);
+    const args = hireArgs(floor, desk, this.f, this.prep.git);
     const who = args.label ?? this.prep.label;
     const gen = this.gen;
     const revision = doc.revision;
     // #210: read once, here: a change in Settings while the hire is on its way does not change how it ends.
     const background = this.host.hirePrefs?.hireInBackground === true;
     this.state = 'hiring';
+    this.hiringText = null;
     this.uploadFailed = false;
     const waiting = args.prompt ? doc.snapshot().images.filter((i) => i.status === 'pending' || i.status === 'uploading').length : 0;
     // The desk is held from here, the images go up, then `worker.hire` (the coordinator); the draft is read now.
     const op = this.hires.start(
-      { key: `hire:${this.id}:${gen}`, session, desk, args, who, prompt: args.prompt ? doc : null, background },
+      { key: `hire:${this.id}:${gen}`, floor, where: this.floorName(), desk, args, who, prompt: args.prompt ? doc : null, background },
       {
         hiring: (sentArgs) => {
           // (The dialog may have been closed, even reopened for another desk, while the images went up: then it is not ours to touch.)
           if (background || !this.dialog.open || gen !== this.gen) return;
           const steps = [sentArgs.worktree ? 'creating the worktree' : null, `starting ${sentArgs.harness}`, sentArgs.prompt ? 'handing over the first task' : null].filter(Boolean);
-          this.setStatus(`Hiring ${who}: ${steps.join(', ')}…`);
+          this.hiringText = `Hiring ${who}: ${steps.join(', ')}…`;
+          this.hiringStatus();
           this.render();
         },
       },
     );
     if (background) {
       // #210: the dialog goes now and the player plays on; the coordinator says how it ended (one toast, a beep on success).
+      // #58 decision 3: a hire on an asleep virtual floor wakes it first, which takes a while: say so now.
+      if (this.wakes()) this.host.toast(`Waking floor ${this.floorName()}… ${who} is hired once it is up.`, 'info');
       this.close();
       const o = await op.done;
       if (o.kind === 'hired') this.clearSent(doc, o.revision ?? revision, sent);
@@ -1137,11 +1167,11 @@ export class HireDialog {
       this.setStatus(waiting ? `Uploading ${waiting === 1 ? 'the image' : `${waiting} images`} for ${who}…` : `Preparing ${who}’s first task…`);
       this.render();
     }
-    this.landed(await op.done, { session, desk, who, gen, doc, revision, sent });
+    this.landed(await op.done, { floor, desk, who, gen, doc, revision, sent });
   }
 
   /** A hire waited for in the dialog ended: the dialog, or (closed meanwhile) a toast, says how; the go-to on success. */
-  private landed(o: HireOutcome, h: { session: string; desk: number; who: string; gen: number; doc: PromptDraft; revision: number; sent: { text: string; fields?: Record<string, string> } }): void {
+  private landed(o: HireOutcome, h: { floor: string; desk: number; who: string; gen: number; doc: PromptDraft; revision: number; sent: { text: string; fields?: Record<string, string> } }): void {
     // Esc'd meanwhile (and maybe another hire opened): only a toast, this dialog is someone else's now.
     const still = this.dialog.open && h.gen === this.gen;
     if (o.kind === 'not_sent') {
@@ -1176,7 +1206,7 @@ export class HireDialog {
       this.host.toast(t.text, t.kind);
       return;
     }
-    const msg = failureText('worker.hire', o.code, o.message, { floor: h.session, desk: h.desk + 1 });
+    const msg = failureText('worker.hire', o.code, o.message, { floor: this.host.store.floorName(h.floor), desk: h.desk + 1 });
     if (!still) {
       this.host.toast(msg, 'error');
       return;
@@ -1191,7 +1221,7 @@ export class HireDialog {
   /** After a capacity or fetch refusal: the caps and origin as they are now (the refusal stays in the status). */
   private async recheck(): Promise<void> {
     const gen = this.gen;
-    const args: CommandArgs['hire.prepare'] = { session: this.session };
+    const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (this.prep?.cwd) args.cwd = this.prep.cwd;
     const r = await this.host.send('hire.prepare', args);
     if (!r.ok || !this.prep || !this.dialog.open || gen !== this.gen || this.state !== 'ready') return;
@@ -1207,7 +1237,7 @@ export class HireDialog {
     if (!this.dialog.open) return null;
     return {
       kind: 'hire',
-      session: this.session,
+      floor: this.floor,
       desk: this.desk,
       title: this.title(),
       state: this.state,

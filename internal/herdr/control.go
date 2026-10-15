@@ -85,12 +85,14 @@ var ErrNotAllowed = errors.New("herdr: control command not allowed")
 
 // Control operations (keys of controlShapes).
 const (
-	opStart        = "start"
-	opStop         = "stop"
-	opResumeClaude = "resume-claude"
-	opResumeCodex  = "resume-codex"
-	opReportCodex  = "report-codex-session"
-	opProcessInfo  = "process-info"
+	opStart = "start"
+	opStop  = "stop"
+	// #58: a new session (newsession.go).
+	opCreateSession = "create-session"
+	opResumeClaude  = "resume-claude"
+	opResumeCodex   = "resume-codex"
+	opReportCodex   = "report-codex-session"
+	opProcessInfo   = "process-info"
 
 	opWorkspaceCreate = "workspace-create"
 	opWorktreeCreate  = "worktree-create"
@@ -145,6 +147,11 @@ var controlShapes = map[string][]string{
 	// Wake: a supervised headless server with the user's login environment
 	// (docs/research/herdr-followup.md §2b), in the policy's shell (#68).
 	opStart: {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
+		"--working-directory={home}", "{shell}", "-l", "-c", "exec herdr --session '{session}' server"},
+	// #58 Create: a new named session is a server started under a name herdr
+	// has not seen (`herdr session` has no create verb), the wake's launch.
+	// CreateSession refuses a name herdr already knows.
+	opCreateSession: {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
 		"--working-directory={home}", "{shell}", "-l", "-c", "exec herdr --session '{session}' server"},
 	// Sleep: herdr's orderly stop (saves state, keeps agent_session).
 	opStop: {"{herdr}", "session", "stop", "{session}", "--json"},
@@ -363,15 +370,20 @@ func CanResume(harness string) bool { _, ok := resumeOps[harness]; return ok }
 // StartSession starts a stopped session's server as the transient user
 // unit herdr-s-<session>, with a login environment of the policy's shell.
 func (c *Control) StartSession(ctx context.Context, session string) error {
-	home := c.Home
-	if home == "" {
-		var err error
-		if home, err = os.UserHomeDir(); err != nil {
-			return err
-		}
+	home, err := c.home()
+	if err != nil {
+		return err
 	}
-	_, err := c.run(ctx, opStart, map[string]string{"session": session, "home": home})
+	_, err = c.run(ctx, opStart, map[string]string{"session": session, "home": home})
 	return err
+}
+
+// home is the started server's working directory: Home, else the user's.
+func (c *Control) home() (string, error) {
+	if c.Home != "" {
+		return c.Home, nil
+	}
+	return os.UserHomeDir()
 }
 
 // StopSession stops a session the way herdr does (`herdr session stop`),

@@ -29,8 +29,8 @@ function setup(here: () => string | null = () => 'floor') {
   let state: BoardState = { issues: issues(40), prs: prs(40), off: null };
   const read: string[] = [];
   const host = {
-    store: { floorView: () => ({ workers: [] }) },
-    session: here,
+    store: { floorName: (id: string) => id, floorView: () => ({ workers: [] }) },
+    floor: here,
     state: (session: string) => {
       read.push(session);
       return state;

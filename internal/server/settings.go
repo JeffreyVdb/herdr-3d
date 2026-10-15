@@ -245,14 +245,15 @@ func (h *Hub) startFloorSettings(ctx context.Context, c *Client, cmd proto.Comma
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	f, err := h.floorFor(a.Session)
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	f, err := h.floorFor(a.Floor)
 	if err != nil {
 		return err
 	}
-	if err := h.notBusy(a.Session, f); err != nil {
+	if err := h.notBusy(a.Floor, f); err != nil {
 		return err
 	}
-	cur := h.settings[a.Session]
+	cur := h.settings[a.Floor]
 	next, err := applySettings(cur, a, h.opts.StatDir, h.hireOptions())
 	if err != nil {
 		return err
@@ -318,14 +319,14 @@ func (h *Hub) afterChange(ctx context.Context) error {
 // the link the floor had when the save began (else the save is stale: the
 // floor or the connection changed meanwhile).
 func (h *Hub) setSettings(ctx context.Context, a proto.FloorSettingsArgs, check *kaneoCheck) error {
-	f, err := h.floorFor(a.Session)
+	f, err := h.floorFor(a.Floor)
 	if err != nil {
 		return err
 	}
-	if err := h.notBusy(a.Session, f); err != nil {
+	if err := h.notBusy(a.Floor, f); err != nil {
 		return err
 	}
-	cur := h.settings[a.Session]
+	cur := h.settings[a.Floor]
 	next, err := applySettings(cur, a, h.opts.StatDir, h.hireOptions())
 	if err != nil {
 		return err
@@ -342,15 +343,15 @@ func (h *Hub) setSettings(ctx context.Context, a proto.FloorSettingsArgs, check 
 	if settingsEqual(cur, next) {
 		return nil
 	}
-	if err := h.st.SetFloorSettings(ctx, a.Session, next); err != nil {
+	if err := h.st.SetFloorSettings(ctx, a.Floor, next); err != nil {
 		return err
 	}
 	if next.IsZero() {
-		delete(h.settings, a.Session)
+		delete(h.settings, a.Floor)
 	} else {
-		h.settings[a.Session] = next
+		h.settings[a.Floor] = next
 	}
-	h.refreshSuggested(a.Session, f)
+	h.refreshSuggested(a.Floor, f)
 	return nil
 }
 

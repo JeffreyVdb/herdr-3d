@@ -35,7 +35,7 @@ import { TRAY_FOLDER_SCALE } from '../world/delivery';
 export interface ArrivalSpec {
   id: string;
   kind: ArrivalKind;
-  session: string;
+  floor: string;
   desk: number;
   name: string;
   /** The walk-out route (`out`); the seat (`in`). */
@@ -95,7 +95,7 @@ interface Active {
 
 /** What the arrivals ask of the office: a desk shown as `away` (null: as the world says again); M6b: a worker dropping in (null: seated). */
 export interface DeskAway {
-  session: string;
+  floor: string;
   desk: number;
   away: AwaySeat | null;
   drop?: DropPose | null;
@@ -105,7 +105,7 @@ export interface DeskAway {
 
 /** M6c: an orchestrator swivelled to take a report (null: facing its desk again). */
 export interface SwivelOut {
-  session: string;
+  floor: string;
   desk: number;
   swivel: SwivelPose | null;
 }
@@ -114,7 +114,7 @@ export interface SwivelOut {
 export interface ArrivalInfo {
   id: string;
   kind: ArrivalKind;
-  session: string;
+  floor: string;
   desk: number;
   name: string;
   phase: ArrivalPose['phase'];
@@ -205,12 +205,12 @@ export class Arrivals {
   private readonly active: Active[] = [];
   private readonly free: number[] = Array.from({ length: CAPACITY }, (_, i) => CAPACITY - 1 - i);
   /** Finished (or skipped) arrivals, newest last (test hook). */
-  readonly log: Array<{ id: string; kind: ArrivalKind; played: boolean; session: string; desk: number }> = [];
+  readonly log: Array<{ id: string; kind: ArrivalKind; played: boolean; floor: string; desk: number }> = [];
   /** Desks the office should show as the world says again (arrivals that just ended). */
   private released: DeskAway[] = [];
   /** M6c: orchestrators that swivelled for a walk that has ended, and those swivelled now. */
-  private swivelEnded: Array<{ session: string; desk: number }> = [];
-  private readonly swiveled = new Map<string, { session: string; desk: number }>();
+  private swivelEnded: Array<{ floor: string; desk: number }> = [];
+  private readonly swiveled = new Map<string, { floor: string; desk: number }>();
   /** M6c: orchestrator swivels as of the last `update` (null: facing its desk again). */
   swivels: SwivelOut[] = [];
   /** M6c: deliveries whose folder landed on the tray since the last `takeLanded` (their keys). */
@@ -320,7 +320,7 @@ export class Arrivals {
   start(spec: ArrivalSpec, now: number): boolean {
     this.cancel(spec.id);
     // M6b: a new hire's desk is its own from the first frame, whatever a walk-out there still has to do (shown or not).
-    if (spec.kind === 'in') this.yieldDesk(spec.session, spec.desk, spec.id, now);
+    if (spec.kind === 'in') this.yieldDesk(spec.floor, spec.desk, spec.id, now);
     const slot = this.free.pop();
     if (slot === undefined || spec.route.length < (spec.kind === 'in' ? 1 : 2) || (spec.kind === 'deliver' && !spec.deliver)) {
       if (slot !== undefined) this.free.push(slot);
@@ -352,8 +352,8 @@ export class Arrivals {
   }
 
   /** Records an arrival nobody sees (another floor, the city): it resolves at once. */
-  skip(spec: Pick<ArrivalSpec, 'id' | 'kind' | 'session' | 'desk'>): void {
-    this.log.push({ id: spec.id, kind: spec.kind, played: false, session: spec.session, desk: spec.desk });
+  skip(spec: Pick<ArrivalSpec, 'id' | 'kind' | 'floor' | 'desk'>): void {
+    this.log.push({ id: spec.id, kind: spec.kind, played: false, floor: spec.floor, desk: spec.desk });
     if (this.log.length > 50) this.log.shift();
   }
 
@@ -368,12 +368,12 @@ export class Arrivals {
    * when a walk gave the desk up (the desk shows as the world says from the
    * next `update`).
    */
-  yieldDesk(session: string, desk: number, by: string, now: number): boolean {
+  yieldDesk(floor: string, desk: number, by: string, now: number): boolean {
     let any = false;
     let out = false;
     for (const a of this.active) {
       // (`by` sitting at its own desk is no one else: a delivery's id is `deliver:<worker>@<report>`, its worker's is the key's head.)
-      if (a.yielded || a.spec.id === by || a.spec.deliver?.key.startsWith(`${by}@`) || a.spec.session !== session || a.spec.desk !== desk) continue;
+      if (a.yielded || a.spec.id === by || a.spec.deliver?.key.startsWith(`${by}@`) || a.spec.floor !== floor || a.spec.desk !== desk) continue;
       a.yielded = true;
       any = true;
       if (a.spec.kind === 'deliver') out = true;
@@ -385,7 +385,7 @@ export class Arrivals {
       if (walk && at < walk.t0) a.t0 = now - walk.t0 / this.rate;
     }
     // M6c: a delivery's freelancer out of its chair gives the chair back too.
-    if (any) this.released.push({ session, desk, away: null, drop: null, ...(out ? { out: null } : {}) });
+    if (any) this.released.push({ floor, desk, away: null, drop: null, ...(out ? { out: null } : {}) });
     return any;
   }
 
@@ -437,10 +437,10 @@ export class Arrivals {
     // A delivery that ends before its folder landed (cancelled): it never will; the caller says where it went.
     if (a.spec.kind === 'deliver' && a.spec.deliver) {
       if (!a.landed && played) this.landedKeys.push(a.spec.deliver.key);
-      this.swivelEnded.push({ session: a.spec.session, desk: a.spec.deliver.orchDesk });
+      this.swivelEnded.push({ floor: a.spec.floor, desk: a.spec.deliver.orchDesk });
     }
-    this.released.push({ session: a.spec.session, desk: a.spec.desk, away: null, drop: null, ...(a.spec.kind === 'deliver' ? { out: null } : {}) });
-    this.log.push({ id: a.spec.id, kind: a.spec.kind, played, session: a.spec.session, desk: a.spec.desk });
+    this.released.push({ floor: a.spec.floor, desk: a.spec.desk, away: null, drop: null, ...(a.spec.kind === 'deliver' ? { out: null } : {}) });
+    this.log.push({ id: a.spec.id, kind: a.spec.kind, played, floor: a.spec.floor, desk: a.spec.desk });
     if (this.log.length > 50) this.log.shift();
     this.endedIds.push(a.spec.id);
     // M6c: a delivery cancelled with its freelancer's walk-out chained: that walk will never start, so the freelancer has left.
@@ -494,36 +494,36 @@ export class Arrivals {
           this.landedKeys.push(s.deliver.key);
         }
         // Someone else sits at its desk now (`yieldDesk`): the walk goes on without the desk.
-        if (!a.yielded) walking.push({ session: s.session, desk: s.desk, away: null, out: { chair: p.chair } });
-        if (s.deliver.swivels && (p.swivel > 0 || p.reach > 0)) swiveled.set(`${s.session}:${s.deliver.orchDesk}`, { session: s.session, desk: s.deliver.orchDesk, swivel: { turn: p.swivel * s.deliver.turn, reach: p.reach } });
+        if (!a.yielded) walking.push({ floor: s.floor, desk: s.desk, away: null, out: { chair: p.chair } });
+        if (s.deliver.swivels && (p.swivel > 0 || p.reach > 0)) swiveled.set(`${s.floor}:${s.deliver.orchDesk}`, { floor: s.floor, desk: s.deliver.orchDesk, swivel: { turn: p.swivel * s.deliver.turn, reach: p.reach } });
         continue;
       }
       if (s.kind === 'in') {
         this.drawDrop(a, p);
-        if (!a.yielded) walking.push({ session: s.session, desk: s.desk, away: null, drop: { dy: p.dy, squash: p.squash } });
+        if (!a.yielded) walking.push({ floor: s.floor, desk: s.desk, away: null, drop: { dy: p.dy, squash: p.squash } });
         continue;
       }
       this.draw(a, p);
       if (a.yielded) continue;
       const packed = p.items + (p.itemLift > 0 ? 1 : 0);
-      walking.push({ session: s.session, desk: s.desk, away: p.desk === 'free' ? null : { show: p.desk, display: s.display, cue: s.cue.color, harness: s.harness, packed } });
+      walking.push({ floor: s.floor, desk: s.desk, away: p.desk === 'free' ? null : { show: p.desk, display: s.display, cue: s.cue.color, harness: s.harness, packed } });
     }
     if (this.active.length) this.flag();
     this.crowd.update(t);
     const out = deskOwners(ended, walking);
     // A drop that just ended hands its figure back to the chair even when an older walk still owns that desk; M6c: so does a delivery.
     for (const e of ended) {
-      const o = out.find((d) => d.session === e.session && d.desk === e.desk);
+      const o = out.find((d) => d.floor === e.floor && d.desk === e.desk);
       if (o && o.drop === undefined) o.drop = null;
       if (o && e.out === null && o.out === undefined) o.out = null;
     }
     // M6c: the orchestrators swivelled now, and those that were and are not any more.
     this.swivels = [...swiveled.values()];
-    for (const key of this.swiveled.keys()) if (!swiveled.has(key)) this.swivels.push({ ...(this.swiveled.get(key) as { session: string; desk: number }), swivel: null });
-    for (const e of this.swivelEnded) if (!swiveled.has(`${e.session}:${e.desk}`) && !this.swivels.some((w) => w.session === e.session && w.desk === e.desk)) this.swivels.push({ ...e, swivel: null });
+    for (const key of this.swiveled.keys()) if (!swiveled.has(key)) this.swivels.push({ ...(this.swiveled.get(key) as { floor: string; desk: number }), swivel: null });
+    for (const e of this.swivelEnded) if (!swiveled.has(`${e.floor}:${e.desk}`) && !this.swivels.some((w) => w.floor === e.floor && w.desk === e.desk)) this.swivels.push({ ...e, swivel: null });
     this.swivelEnded = [];
     this.swiveled.clear();
-    for (const [k, w] of swiveled) this.swiveled.set(k, { session: w.session, desk: w.desk });
+    for (const [k, w] of swiveled) this.swiveled.set(k, { floor: w.floor, desk: w.desk });
     return out;
   }
 
@@ -701,7 +701,7 @@ export class Arrivals {
       return {
         id: a.spec.id,
         kind: a.spec.kind,
-        session: a.spec.session,
+        floor: a.spec.floor,
         desk: a.spec.desk,
         name: a.spec.name,
         phase: p.phase,

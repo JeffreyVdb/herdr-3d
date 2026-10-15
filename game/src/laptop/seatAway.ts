@@ -4,11 +4,12 @@
  * (a woken floor, a new pane). Pure: the frame loop reads it, the tests pin it down.
  */
 export interface AwayView {
-  worker: { session: string; pane_id?: string | null };
+  /** #58: `floor` is the floor id it is on. */
+  worker: { floor: string; pane_id?: string | null };
 }
 
-export function whyAway(name: string, v: AwayView | null, session: string, asleep: boolean): string | null {
-  if (!v || v.worker.session !== session) return `${name} is no longer on the floor.`;
+export function whyAway(name: string, v: AwayView | null, floor: string, asleep: boolean): string | null {
+  if (!v || v.worker.floor !== floor) return `${name} is no longer on the floor.`;
   if (asleep) return `${name}’s floor is asleep.`;
   if (!v.worker.pane_id) return `${name} has no terminal right now.`;
   return null;

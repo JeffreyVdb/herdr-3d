@@ -52,7 +52,7 @@ describe('buildCityOverview: the floors', () => {
     const s = store([worker('w', 'top', { status: 'working' }), worker('b', 'top', { status: 'blocked' }), worker('i', 'top'), worker('z', 'den', { status: 'working' })], { den: { state: 'asleep' } });
     const t = buildCityOverview(s);
     const [top, bottom, den, lot] = t.floors.map((f) => f.row);
-    expect(top).toMatchObject({ kind: 'floor', key: 'floor:top', session: 'top', label: 'Floor 2 · Work', asleep: false, total: 3 });
+    expect(top).toMatchObject({ kind: 'floor', key: 'floor:top', floor: 'top', name: 'top', label: 'Floor 2 · Work', asleep: false, total: 3 });
     expect(top?.counts.map((c) => [c.kind, c.n])).toEqual([
       ['working', 1],
       ['needs_you', 1],

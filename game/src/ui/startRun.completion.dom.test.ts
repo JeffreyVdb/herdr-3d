@@ -30,6 +30,7 @@ function setup() {
   const book = new PresetBook();
   book.reset([PRESET]);
   const store = {
+    floorName: (id: string) => id,
     hireOptions: CAT,
     presets: book,
     floorView: () => ({ seats: Array(10).fill(null), floor: {}, settings: {}, suggested: {} }),
@@ -113,17 +114,17 @@ describe('Start run: completion in Extra instructions and the First prompt (#39)
   it('a Kaneo task: @r: in Extra puts a repository’s folder in, the preview and run.start carry it', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { dlg, of } = setup();
-    dlg.open({ session: 'floor', desk: 0, workItem: ITEM });
+    dlg.open({ floor: 'floor', desk: 0, workItem: ITEM });
     await vi.runAllTimersAsync();
     type('run-extra', 'Please use @r:');
-    expect(of('hire.repos').map((a) => a.args)).toEqual([{ session: 'floor' }]);
+    expect(of('hire.repos').map((a) => a.args)).toEqual([{ floor: 'floor' }]);
     of('hire.repos')[0]!.answer({ ok: true, data: REPOS });
     await vi.runAllTimersAsync();
     press('run-extra', 'Enter');
     expect(text('run-extra')).toBe('Please use /src/api ');
     await vi.advanceTimersByTimeAsync(300);
     const prepares = of('run.prepare');
-    expect(prepares.at(-1)!.args).toMatchObject({ session: 'floor', work_item: { provider: 'kaneo', id: 't1' }, extra: 'Please use /src/api ' });
+    expect(prepares.at(-1)!.args).toMatchObject({ floor: 'floor', work_item: { provider: 'kaneo', id: 't1' }, extra: 'Please use /src/api ' });
     expect(text('run-prompt')).toContain('Please use /src/api');
     vi.useRealTimers();
     press('run-extra', 'Enter', true);
@@ -136,11 +137,11 @@ describe('Start run: completion in Extra instructions and the First prompt (#39)
 
   it('with the skill lookup stalled: / says Loading skills… in Extra (the Codex orchestrator’s, the floor’s folder) and the run starts before it answers', async () => {
     const { dlg, of } = setup();
-    dlg.open({ session: 'floor', desk: 0, workItem: ITEM });
+    dlg.open({ floor: 'floor', desk: 0, workItem: ITEM });
     await flush();
     type('run-extra', '/');
     expect(status()).toBe('Loading skills…');
-    expect(of('hire.commands').map((a) => a.args)).toEqual([{ session: 'floor', harness: 'codex', cwd: '/home/test' }]);
+    expect(of('hire.commands').map((a) => a.args)).toEqual([{ floor: 'floor', harness: 'codex', cwd: '/home/test' }]);
     press('run-extra', 'Escape');
     type('run-extra', ' keep it small');
     press('run-extra', 'Enter', true);
@@ -154,7 +155,7 @@ describe('Start run: completion in Extra instructions and the First prompt (#39)
 
   it('the edited First prompt completes too', async () => {
     const { dlg, of } = setup();
-    dlg.open({ session: 'floor', desk: 0, workItem: ITEM });
+    dlg.open({ floor: 'floor', desk: 0, workItem: ITEM });
     await flush();
     await new Promise((r) => setTimeout(r, 300));
     type('run-prompt', ' @r:');

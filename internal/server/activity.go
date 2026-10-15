@@ -324,21 +324,21 @@ func (h *Hub) activityFor(id string, w *proto.Worker, prev *proto.Worker) *proto
 
 // floorViewed reports whether a client stands on a floor: its board.watch,
 // or a laptop or transcript of one of its workers.
-func (h *Hub) floorViewed(session string) bool {
+func (h *Hub) floorViewed(floor string) bool {
 	for c := range h.clients {
-		if h.viewing(c, session) {
+		if h.viewing(c, floor) {
 			return true
 		}
 	}
 	return false
 }
 
-// viewing reports whether connection c stands on a floor.
-func (h *Hub) viewing(c *Client, session string) bool {
-	if h.act.views[c] == session {
+// viewing reports whether connection c stands on a floor (a floor id).
+func (h *Hub) viewing(c *Client, floor string) bool {
+	if h.act.views[c] == floor {
 		return true
 	}
-	on := func(id string) bool { w := h.workers[id]; return w != nil && w.Session == session }
+	on := func(id string) bool { w := h.workers[id]; return w != nil && workerFloor(w) == floor }
 	h.term.mu.Lock()
 	for id := range h.term.byC[c] {
 		if on(id) {
@@ -381,7 +381,7 @@ func (h *Hub) pumpActivity(ctx context.Context) {
 	for id, aw := range h.act.ws {
 		c := h.candidate(id, aw)
 		w := h.workers[id]
-		if c == nil || w == nil || w.Status != statusWorking || aw.tried == c.Item || !h.floorViewed(w.Session) {
+		if c == nil || w == nil || w.Status != statusWorking || aw.tried == c.Item || !h.floorViewed(workerFloor(w)) {
 			continue
 		}
 		if _, ok := svc.Cached(c.Tool, c.Command); ok {
@@ -475,7 +475,7 @@ func (h *Hub) activityImage(c *Client, id, hash string) func() ([]byte, error) {
 	if cur := aw.view.Working; cur == nil || cur.Image == nil || cur.Image.Hash != hash || aw.view.Image == nil {
 		return nil
 	}
-	if !h.viewing(c, w.Session) {
+	if !h.viewing(c, workerFloor(w)) {
 		return nil
 	}
 	return aw.view.Image

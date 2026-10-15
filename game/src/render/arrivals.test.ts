@@ -20,7 +20,7 @@ const DESK = 5;
 function spec(id: string, kind: 'in' | 'out', desk = DESK, carry?: Carry): ArrivalSpec {
   const slot = floors[1]!.slots[desk]!;
   const route = kind === 'out' ? walkOutRoute(floors[1]!, plan, 1, desk) : [{ x: slot.seat.x, y: floorY(1), z: slot.seat.z }];
-  return { id, kind, session: 'f', desk, name: id, route, seatYaw: slot.yaw, tint: 0x88aaff, cue: { family: 'opus', color: 0xff8844, hat: 'none' }, display: 'working', phase: 0, harness: 'codex', ...(carry ? { carry } : {}) };
+  return { id, kind, floor: 'f', desk, name: id, route, seatYaw: slot.yaw, tint: 0x88aaff, cue: { family: 'opus', color: 0xff8844, hat: 'none' }, display: 'working', phase: 0, harness: 'codex', ...(carry ? { carry } : {}) };
 }
 
 const part = (a: Arrivals, key: string) => a.group.getObjectByName(`arrivals.${key}`) as THREE.InstancedMesh;
@@ -30,7 +30,7 @@ const matrixAt = (m: THREE.InstancedMesh, i: number) => {
   return e;
 };
 /** What the arrivals say desk `DESK` shows (undefined: nothing, as the office has it). */
-const onDesk = (out: DeskAway[]) => out.find((d) => d.session === 'f' && d.desk === DESK);
+const onDesk = (out: DeskAway[]) => out.find((d) => d.floor === 'f' && d.desk === DESK);
 
 const zero = (m: THREE.InstancedMesh, i: number) => {
   const e = new THREE.Matrix4();
@@ -43,23 +43,23 @@ describe('Arrivals', () => {
     const a = new Arrivals(false);
     a.start(spec('pip', 'out'), 0);
     // Packing: the desk is Pip's, busy, with its codex sticker, the first things packed as they go.
-    expect(a.update(0.1, 0)).toEqual([{ session: 'f', desk: DESK, away: { show: 'busy', display: 'working', cue: 0xff8844, harness: 'codex', packed: 0 } }]);
+    expect(a.update(0.1, 0)).toEqual([{ floor: 'f', desk: DESK, away: { show: 'busy', display: 'working', cue: 0xff8844, harness: 'codex', packed: 0 } }]);
     const packing = a.update(1.2, 1.2)[0]!.away!;
     expect(packing.packed).toBeGreaterThan(0);
     expect(packing.packed).toBeLessThanOrEqual(deskKit({ index: DESK, yaw: floors[1]!.slots[DESK]!.yaw }).items.length);
     // Pip is past the point where the desk gets its "+" back: the desk is as the world says...
     const past = PACK_S + STAND_S + (PLUS_BACK_AFTER_M + 1) / WALK_SPEED;
-    expect(a.update(past, 0)).toEqual([{ session: 'f', desk: DESK, away: null }]);
+    expect(a.update(past, 0)).toEqual([{ floor: 'f', desk: DESK, away: null }]);
     // ...and the world now seats Gumdrop there, who drops in: never away, the figure falling onto the seat.
     a.start(spec('gumdrop', 'in'), past);
     const first = a.update(past, past);
-    expect(first).toEqual([{ session: 'f', desk: DESK, away: null, drop: { dy: expect.any(Number), squash: expect.any(Number) } }]);
+    expect(first).toEqual([{ floor: 'f', desk: DESK, away: null, drop: { dy: expect.any(Number), squash: expect.any(Number) } }]);
     expect(first[0]!.drop!.dy).toBeGreaterThan(1);
     const landed = a.update(past + FALL_S + 0.05, past)[0]!;
     expect(landed).toMatchObject({ away: null, drop: { dy: 0 } });
     expect(landed.drop!.squash).toBeLessThan(1);
     // Done in under a second: the desk as the world says, sitting as usual.
-    expect(a.update(past + DROP_S + 0.01, past)).toEqual([{ session: 'f', desk: DESK, away: null, drop: null }]);
+    expect(a.update(past + DROP_S + 0.01, past)).toEqual([{ floor: 'f', desk: DESK, away: null, drop: null }]);
     expect(a.log.at(-1)).toMatchObject({ id: 'gumdrop', kind: 'in', played: true });
     expect(a.count).toBe(1);
   });
@@ -113,7 +113,7 @@ describe('Arrivals', () => {
         expect(d?.drop, `t=${t}`).toMatchObject({ dy: expect.any(Number), squash: expect.any(Number) });
       }
       expect(a.log.at(-1)).toMatchObject({ id: 'pip', played: true });
-      expect(onDesk(a.update(t0 + DROP_S + 0.01, 0))).toEqual({ session: 'f', desk: DESK, away: null, drop: null });
+      expect(onDesk(a.update(t0 + DROP_S + 0.01, 0))).toEqual({ floor: 'f', desk: DESK, away: null, drop: null });
       expect(a.count).toBe(0);
     });
 
@@ -146,7 +146,7 @@ describe('Arrivals', () => {
       expect(a.yieldDesk('f', DESK, 'pip', 10.6)).toBe(false);
       expect(a.yieldDesk('f', DESK, 'mover', 10.6)).toBe(true);
       expect(a.yieldDesk('f', DESK, 'mover', 10.6)).toBe(false);
-      expect(onDesk(a.update(10.6, 0))).toEqual({ session: 'f', desk: DESK, away: null, drop: null });
+      expect(onDesk(a.update(10.6, 0))).toEqual({ floor: 'f', desk: DESK, away: null, drop: null });
       for (const t of [11, 12, 15, 30]) expect(onDesk(a.update(t, 0)), `t=${t}`).toBeUndefined();
     });
   });
@@ -214,7 +214,7 @@ describe('Arrivals: a report on its way (M6c)', () => {
       tray: trayFolderAt({ x: ho.seat.x, y: floorY(1), z: ho.seat.z, yaw: ho.seatYaw, side: ho.side }, 0),
       edge: 0xe03a33,
     };
-    return { id, kind: 'deliver', session: 'f', desk: FROM, name: 'w', route, seatYaw: slot.yaw, tint: 0x88aaff, cue: { family: 'opus', color: 0xff8844, hat: 'none' }, display: 'done', phase: 0, deliver };
+    return { id, kind: 'deliver', floor: 'f', desk: FROM, name: 'w', route, seatYaw: slot.yaw, tint: 0x88aaff, cue: { family: 'opus', color: 0xff8844, hat: 'none' }, display: 'done', phase: 0, deliver };
   }
   const total = (a: Arrivals) => a.info(0)[0]!.total;
 
@@ -259,7 +259,7 @@ describe('Arrivals: a report on its way (M6c)', () => {
     a.update(mid, mid);
     expect(a.info(mid)[0]).toMatchObject({ folder: 'flight', swivel: 1 });
     expect(a.swivels).toHaveLength(1);
-    expect(a.swivels[0]).toMatchObject({ session: 'f', desk: TO, swivel: { turn: expect.any(Number), reach: expect.any(Number) } });
+    expect(a.swivels[0]).toMatchObject({ floor: 'f', desk: TO, swivel: { turn: expect.any(Number), reach: expect.any(Number) } });
     expect(Math.abs(a.swivels[0]!.swivel!.turn)).toBeCloseTo(Math.PI / 2, 2);
     expect(a.takeLanded()).toEqual([]);
     // ...landed a little later: once...
@@ -271,7 +271,7 @@ describe('Arrivals: a report on its way (M6c)', () => {
     // ...and the chair swings back to the desk by the end of the hand-over.
     const done = walkTo + HAND_S + 0.01;
     a.update(done, done);
-    expect(a.swivels).toEqual([{ session: 'f', desk: TO, swivel: null }]);
+    expect(a.swivels).toEqual([{ floor: 'f', desk: TO, swivel: null }]);
     a.update(done + 0.01, done);
     expect(a.swivels).toEqual([]);
   });
@@ -322,7 +322,7 @@ describe('Arrivals: a report on its way (M6c)', () => {
     a.cancel('deliver:w@1');
     const out = a.update(t + 0.01, t);
     expect(onDesk(out)).toMatchObject({ away: null, out: null });
-    expect(a.swivels).toEqual([{ session: 'f', desk: TO, swivel: null }]);
+    expect(a.swivels).toEqual([{ floor: 'f', desk: TO, swivel: null }]);
   });
 
   describe('a delivery with a walk-out chained that ends before the hand-over is done (#29)', () => {
@@ -330,7 +330,7 @@ describe('Arrivals: a report on its way (M6c)', () => {
     function chained() {
       const a = new Arrivals(false);
       const book = new DeliveryBook();
-      book.add({ id: 'w', at: 1, session: 'f', desk: FROM, orch: 'o', tone: null }, true);
+      book.add({ id: 'w', at: 1, floor: 'f', desk: FROM, orch: 'o', tone: null }, true);
       book.next('o');
       a.start(delivery(true), 0);
       const walkTo = STAND_S + a.info(0)[0]!.length / 2 / DELIVER_SPEED;

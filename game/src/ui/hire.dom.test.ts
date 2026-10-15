@@ -31,7 +31,7 @@ function setup() {
   const toasts: string[] = [];
   const kinds: string[] = [];
   const host = {
-    store: { hireOptions: { codex: { models: ['gpt'], efforts: ['high'] } }, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null },
+    store: { floorName: (id: string) => id, hireOptions: { codex: { models: ['gpt'], efforts: ['high'] } }, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null },
     send: async (t: string) => (t === 'hire.prepare' ? { ok: true, data: prep } : await new Promise((r) => (ack = r))),
     unsupported: () => false,
     reserve: (_s: string, d: number) => {

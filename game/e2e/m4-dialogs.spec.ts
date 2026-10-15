@@ -153,7 +153,7 @@ test('the other typed-text dialogs never close from the backdrop either (start-r
   await onFloor(page);
 
   // Start-run: extra instructions.
-  await page.evaluate(() => window.__h3d.openStartRun({ session: 'herdr-3d', desk: 5 }));
+  await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
   await expect.poll(async () => (await dialog(page))?.kind === 'start-run' && (await dialog(page))?.state).toBe('ready');
   const run = page.locator('dialog.desk-dlg--run');
   const extra = page.locator('#run-extra');

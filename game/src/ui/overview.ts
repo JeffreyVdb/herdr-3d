@@ -62,15 +62,15 @@ export interface ViewRect {
 
 
 export interface OverviewHost {
-  data(session: string): OverviewData | null;
+  data(floor: string): OverviewData | null;
   /** #188: every floor of the city. */
   cityData(): CityOverviewData;
   /** #188: a floor row: go to that floor (the page closes first). */
-  goToFloor(session: string): void;
+  goToFloor(floor: string): void;
   /** A worker row: sit at its laptop with its conversation on screen (`App.goToWorker(id, 'transcript')`). */
   goTo(id: string): void;
   /** A ticket: the in-game issue window over the page. */
-  openTicket(session: string, id: string): void;
+  openTicket(floor: string, id: string): void;
   /** #174: ask again for a worker's summary lines that failed (`digest.retry`). */
   retrySummary(id: string): void;
   /** The empty floor's Hire. */
@@ -78,14 +78,16 @@ export interface OverviewHost {
   /** Battery saver (B): no blinking. */
   calm(): boolean;
   /** Where the wall screen is on the view now (null: not in view): the close shrinks into it. */
-  screenRect(session: string): ViewRect | null;
+  screenRect(floor: string): ViewRect | null;
+  /** #58: a floor id's name (the head and its aria label never show an id). */
+  floorName(floor: string): string;
   /** The page closed (the game takes keys again). */
   closed(): void;
   now?(): number;
 }
 
 /** What the page shows: a floor's workers, or every floor's (#188). */
-export type OverviewView = { kind: 'floor'; session: string } | { kind: 'city' };
+export type OverviewView = { kind: 'floor'; floor: string } | { kind: 'city' };
 
 /** What a test can read of the page. */
 export interface OverviewInfo {
@@ -251,12 +253,12 @@ export class OverviewOverlay {
 
   /** The floor of a floor's page; null on the all-floors page and when closed. */
   get floor(): string | null {
-    return this.view?.kind === 'floor' ? this.view.session : null;
+    return this.view?.kind === 'floor' ? this.view.floor : null;
   }
 
   /** Opens a floor's overview, growing out of `from` (the wall screen on your view), else out of the centre. */
-  open(session: string, from: ViewRect | null = null): void {
-    this.show({ kind: 'floor', session }, from);
+  open(floor: string, from: ViewRect | null = null): void {
+    this.show({ kind: 'floor', floor }, from);
   }
 
   /** #188: opens the all-floors overview, out of the centre (never the wall screen: that is one floor's). */
@@ -318,7 +320,7 @@ export class OverviewOverlay {
     if (!view) return Promise.resolve();
     if (this.closing) return this.closing;
     this.closing = (async () => {
-      this.from = this.from && view.kind === 'floor' ? (this.host.screenRect(view.session) ?? null) : null;
+      this.from = this.from && view.kind === 'floor' ? (this.host.screenRect(view.floor) ?? null) : null;
       await this.grow(false);
       this.finish();
     })().finally(() => (this.closing = null));
@@ -377,7 +379,7 @@ export class OverviewOverlay {
     const view = this.view;
     if (!view) return;
     const city = view.kind === 'city';
-    const d = view.kind === 'floor' ? this.host.data(view.session) : this.host.cityData();
+    const d = view.kind === 'floor' ? this.host.data(view.floor) : this.host.cityData();
     const calm = this.calm();
     this.root.toggleAttribute('data-calm', calm);
     if (!d) {
@@ -386,8 +388,8 @@ export class OverviewOverlay {
     }
     const full = d.tree;
     const total = full.total;
-    this.floorEl.textContent = view.kind === 'floor' ? view.session : 'All floors';
-    this.root.setAttribute('aria-label', view.kind === 'floor' ? `Floor overview · ${view.session}` : 'All-floors overview');
+    this.floorEl.textContent = view.kind === 'floor' ? this.host.floorName(view.floor) : 'All floors';
+    this.root.setAttribute('aria-label', view.kind === 'floor' ? `Floor overview · ${this.host.floorName(view.floor)}` : 'All-floors overview');
     this.root.toggleAttribute('data-city', city);
     this.whereEl.textContent = `${d.where} · ${total} ${total === 1 ? 'worker' : 'workers'}`;
     this.renderCounts(d.counts);
@@ -637,15 +639,15 @@ export class OverviewOverlay {
     delete el.dataset.display;
     el.toggleAttribute('data-asleep', r.asleep);
     const counts = r.counts.map((c) => `${c.n} ${c.label}`).join(', ');
-    el.setAttribute('aria-label', `${r.session}${r.label !== r.session ? ` · ${r.label}` : ''}${r.asleep ? ' · asleep' : ''} · ${counts}: go to this floor`);
+    el.setAttribute('aria-label', `${r.name}${r.label !== r.name ? ` · ${r.label}` : ''}${r.asleep ? ' · asleep' : ''} · ${counts}: go to this floor`);
     el.title = 'Go to this floor (↵)';
     el.replaceChildren(
       h('span', { class: 'ov-floor-fold' }, fold ?? ''),
       h(
         'div',
         { class: 'ov-who' },
-        h('span', { class: 'ov-name' }, r.session),
-        r.label !== r.session ? h('span', { class: 'ov-floor-label' }, r.label) : null,
+        h('span', { class: 'ov-name' }, r.name),
+        r.label !== r.name ? h('span', { class: 'ov-floor-label' }, r.label) : null,
         r.asleep ? h('span', { class: 'ov-asleep' }, icon(MOON), 'Asleep') : null,
       ),
       h(
@@ -779,7 +781,7 @@ export class OverviewOverlay {
     }
     // The go-to shuts the page itself (no shrink: you are going somewhere else), O brings it back.
     this.closeNow();
-    if (r.kind === 'floor') this.host.goToFloor(r.session);
+    if (r.kind === 'floor') this.host.goToFloor(r.floor);
     else this.host.goTo(r.id);
   }
 
@@ -802,7 +804,7 @@ export class OverviewOverlay {
   private ticket(r: OverviewWorkerRow): void {
     const item = r.ticket?.item;
     if (!item) return;
-    this.host.openTicket(item.session, item.id);
+    this.host.openTicket(item.floor, item.id);
     // The issue window is a modal dialog over the page: the background is live while it is up.
     const d = [...document.querySelectorAll<HTMLDialogElement>('dialog:modal')];
     if (!d.length) return;
@@ -950,7 +952,7 @@ function statusLabel(line: OverviewLine, kind: 'task' | 'now'): string {
 }
 
 function sameView(a: OverviewView, b: OverviewView): boolean {
-  return a.kind === b.kind && (a.kind === 'city' || a.session === (b as { session: string }).session);
+  return a.kind === b.kind && (a.kind === 'city' || a.floor === (b as { floor: string }).floor);
 }
 
 function svgEl(markup: string): SVGSVGElement {

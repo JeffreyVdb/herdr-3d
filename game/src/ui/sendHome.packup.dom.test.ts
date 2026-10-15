@@ -17,7 +17,7 @@ function setup(prep: FirePrepare = PREP) {
   const toasts: string[] = [];
   const worker = { id: 'A', session: 's', label: 'pixel', agent_kind: 'claude', status: 'idle', worktree: { path: '/w/pixel', linked: true } };
   const host = {
-    store: { workerView: () => ({ name: 'Pixel', desk: 0, harness: 'claude', display: 'idle', worker }), workers: new Map([['A', worker]]) },
+    store: { floorName: (id: string) => id, workerView: () => ({ name: 'Pixel', desk: 0, harness: 'claude', display: 'idle', worker }), workers: new Map([['A', worker]]) },
     unsupported: () => false,
     toast: (m: string) => toasts.push(m),
     now: () => 0,

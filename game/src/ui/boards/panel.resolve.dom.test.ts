@@ -27,8 +27,8 @@ function setup(whyNoHire: string | null = null) {
   const resolve = vi.fn();
   const review = vi.fn();
   const host = {
-    store: { floorView: () => ({ workers: [] }) },
-    session: () => 'floor',
+    store: { floorName: (id: string) => id, floorView: () => ({ workers: [] }) },
+    floor: () => 'floor',
     state: () => ({ issues: null, prs: board, off: null }),
     refresh: () => {},
     external: () => {},

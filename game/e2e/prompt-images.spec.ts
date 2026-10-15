@@ -292,7 +292,7 @@ const slipChips = (page: Page) => runDlg(page).locator('.dd-slip .cmp-chip');
 const runState = async (page: Page) => (await dialog(page)) as Run;
 
 async function openRun(page: Page): Promise<Run> {
-  await page.evaluate(() => window.__h3d.openStartRun({ session: 'herdr-3d', desk: 5 }));
+  await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
   await expect.poll(async () => { const d = await dialog(page); return d?.kind === 'start-run' && d.state; }, { timeout: 10_000 }).toBe('ready');
   await page.locator('#run-ticket').fill('7');
   return settled(page);

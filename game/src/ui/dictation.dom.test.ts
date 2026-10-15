@@ -202,11 +202,11 @@ describe('the dictation bar (#213)', () => {
     await t.flush();
     const s = t.bar.summary();
     expect(s).toMatchObject({ state: 'floor', question: 'Hire on which floor?' });
-    expect(s?.floors.map((f) => [f.session, f.active])).toEqual([['a-one', true], ['a-two', false]]);
+    expect(s?.floors.map((f) => [f.floor, f.active])).toEqual([['a-one', true], ['a-two', false]]);
     expect(t.dlg.querySelector('.dict-floors .tape')?.textContent).toBe('Asleep');
     expect(t.field.getAttribute('aria-activedescendant')).toBe('dict-floor-0');
     t.press('ArrowDown');
-    expect(t.bar.summary()?.floors.find((f) => f.active)?.session).toBe('a-two');
+    expect(t.bar.summary()?.floors.find((f) => f.active)?.floor).toBe('a-two');
     // A refusal (the floor is asleep) keeps the list up, with the reason.
     t.pickFloor.mockResolvedValueOnce({ kind: 'say', text: 'a-two is asleep. Wake it from the elevator (L) to hire.', error: true });
     t.press('Enter');
@@ -242,7 +242,7 @@ describe('the dictation bar (#213)', () => {
     t.press('Enter');
     t.replies[0]!.done({ kind: 'floor', hire });
     await t.flush();
-    (t.dlg.querySelector('[data-session="a-one"]') as HTMLElement).click();
+    (t.dlg.querySelector('[data-floor="a-one"]') as HTMLElement).click();
     await t.flush();
     expect(t.pickFloor).toHaveBeenCalledWith('a-one', hire, expect.any(Function));
     const live = t.pickFloor.mock.calls[0]![2];

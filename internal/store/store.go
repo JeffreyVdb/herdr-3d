@@ -195,6 +195,8 @@ var migrations = []string{
 	migrationHandoffLLM,
 	// #54: repository discovery: the scan roots and the refresh interval.
 	migrationRepoDiscovery,
+	// #58: virtual floors, workers' and run launches' floors, hidden floors.
+	migrationVirtualFloors,
 }
 
 // Fingerprint kinds.
@@ -220,9 +222,10 @@ type Building struct {
 	Logo string
 }
 
-// Assignment places a session on a floor of a building.
+// Assignment places a floor (a floor id: a session's real floor, or a
+// virtual floor, #58) in a building.
 type Assignment struct {
-	Session    string
+	Floor      string
 	BuildingID string
 	Index      int
 }
@@ -235,8 +238,11 @@ type Fingerprint struct {
 
 // Worker is a stored worker identity.
 type Worker struct {
-	ID           string
-	Session      string
+	ID      string
+	Session string // the herdr session its workspace is in
+	// FloorID is the floor it belongs to (#58): its session's real floor
+	// (== Session) or a virtual floor on it. SaveWorker stores "" as Session.
+	FloorID      string
 	WorkspaceID  string
 	Label        string
 	Closed       bool
@@ -368,7 +374,7 @@ func (s *Store) Assignments(ctx context.Context) ([]Assignment, error) {
 	var out []Assignment
 	for rows.Next() {
 		var a Assignment
-		if err := rows.Scan(&a.Session, &a.BuildingID, &a.Index); err != nil {
+		if err := rows.Scan(&a.Floor, &a.BuildingID, &a.Index); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -506,17 +512,22 @@ func renumberBuildings(ctx context.Context, tx *sql.Tx) error {
 	return rows.Err()
 }
 
-// AssignFloor moves session into building at index (clamped; negative
+// AssignFloor moves a floor into building at index (clamped; negative
 // appends), shifting the other floors; buildingID "" unassigns it. Floor
 // indexes stay dense (0..n-1) in every building touched.
-func (s *Store) AssignFloor(ctx context.Context, session, buildingID string, index int) error {
-	if session == "" {
-		return fmt.Errorf("%w: session is required", ErrInvalid)
+//
+// #58 decision 4: a virtual floor always stands in its base session's
+// floor's building. Assigning a virtual floor only moves it within that
+// building (any other building, or none, is refused). Moving a real floor to
+// another building takes its virtual floors along, right after it in their
+// order; unassigning it unassigns them.
+func (s *Store) AssignFloor(ctx context.Context, floor, buildingID string, index int) error {
+	if floor == "" {
+		return fmt.Errorf("%w: floor is required", ErrInvalid)
 	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
-		var old string
-		err := tx.QueryRowContext(ctx, `SELECT building_id FROM floor_assignment WHERE session_name = ?`, session).Scan(&old)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		old, err := assignedBuilding(ctx, tx, floor)
+		if err != nil {
 			return err
 		}
 		if buildingID != "" {
@@ -528,12 +539,36 @@ func (s *Store) AssignFloor(ctx context.Context, session, buildingID string, ind
 				return fmt.Errorf("%w: building %q", ErrNotFound, buildingID)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM floor_assignment WHERE session_name = ?`, session); err != nil {
+		base, err := virtualBase(ctx, tx, floor)
+		if err != nil {
 			return err
 		}
-		if old != "" && old != buildingID {
-			if err := writeFloors(ctx, tx, old, nil); err != nil {
+		var siblings []string // a real floor's virtual floors that move with it
+		if base != "" {
+			home, err := assignedBuilding(ctx, tx, base)
+			if err != nil {
 				return err
+			}
+			if home == "" || buildingID != home {
+				return fmt.Errorf("%w: virtual floor %q stays in the building of its base session %q", ErrInvalid, floor, base)
+			}
+		} else if old != buildingID {
+			if siblings, err = virtualFloorsOf(ctx, tx, floor); err != nil {
+				return err
+			}
+		}
+		for _, f := range append([]string{floor}, siblings...) {
+			prev, err := assignedBuilding(ctx, tx, f)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM floor_assignment WHERE session_name = ?`, f); err != nil {
+				return err
+			}
+			if prev != "" && prev != buildingID {
+				if err := writeFloors(ctx, tx, prev, nil); err != nil {
+					return err
+				}
 			}
 		}
 		if buildingID == "" {
@@ -546,7 +581,8 @@ func (s *Store) AssignFloor(ctx context.Context, session, buildingID string, ind
 		if index < 0 || index > len(floors) {
 			index = len(floors)
 		}
-		floors = append(floors[:index], append([]string{session}, floors[index:]...)...)
+		moved := append([]string{floor}, siblings...)
+		floors = append(floors[:index], append(moved, floors[index:]...)...)
 		return writeFloors(ctx, tx, buildingID, floors)
 	})
 }
@@ -681,7 +717,7 @@ func (s *Store) AuditLog(ctx context.Context) ([]AuditEntry, error) {
 // fingerprints: the identity candidates for reconciliation.
 func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT w.id, w.workspace_id, w.label, w.closed_at IS NOT NULL,
-			w.status, w.status_since, w.harness, w.model, w.effort, w.hired_at, f.kind, f.value
+			w.status, w.status_since, w.harness, w.model, w.effort, w.hired_at, w.floor_id, f.kind, f.value
 		FROM worker w LEFT JOIN worker_fingerprint f ON f.worker_id = w.id
 		WHERE w.session_name = ? ORDER BY w.last_seen_at DESC, w.id, f.kind, f.value`, session)
 	if err != nil {
@@ -694,12 +730,15 @@ func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, e
 		var w Worker
 		var kind, value sql.NullString
 		if err := rows.Scan(&w.ID, &w.WorkspaceID, &w.Label, &w.Closed,
-			&w.Status, &w.StatusSince, &w.Harness, &w.Model, &w.Effort, &w.HiredAt, &kind, &value); err != nil {
+			&w.Status, &w.StatusSince, &w.Harness, &w.Model, &w.Effort, &w.HiredAt, &w.FloorID, &kind, &value); err != nil {
 			return nil, err
 		}
 		i, ok := idx[w.ID]
 		if !ok {
 			w.Session = session
+			if w.FloorID == "" {
+				w.FloorID = session
+			}
 			i = len(out)
 			idx[w.ID] = i
 			out = append(out, w)
@@ -715,16 +754,22 @@ func (s *Store) SessionWorkers(ctx context.Context, session string) ([]Worker, e
 // current fingerprints; older fingerprints are kept as further evidence.
 func (s *Store) SaveWorker(ctx context.Context, w Worker) error {
 	now := s.ts()
+	floor := w.FloorID
+	if floor == "" {
+		floor = w.Session
+	}
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `INSERT INTO worker (id, session_name, workspace_id, label, created_at, last_seen_at,
-				status, status_since, harness, model, effort, hired_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET session_name = excluded.session_name, workspace_id = excluded.workspace_id,
+				status, status_since, harness, model, effort, hired_at, floor_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET session_name = excluded.session_name, floor_id = excluded.floor_id,
+				workspace_id = excluded.workspace_id,
 				label = excluded.label, last_seen_at = excluded.last_seen_at, closed_at = NULL,
 				status = excluded.status, status_since = excluded.status_since,
 				harness = excluded.harness, model = excluded.model, effort = excluded.effort,
 				hired_at = CASE WHEN excluded.hired_at > 0 THEN excluded.hired_at ELSE worker.hired_at END`,
-			w.ID, w.Session, w.WorkspaceID, w.Label, now, now, w.Status, w.StatusSince, w.Harness, w.Model, w.Effort, w.HiredAt)
+			w.ID, w.Session, w.WorkspaceID, w.Label, now, now, w.Status, w.StatusSince, w.Harness, w.Model, w.Effort, w.HiredAt,
+			floor)
 		if err != nil {
 			return err
 		}

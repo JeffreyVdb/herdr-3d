@@ -22,6 +22,10 @@ type FloorHerdr interface {
 	Ping(ctx context.Context, socket string) error
 	StartSession(ctx context.Context, session string) error
 	StopSession(ctx context.Context, session string) (string, error)
+	// #58 session.create: what herdr lists (any state), and a server
+	// started under a new name.
+	ListSessions(ctx context.Context) ([]herdr.Session, error)
+	CreateSession(ctx context.Context, session string) error
 	PaneProcesses(ctx context.Context, session, pane string) (*herdr.ProcessInfo, error)
 	ResumeAgent(ctx context.Context, session, pane, harness, agentSession string) error
 	ReportCodexSession(ctx context.Context, session, pane, agentSession string) error
@@ -45,6 +49,9 @@ const (
 	DefaultSleepTimeout  = 15 * time.Second
 	defaultResumePoll    = 500 * time.Millisecond
 	defaultResumeSettle  = 1500 * time.Millisecond
+	// unitPoll is how often a wake looks whether the last server's unit
+	// has unloaded (a stat of its unit file).
+	unitPoll = 100 * time.Millisecond
 )
 
 var (
@@ -71,6 +78,9 @@ type floorOp struct {
 	asleep bool
 	// running: a wake has seen the floor running.
 	running bool
+	// then, if set, is a hire's wake (#58 decision 3): it runs instead of
+	// the wake's reply, on the hub goroutine, with the wake's error.
+	then func(ctx context.Context, err error)
 }
 
 // resumeWait is one worker a wake expects to resume.
@@ -97,11 +107,14 @@ func (h *Hub) notBusy(session string, f *floorState) error {
 	return nil
 }
 
-// floorFor returns a known floor the bridge may act on.
-func (h *Hub) floorFor(session string) (*floorState, error) {
-	f, ok := h.floors[session]
-	if !ok || (h.opts.Sessions != nil && !h.opts.Sessions.MatchString(session)) {
-		return nil, fmt.Errorf("%w: %q", errUnknownSession, session)
+// floorFor returns a known floor the bridge may act on, by floor id (#58):
+// a session's real floor or a virtual floor on it. Its session (f.session,
+// never a virtual floor's id) is what herdr is called with, and what
+// --sessions must allow.
+func (h *Hub) floorFor(floor string) (*floorState, error) {
+	f, ok := h.floors[floor]
+	if !ok || (h.opts.Sessions != nil && !h.opts.Sessions.MatchString(f.session)) {
+		return nil, fmt.Errorf("%w: %q", errUnknownSession, floor)
 	}
 	return f, nil
 }
@@ -139,24 +152,25 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	f, err := h.floorFor(a.Session)
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	f, err := h.floorFor(a.Floor)
 	if err != nil {
 		return err
 	}
-	if err := h.notBusy(a.Session, f); err != nil {
+	if err := h.notBusy(a.Floor, f); err != nil {
 		return err
 	}
 	if len(f.hires) > 0 || len(f.fires) > 0 {
-		return fmt.Errorf("%w: floor %q is hiring or sending a worker home", errBusy, a.Session)
+		return fmt.Errorf("%w: floor %q is hiring or sending a worker home", errBusy, a.Floor)
 	}
 	wake := cmd.T == proto.CmdFloorWake
 	switch {
 	case wake && f.running:
-		return fmt.Errorf("%w: floor %q is running", errInvalidState, a.Session)
+		return fmt.Errorf("%w: floor %q is running", errInvalidState, a.Floor)
 	case !wake && !f.running:
-		return fmt.Errorf("%w: floor %q is asleep", errInvalidState, a.Session)
-	case !herdr.ValidSessionName(a.Session):
-		return &badArgsError{fmt.Errorf("session %q cannot be woken or put to sleep by the bridge", a.Session)}
+		return fmt.Errorf("%w: floor %q is asleep", errInvalidState, a.Floor)
+	case !herdr.ValidSessionName(f.session):
+		return &badArgsError{fmt.Errorf("session %q cannot be woken or put to sleep by the bridge", f.session)}
 	case h.opts.Herdr == nil:
 		return errors.New("waking and sleeping floors is not configured")
 	}
@@ -164,35 +178,14 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	if err != nil {
 		return err
 	}
-	op := &floorOp{session: a.Session, client: c, cmd: cmd, auditID: auditID, notify: make(chan struct{}, 1)}
+	// #58: a floor's wake or sleep is its session's: every floor of it
+	// wakes or sleeps (herdr is only ever called with the session).
+	op := &floorOp{session: f.session, client: c, cmd: cmd, auditID: auditID, notify: make(chan struct{}, 1)}
 	f.op = op
-	h.log.Info("floor operation started", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID, "session", a.Session)
+	h.log.Info("floor operation started", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID, "session", f.session,
+		"floor", a.Floor)
 	if wake {
-		op.kind = proto.TransitionWaking
-		op.waits = map[string]*resumeWait{}
-		h.syncLayout() // the transition first, then the workers
-		for _, id := range f.order {
-			w := h.workers[id]
-			if l, ok := h.cx.launches[id]; ok && w != nil && l.Mode == store.CodexShared { // #155
-				// Also without a thread (it slept before herdr reported
-				// one): sleep quit its TUI, so it is launched afresh.
-				op.waits[id] = &resumeWait{pane: w.PaneID, harness: "codex", agentSession: l.Thread,
-					state: proto.ResumePending, shared: true}
-				h.setResume(id, proto.ResumePending)
-				continue
-			}
-			if w == nil || w.AgentSession == "" {
-				continue
-			}
-			harness := w.AgentKind
-			if harness == "" {
-				harness = w.Harness
-			}
-			op.waits[id] = &resumeWait{pane: w.PaneID, harness: harness, agentSession: w.AgentSession, state: proto.ResumePending}
-			h.setResume(id, proto.ResumePending)
-		}
-		h.wg.Add(1)
-		go h.runWake(ctx, op, f.socket)
+		h.beginWake(ctx, op, f)
 		return nil
 	}
 	op.kind = proto.TransitionSleeping
@@ -200,7 +193,7 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	known := map[string]bool{}
 	var backfills []backfill
 	var shared []sharedSleep
-	for _, id := range f.order {
+	for _, id := range f.all {
 		h.setResume(id, "")
 		w := h.workers[id]
 		if w == nil {
@@ -225,6 +218,37 @@ func (h *Hub) startFloorOp(ctx context.Context, c *Client, cmd proto.Command) er
 	h.wg.Add(1)
 	go h.runSleep(ctx, op, shared, backfills, known)
 	return nil
+}
+
+// beginWake starts a wake op on f (op holds f): the transition goes out at
+// once, the resumable workers turn pending and runWake does the rest off
+// the hub goroutine.
+func (h *Hub) beginWake(ctx context.Context, op *floorOp, f *floorState) {
+	op.kind = proto.TransitionWaking
+	op.waits = map[string]*resumeWait{}
+	h.syncLayout() // the transition first, then the workers
+	for _, id := range f.all {
+		w := h.workers[id]
+		if l, ok := h.cx.launches[id]; ok && w != nil && l.Mode == store.CodexShared { // #155
+			// Also without a thread (it slept before herdr reported
+			// one): sleep quit its TUI, so it is launched afresh.
+			op.waits[id] = &resumeWait{pane: w.PaneID, harness: "codex", agentSession: l.Thread,
+				state: proto.ResumePending, shared: true}
+			h.setResume(id, proto.ResumePending)
+			continue
+		}
+		if w == nil || w.AgentSession == "" {
+			continue
+		}
+		harness := w.AgentKind
+		if harness == "" {
+			harness = w.Harness
+		}
+		op.waits[id] = &resumeWait{pane: w.PaneID, harness: harness, agentSession: w.AgentSession, state: proto.ResumePending}
+		h.setResume(id, proto.ResumePending)
+	}
+	h.wg.Add(1)
+	go h.runWake(ctx, op, f.socket)
 }
 
 // agentDetected resolves a waking worker whose pane herdr reports its
@@ -292,7 +316,7 @@ func (h *Hub) floorOrder(op *floorOp) []string {
 	var ids []string
 	seen := map[string]bool{}
 	if f := h.floors[op.session]; f != nil {
-		for _, id := range f.order {
+		for _, id := range f.all {
 			ids = append(ids, id)
 			seen[id] = true
 		}
@@ -343,6 +367,8 @@ func query[T any](ctx context.Context, h *Hub, fn func() T) (T, error) {
 
 // wakeReport is the audit-log result of a floor.wake.
 type wakeReport struct {
+	// #58: how long the wake waited for the last server's unit to unload.
+	UnitWaitMs  int64          `json:"unit_wait_ms"`
 	PingAfterMs int64          `json:"ping_after_ms,omitempty"`
 	Workers     []workerReport `json:"workers"`
 }
@@ -354,16 +380,24 @@ type workerReport struct {
 	Note   string `json:"note,omitempty"`
 }
 
-// runWake starts the session's server, waits for it to answer and for its
-// floor to be seen running (else wake_failed), then for each expected
-// agent (herdr resumes them itself; a pane that is back at its shell gets
-// the resume command once) and acks with the outcome. Each phase has one
-// deadline, so the ack comes within about WakeTimeout + 2 × ResumeTimeout
-// however many workers there are and however slowly herdr answers.
+// runWake waits for the last server's unit to unload, starts the session's
+// server, waits for it to answer and for its floor to be seen running (else
+// wake_failed), then for each expected agent (herdr resumes them itself; a
+// pane that is back at its shell gets the resume command once) and acks
+// with the outcome. Each phase has one deadline, so the ack comes within
+// about SleepTimeout + WakeTimeout + 2 × ResumeTimeout however many workers
+// there are and however slowly herdr answers.
 func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 	defer h.wg.Done()
-	start := time.Now()
 	report := &wakeReport{}
+	waited := time.Now()
+	if err := h.awaitUnitGone(ctx, op.session, waited.Add(h.opts.SleepTimeout)); err != nil {
+		report.UnitWaitMs = time.Since(waited).Milliseconds()
+		h.finishOp(ctx, op, err, report)
+		return
+	}
+	start := time.Now()
+	report.UnitWaitMs = start.Sub(waited).Milliseconds()
 	up := start.Add(h.opts.WakeTimeout)
 	sctx, cancel := context.WithDeadline(ctx, up)
 	err := h.opts.Herdr.StartSession(sctx, op.session)
@@ -388,6 +422,34 @@ func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 	h.resumePhase(ctx, op, h.fallback)
 	sharedDone()
 	h.finishOp(ctx, op, nil, report)
+}
+
+// awaitUnitGone waits until deadline for the transient unit of the
+// session's last server (herdr-s-<session>) to unload: systemd-run refuses
+// to start a unit of that name while it is loaded. `herdr session stop`
+// ends the server, but processes it started outside its panes (its update
+// and agent-manifest curls) stay in the unit (KillMode=process) and keep it
+// loaded until they exit, for up to their own timeouts. They are herdr's,
+// not ours to kill, so the wake waits for them.
+func (h *Hub) awaitUnitGone(ctx context.Context, session string, deadline time.Time) error {
+	unit := herdr.SessionUnit(session)
+	loaded := h.unitLoaded()
+	if !loaded(unit) {
+		return nil
+	}
+	h.log.Info("waiting for the last server's unit to unload", "session", session, "unit", unit)
+	for loaded(unit) {
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("%w: the service %s is still loaded: processes the last %s server left are still running "+
+				"after %s; wake the floor again in a moment", errWakeFailed, unit, session, h.opts.SleepTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(min(unitPoll, time.Until(deadline))):
+		}
+	}
+	return nil
 }
 
 // waitPing polls the started server's socket until it answers, backing
@@ -664,6 +726,10 @@ func (h *Hub) finishOp(ctx context.Context, op *floorOp, opErr error, report any
 		h.syncLayout()
 		if aerr := h.st.AuditEnd(ctx, op.auditID, opErr, report); aerr != nil {
 			h.log.Error("audit log write failed", "err", aerr)
+		}
+		if op.then != nil {
+			op.then(ctx, opErr)
+			return
 		}
 		h.reply(op.client, op.cmd, data, opErr)
 	})

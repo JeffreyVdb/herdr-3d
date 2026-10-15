@@ -356,27 +356,7 @@ func TestIntegrationSleepWake(t *testing.T) {
 		t.Skip("systemd-run is not installed")
 	}
 	s := startThrowaway(t)
-	unit := "herdr-s-" + s.name + ".service"
-	t.Cleanup(func() {
-		stop := exec.Command(s.bin, "session", "stop", s.name, "--json")
-		stop.Env = s.env
-		_ = stop.Run()
-		for deadline := time.Now().Add(10 * time.Second); unitActive(unit) && time.Now().Before(deadline); {
-			time.Sleep(100 * time.Millisecond)
-		}
-		if unitActive(unit) {
-			t.Errorf("%s still active after herdr session stop; stopping the unit", unit)
-			_ = exec.Command("systemctl", "--user", "stop", unit).Run()
-		}
-		_ = exec.Command("systemctl", "--user", "reset-failed", unit).Run()
-		// --collect: the unit goes away once it is inactive.
-		for deadline := time.Now().Add(10 * time.Second); unitLoaded(unit) && time.Now().Before(deadline); {
-			time.Sleep(100 * time.Millisecond)
-		}
-		if unitLoaded(unit) {
-			t.Errorf("transient unit %s is still loaded", unit)
-		}
-	})
+	unit := wakeUnitCleanup(t, s)
 	cwd := t.TempDir()
 	for _, label := range []string{"CODE|it-sleep|1|r1", "notes"} {
 		s.run("--session", s.name, "workspace", "create", "--cwd", cwd, "--label", label, "--no-focus")
@@ -486,6 +466,35 @@ func TestIntegrationSleepWake(t *testing.T) {
 			t.Errorf("woken server has %s", kv)
 		}
 	}
+}
+
+// wakeUnitCleanup registers the cleanup of the transient unit a bridge's
+// wake starts the throwaway session's server in (herdr-s-<name>): stop the
+// session herdr's way, wait for the unit to go (stopping it as a last
+// resort; it is ours). It returns the unit's name.
+func wakeUnitCleanup(t *testing.T, s *throwaway) string {
+	unit := "herdr-s-" + s.name + ".service"
+	t.Cleanup(func() {
+		stop := exec.Command(s.bin, "session", "stop", s.name, "--json")
+		stop.Env = s.env
+		_ = stop.Run()
+		for deadline := time.Now().Add(10 * time.Second); unitActive(unit) && time.Now().Before(deadline); {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if unitActive(unit) {
+			t.Errorf("%s still active after herdr session stop; stopping the unit", unit)
+			_ = exec.Command("systemctl", "--user", "stop", unit).Run()
+		}
+		_ = exec.Command("systemctl", "--user", "reset-failed", unit).Run()
+		// --collect: the unit goes away once it is inactive.
+		for deadline := time.Now().Add(10 * time.Second); unitLoaded(unit) && time.Now().Before(deadline); {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if unitLoaded(unit) {
+			t.Errorf("transient unit %s is still loaded", unit)
+		}
+	})
+	return unit
 }
 
 // unitLoaded reports whether systemd still knows a user unit.

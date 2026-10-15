@@ -73,10 +73,10 @@ describe('CompletionScope', () => {
       catalogs: new CommandCatalogs({ send: () => new Promise(() => {}) }),
       repoRefs: null,
     };
-    const l = { session: 's', harness: 'codex', cwd: '/w', worktree: true };
+    const l = { floor: 's', harness: 'codex', cwd: '/w', worktree: true };
     const s = hireSources(host, l);
     s['/']?.opening?.();
-    expect(sent).toEqual([['hire.commands', { session: 's', cwd: '/w', worktree: true, harness: 'codex' }]]);
+    expect(sent).toEqual([['hire.commands', { floor: 's', cwd: '/w', worktree: true, harness: 'codex' }]]);
     expect(hireSources(host, { ...l, harness: 'shell' })['/']).toBeNull();
     expect(hireLookupKey(l)).not.toBe(hireLookupKey({ ...l, worktree: false }));
     // The same context is the same list (asked once), another one its own.

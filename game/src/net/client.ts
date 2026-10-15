@@ -125,18 +125,27 @@ export const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
 
 /**
  * Commands whose ack can take long. `floor.wake` is acked once every worker
- * resumed or fell back (~20 s worst case); progress shows through events
+ * resumed or fell back (~45 s worst case: a sleep still ending 15 s, the wake
+ * 10 s, two resume rounds of 10 s); progress shows through events
  * (`transition`, `resume`) meanwhile, so the wait here is generous.
  */
 export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'floor.wake': 60_000,
   'floor.sleep': 30_000,
+  // #58: the bridge lists herdr's sessions, starts the server and waits up to its wake timeout (10 s) for the floor.
+  'session.create': 30_000,
+  // #58: virtual floors are store writes on the bridge (a delete counts the floor's stored workers first).
+  'floor.create': 15_000,
+  'floor.rename': 15_000,
+  'floor.delete': 15_000,
+  'floor.hide': 15_000,
   // M4: prepare runs `git fetch`; a hire creates a worktree, starts the agent and waits out its trust dialog;
   // a send-home waits for the agent to exit.
   'hire.prepare': 30_000,
   // #213: one LLM call, which the bridge bounds at 35 s.
   'hire.interpret': 40_000,
-  'worker.hire': 90_000,
+  // #58 decision 3: a hire on an asleep virtual floor wakes its session first (up to ~30 s more).
+  'worker.hire': 120_000,
   'worker.fire.prepare': 20_000,
   'worker.fire': 45_000,
   // #83: the arm checks git, waits for the tracker's next round (~2 s), then prompts like worker.prompt.
@@ -159,7 +168,7 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'worker.answer_ask': 45_000,
   // M6 start: a run's prepare may `git fetch` like hire.prepare; its start is a hire.
   'run.prepare': 30_000,
-  'run.start': 90_000,
+  'run.start': 120_000,
   // M7: details are a provider call or two; a merge re-reads the PR first; opening a PR pushes the branch.
   'issue.get': 20_000,
   'pr.get': 20_000,

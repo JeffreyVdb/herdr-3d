@@ -209,12 +209,15 @@ parts:
 
 - **Reads** (`herdr.Client`): the socket methods `ping`, `session.snapshot` and `events.subscribe`, plus `herdr session
   list --json`. `TestReadOnlyAllowlist` is the tripwire.
-- **Writes** (`herdr.Control`), for `floor.wake` / `floor.sleep`, `worker.hire` / `worker.fire` and the laptops (M5)
-  only: exactly the command shapes in `controlShapes`.
+- **Writes** (`herdr.Control`), for `floor.wake` / `floor.sleep`, `session.create` (#58), `worker.hire` /
+  `worker.fire` and the laptops (M5) only: exactly the command shapes in `controlShapes`.
   - Wake and sleep: `systemd-run --user --unit=herdr-s-<name> … <shell> -l -c "exec herdr --session '<name>'
     server"` (`<shell>`: the bridge's shell policy, `--shell bash|fish`, bash by default: [protocol.md](docs/protocol.md#shell-policy)), `herdr session stop <name> --json`, `herdr --session <name> pane run <pane> "claude --resume <id>"` /
     `"codex resume <id>"`, `herdr --session <name> pane report-agent-session <pane> --source herdr:codex --agent codex
     --agent-session-id <id>`, and the read-only `herdr --session <name> pane process-info --pane <pane>`.
+  - New session (#58, `create-session`): the wake's `systemd-run` shape for a name herdr has not seen, after
+    `herdr.CheckNewSessionName` (`^[a-z0-9_-]+$`, the host's `sun_path` cap) and `herdr.NewSessionTaken` (not listed in
+    any state, no session folder, no loaded `herdr-s-<name>` unit); see docs/protocol.md "New herdr sessions".
   - Hire: `workspace create --cwd <dir> --label <label> --no-focus`, `worktree create --cwd <dir> --branch h3d/<…>
     --base origin/<…> --label <label> --no-focus`, `pane rename <pane> h3d-<hex>` (the marker), `agent start <name>
     --kind claude --pane <pane> --timeout 30000 -- --model <m> --effort <e> --permission-mode bypassPermissions --name
@@ -530,6 +533,9 @@ both providers):
   `floor.wake` through the real `systemd-run` path, and checks the workers keep their ids, desks and names, the
   transient unit `herdr-s-h3d-it-…` runs the server, and that server has none of the test's `CLAUDE*`/`HERDR_*`
   variables.
+- `TestIntegrationSessionCreate` (#58): creates a session `h3d-it-new-<random>` through `session.create` (the real
+  `systemd-run` path), checks the ack comes with its floor in the world, herdr lists it, its unit runs and the bridge's
+  unit check sees it, and a second create is `name_taken`; then stops and deletes it.
 
 - `TestIntegrationHireAndSendHome`: hires a Codex worker (`gpt-6-luna`, `low`) into a worktree of a local repository
   whose bare "origin" got a commit the local clone lacks, and checks the worktree has it; hires a Claude worker

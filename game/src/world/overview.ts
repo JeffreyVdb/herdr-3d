@@ -10,10 +10,11 @@
  * floor.
  */
 
-import type { DigestLineStatus, HireOptions, Worker } from '../net/protocol';
+import type { DigestLineStatus, Floor, HireOptions, Worker } from '../net/protocol';
 import { ACTIVITY_WORD, activityOf } from './activity';
 import type { CrewRole } from './crew';
 import { modelText, STATUS_WORD, type Display } from './derive';
+import { floorNameOf, floorOf } from './floorName';
 import type { BuildingView, Counts, FloorView, WorkerView } from './store';
 
 /** Where a task or now line came from (docs/protocol.md "Floor overview digest"); `report` is a freelancer's summary. */
@@ -38,8 +39,8 @@ export interface OverviewTicket {
   /** `#123`, else the run's ticket field. */
   key: string;
   title: string | null;
-  /** The board card it opens (`boardsPanel.openItem('issues', session, id)`); null when the bridge knows none. */
-  item: { session: string; id: string } | null;
+  /** The board card it opens (`boardsPanel.openItem('issues', floor, id)`); null when the bridge knows none. */
+  item: { floor: string; id: string } | null;
   /** The issue's page, as the bridge sent it (the game never builds one). */
   url: string | null;
 }
@@ -48,7 +49,8 @@ export interface OverviewWorkerRow {
   kind: 'worker';
   key: string;
   id: string;
-  session: string;
+  /** #58: the floor id it is on. */
+  floorId: string;
   name: string;
   display: Display;
   /** When the current status began (unix ms). */
@@ -71,7 +73,7 @@ export interface OverviewWorkerRow {
   activity: string | null;
   /** #232: the same as the since column shows it while working: the verb, and its detail ('' for none), which gives way first. */
   act: { verb: string; detail: string } | null;
-  /** The floor it is on, when not the overview's (`Floor 2`, or the session outside this building). */
+  /** The floor it is on, when not the overview's (`Floor 2`, or the floor's name outside this building). */
   floor: string | null;
 }
 
@@ -86,7 +88,7 @@ export interface OverviewGhostRow {
 
 export interface OverviewUnlinkedRow {
   kind: 'unlinked';
-  /** `unlinked` on a floor's page; `unlinked:<session>` on the all-floors page (#188), one group per floor. */
+  /** `unlinked` on a floor's page; `unlinked:<floor id>` on the all-floors page (#188), one group per floor. */
   key: string;
 }
 
@@ -95,10 +97,13 @@ export type OverviewRow = OverviewWorkerRow | OverviewGhostRow | OverviewUnlinke
 /** #188: a floor of the all-floors page, over its workers. */
 export interface OverviewFloorRow {
   kind: 'floor';
-  /** `floor:<session>` (the collapse key too). */
+  /** `floor:<floor id>` (the collapse key too; a real floor's id is its session's name, as before #58). */
   key: string;
-  session: string;
-  /** `Floor 2 · Work`, or the session for a floor in the unassigned lot. */
+  /** #58: the floor id. */
+  floor: string;
+  /** #58: the floor's name. */
+  name: string;
+  /** `Floor 2 · Work`, or the floor's name for a floor in the unassigned lot. */
   label: string;
   /** The top bar's numbers for that floor (`countItems`). */
   counts: CountItem[];
@@ -117,7 +122,8 @@ export interface OverviewNode {
 }
 
 export interface OverviewTree {
-  session: string;
+  /** #58: the floor id. */
+  floor: string;
   nodes: OverviewNode[];
   /** Worker rows in the tree. */
   total: number;
@@ -140,9 +146,10 @@ export interface CityOverviewTree {
 export interface OverviewSource {
   readonly workers: ReadonlyMap<string, Worker>;
   workerView(id: string): WorkerView | null;
-  floorView(session: string): { workers: WorkerView[]; floor: { building: string | null } } | null;
-  level(session: string): { number: number; count: number } | null;
-  readonly floors: ReadonlyMap<string, { building: string | null }>;
+  floorView(floor: string): { workers: WorkerView[]; floor: { building: string | null } } | null;
+  level(floor: string): { number: number; count: number } | null;
+  /** #58: keyed by floor id. */
+  readonly floors: ReadonlyMap<string, Pick<Floor, 'building' | 'session' | 'name' | 'virtual' | 'id'>>;
   /** #229: the bridge's harness catalog, for the models' readable names (`model_labels`). */
   readonly hireOptions: HireOptions;
 }
@@ -195,7 +202,7 @@ function ticketOf(w: Worker, ticket: string | null): OverviewTicket | null {
   return {
     key,
     title: i?.title?.trim() || item?.title?.trim() || null,
-    item: item?.id ? { session: w.session, id: item.id } : null,
+    item: item?.id ? { floor: floorOf(w), id: item.id } : null,
     url: i?.url || item?.url || null,
   };
 }
@@ -222,7 +229,7 @@ export function overviewRow(v: WorkerView, floorTag: string | null, options: Hir
     kind: 'worker',
     key: w.id,
     id: w.id,
-    session: w.session,
+    floorId: w.floor,
     name: v.name,
     display: v.display,
     since: v.since,
@@ -241,15 +248,15 @@ export function overviewRow(v: WorkerView, floorTag: string | null, options: Hir
   };
 }
 
-/** A floor's name beside a row: `Floor 2` in the overview's building, else its session (the project name you know). */
-function floorLabel(src: OverviewSource, here: string, session: string): string {
-  const lv = src.level(session);
+/** A floor's name beside a row: `Floor 2` in the overview's building, else its name (the project name you know). */
+function floorLabel(src: OverviewSource, here: string, floor: string): string {
+  const lv = src.level(floor);
   const same = src.floors.get(here)?.building ?? null;
-  return lv && same !== null && src.floors.get(session)?.building === same ? `Floor ${lv.number}` : session;
+  return lv && same !== null && src.floors.get(floor)?.building === same ? `Floor ${lv.number}` : floorNameOf(src.floors, floor);
 }
 
-export function buildOverview(src: OverviewSource, session: string): OverviewTree {
-  const fv = src.floorView(session);
+export function buildOverview(src: OverviewSource, floor: string): OverviewTree {
+  const fv = src.floorView(floor);
   const here = fv ? [...fv.workers].sort(byDesk) : [];
   const orchs = here.filter((v) => v.crew?.role === 'orch');
   const orchIds = new Set(orchs.map((v) => v.worker.id));
@@ -259,7 +266,7 @@ export function buildOverview(src: OverviewSource, session: string): OverviewTre
   // Freelancers on other floors whose orchestrator is here.
   const away: WorkerView[] = [];
   for (const w of src.workers.values()) {
-    if (w.session === session || !w.orch_id || !orchIds.has(w.orch_id)) continue;
+    if (floorOf(w) === floor || !w.orch_id || !orchIds.has(w.orch_id)) continue;
     const v = src.workerView(w.id);
     if (v?.crew?.freelancer) away.push(v);
   }
@@ -268,7 +275,7 @@ export function buildOverview(src: OverviewSource, session: string): OverviewTre
   let total = 0;
   const rowOf = (v: WorkerView) => {
     total++;
-    return overviewRow(v, v.worker.session === session ? null : floorLabel(src, session, v.worker.session), src.hireOptions);
+    return overviewRow(v, v.worker.floor === floor ? null : floorLabel(src, floor, v.worker.floor), src.hireOptions);
   };
   const nested = (vs: WorkerView[], parent: OverviewTicket | null) =>
     vs.sort(freelancerOrder).map((v) => {
@@ -289,18 +296,18 @@ export function buildOverview(src: OverviewSource, session: string): OverviewTre
     const oid = v.crew?.orchId ?? null;
     if (oid && orchIds.has(oid)) continue;
     const ov = oid ? src.workerView(oid) : null;
-    if (oid && ov && ov.worker.session !== session) ghosts.set(oid, [...(ghosts.get(oid) ?? []), v]);
+    if (oid && ov && ov.worker.floor !== floor) ghosts.set(oid, [...(ghosts.get(oid) ?? []), v]);
     else unlinked.push(v);
   }
   for (const [oid, vs] of ghosts) {
     const ov = src.workerView(oid);
     if (!ov) continue;
-    const head: OverviewGhostRow = { kind: 'ghost', key: `ghost:${oid}`, id: oid, name: ov.name, floor: floorLabel(src, session, ov.worker.session) };
+    const head: OverviewGhostRow = { kind: 'ghost', key: `ghost:${oid}`, id: oid, name: ov.name, floor: floorLabel(src, floor, ov.worker.floor) };
     nodes.push({ row: head, children: nested(vs, ticketOf(ov.worker, ov.crew?.ticket ?? null)) });
   }
   if (unlinked.length) nodes.push({ row: { kind: 'unlinked', key: 'unlinked' }, children: nested(unlinked, null) });
   for (const v of employees) nodes.push({ row: rowOf(v), children: [] });
-  return { session, nodes, total };
+  return { floor, nodes, total };
 }
 
 /**
@@ -308,7 +315,7 @@ export function buildOverview(src: OverviewSource, session: string): OverviewTre
  * first** (the Buildings panel's `stack` order; `WorldStore.city()` gives them ground first), then the unassigned lot.
  * Under each floor its tree as `buildOverview` builds it, with one rule so that every worker appears exactly once: a
  * freelancer sits under its orchestrator, on the orchestrator's floor, tagged with its own floor when that is another;
- * there are no ghost rows; a floor's Unlinked group (`unlinked:<session>`) holds only its freelancers whose
+ * there are no ghost rows; a floor's Unlinked group (`unlinked:<floor id>`) holds only its freelancers whose
  * orchestrator is truly gone (or none, or not an orchestrator).
  */
 export function buildCityOverview(src: CityOverviewSource): CityOverviewTree {
@@ -319,11 +326,11 @@ export function buildCityOverview(src: CityOverviewSource): CityOverviewTree {
   let total = 0;
   const out: CityFloorNode[] = [];
   for (const f of floors) {
-    const session = f.session;
+    const floor = f.id;
     const here = [...f.workers].sort(byDesk);
     const rowOf = (v: WorkerView) => {
       total++;
-      return overviewRow(v, v.worker.session === session ? null : floorLabel(src, session, v.worker.session), src.hireOptions);
+      return overviewRow(v, v.worker.floor === floor ? null : floorLabel(src, floor, v.worker.floor), src.hireOptions);
     };
     const nested = (vs: WorkerView[], parent: OverviewTicket | null) =>
       vs.sort(freelancerOrder).map((v) => {
@@ -337,7 +344,7 @@ export function buildCityOverview(src: CityOverviewSource): CityOverviewTree {
       nodes.push({ row: head, children: nested(freelancers.filter((v) => v.crew?.orchId === o.worker.id), head.ticket) });
     }
     const unlinked = here.filter((v) => v.crew?.freelancer && !(v.crew.orchId && orchIds.has(v.crew.orchId)));
-    if (unlinked.length) nodes.push({ row: { kind: 'unlinked', key: `unlinked:${session}` }, children: nested(unlinked, null) });
+    if (unlinked.length) nodes.push({ row: { kind: 'unlinked', key: `unlinked:${floor}` }, children: nested(unlinked, null) });
     for (const v of here.filter((v) => !v.crew || (!v.crew.freelancer && v.crew.role !== 'orch'))) nodes.push({ row: rowOf(v), children: [] });
     out.push({ row: floorRow(f), nodes });
   }
@@ -348,9 +355,10 @@ export function buildCityOverview(src: CityOverviewSource): CityOverviewTree {
 function floorRow(f: FloorView): OverviewFloorRow {
   return {
     kind: 'floor',
-    key: `floor:${f.session}`,
-    session: f.session,
-    label: f.level ? `Floor ${f.level.number} · ${f.building?.name ?? ''}` : f.session,
+    key: `floor:${f.id}`,
+    floor: f.id,
+    name: f.name,
+    label: f.level ? `Floor ${f.level.number} · ${f.building?.name ?? ''}` : f.name,
     counts: countItems(f.counts, f.asleep),
     asleep: f.asleep,
     total: f.workers.length,

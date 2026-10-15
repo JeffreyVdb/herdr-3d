@@ -87,7 +87,7 @@ describe('DesktopNotify', () => {
   });
 });
 
-const e = (name: string, reason: 'blocked' | 'done'): PingEntry => ({ id: name, name, session: 's', role: null, reason, since: 1 });
+const e = (name: string, reason: 'blocked' | 'done'): PingEntry => ({ id: name, name, floor: 's', role: null, reason, since: 1 });
 
 describe('ping texts', () => {
   it('titles', () => {

@@ -130,7 +130,8 @@ export type FloorSource = Pick<WorldStore, 'city' | 'floorView' | 'buildings' | 
 
 /** A floor as the list fixed it: where it sits in the order is not read again until the list is built again. */
 export interface FloorItem {
-  session: string;
+  /** #58: the floor id. */
+  floor: string;
   /** "Building › floor" when it was listed. */
   label: string;
   /** The characters of `label` the query matched. */
@@ -139,7 +140,8 @@ export interface FloorItem {
 
 /** A floor row as it is now. */
 export interface FloorRow {
-  session: string;
+  /** #58: the floor id. */
+  floor: string;
   label: string;
   counts: Counts;
   asleep: boolean;
@@ -150,7 +152,7 @@ export interface FloorRow {
   hits: number[];
 }
 
-const byLabel = (a: { label: string; session: string }, b: { label: string; session: string }): number => a.label.toLowerCase().localeCompare(b.label.toLowerCase()) || (a.session < b.session ? -1 : a.session > b.session ? 1 : 0);
+const byLabel = (a: { label: string; floor: string }, b: { label: string; floor: string }): number => a.label.toLowerCase().localeCompare(b.label.toLowerCase()) || (a.floor < b.floor ? -1 : a.floor > b.floor ? 1 : 0);
 
 /**
  * Every floor of the city whose "Building › floor" holds `query`, in the order the list keeps until it is built again:
@@ -158,21 +160,21 @@ const byLabel = (a: { label: string; session: string }, b: { label: string; sess
  */
 export function floorList(store: FloorSource, query: string): FloorItem[] {
   const all = store.city().flatMap((b) => b.floors);
-  const items = all.map((f) => ({ session: f.session, label: inboxWhere(store, f.session), needs: f.counts.needsYou > 0 }));
+  const items = all.map((f) => ({ floor: f.id, label: inboxWhere(store, f.id), needs: f.counts.needsYou > 0 }));
   items.sort((a, b) => +b.needs - +a.needs || byLabel(a, b));
   const q = query.trim();
-  if (q === '') return items.map(({ session, label }) => ({ session, label, hits: [] }));
+  if (q === '') return items.map(({ floor, label }) => ({ floor, label, hits: [] }));
   // `rankByName` orders by match tier; the list's order is the rule, so it only says who matches and where.
-  const hit = new Map(rankByName(items, q, (i) => i.label).map((r) => [r.item.session, r.hits]));
-  return items.filter((i) => hit.has(i.session)).map(({ session, label }) => ({ session, label, hits: hit.get(session) as number[] }));
+  const hit = new Map(rankByName(items, q, (i) => i.label).map((r) => [r.item.floor, r.hits]));
+  return items.filter((i) => hit.has(i.floor)).map(({ floor, label }) => ({ floor, label, hits: hit.get(floor) as number[] }));
 }
 
 /** The row of a listed floor with its counts as they are now; null when the floor is gone. */
 export function floorRow(store: FloorSource, item: FloorItem, here: string | null): FloorRow | null {
-  const f = store.floorView(item.session);
+  const f = store.floorView(item.floor);
   if (!f) return null;
-  const label = inboxWhere(store, item.session);
-  return { session: item.session, label, counts: f.counts, asleep: f.asleep, transition: f.transition, here: item.session === here, hits: label === item.label ? item.hits : [] };
+  const label = inboxWhere(store, item.floor);
+  return { floor: item.floor, label, counts: f.counts, asleep: f.asleep, transition: f.transition, here: item.floor === here, hits: label === item.label ? item.hits : [] };
 }
 
 /** How many floors have someone who needs you: the hint under an empty palette. */

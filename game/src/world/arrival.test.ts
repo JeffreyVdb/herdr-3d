@@ -173,7 +173,7 @@ describe('timeline', () => {
 });
 
 describe('desk owners while walks overlap', () => {
-  const away = (session: string, desk: number, show: 'busy' | 'empty' | null, who: string) => ({ session, desk, show, who });
+  const away = (floor: string, desk: number, show: 'busy' | 'empty' | null, who: string) => ({ floor, desk, show, who });
 
   it('the newest walk on a desk owns it: a drop-in behind a walk-out shows the new hire, as the world says', () => {
     // Pip was sent home from desk 5 and is still packing (busy); Gumdrop was hired to desk 5 after and drops in

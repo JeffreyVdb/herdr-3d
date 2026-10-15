@@ -104,7 +104,8 @@ func (e *fetchFailedError) Unwrap() error { return e.err }
 // goroutine) once herdr made the workspace, and seen once the hub saw it.
 // repo is a worktree hire's repository, set with the workspace.
 type hireOp struct {
-	id, session                string
+	id, session                string // session: the herdr session the workspace is made in
+	floor                      string // #58: the floor the worker belongs to (the session's, or a virtual floor on it)
 	desk                       int
 	name, label, marker, agent string
 	harness, model, effort     string
@@ -236,25 +237,25 @@ func (h *Hub) hireCwd(session string, f *floorState, asked string) (string, erro
 	return dir, nil
 }
 
-// counts returns how many workers a floor has and the host has, hires in
-// flight included.
-func (h *Hub) counts(session string) (floor, host int) {
-	for s, f := range h.floors {
+// counts returns how many workers a floor (#58: a floor id; a virtual
+// floor counts its own) has and the host has, hires in flight included.
+func (h *Hub) counts(floor string) (onFloor, host int) {
+	for id, f := range h.floors {
 		if !f.running {
 			continue
 		}
 		n := len(f.order)
 		for _, op := range f.hires {
-			if !op.seen {
+			if !op.seen && op.floor == id {
 				n++
 			}
 		}
 		host += n
-		if s == session {
-			floor = n
+		if id == floor {
+			onFloor = n
 		}
 	}
-	return floor, host
+	return onFloor, host
 }
 
 func (h *Hub) capacity(session string) proto.Capacity {
@@ -306,17 +307,18 @@ func (h *Hub) startHirePrepare(ctx context.Context, c *Client, cmd proto.Command
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	f, err := h.hireFloor(a.Session)
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	f, err := h.prepareFloor(a.Floor)
 	if err != nil {
 		return err
 	}
-	cwd, err := h.hireCwd(a.Session, f, a.Cwd)
+	cwd, err := h.hireCwd(a.Floor, f, a.Cwd)
 	if err != nil {
 		return err
 	}
-	res := proto.HirePrepareResult{Cwd: cwd, Capacity: h.capacity(a.Session)}
-	res.Choice, res.ChoiceSource = h.choice(a.Session)
-	held, released := h.heldNames(a.Session, h.opts.Now())
+	res := proto.HirePrepareResult{Cwd: cwd, Capacity: h.capacity(a.Floor)}
+	res.Choice, res.ChoiceSource = h.choice(a.Floor)
+	held, released := h.heldNames(a.Floor, h.opts.Now())
 	res.Label = world.PickName(uuid.NewString(), held, released)
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
 		res.Git = h.gitInfo(ctx, cwd)
@@ -374,7 +376,39 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	if err := h.hireShape(a); err != nil {
+		return err
+	}
+	// #58 decision 3: an asleep virtual floor's session wakes first.
+	if waking, err := h.wakeForHire(ctx, c, cmd, a.Floor, func(ctx context.Context) error {
+		return h.beginHire(ctx, c, cmd, a, nil, nil)
+	}); waking || err != nil {
+		return err
+	}
 	return h.beginHire(ctx, c, cmd, a, nil, nil)
+}
+
+// hireShape checks what a hire asks for that needs no floor: the desk is
+// named, the harness, model and effort can be hired and started, and the
+// prompt is well formed.
+func (h *Hub) hireShape(a proto.WorkerHireArgs) error {
+	if a.DeskIndex == nil {
+		return bad("desk_index is required")
+	}
+	if err := validHireIn(h.hireOptions(), proto.Hire{Harness: a.Harness, Model: a.Model, Effort: a.Effort}); err != nil {
+		return &badArgsError{err}
+	}
+	if !herdr.CanStart(a.Harness) {
+		return bad("cannot start harness %q", a.Harness)
+	}
+	if a.Prompt != "" && !herdr.ValidPrompt(a.Prompt) {
+		return bad("prompt must be 1-%d bytes of text, not starting with \"--\"", herdr.MaxPrompt)
+	}
+	if a.Prompt != "" {
+		return checkTyped(a.Harness, a.Prompt, herdr.MaxPrompt, "prompt") // #95
+	}
+	return nil
 }
 
 // beginHire is the hire of worker.hire and run.start: it validates a,
@@ -385,36 +419,22 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 // composed prompt); nil translates a.Prompt whole (#39).
 func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs, launched hireLaunched,
 	compose firstPrompt) error {
-	f, err := h.hireFloor(a.Session)
+	f, err := h.hireFloor(a.Floor)
 	if err != nil {
 		return err
 	}
-	if a.DeskIndex == nil {
-		return bad("desk_index is required")
-	}
-	if err := validHireIn(h.hireOptions(), proto.Hire{Harness: a.Harness, Model: a.Model, Effort: a.Effort}); err != nil {
-		return &badArgsError{err}
-	}
-	if !herdr.CanStart(a.Harness) {
-		return bad("cannot start harness %q", a.Harness)
+	if err := h.hireShape(a); err != nil {
+		return err
 	}
 	at := h.opts.Now()
-	held, released := h.heldNames(a.Session, at)
+	held, released := h.heldNames(a.Floor, at)
 	if a.Label == "" {
 		a.Label = world.PickName(uuid.NewString(), held, released)
 	}
 	if !herdr.ValidLabel(a.Label) {
 		return bad("label must be 1-%d bytes without control characters, not starting with \"-\"", herdr.MaxLabel)
 	}
-	if a.Prompt != "" && !herdr.ValidPrompt(a.Prompt) {
-		return bad("prompt must be 1-%d bytes of text, not starting with \"--\"", herdr.MaxPrompt)
-	}
-	if a.Prompt != "" {
-		if err := checkTyped(a.Harness, a.Prompt, herdr.MaxPrompt, "prompt"); err != nil { // #95
-			return err
-		}
-	}
-	cwd, err := h.hireCwd(a.Session, f, a.Cwd)
+	cwd, err := h.hireCwd(a.Floor, f, a.Cwd)
 	if err != nil {
 		return err
 	}
@@ -422,10 +442,10 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 		return errors.New("worktree hires are not configured")
 	}
 	desk := *a.DeskIndex
-	if n := h.deskCount(a.Session, f); desk < 0 || desk >= n {
+	if n := h.deskCount(a.Floor, f); desk < 0 || desk >= n {
 		return fmt.Errorf("%w: desk %d is not on the floor (0-%d)", errDeskTaken, desk, n-1)
 	}
-	for id, d := range h.desks[a.Session] {
+	for id, d := range h.desks[a.Floor] {
 		if d == desk {
 			name := id
 			if w := h.workers[id]; w != nil {
@@ -435,11 +455,11 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 		}
 	}
 	for _, op := range f.hires {
-		if op.desk == desk {
+		if op.floor == a.Floor && op.desk == desk {
 			return fmt.Errorf("%w: desk %d is being hired into", errDeskTaken, desk)
 		}
 	}
-	if err := h.checkCaps(a.Session, 1); err != nil {
+	if err := h.checkCaps(a.Floor, 1); err != nil {
 		return err
 	}
 	if h.opts.Hire == nil {
@@ -452,7 +472,7 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	if !world.Pickable(name, held, released) {
 		name = world.PickName(id, held, released)
 	}
-	op := &hireOp{id: id, session: a.Session, desk: desk, name: name, label: a.Label, marker: "h3d-" + hex[:12],
+	op := &hireOp{id: id, session: f.session, floor: a.Floor, desk: desk, name: name, label: a.Label, marker: "h3d-" + hex[:12],
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
 		notify: make(chan struct{}, 1), launched: launched, compose: compose, shared: a.Harness == "codex" && h.cx.enabled}
@@ -468,8 +488,8 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 		f.hires = map[string]*hireOp{}
 	}
 	f.hires[id] = op
-	h.floorNames(a.Session)[name] = nameClaim{owner: id} // held until the hire ends
-	h.log.Info("hire started", "client", c.name, "req_id", cmd.ReqID, "session", a.Session, "desk", desk,
+	h.floorNames(a.Floor)[name] = nameClaim{owner: id} // held until the hire ends
+	h.log.Info("hire started", "client", c.name, "req_id", cmd.ReqID, "session", a.Floor, "desk", desk,
 		"worker", id, "harness", a.Harness, "model", a.Model, "effort", a.Effort, "worktree", a.Worktree)
 	h.wg.Add(1)
 	go h.runHire(ctx, op)
@@ -686,10 +706,10 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	}
 	choice := store.Hire{Harness: op.harness, Model: op.model, Effort: op.effort}
 	if err := h.doWait(ctx, func() {
-		if err := h.st.SetLastHire(ctx, op.session, choice); err != nil {
-			h.log.Error("saving the last hire failed", "session", op.session, "err", err)
+		if err := h.st.SetLastHire(ctx, op.floor, choice); err != nil {
+			h.log.Error("saving the last hire failed", "floor", op.floor, "err", err)
 		} else {
-			h.lastHire[op.session] = choice
+			h.lastHire[op.floor] = choice
 		}
 	}); err != nil {
 		return
@@ -1062,8 +1082,8 @@ func (h *Hub) finishHire(ctx context.Context, op *hireOp, res *proto.HireResult,
 			}
 		}
 		if !op.seen {
-			if c, ok := h.names[op.session][op.name]; ok && c.owner == op.id {
-				delete(h.names[op.session], op.name)
+			if c, ok := h.names[op.floor][op.name]; ok && c.owner == op.id {
+				delete(h.names[op.floor], op.name)
 			}
 		}
 		var data any
@@ -1293,7 +1313,7 @@ func (h *Hub) groupBlocked(w *proto.Worker, f *floorState) string {
 		return ""
 	}
 	var names []string
-	for _, id := range f.order {
+	for _, id := range f.all { // herdr's groups are the session's
 		o := h.workers[id]
 		if o != nil && o.ID != w.ID && o.Worktree != nil && o.Worktree.Linked && o.Worktree.RepoRoot == w.Worktree.RepoRoot {
 			names = append(names, o.Name)

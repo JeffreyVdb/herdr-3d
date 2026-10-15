@@ -12,8 +12,8 @@ export function receptionContext(store: WorldStore, building: string | null, now
     now,
     building: { id: b?.id ?? null, name: b?.name ?? 'Unassigned lot' },
     floors: store.stack(b ? b.id : null).map((f) => ({
-      session: f.session,
-      name: f.session,
+      id: f.id,
+      name: f.name,
       state: f.asleep ? 'asleep' : 'running',
       needsYou: f.counts.needsYou,
     })),

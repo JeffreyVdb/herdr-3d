@@ -193,7 +193,7 @@ describe('WorldStore crews (M6)', () => {
     expect(v?.display).toBe('needs_you');
     expect(v?.crew).toMatchObject({ overCap: true, needsYou: true });
     expect(s.floorView('lab')?.counts.needsYou).toBe(1);
-    const q = needQueue([{ id: 'o1', session: 'lab', building: 'b1', display: v?.display ?? 'idle', since: 0, desk: 0, name: 'Pip' }]);
+    const q = needQueue([{ id: 'o1', floor: 'lab', building: 'b1', display: v?.display ?? 'idle', since: 0, desk: 0, name: 'Pip' }]);
     expect(q[0]?.reason).toBe('blocked');
     // Back under the cap (the user said go on): what its status says again.
     s.applyEvent({ t: 'worker.upsert', seq: 11, worker: worker({ ...orch, pass: 4, phase: 'fixing', over_cap: undefined, status: 'working' }) });

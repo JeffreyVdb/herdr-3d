@@ -31,22 +31,22 @@ export interface BoardState {
 
 export interface BoardsHost extends DialogHost {
   /** The floor you are on (null: none). */
-  session(): string | null;
-  state(session: string): BoardState;
+  floor(): string | null;
+  state(floor: string): BoardState;
   /** `board.refresh`. */
-  refresh(session: string): void;
+  refresh(floor: string): void;
   external(url: string): void;
   /** "Hand to a worker": the start-run dialog on the nearest free desk, pre-filled. */
-  handTo(session: string, card: IssueCard, provider: string): void;
+  handTo(floor: string, card: IssueCard, provider: string): void;
   /** "Ask a worker…": the hire dialog with a first prompt. */
-  ask(session: string, card: IssueCard, provider: string, body: string | null): void;
+  ask(floor: string, card: IssueCard, provider: string, body: string | null): void;
   /** "Review with a worker": the hire dialog with a reviewer and its first prompt. */
-  review(session: string, pr: PullRequest): void;
+  review(floor: string, pr: PullRequest): void;
   /** #248: "Resolve conflicts with a worker": the hire dialog with the task levels and the resolve-and-merge prompt for `method`. */
-  resolve(session: string, pr: PullRequest, method: MergeMethod): void;
+  resolve(floor: string, pr: PullRequest, method: MergeMethod): void;
   /** Why an action that starts a run or hires is off (null: it works). */
-  whyNoRun(session: string): string | null;
-  whyNoHire(session: string): string | null;
+  whyNoRun(floor: string): string | null;
+  whyNoHire(floor: string): string | null;
   /** A holder's tag: take me to that worker, its transcript on screen. */
   goTo(workerId: string): void;
 }
@@ -99,7 +99,7 @@ const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-dig
 
 export interface BoardSummary {
   kind: 'issues' | 'prs';
-  session: string;
+  floor: string;
   title: string;
   provider: string;
   /** Issues: the columns and the keys of their cards; PRs: one column of keys. */
@@ -140,7 +140,7 @@ export class BoardsPanel {
   private readonly itemFoot = h('footer', { class: 'dd-foot bd-foot' });
 
   private which: Which = 'issues';
-  private session = '';
+  private floor = '';
   // The open item.
   private itemId: string | null = null;
   private issueDetail: Detail<IssueDetail> = { state: 'loading' };
@@ -246,18 +246,18 @@ export class BoardsPanel {
     this.drag.cancel();
   }
 
-  open(which: Which, session: string): void {
+  open(which: Which, floor: string): void {
     if (!this.dialog.open) {
       const a = document.activeElement;
       this.returnTo = a instanceof HTMLElement && a !== document.body ? a : null;
     }
     this.pinned = false;
     this.drag.cancel();
-    if (session !== this.session) this.moves.clear();
-    if (session !== this.session || which !== this.which) this.alert.replaceChildren();
-    const fresh = !this.dialog.open || session !== this.session || which !== this.which;
+    if (floor !== this.floor) this.moves.clear();
+    if (floor !== this.floor || which !== this.which) this.alert.replaceChildren();
+    const fresh = !this.dialog.open || floor !== this.floor || which !== this.which;
     this.which = which;
-    this.session = session;
+    this.floor = floor;
     if (this.item.open) this.item.close();
     this.render();
     // Another list starts at its top; a redraw of the same one (refresh) keeps where it was scrolled to.
@@ -272,9 +272,9 @@ export class BoardsPanel {
   /** The board's data changed (a poll, a world event): the lists redraw; an open item follows its card. */
   refresh(): void {
     if (!this.dialog.open) return;
-    if (!this.pinned && (!this.host.session() || this.host.session() !== this.session)) {
+    if (!this.pinned && (!this.host.floor() || this.host.floor() !== this.floor)) {
       // The floor is not the one you are on any more.
-      const s = this.host.session();
+      const s = this.host.floor();
       if (!s) {
         this.close();
         return;
@@ -282,7 +282,7 @@ export class BoardsPanel {
       this.drag.cancel();
       this.moves.clear();
       this.alert.replaceChildren();
-      this.session = s;
+      this.floor = s;
     }
     this.settleMoves();
     this.render();
@@ -290,7 +290,7 @@ export class BoardsPanel {
   }
 
   private state(): BoardState {
-    return this.host.state(this.session);
+    return this.host.state(this.floor);
   }
 
   private message(): BoardIssues | BoardPrs | null {
@@ -322,16 +322,17 @@ export class BoardsPanel {
     const st = this.state();
     const m = this.message();
     const name = m?.provider_name ?? '';
-    const workers = this.host.store.floorView(this.session)?.workers ?? [];
+    const workers = this.host.store.floorView(this.floor)?.workers ?? [];
     const title = this.which === 'issues' ? (st.issues?.provider === 'kaneo' ? 'Tasks' : 'Issues') : 'Pull requests';
     const count = this.which === 'issues' ? (st.issues?.cards.filter((c) => c.state === 'open').length ?? 0) : (st.prs?.prs.length ?? 0);
-    const sub = m && m.fetched_at ? `${this.session}${name ? ` · ${name}` : ''} · ${count} open · updated ${timeAgo(m.fetched_at, this.host.now()) || 'just now'}` : `${this.session}${name ? ` · ${name}` : ''}`;
+    const where = this.host.store.floorName(this.floor);
+    const sub = m && m.fetched_at ? `${where}${name ? ` · ${name}` : ''} · ${count} open · updated ${timeAgo(m.fetched_at, this.host.now()) || 'just now'}` : `${where}${name ? ` · ${name}` : ''}`;
     this.head.replaceChildren(
       h('div', { class: 'dd-plate dd-plate--board', 'aria-hidden': 'true' }, icon(GLYPH[this.which])),
-      h('div', { class: 'dd-titles' }, h('h2', { id: 'board-title' }, `${title} · ${this.session}`), h('p', { id: 'board-sub' }, sub)),
+      h('div', { class: 'dd-titles' }, h('h2', { id: 'board-title' }, `${title} · ${where}`), h('p', { id: 'board-sub' }, sub)),
       h(
         'button',
-        { class: 'btn btn--icon', 'data-key': 'refresh', title: `Ask ${name || 'the provider'} for the latest now`, 'aria-label': 'Refresh', disabled: !m || undefined, onclick: () => this.host.refresh(this.session) },
+        { class: 'btn btn--icon', 'data-key': 'refresh', title: `Ask ${name || 'the provider'} for the latest now`, 'aria-label': 'Refresh', disabled: !m || undefined, onclick: () => this.host.refresh(this.floor) },
         icon(GLYPH.refresh),
       ),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
@@ -460,7 +461,7 @@ export class BoardsPanel {
     const board = this.state().issues;
     const card = board?.cards.find((c) => c.id === id);
     if (!board || !card) return;
-    const session = this.session;
+    const floor = this.floor;
     // #184: on a board the bridge could not read in full, a card's place is not known against the cards it did not
     // see: the drop moves only its status there.
     if (board.truncated) after = undefined;
@@ -468,11 +469,11 @@ export class BoardsPanel {
     this.moves.delete(id);
     this.moves.set(id, move);
     this.render();
-    const args = { session, id, column, ...(after !== undefined ? { after } : {}) };
+    const args = { floor, id, column, ...(after !== undefined ? { after } : {}) };
     // In order: a drop can be anchored on a card that the one before it moved.
     this.writes = this.writes.then(async () => {
       const r = await this.host.send('issue.set_status', args);
-      if (this.moves.get(id) !== move || this.session !== session) return;
+      if (this.moves.get(id) !== move || this.floor !== floor) return;
       if (!r.ok) {
         this.moves.delete(id);
         const text = failureText('issue.set_status', r.code, r.message, { item: card.key, provider: this.providerName() });
@@ -565,8 +566,8 @@ export class BoardsPanel {
    * Opens an item's modal directly (from a note on the wall, or a test). `pin` (#188, the overview's `t`): the board
    * keeps this floor across refreshes until it is closed, though the viewer stands in the city, a lobby or elsewhere.
    */
-  openItem(which: Which, session: string, id: string, o: { pin?: boolean } = {}): void {
-    this.open(which, session);
+  openItem(which: Which, floor: string, id: string, o: { pin?: boolean } = {}): void {
+    this.open(which, floor);
     this.pinned = !!o.pin;
     if (which === 'issues') this.openIssue(id);
     else this.openPr(id);
@@ -574,7 +575,7 @@ export class BoardsPanel {
 
   private async loadIssue(id: string): Promise<void> {
     const gen = this.gen;
-    const r = await this.host.send('issue.get', { session: this.session, id });
+    const r = await this.host.send('issue.get', { floor: this.floor, id });
     if (gen !== this.gen || !this.item.open) return;
     this.issueDetail = r.ok ? { state: 'ready', data: r.data as IssueDetail } : { state: 'error', message: failureText('issue.get', r.code, r.message, { item: this.card()?.key, provider: this.providerName() }) };
     this.renderItem();
@@ -582,7 +583,7 @@ export class BoardsPanel {
 
   private async loadPr(id: string): Promise<void> {
     const gen = this.gen;
-    const r = await this.host.send('pr.get', { session: this.session, id });
+    const r = await this.host.send('pr.get', { floor: this.floor, id });
     if (gen !== this.gen || !this.item.open) return;
     this.prDetail = r.ok ? { state: 'ready', data: r.data as PrDetail } : { state: 'error', message: failureText('pr.get', r.code, r.message, { item: this.pr()?.key, provider: this.providerName() }) };
     this.renderItem();
@@ -681,7 +682,7 @@ export class BoardsPanel {
     this.actionError = '';
     this.renderItem();
     const key = (issue ? this.card()?.key : this.pr()?.key) ?? 'it';
-    const r: CommandResult = issue ? await this.host.send('issue.comment', { session: this.session, id, body }) : await this.host.send('pr.comment', { session: this.session, id, body });
+    const r: CommandResult = issue ? await this.host.send('issue.comment', { floor: this.floor, id, body }) : await this.host.send('pr.comment', { floor: this.floor, id, body });
     this.busy = null;
     if (id !== this.itemId) return;
     if (r.ok) {
@@ -733,7 +734,7 @@ export class BoardsPanel {
     const meta = h('div', { class: 'bd-meta' }, h('span', { class: `tape tape--state tape--${card.state}` }, card.state === 'open' ? 'Open' : cap(closedWord(board?.provider))));
     if (col) meta.append(h('span', { class: 'tape tape--note' }, col.kind === 'planned' || col.kind === 'archived' ? `${col.name} · ${KIND_NOTE[col.kind]}` : col.name));
     if (card.priority) meta.append(h('span', { class: `tape tape--prio tape--prio-${card.priority}` }, PRIORITY_WORD[card.priority]));
-    const holder = holdersOf([card], this.host.store.floorView(this.session)?.workers ?? []).get(card.id);
+    const holder = holdersOf([card], this.host.store.floorView(this.floor)?.workers ?? []).get(card.id);
     if (holder) {
       meta.append(
         h('button', { class: 'bd-holder bd-holder--go', type: 'button', 'data-key': 'holder', title: `Go to ${holder.name}'s transcript`, onclick: () => this.host.goTo(holder.id) }, `${holder.name} is on it`),
@@ -759,21 +760,21 @@ export class BoardsPanel {
   private renderIssueFoot(card: IssueCard): void {
     const board = this.state().issues;
     const name = this.providerName();
-    const session = this.session;
+    const floor = this.floor;
     const busy = this.busy;
     const notices: Node[] = [];
     if (this.actionError) notices.push(h('p', { class: 'dd-status dd-status--error', role: 'alert' }, this.actionError));
     const actions: HTMLElement[] = [];
     const open = card.state === 'open';
-    const noRun = this.host.whyNoRun(session);
-    const noHire = this.host.whyNoHire(session);
+    const noRun = this.host.whyNoRun(floor);
+    const noHire = this.host.whyNoHire(floor);
     const btn = (key: string, label: string, onclick: () => void, o: { cls?: string; why?: string | null; title?: string } = {}) =>
       h(
         'button',
         { class: `btn${o.cls ? ` ${o.cls}` : ''}`, 'data-key': key, title: o.why ?? o.title ?? label, 'aria-disabled': o.why || busy ? 'true' : null, onclick: () => (o.why ? this.setError(o.why) : busy ? undefined : onclick()) },
         label,
       );
-    if (open) actions.push(btn('hand', 'Hand to a worker', () => this.host.handTo(session, card, board?.provider ?? ''), { cls: 'btn--primary', why: noRun, title: `Start a run on this ${itemWord(board?.provider)} at the free desk nearest to you` }));
+    if (open) actions.push(btn('hand', 'Hand to a worker', () => this.host.handTo(floor, card, board?.provider ?? ''), { cls: 'btn--primary', why: noRun, title: `Start a run on this ${itemWord(board?.provider)} at the free desk nearest to you` }));
     if (open) {
       // #184: a worker cannot read a Kaneo task, so its prompt carries the description: not until it is read.
       const d = this.issueDetail;
@@ -785,7 +786,7 @@ export class BoardsPanel {
             ? `The ${itemWord(board?.provider)}’s description could not be read, and the worker needs it: try again first.`
             : null;
       actions.push(
-        btn('ask', 'Ask a worker…', () => this.host.ask(session, card, board?.provider ?? '', d.state === 'ready' ? d.data.body : null), {
+        btn('ask', 'Ask a worker…', () => this.host.ask(floor, card, board?.provider ?? '', d.state === 'ready' ? d.data.body : null), {
           why: noHire ?? noBody,
           title: 'Hire a worker to look into it and report back, without changing code',
         }),
@@ -837,7 +838,7 @@ export class BoardsPanel {
     this.busy = 'close';
     this.actionError = '';
     this.renderItem();
-    const r = await this.host.send('issue.close', { session: this.session, id: card.id, reason, confirm: true });
+    const r = await this.host.send('issue.close', { floor: this.floor, id: card.id, reason, confirm: true });
     this.busy = null;
     if (card.id !== this.itemId) return;
     if (r.ok) {
@@ -860,7 +861,7 @@ export class BoardsPanel {
     this.busy = 'move';
     this.actionError = '';
     this.renderItem();
-    const r = await this.host.send('issue.set_status', { session: this.session, id: card.id, column: to });
+    const r = await this.host.send('issue.set_status', { floor: this.floor, id: card.id, column: to });
     this.busy = null;
     if (card.id !== this.itemId) return;
     this.moveTo = '';
@@ -891,7 +892,7 @@ export class BoardsPanel {
     );
     const issues = this.state().issues;
     const closes = closesText(pr.closes, keysById(issues));
-    const workers = this.host.store.floorView(this.session)?.workers ?? [];
+    const workers = this.host.store.floorView(this.floor)?.workers ?? [];
     const stamp = verdictOf(pr, workers);
     const meta = h(
       'div',
@@ -937,7 +938,7 @@ export class BoardsPanel {
   private renderPrFoot(pr: PullRequest): void {
     const board = this.state().prs;
     const name = this.providerName();
-    const session = this.session;
+    const floor = this.floor;
     const busy = this.busy;
     const notices: Node[] = [];
     if (this.actionError) notices.push(h('p', { class: 'dd-status dd-status--error', role: 'alert' }, this.actionError));
@@ -950,16 +951,16 @@ export class BoardsPanel {
     // #248: three groups that wrap whole: the workers (one primary: Resolve on a conflicting PR, else Review), the
     // merge, and the way out to the provider.
     const groups: HTMLElement[] = [];
-    const noHire = this.host.whyNoHire(session);
+    const noHire = this.host.whyNoHire(floor);
     const conflicting = pr.mergeable === 'conflicting';
     groups.push(
       h(
         'span',
         { class: 'bd-group bd-group--workers' },
         conflicting
-          ? btn('resolve', 'Resolve conflicts with a worker', () => this.host.resolve(session, pr, this.method), { cls: 'btn--primary', why: noHire, title: 'Hire a worker on a task level to resolve the conflicts and merge, with the merge method picked here' })
+          ? btn('resolve', 'Resolve conflicts with a worker', () => this.host.resolve(floor, pr, this.method), { cls: 'btn--primary', why: noHire, title: 'Hire a worker on a task level to resolve the conflicts and merge, with the merge method picked here' })
           : null,
-        btn('review', 'Review with a worker', () => this.host.review(session, pr), { cls: conflicting ? 'btn--quiet' : 'btn--primary', why: noHire, title: 'Hire a reviewer with the last team’s reviewer model' }),
+        btn('review', 'Review with a worker', () => this.host.review(floor, pr), { cls: conflicting ? 'btn--quiet' : 'btn--primary', why: noHire, title: 'Hire a reviewer with the last team’s reviewer model' }),
       ),
     );
     if (can(board, pr, 'merge')) {
@@ -1014,7 +1015,7 @@ export class BoardsPanel {
     this.busy = 'merge';
     this.actionError = '';
     this.renderItem();
-    const args = { session: this.session, id: pr.id, method: m.method, confirm: true as const, ...(override ? { override: true, confirm_override: true as const } : {}) };
+    const args = { floor: this.floor, id: pr.id, method: m.method, confirm: true as const, ...(override ? { override: true, confirm_override: true as const } : {}) };
     const r = await this.host.send('pr.merge', args);
     this.busy = null;
     if (pr.id !== this.itemId) return;
@@ -1059,8 +1060,8 @@ export class BoardsPanel {
     }
     return {
       kind: this.which,
-      session: this.session,
-      title: `${this.which === 'issues' ? 'Issues' : 'Pull requests'} · ${this.session}`,
+      floor: this.floor,
+      title: `${this.which === 'issues' ? 'Issues' : 'Pull requests'} · ${this.host.store.floorName(this.floor)}`,
       provider: m?.provider_name ?? '',
       columns,
       notice: this.notice.hidden ? null : (this.notice.textContent ?? ''),

@@ -26,7 +26,8 @@ export const TRAY_CAP = 5;
 export interface ReportFact {
   /** The freelancer. */
   id: string;
-  session: string;
+  /** #58: its floor id. */
+  floor: string;
   /** Its desk. */
   desk: number;
   /** The orchestrator's worker id. */
@@ -44,7 +45,7 @@ export function reportFact(v: Pick<WorkerView, 'worker' | 'desk' | 'crew'>): Rep
   const c = v.crew;
   const r = v.worker.report;
   if (!c?.freelancer || !c.orchId || r?.state !== 'ready' || inputRequired(r)) return null;
-  return { id: v.worker.id, session: v.worker.session, desk: v.desk, orch: c.orchId, at: r.at ?? 0, tone: stampOf(r)?.tone ?? null };
+  return { id: v.worker.id, floor: v.worker.floor, desk: v.desk, orch: c.orchId, at: r.at ?? 0, tone: stampOf(r)?.tone ?? null };
 }
 
 /** Whether a worker's report became ready (or a new one did): `prev` → `now`. */
@@ -92,7 +93,7 @@ export class DeliveryBook {
     for (const [key] of this.entries) if (!keys.has(key)) this.entries.delete(key);
     for (const f of facts) {
       const e = this.entries.get(deliveryKey(f.id, f.at));
-      if (e) Object.assign(e, { session: f.session, desk: f.desk, orch: f.orch });
+      if (e) Object.assign(e, { floor: f.floor, desk: f.desk, orch: f.orch });
       else this.add(f, false);
       // What the snapshot knows is on the tray; one still walking is overtaken by it.
       const cur = this.entries.get(deliveryKey(f.id, f.at));
@@ -106,7 +107,7 @@ export class DeliveryBook {
 
   /**
    * The next delivery to `orch` to start: the oldest queued one, unless one is under way for it or its floor is
-   * `busy` (the sessions with a delivery under way: one walk at a time on a floor).
+   * `busy` (the floors with a delivery under way: one walk at a time on a floor).
    */
   next(orch: string, busy?: ReadonlySet<string>): Entry | null {
     let first: Entry | null = null;
@@ -115,14 +116,14 @@ export class DeliveryBook {
       if (e.stage === 'active') return null;
       if (e.stage === 'queued' && !first) first = e;
     }
-    if (!first || busy?.has(first.session)) return null;
+    if (!first || busy?.has(first.floor)) return null;
     first.stage = 'active';
     return first;
   }
 
-  /** The sessions with a delivery under way. */
-  activeSessions(): Set<string> {
-    return new Set([...this.entries.values()].filter((e) => e.stage === 'active').map((e) => e.session));
+  /** The floors with a delivery under way. */
+  activeFloors(): Set<string> {
+    return new Set([...this.entries.values()].filter((e) => e.stage === 'active').map((e) => e.floor));
   }
 
   /** Returns `key`'s delivery to the queue's front (it could not be shown after all). */
@@ -137,11 +138,11 @@ export class DeliveryBook {
     if (e) e.stage = 'tray';
   }
 
-  /** Nobody sees these walks (another floor, the city, a sleeping floor): every delivery on `session` resolves at once. */
-  resolve(session?: string): Entry[] {
+  /** Nobody sees these walks (another floor, the city, a sleeping floor): every delivery on `floor` resolves at once. */
+  resolve(floor?: string): Entry[] {
     const out: Entry[] = [];
     for (const e of this.entries.values()) {
-      if (e.stage === 'tray' || (session !== undefined && e.session !== session)) continue;
+      if (e.stage === 'tray' || (floor !== undefined && e.floor !== floor)) continue;
       e.stage = 'tray';
       out.push(e);
     }

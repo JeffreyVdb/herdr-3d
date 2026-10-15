@@ -30,7 +30,7 @@ interface Ask {
 function setup(git: Record<string, unknown> | null = null) {
   const asks: Ask[] = [];
   const host = {
-    store: {
+    store: { floorName: (id: string) => id,
       hireOptions: { codex: { models: ['gpt'], efforts: ['high'] }, claude: { models: ['opus'], efforts: ['max'] } },
       floorView: () => ({ seats: Array(10).fill(null) }),
       limits: { version: 0, list: () => [] },
@@ -130,7 +130,7 @@ describe('HireDialog: completion in the First task (#39)', () => {
     type('/');
     expect(isOpen()).toBe(true);
     expect(status()).toBe('Loading skills…');
-    expect(of('hire.commands').map((a) => a.args)).toEqual([{ session: 'floor', harness: 'codex', cwd: '/home/test' }]);
+    expect(of('hire.commands').map((a) => a.args)).toEqual([{ floor: 'floor', harness: 'codex', cwd: '/home/test' }]);
     // The dialog is not busy: the editor takes typing, Hire is on.
     expect(box().getAttribute('contenteditable')).toBe('true');
     expect(document.querySelector<HTMLButtonElement>('.desk-dlg--hire button[type="submit"]')?.disabled).toBe(false);
@@ -177,13 +177,13 @@ describe('HireDialog: completion in the First task (#39)', () => {
       type('@lob');
       expect(status()).toBe('Searching files…');
       await vi.advanceTimersByTimeAsync(60);
-      expect(of('hire.files').map((a) => a.args)).toEqual([{ session: 'floor', cwd: '/home/test', query: 'lob', limit: 30 }]);
+      expect(of('hire.files').map((a) => a.args)).toEqual([{ floor: 'floor', cwd: '/home/test', query: 'lob', limit: 30 }]);
       of('hire.files')[0]!.answer({ ok: true, data: { files: [{ path: 'src/lobby.ts', kind: 'file', indices: [4, 5, 6] }], source: 'git', reason: null } });
       await vi.runAllTimersAsync();
       press('Enter');
       expect(draft().snapshot().segments.some((g) => g.kind === 'file' && g.path === 'src/lobby.ts')).toBe(true);
       type('then @r:api');
-      expect(of('hire.repos').map((a) => a.args)).toEqual([{ session: 'floor' }]);
+      expect(of('hire.repos').map((a) => a.args)).toEqual([{ floor: 'floor' }]);
       of('hire.repos')[0]!.answer({ ok: true, data: { repos: [{ session: 'api', building: 'Work', same_building: true, repo: 'acme/api', dir: '/src/api', cloned: true }] } });
       await vi.runAllTimersAsync();
       press('Enter');
@@ -260,7 +260,7 @@ describe('HireDialog: completion in the First task (#39)', () => {
     folder('/home/other');
     type('/');
     expect(dlg.lookupGeneration).toBeGreaterThan(gen);
-    expect(of('hire.commands').map((a) => a.args)).toEqual([{ session: 'floor', harness: 'codex', cwd: '/home/other' }]);
+    expect(of('hire.commands').map((a) => a.args)).toEqual([{ floor: 'floor', harness: 'codex', cwd: '/home/other' }]);
     // A row listed before the next keystroke of the Folder is not put in after it.
     await of('hire.commands')[0]!.answer(skills('other-skill'));
     expect(names()).toEqual(['/other-skill']);
@@ -283,7 +283,7 @@ describe('HireDialog: completion in the First task (#39)', () => {
     await flush();
     expect(of('hire.prepare')).toHaveLength(1);
     expect(of('hire.commands')).toHaveLength(2);
-    expect(of('hire.commands')[1]!.args).toEqual({ session: 'floor', harness: 'codex' });
+    expect(of('hire.commands')[1]!.args).toEqual({ floor: 'floor', harness: 'codex' });
     await of('hire.commands')[0]!.answer(skills('other-only'));
     expect(rows()).toHaveLength(0);
     await of('hire.commands')[1]!.answer(skills('home-skill'));
@@ -302,12 +302,12 @@ describe('HireDialog: completion in the First task (#39)', () => {
     dlg.open('floor', 0);
     await flush();
     type('/');
-    expect(of('hire.commands')[0]!.args).toEqual({ session: 'floor', harness: 'codex', cwd: '/home/test', worktree: true });
+    expect(of('hire.commands')[0]!.args).toEqual({ floor: 'floor', harness: 'codex', cwd: '/home/test', worktree: true });
     const wt = document.querySelector<HTMLInputElement>('#hire-worktree')!;
     wt.checked = false;
     wt.dispatchEvent(new Event('change'));
     await flush();
-    expect(of('hire.commands')[1]!.args).toEqual({ session: 'floor', harness: 'codex', cwd: '/home/test' });
+    expect(of('hire.commands')[1]!.args).toEqual({ floor: 'floor', harness: 'codex', cwd: '/home/test' });
     await of('hire.commands')[0]!.answer(skills('root-skill'));
     expect(rows()).toHaveLength(0);
     await of('hire.commands')[1]!.answer(skills('plain-skill'));
