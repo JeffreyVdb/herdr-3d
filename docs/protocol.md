@@ -134,10 +134,13 @@ after it, in use; once the file exists it is the truth. With neither, the list i
 A page keeps the bridge its per-bridge keys were chosen for at start, and its `/ws` names it:
 `/ws?token=<token>&bridge=<id>` (`bridge=none` when the helper had no bridge). The helper dials that bridge only:
 another one in use (a switch made in another tab, or the first bridge added there) answers `409` with no connection to
-any bridge, so the page never shows another bridge's world under its drafts and seats. The page hears of the switch
-from the list (Settings and the palette poll it while open) or, when its connection drops, by asking for the list,
-and reloads on the bridge in use ("Switching to <name>…"). A `/ws` without `bridge` (a page no helper scope covers) is
-let through to the bridge in use, as before.
+any bridge, so the page never shows another bridge's world under its drafts and seats. The HTTP routes the page uses
+(`/logo`, `/upload`, `/screen/frame`, `/whiteboard`, `/drops`) carry the same `bridge` (their URLs derive from the
+`/ws` one) and are refused the same way, before anything reaches a bridge: `409` with the error object, code
+`bridge_changed`. The helper never passes `bridge` on to the bridge. The page hears of the switch from the list
+(Settings and the palette poll it while open) or, when its connection drops or a route answers `bridge_changed`, by
+asking for the list, and reloads on the bridge in use ("Switching to <name>…"). A request without `bridge` (a page no
+helper scope covers) is let through to the bridge in use, as before.
 
 ## Handshake
 
@@ -4174,6 +4177,7 @@ dismissed_at)`.
 | `no_client`, `not_sharing` | M13 `screen.grab`: no game is connected (or the sharing one went away mid-grab); a game is connected and shares nothing (or stopped mid-grab) |
 | `frame_timeout`, `frame_invalid`, `frame_too_large`, `frame_unavailable` | M13 `screen.grab`: the game sent no frame within 5 s; what it sent is not a valid JPEG; it is over 8 MiB, or wider than 1920 or taller than 4096 pixels; the game said it has no frame (the source is paused, sharing stopped while it encoded). The last three are also the answers of `POST /screen/frame/{req_id}` |
 | `logo_too_large`, `logo_unsupported`, `logo_invalid`, `logo_busy` | M3d, only on the `/logo` HTTP routes (see [Building logos](#building-logos)): an upload over the size limit, of an unsupported kind (an SVG that took too long to draw included), undecodable, or no conversion slot in time |
+| `bridge_changed` | #57, the helper's own, on its HTTP routes (`409`): the page names another bridge than the one in use (a switch made in another tab); the page reloads on that one (see [The helper's bridges](#the-helpers-bridges-57)) |
 | `internal` | the bridge failed (database error, or waking, sleeping, hiring and firing is not configured); safe to retry |
 
 Errors not tied to a command have no `req_id`.
