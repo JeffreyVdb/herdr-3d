@@ -6,7 +6,7 @@ import type { Ask, CommandArgs, CommandName, ConnMessage, KeyItem } from '../net
 import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
 import { PrintMeshes } from '../render/prints';
-import { ScreenMeshes } from '../render/screens';
+import { ScreenMeshes, type ScreenOwner } from '../render/screens';
 // #98: the desk monitors' activity cards.
 import { MonitorCards } from '../render/monitorCards';
 import { MonitorPrefs } from '../ui/monitorPrefs';
@@ -35,6 +35,7 @@ import { hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type Overla
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
 import { Watches } from './watches';
 import type { PackupGate } from '../world/packup';
+import type { Worker } from '../net/protocol';
 
 export { screensParam };
 export type { ImageFeed };
@@ -186,6 +187,12 @@ function isMac(): boolean {
 }
 
 /**
+ * #52: a screen is the worker's at a desk while it is that worker's and of its pane (a worker with no pane now keeps its
+ * last one's). Anything else on that glass (a worker who left the desk, a pane it no longer has) is not shown.
+ */
+const owns = (w: Worker, s: ScreenOwner): boolean => w.id === s.id && (!w.pane_id || w.pane_id === s.pane);
+
+/**
  * M5: laptop screens and sitting at a worker's laptop. Plans which laptops
  * are live (`world/screens.ts`), keeps the bridge's watches in step
  * (`watches.ts`), feeds frames to an xterm per live screen (`terminal.ts`)
@@ -217,8 +224,8 @@ export class Laptops {
   private readonly pool: LaptopTerminal[] = [];
   private meshes: ScreenMeshes | null = null;
   private attached: OfficeView | null = null;
-  /** Worker id → desk on the attached floor, as last planned. */
-  private desks = new Map<string, number>();
+  /** Worker id → desk on the attached floor, as of this frame (#52: not the plan's, which runs less often). */
+  private readonly desks = new Map<string, number>();
   /** Worker id → the desk its live screen is shown on. */
   private readonly liveAt = new Map<string, number>();
   private seat: Seat | null = null;
@@ -272,7 +279,7 @@ export class Laptops {
     this.planner = new WatchPlanner(this.cfg);
     this.watches = new Watches({
       send: (t, args) => this.host.watch(t, args),
-      sink: { frame: (id, f) => this.onFrame(id, f), stop: (id) => this.onStop(id) },
+      sink: { frame: (id, f) => this.onFrame(id, f), stop: (id, reason) => this.onStop(id, reason) },
       failed: (id, code, message) => this.onFailed(id, code, message),
       closed: (id, reason) => this.onClosed(id, reason),
       zoomChanged: (id) => this.syncChip(id),
@@ -435,8 +442,11 @@ export class Laptops {
     }
   }
 
-  /** A watch ended: its laptop keeps the last frame (frozen), the terminal goes back to the pool. */
-  private onStop(id: string): void {
+  /**
+   * A watch ended: its laptop keeps the last frame (frozen), the terminal goes back to the pool. #52: not after
+   * `pane_changed`: that frame is the old pane's, so the laptop goes blank until the new pane's first frame.
+   */
+  private onStop(id: string, reason?: string): void {
     const t = this.terms.get(id);
     if (!t) return;
     this.terms.delete(id);
@@ -445,7 +455,8 @@ export class Laptops {
     if (this.meshes) {
       if (at !== undefined) this.meshes.setLive(at, null);
       const desk = this.desks.get(id);
-      if (desk !== undefined && t.painted) this.meshes.freeze(desk, t.canvas);
+      if (desk !== undefined && reason === 'pane_changed') this.meshes.unfreeze(desk);
+      else if (desk !== undefined && t.painted) this.meshes.freeze(desk, t.canvas, { id, pane: t.pane ?? '' });
     }
     t.reset();
     if (this.pool.length < this.cfg.live + 2) this.pool.push(t);
@@ -528,7 +539,7 @@ export class Laptops {
       const at = this.liveAt.get(s.id);
       if (at !== undefined) this.meshes.setLive(at, null);
       this.liveAt.delete(s.id);
-      if (t?.painted) this.meshes.freeze(s.desk, t.canvas);
+      if (t?.painted) this.meshes.freeze(s.desk, t.canvas, { id: s.id, pane: t.pane ?? '' });
     } else this.meshes.unfreeze(s.desk);
   }
 
@@ -954,7 +965,7 @@ export class Laptops {
     this.prints.setMeshes(null);
     this.monitors.setCards(null);
     this.attached = office;
-    this.desks = new Map();
+    this.desks.clear();
     this.liveAt.clear();
     this.planner.clear();
     if (office) {
@@ -1060,6 +1071,7 @@ export class Laptops {
         meshes.setVisible(!asleep);
         this.monitors.setVisible(!asleep);
       }
+      this.own(office, meshes);
       if (f.now - this.lastPlan >= PLAN_MS) {
         this.lastPlan = f.now;
         this.plan(f, office, meshes);
@@ -1077,7 +1089,9 @@ export class Laptops {
           meshes.setLive(at, null);
           this.liveAt.delete(id);
         }
-        if (desk !== undefined && t.painted && at !== desk) {
+        // #52: only a screen of the pane the worker has now (frames of the old one can come before its watch closes).
+        const w = desk === undefined ? null : office.seat(desk);
+        if (desk !== undefined && t.painted && at !== desk && w && owns(w.worker, { id, pane: t.pane ?? '' })) {
           meshes.setLive(desk, t.texture);
           this.liveAt.set(id, desk);
         }
@@ -1123,6 +1137,28 @@ export class Laptops {
     else el.setAttribute('data-reading', v);
   }
 
+  /**
+   * #52: once per frame, not at the plan's pace: who sits at each desk now (the office can seat someone else at a desk
+   * without a new scene), and the screens on the glass that are not theirs any more (a new worker at the desk, a new
+   * pane under the same one) go, so the laptop is blank until that worker's own screen has a frame.
+   */
+  private own(office: OfficeView, meshes: ScreenMeshes): void {
+    this.desks.clear();
+    for (let i = 0; i < office.desksCount; i++) {
+      const w = office.seat(i);
+      if (w) this.desks.set(w.worker.id, i);
+      const frozen = meshes.frozenOwner(i);
+      if (frozen && !(w && owns(w.worker, frozen))) meshes.unfreeze(i);
+    }
+    for (const [id, d] of this.liveAt) {
+      const w = office.seat(d);
+      const pane = this.terms.get(id)?.pane ?? '';
+      if (w && owns(w.worker, { id, pane })) continue;
+      meshes.setLive(d, null);
+      this.liveAt.delete(id);
+    }
+  }
+
   private plan(f: LaptopFrame, office: OfficeView, meshes: ScreenMeshes): void {
     const cam = f.camera;
     this.frustum.setFromProjectionMatrix(this.m.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
@@ -1130,7 +1166,6 @@ export class Laptops {
     const eye = this.v.clone();
     const cands: Candidate[] = [];
     const printCands: Candidate[] = [];
-    const desks = new Map<string, number>();
     // M6c: an orchestrator in the corner office has no screen on the floor slot it left.
     const away = new Map(office.awayDesks());
     for (const c of office.cornerDesks()) away.set(c, 'busy');
@@ -1138,7 +1173,6 @@ export class Laptops {
     for (let i = 0; i < office.desksCount; i++) {
       const w = office.seat(i);
       if (!w) continue;
-      desks.set(w.worker.id, i);
       if (office.isAsleep || !w.worker.pane_id || away.has(i) || this.seat?.id === w.worker.id) continue;
       M.multiplyMatrices(office.root.matrixWorld, meshes.slotMatrix(i, new THREE.Matrix4()));
       this.sphere.center.copy(SCREEN.center).applyMatrix4(M);
@@ -1151,10 +1185,6 @@ export class Laptops {
         printCands.push({ id: w.worker.id, dist: this.sphere.center.distanceTo(eye), visible: this.frustum.intersectsSphere(this.sphere) });
       }
     }
-    // A desk whose worker changed (left, moved, someone new) forgets its frozen screen.
-    const now = new Map([...desks].map(([id, d]) => [d, id]));
-    for (const [id, d] of this.desks) if (now.get(d) !== id) meshes.unfreeze(d);
-    this.desks = desks;
     // #98: the activity cards (not where you sit, nor where someone packs up); a covered desk's terminal is not watched.
     const seats: MonitorSeat[] = [];
     for (let i = 0; i < office.desksCount; i++) {
@@ -1165,11 +1195,11 @@ export class Laptops {
     if (this.seat) skip.add(this.seat.desk);
     this.monitors.plan(f.now, Date.now(), seats, cands, skip, !office.isAsleep, this.connected);
     for (let i = 0; i < office.desksCount; i++) {
-      const id = now.get(i);
+      const id = office.seat(i)?.worker.id;
       meshes.setCovered(i, id !== undefined && this.monitors.covers(id));
     }
     if (this.connected && !this.watches.disabled) this.planner.plan(f.now, cands.filter((c) => !this.monitors.covers(c.id)), this.cfg.live);
-    this.prints.update(f.now, printCands, desks, this.seat?.id ?? null, this.connected && !office.isAsleep && !this.whyNoTranscript());
+    this.prints.update(f.now, printCands, this.desks, this.seat?.id ?? null, this.connected && !office.isAsleep && !this.whyNoTranscript());
     this.syncWatches();
   }
 
@@ -1234,11 +1264,18 @@ export class Laptops {
 
   // ---- test hooks ----------------------------------------------------------------------
 
-  /** Per worker on the floor you are on: what its laptop shows, and the fps it is watched at. */
-  screens(): Array<{ id: string; desk: number; state: ScreenState; fps: number | null }> {
-    const out: Array<{ id: string; desk: number; state: ScreenState; fps: number | null }> = [];
+  /** Per worker on the floor you are on (and its pane): what its laptop shows, the fps it is watched at, and (#52) whose screen is on its glass. */
+  screens(): Array<{ id: string; pane: string | null; desk: number; state: ScreenState; fps: number | null; shows: string | null }> {
+    const out: Array<{ id: string; pane: string | null; desk: number; state: ScreenState; fps: number | null; shows: string | null }> = [];
     const o = this.attached;
     if (!o) return out;
+    // #52: whose screen each desk's glass shows (`<worker id>@<pane>`): its live plane's terminal, else its frozen image.
+    const shows = new Map<number, string>();
+    for (let i = 0; i < o.desksCount; i++) {
+      const f = this.meshes?.frozenOwner(i);
+      if (f) shows.set(i, `${f.id}@${f.pane}`);
+    }
+    for (const [id, d] of this.liveAt) if (this.meshes?.isLive(d)) shows.set(d, `${id}@${this.terms.get(id)?.pane ?? ''}`);
     for (let i = 0; i < o.desksCount; i++) {
       const w = o.seat(i);
       if (!w) continue;
@@ -1250,7 +1287,7 @@ export class Laptops {
       else if (this.seat?.id === id && this.transcript.shown) state = this.meshes?.isFrozen(i) ? 'frozen' : 'glow';
       else if (fps !== null) state = t?.painted ? 'live' : 'pending';
       else if (this.meshes?.isFrozen(i)) state = 'frozen';
-      out.push({ id, desk: i, state, fps });
+      out.push({ id, pane: w.worker.pane_id ?? null, desk: i, state, fps, shows: shows.get(i) ?? null });
     }
     return out;
   }

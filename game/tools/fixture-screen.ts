@@ -145,6 +145,8 @@ export class SimScreens {
   /** #74: the workers whose watch wants its tab fullscreen (the bridge's refs): a re-watch of one does not zoom again. */
   private readonly held = new Set<string>();
   private readonly screens = new Map<string, Screen>();
+  /** #52: workers whose next watch sends its first frame this much later (ms): a new pane slow to show anything. */
+  private readonly slow = new Map<string, number>();
   private readonly host: ScreenHost;
 
   constructor(host: ScreenHost) {
@@ -248,8 +250,20 @@ export class SimScreens {
     } else this.release(id);
     const zoom = this.zoomState(id);
     ack({ pane: watch.pane, cols: s.rec.cols, rows: s.rec.rows, ...(zoom ? { zoom } : {}) });
-    this.flush(watch);
+    const slow = this.slow.get(id);
+    this.slow.delete(id);
+    if (slow) {
+      watch.timer = this.host.later(() => {
+        watch.timer = null;
+        this.flush(watch);
+      }, slow);
+    } else this.flush(watch);
     if (!s.timer && !s.typed) this.advance(id, s);
+  }
+
+  /** #52 (`sim.swap`): the next watch of `id` holds its first frame `ms`. */
+  holdFirst(id: string, ms: number): void {
+    this.slow.set(id, ms);
   }
 
   /** #74: the zoom state of a worker's pane under `simzoom` (undefined: a bridge without it). */

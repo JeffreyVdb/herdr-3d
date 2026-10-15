@@ -42,6 +42,8 @@ export class LaptopTerminal {
   private lastDraw = -Infinity;
   /** A frame has been painted since the last reset (before that, the laptop keeps its glow). */
   painted = false;
+  /** #52: the pane its frames come from (null until the first one, and after a reset). */
+  pane: string | null = null;
   /** Frames written and repaints done (tests, bench). */
   frames = 0;
   paints = 0;
@@ -138,6 +140,7 @@ export class LaptopTerminal {
   /** Applies a frame: `full` resets first; a diff for other dimensions waits for a full one (false). */
   frame(f: TerminalFrame): boolean {
     if (!f.full && (f.cols !== this.term.cols || f.rows !== this.term.rows)) return false;
+    this.pane = f.pane;
     if (f.full) {
       if (f.cols !== this.term.cols || f.rows !== this.term.rows) this.term.resize(f.cols, f.rows);
       this.term.write('\x1bc');
@@ -151,6 +154,7 @@ export class LaptopTerminal {
   reset(): void {
     this.term.write('\x1bc');
     this.painted = false;
+    this.pane = null;
     this.dirty = false;
   }
 

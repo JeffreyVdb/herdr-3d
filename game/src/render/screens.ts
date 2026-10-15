@@ -18,6 +18,12 @@ const ATLAS_UPLOAD_MS = 400;
 
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 
+/** #52: whose screen an image is: the worker, and the pane its frames came from. */
+export interface ScreenOwner {
+  id: string;
+  pane: string;
+}
+
 /**
  * M5: laptop screens over the desks' flat glow (M6b: on the desk monitors). A live screen is one plane
  * with its own canvas texture (a handful: the nearest laptops and the one
@@ -42,6 +48,8 @@ export class ScreenMeshes {
   private readonly cell: THREE.InstancedBufferAttribute;
   /** Desk → atlas cell, least recently frozen first. */
   private readonly frozen = new Map<number, number>();
+  /** #52: desk → whose screen its frozen image is. */
+  private readonly owners = new Map<number, ScreenOwner>();
   /** #98: desks whose monitor shows the activity card (or an image): their screens are hidden, frozen copies kept. */
   private readonly covered = new Set<number>();
   private atlasDirty = false;
@@ -141,8 +149,8 @@ export class ScreenMeshes {
     return this.live.has(desk);
   }
 
-  /** Keeps `src` (a live screen's canvas) as the desk's frozen screen. */
-  freeze(desk: number, src: CanvasImageSource): void {
+  /** Keeps `src` (a live screen's canvas, `owner`'s) as the desk's frozen screen. */
+  freeze(desk: number, src: CanvasImageSource, owner: ScreenOwner): void {
     if (!this.slots[desk]) return;
     let cell = this.frozen.get(desk);
     if (cell === undefined) {
@@ -150,11 +158,13 @@ export class ScreenMeshes {
         // The one frozen longest ago goes back to its glow.
         const [oldDesk, oldCell] = this.frozen.entries().next().value as [number, number];
         this.frozen.delete(oldDesk);
+        this.owners.delete(oldDesk);
         this.frozenMesh.setMatrixAt(oldDesk, ZERO);
         cell = oldCell;
       } else cell = this.freeCell();
     } else this.frozen.delete(desk);
     this.frozen.set(desk, cell);
+    this.owners.set(desk, { ...owner });
     const x = (cell % COLS) * CELL_W;
     const y = Math.floor(cell / COLS) * CELL_H;
     this.g.drawImage(src, x, y, CELL_W, CELL_H);
@@ -196,6 +206,11 @@ export class ScreenMeshes {
     return this.frozen.has(desk);
   }
 
+  /** #52: whose screen the desk's frozen image is (null: not frozen). */
+  frozenOwner(desk: number): ScreenOwner | null {
+    return this.owners.get(desk) ?? null;
+  }
+
   /** Forgets a desk's frozen screen (its worker left; a new one there starts with a glow). */
   /** Test hook: the share (0–1) of a desk's frozen screen that is not black; null when it is not frozen. */
   frozenInk(desk: number): number | null {
@@ -208,6 +223,7 @@ export class ScreenMeshes {
   }
 
   unfreeze(desk: number): void {
+    this.owners.delete(desk);
     if (!this.frozen.delete(desk)) return;
     this.frozenMesh.setMatrixAt(desk, ZERO);
     this.frozenMesh.instanceMatrix.needsUpdate = true;

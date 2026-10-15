@@ -117,8 +117,15 @@ export interface H3DDebug {
   cards(): Array<{ desk: number; name: string; display: string; task: string; ask?: { text: string; about?: string[]; choices: Array<{ n: number; label: string }>; selected?: number | undefined } | null; usage?: string | null; tall: boolean; tag?: { text: string; color: string } | null; stamp?: { tone: string; text: string } | null; crew?: string[] | null; tape?: { text: string; color: string; box?: boolean } | null }>;
   /** Screen point of a floor's badge in the city (to click it). */
   badgePoint(session: string): { x: number; y: number } | null;
-  /** M5: per worker of the floor you are on, what its laptop shows (live / pending / frozen / glow / dark) and its watch fps. */
-  screens(): Array<{ id: string; desk: number; state: string; fps: number | null }>;
+  /** M5: per worker of the floor you are on, what its laptop shows (live / pending / frozen / glow / dark) and its watch fps; #52: its pane, and whose screen is on its glass (`<worker id>@<pane>`, null: none). */
+  screens(): Array<{ id: string; pane: string | null; desk: number; state: string; fps: number | null; shows: string | null }>;
+  /**
+   * #52: records what every laptop of the floor shows at each rendered frame (`screens()`, taken right after the frame is
+   * drawn) from `true` on; `false` stops and returns the record.
+   */
+  screenTrace(on: boolean): Array<{ frame: number; screens: ReturnType<H3DDebug['screens']> }>;
+  /** #52: the fixture simulator's `sim.swap`: a new pane under a worker, or a new worker at its desk (`sim=1`). */
+  simSwap(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M5: the worker whose laptop you sit at, or null. */
   seated(): string | null;
   /** M5: sits you at a worker's laptop as E does (false, with a toast, when you cannot). */
@@ -331,6 +338,9 @@ const params = new URLSearchParams(window.location.search);
 let app: App | null = null;
 let renderer: THREE.WebGPURenderer | null = null;
 
+/** #52: `screenTrace(true)`'s record, null while off. */
+let screenTrace: Array<{ frame: number; screens: ReturnType<H3DDebug['screens']> }> | null = null;
+
 const h3d: H3DDebug = {
   backend: null,
   frames: 0,
@@ -408,6 +418,17 @@ const h3d: H3DDebug = {
   cards: () => app?.office?.shownCards() ?? [],
   badgePoint: (s) => app?.badgePoint(s) ?? null,
   screens: () => app?.laptops.screens() ?? [],
+  screenTrace: (on) => {
+    const out = screenTrace ?? [];
+    screenTrace = on ? [] : null;
+    return out;
+  },
+  simSwap: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    // `sim.swap` is the fixture simulator's, not a bridge command.
+    const r = await app.client.request('sim.swap' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   seated: () => app?.laptops.seated ?? null,
   officeRebuilds: () => app?.rebuilds ?? 0,
   sitAt: (id) => app?.sitAt(id) ?? false,
@@ -646,6 +667,7 @@ async function start(): Promise<void> {
   a.render = () => {
     origRender();
     h3d.frames = a.frames;
+    screenTrace?.push({ frame: a.frames, screens: a.laptops.screens() });
     if (!h3d.ready && a.store.snapshots > 0) h3d.ready = true;
   };
   a.start();
