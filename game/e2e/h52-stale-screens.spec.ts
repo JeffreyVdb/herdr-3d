@@ -65,9 +65,27 @@ async function swap(page: Page, args: Record<string, unknown>): Promise<{ id: st
   return r.data as { id: string; pane: string };
 }
 
+/** The fewest rendered frames a trace records (software GL draws only a few a second). */
+const MIN_FRAMES = 11;
+
+/**
+ * Starts recording every desk's glass at every rendered frame; the returned stop waits until at least `MIN_FRAMES`
+ * frames are recorded (after whatever the test waited for), then ends the recording and returns it.
+ */
+async function startTrace(page: Page): Promise<() => Promise<Trace>> {
+  const start = await page.evaluate(() => {
+    window.__h3d.screenTrace(true);
+    return window.__h3d.frames;
+  });
+  return async () => {
+    await page.waitForFunction((want) => window.__h3d.frames >= want, start + MIN_FRAMES, { timeout: 30_000 });
+    return page.evaluate(() => window.__h3d.screenTrace(false));
+  };
+}
+
 /** Every desk at every recorded frame: its glass shows nothing, or the screen of the worker and pane there now. */
 function expectOwnScreens(trace: Trace): void {
-  expect(trace.length).toBeGreaterThan(10);
+  expect(trace.length).toBeGreaterThanOrEqual(MIN_FRAMES);
   const wrong = trace.flatMap((t) => t.screens.filter((s) => s.shows !== null && s.shows !== `${s.id}@${s.pane}`).map((s) => ({ frame: t.frame, desk: s.desk, worker: `${s.id}@${s.pane}`, shows: s.shows, state: s.state })));
   expect(wrong.slice(0, 5)).toEqual([]);
 }
@@ -88,11 +106,11 @@ for (const name of [null, 'Zephyr']) {
     const rebuilds = await page.evaluate(() => window.__h3d.officeRebuilds());
     // A few times over: the old screen could only show between two plans of the screens (250 ms), so one swap may miss it.
     for (let i = 0; i < 3; i++) {
-      await page.evaluate(() => window.__h3d.screenTrace(true));
+      const stop = await startTrace(page);
       const now = await swap(page, { id: at.id, hold: HOLD, ...(name ? { name: `${name}${'abc'[i]}` } : {}) });
       expect(now.id).not.toBe(at.id);
       await expect.poll(() => atDesk(page, at.desk).then((s) => s?.shows), { timeout: 15_000 }).toBe(`${now.id}@${now.pane}`);
-      const trace = await page.evaluate(() => window.__h3d.screenTrace(false));
+      const trace = await stop();
       expectOwnScreens(trace);
       const desk = deskFrom(trace, at.desk, now);
       // From its first frame at the desk: blank while its screen is on its way (watched, nothing yet), then its own.
@@ -113,13 +131,13 @@ test('sitting down at the new worker of a reused desk: blank until its first fra
   const L = await enter(page);
   const old = await liveDesk(page, L);
   await faceDesk(page, L, old.desk);
-  await page.evaluate(() => window.__h3d.screenTrace(true));
+  const stop = await startTrace(page);
   const now = await swap(page, { id: old.id, hold: HOLD });
   await leftInTerminal(page, now.id); // #98: the terminal, not the conversation
   await expect.poll(() => page.evaluate((id) => window.__h3d.sitAt(id), now.id)).toBe(true);
   expect(await page.evaluate(() => window.__h3d.seated())).toBe(now.id);
   await expect.poll(() => atDesk(page, old.desk).then((s) => s?.shows), { timeout: 15_000 }).toBe(`${now.id}@${now.pane}`);
-  const trace = await page.evaluate(() => window.__h3d.screenTrace(false));
+  const trace = await stop();
   expectOwnScreens(trace);
   const desk = deskFrom(trace, old.desk, now);
   expect(desk.some((s) => s?.state === 'pending' && s.shows === null)).toBe(true);
@@ -136,11 +154,11 @@ test('a new pane under the same worker (pane_changed): the old pane’s screen g
   await leftInTerminal(page, old.id);
   expect(await page.evaluate((id) => window.__h3d.sitAt(id), old.id)).toBe(true);
   await expect.poll(() => atDesk(page, old.desk).then((s) => s?.state)).toBe('live');
-  await page.evaluate(() => window.__h3d.screenTrace(true));
+  const stop = await startTrace(page);
   const now = await swap(page, { id: old.id, pane: true, hold: HOLD });
   expect(now.id).toBe(old.id);
   await expect.poll(() => atDesk(page, old.desk).then((s) => s?.shows), { timeout: 15_000 }).toBe(`${now.id}@${now.pane}`);
-  const trace = await page.evaluate(() => window.__h3d.screenTrace(false));
+  const trace = await stop();
   // Still seated at the same worker all along.
   expect(await page.evaluate(() => window.__h3d.seated())).toBe(old.id);
   expectOwnScreens(trace);
@@ -161,13 +179,13 @@ test('the same worker and pane: getting up keeps its last frame on the laptop (s
   expect(await page.evaluate((id) => window.__h3d.sitAt(id), w.id)).toBe(true);
   await expect.poll(() => atDesk(page, 0).then((s) => s?.state)).toBe('live');
   await frames(page, 3);
-  await page.evaluate(() => window.__h3d.screenTrace(true));
+  const stop = await startTrace(page);
   await page.keyboard.press('Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
-  await frames(page, 20);
-  const trace = await page.evaluate(() => window.__h3d.screenTrace(false));
+  // The frozen frame goes on the glass with the atlas upload that carries it (at most 400 ms later).
+  await expect.poll(() => atDesk(page, 0)).toMatchObject({ state: 'frozen', shows: `${w.id}@${w.pane}` });
+  const trace = await stop();
   expectOwnScreens(trace);
-  expect(await atDesk(page, 0)).toMatchObject({ state: 'frozen', shows: `${w.id}@${w.pane}` });
   expect(await page.evaluate((id) => window.__h3d.frozenInk(id), w.id)).toBeGreaterThan(0.005);
   clean();
 });
