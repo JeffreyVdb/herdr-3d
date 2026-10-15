@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
@@ -35,6 +36,7 @@ const (
 	EnvHelperChrome        = "H3D_HELPER_CHROME"
 	EnvHelperChromeProfile = "H3D_HELPER_CHROME_PROFILE"
 	EnvHelperTokenFile     = "H3D_HELPER_TOKEN_FILE"
+	EnvHelperBridgesFile   = "H3D_HELPER_BRIDGES_FILE"
 	EnvHelperMusicDir      = "H3D_HELPER_MUSIC_DIR"
 	EnvHelperSSH           = "H3D_HELPER_SSH"
 	EnvHelperLogLevel      = "H3D_HELPER_LOG_LEVEL"
@@ -42,7 +44,8 @@ const (
 )
 
 // DefaultHelperListen is where the helper serves the game. There is no default
-// bridge host: the helper never guesses a machine (see resolveHelperTarget).
+// bridge host: the helper never guesses a machine (see resolveHelperTarget and
+// resolveBridgeList).
 const DefaultHelperListen = "127.0.0.1:7777"
 
 // helperDir is <base>/h3d-helper, base being os.UserCacheDir or
@@ -56,9 +59,15 @@ func helperDir(base func() (string, error), fallback string) string {
 	return filepath.Join(dir, "h3d-helper")
 }
 
-// DefaultLocalSocket is the local end of the tunnel.
+// DefaultLocalSocket anchors the tunnels' local ends (#57): each ssh bridge's
+// is <dir of it>/bridges/<id>.sock.
 func DefaultLocalSocket() string {
 	return filepath.Join(helperDir(os.UserCacheDir, ".cache"), "bridge.sock")
+}
+
+// tunnelSocketDir is where the tunnels' local ends go for a -local-socket.
+func tunnelSocketDir(localSocket string) string {
+	return filepath.Join(filepath.Dir(localSocket), "bridges")
 }
 
 // DefaultBundle is where an installed game bundle lives.
@@ -66,6 +75,11 @@ func DefaultBundle() string { return filepath.Join(helperDir(os.UserConfigDir, "
 
 // DefaultTokenFile is where the helper keeps its token between runs.
 func DefaultTokenFile() string { return filepath.Join(helperDir(os.UserConfigDir, ".config"), "token") }
+
+// DefaultBridgesFile is the helper's bridge list (#57), next to its token.
+func DefaultBridgesFile() string {
+	return filepath.Join(helperDir(os.UserConfigDir, ".config"), "bridges.json")
+}
 
 // DefaultMusicDir is where the radio's tracks live on the Mac (h3d-update --music
 // fills it). No space in the path, so rsync can name it.
@@ -94,7 +108,8 @@ type helperTarget struct {
 
 // resolveHelperTarget picks the host and the remote socket: the flag, then the
 // H3D_HELPER_* environment (on the Mac, the LaunchAgent's EnvironmentVariables).
-// There is no built-in machine: a missing host is an error naming both.
+// There is no built-in machine: with neither, Host is empty (#57: the bridge
+// list may name some, or the game says to add one).
 func resolveHelperTarget(flagHost, flagRemote string) (helperTarget, error) {
 	// An unfilled @PLACEHOLDER@ (a LaunchAgent plist installed without its sed) is not a value.
 	set := func(v string) bool { return v != "" && !(strings.HasPrefix(v, "@") && strings.HasSuffix(v, "@")) }
@@ -111,12 +126,49 @@ func resolveHelperTarget(flagHost, flagRemote string) (helperTarget, error) {
 	t.Host, t.HostSource = pick(flagHost, EnvHelperHost)
 	t.Remote, t.RemoteSource = pick(flagRemote, EnvHelperRemoteSocket)
 	if t.Host == "" {
-		return t, fmt.Errorf("no bridge host: pass -host [user@]host or set $%s (on the Mac: in the LaunchAgent's EnvironmentVariables)", EnvHelperHost)
+		return t, nil
 	}
-	if strings.HasPrefix(t.Host, "-") || strings.ContainsAny(t.Host, " \t\r\n") {
+	if err := helper.CheckSSHHost(t.Host); err != nil {
 		return t, fmt.Errorf("bridge host %q (%s): want [user@]host", t.Host, t.HostSource)
 	}
 	return t, nil
+}
+
+// resolveBridgeList is the list the helper starts with (#57). The list file,
+// once it exists, is the truth; -host / $H3D_HELPER_HOST (with
+// -remote-socket) only seed it when it is missing or empty: an install from
+// before #57 comes up on its one host, named after it, in use, and from then
+// on Settings → Bridges edits the file. Neither: an empty list, and the game
+// says to add a bridge.
+func resolveBridgeList(file string, t helperTarget, log *slog.Logger) (helper.BridgeList, error) {
+	l, exists, err := helper.LoadBridgeList(file)
+	if err != nil {
+		return l, err
+	}
+	l, changed := helper.SeedBridgeList(l, exists, t.Host, t.Remote)
+	if changed {
+		if _, err := helper.CheckBridgeEntry(l.Bridges[0]); err != nil {
+			return l, fmt.Errorf("bridge %s (%s): %w", t.Host, t.HostSource, err)
+		}
+		if err := helper.SaveBridgeList(file, l); err != nil {
+			return l, fmt.Errorf("bridge list %s: %w", file, err)
+		}
+		log.Info("bridge list created", "file", file, "bridge", t.Host, "from", t.HostSource)
+		return l, nil
+	}
+	if t.Host != "" && !hasHost(l, t.Host) {
+		log.Warn("the bridge list is used, the host is not: add it in Settings → Bridges", "file", file, "host", t.Host, "from", t.HostSource)
+	}
+	return l, nil
+}
+
+func hasHost(l helper.BridgeList, host string) bool {
+	for _, e := range l.Bridges {
+		if e.Kind == helper.KindSSH && e.Host == host {
+			return true
+		}
+	}
+	return false
 }
 
 const discoverTimeout = 20 * time.Second
@@ -131,7 +183,7 @@ func discoverRemoteSocket(ctx context.Context, sshBin, host string) (string, err
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
-	hint := "; pass -remote-socket or set $" + EnvHelperRemoteSocket
+	hint := "; set the bridge's remote socket in Settings → Bridges (for the host the helper starts with: pass -remote-socket or set $" + EnvHelperRemoteSocket + ")"
 	if err != nil {
 		return "", fmt.Errorf("asking %s for its runtime dir over ssh: %w (%s)%s", host, err, strings.TrimSpace(stderr.String()), hint)
 	}
@@ -178,9 +230,10 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 	}
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	host := fs.String("host", "", "ssh destination running the bridge, [user@]host; required ($"+EnvHelperHost+")")
-	remote := fs.String("remote-socket", "", "bridge socket on the host; default: $XDG_RUNTIME_DIR/herdr-world/bridge.sock as the host reports it over ssh ($"+EnvHelperRemoteSocket+")")
-	local := fs.String("local-socket", envOr(EnvHelperLocalSocket, DefaultLocalSocket()), "local end of the tunnel ($"+EnvHelperLocalSocket+")")
+	host := fs.String("host", "", "ssh destination running the bridge, [user@]host: the first entry of a new bridge list, ignored once the list exists ($"+EnvHelperHost+")")
+	remote := fs.String("remote-socket", "", "bridge socket on -host; default: $XDG_RUNTIME_DIR/herdr-world/bridge.sock as the host reports it over ssh ($"+EnvHelperRemoteSocket+")")
+	local := fs.String("local-socket", envOr(EnvHelperLocalSocket, DefaultLocalSocket()), "the tunnels' local ends go next to it, one per ssh bridge: <its dir>/bridges/<id>.sock ($"+EnvHelperLocalSocket+")")
+	bridgesFile := fs.String("bridges-file", envOr(EnvHelperBridgesFile, DefaultBridgesFile()), "the bridge list Settings → Bridges edits (0600 JSON) ($"+EnvHelperBridgesFile+")")
 	listen := fs.String("listen", envOr(EnvHelperListen, DefaultHelperListen), "loopback address serving the game ($"+EnvHelperListen+")")
 	bundle := fs.String("bundle", os.Getenv(EnvHelperBundle), "serve this built game directory (a copy of game/dist) instead of the game embedded in the binary; default: the embedded game, else "+DefaultBundle()+" ($"+EnvHelperBundle+")")
 	dev := fs.String("dev-upstream", os.Getenv(EnvHelperDevUpstream), "proxy the game from this Vite dev server instead, e.g. http://127.0.0.1:5173 ($"+EnvHelperDevUpstream+")")
@@ -216,7 +269,6 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 		fmt.Fprintf(stdout, "http://%s/#token=%s\n", *listen, token)
 		return nil
 	}
-	// Before anything else is checked: without a bridge there is nothing to serve.
 	target, err := resolveHelperTarget(*host, *remote)
 	if err != nil {
 		return err
@@ -225,7 +277,6 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 		Token:    token,
 		MusicDir: *musicDir,
 		Listen:   *listen,
-		Tunnel:   &helper.Tunnel{SSH: *sshBin, Local: *local},
 		Log:      log,
 	}
 	if *dev != "" {
@@ -265,16 +316,26 @@ func helperMain(ctx context.Context, name string, args []string, stdout, stderr 
 			cfg.Open = func(ctx context.Context, u string) error { return helper.OpenChrome(ctx, *chrome, u, *profile) }
 		}
 	}
-	if target.Remote == "" {
-		dctx, cancel := context.WithTimeout(ctx, discoverTimeout)
-		target.Remote, err = discoverRemoteSocket(dctx, *sshBin, target.Host)
-		cancel()
-		if err != nil {
-			return err
-		}
-		log.Info("bridge socket discovered on the host", "host", target.Host, "socket", target.Remote)
+	list, err := resolveBridgeList(*bridgesFile, target, log)
+	if err != nil {
+		return err
 	}
-	cfg.Tunnel.Host, cfg.Tunnel.Remote = target.Host, target.Remote
+	if len(list.Bridges) == 0 {
+		log.Warn("no bridge configured: the game asks to add one in Settings → Bridges", "file", *bridgesFile)
+	}
+	sshPath := *sshBin
+	cfg.Bridges, err = helper.NewBridgeSet(helper.BridgeSetConfig{
+		File: *bridgesFile, SSH: sshPath, SocketDir: tunnelSocketDir(*local), Log: log,
+		// An ssh bridge with no remote socket asks its host, in its own supervisor.
+		Discover: func(ctx context.Context, host string) (string, error) {
+			dctx, cancel := context.WithTimeout(ctx, discoverTimeout)
+			defer cancel()
+			return discoverRemoteSocket(dctx, sshPath, host)
+		},
+	}, list)
+	if err != nil {
+		return fmt.Errorf("bridge list %s: %w", *bridgesFile, err)
+	}
 	if _, err := os.Stat(*musicDir); err != nil {
 		log.Info("no music folder: the radio is silent (h3d-update --music fills it)", "dir", *musicDir)
 	}

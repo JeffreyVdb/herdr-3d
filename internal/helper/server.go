@@ -62,6 +62,9 @@ type ServerConfig struct {
 	// browser (default SystemOpen; OpenHosts default DefaultOpenHosts).
 	Open      Opener
 	OpenHosts []string
+	// #57: the bridge list behind /api/bridges (nil: none, the routes say so).
+	// Bridge is usually the same set.
+	Bridges *BridgeSet
 }
 
 // Server is the helper's HTTP front: the game, /ws to the bridge, /healthz.
@@ -100,8 +103,8 @@ func NewServer(cfg ServerConfig) *Server {
 }
 
 // Handler serves everything. Every request must name the helper in its
-// Host header (no DNS rebinding); /ws and /api/open also need a same-origin
-// Origin and the token; /logo, POST /upload and POST /screen/frame/{id} need the token, and an Origin, when the browser
+// Host header (no DNS rebinding); /ws, /api/open and /api/bridges also need a same-origin
+// Origin (an absent one passes on GET /api/bridges) and the token; /logo, POST /upload and POST /screen/frame/{id} need the token, and an Origin, when the browser
 // sends one, must be the helper's own.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -143,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Allow", "POST")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	})
+	s.bridgeRoutes(mux)
 	var site http.Handler
 	if s.cfg.Dev != nil {
 		site = s.devProxy()
@@ -164,7 +168,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) forbid(w http.ResponseWriter, r *http.Request, why string) {
 	s.cfg.Log.Warn("request refused", "why", why, "path", r.URL.Path, "host", r.Host, "origin", r.Header.Get("Origin"), "remote", r.RemoteAddr)
-	if r.URL.Path == "/upload" || strings.HasPrefix(r.URL.Path, "/screen/") || isWhiteboardPath(r.URL.Path) { // the game reads its error code
+	if r.URL.Path == "/upload" || strings.HasPrefix(r.URL.Path, "/screen/") || isWhiteboardPath(r.URL.Path) || isBridgesPath(r.URL.Path) { // the game reads its error code
 		uploadError(w, http.StatusForbidden, "forbidden", "the helper refused the request ("+why+")")
 		return
 	}

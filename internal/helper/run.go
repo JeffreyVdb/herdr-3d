@@ -17,8 +17,9 @@ import (
 // Config is one helper run.
 type Config struct {
 	Listen string // loopback ip:port for the game
-	Tunnel *Tunnel
-	Bundle string // built game directory (ignored when Dev is set)
+	// Bridges are the bridges the helper knows (#57); the one in use gets the game's traffic.
+	Bridges *BridgeSet
+	Bundle  string // built game directory (ignored when Dev is set)
 	// BundleFS, if set, is served instead of Bundle: the game embedded in the binary.
 	BundleFS fs.FS
 	// MusicDir holds the radio tracks served under /music/ (see ServerConfig).
@@ -49,8 +50,8 @@ func ListenLoopback(addr string) (net.Listener, error) {
 	return net.Listen("tcp", addr)
 }
 
-// Run serves the game and supervises the tunnel until ctx is done; on the
-// way out it stops serving and kills ssh.
+// Run serves the game and supervises every bridge's connection until ctx is
+// done; on the way out it stops serving and kills the ssh tunnels.
 func Run(ctx context.Context, cfg Config) error {
 	log := cfg.Log
 	if log == nil {
@@ -65,9 +66,8 @@ func Run(ctx context.Context, cfg Config) error {
 	if token == "" {
 		token = NewToken()
 	}
-	cfg.Tunnel.Log = log
 	srv := NewServer(ServerConfig{
-		Port: addr.Port, ListenHost: addr.IP.String(), Token: token, Bridge: cfg.Tunnel,
+		Port: addr.Port, ListenHost: addr.IP.String(), Token: token, Bridge: cfg.Bridges, Bridges: cfg.Bridges,
 		Bundle: cfg.Bundle, BundleFS: cfg.BundleFS, MusicDir: cfg.MusicDir, Dev: cfg.Dev, Log: log,
 		Open: cfg.OpenURL, OpenHosts: cfg.OpenHosts,
 	})
@@ -80,8 +80,8 @@ func Run(ctx context.Context, cfg Config) error {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		if err := cfg.Tunnel.Run(ctx); err != nil {
-			errs <- fmt.Errorf("tunnel: %w", err)
+		if err := cfg.Bridges.Run(ctx); err != nil {
+			errs <- fmt.Errorf("bridges: %w", err)
 		}
 		cancel()
 	}()
@@ -102,7 +102,14 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.Dev != nil {
 		src = "dev " + cfg.Dev.String()
 	}
-	log.Info("h3d-helper serving", "url", base, "game", src, "bridge", cfg.Tunnel.Host+":"+cfg.Tunnel.Remote)
+	active, list := cfg.Bridges.List()
+	inUse := "none: add one in Settings → Bridges"
+	for _, b := range list {
+		if b.ID == active {
+			inUse = b.Name + " (" + b.Address + ")"
+		}
+	}
+	log.Info("h3d-helper serving", "url", base, "game", src, "bridges", len(list), "bridge", inUse)
 	if cfg.Ready != nil {
 		cfg.Ready(game)
 	}
