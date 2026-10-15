@@ -547,7 +547,7 @@ export class HandoffDialog {
         h('dt', {}, 'Source'),
         h('dd', {}, `Last completed reply · ${kb(c.bytes)}`, pr.session ? ` · session ${shortId(pr.session)}` : ''),
         h('dt', {}, 'Into'),
-        h('dd', {}, `The ${pr.floor} cabinet`),
+        h('dd', {}, `The ${this.host.store.floorName(pr.floor)} cabinet`),
       ),
     );
     nodes.push(this.homeNode(p));
@@ -697,7 +697,7 @@ export class HandoffDialog {
         h('dt', {}, 'From'),
         h('dd', {}, `${this.name}’s conversation up to its latest completed reply${sess ? ` · session ${shortId(sess)}` : ''}`),
         h('dt', {}, 'Into'),
-        h('dd', {}, `The ${p.provenance.floor} cabinet`),
+        h('dd', {}, `The ${this.host.store.floorName(p.provenance.floor)} cabinet`),
       ),
     );
     nodes.push(
@@ -733,7 +733,7 @@ export class HandoffDialog {
           ? `${this.name} was not sent home: ${a.send_home_reason ?? 'it can’t go now'}.`
           : null;
     const out: Node[] = [
-      h('p', { class: 'ho-lede' }, a.existing ? 'Already in the cabinet: this reply was filed before, so nothing was filed twice.' : `In the ${a.handoff.floor} cabinet as “${a.handoff.title}”.`),
+      h('p', { class: 'ho-lede' }, a.existing ? 'Already in the cabinet: this reply was filed before, so nothing was filed twice.' : `In the ${this.host.store.floorName(a.handoff.floor)} cabinet as “${a.handoff.title}”.`),
       h('div', { class: 'ho-where' }, path, h('button', { class: 'btn btn--sm', 'data-key': 'copy', onclick: () => void this.copyPath(a.handoff.path) }, 'Copy path')),
     ];
     if (this.mode === 'llm' && this.job?.model) out.push(h('p', { class: 'ho-hint', 'data-hook': 'ho-written-by' }, `Written by ${this.job.model}${this.job.host ? ` at ${this.job.host}` : ''}; ${this.name} was not asked.`));

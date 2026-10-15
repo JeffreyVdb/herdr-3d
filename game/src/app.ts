@@ -1845,7 +1845,7 @@ export class App {
     const door = openings.find((o) => o.kind === 'door') as Opening;
     const plan = buildingPlan(outline, floors.length, { z0: door.u0, z1: door.u1, height: door.y1 });
     const name = id === null ? 'Unassigned lot' : (store.buildings.get(id)?.name ?? 'Building');
-    return { id, name, tint, floors, outline, openings, plan, shape: JSON.stringify([id, name, tint, outline, floors.map((f) => f.floor)]) };
+    return { id, name, tint, floors, outline, openings, plan, shape: JSON.stringify([id, name, tint, outline, floors.map((f) => f.id)]) };
   }
 
   /** Switches to a building (or a new shape of it): rebuilds the outside only when its shape changed. */
@@ -1991,7 +1991,7 @@ export class App {
     const was = this.loaded;
     this.setBuilding(ctx);
     if (this.office && fv) {
-      const storey = ctx.floors.findIndex((f) => f.floor === fv.floor);
+      const storey = ctx.floors.findIndex((f) => f.id === fv.id);
       if (storey !== was && was !== null) {
         // The floor moved in its building: inside it, you move with it.
         if (this.place.area === 'floor') this.walker.place(this.walker.x, this.walker.z, this.walker.yaw, this.walker.pitch, floorY(storey));
