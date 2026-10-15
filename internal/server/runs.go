@@ -308,34 +308,42 @@ func (h *Hub) attributed(f *floorState, id string, m workerMeta) bool {
 // and metas, whose floors it sets) that has no attributed floor one (#58
 // stage 3): a freelancer its orchestrator's, as soon as its run links it to
 // one, else the floor its h3d_floor token names; only a floor of the same
-// session. persist then stores it with the worker, so a restart (herdr
-// drops the tokens) keeps it.
+// session. Workers no link places take their token's floor first, so the
+// links see an orchestrator that tagged itself on its floor. persist then
+// stores the floor with the worker, so a restart (herdr drops the tokens)
+// keeps it.
 func (h *Hub) inheritFloors(session string, f *floorState, obs []world.WorkerObs, ids []string, metas []workerMeta) {
-	var ls map[string]runs.Link
-	floorOf := map[string]string{} // member id → its floor
-	for i, w := range obs {
-		if h.attributed(f, ids[i], metas[i]) {
-			continue
-		}
-		floor := ""
-		if world.Freelancer(w.Role) {
-			if ls == nil {
-				ms := h.sessionMembers(session, obs, ids, metas)
-				ls = h.links(ms)
-				for _, m := range ms {
-					floorOf[m.ID] = m.Floor
-				}
-			}
-			if orch := ls[ids[i]].OrchID; orch != "" {
-				floor = h.orchFloor(orch, floorOf[orch])
-			}
-		}
-		if g := h.floors[floor]; g == nil || g.session != session {
-			floor = w.Tokens[floorToken]
-		}
+	place := func(i int, floor string) bool {
 		if g := h.floors[floor]; g != nil && g.session == session {
 			metas[i].floor = floor
+			return true
 		}
+		return false
+	}
+	var crew []int // freelancers with no attributed floor
+	for i, w := range obs {
+		switch {
+		case h.attributed(f, ids[i], metas[i]):
+		case world.Freelancer(w.Role):
+			crew = append(crew, i)
+		default:
+			place(i, w.Tokens[floorToken])
+		}
+	}
+	if len(crew) == 0 {
+		return
+	}
+	ms := h.sessionMembers(session, obs, ids, metas)
+	ls := h.links(ms)
+	floorOf := make(map[string]string, len(ms)) // member id → its floor
+	for _, m := range ms {
+		floorOf[m.ID] = m.Floor
+	}
+	for _, i := range crew {
+		if orch := ls[ids[i]].OrchID; orch != "" && place(i, h.orchFloor(orch, floorOf[orch])) {
+			continue
+		}
+		place(i, obs[i].Tokens[floorToken])
 	}
 }
 

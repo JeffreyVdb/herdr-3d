@@ -121,6 +121,26 @@ func TestNewFreelancerStartsOnItsOrchestratorsFloor(t *testing.T) {
 	}
 }
 
+// An orchestrator nothing attributed that tags itself h3d_floor is on that
+// floor, and so is its freelancer, listed before it, in the same
+// observation.
+func TestFreelancerFollowsATaggedOrchestrator(t *testing.T) {
+	t.Parallel()
+	db := seedInherit(t, map[string]string{vWeb: "Web"}, nil)
+	b := startBridge(t, db, server.Options{})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	b.floor("s", true, runWorker("f", "CODE|lobby|3|r1", runTokens("code", inheritRun)),
+		runWorker("o", "ORCH|lobby", runTokens("orch", inheritRun, "h3d_floor", vWeb)))
+	if up := upsertOf(c, "f"); up.Floor != vWeb {
+		t.Fatalf("freelancer's first upsert = %+v", up)
+	}
+	w := b.connect(proto.Hello{}).snapshot().World
+	if o, f := workersOf(w, "s")["o"], workersOf(w, "s")["f"]; o.Floor != vWeb || f.Floor != vWeb || f.OrchID != o.ID {
+		t.Fatalf("orch = %+v, freelancer = %+v", o, f)
+	}
+}
+
 // An attributed worker keeps its floor whatever its run links it to: one
 // the bridge hired (on the real floor too) and one stored on another
 // virtual floor. Nor does a link to an orchestrator of another session
