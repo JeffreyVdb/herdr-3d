@@ -382,58 +382,60 @@ export class App {
       online: () => this.conn.phase === 'live',
     });
     // #216: the application UI theme (Quiet or Ubuntu), first, where the look of everything else is chosen.
-    this.settings.addSection('appearance', 'Appearance', appearanceSection(this.themes.prefs), { store: 'browser' });
-    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser' });
+    this.settings.addSection('appearance', 'Appearance', appearanceSection(this.themes.prefs), { store: 'browser', group: 'general' });
+    this.settings.addSection('display', 'Display', displaySection(this.limitsPrefs, this.monitorPrefs, this.inboxPrefs, this.hirePrefs), { store: 'browser', group: 'general' });
     // #194: which models of each harness the model pickers offer, under the display settings it sits beside.
-    this.settings.addSection('harness-models', 'Harness models', harnessModelsSection({ prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser' });
+    this.settings.addSection('harness-models', 'Harness models', harnessModelsSection({ prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser', group: 'workers' });
     // #248: the named harness / model / effort combinations for small jobs, beside the models they choose from.
-    this.settings.addSection('task-levels', 'Task levels', taskLevelsSection({ levels: this.taskLevels, prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser' });
-    this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser' });
+    this.settings.addSection('task-levels', 'Task levels', taskLevelsSection({ levels: this.taskLevels, prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser', group: 'workers' });
+    this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser', group: 'general' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
-    this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser' });
+    this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser', group: 'general' });
     // #92: the bridge-wide AI models. A chip while one is set up but unusable, a toast when a call just stopped one.
     this.settings.addSection(
       'ai',
       'AI integration',
       aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions', 'Pack up on request', 'Classify unknown commands'], llm: ['Follow-up questions', 'Pack up on request', 'Floor overview summaries'] } }),
-      { store: 'bridge' },
+      { store: 'bridge', group: 'ai' },
     );
     // #90: the first feature on those models: its own switch and threshold, under them.
     const settings = this.settings;
     settings.addSection('followups', 'Follow-up questions', followupsSection({ book: this.store.followups, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
       store: 'bridge',
+      group: 'ai',
     });
     // #110: the second, on the prompts you send: strip a "then go home" and send the worker home after the task.
     settings.addSection('packup', 'Pack up on request', packupSection({ book: this.store.packup, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
       store: 'bridge',
+      group: 'ai',
     });
     // #98: the desk monitors' words for the commands the rules can't place, on the same classifier (absent without the service).
     settings.addSection(
       'activity',
       'Classify unknown commands',
       activitySection({ book: this.store.activitySettings, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
-      { store: 'bridge' },
+      { store: 'bridge', group: 'ai' },
     );
     // #118: the floor overview's task and now lines, written by the LLM for the floors someone is viewing.
     settings.addSection(
       'digest',
       'Floor overview summaries',
       digestSection({ book: this.store.digestSettings, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
-      { store: 'bridge' },
+      { store: 'bridge', group: 'ai' },
     );
     // #9: the handoff dialog's "Use configured LLM": the LLM writes a handoff from the worker's reduced conversation.
     settings.addSection(
       'handoff-llm',
       'LLM handoffs',
       handoffLlmSection({ book: this.store.handoffLlm, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }),
-      { store: 'bridge' },
+      { store: 'bridge', group: 'ai' },
     );
     // #155: whether new Codex workers get a Codex server of their own (the bridge's switch, off by default).
-    settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
+    settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'workers' });
     // #247: whether a conversation's `@r:` lists every building's floors (the bridge's switch, off by default).
-    settings.addSection('repos', 'Repositories', repoRefsSection({ book: this.store.repoRefs, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
+    settings.addSection('repos', 'Repositories', repoRefsSection({ book: this.store.repoRefs, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'integrations' });
     // #184: the Kaneo instance a floor can use as its issue board instead of GitHub.
-    settings.addSection('kaneo', 'Kaneo', kaneoSection({ book: this.store.kaneo, send: (t, args) => this.send(t, args) }), { store: 'bridge' });
+    settings.addSection('kaneo', 'Kaneo', kaneoSection({ book: this.store.kaneo, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'integrations' });
     this.store.ai.onChange((notice) => {
       this.hud.setAiChip(aiChip(this.store.ai.state));
       if (notice) this.hud.toast(notice, 7000, 'error');
@@ -2681,7 +2683,8 @@ export class App {
     }
     // Open dialogs (sheet, panels, confirmations, hire / send home) handle their own keys.
     // (#124: so does the shortcut list, even with the focus out on the page behind it: Tab there is not the floor plan.)
-    if (this.hud.sheetOpen || this.panels.open || this.dialogOpen || this.shortcuts.isOpen) return;
+    // (#49: Settings lets Shift+L out for the peek above; one that is no peek, the plate hidden or folded, ends here.)
+    if (this.hud.sheetOpen || this.panels.open || this.dialogOpen || this.shortcuts.isOpen || this.settings.isOpen) return;
     // M5: at a worker's laptop every key goes to its terminal (Esc gets you up).
     if (this.laptops.key(e)) return;
     // #124: a text field's keys are its own (the shortcut list from inside one is `onHelpKey`'s).

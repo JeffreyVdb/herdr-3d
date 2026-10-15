@@ -21,7 +21,7 @@ function mount(s: Record<string, unknown> | null, answer?: (args: Record<string,
         return Promise.resolve(answer ? answer(args) : { ok: true, data: { enabled: args.enabled, available: true } });
       }) as never,
     }),
-    { store: 'bridge' },
+    { store: 'bridge', group: 'workers' },
   );
   const root = document.querySelector<HTMLElement>('[data-section="codex"]')!;
   const box = () => root.querySelector<HTMLInputElement>('input[type="checkbox"]')!;

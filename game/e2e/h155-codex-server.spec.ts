@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, shot, watchErrors, openMenu } from './game';
+import { frames, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // #155: the Settings window's “Codex workers” switch against the fixture bridge (`sim=1`,
 // tools/fixture-codex-server.ts): off by default, switched on and off through codex_server.set, and disabled with
@@ -13,7 +13,8 @@ async function openSection(page: Page): Promise<Locator> {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
-  return dialog.locator('[data-section="codex"]');
+  // #49: one section at a time: show Codex workers.
+  return settingsSection(page, 'codex');
 }
 
 test('off by default; on and off again, each saying what changes', async ({ page }) => {

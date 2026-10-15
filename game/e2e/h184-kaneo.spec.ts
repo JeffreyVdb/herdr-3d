@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { openGame, openMenu, shot, watchErrors } from './game';
+import { openGame, openMenu, settingsSection, shot, watchErrors } from './game';
 import { enter } from './m7';
 
 // #184: Kaneo as a floor's issue tracker, on demo-m6 with the simulating fixture server (tools/fixture-kaneo.ts):
@@ -16,9 +16,8 @@ async function settings(page: Page): Promise<Locator> {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
-  const section = dialog.locator('[data-section="kaneo"]');
-  await section.scrollIntoViewIfNeeded();
-  return section;
+  // #49: one section at a time: show Kaneo.
+  return settingsSection(page, 'kaneo');
 }
 
 async function floorSettings(page: Page, session = 'lab'): Promise<Locator> {
@@ -72,6 +71,9 @@ test('connect Kaneo in Settings: a failed test says why, Save follows a passing 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(again.getByRole('button', { name: 'Disconnect' })).toBeInViewport({ ratio: 0.5 });
   expect(await page.evaluate(() => document.querySelector('dialog.settings')!.scrollWidth <= document.querySelector('dialog.settings')!.clientWidth)).toBe(true);
+  // #49: nor inside the section's scroller, the Kaneo panel still the one shown.
+  await expect(again).toBeVisible();
+  expect(await page.evaluate(() => { const b = document.querySelector('dialog.settings .settings-body')!; return b.scrollWidth <= b.clientWidth; })).toBe(true);
   await shot(page, 'h184-settings-kaneo-phone');
   clean();
 });

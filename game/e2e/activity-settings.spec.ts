@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { openGame, shot, watchErrors, openMenu } from './game';
+import { openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // #98: the Settings window's “Classify unknown commands” against the fixture bridge (`sim=1`,
 // tools/fixture-activity-settings.ts), whose AI integration calls a fake Jev started here on an OS-leased loopback
@@ -32,11 +32,13 @@ function fakeJev(): Promise<Fake> {
   });
 }
 
-async function openSettings(page: Page): Promise<{ dialog: Locator; section: Locator }> {
+async function openSettings(page: Page, show = 'activity'): Promise<{ dialog: Locator; section: Locator }> {
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
   await expect(dialog).toBeVisible();
+  // #49: one section at a time.
+  await settingsSection(page, show);
   return { dialog, section: dialog.locator('[data-section="activity"]') };
 }
 
@@ -54,8 +56,10 @@ test('under AI integration, the privacy note above its switch: waiting without t
     const order = await dialog.locator('.settings-section').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.section));
     expect(order.indexOf('activity')).toBeGreaterThan(order.indexOf('ai'));
     expect(order.indexOf('activity')).toBe(order.indexOf('packup') + 1);
-    // The AI section says who uses the classifier.
+    // The AI section says who uses the classifier (#49: shown, then back).
+    await settingsSection(page, 'ai');
     await expect(dialog.getByRole('group', { name: /Classification model/ })).toContainText('Classify unknown commands');
+    await settingsSection(page, 'activity');
 
     // Off by default; the privacy note above the switch, which it describes.
     const toggle = section.getByRole('checkbox', { name: 'Classify unknown commands' });
@@ -89,6 +93,9 @@ test('under AI integration, the privacy note above its switch: waiting without t
     await expect(classifier).toContainText('Test passed');
     await classifier.getByRole('button', { name: 'Save' }).click();
     await expect(classifier.locator('.settings-badge')).toHaveText('Ready');
+    // #49: back to the section, which kept its state across the switch.
+    await settingsSection(page, 'activity');
+    await expect(toggle).toBeChecked();
     await expect(state(section)).toHaveAttribute('data-state', 'ready');
     await expect(state(section)).toContainText('Commands the rules can’t place are classified');
     await expect(link).toBeHidden();
@@ -153,9 +160,11 @@ test('a switch set by the bridge environment is read-only and says so, on a phon
 test('a bridge without the AI service has no “Classify unknown commands” section', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m5', '', 'play=none&sim=1&simusage=0&simai=off');
-  const { dialog, section } = await openSettings(page);
+  const { dialog, section } = await openSettings(page, 'ai');
   await expect(dialog.locator('[data-section="ai"]')).toBeVisible();
   await expect(section).toBeHidden();
+  // #49: not in the section list either.
+  await expect(dialog.locator('[role="tab"][data-tab="activity"]')).toBeHidden();
   expect(await page.evaluate(() => window.__h3d.activitySettings())).toBeNull();
   clean();
 });

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, openMenu, shot, watchErrors } from './game';
+import { frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
 import { board, enter, wall } from './m7';
 
 // #248 on demo-m6 with the simulating fixture server: "Resolve conflicts with a worker" on the conflicting PR (#35),
@@ -242,8 +242,8 @@ test('Settings → Task levels: a level added, named and set there is what Resol
   await openPrs(page);
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const section = page.locator('[data-section="task-levels"]');
-  await section.scrollIntoViewIfNeeded();
+  // #49: one section at a time: show Task levels.
+  const section = await settingsSection(page, 'task-levels');
   // The stored level whose model the bridge does not list: its slug and why.
   const old = section.locator('.tl-level[data-level="old"]');
   await expect(old.locator('.tl-stale code')).toHaveText('claude-gone-1');

@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, openMenu, shot, watchErrors } from './game';
+import { frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
 
 // #9: "Use configured LLM" against the fixture bridge (`sim=1`, tools/fixture-handoff.ts). The first journey runs the
 // bridge's gate on the simulated AI integration, which calls a fake OpenAI-compatible server started here on an
@@ -64,7 +64,9 @@ function fakeOpenAI(): Promise<Fake> {
   );
 }
 
-async function setUpLLM(dialog: Locator, llm: Fake): Promise<void> {
+async function setUpLLM(page: Page, dialog: Locator, llm: Fake): Promise<void> {
+  // #49: one section at a time: to AI integration and back.
+  await settingsSection(page, 'ai');
   const box = dialog.getByRole('group', { name: /^LLM/ });
   await box.getByLabel('Base URL').fill(`${llm.url}/v1`);
   await box.getByLabel('API key').fill(LLM_KEY);
@@ -73,6 +75,7 @@ async function setUpLLM(dialog: Locator, llm: Fake): Promise<void> {
   await expect(box).toContainText('Test passed');
   await box.getByRole('button', { name: 'Save' }).click();
   await expect(box.locator('.settings-badge')).toHaveText('Ready');
+  await settingsSection(page, 'handoff-llm');
 }
 
 function demoWorker(name: string): Worker {
@@ -109,7 +112,7 @@ test('LLM handoffs: off until tested, then the configured LLM writes and files i
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const settings = page.getByRole('dialog', { name: 'Settings' });
-    const section = settings.locator('[data-section="handoff-llm"]');
+    const section = await settingsSection(page, 'handoff-llm');
     await expect(section.getByRole('heading', { name: 'LLM handoffs', level: 3 })).toBeVisible();
     const order = await settings.locator('section.settings-section').evaluateAll((s) => s.map((x) => (x as HTMLElement).dataset.section));
     expect(order.indexOf('handoff-llm')).toBe(order.indexOf('digest') + 1);
@@ -119,7 +122,7 @@ test('LLM handoffs: off until tested, then the configured LLM writes and files i
     const privacy = section.locator('.settings-fu-privacy');
     await expect(privacy).toContainText('sends your configured LLM endpoint a reduced copy');
     await expect(privacy).toContainText('a pattern list can miss a secret');
-    await setUpLLM(settings, llm);
+    await setUpLLM(page, settings, llm);
     await expect(toggle).toBeDisabled();
     expect(llm.bodies).toHaveLength(0); // configuring the AI sends nothing of a worker
     await section.getByRole('button', { name: 'Test' }).click();
@@ -224,5 +227,8 @@ test('LLM handoffs off: the mode says why and leads to Settings', async ({ page 
   await dlg.getByRole('button', { name: 'Open LLM handoffs settings' }).click();
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
   await expect(page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="handoff-llm"]')).toBeVisible();
+  // #49: the link selects the section's tab and puts the keyboard on its heading.
+  await expect(page.locator('[role="tab"][data-tab="handoff-llm"]')).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('[data-section="handoff-llm"] h3')).toBeFocused();
   clean();
 });

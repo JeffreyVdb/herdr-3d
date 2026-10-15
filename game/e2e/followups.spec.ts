@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, seatMode, shot, watchErrors, openMenu } from './game';
+import { frames, openGame, seatMode, settingsSection, shot, watchErrors, openMenu } from './game';
 
 // #90: follow-up questions against the fixture bridge (`sim=1`, tools/fixture-followup.ts), whose AI integration
 // calls fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports. Set up both models, pass
@@ -98,8 +98,9 @@ function demoWorker(name: string): Worker {
   return w;
 }
 
-/** Both models set up through the AI integration section. */
-async function setUpModels(dialog: Locator, llm: Fake): Promise<void> {
+/** Both models set up through the AI integration section, then back to Follow-up questions (#49: one section at a time). */
+async function setUpModels(page: Page, dialog: Locator, llm: Fake): Promise<void> {
+  await settingsSection(page, 'ai');
   const classifier = dialog.getByRole('group', { name: /Classification model/ });
   await classifier.getByLabel('Key', { exact: true }).fill(JEV_KEY);
   await classifier.getByRole('button', { name: 'Load models' }).click();
@@ -116,6 +117,7 @@ async function setUpModels(dialog: Locator, llm: Fake): Promise<void> {
   await expect(box).toContainText('Test passed');
   await box.getByRole('button', { name: 'Save' }).click();
   await expect(box.locator('.settings-badge')).toHaveText('Ready');
+  await settingsSection(page, 'followups');
 }
 
 async function sitAtTranscript(page: Page, w: Worker): Promise<void> {
@@ -141,7 +143,7 @@ test('switched on after a passing test, a turn ending in questions needs you and
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
-    const section = dialog.locator('[data-section="followups"]');
+    const section = await settingsSection(page, 'followups');
     await expect(section.getByRole('heading', { name: 'Follow-up questions', level: 3 })).toBeVisible();
     await expect(section.locator('.settings-store')).toHaveText('Bridge');
     // Configuring nothing yet: off, and it cannot be switched on.
@@ -153,7 +155,7 @@ test('switched on after a passing test, a turn ending in questions needs you and
     const [note, sw] = await Promise.all([section.locator('.settings-fu-privacy').boundingBox(), toggle.boundingBox()]);
     expect(note && sw && note.y + note.height <= sw.y).toBe(true);
 
-    await setUpModels(dialog, llm);
+    await setUpModels(page, dialog, llm);
     // The models alone switch nothing on, and still no test passed.
     await expect(section.locator('.settings-fu-role .settings-badge')).toHaveText(['Ready', 'Ready']);
     await expect(toggle).not.toBeChecked();
@@ -247,8 +249,8 @@ test('on a phone the card has room for the question and its answers, and the pro
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
-    const section = dialog.locator('[data-section="followups"]');
-    await setUpModels(dialog, llm);
+    const section = await settingsSection(page, 'followups');
+    await setUpModels(page, dialog, llm);
     await section.getByRole('button', { name: 'Test' }).click();
     await expect(section).toContainText('Test passed');
     await section.getByRole('checkbox', { name: 'Detect follow-up questions' }).check();

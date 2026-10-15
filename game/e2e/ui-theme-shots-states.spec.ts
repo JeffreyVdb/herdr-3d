@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openMenu, RESULTS, watchErrors } from './game';
+import { frames, openMenu, RESULTS, settingsSection, watchErrors } from './game';
 import { boot, DESKTOP, NARROW, SURFACES, sitAtTofu, type Themes, type UiTheme } from './ui-surfaces';
 
 // #216: the screenshots of states (success, warning, error, offline, disabled, busy, invalid, focus), of mixed themes
@@ -66,7 +66,7 @@ const STATES: State[] = [
     open: async (page) => {
       await openMenu(page);
       await page.getByRole('button', { name: 'Settings', exact: true }).click();
-      const section = page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="ai"]');
+      const section = await settingsSection(page, 'ai');
       await section.scrollIntoViewIfNeeded();
       await expect(section.locator('button:disabled').first()).toBeVisible();
     },
@@ -79,6 +79,7 @@ const STATES: State[] = [
       await openMenu(page);
       await page.getByRole('button', { name: 'Settings', exact: true }).click();
       const dlg = page.getByRole('dialog', { name: 'Settings' });
+      await settingsSection(page, 'time');
       const zone = dlg.getByLabel('Timezone');
       await zone.scrollIntoViewIfNeeded();
       await zone.fill('Not/AZone');

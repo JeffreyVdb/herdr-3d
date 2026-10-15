@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, openGame, RESULTS, shot, watchErrors, openMenu } from './game';
+import { frames, openGame, RESULTS, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // #98: the desk monitor shows what the agent is doing. demo-m5 with the simulating fixture server (sim=1): `sim.activity`
 // (tools/fixture-activity.ts) gives a worker an activity, a status and an image as the bridge would send them. A
@@ -244,7 +244,7 @@ test('Settings → Display → Desk monitors: Terminal brings the glance back ev
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Settings' });
-  const pick = dialog.locator('[data-section="display"]').getByLabel('Desk monitors');
+  const pick = (await settingsSection(page, 'display')).getByLabel('Desk monitors'); // #49: one section at a time
   await expect(pick).toHaveValue('activity');
   await expect(dialog.locator('#settings-monitors-hint')).toHaveText('Sitting at a desk always shows its screen.');
   await shot(page, 'm98-settings');
@@ -262,7 +262,7 @@ test('Settings → Display → Desk monitors: Terminal brings the glance back ev
   expect((await monitorsOf(page))?.desks.every((d) => d.mode === 'glance')).toBe(true);
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="display"]').getByLabel('Desk monitors').selectOption('activity');
+  await (await settingsSection(page, 'display')).getByLabel('Desk monitors').selectOption('activity');
   await page.keyboard.press('Escape');
   // Back to the cards: the done and idle Claude and Codex workers rest.
   await expect.poll(async () => (await monitorsOf(page))?.desks.filter((d) => d.mode === 'rest').length ?? 0).toBeGreaterThan(0);
@@ -314,7 +314,7 @@ test('a floor of 60 desks animates every card with no canvas drawn and no textur
   expect(after.m?.meshes).toBe(1);
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="display"]').getByLabel('Desk monitors').selectOption('terminal');
+  await (await settingsSection(page, 'display')).getByLabel('Desk monitors').selectOption('terminal');
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await monitorsOf(page))?.desks.every((d) => d.mode === 'glance')).toBe(true);
   await frames(page, 4);
@@ -340,7 +340,7 @@ test('bench: the cards of a 60-desk floor cost a draw or two and stay in the fra
   const on = await bench();
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Settings' }).locator('[data-section="display"]').getByLabel('Desk monitors').selectOption('terminal');
+  await (await settingsSection(page, 'display')).getByLabel('Desk monitors').selectOption('terminal');
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await monitorsOf(page))?.desks.every((d) => d.mode === 'glance')).toBe(true);
   await frames(page, 4);

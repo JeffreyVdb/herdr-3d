@@ -21,7 +21,7 @@ function mount(s: Record<string, unknown> | null, answer?: (args: Record<string,
         return Promise.resolve(answer ? answer(args) : { ok: true, data: { all_buildings: args.all_buildings } });
       }) as never,
     }),
-    { store: 'bridge' },
+    { store: 'bridge', group: 'integrations' },
   );
   const root = document.querySelector<HTMLElement>('[data-section="repos"]')!;
   const box = () => root.querySelector<HTMLInputElement>('input[type="checkbox"]')!;

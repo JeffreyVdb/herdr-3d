@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, leftInTerminal, openGame, shot, watchErrors, openMenu } from './game';
+import { frames, leftInTerminal, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // M10 (#12) on demo-m4 and the simulating fixture server (tools/fixture-limits.ts): the always-on plan limits widget in the
 // city, on a floor, over an overlay; its colours, panel, staleness, refresh and switch-off; and the limits inside the
@@ -170,6 +170,7 @@ test('it can be hidden from the panel, comes back in Settings and with Shift+L, 
   // Settings has the switch (Display).
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await settingsSection(page, 'display'); // #49: one section at a time
   const box = page.locator('#settings-limits');
   await expect(box).not.toBeChecked();
   await box.check();
@@ -643,6 +644,125 @@ test('an M3 panel (settings) at any width also gets the edge tab; the hire sheet
   expect(await undimmed(page)).toBe(true);
   clean();
 });
+
+// #49: Settings is a workspace (up to 1200 px wide, 90 % of the height), so it is a screen for the corner: on a laptop the
+// plate would sit on its header and Close. It steps out into the edge tab in the gutter beside it, and the inbox chip goes
+// with it; both are back when Settings closes. Demo-m5 has workers waiting on you, so the chip is up to begin with.
+for (const theme of ['quiet', 'ubuntu'] as const) {
+  test(`at 1366x768 (${theme}) Settings keeps its header and Close clear: the plate is an edge tab beside it, the inbox chip steps out`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.addInitScript((t) => localStorage.setItem('h3d.theme.ui', t), theme);
+    await openGame(page, 'demo-m5', '&prints=0', SIM());
+    await withReadings(page);
+    await expect.poll(async () => (await page.evaluate(() => window.__h3d.inbox()))?.shown).toBe(true);
+    await openMenu(page);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
+    await expect(dialog).toBeVisible();
+
+    await expect(limits(page)).toHaveAttribute('data-dock', 'tab');
+    await expect(limits(page)).toHaveAttribute('data-fit', 'full');
+    await expect(page.locator('.inbox')).toBeHidden();
+    const hud = (await limits(page).boundingBox())!;
+    const dlg = (await dialog.boundingBox())!;
+    const close = dialog.getByRole('button', { name: 'Close' });
+    expect(apart(hud, dlg), `hud ${JSON.stringify(hud)} dialog ${JSON.stringify(dlg)}`).toBe(true);
+    expect(apart(hud, (await close.boundingBox())!)).toBe(true);
+    expect(await reachable(page, 'dialog.settings .panel-close')).toBe(true);
+    // The tab, inside Settings (the top modal), is still a control: a click peeks the plate.
+    expect(await reachable(page, '.limits')).toBe(true);
+    await shot(page, `m10-settings-1366-${theme}`);
+
+    await close.click();
+    await expect(dialog).toBeHidden();
+    await expect(limits(page)).toHaveAttribute('data-dock', '');
+    await expect(page.locator('.lm-strip')).toBeVisible();
+    await expect.poll(async () => (await page.evaluate(() => window.__h3d.inbox()))?.shown).toBe(true);
+    clean();
+  });
+}
+
+// #49 with #47's rule: over Settings, a screen, Shift+L outside a text field still peeks the plate (away between the
+// narrow cutoff and the edge tab's gutter, an edge tab beside it on a laptop) and ends the peek; in a field it types. Every
+// other key stays Settings': the floor behind it gets none, and a Shift+L with the plate hidden changes nothing either.
+for (const v of [
+  { width: 1232, height: 800, dock: 'away', theme: 'quiet' },
+  { width: 1232, height: 800, dock: 'away', theme: 'ubuntu' },
+  { width: 1366, height: 768, dock: 'tab', theme: 'quiet' },
+] as const) {
+  test(`at ${v.width}x${v.height} (${v.theme}) Shift+L from a tab or Close of Settings peeks the plate (${v.dock}); in a field it types; the floor gets no key`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const clean = watchErrors(page);
+    await page.setViewportSize({ width: v.width, height: v.height });
+    await page.addInitScript((t) => localStorage.setItem('h3d.theme.ui', t), v.theme);
+    await openGame(page, 'demo-m5', '&prints=0', SIM());
+    await withReadings(page);
+    await enter(page, 'herdr-3d');
+    await openMenu(page);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Settings' });
+    await expect(dialog).toBeVisible();
+    await expect(limits(page)).toHaveAttribute('data-dock', v.dock);
+
+    const peeks = async (from: string) => {
+      await page.keyboard.press('Shift+L');
+      await expect(limits(page), `peek from ${from}`).toHaveAttribute('data-peek', 'true');
+      await expect(page.locator('.lm-panel')).toBeVisible();
+      expect(await onTop(page)).toBe(true);
+    };
+    const ends = async (from: string) => {
+      await page.keyboard.press('Shift+L');
+      await expect(limits(page), `peek ended from ${from}`).toHaveAttribute('data-peek', 'false');
+      await expect(limits(page)).toHaveAttribute('data-dock', v.dock);
+      if (v.dock === 'away') await expect(limits(page)).toBeHidden();
+    };
+    const appearance = dialog.getByRole('tab', { name: 'Appearance', exact: true });
+    await appearance.focus();
+    await peeks('a tab');
+    if (v.width === 1232) await shot(page, `m10-settings-peek-1232-${v.theme}`);
+    await ends('a tab');
+    const close = dialog.getByRole('button', { name: 'Close' });
+    await close.focus();
+    await peeks('Close');
+    await ends('Close');
+    expect(await savedOpen(page)).toBeNull(); // a peek leaves the saved state alone
+
+    // In a text field Shift+L is a capital L.
+    const zone = (await settingsSection(page, 'time')).getByLabel('Timezone');
+    await zone.focus();
+    const before = await zone.inputValue();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Shift+L');
+    await expect(zone).toHaveValue(`${before}L`);
+    await expect(limits(page)).toHaveAttribute('data-peek', 'false');
+
+    // The floor behind Settings keeps no key: O (the overview) and L (the elevator) from a tab open nothing.
+    await appearance.click();
+    await appearance.focus();
+    await page.keyboard.press('KeyO');
+    await page.keyboard.press('KeyL');
+    await frames(page, 5);
+    expect((await page.evaluate(() => window.__h3d.overview()))?.page?.open ?? false).toBe(false);
+    expect(await page.evaluate(() => [...document.querySelectorAll('dialog[open], .ov[open]')].map((d) => d.className))).toEqual([expect.stringContaining('settings')]);
+
+    // The plate hidden from Display: Shift+L there is no peek, and it does not bring the plate back behind the switch.
+    const box = (await settingsSection(page, 'display')).locator('#settings-limits');
+    await box.uncheck();
+    await expect(limits(page)).toBeHidden();
+    await dialog.getByRole('tab', { name: 'Display', exact: true }).focus(); // (the switch, an input, would keep the key)
+    await page.keyboard.press('Shift+L');
+    await frames(page, 5);
+    await expect(limits(page)).toBeHidden();
+    await expect(box).not.toBeChecked();
+    expect(await savedHidden(page)).toBe('1');
+
+    await close.click();
+    await expect(dialog).toBeHidden();
+    clean();
+  });
+}
 
 // Seated at a worker's laptop (#53): the laptop's screen fills the view, so the plate is its edge tab, and standing up gives
 // back what the prefs say. Peeks (the tab, Shift+L) leave the prefs alone. demo-m5 has the floor and the workers to sit at.

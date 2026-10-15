@@ -89,3 +89,18 @@ export async function openMenu(page: Page): Promise<void> {
   await page.locator('.btn--menu').click();
   await expect(menu).toBeVisible();
 }
+
+/**
+ * #49: Settings shows one section at a time. Shows section `id` (its `data-section`) the way the window offers it: its
+ * tab down the side, or the Section picker on a narrow screen. Settings must be open; returns the section's panel.
+ */
+export async function settingsSection(page: Page, id: string) {
+  const dialog = page.getByRole('dialog', { name: 'Settings' });
+  await expect(dialog).toBeVisible();
+  const tab = dialog.locator(`[role="tab"][data-tab="${id}"]`);
+  if (await tab.isVisible()) await tab.click();
+  else await dialog.getByLabel('Section', { exact: true }).selectOption(id);
+  const panel = dialog.locator(`.settings-section[data-section="${id}"]`);
+  await expect(panel).toBeVisible();
+  return panel;
+}
