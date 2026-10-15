@@ -49,6 +49,7 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'floor.create': 'add virtual floors', // #58
   'floor.rename': 'rename virtual floors',
   'floor.delete': 'delete virtual floors',
+  'floor.hide': 'hide floors',
   'hire.prepare': 'hire workers',
   'hire.interpret': 'understand dictated commands',
   'worker.hire': 'hire workers',

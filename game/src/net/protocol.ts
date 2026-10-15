@@ -773,8 +773,13 @@ export interface CommandArgs {
   'floor.create': { name: string; base_session: string };
   /** #58: a virtual floor's display name. */
   'floor.rename': { floor: string; name: string };
-  /** #58: deletes a virtual floor; refused (`invalid_state`) while it has workers. `move_workers` is reserved. */
+  /**
+   * #58: deletes a virtual floor; refused (`invalid_state`) while it has workers unless `move_workers`, which moves
+   * them to its base session's real floor first.
+   */
   'floor.delete': { floor: string; move_workers?: boolean };
+  /** #58 decision 2: a floor's stored hidden setting (any floor). */
+  'floor.hide': { floor: string; hidden: boolean };
   'floor.settings.set': FloorRef & { session: string } & SettingsPatch;
   /** M4 */
   'hire.prepare': FloorRef & { session: string; cwd?: string };
@@ -2859,11 +2864,15 @@ export interface HandoffGetAck {
   llm?: HandoffLLMProvenance;
 }
 
-/** `handoff.added`: filed (complete file, indexed). `session` is its floor; `handoff_count` the floor's count now. */
+/**
+ * `handoff.added`: filed (complete file, indexed). #58: `floor_id` is its floor (absent from a bridge before #58, whose
+ * `session` was the floor), `session` that floor's session; `handoff_count` the floor's count now.
+ */
 export interface HandoffAdded {
   t: 'handoff.added';
   seq: number;
   session: string;
+  floor_id?: string;
   handoff: HandoffEntry;
   handoff_count: number;
 }
@@ -2873,6 +2882,7 @@ export interface HandoffRemoved {
   t: 'handoff.removed';
   seq: number;
   session: string;
+  floor_id?: string;
   handoff_id: number;
   handoff_count: number;
 }

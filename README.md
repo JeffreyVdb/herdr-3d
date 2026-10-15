@@ -3,7 +3,8 @@
 A cute 3D "real world" management game that is a live front-end for [herdr](https://herdr.dev).
 
 - **Building** = group of herdr sessions ("Personal", "Work")
-- **Floor** = herdr session (project)
+- **Floor** = herdr session (project), or a virtual floor the user defines inside one (its workspaces live in that
+  session)
 - **Worker at a desk** = herdr workspace running an agent (claude-code / codex)
 - **Freelancers** = workers an orchestrator hires to delegate work (write-code flow)
 

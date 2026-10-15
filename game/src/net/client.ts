@@ -137,12 +137,14 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'floor.create': 15_000,
   'floor.rename': 15_000,
   'floor.delete': 15_000,
+  'floor.hide': 15_000,
   // M4: prepare runs `git fetch`; a hire creates a worktree, starts the agent and waits out its trust dialog;
   // a send-home waits for the agent to exit.
   'hire.prepare': 30_000,
   // #213: one LLM call, which the bridge bounds at 35 s.
   'hire.interpret': 40_000,
-  'worker.hire': 90_000,
+  // #58 decision 3: a hire on an asleep virtual floor wakes its session first (up to ~30 s more).
+  'worker.hire': 120_000,
   'worker.fire.prepare': 20_000,
   'worker.fire': 45_000,
   // #83: the arm checks git, waits for the tracker's next round (~2 s), then prompts like worker.prompt.
@@ -165,7 +167,7 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'worker.answer_ask': 45_000,
   // M6 start: a run's prepare may `git fetch` like hire.prepare; its start is a hire.
   'run.prepare': 30_000,
-  'run.start': 90_000,
+  'run.start': 120_000,
   // M7: details are a provider call or two; a merge re-reads the PR first; opening a PR pushes the branch.
   'issue.get': 20_000,
   'pr.get': 20_000,
