@@ -225,6 +225,32 @@ export const SURFACES: Surface[] = [
     root: 'dialog.settings',
   },
   {
+    // #58 stage 4: Settings → Floors on demo-h58: each session's floor and its virtual floors, Frontend's delete open.
+    name: 'settings-floors',
+    fixture: 'demo-h58',
+    open: async (page) => {
+      await openMenu(page);
+      await page.getByRole('button', { name: 'Settings', exact: true }).click();
+      const section = await settingsSection(page, 'floors');
+      await section.getByRole('button', { name: 'Delete Frontend' }).click();
+      await expect(section.locator('.settings-fl-confirm')).toBeVisible();
+    },
+    root: 'dialog.settings',
+  },
+  {
+    // #58 stage 4: Add floor on its second choice, a virtual floor on an existing session (name and base session).
+    name: 'add-floor-virtual',
+    fixture: 'demo-h58',
+    open: async (page) => {
+      await openMenu(page);
+      await page.getByRole('button', { name: 'Add floor' }).click();
+      const dlg = page.locator('dialog.desk-dlg--addfloor');
+      await dlg.getByRole('radio', { name: /Virtual floor on an existing session/ }).check();
+      await dlg.getByLabel('Floor name').fill('Ops');
+    },
+    root: 'dialog.desk-dlg--addfloor',
+  },
+  {
     name: 'about',
     fixture: 'demo-m5',
     open: async (page) => {
