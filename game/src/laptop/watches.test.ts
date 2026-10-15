@@ -7,13 +7,20 @@ function harness() {
   const sent: Array<{ t: string; args: Record<string, unknown>; resolve: (r: CommandResult) => void }> = [];
   const frames: Array<[string, number, boolean]> = [];
   const stopped: string[] = [];
+  const reasons: Array<string | undefined> = [];
   const failed: Array<[string, string]> = [];
   const closed: Array<[string, string]> = [];
   const changed: string[] = [];
   let now = 0;
   const w = new Watches({
     send: (t, args) => new Promise((resolve) => sent.push({ t, args: args as unknown as Record<string, unknown>, resolve })),
-    sink: { frame: (id, f) => frames.push([id, f.n, f.full]), stop: (id) => stopped.push(id) },
+    sink: {
+      frame: (id, f) => frames.push([id, f.n, f.full]),
+      stop: (id, reason) => {
+        stopped.push(id);
+        reasons.push(reason);
+      },
+    },
     failed: (id, code) => failed.push([id, code]),
     closed: (id, reason) => closed.push([id, reason]),
     zoomChanged: (id) => changed.push(id),
@@ -25,7 +32,7 @@ function harness() {
     await Promise.resolve();
   };
   const f = (id: string, n: number, full = false): TerminalFrame => ({ t: 'terminal.frame', id, pane: 'w1:p1', n, full, cols: 120, rows: 36, data: '' });
-  return { w, sent, frames, stopped, failed, closed, changed, answer, f, tick: (ms: number) => (now += ms) };
+  return { w, sent, frames, stopped, reasons, failed, closed, changed, answer, f, tick: (ms: number) => (now += ms) };
 }
 
 const want = (...e: Array<[string, number]>) => new Map(e);
@@ -99,9 +106,13 @@ describe('Watches', () => {
 
   it('terminal.closed ends the watch; observer_failed backs off; the next sync re-watches a changed pane', () => {
     const h = harness();
+    h.w.sync(want(['a', 4], ['b', 4], ['c', 4]));
     h.w.sync(want(['a', 4], ['b', 4]));
     h.w.closed({ t: 'terminal.closed', id: 'a', reason: 'pane_changed' });
     h.w.closed({ t: 'terminal.closed', id: 'b', reason: 'observer_failed' });
+    // #52: the screen hears why the bridge ended it (an unwatch of the game's own says nothing).
+    expect(h.stopped).toEqual(['c', 'a', 'b']);
+    expect(h.reasons).toEqual([undefined, 'pane_changed', 'observer_failed']);
     expect(h.closed).toEqual([
       ['a', 'pane_changed'],
       ['b', 'observer_failed'],
@@ -109,7 +120,7 @@ describe('Watches', () => {
     expect(h.failed).toEqual([['b', 'observer_failed']]);
     expect(h.w.count).toBe(0);
     h.w.sync(want(['a', 4]));
-    expect(h.sent.slice(2).map((s) => [s.t, s.args.id])).toEqual([['terminal.watch', 'a']]);
+    expect(h.sent.slice(4).map((s) => [s.t, s.args.id])).toEqual([['terminal.watch', 'a']]);
   });
 
   it('forgets everything when the connection drops, and watches again after it', () => {

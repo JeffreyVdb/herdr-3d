@@ -11,7 +11,7 @@
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Building, Cap, Floor, FloorSettings, Hire, HireOptions, TranscriptItem, Worker } from '../src/net/protocol.ts';
-import { screensOf } from './fixture-screen.ts';
+import { screensOf, type SimScreens } from './fixture-screen.ts';
 import { hashOf, type StoredLogo } from './fixture-logo.ts';
 import { logoPng, MAGENTA, type Palette } from './logo-art.ts';
 
@@ -555,6 +555,8 @@ export class SimWorld {
         case 'sim.advance':
           this.advance(a);
           return ack();
+        case 'sim.swap': // #52
+          return ack(this.swap(a, send, screens));
         case 'building.create':
           return ack(this.create(a, send));
         case 'building.rename':
@@ -790,6 +792,40 @@ export class SimWorld {
       this.timers.add(h);
     };
     next();
+  }
+
+  /**
+   * #52 (`sim.swap`, the simulator's own): what herdr can do under a desk in one observation. `{id, pane: true}`: the
+   * worker's primary pane changes (an agent started in another pane), a new `pane_id` under the same worker id, so its
+   * watch closes with `pane_changed`. `{id, name?}`: its workspace closes and a new one takes the desk at once: a new
+   * worker id and pane, named `name` (default: the same name, free again), no `hired_at` (no walk-in). `hold` (ms): the
+   * new pane's first frame comes that much later. Acks the worker id and pane now at the desk.
+   */
+  private swap(a: Obj, send: Send, screens: SimScreens): { id: string; pane: string } {
+    onlyKeys(a, ['id', 'pane', 'name', 'hold']);
+    const i = this.workers.findIndex((w) => w.id === str(a, 'id'));
+    const old = this.workers[i];
+    if (!old) throw new CmdError('unknown_worker', `unknown worker: "${String(a.id)}"`);
+    const hold = a.hold === undefined ? 0 : Number(a.hold);
+    const n = ++this.nextId;
+    if (a.pane === true) {
+      old.pane_id = `${old.workspace_id}:s${n}`;
+      if (hold) screens.holdFirst(old.id, hold);
+      this.upsertWorker(send, old);
+      return { id: old.id, pane: old.pane_id };
+    }
+    const w = structuredClone(old);
+    delete w.hired_at;
+    w.id = `${(0x52a000 + n).toString(16)}e0-0000-4000-a000-${n.toString(16).padStart(12, '0')}`;
+    w.workspace_id = `ws${n.toString(36)}`;
+    w.pane_id = `${w.workspace_id}:p1`;
+    w.name = a.name === undefined ? (old.name ?? '') : str(a, 'name');
+    w.status_since = this.now();
+    this.workers.splice(i, 1, w);
+    this.emit(send, { t: 'worker.removed', id: old.id, session: old.session, workspace_id: old.workspace_id });
+    if (hold) screens.holdFirst(w.id, hold);
+    this.upsertWorker(send, w);
+    return { id: w.id, pane: w.pane_id };
   }
 
   private upsertWorker(send: Send, w: Worker): void {

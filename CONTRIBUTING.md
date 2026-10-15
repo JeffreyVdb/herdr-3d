@@ -806,7 +806,9 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   otherwise, each from its own point, looping; at most `fps` frames a second, diffs in between concatenated),
   `worker.keys` echoes what was typed (the screen first jumps to the end of its recording), and watches close on
   `worker.removed`, a floor going to sleep or a new pane; `sim.watches` (the simulator's own, not a bridge command)
-  answers this connection's watch count.
+  answers this connection's watch count. #52: `sim.swap {id, pane: true}` gives a worker a new pane (its watch closes
+  with `pane_changed`), `sim.swap {id, name?}` closes its workspace and seats a new worker at its desk in the same
+  observation (a new id and pane, no walk-in); `hold: <ms>` holds the new pane's first frame back.
 - `src/ui` — the HUD (DOM over the canvas) and the M3 panels (`panels.ts`: elevator, buildings, floor settings,
   confirmations; modal `<dialog>`s that re-render live and keep focus); M4: the hire dialog (`hire.ts`) and the
   send-home dialog (`sendHome.ts`), styled in `hire.css`; M6: the start-run dialog (`startRun.ts`, the empty desk's
@@ -1327,7 +1329,11 @@ show. The floor plan shows the mezzanine's outline, the stair and your desk.
 
 Screens (M5; M6b: on the desk monitors): the four nearest monitors you can see (and whose screens face you) show their
 worker's terminal live, at 4 fps, in the glance view (the last lines, big enough to read from the aisle) under the
-status bar; a monitor keeps its last frame when it stops being live (frozen), or its status glow if it never was;
+status bar; a monitor keeps its last frame when it stops being live (frozen), or its status glow if it never was
+(#52: a frame stays only while the same worker and pane are at that desk; a new worker there, or a new pane under the
+same one, gets the glow, or a pending blank screen, until its own first frame, from the very next rendered frame; a
+frozen frame goes on the glass with the frozen atlas's upload that carries it, at most 400 ms later, so an atlas cell
+handed on never shows its previous owner's pixels);
 asleep, they are dark. A nearer one takes over only from one out of view or clearly farther, one at a time, so walking
 does not flicker. #98: a Claude or Codex worker's monitor shows what its agent is doing instead: its mascot (a crab
 for Claude, a cloud for Codex) in a pose for the kind, the word (Testing, Writing, Thinking…), the detail
@@ -1630,7 +1636,10 @@ desk shows, box / laptop / items), `arrivalLog()` (finished walks, `played: fals
 each desk, whether its "+" shows, what a walk holds it as).
 
 M5: `screens()` (per worker of the floor you are on: `desk`, `state` live | pending | frozen | glow | dark, and the
-`fps` it is watched at, else null), `seated()` (the worker whose laptop you sit at, or null), `sitAt(workerId)` (as E;
+`fps` it is watched at, else null; #52: its `pane`, and `shows`, whose screen is on that glass, `<worker id>@<pane>` of
+its live terminal or its frozen frame once the GPU has it, null for none; `state` is the laptop's mode, so a
+just-frozen screen is `frozen` with `shows` null until the upload), `screenTrace(on)` (#52: from `true` on, `screens()` taken right
+after every rendered frame; `false` stops and returns them), `simSwap(args)` (#52: the simulator's `sim.swap`), `seated()` (the worker whose laptop you sit at, or null), `sitAt(workerId)` (as E;
 false with a toast when you cannot), `screenText(workerId)` (a live laptop's screen from its xterm buffer, a string per
 row), `frozenInk(workerId)` (the share of its frozen screen that is not black, 0–1; null when not frozen), `seat()` (the seat bar: shown, tape, note, state ok | busy | error | offline), `watches()` (this connection's
 watches as the game counts them and, with `sim=1`, as the simulator does), `reconnect()` (drops the connection and

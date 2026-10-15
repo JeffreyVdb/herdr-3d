@@ -5,8 +5,11 @@ import { isZoomInfo } from '../net/protocol';
 /** Where frames go: a watched worker's screen, and when it stops being live. */
 export interface ScreenSink {
   frame(id: string, f: TerminalFrame): void;
-  /** Not live any more: it keeps its last frame (frozen), or its glow. */
-  stop(id: string): void;
+  /**
+   * Not live any more: it keeps its last frame (frozen), or its glow. `reason`: the bridge ended it (`terminal.closed`);
+   * #52: after `pane_changed` the last frame is the old pane's, not the worker's screen any more.
+   */
+  stop(id: string, reason?: string): void;
 }
 
 export interface WatchHost {
@@ -215,7 +218,7 @@ export class Watches {
   closed(c: TerminalClosed): void {
     if (!this.on.has(c.id)) return;
     this.on.delete(c.id);
-    this.host.sink.stop(c.id);
+    this.host.sink.stop(c.id, c.reason);
     if (c.reason === 'observer_failed') this.host.failed(c.id, 'observer_failed', 'the laptop screen stopped updating');
     this.host.closed(c.id, c.reason);
   }
