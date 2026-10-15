@@ -104,7 +104,7 @@ func (b *bridge) start() {
 	f := b.f
 	f.t.Helper()
 	only := regexp.MustCompile("^" + regexp.QuoteMeta(f.h.Name) + "$")
-	b.ctl = &herdr.Control{Herdr: f.h.Bin, SystemdRun: fixtureSystemdRun, Only: only, CodexRun: b.run, Run: b.runner()}
+	b.ctl = &herdr.Control{Herdr: f.h.Bin, SystemdRun: fixtureSystemdRun, Only: only, CodexRun: b.run, Run: b.runner(), Shell: f.sh}
 	opts := server.HireOptions()
 	opts.Codex.Models = append(append(opts.Codex.Models, "mock"), b.o.models...)
 	ctx, cancel := context.WithCancel(context.Background())

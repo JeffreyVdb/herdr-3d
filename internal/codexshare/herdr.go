@@ -15,6 +15,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 )
 
 // SessionPrefix starts every Herdr session the fixture creates. Herdr runs
@@ -33,18 +35,23 @@ type Herdr struct {
 	exited chan struct{}
 }
 
-// StartHerdr starts a fresh session whose panes run fish (as herdr-3d's
-// supervised server does) with env (CleanEnv applied, then set). Its log
-// goes to dir. Pass the fixture's CODEX_HOME in set: Herdr restores a
-// workspace without its --env, so a restored pane only has the server's.
-func StartHerdr(ctx context.Context, dir string, env []string, set ...string) (*Herdr, error) {
+// StartHerdr starts a fresh session whose panes run the shell policy sh
+// (bash by default, as herdr-3d's supervised server does: #68) with env
+// (CleanEnv applied, then set). Its log goes to dir. Pass the fixture's
+// CODEX_HOME in set: Herdr restores a workspace without its --env, so a
+// restored pane only has the server's.
+func StartHerdr(ctx context.Context, dir string, sh shell.Kind, env []string, set ...string) (*Herdr, error) {
 	bin, err := exec.LookPath("herdr")
+	if err != nil {
+		return nil, err
+	}
+	shellBin, err := shell.Resolve(sh)
 	if err != nil {
 		return nil, err
 	}
 	var rnd [4]byte
 	_, _ = rand.Read(rnd[:])
-	h := &Herdr{Bin: bin, Name: SessionPrefix + hex.EncodeToString(rnd[:]), Env: CleanEnv(env, append([]string{"SHELL=/bin/fish"}, set...)...), dir: dir}
+	h := &Herdr{Bin: bin, Name: SessionPrefix + hex.EncodeToString(rnd[:]), Env: CleanEnv(env, append([]string{"SHELL=" + shellBin}, set...)...), dir: dir}
 	return h, h.start(ctx)
 }
 

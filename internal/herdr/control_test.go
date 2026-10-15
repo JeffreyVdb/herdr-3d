@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 )
 
 // TestControlAllowlist is the tripwire for the bridge's write path to herdr:
@@ -19,7 +21,7 @@ import (
 func TestControlAllowlist(t *testing.T) {
 	want := map[string][]string{
 		"start": {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
-			"--working-directory={home}", "/bin/fish", "-l", "-c", "exec herdr --session '{session}' server"},
+			"--working-directory={home}", "{shell}", "-l", "-c", "exec herdr --session '{session}' server"},
 		"stop":          {"{herdr}", "session", "stop", "{session}", "--json"},
 		"resume-claude": {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "claude --resume {id}"},
 		"resume-codex":  {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "codex resume {id}"},
@@ -67,7 +69,7 @@ func TestControlAllowlist(t *testing.T) {
 
 		// #155
 		"start-codex-server": {"{herdr}", "--session", "{session}", "pane", "run", "{pane}",
-			"setsid -f fish {launcher} </dev/null >/dev/null 2>&1"},
+			"setsid -f {launcher-shell} {launcher} </dev/null >/dev/null 2>&1"},
 		"start-codex-remote": {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
 			"--pane", "{pane}", "--timeout", "30000", "--", "--remote", "unix://{socket}", "-C", "{cwd}",
 			"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
@@ -94,8 +96,30 @@ func TestControlAllowlist(t *testing.T) {
 		t.Fatalf("Control methods = %v, want %v", methods, w)
 	}
 
+	// #68: the argv of every operation under each shell policy.
+	for _, pol := range []shellPolicy{
+		{name: "bash", kind: shell.Bash, bin: "/usr/bin/bash", wake: "/usr/bin/bash", typed: "/usr/bin/bash", ext: ".sh"},
+		{name: "default is bash", kind: "", bin: "/usr/bin/bash", wake: "/usr/bin/bash", typed: "/usr/bin/bash", ext: ".sh"},
+		// Fish keeps v1.45.0's argv exactly: /bin/fish to wake, a bare `fish` for the launcher.
+		{name: "fish", kind: shell.Fish, bin: "/bin/fish", wake: "/bin/fish", typed: "fish", ext: ".fish"},
+	} {
+		t.Run(pol.name, func(t *testing.T) { checkAllowlistArgv(t, pol) })
+	}
+}
+
+// shellPolicy is one shell policy's expected argv.
+type shellPolicy struct {
+	name        string
+	kind        shell.Kind
+	bin         string
+	wake, typed string // the shell as the wake's and the launcher's argv name it
+	ext         string // the launcher's extension
+}
+
+func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 	var got [][]string
 	c := &Control{Herdr: "/opt/herdr", SystemdRun: "/usr/bin/systemd-run", Home: "/home/u", CodexRun: "/run/user/7/herdr-world/codex",
+		Shell: pol.kind, ShellBin: pol.bin,
 		Run: func(_ context.Context, argv []string) ([]byte, []byte, error) {
 			got = append(got, argv)
 			if slices.Contains(argv, "create") {
@@ -160,13 +184,13 @@ func TestControlAllowlist(t *testing.T) {
 	run := "/run/user/7/herdr-world/codex/"
 	remote := Remote{Socket: run + "a58752ea6511.sock", Cwd: "/home/u/.herdr/worktrees/r/h3d-mochi-a58752"}
 	codex := Agent{Harness: "codex", Model: "gpt-6-sol", Effort: "low"}
-	must(c.StartCodexServer(ctx, "h3d-it-1", "w7:p1", run+"a58752ea6511.fish"))
+	must(c.StartCodexServer(ctx, "h3d-it-1", "w7:p1", run+"a58752ea6511"+pol.ext))
 	must(c.StartCodexRemote(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", codex, remote))
 	must(c.ResumeCodexRemote(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", id, codex, remote))
 	must(c.ResumeCodexEmbedded(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", id, codex))
 	wantArgv := [][]string{
 		{"/usr/bin/systemd-run", "--user", "--unit=herdr-s-h3d-it-1", "--collect", "-p", "KillMode=process",
-			"--working-directory=/home/u", "/bin/fish", "-l", "-c", "exec herdr --session 'h3d-it-1' server"},
+			"--working-directory=/home/u", pol.wake, "-l", "-c", "exec herdr --session 'h3d-it-1' server"},
 		{"/opt/herdr", "session", "stop", "h3d-it-1", "--json"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w1:p2", "claude --resume " + id},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w1:p2", "codex resume " + id},
@@ -208,7 +232,7 @@ func TestControlAllowlist(t *testing.T) {
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "enter"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "send-keys", "w7:p1", "ctrl+u", "backspace", "ctrl+u", "backspace"},
 		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w7:p1",
-			"setsid -f fish /run/user/7/herdr-world/codex/a58752ea6511.fish </dev/null >/dev/null 2>&1"},
+			"setsid -f " + pol.typed + " /run/user/7/herdr-world/codex/a58752ea6511" + pol.ext + " </dev/null >/dev/null 2>&1"},
 		{"/opt/herdr", "--session", "h3d-it-1", "agent", "start", "mochi-a58752", "--kind", "codex", "--pane", "w7:p1",
 			"--timeout", "30000", "--", "--remote", "unix:///run/user/7/herdr-world/codex/a58752ea6511.sock",
 			"-C", "/home/u/.herdr/worktrees/r/h3d-mochi-a58752", "-m", "gpt-6-sol", "-c", "model_reasoning_effort=low",
@@ -441,26 +465,37 @@ func TestControlAPIErrors(t *testing.T) {
 func TestControlRefusesUnsafeCodexLaunch(t *testing.T) {
 	ran := false
 	run := "/run/user/7/herdr-world/codex"
-	c := &Control{CodexRun: run, Run: func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, nil }}
+	c := &Control{CodexRun: run, Shell: shell.Bash, ShellBin: "/usr/bin/bash",
+		Run: func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, nil }}
 	ctx := context.Background()
 	codex := Agent{Harness: "codex", Model: "gpt-6-sol", Effort: "low"}
 	sock := run + "/a1.sock"
 	id := "01a0663b-61cd-73a0-a3a0-034ca9fc6c48"
 	for name, call := range map[string]func() error{
-		"launcher outside run": func() error { return c.StartCodexServer(ctx, "s", "w1:p1", "/tmp/a1.fish") },
-		"launcher in a subdir": func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/x/a1.fish") },
-		"launcher not fish":    func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a1.sh") },
-		"launcher with space":  func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a 1.fish") },
-		"launcher with ;":      func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a;rm.fish") },
-		"launcher with $":      func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/$(id).fish") },
-		"launcher dotdot":      func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/../a1.fish") },
-		"launcher too long":    func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/"+strings.Repeat("a", 80)+".fish") },
-		"no run dir":           func() error { return (&Control{Run: c.Run}).StartCodexServer(ctx, "s", "w1:p1", run+"/a1.fish") },
+		"launcher outside run":   func() error { return c.StartCodexServer(ctx, "s", "w1:p1", "/tmp/a1.sh") },
+		"launcher in a subdir":   func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/x/a1.sh") },
+		"launcher not bash":      func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a1.fish") },
+		"launcher .bash":         func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a1.bash") },
+		"launcher no extension":  func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a1") },
+		"launcher with space":    func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a 1.sh") },
+		"launcher with ;":        func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a;rm.sh") },
+		"launcher with $":        func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/$(id).sh") },
+		"launcher with backtick": func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/`id`.sh") },
+		"launcher with quote":    func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a'b.sh") },
+		"launcher with newline":  func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/a\nb.sh") },
+		"launcher dotdot":        func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/../a1.sh") },
+		"launcher too long":      func() error { return c.StartCodexServer(ctx, "s", "w1:p1", run+"/"+strings.Repeat("a", 80)+".sh") },
+		"no run dir": func() error {
+			return (&Control{Run: c.Run, ShellBin: "/usr/bin/bash"}).StartCodexServer(ctx, "s", "w1:p1", run+"/a1.sh")
+		},
+		"fish launcher, fish too": func() error {
+			return (&Control{CodexRun: run, Shell: shell.Fish, ShellBin: "/bin/fish", Run: c.Run}).StartCodexServer(ctx, "s", "w1:p1", run+"/a1.sh")
+		},
 		"socket outside run": func() error {
 			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: "/tmp/a1.sock", Cwd: "/r"})
 		},
 		"socket not sock": func() error {
-			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: run + "/a1.fish", Cwd: "/r"})
+			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: run + "/a1.sh", Cwd: "/r"})
 		},
 		"cwd with space": func() error {
 			return c.StartCodexRemote(ctx, "s", "w1:p1", "x", codex, Remote{Socket: sock, Cwd: "/r/a b"})
@@ -512,4 +547,112 @@ func TestControlRefusesUnsafeCodexLaunch(t *testing.T) {
 			t.Errorf("!ValidPlainDir(%q)", ok)
 		}
 	}
+}
+
+// #68: the shell policy. Bash is the default whatever else is installed or
+// inherited, nothing starts fish unless asked to, a missing configured shell
+// is an actionable error rather than a fallback, and the shell typed into a
+// pane is a plain path.
+func TestControlShellPolicy(t *testing.T) {
+	ctx := context.Background()
+	run := "/run/user/7/herdr-world/codex"
+	record := func(got *[][]string) Runner {
+		return func(_ context.Context, argv []string) ([]byte, []byte, error) {
+			*got = append(*got, argv)
+			return nil, nil, nil
+		}
+	}
+	bothOps := func(c *Control) error {
+		if err := c.StartSession(ctx, "h3d-it-1"); err != nil {
+			return err
+		}
+		return c.StartCodexServer(ctx, "h3d-it-1", "w1:p1", run+"/a58752ea6511"+c.Shell.LauncherExt())
+	}
+
+	t.Run("bash: nothing names fish, an inherited fish SHELL and an installed fish change nothing", func(t *testing.T) {
+		t.Setenv("SHELL", "/usr/bin/fish")
+		dir, err := os.MkdirTemp("", "h3d-shell-") // (t.TempDir is named after the test)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.RemoveAll(dir) })
+		for _, n := range []string{"bash", "fish"} {
+			if err := os.WriteFile(filepath.Join(dir, n), []byte("#!/bin/sh\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("PATH", dir)
+		var got [][]string
+		c := &Control{Home: "/home/u", CodexRun: run, Run: record(&got)} // default policy, shell resolved
+		if err := bothOps(c); err != nil {
+			t.Fatal(err)
+		}
+		bash := filepath.Join(dir, "bash")
+		if len(got) != 2 || got[0][7] != bash || got[1][6] != "setsid -f "+bash+" "+run+"/a58752ea6511.sh </dev/null >/dev/null 2>&1" {
+			t.Fatalf("argv = %q", got)
+		}
+		for _, argv := range got {
+			if strings.Contains(strings.Join(argv, " "), "fish") {
+				t.Errorf("the bash policy names fish: %q", argv)
+			}
+		}
+	})
+
+	t.Run("fish only when asked", func(t *testing.T) {
+		var got [][]string
+		c := &Control{Home: "/home/u", CodexRun: run, Shell: shell.Fish, ShellBin: "/bin/fish", Run: record(&got)}
+		if err := bothOps(c); err != nil {
+			t.Fatal(err)
+		}
+		if got[0][7] != "/bin/fish" || got[1][6] != "setsid -f fish "+run+"/a58752ea6511.fish </dev/null >/dev/null 2>&1" {
+			t.Fatalf("argv = %q", got)
+		}
+	})
+
+	t.Run("a missing shell is an actionable error and nothing runs", func(t *testing.T) {
+		old := shell.Locate
+		shell.Locate = func(k shell.Kind) (string, error) {
+			return "", &shell.MissingError{Kind: k, Searched: []string{"$PATH"}}
+		}
+		t.Cleanup(func() { shell.Locate = old })
+		for _, k := range []shell.Kind{"", shell.Bash, shell.Fish} {
+			var got [][]string
+			c := &Control{Home: "/home/u", CodexRun: run, Shell: k, Run: record(&got)}
+			for name, err := range map[string]error{"wake": c.StartSession(ctx, "h3d-it-1"), "launch": c.StartCodexServer(ctx, "h3d-it-1", "w1:p1", run+"/a58752ea6511"+k.LauncherExt())} {
+				var me *shell.MissingError
+				if !errors.As(err, &me) || !strings.Contains(err.Error(), "--shell") || !strings.Contains(err.Error(), "HERDR_WORLD_SHELL") {
+					t.Errorf("%s with shell %q: error %v does not name the option", name, k, err)
+				}
+			}
+			if len(got) != 0 {
+				t.Errorf("shell %q: ran %q without a shell", k, got)
+			}
+		}
+	})
+
+	t.Run("an unusable policy or path is refused", func(t *testing.T) {
+		for name, c := range map[string]*Control{
+			"zsh":             {Shell: "zsh", ShellBin: "/usr/bin/zsh"},
+			"command":         {Shell: "bash -x", ShellBin: "/usr/bin/bash"},
+			"space in path":   {ShellBin: "/opt/my shell/bash"},
+			"semicolon":       {ShellBin: "/usr/bin/bash;id"},
+			"dollar":          {ShellBin: "/usr/bin/$(id)"},
+			"relative":        {ShellBin: "bash"},
+			"quote":           {ShellBin: "/usr/bin/ba'sh"},
+			"newline":         {ShellBin: "/usr/bin/ba\nsh"},
+			"unclean":         {ShellBin: "/usr/bin/../bin/bash"},
+			"fish with space": {Shell: shell.Fish, ShellBin: "/opt/a b/fish"},
+		} {
+			ran := false
+			c.Home, c.CodexRun = "/home/u", run
+			c.Run = func(context.Context, []string) ([]byte, []byte, error) { ran = true; return nil, nil, nil }
+			errs := []error{c.StartSession(ctx, "h3d-it-1"), c.StartCodexServer(ctx, "h3d-it-1", "w1:p1", run+"/a58752ea6511"+c.Shell.LauncherExt())}
+			if c.Shell == "zsh" || c.Shell == "bash -x" {
+				errs[1] = nil // (the launcher extension of a bad policy is not meaningful)
+			}
+			if ran || errs[0] == nil {
+				t.Errorf("%s: the wake ran or was accepted: %v", name, errs[0])
+			}
+		}
+	})
 }

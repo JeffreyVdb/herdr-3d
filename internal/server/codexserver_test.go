@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -14,6 +16,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
+	shellpolicy "github.com/JeffreyVdb/herdr-3d/internal/shell"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
@@ -182,10 +185,17 @@ func startSharedBridge(t *testing.T, on bool, workers ...world.WorkerObs) *share
 // one) and host, for a test that restarts the bridge.
 func startSharedBridgeAt(t *testing.T, db string, host *fakeCodexHost, on bool, workers ...world.WorkerObs) *sharedBridge {
 	t.Helper()
+	return startSharedBridgeShell(t, db, host, on, "", workers...)
+}
+
+// startSharedBridgeShell is startSharedBridgeAt with the launchers' shell
+// policy (#68; "": the default, bash).
+func startSharedBridgeShell(t *testing.T, db string, host *fakeCodexHost, on bool, kind shellpolicy.Kind, workers ...world.WorkerObs) *sharedBridge {
+	t.Helper()
 	term := newFakeTerm()
 	sessions := t.TempDir()
 	hb := startHireBridgeAt(t, db, func(o *server.Options) {
-		o.CodexRun, o.CodexHost, o.CodexPoll = codexRun, host, 20*time.Millisecond
+		o.CodexRun, o.CodexHost, o.CodexPoll, o.CodexShell = codexRun, host, 20*time.Millisecond, kind
 		o.Term, o.CodexRejoin = term, 150*time.Millisecond
 		o.Usage = &server.UsageConfig{Roots: usage.Roots{CodexSessions: sessions}, Interval: 20 * time.Millisecond}
 	}, workers...)
@@ -262,7 +272,7 @@ func TestSharedCodexHire(t *testing.T) {
 	want := []string{
 		"create s /home/u/repo " + l.AgentName[:strings.LastIndex(l.AgentName, "-")],
 		"mark w1:p1 h3d-" + name,
-		"codex-server w1:p1 " + codexRun + "/" + name + ".fish",
+		"codex-server w1:p1 " + codexRun + "/" + name + ".sh",
 		"codex-remote w1:p1 " + agent + " gpt-6-sol low " + sock + " /home/u/repo",
 		`prompt w1:p1 "fix it"`,
 	}
@@ -487,7 +497,7 @@ func TestSharedCodexSleepAndWake(t *testing.T) {
 	calls = fh.Calls()[before:]
 	l2 := sb.launches(t)[a.ID]
 	wantResume := "codex-resume w2:p1 " + l.AgentName + " " + th + " gpt-6-sol low " + sock + " /home/u/repo"
-	if !slices.Contains(calls, "codex-server w2:p1 "+codexRun+"/"+l.Name+".fish") || !slices.Contains(calls, wantResume) {
+	if !slices.Contains(calls, "codex-server w2:p1 "+codexRun+"/"+l.Name+".sh") || !slices.Contains(calls, wantResume) {
 		t.Fatalf("wake calls = %q", calls)
 	}
 	for _, c := range calls {
@@ -696,7 +706,7 @@ func TestSharedCodexWakeWithoutThread(t *testing.T) {
 	l := sb.launches(t)[a.ID]
 	calls, resumes := sb.wakeResumes(t)
 	sock := codexRun + "/" + l.Name + ".sock"
-	if !slices.Contains(calls, "codex-server w1:p1 "+codexRun+"/"+l.Name+".fish") ||
+	if !slices.Contains(calls, "codex-server w1:p1 "+codexRun+"/"+l.Name+".sh") ||
 		!slices.Contains(calls, "codex-remote w1:p1 "+l.AgentName+" gpt-6-sol low "+sock+" /home/u/repo") {
 		t.Fatalf("wake calls = %q", calls)
 	}
@@ -967,4 +977,65 @@ func TestSharedCodexSendHomeWhenItsServerDied(t *testing.T) {
 	if st := sb.host.stopped; len(st) != 1 || st[0].Token != l.Token || len(sb.launches(t)) != 0 {
 		t.Fatalf("stopped = %+v, launches %+v", st, sb.launches(t))
 	}
+}
+
+// #68: the launcher's format follows the shell policy: .sh by default, .fish
+// only under the explicit fish option.
+func TestSharedCodexHireLauncherFollowsShellPolicy(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		kind shellpolicy.Kind
+		ext  string
+	}{{"", ".sh"}, {shellpolicy.Bash, ".sh"}, {shellpolicy.Fish, ".fish"}} {
+		t.Run(string(tc.kind)+tc.ext, func(t *testing.T) {
+			t.Parallel()
+			sb := startSharedBridgeShell(t, "", newFakeCodexHost(), true, tc.kind)
+			_, m := sb.c.command(proto.CmdWorkerHire, "h", codexHire(2))
+			res := ackData[proto.HireResult](t, m)
+			name := strings.ReplaceAll(res.ID, "-", "")[:12]
+			if want := "codex-server w1:p1 " + codexRun + "/" + name + tc.ext; !slices.Contains(sb.fl.Calls(), want) {
+				t.Fatalf("calls %q lack %q", sb.fl.Calls(), want)
+			}
+		})
+	}
+}
+
+// #68: a launch v1.45.0 recorded has a .fish launcher. Stopping it through
+// the real host, from the stored record (which has no shell), removes that
+// launcher, and the files next to it, under a bridge whose policy is bash.
+func TestCodexHostStopCleansAV145FishLaunch(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "codex")
+	if err := codexapp.PrivateDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	stored := store.CodexLaunch{RunDir: dir, Name: "a58752ea6511", Token: "0123456789abcdef0123456789abcdef", Cwd: "/home/u/repo"}
+	l := launchRecord(stored)
+	files := []string{"a58752ea6511.fish", "a58752ea6511.pid", "a58752ea6511.log", "a58752ea6511.sock"}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("1\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other := filepath.Join(dir, "b00000000001.fish") // another worker's launcher
+	if err := os.WriteFile(other, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	host := server.NewCodexHost("codex", "direnv")
+	if left := host.Stop(l); len(left) != 0 {
+		t.Fatalf("survivors %v", left)
+	}
+	for _, f := range files {
+		if _, err := os.Lstat(filepath.Join(dir, f)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s kept", f)
+		}
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Errorf("another worker's launcher removed: %v", err)
+	}
+}
+
+// launchRecord is what the bridge rebuilds from a stored launch (launchOf).
+func launchRecord(l store.CodexLaunch) codexapp.Launch {
+	return codexapp.Launch{Dir: l.RunDir, Name: l.Name, Token: l.Token, Cwd: l.Cwd}
 }

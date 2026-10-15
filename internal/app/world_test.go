@@ -18,6 +18,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr/herdrtest"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 	"github.com/JeffreyVdb/herdr-3d/internal/version"
 )
 
@@ -335,5 +336,77 @@ func TestTranscriptImageRoots(t *testing.T) {
 	}
 	if im := transcriptImages(slog.New(slog.NewTextHandler(io.Discard, nil)), "", "-", "/opt/codex/sessions"); im.Cache.Dir() != "" || len(im.Roots) != 1 {
 		t.Errorf("no disk cache / no drop zone: %q %v", im.Cache.Dir(), im.Roots)
+	}
+}
+
+func shellExe(t *testing.T, path string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// #68: bash is the default shell on a host with fish installed, and when the
+// bridge inherits a fish $SHELL; fish is selected only by the option.
+func TestShellPolicyDefaultsToBash(t *testing.T) {
+	dir := t.TempDir()
+	shellExe(t, filepath.Join(dir, "bash"))
+	shellExe(t, filepath.Join(dir, "fish"))
+	t.Setenv("PATH", dir)
+	t.Setenv("SHELL", filepath.Join(dir, "fish"))
+	old := shell.FallbackDirs
+	shell.FallbackDirs = nil
+	t.Cleanup(func() { shell.FallbackDirs = old })
+
+	kind, bin, err := resolveShell("")
+	if err != nil || kind != shell.Bash || bin != filepath.Join(dir, "bash") {
+		t.Fatalf("resolveShell(\"\") = %q, %q, %v: want bash", kind, bin, err)
+	}
+	if kind, _, err := resolveShell("bash"); err != nil || kind != shell.Bash {
+		t.Fatalf("resolveShell(bash) = %q, %v", kind, err)
+	}
+	kind, bin, err = resolveShell("fish")
+	if err != nil || kind != shell.Fish || (bin != filepath.Join(dir, "fish") && bin != "/bin/fish") {
+		t.Fatalf("resolveShell(fish) = %q, %q, %v", kind, bin, err)
+	}
+}
+
+// A host without fish starts on bash; a host without bash is told how to fix
+// it (and never silently gets fish).
+func TestShellPolicyStartupErrors(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	t.Setenv("SHELL", "/usr/bin/fish")
+	old := shell.FallbackDirs
+	shell.FallbackDirs = nil
+	t.Cleanup(func() { shell.FallbackDirs = old })
+
+	shellExe(t, filepath.Join(dir, "bash"))
+	if kind, _, err := resolveShell(""); err != nil || kind != shell.Bash {
+		t.Fatalf("bash host without fish: %q, %v", kind, err)
+	}
+
+	if err := os.Remove(filepath.Join(dir, "bash")); err != nil {
+		t.Fatal(err)
+	}
+	shellExe(t, filepath.Join(dir, "fish")) // only fish: still no bash
+	var out, errOut bytes.Buffer
+	code := World("herdr-world", []string{"serve", "-socket", filepath.Join(dir, "s.sock"), "-db", filepath.Join(dir, "w.db")}, &out, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), `"bash" was not found`) || !strings.Contains(errOut.String(), "HERDR_WORLD_SHELL") ||
+		!strings.Contains(errOut.String(), "-shell") && !strings.Contains(errOut.String(), "--shell") {
+		t.Fatalf("no bash: code %d, err %q", code, errOut.String())
+	}
+	errOut.Reset()
+	if code := World("herdr-world", []string{"serve", "-shell", "zsh"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), `unknown shell "zsh"`) {
+		t.Fatalf("-shell zsh: code %d, err %q", code, errOut.String())
+	}
+	errOut.Reset()
+	if code := World("herdr-world", []string{"serve", "-shell", "/usr/bin/fish"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "bash") {
+		t.Fatalf("-shell with a path: code %d, err %q", code, errOut.String())
+	}
+	t.Setenv(EnvShell, "csh")
+	errOut.Reset()
+	if code := World("herdr-world", []string{"serve"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), `unknown shell "csh"`) {
+		t.Fatalf("$%s=csh: code %d, err %q", EnvShell, code, errOut.String())
 	}
 }

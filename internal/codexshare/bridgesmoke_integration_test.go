@@ -58,7 +58,7 @@ func TestCodexShareBridgeRealModelSmoke(t *testing.T) {
 	codexHome := filepath.Join(home, ".codex")
 	baseline := realBaseline(codexHome)
 	f.record("baseline-before.txt", baseline)
-	f.h, err = StartHerdr(ctx, root, os.Environ(), OwnerVar+"="+f.owner)
+	f.h, err = StartHerdr(ctx, root, fixtureShell(t), os.Environ(), OwnerVar+"="+f.owner)
 	if err != nil {
 		t.Fatal(err)
 	}

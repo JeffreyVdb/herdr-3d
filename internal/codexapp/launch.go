@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 )
 
 // MarkerVar marks every process of a shared-server launch: the launcher
@@ -34,15 +36,25 @@ type Launch struct {
 	Name  string // the worker's marker hex
 	Token string // the processes' MarkerVar value
 	Cwd   string // the directory the server trusts (in memory) and the TUI names with -C
+	// Shell is the language of the launcher (#68): bash (the zero value) or
+	// fish. It is not recorded with a stored launch: everything that works
+	// from a stored launch (Alive, FindServer, Stop, Remove) is
+	// shell-independent.
+	Shell shell.Kind
 }
 
-// NewLaunch returns a launch with a fresh token.
+// NewLaunch returns a launch with a fresh token and a Bash launcher.
 func NewLaunch(dir, name, cwd string) (Launch, error) {
+	return NewLaunchFor(shell.Default, dir, name, cwd)
+}
+
+// NewLaunchFor is NewLaunch with a launcher written for sh.
+func NewLaunchFor(sh shell.Kind, dir, name, cwd string) (Launch, error) {
 	var rnd [16]byte
 	if _, err := rand.Read(rnd[:]); err != nil {
 		return Launch{}, err
 	}
-	l := Launch{Dir: dir, Name: name, Token: hex.EncodeToString(rnd[:]), Cwd: cwd}
+	l := Launch{Dir: dir, Name: name, Token: hex.EncodeToString(rnd[:]), Cwd: cwd, Shell: sh.Or()}
 	return l, l.Valid()
 }
 
@@ -57,6 +69,11 @@ func (l Launch) Valid() error {
 		return errors.New("codexapp: launch token is not 32 hex")
 	case !plainDir(l.Cwd):
 		return fmt.Errorf("codexapp: %q is not a plain directory path", l.Cwd)
+	case strings.ContainsRune(l.Dir, 0):
+		return errors.New("codexapp: run directory holds a NUL")
+	}
+	if _, err := shell.Parse(string(l.Shell)); err != nil {
+		return fmt.Errorf("codexapp: %w", err)
 	}
 	return nil
 }
@@ -69,8 +86,12 @@ func plainDir(d string) bool {
 	return plainDirRe.MatchString(d) && filepath.Clean(d) == d
 }
 
-// Script, Socket, PIDFile and Log are the launch's files.
-func (l Launch) Script() string  { return filepath.Join(l.Dir, l.Name+".fish") }
+// Script, Socket, PIDFile and Log are the launch's files. The launcher's
+// extension follows its shell (#68: ".sh" for bash, ".fish" for fish).
+func (l Launch) Script() string { return l.scriptFor(l.Shell) }
+func (l Launch) scriptFor(k shell.Kind) string {
+	return filepath.Join(l.Dir, l.Name+k.LauncherExt())
+}
 func (l Launch) Socket() string  { return filepath.Join(l.Dir, l.Name+".sock") }
 func (l Launch) PIDFile() string { return filepath.Join(l.Dir, l.Name+".pid") }
 func (l Launch) Log() string     { return filepath.Join(l.Dir, l.Name+".log") }
@@ -85,6 +106,10 @@ func (l Launch) Log() string     { return filepath.Join(l.Dir, l.Name+".log") }
 // override changes nothing on them.
 const ServerFeatures = "features.instant_interrupt=false"
 
+// bashQuote single-quotes s for bash: nothing is special inside '…', so
+// only the quote itself needs closing, escaping and reopening.
+func bashQuote(s string) string { return "'" + strings.ReplaceAll(s, `'`, `'\''`) + "'" }
+
 // fishQuote single-quotes s for fish.
 func fishQuote(s string) string {
 	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
@@ -95,14 +120,48 @@ func tomlString(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
-// Render is the launcher: fish, typed into the worker's initialized pane as
-// `setsid -f fish <script>`, so the server gets the pane's environment
-// (direnv's exports, Herdr's HERDR_PANE_ID for its session-id hook) and the
-// user's `codex` wrapper function applies (phase 1, D1). It marks the
-// server's processes, records the launcher's pid, and starts `codex
-// app-server` on the worker's socket with the worker's directory trusted
-// in memory only (B10: config.toml is not written) and ServerFeatures.
+// Render is the launcher, in the launch's shell. Typed into the worker's
+// initialized pane as `setsid -f <shell> <script>`, it gives the server the
+// pane's environment (direnv's exports, Herdr's HERDR_PANE_ID for its
+// session-id hook) and lets the user's `codex` wrapper apply (phase 1, D1).
+// It marks the server's processes, records the launcher's pid, and starts
+// `codex app-server` on the worker's socket with the worker's directory
+// trusted in memory only (B10: config.toml is not written) and
+// ServerFeatures.
 func (l Launch) Render() string {
+	if l.Shell.Or() == shell.Fish {
+		return l.renderFish()
+	}
+	return l.renderBash()
+}
+
+// renderBash is the Bash launcher (#68). A script run as `bash <file>` reads
+// no startup file, so a `codex` function or alias of the user's ~/.bashrc
+// would be lost (fish loads config.fish even then). The launcher therefore
+// marks itself and records its pid, then re-executes itself as an
+// interactive bash (-i: ~/.bashrc and the usual `[[ $- != *i* ]] && return`
+// guard behave as in the pane's own shell; no terminal is needed) running
+// the one command line. The pid recorded stays the supervising process
+// (exec keeps it) and, unlike a variable exported inside a running shell,
+// its own environment carries the marker. HISTFILE is dropped so the
+// session cannot rewrite the user's history, and history expansion is off
+// (+H) so a "!" in a path is just a character.
+func (l Launch) renderBash() string {
+	trust := "projects={" + tomlString(l.Cwd) + "={trust_level=\"trusted\"}}"
+	run := "unset HISTFILE; codex app-server -c " + bashQuote(trust) + " -c " + bashQuote(ServerFeatures) +
+		" --listen " + bashQuote("unix://"+l.Socket()) + " </dev/null >" + bashQuote(l.Log()) + " 2>&1"
+	return strings.Join([]string{
+		"# herdr-3d (#68): this worker's own Codex app-server, started from its pane (bash).",
+		"export " + MarkerVar + "=" + l.Token,
+		"echo $$ >" + bashQuote(l.PIDFile()),
+		`exec "$BASH" -i +H -c ` + bashQuote(run),
+		"",
+	}, "\n")
+}
+
+// renderFish is the fish launcher of v1.45.0, kept for the explicit fish
+// compatibility option.
+func (l Launch) renderFish() string {
 	trust := "projects={" + tomlString(l.Cwd) + "={trust_level=\"trusted\"}}"
 	return strings.Join([]string{
 		"# herdr-3d (#155): this worker's own Codex app-server, started from its pane.",
@@ -123,7 +182,7 @@ func (l Launch) Write() error {
 	if err := PrivateDir(l.Dir); err != nil {
 		return err
 	}
-	for _, p := range []string{l.Socket(), l.PIDFile()} {
+	for _, p := range append(l.scripts(), l.Socket(), l.PIDFile()) {
 		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -153,9 +212,21 @@ func PrivateDir(dir string) error {
 	return nil
 }
 
+// scripts are the launcher the launch may have, in every shell's format: a
+// launch recorded by v1.45.0 left a ".fish" launcher, which a bridge whose
+// policy is bash now must still clean up (and a launch Write replaces).
+func (l Launch) scripts() []string {
+	out := make([]string, 0, len(shell.Known))
+	for _, k := range shell.Known {
+		out = append(out, l.scriptFor(k))
+	}
+	return out
+}
+
 // Remove deletes the launch's files: the socket (and the socket Codex
 // made the listen path a link to, when it is one of this user's sockets),
-// the pid file, the launcher and the log. Call it once the server is gone.
+// the pid file, the launcher (of any shell's format) and the log. Call it
+// once the server is gone.
 func (l Launch) Remove() error {
 	var errs []error
 	if target, err := os.Readlink(l.Socket()); err == nil {
@@ -167,7 +238,7 @@ func (l Launch) Remove() error {
 			errs = append(errs, removeMissingOK(target))
 		}
 	}
-	for _, p := range []string{l.Socket(), l.PIDFile(), l.Script(), l.Log()} {
+	for _, p := range append(l.scripts(), l.Socket(), l.PIDFile(), l.Log()) {
 		errs = append(errs, removeMissingOK(p))
 	}
 	return errors.Join(errs...)

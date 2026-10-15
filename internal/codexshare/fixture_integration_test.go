@@ -22,7 +22,27 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
+	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 )
+
+// ShellVar selects the shell policy the fixture's panes, Control and
+// launchers run under: bash (the default) or fish (the explicit
+// compatibility option, skipped when fish is not installed).
+const ShellVar = "H3D_CODEXSHARE_SHELL"
+
+// fixtureShell is the policy under test; it skips the test when its shell is
+// not installed (never a failure, never the other shell).
+func fixtureShell(t *testing.T) shell.Kind {
+	t.Helper()
+	kind, err := shell.Parse(os.Getenv(ShellVar))
+	if err != nil {
+		t.Fatalf("$%s: %v", ShellVar, err)
+	}
+	if _, err := shell.Resolve(kind); err != nil {
+		t.Skipf("%s policy: %v", kind, err)
+	}
+	return kind
+}
 
 func TestMain(m *testing.M) {
 	// The test binary stands in for the env-dump MCP server Codex starts.
@@ -37,15 +57,17 @@ func TestMain(m *testing.M) {
 }
 
 // fx is one test's world: a temp root, an isolated CODEX_HOME, the mock,
-// a fish configuration, workspaces and a throwaway Herdr session.
+// the panes' shell configuration, workspaces and a throwaway Herdr session.
 type fx struct {
 	t      *testing.T
+	sh     shell.Kind // the shell policy under test (ShellVar)
 	ctx    context.Context
 	codex  string // `codex --version`, one of VerifiedCodex
 	root   string
 	owner  string // OwnerVar's value in every process the fixture starts
 	home   string
 	xdg    string // XDG_CONFIG_HOME of the panes: the fixture's fish config
+	shHome string // HOME of bash panes: the fixture's .bashrc
 	data   string // XDG_DATA_HOME of the panes: direnv's allow list
 	mcpDir string
 	mock   *Mock
@@ -67,7 +89,7 @@ type fxOptions struct {
 // is not verified with, and returns `codex --version` ("codex-cli 0.161.0").
 func requireTools(t *testing.T) string {
 	t.Helper()
-	for _, bin := range []string{"codex", "herdr", "fish", "direnv", "setsid"} {
+	for _, bin := range []string{"codex", "herdr", "direnv", "setsid"} {
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skipf("%s is not installed", bin)
 		}
@@ -85,6 +107,7 @@ func requireTools(t *testing.T) string {
 
 func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 	codex := requireTools(t)
+	sh := fixtureShell(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	t.Cleanup(cancel)
 	// A short root: unix socket paths are limited to 108 bytes.
@@ -92,7 +115,7 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fx{t: t, ctx: ctx, codex: codex, root: root, owner: NewOwner(), home: filepath.Join(root, "home"), xdg: filepath.Join(root, "xdg"),
+	f := &fx{t: t, sh: sh, ctx: ctx, codex: codex, root: root, owner: NewOwner(), home: filepath.Join(root, "home"), xdg: filepath.Join(root, "xdg"),
 		data: filepath.Join(root, "data"), mcpDir: filepath.Join(root, "mcp")}
 	t.Cleanup(func() {
 		f.killOwned()
@@ -105,7 +128,8 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 			t.Fatal(err)
 		}
 	}
-	for _, d := range []string{f.home, filepath.Join(f.xdg, "fish"), f.data, f.mcpDir, filepath.Join(root, "bin")} {
+	f.shHome = filepath.Join(root, "shhome")
+	for _, d := range []string{f.home, f.shHome, filepath.Join(f.xdg, "fish"), f.data, f.mcpDir, filepath.Join(root, "bin")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -118,14 +142,26 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 	// Model-like latency: Herdr reports a turn only once it saw it working.
 	f.mock.SetDelay(1500 * time.Millisecond)
 
-	// The panes' fish: PATH gets the fixture's tool, an exported config
-	// sentinel, direnv's hook (interactive, like the user's config), a
-	// `codex` wrapper function that exports a sentinel (like a real
-	// credential wrapper) and a fish-only function.
+	// The panes' shell configuration: PATH gets the fixture's tool, an
+	// exported config sentinel, direnv's hook (interactive, like the user's
+	// config), a `codex` wrapper function that exports a sentinel (like a
+	// real credential wrapper) and a shell-only function. Fish and bash get
+	// the same, each in its own startup file.
+	bashrc := strings.Join([]string{
+		"[[ $- != *i* ]] && return",
+		"export PATH=" + filepath.Join(root, "bin") + ":$PATH",
+		"export H3D_SHELL_SENTINEL=shell-config",
+		`eval "$(direnv hook bash)"`,
+		`codex() { H3D_WRAPPER_SENTINEL=wrapper command codex "$@"; }`,
+		"h3d_shell_fn() { echo shell-function-ran; }",
+		`PS1='$ '`,
+		"",
+	}, "\n")
+	f.write(filepath.Join(f.shHome, ".bashrc"), bashrc, 0o644)
 	fish := strings.Join([]string{
 		"set -g fish_greeting",
 		"fish_add_path -g " + filepath.Join(root, "bin"),
-		"set -gx H3D_FISH_SENTINEL fish-config",
+		"set -gx H3D_SHELL_SENTINEL shell-config",
 		"if status is-interactive",
 		"    direnv hook fish | source",
 		"end",
@@ -133,8 +169,8 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 		"    set -lx H3D_WRAPPER_SENTINEL wrapper",
 		"    command codex $argv",
 		"end",
-		"function h3d_fish_fn",
-		"    echo fish-function-ran",
+		"function h3d_shell_fn",
+		"    echo shell-function-ran",
 		"end",
 		"",
 	}, "\n")
@@ -159,7 +195,7 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 			t.Fatal(err)
 		}
 		extra += "\n[mcp_servers.envdump]\ncommand = " + TOMLString(exe) + "\n" +
-			"env_vars = [\"H3D_DIRENV_SENTINEL\", \"H3D_PANE_SENTINEL\", \"H3D_WRAPPER_SENTINEL\", \"H3D_FISH_SENTINEL\", \"HERDR_PANE_ID\", \"" + OwnerVar + "\"]\n" +
+			"env_vars = [\"H3D_DIRENV_SENTINEL\", \"H3D_PANE_SENTINEL\", \"H3D_WRAPPER_SENTINEL\", \"H3D_SHELL_SENTINEL\", \"HERDR_PANE_ID\", \"" + OwnerVar + "\"]\n" +
 			"startup_timeout_sec = 20\n" +
 			"[mcp_servers.envdump.env]\n" + EnvDumpVar + " = " + TOMLString(f.mcpDir) + "\n"
 	}
@@ -168,7 +204,11 @@ func newFx(t *testing.T, o fxOptions, workspaces ...string) *fx {
 	}
 	// The session server's environment reaches its panes, so the marker
 	// reaches everything they run: TUIs, app-servers, daemons, tools.
-	f.h, err = StartHerdr(ctx, root, os.Environ(), "CODEX_HOME="+f.home, OwnerVar+"="+f.owner)
+	set := []string{"CODEX_HOME=" + f.home, OwnerVar + "=" + f.owner}
+	if sh == shell.Bash {
+		set = append(set, "HOME="+f.shHome) // bash reads ~/.bashrc; fish reads XDG_CONFIG_HOME
+	}
+	f.h, err = StartHerdr(ctx, root, sh, os.Environ(), set...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +254,7 @@ func (f *fx) paneEnv(ws string) []string {
 	return []string{"CODEX_HOME=" + f.home, "XDG_CONFIG_HOME=" + f.xdg, "XDG_DATA_HOME=" + f.data, "H3D_PANE_SENTINEL=pane-" + ws}
 }
 
-// pane creates a Herdr workspace in root/<ws> and waits for its fish prompt
+// pane creates a Herdr workspace in root/<ws> and waits for its shell prompt
 // (and direnv's first export).
 func (f *fx) pane(ws string) string {
 	f.t.Helper()
@@ -226,7 +266,7 @@ func (f *fx) pane(ws string) string {
 	return pane
 }
 
-// shell runs a fish command line in an idle pane and waits until it has
+// shell runs a command line in an idle pane and waits until it has
 // finished: it prints a marker the typed command line itself does not
 // contain (wait-output also sees the echoed command).
 func (f *fx) shell(pane, command string) {
@@ -243,15 +283,26 @@ func (f *fx) shell(pane, command string) {
 }
 
 // startServer starts a worker-owned app-server from the pane's initialized
-// fish (the candidate launcher): a detached session leader running fish so
-// the `codex` wrapper function applies, listening on root/<name>.sock.
+// shell (the candidate launcher): a detached session leader running the
+// policy's shell (bash -i, as codexapp.Launch does, or fish) so the `codex`
+// wrapper function applies, listening on root/<name>.sock.
 func (f *fx) startServer(pane, name string) string {
 	f.t.Helper()
 	sock := filepath.Join(f.root, name+".sock")
 	log := filepath.Join(f.root, name+".log")
 	// The production launch's feature override (codexapp.Launch.Render),
 	// after --listen so f.owned's "app-server --listen unix://…" matches.
-	f.shell(pane, fmt.Sprintf("setsid -f fish -c 'codex app-server --listen unix://%s -c %s' </dev/null >%s 2>&1", sock, codexapp.ServerFeatures, log))
+	if f.sh == shell.Fish {
+		f.shell(pane, fmt.Sprintf("setsid -f fish -c 'codex app-server --listen unix://%s -c %s' </dev/null >%s 2>&1", sock, codexapp.ServerFeatures, log))
+	} else {
+		bash, err := shell.Resolve(shell.Bash)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		// The quotes inside stay in the supervisor's command line, so only the
+		// codex process matches "app-server --listen unix://…" (as in the launcher).
+		f.shell(pane, fmt.Sprintf(`setsid -f %s -i +H -c "codex app-server --listen 'unix://%s' -c '%s'" </dev/null >%s 2>&1`, bash, sock, codexapp.ServerFeatures, log))
+	}
 	f.waitSocket(sock)
 	return sock
 }
