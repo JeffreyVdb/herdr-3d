@@ -42,16 +42,23 @@ func MaxNewSessionName(sessionsDir string) int {
 	return max(0, min(n, MaxSessionName))
 }
 
+// virtualFloorIDRe is the shape of a #58 virtual floor's id (store.
+// IsVirtualFloorID): floor ids share one namespace with session names, so no
+// new session takes one.
+var virtualFloorIDRe = regexp.MustCompile(`^v-[0-9a-f]{12}$`)
+
 // CheckNewSessionName says, readably, why name cannot be a new session's
 // name (nil: it can): ^[a-z0-9_-]+$, no leading "-" (it would read as a
-// flag), not herdr's "default", and at most maxLen bytes
-// (MaxNewSessionName).
+// flag), not herdr's "default", not a virtual floor id's "v-<12 hex>", and
+// at most maxLen bytes (MaxNewSessionName).
 func CheckNewSessionName(name string, maxLen int) error {
 	switch {
 	case name == "":
 		return errors.New("Give the floor a name.")
 	case name == "default":
 		return errors.New("“default” is herdr’s own session: pick another name.")
+	case virtualFloorIDRe.MatchString(name):
+		return errors.New("Names like “v-” and 12 hex digits are kept for virtual floors: pick another name.")
 	case !newSessionRe.MatchString(name):
 		return errors.New("Use only lowercase letters, digits, “_” and “-”.")
 	case name[0] == '-':

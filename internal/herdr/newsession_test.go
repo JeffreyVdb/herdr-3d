@@ -28,7 +28,8 @@ func TestMaxNewSessionName(t *testing.T) {
 
 func TestCheckNewSessionName(t *testing.T) {
 	const max = 56
-	for _, name := range []string{"a", "h3dtest_9", "1h3dtest", "424242", "my-floor", "a_b-c", strings.Repeat("x", 56)} {
+	for _, name := range []string{"a", "h3dtest_9", "1h3dtest", "424242", "my-floor", "a_b-c", strings.Repeat("x", 56),
+		"v-0123", "v-0123456789abc", "v-0123456789ag", "w-0123456789ab", "xv-0123456789ab"} {
 		if err := CheckNewSessionName(name, max); err != nil {
 			t.Errorf("CheckNewSessionName(%q) = %v, want ok", name, err)
 		}
@@ -36,6 +37,8 @@ func TestCheckNewSessionName(t *testing.T) {
 	for name, why := range map[string]string{
 		"":                       "Give the floor a name.",
 		"default":                "“default” is herdr’s own session",
+		"v-0123456789ab":         "virtual floors",
+		"v-ba9876543210":         "virtual floors",
 		"-h3dtest":               "cannot start with “-”",
 		"h3dtest-UPPER":          "lowercase letters, digits, “_” and “-”",
 		"h3dtest.dot":            "lowercase letters, digits, “_” and “-”",

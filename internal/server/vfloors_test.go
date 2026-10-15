@@ -298,8 +298,8 @@ func TestVirtualFloorCommands(t *testing.T) {
 	if ev := other.until(proto.EvFloorUpsert); ev.Floor.ID != id || !ev.Floor.Virtual {
 		t.Fatalf("other client: %+v", ev.Floor)
 	}
-	// A virtual floor id is no name for a new session.
-	c.mustError(proto.CmdSessionCreate, proto.SessionCreateArgs{Name: id}, proto.ErrNameTaken)
+	// A virtual floor id is no name for a new session: the shape is reserved.
+	c.mustError(proto.CmdSessionCreate, proto.SessionCreateArgs{Name: id}, proto.ErrBadRequest)
 
 	evs, _ := c.mustAck(proto.CmdFloorRename, proto.FloorRenameArgs{Floor: id, Name: "Frontend"})
 	if len(evs) != 1 || evs[0].T != proto.EvFloorUpsert || evs[0].Floor.Name != "Frontend" {
@@ -345,6 +345,31 @@ func TestVirtualFloorCommands(t *testing.T) {
 	}
 	if vs, _ := hb.st.VirtualFloors(context.Background()); len(vs) != 1 || vs[0].ID != id {
 		t.Fatalf("definitions = %+v", vs)
+	}
+}
+
+// A real herdr session whose name has a virtual floor id's shape can be a
+// virtual floor's base: virtuality is the floor's, not its name's. No new
+// session takes such a name (the virtual ids' namespace is reserved).
+func TestVirtualFloorOnSessionWithVirtualShapedName(t *testing.T) {
+	t.Parallel()
+	hb := startHireBridge(t, nil)
+	const real = "v-ba9876543210"
+	hb.floorAt(real, true, nil)
+	_, ack := hb.c.mustAck(proto.CmdFloorCreate, proto.FloorCreateArgs{Name: "Web", BaseSession: real})
+	v := ack.Data.(map[string]any)
+	if v["base_session"] != real || v["session"] != real || v["virtual"] != true || v["id"] == real {
+		t.Fatalf("created = %+v", v)
+	}
+	w := hb.connect(proto.Hello{}).snapshot().World
+	if f, ok := floorByID(w, real); !ok || f.Virtual || f.Name != real {
+		t.Fatalf("the real floor = %+v, %v", f, ok)
+	}
+	// A virtual floor's base is a real floor, whatever its name.
+	hb.c.mustError(proto.CmdFloorCreate, proto.FloorCreateArgs{Name: "X", BaseSession: v["id"].(string)}, proto.ErrUnknownSession)
+	_, m := hb.c.command(proto.CmdSessionCreate, "new", proto.SessionCreateArgs{Name: "v-0123456789ab"})
+	if e := errorOf(m); e.Code != proto.ErrBadRequest || !strings.Contains(e.Message, "virtual floors") {
+		t.Fatalf("session.create v-<12 hex>: %s", m.raw)
 	}
 }
 

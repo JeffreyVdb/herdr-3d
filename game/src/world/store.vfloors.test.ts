@@ -85,6 +85,9 @@ describe('WorldStore: virtual floors (#58)', () => {
     expect(floorName(vfloor(V, 'Frontend', 'main'))).toBe('Frontend');
     expect(floorName({ session: 'old' })).toBe('old');
     expect(floorName(vfloor(V, ' ', 'main'))).toBe('Unnamed floor');
+    // A real session whose name has a virtual id's shape is named by it: virtual is the floor's flag, not its id's shape.
+    expect(floorName({ id: 'v-ba9876543210', session: 'v-ba9876543210', virtual: false })).toBe('v-ba9876543210');
+    expect(floorName({ session: 'v-ba9876543210' })).toBe('v-ba9876543210');
   });
 
   it('names a floor by id, also once it is gone (a v- id never shows)', () => {

@@ -110,6 +110,13 @@ func TestVirtualFloorCRUD(t *testing.T) {
 	if _, err := st.CreateVirtualFloor(ctx, "v-00000000000f", "X", "v-0123456789ab"); !errors.Is(err, store.ErrInvalid) {
 		t.Errorf("virtual base: %v", err)
 	}
+	// A real herdr session whose name has a virtual id's shape is a base like
+	// any other: being virtual is being defined, not a name's shape.
+	if v, err := st.CreateVirtualFloor(ctx, "v-0000000000aa", "Web", "v-ba9876543210"); err != nil || v.BaseSession != "v-ba9876543210" {
+		t.Errorf("real base with a virtual id's shape: %+v, %v", v, err)
+	} else if err := st.DeleteVirtualFloor(ctx, v.ID, false); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := st.CreateVirtualFloor(ctx, "v-00000000000f", "Backend", "t"); err != nil {
 		t.Fatal(err)
 	}

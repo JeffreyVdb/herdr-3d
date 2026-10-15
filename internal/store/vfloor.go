@@ -48,7 +48,10 @@ const MaxFloorNameLen = 64
 var virtualFloorIDRe = regexp.MustCompile(`^v-[0-9a-f]{12}$`)
 
 // IsVirtualFloorID reports whether id has the shape of a virtual floor's id.
-// Such an id is also a safe single path component.
+// Such an id is also a safe single path component. The shape checks an id
+// being minted; it does not say a floor is virtual (a real session may have
+// such a name from before herdr.CheckNewSessionName reserved it): a virtual
+// floor is one virtual_floor defines.
 func IsVirtualFloorID(id string) bool { return virtualFloorIDRe.MatchString(id) }
 
 // ErrFloorExists is a virtual floor id that is already taken.
@@ -105,14 +108,15 @@ func (s *Store) VirtualFloors(ctx context.Context) ([]VirtualFloor, error) {
 
 // CreateVirtualFloor stores a new virtual floor. The caller mints the id and
 // checks it against the herdr sessions; this refuses an id of the wrong
-// shape or one already taken. When the base session's floor is in a
-// building, the new floor joins that building last (decision 4).
+// shape or one already taken, and a base that is itself a virtual floor.
+// When the base session's floor is in a building, the new floor joins that
+// building last (decision 4).
 func (s *Store) CreateVirtualFloor(ctx context.Context, id, name, base string) (VirtualFloor, error) {
 	if !IsVirtualFloorID(id) {
 		return VirtualFloor{}, fmt.Errorf("%w: virtual floor id %q", ErrInvalid, id)
 	}
-	if base == "" || IsVirtualFloorID(base) {
-		return VirtualFloor{}, fmt.Errorf("%w: base session %q", ErrInvalid, base)
+	if base == "" {
+		return VirtualFloor{}, fmt.Errorf("%w: base session is required", ErrInvalid)
 	}
 	name, err := CleanFloorName(name)
 	if err != nil {
@@ -126,6 +130,12 @@ func (s *Store) CreateVirtualFloor(ctx context.Context, id, name, base string) (
 		}
 		if n > 0 {
 			return fmt.Errorf("%w: %q", ErrFloorExists, id)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM virtual_floor WHERE id = ?`, base).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			return fmt.Errorf("%w: base session %q is a virtual floor", ErrInvalid, base)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO virtual_floor (id, name, base_session, created_at) VALUES (?, ?, ?, ?)`,
 			id, name, base, now.Format(time.RFC3339Nano)); err != nil {

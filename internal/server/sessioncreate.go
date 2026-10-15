@@ -19,7 +19,10 @@ import (
 // (docs/decisions.md "New herdr sessions"):
 //
 //   - the name: herdr.CheckNewSessionName, with the length cap of this
-//     host's sessions folder (sun_path), and inside --sessions when set;
+//     host's sessions folder (sun_path), and inside --sessions when set; it
+//     refuses a virtual floor id's "v-<12 hex>" (#58: floor ids and session
+//     names share one namespace), so a virtual floor's id, also while its
+//     base session is away, is never a new session's name;
 //   - free: not a floor, not in `herdr session list` in any state (starting
 //     a known name wakes that session), no folder by it in the sessions
 //     folder, no transient unit herdr-s-<name> still loaded;
@@ -86,9 +89,6 @@ func (h *Hub) startSessionCreate(ctx context.Context, c *Client, cmd proto.Comma
 	}
 	if _, ok := h.floors[a.Name]; ok {
 		return &codedError{proto.ErrNameTaken, fmt.Errorf("“%s” is already a floor.", a.Name)}
-	}
-	if _, ok := h.vfloors[a.Name]; ok { // #58: also while its base session is away
-		return &codedError{proto.ErrNameTaken, fmt.Errorf("“%s” is already a floor's id.", a.Name)}
 	}
 	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, cmd.Args)
 	if err != nil {

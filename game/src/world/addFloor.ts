@@ -5,7 +5,7 @@
  * herdr knows (a session asleep, a leftover folder): those refusals come back from it. Pure.
  */
 
-import { floorName } from './floorName';
+import { floorName, isVirtualFloorId } from './floorName';
 import type { StoredFloor } from './store';
 
 /** herdr's own cap on a session name; the bridge's host may allow fewer (its sun_path cap). */
@@ -17,6 +17,7 @@ const NAME_RE = /^[a-z0-9_-]+$/;
 export function newSessionNameError(name: string, floors: Iterable<string>): string {
   if (!name) return 'Give the floor a name.';
   if (name === 'default') return '“default” is herdr’s own session: pick another name.';
+  if (isVirtualFloorId(name)) return 'Names like “v-” and 12 hex digits are kept for virtual floors: pick another name.';
   if (!NAME_RE.test(name)) return 'Use only lowercase letters, digits, “_” and “-”.';
   if (name.startsWith('-')) return 'The name cannot start with “-”.';
   if (name.length > MAX_SESSION_NAME) return `Keep the name to at most ${MAX_SESSION_NAME} characters.`;

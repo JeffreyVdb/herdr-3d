@@ -1059,12 +1059,14 @@ unassigned lot. It never goes through the floor checks of the other floor comman
 ```
 
 1. **The name** (`bad_request`, the message says why in words a person can act on): `^[a-z0-9_-]+$` (stricter than
-   herdr: no uppercase, no dots), no leading `-`, not `default`, and at most as long as this host allows: the
+   herdr: no uppercase, no dots), no leading `-`, not `default`, not a virtual floor id's `v-<12 hex>` (#58: floor ids
+   and session names share one namespace, so that shape is reserved; a real session that already has such a name is
+   still a floor and a base like any other), and at most as long as this host allows: the
    session's `herdr-client.sock` must fit the 108-byte `sun_path`, so the cap is `108 − len(<sessions folder>) − 1 −
    len("/herdr-client.sock")` (56 for `/home/jeff/.config/herdr/sessions`). The sessions folder comes from `herdr
    session list` (a named session's parent folder, else `sessions/` in the default session's). With `--sessions` set,
    the name must match it too: a session outside it would never show as a floor.
-2. **Free** (`name_taken`): not a floor (nor, #58, a virtual floor's id, also while its base session is away), not in `herdr session list` in any state (starting a known name would wake
+2. **Free** (`name_taken`): not a floor (a virtual floor's id is refused by its shape, step 1), not in `herdr session list` in any state (starting a known name would wake
    that session instead: an asleep one is refused too), nothing at `<sessions folder>/<name>` (a stale folder, a
    backup), and no transient unit `herdr-s-<name>.service` still loaded (its unit file under `$XDG_RUNTIME_DIR`).
 3. **One at a time** (`busy`): a second `session.create` of a name being created is refused.
@@ -1090,7 +1092,10 @@ workspaces live in the base session. Every discovered session keeps its **real f
 ```
 
 **Identity.** A virtual floor's id is `v-` and 12 lower-case hex digits, minted by the bridge: never a discovered or
-starting session's name, and a safe single path component (its whiteboard folder is named by it). The definition
+starting session's name (`session.create` refuses the shape), and a safe single path component (its whiteboard folder
+is named by it). Whether a floor is virtual is its `virtual` flag (the bridge: a stored definition), never its id's
+shape: a session discovered with a `v-<12 hex>` name from before the shape was reserved is a real floor and can be a
+base. The definition
 (`virtual_floor`: id, name, base session) is stored and kept while the base session is away; the floor is in the world
 (`floor.upsert`) only while its base session is: a session that goes away removes its real floor and its virtual floors
 (`floor.removed` for each, `floor_id` naming it, after its workers' `worker.removed`), and they come back with it.
