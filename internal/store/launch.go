@@ -251,9 +251,11 @@ func (s *Store) SetLastPreset(ctx context.Context, session, presetID string) err
 // (#184), or free text) and the preset it was started with. RunID is the
 // h3d_run token that worker first showed ("" until then).
 type RunLaunch struct {
-	ID          string
-	RunID       string
-	Session     string
+	ID      string
+	RunID   string
+	Session string // the herdr session
+	// FloorID is the floor the run was started on (#58; "" stores Session).
+	FloorID     string
 	Repo        string // with IssueNumber, for an issue ticket
 	IssueNumber int
 	TicketText  string // a free-text ticket
@@ -280,9 +282,14 @@ func (s *Store) RecordRunLaunch(ctx context.Context, l RunLaunch) error {
 	if (l.ItemProvider == "") != (l.ItemID == "") {
 		return fmt.Errorf("%w: an item needs its provider and id", ErrInvalid)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO run_launch (id, run_id, session, repo, issue_number, ticket_text, item_provider,
-			item_id, item_key, orch_worker_id, preset_id, preset_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		l.ID, null(l.RunID), l.Session, null(l.Repo), number, null(l.TicketText), null(l.ItemProvider), null(l.ItemID),
+	floor := l.FloorID
+	if floor == "" {
+		floor = l.Session
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO run_launch (id, run_id, session, floor_id, repo, issue_number, ticket_text,
+			item_provider, item_id, item_key, orch_worker_id, preset_id, preset_name, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.ID, null(l.RunID), l.Session, floor, null(l.Repo), number, null(l.TicketText), null(l.ItemProvider), null(l.ItemID),
 		null(l.ItemKey), l.OrchWorkerID, l.PresetID, l.PresetName, s.ts())
 	return err
 }
@@ -292,11 +299,11 @@ func (s *Store) RecordRunLaunch(ctx context.Context, l RunLaunch) error {
 func (s *Store) RunLaunchByWorker(ctx context.Context, workerID string) (RunLaunch, bool, error) {
 	l := RunLaunch{OrchWorkerID: workerID}
 	var created string
-	err := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(run_id, ''), session, COALESCE(repo, ''), COALESCE(issue_number, 0),
+	err := s.db.QueryRowContext(ctx, `SELECT id, COALESCE(run_id, ''), session, floor_id, COALESCE(repo, ''), COALESCE(issue_number, 0),
 			COALESCE(ticket_text, ''), COALESCE(item_provider, ''), COALESCE(item_id, ''), COALESCE(item_key, ''), preset_id,
 			preset_name, created_at
 		FROM run_launch WHERE orch_worker_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`, workerID).
-		Scan(&l.ID, &l.RunID, &l.Session, &l.Repo, &l.IssueNumber, &l.TicketText, &l.ItemProvider, &l.ItemID, &l.ItemKey,
+		Scan(&l.ID, &l.RunID, &l.Session, &l.FloorID, &l.Repo, &l.IssueNumber, &l.TicketText, &l.ItemProvider, &l.ItemID, &l.ItemKey,
 			&l.PresetID, &l.PresetName, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RunLaunch{}, false, nil

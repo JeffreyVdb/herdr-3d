@@ -1198,7 +1198,7 @@ func (h *Hub) reload(ctx context.Context) error {
 	}
 	h.assign = map[string]store.Assignment{}
 	for _, a := range as {
-		h.assign[a.Session] = a
+		h.assign[a.Floor] = a
 	}
 	return nil
 }
@@ -1840,14 +1840,14 @@ func (h *Hub) buildingViews() []proto.Building {
 	}
 	as := make([]store.Assignment, 0, len(h.assign))
 	for _, a := range h.assign {
-		if _, known := h.floors[a.Session]; known {
+		if _, known := h.floors[a.Floor]; known {
 			as = append(as, a)
 		}
 	}
 	sort.Slice(as, func(i, j int) bool { return as[i].Index < as[j].Index })
 	for _, a := range as {
 		if i, ok := byID[a.BuildingID]; ok {
-			bs[i].Floors = append(bs[i].Floors, a.Session)
+			bs[i].Floors = append(bs[i].Floors, a.Floor)
 		}
 	}
 	return bs

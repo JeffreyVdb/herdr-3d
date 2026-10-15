@@ -35,7 +35,7 @@ func floorsOf(t *testing.T, st *store.Store, building string) []string {
 			if a.Index != len(out) {
 				t.Fatalf("building %s: floor indexes not dense: %+v", building, as)
 			}
-			out = append(out, a.Session)
+			out = append(out, a.Floor)
 		}
 	}
 	return out
@@ -175,7 +175,7 @@ func TestAssignFloor(t *testing.T) {
 		t.Fatal(err)
 	}
 	as, _ := st.Assignments(ctx)
-	if len(as) != 1 || as[0].Session != "b" {
+	if len(as) != 1 || as[0].Floor != "b" {
 		t.Fatalf("assignments after delete = %+v", as)
 	}
 }
