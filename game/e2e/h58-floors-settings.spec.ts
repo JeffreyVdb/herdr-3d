@@ -121,6 +121,46 @@ test('Settings → Floors: add a virtual floor, rename it, show and hide one, de
   clean();
 });
 
+test('a floor you walked to stays under you when Settings hides it', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-h58', '', SIM);
+  // Archive listed again, then reached from pastry by walking (a pose onto its storey takes the stairs' path), not by
+  // the elevator: hiding it, empty, must not take it from under you.
+  await openMenu(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  let section = await settingsSection(page, 'floors');
+  const archive = () => section.locator('.settings-fl-row').filter({ has: page.locator('.settings-fl-name', { hasText: /^Archive$/ }) });
+  await archive().getByRole('button', { name: 'Show Archive' }).click();
+  await expect(section.locator('.settings-status')).toHaveText('Archive is listed again.');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeHidden();
+  await page.evaluate(() => window.__h3d.enterFloor('pastry'));
+  const where = await page.evaluate(() => window.__h3d.where());
+  const storey = where!.floors.indexOf(ARCHIVE);
+  expect(storey).toBeGreaterThanOrEqual(0);
+  const storeyH = await page.evaluate(() => window.__h3d.building()!.storey);
+  const from = (await page.evaluate(() => window.__h3d.pose()))!;
+  await page.evaluate((p) => window.__h3d.setPose(p), { x: from.x, z: from.z, yaw: from.yaw, y: (storey + 1) * storeyH });
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.pose()))?.floor).toBe(ARCHIVE);
+  const on = (await page.evaluate(() => window.__h3d.pose()))!;
+
+  await openMenu(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  section = await settingsSection(page, 'floors');
+  await archive().getByRole('button', { name: 'Hide Archive' }).click();
+  await expect(section.locator('.settings-status')).toHaveText('Archive is hidden.');
+  await page.keyboard.press('Escape');
+  // Still on Archive, at its height, with its interior: not the lobby.
+  const after = (await page.evaluate(() => window.__h3d.pose()))!;
+  expect(after).toMatchObject({ floor: ARCHIVE, area: 'floor', storey: on.storey });
+  expect(after.y).toBeCloseTo(on.y, 3);
+  expect((await page.evaluate(() => window.__h3d.where()))!.loaded).toBe(ARCHIVE);
+  // Down in the lobby, it is no floor you stand on: hidden and empty, it leaves the building.
+  await page.evaluate(() => window.__h3d.enterLobby());
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.where()))?.floors.includes(ARCHIVE)).toBe(false);
+  clean();
+});
+
 test('Add floor from the city: a virtual floor on an existing session, in its session’s building', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-h58', '', SIM);

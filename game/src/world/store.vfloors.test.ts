@@ -218,6 +218,27 @@ describe('WorldStore: virtual floors (#58)', () => {
       expect(s.stack(null).map((f) => f.id)).toEqual(['lot']);
       expect(s.pin('lot')).toBe(false);
     });
+
+    it('walking to another floor moves the pin: the floor left goes, the floor walked to stays through a hide', () => {
+      const s = new WorldStore(1000);
+      // main hidden and empty, entered by the elevator (pinned); Frontend has nobody once b goes.
+      s.applySnapshot(hidden([]));
+      s.applyEvent({ t: 'floor.upsert', seq: 11, floor: vfloor(V, 'Frontend', 'main', { index: 1 }) });
+      expect(s.pin('main')).toBe(true);
+      expect(s.stack('b1').map((f) => f.id)).toEqual(['main', V]);
+      // By the stairs to Frontend: main leaves the lists, Frontend is where it was.
+      expect(s.pin(V)).toBe(true);
+      expect(s.stack('b1').map((f) => f.id)).toEqual([V]);
+      // Hidden in Settings while you stand on it: still listed, with a storey.
+      const v = s.structureVersion;
+      s.applyEvent({ t: 'floor.upsert', seq: 12, floor: vfloor(V, 'Frontend', 'main', { index: 1, hidden: true }) });
+      expect(s.structureVersion).toBeGreaterThan(v);
+      expect(s.stack('b1').map((f) => f.id)).toEqual([V]);
+      expect(s.level(V)).toEqual({ number: 1, count: 1 });
+      // Down to the lobby: nothing is pinned, both hidden empty floors leave.
+      expect(s.pin(null)).toBe(true);
+      expect(s.stack('b1')).toEqual([]);
+    });
   });
 
   describe('Settings → Floors rows (stage 4)', () => {

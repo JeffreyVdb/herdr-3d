@@ -2008,7 +2008,15 @@ export class App {
     const floor = this.office?.id ?? null;
     const ctx = floor ? this.buildingFor(floor) : this.building ? this.buildingById(this.building.id) : null;
     const fv = floor ? this.store.floorView(floor) : null;
-    if (!ctx || (floor && !fv)) {
+    // #58: the floor with the interior left its building's stack (hidden and empty, not pinned; its building may have
+    // no other): list it again (you are on it or by it) rather than put you on no storey; still out of it, it is gone.
+    const storey = fv && ctx ? ctx.floors.findIndex((f) => f.id === fv.id) : -1;
+    if (fv && storey < 0 && this.store.pin(fv.id)) {
+      this.city.build(this.store.city());
+      this.syncWalk();
+      return;
+    }
+    if (!ctx || (floor && (!fv || storey < 0))) {
       // #187: not while you sit at a laptop of it: the floor you were reading stays as it was (its worker is away, see
       // `Laptops.whyAway`) until you get up yourself; `step` then comes back here and leaves.
       if (this.laptops.seated) {
@@ -2023,10 +2031,10 @@ export class App {
     const was = this.loaded;
     this.setBuilding(ctx);
     if (this.office && fv) {
-      const storey = ctx.floors.findIndex((f) => f.id === fv.id);
       if (storey !== was && was !== null) {
-        // The floor moved in its building: inside it, you move with it.
+        // The floor moved in its building: inside it, or on the fire escape by it, you move with it.
         if (this.place.area === 'floor') this.walker.place(this.walker.x, this.walker.z, this.walker.yaw, this.walker.pitch, floorY(storey));
+        else if (this.place.area === 'fire-escape') this.walker.place(this.walker.x, this.walker.z, this.walker.yaw, this.walker.pitch, this.walker.y + floorY(storey) - floorY(was));
         this.loaded = storey;
         this.walk.setOffice(this.office, floorY(storey));
         this.walk.outside?.setLoaded(storey);
@@ -2113,6 +2121,20 @@ export class App {
     this.updateHint();
     this.panels.refresh();
     this.statusDirty = true;
+    this.pinHere();
+  }
+
+  /**
+   * #58: the floor you stand in stays listed (`WorldStore.pin`), however you got in (the elevator, the stairs, a pose),
+   * so a hide or its last worker leaving never takes it away under you; the lobby keeps none. On the fire escape and
+   * the street the last one stays, so the building does not change shape under the stairs. When the lists change, the
+   * city is rebuilt and the walk follows the building (`syncWalk`, whose own `updatePlace` finds the pin as it is).
+   */
+  private pinHere(): void {
+    const here = this.place.area === 'floor' ? (this.office?.id ?? null) : this.place.area === 'lobby' ? null : undefined;
+    if (here === undefined || !this.store.pin(here)) return;
+    this.city.build(this.store.city());
+    if (this.mode === 'floor') this.syncWalk();
   }
 
   /** #58: the id of the floor you are on (inside it), else null. */
