@@ -128,9 +128,22 @@
 .pal-opt--bridge .br-dot {
   margin-right: 2px;
 }
+/* A long address gives way (ellipsis) so the state stays readable on a phone. */
+.pal-opt--bridge .pal-meta {
+  min-width: 0;
+  max-width: 100%;
+}
 .pal-br-addr {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-code);
   font-size: 12px;
+}
+.pal-opt--bridge .pal-br-state {
+  flex: none;
+  white-space: nowrap;
 }
 .pal-br-state--up {
   color: var(--ok-text);

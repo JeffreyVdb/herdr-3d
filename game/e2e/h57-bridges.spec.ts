@@ -194,6 +194,21 @@ test('a switch made in another tab: this page starts over on the new bridge, fro
   expectClean();
 });
 
+test('on a phone the switch list keeps a bridge’s state in view next to a long address', async ({ page }) => {
+  const expectClean = watchErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const far: FakeBridge = { id: 'eeeeeeeeee', name: 'Far away', kind: 'ssh', host: 'someone@a-rather-long-hostname.internal.example.net', remote_socket: '/run/user/1000/herdr-world/bridge.sock', state: 'backoff' };
+  await fakeHelper(page, [devbox, far], devbox.id);
+  await openGame(page, 'demo-m6', '', SIM);
+  await openSwitch(page);
+  const row = palette(page).locator('.pal-opt[data-bridge="eeeeeeeeee"]');
+  await expect(row.locator('.pal-br-state')).toHaveText('Offline, retrying');
+  const [r, st] = await Promise.all([row.boundingBox(), row.locator('.pal-br-state').boundingBox()]);
+  expect(st!.x + st!.width).toBeLessThanOrEqual(r!.x + r!.width);
+  expect(await row.locator('.pal-br-addr').evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true);
+  expectClean();
+});
+
 test('a helper with no bridge: the game says to add one, and Switch bridge leads to Settings → Bridges', async ({ page }) => {
   const expectClean = watchErrors(page);
   await fakeHelper(page, [], '');
