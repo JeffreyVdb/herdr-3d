@@ -25,7 +25,7 @@ function mount(s: Record<string, unknown> | null, answers: Record<string, (args:
   const sent: Array<{ t: string; args: Record<string, unknown> }> = [];
   let shownAi = 0;
   const dialog = new SettingsDialog(document.body);
-  dialog.addSection('ai', 'AI integration', (body) => void body.append('models'), { store: 'bridge' });
+  dialog.addSection('ai', 'AI integration', (body) => void body.append('models'), { store: 'bridge', group: 'ai' });
   dialog.addSection(
     'activity',
     'Classify unknown commands',
@@ -37,7 +37,7 @@ function mount(s: Record<string, unknown> | null, answers: Record<string, (args:
       }) as never,
       showAi: () => shownAi++,
     }),
-    { store: 'bridge' },
+    { store: 'bridge', group: 'ai' },
   );
   const root = document.querySelector<HTMLElement>('[data-section="activity"]')!;
   const box = () => root.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
@@ -53,8 +53,13 @@ function mount(s: Record<string, unknown> | null, answers: Record<string, (args:
 describe('the “Classify unknown commands” section (#98)', () => {
   it('is not there at all while the bridge sends no state, and shows once it does', () => {
     const m = mount(null);
+    // #49: out of the navigator, not just a section that is not the one showing (AI integration is).
+    const tab = document.querySelector<HTMLElement>('[role="tab"][data-tab="activity"]')!;
     expect(m.root.hidden).toBe(true);
+    expect(tab.hidden).toBe(true);
     m.book.upsert(state());
+    expect(tab.hidden).toBe(false);
+    m.dialog.reveal('activity');
     expect(m.root.hidden).toBe(false);
     expect(m.dialog.sectionIds).toEqual(['ai', 'activity']);
   });

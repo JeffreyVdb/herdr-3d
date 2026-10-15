@@ -7,7 +7,7 @@ import { ViewPrefs } from './themePrefs';
 function mount(prefs = new ViewPrefs(null)) {
   document.body.replaceChildren();
   const dialog = new SettingsDialog(document.body);
-  const remove = dialog.addSection('appearance', 'Appearance', appearanceSection(prefs), { store: 'browser' });
+  const remove = dialog.addSection('appearance', 'Appearance', appearanceSection(prefs), { store: 'browser', group: 'general' });
   const section = document.querySelector<HTMLElement>('[data-section="appearance"]')!;
   const radios = () => [...section.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
   return { dialog, prefs, section, radios, remove };

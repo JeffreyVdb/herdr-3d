@@ -1,29 +1,157 @@
 /* The Settings window (#91): the About panel's frame (credits.css `.credits`), then one block per section: heading, where it is kept, content.
- * #110: wide enough for the AI-backed sections (status line, threshold, test results); their rows reflow into it. */
+ * #49: a workspace, not a column: as wide as a laptop allows, a fixed height so a switch never makes it jump, the
+ * sections listed down the side (grouped) and one of them beside the list. Below 800px the list is a picker above it. */
 dialog.settings {
-  width: min(640px, calc(100vw - 32px));
+  width: min(1200px, calc(100vw - 32px));
+  height: min(90dvh, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
   /* #40: clips like `.credits` but is no scroll container, so no focus or scrollIntoView can scroll the window itself
-     and hide its header and body: only its body scrolls. */
+     and hide its header and body: only the section list and the section scroll. */
   overflow: clip;
 }
-.settings .settings-body {
-  padding-top: 14px;
+/* What the dialog hides by itself: a section not showing or not offered, its tab, an empty group, the unused picker. */
+.settings-section[hidden],
+.settings-tab[hidden],
+.settings-nav-group[hidden],
+.settings-pick[hidden] {
+  display: none !important;
 }
-.settings-section + .settings-section {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
+.settings-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+/* The list scrolls by itself on a short screen; the section beside it has its own scroller. */
+.settings-nav {
+  flex: none;
+  width: 224px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: 12px 10px 14px;
+  border-right: 1px solid var(--line);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* A group's name: the field labels' quiet tone, for the eye only (the tablist holds tabs). */
+.settings-nav-label {
+  padding: 0 10px 4px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+}
+.settings .settings-tab {
+  display: block;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-tab:hover {
+  background: var(--row-hover-soft);
+}
+/* Selected: the palette's selected option (palette.css `.pal-opt`), the weight up as well, so never colour alone. */
+.settings .settings-tab[aria-selected='true'] {
+  background: color-mix(in srgb, var(--accent-text) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-text) 55%, transparent);
+  font-weight: 800;
+}
+.settings-tab:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+@media (forced-colors: active) {
+  /* Box shadows are dropped: the selected tab keeps an outline. */
+  .settings .settings-tab[aria-selected='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+.settings-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Narrow only: the sections as a native picker above the one showing. */
+.settings .settings-pick {
+  display: none;
+}
+.settings .settings-body {
+  padding: 16px 22px 20px;
+}
+/* A readable measure for its hints and status lines however wide the window gets. */
+.settings-section {
+  max-width: 880px;
+}
+@media (max-width: 799px) {
+  .settings-nav {
+    display: none;
+  }
+  .settings .settings-pick:not([hidden]) {
+    display: flex;
+    flex: none;
+    padding: 10px 14px 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .settings .settings-body {
+    padding: 14px 14px 16px;
+  }
+}
+/* Short too (a laptop at 200% zoom, a phone on its side): the picker's label beside it, so the section keeps the room. */
+@media (max-width: 799px) and (max-height: 480px) {
+  .settings .settings-pick:not([hidden]) {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+  }
+  .settings .settings-pick .settings-field-label {
+    margin: 0;
+  }
+  .settings .settings-pick select {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+/* A phone: nearly the whole screen, clear of a notch or the home bar; a finger-sized picker. */
+@media (max-width: 600px) {
+  dialog.settings {
+    width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+    height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    max-height: none;
+  }
+  .settings .settings-pick select {
+    min-height: 44px;
+  }
 }
 .settings-section-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
+/* #49: the heading of the one section showing: the pane's title, a step above its field labels. */
 .settings-title {
   margin: 0;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 800;
 }
 /* Where the section is kept: a quiet tag, the same tone as the field labels. */
@@ -982,6 +1110,23 @@ dialog.settings {
 :root[data-ui-theme='ubuntu'] .hm-row {
   min-height: var(--ctl-h);
 }
+/* #49: the section list. Its rows are 36px targets (44px for a finger), the selected one marked like the palette's (an
+   orange bar as well as the ring); the list stands 5px in from the dialog's foot so a ring there has room. */
+:root[data-ui-theme='ubuntu'] .settings .settings-tab {
+  min-height: var(--ctl-h);
+}
+:root[data-ui-theme='ubuntu'] .settings .settings-tab[aria-selected='true'] {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-text) 55%, transparent),
+    inset 4px 0 0 var(--action);
+}
+:root[data-ui-theme='ubuntu'] .settings-tab:focus-visible {
+  outline-offset: 2px;
+}
+:root[data-ui-theme='ubuntu'] .settings-nav {
+  margin-bottom: 5px;
+  scroll-padding: 5px;
+}
 /* The disclosures and the volume slider are dense controls: 32px tall targets, their type unchanged. */
 :root[data-ui-theme='ubuntu'] .settings-advanced > summary,
 :root[data-ui-theme='ubuntu'] .settings-pk-all > summary {
@@ -1007,6 +1152,9 @@ dialog.settings {
   }
   :root[data-ui-theme='ubuntu'] .settings-field .settings-nt-volume {
     height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .settings .settings-tab {
+    min-height: 44px;
   }
 }
 @media (forced-colors: active) {
