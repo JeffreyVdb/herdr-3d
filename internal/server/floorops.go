@@ -22,6 +22,10 @@ type FloorHerdr interface {
 	Ping(ctx context.Context, socket string) error
 	StartSession(ctx context.Context, session string) error
 	StopSession(ctx context.Context, session string) (string, error)
+	// #58 session.create: what herdr lists (any state), and a server
+	// started under a new name.
+	ListSessions(ctx context.Context) ([]herdr.Session, error)
+	CreateSession(ctx context.Context, session string) error
 	PaneProcesses(ctx context.Context, session, pane string) (*herdr.ProcessInfo, error)
 	ResumeAgent(ctx context.Context, session, pane, harness, agentSession string) error
 	ReportCodexSession(ctx context.Context, session, pane, agentSession string) error

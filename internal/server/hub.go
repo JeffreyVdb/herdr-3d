@@ -58,6 +58,10 @@ type Options struct {
 	// Sessions, if set, is the only set of sessions floor commands may act
 	// on (the watcher's --sessions filter, checked again here).
 	Sessions *regexp.Regexp
+	// #58: UnitLoaded reports whether a transient user unit is loaded, the
+	// last check before session.create starts herdr-s-<name> (default:
+	// its unit file under herdr.RuntimeDir).
+	UnitLoaded func(unit string) bool
 	// WakeTimeout bounds starting a woken server, its answering ping and
 	// its floor being seen running, together (default DefaultWakeTimeout).
 	WakeTimeout time.Duration
@@ -358,6 +362,7 @@ type Hub struct {
 	branches map[string]branchRead          // checkout path → its branch, read recently
 	resume   map[string]string              // worker id → resume state, during and after a wake
 	rescan   chan struct{}                  // asks the watcher to look at sessions now
+	creating map[string]*createOp           // #58: session.create in progress, by name
 	suggest  chan suggestJob                // repo lookups for the suggester
 	wg       sync.WaitGroup                 // floor operations and the suggester
 
@@ -604,6 +609,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		resume:        map[string]string{},
 		branches:      map[string]branchRead{},
 		rescan:        make(chan struct{}, 1),
+		creating:      map[string]*createOp{},
 		suggest:       make(chan suggestJob, 256),
 		usage:         map[string]*proto.Usage{},
 		limits:        map[string]proto.Limits{},
@@ -850,6 +856,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 		switch cmd.T {
 		case proto.CmdFloorWake, proto.CmdFloorSleep:
 			start = h.startFloorOp
+		case proto.CmdSessionCreate: // #58
+			start = h.startSessionCreate
 		case proto.CmdFloorSettings: // #184: a Kaneo link is checked off the hub goroutine
 			start = h.startFloorSettings
 		case proto.CmdWorkerHire:
@@ -1245,9 +1253,10 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 	for _, ev := range evs {
 		h.emit(ev)
 	}
-	h.relink()          // M6 runs
-	h.afterObserve(ctx) // M5 term
-	h.fillRunIDs(ctx)   // M6 launch
+	h.relink()                           // M6 runs
+	h.afterObserve(ctx)                  // M5 term
+	h.fillRunIDs(ctx)                    // M6 launch
+	h.createdFloor(u.Session, u.Running) // #58: after its floor.upsert
 }
 
 func (h *Hub) removeFloor(u world.FloorGone) {

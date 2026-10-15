@@ -888,6 +888,12 @@ func (f floorHerdr) Ping(ctx context.Context, socket string) error {
 	return err
 }
 
+// ListSessions is `herdr session list` (read only), for session.create's
+// checks (#58).
+func (f floorHerdr) ListSessions(ctx context.Context) ([]herdr.Session, error) {
+	return f.read.ListSessions(ctx)
+}
+
 // paneState reads a pane's size and what its tab does with it (zoomed,
 // focused, how many panes) from its session's snapshot, read only (#74).
 func paneState(read watch.Herdr) func(ctx context.Context, socket, pane string) (herdr.PaneState, bool) {
@@ -1030,6 +1036,7 @@ func cmdMain(ctx context.Context, name string, args []string, stdout, stderr io.
 		fmt.Fprintf(stderr, "  %s cmd floor.assign '{\"session\":\"herdr-3d\",\"building\":\"b_…\",\"index\":0}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd floor.settings.set '{\"session\":\"herdr-3d\",\"repo\":\"JeffreyVdb/herdr-3d\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd floor.sleep '{\"session\":\"h3d-scratch\"}'\n", name)
+		fmt.Fprintf(stderr, "  %s cmd session.create '{\"name\":\"h3d-scratch\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd worker.hire '{\"session\":\"h3d-scratch\",\"desk_index\":0,\"harness\":\"codex\",\"model\":\"gpt-6-luna\",\"effort\":\"low\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd worker.fire '{\"id\":\"…\",\"worktree\":\"keep\"}'\n", name)
 		fmt.Fprintf(stderr, "  %s cmd issue.comment '{\"session\":\"h3d-scratch\",\"id\":\"JeffreyVdb/h3d-lab#3\",\"body\":\"hi\"}'\n\nflags:\n", name)

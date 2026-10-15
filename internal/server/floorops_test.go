@@ -39,6 +39,15 @@ type fakeHerdr struct {
 	// and ResumeCodexEmbedded with embeddedErr (after starting Codex).
 	remoteErr, embeddedErr error
 	gate                   chan struct{} // StartSession waits for it when set
+	// #58 session.create: what `session list` says, CreateSession's error
+	// and hook (after it "started" the server), and the gate a create of
+	// holdCreate waits for.
+	sessions   []herdr.Session
+	listErr    error
+	createErr  error
+	onCreate   func(name string)
+	holdCreate string
+	createGate chan struct{}
 }
 
 func newFakeHerdr() *fakeHerdr {
@@ -92,6 +101,31 @@ func (f *fakeHerdr) StartSession(ctx context.Context, session string) error {
 	}
 	if f.onStart != nil {
 		f.onStart()
+	}
+	return nil
+}
+
+func (f *fakeHerdr) ListSessions(context.Context) ([]herdr.Session, error) {
+	f.record("list")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.sessions), f.listErr
+}
+
+func (f *fakeHerdr) CreateSession(ctx context.Context, name string) error {
+	f.record("create %s", name)
+	if name == f.holdCreate {
+		select {
+		case <-f.createGate:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	if f.createErr != nil {
+		return f.createErr
+	}
+	if f.onCreate != nil {
+		f.onCreate(name)
 	}
 	return nil
 }
@@ -752,6 +786,8 @@ func (r *runnerHerdr) Ping(context.Context, string) error {
 	}
 	return nil
 }
+
+func (r *runnerHerdr) ListSessions(context.Context) ([]herdr.Session, error) { return nil, nil }
 
 // Each resume phase has one deadline, however many panes there are and
 // however long herdr takes to say what runs in them: panes are watched
