@@ -49,6 +49,9 @@ const (
 	DefaultSleepTimeout  = 15 * time.Second
 	defaultResumePoll    = 500 * time.Millisecond
 	defaultResumeSettle  = 1500 * time.Millisecond
+	// unitPoll is how often a wake looks whether the last server's unit
+	// has unloaded (a stat of its unit file).
+	unitPoll = 100 * time.Millisecond
 )
 
 var (
@@ -364,6 +367,8 @@ func query[T any](ctx context.Context, h *Hub, fn func() T) (T, error) {
 
 // wakeReport is the audit-log result of a floor.wake.
 type wakeReport struct {
+	// #58: how long the wake waited for the last server's unit to unload.
+	UnitWaitMs  int64          `json:"unit_wait_ms"`
 	PingAfterMs int64          `json:"ping_after_ms,omitempty"`
 	Workers     []workerReport `json:"workers"`
 }
@@ -375,16 +380,24 @@ type workerReport struct {
 	Note   string `json:"note,omitempty"`
 }
 
-// runWake starts the session's server, waits for it to answer and for its
-// floor to be seen running (else wake_failed), then for each expected
-// agent (herdr resumes them itself; a pane that is back at its shell gets
-// the resume command once) and acks with the outcome. Each phase has one
-// deadline, so the ack comes within about WakeTimeout + 2 × ResumeTimeout
-// however many workers there are and however slowly herdr answers.
+// runWake waits for the last server's unit to unload, starts the session's
+// server, waits for it to answer and for its floor to be seen running (else
+// wake_failed), then for each expected agent (herdr resumes them itself; a
+// pane that is back at its shell gets the resume command once) and acks
+// with the outcome. Each phase has one deadline, so the ack comes within
+// about SleepTimeout + WakeTimeout + 2 × ResumeTimeout however many workers
+// there are and however slowly herdr answers.
 func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 	defer h.wg.Done()
-	start := time.Now()
 	report := &wakeReport{}
+	waited := time.Now()
+	if err := h.awaitUnitGone(ctx, op.session, waited.Add(h.opts.SleepTimeout)); err != nil {
+		report.UnitWaitMs = time.Since(waited).Milliseconds()
+		h.finishOp(ctx, op, err, report)
+		return
+	}
+	start := time.Now()
+	report.UnitWaitMs = start.Sub(waited).Milliseconds()
 	up := start.Add(h.opts.WakeTimeout)
 	sctx, cancel := context.WithDeadline(ctx, up)
 	err := h.opts.Herdr.StartSession(sctx, op.session)
@@ -409,6 +422,34 @@ func (h *Hub) runWake(ctx context.Context, op *floorOp, socket string) {
 	h.resumePhase(ctx, op, h.fallback)
 	sharedDone()
 	h.finishOp(ctx, op, nil, report)
+}
+
+// awaitUnitGone waits until deadline for the transient unit of the
+// session's last server (herdr-s-<session>) to unload: systemd-run refuses
+// to start a unit of that name while it is loaded. `herdr session stop`
+// ends the server, but processes it started outside its panes (its update
+// and agent-manifest curls) stay in the unit (KillMode=process) and keep it
+// loaded until they exit, for up to their own timeouts. They are herdr's,
+// not ours to kill, so the wake waits for them.
+func (h *Hub) awaitUnitGone(ctx context.Context, session string, deadline time.Time) error {
+	unit := herdr.SessionUnit(session)
+	loaded := h.unitLoaded()
+	if !loaded(unit) {
+		return nil
+	}
+	h.log.Info("waiting for the last server's unit to unload", "session", session, "unit", unit)
+	for loaded(unit) {
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("%w: the service %s is still loaded: processes the last %s server left are still running "+
+				"after %s; wake the floor again in a moment", errWakeFailed, unit, session, h.opts.SleepTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(min(unitPoll, time.Until(deadline))):
+		}
+	}
+	return nil
 }
 
 // waitPing polls the started server's socket until it answers, backing

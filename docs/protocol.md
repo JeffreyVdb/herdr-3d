@@ -995,6 +995,14 @@ A floor wakes and sleeps through herdr itself. The bridge acts only on sessions 
 
 **Wake** (the floor must be asleep, else `invalid_state`):
 
+0. #58: the bridge waits for the last server's unit `herdr-s-<name>` to unload, up to 15 s (it looks for its unit file
+   under `systemd/transient/` in the user's runtime directory, `$XDG_RUNTIME_DIR`, else `/run/user/<uid>`, every
+   100 ms). `herdr session stop` ends the server, but processes it started outside its panes (its update and
+   agent-manifest `curl`s, bounded by their `--max-time`, 15 s / 20 s per attempt, with retries) stay in the unit
+   (`KillMode=process`) and keep it loaded until they exit, and `systemd-run` refuses a unit name that is still loaded
+   ("Unit herdr-s-<name>.service was already loaded or has a fragment file"). A wake right after a sleep therefore
+   waits; a unit still loaded after 15 s is `wake_failed` ("the service herdr-s-<name>.service is still loaded: …"),
+   with nothing started. The bridge does not kill them: they are herdr's.
 1. `systemd-run --user --unit=herdr-s-<name> --collect -p KillMode=process --working-directory=$HOME /bin/fish -l -c
    "exec herdr --session '<name>' server"`: a supervised headless server with the user's login environment (their fish
    wrappers and API keys, none of the bridge's `CLAUDE*`/`HERDR_*` variables). It fails (`wake_failed`) if the unit
@@ -4249,7 +4257,7 @@ dismissed_at)`.
 | `not_clean` | #83: `worker.wrapup` with a delete for a tree that is not clean and pushed now; `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
-| `wake_failed` | the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
+| `wake_failed` | the last server's unit did not unload within 15 s, or the server did not start, did not answer `ping` or was not seen running within `--wake-timeout`; the message says why |
 | `session_create_failed` | #58 `session.create`: `herdr session list` could not be read, `systemd-run` failed, or the new floor was not seen running within `--wake-timeout`; the message carries herdr's error, and whatever the call started was stopped and removed |
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `input_failed` | #156 `worker.answer_async`: the worker's app-server refused the answer (nothing delivered; the question is `pending` again with its `error`); `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |

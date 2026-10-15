@@ -59,8 +59,9 @@ type Options struct {
 	// on (the watcher's --sessions filter, checked again here).
 	Sessions *regexp.Regexp
 	// #58: UnitLoaded reports whether a transient user unit is loaded, the
-	// last check before session.create starts herdr-s-<name> (default:
-	// its unit file under herdr.RuntimeDir).
+	// last check before session.create starts herdr-s-<name>, and what a
+	// wake waits on before it starts one (default: its unit file under
+	// herdr.RuntimeDir).
 	UnitLoaded func(unit string) bool
 	// WakeTimeout bounds starting a woken server, its answering ping and
 	// its floor being seen running, together (default DefaultWakeTimeout).

@@ -715,6 +715,62 @@ func TestWakeWithoutAgentsAcksOnceRunning(t *testing.T) {
 	}
 }
 
+// #58: a wake right after a sleep waits for the last server's transient unit
+// to unload before it starts the new one (systemd-run refuses a unit name
+// that is still loaded; processes herdr's server left behind, its curls,
+// keep the unit loaded for a while after `session stop`), and a unit that
+// stays loaded is a readable wake_failed with nothing started.
+func TestWakeWaitsForTheLastServersUnit(t *testing.T) {
+	t.Parallel()
+	fh := newFakeHerdr()
+	var checks atomic.Int32
+	opts := fastOps(fh)
+	opts.UnitLoaded = func(unit string) bool {
+		if unit != "herdr-s-s.service" {
+			t.Errorf("unit checked = %q", unit)
+		}
+		return checks.Add(1) <= 3 // the leftovers exit after three looks
+	}
+	b := startBridge(t, "", opts)
+	plain := []world.WorkerObs{worker("w1", "notes", "", "unknown")}
+	b.floorAt("s", false, plain)
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	fh.onStart = func() {
+		if n := checks.Load(); n < 4 {
+			t.Errorf("started after %d unit checks, while the unit was still loaded", n)
+		}
+		fh.setUp("sock-s", true)
+		b.floorAt("s", true, plain)
+	}
+	_, m := c.command(proto.CmdFloorWake, "w", proto.FloorArgs{Session: "s"})
+	ackData[proto.WakeResult](t, m)
+	log, _ := b.st.AuditLog(context.Background())
+	if len(log) != 1 || !log[0].OK || !strings.Contains(log[0].Result, `"unit_wait_ms"`) {
+		t.Fatalf("audit = %+v", log)
+	}
+
+	// The unit never unloads: wake_failed once SleepTimeout is over.
+	fh2 := newFakeHerdr()
+	opts2 := fastOps(fh2)
+	opts2.SleepTimeout = 200 * time.Millisecond
+	opts2.UnitLoaded = func(string) bool { return true }
+	b2 := startBridge(t, "", opts2)
+	b2.floorAt("s", false, plain)
+	c2 := b2.connect(proto.Hello{})
+	c2.snapshot()
+	evs, m := c2.command(proto.CmdFloorWake, "w", proto.FloorArgs{Session: "s"})
+	if e := errorOf(m); e.Code != proto.ErrWakeFailed || !strings.Contains(e.Message, "herdr-s-s.service is still loaded") {
+		t.Fatalf("reply = %s", m.raw)
+	}
+	if calls := fh2.Calls(); len(calls) != 0 {
+		t.Errorf("herdr calls = %v, want none", calls)
+	}
+	if f := lastFloor(t, evs); f.Transition != "" || f.State != "asleep" {
+		t.Errorf("final floor = %+v", f)
+	}
+}
+
 // A server that answers ping but that the watcher never sees running is no
 // wake: the command fails, the transition ends and the audit row says so.
 func TestWakeFailsWhenTheFloorIsNotSeenRunning(t *testing.T) {
