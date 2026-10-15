@@ -102,6 +102,7 @@ import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup
 import { activitySection } from './ui/activitySection';
 import { codexServerSection } from './ui/codexServerSection';
 import { repoDiscoverySection } from './ui/repoDiscoverySection';
+import { floorsSection } from './ui/floorsSection';
 import { repoRefsSection } from './ui/repoRefsSection';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
@@ -392,6 +393,18 @@ export class App {
     this.settings.addSection('harness-models', 'Harness models', harnessModelsSection({ prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser', group: 'workers' });
     // #248: the named harness / model / effort combinations for small jobs, beside the models they choose from.
     this.settings.addSection('task-levels', 'Task levels', taskLevelsSection({ levels: this.taskLevels, prefs: this.hireModelPrefs, options: () => this.store.hireOptions }), { store: 'browser', group: 'workers' });
+    // #58 stage 4: every session's floor and the virtual floors on it: add, rename, delete, hide (kept on the bridge).
+    this.settings.addSection(
+      'floors',
+      'Floors',
+      floorsSection({
+        book: this.store.floorList,
+        send: (t, args) => this.send(t, args),
+        unsupported: (t) => this.unsupported.has(t),
+        addFloor: (from, added) => this.addFloor.open(from, { kind: 'virtual', added }),
+      }),
+      { store: 'bridge', group: 'general' },
+    );
     this.settings.addSection('time', 'Day and night', timeSection({ prefs: this.timePrefs, time: this.timeOfDay }), { store: 'browser', group: 'general' });
     // #100: how the inbox reaches you beyond its chip: desktop notifications and the chime.
     this.settings.addSection('notifications', 'Notifications', notifySection({ prefs: this.inboxPrefs, audio: this.audio }), { store: 'browser', group: 'general' });
@@ -633,8 +646,16 @@ export class App {
     this.hireReview = new HireReviewDialog(o.host, { ...hireHost, hirePrefs: this.hirePrefs, hires: this.hires, goTo: (id) => this.goToNewHire(id) });
     // M6 start
     this.presetsPanel = new PresetsPanel(o.host, { ...dialogHost, modelPrefs: this.hireModelPrefs });
-    // #58: the new floor waits in the lot; the Buildings panel opens on its Move menu.
-    this.addFloor = new AddFloorDialog(o.host, { ...dialogHost, added: (s) => this.panels.openBuildings(s) });
+    // #58: a new session's floor waits in the lot: the Buildings panel opens on its Move menu. A virtual floor already
+    // stands in its session's building (decision 4): a toast says where.
+    this.addFloor = new AddFloorDialog(o.host, {
+      ...dialogHost,
+      added: (id, kind) => (kind === 'session' ? this.panels.openBuildings(id) : this.virtualFloorAdded(id)),
+      here: () => {
+        const f = this.hereFloor();
+        return f ? (this.store.floors.get(f)?.base_session ?? null) : null;
+      },
+    });
     this.startRun = new StartRunDialog(o.host, {
       ...hireHost,
       hirePrefs: this.hirePrefs,
@@ -1661,6 +1682,14 @@ export class App {
     this.panels.openBuildings();
   }
 
+  /** #58 stage 4: a virtual floor added from the city: where it stands. */
+  private virtualFloorAdded(id: string): void {
+    const f = this.store.floors.get(id);
+    if (!f) return;
+    const b = f.building !== null ? this.store.buildings.get(f.building) : undefined;
+    this.hud.toast(`Added ${this.store.floorName(id)} on herdr session ${f.base_session}, in ${b ? b.name : 'the Unassigned lot'}.`, 5000, 'info');
+  }
+
   /** #58: the Add floor dialog (over the Buildings panel when opened from it). */
   openAddFloor(from: HTMLElement | null = null): void {
     this.walker.release();
@@ -1726,6 +1755,8 @@ export class App {
     const fv = this.store.floorView(floor);
     if (!fv || this.transitioning) return;
     const swap = () => {
+      // #58: the floor you enter is listed while you are on it, hidden or not (pinned before its building is read).
+      if (this.store.pin(floor)) this.city.build(this.store.city());
       // Read the floor again: events keep arriving while the doors close, and
       // until the office exists nothing else applies them to it.
       const now = this.store.floorView(floor);
@@ -1811,11 +1842,13 @@ export class App {
       this.endDeliveries(null); // M6c
       this.building = null;
       this.mode = 'city';
+      // #58: a hidden floor you were on leaves the lists with you (its building is looked up first).
+      const b = floor ? this.city.buildingOf(floor) : null;
+      if (this.store.pin(null)) this.city.build(this.store.city());
       this.setPlan(false);
       this.hud.setMode('city');
       this.city.setVisible(true);
       this.refreshTopbar();
-      const b = floor ? this.city.buildingOf(floor) : null;
       if (b !== null) this.focusBuilding(b, false);
       this.statusDirty = true;
       this.cameraMoved = true;

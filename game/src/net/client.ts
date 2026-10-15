@@ -125,7 +125,8 @@ export const DEFAULT_COMMAND_TIMEOUT_MS = 10_000;
 
 /**
  * Commands whose ack can take long. `floor.wake` is acked once every worker
- * resumed or fell back (~20 s worst case); progress shows through events
+ * resumed or fell back (~45 s worst case: a sleep still ending 15 s, the wake
+ * 10 s, two resume rounds of 10 s); progress shows through events
  * (`transition`, `resume`) meanwhile, so the wait here is generous.
  */
 export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {

@@ -19,3 +19,11 @@
   font-size: 14px;
   letter-spacing: 0;
 }
+/* A virtual floor's name is free text the game alone shows: the body face, not herdr's. */
+.desk-dlg .af-name--free {
+  font-family: inherit;
+  font-size: inherit;
+}
+.dd-field.af-base[hidden] {
+  display: none;
+}

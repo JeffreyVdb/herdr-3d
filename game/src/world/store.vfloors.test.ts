@@ -197,6 +197,66 @@ describe('WorldStore: virtual floors (#58)', () => {
       s.applyEvent({ t: 'floor.upsert', seq: 12, floor: floor('other', { index: 2, hidden: false }) });
       expect(s.stack('b1').map((f) => f.id)).toEqual(['main', V, 'other']);
     });
+
+    it('keeps the floor you stand on listed while it is hidden and empty (stage 4: hiding never yanks you off it)', () => {
+      const s = new WorldStore(1000);
+      s.applySnapshot(hidden([worker('b', V, 'main'), worker('tui', 'main')]));
+      expect(s.pin('main')).toBe(false); // it shows anyway: a worker is on it
+      s.applyEvent({ t: 'worker.removed', seq: 11, id: 'tui', session: 'main', floor_id: 'main', workspace_id: 'ws-tui' });
+      expect(s.stack('b1').map((f) => f.id)).toEqual(['main', V]);
+      expect(s.level('main')).toEqual({ number: 2, count: 2 });
+      // Leaving it: the lists change (the city rebuilds).
+      const v = s.structureVersion;
+      expect(s.pin(null)).toBe(true);
+      expect(s.structureVersion).toBe(v + 1);
+      expect(s.stack('b1').map((f) => f.id)).toEqual([V]);
+      // A ?floor= link to a hidden floor: pinned before the building is read, it has a storey.
+      expect(s.pin('lot')).toBe(true);
+      expect(s.stack(null).map((f) => f.id)).toEqual(['lot']);
+      expect(s.pin('lot')).toBe(false);
+    });
+  });
+
+  describe('Settings → Floors rows (stage 4)', () => {
+    it('groups the floors by session, the real floor first, with who works on each', () => {
+      const s = new WorldStore(1000);
+      s.applySnapshot(
+        snap({
+          floors: [floor('main'), vfloor(W, 'Backend', 'main', { index: 2, hidden: true }), vfloor(V, 'Frontend', 'main', { index: 1 }), floor('other', { index: 3, state: 'asleep' })],
+          workers: [worker('a', 'main', 'main', { name: 'Nibble' }), worker('c', V, 'main', { desk_index: 3, name: 'Pixel' }), worker('b', V, 'main', { desk_index: 0, name: 'Mochi' })],
+        }),
+      );
+      expect(s.floorList.groups).toEqual([
+        {
+          session: 'main',
+          real: { id: 'main', name: 'main', session: 'main', virtual: false, hidden: false, asleep: false, workers: ['Nibble'] },
+          virtual: [
+            { id: W, name: 'Backend', session: 'main', virtual: true, hidden: true, asleep: false, workers: [] },
+            { id: V, name: 'Frontend', session: 'main', virtual: true, hidden: false, asleep: false, workers: ['Mochi', 'Pixel'] },
+          ],
+        },
+        { session: 'other', real: { id: 'other', name: 'other', session: 'other', virtual: false, hidden: false, asleep: true, workers: [] }, virtual: [] },
+      ]);
+      expect(s.floorList.row(V)?.name).toBe('Frontend');
+      expect(s.floorList.row('gone')).toBeNull();
+    });
+
+    it('tells its listeners when the rows change, not on a worker’s status', () => {
+      const s = new WorldStore(1000);
+      s.applySnapshot(snap());
+      let told = 0;
+      s.floorList.onChange(() => told++);
+      s.applyEvent({ t: 'worker.status', seq: 11, id: 'b', session: 'main', workspace_id: 'ws-b', status: 'working' });
+      expect(told).toBe(0);
+      s.applyEvent({ t: 'floor.upsert', seq: 12, floor: vfloor(V, 'Front end', 'main', { index: 1 }) });
+      expect(told).toBe(1);
+      expect(s.floorList.row(V)?.name).toBe('Front end');
+      s.applyEvent({ t: 'worker.upsert', seq: 13, worker: worker('b', V, 'main', { desk_index: 0, name: 'Renamed' }) });
+      expect(told).toBe(2);
+      s.applyEvent({ t: 'floor.removed', seq: 14, session: 'main', floor_id: V });
+      expect(told).toBe(3);
+      expect(s.floorList.row(V)).toBeNull();
+    });
   });
 
   it('lists a building’s floors that share a session (the floors a sleep puts to sleep)', () => {

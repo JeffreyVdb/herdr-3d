@@ -1255,3 +1255,119 @@ dialog.settings {
     flex-wrap: wrap;
   }
 }
+
+/* #58 stage 4: Settings → Floors. One ruled group per herdr session: its own floor first, named in the code face (a
+ * herdr session name, typed as such), then the virtual floors on it under a hairline guide, named in the body face, so
+ * herdr's names and the player's own read apart. Rename and Delete open in place under their row. */
+.settings-fl .settings-role-head {
+  align-items: center;
+  margin-bottom: 0;
+}
+.settings-fl-sessions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.settings-fl-sessions[hidden],
+.settings-fl-empty[hidden],
+.settings-fl .settings-used[hidden] {
+  display: none;
+}
+.settings-fl-session {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.settings-fl-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.settings-fl-row {
+  padding: 6px 0;
+}
+.settings-fl-row[data-virtual] {
+  margin-left: 9px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+.settings-fl-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.settings-fl-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.settings-fl-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-fl-name--session {
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.settings-fl-meta {
+  color: var(--text-2);
+  font-size: 12px;
+}
+.settings-fl-tools {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+.settings-fl-tools .btn:disabled,
+.settings-fl-edit .btn:disabled,
+.settings-fl-confirm .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.settings-fl-row > .settings-field-hint {
+  margin-top: 4px;
+}
+.settings-fl-edit,
+.settings-fl-confirm {
+  margin-top: 8px;
+}
+.settings-fl-confirm {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--well);
+}
+.settings-fl-confirm-title {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+.settings-fl-confirm .settings-field-hint {
+  margin-top: 4px;
+}
+.settings-fl-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.settings-fl .settings-status {
+  margin: -6px 0 0;
+}
+@media (max-width: 600px) {
+  .settings-fl .btn--sm {
+    min-height: 44px;
+  }
+  .settings-fl-line {
+    flex-wrap: wrap;
+  }
+}

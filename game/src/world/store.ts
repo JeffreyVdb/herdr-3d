@@ -38,6 +38,7 @@ import { RepoDiscoveryBook } from './repoDiscovery';
 import { RepoRefsBook } from './repoRefs';
 import { KaneoBook } from './kaneo';
 import { HandoffBook } from './handoff';
+import { floorGroups, FloorListBook } from './floorList';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
@@ -239,6 +240,10 @@ export class WorldStore {
   readonly repoDiscovery = new RepoDiscoveryBook(); // #54
   readonly kaneo = new KaneoBook(); // #184
   readonly handoffs = new HandoffBook(); // #223
+  /** #58 stage 4: Settings → Floors' rows, refreshed after every change that moves floors or workers. */
+  readonly floorList = new FloorListBook(() => floorGroups(this.floors.values(), this.workers.values()));
+  /** #58: the floor you stand on, listed even while hidden and empty (see `pin`). */
+  private pinned: string | null = null;
   /** #106: the inbox's dismissed finished rows, worker id → the `status_since` of the done episode hidden. */
   readonly inboxDismissed = new Map<string, number>();
   private readonly localDesks = new Map<string, number>();
@@ -293,6 +298,7 @@ export class WorldStore {
     const c = emptyChange();
     c.structure = true;
     for (const f of this.floors.keys()) c.floors.add(f);
+    this.floorList.refresh();
     return c;
   }
 
@@ -464,6 +470,7 @@ export class WorldStore {
       }
     }
     if (c.structure) this.structureVersion++;
+    if (c.structure || c.workers.size) this.floorList.refresh();
     return c;
   }
 
@@ -529,13 +536,35 @@ export class WorldStore {
   }
 
   /**
-   * #58 decision 2: a floor the lists show: not hidden, or hidden with a worker on it (an unattributed workspace on a
-   * hidden base floor shows it again).
+   * #58: keeps floor `id` in the lists while you stand on it (null: none), so hiding it, or its last worker leaving,
+   * never takes the floor away under you; a `?floor=` link to a hidden floor opens it too. True when the lists change.
    */
-  private shown(f: StoredFloor): boolean {
+  pin(id: string | null): boolean {
+    if (id === this.pinned) return false;
+    // Only a floor that shows by nothing but the pin comes or goes with it.
+    const pinOnly = (x: string | null) => {
+      const f = x === null ? undefined : this.floors.get(x);
+      return !!f && !this.shownUnpinned(f);
+    };
+    const changed = pinOnly(this.pinned) || pinOnly(id);
+    this.pinned = id;
+    if (changed) this.structureVersion++;
+    return changed;
+  }
+
+  /** Whether a floor shows by its own setting and workers, pin aside. */
+  private shownUnpinned(f: StoredFloor): boolean {
     if (!f.hidden) return true;
     for (const w of this.workers.values()) if (w.floor === f.id) return true;
     return false;
+  }
+
+  /**
+   * #58 decision 2: a floor the lists show: not hidden, or hidden with a worker on it (an unattributed workspace on a
+   * hidden base floor shows it again), or the floor you stand on (`pin`).
+   */
+  private shown(f: StoredFloor): boolean {
+    return f.id === this.pinned || this.shownUnpinned(f);
   }
 
   /** Floor position within its building: number counts from the ground. */
