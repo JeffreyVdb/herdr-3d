@@ -656,7 +656,7 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
     await page.addInitScript((t) => localStorage.setItem('h3d.theme.ui', t), theme);
     await openGame(page, 'demo-m5', '&prints=0', SIM());
     await withReadings(page);
-    const chipBefore = (await page.evaluate(() => window.__h3d.inbox()))?.shown;
+    await expect.poll(async () => (await page.evaluate(() => window.__h3d.inbox()))?.shown).toBe(true);
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Settings' });
@@ -679,7 +679,7 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
     await expect(dialog).toBeHidden();
     await expect(limits(page)).toHaveAttribute('data-dock', '');
     await expect(page.locator('.lm-strip')).toBeVisible();
-    await expect.poll(async () => (await page.evaluate(() => window.__h3d.inbox()))?.shown).toBe(chipBefore);
+    await expect.poll(async () => (await page.evaluate(() => window.__h3d.inbox()))?.shown).toBe(true);
     clean();
   });
 }

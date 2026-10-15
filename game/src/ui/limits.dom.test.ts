@@ -278,7 +278,7 @@ describe('the plan-limits plate over the command palette (#147)', () => {
 // #49: Settings is a workspace now (up to 1200 px wide, 90 % of the height): a screen for the corner, so the plate and the
 // inbox chip step out of it like they do for the boards; the About window, its small sibling, keeps the plate above it.
 describe('the plan-limits plate over Settings (#49)', () => {
-  /** Settings on a 1366 px laptop: 1200 px, centred, leaves 83 px right of it. */
+  /** The gutter Settings (1200 px, centred) leaves on a 1366 px laptop: 83 px right of it. */
   const SETTINGS_RIGHT = WIDTH - 83;
 
   it('Settings is a screen for the corner; the About window is not', async () => {
