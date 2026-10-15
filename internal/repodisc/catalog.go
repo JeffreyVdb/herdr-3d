@@ -58,8 +58,9 @@ func (r Repo) Name() string {
 	return filepath.Base(r.Path())
 }
 
-// GitHubID is the identity of a GitHub "owner/repo" (GitHub ignores case).
-func GitHubID(repo string) string { return "gh:" + strings.ToLower(repo) }
+// GitHubID is the identity of a GitHub "owner/repo", however it is spelled:
+// GitHub ignores case and a ".git" suffix.
+func GitHubID(repo string) string { return "gh:" + strings.TrimSuffix(strings.ToLower(repo), ".git") }
 
 // Catalog is an immutable snapshot of the discovered repositories. A nil
 // Catalog is empty.

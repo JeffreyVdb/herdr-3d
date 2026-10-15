@@ -107,3 +107,26 @@ func TestResolveRepoRefsRoots(t *testing.T) {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
+
+// #54 review: a floor's repository spelled with a ".git" suffix (and
+// another case) is the discovered repository its origin names: one row,
+// the floor's, with the discovered checkout; so is a folder-only floor's.
+func TestMergeReposGitSuffix(t *testing.T) {
+	cat := repodisc.NewCatalog(1, []repodisc.Checkout{
+		withGH(co("/d/api", "/d/api/.git", "https://github.com/acme/api"), "acme/api"),
+		withGH(co("/d/web", "/d/web/.git", "git@github.com:acme/web.git"), "acme/web"),
+	})
+	got := mergeRepos([]floorRepo{
+		{ref: proto.RepoRef{Session: "api", Repo: "ACME/api.git"}},
+		{ref: proto.RepoRef{Session: "web", Repo: "acme/web.GIT", Dir: "/elsewhere"}},
+		{ref: proto.RepoRef{Session: "web2", Dir: "/x/sub"}, root: "/x", gh: "Acme/Web.git"},
+	}, cat)
+	want := []proto.RepoRef{
+		{ID: "gh:acme/api", Source: "floor", Session: "api", Repo: "ACME/api.git", Dir: "/d/api", Cloned: true, Checkouts: 1},
+		// The folder-only floor's checkout wins, as ever: one row all the same.
+		{ID: "gh:acme/web", Source: "floor", Session: "web2", Repo: "acme/web.GIT", Dir: "/x/sub", Cloned: true, Checkouts: 1},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("merged:\n got %+v\nwant %+v", got, want)
+	}
+}

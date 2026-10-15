@@ -174,6 +174,11 @@ func TestCatalog(t *testing.T) {
 	if r, ok := cat.ByPath("/w/x-feature"); !ok || r.ID != "gh:owner/x" || r.Path() != "/a/x" || r.Name() != "X" {
 		t.Fatalf("ByPath = %+v, %v", r, ok)
 	}
+	for _, s := range []string{"OWNER/x", "owner/x.git", "Owner/X.GIT"} { // GitHub ignores case and a .git suffix
+		if id := GitHubID(s); id != "gh:owner/x" {
+			t.Fatalf("GitHubID(%q) = %q", s, id)
+		}
+	}
 	if r, ok := cat.Repo(GitHubID("OWNER/x")); !ok || !r.Checkouts[0].Main {
 		t.Fatalf("Repo = %+v, %v", r, ok)
 	}
