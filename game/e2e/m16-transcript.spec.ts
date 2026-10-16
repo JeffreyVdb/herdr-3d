@@ -61,6 +61,8 @@ async function imagesInTheConversation(page: Page, tx: ReturnType<Page['locator'
   }
   const asked = async () => (await watchLog(page)).filter((c) => c.t === 'transcript.image').map((c) => c.args as { hash: string; size: string });
   expect((await asked()).every((a) => a.size === 'thumb')).toBe(true);
+  // The strips further down that scrolled into view ask for theirs too: each has its answer before the check.
+  await expect.poll(async () => (await watchLog(page)).filter((c) => c.t === 'transcript.image').every((c) => c.result)).toBe(true);
   expect((await watchLog(page)).filter((c) => c.t === 'transcript.image').every((c) => c.result?.ok)).toBe(true);
 
   // #70: a Read of a PNG shows its images collapsed, under its header, with no click; opened, the row shows its text
