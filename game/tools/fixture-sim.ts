@@ -34,6 +34,7 @@ import { CrewSim } from './fixture-crew.ts';
 // M7: the issues and pull request boards (`board.watch`, `sim.boards`, `simfail=no_m7`).
 import { BoardSim } from './fixture-boards.ts';
 import { KaneoSim, type KaneoMode } from './fixture-kaneo.ts';
+import { TelegramSim, type TelegramMode } from './fixture-telegram.ts';
 // M10: the plan limits (`limits.refresh`, `simlimits=<scenario>`, `simfail=no_m10`).
 import { LimitsSim } from './fixture-limits.ts';
 // #92: the AI integration (`ai.*`, `simjev=<url>`, `simai=off`, `simfail=no_ai`).
@@ -109,6 +110,9 @@ export interface SimOptions {
   /** #184: the Kaneo connection to start with (`simkaneo=off|connected|unavailable|old`, tools/fixture-kaneo.ts), and how long its slow answers take (`simkaneoslow=<ms>`). */
   kaneo?: KaneoMode;
   kaneoSlowMs?: number;
+  /** #11: the Telegram notifications to start with (`simtelegram=off|token|paired|on|env|old`, tools/fixture-telegram.ts), and when a pairing's code arrives (`simtelegrampair=<ms>`; absent: only by `sim.telegram {pair: true}`). */
+  telegram?: TelegramMode;
+  telegramPairMs?: number;
   /** #171: the transcript timeline every watch gets (`simtx=<name>`, default the fixture's name; tools/fixture-transcript.ts). */
   transcript?: string;
   /** #223: this many handoffs in the first floor's cabinet to start with (`simhandoffs=<n>`). */
@@ -403,6 +407,23 @@ export class SimWorld {
       o.kaneo ?? 'off',
       o.kaneoSlowMs ?? 1500,
     );
+    this.telegram = new TelegramSim(
+      {
+        emit: (send, m) => this.emit(send, m),
+        error: (code, message) => new CmdError(code, message),
+        later: (fn, ms) => {
+          const h = this.setT(() => {
+            this.timers.delete(h);
+            fn();
+          }, ms);
+          this.timers.add(h);
+          return h;
+        },
+        now: this.now,
+      },
+      o.telegram ?? 'off',
+      o.telegramPairMs ?? null,
+    );
   }
 
   /** M10: the plan limits (tools/fixture-limits.ts). */
@@ -435,6 +456,8 @@ export class SimWorld {
   private readonly boards: BoardSim;
   /** #184: the Kaneo connection and Kaneo floors' boards (tools/fixture-kaneo.ts). */
   private readonly kaneo: KaneoSim;
+  /** #11: the Telegram notifications (tools/fixture-telegram.ts). */
+  private readonly telegram: TelegramSim;
 
   /** M6 start: presets and runs (tools/fixture-start.ts). */
   private readonly start6: StartSim;
@@ -554,6 +577,7 @@ export class SimWorld {
     this.codexServer.decorate(world); // #155
     this.repos.decorate(world); // #247
     this.kaneo.decorate(world); // #184
+    this.telegram.decorate(world); // #11
     this.handoffs.decorate(world); // #223
     this.inbox.decorate(world); // #106
     this.share.decorate(world); // M13
@@ -678,6 +702,7 @@ export class SimWorld {
       if (screens.handle(m.t, a, send, ack, (code, message) => send({ t: 'error', req_id: reqId, code, message }))) return;
       if (this.start6.handle(m.t, a, send, ack, fail)) return;
       if (this.kaneo.handle(m.t, a, send, ack, fail)) return; // #184: a Kaneo floor's board, before the GitHub ones
+      if (this.telegram.handle(m.t, a, send, ack, fail)) return; // #11
       if (this.boards.handle(m.t, a, send, ack, fail)) return;
       if (this.limits.handle(m.t, send, ack)) return;
       if (this.host.handle(m.t, a, send, ack)) return; // #74

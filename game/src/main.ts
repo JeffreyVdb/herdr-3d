@@ -316,6 +316,8 @@ export interface H3DDebug {
   simBoards(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #184: the fixture simulator's `sim.kaneo` (make a Kaneo board's polls fail, the next placed move stale, …). */
   simKaneo(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #11: the fixture simulator's `sim.telegram` (pair now, expire the code, show a conflict, make tests blocked). */
+  simTelegram(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #74: the fixture simulator's `sim.host` (script the host's numbers) and `sim.host_log` (the commands and frames of this connection). */
   simHost(t: 'sim.host' | 'sim.host_log', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M17: the light as shown (`daylight`, eased) and its `target`, the zone and where it comes from, the latitude, whether the time is pinned, the office lamps and what the wall clock's face shows. */
@@ -627,6 +629,11 @@ const h3d: H3DDebug = {
   simKaneo: async (args) => {
     if (!app) return { ok: false, code: 'not_started' };
     const r = await app.client.request('sim.kaneo' as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simTelegram: async (args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request('sim.telegram' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   simHost: async (t, args) => {

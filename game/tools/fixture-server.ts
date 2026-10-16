@@ -233,6 +233,9 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // #184: the Kaneo connection to start with, and how slow its slow answers are (tools/fixture-kaneo.ts).
             ...(['off', 'connected', 'unavailable', 'old'].includes(q.get('simkaneo') ?? '') ? { kaneo: q.get('simkaneo') as 'off' | 'connected' | 'unavailable' | 'old' } : {}),
             ...(q.get('simkaneoslow') !== null ? { kaneoSlowMs: Math.max(0, Number(q.get('simkaneoslow')) || 0) } : {}),
+            // #11: the Telegram notifications to start with, and when a pairing's code arrives (tools/fixture-telegram.ts).
+            ...(['off', 'token', 'paired', 'on', 'env', 'old'].includes(q.get('simtelegram') ?? '') ? { telegram: q.get('simtelegram') as 'off' | 'token' | 'paired' | 'on' | 'env' | 'old' } : {}),
+            ...(q.get('simtelegrampair') !== null ? { telegramPairMs: Math.max(0, Number(q.get('simtelegrampair')) || 0) } : {}),
             // #171: the transcript timeline (tools/fixture-transcript.ts): demo-h171's own code changes.
             transcript: q.get('simtx') || name,
             // #223: the filing cabinet starts with this many handoffs on the first floor (tools/fixture-handoff.ts).
