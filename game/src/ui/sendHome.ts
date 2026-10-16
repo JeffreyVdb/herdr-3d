@@ -1,5 +1,5 @@
 import type { FireAck, FirePrepare, FireWorktree, PackupRange, WrapUp, WrapUpAck } from '../net/protocol';
-import { fireArgs, fireBlocked, fireOptions, leftovers, type FireOptions } from '../world/hire';
+import { fireArgs, fireBlocked, fireOptions, leftovers, scheduleHold, type FireOptions } from '../world/hire';
 import { armedText, defaultChoice, WRAPUP_AGAIN_PROMPT, WRAPUP_PROMPT, worktreeFate, wrapUpOf } from '../world/wrapup';
 import { packupChoice, packupPrompt, struckParts } from '../world/packup';
 import { h, icon, ICON } from './dom';
@@ -672,8 +672,8 @@ export class SendHomeDialog {
       return;
     }
     this.setStatus(msg, true);
-    // The tree may have changed since the prepare: look again.
-    if (r.code === 'not_clean') {
+    // The tree may have changed since the prepare, or a scheduled agent came to hold the worktree (#63): look again.
+    if (r.code === 'not_clean' || (r.code === 'invalid_state' && scheduleHold(r.message))) {
       this.choice = 'keep';
       void this.prepare().then(() => this.setStatus(msg, true));
       return;
@@ -715,7 +715,7 @@ export class SendHomeDialog {
       return;
     }
     this.setStatus(msg, true);
-    if (r.code === 'not_clean') {
+    if (r.code === 'not_clean' || (r.code === 'invalid_state' && scheduleHold(r.message))) {
       void this.prepare().then(() => this.setStatus(msg, true));
       return;
     }

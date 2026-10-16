@@ -49,6 +49,8 @@ type fakeFloor struct {
 	noMainCheckout bool
 	closeErrs      map[string]error // workspace → CloseWorkspace's error
 	onKey          func(pane string, key herdr.Key)
+	removeGate     chan struct{}            // #63: RemoveWorktree waits for it when set
+	removeErr      error                    // #63: RemoveWorktree fails with it (nothing removed)
 	decorate       func(w *world.WorkerObs) // sets what the watcher derives (role, run) of a new workspace
 	// fresh is what a fresh read of herdr (Options.Fresh) returns instead of the floor as published.
 	fresh func(published []world.WorkerObs) ([]world.WorkerObs, error)
@@ -285,6 +287,15 @@ func (f *fakeFloor) CloseWorkspace(_ context.Context, session, ws string) error 
 
 func (f *fakeFloor) RemoveWorktree(_ context.Context, session, ws string) error {
 	f.record("remove-worktree %s", ws)
+	f.mu.Lock()
+	gate, err := f.removeGate, f.removeErr
+	f.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
+	if err != nil {
+		return err
+	}
 	f.close(ws)
 	return nil
 }
@@ -303,6 +314,7 @@ type fakeGit struct {
 	def      string
 	sha      string
 	onStatus func(dir string) // called before each Status, outside mu
+	onBranch func(dir string) // #63: called before each CurrentBranch, outside mu
 }
 
 func newFakeGit() *fakeGit {
@@ -366,6 +378,12 @@ func (g *fakeGit) Unpushed(_ context.Context, dir string) (int, error) {
 }
 
 func (g *fakeGit) CurrentBranch(_ context.Context, dir string) (string, error) {
+	g.mu.Lock()
+	hook := g.onBranch
+	g.mu.Unlock()
+	if hook != nil {
+		hook(dir)
+	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if b, ok := g.current[dir]; ok {

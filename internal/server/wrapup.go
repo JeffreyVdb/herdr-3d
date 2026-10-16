@@ -352,11 +352,12 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 	go func() {
 		defer h.wg.Done()
 		// The first of the checks before a worktree is removed: clean and
-		// pushed now (again after CLEAN, and twice in runFire).
-		var why string
+		// pushed now, and held by no schedule (again after CLEAN, and twice
+		// in runFire).
+		var why, held string
 		var cerr error
 		if op.choice != proto.FireKeep {
-			why, cerr = h.fireCheck(ctx, op, &fireReport{})
+			why, held, cerr = h.fireCheck(ctx, op, &fireReport{})
 		}
 		_ = h.doWait(ctx, func() {
 			if h.wrapups[wu.id] != wu {
@@ -365,6 +366,9 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 			switch {
 			case cerr != nil:
 				h.failArm(ctx, wu, prev, fmt.Errorf("%w: %v", errFireFailed, cerr))
+				return
+			case held != "":
+				h.failArm(ctx, wu, prev, fmt.Errorf("%w: %s", errInvalidState, held))
 				return
 			case why != "":
 				h.failArm(ctx, wu, prev, fmt.Errorf("%w: %s: commit and push first, or keep the worktree", errNotClean, why))
@@ -583,19 +587,31 @@ func (h *Hub) tookOver(ctx context.Context, id string) {
 }
 
 // wrapUpClean checks the tree once more and sends the worker home with the
-// armed choice: the same runFire as worker.fire, strict.
+// armed choice: the same runFire as worker.fire, strict. #63: a worktree a
+// schedule holds now is kept instead, with a note.
 func (h *Hub) wrapUpClean(ctx context.Context, wu *wrapUp) {
+	held := "" // once held, kept: the send home is a keep
 	start := func() (*fireOp, *floorState, error) {
 		w, f, err := h.fireWorker(wu.id)
 		if err != nil {
 			return nil, nil, err
 		}
-		op, err := h.newFireOp(ctx, w, f, wu.worktree)
+		choice := wu.worktree
+		if held == "" && choice != proto.FireKeep {
+			held = h.scheduleHolds().of(checkoutOf(w))
+		}
+		if held != "" {
+			choice = proto.FireKeep
+		}
+		op, err := h.newFireOp(ctx, w, f, choice)
 		if err != nil {
 			return nil, nil, err
 		}
 		op.strict = true
 		op.wrapup = &fireWrapUp{Nonce: wu.nonce, Verdict: transcript.WrapUpClean}
+		if held != "" {
+			op.wrapup.Reason = heldKept(held)
+		}
 		return op, f, nil
 	}
 	op, _, err := start()
@@ -610,10 +626,10 @@ func (h *Hub) wrapUpClean(ctx context.Context, wu *wrapUp) {
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
-		var why string
+		var why, hold string
 		var cerr error
 		if op.choice != proto.FireKeep {
-			why, cerr = h.fireCheck(ctx, op, &fireReport{})
+			why, hold, cerr = h.fireCheck(ctx, op, &fireReport{})
 		}
 		_ = h.doWait(ctx, func() {
 			if h.wrapups[wu.id] != wu || wu.state != proto.WrapUpArmed {
@@ -626,6 +642,8 @@ func (h *Hub) wrapUpClean(ctx context.Context, wu *wrapUp) {
 			case cerr != nil:
 				h.needsYou(ctx, wu, "it reported CLEAN, but reading the git state failed: "+cerr.Error())
 				return
+			case hold != "":
+				held = hold // sent home keeping it, below
 			case why != "":
 				h.needsYou(ctx, wu, "it reported CLEAN, but the worktree is not clean and pushed any more ("+why+"): nothing was removed")
 				return
@@ -652,7 +670,8 @@ func (h *Hub) wrapUpClean(ctx context.Context, wu *wrapUp) {
 			op.auditID = auditID
 			wu.firing = true
 			h.beginFire(ctx, op, f)
-			h.log.Info("send home after wrap-up started", "session", op.session, "worker", op.id, "worktree", op.choice)
+			h.log.Info("send home after wrap-up started", "session", op.session, "worker", op.id, "worktree", op.choice,
+				"note", op.wrapup.Reason)
 		})
 	}()
 }

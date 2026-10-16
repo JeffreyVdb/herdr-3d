@@ -46,6 +46,9 @@ type scheduleState struct {
 	// listed is the sessions discovery last listed (nil: none yet, so
 	// the floors are not known and nothing fires).
 	listed map[string]bool
+	// #63: worker id → the canonical top of the worktree its send home is
+	// removing now (reserveRemoval).
+	removing map[string]string
 }
 
 // loadSchedules reads the schedules in view and resolves the ones a
@@ -474,6 +477,9 @@ func (h *Hub) scheduleCommand(ctx context.Context, cmd proto.Command) (store.Sch
 		if err := h.applyScheduleSpec(&s, a, now); err != nil {
 			return store.Schedule{}, err
 		}
+		if err := h.removingRefusal(s.Cwd); err != nil {
+			return store.Schedule{}, err
+		}
 		if err := h.st.AddSchedule(ctx, s); err != nil {
 			return store.Schedule{}, fmt.Errorf("saving the schedule: %w", err)
 		}
@@ -539,11 +545,20 @@ func (h *Hub) scheduleCommand(ctx context.Context, cmd proto.Command) (store.Sch
 		if err := h.applyScheduleSpec(&s, spec, now); err != nil {
 			return store.Schedule{}, err
 		}
+		if err := h.removingRefusal(s.Cwd); err != nil {
+			return store.Schedule{}, err
+		}
 	case proto.CmdScheduleCancel:
 		s.State, s.StateReason = store.ScheduleCancelled, ""
 	case proto.CmdScheduleDismiss:
 		s.DismissedAt = now.UnixMilli()
 	case proto.CmdScheduleRunNow, proto.CmdScheduleRetry:
+		// #63: a retry that waits would hold its worktree again.
+		if cmd.T == proto.CmdScheduleRetry {
+			if err := h.removingRefusal(s.Cwd); err != nil {
+				return store.Schedule{}, err
+			}
+		}
 		// The same spec, now: no grace, no on_miss. The fire writes where
 		// it got (running, waiting or failed).
 		h.log.Info("schedule fired by hand", "schedule", s.ID, "cmd", cmd.T)

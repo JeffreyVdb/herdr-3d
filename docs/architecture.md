@@ -316,7 +316,10 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   called and settles the schedule from `finishHire`. The bridge picks the first free desk; an asleep floor wakes through
   `wakeFor`, the path a hire on an asleep virtual floor shares. The prompt's handoff line is `handoff.HireTask`, the
   game's Hire from handoff wording (`TestHireTaskIsTheGames` pins the two). No schedule path sends a worker home or
-  deletes anything; a crash while `running` resolves on startup from whether the worker was ever seen.
+  deletes anything; a crash while `running` resolves on startup from whether the worker was ever seen. #63: a
+  `scheduled` or `waiting` schedule holds the linked worktree its `cwd` is in (`internal/server/schedulehold.go`,
+  derived from the schedules on each check, never cached): send-home prepare, fire and wrap-up refuse to delete it, and
+  a wrap-up's CLEAN keeps it instead.
 - **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
   bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
   the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket
