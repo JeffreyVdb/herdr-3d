@@ -7,6 +7,8 @@ package server
 // worker.fire and worker.wrapup refuse a delete, and an armed wrap-up's
 // CLEAN keeps it instead. The hold is read from the schedules each time,
 // never kept, so cancelling, firing or dismissing a schedule releases it.
+// A send home checks it last in the hub step that reserves the worktree
+// for its removal; until that ends no schedule may come to hold it.
 // Removals outside the bridge are not prevented: the schedule then fails
 // when it fires (its cwd is gone).
 
@@ -88,4 +90,44 @@ func canonDir(dir string) string {
 // (/a/wt holds /a/wt/sub, not /a/wt2).
 func inDir(dir, path string) bool {
 	return path == dir || strings.HasPrefix(path, strings.TrimSuffix(dir, string(filepath.Separator))+string(filepath.Separator))
+}
+
+// reserveRemoval is the last hold check before a send home removes the
+// worktree whose top level is top, on the hub goroutine: held says why it
+// may not go; else top is reserved for worker until releaseRemoval, and
+// meanwhile no schedule that would hold it is made (removingRefusal). The
+// check and the reservation are one hub step, so no schedule that holds
+// the worktree is acknowledged between the last check and the removal.
+// In memory only: a restart ends every send home in flight.
+func (h *Hub) reserveRemoval(worker, top string) (held string) {
+	if held = h.scheduleHolds().of(top); held != "" {
+		return held
+	}
+	if h.sc.removing == nil {
+		h.sc.removing = map[string]string{}
+	}
+	h.sc.removing[worker] = canonDir(top)
+	return ""
+}
+
+// releaseRemoval ends worker's reservation, removed or not (hub goroutine).
+func (h *Hub) releaseRemoval(worker string) { delete(h.sc.removing, worker) }
+
+// removingRefusal refuses, busy, a schedule that would hold a worktree a
+// send home is removing now: cwd is its top or under it (hub goroutine).
+func (h *Hub) removingRefusal(cwd string) error {
+	if len(h.sc.removing) == 0 {
+		return nil
+	}
+	cwd = canonDir(cwd)
+	for id, top := range h.sc.removing {
+		if inDir(top, cwd) {
+			name := id
+			if w := h.workers[id]; w != nil {
+				name = w.Name
+			}
+			return fmt.Errorf("%w: cwd %s is in the worktree %s, which is being removed (sending %s home)", errBusy, cwd, top, name)
+		}
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"slices"
 	"strings"
@@ -275,5 +276,172 @@ func TestWrapUpCleanKeepsAHeldWorktree(t *testing.T) {
 			!strings.Contains(row.Result, `: the worktree is kept"}`) {
 			t.Fatalf("during %v: fire audit = %+v", during, row)
 		}
+	}
+}
+
+// blockAfterExit holds the first CurrentBranch that comes after pane's
+// agent was sent its exit's Enter: the check before the worktree is
+// removed (its hold already read). held closes when it is reached; the
+// check goes on once release is called (at the latest on cleanup).
+func blockAfterExit(t *testing.T, git *fakeGit, fl *fakeFloor, pane string) (held chan struct{}, release func()) {
+	t.Helper()
+	held, gate := make(chan struct{}), make(chan struct{})
+	var once, opened sync.Once
+	release = func() { opened.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	git.mu.Lock()
+	git.onBranch = func(string) {
+		if slices.Contains(fl.Calls(), "key "+pane+" enter") {
+			once.Do(func() { close(held); <-gate })
+		}
+	}
+	git.mu.Unlock()
+	return held, release
+}
+
+func waitClosed(t *testing.T, ch chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s not reached", what)
+	}
+}
+
+// R1: a schedule acknowledged while the last git checks before a removal
+// run (after the hold was read) is seen by the hub step that reserves the
+// worktree: worker.fire delete_branch keeps it, with the note.
+func TestScheduleDuringTheLastCheckKeepsTheWorktree(t *testing.T) {
+	t.Parallel()
+	sb, ws := startHoldBridge(t, nil, linkedWorker("w1", "h3d/pixel"))
+	w1 := ws["w1"].ID
+	if err := sb.st.RecordHireBranch(context.Background(), store.HireBranch{WorkerID: w1, Session: "s", RepoRoot: "/home/u/repo",
+		Branch: "h3d/pixel", BaseSHA: sb.git.sha}); err != nil {
+		t.Fatal(err)
+	}
+	other := sb.connect(proto.Hello{Client: "other"})
+	other.snapshot()
+	sb.fl.setProcs("w1:p1", running("claude", ""))
+	held, release := blockAfterExit(t, sb.git, sb.fl, "w1:p1")
+	fired := make(chan msg, 1)
+	go func() {
+		_, m := sb.c.command(proto.CmdWorkerFire, "fire", proto.WorkerFireArgs{ID: w1, Worktree: proto.FireDeleteBranch})
+		fired <- m
+	}()
+	waitClosed(t, held, "the check after the exit")
+	a := spec(t0.Add(time.Hour))
+	a.Title, a.Cwd = "Just in time", holdWT1+"/docs"
+	other.mustAck(proto.CmdScheduleCreate, a)
+	release()
+	m := <-fired
+	res := ackData[proto.FireResult](t, m)
+	if res.Worktree != proto.WorktreeKept || res.Note != "used by scheduled agent 'Just in time' at 2026-10-16 13:00 CEST: the worktree is kept" {
+		t.Fatalf("held during the last check: %s", m.raw)
+	}
+	if calls := sb.fl.Calls(); !slices.Contains(calls, "close w1") || slices.Contains(calls, "remove-worktree w1") {
+		t.Fatalf("herdr calls = %q", calls)
+	}
+	if slices.ContainsFunc(sb.git.Calls(), func(c string) bool { return strings.HasPrefix(c, "branch -D") }) {
+		t.Fatalf("git calls = %q", sb.git.Calls())
+	}
+}
+
+// R1: so does an armed wrap-up's CLEAN: it falls back to keep.
+func TestWrapUpScheduleDuringTheLastCheckKeeps(t *testing.T) {
+	t.Parallel()
+	wb := startWrapBridge(t, "", "", nil)
+	c := wb.connect(proto.Hello{})
+	c.snapshot()
+	nonce := wb.arm(t, c, "w1", proto.FireDeleteBranch)
+	text, _ := wb.prompted(t, "w1:p1")
+	held, release := blockAfterExit(t, wb.git, wb.fl, "w1:p1")
+	wb.reply(t, text, "H3D-WRAPUP "+nonce+" CLEAN")
+	waitClosed(t, held, "the check after the exit")
+	sp := spec(time.Now().Add(time.Hour))
+	sp.Cwd = wrapWT1
+	c.mustAck(proto.CmdScheduleCreate, sp)
+	release()
+	removedSentHome(c, wb.ids["w1"])
+	if calls := wb.fl.Calls(); slices.Contains(calls, "remove-worktree w1") || !slices.Contains(calls, "close w1") {
+		t.Fatalf("herdr calls = %q", calls)
+	}
+	row := doneRow(t, wb.bridge, proto.CmdWorkerFire)
+	if !row.OK || !strings.Contains(row.Result, `"worktree":"kept"`) ||
+		!strings.Contains(row.Result, `"wrapup":{"nonce":"`+nonce+`","verdict":"clean","reason":"used by scheduled agent 'Soak done' at `) {
+		t.Fatalf("fire audit = %+v", row)
+	}
+}
+
+// While a send home removes a worktree, a schedule that would hold it is
+// refused busy (create, update into it, retry of a failed one); one
+// elsewhere is not. The reservation ends with the removal, whether it
+// worked or not.
+func TestScheduleRefusedWhileItsWorktreeIsRemoved(t *testing.T) {
+	t.Parallel()
+	for _, fails := range []bool{false, true} {
+		var missing atomic.Bool
+		sb, ws := startHoldBridge(t, &missing, linkedWorker("w1", "h3d/pixel"), linkedWorker("w2", "h3d/pixel2"))
+		w1 := ws["w1"].ID
+
+		// A schedule elsewhere to update, and a failed one in the tree to retry.
+		u := spec(t0.Add(3 * time.Hour))
+		u.Title, u.Cwd = "Elsewhere", holdWT2
+		su := sb.create(u)
+		f := spec(t0.Add(time.Hour))
+		f.Title, f.Cwd = "Failed", holdWT1
+		sf := sb.create(f)
+		missing.Store(true)
+		sb.at(t0.Add(time.Hour))
+		sb.schedule(sf.ID, inState(proto.ScheduleFailed))
+		missing.Store(false)
+
+		gate := make(chan struct{})
+		var opened sync.Once
+		open := func() { opened.Do(func() { close(gate) }) }
+		t.Cleanup(open) // a failure must not leave the removal waiting
+		sb.fl.mu.Lock()
+		sb.fl.removeGate = gate
+		if fails {
+			sb.fl.removeErr = errors.New("worktree is locked")
+		}
+		sb.fl.mu.Unlock()
+		fired := make(chan msg, 1)
+		go func() {
+			_, m := sb.c.command(proto.CmdWorkerFire, "fire", proto.WorkerFireArgs{ID: w1, Worktree: proto.FireDelete})
+			fired <- m
+		}()
+		waitFor(t, "the removal", func() bool { return slices.Contains(sb.fl.Calls(), "remove-worktree w1") })
+
+		other := sb.connect(proto.Hello{Client: "other"})
+		other.snapshot()
+		busy := "busy: cwd " + holdWT1 + "/web is in the worktree " + holdWT1 + ", which is being removed (sending " + ws["w1"].Name + " home)"
+		in := spec(t0.Add(2 * time.Hour))
+		in.Title, in.Cwd = "Too soon", holdWT1+"/web"
+		_, m := other.command(proto.CmdScheduleCreate, "create", in)
+		if e := errorOf(m); e.Code != proto.ErrBusy || e.Message != busy {
+			t.Fatalf("fails %v: create during the removal: %s", fails, m.raw)
+		}
+		_, m = other.command(proto.CmdScheduleUpdate, "update", proto.ScheduleUpdateArgs{ID: su.ID, ScheduleSpec: in})
+		if e := errorOf(m); e.Code != proto.ErrBusy || e.Message != busy {
+			t.Fatalf("fails %v: update during the removal: %s", fails, m.raw)
+		}
+		_, m = other.command(proto.CmdScheduleRetry, "retry", proto.ScheduleArgs{ID: sf.ID})
+		if e := errorOf(m); e.Code != proto.ErrBusy || !strings.Contains(e.Message, "which is being removed (sending "+ws["w1"].Name+" home)") {
+			t.Fatalf("fails %v: retry during the removal: %s", fails, m.raw)
+		}
+		sib := spec(t0.Add(2 * time.Hour))
+		sib.Title, sib.Cwd = "Sibling", holdWT2
+		other.mustAck(proto.CmdScheduleCreate, sib)
+
+		open()
+		m = <-fired
+		if fails {
+			if e := errorOf(m); e.Code != proto.ErrFireFailed || !strings.Contains(e.Message, "worktree is locked") {
+				t.Fatalf("failed removal: %s", m.raw)
+			}
+		} else if res := ackData[proto.FireResult](t, m); res.Worktree != proto.WorktreeDeleted {
+			t.Fatalf("removal: %s", m.raw)
+		}
+		sb.create(in) // released
 	}
 }

@@ -1573,6 +1573,8 @@ type fireReport struct {
 	Steps     []string `json:"steps"`
 	// #83: the wrap-up whose CLEAN sent the worker home.
 	WrapUp *fireWrapUp `json:"wrapup,omitempty"`
+	// top is the worktree's top level git last read (fireCheck).
+	top string
 }
 
 // fireWrapUp is the wrap-up behind a send home, in its audit report.
@@ -1597,6 +1599,15 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 		WrapUp: op.wrapup}
 	res := proto.FireResult{Worktree: proto.WorktreeKept}
 	remove := op.choice != proto.FireKeep
+	// #63: a worktree a schedule holds is kept, with a note.
+	keepHeld := func(held string) {
+		remove = false
+		res.Note = heldKept(held)
+		if op.wrapup != nil {
+			op.wrapup.Reason = res.Note
+		}
+		rep.step("%s", res.Note)
+	}
 	if remove {
 		why, held, err := h.fireCheck(ctx, op, rep)
 		switch {
@@ -1604,11 +1615,7 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %v", errFireFailed, err), rep)
 			return
 		case held != "" && op.wrapup != nil:
-			// #63: a wrap-up's CLEAN keeps a held worktree.
-			remove = false
-			res.Note = heldKept(held)
-			op.wrapup.Reason = res.Note
-			rep.step("%s", res.Note)
+			keepHeld(held) // a wrap-up's CLEAN keeps a held worktree
 		case held != "":
 			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %s", errInvalidState, held), rep)
 			return
@@ -1645,13 +1652,7 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 
 	if remove {
 		if why, held, err := h.fireCheck(ctx, op, rep); held != "" {
-			// #63: held while the agent exited: kept, never deleted.
-			remove = false
-			res.Note = heldKept(held)
-			if op.wrapup != nil {
-				op.wrapup.Reason = res.Note
-			}
-			rep.step("%s", res.Note)
+			keepHeld(held) // held while the agent exited: kept, never deleted
 		} else if err != nil || why != "" {
 			if err != nil {
 				why = err.Error()
@@ -1669,8 +1670,28 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 			rep.step("%s", res.Note)
 		}
 	}
+	// release ends the reservation below, before the result goes out.
+	release := func() {
+		if remove {
+			_ = h.doWait(ctx, func() { h.releaseRemoval(op.id) })
+		}
+	}
+	if remove {
+		// #63: the last hold check, and the worktree reserved for its
+		// removal, in one hub step: a schedule acknowledged before it is
+		// seen here, and one after it is refused until the removal ends.
+		held, err := query(ctx, h, func() string { return h.reserveRemoval(op.id, rep.top) })
+		switch {
+		case err != nil:
+			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %v", errFireFailed, err), rep)
+			return
+		case held != "":
+			keepHeld(held)
+		}
+	}
 	if remove {
 		if err := hh.RemoveWorktree(ctx, op.session, op.workspaceID); err != nil {
+			release()
 			h.finishFire(ctx, op, nil, fmt.Errorf("%w: herdr worktree remove: %v", errFireFailed, err), rep)
 			return
 		}
@@ -1683,7 +1704,9 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 		}
 		rep.step("herdr workspace close")
 	}
-	if !awaitOn(ctx, h, op.notify, time.Now().Add(h.opts.SeenTimeout), func() bool { return op.removed }) {
+	gone := awaitOn(ctx, h, op.notify, time.Now().Add(h.opts.SeenTimeout), func() bool { return op.removed })
+	release()
+	if !gone {
 		if ctx.Err() != nil {
 			return
 		}
@@ -1722,7 +1745,7 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 // could not be read. Off the hub goroutine.
 func (h *Hub) fireCheck(ctx context.Context, op *fireOp, rep *fireReport) (why, held string, err error) {
 	t := h.readTree(ctx, op.checkout)
-	rep.Dirty, rep.Unpushed = t.dirty, t.unpushed
+	rep.Dirty, rep.Unpushed, rep.top = t.dirty, t.unpushed, t.top
 	switch {
 	case t.err != nil:
 		return "", "", fmt.Errorf("reading the git state: %v", t.err)
