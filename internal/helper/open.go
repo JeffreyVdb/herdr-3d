@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -22,21 +23,124 @@ import (
 // tunnel (Status.OpenHosts), while it is configured there.
 var DefaultOpenHosts = []string{"github.com"}
 
-// Opener opens an http(s) URL in the user's browser.
+// Opener opens an http(s) URL in the user's browser (SystemOpen: the helper's own, for macOS and Linux).
 type Opener func(ctx context.Context, url string) error
 
-// SystemOpen is the Opener of a Mac helper: `open <url>` (the default browser).
-// Elsewhere there is no browser to reach from here, and it says so.
-func SystemOpen(ctx context.Context, u string) error {
-	if runtime.GOOS != "darwin" {
-		return errors.New("opening a browser needs macOS")
+// SystemOpen is the Opener of the real helper: the platform's own way to open
+// a URL in the user's default browser, `open <url>` on macOS and `xdg-open
+// <url>` on Linux. Any other OS has no way from here, and it says which.
+//
+// Launch completion (#81). `open` returns at once, but `xdg-open` may stay in
+// the foreground for as long as the application it launched lives (it execs
+// or waits on a .desktop launcher when no browser is running), so a process
+// that is still alive is not a failure and must not be killed with a timeout.
+// So the opener waits a short grace window for the command to finish:
+//   - exit 0 inside the window: opened;
+//   - a non-zero exit, or no such executable, inside the window: an error with
+//     the exit code and the first of its output (capped);
+//   - still running at the end of the window: opened. It is left alone and
+//     reaped in the background, so its late exit is not looked at: nobody is
+//     waiting for an answer by then;
+//   - the request's context ending first (the game went away): the wait ends
+//     with that error and the launch in flight is left alone too, never killed.
+//
+// The command gets no stdin and inherits the helper's environment: xdg-open
+// needs the desktop session's (WAYLAND_DISPLAY or DISPLAY, XDG_RUNTIME_DIR,
+// DBUS_SESSION_BUS_ADDRESS, XDG_CURRENT_DESKTOP, PATH), and none is invented
+// here (CONTRIBUTING.md, "Linux user service"). The URL is one argv element,
+// never parsed by a shell.
+var SystemOpen Opener = newSystemOpener(runtime.GOOS, exec.Command, openGrace)
+
+const (
+	// openGrace is how long the opener waits for the command to finish before
+	// it counts a still-running one as launched.
+	openGrace = 3 * time.Second
+	// maxOpenDiag caps the command output kept in an error, and so in the 502
+	// body; the capture buffer behind it is maxOpenCapture.
+	maxOpenDiag    = 512
+	maxOpenCapture = 4 << 10
+)
+
+// newSystemOpener returns the Opener for goos. command builds the *exec.Cmd
+// (exec.Command in production, a stand-in in tests); grace is the wait above.
+func newSystemOpener(goos string, command func(name string, arg ...string) *exec.Cmd, grace time.Duration) Opener {
+	var name string
+	switch goos {
+	case "darwin":
+		name = "open"
+	case "linux":
+		name = "xdg-open"
+	default:
+		return func(context.Context, string) error {
+			return fmt.Errorf("opening a browser is not supported on %s (the helper does it on macOS and Linux)", goos)
+		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if out, err := exec.CommandContext(ctx, "open", u).CombinedOutput(); err != nil {
-		return fmt.Errorf("open: %w: %s", err, strings.TrimSpace(string(out)))
+	// Once the command has exited, descendants that kept its output pipe open
+	// (a browser it started) must not hold the wait: cut them off well inside
+	// the grace window, so the exit status is still reported inside it.
+	settle := min(grace/2, 500*time.Millisecond)
+	return func(ctx context.Context, u string) error {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		out := &boundedBuffer{max: maxOpenCapture}
+		cmd := command(name, u)
+		cmd.Stdout, cmd.Stderr = out, out // the same writer: one pipe, in order
+		cmd.WaitDelay = settle
+		if err := cmd.Start(); err != nil {
+			if errors.Is(err, exec.ErrNotFound) {
+				return fmt.Errorf("%s: %w (install it, or put it on the helper's PATH)", name, err)
+			}
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		done := make(chan error, 1) // buffered: the reaper never blocks on a caller that left
+		go func() { done <- cmd.Wait() }()
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case err := <-done:
+			// ErrWaitDelay: it exited 0 and only a descendant held the pipe.
+			if err == nil || errors.Is(err, exec.ErrWaitDelay) {
+				return nil
+			}
+			return fmt.Errorf("%s: %w: %s", name, err, out.diagnostics())
+		case <-timer.C:
+			return nil // still running: launched (a long-lived opener is not a failure)
+		case <-ctx.Done():
+			return fmt.Errorf("%s: gave up waiting: %w", name, ctx.Err())
+		}
 	}
-	return nil
+}
+
+// boundedBuffer keeps the first max bytes written and discards the rest,
+// always reporting a full write so a chatty command never blocks on its pipe.
+type boundedBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+	max int
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if room := b.max - len(b.buf); room > 0 {
+		b.buf = append(b.buf, p[:min(room, len(p))]...)
+	}
+	return len(p), nil
+}
+
+// diagnostics is the captured output, trimmed and cut to maxOpenDiag bytes.
+func (b *boundedBuffer) diagnostics() string {
+	b.mu.Lock()
+	s := strings.TrimSpace(strings.ToValidUTF8(string(b.buf), "?"))
+	b.mu.Unlock()
+	if len(s) > maxOpenDiag {
+		s = strings.ToValidUTF8(s[:maxOpenDiag], "") + "…"
+	}
+	if s == "" {
+		return "(no output)"
+	}
+	return s
 }
 
 const (

@@ -623,13 +623,18 @@ killed hard, check `herdr session list` for a leftover `h3d-it-*` session (`herd
 - it opens a Chrome `--app` window on `http://127.0.0.1:7777/#token=…` with its own profile (`-no-open` skips that; it also skips it when the game is installed as a Chrome app, see
   `docs/releasing.md`).
   The token is kept in a file and survives restarts, so an open game window reconnects by itself.
-- (M7) `POST /api/open {"url": "https://github.com/…"}` opens a page in the Mac's default browser (`open <url>`), for
+- (M7) `POST /api/open {"url": "https://github.com/…"}` opens a page in the default browser of the machine the helper runs
+  on (`open <url>` on macOS, `xdg-open <url>` on Linux; #81), for
   the game's "Open in GitHub" buttons and the links in issue bodies. Same Host and Origin checks as `/ws`, the token in
   the `X-H3D-Token` header (never in a URL), `Content-Type: application/json`, a body of at most 4 KiB; only `https://`
   URLs on a listed host (`internal/helper.DefaultOpenHosts`: `github.com`; a provider added later adds its host there;
   #184: plus the self-hosted Kaneo instance the bridge names on its `/healthz` (`X-H3D-Open-Hosts`), read through the
   tunnel every check and dropped when the bridge stops naming it), no credentials or port, no control characters. `204` on success, `400` for a refused URL, `403` for a failed check,
-  `502` when `open` failed; `go test ./internal/helper` covers it with a fake opener. A page not served by the helper
+  `502` when the opener failed (no such executable, a non-zero exit: the message carries the exit code and the first
+  512 bytes of its output) or there is no browser to reach. A command still running after 3 s counts as launched
+  (`xdg-open` can stay in the foreground as long as the app it started lives): it is neither killed nor reported as a failure
+  (decision in `docs/decisions.md`, `internal/helper/open.go`). `go test ./internal/helper -run 'Open'` covers it with a fake opener and
+  with fake `xdg-open`/`open` scripts on `PATH`, no real browser. A page not served by the helper
   (Vite on the server) has no endpoint, and the game opens a new window instead (`https://` only); a page the helper
   serves never falls back to a window: a URL it refuses gets a notice and is not opened.
 - (#57) it keeps a **list of bridges** and tunnels the game to one at a time, the one in use. The list is a 0600
@@ -722,6 +727,25 @@ $R/h3d-helper -no-open -listen 127.0.0.1:PORT -bundle game/dist -bridges-file $R
 
 Open the URL it logs, ⌘/Ctrl+P → Switch bridge: Office A's city has five floors (`lab` among them), Office B's three,
 and Nowhere stays `backoff` without holding anything up.
+
+### Linux user service
+
+The helper also runs on Linux (`POST /api/open` opens links with `xdg-open`; the game-window launch stays macOS only, so
+start it with `-no-open`). As a `systemd --user` service, for example `ExecStart=%h/.local/bin/h3d-helper -no-open`,
+`WantedBy=default.target`, the opener needs what `xdg-open` needs from a desktop session, in the **helper's own
+environment** (the helper passes its environment on unchanged and invents none of it):
+
+- `WAYLAND_DISPLAY` or `DISPLAY`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS` and `XDG_CURRENT_DESKTOP`;
+- a `PATH` that finds `xdg-open` (from `xdg-utils`).
+
+A user service gets the user manager's environment, not the compositor's. The compositor must import it at startup
+(`dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP …`, or `systemctl --user
+import-environment …`; Omarchy does this). A helper that started **before** that import has none of it: restart it
+(`systemctl --user restart h3d-helper`) or order it `After=graphical-session.target`. Check with `systemctl --user
+show-environment` (the manager) and `tr '\0' '\n' < /proc/$(systemctl --user show -p MainPID --value h3d-helper)/environ`
+(the helper). Without a session, `/api/open` answers `502` with `xdg-open`'s message. A browser that `xdg-open` starts
+cold is a child of the helper and in its service's cgroup, so restarting the helper closes it.
+See `docs/research/linux-browser-opening.md`.
 
 ## Rule: never serve the game to the Mac over plain `http://<tailnet-host>`
 

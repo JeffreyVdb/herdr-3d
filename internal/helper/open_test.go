@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,6 +48,12 @@ func goodOpen(body string) openReq {
 
 func doOpen(t *testing.T, ts *httptest.Server, r openReq) int {
 	t.Helper()
+	status, _ := doOpenBody(t, ts, r)
+	return status
+}
+
+func doOpenBody(t *testing.T, ts *httptest.Server, r openReq) (int, string) {
+	t.Helper()
 	req, err := http.NewRequest(r.method, ts.URL+"/api/open", strings.NewReader(r.body))
 	if err != nil {
 		t.Fatal(err)
@@ -65,8 +72,9 @@ func doOpen(t *testing.T, ts *httptest.Server, r openReq) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
-	return resp.StatusCode
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b)
 }
 
 func TestOpenAcceptsAllowlistedHTTPS(t *testing.T) {

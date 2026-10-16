@@ -59,7 +59,8 @@ type ServerConfig struct {
 	Dev      *url.URL
 	Log      *slog.Logger
 	// M7: POST /api/open. Open opens an https URL of OpenHosts in the user's
-	// browser (default SystemOpen; OpenHosts default DefaultOpenHosts).
+	// browser (default SystemOpen: `open` on macOS, `xdg-open` on Linux;
+	// OpenHosts default DefaultOpenHosts).
 	Open      Opener
 	OpenHosts []string
 	// #57: the bridge list behind /api/bridges (nil: none, the routes say so).

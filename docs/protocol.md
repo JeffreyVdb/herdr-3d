@@ -79,8 +79,8 @@ use (a local one is `up` or `down`); with no bridge configured it is `{"state":"
 configured: add one in Settings"}` (`503`), and `version` is always the helper's.
 
 The helper also answers one request of its own, for the game's "Open in <provider>" buttons and the links in issue
-bodies (M7): `POST /api/open` with `{"url":"https://github.com/…"}` opens that page in the Mac's default browser
-(`open <url>`). It needs the same `Host` and `Origin`, the token in an `X-H3D-Token` header (never in a URL) and
+bodies (M7): `POST /api/open` with `{"url":"https://github.com/…"}` opens that page in the helper machine's default browser
+(`open <url>` on macOS, `xdg-open <url>` on Linux; #81). It needs the same `Host` and `Origin`, the token in an `X-H3D-Token` header (never in a URL) and
 `Content-Type: application/json`, and accepts only an `https://` URL on a host of its allowlist (`github.com`; every
 provider the bridge learns adds its own host), without credentials or a port. #184: a self-hosted provider's host
 (the saved [Kaneo](#kaneo) instance's web host) is not built in: the bridge names it on its own `GET /healthz`, in the
@@ -2158,7 +2158,7 @@ settings has no `kaneo` key (a bridge before #184: every `kaneo.*` is `unknown_c
   key, **or its request quota**: try again after a minute), `forbidden` (403), `unreachable`, `timeout`, `rate_limited`,
   `provider_failed`, `not_found`, `bad_request`, `unsupported` (no Kaneo client).
 
-The saved instance's web host is what the Mac helper may open "Open in Kaneo" links on (see [Through
+The saved instance's web host is what the helper may open "Open in Kaneo" links on (see [Through
 `h3d-helper`](#through-h3d-helper-the-mac)).
 
 ### Laptops: screens, input, changes and usage
