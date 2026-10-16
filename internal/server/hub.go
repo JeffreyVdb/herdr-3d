@@ -30,6 +30,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/hoststats"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
+	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/repodisc"
@@ -303,6 +304,18 @@ type Options struct {
 	HandoffLLMRoles   handoffllm.Roles
 	HandoffReduce     func(ctx context.Context, in handoffllm.Input) (handoffllm.Payload, error)
 
+	// #11 notifications: NotifyChannel is where messages go (the app's
+	// Telegram channel; nil: none, the notify.* commands fail with
+	// unsupported and the snapshot has no notify), NotifyEnabled the
+	// environment's switch (HERDR_WORLD_NOTIFY_ENABLED; nil: not set),
+	// NotifySettle how long a done waits (default notify.DefaultSettle),
+	// NotifyClock the service's clock (default the wall clock; tests pass a
+	// fake).
+	NotifyChannel notify.Channel
+	NotifyEnabled *bool
+	NotifySettle  time.Duration
+	NotifyClock   notify.Clock
+
 	// #155 shared Codex server: CodexRun is the private directory of the
 	// shared launches' launchers and sockets ("" or no CodexHost: the switch
 	// cannot be turned on), CodexHost their checks, files, processes and
@@ -441,7 +454,8 @@ type Hub struct {
 	dg  map[string]*transcript.Digest
 	dgs digestHub // #118 phase 2: floor overview summaries
 
-	cx codexState // #155 shared Codex server
+	cx codexState  // #155 shared Codex server
+	nt notifyState // #11 notifications
 
 	rr repoRefsState // #247 repositories on other floors
 	rd repoDiscState // #54 repository discovery
@@ -726,6 +740,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initDigest(ctx); err != nil { // #118
 		return nil, err
 	}
+	if err := h.initNotify(ctx); err != nil { // #11
+		return nil, err
+	}
 	if err := h.initBoards(ctx); err != nil { // M7 boards
 		return nil, err
 	}
@@ -799,6 +816,11 @@ func (h *Hub) Run(ctx context.Context) error {
 	if h.opts.RepoDiscovery != nil { // #54
 		h.wg.Add(1)
 		go h.trackRepoDiscovery(ctx)
+	}
+	if h.nt.svc != nil { // #11 notifications
+		h.wg.Add(2)
+		go h.runNotify(ctx)
+		go h.trackNotify(ctx)
 	}
 	var codexC <-chan time.Time // #155
 	if h.codexAvailable() || len(h.cx.launches) > 0 {
@@ -1019,6 +1041,9 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startActivity
 		case proto.CmdDigestGet, proto.CmdDigestSet, proto.CmdDigestTest, proto.CmdDigestRetry: // #118, #174
 			start = h.startDigest
+		case proto.CmdNotifyGet, proto.CmdNotifySet, proto.CmdNotifyTest, proto.CmdNotifyTokenSet, proto.CmdNotifyTokenClear,
+			proto.CmdNotifyPairStart, proto.CmdNotifyPairCancel, proto.CmdNotifyUnpair: // #11
+			start = h.startNotify
 		// M7 boards
 		case proto.CmdBoardWatch:
 			start = h.startBoardWatch
@@ -1127,6 +1152,8 @@ func errorCode(err error) string {
 		return activityErrorCode(err)
 	case digestErrorCode(err) != "": // #118
 		return digestErrorCode(err)
+	case notifyErrorCode(err) != "": // #11
+		return notifyErrorCode(err)
 	case aiErrorCode(err) != "": // #92
 		return aiErrorCode(err)
 	case kaneoErrorCode(err) != "": // #184
@@ -2130,6 +2157,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.Activity = h.activityView()             // #98
 	w.Digest = h.digestView()                 // #118
 	w.HandoffLLM = h.handoffLLMView()         // #9
+	w.Notify = h.notifyView()                 // #11
 	w.InboxDismissed = h.inboxDismissedView() // #106
 	w.CodexServer = h.codexServerView()       // #155
 	w.RepoRefs = h.repoRefsView()             // #247
@@ -2180,6 +2208,7 @@ func (h *Hub) emit(ev proto.Event) {
 	for c := range h.clients {
 		h.deliver(c, msg)
 	}
+	h.notifyEvent(ev) // #11: never blocks
 }
 
 // deliver queues msg for c without blocking, dropping c if its queue is full.

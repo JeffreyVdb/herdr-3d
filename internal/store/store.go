@@ -201,6 +201,8 @@ var migrations = []string{
 	migrationCodexVersionPolicy,
 	// #62: scheduled agents: one-shot hires at a wall-clock time.
 	migrationSchedule,
+	// #11: the notifications' settings.
+	migrationNotify,
 }
 
 // Fingerprint kinds.

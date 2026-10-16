@@ -33,6 +33,8 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
+	"github.com/JeffreyVdb/herdr-3d/internal/notify"
+	"github.com/JeffreyVdb/herdr-3d/internal/notify/telegram"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/repodisc"
 	"github.com/JeffreyVdb/herdr-3d/internal/screenshare"
@@ -144,6 +146,19 @@ const EnvKaneoFile = "HERDR_WORLD_KANEO_FILE"
 
 // DefaultKaneoFile is kaneo.json next to the database.
 func DefaultKaneoFile(db string) string { return filepath.Join(filepath.Dir(db), "kaneo.json") }
+
+// #11 notifications: the Telegram bot token and the paired person, one 0600
+// file of their own next to the database; the token may come from a file
+// the environment names instead (then the panel cannot change it). The
+// environment's switch (true or false; unset: the panel's) wins while set.
+const (
+	EnvTelegramFile    = "HERDR_WORLD_TELEGRAM_FILE"
+	EnvTelegramKeyFile = "HERDR_WORLD_TELEGRAM_KEY_FILE"
+	EnvNotifyEnabled   = "HERDR_WORLD_NOTIFY_ENABLED"
+)
+
+// DefaultTelegramFile is telegram.json next to the database.
+func DefaultTelegramFile(db string) string { return filepath.Join(filepath.Dir(db), "telegram.json") }
 
 // M6 runs: write-code's runs directory (the contract names this variable).
 const EnvRunsDir = "H3D_RUNS_DIR"
@@ -454,11 +469,14 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	imageCache := fs.String("image-cache", os.Getenv(EnvImageCache), "directory of the transcript image disk cache, \"-\" for none (default $XDG_CACHE_HOME/herdr-world/img) ($"+EnvImageCache+")")          // M16 images
 	codexRun := fs.String("codex-run", envOr(EnvCodexRun, DefaultCodexRun()), "private directory of the shared Codex servers' launchers and sockets, \"-\" for none (#155) ($"+EnvCodexRun+")")
 	shellPolicy := fs.String("shell", os.Getenv(EnvShell), "shell of woken floors' login environment and of the shared Codex launchers: bash (the default) or fish, an explicit compatibility option; $SHELL is never used ($"+EnvShell+")")
-	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")")      // M13 screen
-	handoffDir := fs.String("handoff-dir", envOr(EnvHandoffDir, DefaultHandoffDir()), "directory of the filing cabinet's handoffs (<dir>/<floor>/*.md), \"-\" for none ($"+EnvHandoffDir+")") // #223
-	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")                    // M13 whiteboard
-	aiFile := fs.String("ai-file", os.Getenv(EnvAIFile), "file of the AI integration's settings and keys, 0600 (default ai.json next to the database) ($"+EnvAIFile+")")                      // #92
-	kaneoFile := fs.String("kaneo-file", os.Getenv(EnvKaneoFile), "file of the Kaneo connection's settings and key, 0600 (default kaneo.json next to the database) ($"+EnvKaneoFile+")")      // #184
+	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")")                      // M13 screen
+	handoffDir := fs.String("handoff-dir", envOr(EnvHandoffDir, DefaultHandoffDir()), "directory of the filing cabinet's handoffs (<dir>/<floor>/*.md), \"-\" for none ($"+EnvHandoffDir+")")                 // #223
+	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")                                    // M13 whiteboard
+	aiFile := fs.String("ai-file", os.Getenv(EnvAIFile), "file of the AI integration's settings and keys, 0600 (default ai.json next to the database) ($"+EnvAIFile+")")                                      // #92
+	kaneoFile := fs.String("kaneo-file", os.Getenv(EnvKaneoFile), "file of the Kaneo connection's settings and key, 0600 (default kaneo.json next to the database) ($"+EnvKaneoFile+")")                      // #184
+	telegramFile := fs.String("telegram-file", os.Getenv(EnvTelegramFile), "file of the Telegram bot token and the paired account, 0600 (default telegram.json next to the database) ($"+EnvTelegramFile+")") // #11
+	telegramKey := fs.String("telegram-key-file", os.Getenv(EnvTelegramKeyFile), "file holding the Telegram bot token; overrides the panel's ($"+EnvTelegramKeyFile+")")                                      // #11
+	notifyEnabled := fs.String("notify-enabled", os.Getenv(EnvNotifyEnabled), "true or false: switch the Telegram notifications on or off, overriding the panel's toggle ($"+EnvNotifyEnabled+")")            // #11
 	aiClsKey := fs.String("ai-classifier-key-file", os.Getenv(EnvAIClassifierKeyFile), "file holding the classification model's key; overrides the panel's ($"+EnvAIClassifierKeyFile+")")
 	aiClsModel := fs.String("ai-classifier-model", os.Getenv(EnvAIClassifierModel), "classification model; overrides the panel's ($"+EnvAIClassifierModel+")")
 	aiLLMBase := fs.String("ai-llm-base-url", os.Getenv(EnvAILLMBaseURL), "OpenAI-compatible endpoint's base URL; overrides the panel's ($"+EnvAILLMBaseURL+")")
@@ -531,6 +549,14 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 			return fmt.Errorf("-digest-enabled must be true or false, got %q", *digestEnabled)
 		}
 		digestOn = &on
+	}
+	var notifyOn *bool // #11
+	if *notifyEnabled != "" {
+		on, err := strconv.ParseBool(*notifyEnabled)
+		if err != nil {
+			return fmt.Errorf("-notify-enabled must be true or false, got %q", *notifyEnabled)
+		}
+		notifyOn = &on
 	}
 	var handoffLLMOn *bool // #9
 	if *handoffLLMEnabled != "" {
@@ -607,6 +633,10 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	if err != nil {
 		return fmt.Errorf("kaneo settings: %w", err)
 	}
+	tg, err := Telegram(telegram.Options{File: orDefault(*telegramFile, DefaultTelegramFile(*db)), KeyFile: *telegramKey, Log: log}) // #11
+	if err != nil {
+		return fmt.Errorf("telegram settings: %w", err)
+	}
 	return Serve(ctx, ServeConfig{
 		Socket: *socket, DB: *db, Herdr: &herdr.Client{Bin: *herdrBin}, Only: only,
 		Poll: poll, Resnapshot: resnap, MaxDesks: maxDesks, NameHold: nameHold, Log: log, Name: name,
@@ -635,6 +665,8 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		ActivityModel:     activityOn,   // #98 activity
 		DigestEnabled:     digestOn,     // #118 floor overview summaries
 		HandoffLLMEnabled: handoffLLMOn, // #9 LLM handoffs
+		Notify:            tg,           // #11 notifications
+		NotifyEnabled:     notifyOn,
 	})
 }
 
@@ -759,6 +791,11 @@ type ServeConfig struct {
 	DigestEnabled *bool
 	// #9 LLM handoffs: the environment's toggle (nil: the panel's).
 	HandoffLLMEnabled *bool
+	// #11 notifications: where messages go (nil: none, the notify.*
+	// commands answer unsupported), and the environment's switch (nil: the
+	// panel's).
+	Notify        notify.Channel
+	NotifyEnabled *bool
 }
 
 // Serve runs the bridge until ctx is done: store, hub, session watchers and
@@ -860,6 +897,9 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	opts.ActivityModel = cfg.ActivityModel         // #98
 	opts.DigestEnabled = cfg.DigestEnabled         // #118
 	opts.HandoffLLMEnabled = cfg.HandoffLLMEnabled // #9
+	if cfg.Notify != nil {                         // #11
+		opts.NotifyChannel, opts.NotifyEnabled = cfg.Notify, cfg.NotifyEnabled
+	}
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
 	// #74 server rack: checkupdates' throwaway sync database lives in a
 	// directory of the bridge's own, next to the world database, so it never
