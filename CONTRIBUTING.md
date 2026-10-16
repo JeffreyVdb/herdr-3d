@@ -66,7 +66,9 @@ backoff, the `Destination` / `Channel` interfaces, `FakeChannel` and `FakeClock`
 `net/http`) and `notify/telegram` (the Bot API behind `Channel`: the token's 0600 file, `sendMessage`, the one `getUpdates` poll
 loop of the pairing and (#13) the replies, `setMessageReaction`; only `app` imports it,
 `TestNotifyCoreIsProviderNeutral`); #13: `notify`'s `reply.go` (a reply to a notification checked, rate-limited,
-typed through the hub's `Prompt` callback and confirmed or answered);
+typed through the hub's `Prompt` callback and confirmed or answered); #14: `notify`'s `buttons.go` (a card per question
+of an ask or follow-up, the taps resolved and collected, answered through the hub's `Answer` callback, the cards edited
+to their end);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per

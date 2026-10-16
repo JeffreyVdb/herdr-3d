@@ -4557,7 +4557,8 @@ dismissed_at)`.
 own rule: the game's (`WorldStore.workerView`, `inboxReason`, `inboxQueue`), ported to the bridge
 (`internal/notify`) and pinned to it by shared vectors (`internal/notify/testdata/inbox_vectors.json`). The bridge
 reads the bot's messages only while a pairing waits or (#13) **replies** are on: then a reply to a notification is
-typed into its worker. Nothing leaves the machine while it is off.
+typed into its worker, and (#14) a worker's question comes with buttons that answer it. Nothing leaves the machine
+while it is off.
 
 - **Who notifies**: a worker needing you (any role: blocked, an `ask`, a `followup`, a wrap-up `needs_you`, an
   orchestrator over its cap, a freelancer's report request), at once; a worker `done`, after **5 seconds** if it is
@@ -4617,12 +4618,38 @@ typed into its worker. Nothing leaves the machine while it is off.
   Replies on when the bridge starts (a restart, a release): what came while it was away is read, and typed when sent
   within the last 2 minutes; older is answered as not sent. Telegram keeps updates 24 hours at most. Replies stay on
   across unpairing: they read only the account paired at the time, and pause while there is none.
+- **Answer buttons** (#14; `replies` on): a notification about an `ask` or a `followup` is followed (quietly) by a
+  **card** per question: the question (its header, its text), each option with its description and its preview cut
+  to one short line, and a button for each option; then **Other…** when the question takes a typed answer, **Done**
+  for a multi-select and **Cancel** for an ask. A follow-up's `yes_no` question is **Yes** / **No**, a `choice` its
+  options and **Other…**, an `open` one **Answer…**; a follow-up has no Cancel. **Other…** and **Answer…** send a
+  prompt that opens the reply field (Telegram's force reply, a message of its own); your reply to it is that
+  question's typed answer (an ask's: one line, at most 4 KiB; a follow-up's: at most 8000 bytes), confirmed with a
+  👍, and never typed as a prompt; a reply to the card itself gets the ask's hint. A single-choice tap answers its
+  question; a multi-select's taps toggle (the card shows ☑ / ☐) until **Done**. Once every question has its answer,
+  the bridge answers the worker as the game does: `worker.answer_ask` (1-based `choices`, `other`) or `cancel: true`,
+  `worker.answer_followup` (`Yes` / `No`, the option's text, the typed text), with their checks on the worker's input
+  lane, no client: no command reply, no row of those commands. A secret question is never relayed: an ask with one
+  gets one card, "Its answer is secret. Answer this one in the game.", none of its texts, no button. An ask or
+  follow-up of more than 4 questions gets no cards. Every tap is answered at once (the button's spinner stops), and
+  the cards are edited to their end: the answer, Cancelled, "Answered in the game." once the ask or follow-up left
+  the worker another way, "No longer open" when the bridge found it answered or replaced meanwhile, why it was not
+  sent (the reply refusals' sentences), or "Replies are off" when they are switched off. A button's data is a short
+  token of the bridge's and an action (never an id); a tap on a card the bridge no longer knows (a restart: cards
+  are kept in memory, at most 32 asks and follow-ups) is answered "No longer open" and its buttons are taken away.
+  Taps count only from the paired account in your private chat with the bot, under the replies' switch and
+  recipient (switched off, unpaired or paired anew: nothing read before answers a worker); anyone else's tap is
+  answered without a word. At most 30 taps a minute on one worker's cards, 60 in all.
 - **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`,
   `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}` and (#13)
   `notify.reply` `{"id"?, "text_bytes", "text_runes", "outcome"}` (`sent`, else the refusal: `not_a_reply`,
   `no_text`, `relayed`, `stale`, `too_long`, `unknown`, `rate_limited`, `ask`, `gone`, `invalid_state`, `busy`,
-  `bad_text`, `handoff`, `failed`). A reply's prompt writes no `worker.prompt` row. Never a message's text, a code, a
-  token or a Telegram id.
+  `bad_text`, `handoff`, `failed`; #14: `typed_answer`, a card's typed answer taken). A reply's prompt writes no
+  `worker.prompt` row. #14: `notify.tap` `{"id"?, "kind"?: "ask" | "followup", "question"?, "action"?: "option" |
+  "type" | "done" | "cancel", "option"?, "outcome"}` (`ok`, `off`, `unknown`, `closed`, `rate_limited`, `busy`,
+  `empty`) and `notify.answer` `{"id", "kind", "questions", "choices"?, "typed_bytes"?, "typed_runes"?, "cancel"?,
+  "outcome"}` (`sent`, else the refusal of a reply's, or `closed`); a card's answer writes no `worker.answer_ask` or
+  `worker.answer_followup` row. Never a message's text, an answer, a code, a token or a Telegram id.
 
 ### Host stats
 
