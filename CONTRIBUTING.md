@@ -59,6 +59,12 @@ as `FollowupTracker`; #224: `NewMarkerTracker`, an agent handoff request's turn 
 `doc.go`, the standard library, `jsonl` and `transcript` only, `TestReducerIsALeaf`; and the feature, the switch bound
 to a passing `handoff_llm.test`, the versioned prompt with nonce-delimited data, the answer's validation, one call at a
 time, `ai`'s interfaces only, `TestHandoffLLMUsesOnlyAIInterfaces`);
+#11: `notify` (the notifications' provider-neutral core: the inbox rule ported from the game and pinned to it by
+`testdata/inbox_vectors.json` (the game's `notifyVectors.test.ts` reads it too), the episodes and the 5 s done settle,
+the settings with their test gate and environment switch, the never-blocking sightings and the bounded sender with its
+backoff, the `Destination` / `Channel` interfaces, `FakeChannel` and `FakeClock`; the standard library only, no
+`net/http`) and `notify/telegram` (the Bot API behind `Channel`: the token's 0600 file, `sendMessage`, the pairing's
+`getUpdates` poll; only `app` imports it, `TestNotifyCoreIsProviderNeutral`);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
@@ -160,7 +166,7 @@ make browsers          # download the Chromium revision the pinned Playwright ex
 - #216: the application UI theme (Quiet / Ubuntu): a stylesheet change must keep Quiet as it was, so `node tools/ui-quiet-check.mjs <css files>` (from `game/`) expands the Quiet tokens and diffs each file against the commit before #216 (no output hunk but a deliberate one). `e2e/ui-theme-shots.spec.ts` writes a screenshot of every surface in Quiet and Ubuntu, at 1280 and 390 px, to `game/test-results/ui-theme/<set>/<size>/` (`make e2e-visual SPEC=e2e/ui-theme-shots.spec.ts`; `H3D_UI_SET=before-quiet` with `H3D_DIST=<a build of the earlier commit>` and `make e2e-prebuilt` records the "before" set), and `node tools/ui-shot-diff.mjs <before> <after>` says how much of each differs. `e2e/ui-surfaces.ts` lists the surfaces once for those screenshots and for `e2e/ui-theme.spec.ts`'s per-surface audit (palette leftovers, contrast, targets, focus rings, narrow and zoomed layout, one boot per surface and size; a representative per component family runs in `extended`, every surface, with all 8 theme combinations, in `make e2e-visual`): a new dialog or panel belongs in it.
 - Never hardcode ports. Use `portlease run` / `portlease reserve`, and bind `127.0.0.1` only. Other agents run in
   parallel worktrees on the same host.
-- CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test and the darwin cross-build only when a branch changes a Go input against main (`cmd/`, `internal/`, `game/fixtures/`, `go.mod`/`go.sum`, the Makefile, the workflow); pushes to main always run them. tsc and vitest run only when a branch changes a game input (`game/`, `docs/shortcuts.md`, `internal/whiteboard/testdata/`, the Makefile, the workflow). The shell deploy test always runs. No Playwright in CI.
+- CI (`.github/workflows/ci.yml`) runs go vet/gofmt/test and the darwin cross-build only when a branch changes a Go input against main (`cmd/`, `internal/`, `game/fixtures/`, `go.mod`/`go.sum`, the Makefile, the workflow); pushes to main always run them. tsc and vitest run only when a branch changes a game input (`game/`, `docs/shortcuts.md`, `internal/whiteboard/testdata/`, `internal/notify/testdata/` (#11: the inbox vectors the game checks too), the Makefile, the workflow). The shell deploy test always runs. No Playwright in CI.
 - `go test ./internal/ai ./internal/server` never call a model (#92): `httptest` servers play Jev and an OpenAI-compatible
   endpoint, and a feature's tests take `ai.FakeClassifier` / `ai.FakeLLM`. `game/e2e/ai-integration.spec.ts` starts its own
   fake Jev and OpenAI servers on OS-leased loopback ports and the fixture bridge (`simjev=<url>`, `game/tools/fixture-ai.ts`)
@@ -203,6 +209,12 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   `make dev`, then `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simhandoffllm%3Dready%26simhandoffllmout%3Dslow&floor=herdr-3d`
   (a worker needs a completed reply first: `window.__h3d.simHandoff('sim.final', {id, text})`).
   `go run ./cmd/handoff-spike FILE.jsonl…` is the spike's dry run (numbers only); `--send` costs money.
+- #11: `go test ./internal/notify/...` never reaches Telegram: an `httptest` Bot API (`getMe`, `sendMessage`,
+  `getUpdates` with offsets) and `notify.FakeClock` (the settle, the backoff and a code's expiry with no real sleep);
+  `go test ./internal/server -run Notify` drives the hub with `notify.FakeChannel`. The inbox vectors are rewritten by
+  `go test ./internal/server -run TestNotifyInboxVectors -update-notify-vectors` and checked by
+  `game/src/world/notifyVectors.test.ts`; `game/e2e/h11-telegram.spec.ts` drives the fixture bridge's Telegram
+  (`tools/fixture-telegram.ts`: `simtelegram=off|token|paired|on|env|old`, `simtelegrampair=<ms>`, `sim.telegram`).
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
@@ -473,6 +485,10 @@ that directory.
 | `--ai-llm-base-url`, `--ai-llm-key-file`, `--ai-llm-model` | `HERDR_WORLD_AI_LLM_BASE_URL`, `HERDR_WORLD_AI_LLM_KEY_FILE`, `HERDR_WORLD_AI_LLM_MODEL` | none: the OpenAI-compatible LLM's base URL, the file holding its key, and its model; same rules |
 | `--followups-enabled` | `HERDR_WORLD_FOLLOWUPS_ENABLED` | none: `true` or `false` switches the follow-up questions on or off over the panel's toggle, which then shows it read-only (#90, [`docs/protocol.md` "Follow-up questions"](docs/protocol.md#follow-up-questions)); on, they still run only while both AI models are ready |
 | `--packup-enabled` | `HERDR_WORLD_PACKUP_ENABLED` | none: `true` or `false` switches pack up on request on or off over the panel's toggle, which then shows it read-only (#110, [`docs/protocol.md` "Pack up on request"](docs/protocol.md#pack-up-on-request)); on, it still runs only while both AI models are ready |
+| `--digest-enabled` | `HERDR_WORLD_DIGEST_ENABLED` | none: `true` or `false` switches the floor overview summaries on or off over the panel's toggle, which then shows it read-only (#118, [`docs/protocol.md` "Floor overview summaries"](docs/protocol.md#floor-overview-summaries)); on, they still run only while the LLM is ready |
+| `--telegram-file` | `HERDR_WORLD_TELEGRAM_FILE` | `telegram.json` next to the database: the Telegram bot token, its bot and the paired account, 0600, never in the database (#11, [`docs/protocol.md` "Notifications"](docs/protocol.md#notifications)) |
+| `--telegram-key-file` | `HERDR_WORLD_TELEGRAM_KEY_FILE` | none: a file holding the Telegram bot token; it wins over the panel's, which then cannot change it, and `telegram.json` keeps no token (#11) |
+| `--notify-enabled` | `HERDR_WORLD_NOTIFY_ENABLED` | none: `true` or `false` switches the Telegram notifications on or off over the panel's switch, which then shows it read-only; on, they still go only with a token and a paired account (#11) |
 | `--activity-model` | `HERDR_WORLD_ACTIVITY_MODEL` | none: `true` or `false` switches "Classify unknown commands" (the desk monitor's activity, the classification model for the commands the rules cannot place) on or off over the panel's toggle, which then shows it read-only (#98, [`docs/protocol.md` "Activity"](docs/protocol.md#activity)); on, it still calls only while the classifier is ready |
 | `--pricing` | `HERDR_WORLD_PRICING` | none: a JSON file of model prices merged over the built-in table (`internal/usage/pricing.json`; format in [`docs/protocol.md` "Usage and cost"](docs/protocol.md#usage-and-cost)) |
 | `--warn-workers-per-floor`, `--max-workers-per-floor` | `HERDR_WORLD_WARN_WORKERS_PER_FLOOR`, `HERDR_WORLD_MAX_WORKERS_PER_FLOOR` | `12`, `24`: above the first the hire dialog warns, a hire above the second is refused (`capacity`) |

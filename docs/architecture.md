@@ -19,7 +19,8 @@ and `docs/decisions.md`. Where a verifier and a follow-up disagree, the one with
 | Floor overview screen (west wall of every floor's lounge) | the floor's workers as one tree: who works, who waits on you, orchestrators over their freelancers, each one's ticket, task and what it does now (#118); its page, and the all-floors page (#188): every floor of the city over its workers, each worker once, active only by default | derived in the game from the world (`world/overview.ts`); the task / now lines from the bridge's `digest` (each worker's transcript), the ticket titles from the floor's board provider |
 | Plan limits meter (top-right widget) | the Claude and Codex plan windows (5 h, week, per model) | the `claude` / `codex` CLIs, run as probes by the bridge (`internal/limits`), only while a client is connected |
 | Inbox chip (under the limits meter, #100) | the workers that need you, and the employees that are done, across every floor; a click opens the list (who, `Building › floor`, why, how long), a row sits you at that worker's laptop, on its conversation | derived in the game from the world (`world/inbox.ts`); the bridge keeps only the dismissed finished rows (#106: SQLite `inbox_dismissed`, `inbox.dismiss`, snapshot `inbox_dismissed`, event `inbox.dismissed`) |
-| Inbox pings (#100) | a desktop notification and the chime when someone starts needing you or an employee finishes, with the game open (in front: the chip pulses, a toast) | the game, on live world changes (`world/inboxPings.ts`, `ui/desktopNotify.ts`: the page's `Notification`, no service worker or push server); nothing on the bridge |
+| Inbox pings (#100) | a desktop notification and the chime when someone starts needing you or an employee finishes, with the game open (in front: the chip pulses, a toast) | the game, on live world changes (`world/inboxPings.ts`, `ui/desktopNotify.ts`: the page's `Notification`, no service worker or push server) |
+| Telegram notifications (#11) | a message on your phone when a worker needs you or finishes, the game open or not | the bridge (`internal/notify`: the inbox rule ported from the game and pinned by shared vectors, the episodes and the 5 s done settle; `internal/notify/telegram`: the Bot API, the token in `telegram.json`, pairing by a one-time code); settings in SQLite `notify_settings`, Settings → Telegram |
 
 Worker states → animation:
 
@@ -366,6 +367,18 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   orchestrator's floor, no ghosts, Unlinked per floor); both pages filter **Active only / All** (`f`, remembered per
   view; the all-floors page starts active only), the header's counts never filtered. Page only: the wall stays per
   floor (`decisions.md` "#188"). #174: the feature's own reasoning effort (from the model's catalog) and completion budget (default 1,024), a bounded retry of a failed task line, per-call sanitized diagnostics (`truncated` / `empty_answer` apart from `bad_response`), and a status on the page's line while a fallback shows (`decisions.md` "#174").
+- **Telegram notifications** (#11; details in `protocol.md` "Notifications"): `Hub.emit` hands `internal/notify` a look
+  at the worker of every worker and floor event, from the hub's own `proto.Worker`, on the hub goroutine; `Observe`
+  only appends to a bounded list, so the emit path never waits on the network. The service's loop applies the inbox
+  rule (the game's, ported: `notify.Judge`, pinned to `WorldStore.workerView` / `inboxReason` / `inboxQueue` by
+  `internal/notify/testdata/inbox_vectors.json`), keeps each worker's last episode (needs-you or done, and its since:
+  a first sighting, and an episode that starts while it may not notify, are known silently), sends needs-you at once
+  and done after a 5 s settle, through a 32-deep queue with backoff (429's `retry_after`, 5xx and network failures 1,
+  2, 4 s; at most 4 attempts) and audits each send. The core is provider-neutral (no `net/http`, nothing of the
+  module); `internal/notify/telegram` is the `Channel`: the bot token in `telegram.json` (0600) or the environment's
+  key file, `sendMessage` as plain text, and pairing by a one-time code read with `getUpdates`, polled only while a
+  pairing waits (no webhook, no inbound port). Only `internal/app` imports it (`TestNotifyCoreIsProviderNeutral`).
+  Switched off, nothing leaves the machine; switching on needs a delivered test message.
 - **Handoffs and the filing cabinet** (#223, part 1 of #11; details in `protocol.md` "Handoffs"): a worker's latest
   completed final reply is filed **literally**, no model call and nothing sent to the worker. `transcript.HandoffTracker`
   rides the usage tracker's line tap beside the follow-up and wrap-up trackers (the same `TurnEvents`, one parse per
@@ -443,11 +456,13 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   snapshot); workers carry `work_item{provider, id}` next to `issue` (#184: alone, with its `key`, for a Kaneo task).
   #184: `kaneo.update` (the Kaneo connection, never a key) and `world.snapshot`'s `kaneo`.
   #54: `repo_discovery.update` (settings and scan status, a catalog `revision`) and `world.snapshot`'s `repo_discovery`.
+  #11: `notify.update` (the Telegram notifications' settings and channel, never a token) and `world.snapshot`'s `notify`.
 - Commands (each with `req_id`, ack/err): `building.create/rename/delete`, `floor.assign`, `floor.wake/sleep`,
   `worker.hire{floor, harness, model, effort, label, cwd}`, `worker.fire`, `worker.prompt`, `worker.keys`,
   `terminal.watch/unwatch/zoom`, `terminal.open` (see below). M7: `board.watch/unwatch/refresh`, `issue.get/comment/close/
   set_status`, `pr.get/comment/merge`, `worker.open_pr.prepare/open_pr`; `run.prepare/start` take a `work_item`.
   #184: `kaneo.get/test/set/clear/workspaces/projects`; `floor.settings.set` takes `tracker` and `kaneo`.
+  #11: `notify.get/set/test`, `notify.token.set/clear`, `notify.pair.start/cancel`, `notify.unpair`.
   #54: `repo_discovery.get/set/refresh`; `worker.repos` / `hire.repos` rows gain `id`, `source` and `checkouts`.
 - **Open in Ghostty (optional escape hatch, not needed to play)**: all normal interaction happens in-game —
   laptop screen = live read-only terminal via `observe`; prompts, approvals and keys via `worker.prompt` / `worker.keys`.
