@@ -122,6 +122,7 @@ type hireOp struct {
 	workspaceID, pane          string
 	seen                       bool
 	launched                   hireLaunched // run.start's, else nil
+	watch                      *hireWatch   // #62: a schedule's fire, else nil
 	// #39: compose builds the first prompt from its user-typed parts, each
 	// run through tr (run.start's composed prompt: its extra only); nil: the
 	// prompt is the user's text, translated whole. sent is the text the
@@ -138,6 +139,16 @@ type hireLaunched func(ctx context.Context, res proto.HireResult, rep *hireRepor
 // firstPrompt composes a hire's first prompt, translating only what a
 // person typed with tr (#39).
 type firstPrompt func(tr func(string) string) string
+
+// hireWatch is how a hire the bridge started itself (#62: a schedule's
+// fire, which no client waits for) follows it, on the hub goroutine: begun
+// once its desk, name and worker id are taken, before anything reaches
+// herdr (an error refuses the hire); settled once it ended, with its result
+// or its error.
+type hireWatch struct {
+	begun   func(ctx context.Context, id string) error
+	settled func(ctx context.Context, id string, res *proto.HireResult, err error)
+}
 
 func (op *hireOp) signal() {
 	select {
@@ -384,11 +395,11 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 	}
 	// #58 decision 3: an asleep virtual floor's session wakes first.
 	if waking, err := h.wakeForHire(ctx, c, cmd, a.Floor, func(ctx context.Context) error {
-		return h.beginHire(ctx, c, cmd, a, nil, nil)
+		return h.beginHire(ctx, c, cmd, a, nil, nil, nil)
 	}); waking || err != nil {
 		return err
 	}
-	return h.beginHire(ctx, c, cmd, a, nil, nil)
+	return h.beginHire(ctx, c, cmd, a, nil, nil, nil)
 }
 
 // hireShape checks what a hire asks for that needs no floor: the desk is
@@ -413,14 +424,16 @@ func (h *Hub) hireShape(a proto.WorkerHireArgs) error {
 	return nil
 }
 
-// beginHire is the hire of worker.hire and run.start: it validates a,
+// beginHire is the hire of worker.hire, run.start and a schedule's fire
+// (#62): it validates a,
 // reserves the desk and name, mints the worker id and starts the hire.
 // launched, if set, runs on the hub goroutine once the hire succeeded and
 // returns the ack data instead of the HireResult (run.start). compose, if
 // set, rebuilds a.Prompt with its typed parts translated (run.start's
-// composed prompt); nil translates a.Prompt whole (#39).
+// composed prompt); nil translates a.Prompt whole (#39). watch, if set,
+// follows a hire the bridge started itself (#62).
 func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs, launched hireLaunched,
-	compose firstPrompt) error {
+	compose firstPrompt, watch *hireWatch) error {
 	f, err := h.hireFloor(a.Floor)
 	if err != nil {
 		return err
@@ -477,9 +490,15 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	op := &hireOp{id: id, session: f.session, floor: a.Floor, desk: desk, name: name, label: a.Label, marker: "h3d-" + hex[:12],
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
-		notify: make(chan struct{}, 1), launched: launched, compose: compose, shared: a.Harness == "codex" && h.cx.enabled, codexPolicy: h.cx.policy}
+		notify: make(chan struct{}, 1), launched: launched, compose: compose, shared: a.Harness == "codex" && h.cx.enabled, codexPolicy: h.cx.policy,
+		watch: watch}
 	if a.Worktree {
 		op.branch = "h3d/" + op.agent
+	}
+	if watch != nil && watch.begun != nil {
+		if err := watch.begun(ctx, id); err != nil {
+			return err
+		}
 	}
 	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, cmd.Args)
 	if err != nil {
@@ -1100,6 +1119,9 @@ func (h *Hub) finishHire(ctx context.Context, op *hireOp, res *proto.HireResult,
 			h.log.Error("audit log write failed", "err", aerr)
 		}
 		h.reply(op.client, op.cmd, data, opErr)
+		if op.watch != nil && op.watch.settled != nil {
+			op.watch.settled(ctx, op.id, res, opErr)
+		}
 	})
 	if err != nil {
 		h.log.Warn("hire abandoned", "session", op.session, "worker", op.id, "err", err)

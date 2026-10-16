@@ -287,14 +287,10 @@ func (h *Hub) wakeForHire(ctx context.Context, c *Client, cmd proto.Command, flo
 	if err != nil || !f.virtual || f.running || f.op != nil || h.opts.Herdr == nil || !herdr.ValidSessionName(f.session) {
 		return false, nil
 	}
-	args := mustJSON(map[string]string{"floor": floor, "for": cmd.T, "req_id": cmd.ReqID})
-	auditID, err := h.st.AuditBegin(ctx, c.name, proto.CmdFloorWake, args)
-	if err != nil {
-		return true, err
-	}
 	name := h.floorName(f)
-	op := &floorOp{session: f.session, client: c, cmd: cmd, auditID: auditID, notify: make(chan struct{}, 1)}
-	op.then = func(ctx context.Context, err error) {
+	h.log.Info("waking a virtual floor's session for a hire", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID,
+		"session", f.session, "floor", floor)
+	return true, h.wakeFor(ctx, c, cmd, floor, f, func(ctx context.Context, err error) {
 		if err != nil {
 			err = fmt.Errorf("waking floor “%s” (session %s) before the hire: %w", name, f.session, err)
 		} else {
@@ -304,12 +300,25 @@ func (h *Hub) wakeForHire(ctx context.Context, c *Client, cmd proto.Command, flo
 			h.audit(ctx, c, cmd, err)
 			h.reply(c, cmd, nil, err)
 		}
+	})
+}
+
+// wakeFor wakes floor's session (f, asleep, no op on it) for cmd, which goes
+// on once it is running: the floor.wake path, audited as its own floor.wake
+// row of c's, its transition on every floor of the session; then runs on
+// the hub goroutine with the wake's error instead of a reply. Used by a
+// hire on an asleep virtual floor (#58 decision 3) and a schedule's fire
+// (#62).
+func (h *Hub) wakeFor(ctx context.Context, c *Client, cmd proto.Command, floor string, f *floorState,
+	then func(ctx context.Context, err error)) error {
+	args := mustJSON(map[string]string{"floor": floor, "for": cmd.T, "req_id": cmd.ReqID})
+	auditID, err := h.st.AuditBegin(ctx, c.name, proto.CmdFloorWake, args)
+	if err != nil {
+		return err
 	}
-	f.op = op
-	h.log.Info("waking a virtual floor's session for a hire", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID,
-		"session", f.session, "floor", floor)
-	h.beginWake(ctx, op, f)
-	return true, nil
+	f.op = &floorOp{session: f.session, client: c, cmd: cmd, auditID: auditID, notify: make(chan struct{}, 1), then: then}
+	h.beginWake(ctx, f.op, f)
+	return nil
 }
 
 // prepareFloor is the floor of hire.prepare and run.prepare: hireFloor's,

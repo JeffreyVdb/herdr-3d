@@ -189,6 +189,11 @@ func TestWatch(t *testing.T) {
 	if d := rec.floor("delta", "asleep (hung socket)", func(f world.FloorObs) bool { return true }); d.Running || len(d.Workers) != 0 {
 		t.Fatalf("delta = %+v", d)
 	}
+	// #62: the sessions it may watch are listed, sorted, once per change.
+	isListed := func(u world.Update) bool { _, ok := u.(world.Listed); return ok }
+	if l := rec.wait("listed", isListed).(world.Listed); !slices.Equal(l.Sessions, []string{"alpha", "beta", "delta", "gamma"}) {
+		t.Fatalf("listed = %v", l.Sessions)
+	}
 
 	// A status event updates just that worker, within the same generation.
 	srv.WaitStatusPane(t, "wD:p1")
@@ -242,6 +247,12 @@ func TestWatch(t *testing.T) {
 		}
 		return ok
 	})
+	if l := rec.wait("listed without beta", isListed).(world.Listed); !slices.Equal(l.Sessions, []string{"alpha", "delta", "gamma"}) {
+		t.Fatalf("listed = %v", l.Sessions)
+	}
+	if slices.ContainsFunc(rec.pending, isListed) {
+		t.Fatalf("listed again without a change: %v", rec.pending)
+	}
 
 	for _, m := range srv.Methods() {
 		if m != "ping" && m != "session.snapshot" && m != "events.subscribe" {

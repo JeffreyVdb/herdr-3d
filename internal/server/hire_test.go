@@ -36,6 +36,7 @@ type fakeFloor struct {
 	keys    []string
 	// hooks and failures
 	startErr     error
+	createErr    error // #62: CreateWorkspace fails with it (nothing made)
 	markErr      error
 	promptErrs   []error
 	typeErrs     []error       // #95: TypePrompt's results in turn
@@ -107,6 +108,9 @@ func (f *fakeFloor) CreateWorkspace(ctx context.Context, session, dir, label str
 		case <-ctx.Done():
 			return herdr.Created{}, ctx.Err()
 		}
+	}
+	if f.createErr != nil {
+		return herdr.Created{}, f.createErr
 	}
 	cr := f.create(dir, label, nil)
 	if f.publishEarly {
