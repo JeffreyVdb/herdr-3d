@@ -334,6 +334,7 @@ func (c *Channel) ClearToken() error {
 	}
 	c.stored = Stored{}
 	c.stopPairLocked()
+	c.interruptLocked() // #13: and a reply poll
 	c.ended = nil
 	c.mu.Unlock()
 	c.signal()

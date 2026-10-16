@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -233,5 +234,75 @@ func TestOneReaderOfUpdates(t *testing.T) {
 	r.tg.mu.Unlock()
 	if most != 1 {
 		t.Fatalf("%d getUpdates at once", most)
+	}
+}
+
+// The whole path against the fake Bot API: a needs-you message, Ada's
+// reply to it typed into its worker and 👍'd; refused while it asks, with
+// the ticket's sentence as a reply to hers.
+func TestReplyRoundTripOverHTTP(t *testing.T) {
+	r := pairedRig(t, true)
+	st := notify.NewFakeStore()
+	set := notify.DefaultSettings()
+	set.Enabled, set.Replies = true, true
+	if err := st.SaveNotifySettings(context.Background(), set); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var typed []string
+	var refuse error
+	svc, err := notify.New(context.Background(), notify.Options{Store: st, Channel: r.ch, Clock: r.clock,
+		Prompt: func(_ context.Context, id, text string, done func(error)) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if refuse != nil {
+				return refuse
+			}
+			typed = append(typed, id+": "+text)
+			go done(nil)
+			return nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	svc.Observe(notify.Observation{Worker: notify.Worker{ID: "w-a", Status: "working", StatusSince: 1}, Name: "Pixel"})
+	svc.Observe(notify.Observation{Worker: notify.Worker{ID: "w-a", Status: "blocked", StatusSince: 2}, Name: "Pixel"})
+	waitFor(t, "the notification", func() bool { return len(r.tg.requests("sendMessage")) == 1 })
+	waitFor(t, "it remembered", func() bool {
+		w, _, ok, _ := st.NotifyMessage(context.Background(), notify.Ref{Chat: 42, Message: 1})
+		return ok && w == "w-a"
+	})
+	id := r.tg.pushMsg(&message{From: ada(), Chat: chat{ID: 42, Type: "private"}, Text: "now add tests", ReplyTo: replyTo(1)})
+	waitFor(t, "the 👍", func() bool { return len(r.tg.requests("setMessageReaction")) == 1 })
+	if rs := r.tg.requests("setMessageReaction")[0].body; rs["message_id"].(float64) != float64(id) {
+		t.Fatalf("reaction %+v", rs)
+	}
+	mu.Lock()
+	if len(typed) != 1 || typed[0] != "w-a: now add tests" {
+		t.Fatalf("typed %q", typed)
+	}
+	refuse = &notify.ReplyError{Kind: notify.ReplyAsk}
+	mu.Unlock()
+	id = r.tg.pushMsg(&message{From: ada(), Chat: chat{ID: 42, Type: "private"}, Text: "tea", ReplyTo: replyTo(1)})
+	waitFor(t, "the refusal", func() bool { return len(r.tg.requests("sendMessage")) == 2 })
+	m := r.tg.requests("sendMessage")[1].body
+	if rp, _ := m["reply_parameters"].(map[string]any); m["text"] != notify.ReplyAskText || rp["message_id"].(float64) != float64(id) {
+		t.Fatalf("refusal %+v", m)
+	}
+	// Someone else's reply: no answer at all.
+	r.tg.pushMsg(&message{From: &user{ID: 7}, Chat: chat{ID: 7, Type: "private"}, Text: "hi", ReplyTo: replyTo(1)})
+	time.Sleep(100 * time.Millisecond)
+	if n := len(r.tg.requests("sendMessage")); n != 2 {
+		t.Fatalf("%d messages: a stranger was answered", n)
 	}
 }

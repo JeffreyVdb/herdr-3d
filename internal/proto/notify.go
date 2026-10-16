@@ -68,6 +68,8 @@ type NotifySetArgs struct {
 	Events      *NotifyEventsArgs `json:"events,omitempty"`
 	Quiet       *bool             `json:"quiet,omitempty"`
 	Freelancers *bool             `json:"freelancers,omitempty"`
+	// Replies (#13): a reply to a notification is typed into its worker.
+	Replies *bool `json:"replies,omitempty"`
 }
 
 // NotifyTokenSetArgs are the args of notify.token.set: the bot token
