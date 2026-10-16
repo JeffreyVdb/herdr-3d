@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sync"
 	"time"
 
@@ -100,6 +101,7 @@ type discovery struct {
 	cfg      Config
 	sessions map[string]*session
 	kick     chan struct{} // a watcher ended: re-evaluate now
+	listed   []string      // the sessions last sent as world.Listed (nil: none sent yet)
 }
 
 func (d *discovery) tick(ctx context.Context) {
@@ -159,6 +161,16 @@ func (d *discovery) tick(ctx context.Context) {
 		if s.published {
 			d.cfg.Log.Info("session gone", "session", name)
 			send(ctx, d.cfg.Out, world.FloorGone{Session: name, Gen: world.NextGen()})
+		}
+	}
+	names := make([]string, 0, len(listed))
+	for _, info := range listed {
+		names = append(names, info.Name)
+	}
+	slices.Sort(names)
+	if d.listed == nil || !slices.Equal(names, d.listed) {
+		if send(ctx, d.cfg.Out, world.Listed{Sessions: names}) {
+			d.listed = names
 		}
 	}
 }

@@ -317,6 +317,10 @@ type Options struct {
 	CodexPoll         time.Duration
 	CodexStartTimeout time.Duration
 	CodexRejoin       time.Duration
+
+	// #62 scheduled agents: ScheduleTick is how often the runner looks at
+	// the wall clock (Now) for due schedules (default DefaultScheduleTick).
+	ScheduleTick time.Duration
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -431,6 +435,7 @@ type Hub struct {
 
 	rr repoRefsState // #247 repositories on other floors
 	rd repoDiscState // #54 repository discovery
+	sc scheduleState // #62 scheduled agents
 }
 
 // sessionState is what the floors of one herdr session share (#58): its
@@ -604,6 +609,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if opts.ExitPause <= 0 {
 		opts.ExitPause = defaultExitPause
 	}
+	if opts.ScheduleTick <= 0 { // #62
+		opts.ScheduleTick = DefaultScheduleTick
+	}
 	termDefaults(&opts)  // M5 term
 	runsDefaults(&opts)  // M6 runs
 	boardDefaults(&opts) // M7 boards
@@ -709,6 +717,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initBoards(ctx); err != nil { // M7 boards
 		return nil, err
 	}
+	if err := h.loadSchedules(ctx); err != nil { // #62
+		return nil, err
+	}
 	desks, err := st.Desks(ctx)
 	if err != nil {
 		return nil, err
@@ -788,10 +799,14 @@ func (h *Hub) Run(ctx context.Context) error {
 		defer t.Stop()
 		boardC = t.C
 	}
+	schedC := time.NewTicker(h.opts.ScheduleTick) // #62: a look at the wall clock, not a timer to a due time
+	defer schedC.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-schedC.C:
+			h.checkSchedules(ctx)
 		case <-boardC:
 			h.boardTick(ctx)
 		case <-codexC:
@@ -799,11 +814,17 @@ func (h *Hub) Run(ctx context.Context) error {
 		case u := <-h.updates:
 			switch u := u.(type) {
 			case world.FloorObs:
+				_, known := h.floors[u.Session]
 				h.applyFloor(ctx, u)
+				if !known { // #62: a schedule may wait for it
+					h.checkSchedules(ctx)
+				}
 			case world.FloorGone:
 				h.removeFloor(u)
 			case world.AgentDetected:
 				h.agentDetected(u)
+			case world.Listed: // #62
+				h.listed(ctx, u)
 			}
 		case op := <-h.ops:
 			op(ctx)
@@ -1025,6 +1046,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startWhiteboardPin
 		case proto.CmdDropsList:
 			start = h.startDropsList
+		// #62 scheduled agents
+		case proto.CmdScheduleCreate, proto.CmdScheduleUpdate, proto.CmdScheduleCancel, proto.CmdScheduleRunNow,
+			proto.CmdScheduleRetry, proto.CmdScheduleDismiss:
+			start = h.startSchedule
 		}
 		if start != nil {
 			// Accepted: the audit row is written (or begun) and the reply
@@ -2077,6 +2102,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.CodexServer = h.codexServerView()       // #155
 	w.RepoRefs = h.repoRefsView()             // #247
 	w.RepoDiscovery = h.repoDiscoveryView()   // #54
+	w.Schedules = h.schedulesView()           // #62
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

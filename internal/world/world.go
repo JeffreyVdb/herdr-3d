@@ -17,8 +17,8 @@ const (
 	Asleep  = "asleep"
 )
 
-// Update is what watchers send to the hub: FloorObs, FloorGone or
-// AgentDetected.
+// Update is what watchers send to the hub: FloorObs, FloorGone,
+// AgentDetected or Listed.
 type Update interface{ isUpdate() }
 
 // FloorObs is a complete observation of one herdr session.
@@ -62,9 +62,18 @@ type AgentDetected struct {
 	Released    bool
 }
 
+// Listed is the herdr sessions discovery last listed (those it may watch),
+// sent after their observations of that round and whenever the list
+// changes (#62: a floor whose session is not listed is gone; until the first
+// list the bridge does not know).
+type Listed struct {
+	Sessions []string
+}
+
 func (FloorObs) isUpdate()      {}
 func (FloorGone) isUpdate()     {}
 func (AgentDetected) isUpdate() {}
+func (Listed) isUpdate()        {}
 
 var gen atomic.Uint64
 

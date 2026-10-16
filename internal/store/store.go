@@ -199,6 +199,8 @@ var migrations = []string{
 	migrationVirtualFloors,
 	// Explicit compatibility opt-in, off for existing databases.
 	migrationCodexVersionPolicy,
+	// #62: scheduled agents: one-shot hires at a wall-clock time.
+	migrationSchedule,
 }
 
 // Fingerprint kinds.

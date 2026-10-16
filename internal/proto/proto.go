@@ -223,6 +223,10 @@ type World struct {
 	// #184: the Kaneo connection (never a key). nil (left out) when the
 	// bridge has no Kaneo settings.
 	Kaneo *Kaneo `json:"kaneo,omitempty"`
+	// #62 scheduled agents: the upcoming ones, the failed and skipped ones
+	// not dismissed, and each floor's last ScheduleKeepDone done ones, by
+	// due time. Always present ([] when none).
+	Schedules []Schedule `json:"schedules"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -627,6 +631,9 @@ type Event struct {
 	Handoff      *HandoffEntry `json:"handoff,omitempty"`
 	HandoffID    int64         `json:"handoff_id,omitempty"`
 	HandoffCount *int          `json:"handoff_count,omitempty"`
+	// #62 scheduled agents: Schedule is set on schedule.upsert; ID and
+	// FloorID name the schedule on schedule.removed.
+	Schedule *Schedule `json:"schedule,omitempty"`
 }
 
 // Command is a client request. Args depend on T (see the *Args types).

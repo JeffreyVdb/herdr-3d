@@ -304,6 +304,19 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   the hub goroutine, one row per repository (`RepoRef.id`, `source`); `repo_discovery.update` tells an open popup to
   ask again. Warm full scan of the two benchmark roots (135 candidates, 61 repositories): ~150 ms
   (`docs/research/repository-scan-bench`).
+- **Scheduled agents** (#62, part 1 of the epic #61; details in `protocol.md` "Scheduled agents", `decisions.md`
+  "#62"): one-shot hires at a wall-clock time, stored in SQLite `schedule` (`internal/store/schedule.go`) and kept in
+  view by the hub (`internal/server/schedule.go`). The runner runs on the hub goroutine: every 30 s tick
+  (`Options.ScheduleTick`) it compares due times with the wall clock (`Options.Now`, injectable), never a timer to a due
+  time, which a suspended host would stop; it first looks once discovery's `world.Listed` (the sessions it may watch,
+  sent after each changed list) says the floors are known, and again when a floor is first seen. A due schedule is
+  decided against the 5 min grace and its `on_miss` / `max_lateness`, then fired as a hire the bridge starts itself:
+  `beginHire` / `runHire`, worker.hire's path, under the bridge's own `Client` identity (`bridge:schedule`, never
+  connected, so no reply goes anywhere) with a `hireWatch` that writes `running` and the worker id before herdr is
+  called and settles the schedule from `finishHire`. The bridge picks the first free desk; an asleep floor wakes through
+  `wakeFor`, the path a hire on an asleep virtual floor shares. The prompt's handoff line is `handoff.HireTask`, the
+  game's Hire from handoff wording (`TestHireTaskIsTheGames` pins the two). No schedule path sends a worker home or
+  deletes anything; a crash while `running` resolves on startup from whether the worker was ever seen.
 - **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
   bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
   the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket

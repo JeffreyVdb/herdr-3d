@@ -536,7 +536,7 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 			}
 		}
 		return proto.RunStartResult{HireResult: res, LaunchID: launch.ID, Prompt: sent}
-	}, compose)
+	}, compose, nil)
 }
 
 // fillRunIDs records the run id of launches whose orchestrator now shows

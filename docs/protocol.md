@@ -276,6 +276,11 @@ before #184, leaves it out.
 `handoffs` (#223) is the filing cabinet, `{"counts": {floor: n}}` (floors without a handoff left out; see
 [Handoffs](#handoffs)); a bridge without a handoff directory (`--handoff-dir -`), or from before #223, leaves it out.
 
+`schedules` (#62) are the scheduled agents in view, by `due_at`: the upcoming ones (`scheduled`, `waiting`, `running`),
+the `failed` and `skipped` ones not dismissed, and each floor's last 50 `done` ones (see [Scheduled
+agents](#scheduled-agents)); `[]` when there are none. A bridge from before #62 leaves the key out: a client reads that
+as `[]`.
+
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
@@ -551,6 +556,8 @@ and remember the last `seq` applied.
 | `repo_discovery.update` | `roots`, `interval_minutes`, `status` | #54: repository discovery's settings or a scan's status changed (a scan started, progressed, ended); flat in the event. `status.revision` moves only when the discovered repositories did (see [Repository discovery](#repository-discovery)) |
 | `handoff.added` | `floor_id`, `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (#58: `floor_id` is its floor, `session` that floor's session; before #58 `session` was the floor, which it still is for a real floor; `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
 | `handoff.removed` | `floor_id`, `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
+| `schedule.upsert` | `schedule` | #62: a schedule was created or updated, or its state changed (a fire began, waits, ended); the whole schedule (see [Scheduled agents](#scheduled-agents)) |
+| `schedule.removed` | `id`, `floor_id` | #62: a schedule left the view: cancelled, dismissed, or a `done` one pruned beyond its floor's last 50 |
 | `kaneo.update` | the fields of the Kaneo state | #184: the Kaneo connection changed (saved, cleared, paused by a refused key, resumed); flat in the event, never a key (see [Kaneo](#kaneo)). Like `packup.update`, decode it by its `t`: its `state` and `last_error` are not `ai.update`'s |
 
 ```json
@@ -716,6 +723,12 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `pr.merge` | `{"floor"|"session", "id", "method", "confirm": true, "override"?, "confirm_override"?}` | `{"merged": true}` | boards after the refresh |
 | `worker.open_pr.prepare` | `{"id"}` (worker id) | `{"can_open", "reason"?, "branch", "base", "ahead", "dirty", "existing"?, "title", "body"}` | — |
 | `worker.open_pr` | `{"id", "title", "body", "confirm": true}` | `{"pr": {"id", "key", "url"}, "pushed", "existed"}` | boards after the refresh |
+| `schedule.create` | #62: `{"floor", "title", "prompt", "due_at", "on_miss"?, "max_lateness_ms"?, "harness", "model", "effort", "cwd", "worktree"?, "wake_floor"?, "handoff_path"?, "source"?}` (see [Scheduled agents](#scheduled-agents)) | the schedule | `schedule.upsert` |
+| `schedule.update` | `{"id", …}`: `schedule.create`'s args without `source`, the whole spec replaced; only while `scheduled` | the schedule | `schedule.upsert` |
+| `schedule.cancel` | `{"id"}`; only while `scheduled` or `waiting` | the schedule, `cancelled` | `schedule.removed` |
+| `schedule.run_now` | `{"id"}`; only while `scheduled` | the schedule, as its fire left it (`running`, `waiting` or `failed`) | `schedule.upsert`, then the hire's |
+| `schedule.retry` | `{"id"}`; only while `failed` or `skipped`: the same spec, fired now | the schedule, as its fire left it | `schedule.upsert`, then the hire's |
+| `schedule.dismiss` | `{"id"}`; only while `failed` or `skipped` | the schedule, with `dismissed_at` | `schedule.removed` |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -4368,6 +4381,99 @@ front matter. The audit row of `worker.handoff` keeps the instruction's length o
 result has the model, host, prompt version, sizes (payload, sent, answer, document), the elapsed time, the outcome
 code, the redaction counts, the coverage numbers and the call's sanitized diagnostics; never text.
 
+### Scheduled agents
+
+#62 (part 1 of the epic #61). A schedule is a one-shot hire at a wall-clock time: when it is due the bridge hires a
+fresh worker on its floor with its prompt, with no client connected. The original worker is never prompted, and no
+schedule path ever sends a worker home or deletes a worktree, a branch or a workspace.
+
+```json
+{"t":"schedule.create","req_id":"s1","args":{"floor":"herdr-3d","title":"After the soak","due_at":1792061100000,
+ "prompt":"The 24h soak is over. Delete the backups, attach the evidence and close the ticket.",
+ "harness":"claude","model":"claude-opus-5-5","effort":"high","cwd":"/home/dev/devel/herdr-3d","worktree":true,
+ "handoff_path":"/home/dev/handoff/herdr-3d/20261016-1045-flicker-vector-rollout.md",
+ "source":{"kind":"transcript","worker":"6db1905e-9e85-42f4-911c-b05e31b84c68","message":"msg_01"}}}
+{"t":"schedule.upsert","seq":2210,"schedule":{"id":"sch_5f3c9a1e7b2d4086","floor":"herdr-3d","title":"After the soak",
+ "prompt":"The 24h soak is over. …","due_at":1792061100000,"on_miss":"run_late","harness":"claude",
+ "model":"claude-opus-5-5","effort":"high","cwd":"/home/dev/devel/herdr-3d","worktree":true,"wake_floor":true,
+ "handoff_path":"/home/dev/handoff/herdr-3d/20261016-1045-flicker-vector-rollout.md",
+ "source":{"kind":"transcript","worker":"6db1905e-9e85-42f4-911c-b05e31b84c68","message":"msg_01"},
+ "state":"scheduled","created_at":1791974700000,"updated_at":1791974700000}}
+```
+
+**The spec.** `floor` is a floor id the bridge knows (a virtual floor too); it cannot change. `title`: 1–200 bytes, no
+control characters. `due_at`: unix ms, UTC, in the future on create and update (relative input such as "in 24h" is the
+client's to resolve). `prompt`: `worker.hire`'s rules (at most 32 KiB, not starting with `--`, typeable for Claude); it
+may be empty only with a `handoff_path`. `harness`, `model` and `effort` are checked against `hire_options` as a hire's
+are. `cwd`: an absolute directory that exists now; a schedule never falls back to another one. `worktree` (default
+false) makes the fire a worktree hire from `cwd`'s repository. `wake_floor` (default true) wakes the floor when it is
+asleep. `handoff_path`: an absolute path to a handoff the worker reads. `on_miss` (`run_late`, the default, or `skip`)
+and `max_lateness_ms` (positive, `run_late` only; absent: no limit) are the missed-window policy below. `source` (create
+only; default `{"kind":"manual"}`): `manual`, `transcript` or `suggestion`, with the source `worker` and `message` ids
+when known.
+
+**States.** `scheduled` (not due) → `waiting` (due, its fire waits: the floor wakes, is busy, is not seen yet, or has no
+free desk; `state_reason` says which) → `running` (the hire is in flight; `worker_id`, `fired_at` set) → `done`
+(hired) | `failed` | `skipped` | `cancelled`. `failed` and `skipped` carry a `state_reason` that names the flag or path
+and stay in view, as *needs attention*, until `schedule.dismiss` (which sets `dismissed_at`) or `schedule.retry`.
+`cancelled` and dismissed schedules are kept in the database but leave the view (`schedule.removed`). Every transition
+is written to SQLite first (`updated_at`), so a restart resumes them.
+
+| command | allowed from | then |
+|---|---|---|
+| `schedule.update` | `scheduled` | the new spec |
+| `schedule.cancel` | `scheduled`, `waiting` | `cancelled` |
+| `schedule.run_now` | `scheduled` | fires now, without the grace check |
+| `schedule.retry` | `failed`, `skipped` | fires the same spec now, without the grace check |
+| `schedule.dismiss` | `failed`, `skipped` | out of view |
+
+Any other transition answers `invalid_state` (also a command on a cancelled or dismissed schedule); an unknown id is
+`not_found`.
+
+**The runner.** The bridge looks at the wall clock every 30 s, and once on startup as soon as discovery has listed the
+sessions (and again when a floor is first seen). It never waits on one long monotonic timer, which stops while the host
+is suspended: a host that was suspended or a bridge that was down catches up on its next look.
+
+**Grace and the missed window.** A schedule first seen due at most **5 minutes** after `due_at` fires normally. Past
+that it was missed:
+
+- `on_miss: "skip"` → `skipped`, `"missed: bridge was offline at 2026-10-17 10:45 UTC (seen 2026-10-17 11:20 UTC)"`.
+- `on_miss: "run_late"` later than `max_lateness_ms` → `skipped`, `"missed: 2h late, more than its max_lateness of 1h
+  (due …, seen …)"`.
+- otherwise it fires late, and its prompt starts with: `This task was scheduled for 2026-10-17 10:45 UTC and is running
+  at 2026-10-17 13:05 UTC, 2h 20m late. Check whether anything below is stale before acting.`
+
+`run_now` and `retry` skip the grace check (a retry of a late schedule still gets the late notice). Each schedule fires
+once: the fire writes `running` before herdr is called, and a schedule a crash left `running` is resolved on startup:
+`done` if the bridge ever saw its worker, else `failed` `"bridge stopped while hiring"`. It is never fired again.
+
+**The fire** is `worker.hire`'s path, started by the bridge itself (audited as `worker.hire` by `bridge:schedule`, with
+the schedule's id in its args and `req_id` `schedule:<id>`; no client gets a reply). Every client sees it exactly as a
+hire: `floor.upsert` when the floor grows a desk, the new worker's `worker.upsert` with `hired_at`, its statuses.
+
+1. The floor is gone (a virtual floor deleted, or a session discovery no longer lists) → `failed` `"floor <id> is gone"`.
+2. The floor is asleep: with `wake_floor` the bridge wakes it (`floor.wake`'s path, its own audited `floor.wake` row) and
+   the schedule waits; it fires once the wake ends (a failed wake fails it with the wake's error). Without `wake_floor`
+   → `failed` `"floor asleep: wake_floor is off"`. While the floor wakes or sleeps (`busy`) the schedule waits and is
+   tried again on the next look.
+3. `cwd` missing → `failed` `"working directory <cwd> no longer exists"`.
+4. A hard cap → `failed` with the hire's message, which names `--max-workers-per-floor` or `--max-workers`.
+5. The desk is the bridge's pick: the first desk no worker holds and no hire is on its way to; the floor grows its desks
+   as with any hire. None free (hires in flight hold them all) → the schedule waits.
+6. The prompt: the late notice (if any), the schedule's `prompt`, then, with a `handoff_path`, the cabinet's Hire from
+   handoff line, `Read <path> and continue the work. Invoke the skills it suggests.`, or, if that file is gone, `The
+   handoff <path> this task referenced was deleted; continue without it.`; the parts separated by a blank line. A
+   prompt that grows over 32 KiB this way fails the fire with the hire's `bad_request` message.
+7. The hire succeeds → `done` with `worker_id` and `fired_at`. A hire error → `failed` with its message (as
+   `worker.hire` would answer it; a hire that fails after herdr made its workspace rolls that workspace back, as any
+   failed hire does). A worker hired whose prompt was not sent → `failed`, `"hired <name>, but its prompt was not sent:
+   …"`: the worker stays at its desk.
+
+Stored in SQLite `schedule (id, floor, title, prompt, due_at, on_miss, max_lateness_ms, harness, model, effort, cwd,
+worktree, wake_floor, handoff_path, source, source_worker, source_message, state, state_reason, seen_at, fired_at,
+worker_id, created_at, updated_at, dismissed_at)`; `seen_at` is when the runner first saw it due (a late run's mark).
+A floor keeps its last 50 `done` schedules, by `fired_at`; older ones are deleted.
+
 ### Inbox
 
 The game's inbox (#100) is derived in the client from the world: the workers that need you and the employees that are
@@ -4409,12 +4515,12 @@ dismissed_at)`.
 | `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `truncated`, `empty_answer`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` (#174: also a reasoning effort or budget the model or the range refuses; `digest.retry` also `unknown_worker`) and, from its test's calls, the `ai.*` ones (`truncated`, `empty_answer`); #211 `hire.interpret` never fails with them: they are its result's `error` (see [Hire interpretation](#hire-interpretation)) |
 | `bad_url`, `key_required`, `not_configured`, `unauthorized`, `forbidden` | #184 `kaneo.*` and a floor's Kaneo link (see [Kaneo](#kaneo)); `unauthorized` (the provider refused the key, HTTP 401, maybe its quota) and `forbidden` (a permission problem, HTTP 403) also from the board commands of a provider that tells them apart; `unreachable`, `timeout`, `test_required`, `rate_limited` and `provider_failed` are used there too |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
-| `not_found` | no building with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
+| `not_found` | no building with that id; #62 no schedule with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case); #58 `session.create`: a floor, a herdr session (also an asleep one), a session folder or a loaded `herdr-s-<name>` unit has that name |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started; #224: an agent handoff for a worker with a request running or a wrap-up armed, a wrap-up while a request runs, `worker.handoff_cancel` while it is being filed; #58: `session.create` of a name already being created; #60: `worker.retry_followup` while a retry of that follow-up runs |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read; #60 `worker.retry_followup` after 3 retries of that follow-up, or while follow-up questions are not `ready` |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read; #60 `worker.retry_followup` after 3 retries of that follow-up, or while follow-up questions are not `ready`; #62 a `schedule.*` command in a state it does not allow (see [Scheduled agents](#scheduled-agents)), or on a cancelled or dismissed schedule |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |
