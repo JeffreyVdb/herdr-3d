@@ -3463,11 +3463,13 @@
 
 /* #31: a file reference's popover (fileRefPopover.ts): its full path, selectable whole, and "Copy file path". App chrome,
    so the UI theme's raised surface (#216); the path is machine text, in the transcript's mono on a recessed well. It
-   sits in the root, over the timeline, never clipped by its scroller, and is kept inside the screen (narrow ones too). */
+   sits in the root, over the timeline, never clipped by its scroller, and is kept inside the screen (narrow ones too).
+   Short of room, only the body (the path and its note) shrinks and scrolls: Copy stays in view. */
 .tx-fref {
   position: absolute;
   z-index: 25;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   width: max-content;
   min-width: min(15em, 100%);
@@ -3498,6 +3500,22 @@
     opacity: 0;
     transform: translateY(3px);
   }
+}
+.tx-fref-body {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* Room for the path's focus ring, which the scroll box would clip (Ubuntu's reaches 5px out). */
+  margin: -5px;
+  padding: 5px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ctl-hover) transparent;
+}
+.tx-fref-row,
+.tx-fref-status {
+  flex-shrink: 0;
 }
 .tx-fref-path {
   max-width: 34em;
@@ -3576,6 +3594,9 @@
   }
 }
 /* ubuntu:begin */
+:root[data-ui-theme='ubuntu'] .tx .tx-fref-body {
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
 /* #216 row 21: a labelled button is 36px in Ubuntu; a coarse pointer 44. */
 :root[data-ui-theme='ubuntu'] .tx .tx-fref-copy {
   min-height: 36px;

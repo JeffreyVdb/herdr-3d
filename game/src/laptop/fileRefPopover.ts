@@ -8,7 +8,8 @@ import { zoomKey } from './keys';
  * `data-tx-file`): its full path, selectable, and "Copy file path". A click on the reference, or Enter / Space on it,
  * opens it with the keyboard on the button; Esc closes it and gives the keyboard back to the reference, a click
  * elsewhere closes it. It sits in the transcript's root, not in the scroller, so the scroller never clips it, and follows
- * the reference as the timeline scrolls (out of view, it closes). A relative path is joined to the worker's checkout,
+ * the reference as the timeline scrolls (out of view, it closes). Short of room, only the path (and its note) scrolls:
+ * Copy is always in view. A relative path is joined to the worker's checkout,
  * read when it opens; unknown, it stays relative and says so.
  */
 
@@ -57,8 +58,42 @@ export function markFileRefs(el: HTMLElement): void {
   }
 }
 
+/** Where the popover may be (screen pixels): the part of the root inside the window, less the margin. */
+export interface Room {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+export function popRoom(box: Room, winWidth: number, winHeight: number): Room {
+  return {
+    top: Math.max(box.top, 0) + PAD,
+    bottom: Math.min(box.bottom, winHeight) - PAD,
+    left: Math.max(box.left, 0) + PAD,
+    right: Math.min(box.right, winWidth) - PAD,
+  };
+}
+
+/**
+ * Its height and top for a reference at `ref`: `ht` tall unhindered, never under `least` while the room has that.
+ * Below the reference when it fits there or there is more room below, else above; capped to that side's room, or, when
+ * that is under `least`, `least` tall and moved back inside the room (over the reference).
+ */
+export function placeY(ht: number, least: number, ref: { top: number; bottom: number }, room: Room): { top: number; height: number; side: 'below' | 'above' } {
+  const below = room.bottom - (ref.bottom + GAP);
+  const above = ref.top - GAP - room.top;
+  const side = ht <= below || below >= above ? 'below' : 'above';
+  const fits = Math.max(0, side === 'below' ? below : above);
+  const height = Math.max(0, Math.min(ht, Math.max(fits, least), room.bottom - room.top));
+  const want = side === 'below' ? ref.bottom + GAP : ref.top - GAP - height;
+  return { top: Math.max(room.top, Math.min(want, room.bottom - height)), height, side };
+}
+
 export class FileRefPopover {
   readonly el: HTMLDivElement;
+  /** The path and its note: what shrinks and scrolls when room is short. */
+  private readonly body: HTMLDivElement;
   private readonly pathEl: HTMLDivElement;
   private readonly note: HTMLParagraphElement;
   private readonly btn: HTMLButtonElement;
@@ -87,11 +122,11 @@ export class FileRefPopover {
     this.btnText = h('span', {}, 'Copy file path');
     this.btn = h('button', { type: 'button', class: 'tx-fref-copy', onclick: () => void this.copy() }, this.btnIcon, this.btnText);
     this.status = h('div', { class: 'tx-fref-status', role: 'status', 'aria-live': 'polite' });
+    this.body = h('div', { class: 'tx-fref-body' }, this.pathEl, this.note);
     this.el = h(
       'div',
       { class: 'tx-fref', id, role: 'dialog', 'aria-label': 'File path', 'aria-describedby': `${id}-path`, hidden: true },
-      this.pathEl,
-      this.note,
+      this.body,
       h('div', { class: 'tx-fref-row' }, this.btn),
       this.status,
     );
@@ -129,6 +164,7 @@ export class FileRefPopover {
     a.setAttribute('aria-expanded', 'true');
     a.setAttribute('aria-controls', this.el.id);
     this.el.hidden = false;
+    this.body.scrollTop = 0;
     document.addEventListener('pointerdown', this.onDocDown, true);
     window.addEventListener('resize', this.onResize);
     this.place();
@@ -155,8 +191,10 @@ export class FileRefPopover {
   }
 
   /**
-   * Next to its reference, below it (above when there is more room there), inside the root; closed when the reference
-   * scrolled out of the timeline. A row drawn anew (an update) brings the same reference back: it follows that one.
+   * Next to its reference, below it (above when there is more room there), inside the root and the window; closed when
+   * the reference scrolled out of the timeline. A row drawn anew (an update) brings the same reference back: it follows
+   * that one. Short of room on both sides it takes the roomier one and, rather than shrink below the least it may be
+   * (Copy and two lines of the path), moves over the reference, still inside the root.
    */
   place(): void {
     let a = this.anchor;
@@ -175,21 +213,18 @@ export class FileRefPopover {
     const box = root.getBoundingClientRect();
     // A root drawn scaled (a CSS transform): boxes are in screen pixels, `left`/`top` in its own.
     const k = root.offsetWidth > 0 && box.width > 0 ? box.width / root.offsetWidth : 1;
+    const room = popRoom(box, innerWidth, innerHeight);
     const pop = this.el;
-    pop.style.maxWidth = `${Math.max(0, box.width - 2 * PAD) / k}px`;
+    pop.style.maxWidth = `${Math.max(0, room.right - room.left) / k}px`;
     pop.style.maxHeight = '';
+    const ht = pop.offsetHeight * k;
+    const bodyHt = this.body.offsetHeight * k;
+    // The least: all of it but the path and its note, and two lines of the path (all of them when that is less).
+    const least = ht - bodyHt + Math.min(bodyHt, this.twoLines() * k);
+    const { top, height, side } = placeY(ht, least, r, room);
+    if (height < ht) pop.style.maxHeight = `${height / k}px`;
     const w = pop.offsetWidth * k;
-    let ht = pop.offsetHeight * k;
-    const below = box.bottom - PAD - (r.bottom + GAP);
-    const above = r.top - GAP - (box.top + PAD);
-    const side = ht <= below || below >= above ? 'below' : 'above';
-    const room = Math.max(0, side === 'below' ? below : above);
-    if (ht > room) {
-      pop.style.maxHeight = `${room / k}px`;
-      ht = room;
-    }
-    const top = side === 'below' ? r.bottom + GAP : r.top - GAP - ht;
-    const left = Math.max(box.left + PAD, Math.min(r.left, box.right - PAD - w));
+    const left = Math.max(room.left, Math.min(r.left, room.right - w));
     pop.style.left = `${(left - box.left) / k}px`;
     pop.style.top = `${(top - box.top) / k}px`;
     pop.dataset.side = side;
@@ -198,6 +233,15 @@ export class FileRefPopover {
   destroy(): void {
     this.close(false);
     this.el.remove();
+  }
+
+  /** The body showing two lines of the path: their height with the path's and the body's padding (before the root's scale). */
+  private twoLines(): number {
+    const cs = getComputedStyle(this.pathEl);
+    const bs = getComputedStyle(this.body);
+    const px = (v: string) => parseFloat(v) || 0;
+    const line = px(cs.lineHeight) || px(cs.fontSize) * 1.45 || 17;
+    return 2 * line + px(cs.paddingTop) + px(cs.paddingBottom) + px(bs.paddingTop) + px(bs.paddingBottom);
   }
 
   private refind(): HTMLElement | null {
