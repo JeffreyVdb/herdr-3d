@@ -11,12 +11,17 @@ package server
 // knows notify's interfaces only: the Telegram channel is the app's
 // (TestNotifyCoreIsProviderNeutral). #13: a reply to a notification is
 // typed into its worker through worker.prompt's own path (replyPrompt).
+// #14: what is tapped on a Telegram card answers the worker's ask or
+// follow-up through worker.answer_ask's or worker.answer_followup's own
+// path (cardAnswer); the cards' texts are the worker's facts (notifyFacts),
+// none of a secret ask's.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -60,7 +65,7 @@ func (h *Hub) initNotify(ctx context.Context) error {
 	}
 	svc, err := notify.New(ctx, notify.Options{Store: notifyStore{h.st}, Channel: h.opts.NotifyChannel,
 		EnvEnabled: h.opts.NotifyEnabled, Clock: h.opts.NotifyClock, Settle: h.opts.NotifySettle,
-		Audit: h.auditNotify, Prompt: h.replyPrompt, Log: h.log})
+		Audit: h.auditNotify, Prompt: h.replyPrompt, Answer: h.cardAnswer, Log: h.log})
 	if err != nil {
 		return fmt.Errorf("notifications: %w", err)
 	}
@@ -161,7 +166,9 @@ func (h *Hub) notifyWorker(id string) {
 }
 
 // notifyFacts is what the inbox rule reads of a worker: its fields as they
-// are (internal/notify interprets them, as the game does).
+// are (internal/notify interprets them, as the game does). #14: and what
+// its question cards show; an ask with a secret question gives none of
+// its texts.
 func notifyFacts(w *proto.Worker, asleep bool) notify.Worker {
 	n := notify.Worker{ID: w.ID, Status: w.Status, StatusSince: w.StatusSince, Asleep: asleep, Role: w.Role, Label: w.Label,
 		OverCap: w.OverCap, Pass: w.Pass, Phase: w.Phase}
@@ -172,15 +179,28 @@ func notifyFacts(w *proto.Worker, asleep bool) notify.Worker {
 		n.Ask = &notify.Ask{ToolUseID: a.ToolUseID, Since: a.Since}
 		if a.Questions != nil {
 			n.Ask.Questions = make([]notify.AskQuestion, len(a.Questions))
+			secret := slices.ContainsFunc(a.Questions, func(q proto.AskQuestion) bool { return q.Secret })
 			for i, q := range a.Questions {
-				n.Ask.Questions[i] = notify.AskQuestion{HasOptions: q.Options != nil, Secret: q.Secret}
+				nq := notify.AskQuestion{HasOptions: q.Options != nil, Secret: q.Secret}
+				if !secret {
+					nq.Header, nq.Question, nq.Multi, nq.Other = q.Header, q.Question, q.Multi, q.Other
+					for _, o := range q.Options {
+						nq.Options = append(nq.Options, notify.AskOption{Label: o.Label, Description: o.Description, Preview: o.Preview})
+					}
+				}
+				n.Ask.Questions[i] = nq
 			}
 		}
 	}
 	if f := w.Followup; f != nil {
-		n.Followup = &notify.Followup{TurnID: f.TurnID, At: f.At}
+		n.Followup = &notify.Followup{TurnID: f.TurnID, At: f.At, Tail: f.Tail}
 		for _, q := range f.Questions {
-			n.Followup.Questions = append(n.Followup.Questions, notify.FollowupQuestion{ID: q.ID, Question: q.Question, Kind: q.Kind, Options: len(q.Options)})
+			nq := notify.FollowupQuestion{ID: q.ID, Question: q.Question, Kind: q.Kind, Options: len(q.Options),
+				Label: q.Label, Context: q.Context, Choices: q.Options}
+			if r := q.Recommendation; r != nil {
+				nq.Recommendation = r.Text
+			}
+			n.Followup.Questions = append(n.Followup.Questions, nq)
 		}
 	}
 	if u := w.WrapUp; u != nil {
@@ -253,12 +273,49 @@ func lastTextLine(steps []transcript.DigestStep) string {
 // and no worker.prompt audit row (the service writes notify.reply, by the
 // text's lengths). A /handoff is refused: it is the game's.
 func (h *Hub) replyPrompt(ctx context.Context, id, text string, done func(error)) error {
-	res := make(chan error, 1)
-	err := h.do(ctx, func(hctx context.Context) {
-		res <- h.queuePrompt(hctx, proto.WorkerPromptArgs{ID: id, Text: text}, nil, func(_ context.Context, _ any, err error) {
+	return h.handOff(ctx, func(hctx context.Context) error {
+		return h.queuePrompt(hctx, proto.WorkerPromptArgs{ID: id, Text: text}, nil, func(_ context.Context, _ any, err error) {
 			done(replyError(err))
 		})
 	})
+}
+
+// cardAnswer is the service's Answer (#14): what was tapped on a Telegram
+// card answers the worker's ask or follow-up as the game's
+// worker.answer_ask or worker.answer_followup does (queueAnswerAsk,
+// queueAnswerFollowup: the same checks, lane and herdr calls), with no
+// client: no command reply, and no row of those commands (the service
+// writes notify.answer, without a text). An ask or follow-up that is no
+// longer the one tapped is errStale (notify.ReplyClosed).
+func (h *Hub) cardAnswer(ctx context.Context, a notify.Answer, done func(error)) error {
+	end := func(_ context.Context, data any, err error) {
+		if r, ok := data.(proto.AnswerAskResult); ok && err == nil && !r.Resolved {
+			h.log.Info("a Telegram card's answer was sent; the transcript has not recorded it yet", "worker", a.WorkerID)
+		}
+		done(replyError(err))
+	}
+	return h.handOff(ctx, func(hctx context.Context) error {
+		if a.TurnID != "" {
+			args := proto.WorkerAnswerFollowupArgs{ID: a.WorkerID, TurnID: a.TurnID}
+			for _, f := range a.Followup {
+				args.Answers = append(args.Answers, proto.FollowupAnswer{ID: f.ID, Value: f.Value})
+			}
+			return h.queueAnswerFollowup(hctx, args, end)
+		}
+		args := proto.WorkerAnswerAskArgs{ID: a.WorkerID, ToolUseID: a.ToolUseID, Cancel: a.Cancel}
+		for _, x := range a.Ask {
+			args.Answers = append(args.Answers, proto.AskAnswerArg{Question: x.Question, Choices: x.Choices, Other: x.Other})
+		}
+		return h.queueAnswerAsk(hctx, args, end)
+	})
+}
+
+// handOff runs queue (the checks and the queueing of a reply's or a card's
+// input) on the hub goroutine and returns its refusal, as the service
+// tells it.
+func (h *Hub) handOff(ctx context.Context, queue func(hctx context.Context) error) error {
+	res := make(chan error, 1)
+	err := h.do(ctx, func(hctx context.Context) { res <- queue(hctx) })
 	if err != nil {
 		return replyError(err)
 	}
@@ -282,6 +339,8 @@ func replyError(err error) error {
 	switch {
 	case errors.Is(err, errAskWaiting):
 		kind = notify.ReplyAsk
+	case errors.Is(err, errStale): // #14: the ask or follow-up tapped is no longer the worker's
+		kind = notify.ReplyClosed
 	case errors.Is(err, errLaneFull):
 		kind = notify.ReplyBusy
 	case errors.Is(err, errUnknownWorker):

@@ -155,6 +155,13 @@ func (h *Hub) startAnswerAsk(ctx context.Context, c *Client, cmd proto.Command) 
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	return h.queueAnswerAsk(ctx, a, h.endCommand(c, cmd))
+}
+
+// queueAnswerAsk is worker.answer_ask's checks and its queueing on the
+// worker's lane (hub goroutine), for a client's command and (#14) a
+// Telegram card's answer alike: end gets the outcome.
+func (h *Hub) queueAnswerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, end inputEnd) error {
 	if !toolUseIDRe.MatchString(a.ToolUseID) {
 		return bad("tool_use_id must be the ask's tool_use_id")
 	}
@@ -197,9 +204,9 @@ func (h *Hub) startAnswerAsk(ctx context.Context, c *Client, cmd proto.Command) 
 		}
 	}
 	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
-	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
+	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		return h.answerAsk(ctx, a, answers, session, pane)
-	})
+	}, end)
 }
 
 // askDriver presses keys into one worker's dialog, reading its screen

@@ -575,6 +575,13 @@ func (h *Hub) startAnswerFollowup(ctx context.Context, c *Client, cmd proto.Comm
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	return h.queueAnswerFollowup(ctx, a, h.endCommand(c, cmd))
+}
+
+// queueAnswerFollowup is worker.answer_followup's checks and its queueing
+// on the worker's lane (hub goroutine), for a client's command and (#14) a
+// Telegram card's answer alike: end gets the outcome.
+func (h *Hub) queueAnswerFollowup(ctx context.Context, a proto.WorkerAnswerFollowupArgs, end inputEnd) error {
 	s, err := h.followupOf(a.ID, a.TurnID)
 	if err != nil {
 		return err
@@ -597,11 +604,11 @@ func (h *Hub) startAnswerFollowup(ctx context.Context, c *Client, cmd proto.Comm
 		return err
 	}
 	if w.Ask != nil { // #57: its dialog would take the text
-		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
+		return fmt.Errorf("%w: %s %w: answer it first (worker.answer_ask)", errInvalidState, w.Name, errAskWaiting)
 	}
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
-	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
+	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		stale, err := query(ctx, h, func() error { _, err := h.followupOf(a.ID, a.TurnID); return err })
 		if err != nil {
 			return nil, err
@@ -620,7 +627,7 @@ func (h *Hub) startAnswerFollowup(ctx context.Context, c *Client, cmd proto.Comm
 			}
 		})
 		return res, nil
-	})
+	}, end)
 }
 
 // startRetryFollowup answers worker.retry_followup (#60): a fallback's
