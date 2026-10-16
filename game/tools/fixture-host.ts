@@ -52,16 +52,28 @@ export class HostSim {
   private watching = false;
   private timers: unknown[] = [];
   private readonly log = { watch: 0, unwatch: 0, stats: 0, disk: 0 };
+  private readonly on: boolean;
+  private readonly everyMs: number;
+  private readonly later: (fn: () => void, ms: number) => unknown;
+  private readonly cancel: (h: unknown) => void;
+  private readonly now: () => number;
+  private readonly error: (code: string, message: string) => Error;
 
   constructor(
     scenario: string,
-    private readonly on: boolean,
-    private readonly everyMs: number,
-    private readonly later: (fn: () => void, ms: number) => unknown,
-    private readonly cancel: (h: unknown) => void,
-    private readonly now: () => number,
-    private readonly error: (code: string, message: string) => Error,
+    on: boolean,
+    everyMs: number,
+    later: (fn: () => void, ms: number) => unknown,
+    cancel: (h: unknown) => void,
+    now: () => number,
+    error: (code: string, message: string) => Error,
   ) {
+    this.on = on;
+    this.everyMs = everyMs;
+    this.later = later;
+    this.cancel = cancel;
+    this.now = now;
+    this.error = error;
     this.nums = startNumbers(scenario);
   }
 
