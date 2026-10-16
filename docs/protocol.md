@@ -1317,7 +1317,7 @@ remote-tracking refs) and is audited like any command.
 | arg | rule, else `bad_request` |
 |---|---|
 | `floor` (or `session`) | a running, watched floor (#58: a floor id; a virtual floor's base session must run) |
-| `desk_index` | `0 ≤ desk_index < floor.desks`, and free: no worker holds it and no other hire in flight reserved it (else `desk_taken`, also for an out-of-range desk). Two hires to one desk: the first accepted wins, the other is `desk_taken`. |
+| `desk_index` | `0 ≤ desk_index < max(floor.desks, max_desks)`, and free: no worker holds it and no other hire in flight reserved it (else `desk_taken`, also for an out-of-range desk). A desk beyond the current outline grows the floor when reserved, before its workspace appears; a floor shrinking while the form is open does not invalidate the hire. Pending hires count toward spare desks on their own floor. Two hires to one desk: the first accepted wins, the other is `desk_taken`. |
 | `harness`, `model`, `effort` | one of `hire_options` (as `default_hire`) |
 | `label` | 1–64 bytes, no control characters, not starting with `-`; default: the next generated name (`hire.prepare`'s `label`). The worker's name is the label when that is a free generated name, else the next generated name. |
 | `cwd` | absolute, existing directory; default as in `hire.prepare` |

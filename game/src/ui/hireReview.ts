@@ -113,6 +113,8 @@ export class HireReviewDialog {
   private modelQuery = '';
   /** Bumped by every open and close: an answer asked for earlier is for a review that is gone. */
   private epoch = 0;
+  /** Only this opening may be restored after a background refusal. */
+  private opening = 0;
   /** Bumped by every `hire.prepare` (the answer of the latest one is the one that counts). */
   private prepGen = 0;
   /** Bumped by every keystroke in the folder: a folder check is for the folder it was asked about, never a newer one. */
@@ -184,6 +186,7 @@ export class HireReviewDialog {
       return false;
     }
     this.epoch++;
+    this.opening++;
     this.floor = floor;
     this.desk = seat.desk;
     this.prep = null;
@@ -805,6 +808,7 @@ export class HireReviewDialog {
     const who = args.label ?? this.prep.label;
     const epoch = this.epoch;
     // Read once, here: a change in Settings while the hire is on its way does not change how it ends.
+    const opening = this.opening;
     const background = this.host.hirePrefs?.hireInBackground === true;
     this.state = 'hiring';
     this.hiringText = null;
@@ -826,7 +830,12 @@ export class HireReviewDialog {
       // #58 decision 3: a hire on an asleep virtual floor wakes it first, which takes a while: say so now.
       if (this.wakes()) this.host.toast(`Waking floor ${this.floorName()}… ${who} is hired once it is up.`, 'info');
       this.close();
-      await op.done;
+      const o = await op.done;
+      if ((o.kind === 'failed' || o.kind === 'not_sent') && opening === this.opening && !document.querySelector('dialog[open]')) {
+        this.dialog.showModal();
+        this.landed(o, { floor, desk, who, epoch: this.epoch });
+        this.focusFirst();
+      }
       return;
     }
     this.render();

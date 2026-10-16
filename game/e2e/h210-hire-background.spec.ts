@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, openMenu, settingsSection, watchErrors } from './game';
+import { frames, openGame, openMenu, RESULTS, settingsSection, watchErrors } from './game';
 import { advance, beeps, forgetToasts, notes, pose, probe, SPAWNED, toasts } from './hireProbe';
 
 // #210 on demo-m4 with the simulator on a manual clock (sim=1, simclock=manual): a hire's ack is held until the test
@@ -157,7 +157,8 @@ test('an image that does not upload: the desk is held while it tries, then let g
   await expect.poll(() => page.evaluate(() => window.__h3d.desks()[14]?.plus)).toBe(true);
   expect(await hires(page)).toHaveLength(0);
   expect(await beeps(page)).toBe(0);
-  await openHire(page, 14);
+  await expect.poll(() => dialog(page)).toMatchObject({ kind: 'hire', desk: 14, state: 'ready', error: true });
+  await expect(page.locator('#hire-task')).toBeFocused();
   expect(await task(page)).toContain('See');
   expect((await dialog(page)) as unknown).toMatchObject({ images: [{ name: 'grill.png', status: 'error' }] });
   clean();
@@ -206,9 +207,17 @@ test('a launch failure and a task not delivered: each its own error, the desk le
   await expect.poll(() => page.evaluate(() => window.__h3d.desks()[14]?.plus)).toBe(true);
   expect(await hires(page)).toHaveLength(1);
   expect(await beeps(page)).toBe(0);
-  await openHire(page, 14);
+  await expect.poll(() => dialog(page)).toMatchObject({ kind: 'hire', desk: 14, state: 'ready', error: true });
   expect(await task(page)).toBe('Proof the dough');
-  await page.keyboard.press('Escape');
+  await expect(page.locator('#hire-task')).toBeFocused();
+  await page.screenshot({ path: `${RESULTS}/hire-failure-recovered.png` });
+  // The restored form is usable: a deliberate retry sends the same task once.
+  await page.keyboard.press('Enter');
+  await expect.poll(() => hires(page)).toHaveLength(2);
+  expect((await hires(page))[1]!.args).toMatchObject({ prompt: 'Proof the dough', desk_index: 14 });
+  await advance(page, 150);
+  await expect(page.locator('.toast')).toHaveText(SPAWNED);
+  expect(await dialog(page)).toBeNull();
 
   // A fresh page and simulator: the next hire's first task is not delivered.
   await onPastry(page, '&simfail=prompt_undelivered');
