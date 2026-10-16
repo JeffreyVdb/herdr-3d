@@ -100,6 +100,9 @@ func (c *Control) StartAgent(ctx context.Context, session, pane, name string, a 
 		vars["label"] = a.Label
 	}
 	_, err := c.run(ctx, op, vars)
+	if a.Harness == "codex" {
+		return c.codexStartupResult(ctx, session, pane, name, err)
+	}
 	return err
 }
 

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -241,7 +242,11 @@ func (h *Hub) resumeShared(ctx context.Context, session, id, pane, thread string
 	if h.opts.CodexHost == nil || h.opts.CodexRun == "" {
 		return embedded("this bridge cannot start Codex servers")
 	}
-	sl := &sharedLaunch{id: id, session: session, pane: pane, agent: rec.AgentName, rec: rec}
+	policy, err := query(ctx, h, func() codexapp.VersionPolicy { return h.cx.policy })
+	if err != nil {
+		return fail(err.Error())
+	}
+	sl := &sharedLaunch{id: id, session: session, pane: pane, agent: rec.AgentName, rec: rec, policy: policy}
 	if err := h.startSharedServer(ctx, sl, fh); err != nil {
 		return embedded(err.Error())
 	}

@@ -11,7 +11,8 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 /** A well-formed switch (unknown keys dropped), else null. */
 export function codexServerStateOf(v: unknown): CodexServerState | null {
   if (!isObj(v) || typeof v.enabled !== 'boolean' || typeof v.available !== 'boolean') return null;
-  return { enabled: v.enabled, available: v.available };
+  if (v.allow_unverified !== undefined && typeof v.allow_unverified !== 'boolean') return null;
+  return { enabled: v.enabled, available: v.available, ...(typeof v.allow_unverified === 'boolean' ? { allow_unverified: v.allow_unverified } : {}) };
 }
 
 /** The switch, and who listens for changes. */
@@ -79,8 +80,8 @@ export function codexNotice(w: { codex?: Worker['codex'] | undefined }): CodexNo
 
 /**
  * #186: the bridge's refusal of a Codex its shared server is not verified with, by `codex --version`
- * (`unsupported Codex version: "codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x)`) or by the server's
- * userAgent (`… app-server "herdr_3d/0.163.0 (…) …" (supported: 0.160.x, 0.161.x or 0.162.x)`), in plain words; any other
+ * (`unsupported Codex version: "codex-cli 0.999.0" (supported: codex-cli 0.160.x, 0.161.x, 0.162.x or 0.163.x)`) or by the server's
+ * userAgent (`… app-server "herdr_3d/0.999.0 (…) …" (supported: 0.160.x, 0.161.x, 0.162.x or 0.163.x)`), in plain words; any other
  * reason as it is.
  */
 function plainWhy(why: string): string {

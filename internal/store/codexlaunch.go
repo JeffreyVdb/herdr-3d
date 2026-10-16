@@ -41,20 +41,26 @@ const migrationCodexLaunch = `CREATE TABLE codex_server_settings (
 		updated_at   TEXT NOT NULL
 	);`
 
-// LoadCodexServerSettings returns whether new Codex workers get their own
-// shared app-server (ok false: never set, the default is off).
-func (s *Store) LoadCodexServerSettings(ctx context.Context) (enabled, ok bool, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT enabled FROM codex_server_settings WHERE id = 1`).Scan(&enabled)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, false, nil
-	}
-	return enabled, err == nil, err
+// CodexServerSettings are the bridge-wide launch and compatibility preferences.
+type CodexServerSettings struct {
+	Enabled, AllowUnverified bool
 }
 
-// SaveCodexServerSettings stores the switch.
-func (s *Store) SaveCodexServerSettings(ctx context.Context, enabled bool) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO codex_server_settings (id, enabled, updated_at) VALUES (1, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at`, enabled, s.ts())
+const migrationCodexVersionPolicy = `ALTER TABLE codex_server_settings ADD COLUMN allow_unverified INTEGER NOT NULL DEFAULT 0;`
+
+// LoadCodexServerSettings returns the preferences (ok false: never set).
+func (s *Store) LoadCodexServerSettings(ctx context.Context) (settings CodexServerSettings, ok bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT enabled, allow_unverified FROM codex_server_settings WHERE id = 1`).Scan(&settings.Enabled, &settings.AllowUnverified)
+	if errors.Is(err, sql.ErrNoRows) {
+		return CodexServerSettings{}, false, nil
+	}
+	return settings, err == nil, err
+}
+
+// SaveCodexServerSettings stores both preferences atomically.
+func (s *Store) SaveCodexServerSettings(ctx context.Context, settings CodexServerSettings) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO codex_server_settings (id, enabled, allow_unverified, updated_at) VALUES (1, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, allow_unverified = excluded.allow_unverified, updated_at = excluded.updated_at`, settings.Enabled, settings.AllowUnverified, s.ts())
 	return err
 }
 

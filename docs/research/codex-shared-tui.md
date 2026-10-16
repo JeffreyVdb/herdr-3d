@@ -829,3 +829,72 @@ strict on all three.
 **Not run:** the real-model smokes (`H3D_CODEXSHARE_REAL=1`, inference cost). The mock speaks HTTP streaming; the
 real provider's websocket path is not exercised with the override, though the override only gates the preemption
 token both paths share.
+
+## 15. Codex 0.163.0
+
+Date 2026-10-16. Installed: **codex-cli 0.163.0**, herdr 0.9.3. Compared the upstream rust-v0.162.0 and
+[rust-v0.163.0 sources](https://github.com/openai/codex/tree/rust-v0.163.0) (0.163 commit
+`83086188ae0614bd882818ff1aa23f3194962012`). The schemas used here (`initialize`, `thread/resume`, `thread/read`,
+`thread/turns/list`, `turn/steer`, question parameters, `ThreadItem`, `Turn` and `UserInput`) are unchanged. Read-state
+fields/methods and retained tool output options are additive. `request_user_input_async` now respects
+[`tools.experimental_request_user_input.enabled`](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/tools/spec_plan.rs#L1340),
+whose [default remains true](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/config/mod.rs#L2758).
+The shared launch keeps `features.instant_interrupt=false` (§14); the upstream default is
+[still true](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/features/src/lib.rs#L1207).
+
+**Idle thread unloading now defaults to 30 minutes.** The
+[0.163 default is 1800 seconds](https://github.com/openai/codex/blob/rust-v0.163.0/codex-rs/core/src/config/mod.rs#L4031),
+up from [60 seconds](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/core/src/config/mod.rs#L3930).
+`Lifecycle` pins `thread_unload_delay_secs = 60` in its private test home to continue exercising actual unload and
+cold resume. The product keeps the user's setting/default.
+
+**Hook-review startup exposed Herdr's lost pending name.** On this host, the first embedded and shared launches
+with fixture hooks return `timeout` or `agent_name_not_found` while the terminal is still at **Hooks need review**.
+This dialog is not new to 0.163 (see §12); the hook schemas and discovery logic are unchanged between these tags.
+Treating it as an ordinary launch failure removed a usable terminal; merely preserving the terminal still left
+named `herdr agent` commands unable to find it. The production adapter now checks the complete visible dialog on
+those two errors, renames the existing pane's agent to its requested name, and reports `agent_not_ready`. The
+player still reviews the hooks, and the initial prompt is held. Unit coverage checks all four startup paths and
+unrelated errors; the real fixtures explicitly trust only their own generated hooks.
+
+**The Bash fixture now uses its private HOME throughout.** Session discovery and the production Control runner
+previously looked in the user's home while the fixture's Herdr server used a private home. Discovery, CLI writes
+and the server now share the fixture environment; the production socket client is unchanged. This keeps the
+real-TUI checks independent of the user's shell configuration. The Claude rollout check verifies the real launch
+arguments and absence of a Codex server; it leaves the unconfigured Claude TUI to fixture session cleanup. Claude
+2.1.301 opens its theme chooser in the private home, where `/exit` is not yet a command. Claude onboarding and
+authentication are outside this Codex fixture.
+
+**Persistent compatibility opt-in.** The default remains a verified-release allowlist, now including 0.163.x.
+`allow_unverified` permits syntactically valid unverified releases at all three version checks. The rollout fixture
+uses a deliberately unverified `codex-cli 0.999.0` preflight identity, with the real 0.163 server, to verify both the
+normal fallback and opt-in behavior. The preference survives a bridge restart and the accepted hire keeps its
+shared transcript. Unit tests separately cover an unverified server handshake and watcher identity. The existing
+transcript regression now also requires the shell command, its output, and successful tool status in the game's
+transcript response.
+
+**The warm reattach limitation remains on 0.163.0.** The live `MixedHarness` check reproduced the missing Herdr
+session ID after reattaching to the same loaded server (§13/§14). The thread and tool environment remain correct;
+cold resume reports the ID correctly. The version-specific regression now expects the observed gap on 0.163.x as
+well, and will fail if upstream fixes it so the assertion can become strict. The app's sleep/wake flow uses cold
+resume and passes.
+
+**Validation.** All 17 mock-inference top-level suites have passing results across the initial full run and targeted
+reruns after the fixes above. The final `make codex-shared-bridge` is clean: all six full-stack suites pass in 424 s.
+The two real-model smokes are skipped by their normal opt-in gate; real provider inference and its websocket path
+are not part of this compatibility claim.
+
+| Checks | Result |
+|---|---|
+| Full-stack bridge: handoff, questions, transcript/terminal regression, restart delivery, worker isolation, rollout | 6/6 pass in the final bridge run |
+| Direct TUI/server: approvals, async answers, start during a turn, environment, identity, shared launch/approvals, lifecycle, mixed harness, questions, resume suppression | 11/11 pass across runs; warm reattach asserts the known limitation above |
+| `make lint test` | pass; 242 Vitest files / 3,034 tests, all Go packages, typecheck, vet and deploy-script checks |
+| Race checks: `go test -race ./internal/herdr ./internal/codexapp ./internal/server -run 'Test.*(Codex|Shared|ControlAllowlist)' -count=1` | pass |
+| Codex settings Playwright suite | 5/5 pass; desktop and 390 px phone views inspected |
+| Playwright smoke | 28/30 initially; screen-sharing latency and whiteboard pass on serial reruns; screen-sharing also passes on unchanged main |
+
+Local evidence (outside the repo): `/tmp/h3d-codex163-bridge-verified` contains the final bridge run's screens and
+protocol records; `/tmp/h3d-codex163-final-evidence` contains identity, launch, lifecycle and resume-suppression
+records; `/tmp/h3d-codex163-mixed-evidence` contains the final mixed-harness run. The run logs use the same
+`/tmp/h3d-codex163-` prefix (`integration.log`, `fixture-final.log`, `final-integration.log`, `mixed.log`,
+`bridge-verified.log`, `final-checks.log`, `final-race.log`, `ui-e2e.log`, `e2e-retry.log`, `screen-final.log`).

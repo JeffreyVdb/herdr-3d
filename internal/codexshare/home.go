@@ -10,12 +10,12 @@ import (
 )
 
 // VerifiedCodex are the exact Codex versions (`codex --version`) the
-// fixture was verified with: 0.160.1 (#154/#155), 0.161.0 (#186), 0.162.0.
+// fixture was verified with: 0.160.1 (#154/#155), 0.161.0 (#186), 0.162.0, 0.163.0.
 // The integration tests skip on any other, loudly: verifying a release is
 // adding it here and to codexapp.SupportedLines, then running
 // `make codex-shared-tui` without a version skip
 // (docs/research/codex-shared-tui.md).
-var VerifiedCodex = []string{"codex-cli 0.160.1", "codex-cli 0.161.0", "codex-cli 0.162.0"}
+var VerifiedCodex = []string{"codex-cli 0.160.1", "codex-cli 0.161.0", "codex-cli 0.162.0", "codex-cli 0.163.0"}
 
 // CheckFixtureCodex checks `codex --version` output against VerifiedCodex.
 func CheckFixtureCodex(out string) error {

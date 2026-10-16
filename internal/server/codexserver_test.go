@@ -30,15 +30,16 @@ const codexRun = "/run/user/7/herdr-world/codex"
 // answers (unless readyErr) with a supported userAgent and gets the next
 // pid; dead pids are reported down; joins are recorded.
 type fakeCodexHost struct {
-	mu       sync.Mutex
-	calls    []string
-	preErr   error
-	readyErr error
-	ua       string
-	next     int
-	dead     map[int]bool
-	stopped  []codexapp.Launch
-	watches  []*fakeCodexWatch
+	cliVersion string
+	mu         sync.Mutex
+	calls      []string
+	preErr     error
+	readyErr   error
+	ua         string
+	next       int
+	dead       map[int]bool
+	stopped    []codexapp.Launch
+	watches    []*fakeCodexWatch
 	// #156: what a watch's Steer and StartTurn answer (nil: accepted, turn
 	// "t-steered" / "t-started"), and every send, in order.
 	steer func(turn, text, cid string) (string, error)
@@ -106,9 +107,15 @@ func (f *fakeCodexHost) Calls() []string {
 	return slices.Clone(f.calls)
 }
 
-func (f *fakeCodexHost) Preflight(_ context.Context, dir string) error {
+func (f *fakeCodexHost) Preflight(_ context.Context, dir string, policy codexapp.VersionPolicy) error {
 	f.record("preflight %s", dir)
-	return f.preErr
+	if f.preErr != nil {
+		return f.preErr
+	}
+	if f.cliVersion != "" {
+		return policy.CheckVersion(f.cliVersion)
+	}
+	return nil
 }
 
 func (f *fakeCodexHost) Prepare(l codexapp.Launch) error {
@@ -238,7 +245,7 @@ func TestCodexServerSwitch(t *testing.T) {
 		t.Fatalf("set ack %s", m.raw)
 	}
 	sb.c.mustError(proto.CmdCodexServerSet, map[string]any{}, proto.ErrBadRequest)
-	if en, ok, _ := sb.st.LoadCodexServerSettings(context.Background()); !en || !ok {
+	if en, ok, _ := sb.st.LoadCodexServerSettings(context.Background()); !en.Enabled || !ok {
 		t.Fatal("switch not stored")
 	}
 
@@ -304,7 +311,7 @@ func TestSharedCodexHire(t *testing.T) {
 // mode; TestSharedCodexHireFallsBack has the lines around them.
 func TestSharedCodexHireOnEachVerifiedLine(t *testing.T) {
 	t.Parallel()
-	for _, ua := range []string{"herdr_3d/0.160.1 (Linux; x86_64) xterm", "herdr_3d/0.161.0 (Linux; x86_64) xterm"} {
+	for _, ua := range []string{"herdr_3d/0.160.1 (Linux; x86_64) xterm", "herdr_3d/0.161.0 (Linux; x86_64) xterm", "herdr_3d/0.162.0 (Linux)", "herdr_3d/0.163.0 (Linux)"} {
 		t.Run(ua, func(t *testing.T) {
 			sb := startSharedBridge(t, true)
 			sb.host.ua = ua
@@ -363,12 +370,12 @@ func TestSharedCodexHireFallsBack(t *testing.T) {
 			sb.host.preErr = fmt.Errorf("%w: /home/u/repo/.envrc (run `direnv allow` there)", codexapp.ErrEnvrcBlocked)
 		}, note: ".envrc is blocked"},
 		"unsupported codex": {setup: func(sb *sharedBridge) {
-			sb.host.preErr = codexapp.CheckVersion("codex-cli 0.163.0")
-		}, note: `unsupported Codex version: "codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x)`},
+			sb.host.preErr = codexapp.CheckVersion("codex-cli 0.999.0")
+		}, note: `unsupported Codex version: "codex-cli 0.999.0" (supported: codex-cli 0.160.x, 0.161.x, 0.162.x or 0.163.x)`},
 		"server does not answer": {setup: func(sb *sharedBridge) {
 			sb.host.readyErr = errors.New("the app-server did not answer")
 		}, note: "did not answer", stops: true},
-		"unsupported server": {setup: func(sb *sharedBridge) { sb.host.ua = "herdr_3d/0.163.0 (x)" }, note: "unsupported", stops: true},
+		"unsupported server": {setup: func(sb *sharedBridge) { sb.host.ua = "herdr_3d/0.999.0 (x)" }, note: "unsupported", stops: true},
 		"older server":       {setup: func(sb *sharedBridge) { sb.host.ua = "herdr_3d/0.159.9 (x)" }, note: "unsupported", stops: true},
 		"unplain path":       {cwd: "/home/u/my repo", note: "characters the shared launch does not pass"},
 	} {
@@ -1038,4 +1045,106 @@ func TestCodexHostStopCleansAV145FishLaunch(t *testing.T) {
 // launchRecord is what the bridge rebuilds from a stored launch (launchOf).
 func launchRecord(l store.CodexLaunch) codexapp.Launch {
 	return codexapp.Launch{Dir: l.RunDir, Name: l.Name, Token: l.Token, Cwd: l.Cwd}
+}
+
+func TestCodexVersionPreferencePersistsAndPatches(t *testing.T) {
+	t.Parallel()
+	db := filepath.Join(t.TempDir(), "world.db")
+	sb := startSharedBridgeAt(t, db, newFakeCodexHost(), false)
+	_, ack := sb.c.mustAck(proto.CmdCodexServerSet, map[string]any{"allow_unverified": true})
+	if v := ack.Data.(map[string]any); v["allow_unverified"] != true || v["enabled"] != false {
+		t.Fatalf("patch %+v", v)
+	}
+	// An older client's enabled-only command preserves the choice.
+	sb.c.mustAck(proto.CmdCodexServerSet, proto.CodexServerSetArgs{Enabled: ptr(true)})
+	sb.c.mustError(proto.CmdCodexServerSet, map[string]any{"allow_unverified": "yes"}, proto.ErrBadRequest)
+	// A second bridge reads the same durable preferences.
+	restarted := startSharedBridgeAt(t, db, newFakeCodexHost(), false)
+	cs := restarted.connect(proto.Hello{}).snapshot().World.CodexServer
+	if cs == nil || !cs.Enabled || !cs.AllowUnverified {
+		t.Fatalf("reloaded %+v", cs)
+	}
+	restarted.c.mustAck(proto.CmdCodexServerSet, map[string]any{"allow_unverified": false})
+	settings, _, err := restarted.st.LoadCodexServerSettings(context.Background())
+	if err != nil || !settings.Enabled || settings.AllowUnverified {
+		t.Fatalf("revoke: %+v %v", settings, err)
+	}
+}
+
+func TestSharedCodexUnverifiedOptIn(t *testing.T) {
+	t.Parallel()
+	for _, allow := range []bool{false, true} {
+		t.Run(fmt.Sprint(allow), func(t *testing.T) {
+			sb := startSharedBridge(t, true)
+			sb.host.cliVersion, sb.host.ua = "codex-cli 0.999.0", "herdr_3d/0.999.0 (Linux)"
+			sb.c.mustAck(proto.CmdCodexServerSet, map[string]any{"allow_unverified": allow})
+			_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
+			a := ackData[proto.HireResult](t, m)
+			if !allow {
+				if a.Codex == nil || a.Codex.Mode != proto.CodexModeLegacy || !strings.Contains(a.Codex.Note, "0.999.0") {
+					t.Fatalf("default %+v", a.Codex)
+				}
+				return
+			}
+			if a.Codex == nil || a.Codex.Mode != proto.CodexModeShared || a.Codex.Note != "" {
+				t.Fatalf("opt-in %+v", a.Codex)
+			}
+			sb.fl.update("w1", func(w *world.WorkerObs) { w.AgentSession = "test-thread" })
+			sb.world(func(w proto.World) bool { x := workersOf(w, "s")["w1"]; return x.Codex != nil && x.Codex.Attached })
+			sb.host.mu.Lock()
+			policy := sb.host.watches[0].o.VersionPolicy
+			sb.host.mu.Unlock()
+			if !policy.AllowUnverified {
+				t.Fatal("launch allowed but transcript join still gated")
+			}
+			launch := sb.launches(t)[a.ID]
+			sb.c.mustAck(proto.CmdCodexServerSet, map[string]any{"allow_unverified": false})
+			sb.host.mu.Lock()
+			lastPolicy := sb.host.watches[len(sb.host.watches)-1].o.VersionPolicy
+			sb.host.mu.Unlock()
+			if lastPolicy.AllowUnverified {
+				t.Fatal("revoked preference not applied to bridge connections")
+			}
+			if got := sb.launches(t)[a.ID]; got != launch {
+				t.Fatal("changing the compatibility preference relaunched the worker")
+			}
+		})
+	}
+}
+
+func TestSharedCodexUnverifiedWake(t *testing.T) {
+	t.Parallel()
+	sb := startSharedBridge(t, true)
+	a := sb.hireAndSleep(t, "saved-thread")
+	sb.host.ua = "herdr_3d/0.999.0 (Linux)"
+	sb.c.mustAck(proto.CmdCodexServerSet, map[string]any{"allow_unverified": true})
+	calls, _ := sb.wakeResumes(t)
+	if !slices.ContainsFunc(calls, func(c string) bool { return strings.HasPrefix(c, "codex-resume w1:p1 ") }) {
+		t.Fatalf("no shared resume: %v", calls)
+	}
+	if l := sb.launches(t)[a.ID]; l.ServerPID == 0 || l.Note != "" {
+		t.Fatalf("wake %+v", l)
+	}
+}
+
+func TestSharedCodexHookReviewKeepsTerminal(t *testing.T) {
+	t.Parallel()
+	sb := startSharedBridge(t, true)
+	sb.fl.startErr = &herdr.APIError{Code: "agent_not_ready", Message: "Codex asks to review its hooks"}
+	sb.fl.screens["w1:p1"] = []string{"Hooks need review\n1 hook is new or changed.\n1. Review hooks\n2. Trust all and continue\n3. Continue without trusting (hooks won't run)"}
+	a := codexHire(1)
+	a.Prompt = "do the work"
+	_, m := sb.c.command(proto.CmdWorkerHire, "hooks", a)
+	r := ackData[proto.HireResult](t, m)
+	if r.Codex == nil || r.Codex.Mode != proto.CodexModeShared || r.Codex.Server != proto.CodexServerRunning || r.Prompted == nil || *r.Prompted || !strings.Contains(r.PromptError, "review its hooks") {
+		t.Fatalf("hook review hire %+v", r)
+	}
+	if len(sb.host.stopped) != 0 {
+		t.Fatal("stopped the server while its terminal needed hook review")
+	}
+	for _, call := range sb.fl.Calls() {
+		if strings.HasPrefix(call, "key ") || strings.HasPrefix(call, "close ") || strings.HasPrefix(call, "prompt ") {
+			t.Fatalf("acted on hook review: %s", call)
+		}
+	}
 }

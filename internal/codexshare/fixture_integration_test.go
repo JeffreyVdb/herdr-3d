@@ -12,6 +12,7 @@ package codexshare
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -350,7 +351,15 @@ func (f *fx) startTUI(name, pane string, args ...string) Agent {
 	a, err := f.h.AgentStart(f.ctx, name, pane, 60*time.Second, args...)
 	if err != nil {
 		screen, _ := f.h.Read(f.ctx, pane, "visible", 0)
-		f.t.Fatalf("agent start: %v\n%s", err, screen)
+		var he *HerdrError
+		if errors.As(err, &he) && (he.Code == "timeout" || he.Code == "agent_name_not_found") && strings.Contains(screen, hooksReviewText) {
+			// Herdr 0.9.3 can time out on hook review. The caller's
+			// trustHooks step still answers it explicitly in this test home.
+			a, _, err = f.h.AgentGet(f.ctx, pane)
+		}
+		if err != nil {
+			f.t.Fatalf("agent start: %v\n%s", err, screen)
+		}
 	}
 	f.snap("tui-started-"+name, pane)
 	return a

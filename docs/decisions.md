@@ -1490,3 +1490,27 @@ The floors are managed in the game: Settings → Floors lists them and Add floor
 | 2 | Delete | In place under the row, like the presets' confirmation: no extra modal over Settings. It names the workers on the floor and where they go; with any, the button says "Move N workers and delete" and sends `move_workers: true`, never silently. The bridge also counts hires in flight and an away session's stored workers: a plain delete it refuses with `invalid_state` shows its words and offers the move. |
 | 3 | Hide | A Show / Hide button on every row (decision 2) with one explanation under the list: a hidden floor leaves the lists while nobody works on it and shows again when a worker is on it. A hidden floor that shows because of its workers says who. The floor you stand on stays listed too (`WorldStore.pin`: the floor whose interior you are in, however you got there — the elevator, the stairs, a pose; none in the lobby or the city; on the fire escape and the street the last one, so the building does not change shape under the stairs), so a hide or its last worker leaving never takes it away under you, and a `?floor=` link opens a hidden floor. Should the floor with the interior still drop out of its building's stack, the walk lists it again rather than move you to no storey. |
 | 4 | Add floor's second choice | `FLOOR_KINDS` gains "Virtual floor on an existing session": a free-text name (trimmed, 1–64 bytes, no control characters, checked as typed) in the body face instead of the session name's mono, and a base session picked from the real floors (asleep and hidden ones too; the session of the floor you are on first). Never a building (decision 4). From Settings it opens on the virtual kind and its result is the section's status line; from the city a toast says which building the floor stands in. |
+
+## 2026-10-16 — Codex compatibility preference and 0.163.0
+
+Codex upgrades should not force a player who accepts compatibility risk to wait for another herdr-3d release. The
+working model stays one Codex terminal managed inside Herdr, with the bridge following its conversation and tool
+steps in the transcript.
+
+- **Settings → Codex workers → Allow unverified Codex versions** is a separate, bridge-wide preference, off by
+  default and stored in SQLite. It persists across bridge restarts and future upgrades. The UI names the risk:
+  transcript updates or question replies may stop working on an untested release. Codex 0.163 is added to the
+  verified set, so it does not need this opt-in.
+- The same policy covers CLI preflight, the actual server's handshake on hire/wake, and thread connections.
+  Changing it refreshes bridge connections; it does not relaunch terminals, servers or turns. Existing legacy
+  workers keep their launch mode. The opt-in only relaxes the release allowlist: command failures, malformed
+  versions, blocked environments, process ownership and thread identity checks still apply.
+- `codex_server.set` patches either preference, preserving omitted fields. An old client's launch-switch change
+  cannot reset the risk preference. Older bridges omit `allow_unverified`, so the new game hides that control.
+- A Codex waiting at **Hooks need review** can make Herdr 0.9.3 return `timeout` or `agent_name_not_found` and drop
+  its pending agent name. The adapter recognizes that complete dialog after those errors, restores the requested
+  name on the existing pane, and returns the existing recoverable `agent_not_ready` result. The hire holds its first
+  prompt for the player. It neither approves hooks nor starts a second terminal. This covers both shared and
+  embedded Codex launches and their resume paths; other startup errors retain their normal handling.
+
+Verification and upstream details are in [Codex shared TUI research §15](research/codex-shared-tui.md#15-codex-01630).

@@ -101,19 +101,20 @@ func TestCodexShareMixedHarness(t *testing.T) {
 		if !strings.Contains(string(got), `"direnv":"direnv-ws-a"`) || !strings.Contains(string(got), `"herdr_pane":"`+pane+`"`) {
 			t.Errorf("environment after resume: %s", got)
 		}
-		// Known upstream gap (#186, findings §13 and §14): codex 0.161 and
-		// 0.162 run no SessionStart hook when a TUI re-attaches to a server
+		// Known upstream gap (#186, findings §13–§15): codex 0.161 through
+		// 0.163 run no SessionStart hook when a TUI re-attaches to a server
 		// that still has its thread loaded (0.160 runs it, source "resume",
 		// at the first prompt), so Herdr's hook never reports the id again.
 		// Kept as observed so a fix fails here and this check is made strict.
 		_, raw, _ := f.h.AgentGet(f.ctx, "codexworker")
+		f.record("agent-get-after-warm-resume.json", string(raw))
 		kept := strings.Contains(string(raw), session)
-		warmGap := strings.HasPrefix(f.codex, "codex-cli 0.161.") || strings.HasPrefix(f.codex, "codex-cli 0.162.")
+		warmGap := strings.HasPrefix(f.codex, "codex-cli 0.161.") || strings.HasPrefix(f.codex, "codex-cli 0.162.") || strings.HasPrefix(f.codex, "codex-cli 0.163.")
 		if !warmGap && !kept {
 			t.Errorf("Herdr lost the session id after resume: %s", raw)
 		} else if warmGap && kept {
 			t.Errorf("%s: Herdr has the session id after a warm re-attach: the upstream gap (no SessionStart on warm resume) "+
-				"looks fixed; make this check strict for that line and update findings §13/§14: %s", f.codex, raw)
+				"looks fixed; make this check strict for that line and update findings §13–§15: %s", f.codex, raw)
 		}
 		c := f.client(sock, "h3d-mixed")
 		if th := f.tuiThread(c); th.ID != session {
