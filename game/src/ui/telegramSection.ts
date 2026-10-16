@@ -15,7 +15,7 @@ export interface TelegramSectionHost {
 
 /** What leaves the machine, shown above the switch: it is what the switch agrees to. */
 export const TELEGRAM_PRIVACY =
-  'Each message holds the worker’s name, why it needs you or that it finished, and one line of what it did: the floor overview’s line, else the last line it wrote, with anything shaped like a key or token removed. A question marked secret is never included. Messages go through Telegram’s servers to your account only; nothing is sent while this is off.';
+  'Each message holds the worker’s name, why it needs you or that it finished, and one line of what it did: the floor overview’s line, else the last line it wrote, with anything shaped like a key or token removed. A question marked secret is never included. Messages go through Telegram’s servers to your account only; nothing is sent while this is off. Saving the token, Pair and Send test message still contact Telegram, even while it is off.';
 
 const BOTFATHER = 'https://t.me/BotFather';
 const CONFIRM_MS = 4000;
@@ -25,6 +25,47 @@ const PAIR_BADGE: Record<string, { text: string; state: string }> = {
   error: { text: 'Retrying', state: 'invalid' },
   expired: { text: 'Code expired', state: 'invalid' },
 };
+
+/** #12: the destination's one status, at the top of the section. */
+export interface TelegramDestination {
+  kind: 'none' | 'paired' | 'error';
+  /** The badge: Not configured, Paired, Error. */
+  label: string;
+  /** Why, and what comes next. */
+  text: string;
+}
+
+const DEST_BADGE: Record<TelegramDestination['kind'], string> = { none: 'off', paired: 'ready', error: 'invalid' };
+
+/**
+ * #12: the destination's status, from the bridge's state alone. The first rule that matches:
+ * 1. No bot token: Not configured. A token Telegram refused is never saved, so a failed check lands here too (the
+ *    command's error says why, in the section's status line).
+ * 2. `last_error`: Error, with Telegram's reason. The bridge keeps it until a message gets through or the token or the
+ *    account changes, whatever the switch says (a failed test sets it too); `state` `blocked` is one of these.
+ * 3. A pairing that is retrying (`conflict`, `error`): Error, with why.
+ * 4. No paired account, a code waiting or not: Not configured.
+ * 5. Paired, and whether alerts are on (`enabled`).
+ */
+export function telegramDestination(s: NotifyState): TelegramDestination {
+  const c = s.channel;
+  if (!c.key_set) return { kind: 'none', label: 'Not configured', text: 'No bot token yet: start with step 1.' };
+  const err = s.last_error;
+  if (err) return { kind: 'error', label: 'Error', text: `Last message not delivered: ${notifyFailureText(err.code, err.message)}` };
+  const p = c.pairing;
+  if (p?.state === 'conflict' || p?.state === 'error') {
+    return { kind: 'error', label: 'Error', text: p.message || (p.state === 'conflict' ? notifyFailureText('conflict', '') : 'Telegram failed while pairing: retrying.') };
+  }
+  if (!c.paired) {
+    return { kind: 'none', label: 'Not configured', text: p?.state === 'waiting' ? 'Waiting for the pairing code from your Telegram account.' : 'The bot token is saved: pair your Telegram account in step 2.' };
+  }
+  const who = c.paired.name || 'your account';
+  return s.enabled
+    ? { kind: 'paired', label: 'Paired', text: `Alerts are on: messages go to ${who} through ${botName(c)}.` }
+    : { kind: 'paired', label: 'Paired', text: `Alerts are off: nothing is sent to ${who}.` };
+}
+
+const destLine = (d: TelegramDestination): string => `${d.label}. ${d.text}`;
 
 let serial = 0;
 
@@ -62,6 +103,12 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     const lede = el('p', 'settings-lede', 'Get a Telegram message when a worker needs you or finishes, wherever you are. The bridge sends them itself, through a bot of your own.');
     const missing = el('p', 'settings-field-hint', 'This bridge has no Telegram notifications. Update it to use this.');
     const root = el('div', 'settings-tg');
+
+    // The destination's status (#12). Not a live region: the status line below is the section's one (see sync).
+    const dest = el('div', 'settings-tg-dest');
+    const destBadge = el('span', 'settings-tg-dest-badge');
+    const destText = el('p', 'settings-tg-dest-text');
+    dest.append(destBadge, destText);
 
     // 1. The bot token.
     const tokenBlock = el('div', 'settings-role settings-tg-step');
@@ -165,13 +212,16 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     const status = el('p', 'settings-status');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
-    const lastError = el('p', 'settings-field-hint settings-field-error');
-    opts.append(privacy, on.label, onHint, events, quiet.label, freelancers.label, lastError, status);
+    opts.append(privacy, on.label, onHint, events, quiet.label, freelancers.label, status);
 
-    root.append(tokenBlock, pairBlock, testBlock, opts);
+    root.append(dest, tokenBlock, pairBlock, testBlock, opts);
     body.append(lede, missing, root);
 
     let busy = false;
+    /** An action of this section is under way, from its click to where the keyboard lands after it. */
+    let acting = false;
+    /** What the destination's status said last (null: not shown yet). */
+    let destSaid: string | null = null;
     let note: { text: string; error: boolean } | null = null;
     let clearTimer: ReturnType<typeof setTimeout> | null = null;
     let tick: ReturnType<typeof setInterval> | null = null;
@@ -191,13 +241,47 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
       b.dataset.state = state;
     }
 
+    const usable = (e: Element | null): e is HTMLElement =>
+      e instanceof HTMLElement && e.isConnected && !(e as HTMLButtonElement).disabled && !e.closest('[hidden]');
+
+    /**
+     * #12: where the keyboard goes once an action is done. Its control is disabled while the command is on its way
+     * (the browser drops the focus then), and some go away after it (Pair while a code waits, Unpair, Remove token):
+     * so `next`, else the control used, else the section's first control. Only while the focus is still on that
+     * control or nowhere (the page's body): never pulled from where the user went meanwhile.
+     */
+    function land(from: Element | null, next: HTMLElement | null): void {
+      if (!from) return;
+      const a = document.activeElement;
+      if (a && a !== from && a !== document.body) return;
+      const to = [next, from].find(usable) ?? [...root.querySelectorAll('input, button, a[href]')].find(usable);
+      to?.focus();
+    }
+
+    /** The control with the keyboard, when it is in this section. */
+    const focused = (): Element | null => (root.contains(document.activeElement) ? document.activeElement : null);
+
     function sync(): void {
+      const f = focused();
       const s = st();
       missing.hidden = host.book.known;
       root.hidden = !s;
       if (!s) return;
       const c = s.channel;
       const pairing = c.pairing && c.pairing.state !== 'expired' ? c.pairing : null;
+
+      // The destination. A change no action here made (the phone sent the code, a message bounced) is said in the
+      // status line, the section's one live region: an action's own line already says what it changed, and one that
+      // comes while an action is on its way is said after that line (see finish).
+      const d = telegramDestination(s);
+      badge(destBadge, d.label, DEST_BADGE[d.kind]);
+      dest.dataset.dest = d.kind;
+      destText.textContent = d.text;
+      if (!acting) {
+        const said = destLine(d);
+        if (destSaid !== null && said !== destSaid) note = { text: said, error: d.kind === 'error' };
+        destSaid = said;
+      }
 
       // 1. Token.
       badge(tokenBadge, c.key_set ? (c.key_env ? 'Set by the bridge' : 'Saved') : 'Not set', c.key_set ? 'ready' : 'off');
@@ -261,7 +345,7 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
           ? s.state === 'incomplete'
             ? 'On, but paused: no token or no paired account. Nothing is sent.'
             : s.state === 'blocked'
-              ? 'On, but Telegram refused the last message: see below.'
+              ? 'On, but Telegram refused the last message: see the status at the top.'
               : 'On: the bridge messages you when a worker needs you or finishes.'
           : !ready
             ? 'Set up the bot and pair your account first.'
@@ -277,9 +361,6 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
         box.checked = wanted.get(box) ?? v;
         box.disabled = busy;
       }
-      const err = s.last_error;
-      lastError.hidden = !err || !s.enabled;
-      lastError.textContent = err ? `Last message not delivered: ${notifyFailureText(err.code, err.message)}` : '';
       status.textContent = note?.text ?? '';
       status.classList.toggle('settings-field-error', !!note?.error);
       status.hidden = !note;
@@ -289,6 +370,31 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
         clearInterval(tick);
         tick = null;
       }
+      // The keyboard was on something the bridge's news took away (the phone paired while it was on Cancel pairing or
+      // the bot's link; the account went elsewhere): on to what comes next.
+      if (!acting && f && !usable(f)) {
+        const next = f === cancelPair || f === openBot ? (c.paired ? test : pair) : f === unpair || f === test ? pair : f === clearToken ? token : null;
+        land(f, next);
+      }
+    }
+
+    /**
+     * Says how an action went, and then the destination when it changed since it was last said: the action's or not
+     * (another window switched alerts off during a test, a worker's message bounced), one message in the one live
+     * region. Which change was the action's is not guessed: a missed change costs more than a repeated one.
+     */
+    function finish(text: string, error: boolean): void {
+      const s = st();
+      if (s) {
+        const d = telegramDestination(s);
+        const said = destLine(d);
+        if (destSaid !== null && said !== destSaid && !text.includes(d.text)) {
+          text = `${text} ${said}`;
+          error ||= d.kind === 'error';
+        }
+        destSaid = said;
+      }
+      say(text, error);
     }
 
     async function run(work: () => Promise<CommandResult>): Promise<CommandResult> {
@@ -301,23 +407,40 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
       }
     }
 
-    /** Sends a command whose ack is the new state, and says how it went. */
-    async function act<T extends CommandName>(t: T, args: CommandArgs[T], pending: string, ok: string): Promise<boolean> {
-      note = { text: pending, error: false };
-      const r = await run(() => host.send(t, args));
-      if (!r.ok) {
-        say(notifyFailureText(r.code, r.message), true);
-        return false;
+    /**
+     * Sends a command whose ack is the new state, says how it went, and puts the keyboard on `next(ok)` (else back
+     * on the control used: see land).
+     */
+    async function act<T extends CommandName>(
+      t: T,
+      args: CommandArgs[T],
+      pending: string,
+      ok: string,
+      next?: (ok: boolean) => HTMLElement | null,
+    ): Promise<boolean> {
+      const from = focused();
+      acting = true;
+      try {
+        note = { text: pending, error: false };
+        const r = await run(() => host.send(t, args));
+        if (!r.ok) {
+          finish(notifyFailureText(r.code, r.message), true);
+        } else {
+          host.book.upsert(r.data); // the ack is the state: show it even before notify.update
+          finish(ok, false);
+        }
+        land(from, next?.(r.ok) ?? null);
+        return r.ok;
+      } finally {
+        acting = false;
       }
-      host.book.upsert(r.data); // the ack is the state: show it even before notify.update
-      say(ok);
-      return true;
     }
 
     async function runSaveToken(): Promise<void> {
       const v = token.value.trim();
       if (saveToken.disabled || !v) return;
-      if (await act('notify.token.set', { key: v }, 'Checking the token with Telegram…', 'Token saved. Now pair your account.')) token.value = '';
+      // Accepted: on to the next step's Pair, whether it was Enter in the field or the button.
+      if (await act('notify.token.set', { key: v }, 'Checking the token with Telegram…', 'Token saved. Now pair your account.', (ok) => (ok ? pair : null))) token.value = '';
       sync();
     }
 
@@ -338,7 +461,7 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
         return;
       }
       disarm();
-      void act('notify.token.clear', {}, 'Removing…', 'Token removed and account unpaired. Nothing is sent.');
+      void act('notify.token.clear', {}, 'Removing…', 'Token removed and account unpaired. Nothing is sent.', (ok) => (ok ? token : null));
     }
 
     function set(box: HTMLInputElement, args: CommandArgs['notify.set'], ok: string): void {
@@ -360,16 +483,23 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     });
     saveToken.addEventListener('click', () => void runSaveToken());
     clearToken.addEventListener('click', runClearToken);
-    pair.addEventListener('click', () => void act('notify.pair.start', {}, 'Asking Telegram for the bot…', 'Send the code to the bot from your phone.'));
-    cancelPair.addEventListener('click', () => void act('notify.pair.cancel', {}, 'Cancelling…', 'Pairing cancelled.'));
-    unpair.addEventListener('click', () => void act('notify.unpair', {}, 'Unpairing…', 'Unpaired. Nothing is sent until you pair again.'));
+    pair.addEventListener('click', () => void act('notify.pair.start', {}, 'Asking Telegram for the bot…', 'Send the code to the bot from your phone.', (ok) => (ok ? cancelPair : null)));
+    cancelPair.addEventListener('click', () => void act('notify.pair.cancel', {}, 'Cancelling…', 'Pairing cancelled.', (ok) => (ok ? pair : null)));
+    unpair.addEventListener('click', () => void act('notify.unpair', {}, 'Unpairing…', 'Unpaired. Nothing is sent until you pair again.', (ok) => (ok ? pair : null)));
     test.addEventListener('click', () => {
+      const from = focused();
+      acting = true;
       note = { text: 'Sending the test message…', error: false };
-      void run(() => host.send('notify.test', {})).then((r) => {
-        if (!r.ok) return say(notifyFailureText(r.code, r.message), true);
-        const d = r.data as Partial<NotifyTestAck>;
-        say(`Test message delivered in ${timeText(typeof d.latency_ms === 'number' ? d.latency_ms : 0)}. Check your phone, then switch notifications on.`);
-      });
+      void run(() => host.send('notify.test', {}))
+        .then((r) => {
+          if (!r.ok) return finish(notifyFailureText(r.code, r.message), true);
+          const d = r.data as Partial<NotifyTestAck>;
+          finish(`Test message delivered in ${timeText(typeof d.latency_ms === 'number' ? d.latency_ms : 0)}. Check your phone, then switch notifications on.`, false);
+        })
+        .finally(() => {
+          land(from, test);
+          acting = false;
+        });
     });
     on.box.addEventListener('change', () => set(on.box, { enabled: on.box.checked }, on.box.checked ? 'On. You will get a message when a worker needs you or finishes.' : 'Off. Nothing is sent.'));
     needs.box.addEventListener('change', () => set(needs.box, { events: { needs_you: needs.box.checked } }, 'Saved.'));

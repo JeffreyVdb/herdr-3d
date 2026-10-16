@@ -10,7 +10,8 @@
 //   `notify.token.clear` forgets the token and the account. With `simtelegram=env` both are `env_locked`.
 // - `notify.pair.start` shows a code (K7QM-4XPA) good for 10 minutes; the account pairs `simtelegrampair` ms later
 //   (default: only by `sim.telegram {pair: true}`). `notify.pair.cancel` stops it, `notify.unpair` forgets Ada.
-//   `sim.telegram {expire: true}` expires the code; `{conflict: true}` shows the 409 retry state.
+//   `sim.telegram {expire: true}` expires the code; `{conflict: true}` shows the 409 retry state. Like the bridge
+//   (`Service.after`), each of these and a token change forget the last delivery's error.
 // - `notify.test` needs the token and the account (`not_configured`, `not_paired`); `sim.telegram {blocked: true}`
 //   makes the next tests `blocked` (the 403 of a bot you blocked), `{blocked: false}` undoes it.
 // - `notify.set` patches enabled, events, quiet and freelancers; switching on needs the token, the account and a
@@ -146,11 +147,13 @@ export class TelegramSim {
           this.only(a, []);
           this.pairing = null;
           this.pairGen++;
+          this.lastError = null;
           break;
         case 'notify.unpair':
           this.only(a, []);
           this.paired = null;
           this.tested = false;
+          this.lastError = null;
           break;
         case 'sim.telegram':
           this.control(a, send);
@@ -188,6 +191,7 @@ export class TelegramSim {
     if (!this.token) throw this.d.error('not_configured', 'set the bot token first');
     const gen = ++this.pairGen;
     this.pairing = { state: 'waiting', code: SIM_CODE, expires_at: this.d.now() + PAIR_TTL };
+    this.lastError = null;
     if (this.pairMs !== null) {
       this.d.later(() => {
         if (gen !== this.pairGen || !this.pairing) return;

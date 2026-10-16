@@ -74,6 +74,27 @@ describe('the simulated Telegram notifications (#11)', () => {
     expect(r.store.notifySettings.state?.last_error?.code).toBe('blocked');
   });
 
+  it('forgets the last delivery error once the channel changes (pair, cancel, unpair), like the bridge (#12)', () => {
+    const r = rig({ telegram: 'on' });
+    const blockTest = () => {
+      r.cmd('sim.telegram', { blocked: true });
+      expect(r.cmd('notify.test', {}).err()?.code).toBe('blocked');
+      expect(r.store.notifySettings.state).toMatchObject({ state: 'blocked', last_error: { code: 'blocked' } });
+      r.cmd('sim.telegram', { blocked: false });
+    };
+    blockTest();
+    r.cmd('notify.pair.start', {});
+    expect(r.store.notifySettings.state?.last_error).toBeUndefined();
+    blockTest();
+    r.cmd('notify.pair.cancel', {});
+    expect(r.store.notifySettings.state?.last_error).toBeUndefined();
+    blockTest();
+    expect(r.cmd('notify.unpair', {}).ack()).toBeTruthy();
+    expect(r.store.notifySettings.state).toMatchObject({ state: 'incomplete', missing: ['recipient'] });
+    expect(r.store.notifySettings.state?.last_error).toBeUndefined();
+    expect(r.store.notifySettings.state?.channel.paired).toBeUndefined();
+  });
+
   it('env: the switch and the token are the environment’s', () => {
     const r = rig({ telegram: 'env' });
     expect(r.store.notifySettings.state).toMatchObject({ enabled: true, env: ['enabled', 'token'], channel: { key_env: true } });
