@@ -15,7 +15,7 @@ export interface TelegramSectionHost {
 
 /** What leaves the machine, shown above the switch: it is what the switch agrees to. */
 export const TELEGRAM_PRIVACY =
-  'Each message holds the worker’s name, why it needs you or that it finished, and one line of what it did: the floor overview’s line, else the last line it wrote, with anything shaped like a key or token removed. A question marked secret is never included. Messages go through Telegram’s servers to your account only; nothing is sent while this is off. Saving the token, Pair and Send test message still contact Telegram, even while it is off.';
+  'Each message holds the worker’s name, why it needs you or that it finished, and one line of what it did: the floor overview’s line, else the last line it wrote, with anything shaped like a key or token removed. A question marked secret is never included. Messages go through Telegram’s servers to your account only; nothing is sent while this is off. Saving the token, Pair, Send test message and Allow replies (below) still contact Telegram, even while it is off.';
 
 /** #13: what Allow replies agrees to, shown above its switch. */
 export const TELEGRAM_REPLIES =

@@ -226,7 +226,7 @@ describe('Settings → Telegram (#12)', () => {
 
   it('the privacy note says what still talks to Telegram while it is off', () => {
     const m = mount(view());
-    expect(m.body.querySelector('.settings-fu-privacy')!.textContent).toMatch(/Saving the token, Pair and Send test message still contact Telegram, even while it is off\./);
+    expect(m.body.querySelector('.settings-fu-privacy')!.textContent).toMatch(/Saving the token, Pair, Send test message and Allow replies \(below\) still contact Telegram, even while it is off\./);
   });
 });
 
