@@ -190,7 +190,7 @@ func safeURL(raw string) string {
 }
 
 // KaneoOpenHost is the host of the saved Kaneo instance's web pages ("":
-// none, or not https): the one host besides the built-in ones a Mac helper
+// none, or not https): the one host besides the built-in ones the helper
 // may open "Open in Kaneo" links on. It goes to the helper only through the
 // bridge's own socket (/healthz), never through a client.
 func (h *Hub) KaneoOpenHost() string {

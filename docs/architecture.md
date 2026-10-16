@@ -289,7 +289,7 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   for 5 minutes, ended by a passing re-test; a 403 is a permission problem. Kaneo's virtual `planned` and `archived`
   statuses are columns with a `kind`; `close` is off (completion is a final column; a task is never deleted). Runs on
   a Kaneo task keep `{provider, id}` in `run_launch` and inline the task in the prompt (an agent cannot read Kaneo).
-  "Open in Kaneo" from the Mac helper works for the saved instance's host only, which the bridge names on its own
+  "Open in Kaneo" from the helper works for the saved instance's host only, which the bridge names on its own
   `/healthz` for the helper.
 - **Repository discovery** (#54, built; details in `protocol.md` "Repository discovery"): the bridge scans folders on
   its own host (scan roots, bridge-wide in SQLite with a refresh interval, 10 minutes by default) for Git working

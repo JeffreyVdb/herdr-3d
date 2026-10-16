@@ -2714,7 +2714,7 @@ export class App {
     this.boardsPanel.refresh();
   }
 
-  /** Opens a provider's page in the user's browser (the Mac helper does it), else in a new window. */
+  /** Opens a provider's page in the user's browser (the helper does it), else in a new window. */
   external(url: string): void {
     void openExternal(url, this.noOpen ? { token: this.token, open: () => undefined } : { token: this.token }).then((via) => {
       this.opened.push({ url, via });

@@ -1,5 +1,5 @@
 /**
- * M7: opens a provider's page (an issue, a pull request) in the user's browser. Served by the Mac helper, the game
+ * M7: opens a provider's page (an issue, a pull request) in the user's browser. Served by the helper (macOS or Linux), the game
  * asks it to (`POST /api/open`, same origin, its token in `X-H3D-Token`): the helper opens https URLs of the providers
  * it knows in the default browser, not in this app window. The helper opens the game with its token, so a page with
  * none (Vite on the server, a fixture page) is not served by it: there is no such endpoint to ask, and the game opens

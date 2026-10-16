@@ -31,7 +31,7 @@ type Config struct {
 	Log   *slog.Logger
 	// Ready, if set, is called with the game URL once serving.
 	Ready func(url string)
-	// OpenURL opens a URL for POST /api/open (default SystemOpen), for the
+	// OpenURL opens a URL for POST /api/open (default SystemOpen: macOS and Linux), for the
 	// hosts of OpenHosts (default DefaultOpenHosts).
 	OpenURL   Opener
 	OpenHosts []string
