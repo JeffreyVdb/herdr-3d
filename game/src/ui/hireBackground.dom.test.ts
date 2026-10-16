@@ -115,6 +115,63 @@ describe('HireDialog: Hire in background (#210)', () => {
     expect(t.toasts.map((x) => x.text)).toEqual(['Agent spawned successfully.']);
   });
 
+  it('returns a refused background hire to its editable form with the entire prompt and images', async () => {
+    const t = setup();
+    t.uploads(async () => ({ ok: true, data: { path: '/drops/task.png' } }));
+    await typed(t, 8, 'The task I spent time writing ');
+    t.inner.editor.draft.addImages([new File([new Uint8Array([1, 2])], 'task.png', { type: 'image/png' })]);
+    const doc = t.inner.editor.draft;
+    const label = document.querySelector<HTMLInputElement>('#hire-label')!;
+    label.value = 'Keep me';
+    label.dispatchEvent(new Event('input'));
+    const pending = t.inner.hire();
+    await tick();
+    t.hires[0]!.answer({ ok: false, code: 'desk_taken', message: 'desk 8 is not on the floor (0-7)' });
+    await pending;
+    expect(t.dlg.isOpen).toBe(true);
+    expect(t.dlg.summary()).toMatchObject({ state: 'ready', error: true, form: { label: 'Keep me' } });
+    expect(t.inner.editor.draft).toBe(doc);
+    expect(t.inner.editor.draft.doc.text).toContain('The task I spent time writing');
+    expect(t.dlg.summary()!.images).toMatchObject([{ name: 'task.png', path: '/drops/task.png' }]);
+    expect(localStorage.getItem(key(8))).toContain('The task I spent time writing');
+    expect(t.holds.size).toBe(0);
+    expect(t.hires).toHaveLength(1);
+    expect(t.goTos).toEqual([]);
+    expect(t.beeps()).toBe(0);
+  });
+
+  it('does not resurrect an older failed hire after a newer dialog was opened and closed', async () => {
+    const t = setup();
+    await typed(t, 0, 'first task');
+    const pending = t.inner.hire();
+    await tick();
+    await typed(t, 1, 'newer task');
+    t.dlg.close();
+    t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'could not start' });
+    await pending;
+    expect(t.dlg.isOpen).toBe(false);
+    expect(localStorage.getItem(key(0))).toContain('first task');
+    expect(localStorage.getItem(key(1))).toContain('newer task');
+  });
+
+  it('keeps a failed hire saved without opening over another modal', async () => {
+    const t = setup();
+    await typed(t, 0, 'keep this task');
+    const pending = t.inner.hire();
+    await tick();
+    const other = document.createElement('dialog');
+    document.body.append(other);
+    other.showModal();
+    t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'could not start' });
+    await pending;
+    expect(t.dlg.isOpen).toBe(false);
+    expect(other.open).toBe(true);
+    expect(localStorage.getItem(key(0))).toContain('keep this task');
+    other.close();
+    t.dlg.open('floor', 0);
+    expect(t.inner.editor.draft.doc.text).toBe('keep this task');
+  });
+
   it('a second Hire (Enter again) on the same dialog is the same hire: one worker.hire', async () => {
     const t = setup();
     await typed(t, 0, 'once');

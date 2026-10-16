@@ -670,6 +670,95 @@ func TestHireAtDesk(t *testing.T) {
 	}
 }
 
+// A desk offered when the form opened must still accept its hire after
+// workers leave and the rendered floor shrinks while the prompt is written.
+func TestHireAtDeskAfterFloorShrinks(t *testing.T) {
+	t.Parallel()
+	var obs []world.WorkerObs
+	for i := range 7 {
+		obs = append(obs, agent(fmt.Sprintf("existing%d", i), "idle"))
+	}
+	hb := startHireBridge(t, nil, obs...)
+	w := hb.world(hasWorkers("s", 7))
+	if n := floorOf(w, "s").Desks; n != 9 {
+		t.Fatalf("initial desks = %d, want 9", n)
+	}
+	hb.fl.mu.Lock()
+	hb.fl.workers = hb.fl.workers[:6]
+	hb.fl.mu.Unlock()
+	hb.fl.publish()
+	w = hb.world(hasWorkers("s", 6))
+	if n := floorOf(w, "s").Desks; n != 8 {
+		t.Fatalf("shrunk desks = %d, want 8", n)
+	}
+	// The user is still composing at Desk 9, the last spare before the shrink.
+	a := hireArgs(8)
+	a.Prompt = "Keep the task I spent time writing"
+	_, m := hb.c.command(proto.CmdWorkerHire, "after-shrink", a)
+	res := ackData[proto.HireResult](t, m)
+	if res.Prompted == nil || !*res.Prompted {
+		t.Fatalf("expanded hire did not receive its task: %+v", res)
+	}
+	hb.world(func(w proto.World) bool {
+		for _, wk := range w.Workers {
+			if wk.DeskIndex == 8 {
+				return floorOf(w, "s").Desks >= 9
+			}
+		}
+		return false
+	})
+}
+
+func TestHireGrowsFloorBeforeWorkspaceAppears(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, floor              string
+		workers, desk, want, max int
+	}{
+		{"real", "s", 0, 8, 9, 96},
+		{"virtual", vWeb, 0, 8, 9, 96},
+		{"spares", "s", 5, 6, 8, 96},
+		{"capped spares", "s", 5, 6, 7, 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			floor := tc.floor
+			db := seedFloors(t, map[string]string{vWeb: "Web"}, nil)
+			var obs []world.WorkerObs
+			for i := range tc.workers {
+				obs = append(obs, agent(fmt.Sprintf("existing%d", i), "idle"))
+			}
+			hb := startHireBridgeAt(t, db, func(o *server.Options) { o.MaxDesks = tc.max }, obs...)
+			hb.fl.createGate = make(chan struct{})
+			defer close(hb.fl.createGate)
+			a := hireArgs(tc.desk)
+			a.Session, a.Floor = "", floor
+			hb.c.send(proto.Command{T: proto.CmdWorkerHire, ReqID: "growing", Args: mustRaw(a)})
+			// Holding CreateWorkspace makes the reservation itself responsible
+			// for the growth; no worker observation can hide the bug.
+			deadline := time.Now().Add(2 * time.Second)
+			for len(hb.fl.Calls()) == 0 && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			if len(hb.fl.Calls()) == 0 {
+				t.Fatal("hire never reached CreateWorkspace")
+			}
+			w := hb.connect(proto.Hello{}).snapshot().World
+			f, ok := floorByID(w, floor)
+			if !ok || f.Desks != tc.want {
+				t.Fatalf("pending hire must provide %d desks before a worker appears: %+v", tc.want, f)
+			}
+			// The other floor in this session does not grow with this hire.
+			other := vWeb
+			if floor == vWeb {
+				other = "s"
+			}
+			if f, _ := floorByID(w, other); f.Desks != 6 {
+				t.Fatalf("unrelated floor grew: %+v", f)
+			}
+		})
+	}
+}
+
 func TestHireValidation(t *testing.T) {
 	t.Parallel()
 	hb := startHireBridge(t, func(o *server.Options) { o.Caps = server.Caps{FloorSoft: 1, FloorHard: 2, HostSoft: 1, HostHard: 5} },
@@ -691,7 +780,7 @@ func TestHireValidation(t *testing.T) {
 	bad(func(a *proto.WorkerHireArgs) { a.Cwd = "relative" }, proto.ErrBadRequest)
 	bad(func(a *proto.WorkerHireArgs) { a.Session = "other" }, proto.ErrUnknownSession)
 	bad(func(a *proto.WorkerHireArgs) { a.DeskIndex = ptr(-1) }, proto.ErrDeskTaken)
-	bad(func(a *proto.WorkerHireArgs) { a.DeskIndex = ptr(6) }, proto.ErrDeskTaken) // 6 desks: 0-5
+	bad(func(a *proto.WorkerHireArgs) { a.DeskIndex = ptr(server.DefaultMaxDesks) }, proto.ErrDeskTaken)
 	c.mustError(proto.CmdWorkerHire, map[string]any{"session": "s", "desk_index": 2, "harness": "claude",
 		"model": "claude-opus-5-5", "effort": "low", "stop_services": true}, proto.ErrBadRequest)
 

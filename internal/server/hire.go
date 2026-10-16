@@ -457,7 +457,9 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 		return errors.New("worktree hires are not configured")
 	}
 	desk := *a.DeskIndex
-	if n := h.deskCount(a.Floor, f); desk < 0 || desk >= n {
+	// A form can outlive the spare desks it was opened on (workers leave
+	// while its prompt is written). Grow back to that desk within the cap.
+	if n := max(h.opts.MaxDesks, h.deskCount(a.Floor, f)); desk < 0 || desk >= n {
 		return fmt.Errorf("%w: desk %d is not on the floor (0-%d)", errDeskTaken, desk, n-1)
 	}
 	for id, d := range h.desks[a.Floor] {
@@ -510,6 +512,8 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	}
 	f.hires[id] = op
 	h.floorNames(a.Floor)[name] = nameClaim{owner: id} // held until the hire ends
+	// Pending hires make room before their workspace appears.
+	h.syncLayout()
 	h.log.Info("hire started", "client", c.name, "req_id", cmd.ReqID, "session", a.Floor, "desk", desk,
 		"worker", id, "harness", a.Harness, "model", a.Model, "effort", a.Effort, "worktree", a.Worktree)
 	h.wg.Add(1)

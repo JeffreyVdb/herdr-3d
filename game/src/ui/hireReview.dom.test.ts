@@ -464,6 +464,23 @@ describe('HireReviewDialog', () => {
       expect(rv.summary()!.form).toMatchObject({ harness: 'claude', model: 'claude-haiku-5-5', effort: 'high', prompt: 'fix the login bug.' });
       expect(hires).toHaveLength(1);
     });
+
+    it('a refused background hire restores the reviewed task and choices for an explicit retry', async () => {
+      const { rv, hires, toasts, goTos } = setup({}, true);
+      rv.open('floor', FULL);
+      await tick();
+      const form = rv.summary()!.form;
+      hireBtn().click();
+      await tick();
+      expect(rv.isOpen).toBe(false);
+      hires[0]!.answer({ ok: false, code: 'desk_taken', message: 'desk is gone' });
+      await tick();
+      expect(rv.isOpen).toBe(true);
+      expect(rv.summary()).toMatchObject({ state: 'ready', error: true, form });
+      expect(hires).toHaveLength(1);
+      expect(toasts).toHaveLength(1);
+      expect(goTos).toEqual([]);
+    });
   });
 
   describe('floor and desk', () => {

@@ -420,6 +420,8 @@ export class HireDialog {
   private statusError = false;
   /** Bumped on every open / prepare, so a late answer for an older one is dropped. */
   private gen = 0;
+  /** Opening a newer form prevents a late background failure from restoring the old one. */
+  private opening = 0;
   private hireBtn: HTMLButtonElement | null = null;
   private renderedKey = '';
   private refetching = false;
@@ -513,6 +515,7 @@ export class HireDialog {
    * first task ("Ask a worker…", "Review with a worker") and, for the review, the reviewer's harness / model / effort.
    */
   open(floor: string, desk: number, prefill: HirePrefill = {}): void {
+    this.opening++;
     this.floor = floor;
     this.desk = desk;
     this.prep = null;
@@ -1127,6 +1130,7 @@ export class HireDialog {
     }
     const floor = this.floor;
     const desk = this.desk;
+    this.saveDraft(); // also keep a prefilled task that has not been edited
     // The draft as sent: an acknowledged hire clears exactly this (a newer edit after Esc stays).
     const sent = this.draftNow();
     const doc = this.editor.draft;
@@ -1134,6 +1138,7 @@ export class HireDialog {
     const who = args.label ?? this.prep.label;
     const gen = this.gen;
     const revision = doc.revision;
+    const opening = this.opening;
     // #210: read once, here: a change in Settings while the hire is on its way does not change how it ends.
     const background = this.host.hirePrefs?.hireInBackground === true;
     this.state = 'hiring';
@@ -1161,6 +1166,14 @@ export class HireDialog {
       this.close();
       const o = await op.done;
       if (o.kind === 'hired') this.clearSent(doc, o.revision ?? revision, sent);
+      // A refusal must leave a usable form, including images and choices.
+      // Never replace a newer form or open over another modal; uncertain
+      // outcomes stay a warning so they cannot encourage a duplicate hire.
+      if ((o.kind === 'failed' || o.kind === 'not_sent') && opening === this.opening && !document.querySelector('dialog[open]')) {
+        this.dialog.showModal();
+        this.landed(o, { floor, desk, who, gen: this.gen, doc, revision, sent });
+        this.editor.focus();
+      }
       return;
     }
     if (op.phase === 'uploading') {

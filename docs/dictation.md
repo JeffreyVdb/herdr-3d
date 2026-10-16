@@ -74,6 +74,8 @@ choice is kept in this browser. It applies to the Hire dialog and to the dictate
 - **On:** Hire closes the dialog at once and you keep playing (walk, hire another). When the worker is up you get
   exactly **"Agent spawned successfully."** and one short beep (under the master mute and volume), never an inbox item
   or a desktop notification, and never a trip to the laptop, whatever "Go to a new hire after hiring" says.
-  A failure is one error toast that names the desk. If the connection drops or herdr-world does not answer in time, the
+  A failure is one error toast that names the desk. A rejected hire or failed image upload restores the editable
+  dialog with its task and choices, unless a newer hire dialog has opened or another modal is open.
+  If the connection drops or herdr-world does not answer in time, the
   toast says the hire may still have gone through: look at the desk before you hire again. It is never sent twice by
   itself.
