@@ -89,6 +89,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'followups.test': 'test the follow-up questions',
   'worker.answer_followup': 'answer follow-up questions',
   'worker.dismiss_followup': 'dismiss follow-up questions',
+  'worker.retry_followup': 'read follow-up questions again',
+  'worker.followup_message': 'show the agent’s message',
   // #223
   'worker.handoff_preview': 'file handoffs',
   'worker.handoff': 'file handoffs',

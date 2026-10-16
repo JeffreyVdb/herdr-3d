@@ -966,6 +966,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startAnswerFollowup
 		case proto.CmdWorkerDismissFollowup:
 			start = h.startDismissFollowup
+		case proto.CmdWorkerRetryFollowup: // #60
+			start = h.startRetryFollowup
+		case proto.CmdWorkerFollowupMessage: // #60
+			start = h.startFollowupMessage
 		case proto.CmdWorkerHandoffPreview: // #223
 			start = h.startHandoffPreview
 		case proto.CmdWorkerHandoff: // #223

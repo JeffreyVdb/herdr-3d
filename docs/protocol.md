@@ -356,7 +356,7 @@ floor with no workers and an `error`).
 | `usage` | object, optional | its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
 | `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
-| `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "question", "kind": "yes_no" \| "choice" \| "open", "options"?}], "score", "source": "model" \| "fallback", "at", "tail"?}`, until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
+| `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "label"?, "question", "kind": "yes_no" \| "choice" \| "open", "options"?, "context"?, "recommendation"?: {"text", "why"?, "option"?}}], "score", "source": "parsed" \| "model" \| "fallback", "at", "tail"?, "error"?, "unlisted"?, "retries"?}` (#60: `label` … `retries`, `parsed`), until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
 | `handoff` | object, optional | #223: its agent's latest completed final reply a literal handoff can file, `{"id", "session", "revision", "harness", "message"?, "turn"?, "source": "message" \| "last_agent_message", "bytes", "images"?, "too_large"?}`: the bridge's identity of it, never its text (see [Handoffs](#handoffs)) |
 | `llm_handoff` | object, optional | #9: its latest LLM handoff job, `{"op", "state": "queued" \| "running" \| "filed" \| "failed" \| "cancelled", "code"?, "message"?, "started_at", "updated_at", "model"?, "host"?, "send_home"?, "handoff"?, "send_home_result"?, "send_home_reason"?}`, while it runs and once settled until a new one starts or the worker leaves (see [LLM handoffs](#llm-handoffs)) |
 | `activity` | object, optional | #98: what its agent is doing right now, `{"kind", "detail"?, "since", "source", "image"?, "tasks"?}`: while `status` is `working`, and while `idle` or `done` only as `waiting` on open background tasks; absent otherwise and for harnesses other than Claude and Codex (see [Activity](#activity)) |
@@ -667,14 +667,16 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `kaneo.projects` | `{"workspace_id"}` | `{"workspace_id", "projects": [{id, workspace_id, name, slug?}], "generation"}` | — |
 | `followups.get` | `{}` | the follow-up questions' state (see [Follow-up questions](#follow-up-questions)) | — |
 | `followups.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | the follow-up questions' state | `followups.update` (before the ack) |
-| `followups.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"name", "expect", "score", "flagged", "questions"?, "source"?, "error"?}], "latency_ms"}` | `followups.update` when it changes `tested` |
+| `followups.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"name": "questions" \| "grill" \| "done", "expect", "score", "flagged", "questions"?, "source"?, "error"?, "unlisted"?}], "latency_ms"}` | `followups.update` when it changes `tested` |
 | `packup.get` | `{}` | pack up on request's state (see [Pack up on request](#pack-up-on-request)) | — |
 | `packup.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | its state | `packup.update` (before the ack) |
 | `packup.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"text", "expect", "core"?, "score", "matched", "task"?, "want_task"?, "right", "error"?}], "right", "total", "latency_ms"}` | `packup.update` when it changes `tested` |
 | `packup.detect` | `{"id", "text"}` | `{"matched", "task"?, "removed"?: [{"start", "end"}], "score"}`; `matched` false: send `text` as written | — |
 | `hire.interpret` | `{"text", "pending"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?}`: a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
-| `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…]}` | `worker.prompt`'s | the worker's upsert without its `followup` |
+| `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…], "note"?}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
+| `worker.retry_followup` (#60) | `{"id", "turn_id"}` | `{"source", "error"?}` once the extraction ran again | the worker's upsert with the new `followup` (before the ack) |
+| `worker.followup_message` (#60) | `{"id", "turn_id"}` | `{"text", "cut"?}`: the message the follow-up is of | — |
 | `worker.handoff_preview` | `{"worker", "candidate"}` (#224 `mode: "agent"`, #9 `mode: "llm"`: see [Ask the agent](#ask-the-agent), [LLM handoffs](#llm-handoffs)) | `{"candidate", "text", "truncated"?, "title", "provenance", "can_send_home", "send_home_blocked"?}` (see [Handoffs](#handoffs)) | — |
 | `worker.handoff` | `{"worker", "mode": "literal", "session", "candidate", "revision", "send_home"?, "op"}` | `{"handoff", "existing"?, "send_home"?: "started" \| "skipped", "send_home_reason"?}` | `handoff.added` (before the ack) when filed; `worker.removed` later when sent home |
 | `worker.handoff` (#9) | `{"worker", "mode": "llm", "session", "candidate", "revision", "instruction"?, "send_home"?, "op"}` | `{"job", "existing"?}` at once; the job follows on `Worker.llm_handoff` (see [LLM handoffs](#llm-handoffs)) | `worker.upsert` (the job), `handoff.added` when filed, `worker.removed` later when sent home |
@@ -3319,6 +3321,11 @@ and flags the worker as needing you with the questions it found.
 "followup":{"turn_id":"3f9c1a7b2e4d6a80","score":0.96,"source":"model","at":1790859600000,
   "questions":[{"id":"q1","question":"Does the legacy importer still need the v1 format?","kind":"yes_no"},
                {"id":"q2","question":"Ship this already, or wait for the e2e-live run?","kind":"choice","options":["Ship now","Wait for e2e-live"]}]}
+"followup":{"turn_id":"9b2e4d6a803f9c1a","score":0.89,"source":"parsed","at":1792064661000,
+  "questions":[{"id":"q2","label":"Q9","question":"Asleep floor at fire time","kind":"choice",
+                "options":["(a) Auto-wake the floor, then hire.","(b) Mark the schedule `failed: floor_asleep` and notify.","(c) Per-schedule checkbox \"wake floor if asleep\", default on."],
+                "context":"A hire on an asleep floor returns `invalid_state`. …",
+                "recommendation":{"text":"(c), default on. The whole point is not having to remember. …","option":2}}, …]}
 ```
 
 **Settings** (bridge-wide, in the database): `followups.get` answers them, the snapshot's `followups` holds them,
@@ -3333,10 +3340,13 @@ and flags the worker as needing you with the questions it found.
   nothing runs), `ready`. **Only `ready` runs the pipeline**; with anything else there are zero calls on turn end. A
   model that turns `invalid` at runtime (a rejected key) pauses it with the `ai.update` that says so (a
   `followups.update` follows). `roles` are both models' states, for the panel's status line.
-- **`followups.test`** runs two sample messages (one ending in open questions, one "Done, PR merged.") through the
-  whole pipeline with the models in use: it passes when the first scores at or over the threshold and the LLM lists its
-  questions, and the second scores under it. A test that ran but did not pass is `ok: false` with `reason` (and the
-  scores); a call that failed is its error (`auth_failed`, `timeout`…; `incomplete` without both models `ready`).
+- **`followups.test`** runs three sample messages with the models in use: one ending in open questions and one "Done,
+  PR merged." through the whole pipeline, and (#60) `grill`, a real ten-question grill round (Q8–Q17, each with a
+  recommendation), through the classifier and then the LLM itself (never the round reader below, so the model in use
+  is what is tried). It passes when the first and the grill round score at or over the threshold, the LLM lists the
+  first's questions and all ten of the round's, each with its recommendation, and "Done" scores under it. A test that
+  ran but did not pass is `ok: false` with `reason` (and the scores); a call that failed is its error (`auth_failed`,
+  `timeout`…; `incomplete` without both models `ready`).
 - **`followups.set {enabled: true}` needs a passing test** of the models in use (their config fingerprints, as `ai.set`
   does) from the last 30 minutes, else `test_required` (`incomplete` while a model is not ready); `tested` says whether
   one covers them now. Switching off and the threshold need none.
@@ -3355,14 +3365,30 @@ assistant `response_item` (else `task_complete`'s `last_agent_message`). A new p
 3. **Gate**: the classifier scores `state {"last_agent_message": <the message's last 96,000 characters, ~24k tokens at
    4 characters a token>}` for "Does the message ask the user one or more questions or decisions they are expected to answer, even when the agent proposes a recommended answer for each?". Under the
    threshold: nothing, and no LLM call.
-4. **Extract**: the LLM (JSON mode) lists `{"questions":[{"question","kind","options"}]}`, validated strictly: 1–8
-   questions, each 1–300 characters (whitespace folded), `kind` `yes_no`, `choice` (2–8 options of 1–120 characters)
-   or `open`; options of the other kinds are dropped. Anything else, or an LLM failure, is the **fallback**: one `open`
-   item ("The agent asked you something") with the message's last 1,200 characters as `tail`. A positive gate is never
-   dropped.
+4. **Extract**. #60: a **grill round** is read as it is, with no LLM call (`source: "parsed"`): blocks
+   `❓ **Q9** - **Title**: body` (or `❓ **Q9 - Title.** body`; a hyphen, en or em dash, colon or period between),
+   each its own question: `label` `Q9`, the title as `question`, the rest of the body as `context` (Markdown), options
+   from lettered bullets `- (a) …` (else letters inline, `(a) … (b) …`, else plain bullets none of which is itself a
+   question: a bullet with a `?` is a sub-question and stays in `context`, the question `open`), and the `➡️` line with
+   the lines right under it (to a blank line) as `recommendation.text`; one that starts with an option's letter
+   (`(c), default on.`) names it (`option`, its index). Up to 30 questions, the rest counted in `unlisted`. A ❓ line in
+   any other shape (outside a code fence) makes the message no round: the LLM reads it. Anything else goes to the
+   **LLM** (JSON mode, `source: "model"`): `{"questions":[{"label","question","kind","options","context",
+   "recommendation","recommended_option","why"}],"more"}`, validated: up to 16 questions (more, and the `more` it
+   reports, are counted in `unlisted`), each 1–300 characters (whitespace folded), `kind` `yes_no`, `choice` (2–8
+   options of 1–300 characters) or `open`; options of the other kinds are dropped. One invalid question does not cost
+   the round: an empty, over-long or unknown-kind question is left out and counted in `unlisted`; a choice with bad
+   options becomes `open`, its options listed in `context`. `context` and `recommendation.text` are cut at 1,200
+   characters, `why` at 600. The call: an 8,192-token completion budget, reasoning effort `low` when the model's
+   catalog lists it (never sent when the catalog does not describe the model), no partial answer, its own 45 s
+   timeout and no retry of a call that may have reached the provider; cut off at the budget or empty, it is asked once
+   more with effort `none` (or `minimal`, the first the model takes). An answer with no valid question, or an LLM
+   failure, is the **fallback**: one `open` item ("The agent asked you something") with the message's last 1,200
+   characters as `tail` and why as `error`. A positive gate is never dropped.
 5. **Once**: each message looked at is recorded by worker and SHA-256 (`followup_seen`, with its follow-up while it is
    open, the last 20 per worker). A restart or a re-read never classifies it again; an open follow-up comes back as it
-   was, a cleared one never. A classifier failure is not recorded (logged; a later restart may try again).
+   was, a cleared one never. A classifier failure is not recorded (logged; a later restart may try again). A fallback is
+   never extracted again by itself: only on request (`worker.retry_followup`, below).
 
 The calls run off the hub goroutine, under the AI integration's bounds (two calls in flight over the whole bridge).
 `turn_id` is 16 hex digits of the turn's identity (#223): its place among the transcript's turns, the message's ids
@@ -3376,22 +3402,47 @@ back after one of these (or after a new prompt was read, or after herdr said `wo
 even when the worker is idle again by then) is recorded but not shown. The feature's state is checked again before the
 extraction: switched off or a model `invalid` while the classifier ran, the message never goes to the LLM.
 
-**Answering.** **`worker.answer_followup {id, turn_id, answers: [{id, value, note?}]}`** is `stale` unless the worker's
-follow-up is of `turn_id` (answered, dismissed or a newer turn meanwhile), `bad_request` for an unknown or repeated
-question id, an empty answer, a `yes_no` value other than `Yes` / `No` (any case), or a value or note over 4,000
-bytes. It sends **exactly one prompt** through `worker.prompt`'s lane and rules (typed for Claude, #95; queued for an
-agent at work; `invalid_state` with an `ask`), checked again when its turn on the lane comes, and clears the follow-up
-once it went:
+**Answering.** **`worker.answer_followup {id, turn_id, answers: [{id, value, note?}], note?}`** is `stale` unless the
+worker's follow-up is of `turn_id` (answered, dismissed or a newer turn meanwhile), `bad_request` for an unknown or
+repeated question id, an empty answer, no answer and no `note`, a `yes_no` value other than `Yes` / `No` (any case), or
+a value or note over 8,000 bytes. It sends **exactly one prompt** through `worker.prompt`'s lane and rules (typed for
+Claude, #95; queued for an agent at work; `invalid_state` with an `ask`), checked again when its turn on the lane
+comes, and clears the follow-up once it went:
 
 ```
 Answers to your open questions:
 1. Does the legacy importer still need the v1 format? → No
 2. Ship this already, or wait for the e2e-live run? → Wait for e2e-live <optional note>
+Unanswered: 3
 ```
 
-Only the answered questions are listed, numbered as asked; a note follows its value after a space. A fallback's one
-free answer is sent as it is. **`worker.dismiss_followup {id, turn_id}`** clears it (`stale` likewise). The audit log
-keeps the ids and each answer's lengths, never the text.
+Only the answered questions are listed, numbered as asked; a note follows its value after a space. #60: a question with
+a `label` (a grill round's) is named by it and its question instead, so the agent pairs each answer with its own
+question; an answer that is the question's recommendation as it was (its option, or an open question's whole text, no
+note) says so; the questions left unanswered follow on one line; the request's `note` ends the prompt after a blank
+line:
+
+```
+Answers to your open questions:
+- Q9 Asleep floor at fire time → (c) Per-schedule checkbox "wake floor if asleep", default on. (your recommendation)
+- Q17 Defining "missed" → 10 min grace.
+Unanswered: Q8, Q10, Q11, Q12, Q13, Q14, Q15, Q16
+
+<note>
+```
+
+A fallback's one free answer is sent as it is (its `note` after it). **`worker.dismiss_followup {id, turn_id}`** clears
+it (`stale` likewise). The audit log keeps the ids and each answer's lengths, never the text.
+
+**The message and a retry** (#60). **`worker.followup_message {id, turn_id}`** answers the message the open follow-up
+is of (`text`, its last 96,000 characters; `cut` when it is longer), kept in memory with it (also after a restart:
+the transcript has it), never in the worker's upsert; `stale` likewise. **`worker.retry_followup {id, turn_id}`** runs
+the extraction of a fallback again (the round reader, then the LLM; never the classifier) and replaces the follow-up of
+the same turn with what it made of it (in `followup_seen` too: a restart brings back the recovered questions): the
+questions, or the fallback again with the new `error`; `retries` counts them. The ack is `{source, error?}` once it
+ran. `stale` likewise (also when it was answered, dismissed or moot meanwhile), `bad_request` when its questions were
+read (no fallback), `busy` while a retry of it runs, `invalid_state` after 3 retries or while the feature is not
+`ready`.
 
 **Privacy.** With the feature on, every agent's final message goes to TypeSafe (the classifier), and to the configured
 LLM endpoint when the classifier says yes. Messages can contain code, paths and internal details: that is why it is
@@ -4348,8 +4399,8 @@ dismissed_at)`.
 | `name_taken` | another building, or another team preset, already has that name (ignoring case); #58 `session.create`: a floor, a herdr session (also an asleep one), a session folder or a loaded `herdr-s-<name>` unit has that name |
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
-| `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started; #224: an agent handoff for a worker with a request running or a wrap-up armed, a wrap-up while a request runs, `worker.handoff_cancel` while it is being filed; #58: `session.create` of a name already being created |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read |
+| `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started; #224: an agent handoff for a worker with a request running or a wrap-up armed, a wrap-up while a request runs, `worker.handoff_cancel` while it is being filed; #58: `session.create` of a name already being created; #60: `worker.retry_followup` while a retry of that follow-up runs |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read; #60 `worker.retry_followup` after 3 retries of that follow-up, or while follow-up questions are not `ready` |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |
@@ -4367,7 +4418,7 @@ dismissed_at)`.
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `input_failed` | #156 `worker.answer_async`: the worker's app-server refused the answer (nothing delivered; the question is `pending` again with its `error`); `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
-| `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
+| `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` (#60: `worker.retry_followup` / `worker.followup_message`) for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `files_failed` | #137 `worker.files` (#39: `hire.files`) whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |
