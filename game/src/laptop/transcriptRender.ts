@@ -28,6 +28,8 @@ import { atSource } from './atSource';
 import type { Source } from '../ui/composer/complete';
 import { SendGate } from './transcriptDrafts';
 import { zoomKey } from './keys';
+import { fileRefPath } from './fileRef';
+import { clipboardCopy, FileRefPopover, markFileRefs } from './fileRefPopover';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 
 /**
@@ -39,6 +41,8 @@ import type { ActivityCue, PendingPrompt } from './transcriptActivity';
  * against an allowlist (no script, style, form, frame, svg or image, no `on*`, only `http(s):` / `mailto:` links, all
  * opened in a new context with `rel="noopener noreferrer"`). The code highlighter is loaded on first use and its
  * output is sanitised again (spans with classes only). Without a DOM to sanitise in, markdown shows as plain text.
+ * #31: a link to a file on the worker's machine (`fileRef.ts`) loses its `href` too, but keeps its path as inert data
+ * (`data-tx-file`): the reference opens a popover with the path and "Copy file path" (`fileRefPopover.ts`).
  */
 
 export interface TranscriptRenderHost {
@@ -102,6 +106,10 @@ export interface TranscriptRenderHost {
   files?: { id: string; search: FileSearchHost } | null;
   /** #247: the worker, for the `@r:` repositories of the other floors (needs `files`; none: `@` is files only). */
   repos?: { id: string; search: RepoSearchHost } | null;
+  /** #31: the worker's checkout now, for a relative file reference's full path (none, or null: not known, it stays relative). */
+  cwd?(): string | null;
+  /** #31: puts a file reference's path on the clipboard, false when refused (none: the browser's clipboard). */
+  copy?(text: string): Promise<boolean>;
 }
 
 export interface BlockedQuestion {
@@ -249,6 +257,8 @@ const QUESTION_ROOM = 64;
 
 let mdPurifier: Purifier | null | undefined;
 let hlPurifier: Purifier | null | undefined;
+/** #31: the file path of each link the sanitiser is taking the `href` of, until its attributes are done. */
+const fileHrefs = new WeakMap<Element, string>();
 
 /** Our own DOMPurify instances (hooks and config apart from the boards'); null without a DOM. */
 function purifiers(): { md: Purifier; hl: Purifier } | null {
@@ -263,6 +273,14 @@ function purifiers(): { md: Purifier; hl: Purifier } | null {
     md.addHook('uponSanitizeAttribute', (node, data) => {
       const tag = node.nodeName;
       if (data.attrName === 'class') data.keepAttr = tag === 'CODE' && /^language-[\w+#.-]{1,32}$/.test(data.attrValue);
+      // #31: a file reference is no URL to follow: its href goes, its path is kept (below) as data for the copy.
+      else if (data.attrName === 'href' && tag === 'A') {
+        const path = fileRefPath(data.attrValue);
+        if (path !== null) {
+          fileHrefs.set(node, path);
+          data.keepAttr = false;
+        }
+      }
       // GFM task lists: a disabled checkbox and nothing else.
       else if (data.attrName === 'type' || data.attrName === 'checked' || data.attrName === 'disabled') data.keepAttr = tag === 'INPUT';
     });
@@ -275,6 +293,13 @@ function purifiers(): { md: Purifier; hl: Purifier } | null {
       }
       if (node.nodeName !== 'A') return;
       const a = node as Element;
+      const path = fileHrefs.get(a);
+      if (path !== undefined) {
+        fileHrefs.delete(a);
+        a.removeAttribute('href');
+        a.setAttribute('data-tx-file', path);
+        return;
+      }
       if (!a.getAttribute('href')) {
         a.removeAttribute('href');
         return;
@@ -352,6 +377,7 @@ function setMarkdown(el: HTMLElement, md: string): void {
     return;
   }
   el.replaceChildren(frag);
+  markFileRefs(el);
   for (const code of el.querySelectorAll<HTMLElement>('pre > code')) {
     const lang = /(?:^|\s)language-([\w+#.-]+)/.exec(code.className)?.[1];
     if (lang && code.parentElement) code.parentElement.dataset.lang = lang;
@@ -909,6 +935,8 @@ class Transcript implements TranscriptView {
   private activityRow: HTMLElement | null = null;
   private readonly live: HTMLDivElement;
   private readonly pendingLive: HTMLDivElement;
+  /** #31: the popover of a file reference: its full path and "Copy file path". */
+  private readonly fileRefs: FileRefPopover;
   /** A hidden tab pauses the cue's flash (the browser still runs a CSS animation there). */
   private readonly onVisibility = () => this.root.toggleAttribute('data-page-hidden', document.visibilityState === 'hidden');
 
@@ -1057,6 +1085,12 @@ class Transcript implements TranscriptView {
     const bar = h('div', { class: 'tx-bar' }, this.titleEl, this.countEl, this.sysBtn, tools, changes, this.busy, this.ctxEl, h('div', { class: 'tx-look' }, picker, zoom));
     this.main = h('div', { class: 'tx-main' }, this.scroller, this.jump);
     this.root = h('div', { class: 'tx', 'data-system': 'hidden', 'data-tools': 'shown', 'data-changes': 'shown' }, bar, this.banner, this.main, this.ask.el, this.cardTabs, this.followup.el, this.asyncq.el, this.asyncq.live, this.form, this.pendingLive, this.live);
+    this.fileRefs = new FileRefPopover({
+      root: this.root,
+      scroller: this.scroller,
+      cwd: () => host.cwd?.() ?? null,
+      copy: (t) => (host.copy ? host.copy(t) : clipboardCopy(t)),
+    });
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
@@ -1075,6 +1109,7 @@ class Transcript implements TranscriptView {
         if (seen.some((e) => e.target === this.root)) this.fit();
         this.sizeView();
         this.stick();
+        this.fileRefs.place(); // #31
       });
       this.resize.observe(this.root);
       this.resize.observe(this.scroller);
@@ -1392,6 +1427,7 @@ class Transcript implements TranscriptView {
     this.ask.destroy();
     this.followup.destroy();
     this.asyncq.destroy();
+    this.fileRefs.destroy(); // #31
     // The composer's own draft goes with the view: its uploads are cancelled, its object URLs revoked. The host's
     // (#141) stays for the next view of this worker.
     this.offSending();
@@ -1925,8 +1961,10 @@ class Transcript implements TranscriptView {
     this.syncHandoff(); // #223
     if (initial || this.following) {
       this.stick(true);
+      this.fileRefs.place(); // #31: its reference's row may be drawn anew, or scrolled away
       return;
     }
+    this.fileRefs.place();
     for (const it of added) this.fresh.add(it.id);
     // An update can change what an unread row shows too (#70: a hidden Read that finishes with its images).
     if (added.length || this.fresh.size) this.renderJump();

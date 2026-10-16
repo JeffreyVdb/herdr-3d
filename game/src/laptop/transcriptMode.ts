@@ -99,6 +99,8 @@ export interface TranscriptModeHost {
   repoDiscovery?: RepoSearchHost['discovery'];
   /** #58: a floor id's name (the `@r:` rows). */
   floorName?(id: string): string;
+  /** #31: a worker's checkout now (null: not known), for the transcript's relative file references. */
+  cwd?(id: string): string | null;
   /** #39: the app's lists of commands and skills, shared with the Prompt overlay and the hire dialogs (none: its own). */
   catalogs?: CommandCatalogs;
   /** #58: the clock of the pending prompts' "not seen yet" hint (default Date.now; tests pass their own). */
@@ -720,6 +722,8 @@ export class TranscriptMode {
       files: { id: s.id, search: { send: (t, args) => this.host.send(t, args) } },
       // #247: `@r:` lists the repositories and folders of the other floors (#54: and the ones the bridge discovered).
       repos: { id: s.id, search: { send: (t, args) => this.host.send(t, args), refs: this.host.repoRefs ?? null, discovery: this.host.repoDiscovery ?? null, ...(this.host.floorName ? { floorName: (id: string) => this.host.floorName?.(id) ?? id } : {}) } },
+      // #31: read when a file reference opens (the checkout may come or change while you sit).
+      cwd: () => this.host.cwd?.(s.id) ?? null,
       onPromptSubmit: (text) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');
