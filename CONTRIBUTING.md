@@ -78,8 +78,10 @@ M7 boards:
 
 ## Toolchain
 
-Go 1.27 (see `go.mod`), Node 24.18 (`game/.nvmrc`), pnpm 11.7 (`packageManager` in `game/package.json`),
-`portlease` for ports. CI uses the same pins. Working in a git worktree (the default here)? Follow
+Go 1.27 (see `go.mod`), Node 26.12 (`game/.nvmrc`), pnpm 11.7 (`packageManager` in `game/package.json`),
+`portlease` for ports. CI uses the same pins. Node runs `game/tools/*.ts` itself, by stripping the types, so a module a tool
+imports holds only erasable TypeScript: no parameter properties, enums or namespaces (#77; `tools/fixture-server.test.ts`
+loads the fixture server's modules under plain `node`). Working in a git worktree (the default here)? Follow
 [`docs/git-worktrees.md`](docs/git-worktrees.md): create, `make setup`, verify, teardown.
 
 ## Remotes
@@ -707,8 +709,8 @@ port of your own, from the repository root:
 
 ```sh
 R=$XDG_RUNTIME_DIR/h3d-bridges-mytask; mkdir -p -m 700 $R; rm -f $R/*.sock
-(cd game && node --experimental-transform-types tools/fixture-server.ts --socket $R/a.sock --fixture demo-m6 --simulate) &
-(cd game && node --experimental-transform-types tools/fixture-server.ts --socket $R/b.sock --fixture demo --simulate) &
+(cd game && node tools/fixture-server.ts --socket $R/a.sock --fixture demo-m6 --simulate) &
+(cd game && node tools/fixture-server.ts --socket $R/b.sock --fixture demo --simulate) &
 printf '%s\n' '{"active": "a0a0a0a0a0", "bridges": [' \
   "{\"id\": \"a0a0a0a0a0\", \"name\": \"Office A\", \"kind\": \"local\", \"socket\": \"$R/a.sock\"}," \
   "{\"id\": \"b0b0b0b0b0\", \"name\": \"Office B\", \"kind\": \"local\", \"socket\": \"$R/b.sock\"}," \

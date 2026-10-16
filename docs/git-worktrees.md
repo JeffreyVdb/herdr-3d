@@ -16,7 +16,7 @@ herdr worktree create --cwd <repo> --branch h3d/<name> [--base origin/main]   # 
 make setup && make lint && make shot
 ```
 
-That is the whole setup, no other manual step. `make setup` checks the toolchain (go, node 24.18, pnpm 11.7,
+That is the whole setup, no other manual step. `make setup` checks the toolchain (go, node 26.12, pnpm 11.7,
 portlease, flock; pins read from `go.mod`, `game/.nvmrc`, `game/package.json`) and fails with a clear message
 when one is missing or wrong. It then runs `make deps` (`game/node_modules`, ~3 s from the shared pnpm store), checks
 that the Chromium revision the pinned Playwright expects is in `~/.cache/ms-playwright` (missing: it says to run
