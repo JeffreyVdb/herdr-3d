@@ -65,6 +65,23 @@ export function telegramDestination(s: NotifyState): TelegramDestination {
     : { kind: 'paired', label: 'Paired', text: `Alerts are off: nothing is sent to ${who}.` };
 }
 
+/**
+ * What an action can change of what the destination says: a channel command the channel (and the last error, which it
+ * forgets), notify.set the switch, a test the last error.
+ */
+type Owns = 'channel' | 'enabled' | 'last_error';
+const OWNS: Record<string, readonly Owns[]> = { 'notify.set': ['enabled'], 'notify.test': ['last_error'] };
+const CHANNEL: readonly Owns[] = ['channel', 'last_error'];
+
+/** The state `pre` with only what an action owns taken from `now`: where the action alone would have left it. */
+function ownOnly(pre: NotifyState, now: NotifyState, owns: readonly Owns[]): NotifyState {
+  const s = { ...pre };
+  for (const k of owns) Object.assign(s, { [k]: now[k] });
+  return s;
+}
+
+const destLine = (d: TelegramDestination): string => `${d.label}. ${d.text}`;
+
 let serial = 0;
 
 const timeText = (ms: number): string => (ms < 1000 ? `${Math.max(1, Math.round(ms))} ms` : `${(ms / 1000).toFixed(1)} s`);
@@ -269,14 +286,17 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
       const pairing = c.pairing && c.pairing.state !== 'expired' ? c.pairing : null;
 
       // The destination. A change no action here made (the phone sent the code, a message bounced) is said in the
-      // status line, the section's one live region: an action's own line already says what it changed.
+      // status line, the section's one live region: an action's own line already says what it changed, and one that
+      // comes while an action is on its way is said after that line (see finish).
       const d = telegramDestination(s);
       badge(destBadge, d.label, DEST_BADGE[d.kind]);
       dest.dataset.dest = d.kind;
       destText.textContent = d.text;
-      const said = `${d.label}. ${d.text}`;
-      if (destSaid !== null && said !== destSaid && !acting) note = { text: said, error: d.kind === 'error' };
-      destSaid = said;
+      if (!acting) {
+        const said = destLine(d);
+        if (destSaid !== null && said !== destSaid) note = { text: said, error: d.kind === 'error' };
+        destSaid = said;
+      }
 
       // 1. Token.
       badge(tokenBadge, c.key_set ? (c.key_env ? 'Set by the bridge' : 'Saved') : 'Not set', c.key_set ? 'ready' : 'off');
@@ -373,6 +393,24 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
       }
     }
 
+    /**
+     * Says how an action went. A change of the destination it did not make while it was on its way (another window
+     * switched alerts off during a test) follows its line: the action, from `pre`, would have left it elsewhere.
+     */
+    function finish(text: string, error: boolean, pre: NotifyState | null, owns: readonly Owns[]): void {
+      const s = st();
+      if (s && pre) {
+        const d = telegramDestination(s);
+        const said = destLine(d);
+        if (destSaid !== null && said !== destSaid && said !== destLine(telegramDestination(ownOnly(pre, s, owns)))) {
+          text = `${text} ${said}`;
+          error ||= d.kind === 'error';
+        }
+        destSaid = said;
+      }
+      say(text, error);
+    }
+
     async function run(work: () => Promise<CommandResult>): Promise<CommandResult> {
       busy = true;
       sync();
@@ -395,15 +433,17 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
       next?: (ok: boolean) => HTMLElement | null,
     ): Promise<boolean> {
       const from = focused();
+      const pre = st();
       acting = true;
       try {
         note = { text: pending, error: false };
         const r = await run(() => host.send(t, args));
+        const owns = OWNS[t] ?? CHANNEL;
         if (!r.ok) {
-          say(notifyFailureText(r.code, r.message), true);
+          finish(notifyFailureText(r.code, r.message), true, pre, owns);
         } else {
           host.book.upsert(r.data); // the ack is the state: show it even before notify.update
-          say(ok);
+          finish(ok, false, pre, owns);
         }
         land(from, next?.(r.ok) ?? null);
         return r.ok;
@@ -464,13 +504,15 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     unpair.addEventListener('click', () => void act('notify.unpair', {}, 'Unpairing…', 'Unpaired. Nothing is sent until you pair again.', (ok) => (ok ? pair : null)));
     test.addEventListener('click', () => {
       const from = focused();
+      const pre = st();
       acting = true;
       note = { text: 'Sending the test message…', error: false };
       void run(() => host.send('notify.test', {}))
         .then((r) => {
-          if (!r.ok) return say(notifyFailureText(r.code, r.message), true);
+          const owns = OWNS['notify.test']!;
+          if (!r.ok) return finish(notifyFailureText(r.code, r.message), true, pre, owns);
           const d = r.data as Partial<NotifyTestAck>;
-          say(`Test message delivered in ${timeText(typeof d.latency_ms === 'number' ? d.latency_ms : 0)}. Check your phone, then switch notifications on.`);
+          finish(`Test message delivered in ${timeText(typeof d.latency_ms === 'number' ? d.latency_ms : 0)}. Check your phone, then switch notifications on.`, false, pre, owns);
         })
         .finally(() => {
           land(from, test);

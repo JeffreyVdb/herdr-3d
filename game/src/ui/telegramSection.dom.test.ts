@@ -152,6 +152,61 @@ describe('Settings → Telegram (#12)', () => {
     expect(m.status().textContent).toBe('Unpaired. Nothing is sent until you pair again.');
   });
 
+  it('a change it did not make while an action is on its way is said after the action’s line', async () => {
+    const PAIRED_ON = { enabled: true, state: 'ready', tested: true, channel: ADA };
+    // Send test message: another window switches alerts off before Telegram answers.
+    const m = mount(view(PAIRED_ON), (t) =>
+      t === 'notify.test'
+        ? { ok: true, data: { ok: true, latency_ms: 240 } }
+        : { ok: true, data: view({ ...PAIRED_ON, enabled: false, channel: { ...ADA, pairing: WAITING } }) },
+    );
+    m.rig.hold = true;
+    const test = m.button('Send test message');
+    test.focus();
+    test.click();
+    m.book.upsert(view({ ...PAIRED_ON, enabled: false }));
+    expect(m.dest().textContent).toContain('Alerts are off');
+    m.release();
+    await m.flush();
+    expect(m.status().textContent).toBe('Test message delivered in 240 ms. Check your phone, then switch notifications on. Paired. Alerts are off: nothing is sent to Ada.');
+    expect(document.activeElement).toBe(test);
+    // Later news that changes nothing says nothing more.
+    m.book.upsert(view({ ...PAIRED_ON, enabled: false }));
+    expect(m.status().textContent).toContain('Test message delivered');
+
+    // Pair again: its ack already holds the other window's change; still said, it is not Pair's.
+    m.book.upsert(view(PAIRED_ON));
+    m.button('Pair again').focus();
+    m.button('Pair again').click();
+    m.book.upsert(view({ ...PAIRED_ON, enabled: false }));
+    m.release();
+    await m.flush();
+    expect(m.status().textContent).toBe('Send the code to the bot from your phone. Paired. Alerts are off: nothing is sent to Ada.');
+    expect(document.activeElement).toBe(m.button('Cancel pairing'));
+  });
+
+  it('the action’s own change, published before its ack, is said once', async () => {
+    const PAIRED_ON = { enabled: true, state: 'ready', tested: true, channel: ADA };
+    const m = mount(view(PAIRED_ON), () => ({ ok: true, data: view({ ...PAIRED_ON, enabled: false }) }));
+    m.rig.hold = true;
+    const on = m.box(/Send Telegram notifications/);
+    on.focus();
+    on.click(); // off
+    m.book.upsert(view({ ...PAIRED_ON, enabled: false })); // its notify.update
+    m.release();
+    await m.flush();
+    expect(m.status().textContent).toBe('Off. Nothing is sent.');
+    // A test that fails sets the error itself: its line says why, once.
+    const m2 = mount(view(PAIRED_ON), () => ({ ok: false, code: 'blocked', message: '' }));
+    m2.rig.hold = true;
+    m2.button('Send test message').click();
+    m2.book.upsert(view({ ...PAIRED_ON, state: 'blocked', last_error: { code: 'blocked', message: '', at: 1 } }));
+    m2.release();
+    await m2.flush();
+    expect(m2.status().textContent).not.toContain('Last message not delivered');
+    expect(m2.status().textContent).toContain('press Start');
+  });
+
   it('the privacy note says what still talks to Telegram while it is off', () => {
     const m = mount(view());
     expect(m.body.querySelector('.settings-fu-privacy')!.textContent).toMatch(/Saving the token, Pair and Send test message still contact Telegram, even while it is off\./);
