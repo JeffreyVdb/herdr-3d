@@ -4540,8 +4540,9 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
   upgrade, needs no root and never touches the real database; the bridge never runs `pacman -Sy`, never runs anything as
   root and never upgrades. `CHECKUPDATES_DB` is `checkupdates/` next to the bridge's database, so the run never meets another
   `checkupdates`' `db.lck` (a bar module, a cron job). A check starts only while somebody watches, never more often than every
-  12 hours since the last one began (a failed run counts), one at a time, with a 60 s timeout, and stops with the last
-  watcher. Exit 0 is the updates (one line each), 2 none, 1 or a timeout keeps the last good count with its `checked_at`: the
+  12 hours since the last one began (a failed, timed-out or cancelled run counts: watching, unwatching and watching again
+  starts one run, not several), one at a time, with a 60 s timeout, and stops with the last watcher (SIGTERM to its process
+  group, SIGKILL after 3 s; a stopped run's `db.lck` in that directory is removed once it is reaped). Exit 0 is the updates (one line each), 2 none, 1 or a timeout keeps the last good count with its `checked_at`: the
   bridge never invents one.
 - **`host.disk`** (bridge → each watching connection, no `seq`, every second while sampling): the physical disks' activity
   over the last second. `/proc/diskstats` counters (reads and writes completed, 512-byte sectors) are differenced per disk.

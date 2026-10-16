@@ -2,7 +2,9 @@ package hoststats
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -182,7 +184,7 @@ func TestUpdatesOneRunAtATime(t *testing.T) {
 	if r.run.count() != 1 {
 		t.Fatalf("a second run started while one is in flight: %d", r.run.count())
 	}
-	cancel() // stopped watching: the run is dropped, not counted
+	cancel() // stopped watching: no result, but the attempt counts
 	if <-done {
 		t.Fatal("a cancelled run is no result")
 	}
@@ -190,8 +192,136 @@ func TestUpdatesOneRunAtATime(t *testing.T) {
 		t.Fatal("no result from a cancelled run")
 	}
 	r.run.script = []fakeRun{{exit: 2}}
-	if _, started := r.poll(t); !started {
-		t.Fatal("a cancelled run does not hold the next one back")
+	*r.now = r.now.Add(-47 * time.Hour) // 1 h after the attempt
+	if _, started := r.poll(t); started {
+		t.Fatal("a cancelled run is an attempt: nothing starts within 12 h of it")
+	}
+}
+
+func TestUpdatesWatchCyclesStartOneRun(t *testing.T) {
+	t.Parallel()
+	r := newUpdates(t, archRelease, fakeRun{hang: true}, fakeRun{hang: true}, fakeRun{hang: true}, fakeRun{hang: true})
+	for i := 0; i < 5; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan bool, 1)
+		r.u.Poll(ctx, func(c bool) { done <- c })
+		if i == 0 {
+			for r.run.count() == 0 {
+				time.Sleep(time.Millisecond)
+			}
+		}
+		cancel()
+		if i == 0 && <-done {
+			t.Fatal("a cancelled run is no result")
+		}
+		*r.now = r.now.Add(time.Hour)
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := r.run.count(); n != 1 {
+		t.Fatalf("watch, unwatch, watch started %d runs inside 12 h, want 1", n)
+	}
+	*r.now = r.now.Add(12 * time.Hour)
+	r.run.mu.Lock()
+	r.run.script = []fakeRun{{out: "a 1 -> 2\n"}}
+	r.run.mu.Unlock()
+	if ch, st := r.poll(t); !st || !ch {
+		t.Fatalf("12 h after the attempt the next one runs: started %v changed %v", st, ch)
+	}
+}
+
+func TestUpdatesStoppedRunDropsItsStaleLock(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"cancel", "timeout"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			r := newUpdates(t, archRelease, fakeRun{hang: true}, fakeRun{exit: 2})
+			dir := t.TempDir()
+			r.u.cfg.StateDir = dir
+			lock, keep := filepath.Join(dir, "db.lck"), filepath.Join(dir, "sync")
+			for _, p := range []string{lock, keep} {
+				if err := os.WriteFile(p, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if name == "timeout" {
+				r.u.cfg.Timeout = 20 * time.Millisecond
+			}
+			done := make(chan bool, 1)
+			r.u.Poll(ctx, func(c bool) { done <- c })
+			if name == "cancel" {
+				for r.run.count() == 0 {
+					time.Sleep(time.Millisecond)
+				}
+				cancel()
+			}
+			<-done
+			if _, err := os.Stat(lock); !os.IsNotExist(err) {
+				t.Fatalf("a stopped run left db.lck: %v", err)
+			}
+			if _, err := os.Stat(keep); err != nil {
+				t.Fatalf("only db.lck goes: %v", err)
+			}
+			*r.now = r.now.Add(13 * time.Hour)
+			if ch, st := r.poll(t); !st || !ch {
+				t.Fatalf("the next due run works: started %v changed %v", st, ch)
+			}
+		})
+	}
+}
+
+func TestUpdatesFinishedRunLeavesTheStateDirAlone(t *testing.T) {
+	t.Parallel()
+	r := newUpdates(t, archRelease, fakeRun{exit: 2})
+	dir := t.TempDir()
+	r.u.cfg.StateDir = dir
+	other := filepath.Join(dir, "db.lck.other")
+	if err := os.WriteFile(other, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, st := r.poll(t); !st {
+		t.Fatal("no run")
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("a finished run removed %v", err)
+	}
+}
+
+func TestExecRunnerTermsTheGroupBeforeKilling(t *testing.T) {
+	t.Parallel()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	lock := filepath.Join(dir, "db.lck")
+	script := filepath.Join(dir, "fake.sh")
+	body := "#!" + sh + "\ntrap 'rm -f \"$CU_LOCK\"; exit 0' TERM\n: > \"$CU_LOCK\"\nsleep 30 &\nwait\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for {
+			if _, err := os.Stat(lock); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		cancel()
+	}()
+	start := time.Now()
+	_, _, err = ExecRunner{}.Run(ctx, script, append(os.Environ(), "CU_LOCK="+lock))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the context's", err)
+	}
+	if d := time.Since(start); d > stopGrace {
+		t.Fatalf("took %v: the group was killed, not asked to stop", d)
+	}
+	if _, err := os.Stat(lock); !os.IsNotExist(err) {
+		t.Fatalf("the TERM trap did not run: %v", err)
 	}
 }
 

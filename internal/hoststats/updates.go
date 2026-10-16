@@ -28,8 +28,13 @@ type Runner interface {
 	Run(ctx context.Context, path string, env []string) (stdout []byte, exit int, err error)
 }
 
+// stopGrace is how long a cancelled or timed-out run has, after SIGTERM, to
+// clean up (checkupdates removes its db.lck in a TERM trap) before SIGKILL.
+const stopGrace = 3 * time.Second
+
 // ExecRunner runs real processes, each in its own process group so that a
-// cancelled context takes the children down too. stderr is discarded.
+// cancelled context takes the children down too: SIGTERM to the group first,
+// SIGKILL to it after stopGrace. stderr is discarded.
 type ExecRunner struct{}
 
 // Run implements Runner.
@@ -37,11 +42,20 @@ func (ExecRunner) Run(ctx context.Context, path string, env []string) ([]byte, i
 	cmd := exec.CommandContext(ctx, path)
 	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = 2 * time.Second
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+	cmd.WaitDelay = stopGrace
 	var out bytes.Buffer
 	cmd.Stdout = &out
-	err := cmd.Run()
+	err := cmd.Start()
+	if err != nil {
+		return nil, -1, err
+	}
+	pgid := cmd.Process.Pid
+	err = cmd.Wait()
+	if ctx.Err() != nil {
+		// After the grace Go kills only the leader: end what is left of the group.
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) && ctx.Err() == nil {
 		return out.Bytes(), ee.ExitCode(), nil
@@ -92,8 +106,10 @@ type UpdatesResult struct {
 //
 // A run starts only from Poll, which the Sampler calls while somebody
 // watches, and at most once per Every since the last run began, whether it
-// worked or not. Exit 0 is the updates (one line each), 2 none; exit 1 or a
-// timeout keeps the last good count with its time, never an invented one.
+// worked, failed, timed out or was cancelled with the last watcher (so
+// watching, unwatching and watching again never starts another mirror sync).
+// Exit 0 is the updates (one line each), 2 none; exit 1 or a timeout keeps
+// the last good count with its time, never an invented one.
 type Updates struct {
 	cfg UpdatesConfig
 	now func() time.Time
@@ -169,7 +185,7 @@ func (u *Updates) Last() *UpdatesResult {
 // Poll starts a run when the host is supported, none is running and the
 // last one began Every ago or more (or never). It returns at once; done, if
 // not nil, is called after a run ends, with whether it changed Last. A run
-// cancelled by ctx counts as if it had not started.
+// cancelled by ctx still counts as an attempt (it leaves Last as it was).
 func (u *Updates) Poll(ctx context.Context, done func(changed bool)) {
 	u.mu.Lock()
 	now := u.now()
@@ -177,7 +193,6 @@ func (u *Updates) Poll(ctx context.Context, done func(changed bool)) {
 		u.mu.Unlock()
 		return
 	}
-	prevRun := u.lastRun
 	u.running, u.lastRun = true, now
 	bin, fakeDir := u.bin, u.fakeDir
 	u.mu.Unlock()
@@ -190,12 +205,16 @@ func (u *Updates) Poll(ctx context.Context, done func(changed bool)) {
 		}
 		env = withPathDir(env, fakeDir)
 		out, exit, err := u.cfg.Runner.Run(rctx, bin, env)
+		if err != nil || exit < 0 {
+			// Not ended on its own (cancelled, timed out, killed): its TERM trap
+			// may not have run, so its lock is stale. Only our own directory.
+			u.dropStaleLock()
+		}
 		changed := false
 		u.mu.Lock()
 		u.running = false
 		switch {
-		case ctx.Err() != nil: // stopped watching: as if never started
-			u.lastRun = prevRun
+		case ctx.Err() != nil: // stopped watching: no result, but the attempt counts
 		case err != nil || (exit != 0 && exit != 2): // exit 1, a timeout: keep the last good count
 		default:
 			n := 0
@@ -210,6 +229,17 @@ func (u *Updates) Poll(ctx context.Context, done func(changed bool)) {
 			done(changed)
 		}
 	}()
+}
+
+// dropStaleLock removes db.lck from the bridge's own CHECKUPDATES_DB, left by
+// a run that was stopped before its trap removed it. Safe because one run
+// happens at a time and the process group has been reaped. Never touches the
+// shared default directory (StateDir "") or anything but that one file.
+func (u *Updates) dropStaleLock() {
+	if u.cfg.StateDir == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(u.cfg.StateDir, "db.lck"))
 }
 
 func countLines(b []byte) int {
