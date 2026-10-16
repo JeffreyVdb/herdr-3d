@@ -122,6 +122,7 @@ import { WhiteboardOverlay } from './ui/whiteboard';
 // #118: the floor overview (the lounge wall's screen and its page).
 import { OverviewOverlay, type ViewRect } from './ui/overview';
 import { OverviewFilterPrefs, OverviewPrefs } from './ui/overviewPrefs';
+import { RackLink } from './rack/link';
 import { buildCityOverview, buildOverview, cityCountItems, countItems, type CityOverviewData, type OverviewData } from './world/overview';
 import { loadBoardTexture } from './render/whiteboardTexture';
 import type { WhiteboardState } from './net/protocol';
@@ -307,6 +308,14 @@ export class App {
   readonly openPr: OpenPrDialog;
   /** M7: the `board.watch` / `unwatch` / `refresh` the game sends by itself, the last 400 (test hook; not in `sent`). */
   readonly boardLog: Array<{ t: CommandName; args: unknown; result?: CommandResult }> = [];
+  /** #74: the server rack's link to the bridge: the host.watch gate, the frames it feeds the rack, the HUD line. */
+  readonly rack = new RackLink({
+    request: (t) => this.client.request(t, {}),
+    hudInfo: (line) => this.hud.setPropInfo('server.rack', line),
+    unsupported: () => this.unsupported.has('host.watch'),
+    markUnsupported: () => void this.unsupported.add('host.watch'),
+    now: () => performance.now(),
+  });
   /** M13: the whiteboard overlay, each floor's board as last heard of, and the `whiteboard.get`s the game sent by itself (test hook; not in `sent`). */
   readonly whiteboard: WhiteboardOverlay;
   /** #118: the floor overview page, and when the wall screen and the page last had the world as it is. */
@@ -570,12 +579,14 @@ export class App {
         onConn: (m) => this.laptops.onConn(m),
         onBoard: (m) => this.onBoard(m),
         onScreen: (m) => this.screen.onMessage(m), // M13 screen
+        onHost: (m) => this.rack.onMessage(m), // #74 server rack
         onState: (s) => {
           // M3d: a logo that could not be fetched is tried again once the bridge is back (also after a replay, which sends no snapshot).
           if (s.phase === 'live' && this.conn.phase !== 'live' && this.logos.retryFailed()) this.syncLogos();
           this.conn = s;
           // M7: a dropped connection forgot its board watch; the next live one watches again.
           if (s.phase !== 'live') this.watched = null;
+          if (s.phase !== 'live') this.rack.connLost(); // #74: the bridge forgot the host watch too
           this.syncBoardWatch();
           // M13: a new connection may have missed boards' saves: read the floor's again.
           if (s.phase === 'live' && this.conn.phase !== 'live') {
@@ -2453,6 +2464,27 @@ export class App {
     o?.tickOverview(Date.now(), this.fpCam);
   }
 
+  /** #74: the rack's watch: wanted while it is in view on the floor you stand on (the link decides when to ask the bridge). */
+  private stepRack(): void {
+    this.rack.step({
+      office: this.office,
+      here: this.mode === 'floor' && this.place.area === 'floor' && !this.planOpen,
+      live: !document.hidden && this.conn.phase === 'live',
+      calm: this.batterySaver || reducedMotionTest(),
+      camera: this.fpCam,
+    });
+  }
+
+  /** #74: shows or hides the floor's rack (test hook). */
+  rackShown(on: boolean): void {
+    this.office?.setRackShown(on);
+  }
+
+  /** #74: what the rack shows and what the game knows of the host (test hook). */
+  rackInfo(): { link: ReturnType<RackLink['info']>; rack: ReturnType<OfficeView['rackInfo']>; sent: RackLink['log'] } {
+    return { link: this.rack.info(), rack: this.office?.rackInfo() ?? null, sent: this.rack.log };
+  }
+
   /** #118: what the overview page and the wall screen show (test hook). */
   overviewInfo(): { page: ReturnType<OverviewOverlay['info']>; wall: ReturnType<OfficeView['overviewInfo']> } {
     return { page: this.overview.info(), wall: this.office?.overviewInfo() ?? null };
@@ -3297,6 +3329,7 @@ export class App {
 
   private onVisibility(): void {
     if (document.hidden) {
+      this.rack.hidden(); // #74: nobody looks at the rack: the bridge stops sampling at once
       void this.r.setAnimationLoop(null);
       this.walker.release();
       this.walker.stop();
@@ -3393,6 +3426,7 @@ export class App {
     this.lastT = t;
     this.stepDaylight(dt);
     this.stepOverview(performance.now()); // #118
+    this.stepRack(); // #74
     if (this.mode === 'floor' && this.building) {
       if (this.walker.step(dt, this.walkWorldNow())) {
         this.cameraMoved = true;

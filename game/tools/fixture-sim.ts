@@ -62,6 +62,8 @@ import { ShareSim } from './fixture-share.ts';
 import { ActivitySim } from './fixture-activity.ts';
 // #157: shared Codex workers' async questions (`sim.codex*`, `worker.answer_async`, `simcodex=ask`).
 import { CodexQuestionsSim } from './fixture-codex-questions.ts';
+// #74: the server rack's host stats (`host.watch`, `sim.host`, `simhost=<scenario>`, `simfail=no_host`).
+import { HostSim } from './fixture-host.ts';
 // #223: literal handoffs and the filing cabinet (`worker.handoff*`, `handoff.*`, `sim.final`, `simhandoffs=<n>`, `simfail=no_handoff`).
 import { HandoffSim } from './fixture-handoff.ts';
 
@@ -89,6 +91,9 @@ export interface SimOptions {
   ai?: 'on' | 'off';
   /** M10: which readings the plan limits show (tools/fixture-limits.ts; default `ok`). */
   limits?: string;
+  /** #74: the host stats' scripted numbers (`simhost=ok|hot|noupdates|busy`) and their period (`simhostms=<ms>`, default 5000; tools/fixture-host.ts). */
+  host?: string;
+  hostMs?: number;
   /** #51: this many extra Claude models (`claude-lab-01`…) on top of the three, to see a long model list (`simmodels=<n>`). */
   models?: number;
   /** #74: the bridge's pane zoom as played by the screens (tools/fixture-screen.ts; `simzoom=`; absent: a bridge before it). */
@@ -341,6 +346,25 @@ export class SimWorld {
     );
     this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run', o.fail === 'codex_unverified'); // #155, #186
     this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
+    this.host = new HostSim(
+      o.host ?? 'ok',
+      o.fail !== 'no_host',
+      o.hostMs ?? 5000,
+      (fn, ms) => {
+        const h = this.setT(() => {
+          this.timers.delete(h);
+          fn();
+        }, ms);
+        this.timers.add(h);
+        return h;
+      },
+      (h) => {
+        this.clearT(h);
+        this.timers.delete(h);
+      },
+      this.now,
+      (code, message) => new CmdError(code, message),
+    );
     this.limits = new LimitsSim(o.limits ?? 'ok', o.fail !== 'no_m10', this.now, (send, m) => this.emit(send, m), (code, message) => new CmdError(code, message));
     this.boards = new BoardSim(
       {
@@ -383,6 +407,8 @@ export class SimWorld {
 
   /** M10: the plan limits (tools/fixture-limits.ts). */
   private readonly limits: LimitsSim;
+  /** #74: the host stats of the server rack (tools/fixture-host.ts). */
+  private readonly host: HostSim;
   /** #92: the AI integration (tools/fixture-ai.ts). */
   private readonly ai: AiSim;
   /** #98: "Classify unknown commands" (tools/fixture-activity-settings.ts). */
@@ -416,6 +442,7 @@ export class SimWorld {
   dispose(): void {
     this.share.dispose();
     this.repos.dispose(); // #247
+    this.host.dispose(); // #74
     for (const t of this.timers) this.clearT(t);
     this.timers.clear();
   }
@@ -653,6 +680,7 @@ export class SimWorld {
       if (this.kaneo.handle(m.t, a, send, ack, fail)) return; // #184: a Kaneo floor's board, before the GitHub ones
       if (this.boards.handle(m.t, a, send, ack, fail)) return;
       if (this.limits.handle(m.t, send, ack)) return;
+      if (this.host.handle(m.t, a, send, ack)) return; // #74
       if (this.ai.handle(m.t, a, send, ack, fail)) return; // #92
       if (this.activitySettings.handle(m.t, a, send, ack)) return; // #98
       if (this.codexServer.handle(m.t, a, send, ack)) return; // #155
