@@ -6,21 +6,59 @@
  * transcript view's card (laptop/followupCard.ts), the desk card and the Settings section use it.
  */
 
-import type { AiRole, AiRoleState, CommandArgs, Followup, FollowupAnswer, FollowupQuestion, FollowupsFeatureState, FollowupsState, Worker } from '../net/protocol';
+import type { AiRole, AiRoleState, CommandArgs, Followup, FollowupAnswer, FollowupQuestion, FollowupRecommendation, FollowupsFeatureState, FollowupsState, Worker } from '../net/protocol';
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const KINDS: readonly string[] = ['yes_no', 'choice', 'open'];
+const SOURCES: readonly string[] = ['parsed', 'model', 'fallback'];
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v : undefined);
+const count = (v: unknown): number | undefined => (typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined);
 
-function validQuestion(q: unknown): q is FollowupQuestion {
-  if (!isObj(q) || typeof q.id !== 'string' || !q.id || typeof q.question !== 'string' || !KINDS.includes(String(q.kind))) return false;
-  if (q.kind !== 'choice') return true;
-  return Array.isArray(q.options) && q.options.length > 0 && q.options.every((o) => typeof o === 'string');
+/** A question as the card can use it (#60's fields only when well-formed: an older bridge sends none), else null. */
+function questionOf(q: unknown): FollowupQuestion | null {
+  if (!isObj(q) || typeof q.id !== 'string' || !q.id || typeof q.question !== 'string' || !KINDS.includes(String(q.kind))) return null;
+  const out: FollowupQuestion = { id: q.id, question: q.question, kind: q.kind as FollowupQuestion['kind'] };
+  if (q.kind === 'choice') {
+    if (!Array.isArray(q.options) || !q.options.length || !q.options.every((o) => typeof o === 'string')) return null;
+    out.options = q.options as string[];
+  }
+  const label = str(q.label);
+  if (label) out.label = label;
+  const context = str(q.context);
+  if (context) out.context = context;
+  const r = q.recommendation;
+  const text = isObj(r) ? str(r.text) : undefined;
+  if (isObj(r) && text) {
+    const rec: FollowupRecommendation = { text };
+    const why = str(r.why);
+    if (why) rec.why = why;
+    if (typeof r.option === 'number' && Number.isInteger(r.option) && r.option >= 0 && r.option < (out.options?.length ?? 0)) rec.option = r.option;
+    out.recommendation = rec;
+  }
+  return out;
 }
 
-/** A well-formed follow-up (a turn to answer and at least one question), else null. */
+/** A well-formed follow-up (a turn to answer and at least one question), else null; unknown fields dropped. */
 export function validFollowup(f: unknown): Followup | null {
   if (!isObj(f) || typeof f.turn_id !== 'string' || !f.turn_id || !Array.isArray(f.questions) || !f.questions.length) return null;
-  return f.questions.every(validQuestion) ? (f as unknown as Followup) : null;
+  const questions = f.questions.map(questionOf);
+  if (!questions.every((q): q is FollowupQuestion => q !== null)) return null;
+  const out: Followup = {
+    turn_id: f.turn_id,
+    questions,
+    score: typeof f.score === 'number' ? f.score : 0,
+    source: SOURCES.includes(String(f.source)) ? (f.source as Followup['source']) : 'model',
+    at: typeof f.at === 'number' ? f.at : 0,
+  };
+  const tail = str(f.tail);
+  if (tail) out.tail = tail;
+  const error = str(f.error);
+  if (error) out.error = error;
+  const unlisted = count(f.unlisted);
+  if (unlisted) out.unlisted = unlisted;
+  const retries = count(f.retries);
+  if (retries) out.retries = retries;
+  return out;
 }
 
 /** The worker's follow-up, when there is one to answer. */
@@ -39,6 +77,9 @@ export function followupLine(f: Followup): string {
   if (f.questions.length === 1) return oneLine((f.questions[0] as FollowupQuestion).question);
   return `${questionsCount(f)}: ${oneLine((f.questions[0] as FollowupQuestion).question)}`;
 }
+
+/** How a question is named: its label (`Q9`), else its number. */
+export const questionName = (f: Followup, qi: number): string => f.questions[qi]?.label ?? String(qi + 1);
 
 /** What is chosen for one question: a value (Yes / No, an option, or null) and the typed text (Other, a note, the answer). */
 export interface FollowupPick {
@@ -92,25 +133,95 @@ export function followupAnswers(f: Followup, picks: FollowupPick[]): FollowupAns
   return f.questions.map((_, i) => answerOf(f, picks, i)).filter((a): a is FollowupAnswer => a !== null);
 }
 
-/** `worker.answer_followup` args (null: nothing answered yet). */
-export function answerFollowupArgs(id: string, f: Followup, picks: FollowupPick[]): CommandArgs['worker.answer_followup'] | null {
+/** `worker.answer_followup` args (null: nothing answered yet, and no note). */
+export function answerFollowupArgs(id: string, f: Followup, picks: FollowupPick[], note = ''): CommandArgs['worker.answer_followup'] | null {
   const answers = followupAnswers(f, picks);
-  return answers.length ? { id, turn_id: f.turn_id, answers } : null;
+  const n = note.trim();
+  if (!answers.length && !n) return null;
+  return n ? { id, turn_id: f.turn_id, answers, note: n } : { id, turn_id: f.turn_id, answers };
 }
 
-/** The prompt the bridge sends, as the agent will read it (docs/protocol.md "Follow-up questions"). */
-export function followupPrompt(f: Followup, picks: FollowupPick[]): string {
+// ---- #60: the agent's recommendations ------------------------------------------------------------
+
+/**
+ * What accepting question qi's recommendation picks: a choice's option it names (else its text, as the typed answer),
+ * Yes / No when the text starts with one, an open question's whole text. Null: it has none, or it is a yes / no
+ * question whose recommendation says neither (the card shows it, to read).
+ */
+export function recommendedPick(f: Followup, qi: number): FollowupPick | null {
+  const q = f.questions[qi];
+  const r = q?.recommendation;
+  if (!q || !r) return null;
+  switch (q.kind) {
+    case 'choice': {
+      const o = r.option !== undefined ? q.options?.[r.option] : undefined;
+      return o !== undefined ? { value: o, text: '' } : { value: null, text: r.text.trim() };
+    }
+    case 'yes_no': {
+      const m = /^[\s*_]*(yes|no)\b/i.exec(r.text);
+      return m ? { value: m[1]!.toLowerCase() === 'yes' ? 'Yes' : 'No', text: '' } : null;
+    }
+    default:
+      return { value: null, text: r.text.trim() };
+  }
+}
+
+/** Accepts question qi's recommendation (it replaces what was picked or typed there): the picks, unchanged when there is none. */
+export function acceptRecommendation(f: Followup, picks: FollowupPick[], qi: number): FollowupPick[] {
+  const r = recommendedPick(f, qi);
+  return r ? picks.map((p, i) => (i === qi ? r : p)) : picks;
+}
+
+/** Accepts every recommendation of a question still unanswered (answers you gave stay): the picks, and how many it filled. */
+export function acceptAllRecommendations(f: Followup, picks: FollowupPick[]): { picks: FollowupPick[]; filled: number } {
+  let filled = 0;
+  const next = picks.map((p, i) => {
+    if (answeredFollowup(f, picks, i)) return p;
+    const r = recommendedPick(f, i);
+    if (!r) return p;
+    filled++;
+    return r;
+  });
+  return { picks: next, filled };
+}
+
+/** How many unanswered questions a recommendation could fill. */
+export const recommendationsLeft = (f: Followup, picks: FollowupPick[]): number =>
+  f.questions.filter((_, i) => !answeredFollowup(f, picks, i) && recommendedPick(f, i) !== null).length;
+
+/** Whether question qi's answer is its recommendation as it was (the bridge then tells the agent so). */
+export function isRecommended(f: Followup, picks: FollowupPick[], qi: number): boolean {
+  const q = f.questions[qi];
+  const r = q?.recommendation;
+  const a = answerOf(f, picks, qi);
+  if (!q || !r || !a || a.note) return false;
+  if (q.kind === 'choice' && r.option !== undefined) return a.value === q.options?.[r.option];
+  return q.kind === 'open' && a.value === r.text.trim();
+}
+
+/** The questions left unanswered, by name (`Q12`, or a number). */
+export const unansweredNames = (f: Followup, picks: FollowupPick[]): string[] => f.questions.map((_, i) => i).filter((i) => !answeredFollowup(f, picks, i)).map((i) => questionName(f, i));
+
+/** The prompt the bridge sends, as the agent will read it (docs/protocol.md "Follow-up questions", "Answering"). */
+export function followupPrompt(f: Followup, picks: FollowupPick[], note = ''): string {
   const join = (a: FollowupAnswer) => (a.note ? `${a.value} ${a.note}` : a.value);
+  const extra = note.replace(/\r\n/g, '\n').trim();
+  const withNote = (s: string) => (!extra ? s : !s ? extra : `${s}\n\n${extra}`);
   if (f.source === 'fallback' && f.questions.length === 1) {
     const a = answerOf(f, picks, 0);
-    return a ? join(a) : '';
+    return withNote(a ? join(a) : '');
   }
   const lines = ['Answers to your open questions:'];
   f.questions.forEach((q, i) => {
     const a = answerOf(f, picks, i);
-    if (a) lines.push(`${i + 1}. ${q.question} → ${join(a)}`);
+    if (!a) return;
+    const v = join(a) + (isRecommended(f, picks, i) ? ' (your recommendation)' : '');
+    lines.push(q.label ? `- ${q.label} ${q.question} → ${v}` : `${i + 1}. ${q.question} → ${v}`);
   });
-  return lines.length > 1 ? lines.join('\n') : '';
+  if (lines.length === 1 && !extra) return '';
+  const left = unansweredNames(f, picks);
+  if (left.length) lines.push(`Unanswered: ${left.join(', ')}`);
+  return withNote(lines.join('\n'));
 }
 
 // ---- the feature's settings ------------------------------------------------------------------

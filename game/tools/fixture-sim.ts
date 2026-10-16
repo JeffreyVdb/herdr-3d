@@ -99,6 +99,8 @@ export interface SimOptions {
   activity?: string;
   /** #157: seeds a shared Codex worker's async questions on start (`simcodex=ask`, tools/fixture-codex-questions.ts). */
   codex?: string;
+  /** #60: seeds Pebble's follow-up questions on start (`simfollowup=grill|fallback|fallback-fail`, tools/fixture-followup.ts). */
+  followup?: string;
   /** #184: the Kaneo connection to start with (`simkaneo=off|connected|unavailable|old`, tools/fixture-kaneo.ts), and how long its slow answers take (`simkaneoslow=<ms>`). */
   kaneo?: KaneoMode;
   kaneoSlowMs?: number;
@@ -321,6 +323,7 @@ export class SimWorld {
     };
     this.activitySettings = new ActivitySettingsSim({ ai: this.ai, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) });
     if (o.codex) this.codexq.seed(o.codex); // #157
+    if (o.followup) this.followups.seed(o.followup); // #60
     if (o.repos !== undefined) seedRepos(this.floors, [...this.buildings.values()]); // #247
     this.repos = new ReposSim(
       {

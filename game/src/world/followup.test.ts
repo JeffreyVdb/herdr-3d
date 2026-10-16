@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Followup } from '../net/protocol';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
+  acceptAllRecommendations,
+  acceptRecommendation,
   answerFollowupArgs,
   emptyFollowupPicks,
   followupLine,
@@ -8,8 +12,12 @@ import {
   followupPrompt,
   FollowupsBook,
   followupsStateOf,
+  isRecommended,
   pickValue,
+  recommendedPick,
   setText,
+  unansweredNames,
+  validFollowup,
 } from './followup';
 
 const f = (over: Partial<Followup> = {}): Followup => ({
@@ -56,7 +64,7 @@ describe('follow-up questions (#90)', () => {
         { id: 'q2', value: 'Wait for e2e-live' },
       ],
     });
-    expect(followupPrompt(x, p)).toBe('Answers to your open questions:\n1. Does X still need Y? → No not any more\n2. Ship now or wait for the e2e-live run? → Wait for e2e-live');
+    expect(followupPrompt(x, p)).toBe('Answers to your open questions:\n1. Does X still need Y? → No not any more\n2. Ship now or wait for the e2e-live run? → Wait for e2e-live\nUnanswered: 3');
     // A typed Other replaces the picked option; picking the same again drops it; Maybe is no yes/no answer.
     p = setText(x, p, 1, 'Ship on Monday');
     expect(answerFollowupArgs('w', x, p)?.answers[1]).toEqual({ id: 'q2', value: 'Ship on Monday' });
@@ -84,5 +92,61 @@ describe('follow-up questions (#90)', () => {
     expect(b.upsert({ enabled: false, threshold: 0.7, state: 'off', roles: {}, env: [] })).toBe(true);
     expect(b.known).toBe(true);
     expect(n).toBe(2);
+  });
+});
+
+// #60: a grill round as the bridge reads it (game/fixtures/followup-grill.json, from internal/followup's golden test).
+
+const grill = (): Followup => JSON.parse(readFileSync(resolve(import.meta.dirname, '../../fixtures/followup-grill.json'), 'utf8')) as Followup;
+
+describe('grill rounds (#60)', () => {
+  it('keeps the labels, context and recommendations, and takes a follow-up from an older bridge', () => {
+    const f = validFollowup(grill())!;
+    expect(f.questions.map((q) => q.label)).toEqual(['Q8', 'Q9', 'Q10', 'Q11', 'Q12', 'Q13', 'Q14', 'Q15', 'Q16', 'Q17']);
+    expect(f.questions[1]!.recommendation).toEqual({ text: expect.stringMatching(/^\(c\), default on\./), option: 2 });
+    expect(f.questions[0]!.context).toContain('- worktree flag: the default?');
+    // An older bridge: none of the new fields, still a follow-up.
+    expect(validFollowup({ turn_id: 't', score: 1, source: 'model', at: 1, questions: [{ id: 'q1', question: 'x?', kind: 'open' }] })).not.toBeNull();
+    // Malformed new fields are dropped, not the follow-up.
+    const odd = validFollowup({ ...f, unlisted: -2, questions: [{ id: 'q1', question: 'x?', kind: 'choice', options: ['a', 'b'], label: 3, recommendation: { text: 'b', option: 9 } }] })!;
+    expect(odd.questions[0]).toEqual({ id: 'q1', question: 'x?', kind: 'choice', options: ['a', 'b'], recommendation: { text: 'b' } });
+    expect(odd.unlisted).toBeUndefined();
+  });
+
+  it('accepts one recommendation, all of them (yours stay), and pairs the answers by label', () => {
+    const f = grill();
+    let p = emptyFollowupPicks(f);
+    // Q8 open: its whole text; Q9 a choice: the option it names.
+    expect(recommendedPick(f, 0)).toEqual({ value: null, text: f.questions[0]!.recommendation!.text });
+    p = acceptRecommendation(f, p, 1);
+    expect(p[1]).toEqual({ value: '(c) Per-schedule checkbox "wake floor if asleep", default on.', text: '' });
+    expect(isRecommended(f, p, 1)).toBe(true);
+    // Overridden: Q10 (a).
+    p = pickValue(f, p, 2, f.questions[2]!.options![0]!);
+    expect(unansweredNames(f, p)).toEqual(['Q8', 'Q11', 'Q12', 'Q13', 'Q14', 'Q15', 'Q16', 'Q17']);
+    expect(followupPrompt(f, p)).toBe(
+      'Answers to your open questions:\n' +
+        '- Q9 Asleep floor at fire time → (c) Per-schedule checkbox "wake floor if asleep", default on. (your recommendation)\n' +
+        '- Q10 Desks full at fire time → (a) Fail immediately with `failed: no_desk`.\n' +
+        'Unanswered: Q8, Q11, Q12, Q13, Q14, Q15, Q16, Q17',
+    );
+    const all = acceptAllRecommendations(f, p);
+    expect(all.filled).toBe(8);
+    expect(all.picks[2]!.value).toBe(f.questions[2]!.options![0]); // yours stays
+    expect(answerFollowupArgs('w', f, all.picks)?.answers).toHaveLength(10);
+    // A note on it is no acceptance; editing an open one's text neither.
+    expect(isRecommended(f, setText(f, all.picks, 0, `${f.questions[0]!.recommendation!.text} Also X.`), 0)).toBe(false);
+    // The round's note ends the prompt.
+    expect(followupPrompt(f, emptyFollowupPicks(f), 'Later.')).toMatch(/\nUnanswered: Q8, .*Q17\n\nLater\.$/);
+    expect(answerFollowupArgs('w', f, emptyFollowupPicks(f), ' Later. ')).toEqual({ id: 'w', turn_id: f.turn_id, answers: [], note: 'Later.' });
+  });
+
+  it('a yes / no recommendation picks Yes or No when it says one', () => {
+    const f: Followup = { turn_id: 't', score: 1, source: 'model', at: 1, questions: [
+      { id: 'q1', question: 'Both?', kind: 'yes_no', recommendation: { text: '**Yes to both.** Because.' } },
+      { id: 'q2', question: 'Ship?', kind: 'yes_no', recommendation: { text: 'Depends on CI.' } },
+    ] };
+    expect(recommendedPick(f, 0)).toEqual({ value: 'Yes', text: '' });
+    expect(recommendedPick(f, 1)).toBeNull();
   });
 });

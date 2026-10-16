@@ -2357,9 +2357,202 @@
   min-height: 4.2em;
   line-height: 1.4;
 }
+/*
+ * #60, a grill round: the round's line (how far you are, Use all recommendations, the whole message), each question's
+ * context as the agent wrote it, and its recommendation under the options: the agent's voice, tinted in the card's
+ * sun, turning to the ok colour once it is your answer. A fallback says why its questions could not be read.
+ */
+.tx-fu-round {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 8px;
+  color: var(--ctl-text-2);
+  font-size: calc(12px * var(--tx-k, 1));
+}
+.tx-fu-progress {
+  font-variant-numeric: tabular-nums;
+}
+.tx-fu-progress b {
+  color: var(--ctl-text);
+  font-weight: 750;
+}
+.tx .tx-fu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 11px;
+  border: 1px solid var(--tx-sun-soft);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--tx-sun-text);
+  font-size: calc(12px * var(--tx-k, 1));
+  font-weight: 650;
+  white-space: nowrap;
+  transition: border-color 120ms ease-out, background-color 120ms ease-out;
+}
+.tx .tx-fu-btn:hover:not(:disabled) {
+  border-color: var(--tx-sun);
+  background: color-mix(in srgb, var(--tx-sun) 8%, transparent);
+}
+.tx .tx-fu-btn:disabled {
+  border-color: var(--ctl-border);
+  color: var(--ctl-text-3);
+}
+.tx-fu-btn .tx-ask-kbd {
+  margin-left: 0;
+}
+.tx-fu-unlisted {
+  margin: 6px 0 0;
+  color: var(--ctl-text-2);
+  font-size: calc(12px * var(--tx-k, 1));
+}
+.tx-fu-msg {
+  margin-top: 8px;
+  padding: 8px 10px;
+  max-height: 16em;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--ctl-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--ctl-recess) 60%, transparent);
+  color: var(--ctl-text);
+  font-size: calc(12.5px * var(--tx-k, 1));
+  line-height: 1.45;
+}
+.tx-fu-msg:focus-visible {
+  outline: 2px solid var(--tx-sun);
+  outline-offset: 1px;
+}
+.tx-fu-msg-state {
+  margin: 0 0 6px;
+  color: var(--ctl-text-2);
+  font-size: calc(12px * var(--tx-k, 1));
+}
+.tx-fu-msg-state:last-child {
+  margin-bottom: 0;
+}
+.tx-fu-msg-state.is-error {
+  color: var(--ctl-error);
+}
+.tx-fu-fail {
+  margin-top: 9px;
+}
+.tx-fu-fail-title {
+  margin: 0;
+  font-size: calc(13.5px * var(--tx-k, 1));
+  font-weight: 650;
+}
+.tx-fu-fail-why {
+  margin: 3px 0 0;
+  color: var(--ctl-text-2);
+  font-size: calc(12px * var(--tx-k, 1));
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.tx-fu-fail-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 7px;
+}
+.tx-fu-context {
+  margin: -2px 0 8px;
+  max-width: 72ch;
+  max-height: 11em;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--ctl-text-2);
+  font-size: calc(12.5px * var(--tx-k, 1));
+  line-height: 1.45;
+}
+.tx-fu-context strong {
+  color: var(--ctl-text);
+}
+.tx-ask-opt-label code {
+  padding: 0.05em 0.3em;
+  border-radius: 4px;
+  background: rgb(var(--ctl-tint) / 8%);
+  font-family: var(--tx-mono);
+  font-size: 0.92em;
+  font-weight: 550;
+  font-variant-ligatures: none;
+}
+.tx-fu-rec {
+  margin-top: 8px;
+  padding: 7px 10px 8px;
+  border: 1px solid color-mix(in srgb, var(--tx-sun) 28%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--tx-sun) 6%, transparent);
+  transition: border-color 160ms ease-out, background-color 160ms ease-out;
+}
+.tx-fu-rec.is-using {
+  border-color: color-mix(in srgb, var(--ctl-ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ctl-ok) 7%, transparent);
+}
+.tx-fu-rec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(22px * var(--tx-k, 1));
+  margin-bottom: 4px;
+}
+.tx-fu-rec-tag {
+  color: var(--tx-sun-text);
+  font-size: calc(11px * var(--tx-k, 1));
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.tx-fu-rec.is-using .tx-fu-rec-tag,
+.tx-fu-rec-using {
+  color: var(--ctl-ok);
+}
+.tx-fu-rec-using {
+  font-size: calc(12px * var(--tx-k, 1));
+  font-weight: 650;
+}
+.tx-fu-rec-text {
+  max-height: 9em;
+  overflow: auto;
+  color: var(--ctl-text);
+  font-size: calc(13px * var(--tx-k, 1));
+  line-height: 1.45;
+}
+.tx-fu-rec-why {
+  margin-top: 4px;
+  color: var(--ctl-text-2);
+  font-size: calc(12px * var(--tx-k, 1));
+  line-height: 1.4;
+}
+.tx-fu-carry {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+.tx-fu-carry-head {
+  color: var(--ctl-text-2);
+  font-size: calc(12px * var(--tx-k, 1));
+  font-weight: 650;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx .tx-fu-btn,
+  .tx-fu-rec {
+    transition: none;
+  }
+}
 @container tx (max-height: 470px) {
   .tx-fu-tail {
     max-height: 4.5em;
+  }
+  .tx-fu-context,
+  .tx-fu-rec-text {
+    max-height: 5.5em;
+  }
+  .tx-fu-msg {
+    max-height: 9em;
   }
 }
 /*
@@ -2964,6 +3157,21 @@
   border-color: var(--border-hover);
   background: var(--hover);
 }
+:root[data-ui-theme='ubuntu'] .tx .tx-fu-btn {
+  min-height: 32px;
+  border-color: var(--border);
+  background: var(--btn-bg);
+  color: var(--text);
+  font-size: 13px;
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-fu-btn:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  background: var(--btn-bg-hover);
+}
+:root[data-ui-theme='ubuntu'] .tx .tx-fu-btn:disabled {
+  background: transparent;
+  color: var(--text-3);
+}
 :root[data-ui-theme='ubuntu'] .tx .tx-ask-done {
   min-height: 36px;
   border-color: var(--border);
@@ -3122,6 +3330,7 @@
   :root[data-ui-theme='ubuntu'] .tx .tx-ask-opt,
   :root[data-ui-theme='ubuntu'] .tx .tx-ask-row,
   :root[data-ui-theme='ubuntu'] .tx .tx-ask-done,
+  :root[data-ui-theme='ubuntu'] .tx .tx-fu-btn,
   :root[data-ui-theme='ubuntu'] .tx .tx-ask-other-input,
   :root[data-ui-theme='ubuntu'] .tx .tx-qtab {
     min-height: 44px;

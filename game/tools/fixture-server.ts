@@ -39,6 +39,9 @@
 // connection (a reconnect replays it); `sim.codex`, `sim.codex_answer`, `sim.codex_turn_end`, `worker.answer_async` and
 // `worker.dismiss_async`, `simfail=async_input_failed|async_stale|async_unconfirmed|async_undelivered`
 // (tools/fixture-codex-questions.ts).
+// #60: `simfollowup=grill|fallback|fallback-fail` seeds Pebble (demo-m5) with the incident's ten-question grill round, as
+// the bridge reads it or as its fallback (whose Retry reads it, or fails again), no AI integration needed; also
+// `worker.retry_followup` and `worker.followup_message` (tools/fixture-followup.ts).
 // #171: `simtx=<name>` picks the transcript timeline every watch gets (default: the fixture's name, e.g. demo-h171's code
 // changes; the demo one when there is none by that name; tools/fixture-transcript.ts).
 // #247: `simrepos=<key>` sets demo-m5's floors up for `@r:` and shares the "Repositories from other buildings" switch
@@ -220,6 +223,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             ...(q.get('simactivity') ? { activity: q.get('simactivity') as string } : {}),
             // #157: a shared Codex worker's async questions, on every connection (tools/fixture-codex-questions.ts).
             ...(q.get('simcodex') ? { codex: q.get('simcodex') as string } : {}),
+            // #60: Pebble's follow-up questions to start with: the incident's grill round, read or fallen back (tools/fixture-followup.ts).
+            ...(q.get('simfollowup') ? { followup: q.get('simfollowup') as string } : {}),
             // #184: the Kaneo connection to start with, and how slow its slow answers are (tools/fixture-kaneo.ts).
             ...(['off', 'connected', 'unavailable', 'old'].includes(q.get('simkaneo') ?? '') ? { kaneo: q.get('simkaneo') as 'off' | 'connected' | 'unavailable' | 'old' } : {}),
             ...(q.get('simkaneoslow') !== null ? { kaneoSlowMs: Math.max(0, Number(q.get('simkaneoslow')) || 0) } : {}),
