@@ -34,7 +34,11 @@ export class ActivitySettingsSim {
   private env: string[] = [];
   private last = '';
 
-  constructor(private readonly h: ActivitySettingsHost) {}
+  private readonly h: ActivitySettingsHost;
+
+  constructor(h: ActivitySettingsHost) {
+    this.h = h;
+  }
 
   view(): Obj {
     const classifier = (this.h.ai.view() as { classifier: { state: string } }).classifier.state;

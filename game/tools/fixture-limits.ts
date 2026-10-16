@@ -72,13 +72,25 @@ export function readings(scenario: string, now: number): Limits[] {
 export class LimitsSim {
   private lastRefresh = -Infinity;
 
+  private readonly scenario: string;
+  private readonly on: boolean;
+  private readonly now: () => number;
+  private readonly emit: (send: Send, m: Obj) => void;
+  private readonly error: (code: string, message: string) => Error;
+
   constructor(
-    private readonly scenario: string,
-    private readonly on: boolean,
-    private readonly now: () => number,
-    private readonly emit: (send: Send, m: Obj) => void,
-    private readonly error: (code: string, message: string) => Error,
-  ) {}
+    scenario: string,
+    on: boolean,
+    now: () => number,
+    emit: (send: Send, m: Obj) => void,
+    error: (code: string, message: string) => Error,
+  ) {
+    this.scenario = scenario;
+    this.on = on;
+    this.now = now;
+    this.emit = emit;
+    this.error = error;
+  }
 
   decorate(world: Obj): void {
     if (this.on && this.scenario !== 'off') world.limits = readings(this.scenario, this.now());

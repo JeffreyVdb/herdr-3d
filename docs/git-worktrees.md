@@ -19,7 +19,7 @@ a tool reports that no version is set or selects the wrong version, follow the m
 make setup && make lint && make shot
 ```
 
-Once the toolchain is available, that is the whole setup. `make setup` checks the toolchain (go, node 24.18, pnpm 11.7,
+Once the toolchain is available, that is the whole setup. `make setup` checks the toolchain (go, node 26.12, pnpm 11.7,
 portlease, flock; pins read from `go.mod`, `game/.nvmrc`, `game/package.json`) and fails with a clear message
 when one is missing or wrong. It then runs `make deps` (`game/node_modules`, ~3 s from the shared pnpm store), checks
 that the Chromium revision the pinned Playwright expects is in `~/.cache/ms-playwright` (missing: it says to run

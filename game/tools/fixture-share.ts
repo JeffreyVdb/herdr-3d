@@ -94,12 +94,22 @@ export class ShareSim {
   private surface: string | undefined;
   private readonly mine = new Set<string>();
 
+  private readonly emit: (send: Send, m: Obj) => void;
+  private readonly error: (code: string, message: string) => Error;
+  private readonly hasFloor: (session: string) => boolean;
+  private readonly grabMs: number;
+
   constructor(
-    private readonly emit: (send: Send, m: Obj) => void,
-    private readonly error: (code: string, message: string) => Error,
-    private readonly hasFloor: (session: string) => boolean,
-    private readonly grabMs = 5000,
-  ) {}
+    emit: (send: Send, m: Obj) => void,
+    error: (code: string, message: string) => Error,
+    hasFloor: (session: string) => boolean,
+    grabMs = 5000,
+  ) {
+    this.emit = emit;
+    this.error = error;
+    this.hasFloor = hasFloor;
+    this.grabMs = grabMs;
+  }
 
   decorate(world: Obj): void {
     world.screen = this.sharing ? { sharing: true, ...(this.surface ? { surface: this.surface } : {}) } : { sharing: false };

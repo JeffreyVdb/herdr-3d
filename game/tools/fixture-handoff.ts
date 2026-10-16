@@ -194,13 +194,12 @@ export class HandoffSim {
   private llmOutcome: string;
   private readonly jobs = new Map<string, LLMHandoff & { worker: string; args: string; focus: string; sendHome: boolean }>();
   private llmRunning: string | null = null;
+  private readonly h: HandoffHost;
+  readonly enabled: boolean;
 
-  constructor(
-    private readonly h: HandoffHost,
-    readonly enabled: boolean,
-    seed = 0,
-    llm: HandoffLLMKnobs = {},
-  ) {
+  constructor(h: HandoffHost, enabled: boolean, seed = 0, llm: HandoffLLMKnobs = {}) {
+    this.h = h;
+    this.enabled = enabled;
     this.llmState = llm.state && ['ready', 'off', 'untested', 'incomplete', 'none'].includes(llm.state) ? llm.state : null;
     this.llmOutcome = llm.outcome || 'success';
     const floor = h.floors()[0];

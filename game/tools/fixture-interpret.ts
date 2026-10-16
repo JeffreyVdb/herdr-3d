@@ -81,7 +81,11 @@ export class InterpretSim {
   /** How long an interpretation may take (the bridge's bound); `sim.interpret {timeout_ms}` changes it. */
   private timeoutMs = 35_000;
 
-  constructor(private readonly h: InterpretHost) {}
+  private readonly h: InterpretHost;
+
+  constructor(h: InterpretHost) {
+    this.h = h;
+  }
 
   handle(t: unknown, a: Obj, ack: (d?: unknown) => void, fail: (e: unknown) => void): boolean {
     if (t === 'sim.interpret') {
