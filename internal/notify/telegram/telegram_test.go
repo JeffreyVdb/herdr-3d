@@ -48,10 +48,15 @@ type fakeTG struct {
 	polling, maxPolling int
 	// now dates the updates pushed (nil: 0).
 	now func() time.Time
+	// #14: each message's text and buttons as shown now (by id); failEdit
+	// is editMessageText's n-th call's failure (0: none).
+	shown    map[int64]string
+	edits    int
+	failEdit func(n int) (int, string)
 }
 
 func newFakeTG(t *testing.T) *fakeTG {
-	f := &fakeTG{nextID: 100, pushed: make(chan struct{}, 1), reqC: make(chan struct{}, 256)}
+	f := &fakeTG{nextID: 100, pushed: make(chan struct{}, 1), reqC: make(chan struct{}, 256), shown: map[int64]string{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -92,9 +97,45 @@ func (f *fakeTG) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		// Each message its own id (from 1), in the chat it went to.
 		chatID, _ := body["chat_id"].(float64)
+		f.mu.Lock()
+		f.shown[int64(n+1)] = shownOf(body)
+		f.mu.Unlock()
 		fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d,"date":1,"chat":{"id":%d,"type":"private"}}}`, n+1, int64(chatID))
-	case "setMessageReaction":
+	case "setMessageReaction", "answerCallbackQuery":
 		fmt.Fprint(w, `{"ok":true,"result":true}`)
+	case "editMessageText", "editMessageReplyMarkup":
+		id, _ := body["message_id"].(float64)
+		f.mu.Lock()
+		n := f.edits
+		f.edits++
+		fail := f.failEdit
+		prev, ok := f.shown[int64(id)]
+		next := shownOf(body)
+		if method == "editMessageReplyMarkup" {
+			text, _, _ := strings.Cut(prev, "\x00")
+			next = text + "\x00" + markupOf(body)
+		}
+		f.mu.Unlock()
+		if fail != nil && method == "editMessageText" {
+			if st, b := fail(n); st != 0 {
+				w.WriteHeader(st)
+				fmt.Fprint(w, b)
+				return
+			}
+		}
+		switch {
+		case !ok:
+			w.WriteHeader(400)
+			fmt.Fprint(w, `{"ok":false,"error_code":400,"description":"Bad Request: message to edit not found"}`)
+		case prev == next:
+			w.WriteHeader(400)
+			fmt.Fprint(w, `{"ok":false,"error_code":400,"description":"Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message"}`)
+		default:
+			f.mu.Lock()
+			f.shown[int64(id)] = next
+			f.mu.Unlock()
+			fmt.Fprint(w, `{"ok":true,"result":true}`)
+		}
 	case "getUpdates":
 		f.mu.Lock()
 		n := f.gets
@@ -162,6 +203,60 @@ func (f *fakeTG) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(404)
 		fmt.Fprint(w, `{"ok":false,"error_code":404,"description":"Not Found"}`)
 	}
+}
+
+// shownOf is a sendMessage's or an edit's text and buttons, as the fake
+// keeps them: the text, NUL, the reply markup's JSON.
+func shownOf(body map[string]any) string {
+	text, _ := body["text"].(string)
+	return text + "\x00" + markupOf(body)
+}
+
+func markupOf(body map[string]any) string {
+	m, ok := body["reply_markup"]
+	if !ok {
+		return ""
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// shownText is message id's text now, and its buttons' labels.
+func (f *fakeTG) shownText(id int64) (string, []string) {
+	f.mu.Lock()
+	s := f.shown[id]
+	f.mu.Unlock()
+	text, markup, _ := strings.Cut(s, "\x00")
+	var k struct {
+		Rows [][]struct {
+			Text string `json:"text"`
+			Data string `json:"callback_data"`
+		} `json:"inline_keyboard"`
+	}
+	_ = json.Unmarshal([]byte(markup), &k)
+	var labels []string
+	for _, row := range k.Rows {
+		for _, b := range row {
+			labels = append(labels, b.Text+"="+b.Data)
+		}
+	}
+	return text, labels
+}
+
+// pushTap queues a tap by from on message msg of chat (its button's data);
+// it returns the tap's id.
+func (f *fakeTG) pushTap(from *user, chatID int64, msg int64, data string) string {
+	f.mu.Lock()
+	f.nextID++
+	id := fmt.Sprintf("cb%d", f.nextID)
+	f.queue = append(f.queue, update{UpdateID: f.nextID, CallbackQuery: &callbackQuery{ID: id, From: from, Data: data,
+		Message: &message{MessageID: msg, Chat: chat{ID: chatID, Type: "private"}, Date: 1}}})
+	f.mu.Unlock()
+	select {
+	case f.pushed <- struct{}{}:
+	default:
+	}
+	return id
 }
 
 func (f *fakeTG) push(from int64, chatType, text string, isBot bool) {

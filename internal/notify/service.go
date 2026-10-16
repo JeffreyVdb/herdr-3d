@@ -48,6 +48,9 @@ const (
 	AuditSend  = "notify.send"
 	AuditPair  = "notify.pair"
 	AuditReply = "notify.reply" // #13
+	// #14: a tap on a card, and an answer of the cards handed to the hub.
+	AuditTap    = "notify.tap"
+	AuditAnswer = "notify.answer"
 )
 
 // Settings are what the store keeps.
@@ -100,6 +103,13 @@ type Options struct {
 	// typed it (nil) or failed. A *ReplyError says why (else ReplyFailed).
 	// Nil: replies are refused.
 	Prompt func(ctx context.Context, id, text string, done func(error)) error
+	// Answer (#14) answers a worker's ask or follow-up with what was tapped
+	// on its cards, as the game does (the hub's worker.answer_ask or
+	// worker.answer_followup: its checks, the worker's input lane). An error
+	// refuses it at once; else done is called once, when the lane is done.
+	// A *ReplyError says why (ReplyClosed: no longer the worker's). Nil: the
+	// cards' answers are refused.
+	Answer func(ctx context.Context, a Answer, done func(error)) error
 	Log    *slog.Logger
 }
 
@@ -186,6 +196,10 @@ type Service struct {
 	since time.Time
 
 	rp replies // #13: the replier's
+	bt buttons // #14: the replier's too
+	// keys is what each worker asks now, as the loop last told the replier
+	// (the loop's).
+	keys map[string]string
 
 	obsMu    sync.Mutex
 	obs      []Observation
@@ -213,7 +227,8 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 		opts.Log = slog.New(slog.DiscardHandler)
 	}
 	s := &Service{opts: opts, change: make(chan struct{}, 1), kick: make(chan struct{}, 1),
-		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle), rp: newReplies()}
+		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle), rp: newReplies(),
+		bt: newButtons(), keys: map[string]string{}}
 	if opts.Store != nil {
 		st, ok, err := opts.Store.LoadNotifySettings(ctx)
 		if err != nil {
@@ -388,6 +403,9 @@ func (s *Service) Apply(ctx context.Context, u Update) error {
 	s.mu.Unlock()
 	if listen {
 		s.opts.Channel.Listen(next.Replies)
+		if !next.Replies {
+			s.job(s.repliesOff) // #14: no tap is read any more
+		}
 	}
 	s.signal()
 	return nil
@@ -509,7 +527,7 @@ func (s *Service) Run(ctx context.Context) {
 	s.mu.Unlock()
 	go func() {
 		defer wg.Done()
-		s.opts.Channel.Run(ctx, Hooks{Pair: s.paired, Reply: s.inbound, Listen: listen})
+		s.opts.Channel.Run(ctx, Hooks{Pair: s.paired, Reply: s.inbound, Tap: s.tapped, Listen: listen})
 	}()
 	defer wg.Wait()
 	var timer Timer
@@ -549,6 +567,19 @@ func (s *Service) process() {
 	now := s.now()
 	freelancers := s.freelancers()
 	for _, o := range obs {
+		// #14: what the worker asks now, for its cards (a change only).
+		id, key := o.Worker.ID, ""
+		if !o.Gone {
+			key = questionKey(o.Worker)
+		}
+		if s.keys[id] != key {
+			if key == "" {
+				delete(s.keys, id)
+			} else {
+				s.keys[id] = key
+			}
+			s.job(func(ctx context.Context) { s.seen(ctx, id, key) })
+		}
 		if o.Gone {
 			s.tr.gone(o.Worker.ID)
 			continue
@@ -585,6 +616,14 @@ func (s *Service) sight(o Observation, freelancers bool) sighting {
 	sg.key = episodeKey(sg.kind, latent.Since)
 	sg.eligible = v.Candidate(freelancers) && s.allowed(sg.kind)
 	sg.alert = Alert{WorkerID: o.Worker.ID, Kind: sg.kind, Reason: v.Reason, Name: o.Name, Line: o.Line}
+	if sg.kind == KindNeedsYou {
+		switch v.Reason {
+		case ReasonQuestion:
+			sg.alert.Ask = w.Ask
+		case ReasonFollowup:
+			sg.alert.Followup = w.Followup
+		}
+	}
 	return sg
 }
 
@@ -682,6 +721,9 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 	} else {
 		s.opts.Log.Info("notification sent", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts)
 		s.remember(ctx, ref, a.WorkerID)
+		if a.Ask != nil || a.Followup != nil {
+			s.job(func(ctx context.Context) { s.openCards(ctx, a) }) // #14
+		}
 	}
 	s.audit(ctx, AuditSend, row, aerr)
 }

@@ -10,6 +10,8 @@
 // nothing here reaches the network but through a Channel. #13: a reply to a
 // notification is typed into its worker (reply.go): the Channel hands the
 // recipient's messages in and confirms or answers them; the hub types them.
+// #14: an ask or a follow-up comes with a card per question, buttons to
+// tap the answer (buttons.go); the hub answers it as the game does.
 package notify
 
 import (
@@ -103,6 +105,38 @@ type Reply struct {
 	Epoch uint64
 }
 
+// Card is a message with buttons (#14): plain text, and rows of buttons.
+type Card struct {
+	Text    string
+	Buttons [][]Button
+	// Quiet: delivered without a sound.
+	Quiet bool
+}
+
+// Button is one button of a card: its label, and the data a tap on it
+// hands back (Tap.Data: a few bytes the service resolves, never an id of
+// the bridge's).
+type Button struct {
+	Text, Data string
+}
+
+// MaxButtonData is the most bytes of a Button's Data (Telegram's
+// callback_data).
+const MaxButtonData = 64
+
+// Tap is a button the recipient tapped (#14). The Channel checked who
+// tapped it, as it checks a Reply's sender; every other tap is answered
+// there without a word.
+type Tap struct {
+	// ID is the provider's id of the tap: AnswerTap takes it.
+	ID string
+	// Msg is the card whose button it was.
+	Msg  Ref
+	Data string
+	// Epoch is the Channel's, as a Reply's.
+	Epoch uint64
+}
+
 // Hooks are what a Channel's Run tells the service.
 type Hooks struct {
 	// Pair is told how each pairing ended.
@@ -110,6 +144,9 @@ type Hooks struct {
 	// Reply gets each message the recipient sent while replies are read
 	// (Channel.Listen). It must not block.
 	Reply func(Reply)
+	// Tap gets each button the recipient tapped while replies are read
+	// (#14). It must not block. Nil: a tap is answered without a word.
+	Tap func(Tap)
 	// Listen: replies were on when the bridge started, so what came while
 	// it was away is read too (the service answers what is too old). Else
 	// reading starts from what is sent next.
@@ -155,6 +192,19 @@ type Channel interface {
 	// service's (a refusal, a hint), as a reply to it.
 	Confirm(ctx context.Context, msg Ref) error
 	Answer(ctx context.Context, msg Ref, text string) error
+	// SendCard delivers a card to the paired recipient (#14); EditCard
+	// replaces a card's text and buttons (no buttons: none left), and an
+	// edit that changes nothing is no error; ClearButtons takes a message's
+	// buttons away and keeps its text.
+	SendCard(ctx context.Context, c Card) (Ref, error)
+	EditCard(ctx context.Context, msg Ref, c Card) error
+	ClearButtons(ctx context.Context, msg Ref) error
+	// AnswerTap answers a tap (its spinner stops; text, if any, shows
+	// briefly). AskText sends text as a reply to msg that opens the reply
+	// field (Telegram: a force reply) with placeholder in it; the
+	// recipient's reply to it is a Reply To it.
+	AnswerTap(ctx context.Context, id, text string) error
+	AskText(ctx context.Context, msg Ref, text, placeholder string) (Ref, error)
 	// Run does the channel's background work until ctx is done: one reader
 	// of the provider's updates, while a pairing waits or replies are read.
 	Run(ctx context.Context, h Hooks)

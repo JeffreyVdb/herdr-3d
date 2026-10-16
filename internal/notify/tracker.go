@@ -25,6 +25,9 @@ type Alert struct {
 	Reason   string
 	Name     string
 	Line     string
+	// Ask or Followup is what a needs-you alert asks (#14: its cards).
+	Ask      *Ask
+	Followup *Followup
 }
 
 // sighting is one look at a worker for the tracker.
