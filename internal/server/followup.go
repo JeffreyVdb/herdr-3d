@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -436,6 +437,7 @@ const FollowupRecommended = "(your recommendation)"
 // <answer>"), else by its number ("<n>. <question> → <answer>"); a note
 // follows the answer after a space, and an accepted recommendation says so.
 // A fallback's one free answer is sent as it is (with the note after it).
+// A cut recommendation sent back as an answer is refused (bad_request).
 func followupPrompt(f *proto.Followup, answers []proto.FollowupAnswer, note string) (string, error) {
 	if len(note) > proto.MaxFollowupAnswer || !utf8.ValidString(note) {
 		return "", bad("note must be at most %d bytes of UTF-8", proto.MaxFollowupAnswer)
@@ -446,11 +448,13 @@ func followupPrompt(f *proto.Followup, answers []proto.FollowupAnswer, note stri
 	}
 	byID := map[string]proto.FollowupAnswer{}
 	for i, a := range answers {
-		known := false
-		for _, q := range f.Questions {
-			known = known || q.ID == a.ID
+		at := -1
+		for j, q := range f.Questions {
+			if q.ID == a.ID {
+				at = j
+			}
 		}
-		if !known {
+		if at < 0 {
 			return "", bad("answers[%d].id is not a question of this follow-up", i)
 		}
 		if _, dup := byID[a.ID]; dup {
@@ -465,6 +469,13 @@ func followupPrompt(f *proto.Followup, answers []proto.FollowupAnswer, note stri
 		a.Note = strings.TrimSpace(strings.ReplaceAll(a.Note, "\r\n", "\n"))
 		if a.Value == "" && a.Note == "" {
 			return "", bad("answers[%d] is empty", i)
+		}
+		if q := f.Questions[at]; cutRecommendation(q, a.Value) || cutRecommendation(q, a.Note) {
+			name := "question " + strconv.Itoa(at+1)
+			if q.Label != "" {
+				name = q.Label
+			}
+			return "", bad("%s's recommendation was too long to send whole: read the whole message and write your answer", name)
 		}
 		byID[a.ID] = a
 	}
@@ -540,6 +551,19 @@ func recommended(q proto.FollowupQuestion, a proto.FollowupAnswer) bool {
 		return a.Value == q.Options[*r.Option]
 	}
 	return q.Kind == proto.FollowupOpen && !r.Cut && a.Value == strings.TrimSpace(r.Text)
+}
+
+// cutRecommendation: s is question q's cut recommendation sent back as an
+// answer (#60): its start, with or without the "…", however its spaces fold.
+// The bridge refuses it whatever the client: the agent would take a part of
+// its answer for the whole. An option of q is sent whole, never refused.
+func cutRecommendation(q proto.FollowupQuestion, s string) bool {
+	r := q.Recommendation
+	if r == nil || !r.Cut || s == "" || slices.Contains(q.Options, s) {
+		return false
+	}
+	fold := func(s string) string { return strings.TrimRight(strings.Join(strings.Fields(s), " "), " .…") }
+	return fold(s) == fold(r.Text)
 }
 
 // startAnswerFollowup answers worker.answer_followup: the answers as one

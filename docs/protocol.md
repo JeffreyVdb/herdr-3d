@@ -3407,7 +3407,10 @@ extraction: switched off or a model `invalid` while the classifier ran, the mess
 **Answering.** **`worker.answer_followup {id, turn_id, answers: [{id, value, note?}], note?}`** is `stale` unless the
 worker's follow-up is of `turn_id` (answered, dismissed or a newer turn meanwhile), `bad_request` for an unknown or
 repeated question id, an empty answer, no answer and no `note`, a `yes_no` value other than `Yes` / `No` (any case), or
-a value or note over 8,000 bytes. It sends **exactly one prompt** through `worker.prompt`'s lane and rules (typed for
+a value or note over 8,000 bytes, or (#60) a value or note that is a question's `cut` recommendation sent back: its
+text with or without the `…`, however its spaces and line breaks fold (`<label or "question n">'s recommendation was
+too long to send whole: read the whole message and write your answer`; nothing is sent and the follow-up stays open,
+whatever the client offered; the option a `cut` recommendation names is sent whole as before). It sends **exactly one prompt** through `worker.prompt`'s lane and rules (typed for
 Claude, #95; queued for an agent at work; `invalid_state` with an `ask`), checked again when its turn on the lane
 comes, and clears the follow-up once it went:
 

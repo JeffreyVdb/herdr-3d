@@ -738,9 +738,97 @@ func TestFollowupPromptLongRecommendation(t *testing.T) {
 			t.Fatalf("%s accepted: %d bytes, %v", a.ID, len(text), err)
 		}
 	}
-	text, err := server.FollowupPrompt(f, []proto.FollowupAnswer{{ID: "q3", Value: cut.Text}}, "")
-	if err != nil || strings.Contains(text, server.FollowupRecommended) {
-		t.Fatalf("a cut recommendation sent back: %q…, %v", text[:80], err)
+	if text, err := server.FollowupPrompt(f, []proto.FollowupAnswer{{ID: "q3", Value: cut.Text}}, ""); err == nil {
+		t.Fatalf("a cut recommendation sent back: %d bytes accepted", len(text))
+	}
+}
+
+// #60 (R1b): the bridge itself refuses a cut recommendation sent back as an
+// answer, whatever the client (one that drops `cut` offers it to accept):
+// as it was, without its "…", its spaces folded, or as the note. Nothing is
+// typed, the follow-up stays open; a typed answer and the option a cut
+// choice's recommendation names are sent.
+func TestFollowupCutRecommendationRefused(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("Prepare audit rows before cutover. ", 240) + "Never delete the existing production database."
+	round := "❓ **Q12** - **Cutover**: What happens to the old database?\n\n➡️ " + long + "\n\n" +
+		"❓ **Q13** - **Window**: When do we cut over?\n\n(a) Friday night\n(b) Sunday morning\n\n➡️ (b) " + long + "\n"
+	roles := newFuRoles()
+	fb := startFuBridge(t, "", "", roles, on(), "")
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	id := fb.ids["w1"]
+	appendTo(t, fb.claude, wrapUser("Grill me.")+wrapSay("m_cut", round, "end_turn")+wrapTurnEnd)
+	f := followupOf(c, id).Followup
+	if f.Source != proto.FollowupParsed || len(f.Questions) != 2 {
+		t.Fatalf("followup = %+v", f)
+	}
+	q12, q13 := f.Questions[0], f.Questions[1]
+	if r := q12.Recommendation; len(long) != 8446 || r == nil || !r.Cut || !strings.HasSuffix(r.Text, "…") {
+		t.Fatalf("Q12 = %+v", q12)
+	}
+	if r := q13.Recommendation; q13.Kind != proto.FollowupChoice || r == nil || !r.Cut || r.Option == nil || *r.Option != 1 {
+		t.Fatalf("Q13 = %+v", q13)
+	}
+	typed := func() int {
+		n := 0
+		for _, call := range fb.term.Calls() {
+			if strings.HasPrefix(call, "type w1:p1 ") {
+				n++
+			}
+		}
+		return n
+	}
+	cut := q12.Recommendation.Text
+	bare := strings.TrimSuffix(cut, "…")
+	for name, a := range map[string]proto.FollowupAnswer{
+		"as it was":        {ID: q12.ID, Value: cut},
+		"without its …":    {ID: q12.ID, Value: bare},
+		"spaces trimmed":   {ID: q12.ID, Value: strings.TrimSpace(bare)},
+		"spaces folded":    {ID: q12.ID, Value: " " + strings.ReplaceAll(bare, ". ", ".\n") + "\t"},
+		"as its note":      {ID: q12.ID, Note: cut},
+		"for a cut choice": {ID: q13.ID, Value: q13.Recommendation.Text},
+	} {
+		answers := []proto.FollowupAnswer{{ID: q13.ID, Value: q13.Options[0]}, a} // with an answer it would send
+		want := "Q12's recommendation was too long to send whole: read the whole message and write your answer"
+		if a.ID == q13.ID {
+			answers, want = []proto.FollowupAnswer{a}, "Q13's recommendation was too long"
+		}
+		_, m := c.command(proto.CmdWorkerAnswerFollowup, name, proto.WorkerAnswerFollowupArgs{ID: id, TurnID: f.TurnID, Answers: answers})
+		if m.env.T != proto.TError || !strings.Contains(string(m.raw), `"code":"bad_request"`) || !strings.Contains(string(m.raw), want) {
+			t.Fatalf("%s: %s", name, m.raw)
+		}
+	}
+	if n := typed(); n != 0 {
+		t.Fatalf("%d prompts typed for refused answers", n)
+	}
+	if w := workersOf(fb.connect(proto.Hello{}).snapshot().World, "s")["w1"]; w.Followup == nil || w.Followup.TurnID != f.TurnID {
+		t.Fatalf("follow-up after the refusals = %+v", w.Followup)
+	}
+	// A typed answer, and the option Q13's cut recommendation names (whole).
+	evs, m := c.command(proto.CmdWorkerAnswerFollowup, "ok", proto.WorkerAnswerFollowupArgs{ID: id, TurnID: f.TurnID,
+		Answers: []proto.FollowupAnswer{{ID: q12.ID, Value: bare[:40] + " then keep the old database."}, {ID: q13.ID, Value: q13.Options[1]}}})
+	if m.env.T != proto.TAck {
+		t.Fatalf("answer: %s", m.raw)
+	}
+	want := "Answers to your open questions:\n" +
+		"- Q12 Cutover → " + bare[:40] + " then keep the old database.\n" +
+		"- Q13 Window → " + q13.Options[1] + " " + server.FollowupRecommended
+	var sent []string
+	for _, call := range fb.term.Calls() {
+		if strings.HasPrefix(call, "type w1:p1 ") {
+			sent = append(sent, call)
+		}
+	}
+	if b, _ := json.Marshal(want); len(sent) != 1 || sent[0] != "type w1:p1 "+string(b) {
+		t.Fatalf("typed = %q, want one %q", sent, want)
+	}
+	cleared := false
+	for _, ev := range evs {
+		cleared = cleared || (ev.T == proto.EvWorkerUpsert && ev.Worker.ID == id && ev.Worker.Followup == nil)
+	}
+	if !cleared {
+		upsertFor(c, id, func(w *proto.Worker) bool { return w.Followup == nil })
 	}
 }
 
