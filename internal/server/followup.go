@@ -13,13 +13,18 @@ package server
 // Each message looked at is recorded by worker and SHA-256 (followup_seen),
 // with its follow-up while that is open: a restart or a re-read of the
 // transcript never classifies the same message again, and an open one comes
-// back as it was.
+// back as it was. #60: the message itself stays in memory with its open
+// follow-up (from the turn, also after a restart), for worker.followup_message
+// and worker.retry_followup, which extracts a fallback's questions again on
+// request: never by itself.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -89,7 +94,13 @@ type followupCand struct {
 type followupShown struct {
 	f    *proto.Followup
 	hash string
+	text string // the message (#60)
+	// retrying: a worker.retry_followup runs on it.
+	retrying bool
 }
+
+// MaxFollowupRetries bounds worker.retry_followup per follow-up (#60).
+const MaxFollowupRetries = 3
 
 // followupState is the hub's part of the feature (hub goroutine).
 type followupState struct {
@@ -230,7 +241,7 @@ func (h *Hub) considerFollowup(ctx context.Context, id string, c *followupCand) 
 		// follow-up comes back.
 		var f proto.Followup
 		if seen.Followup != "" && !seen.Cleared && json.Unmarshal([]byte(seen.Followup), &f) == nil {
-			h.setFollowup(id, &f, c.turn.Hash)
+			h.setFollowup(id, &f, c.turn.Hash, c.turn.Text)
 		}
 		return false
 	}
@@ -263,9 +274,13 @@ func (h *Hub) followupDone(ctx context.Context, id string, c *followupCand, turn
 	if res.Flag {
 		f = &proto.Followup{TurnID: turnID, Questions: res.Questions, Score: res.Score, Source: res.Source,
 			At: h.opts.Now().UnixMilli()}
+		f.Unlisted = res.Unlisted
 		if res.Source == followup.SourceFallback {
-			f.Tail = followup.Tail(c.turn.Text, followup.TailChars)
-			h.log.Info("follow-up extraction fell back", "worker", id, "why", res.ExtractErr)
+			f.Tail, f.Error = followup.Tail(c.turn.Text, followup.TailChars), res.ExtractErr
+			h.log.Info("follow-up extraction fell back", "worker", id, "why", res.ExtractErr, "efforts", res.Efforts)
+		}
+		if res.NotRound != "" {
+			h.log.Info("follow-up not read as a grill round", "worker", id, "why", res.NotRound)
 		}
 	}
 	// Superseded meanwhile (a prompt, the worker at work or asking): the
@@ -282,17 +297,17 @@ func (h *Hub) followupDone(ctx context.Context, id string, c *followupCand, turn
 	}
 	h.log.Info("follow-up looked at", "worker", id, "score", res.Score, "flagged", f != nil, "stale", stale)
 	if f != nil && !stale {
-		h.setFollowup(id, f, c.turn.Hash)
+		h.setFollowup(id, f, c.turn.Hash, c.turn.Text)
 	}
 }
 
 // setFollowup shows a worker's follow-up (worker.upsert).
-func (h *Hub) setFollowup(id string, f *proto.Followup, hash string) {
+func (h *Hub) setFollowup(id string, f *proto.Followup, hash, text string) {
 	w := h.workers[id]
 	if w == nil {
 		return
 	}
-	h.fu.shown[id] = &followupShown{f: f, hash: hash}
+	h.fu.shown[id] = &followupShown{f: f, hash: hash, text: text}
 	next := *w
 	next.Followup = f
 	h.workers[id] = &next
@@ -411,21 +426,35 @@ func (h *Hub) startDismissFollowup(ctx context.Context, c *Client, cmd proto.Com
 // FollowupPromptHeader starts the prompt worker.answer_followup sends.
 const FollowupPromptHeader = "Answers to your open questions:"
 
+// FollowupRecommended follows an answer that is the agent's own
+// recommendation, accepted as it was (#60).
+const FollowupRecommended = "(your recommendation)"
+
 // followupPrompt formats the answers as the one prompt the agent gets: a
-// numbered line per answered question, in the questions' order ("<n>.
-// <question> → <answer>[ <note>]"). A fallback's one free answer is sent as
-// it is.
-func followupPrompt(f *proto.Followup, answers []proto.FollowupAnswer) (string, error) {
-	if len(answers) == 0 {
+// line per answered question, in the questions' order, then the questions
+// left unanswered and the round's note. A question with a label (a grill
+// round's Q9, #60) is named by it and its title ("- Q9 <question> →
+// <answer>"), else by its number ("<n>. <question> → <answer>"); a note
+// follows the answer after a space, and an accepted recommendation says so.
+// A fallback's one free answer is sent as it is (with the note after it).
+// A cut recommendation sent back as an answer is refused (bad_request).
+func followupPrompt(f *proto.Followup, answers []proto.FollowupAnswer, note string) (string, error) {
+	if len(note) > proto.MaxFollowupAnswer || !utf8.ValidString(note) {
+		return "", bad("note must be at most %d bytes of UTF-8", proto.MaxFollowupAnswer)
+	}
+	note = strings.TrimSpace(strings.ReplaceAll(note, "\r\n", "\n"))
+	if len(answers) == 0 && note == "" {
 		return "", bad("answers must answer at least one question")
 	}
 	byID := map[string]proto.FollowupAnswer{}
 	for i, a := range answers {
-		known := false
-		for _, q := range f.Questions {
-			known = known || q.ID == a.ID
+		at := -1
+		for j, q := range f.Questions {
+			if q.ID == a.ID {
+				at = j
+			}
 		}
-		if !known {
+		if at < 0 {
 			return "", bad("answers[%d].id is not a question of this follow-up", i)
 		}
 		if _, dup := byID[a.ID]; dup {
@@ -441,6 +470,13 @@ func followupPrompt(f *proto.Followup, answers []proto.FollowupAnswer) (string, 
 		if a.Value == "" && a.Note == "" {
 			return "", bad("answers[%d] is empty", i)
 		}
+		if q := f.Questions[at]; cutRecommendation(q, a.Value) || cutRecommendation(q, a.Note) {
+			name := "question " + strconv.Itoa(at+1)
+			if q.Label != "" {
+				name = q.Label
+			}
+			return "", bad("%s's recommendation was too long to send whole: read the whole message and write your answer", name)
+		}
 		byID[a.ID] = a
 	}
 	join := func(a proto.FollowupAnswer) string {
@@ -452,14 +488,33 @@ func followupPrompt(f *proto.Followup, answers []proto.FollowupAnswer) (string, 
 		}
 		return a.Value + " " + a.Note
 	}
+	withNote := func(s string) string {
+		switch {
+		case note == "":
+			return s
+		case s == "":
+			return note
+		}
+		return s + "\n\n" + note
+	}
 	if f.Source == proto.FollowupFallback && len(f.Questions) == 1 {
-		return join(byID[f.Questions[0].ID]), nil
+		a, ok := byID[f.Questions[0].ID]
+		if !ok {
+			return note, nil
+		}
+		return withNote(join(a)), nil
 	}
 	var b strings.Builder
+	var unanswered []string
 	b.WriteString(FollowupPromptHeader)
 	for i, q := range f.Questions {
+		name := strconv.Itoa(i + 1)
+		if q.Label != "" {
+			name = q.Label
+		}
 		a, ok := byID[q.ID]
 		if !ok {
+			unanswered = append(unanswered, name)
 			continue
 		}
 		v := join(a)
@@ -470,9 +525,45 @@ func followupPrompt(f *proto.Followup, answers []proto.FollowupAnswer) (string, 
 				return "", bad("question %s is yes or no: value must be \"Yes\" or \"No\"", q.ID)
 			}
 		}
-		fmt.Fprintf(&b, "\n%d. %s → %s", i+1, q.Question, v)
+		if recommended(q, a) {
+			v += " " + FollowupRecommended
+		}
+		if q.Label != "" {
+			fmt.Fprintf(&b, "\n- %s %s → %s", q.Label, q.Question, v)
+		} else {
+			fmt.Fprintf(&b, "\n%d. %s → %s", i+1, q.Question, v)
+		}
 	}
-	return b.String(), nil
+	if len(unanswered) > 0 {
+		b.WriteString("\nUnanswered: " + strings.Join(unanswered, ", "))
+	}
+	return withNote(b.String()), nil
+}
+
+// recommended: answer a is question q's recommendation as it was (its
+// option, or its whole text: never a cut one's), with no note.
+func recommended(q proto.FollowupQuestion, a proto.FollowupAnswer) bool {
+	r := q.Recommendation
+	if r == nil || a.Note != "" {
+		return false
+	}
+	if q.Kind == proto.FollowupChoice && r.Option != nil && *r.Option >= 0 && *r.Option < len(q.Options) {
+		return a.Value == q.Options[*r.Option]
+	}
+	return q.Kind == proto.FollowupOpen && !r.Cut && a.Value == strings.TrimSpace(r.Text)
+}
+
+// cutRecommendation: s is question q's cut recommendation sent back as an
+// answer (#60): its start, with or without the "…", however its spaces fold.
+// The bridge refuses it whatever the client: the agent would take a part of
+// its answer for the whole. An option of q is sent whole, never refused.
+func cutRecommendation(q proto.FollowupQuestion, s string) bool {
+	r := q.Recommendation
+	if r == nil || !r.Cut || s == "" || slices.Contains(q.Options, s) {
+		return false
+	}
+	fold := func(s string) string { return strings.TrimRight(strings.Join(strings.Fields(s), " "), " .…") }
+	return fold(s) == fold(r.Text)
 }
 
 // startAnswerFollowup answers worker.answer_followup: the answers as one
@@ -488,7 +579,7 @@ func (h *Hub) startAnswerFollowup(ctx context.Context, c *Client, cmd proto.Comm
 	if err != nil {
 		return err
 	}
-	text, err := followupPrompt(s.f, a.Answers)
+	text, err := followupPrompt(s.f, a.Answers, a.Note)
 	if err != nil {
 		return err
 	}
@@ -532,6 +623,88 @@ func (h *Hub) startAnswerFollowup(ctx context.Context, c *Client, cmd proto.Comm
 	})
 }
 
+// startRetryFollowup answers worker.retry_followup (#60): a fallback's
+// questions extracted again from its message (never classified again), at
+// most MaxFollowupRetries times and one at a time. The outcome replaces the
+// follow-up of the same turn (also in followup_seen, so a restart brings
+// back the recovered round) unless it was answered, dismissed or moot
+// meanwhile; a failure is the fallback again, with the new why.
+func (h *Hub) startRetryFollowup(ctx context.Context, c *Client, cmd proto.Command) error {
+	var a proto.WorkerRetryFollowupArgs
+	if err := decodeArgs(cmd.Args, &a); err != nil {
+		return err
+	}
+	s, err := h.followupOf(a.ID, a.TurnID)
+	if err != nil {
+		return err
+	}
+	switch {
+	case h.fu.svc == nil || !h.fu.svc.Ready():
+		return fmt.Errorf("%w: follow-up questions are not ready (switched off, or a model is not ready)", errInvalidState)
+	case s.f.Source != proto.FollowupFallback:
+		return bad("its questions were read: there is nothing to retry")
+	case s.retrying:
+		return fmt.Errorf("%w: a retry of these questions is running", errBusy)
+	case s.f.Retries >= MaxFollowupRetries:
+		return fmt.Errorf("%w: retried %d times already: answer in your own words, or read the whole message", errInvalidState, s.f.Retries)
+	}
+	s.retrying = true
+	svc, text := h.fu.svc, s.text
+	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
+		ex, err := svc.Retry(ctx, text)
+		var out proto.WorkerRetryFollowupResult
+		if derr := h.doWait(ctx, func() { out, err = h.retriedFollowup(ctx, a, s, ex, err) }); derr != nil {
+			return nil, derr
+		}
+		if err != nil {
+			return nil, err
+		}
+		return out, nil
+	})
+	return nil
+}
+
+// retriedFollowup takes a retry's extraction (hub goroutine).
+func (h *Hub) retriedFollowup(ctx context.Context, a proto.WorkerRetryFollowupArgs, s *followupShown, ex followup.Extraction, err error) (proto.WorkerRetryFollowupResult, error) {
+	s.retrying = false
+	if err != nil {
+		return proto.WorkerRetryFollowupResult{}, err
+	}
+	cur, serr := h.followupOf(a.ID, a.TurnID)
+	if serr != nil || cur != s {
+		return proto.WorkerRetryFollowupResult{}, fmt.Errorf("%w: the questions were answered, dismissed or replaced meanwhile", errStale)
+	}
+	next := *s.f
+	next.Retries++
+	next.Questions, next.Source, next.Unlisted, next.Error = ex.Questions, ex.Source, ex.Unlisted, ex.ExtractErr
+	if ex.Source != followup.SourceFallback {
+		next.Tail = ""
+	}
+	h.log.Info("follow-up extraction retried", "worker", a.ID, "source", ex.Source, "why", ex.ExtractErr, "efforts", ex.Efforts)
+	b, _ := json.Marshal(&next)
+	if err := h.st.RecordFollowupSeen(ctx, a.ID, s.hash, string(b), false); err != nil {
+		h.log.Error("recording follow-up failed", "worker", a.ID, "err", err)
+	}
+	h.setFollowup(a.ID, &next, s.hash, s.text)
+	return proto.WorkerRetryFollowupResult{Source: next.Source, Error: next.Error}, nil
+}
+
+// startFollowupMessage answers worker.followup_message (#60): the message
+// the open follow-up is of, on request (never in the worker's upsert).
+func (h *Hub) startFollowupMessage(ctx context.Context, c *Client, cmd proto.Command) error {
+	var a proto.WorkerFollowupMessageArgs
+	if err := decodeArgs(cmd.Args, &a); err != nil {
+		return err
+	}
+	s, err := h.followupOf(a.ID, a.TurnID)
+	if err != nil {
+		return err
+	}
+	text := followup.Tail(s.text, followup.MaxMessageChars)
+	h.reply(c, cmd, proto.WorkerFollowupMessageResult{Text: text, Cut: len(text) < len(s.text)}, nil)
+	return nil
+}
+
 // auditFollowup is what worker.answer_followup leaves in the audit log: the
 // ids and each answer's lengths, never its text.
 func auditFollowup(cmd proto.Command) json.RawMessage {
@@ -545,10 +718,11 @@ func auditFollowup(cmd proto.Command) json.RawMessage {
 		NoteBytes  int    `json:"note_bytes,omitempty"`
 	}
 	out := struct {
-		ID      string   `json:"id"`
-		TurnID  string   `json:"turn_id"`
-		Answers []answer `json:"answers"`
-	}{ID: clip(a.ID), TurnID: clip(a.TurnID), Answers: []answer{}}
+		ID        string   `json:"id"`
+		TurnID    string   `json:"turn_id"`
+		Answers   []answer `json:"answers"`
+		NoteBytes int      `json:"note_bytes,omitempty"`
+	}{ID: clip(a.ID), TurnID: clip(a.TurnID), Answers: []answer{}, NoteBytes: len(a.Note)}
 	for _, x := range a.Answers {
 		out.Answers = append(out.Answers, answer{ID: clip(x.ID), ValueBytes: len(x.Value), NoteBytes: len(x.Note)})
 	}

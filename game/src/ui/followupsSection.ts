@@ -18,7 +18,7 @@ export const FOLLOWUPS_PRIVACY =
   'With follow-up questions on, every agent’s final message goes to TypeSafe (the classification model), and to your chosen LLM endpoint when the classifier says yes. Those messages can contain code, paths and internal details. Only the final assistant message is sent, never the full transcript or tool output. A self-hosted OpenAI-compatible endpoint (vLLM, Ollama, LiteLLM) keeps the extraction step in-house.';
 
 const ROLE_STATE: Record<AiRoleState, string> = { ready: 'Ready', off: 'Not set up', incomplete: 'Unfinished', invalid: 'Paused' };
-const SAMPLE_NAME: Record<FollowupsTestSample['name'], string> = { questions: 'Message with questions', done: 'Message without questions' };
+const SAMPLE_NAME: Record<FollowupsTestSample['name'], string> = { questions: 'Message with questions', grill: 'Grill round (10 questions)', done: 'Message without questions' };
 const KIND_NAME: Record<string, string> = { yes_no: 'yes / no', choice: 'choice', open: 'open' };
 
 let serial = 0;
@@ -32,7 +32,7 @@ function button(text: string, cls = 'btn btn--sm'): HTMLButtonElement {
 /**
  * #90: the “Follow-up questions” section of the Settings window, under “AI integration”: the feature's own switch
  * (off by default: setting up the models does not turn it on), the threshold, what it needs (both models ready,
- * linking to the AI section), the privacy note above the switch, and Test, which runs the two sample messages
+ * linking to the AI section), the privacy note above the switch, and Test, which runs the sample messages (#60: a grill round too)
  * through the whole pipeline. The switch is off until a test passed with the models in use; the bridge's
  * environment can set it, and then it is read-only here.
  */
@@ -192,7 +192,7 @@ export function followupsSection(host: FollowupsSectionHost): (body: HTMLElement
     });
 
     test.addEventListener('click', () => {
-      note = { text: 'Testing with the two sample messages…', error: false };
+      note = { text: 'Testing with the three sample messages…', error: false };
       result.hidden = true;
       void run(() => host.send('followups.test', {})).then((r) => {
         if (!r.ok) return say(followupFailureText(r.code, r.message), true);
@@ -229,6 +229,14 @@ function paintResult(root: HTMLElement, d: FollowupsTestAck): void {
     verdict.dataset.state = expected ? 'ready' : 'invalid';
     dd.append(score, verdict);
     rows.append(dt, dd);
+    if (s.name === 'grill' && s.flagged) {
+      // #60: ten questions are too many to list here; what counts is that all came back with their recommendations.
+      const n = s.questions?.length ?? 0;
+      const recs = s.questions?.filter((q) => q.recommendation?.text).length ?? 0;
+      const text = s.source === 'fallback' ? `The LLM did not read it (${s.error ?? 'no answer'}).` : `The LLM listed ${n} of its 10 questions, ${recs} with the agent’s recommendation.`;
+      rows.append(el('dd', 'settings-fu-extracted settings-field-hint settings-fu-grill', text));
+      continue;
+    }
     if (s.questions?.length) {
       const list = el('ol', 'settings-fu-questions');
       for (const q of s.questions) {

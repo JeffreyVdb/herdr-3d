@@ -7,7 +7,8 @@ import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
 import { isSendKey, reveal } from './askStack';
 import { diffColours } from './diffHighlight';
-import { FollowupCard, type FollowupResult } from './followupCard';
+import { FollowupCard, type FollowupMessage, type FollowupResult } from './followupCard';
+import type { FollowupDraft } from './followupDrafts';
 import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
 import { h, icon, ICON } from '../ui/dom';
@@ -56,6 +57,12 @@ export interface TranscriptRenderHost {
   onAnswerFollowup?(args: CommandArgs['worker.answer_followup']): Promise<FollowupResult>;
   /** #90: dismisses them. */
   onDismissFollowup?(turnId: string): Promise<FollowupResult>;
+  /** #60: reads a fallback's questions again (none: no Retry). */
+  onRetryFollowup?(turnId: string): Promise<FollowupResult>;
+  /** #60: the whole message the follow-up is of (none: only a fallback's end). */
+  loadFollowupMessage?(turnId: string): Promise<FollowupMessage>;
+  /** #60: what you picked and wrote for the follow-up, kept by the host across views (none: the card's own). */
+  followupDrafts?: { get(turn: string): FollowupDraft | null; set(turn: string, d: FollowupDraft): void; clear(turn: string): void };
   /** #223: the inline Handoff button on the worker's latest completed reply was pressed (none: no button). */
   onHandoff?(c: HandoffCandidate): void;
   /** #157: answers a Codex worker's async questions (none: the card cannot send). */
@@ -959,6 +966,9 @@ class Transcript implements TranscriptView {
     this.followup = new FollowupCard({
       answer: (args) => (host.onAnswerFollowup ? host.onAnswerFollowup(args) : noFollowup()),
       dismiss: (turnId) => (host.onDismissFollowup ? host.onDismissFollowup(turnId) : noFollowup()),
+      ...(host.onRetryFollowup ? { retry: (turnId: string) => host.onRetryFollowup!(turnId) } : {}),
+      ...(host.loadFollowupMessage ? { message: (turnId: string) => host.loadFollowupMessage!(turnId) } : {}),
+      ...(host.followupDrafts ? { drafts: host.followupDrafts } : {}),
       focusTimeline: () => this.focus(),
       resized: () => {
         // A very short screen gives the card the timeline's room while it is up (transcript.css).

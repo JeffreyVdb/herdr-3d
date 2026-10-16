@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommandArgs, Followup } from '../net/protocol';
-import { FollowupCard, type FollowupResult } from './followupCard';
+import { FollowupCard, type FollowupMessage, type FollowupResult } from './followupCard';
+import { FollowupDrafts } from './followupDrafts';
 import { mountTranscript, type TranscriptView } from './transcriptRender';
 
 // #90: the follow-up card: its questions stacked (the open one, the others folded to their answer), yes/no with a note,
@@ -66,7 +69,7 @@ describe('FollowupCard (#90)', () => {
     expect(c.el.querySelector('.tx-ask-q .tx-ask-chip')?.textContent).toBe('Question 2');
     expect([...c.el.querySelectorAll('.tx-ask-opt-label')].map((x) => x.textContent)).toEqual(['Ship now', 'Wait', 'Other']);
     expect(c.el.querySelector('.tx-ask-row.is-done .tx-ask-row-text')?.textContent).toBe('No');
-    expect(c.el.querySelector('.tx-ask-hint-text')?.textContent).toBe('1 of 3 answered: the rest are left out');
+    expect(c.el.querySelector('.tx-ask-hint-text')?.textContent).toBe('1 of 3 answered: questions 2, 3 go as unanswered');
     expect(c.el.querySelector('.tx-ask-send')?.firstChild?.textContent).toBe('Send 1 of 3');
     // ← → change question; Tab and Enter on the timeline are not the card's (the focus, the prompt box).
     expect(press(c, 'Tab')).toBe(false);
@@ -251,5 +254,157 @@ describe('FollowupCard keyboard in the transcript (#90)', () => {
     expect(e.defaultPrevented).toBe(false);
     await flush();
     expect(answers).toEqual([]);
+  });
+});
+
+// #60: a grill round (game/fixtures/followup-grill.json): labels, context, recommendations; R and Use all only fill;
+// the foot says what goes unanswered; a fallback says why, retries, shows the message, and keeps what you wrote.
+const grill = (): Followup => JSON.parse(readFileSync(resolve(import.meta.dirname, '../../fixtures/followup-grill.json'), 'utf8')) as Followup;
+const fallbackOf = (g: Followup): Followup => ({
+  turn_id: g.turn_id,
+  score: g.score,
+  source: 'fallback',
+  at: g.at,
+  tail: 'Q17 … 5 min grace.',
+  error: 'the model used its whole completion budget (8192 of 8192 tokens, 8192 of them reasoning) before writing any text',
+  questions: [{ id: 'q1', question: 'The agent asked you something', kind: 'open' }],
+});
+
+describe('FollowupCard, a grill round (#60)', () => {
+  let card: FollowupCard | null = null;
+  afterEach(() => {
+    card?.destroy();
+    card = null;
+  });
+
+  function grillHost(drafts = new FollowupDrafts(null)) {
+    const t = host();
+    const retries: string[] = [];
+    let retry: () => FollowupResult = () => ({ ok: true });
+    const h = {
+      ...t.h,
+      retry: (turn: string) => (retries.push(turn), Promise.resolve(retry())),
+      message: (): Promise<FollowupMessage> => Promise.resolve({ ok: true, text: 'Round 2.\n\n- **Q8** first', cut: false }),
+      drafts: { get: (turn: string) => drafts.get('w1', turn), set: (turn: string, d: Parameters<FollowupDrafts['set']>[2]) => drafts.set('w1', turn, d), clear: (turn: string) => drafts.clear('w1', turn) },
+    };
+    return { ...t, h, retries, drafts, onRetry: (fn: () => FollowupResult) => (retry = fn) };
+  }
+
+  it('names each question as the agent did, renders its context and shows its recommendation', () => {
+    const t = grillHost();
+    const c = (card = new FollowupCard(t.h));
+    document.body.append(c.el);
+    c.set(grill());
+    expect(c.el.querySelector('.tx-ask-q .tx-ask-chip')?.textContent).toBe('Q8');
+    expect([...c.el.querySelectorAll('.tx-ask-row-head')].map((x) => x.textContent)).toEqual(['Q9', 'Q10', 'Q11', 'Q12', 'Q13', 'Q14', 'Q15', 'Q16', 'Q17']);
+    expect(c.el.querySelectorAll('.tx-fu-context li')).toHaveLength(2);
+    expect(c.el.querySelector('.tx-fu-context code')?.textContent).toBe('worker.hire');
+    expect(c.el.querySelector('.tx-fu-rec-text')?.textContent).toMatch(/^Store the full spec/);
+    expect(c.el.querySelector('.tx-fu-progress')?.textContent).toBe('0 of 10 answered');
+    expect(c.el.querySelector('.tx-ask-keys')?.textContent).toContain('R recommendation');
+    // Q9: options with their Markdown, the recommended one marked.
+    press(c, 'ArrowRight');
+    const opts = [...c.el.querySelectorAll('button.tx-ask-opt')];
+    expect(opts.map((o) => o.querySelector('.tx-ask-rec')?.textContent ?? '')).toEqual(['', '', 'Recommended']);
+    expect(opts[1]!.querySelector('code')?.textContent).toBe('failed: floor_asleep');
+  });
+
+  it('R and Use all only fill; an override stays; the foot names what goes unanswered; one Send sends it all', async () => {
+    const t = grillHost();
+    const c = (card = new FollowupCard(t.h));
+    document.body.append(c.el);
+    c.set(grill());
+    // R on Q8 (open): the whole recommendation in its text, the keyboard there to edit; nothing sent.
+    expect(press(c, 'r')).toBe(true);
+    expect((c.el.querySelector('textarea.tx-fu-text') as HTMLTextAreaElement).value).toMatch(/^Store the full spec.*not stored\.$/);
+    expect(c.el.querySelector('.tx-fu-rec.is-using')).not.toBeNull();
+    // Q9: R picks (c) and moves on; 1 (a) on Q10 overrides it.
+    press(c, 'ArrowRight');
+    press(c, 'r');
+    expect(c.el.querySelector('.tx-ask-q .tx-ask-chip')?.textContent).toBe('Q10');
+    press(c, '1');
+    expect(c.el.querySelector('.tx-ask-hint-text')?.textContent).toBe('3 of 10 answered: Q11, Q12, Q13, Q14 and 3 more go as unanswered');
+    expect(c.el.querySelector('.tx-ask-send')?.firstChild?.textContent).toBe('Send 3 of 10');
+    await flush();
+    expect(t.answers).toEqual([]);
+    c.el.querySelector<HTMLButtonElement>('.tx-fu-all')!.click();
+    expect(c.el.querySelector('.tx-fu-progress')?.textContent).toBe('10 of 10 answered');
+    expect(c.el.querySelector('.tx-ask-note')?.textContent).toMatch(/^Filled 7 answers/);
+    expect(c.el.querySelector<HTMLButtonElement>('.tx-fu-all')!.disabled).toBe(true);
+    await flush();
+    expect(t.answers).toEqual([]);
+    press(c, 'Enter', { ctrlKey: true });
+    await flush();
+    expect(t.answers).toHaveLength(1);
+    const sent = t.answers[0]!.answers;
+    expect(sent).toHaveLength(10);
+    expect(sent[2]).toEqual({ id: 'q3', value: '(a) Fail immediately with `failed: no_desk`.' });
+    expect(c.shown).toBe(false);
+  });
+
+  it('a fallback says why, shows the whole message, retries, and keeps your reply as the round’s note', async () => {
+    const drafts = new FollowupDrafts(null);
+    const t = grillHost(drafts);
+    const c = (card = new FollowupCard(t.h));
+    document.body.append(c.el);
+    const g = grill();
+    c.set(fallbackOf(g));
+    expect(c.el.querySelector('.tx-fu-fail-why')?.textContent).toContain('whole completion budget');
+    const area = c.el.querySelector<HTMLTextAreaElement>('textarea.tx-fu-text')!;
+    area.value = 'Q9: (a).';
+    area.dispatchEvent(new Event('input'));
+    // The whole message, on request, rendered.
+    [...c.el.querySelectorAll('button')].find((b) => b.textContent === 'Show the whole message')!.click();
+    await flush();
+    expect(c.el.querySelector('.tx-fu-msg strong')?.textContent).toBe('Q8');
+    expect(c.el.querySelector('.tx-fu-tail')).toBeNull();
+    // Retry: refused, it says why and keeps the text.
+    t.onRetry(() => ({ ok: false, code: 'invalid_state', message: 'Retried 3 times already.' }));
+    c.el.querySelector<HTMLButtonElement>('[data-key="retry"]')!.click();
+    await flush();
+    expect(t.retries).toEqual([g.turn_id]);
+    expect(c.el.querySelector('.tx-ask-note.is-error')?.textContent).toBe('Retried 3 times already.');
+    expect(c.el.querySelector<HTMLTextAreaElement>('textarea.tx-fu-text')!.value).toBe('Q9: (a).');
+    // A view made meanwhile (standing up and sitting down) gets the draft back.
+    const again = new FollowupCard(t.h);
+    again.set(fallbackOf(g));
+    expect(again.el.querySelector<HTMLTextAreaElement>('textarea.tx-fu-text')!.value).toBe('Q9: (a).');
+    again.destroy();
+    // The retry's upsert reads the round: the reply is the round's note, sent after the answers.
+    c.set(g);
+    expect(c.el.querySelector<HTMLTextAreaElement>('textarea.tx-fu-note')!.value).toBe('Q9: (a).');
+    expect(c.el.querySelector('.tx-ask-q textarea.tx-fu-text')).not.toBeNull();
+    expect((c.el.querySelector('.tx-ask-q textarea.tx-fu-text') as HTMLTextAreaElement).value).toBe('');
+    expect(c.el.querySelector('.tx-ask-send')?.firstChild?.textContent).toBe('Send your reply');
+    press(c, 'ArrowRight');
+    press(c, '1');
+    c.el.querySelector<HTMLButtonElement>('.tx-ask-send')!.click();
+    await flush();
+    expect(t.answers).toEqual([{ id: '', turn_id: g.turn_id, answers: [{ id: 'q2', value: '(a) Auto-wake the floor, then hire.' }], note: 'Q9: (a).' }]);
+    expect(drafts.get('w1', g.turn_id)).toBeNull(); // sent: the draft goes
+  });
+
+  it('says how many questions are only in the message', () => {
+    const t = grillHost();
+    const c = (card = new FollowupCard(t.h));
+    document.body.append(c.el);
+    c.set({ ...grill(), unlisted: 2 });
+    expect(c.el.querySelector('.tx-fu-unlisted')?.textContent).toMatch(/^2 more questions are only in the agent’s message/);
+  });
+
+  it('a cut recommendation is shown with the whole message, never offered to use', () => {
+    const t = grillHost();
+    const c = (card = new FollowupCard(t.h));
+    document.body.append(c.el);
+    const f = grill();
+    f.questions[0]!.recommendation = { text: 'Store the full spec …', cut: true };
+    c.set(f);
+    expect(c.el.querySelector('.tx-fu-rec-text')?.textContent).toMatch(/^Store the full spec/);
+    expect(c.el.querySelector('.tx-fu-rec-cut')?.textContent).toMatch(/cannot be used as it is: Show the whole message has all of it\.$/);
+    expect(c.el.querySelector('[data-key="use-rec"]')).toBeNull();
+    expect(c.el.querySelector('.tx-ask-keys')?.textContent).not.toContain('R recommendation');
+    press(c, 'r');
+    expect(c.el.querySelector('.tx-fu-progress')?.textContent).toBe('0 of 10 answered');
+    expect(c.el.querySelector('[data-key="message"]')).not.toBeNull();
   });
 });

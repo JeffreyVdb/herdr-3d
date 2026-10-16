@@ -2,6 +2,7 @@ package followup
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"sync"
 	"time"
@@ -231,7 +232,25 @@ func (s *Service) Detect(ctx context.Context, text string) (*Result, error) {
 	if !s.Ready() {
 		return nil, ai.ErrNotReady
 	}
-	return run(ctx, s.opts.Roles.Classifier(), s.opts.Roles.LLM(), text, s.Threshold(), s.Ready)
+	return run(ctx, s.opts.Roles.Classifier(), s.opts.Roles.LLM(), text, s.Threshold(), s.Ready, s.reasoning(ctx))
+}
+
+// Retry extracts a flagged message's questions again (worker.retry_followup,
+// #60): no classifier, only while the feature is ready.
+func (s *Service) Retry(ctx context.Context, text string) (Extraction, error) {
+	if !s.Ready() {
+		return Extraction{}, ai.ErrNotReady
+	}
+	return Extract(ctx, s.opts.Roles.LLM(), text, s.reasoning(ctx)), nil
+}
+
+// reasoning is what is known of the LLM's reasoning efforts (unknown when the
+// roles do not say: none is sent).
+func (s *Service) reasoning(ctx context.Context) ai.Reasoning {
+	if rs, ok := s.opts.Roles.(Reasoner); ok {
+		return rs.ModelReasoning(ctx)
+	}
+	return ai.UnknownReasoning()
 }
 
 // The test's samples: the messages of the probe (#90 "API check").
@@ -243,9 +262,19 @@ const (
 	SampleDone = "Done, PR merged. CI is green and the branch is deleted."
 )
 
+// SampleGrill is a real grill round (#60: the one whose extraction ran out of
+// budget): ten questions, Q8-Q17, each with a recommendation. The test sends
+// it to the LLM, past ParseRound, so the model in use is the one tried.
+//
+//go:embed grill_sample.md
+var SampleGrill string
+
+// SampleGrillQuestions is how many questions SampleGrill asks.
+const SampleGrillQuestions = 10
+
 // Sample is one sample's outcome.
 type Sample struct {
-	Name string `json:"name"` // "questions" or "done"
+	Name string `json:"name"` // "questions", "grill" or "done"
 	// Expect is "flag" (questions) or "skip" (done).
 	Expect    string     `json:"expect"`
 	Score     float64    `json:"score"`
@@ -253,6 +282,7 @@ type Sample struct {
 	Questions []Question `json:"questions,omitempty"`
 	Source    string     `json:"source,omitempty"`
 	Error     string     `json:"error,omitempty"` // why the extraction fell back
+	Unlisted  int        `json:"unlisted,omitempty"`
 }
 
 // TestResult is followups.test's answer. A test that ran but did not pass
@@ -266,9 +296,11 @@ type TestResult struct {
 	LatencyMS int64    `json:"latency_ms"`
 }
 
-// Test runs both samples through the whole pipeline with the models in use
-// and the threshold (nil: the current one). A pass allows switching the
-// feature on for 30 minutes, while the models stay the same.
+// Test runs the samples through the pipeline with the models in use and
+// the threshold (nil: the current one): the questions and the done message
+// whole, the grill round (#60) through the classifier and then the LLM
+// itself (ExtractLLM, never ParseRound). A pass allows switching the feature
+// on for 30 minutes, while the models stay the same.
 func (s *Service) Test(ctx context.Context, threshold *float64) (*TestResult, error) {
 	th := s.Threshold()
 	if threshold != nil {
@@ -287,19 +319,25 @@ func (s *Service) Test(ctx context.Context, threshold *float64) (*TestResult, er
 	cfp, lfp := r.Fingerprint(ai.RoleClassifier), r.Fingerprint(ai.RoleLLM)
 	start := s.opts.Now()
 	res := &TestResult{Threshold: th}
+	reasoning := s.reasoning(ctx)
 	for _, smp := range []struct{ name, expect, text string }{
 		{"questions", "flag", SampleQuestions},
 		{"done", "skip", SampleDone},
 	} {
-		out, err := Run(ctx, r.Classifier(), r.LLM(), smp.text, th)
+		out, err := run(ctx, r.Classifier(), r.LLM(), smp.text, th, nil, reasoning)
 		if err != nil {
 			return nil, err
 		}
 		res.Samples = append(res.Samples, Sample{Name: smp.name, Expect: smp.expect, Score: out.Score, Flagged: out.Flag,
-			Questions: out.Questions, Source: out.Source, Error: out.ExtractErr})
+			Questions: out.Questions, Source: out.Source, Error: out.ExtractErr, Unlisted: out.Unlisted})
 	}
+	g, err := s.testGrill(ctx, th, reasoning)
+	if err != nil {
+		return nil, err
+	}
+	res.Samples = []Sample{res.Samples[0], g, res.Samples[1]}
 	res.LatencyMS = s.opts.Now().Sub(start).Milliseconds()
-	q, d := res.Samples[0], res.Samples[1]
+	q, d := res.Samples[0], res.Samples[2]
 	switch {
 	case !q.Flagged:
 		res.Reason = fmt.Sprintf("the message with questions scored %.2f, under the threshold %.2f", q.Score, th)
@@ -307,8 +345,13 @@ func (s *Service) Test(ctx context.Context, threshold *float64) (*TestResult, er
 		res.Reason = fmt.Sprintf("the message without questions scored %.2f, at or over the threshold %.2f", d.Score, th)
 	case q.Source != SourceModel:
 		res.Reason = "the LLM did not extract the questions: " + q.Error
+	case !g.Flagged:
+		res.Reason = fmt.Sprintf("the grill round scored %.2f, under the threshold %.2f", g.Score, th)
+	case g.Source != SourceModel:
+		res.Reason = "the LLM did not extract the grill round: " + g.Error
 	default:
-		res.OK = true
+		res.Reason = grillShort(g)
+		res.OK = res.Reason == ""
 	}
 	if res.OK {
 		s.mu.Lock()
@@ -316,4 +359,43 @@ func (s *Service) Test(ctx context.Context, threshold *float64) (*TestResult, er
 		s.mu.Unlock()
 	}
 	return res, nil
+}
+
+// testGrill runs SampleGrill: the classifier, then (flagged) the LLM itself.
+func (s *Service) testGrill(ctx context.Context, th float64, reasoning ai.Reasoning) (Sample, error) {
+	r := s.opts.Roles
+	g := Sample{Name: "grill", Expect: "flag"}
+	score, err := r.Classifier().Classify(ctx, map[string]any{"last_agent_message": SampleGrill}, GateQuestion)
+	if err != nil {
+		return g, err
+	}
+	g.Score, g.Flagged = score, score >= th
+	if !g.Flagged {
+		return g, nil
+	}
+	qs, unlisted, _, err := ExtractLLM(ctx, r.LLM(), SampleGrill, reasoning)
+	if err != nil {
+		g.Questions, g.Source, g.Error = Fallback(), SourceFallback, err.Error()
+		return g, nil
+	}
+	g.Questions, g.Source, g.Unlisted = qs, SourceModel, unlisted
+	return g, nil
+}
+
+// grillShort says what the LLM left out of the grill round ("": nothing):
+// it must list all its questions, each with a recommendation.
+func grillShort(g Sample) string {
+	if n := len(g.Questions); n != SampleGrillQuestions {
+		return fmt.Sprintf("the LLM listed %d of the grill round's %d questions", n, SampleGrillQuestions)
+	}
+	without := 0
+	for _, q := range g.Questions {
+		if q.Recommendation == nil {
+			without++
+		}
+	}
+	if without > 0 {
+		return fmt.Sprintf("the LLM kept no recommendation for %d of the grill round's %d questions", without, SampleGrillQuestions)
+	}
+	return ""
 }

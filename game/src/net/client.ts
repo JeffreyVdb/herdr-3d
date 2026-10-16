@@ -182,10 +182,13 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   // #92: a model list or a test is one provider call (15 s on the bridge); set writes a file.
   'ai.models': 25_000,
   'ai.test': 25_000,
-  // #90: two classifications and an extraction (3 s and 15 s per attempt on the bridge, one retry each).
-  'followups.test': 75_000,
+  // #90: three classifications and (#60) two extractions (3 s per attempt on the bridge, one retry each; an
+  // extraction 45 s, once more when cut off).
+  'followups.test': 200_000,
   // #90: one prompt on the worker's input lane, like worker.prompt.
   'worker.answer_followup': 20_000,
+  // #60: one extraction (45 s on the bridge, once more when cut off).
+  'worker.retry_followup': 100_000,
   // #110: every labelled sample through the classifier (4 at a time), three extractions.
   'packup.test': 120_000,
   // #110: the whole detect, as the game sees it: past 1.5 s the prompt goes as written and a late ack is dropped (the

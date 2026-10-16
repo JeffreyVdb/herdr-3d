@@ -28,6 +28,9 @@ const THREE = `Moved the loader over (${THREE_MARK}).\n\n## Open questions for y
 const EXTRACTED_THREE = {
   questions: [...EXTRACTED.questions, { question: 'What should the new flag be called?', kind: 'open' }],
 };
+// #60: followups.test's grill round, as a model listed it (internal/followup/testdata: a live answer).
+const GRILL_MARK = 'Hire params captured at creation';
+const GRILL_LLM = readFileSync(resolve(import.meta.dirname, '../../internal/followup/testdata/grill-round2-llm.json'), 'utf8');
 const FALLBACK_MARK = 'cannot be parsed';
 const FALLBACK = `The importer change is in, but its answer ${FALLBACK_MARK}.\n\nShould I keep the v1 reader around for another release, or drop it now?`;
 
@@ -80,7 +83,9 @@ function fakeOpenAI(): Promise<Fake> {
       void body(req).then((b) => {
         const content = b.includes('Reply with exactly this JSON')
           ? '{"ok": true}'
-          : b.includes(THREE_MARK)
+          : b.includes(GRILL_MARK)
+            ? GRILL_LLM
+            : b.includes(THREE_MARK)
             ? JSON.stringify(EXTRACTED_THREE)
             : b.includes(FALLBACK_MARK)
               ? '{"questions": ['
@@ -326,6 +331,128 @@ test('on a phone the card has room for the question and its answers, and the pro
     await expect(card).toBeHidden();
   } finally {
     await Promise.all([jev.close(), llm.close()]);
+  }
+  clean();
+});
+
+// #60: a grill round (the incident's ten questions, Q8–Q17, seeded on Pebble by the fixture bridge as the bridge reads
+// it: `simfollowup=grill`). Every question keeps its label, context, options and the agent's recommendation; R and
+// Use all recommendations only fill answers, an override stays, and one Send sends them paired with their questions.
+test('a grill round: each question with its recommendation, accepted or overridden, sent once', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=300&simusage=0&simecho=200&simfollowup=grill');
+  const w = demoWorker('Pebble');
+  await sitAtTranscript(page, w);
+  const tx = page.locator('.seat-transcript .tx');
+  const card = tx.locator('.tx-fu');
+  await expect(card).toBeVisible();
+  await expect(card.locator('.tx-ask-tag')).toHaveText('10 open questions');
+  await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Q8');
+  await expect(card.locator('.tx-ask-row .tx-ask-row-head')).toHaveText(['Q9', 'Q10', 'Q11', 'Q12', 'Q13', 'Q14', 'Q15', 'Q16', 'Q17']);
+  // Q8: its context rendered (the sub-questions a list, code as code), its recommendation whole.
+  await expect(card.locator('.tx-ask-question')).toHaveText('Hire params captured at creation');
+  await expect(card.locator('.tx-fu-context li')).toHaveCount(2);
+  await expect(card.locator('.tx-fu-context code').first()).toHaveText('worker.hire');
+  await expect(card.locator('.tx-fu-rec-text')).toContainText('Desk is picked at fire time, not stored.');
+  await expect(card.locator('.tx-fu-progress')).toHaveText('0 of 10 answered');
+  await shot(page, 'followup-grill');
+  await tx.locator('.tx-scroll').focus();
+
+  // R fills Q8's answer with the recommendation (the keyboard in its text, to edit): nothing is sent.
+  await page.keyboard.press('r');
+  await expect(card.locator('textarea.tx-fu-text')).toBeFocused();
+  await expect(card.locator('textarea.tx-fu-text')).toHaveValue(/^Store the full spec/);
+  await expect(card.locator('.tx-fu-rec.is-using .tx-fu-rec-using')).toHaveText('Your answer');
+  await expect(card.locator('.tx-fu-progress')).toHaveText('1 of 10 answered');
+  // Q9: the recommended option is marked; another one picked overrides it.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ArrowRight');
+  await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Q9');
+  await expect(card.getByRole('radio', { name: /Per-schedule checkbox/ }).locator('.tx-ask-rec')).toHaveText('Recommended');
+  await card.getByRole('radio', { name: /Mark the schedule/ }).click();
+  await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Q10');
+  await expect(card.locator('.tx-ask-hint-text')).toContainText('2 of 10 answered: Q10, Q11, Q12, Q13 and 4 more go as unanswered');
+  // Use all: the eight left take theirs; Q9's override stays.
+  await card.getByRole('button', { name: 'Use all recommendations' }).click();
+  await expect(card.locator('.tx-fu-progress')).toHaveText('10 of 10 answered');
+  await expect(card.locator('.tx-ask-note')).toContainText('Filled 8 answers');
+  await expect(card.locator('.tx-ask-send')).toBeFocused();
+  expect(await sent(page, 'worker.answer_followup')).toHaveLength(0);
+  await expect(card.locator('.tx-ask-row').filter({ hasText: 'Q9' }).locator('.tx-ask-row-text')).toHaveText('(b) Mark the schedule failed: floor_asleep and notify.');
+  await shot(page, 'followup-grill-filled');
+  // Send: one command, the prompt pairs each answer with its question.
+  await card.locator('.tx-ask-send').click();
+  await expect(card).toBeHidden();
+  const answers = await sent(page, 'worker.answer_followup');
+  expect(answers).toHaveLength(1);
+  const echoed = tx.locator('.tx-item').filter({ hasText: 'Answers to your open questions:' });
+  await expect(echoed).toBeVisible();
+  await expect(echoed.locator('li').nth(1)).toHaveText('Q9 Asleep floor at fire time → (b) Mark the schedule failed: floor_asleep and notify.');
+  await expect(echoed.locator('li').nth(2)).toContainText('Q10 Desks full at fire time → (b) Wait in a waiting_desk state');
+  await expect(echoed.locator('li').nth(2)).toContainText('(your recommendation)');
+  clean();
+});
+
+// #60: the round's fallback (`simfollowup=fallback`: the model ran out of budget). The card says why, shows the whole
+// message on request, keeps the free answer typed meanwhile; Retry reads the round and the free answer goes along as a
+// note after the answers.
+test('a fallback says why, shows the whole message, and a retry keeps what you wrote', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=300&simusage=0&simecho=200&simfollowup=fallback');
+  const w = demoWorker('Pebble');
+  await sitAtTranscript(page, w);
+  const tx = page.locator('.seat-transcript .tx');
+  const card = tx.locator('.tx-fu');
+  await expect(card.locator('.tx-fu-fail-title')).toHaveText('The questions could not be prepared as answers.');
+  await expect(card.locator('.tx-fu-fail-why')).toContainText('whole completion budget');
+  await expect(card.locator('.tx-fu-tail')).toBeVisible();
+  await card.locator('textarea.tx-fu-text').fill('Q9: (a), please.');
+  await card.getByRole('button', { name: 'Show the whole message' }).click();
+  await expect(card.locator('.tx-fu-msg-text')).toContainText('Round 2.');
+  await expect(card.locator('.tx-fu-msg-text strong').first()).toHaveText('Q8');
+  await expect(card.locator('.tx-fu-tail')).toHaveCount(0);
+  await shot(page, 'followup-fallback');
+  await card.getByRole('button', { name: 'Retry' }).click();
+  await expect(card.locator('.tx-ask-tag')).toHaveText('10 open questions');
+  expect(await sent(page, 'worker.retry_followup')).toHaveLength(1);
+  // The free answer survived the retry: it goes after the answers.
+  await expect(card.locator('textarea.tx-fu-note')).toHaveValue('Q9: (a), please.');
+  await expect(card.locator('.tx-ask-send')).toHaveText(/Send your reply/);
+  await card.locator('.tx-ask-send').click();
+  await expect(card).toBeHidden();
+  const [a] = await sent(page, 'worker.answer_followup');
+  expect((a as { args: { note?: string; answers: unknown[] } }).args).toMatchObject({ note: 'Q9: (a), please.', answers: [] });
+  clean();
+});
+
+// #60 on a phone (360×800), in Quiet and Ubuntu (the transcript's theme, picked before sitting: the card hides the bar):
+// a grill question's context, recommendation and Send are reachable, Use recommendation fills it, and a reload keeps it.
+test('on a phone a grill round’s question, recommendation and Send are reachable', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 360, height: 800 });
+  for (const theme of ['quiet', 'ubuntu'] as const) {
+    await page.addInitScript((t) => {
+      try {
+        localStorage.setItem('h3d.theme.transcript', t);
+      } catch {
+        /* blocked: the default theme */
+      }
+    }, theme);
+    await openGame(page, 'demo-m5', '', 'play=none&sim=1&simms=300&simusage=0&simfollowup=grill');
+    await sitAtTranscript(page, demoWorker('Pebble'));
+    const card = page.locator('.seat-transcript .tx .tx-fu');
+    await expect(card).toBeVisible();
+    await card.locator('.tx-ask-row').filter({ hasText: 'Q9' }).click();
+    await expect(card.locator('.tx-ask-q .tx-ask-chip')).toHaveText('Q9');
+    await shot(page, `followup-grill-phone-${theme}`);
+    // The second time (a reload) the answer the first one filled is still there: the draft is kept.
+    const use = theme === 'quiet' ? card.getByRole('button', { name: /Use recommendation/ }) : card.locator('.tx-fu-rec-using');
+    for (const l of [card.locator('.tx-ask-question'), card.locator('.tx-fu-rec'), use, card.locator('.tx-ask-send')]) {
+      await l.scrollIntoViewIfNeeded();
+      await expect(l).toBeInViewport();
+    }
+    if (theme === 'quiet') await use.click();
+    await expect(card.locator('.tx-fu-progress')).toHaveText('1 of 10 answered');
   }
   clean();
 });

@@ -1,7 +1,7 @@
 import type { CommandResult } from '../net/client';
 import type { RepoSearchHost } from './repoSearch';
 import type { PackupGate } from '../world/packup';
-import type { AnswerAskAck, Ask, CommandArgs, Followup, HandoffCandidate, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
+import type { AnswerAskAck, Ask, CommandArgs, Followup, FollowupMessageAck, HandoffCandidate, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import type { ViewPrefs } from '../ui/themePrefs';
@@ -12,6 +12,7 @@ import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
 import { itemsOf, type TimelineOf } from './transcriptWatches';
 import { TranscriptDrafts } from './transcriptDrafts';
 import { AsyncDrafts } from './asyncDrafts';
+import { FollowupDrafts } from './followupDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 import { handoffCommand, newOp } from '../world/handoff';
@@ -64,7 +65,7 @@ export interface OverlayRect {
 
 export interface TranscriptModeHost {
   send<
-    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files' | 'worker.repos',
+    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.retry_followup' | 'worker.followup_message' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files' | 'worker.repos',
   >(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
   feed(id: string): ImageFeed | null;
@@ -251,6 +252,7 @@ export class TranscriptMode {
   private readonly drafts: TranscriptDrafts;
   /** #157: what you wrote for Codex workers' async questions, kept across views, seats and reconnects. */
   private readonly asyncDrafts: AsyncDrafts;
+  private readonly followupDrafts: FollowupDrafts; // #60
   /**
    * #141: the workers a prompt is on its way to (until the bridge answered it). A sitting's pending rows go when you
    * stand up but the send does not, nor does the draft it came from: sitting there again must not send it twice.
@@ -267,6 +269,7 @@ export class TranscriptMode {
     this.catalogs = host.catalogs ?? new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
     this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage });
     this.asyncDrafts = new AsyncDrafts(host.storage);
+    this.followupDrafts = new FollowupDrafts(host.storage);
   }
 
   private now(): number {
@@ -812,6 +815,25 @@ export class TranscriptMode {
         if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
+      // #60: a fallback's questions read again (the upsert brings them), and the message they are of. The card says
+      // why a retry was refused.
+      onRetryFollowup: async (turnId) => {
+        if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
+        const r = await this.host.send('worker.retry_followup', { id: s.id, turn_id: turnId });
+        if (r.ok) return { ok: true };
+        return { ok: false, code: r.code, message: failureText('worker.retry_followup', r.code, r.message, { worker: s.name }) };
+      },
+      loadFollowupMessage: async (turnId) => {
+        const r = await this.host.send('worker.followup_message', { id: s.id, turn_id: turnId });
+        if (!r.ok) return { ok: false, code: r.code, message: failureText('worker.followup_message', r.code, r.message, { worker: s.name }) };
+        const d = (r.data ?? {}) as Partial<FollowupMessageAck>;
+        return typeof d.text === 'string' ? { ok: true, text: d.text, cut: d.cut === true } : { ok: false, code: 'bad_response', message: 'The bridge sent no message.' };
+      },
+      followupDrafts: {
+        get: (turn) => this.followupDrafts.get(s.id, turn),
+        set: (turn, d) => this.followupDrafts.set(s.id, turn, d),
+        clear: (turn) => this.followupDrafts.clear(s.id, turn),
+      },
       // #157: a Codex worker's async questions. Refused, the card keeps the answer and says why (the seat bar too, but
       // not for `stale`: the question had moved on already, which the card says calmly).
       onAnswerAsync: async (args) => {
@@ -1036,7 +1058,7 @@ export class TranscriptMode {
   followedUp(f: Followup | null): void {
     const s = this.s;
     if (!s) return;
-    const key = f ? `${f.turn_id}\u0000${JSON.stringify(f.questions)}` : '';
+    const key = f ? JSON.stringify(f) : ''; // #60: a retry changes its source, why and count too
     if (key === s.followupKey) return;
     s.followupKey = key;
     s.followup = f;

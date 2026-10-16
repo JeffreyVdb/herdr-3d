@@ -869,8 +869,11 @@ export interface CommandArgs {
   'followups.get': Record<string, never>;
   'followups.set': { enabled?: boolean; threshold?: number };
   'followups.test': { threshold?: number };
-  'worker.answer_followup': { id: string; turn_id: string; answers: FollowupAnswer[] };
+  'worker.answer_followup': { id: string; turn_id: string; answers: FollowupAnswer[]; note?: string };
   'worker.dismiss_followup': { id: string; turn_id: string };
+  // #60: the extraction once more (a fallback's; acks `RetryFollowupAck`), the whole message (`FollowupMessageAck`).
+  'worker.retry_followup': { id: string; turn_id: string };
+  'worker.followup_message': { id: string; turn_id: string };
   // #110 pack up on request (docs/protocol.md "Pack up on request"). `packup.detect` acks `PackupDetectAck`.
   'packup.get': Record<string, never>;
   'packup.set': { enabled?: boolean; threshold?: number };
@@ -2164,10 +2167,28 @@ export type FollowupKind = 'yes_no' | 'choice' | 'open';
 
 export interface FollowupQuestion {
   id: string;
+  /** #60: the message's own name for it (a grill round's `Q9`): the answer names it. */
+  label?: string;
   question: string;
   kind: FollowupKind;
   /** A choice's options (never on yes_no or open). */
   options?: string[];
+  /** #60: the rest of what the message says about it (Markdown): sub-questions, constraints. */
+  context?: string;
+  /** #60: the answer the agent proposes. */
+  recommendation?: FollowupRecommendation;
+}
+
+/** #60: the agent's proposed answer to a question. */
+export interface FollowupRecommendation {
+  /** As the agent wrote it (Markdown): an open question's whole answer when accepted. */
+  text: string;
+  /** Its reason, when the message gives it apart. */
+  why?: string;
+  /** The index of the option it names (a choice). */
+  option?: number;
+  /** Its text is over an answer's 8,000 bytes: `text` is its start (with "…"), shown but never accepted as the answer (its `option` still is). */
+  cut?: boolean;
 }
 
 /** A worker's open questions (`Worker.followup`). */
@@ -2177,12 +2198,30 @@ export interface Followup {
   questions: FollowupQuestion[];
   /** The classifier's score. */
   score: number;
-  /** model: the LLM listed them; fallback: it failed, one open item stands for them. */
-  source: 'model' | 'fallback';
+  /** parsed (#60): a grill round read as it is; model: the LLM listed them; fallback: it failed, one open item stands for them. */
+  source: 'parsed' | 'model' | 'fallback';
   /** Unix ms (bridge clock). */
   at: number;
   /** The end of the message (a fallback's), for the card. */
   tail?: string;
+  /** #60: why the questions could not be read (a fallback's). */
+  error?: string;
+  /** #60: how many questions the message asks that are not listed (over the bounds, or unreadable). */
+  unlisted?: number;
+  /** #60: how many times the extraction was tried again (`worker.retry_followup`). */
+  retries?: number;
+}
+
+/** #60: `worker.retry_followup`'s ack. */
+export interface RetryFollowupAck {
+  source: Followup['source'];
+  error?: string;
+}
+
+/** #60: `worker.followup_message`'s ack: the message (its last 96,000 characters; `cut`: it is longer). */
+export interface FollowupMessageAck {
+  text: string;
+  cut?: boolean;
 }
 
 /** off: switched off; incomplete: on, but a model is not ready (nothing runs); ready. */
@@ -2215,13 +2254,15 @@ export interface FollowupAnswer {
 }
 
 export interface FollowupsTestSample {
-  name: 'questions' | 'done';
+  /** #60: grill, a ten-question grill round read by the LLM itself. */
+  name: 'questions' | 'grill' | 'done';
   expect: 'flag' | 'skip';
   score: number;
   flagged: boolean;
   questions?: FollowupQuestion[];
   source?: 'model' | 'fallback';
   error?: string;
+  unlisted?: number;
 }
 
 /** `followups.test` ack: ok false with `reason` when it ran but did not pass. */

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +35,7 @@ type fuRoles struct {
 func newFuRoles() *fuRoles {
 	r := &fuRoles{state: map[ai.Role]ai.State{ai.RoleClassifier: ai.StateReady, ai.RoleLLM: ai.StateReady},
 		cls: &ai.FakeClassifier{}, llm: &ai.FakeLLM{Text: fuExtracted}}
+
 	// The probe's scores: high for a message with questions, low for one
 	// without.
 	r.cls.Func = func(_ context.Context, state map[string]any, _ string) (float64, error) {
@@ -57,8 +59,20 @@ func (r *fuRoles) set(x ai.Role, s ai.State) {
 }
 func (r *fuRoles) Fingerprint(x ai.Role) string { return string(x) + "-fp" }
 func (r *fuRoles) Classifier() ai.Classifier    { return r.cls }
-func (r *fuRoles) LLM() ai.LLM                  { return r.llm }
-func (r *fuRoles) calls() (int, int)            { return len(r.cls.Calls()), len(r.llm.Calls()) }
+func (r *fuRoles) LLM() ai.LLM                  { return grillLLM{r.llm} }
+
+// grillLLM answers followups.test's grill round (#60) with a model's answer
+// to it, and leaves every other call to the fake.
+type grillLLM struct{ *ai.FakeLLM }
+
+func (g grillLLM) Complete(ctx context.Context, req ai.Request) (string, error) {
+	if strings.Contains(req.Messages[1].Content, "❓ **Q8**") {
+		b, err := os.ReadFile(filepath.Join("..", "followup", "testdata", "grill-round2-llm.json"))
+		return string(b), err
+	}
+	return g.FakeLLM.Complete(ctx, req)
+}
+func (r *fuRoles) calls() (int, int) { return len(r.cls.Calls()), len(r.llm.Calls()) }
 
 const fuExtracted = `{"questions":[{"question":"Does the legacy importer still need the v1 format?","kind":"yes_no"},
 	{"question":"Ship this already, or wait for the e2e-live run?","kind":"choice","options":["Ship now","Wait for e2e-live"]}]}`
@@ -483,8 +497,9 @@ func TestFollowupsSettings(t *testing.T) {
 	}
 	_ = json.Unmarshal(m.raw, &ack)
 	res := ack.Data
-	if m.env.T != proto.TAck || !res.OK || len(res.Samples) != 2 ||
-		res.Samples[0].Score != 0.96 || res.Samples[1].Score != 0.02 || len(res.Samples[0].Questions) != 2 {
+	if m.env.T != proto.TAck || !res.OK || len(res.Samples) != 3 ||
+		res.Samples[0].Score != 0.96 || res.Samples[2].Score != 0.02 || len(res.Samples[0].Questions) != 2 ||
+		res.Samples[1].Name != "grill" || len(res.Samples[1].Questions) != followup.SampleGrillQuestions {
 		t.Fatalf("test: %s", m.raw)
 	}
 	if len(evs) != 1 || evs[0].T != proto.EvFollowupsUpdate || !evs[0].Followups.Tested {
@@ -559,5 +574,354 @@ func TestFollowupNewTurnClearsIt(t *testing.T) {
 		if strings.HasPrefix(call, "type w1:p1 ") {
 			t.Fatalf("typed: %s", call)
 		}
+	}
+}
+
+// fuGrillTurn ends w1's turn with the incident's grill round (#60).
+func (fb *fuBridge) fuGrillTurn(t *testing.T) {
+	t.Helper()
+	appendTo(t, fb.claude, wrapUser("Grill me.")+wrapSay("m_grill", followup.SampleGrill, "end_turn")+wrapTurnEnd)
+}
+
+// #60: the incident's round is read whole, with no LLM call: ten questions
+// with their labels, context, options and recommendations, through the
+// worker's upsert and a restart. Answers pair with their questions by
+// label; an accepted recommendation says so, the unanswered are listed.
+func TestFollowupGrillRound(t *testing.T) {
+	t.Parallel()
+	roles := newFuRoles()
+	fb := startFuBridge(t, "", "", roles, on(), "")
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	id := fb.ids["w1"]
+	fb.fuGrillTurn(t)
+	f := followupOf(c, id).Followup
+	if f.Source != proto.FollowupParsed || len(f.Questions) != 10 || f.Unlisted != 0 || f.Error != "" || f.Tail != "" {
+		t.Fatalf("followup = %+v", f)
+	}
+	if _, l := roles.calls(); l != 0 {
+		t.Fatalf("%d LLM calls for a grill round", l)
+	}
+	for i, q := range f.Questions {
+		if q.Label != "Q"+strconv.Itoa(i+8) || q.Recommendation == nil || q.Recommendation.Text == "" {
+			t.Fatalf("question %d = %+v", i+1, q)
+		}
+	}
+	q9 := f.Questions[1]
+	if q9.Kind != proto.FollowupChoice || len(q9.Options) != 3 || q9.Recommendation.Option == nil || *q9.Recommendation.Option != 2 ||
+		!strings.Contains(q9.Context, "`floor.wake` resumes **every** worker") {
+		t.Fatalf("Q9 = %+v", q9)
+	}
+	fb.stop()
+
+	// Restored as it was, recommendations and all; not looked at again.
+	fb2 := startFuBridge(t, fb.db, fb.dir, roles, on(), "")
+	c2 := fb2.connect(proto.Hello{})
+	c2.snapshot()
+	g := followupOf(c2, fb2.ids["w1"]).Followup
+	if a, b := mustMarshal(t, f), mustMarshal(t, g); string(a) != string(b) {
+		t.Fatalf("restored:\n%s\nwant:\n%s", b, a)
+	}
+	if cls, _ := roles.calls(); cls != 1 {
+		t.Fatalf("%d classifications after a restart", cls)
+	}
+	// Every recommendation accepted fits one prompt.
+	all := make([]proto.FollowupAnswer, 0, len(g.Questions))
+	for _, q := range g.Questions {
+		v := q.Recommendation.Text
+		if q.Recommendation.Option != nil {
+			v = q.Options[*q.Recommendation.Option]
+		}
+		all = append(all, proto.FollowupAnswer{ID: q.ID, Value: v})
+	}
+	if text, err := server.FollowupPrompt(g, all, ""); err != nil || len(text) > 16<<10 || strings.Count(text, server.FollowupRecommended) != 10 {
+		t.Fatalf("all accepted: %d bytes, %v", len(text), err)
+	}
+	// Q9 accepted, Q10 overridden, Q17 open with its recommendation edited; the rest unanswered.
+	_, m := c2.command(proto.CmdWorkerAnswerFollowup, "a", proto.WorkerAnswerFollowupArgs{ID: fb2.ids["w1"], TurnID: g.TurnID,
+		Answers: []proto.FollowupAnswer{
+			{ID: "q2", Value: g.Questions[1].Options[2]},
+			{ID: "q3", Value: g.Questions[2].Options[0]},
+			{ID: "q10", Value: "10 min grace."},
+		}})
+	if m.env.T != proto.TAck {
+		t.Fatalf("answer: %s", m.raw)
+	}
+	want := "Answers to your open questions:\n" +
+		`- Q9 Asleep floor at fire time → (c) Per-schedule checkbox "wake floor if asleep", default on. (your recommendation)` + "\n" +
+		"- Q10 Desks full at fire time → (a) Fail immediately with `failed: no_desk`.\n" +
+		`- Q17 Defining "missed" → 10 min grace.` + "\n" +
+		"Unanswered: Q8, Q11, Q12, Q13, Q14, Q15, Q16"
+	var typed []string
+	for _, call := range fb2.term.Calls() {
+		if strings.HasPrefix(call, "type w1:p1 ") {
+			typed = append(typed, call)
+		}
+	}
+	if b, _ := json.Marshal(want); len(typed) != 1 || typed[0] != "type w1:p1 "+string(b) {
+		t.Fatalf("typed = %q, want one %q", typed, want)
+	}
+}
+
+// #60: answers to a numbered and a labelled round, a fallback's answer and
+// the round's note.
+func TestFollowupPromptPairs(t *testing.T) {
+	opt := 1
+	plain := &proto.Followup{Source: proto.FollowupModel, Questions: []proto.FollowupQuestion{
+		{ID: "q1", Question: "Does X still need Y?", Kind: proto.FollowupYesNo},
+		{ID: "q2", Question: "Ship now or wait?", Kind: proto.FollowupChoice, Options: []string{"Ship now", "Wait"},
+			Recommendation: &proto.FollowupRecommendation{Text: "Wait: e2e-live first.", Option: &opt}},
+		{ID: "q3", Question: "Name the flag?", Kind: proto.FollowupOpen, Recommendation: &proto.FollowupRecommendation{Text: "--legacy-v1\nas a hidden flag"}},
+	}}
+	for name, tc := range map[string]struct {
+		f       *proto.Followup
+		answers []proto.FollowupAnswer
+		note    string
+		want    string
+	}{
+		"numbered, partial": {plain, []proto.FollowupAnswer{{ID: "q2", Value: "Wait"}}, "",
+			"Answers to your open questions:\n2. Ship now or wait? → Wait (your recommendation)\nUnanswered: 1, 3"},
+		"a note on the recommended is no acceptance": {plain, []proto.FollowupAnswer{{ID: "q2", Value: "Wait", Note: "a day"}, {ID: "q1", Value: "yes"}, {ID: "q3", Value: "--legacy-v1\r\nas a hidden flag"}}, "",
+			"Answers to your open questions:\n1. Does X still need Y? → yes\n2. Ship now or wait? → Wait a day\n3. Name the flag? → --legacy-v1\nas a hidden flag (your recommendation)"},
+		"the round's note": {plain, []proto.FollowupAnswer{{ID: "q1", Value: "No"}}, " Also bump the version. ",
+			"Answers to your open questions:\n1. Does X still need Y? → No\nUnanswered: 2, 3\n\nAlso bump the version."},
+		"a note alone": {plain, nil, "Hold off, I'll answer tomorrow.",
+			"Answers to your open questions:\nUnanswered: 1, 2, 3\n\nHold off, I'll answer tomorrow."},
+		"fallback": {&proto.Followup{Source: proto.FollowupFallback, Questions: followup.Fallback()}, []proto.FollowupAnswer{{ID: "q1", Value: "Keep v1."}}, "",
+			"Keep v1."},
+		"fallback with a draft note": {&proto.Followup{Source: proto.FollowupFallback, Questions: followup.Fallback()}, nil, "Keep v1.",
+			"Keep v1."},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := server.FollowupPrompt(tc.f, tc.answers, tc.note)
+			if err != nil || got != tc.want {
+				t.Fatalf("prompt = %q, %v\nwant %q", got, err, tc.want)
+			}
+		})
+	}
+	for name, tc := range map[string]struct {
+		answers []proto.FollowupAnswer
+		note    string
+	}{
+		"nothing":       {nil, "  "},
+		"a long note":   {nil, strings.Repeat("x", proto.MaxFollowupAnswer+1)},
+		"a long answer": {[]proto.FollowupAnswer{{ID: "q3", Value: strings.Repeat("x", proto.MaxFollowupAnswer+1)}}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := server.FollowupPrompt(plain, tc.answers, tc.note); err == nil {
+				t.Fatal("accepted")
+			}
+		})
+	}
+}
+
+// #60: an accepted recommendation goes whole, however long an answer may be
+// (the reviewer's 1,446 bytes, the bound itself) and fits one prompt; a cut
+// one is never sent as the agent's recommendation.
+func TestFollowupPromptLongRecommendation(t *testing.T) {
+	long := strings.Repeat("Prepare audit rows before cutover. ", 40) + "Never delete the existing production database."
+	limit := strings.Repeat("x", followup.MaxRecommendationLen)
+	qs, _, err := followup.ParseRound("❓ **Q1** - **Cutover**: What then?\n\n➡️ " + long + "\n\n" +
+		"❓ **Q2** - **Rows**: How many?\n\n➡️ " + limit + "\n\n" +
+		"❓ **Q3** - **Old data**: Keep it?\n\n➡️ " + limit + "y\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &proto.Followup{Source: proto.FollowupParsed, Questions: qs}
+	cut := qs[2].Recommendation
+	if !cut.Cut {
+		t.Fatalf("Q3's recommendation is not cut: %d bytes", len(cut.Text))
+	}
+	for _, a := range []proto.FollowupAnswer{{ID: "q1", Value: qs[0].Recommendation.Text}, {ID: "q2", Value: qs[1].Recommendation.Text}} {
+		text, err := server.FollowupPrompt(f, []proto.FollowupAnswer{a}, "")
+		if err != nil || !strings.Contains(text, " → "+a.Value+" "+server.FollowupRecommended+"\n") || len(text) > 16<<10 {
+			t.Fatalf("%s accepted: %d bytes, %v", a.ID, len(text), err)
+		}
+	}
+	if text, err := server.FollowupPrompt(f, []proto.FollowupAnswer{{ID: "q3", Value: cut.Text}}, ""); err == nil {
+		t.Fatalf("a cut recommendation sent back: %d bytes accepted", len(text))
+	}
+}
+
+// #60 (R1b): the bridge itself refuses a cut recommendation sent back as an
+// answer, whatever the client (one that drops `cut` offers it to accept):
+// as it was, without its "…", its spaces folded, or as the note. Nothing is
+// typed, the follow-up stays open; a typed answer and the option a cut
+// choice's recommendation names are sent.
+func TestFollowupCutRecommendationRefused(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("Prepare audit rows before cutover. ", 240) + "Never delete the existing production database."
+	round := "❓ **Q12** - **Cutover**: What happens to the old database?\n\n➡️ " + long + "\n\n" +
+		"❓ **Q13** - **Window**: When do we cut over?\n\n(a) Friday night\n(b) Sunday morning\n\n➡️ (b) " + long + "\n"
+	roles := newFuRoles()
+	fb := startFuBridge(t, "", "", roles, on(), "")
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	id := fb.ids["w1"]
+	appendTo(t, fb.claude, wrapUser("Grill me.")+wrapSay("m_cut", round, "end_turn")+wrapTurnEnd)
+	f := followupOf(c, id).Followup
+	if f.Source != proto.FollowupParsed || len(f.Questions) != 2 {
+		t.Fatalf("followup = %+v", f)
+	}
+	q12, q13 := f.Questions[0], f.Questions[1]
+	if r := q12.Recommendation; len(long) != 8446 || r == nil || !r.Cut || !strings.HasSuffix(r.Text, "…") {
+		t.Fatalf("Q12 = %+v", q12)
+	}
+	if r := q13.Recommendation; q13.Kind != proto.FollowupChoice || r == nil || !r.Cut || r.Option == nil || *r.Option != 1 {
+		t.Fatalf("Q13 = %+v", q13)
+	}
+	typed := func() int {
+		n := 0
+		for _, call := range fb.term.Calls() {
+			if strings.HasPrefix(call, "type w1:p1 ") {
+				n++
+			}
+		}
+		return n
+	}
+	cut := q12.Recommendation.Text
+	bare := strings.TrimSuffix(cut, "…")
+	for name, a := range map[string]proto.FollowupAnswer{
+		"as it was":        {ID: q12.ID, Value: cut},
+		"without its …":    {ID: q12.ID, Value: bare},
+		"spaces trimmed":   {ID: q12.ID, Value: strings.TrimSpace(bare)},
+		"spaces folded":    {ID: q12.ID, Value: " " + strings.ReplaceAll(bare, ". ", ".\n") + "\t"},
+		"as its note":      {ID: q12.ID, Note: cut},
+		"for a cut choice": {ID: q13.ID, Value: q13.Recommendation.Text},
+	} {
+		answers := []proto.FollowupAnswer{{ID: q13.ID, Value: q13.Options[0]}, a} // with an answer it would send
+		want := "Q12's recommendation was too long to send whole: read the whole message and write your answer"
+		if a.ID == q13.ID {
+			answers, want = []proto.FollowupAnswer{a}, "Q13's recommendation was too long"
+		}
+		_, m := c.command(proto.CmdWorkerAnswerFollowup, name, proto.WorkerAnswerFollowupArgs{ID: id, TurnID: f.TurnID, Answers: answers})
+		if m.env.T != proto.TError || !strings.Contains(string(m.raw), `"code":"bad_request"`) || !strings.Contains(string(m.raw), want) {
+			t.Fatalf("%s: %s", name, m.raw)
+		}
+	}
+	if n := typed(); n != 0 {
+		t.Fatalf("%d prompts typed for refused answers", n)
+	}
+	if w := workersOf(fb.connect(proto.Hello{}).snapshot().World, "s")["w1"]; w.Followup == nil || w.Followup.TurnID != f.TurnID {
+		t.Fatalf("follow-up after the refusals = %+v", w.Followup)
+	}
+	// A typed answer, and the option Q13's cut recommendation names (whole).
+	evs, m := c.command(proto.CmdWorkerAnswerFollowup, "ok", proto.WorkerAnswerFollowupArgs{ID: id, TurnID: f.TurnID,
+		Answers: []proto.FollowupAnswer{{ID: q12.ID, Value: bare[:40] + " then keep the old database."}, {ID: q13.ID, Value: q13.Options[1]}}})
+	if m.env.T != proto.TAck {
+		t.Fatalf("answer: %s", m.raw)
+	}
+	want := "Answers to your open questions:\n" +
+		"- Q12 Cutover → " + bare[:40] + " then keep the old database.\n" +
+		"- Q13 Window → " + q13.Options[1] + " " + server.FollowupRecommended
+	var sent []string
+	for _, call := range fb.term.Calls() {
+		if strings.HasPrefix(call, "type w1:p1 ") {
+			sent = append(sent, call)
+		}
+	}
+	if b, _ := json.Marshal(want); len(sent) != 1 || sent[0] != "type w1:p1 "+string(b) {
+		t.Fatalf("typed = %q, want one %q", sent, want)
+	}
+	cleared := false
+	for _, ev := range evs {
+		cleared = cleared || (ev.T == proto.EvWorkerUpsert && ev.Worker.ID == id && ev.Worker.Followup == nil)
+	}
+	if !cleared {
+		upsertFor(c, id, func(w *proto.Worker) bool { return w.Followup == nil })
+	}
+}
+
+// #60: a fallback says why, keeps its message for worker.followup_message
+// and can be retried (the extraction only, never the classifier), also
+// after a restart; the recovered round is what a later restart restores.
+// Retries are bounded, one at a time, and only of a fallback.
+func TestFollowupRetry(t *testing.T) {
+	t.Parallel()
+	roles := newFuRoles()
+	roles.llm.Err = &ai.Error{Kind: ai.KindTruncated, Msg: "the model used its whole completion budget (8192 of 8192 tokens, 8192 of them reasoning) before writing any text"}
+	fb := startFuBridge(t, "", "", roles, on(), "")
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	id := fb.ids["w1"]
+	fb.turn(t, "claude", "followup_questions.jsonl")
+	f := followupOf(c, id).Followup
+	if f.Source != proto.FollowupFallback || !strings.Contains(f.Error, "whole completion budget") || f.Tail != fuQuestionsText {
+		t.Fatalf("followup = %+v", f)
+	}
+	fb.stop()
+
+	fb2 := startFuBridge(t, fb.db, fb.dir, roles, on(), "")
+	c2 := fb2.connect(proto.Hello{})
+	c2.snapshot()
+	id = fb2.ids["w1"]
+	f = followupOf(c2, id).Followup
+	// The whole message, on request.
+	_, m := c2.command(proto.CmdWorkerFollowupMessage, "m", proto.WorkerFollowupMessageArgs{ID: id, TurnID: f.TurnID})
+	var msg struct {
+		Data proto.WorkerFollowupMessageResult `json:"data"`
+	}
+	if _ = json.Unmarshal(m.raw, &msg); m.env.T != proto.TAck || msg.Data.Text != fuQuestionsText || msg.Data.Cut {
+		t.Fatalf("message: %s", m.raw)
+	}
+	if _, m := c2.command(proto.CmdWorkerFollowupMessage, "m2", proto.WorkerFollowupMessageArgs{ID: id, TurnID: "0123456789abcdef"}); !strings.Contains(string(m.raw), `"code":"stale"`) {
+		t.Fatalf("another turn's message: %s", m.raw)
+	}
+	// Still failing: the fallback again, its why and count updated.
+	cls0, llm0 := roles.calls()
+	evs, m := c2.command(proto.CmdWorkerRetryFollowup, "r1", proto.WorkerRetryFollowupArgs{ID: id, TurnID: f.TurnID})
+	if m.env.T != proto.TAck || !strings.Contains(string(m.raw), `"source":"fallback"`) {
+		t.Fatalf("retry: %s", m.raw)
+	}
+	if len(evs) != 1 || evs[0].Worker.Followup.Retries != 1 || evs[0].Worker.Followup.Source != proto.FollowupFallback {
+		t.Fatalf("events of the retry: %+v", evs)
+	}
+	// Then it reads them.
+	roles.llm.Err, roles.llm.Text = nil, fuExtracted
+	evs, m = c2.command(proto.CmdWorkerRetryFollowup, "r2", proto.WorkerRetryFollowupArgs{ID: id, TurnID: f.TurnID})
+	if m.env.T != proto.TAck || !strings.Contains(string(m.raw), `"source":"model"`) || len(evs) != 1 {
+		t.Fatalf("retry: %s %+v", m.raw, evs)
+	}
+	g := evs[0].Worker.Followup
+	if g.TurnID != f.TurnID || g.Source != proto.FollowupModel || len(g.Questions) != 2 || g.Error != "" || g.Tail != "" || g.Retries != 2 {
+		t.Fatalf("recovered = %+v", g)
+	}
+	if cls, llm := roles.calls(); cls != cls0 || llm != llm0+2 {
+		t.Fatalf("calls of two retries: %d classifier, %d LLM", cls-cls0, llm-llm0)
+	}
+	if _, m := c2.command(proto.CmdWorkerRetryFollowup, "r3", proto.WorkerRetryFollowupArgs{ID: id, TurnID: f.TurnID}); !strings.Contains(string(m.raw), `"code":"bad_request"`) {
+		t.Fatalf("a retry of read questions: %s", m.raw)
+	}
+	fb2.stop()
+
+	fb3 := startFuBridge(t, fb.db, fb.dir, roles, on(), "")
+	c3 := fb3.connect(proto.Hello{})
+	c3.snapshot()
+	if h := followupOf(c3, fb3.ids["w1"]).Followup; h.Source != proto.FollowupModel || len(h.Questions) != 2 || h.Retries != 2 {
+		t.Fatalf("after a restart = %+v", h)
+	}
+}
+
+// #60: at most MaxFollowupRetries retries of one follow-up.
+func TestFollowupRetryIsBounded(t *testing.T) {
+	t.Parallel()
+	roles := newFuRoles()
+	roles.llm.Text = "no json here"
+	fb := startFuBridge(t, "", "", roles, on(), "")
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	id := fb.ids["w1"]
+	fb.turn(t, "claude", "followup_questions.jsonl")
+	f := followupOf(c, id).Followup
+	for i := range server.MaxFollowupRetries {
+		if _, m := c.command(proto.CmdWorkerRetryFollowup, "r"+strconv.Itoa(i), proto.WorkerRetryFollowupArgs{ID: id, TurnID: f.TurnID}); m.env.T != proto.TAck {
+			t.Fatalf("retry %d: %s", i+1, m.raw)
+		}
+	}
+	if _, m := c.command(proto.CmdWorkerRetryFollowup, "over", proto.WorkerRetryFollowupArgs{ID: id, TurnID: f.TurnID}); !strings.Contains(string(m.raw), `"code":"invalid_state"`) {
+		t.Fatalf("one retry too many: %s", m.raw)
+	}
+	if _, l := roles.calls(); l != 1+server.MaxFollowupRetries {
+		t.Fatalf("%d LLM calls", l)
 	}
 }
