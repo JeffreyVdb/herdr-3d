@@ -5,7 +5,7 @@ import { Draft as PromptDraft } from '../ui/composer/draft';
 import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs } from '../ui/themePrefs';
 import { SendGate } from './transcriptDrafts';
-import { duration, loadHighlighter, mountTranscript, parseHunk, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
+import { duration, loadHighlighter, mountTranscript, parseHunk, renderMarkdown, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 interface FakeHost extends TranscriptRenderHost {
   prompts: string[];
@@ -1615,5 +1615,251 @@ describe('#141: the host’s draft', () => {
     ack(true);
     await flush();
     expect(d.doc.text).toBe('');
+  });
+});
+
+describe('#31 file references: the friendly label, the full path to copy', () => {
+  const REPRO = '/tmp/herdr-remote-runtime-handoff-2026-10-09.md';
+  const md = (s: string) => {
+    const root = document.createElement('div');
+    root.append(renderMarkdown(s)!);
+    return root;
+  };
+  /** The file paths the anchors of `s` keep, in order (null: an anchor that is not a file reference). */
+  const paths = (s: string) => [...md(s).querySelectorAll('a')].map((a) => a.getAttribute('data-tx-file'));
+
+  it('retains a file reference destination for copying', () => {
+    const root = md(`[handoff document](${REPRO})`);
+    expect(root.querySelector('a')?.textContent).toBe('handoff document');
+    expect(root.innerHTML).toContain(REPRO);
+    // Inert: no href to follow, nothing that resolves against the page.
+    expect(root.querySelector('a')?.hasAttribute('href')).toBe(false);
+    expect(root.querySelector('a')?.getAttribute('data-tx-file')).toBe(REPRO);
+  });
+
+  it('keeps spaces, Unicode and markdown escapes faithfully', () => {
+    expect(paths('[a](</tmp/a b.md>)')).toEqual(['/tmp/a b.md']);
+    expect(paths('[a](/tmp/日本語/é.md)')).toEqual(['/tmp/日本語/é.md']);
+    expect(paths('[a](/tmp/my\\_file\\(1\\).md)')).toEqual(['/tmp/my_file(1).md']);
+    expect(paths('[a](<./a (1) & b.md>)')).toEqual(['./a (1) & b.md']);
+    expect(paths('[a](/tmp/x"y.md)')).toEqual(['/tmp/x"y.md']);
+    expect(paths('[a](/tmp/100%.md)')).toEqual(['/tmp/100%.md']);
+    expect(paths('[a](/tmp/a%20b.md "A title")')).toEqual(['/tmp/a b.md']);
+  });
+
+  it('file: URLs decode to their path; relative references stay as written', () => {
+    expect(paths('[a](file:///tmp/a%20b.md) <file:///tmp/c.md>')).toEqual(['/tmp/a b.md', '/tmp/c.md']);
+    expect(paths('[a](./docs/handoff.md) [b](docs/x.md) [c](../up.md) [d](src/app.ts#L42) [e](~/notes.md)')).toEqual(['./docs/handoff.md', 'docs/x.md', '../up.md', 'src/app.ts', '~/notes.md']);
+    // A markdown image of a local file is a reference too (it is never an <img>).
+    expect(paths('![shot](/tmp/shot.png)')).toEqual(['/tmp/shot.png']);
+  });
+
+  it('unsafe destinations stay inert and are no file reference; http(s) and mailto links are unchanged', () => {
+    const root = md('[js](javascript:alert(1)) [data](data:text/html,x) [vb](vbscript:msgbox) [ent](&#106;avascript:alert(1)) [net](//evil.example/x) [host](file://evil.example/x) [anchor](#top) [web](https://example.com/a.md) [mail](mailto:me@example.com)');
+    const as = [...root.querySelectorAll('a')];
+    expect(as.map((a) => a.getAttribute('data-tx-file'))).toEqual([null, null, null, null, null, null, null, null, null]);
+    for (const a of as.slice(0, 7)) expect(a.hasAttribute('href'), a.textContent ?? '').toBe(false);
+    for (const a of as.slice(7)) {
+      expect(a.getAttribute('target')).toBe('_blank');
+      expect(a.getAttribute('rel')).toBe('noopener noreferrer');
+    }
+    expect(as[7]?.getAttribute('href')).toBe('https://example.com/a.md');
+    expect(as[8]?.getAttribute('href')).toBe('mailto:me@example.com');
+    // Raw HTML cannot plant the marker: it is text.
+    expect(md('<a data-tx-file="/etc/passwd">x</a>').querySelector('[data-tx-file]')).toBeNull();
+  });
+
+  interface CopyHost extends FakeHost {
+    copied: string[];
+    copyOk: boolean;
+  }
+  function copyHost(cwd: string | null = null): CopyHost {
+    const h = fakeHost() as CopyHost;
+    h.copied = [];
+    h.copyOk = true;
+    h.copy = (t) => {
+      h.copied.push(t);
+      return Promise.resolve(h.copyOk);
+    };
+    h.cwd = () => cwd;
+    return h;
+  }
+  const ref = () => $('.tx-file-ref') as HTMLElement;
+  const pop = () => $('.tx-fref') as HTMLElement;
+
+  function showRepro(h: CopyHost): void {
+    mount(h);
+    view.setItems([item('assistant', { parts: [text(`Saved the [handoff document](${REPRO}) in \`/tmp\`.`)] })]);
+  }
+
+  it('the reference is a button in the tab order; Enter opens the popover with the path, Copy copies exactly that', async () => {
+    const h = copyHost();
+    showRepro(h);
+    const a = ref();
+    expect(a.textContent).toBe('handoff document');
+    expect(a.getAttribute('role')).toBe('button');
+    expect(a.getAttribute('tabindex')).toBe('0');
+    expect(a.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(a.getAttribute('aria-expanded')).toBe('false');
+    expect(pop().hidden).toBe(true);
+    a.focus();
+    const e = press(a, 'Enter');
+    expect(e.defaultPrevented).toBe(true);
+    expect(pop().hidden).toBe(false);
+    expect(pop().getAttribute('role')).toBe('dialog');
+    expect(a.getAttribute('aria-expanded')).toBe('true');
+    expect(a.getAttribute('aria-controls')).toBe(pop().id);
+    // Not in the scroller: nothing there clips it.
+    expect($('.tx-scroll')?.contains(pop())).toBe(false);
+    expect($('.tx-fref-path')?.textContent).toBe(REPRO);
+    const copy = $('.tx-fref-copy') as HTMLButtonElement;
+    expect(document.activeElement).toBe(copy);
+    expect(copy.textContent).toBe('Copy file path');
+    copy.click();
+    await flush();
+    expect(h.copied).toEqual([REPRO]);
+    expect(copy.textContent).toBe('Copied');
+    expect(pop().dataset.state).toBe('copied');
+    expect($('.tx-fref-status')?.getAttribute('aria-live')).toBe('polite');
+    expect($('.tx-fref-status')?.textContent).toBe('File path copied to the clipboard.');
+  });
+
+  it('Esc closes it and gives the keyboard back to the reference, without reaching the seat; Space opens it too', () => {
+    showRepro(copyHost());
+    const seat = vi.fn();
+    document.addEventListener('keydown', seat);
+    try {
+      const a = ref();
+      a.focus();
+      press(a, ' ');
+      expect(pop().hidden).toBe(false);
+      const esc = press(document.activeElement as HTMLElement, 'Escape');
+      expect(esc.defaultPrevented).toBe(true);
+      expect(pop().hidden).toBe(true);
+      expect(document.activeElement).toBe(a);
+      expect(a.getAttribute('aria-expanded')).toBe('false');
+      // Neither key got past the transcript (Esc would stand you up).
+      expect(seat).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener('keydown', seat);
+    }
+  });
+
+  it('keys in the popover are its own: Tab goes between the path and Copy, j does not scroll', () => {
+    showRepro(copyHost());
+    ref().click();
+    const copy = $('.tx-fref-copy') as HTMLElement;
+    const path = $('.tx-fref-path') as HTMLElement;
+    expect(document.activeElement).toBe(copy);
+    press(copy, 'Tab');
+    expect(document.activeElement).toBe(path);
+    // The path, focused, is selected whole (the copy key copies it).
+    expect(document.getSelection()?.toString()).toBe(REPRO);
+    press(path, 'Tab', { shiftKey: true });
+    expect(document.activeElement).toBe(copy);
+    const j = press(copy, 'j');
+    expect(j.defaultPrevented).toBe(false);
+    expect(pop().hidden).toBe(false);
+  });
+
+  it('a click opens it, a click outside closes it, a click on the reference again closes it', () => {
+    showRepro(copyHost());
+    const a = ref();
+    a.click();
+    expect(pop().hidden).toBe(false);
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    expect(pop().hidden).toBe(true);
+    a.click();
+    expect(pop().hidden).toBe(false);
+    pop().dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    expect(pop().hidden).toBe(false);
+    a.click();
+    expect(pop().hidden).toBe(true);
+  });
+
+  it('a refused clipboard says so and selects the path for the copy key', async () => {
+    const h = copyHost();
+    h.copyOk = false;
+    showRepro(h);
+    ref().click();
+    ($('.tx-fref-copy') as HTMLButtonElement).click();
+    await flush();
+    expect(pop().dataset.state).toBe('failed');
+    expect($('.tx-fref-copy')?.textContent).toBe('Copy file path');
+    expect($('.tx-fref-status')?.textContent).toMatch(/^Couldn’t copy: .*The path is selected: press (Ctrl\+C|⌘C) to copy it\.$/);
+    expect(document.activeElement).toBe($('.tx-fref-path'));
+    expect(document.getSelection()?.toString()).toBe(REPRO);
+  });
+
+  it('without a host copy it uses the browser clipboard, and a missing one is a refusal', async () => {
+    const h = fakeHost();
+    mount(h);
+    view.setItems([item('assistant', { parts: [text(`[doc](${REPRO})`)] })]);
+    const writeText = vi.fn(() => Promise.resolve());
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      ref().click();
+      ($('.tx-fref-copy') as HTMLButtonElement).click();
+      await flush();
+      expect(writeText).toHaveBeenCalledWith(REPRO);
+      expect(pop().dataset.state).toBe('copied');
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined });
+      ($('.tx-fref-copy') as HTMLButtonElement).click();
+      await flush();
+      expect(pop().dataset.state).toBe('failed');
+    } finally {
+      delete (navigator as unknown as Record<string, unknown>).clipboard;
+    }
+  });
+
+  it('a relative reference copies the path in the worker’s checkout; unknown, it stays relative and says so', async () => {
+    const h = copyHost('/home/dev/devel/herdr-3d');
+    mount(h);
+    view.setItems([item('assistant', { parts: [text('See [the plan](./docs/../docs/plan%20v2.md).')] })]);
+    ref().click();
+    expect($('.tx-fref-path')?.textContent).toBe('/home/dev/devel/herdr-3d/docs/plan v2.md');
+    expect($('.tx-fref-note')?.hidden).toBe(false);
+    expect($('.tx-fref-note')?.textContent).toBe('Written as ./docs/../docs/plan v2.md, in the worker’s checkout.');
+    ($('.tx-fref-copy') as HTMLButtonElement).click();
+    await flush();
+    expect(h.copied).toEqual(['/home/dev/devel/herdr-3d/docs/plan v2.md']);
+    view.destroy();
+
+    const u = copyHost(null);
+    mount(u);
+    view.setItems([item('assistant', { parts: [text('See [the plan](docs/plan.md).')] })]);
+    ref().click();
+    expect($('.tx-fref-path')?.textContent).toBe('docs/plan.md');
+    expect($('.tx-fref-note')?.textContent).toBe('Relative to the worker’s checkout, which isn’t known here.');
+    ($('.tx-fref-copy') as HTMLButtonElement).click();
+    await flush();
+    expect(u.copied).toEqual(['docs/plan.md']);
+    // An absolute one needs no note.
+    view.setItems([item('assistant', { parts: [text(`[doc](${REPRO})`)] })]);
+    ref().click();
+    expect($('.tx-fref-note')?.hidden).toBe(true);
+  });
+
+  it('a row drawn anew keeps the popover on the same reference; one that goes closes it', () => {
+    showRepro(copyHost());
+    const it0 = item('assistant', { parts: [text(`Saved the [handoff document](${REPRO}) in \`/tmp\`.`)] });
+    view.setItems([it0]);
+    const was = ref();
+    was.click();
+    expect(pop().hidden).toBe(false);
+    view.applyUpdates([{ ...it0, parts: [text(`Saved the [handoff document](${REPRO}) in \`/tmp\`. Done.`)] }]);
+    expect(ref()).not.toBe(was);
+    expect(pop().hidden).toBe(false);
+    expect(ref().getAttribute('aria-expanded')).toBe('true');
+    expect(ref().getAttribute('aria-controls')).toBe(pop().id);
+    view.setItems([item('assistant', { parts: [text('Nothing here.')] })]);
+    expect(pop().hidden).toBe(true);
+  });
+
+  it('a popover goes with its view', () => {
+    showRepro(copyHost());
+    ref().click();
+    view.destroy();
+    expect($('.tx-fref')).toBeNull();
   });
 });

@@ -662,6 +662,21 @@
 .tx-md a {
   color: var(--tx-blue-text);
 }
+/* #31: a file reference (a path on the worker's machine, no href): the link's blue with a dotted underline, a thing
+   that opens here rather than a page; solid while hovered or open. */
+.tx-md .tx-file-ref {
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in srgb, var(--tx-blue-text) 60%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.22em;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.tx-md .tx-file-ref:hover,
+.tx-md .tx-file-ref[aria-expanded='true'] {
+  text-decoration-style: solid;
+  text-decoration-color: currentColor;
+}
 .tx-md blockquote {
   padding-left: 10px;
   border-left: 3px solid var(--tx-bg-3);
@@ -3445,3 +3460,129 @@
     transition: none;
   }
 }
+
+/* #31: a file reference's popover (fileRefPopover.ts): its full path, selectable whole, and "Copy file path". App chrome,
+   so the UI theme's raised surface (#216); the path is machine text, in the transcript's mono on a recessed well. It
+   sits in the root, over the timeline, never clipped by its scroller, and is kept inside the screen (narrow ones too). */
+.tx-fref {
+  position: absolute;
+  z-index: 25;
+  display: grid;
+  gap: 8px;
+  width: max-content;
+  min-width: min(15em, 100%);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--ctl-border);
+  border-radius: 8px;
+  background: var(--ctl-raised);
+  color: var(--ctl-text);
+  box-shadow: var(--ctl-shadow-pop);
+  font: calc(12.5px * var(--tx-k, 1)) / 1.4 var(--ctl-font);
+  animation: tx-fref-in 130ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tx-fref[hidden] {
+  display: none;
+}
+.tx-fref[data-side='above'] {
+  animation-name: tx-fref-in-above;
+}
+@keyframes tx-fref-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+@keyframes tx-fref-in-above {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+.tx-fref-path {
+  max-width: 34em;
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: var(--ctl-well);
+  box-shadow: inset 0 0 0 1px var(--ctl-line);
+  font: var(--tx-mono-fs, 11.5px) / 1.45 var(--tx-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: all;
+  -webkit-user-select: all;
+  cursor: text;
+}
+.tx-fref-path::selection {
+  background: color-mix(in srgb, var(--ctl-accent) 42%, transparent);
+  color: var(--ctl-text);
+}
+.tx-fref-note {
+  max-width: 34em;
+  margin: 0;
+  color: var(--ctl-text-2);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+.tx-fref-note[hidden] {
+  display: none;
+}
+.tx-fref-row {
+  display: flex;
+  align-items: center;
+}
+.tx .tx-fref-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 11px 3px 9px;
+  border: 1px solid var(--ctl-border);
+  border-radius: 5px;
+  background: var(--ctl-hover);
+  color: var(--ctl-text);
+  font-weight: 600;
+  transition: border-color 140ms ease-out;
+}
+.tx .tx-fref-copy:hover {
+  border-color: var(--ctl-accent);
+}
+.tx-fref-ic {
+  display: inline-flex;
+}
+.tx-fref[data-state='copied'] .tx-fref-ic {
+  color: var(--ctl-ok);
+}
+/* Said to a screen reader when the copy worked (the button says "Copied"), shown when it did not. */
+.tx-fref-status {
+  max-width: 34em;
+  color: var(--warn);
+}
+.tx-fref:not([data-state='failed']) .tx-fref-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-fref,
+  .tx .tx-fref-copy {
+    animation: none;
+    transition: none;
+  }
+}
+/* ubuntu:begin */
+/* #216 row 21: a labelled button is 36px in Ubuntu; a coarse pointer 44. */
+:root[data-ui-theme='ubuntu'] .tx .tx-fref-copy {
+  min-height: 36px;
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .tx .tx-fref-copy {
+    min-height: 44px;
+  }
+}
+/* ubuntu:end */

@@ -323,6 +323,7 @@ export class Laptops {
       repoRefs: host.store.repoRefs, // #247
       repoDiscovery: host.store.repoDiscovery, // #54
       floorName: (id: string) => host.store.floorName(id), // #58
+      cwd: (id: string) => host.store.workers.get(id)?.cwd || null, // #31
       ...(host.catalogs ? { catalogs: host.catalogs } : {}), // #39
       modeChanged: (mode) => this.onMode(mode),
       ...(host.themes ? { prefs: host.themes.prefs } : {}),
