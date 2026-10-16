@@ -2,6 +2,7 @@
 
 import type { CommandName } from '../net/protocol';
 import { kaneoFailureText } from '../world/kaneo';
+import { scheduleHold } from '../world/hire';
 
 /** The logo requests are HTTP, not commands, but fail with the same codes. */
 export type LogoAction = 'logo.set' | 'logo.clear';
@@ -229,11 +230,16 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
       if (t === 'worker.wrapup') return `${ctx.worker ?? 'This worker'} is already wrapping up, being hired or on the way out.`;
       if (t === 'worker.wrapup.cancel') return `${ctx.worker ?? 'This worker'} already reported CLEAN and is on the way out.`;
       return `${floor} is already waking up or going to sleep. Try again once it is done.`;
-    case 'invalid_state':
+    case 'invalid_state': {
       if (t === 'floor.wake') return `${floor} is already awake.`;
       if (t === 'floor.sleep') return `${floor} is already asleep.`;
+      // #63: a scheduled agent holds the worktree a delete was asked for; the floor is awake.
+      const hold = t === 'worker.fire' || t === 'worker.wrapup' ? scheduleHold(why) : null;
+      if (hold && t === 'worker.fire') return `${ctx.worker ?? 'The worker'} was not sent home: its worktree is ${hold}. Keep the worktree to send ${ctx.worker ?? 'it'} home now.`;
+      if (hold) return `Nothing was sent: the worktree is ${hold}. Keep the worktree to wrap up now.`;
       if (t === 'hire.prepare' || t === 'worker.hire' || t === 'worker.fire.prepare' || t === 'worker.fire') return `${floor} is asleep. Wake it from the elevator (L) first.`;
       return `herdr-world refused it: ${why}`;
+    }
     case 'wake_failed':
       return `${floor} did not wake up: ${why || 'its server did not answer'}.`;
     case 'sleep_failed':

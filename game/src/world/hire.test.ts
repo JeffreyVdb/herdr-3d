@@ -22,6 +22,7 @@ import {
   resolveChoice,
   offeredOptions,
   resolveVisibleChoice,
+  scheduleHold,
   visibleOptions,
   worktreeUsable,
 } from './hire';
@@ -220,6 +221,24 @@ describe('send home', () => {
     // A disabled choice is never sent.
     expect(fireArgs('id1', dirty, 'delete')).toEqual({ id: 'id1' });
     expect(leftovers(fp({ unpushed: 1 }))).toBe('1 commit not on any remote');
+  });
+  it('#63: a scheduled agent’s hold is its own reason, with its own advice; commit and push only for leftovers', () => {
+    const hold = "used by scheduled agent 'After the soak' at 2026-10-17 12:45 CEST";
+    expect(scheduleHold(hold)).toBe(hold);
+    expect(scheduleHold(`invalid state: ${hold} and 2 more`)).toBe(`${hold} and 2 more`);
+    for (const other of [undefined, null, '', '2 uncommitted changes', 'not in a linked worktree (only those can be deleted)', 'invalid state: floor s is asleep']) {
+      expect(scheduleHold(other)).toBeNull();
+    }
+    const held = fp({ can_delete: false, can_delete_branch: false, reason: hold });
+    expect(fireOptions(held)).toMatchObject({ offered: true, enabled: { keep: true, delete: false, delete_branch: false } });
+    expect(fireOptions(held).warning).toBe(`Deleting is off: ${hold}. The worktree stays until that agent starts, or until its schedule is cancelled.`);
+    expect(fireOptions({ ...held, reason: `${hold} and 2 more` }).warning).toBe(
+      `Deleting is off: ${hold} and 2 more. The worktree stays until those agents start, or until their schedules are cancelled.`,
+    );
+    // Held and dirty: the hold is the reason, and commit and push would not help.
+    expect(fireOptions({ ...held, dirty: [' M a.ts'] }).warning).not.toMatch(/commit and push/);
+    // Neither a hold nor leftovers: no advice that would not help.
+    expect(fireOptions(fp({ can_delete: false, reason: 'reading the git state failed: boom' })).warning).toBe('Deleting is off: reading the git state failed: boom. The worktree stays.');
   });
   it('knows when herdr would not close the workspace at all', () => {
     expect(fireBlocked(fp())).toBeNull();

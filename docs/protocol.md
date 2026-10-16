@@ -4459,7 +4459,8 @@ resolved where they exist, on separator boundaries, so `/x/wt` does not hold `/x
 - `worker.fire.prepare`: `can_delete` and `can_delete_branch` are `false`, and `reason` is `used by scheduled agent
   '<title>' at <due>`; several holders: the earliest due is named, `… and <n> more`. `<due>` is the bridge's local time,
   `2006-01-02 15:04 MST` (the zone of the bridge's clock, `TZ` / the host's zone), e.g. `used by scheduled agent 'After
-  the soak' at 2026-10-17 12:45 CEST and 2 more`.
+  the soak' at 2026-10-17 12:45 CEST and 2 more`. Clients may recognise a hold by the prefix `used by scheduled agent '`
+  (at the start of `reason`, or after `invalid state: ` in an error's `message`); the game does.
 - `worker.fire` with `delete` / `delete_branch` and `worker.wrapup` with a delete: `invalid_state`, the same reason
   (checked when the command arrives, not only in the dialog). A hold that comes while a send home's agent exits keeps
   the worktree, with a `note`.

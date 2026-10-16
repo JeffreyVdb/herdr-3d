@@ -35,6 +35,18 @@ describe('failureText', () => {
     );
     expect(failureText('worker.hire', 'fetch_failed', '')).toBe('git fetch origin failed, so no worktree was made and nobody was hired. Fetch again, or hire without a worktree.');
     expect(failureText('worker.fire', 'not_clean', '2 uncommitted changes')).toBe('The worktree was kept: 2 uncommitted changes.');
+    // #63: a scheduled agent holds the worktree: the bridge's reason, not an asleep floor; other invalid_states unchanged.
+    const hold = "used by scheduled agent 'After the soak' at 2026-10-17 12:45 CEST and 2 more";
+    expect(failureText('worker.fire', 'invalid_state', `invalid state: ${hold}`, { worker: 'Pixel', floor: 'pastry' })).toBe(
+      `Pixel was not sent home: its worktree is ${hold}. Keep the worktree to send Pixel home now.`,
+    );
+    expect(failureText('worker.fire', 'invalid_state', `invalid state: ${hold}`)).toBe(`The worker was not sent home: its worktree is ${hold}. Keep the worktree to send it home now.`);
+    expect(failureText('worker.wrapup', 'invalid_state', `invalid state: ${hold}`, { worker: 'Pixel' })).toBe(`Nothing was sent: the worktree is ${hold}. Keep the worktree to wrap up now.`);
+    expect(failureText('worker.fire', 'invalid_state', 'invalid state: floor pastry is asleep', { floor: 'pastry' })).toBe('pastry is asleep. Wake it from the elevator (L) first.');
+    expect(failureText('worker.fire.prepare', 'invalid_state', `invalid state: ${hold}`, { floor: 'pastry' })).toBe('pastry is asleep. Wake it from the elevator (L) first.');
+    expect(failureText('worker.wrapup', 'invalid_state', 'invalid state: Pixel is blocked: answer its question first')).toBe(
+      'herdr-world refused it: invalid state: Pixel is blocked: answer its question first',
+    );
     expect(failureText('worker.fire', 'busy', '', { worker: 'Pixel' })).toBe('Pixel is still being hired or already on the way out.');
     expect(failureText('worker.fire.prepare', 'unknown_worker', '', { worker: 'Pixel' })).toBe('Pixel is no longer on the floor.');
     expect(failureText('worker.fire', 'fire_failed', 'no exit', { worker: 'Pixel' })).toBe('Pixel could not be sent home: no exit.');

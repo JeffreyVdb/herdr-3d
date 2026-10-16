@@ -328,6 +328,16 @@ export function leftovers(p: FirePrepare): string | null {
   return parts.length ? parts.join(' and ') : null;
 }
 
+/**
+ * #63: a scheduled agent holds the worktree. The bridge's reason (`worker.fire.prepare`'s `reason`, and the message of
+ * the `invalid_state` that refuses a delete) is "used by scheduled agent '<title>' at <due>", maybe "… and 2 more".
+ * Returns that reason, null for any other.
+ */
+export function scheduleHold(why: string | null | undefined): string | null {
+  const m = /(?:^|: )(used by scheduled agent '.*)$/s.exec(why?.trim() ?? '');
+  return m ? m[1]!.replace(/\.$/, '') : null;
+}
+
 /** Why the worker cannot be sent home at all (herdr would refuse to close its workspace), else null. */
 export function fireBlocked(p: FirePrepare): string | null {
   if (p.can_fire !== false) return null;
@@ -342,7 +352,16 @@ export function fireOptions(p: FirePrepare): FireOptions {
   let warning: string | null = null;
   if (offered && !p.can_delete) {
     const left = leftovers(p);
-    warning = `Deleting is off: ${p.reason ?? left ?? 'the bridge cannot tell whether the work is safe'}. The worktree stays; commit and push first to delete it.`;
+    const hold = scheduleHold(p.reason);
+    // Commit and push only helps with what is left on the desk; a scheduled agent's hold ends when it starts.
+    const next = hold
+      ? / and \d+ more$/.test(hold)
+        ? 'The worktree stays until those agents start, or until their schedules are cancelled.'
+        : 'The worktree stays until that agent starts, or until its schedule is cancelled.'
+      : left
+        ? 'The worktree stays; commit and push first to delete it.'
+        : 'The worktree stays.';
+    warning = `Deleting is off: ${p.reason ?? left ?? 'the bridge cannot tell whether the work is safe'}. ${next}`;
   }
   const choices: FireWorktree[] = !offered ? [] : delBranch ? ['keep', 'delete', 'delete_branch'] : ['keep', 'delete'];
   const branchNote = del && !delBranch && p.branch ? `The branch ${p.branch} stays either way: herdr-world only deletes a branch it made for this worker.` : null;
