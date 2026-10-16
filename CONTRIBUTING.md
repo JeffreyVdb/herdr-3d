@@ -63,8 +63,10 @@ time, `ai`'s interfaces only, `TestHandoffLLMUsesOnlyAIInterfaces`);
 `testdata/inbox_vectors.json` (the game's `notifyVectors.test.ts` reads it too), the episodes and the 5 s done settle,
 the settings with their test gate and environment switch, the never-blocking sightings and the bounded sender with its
 backoff, the `Destination` / `Channel` interfaces, `FakeChannel` and `FakeClock`; the standard library only, no
-`net/http`) and `notify/telegram` (the Bot API behind `Channel`: the token's 0600 file, `sendMessage`, the pairing's
-`getUpdates` poll; only `app` imports it, `TestNotifyCoreIsProviderNeutral`);
+`net/http`) and `notify/telegram` (the Bot API behind `Channel`: the token's 0600 file, `sendMessage`, the one `getUpdates` poll
+loop of the pairing and (#13) the replies, `setMessageReaction`; only `app` imports it,
+`TestNotifyCoreIsProviderNeutral`); #13: `notify`'s `reply.go` (a reply to a notification checked, rate-limited,
+typed through the hub's `Prompt` callback and confirmed or answered);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
