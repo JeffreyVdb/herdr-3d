@@ -167,7 +167,11 @@ export class PackupSim {
   /** `sim.packup_lag`: ms each detect ack is held after its answer. */
   private lag = 0;
 
-  constructor(private readonly h: PackupHost) {}
+  private readonly h: PackupHost;
+
+  constructor(h: PackupHost) {
+    this.h = h;
+  }
 
   private missing(): Array<'classifier' | 'llm'> {
     return (['classifier', 'llm'] as const).filter((r) => !this.h.ai.ready(r));

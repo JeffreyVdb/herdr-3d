@@ -46,12 +46,22 @@ export class AiSim {
   /** #90: told after every change of the state (the follow-up questions' own state follows it). */
   onChange: ((send: Send) => void) | null = null;
 
+  private readonly jev: string;
+  private readonly mode: 'on' | 'off' | 'old';
+  private readonly emit: (send: Send, m: Obj) => void;
+  private readonly error: (code: string, message: string) => Error;
+
   constructor(
-    private readonly jev: string,
-    private readonly mode: 'on' | 'off' | 'old',
-    private readonly emit: (send: Send, m: Obj) => void,
-    private readonly error: (code: string, message: string) => Error,
-  ) {}
+    jev: string,
+    mode: 'on' | 'off' | 'old',
+    emit: (send: Send, m: Obj) => void,
+    error: (code: string, message: string) => Error,
+  ) {
+    this.jev = jev;
+    this.mode = mode;
+    this.emit = emit;
+    this.error = error;
+  }
 
   private conv(e: unknown): unknown {
     return e instanceof AiError ? this.error(e.code, e.message) : e;

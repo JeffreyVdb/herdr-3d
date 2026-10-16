@@ -26,10 +26,13 @@ export interface InboxHost {
 export class InboxSim {
   private readonly dismissed = new Map<string, number>();
 
-  constructor(
-    private readonly h: InboxHost,
-    private readonly present: boolean,
-  ) {}
+  private readonly h: InboxHost;
+  private readonly present: boolean;
+
+  constructor(h: InboxHost, present: boolean) {
+    this.h = h;
+    this.present = present;
+  }
 
   /** The dismissals that still hold. */
   private current(): Record<string, number> {

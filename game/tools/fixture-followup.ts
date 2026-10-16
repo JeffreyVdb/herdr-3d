@@ -129,7 +129,11 @@ export class FollowupSim {
   private readonly texts = new Map<string, string>();
   private retryFails = false;
 
-  constructor(private readonly h: FollowupHost) {}
+  private readonly h: FollowupHost;
+
+  constructor(h: FollowupHost) {
+    this.h = h;
+  }
 
   private missing(): Array<'classifier' | 'llm'> {
     return (['classifier', 'llm'] as const).filter((r) => !this.h.ai.ready(r));

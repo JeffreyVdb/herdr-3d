@@ -159,13 +159,15 @@ export class ReposSim {
   private own = false;
   private readonly group: Shared | null;
   private readonly hear: ((m: Obj) => void) | null = null;
+  private readonly h: ReposHost;
 
   constructor(
-    private readonly h: ReposHost,
+    h: ReposHost,
     key: string | null,
     /** This world's own announce (its last connection's send), for a change another connection made. */
     announce?: (m: Obj) => void,
   ) {
+    this.h = h;
     if (key === null) {
       this.group = null;
       return;

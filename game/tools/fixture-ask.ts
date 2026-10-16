@@ -42,7 +42,11 @@ export class AskSim {
   /** The ask calls of each worker's transcript, by worker id. */
   private readonly items = new Map<string, TranscriptItem[]>();
 
-  constructor(private readonly h: AskHost) {}
+  private readonly h: AskHost;
+
+  constructor(h: AskHost) {
+    this.h = h;
+  }
 
   /** The worker's ask items (the next transcript watch's timeline has them). */
   extra(id: string): TranscriptItem[] {

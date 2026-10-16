@@ -66,7 +66,10 @@ export class CodexQuestionsSim {
   /** How long after its ack a sent answer is seen answered (default three steps). */
   deliverMs: number;
 
-  constructor(private readonly h: CodexQuestionsHost) {
+  private readonly h: CodexQuestionsHost;
+
+  constructor(h: CodexQuestionsHost) {
+    this.h = h;
     this.deliverMs = h.stepMs * 3;
   }
 

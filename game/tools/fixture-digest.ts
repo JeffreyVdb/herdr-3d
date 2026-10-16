@@ -54,7 +54,11 @@ export class DigestSim {
   private readonly done = new Map<string, string>();
   private busy = false;
 
-  constructor(private readonly h: DigestHost) {}
+  private readonly h: DigestHost;
+
+  constructor(h: DigestHost) {
+    this.h = h;
+  }
 
   private ready(): boolean {
     return this.h.ai.ready('llm');

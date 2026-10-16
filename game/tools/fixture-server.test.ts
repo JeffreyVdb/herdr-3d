@@ -1,7 +1,9 @@
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { WorldStore } from '../src/world/store';
@@ -187,4 +189,17 @@ describe('fixture server', () => {
     await expect(session('/fixture/..%2Fpackage', { t: 'hello', proto: 1 }, 1)).rejects.toThrow(/404/);
     await expect(session('/fixture/nope', { t: 'hello', proto: 1 }, 1)).rejects.toThrow(/404/);
   });
+});
+
+// #77: `pnpm fixture-server` and CONTRIBUTING run this file with plain `node`, which only strips erasable TypeScript
+// (no parameter properties, enums or namespaces) and has no flag to transform the rest since Node 26. Vitest transforms
+// whatever it imports, so only a real `node` catches that. Without a port the server prints its usage and exits 2, after
+// loading every module it imports: nothing listens.
+it('#77 loads under plain node: every module it imports is erasable TypeScript', () => {
+  const env = { ...process.env };
+  delete env.PORTLEASE_FIXTURE_PORT;
+  const r = spawnSync(process.execPath, ['fixture-server.ts'], { cwd: dirname(fileURLToPath(import.meta.url)), env, encoding: 'utf8' });
+  expect(r.stderr).not.toMatch(/ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX/);
+  expect(r.stderr).toMatch(/^usage: fixture-server\.ts/);
+  expect(r.status).toBe(2);
 });

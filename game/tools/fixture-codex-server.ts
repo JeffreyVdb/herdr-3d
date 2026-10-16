@@ -22,11 +22,15 @@ export class CodexServerSim {
   private enabled = false;
   private allowUnverified = false;
 
-  constructor(
-    private readonly h: CodexServerHost,
-    private readonly available: boolean,
-    private readonly unverified = false,
-  ) {}
+  private readonly h: CodexServerHost;
+  private readonly available: boolean;
+  private readonly unverified: boolean;
+
+  constructor(h: CodexServerHost, available: boolean, unverified = false) {
+    this.h = h;
+    this.available = available;
+    this.unverified = unverified;
+  }
 
   /** #186: how a hire of `harness` was launched (the ack's and the worker's `codex`), when it is not the usual way. */
   hire(harness: string): { mode: 'legacy'; note: string } | undefined {
