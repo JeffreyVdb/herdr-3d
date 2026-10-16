@@ -934,6 +934,25 @@ export const SURFACES: Surface[] = [
     root: '.seat-transcript',
   },
   {
+    // #31: a file reference's popover (its full path and "Copy file path"), opened from Zippy's reply (a sim.final) that
+    // links a relative path, so the note on the checkout shows too. The root is the reply's text (the one reference) and
+    // the popover: walking the focus through the rest of the timeline would close it.
+    name: 'file-path',
+    fixture: 'demo-m5',
+    extra: '&prints=0',
+    open: async (page) => {
+      const id = await sitAtTofu(page, 'transcript', 'Zippy', 0);
+      const r = await page.evaluate((w) => window.__h3d.simHandoff('sim.final', { id: w, text: 'The plan is in [the plan](./docs/plan%20v2.md), ready for review.' }), id);
+      expect(r.ok).toBe(true);
+      const ref = page.locator('.seat-transcript .tx-file-ref', { hasText: 'the plan' });
+      await ref.scrollIntoViewIfNeeded();
+      await ref.click();
+      await expect(page.locator('.seat-transcript .tx-fref[role="dialog"]')).toBeVisible();
+      await expect(page.locator('.seat-transcript .tx-fref-note')).toBeVisible();
+    },
+    root: '.seat-transcript .tx-md:has(.tx-file-ref), .seat-transcript .tx-fref',
+  },
+  {
     name: 'seat-terminal',
     fixture: 'demo-m5',
     extra: '&prints=0',

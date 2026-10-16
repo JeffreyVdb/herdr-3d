@@ -4,7 +4,8 @@
  * inert metadata (no `href`, so nothing navigates or resolves against the page's origin) and offers it to copy.
  *
  * What counts as a file reference (the destination as the markdown wrote it):
- * - an absolute path (`/tmp/a.md`), a home one (`~/notes.md`), a Windows drive path (`C:\x\a.md`, `C:/x/a.md`);
+ * - an absolute path (`/tmp/a.md`), a home one (`~/notes.md`), a Windows drive path (`C:\x\a.md`, `C:/x/a.md`, also with its
+ *   backslashes percent-encoded, as markdown hands them over: `C:%5Cx%5Ca.md`);
  * - a relative one (`./a.md`, `../a.md`, `docs/a.md`, `README.md`): relative to the worker's checkout;
  * - a `file:` URL with no host or `localhost` (`file:///tmp/a%20b.md` is `/tmp/a b.md`).
  * Not: any other scheme (`http:`, `mailto:`, `javascript:`, `data:`…), a network path (`//host/x`, `\\host\x`, a `file:` URL
@@ -50,7 +51,9 @@ export function fileRefPath(href: string): FileRefPath | null {
     // file:///C:/x is the drive path C:/x.
     if (/^\/[a-z]:[\\/]/i.test(path)) path = path.slice(1);
   } else {
-    if (!DRIVE.test(raw) && SCHEME.test(raw)) return null;
+    // A drive path after markdown has its backslashes encoded (`C:%5Cx`): it is one once decoded. Only a drive letter, a
+    // colon and a slash pass this way, so no other scheme does.
+    if (!DRIVE.test(decodePercent(raw)) && SCHEME.test(raw)) return null;
     if (/^(?:\/\/|\\\\|[#?])/.test(raw)) return null;
     path = decodePercent(raw.replace(/#.*$/s, ''));
     if (!isAbsolutePath(path) && (path.split('/')[0] ?? '').includes(':')) return null;

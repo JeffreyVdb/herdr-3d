@@ -22,6 +22,8 @@ describe('fileRefPath', () => {
     ['file:///tmp/x.md?raw#top', '/tmp/x.md'],
     ['file:///C:/Users/me/a.md', 'C:/Users/me/a.md'],
     ['C:\\Users\\me\\a.md', 'C:\\Users\\me\\a.md'],
+    ['C:%5CUsers%5Cme%5Ca.md', 'C:\\Users\\me\\a.md'],
+    ['c:%2FUsers%2Fa.md', 'c:/Users/a.md'],
     ['  /tmp/trimmed.md ', '/tmp/trimmed.md'],
   ])('%s is the file %s', (href, path) => {
     expect(fileRefPath(href)).toBe(path);
@@ -38,6 +40,10 @@ describe('fileRefPath', () => {
     'blob:https://example.com/1',
     'app.ts:42',
     'javascript%3Aalert(1)',
+    'javascript:%5Calert(1)',
+    'javascript:%2F%2Fx',
+    'x:alert(1)',
+    'x:%41lert(1)',
     '//evil.example/x.md',
     '\\\\server\\share\\x.md',
     'file://server/share/x.md',

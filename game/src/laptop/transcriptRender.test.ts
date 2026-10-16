@@ -1654,6 +1654,12 @@ describe('#31 file references: the friendly label, the full path to copy', () =>
     expect(paths('![shot](/tmp/shot.png)')).toEqual(['/tmp/shot.png']);
   });
 
+  it('a Windows drive path survives markdown encoding its backslashes', () => {
+    expect(paths('[a](C:\\Users\\me\\a.md) [b](C:/Users/me/b.md) [c](<D:\\My Docs\\c.md>)')).toEqual(['C:\\Users\\me\\a.md', 'C:/Users/me/b.md', 'D:\\My Docs\\c.md']);
+    // A one-letter scheme without a slash is no drive path.
+    expect(paths('[x](x:alert(1))')).toEqual([null]);
+  });
+
   it('unsafe destinations stay inert and are no file reference; http(s) and mailto links are unchanged', () => {
     const root = md('[js](javascript:alert(1)) [data](data:text/html,x) [vb](vbscript:msgbox) [ent](&#106;avascript:alert(1)) [net](//evil.example/x) [host](file://evil.example/x) [anchor](#top) [web](https://example.com/a.md) [mail](mailto:me@example.com)');
     const as = [...root.querySelectorAll('a')];
