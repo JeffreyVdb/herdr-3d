@@ -252,19 +252,20 @@ describe('floorLayout', () => {
       expect(rack, `${n} desks`).toMatchObject({ label: 'Server rack', milestone: null, solid: true });
       const b = (rack as NonNullable<typeof rack>).box;
       expect(b).toEqual({ min: [RACK_BOX[0], RACK_BOX[1], RACK_BOX[2]], max: [RACK_BOX[3], RACK_BOX[4], RACK_BOX[5]] });
-      // On the floor, against the north wall, a short rack: its monitor is no higher than a tall person's chest.
+      // On the floor, against the north wall, a short rack: its monitor is about chest high.
       expect(b.min[1]).toBe(0);
       expect(b.min[2]).toBe(0);
-      expect(b.max[1]).toBeGreaterThan(1.2);
-      expect(b.max[1]).toBeLessThanOrEqual(1.5);
+      expect(b.max[1]).toBeGreaterThan(1.4);
+      expect(b.max[1]).toBeLessThanOrEqual(1.7);
       // Clear of the north windows (their frames reach 5 cm past the hole): the lounge window and the corner office's.
       for (const o of l.openings.filter((o) => o.wall === 'north' && o.kind === 'window')) {
         expect(b.min[0] >= o.u1 + 0.05 || b.max[0] <= o.u0 - 0.05, `window ${o.u0}-${o.u1}`).toBe(true);
       }
-      // East of the rug, west of the whiteboard (with room to walk between them).
-      expect(b.min[0]).toBeGreaterThanOrEqual(l.rug.x1);
+      // East of the rug and west of the whiteboard, a clear margin on both sides.
+      expect(b.min[0] - l.rug.x1).toBeGreaterThanOrEqual(0.5);
       const wb = l.props.find((p) => p.id === 'whiteboard') as NonNullable<ReturnType<typeof floorLayout>['props'][number]>;
-      expect(wb.box.min[0] - b.max[0]).toBeGreaterThanOrEqual(1);
+      expect(wb.box.min[0] - b.max[0]).toBeGreaterThanOrEqual(0.6);
+      expect(b.max[0] - b.min[0]).toBeGreaterThanOrEqual(0.85); // wide enough to read as a rack next to the sofa and the board
       // It overlaps no other prop, and none of the mezzanine's posts with the room they keep around them.
       for (const p of l.props) {
         if (p.id === 'server.rack') continue;

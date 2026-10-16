@@ -573,7 +573,7 @@ and remember the last `seq` applied.
 
 `terminal.frame`, `terminal.state` and `terminal.closed` ([Laptop screens](#laptop-screens)) are not events: they go only to the
 connection that watches, have no `seq`, are not in the replay ring and are never replayed. Neither are M13's
-`screen.frame_request` and `screen.grabbed` ([Screen share](#screen-share)): they go only to the sharing game.
+`screen.frame_request` and `screen.grabbed` ([Screen share](#screen-share)): they go only to the sharing game. Nor are #74's `host.stats` and `host.disk` ([Host stats](#host-stats)): they go only to the connections that sent `host.watch`.
 
 A status or title change can also arrive inside a `worker.upsert` (when something else changed at the same time), so
 take `status`, `status_since` and `title` from both. When one observation changes a floor and its workers, the
@@ -712,6 +712,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `whiteboard.pin` | `{"floor", "author", "note", "request_id"?}` (an image: `POST /whiteboard/{floor}/pin`) | the new state plus `{"elements": [id…], "repeated"?}` | `whiteboard.updated` (none for a repeated `request_id`) |
 | `drops.list` | `{"limit"?: 1–50}` (default 20) | `{"drops": [{"path", "name", "size", "mtime", "mime", "image", "reason"?}…]}` | — |
 | `board.watch` | `{"floor"|"session"}` | `{"enabled": bool, "reason"?}`, then `board.issues` and `board.prs` to this connection (see [Boards](#boards-issues-and-pull-requests)) | — |
+| `host.watch` | `{}`: #74, start sending this connection the host's stats (see [Host stats](#host-stats)) | — | `host.stats` after about a second and every 5 s, `host.disk` every second, to this connection only |
+| `host.unwatch` | `{}` | — | the frames stop (when it was this connection's last watch, the bridge stops sampling) |
 | `board.unwatch` | `{"floor"|"session"}` | — | — |
 | `board.refresh` | `{"floor"|"session"}` | `{"queued": bool}` | the boards of the poll, to the watchers |
 | `issue.get` | `{"floor"|"session", "id"}` | `{"card", "body", "author", "created_at", "comments", "comments_truncated"}` | — |
@@ -4502,6 +4504,55 @@ bridge restart and a second browser.
 
 Stored in SQLite `inbox_dismissed (worker_uuid PRIMARY KEY REFERENCES worker(id) ON DELETE CASCADE, status_since,
 dismissed_at)`.
+
+### Host stats
+
+#74. The game's server rack shows the CPU and memory of the machine the bridge runs on, the number of pending system
+updates on an Arch-based host, and its disks' activity. All of it is sampled **only while a game watches**: the game sends
+`host.watch` while the rack is in view on the floor you stand on (the tab visible, the bridge connected) and
+`host.unwatch` when it is not. With no watcher the bridge reads nothing under `/proc` or `/sys` and never runs
+`checkupdates`.
+
+- **`host.watch {}` / `host.unwatch {}`**: idempotent per connection, acked with no data. The sampler is one per bridge:
+  the first watching connection starts it, the last one leaving (an `unwatch`, or a disconnect, which drops the watch)
+  stops it. A connection that joins a running sampler gets the latest `host.stats` at once. A bridge from before them
+  answers `unknown_command`; the game then shows a calm idle screen ("No host stats on this bridge"), never an error.
+  They are not written to the audit log: a game flaps them as the player turns.
+- **`host.stats`** (bridge → each watching connection, no `seq`, never replayed, not in the ring or the snapshot): the
+  first one about a second after sampling starts, then every 5 s (`Options.HostStatsPoll`).
+
+```json
+{"t":"host.stats","cpu_pct":12.4,"cpus":12,"load1":0.82,"mem_used_pct":41.3,"mem_used_bytes":13523000000,
+ "mem_total_bytes":33547000000,"sampled_at":"2026-10-16T12:00:05Z",
+ "updates":{"count":3,"checked_at":"2026-10-16T11:31:10Z"}}
+```
+
+| field | meaning |
+|---|---|
+| `cpu_pct` | share of CPU time in use over all cores since the previous sample, in percent, one decimal: `1 − Δidle/Δtotal` over the aggregate `cpu` line of `/proc/stat` (`idle` is idle + iowait; `total` is user + nice + system + idle + iowait + irq + softirq + steal, leaving out guest time, which is already in user). `null` until two samples exist; when `Δtotal ≤ 0` (a counter reset, a suspend) the previous value is kept |
+| `cpus` | the CPU count |
+| `load1` | the 1-minute load average |
+| `mem_used_pct`, `mem_used_bytes`, `mem_total_bytes` | `MemTotal − MemAvailable` of `/proc/meminfo`, exactly the `used` column of `free`, its share, and `MemTotal` |
+| `sampled_at` | when the sample was taken, RFC 3339, UTC |
+| `updates` | pending pacman updates: the last good count and when it was taken (`checked_at`). **Absent** on a host that is not Arch-based (`/etc/os-release` `ID=arch` or `arch` in `ID_LIKE`) or lacks `checkupdates` or `fakeroot` (found like the other CLIs, `PATH` then `~/.local/bin`), and until a check has worked |
+
+- **Updates**: `checkupdates` (pacman-contrib) syncs a throwaway copy of the sync database, so it can never cause a partial
+  upgrade, needs no root and never touches the real database; the bridge never runs `pacman -Sy`, never runs anything as
+  root and never upgrades. `CHECKUPDATES_DB` is `checkupdates/` next to the bridge's database, so the run never meets another
+  `checkupdates`' `db.lck` (a bar module, a cron job). A check starts only while somebody watches, never more often than every
+  12 hours since the last one began (a failed run counts), one at a time, with a 60 s timeout, and stops with the last
+  watcher. Exit 0 is the updates (one line each), 2 none, 1 or a timeout keeps the last good count with its `checked_at`: the
+  bridge never invents one.
+- **`host.disk`** (bridge → each watching connection, no `seq`, every second while sampling): the physical disks' activity
+  over the last second. `/proc/diskstats` counters (reads and writes completed, 512-byte sectors) are differenced per disk.
+  A device counts when `/sys/block/<dev>/device` exists, so `loop*`, `ram*`, `zram*`, `dm-*` and `md*` and the partitions
+  (not in `/sys/block`) are left out; `/sys/block` is read again only when a device name appears in diskstats that was not
+  seen before. A counter that goes backwards resets that disk's baseline: it reports zero for that second, never a negative
+  rate. `disks` is sorted by name and is `[]` when the host has no physical disk.
+
+```json
+{"t":"host.disk","disks":[{"name":"nvme0n1","r_iops":12.0,"w_iops":240.0,"r_bps":49152,"w_bps":8388608}]}
+```
 
 ### Errors
 

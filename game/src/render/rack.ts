@@ -97,11 +97,11 @@ const STACK: Array<{ u: number; server: boolean }> = [
   { u: 2, server: true },
   { u: 1, server: false },
 ];
-const U = 0.085;
-const BODY_H = 0.97;
+const U = 0.1;
+const BODY_H = 1.12;
 const PLINTH_H = 0.07;
 const LEDS_PER_SERVER = 4; // power, read, write, link
-const LED_R = 0.009;
+const LED_R = 0.0105;
 
 interface Build {
   body: THREE.BufferGeometry;
@@ -146,20 +146,20 @@ function build(box: Box3): Build {
     // Rack ears at both ends.
     for (const ex of [px0 + 0.011, px1 - 0.011]) parts.push(part(0.022, h, 0.034, ex, yc, front + 0.015, EAR));
     // Vents: horizontal slots over the left half.
-    const slots = slot.u === 1 ? 5 : 9;
+    const slots = slot.u === 1 ? 6 : 11;
     const vx0 = px0 + 0.04;
     const vw = plateW * 0.42;
     const pitch = (h - 0.024) / slots;
     for (let k = 0; k < slots; k++) parts.push(part(vw, pitch * 0.45, 0.004, vx0 + vw / 2, y + 0.012 + pitch * (k + 0.5) + 0.002, front + 0.031, VENT));
     // Drive bays: a row (two for a 2U) of small bays with a handle, right of the vents.
     const rows = slot.u;
-    const bw = 0.05;
+    const bw = 0.065;
     const bx0 = vx0 + vw + 0.035;
     for (let r = 0; r < rows; r++) {
       for (let b = 0; b < 3; b++) {
         const bx = bx0 + bw / 2 + b * (bw + 0.008);
         const by = y + 0.012 + ((h - 0.024) / rows) * (r + 0.5) - (rows === 1 ? 0.004 : 0.012);
-        parts.push(part(bw, rows === 1 ? 0.034 : 0.026, 0.004, bx, by, front + 0.031, BAY));
+        parts.push(part(bw, rows === 1 ? 0.042 : 0.034, 0.004, bx, by, front + 0.031, BAY));
         parts.push(part(bw * 0.6, 0.004, 0.005, bx, by - (rows === 1 ? 0.008 : 0.005), front + 0.0315, HANDLE));
       }
     }
@@ -167,23 +167,23 @@ function build(box: Box3): Build {
     const ly = yc + (slot.u === 1 ? 0.0 : h / 2 - 0.02);
     const bx = px1 - 0.035;
     parts.push(part(0.014, 0.014, 0.006, bx, ly, front + 0.031, BUTTON));
-    for (let l = 0; l < LEDS_PER_SERVER; l++) leds.push(new THREE.Matrix4().makeTranslation(bx - 0.03 - (LEDS_PER_SERVER - 1 - l) * 0.02, ly, front + 0.0325));
+    for (let l = 0; l < LEDS_PER_SERVER; l++) leds.push(new THREE.Matrix4().makeTranslation(bx - 0.03 - (LEDS_PER_SERVER - 1 - l) * 0.026, ly, front + 0.0325));
     y += slot.u * U;
     server++;
   }
 
   // The keyboard on the top, in front of the monitor.
   const topY = BODY_H;
-  const kw = 0.34;
-  parts.push(part(kw, 0.014, 0.125, cx, topY + 0.007, z1 - 0.2, KEYS));
-  for (let r = 0; r < 4; r++) parts.push(part(kw - 0.03, 0.004, 0.017, cx, topY + 0.016, z1 - 0.2 - 0.045 + r * 0.025, KEYTOP));
+  const kw = 0.44;
+  parts.push(part(kw, 0.016, 0.15, cx, topY + 0.008, z1 - 0.2, KEYS));
+  for (let r = 0; r < 4; r++) parts.push(part(kw - 0.04, 0.004, 0.02, cx, topY + 0.018, z1 - 0.2 - 0.054 + r * 0.03, KEYTOP));
   // The monitor: foot, neck, bezel box; its glass is the screen plane.
-  const mz = z0 + 0.3;
-  parts.push(part(0.22, 0.012, 0.15, cx, topY + 0.006, mz, BEZEL));
-  parts.push(part(0.04, 0.06, 0.03, cx, topY + 0.042, mz - 0.03, BEZEL));
-  const scW = 0.46;
-  const scH = 0.29;
-  const bezel = 0.016;
+  const mz = z0 + 0.36;
+  parts.push(part(0.26, 0.012, 0.18, cx, topY + 0.006, mz, BEZEL));
+  parts.push(part(0.05, 0.06, 0.035, cx, topY + 0.042, mz - 0.03, BEZEL));
+  const scW = 0.56;
+  const scH = 0.35;
+  const bezel = 0.018;
   const sy = topY + 0.07 + bezel + scH / 2;
   parts.push(part(scW + 2 * bezel, scH + 2 * bezel, 0.035, cx, sy, mz - 0.03, BEZEL));
   const glassZ = mz - 0.03 + 0.0175 + 0.002;

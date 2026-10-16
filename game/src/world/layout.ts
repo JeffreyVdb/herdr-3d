@@ -227,10 +227,11 @@ export const COUNTER_TOP = 0.9;
 const RADIO_BOX = [0.16, COUNTER_TOP, 4.4, 0.46, COUNTER_TOP + 0.24, 4.74] as const;
 /**
  * #74: the server rack, against the north wall between the lounge window (x 1.0 to 4.6) and the whiteboard (west edge 7.35
- * and up), clear of the rug (ends x 5.2) and the mezzanine posts. 0.64 m wide and 0.68 m deep, its body 1.0 m tall and the
- * monitor on top of it up to 1.45 m. Facing the room (+z). The same on every floor.
+ * and up), 0.55 m east of the rug (which ends at x 5.2) and 0.7 m west of the whiteboard's nearest edge, clear of the mezzanine
+ * posts. 0.9 m wide and 0.78 m deep, its body 1.12 m tall and the monitor on top of it up to 1.62 m. Facing the room (+z).
+ * The same on every floor.
  */
-export const RACK_BOX = [5.6, 0, 0, 6.24, 1.45, 0.68] as const;
+export const RACK_BOX = [5.75, 0, 0, 6.65, 1.62, 0.78] as const;
 const rectOf = (b: Box3): Rect => ({ x0: b.min[0], z0: b.min[2], x1: b.max[0], z1: b.max[2] });
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
