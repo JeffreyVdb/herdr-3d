@@ -44,6 +44,10 @@ type fakeTG struct {
 	holdGet func(n int)               // runs before getUpdates' n-th call reads the queue
 	gets    int
 	msgs    int
+	// #13: the getUpdates under way now, and the most there ever were.
+	polling, maxPolling int
+	// now dates the updates pushed (nil: 0).
+	now func() time.Time
 }
 
 func newFakeTG(t *testing.T) *fakeTG {
@@ -86,13 +90,24 @@ func (f *fakeTG) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		fmt.Fprint(w, `{"ok":true,"result":{"message_id":1,"date":1,"chat":{"id":1,"type":"private"}}}`)
+		// Each message its own id (from 1), in the chat it went to.
+		chatID, _ := body["chat_id"].(float64)
+		fmt.Fprintf(w, `{"ok":true,"result":{"message_id":%d,"date":1,"chat":{"id":%d,"type":"private"}}}`, n+1, int64(chatID))
+	case "setMessageReaction":
+		fmt.Fprint(w, `{"ok":true,"result":true}`)
 	case "getUpdates":
 		f.mu.Lock()
 		n := f.gets
 		f.gets++
 		fail := f.failGet
+		f.polling++
+		f.maxPolling = max(f.maxPolling, f.polling)
 		f.mu.Unlock()
+		defer func() {
+			f.mu.Lock()
+			f.polling--
+			f.mu.Unlock()
+		}()
 		if fail != nil {
 			if st, b := fail(n); st != 0 {
 				w.WriteHeader(st)
@@ -150,15 +165,25 @@ func (f *fakeTG) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeTG) push(from int64, chatType, text string, isBot bool) {
+	f.pushMsg(&message{From: &user{ID: from, IsBot: isBot, FirstName: fmt.Sprintf("User%d", from)}, Chat: chat{ID: from, Type: chatType}, Text: text})
+}
+
+// pushMsg queues m as the next update (its id the update's; dated now).
+func (f *fakeTG) pushMsg(m *message) int64 {
 	f.mu.Lock()
 	f.nextID++
-	f.queue = append(f.queue, update{UpdateID: f.nextID, Message: &message{MessageID: f.nextID,
-		From: &user{ID: from, IsBot: isBot, FirstName: fmt.Sprintf("User%d", from)}, Chat: chat{ID: from, Type: chatType}, Text: text}})
+	m.MessageID = f.nextID
+	if f.now != nil && m.Date == 0 {
+		m.Date = f.now().Unix()
+	}
+	f.queue = append(f.queue, update{UpdateID: f.nextID, Message: m})
+	id := f.nextID
 	f.mu.Unlock()
 	select {
 	case f.pushed <- struct{}{}:
 	default:
 	}
+	return id
 }
 
 func (f *fakeTG) requests(method string) []req {
@@ -193,6 +218,21 @@ type rig struct {
 
 	mu      sync.Mutex
 	results []notify.PairResult
+	// #13: the replies handed over; Listen at the start.
+	replies       []notify.Reply
+	listenAtStart bool
+}
+
+func (r *rig) hookReply(rp notify.Reply) {
+	r.mu.Lock()
+	r.replies = append(r.replies, rp)
+	r.mu.Unlock()
+}
+
+func (r *rig) gotReplies() []notify.Reply {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]notify.Reply(nil), r.replies...)
 }
 
 func (r *rig) pairResults() []notify.PairResult {
@@ -201,7 +241,10 @@ func (r *rig) pairResults() []notify.PairResult {
 	return append([]notify.PairResult(nil), r.results...)
 }
 
-func newRig(t *testing.T, opts Options) *rig {
+func newRig(t *testing.T, opts Options) *rig { return newRigBefore(t, opts, nil) }
+
+// newRigBefore is newRig with before run on it before the channel's Run.
+func newRigBefore(t *testing.T, opts Options, before func(*rig)) *rig {
 	t.Helper()
 	r := &rig{tg: newFakeTG(t), clock: notify.NewFakeClock(t0), log: &bytes.Buffer{}}
 	if opts.File == "" {
@@ -216,15 +259,18 @@ func newRig(t *testing.T, opts Options) *rig {
 		t.Fatal(err)
 	}
 	r.ch = ch
+	if before != nil {
+		before(r)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ch.Run(ctx, func(res notify.PairResult) {
+		ch.Run(ctx, notify.Hooks{Pair: func(res notify.PairResult) {
 			r.mu.Lock()
 			r.results = append(r.results, res)
 			r.mu.Unlock()
-		})
+		}, Reply: r.hookReply, Listen: r.listenAtStart})
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -296,7 +342,7 @@ func TestPairingStoresTheSendersUserID(t *testing.T) {
 		t.Fatalf("still polling after pairing: %d → %d", n, m)
 	}
 	// Sends go to that user, plain text, no previews.
-	if err := r.ch.Send(context.Background(), notify.Notification{Name: "Pixel", Reason: notify.ReasonFinished, Line: "Opened PR #12", Quiet: true}); err != nil {
+	if _, err := r.ch.Send(context.Background(), notify.Notification{Name: "Pixel", Reason: notify.ReasonFinished, Line: "Opened PR #12", Quiet: true}); err != nil {
 		t.Fatal(err)
 	}
 	msgs = r.tg.requests("sendMessage")
@@ -507,7 +553,7 @@ func TestErrorsClassified(t *testing.T) {
 		r.tg.mu.Lock()
 		r.tg.failMsg = func(int) (int, string) { return c.status, c.body }
 		r.tg.mu.Unlock()
-		err := r.ch.Send(context.Background(), notify.Notification{Name: "a", Reason: "b"})
+		_, err := r.ch.Send(context.Background(), notify.Notification{Name: "a", Reason: "b"})
 		se, ok := err.(*notify.SendError)
 		if !ok || se.Code != c.code || se.RetryAfter != c.retry || se.Status != c.status {
 			t.Errorf("%d: %#v", c.status, err)
@@ -538,13 +584,13 @@ func TestTokenNeverLeaks(t *testing.T) {
 		return 400, `{"ok":false,"error_code":400,"description":"Bad Request: bad thing in /bot` + token + `/sendMessage"}`
 	}
 	r.tg.mu.Unlock()
-	err := r.ch.Send(context.Background(), notify.Notification{Name: "a", Reason: "b"})
+	_, err := r.ch.Send(context.Background(), notify.Notification{Name: "a", Reason: "b"})
 	check("an echoed description", err.Error())
 	// A message with the token in it goes out without it.
 	r.tg.mu.Lock()
 	r.tg.failMsg = nil
 	r.tg.mu.Unlock()
-	if err := r.ch.Send(context.Background(), notify.Notification{Name: "a", Reason: "b", Line: "it printed " + token}); err != nil {
+	if _, err := r.ch.Send(context.Background(), notify.Notification{Name: "a", Reason: "b", Line: "it printed " + token}); err != nil {
 		t.Fatal(err)
 	}
 	msgs := r.tg.requests("sendMessage")
@@ -558,7 +604,7 @@ func TestTokenNeverLeaks(t *testing.T) {
 	dead := "http://" + ln.Addr().String()
 	ln.Close()
 	r.ch.api.base = dead
-	err = r.ch.Send(context.Background(), notify.Notification{Name: "a", Reason: "b"})
+	_, err = r.ch.Send(context.Background(), notify.Notification{Name: "a", Reason: "b"})
 	if notify.CodeOf(err) != notify.CodeUnreachable {
 		t.Fatalf("refused: %v", err)
 	}
@@ -579,7 +625,7 @@ func TestTokenNeverLeaks(t *testing.T) {
 	defer close(stop)
 	r.ch.api.base = hang.URL
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	err = r.ch.Send(ctx, notify.Notification{Name: "a", Reason: "b"})
+	_, err = r.ch.Send(ctx, notify.Notification{Name: "a", Reason: "b"})
 	cancel()
 	if notify.CodeOf(err) != notify.CodeTimeout {
 		t.Fatalf("timeout: %v", err)

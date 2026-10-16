@@ -6,8 +6,12 @@ import (
 	"time"
 )
 
+var _ Channel = (*FakeChannel)(nil)
+
 // FakeChannel is a Channel for tests: it records the messages it is asked
-// to send and answers what SendErr says. Safe for concurrent use.
+// to send and answers what SendErr says; (#13) Deliver hands the service a
+// reply, while it listens, and the confirmations and answers are recorded.
+// Safe for concurrent use.
 type FakeChannel struct {
 	mu   sync.Mutex
 	st   ChannelState
@@ -17,7 +21,20 @@ type FakeChannel struct {
 	SendErr func(ctx context.Context, n int) error
 	change  chan struct{}
 	sentC   chan struct{}
-	pair    func(PairResult)
+	hooks   Hooks
+	listen  bool
+
+	confirmed []Ref
+	answered  []FakeAnswer
+}
+
+// FakeChatID is the chat of a FakeChannel's messages.
+const FakeChatID = 7
+
+// FakeAnswer is an answer the service gave a reply.
+type FakeAnswer struct {
+	To   Ref
+	Text string
 }
 
 // NewFakeChannel is a fake with a token and a paired recipient when ready.
@@ -29,7 +46,8 @@ func NewFakeChannel(ready bool) *FakeChannel {
 	return f
 }
 
-func (f *FakeChannel) Send(ctx context.Context, n Notification) error {
+// Send records n: the k-th attempt (from 0) is message k+1 of FakeChatID.
+func (f *FakeChannel) Send(ctx context.Context, n Notification) (Ref, error) {
 	f.mu.Lock()
 	hook, k := f.SendErr, len(f.sent)
 	f.mu.Unlock()
@@ -39,14 +57,15 @@ func (f *FakeChannel) Send(ctx context.Context, n Notification) error {
 			f.sent = append(f.sent, Notification{Name: "(failed)"})
 			f.mu.Unlock()
 			f.tick()
-			return err
+			return Ref{}, err
 		}
 	}
 	f.mu.Lock()
 	f.sent = append(f.sent, n)
+	ref := Ref{FakeChatID, int64(len(f.sent))}
 	f.mu.Unlock()
 	f.tick()
-	return nil
+	return ref, nil
 }
 
 func (f *FakeChannel) tick() {
@@ -145,7 +164,7 @@ func (f *FakeChannel) StartPairing(context.Context) error {
 func (f *FakeChannel) CancelPairing() error {
 	f.mu.Lock()
 	f.st.Pairing = nil
-	pair := f.pair
+	pair := f.hooks.Pair
 	f.mu.Unlock()
 	if pair != nil {
 		pair(PairResult{Outcome: PairCancelled})
@@ -158,7 +177,7 @@ func (f *FakeChannel) CancelPairing() error {
 func (f *FakeChannel) CompletePairing(name string) {
 	f.mu.Lock()
 	f.st.Pairing, f.st.Paired = nil, &Recipient{Name: name, At: 2}
-	pair := f.pair
+	pair := f.hooks.Pair
 	f.mu.Unlock()
 	if pair != nil {
 		pair(PairResult{Outcome: PairedOK, Ignored: 1})
@@ -176,9 +195,125 @@ func (f *FakeChannel) Unpair() error {
 
 func (f *FakeChannel) Changes() <-chan struct{} { return f.change }
 
-func (f *FakeChannel) Run(ctx context.Context, pair func(PairResult)) {
+func (f *FakeChannel) Run(ctx context.Context, h Hooks) {
 	f.mu.Lock()
-	f.pair = pair
+	f.hooks = h
 	f.mu.Unlock()
+	f.signal()
 	<-ctx.Done()
+}
+
+func (f *FakeChannel) Listen(on bool) {
+	f.mu.Lock()
+	f.listen = on
+	f.mu.Unlock()
+}
+
+// Listening: replies are read (Run has started, Listen on, paired).
+func (f *FakeChannel) Listening() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.listen && f.hooks.Reply != nil && f.st.KeySet && f.st.Paired != nil
+}
+
+// Deliver hands the service r as the recipient's message, if replies are
+// read (false: dropped, as a channel that does not listen does).
+func (f *FakeChannel) Deliver(r Reply) bool {
+	if !f.Listening() {
+		return false
+	}
+	f.mu.Lock()
+	h := f.hooks.Reply
+	f.mu.Unlock()
+	h(r)
+	return true
+}
+
+func (f *FakeChannel) Confirm(_ context.Context, msg Ref) error {
+	f.mu.Lock()
+	f.confirmed = append(f.confirmed, msg)
+	f.mu.Unlock()
+	f.tick()
+	return nil
+}
+
+func (f *FakeChannel) Answer(_ context.Context, msg Ref, text string) error {
+	f.mu.Lock()
+	f.answered = append(f.answered, FakeAnswer{msg, text})
+	f.mu.Unlock()
+	f.tick()
+	return nil
+}
+
+// Confirmed is every reply confirmed so far; Answered every answer.
+func (f *FakeChannel) Confirmed() []Ref {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Ref(nil), f.confirmed...)
+}
+
+func (f *FakeChannel) Answered() []FakeAnswer {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]FakeAnswer(nil), f.answered...)
+}
+
+// WaitReplied waits until n replies were confirmed or answered in all.
+func (f *FakeChannel) WaitReplied(n int, d time.Duration) bool {
+	deadline := time.After(d)
+	count := func() int { return len(f.Confirmed()) + len(f.Answered()) }
+	for {
+		if count() >= n {
+			return true
+		}
+		select {
+		case <-f.sentC:
+		case <-deadline:
+			return count() >= n
+		}
+	}
+}
+
+// FakeStore is a Store in memory. Safe for concurrent use.
+type FakeStore struct {
+	mu   sync.Mutex
+	set  *Settings
+	msgs map[Ref]fakeMsg
+}
+
+type fakeMsg struct {
+	worker string
+	at     time.Time
+}
+
+func NewFakeStore() *FakeStore { return &FakeStore{msgs: map[Ref]fakeMsg{}} }
+
+func (s *FakeStore) LoadNotifySettings(context.Context) (Settings, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.set == nil {
+		return Settings{}, false, nil
+	}
+	return *s.set, true, nil
+}
+
+func (s *FakeStore) SaveNotifySettings(_ context.Context, n Settings) error {
+	s.mu.Lock()
+	s.set = &n
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *FakeStore) SaveNotifyMessage(_ context.Context, msg Ref, worker string, at time.Time) error {
+	s.mu.Lock()
+	s.msgs[msg] = fakeMsg{worker, at}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *FakeStore) NotifyMessage(_ context.Context, msg Ref) (string, time.Time, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.msgs[msg]
+	return m.worker, m.at, ok, nil
 }

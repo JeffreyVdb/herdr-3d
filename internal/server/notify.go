@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/digest"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
@@ -41,6 +42,14 @@ func (s notifyStore) LoadNotifySettings(ctx context.Context) (notify.Settings, b
 
 func (s notifyStore) SaveNotifySettings(ctx context.Context, n notify.Settings) error {
 	return s.st.SaveNotifySettings(ctx, store.NotifySettings(n))
+}
+
+func (s notifyStore) SaveNotifyMessage(ctx context.Context, msg notify.Ref, worker string, at time.Time) error {
+	return s.st.SaveNotifyMessage(ctx, msg.Chat, msg.Message, worker, at)
+}
+
+func (s notifyStore) NotifyMessage(ctx context.Context, msg notify.Ref) (string, time.Time, bool, error) {
+	return s.st.NotifyMessage(ctx, msg.Chat, msg.Message)
 }
 
 // initNotify opens the service when the bridge has a channel.

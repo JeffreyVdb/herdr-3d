@@ -8,27 +8,6 @@ import (
 	"time"
 )
 
-type memStore struct {
-	mu sync.Mutex
-	s  *Settings
-}
-
-func (m *memStore) LoadNotifySettings(context.Context) (Settings, bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.s == nil {
-		return Settings{}, false, nil
-	}
-	return *m.s, true, nil
-}
-
-func (m *memStore) SaveNotifySettings(_ context.Context, s Settings) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.s = &s
-	return nil
-}
-
 type auditRow struct {
 	cmd  string
 	args any
@@ -39,7 +18,7 @@ type rig struct {
 	svc   *Service
 	ch    *FakeChannel
 	clock *FakeClock
-	store *memStore
+	store *FakeStore
 
 	mu     sync.Mutex
 	audits []auditRow
@@ -53,20 +32,27 @@ func (r *rig) rows() []auditRow {
 
 // newRig is a service on a fake channel and clock, switched on (unless
 // off), its loop running.
-func newRig(t *testing.T, on bool) *rig {
+func newRig(t *testing.T, on bool) *rig { return newRigWith(t, on, nil) }
+
+// newRigWith is newRig with its options (and stored settings) tweaked.
+func newRigWith(t *testing.T, on bool, tweak func(*Options, *Settings)) *rig {
 	t.Helper()
-	r := &rig{ch: NewFakeChannel(true), clock: NewFakeClock(t0), store: &memStore{}}
-	if on {
-		st := DefaultSettings()
-		st.Enabled = true
-		r.store.s = &st
-	}
-	svc, err := New(context.Background(), Options{Store: r.store, Channel: r.ch, Clock: r.clock,
+	r := &rig{ch: NewFakeChannel(true), clock: NewFakeClock(t0), store: NewFakeStore()}
+	st := DefaultSettings()
+	st.Enabled = on
+	opts := Options{Store: r.store, Channel: r.ch, Clock: r.clock,
 		Audit: func(_ context.Context, cmd string, args any, err error) {
 			r.mu.Lock()
 			r.audits = append(r.audits, auditRow{cmd, args, err})
 			r.mu.Unlock()
-		}})
+		}}
+	if tweak != nil {
+		tweak(&opts, &st)
+	}
+	if on || st != DefaultSettings() {
+		r.store.set = &st
+	}
+	svc, err := New(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +186,7 @@ func TestDisabledSendsNothing(t *testing.T) {
 	// Switched on later: what happened meanwhile is known, not sent.
 	st := DefaultSettings()
 	st.Enabled = true
-	r.store.s = &st
+	r.store.set = &st
 	r.svc.mu.Lock()
 	r.svc.set = st
 	r.svc.mu.Unlock()
@@ -304,7 +290,7 @@ func TestEnableGates(t *testing.T) {
 	if err := r.svc.Apply(ctx, Update{Enabled: &on}); err != nil {
 		t.Fatal(err)
 	}
-	if v := r.svc.View(); !v.Enabled || v.State != StateReady || r.store.s == nil || !r.store.s.Enabled {
+	if v := r.svc.View(); !v.Enabled || v.State != StateReady || r.store.set == nil || !r.store.set.Enabled {
 		t.Fatalf("view %+v", v)
 	}
 }
@@ -443,7 +429,7 @@ func TestPairAudited(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		r.ch.mu.Lock()
-		ok := r.ch.pair != nil
+		ok := r.ch.hooks.Pair != nil
 		r.ch.mu.Unlock()
 		if ok || time.Now().After(deadline) {
 			break

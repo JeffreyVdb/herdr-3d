@@ -1,8 +1,12 @@
 // Package telegram is the Telegram Bot API behind internal/notify's Channel
 // (#11): the bot token in a 0600 file of its own (or a file the bridge
 // environment names), sendMessage to the paired person, and pairing by a
-// one-time code read with getUpdates, polled only while a pairing waits. No
-// inbound port, no webhook. Only internal/app imports it
+// one-time code read with getUpdates. #13: the paired person's replies are
+// read by the same getUpdates loop, the one reader of the bot's updates
+// (two would make Telegram answer 409), polled only while a pairing waits
+// or replies are on; a reply typed into its worker gets a 👍 reaction, one
+// that is not an answer as a reply to it. No inbound port, no webhook. Only
+// internal/app imports it
 // (TestNotifyCoreIsProviderNeutral): the hub, the store and the protocol
 // know notify's interfaces only. The token never leaves this package: not
 // in a ChannelState, an error, a log line or a message (Scrub).
@@ -29,7 +33,7 @@ import (
 
 // Defaults.
 const (
-	// DefaultPollTimeout is getUpdates' long-poll timeout while pairing.
+	// DefaultPollTimeout is getUpdates' long-poll timeout.
 	DefaultPollTimeout = 25 * time.Second
 	// DefaultPairTTL is how long a pairing code is good for.
 	DefaultPairTTL = 10 * time.Minute
@@ -39,6 +43,11 @@ const (
 	nameMax      = 64
 	// pairBackoffCap bounds the wait between failed polls.
 	pairBackoffCap = 30 * time.Second
+	// confirmTimeout bounds the poll that confirms what was read, before
+	// the loop goes idle or stops.
+	confirmTimeout = 2 * time.Second
+	// confirmEmoji is the reaction on a reply typed into its worker.
+	confirmEmoji = "👍"
 )
 
 // PairedText is what the bot says to the person who just paired.
@@ -71,7 +80,6 @@ type pairState struct {
 	expires time.Time
 	state   string
 	msg     string
-	cancel  context.CancelFunc
 }
 
 // Channel is the Telegram notify.Channel. Safe for concurrent use.
@@ -88,6 +96,12 @@ type Channel struct {
 	pair     *pairState
 	ended    *notify.Pairing // how the last pairing ended (expired), until the next
 	gen      int
+	// #13: replies are read (the service's switch); the hooks Run was
+	// given; interrupt cancels the poll (or its backoff) under way, so the
+	// loop looks again at what to poll for.
+	listen    bool
+	hooks     notify.Hooks
+	interrupt context.CancelFunc
 }
 
 var _ notify.Channel = (*Channel)(nil)
@@ -199,18 +213,74 @@ func (c *Channel) Fingerprint() string {
 	return hex.EncodeToString(h[:8])
 }
 
-// Send delivers n to the paired person.
-func (c *Channel) Send(ctx context.Context, n notify.Notification) error {
+// recipient is the token and the paired person's id, or why there is none.
+func (c *Channel) recipient() (string, int64, error) {
 	c.mu.Lock()
 	t, uid, ok := c.tokenLocked(), c.stored.UserID, c.pairedLocked()
 	c.mu.Unlock()
 	switch {
 	case t == "":
-		return &notify.SendError{Code: notify.CodeNotConfigured, Msg: "no bot token is set"}
+		return "", 0, &notify.SendError{Code: notify.CodeNotConfigured, Msg: "no bot token is set"}
 	case !ok:
-		return &notify.SendError{Code: notify.CodeNotPaired, Msg: "no Telegram account is paired"}
+		return "", 0, &notify.SendError{Code: notify.CodeNotPaired, Msg: "no Telegram account is paired"}
+	}
+	return t, uid, nil
+}
+
+// Send delivers n to the paired person.
+func (c *Channel) Send(ctx context.Context, n notify.Notification) (notify.Ref, error) {
+	t, uid, err := c.recipient()
+	if err != nil {
+		return notify.Ref{}, err
 	}
 	return c.api.send(ctx, t, uid, n.Text(), n.Quiet)
+}
+
+// Confirm reacts 👍 to a reply typed into its worker (#13).
+func (c *Channel) Confirm(ctx context.Context, msg notify.Ref) error {
+	t, _, err := c.recipient()
+	if err != nil {
+		return err
+	}
+	return c.api.react(ctx, t, msg.Chat, msg.Message, confirmEmoji)
+}
+
+// Answer sends text as a reply to the paired person's message (#13).
+func (c *Channel) Answer(ctx context.Context, msg notify.Ref, text string) error {
+	t, _, err := c.recipient()
+	if err != nil {
+		return err
+	}
+	return c.api.answer(ctx, t, msg.Chat, msg.Message, text)
+}
+
+// Listen switches reading replies on or off (#13).
+func (c *Channel) Listen(on bool) {
+	c.mu.Lock()
+	changed := c.listen != on
+	c.listen = on
+	if changed {
+		c.interruptLocked()
+	}
+	c.mu.Unlock()
+	if changed {
+		c.poke()
+	}
+}
+
+// poke wakes an idle loop.
+func (c *Channel) poke() {
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+}
+
+// interruptLocked cancels the poll under way: the loop looks again.
+func (c *Channel) interruptLocked() {
+	if c.interrupt != nil {
+		c.interrupt()
+	}
 }
 
 func envLocked() error {
@@ -247,6 +317,7 @@ func (c *Channel) SetToken(ctx context.Context, token string) error {
 	c.stored = next
 	c.stopPairLocked()
 	c.mu.Unlock()
+	c.poke()
 	c.signal()
 	return nil
 }
@@ -279,6 +350,7 @@ func (c *Channel) Unpair() error {
 		return fmt.Errorf("saving the Telegram settings failed: %w", err)
 	}
 	c.stored = next
+	c.interruptLocked() // #13: their replies are not read any more
 	c.mu.Unlock()
 	c.signal()
 	return nil
@@ -329,14 +401,12 @@ func (c *Channel) StartPairing(ctx context.Context) error {
 		}
 	}
 	c.stopPairLocked()
+	c.interruptLocked() // a poll under way does not look for this code
 	c.gen++
 	c.pair = &pairState{gen: c.gen, code: code, expires: c.opts.Clock.Now().Add(c.opts.PairTTL), state: notify.PairWaiting}
 	c.ended = nil
 	c.mu.Unlock()
-	select {
-	case c.wake <- struct{}{}:
-	default:
-	}
+	c.poke()
 	c.signal()
 	return nil
 }
@@ -352,55 +422,255 @@ func (c *Channel) CancelPairing() error {
 }
 
 func (c *Channel) stopPairLocked() {
-	if c.pair != nil && c.pair.cancel != nil {
-		c.pair.cancel()
+	if c.pair != nil {
+		c.interruptLocked()
 	}
 	c.pair = nil
 }
 
-// Run polls for the pairing code while a pairing waits, and does nothing
-// else: no call to Telegram leaves it otherwise.
-func (c *Channel) Run(ctx context.Context, report func(notify.PairResult)) {
-	for {
+// Run is the one reader of the bot's updates: it polls while a pairing
+// waits or (#13) replies are read for a paired person, and makes no call to
+// Telegram otherwise. Each update goes to the pairing (its code) or to
+// Hooks.Reply (the paired person's message); every other one is dropped
+// without a word.
+func (c *Channel) Run(ctx context.Context, h notify.Hooks) {
+	c.mu.Lock()
+	c.hooks = h
+	c.mu.Unlock()
+	// Replies on at the start: what came while the bridge was away is read
+	// (the service answers what is too old). Every other start from idle
+	// forgets it.
+	l := &reader{c: c, keep: h.Listen, idle: true}
+	defer l.confirm(ctx)
+	for ctx.Err() == nil {
+		if l.step(ctx) {
+			continue
+		}
 		select {
 		case <-ctx.Done():
-			return
 		case <-c.wake:
 		}
-		for {
-			c.mu.Lock()
-			p := c.pair
-			var pctx context.Context
-			if p != nil {
-				var cancel context.CancelFunc
-				pctx, cancel = context.WithCancel(ctx)
-				p.cancel = cancel
-			}
-			c.mu.Unlock()
-			if p == nil {
-				break
-			}
-			res := c.poll(pctx, p)
-			p.cancel()
-			c.mu.Lock()
-			current := c.pair == p
-			if current {
-				c.pair = nil
-				if res.Outcome == notify.PairTimedOut {
-					c.ended = &notify.Pairing{State: notify.PairExpired, Message: "The code expired before it arrived: start pairing again."}
+	}
+}
+
+// reader is Run's: the offset, and the pairing it polls for.
+type reader struct {
+	c *Channel
+	// token is the one offset and confirmed are of; offset is the next
+	// update wanted, confirmed the offset Telegram was last asked from
+	// (what is below it is forgotten there).
+	token             string
+	offset, confirmed int64
+	// idle: nothing was polled since the last wait; keep: the next poll
+	// from idle keeps what came before (else offset -1); skip: the next poll
+	// forgets it.
+	idle, keep, skip bool
+	fails            int
+	// cur is the pairing polled for, res its result so far.
+	cur *pairState
+	res notify.PairResult
+}
+
+// step polls once, if there is something to poll for (false: nothing; the
+// loop waits).
+func (l *reader) step(ctx context.Context) bool {
+	c := l.c
+	now := c.opts.Clock.Now()
+	c.mu.Lock()
+	var ended []notify.PairResult
+	if l.cur != nil && c.pair != l.cur {
+		// Ended elsewhere: cancelled (a pairing superseded by a new one is
+		// not reported).
+		if c.pair == nil {
+			r := l.res
+			r.Outcome = notify.PairCancelled
+			ended = append(ended, r)
+		}
+		l.cur = nil
+	}
+	if p := c.pair; p != nil && !now.Before(p.expires) {
+		c.pair = nil
+		c.ended = &notify.Pairing{State: notify.PairExpired, Message: "The code expired before it arrived: start pairing again."}
+		r := l.res
+		if l.cur != p {
+			r = notify.PairResult{}
+		}
+		r.Outcome = notify.PairTimedOut
+		ended = append(ended, r)
+		l.cur = nil
+	}
+	p := c.pair
+	if p != nil && l.cur != p {
+		l.cur, l.res = p, notify.PairResult{}
+	}
+	t := c.tokenLocked()
+	listen := c.listen && c.pairedLocked()
+	if t != l.token {
+		// Another bot's updates (or none): its offset is not this one's.
+		l.token, l.offset, l.confirmed, l.idle = t, 0, 0, true
+	}
+	if t == "" || (p == nil && !listen) {
+		c.mu.Unlock()
+		l.confirm(ctx)
+		l.report(ended)
+		l.idle, l.keep = true, false
+		return false
+	}
+	if l.idle {
+		l.idle, l.skip = false, !l.keep
+		l.keep = false
+	}
+	pctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	c.interrupt = cancel
+	timeout := c.opts.PollTimeout
+	if p != nil {
+		timeout = min(timeout, p.expires.Sub(now))
+	}
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.interrupt = nil
+		c.mu.Unlock()
+	}()
+	l.report(ended)
+	offset, secs := l.offset, max(int(timeout.Seconds()), 1)
+	if l.skip {
+		// What came before is not for this: the newest update only, which
+		// confirms (forgets) the rest; the next poll confirms it too. That
+		// one is read like any other: a pairing's code is new, and the
+		// service drops a reply sent before replies were switched on.
+		offset, secs = -1, 0
+	}
+	ups, err := c.api.updates(pctx, t, offset, secs)
+	if pctx.Err() != nil {
+		return true // stopped, or interrupted: look again
+	}
+	if err != nil {
+		l.failed(pctx, p, err, now)
+		return true
+	}
+	if l.fails > 0 {
+		c.opts.Log.Info("telegram: reading the bot's updates works again")
+	}
+	l.fails, l.skip = 0, false
+	if offset > 0 {
+		l.confirmed = max(l.confirmed, offset)
+	}
+	if p != nil {
+		c.setPairState(p, notify.PairWaiting, "")
+	}
+	l.dispatch(ctx, t, p, ups)
+	return true
+}
+
+// failed shows a failed poll in the pairing (when one waits) and backs off.
+func (l *reader) failed(ctx context.Context, p *pairState, err error, now time.Time) {
+	c := l.c
+	l.fails++
+	if l.fails == 1 {
+		c.opts.Log.Warn("telegram: reading the bot's updates failed", "code", notify.CodeOf(err), "status", statusOf(err))
+	}
+	wait := min(notify.Backoff(l.fails)*2, pairBackoffCap)
+	if p != nil && l.cur == p {
+		l.res.Errors++
+		l.res.Status = statusOf(err)
+		state, msg := notify.PairError, "Telegram failed: retrying."
+		if notify.CodeOf(err) == notify.CodeConflict {
+			state, msg = notify.PairConflict, err.Error()+": retrying."
+		} else if notify.CodeOf(err) == notify.CodeUnauthorized {
+			msg = err.Error() + "."
+		}
+		c.setPairState(p, state, msg)
+		wait = min(wait, max(p.expires.Sub(now), time.Millisecond))
+	}
+	_ = notify.Sleep(ctx, c.opts.Clock, wait)
+}
+
+// dispatch hands each update of a batch to the pairing or to the replies.
+func (l *reader) dispatch(ctx context.Context, t string, p *pairState, ups []update) {
+	c := l.c
+	// A batch answered after the deadline is too late for the code, however
+	// long the poll took to come back.
+	if p != nil && c.expired(p) {
+		p = nil
+	}
+	for _, u := range ups {
+		l.offset = max(l.offset, u.UpdateID+1)
+		m := u.Message
+		if p != nil && m != nil && m.From != nil && !m.From.IsBot && m.Chat.Type == "private" && normalize(m.Text) == p.code {
+			switch c.paired(ctx, p, t, *m.From) {
+			case notify.PairedOK:
+				// Confirm what was read, so the code is not read again.
+				l.confirm(ctx)
+				r := l.res
+				r.Outcome = notify.PairedOK
+				l.report([]notify.PairResult{r})
+				l.cur = nil
+			case notify.PairCancelled:
+				// Not saved: the pairing ends (the next step reports it).
+				c.mu.Lock()
+				if c.pair == p {
+					c.pair = nil
 				}
+				c.mu.Unlock()
 			}
-			superseded := c.pair != nil && c.pair != p
-			c.mu.Unlock()
-			if ctx.Err() != nil {
-				return
-			}
-			if !superseded && report != nil {
-				report(res)
-			}
-			c.signal()
+			p = nil
+			continue
+		}
+		if r, ok := c.replyOf(m); ok {
+			c.hooks.Reply(r)
+			continue
+		}
+		if p != nil {
+			l.res.Ignored++
 		}
 	}
+}
+
+// confirm tells Telegram what was read (a poll from the offset, answered
+// at once), before the loop goes idle or stops: else the next start reads
+// it again.
+func (l *reader) confirm(ctx context.Context) {
+	if l.token == "" || l.offset <= l.confirmed {
+		return
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), confirmTimeout)
+	defer cancel()
+	if _, err := l.c.api.updates(cctx, l.token, l.offset, 0); err == nil {
+		l.confirmed = l.offset
+	}
+}
+
+func (l *reader) report(rs []notify.PairResult) {
+	for _, r := range rs {
+		if l.c.hooks.Pair != nil {
+			l.c.hooks.Pair(r)
+		}
+	}
+	if len(rs) > 0 {
+		l.c.signal()
+	}
+}
+
+// replyOf is m as a reply for the service (#13): only while replies are
+// read, and only the paired person's own: their private chat with the bot,
+// not a bot, not on behalf of a chat. Forwarded or sent through a bot, it
+// is Relayed (refused there). A reply to anything but the bot's message is
+// no reply (the hint).
+func (c *Channel) replyOf(m *message) (notify.Reply, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if m == nil || !c.listen || !c.pairedLocked() || c.hooks.Reply == nil || m.From == nil || m.From.IsBot ||
+		m.From.ID != c.stored.UserID || m.Chat.Type != "private" || m.SenderChat != nil || m.MessageID == 0 {
+		return notify.Reply{}, false
+	}
+	r := notify.Reply{Ref: notify.Ref{Chat: m.Chat.ID, Message: m.MessageID}, Text: m.Text, At: time.Unix(m.Date, 0),
+		Relayed: m.ForwardOrigin != nil || m.ViaBot != nil}
+	if to := m.ReplyTo; to != nil && to.From != nil && to.From.IsBot && strconv.FormatInt(to.From.ID, 10) == c.stored.BotID {
+		r.To = notify.Ref{Chat: m.Chat.ID, Message: to.MessageID}
+	}
+	return r, true
 }
 
 func (c *Channel) setPairState(p *pairState, state, msg string) {
@@ -420,94 +690,9 @@ func normalize(s string) string {
 	return strings.ToUpper(strings.NewReplacer(" ", "", "-", "", "\t", "", "\n", "").Replace(s))
 }
 
-// poll waits for p's code: every other message, and every sender but the
-// one who sends the code, is dropped without a word.
-func (c *Channel) poll(ctx context.Context, p *pairState) notify.PairResult {
-	res := notify.PairResult{Outcome: notify.PairCancelled}
-	c.mu.Lock()
-	t := c.tokenLocked()
-	c.mu.Unlock()
-	// What came before the code is not for it: the newest update only, which
-	// confirms (forgets) the rest; the next poll confirms it too. That one
-	// is read like any other: the code is new, so a message holding it was
-	// sent after it was shown.
-	var offset int64
-	ups, err := c.api.updates(ctx, t, -1, 0)
-	if err != nil {
-		res.Errors++
-		res.Status = statusOf(err)
-	}
-	fails := 0
-	for {
-		// A batch answered after the deadline is too late, however long the
-		// poll took to come back.
-		if c.expired(p) {
-			res.Outcome = notify.PairTimedOut
-			return res
-		}
-		if outcome := c.match(ctx, p, t, ups, &offset, &res); outcome != "" {
-			res.Outcome = outcome
-			return res
-		}
-		if ctx.Err() != nil {
-			return res
-		}
-		left := p.expires.Sub(c.opts.Clock.Now())
-		if left <= 0 {
-			res.Outcome = notify.PairTimedOut
-			return res
-		}
-		timeout := int(min(c.opts.PollTimeout, left).Seconds())
-		ups, err = c.api.updates(ctx, t, offset, max(timeout, 1))
-		if ctx.Err() != nil {
-			return res
-		}
-		if err != nil {
-			ups = nil
-			fails++
-			res.Errors++
-			res.Status = statusOf(err)
-			state, msg := notify.PairError, "Telegram failed: retrying."
-			if notify.CodeOf(err) == notify.CodeConflict {
-				state, msg = notify.PairConflict, err.Error()+": retrying."
-			} else if notify.CodeOf(err) == notify.CodeUnauthorized {
-				msg = err.Error() + "."
-			}
-			c.setPairState(p, state, msg)
-			wait := min(notify.Backoff(fails)*2, pairBackoffCap, max(left, time.Millisecond))
-			if notify.Sleep(ctx, c.opts.Clock, wait) != nil {
-				return res
-			}
-			continue
-		}
-		fails = 0
-		c.setPairState(p, notify.PairWaiting, "")
-	}
-}
-
 // expired: p's code is past its deadline and can no longer pair.
 func (c *Channel) expired(p *pairState) bool {
 	return !c.opts.Clock.Now().Before(p.expires)
-}
-
-// match reads a batch of updates for p's code: the pairing's outcome once it
-// is over (paired, expired, or cancelled when superseded meanwhile), else "".
-func (c *Channel) match(ctx context.Context, p *pairState, t string, ups []update, offset *int64, res *notify.PairResult) string {
-	for _, u := range ups {
-		*offset = max(*offset, u.UpdateID+1)
-		m := u.Message
-		if m == nil || m.From == nil || m.From.IsBot || m.Chat.Type != "private" || normalize(m.Text) != p.code {
-			res.Ignored++
-			continue
-		}
-		outcome := c.paired(ctx, p, t, *m.From)
-		if outcome == notify.PairedOK {
-			// Confirm what was read, so the code is not read again.
-			_, _ = c.api.updates(ctx, t, *offset, 0)
-		}
-		return outcome
-	}
-	return ""
 }
 
 // paired stores who sent the code (from.id: the person, never the chat)
@@ -537,7 +722,7 @@ func (c *Channel) paired(ctx context.Context, p *pairState, token string, from u
 	c.signal()
 	sctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
-	if err := c.api.send(sctx, token, from.ID, PairedText, false); err != nil {
+	if _, err := c.api.send(sctx, token, from.ID, PairedText, false); err != nil {
 		c.opts.Log.Warn("telegram: the pairing greeting was not delivered", "code", notify.CodeOf(err))
 	}
 	return notify.PairedOK
