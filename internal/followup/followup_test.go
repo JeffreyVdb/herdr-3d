@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -135,30 +137,40 @@ const grillQuestions = `{"questions":[
 	{"question":"Where does a Project's cost live?","kind":"choice","options":["On the Project","On the Environment","On both, split by tag"]},
 	{"question":"When is a Project deleted?","kind":"choice","options":["When its repository is archived","Only by hand","After 90 days without a deploy","Never, only hidden"]}]}`
 
-// A grill round goes through as a card of six choices, and the extraction
-// prompt says a question with a recommended answer is still one. The fakes
-// pin the plumbing and Parse, not what a real model makes of it (#166).
+// A grill round is read as it is (#60): six choices with their
+// recommendations, and no LLM call. The extraction prompt still says a
+// question with a recommended answer is one, for the rounds it reads.
 func TestRunExtractsAGrillRound(t *testing.T) {
 	r := newRoles()
 	r.cls.Score = 0.82
 	r.llm.Text = grillQuestions
 	res, err := followup.Run(context.Background(), r.cls, r.llm, grillRound, 0.82)
-	if err != nil || !res.Flag || res.Source != followup.SourceModel || res.ExtractErr != "" {
+	if err != nil || !res.Flag || res.Source != followup.SourceParsed || res.ExtractErr != "" {
 		t.Fatalf("Run = %+v, %v", res, err)
 	}
 	if len(res.Questions) != 6 {
 		t.Fatalf("%d questions; want 6", len(res.Questions))
 	}
 	for i, q := range res.Questions {
-		if q.ID != fmt.Sprintf("q%d", i+1) || q.Kind != followup.KindChoice || len(q.Options) < 2 || len(q.Options) > 4 {
-			t.Fatalf("question %d = %+v; want a choice of 2-4 options", i+1, q)
+		if q.ID != fmt.Sprintf("q%d", i+1) || q.Label != fmt.Sprintf("Q%d", i+1) || q.Kind != followup.KindChoice || len(q.Options) < 2 || len(q.Options) > 4 ||
+			q.Recommendation == nil || q.Recommendation.Option == nil {
+			t.Fatalf("question %d = %+v; want a choice of 2-4 options with its recommendation", i+1, q)
 		}
 	}
-	if q := res.Questions[1]; q.Question != "What is an Environment?" || q.Options[2] != "A KENV, with the account derived from it" {
+	if q := res.Questions[1]; q.Question != "What is an Environment?" || q.Options[2] != "(c) a KENV, with the account derived from it" || *q.Recommendation.Option != 2 {
 		t.Fatalf("question 2 = %+v", q)
 	}
 	if call := r.cls.Calls()[0]; call.Question != followup.GateQuestion || call.State["last_agent_message"] != grillRound {
 		t.Fatalf("classify call = %+v", call)
+	}
+	if _, l := r.calls(); l != 0 {
+		t.Fatal("a grill round went to the LLM")
+	}
+	// The same round in other words goes to the LLM, whose prompt keeps a
+	// recommended question as one.
+	res, err = followup.Run(context.Background(), r.cls, r.llm, strings.ReplaceAll(grillRound, "❓", "-"), 0.82)
+	if err != nil || res.Source != followup.SourceModel || len(res.Questions) != 6 {
+		t.Fatalf("Run = %+v, %v", res, err)
 	}
 	req := r.llm.Calls()[0]
 	if !req.JSON || len(req.Messages) != 2 || !strings.Contains(req.Messages[1].Content, "➡️ **(c).** KENV primary") {
@@ -174,12 +186,10 @@ func TestRunFallsBack(t *testing.T) {
 		"error":        {Err: &ai.Error{Kind: ai.KindTimeout, Msg: "the LLM timed out"}},
 		"invalid json": {Text: `{"questions": [`},
 		"no json":      {Text: "There are two questions."},
-		"too many":     {Text: manyQuestions(9)},
 		"too long":     {Text: fmt.Sprintf(`{"questions":[{"question":%q,"kind":"open"}]}`, strings.Repeat("a", 301))},
 		"none":         {Text: `{"questions":[]}`},
 		"bad kind":     {Text: `{"questions":[{"question":"Which?","kind":"multi"}]}`},
-		"one option":   {Text: `{"questions":[{"question":"Which?","kind":"choice","options":["A"]}]}`},
-		"long option":  {Text: fmt.Sprintf(`{"questions":[{"question":"Which?","kind":"choice","options":["A",%q]}]}`, strings.Repeat("b", 121))},
+		"none valid":   {Text: `{"questions":[{"question":"","kind":"open"},{"question":"Which?","kind":"multi"}]}`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cls := &ai.FakeClassifier{Score: 0.9}
@@ -203,11 +213,11 @@ func manyQuestions(n int) string {
 }
 
 func TestParseClipsAndNormalises(t *testing.T) {
-	qs, err := followup.Parse(manyQuestions(8))
+	qs, _, err := followup.Parse(manyQuestions(8))
 	if err != nil || len(qs) != 8 {
 		t.Fatalf("8 questions: %d, %v", len(qs), err)
 	}
-	qs, err = followup.Parse(`{"questions":[{"question":"  Ship\n it   now? ","kind":"yes_no","options":["Yes","No"]},
+	qs, _, err = followup.Parse(`{"questions":[{"question":"  Ship\n it   now? ","kind":"yes_no","options":["Yes","No"]},
 		{"question":"` + strings.Repeat("é", 300) + `","kind":"open"}]}`)
 	if err != nil {
 		t.Fatal(err)
@@ -261,13 +271,41 @@ func ptr[T any](v T) *T { return &v }
 func passingRoles() *roles {
 	r := newRoles()
 	r.scoreBy(func(msg string) float64 {
-		if strings.Contains(msg, "Open questions") {
+		if strings.Contains(msg, "Open questions") || strings.Contains(msg, "❓") {
 			return 0.96
 		}
 		return 0.02
 	})
-	r.llm.Text = twoQuestions
+	r.llm.Func = func(_ context.Context, req ai.Request) (string, error) {
+		if strings.Contains(req.Messages[1].Content, "❓ **Q8**") {
+			return grillLLM, nil
+		}
+		return twoQuestions, nil
+	}
 	return r
+}
+
+// grillLLM is a model's answer to SampleGrill: ten questions, each with its
+// recommendation.
+var grillLLM = func() string {
+	b, err := os.ReadFile(filepath.Join("testdata", "grill-round2-llm.json"))
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}()
+
+// reasoningRoles are roles whose AI integration knows the LLM's efforts.
+type reasoningRoles struct {
+	*roles
+	r ai.Reasoning
+}
+
+func (r *reasoningRoles) ModelReasoning(context.Context) ai.Reasoning { return r.r }
+
+func mustNow() func() time.Time {
+	now := time.Unix(1_790_000_000, 0)
+	return func() time.Time { return now }
 }
 
 func TestEnablingNeedsAPassingTest(t *testing.T) {
@@ -288,14 +326,21 @@ func TestEnablingNeedsAPassingTest(t *testing.T) {
 		t.Fatalf("calls before the test: %d, %d", c, l)
 	}
 	res, err := s.Test(ctx, nil)
-	if err != nil || !res.OK || len(res.Samples) != 2 {
+	if err != nil || !res.OK || len(res.Samples) != 3 {
 		t.Fatalf("test = %+v, %v", res, err)
 	}
-	if q := res.Samples[0]; q.Score != 0.96 || !q.Flagged || len(q.Questions) != 2 || q.Source != followup.SourceModel {
+	if q := res.Samples[0]; q.Name != "questions" || q.Score != 0.96 || !q.Flagged || len(q.Questions) != 2 || q.Source != followup.SourceModel {
 		t.Fatalf("questions sample = %+v", q)
 	}
-	if d := res.Samples[1]; d.Score != 0.02 || d.Flagged || d.Questions != nil {
+	// #60: the grill round went to the LLM (not the round reader) and came back whole.
+	if g := res.Samples[1]; g.Name != "grill" || g.Expect != "flag" || !g.Flagged || g.Source != followup.SourceModel || len(g.Questions) != followup.SampleGrillQuestions {
+		t.Fatalf("grill sample = %+v", g)
+	}
+	if d := res.Samples[2]; d.Name != "done" || d.Score != 0.02 || d.Flagged || d.Questions != nil {
 		t.Fatalf("done sample = %+v", d)
+	}
+	if _, l := r.calls(); l != 2 {
+		t.Fatalf("%d LLM calls; want the questions' and the grill round's", l)
 	}
 	if !s.View().Tested {
 		t.Fatal("a passing test is not shown")
@@ -336,7 +381,39 @@ func TestFailingTest(t *testing.T) {
 	}{
 		"questions low": {func(r *roles) { r.scoreBy(func(string) float64 { return 0.3 }) }, "under the threshold"},
 		"done high":     {func(r *roles) { r.scoreBy(func(string) float64 { return 0.9 }) }, "at or over"},
-		"llm fails":     {func(r *roles) { r.llm.Text = "nope" }, "did not extract"},
+		"llm fails":     {func(r *roles) { r.llm.Func = nil; r.llm.Text = "nope" }, "did not extract the questions"},
+		"grill low": {func(r *roles) {
+			r.scoreBy(func(m string) float64 {
+				if strings.Contains(m, "Open questions") {
+					return 0.96
+				}
+				return 0.02
+			})
+		}, "the grill round scored 0.02"},
+		"grill short": {func(r *roles) {
+			r.llm.Func = func(_ context.Context, req ai.Request) (string, error) {
+				if strings.Contains(req.Messages[1].Content, "❓ **Q8**") {
+					return manyQuestions(8), nil
+				}
+				return twoQuestions, nil
+			}
+		}, "listed 8 of the grill round's 10 questions"},
+		"grill without recommendations": {func(r *roles) {
+			r.llm.Func = func(_ context.Context, req ai.Request) (string, error) {
+				if strings.Contains(req.Messages[1].Content, "❓ **Q8**") {
+					return manyQuestions(10), nil
+				}
+				return twoQuestions, nil
+			}
+		}, "no recommendation for 10 of the grill round's 10"},
+		"grill cut off": {func(r *roles) {
+			r.llm.Func = func(_ context.Context, req ai.Request) (string, error) {
+				if strings.Contains(req.Messages[1].Content, "❓ **Q8**") {
+					return "", truncated
+				}
+				return twoQuestions, nil
+			}
+		}, "did not extract the grill round: the model used its whole completion budget"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := passingRoles()

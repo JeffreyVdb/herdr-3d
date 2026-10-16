@@ -1,0 +1,129 @@
+{
+  "turn_id": "grill0000000060a",
+  "questions": [
+    {
+      "id": "q1",
+      "label": "Q8",
+      "question": "Hire params captured at creation",
+      "kind": "open",
+      "context": "A `worker.hire` needs floor, desk, harness/model/effort, cwd and the worktree flag. Should the schedule store a full hire spec, prefilled from the source worker when it comes from a suggestion?\n- cwd: source worker's cwd. If that was a worktree that's gone by fire time, then what?\n- worktree flag: the default?",
+      "recommendation": {
+        "text": "Store the full spec (floor, harness, model, effort, cwd, worktree), prefilled from the source worker and editable. If the stored cwd has disappeared at fire time, fall back to the worktree's repo root plus `worktree: true` (fresh `h3d/` branch). Default `worktree: false` when the source wasn't a worktree, otherwise as above. Desk is picked at fire time, not stored."
+      }
+    },
+    {
+      "id": "q2",
+      "label": "Q9",
+      "question": "Asleep floor at fire time",
+      "kind": "choice",
+      "options": [
+        "(a) Auto-wake the floor, then hire.",
+        "(b) Mark the schedule `failed: floor_asleep` and notify.",
+        "(c) Per-schedule checkbox \"wake floor if asleep\", default on."
+      ],
+      "context": "A hire on an asleep floor returns `invalid_state`. `floor.wake` resumes **every** worker on the floor, which is a side effect.",
+      "recommendation": {
+        "text": "(c), default on. The whole point is not having to remember. Resuming the floor's other workers is acceptable collateral, and users who object can turn it off.",
+        "option": 2
+      }
+    },
+    {
+      "id": "q3",
+      "label": "Q10",
+      "question": "Desks full at fire time",
+      "kind": "choice",
+      "options": [
+        "(a) Fail immediately with `failed: no_desk`.",
+        "(b) Wait in a `waiting_desk` state until a desk frees, shown in the display, with \"run now\" still available. This counts toward lateness under `max_lateness`."
+      ],
+      "recommendation": {
+        "text": "(b). A soak follow-up running an hour late beats one that never runs.",
+        "option": 1
+      }
+    },
+    {
+      "id": "q4",
+      "label": "Q11",
+      "question": "How the handoff reaches the new agent",
+      "kind": "choice",
+      "options": [
+        "(a) Inline the handoff text into the prompt.",
+        "(b) Append \"Context from earlier session: read `~/handoff/\u003cfloor\u003e/\u003cfile\u003e.md` first\" to the explicit prompt."
+      ],
+      "context": "The prompt limit is 32 KiB and a handoff can be larger.",
+      "recommendation": {
+        "text": "(b). Size-safe, the file is already on the bridge host, and it reuses the handoff as-is. If the file was deleted before firing, run without it and add a note to the prompt.",
+        "option": 1
+      }
+    },
+    {
+      "id": "q5",
+      "label": "Q12",
+      "question": "Handoff source on create",
+      "kind": "open",
+      "context": "- From the suggestion chip: auto-create a **literal** handoff (no AI call) of the source message when the schedule is saved, with a checkbox to opt out?\n- Manual create: pick an existing handoff from the filing cabinet (optional), or none?\n- Should LLM/agent handoff modes be offered too?",
+      "recommendation": {
+        "text": "Chip: literal handoff, checkbox on by default. Manual: optional picker over existing handoffs. Literal only in this epic; the user can make an LLM handoff separately first and then pick it."
+      }
+    },
+    {
+      "id": "q6",
+      "label": "Q13",
+      "question": "Detection pipeline \u0026 toggle",
+      "kind": "open",
+      "context": "Reuse the follow-ups (#90) turn-end hook with a second classifier question (\"Does the message say something must be done after a wait or at a later time?\"). The LLM then extracts `{due_at, draft_prompt, title}` and is given the current time in UTC plus the user's tz so it can resolve \"10:45 UTC tomorrow\". Separate settings toggle or shared with follow-ups? Default?",
+      "recommendation": {
+        "text": "A separate bridge setting, \"Schedule suggestions\", off by default like follow-ups, with the same 0.7 gate and the same once-per-message dedup. If the LLM can't produce a concrete `due_at`, show no chip."
+      }
+    },
+    {
+      "id": "q7",
+      "label": "Q14",
+      "question": "Office display form",
+      "kind": "choice",
+      "options": [
+        "(a) Per-floor board showing only that floor's schedules.",
+        "(b) A single global board in the lobby/lounge.",
+        "(c) Per-floor board, with an \"all floors\" toggle in the dialog."
+      ],
+      "context": "A new prop on each floor, e.g. a wall \"departures board\" showing the next ~3 schedules with countdowns. Clicking it opens a HUD dialog with the full list, plus create/edit/cancel/run-now. Scope:",
+      "recommendation": {
+        "text": "(c). Schedules belong to a floor (that's where they hire), but the overview needs to cover all floors.",
+        "option": 2
+      }
+    },
+    {
+      "id": "q8",
+      "label": "Q15",
+      "question": "Manual creation entry points",
+      "kind": "open",
+      "context": "Where can you create one without a chip?\n- The display dialog's \"+ New\".\n- \"Schedule follow-up…\" on any transcript message (next to Handoff), even unclassified.\n- A keyboard shortcut?",
+      "recommendation": {
+        "text": "The first two. The second reuses the chip's prefill path minus the LLM draft. No shortcut for now."
+      }
+    },
+    {
+      "id": "q9",
+      "label": "Q16",
+      "question": "Notifying outcomes",
+      "kind": "open",
+      "context": "When a schedule fires, runs late, is skipped, or fails, how do you hear about it? Toast in game, the display's status, a system/push notification?",
+      "recommendation": {
+        "text": "Game toast plus display status. The hired worker appearing at a desk is the main signal. No OS-level push in this epic."
+      }
+    },
+    {
+      "id": "q10",
+      "label": "Q17",
+      "question": "Defining \"missed\"",
+      "kind": "open",
+      "context": "The bridge's Go timers use a monotonic clock, which stops while the host is suspended (laptop lid closed). Proposal: a wall-clock check every 30 s rather than one long timer, plus a check on startup. A schedule counts as **missed** when it is first checked more than a grace period after `due_at`, and the `on_miss` policy then applies. Grace period?",
+      "recommendation": {
+        "text": "5 min grace. Under that it just runs, with no late note. The scan on startup covers a bridge restart."
+      }
+    }
+  ],
+  "score": 0.89,
+  "source": "parsed",
+  "at": 1792064661000
+}
