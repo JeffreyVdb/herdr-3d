@@ -65,21 +65,6 @@ export function telegramDestination(s: NotifyState): TelegramDestination {
     : { kind: 'paired', label: 'Paired', text: `Alerts are off: nothing is sent to ${who}.` };
 }
 
-/**
- * What an action can change of what the destination says: a channel command the channel (and the last error, which it
- * forgets), notify.set the switch, a test the last error.
- */
-type Owns = 'channel' | 'enabled' | 'last_error';
-const OWNS: Record<string, readonly Owns[]> = { 'notify.set': ['enabled'], 'notify.test': ['last_error'] };
-const CHANNEL: readonly Owns[] = ['channel', 'last_error'];
-
-/** The state `pre` with only what an action owns taken from `now`: where the action alone would have left it. */
-function ownOnly(pre: NotifyState, now: NotifyState, owns: readonly Owns[]): NotifyState {
-  const s = { ...pre };
-  for (const k of owns) Object.assign(s, { [k]: now[k] });
-  return s;
-}
-
 const destLine = (d: TelegramDestination): string => `${d.label}. ${d.text}`;
 
 let serial = 0;
@@ -394,15 +379,16 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     }
 
     /**
-     * Says how an action went. A change of the destination it did not make while it was on its way (another window
-     * switched alerts off during a test) follows its line: the action, from `pre`, would have left it elsewhere.
+     * Says how an action went, and then the destination when it changed since it was last said: the action's or not
+     * (another window switched alerts off during a test, a worker's message bounced), one message in the one live
+     * region. Which change was the action's is not guessed: a missed change costs more than a repeated one.
      */
-    function finish(text: string, error: boolean, pre: NotifyState | null, owns: readonly Owns[]): void {
+    function finish(text: string, error: boolean): void {
       const s = st();
-      if (s && pre) {
+      if (s) {
         const d = telegramDestination(s);
         const said = destLine(d);
-        if (destSaid !== null && said !== destSaid && said !== destLine(telegramDestination(ownOnly(pre, s, owns)))) {
+        if (destSaid !== null && said !== destSaid && !text.includes(d.text)) {
           text = `${text} ${said}`;
           error ||= d.kind === 'error';
         }
@@ -433,17 +419,15 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
       next?: (ok: boolean) => HTMLElement | null,
     ): Promise<boolean> {
       const from = focused();
-      const pre = st();
       acting = true;
       try {
         note = { text: pending, error: false };
         const r = await run(() => host.send(t, args));
-        const owns = OWNS[t] ?? CHANNEL;
         if (!r.ok) {
-          finish(notifyFailureText(r.code, r.message), true, pre, owns);
+          finish(notifyFailureText(r.code, r.message), true);
         } else {
           host.book.upsert(r.data); // the ack is the state: show it even before notify.update
-          finish(ok, false, pre, owns);
+          finish(ok, false);
         }
         land(from, next?.(r.ok) ?? null);
         return r.ok;
@@ -504,15 +488,13 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     unpair.addEventListener('click', () => void act('notify.unpair', {}, 'Unpairing…', 'Unpaired. Nothing is sent until you pair again.', (ok) => (ok ? pair : null)));
     test.addEventListener('click', () => {
       const from = focused();
-      const pre = st();
       acting = true;
       note = { text: 'Sending the test message…', error: false };
       void run(() => host.send('notify.test', {}))
         .then((r) => {
-          const owns = OWNS['notify.test']!;
-          if (!r.ok) return finish(notifyFailureText(r.code, r.message), true, pre, owns);
+          if (!r.ok) return finish(notifyFailureText(r.code, r.message), true);
           const d = r.data as Partial<NotifyTestAck>;
-          finish(`Test message delivered in ${timeText(typeof d.latency_ms === 'number' ? d.latency_ms : 0)}. Check your phone, then switch notifications on.`, false, pre, owns);
+          finish(`Test message delivered in ${timeText(typeof d.latency_ms === 'number' ? d.latency_ms : 0)}. Check your phone, then switch notifications on.`, false);
         })
         .finally(() => {
           land(from, test);

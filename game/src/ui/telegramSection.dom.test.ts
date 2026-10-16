@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
-import { NotifyBook } from '../world/notifySettings';
+import { NotifyBook, notifyFailureText } from '../world/notifySettings';
 import { telegramDestination, telegramSection } from './telegramSection';
 
 type View = Record<string, unknown>;
@@ -136,7 +136,7 @@ describe('Settings → Telegram (#12)', () => {
     expect(lines.map((p) => p.className)).toEqual(['settings-tg-dest-text', 'settings-status settings-field-error']);
   });
 
-  it('says a change it did not make in the one live region; an action’s own line stands', async () => {
+  it('says a change it did not make in the one live region; after an action, its line then the destination', async () => {
     const m = mount(view({ channel: { ...TOKEN, pairing: WAITING } }), () => ({ ok: true, data: view({ channel: TOKEN }) }));
     expect(m.body.querySelectorAll('[aria-live]').length).toBe(2); // the code's expiry, and the status line
     expect(m.dest().getAttribute('aria-live')).toBeNull();
@@ -145,11 +145,11 @@ describe('Settings → Telegram (#12)', () => {
     expect(m.status().hidden).toBe(false);
     expect(m.status().getAttribute('role')).toBe('status');
     expect(m.status().textContent).toBe('Paired. Alerts are off: nothing is sent to Ada.');
-    // An action: its line says what happened, the status does not talk over it.
+    // An action: its line says what happened, then where the destination is now, in one message.
     m.button('Unpair').click();
     await m.flush();
     expect(m.badge().textContent).toBe('Not configured');
-    expect(m.status().textContent).toBe('Unpaired. Nothing is sent until you pair again.');
+    expect(m.status().textContent).toBe('Unpaired. Nothing is sent until you pair again. Not configured. The bot token is saved: pair your Telegram account in step 2.');
   });
 
   it('a change it did not make while an action is on its way is said after the action’s line', async () => {
@@ -185,31 +185,109 @@ describe('Settings → Telegram (#12)', () => {
     expect(document.activeElement).toBe(m.button('Cancel pairing'));
   });
 
-  it('the action’s own change, published before its ack, is said once', async () => {
+  it('the action’s own change, published before its ack: its line, then the destination once, in one message', async () => {
     const PAIRED_ON = { enabled: true, state: 'ready', tested: true, channel: ADA };
+    const OFF = 'Paired. Alerts are off: nothing is sent to Ada.';
     const m = mount(view(PAIRED_ON), () => ({ ok: true, data: view({ ...PAIRED_ON, enabled: false }) }));
+    const said: string[] = [];
+    new MutationObserver(() => {
+      const t = m.status().textContent!;
+      if (t !== said.at(-1)) said.push(t); // sync rewrites the same text: not a new message
+    }).observe(m.status(), { childList: true, characterData: true, subtree: true });
     m.rig.hold = true;
     const on = m.box(/Send Telegram notifications/);
     on.focus();
     on.click(); // off
-    m.book.upsert(view({ ...PAIRED_ON, enabled: false })); // its notify.update
+    m.book.upsert(view({ ...PAIRED_ON, enabled: false })); // its notify.update: shown, not said
+    expect(m.dest().textContent).toContain('Alerts are off');
+    expect(m.status().textContent).toBe('Saving…');
     m.release();
     await m.flush();
-    expect(m.status().textContent).toBe('Off. Nothing is sent.');
-    // A test that fails sets the error itself: its line says why, once.
+    await m.flush();
+    expect(m.status().textContent).toBe(`Off. Nothing is sent. ${OFF}`);
+    // One message: the region went from the pending line to the whole of it, never the destination alone.
+    expect(said.filter((t) => t !== 'Saving…')).toEqual([`Off. Nothing is sent. ${OFF}`]);
+    // Said, it is not said again.
+    m.book.upsert(view({ ...PAIRED_ON, enabled: false }));
+    expect(m.status().textContent).toBe(`Off. Nothing is sent. ${OFF}`);
+    // A test that fails sets the error itself: its line says why, the destination's Error follows.
     const m2 = mount(view(PAIRED_ON), () => ({ ok: false, code: 'blocked', message: '' }));
     m2.rig.hold = true;
     m2.button('Send test message').click();
     m2.book.upsert(view({ ...PAIRED_ON, state: 'blocked', last_error: { code: 'blocked', message: '', at: 1 } }));
     m2.release();
     await m2.flush();
-    expect(m2.status().textContent).not.toContain('Last message not delivered');
-    expect(m2.status().textContent).toContain('press Start');
+    expect(m2.status().textContent).toBe(`${notifyFailureText('blocked', '')} Error. Last message not delivered: ${notifyFailureText('blocked', '')}`);
+    expect(m2.status().textContent!.split('Last message not delivered')).toHaveLength(2);
   });
 
   it('the privacy note says what still talks to Telegram while it is off', () => {
     const m = mount(view());
     expect(m.body.querySelector('.settings-fu-privacy')!.textContent).toMatch(/Saving the token, Pair and Send test message still contact Telegram, even while it is off\./);
+  });
+});
+
+describe('Settings → Telegram says a change made elsewhere during an action (#12, review R1)', () => {
+  const PAIRED_ON = { enabled: true, state: 'ready', tested: true, channel: ADA };
+
+  it('an external switch change while a test is on its way', async () => {
+    const m = mount(view(PAIRED_ON), () => ({ ok: true, data: { ok: true, latency_ms: 240 } }));
+    m.rig.hold = true;
+    const test = m.button('Send test message');
+    test.focus();
+    test.click();
+    m.book.upsert(view({ ...PAIRED_ON, enabled: false }));
+    expect(m.dest().textContent).toContain('Alerts are off');
+    m.release();
+    await m.flush();
+    expect(m.status().textContent).toContain('Alerts are off');
+  });
+
+  it('an external switch change during an event-only save, its ack holding it too', async () => {
+    const updated = view({ ...PAIRED_ON, enabled: false, state: 'off', events: { needs_you: true, done: false } });
+    const m = mount(view(PAIRED_ON), () => ({ ok: true, data: updated }));
+    m.rig.hold = true;
+    const done = m.box(/A worker finishes/);
+    done.focus();
+    done.click();
+    m.book.upsert(updated);
+    m.release();
+    await m.flush();
+    expect(document.activeElement).toBe(done);
+    expect(m.dest().textContent).toContain('Alerts are off');
+    expect(m.status().textContent).toBe('Saved. Paired. Alerts are off: nothing is sent to Ada.');
+  });
+
+  it('a worker’s delivery failure after the test’s success, before its ack', async () => {
+    const m = mount(view(PAIRED_ON), () => ({ ok: true, data: { ok: true, latency_ms: 240 } }));
+    m.rig.hold = true;
+    const test = m.button('Send test message');
+    test.focus();
+    test.click();
+    m.book.upsert(view(PAIRED_ON)); // the test's own success
+    m.book.upsert(view({ ...PAIRED_ON, state: 'blocked', last_error: { code: 'blocked', message: '', at: 1 } })); // a worker's message bounced
+    m.release();
+    await m.flush();
+    expect(document.activeElement).toBe(test);
+    expect(m.dest().textContent).toContain('Last message not delivered');
+    expect(m.status().textContent).toBe(
+      `Test message delivered in 240 ms. Check your phone, then switch notifications on. Error. Last message not delivered: ${notifyFailureText('blocked', '')}`,
+    );
+    expect(m.status().classList.contains('settings-field-error')).toBe(true);
+  });
+
+  it('an action that fails while an external change lands', async () => {
+    const m = mount(view(PAIRED_ON), () => ({ ok: false, code: 'timeout', message: '' }));
+    m.rig.hold = true;
+    const needs = m.box(/A worker needs you/);
+    needs.focus();
+    needs.click();
+    m.book.upsert(view({ ...PAIRED_ON, enabled: false, state: 'off' }));
+    m.release();
+    await m.flush();
+    expect(document.activeElement).toBe(needs);
+    expect(needs.checked).toBe(true); // the bridge's
+    expect(m.status().textContent).toBe(`${notifyFailureText('timeout', '')} Paired. Alerts are off: nothing is sent to Ada.`);
   });
 });
 

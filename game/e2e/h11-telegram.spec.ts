@@ -172,7 +172,7 @@ test('pair the bot, send a test, toggle both events, unpair and remove the token
   await destination(tg, 'Paired', 'Alerts are on');
   // Unpair: back to not configured, the switch off with it.
   await tg.getByRole('button', { name: 'Unpair' }).click();
-  await expect(status).toHaveText('Unpaired. Nothing is sent until you pair again.');
+  await expect(status).toHaveText('Unpaired. Nothing is sent until you pair again. Not configured. The bot token is saved: pair your Telegram account in step 2.');
   await destination(tg, 'Not configured', 'pair your Telegram account');
   await expect(tg.getByRole('button', { name: 'Pair', exact: true })).toBeEnabled();
   await expect(tg.getByRole('button', { name: 'Unpair' })).toBeHidden();
@@ -265,7 +265,7 @@ test('keyboard only: the same journey with Tab, Shift+Tab, Enter and Space, the 
   const unpair = tg.getByRole('button', { name: 'Unpair' });
   await at(unpair);
   await page.keyboard.press('Enter');
-  await expect(status).toHaveText('Unpaired. Nothing is sent until you pair again.');
+  await expect(status).toHaveText('Unpaired. Nothing is sent until you pair again. Not configured. The bot token is saved: pair your Telegram account in step 2.');
   await at(pair);
   await destination(tg, 'Not configured', 'pair your Telegram account');
   // Remove token, asked twice: then the token field.
