@@ -29,6 +29,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
 	"github.com/JeffreyVdb/herdr-3d/internal/harness"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/hoststats"
 	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
@@ -860,6 +861,10 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	opts.DigestEnabled = cfg.DigestEnabled         // #118
 	opts.HandoffLLMEnabled = cfg.HandoffLLMEnabled // #9
 	opts.Caps, opts.HireOptions, opts.Load = cfg.Caps, cfg.HireOptions, server.HostLoad
+	// #74 server rack: checkupdates' throwaway sync database lives in a
+	// directory of the bridge's own, next to the world database, so it never
+	// meets another checkupdates' lock (a bar module, a cron job).
+	opts.HostStats = &hoststats.Config{Updates: hoststats.UpdatesConfig{StateDir: filepath.Join(filepath.Dir(cfg.DB), "checkupdates")}}
 	opts.TrustTimeout, opts.SeenTimeout, opts.ExitTimeout = cfg.TrustTimeout, cfg.SeenTimeout, cfg.ExitTimeout
 	opts.WrapUpTimeout = cfg.WrapUpTimeout // #83
 	if dir := cfg.CodexSessions; dir != "" {

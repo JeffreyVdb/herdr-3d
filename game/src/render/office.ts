@@ -17,10 +17,16 @@ import { MezzanineView } from './mezzanine';
 import { BODY_TINTS, OFFICE } from './palette';
 import { buildProps, signTexture, type PropMeshes } from './props';
 import type { ClockFace } from './clock';
+import { PropViewer } from './propView';
+import type { RackInfo } from './rack';
+import type { HostDiskRate, HostStats } from '../net/protocol';
+import type { RackMode } from '../world/hostStats';
 import type { OverviewData } from '../world/overview';
 
 /** #118: the wall screen draws and pages only while it spans at least this share of the view's height (readable). */
 const OVERVIEW_READABLE = 0.3;
+/** #74: the server rack counts as seen (its LEDs, its monitor) once its box spans this share of the view's height. */
+const RACK_VISIBLE = 0.03;
 import { lookOf, NOON, type Look } from './daylook';
 // M7: the corkboard, the pull request board and the merge gong.
 import { BoardsView } from './boards/boards';
@@ -750,33 +756,53 @@ export class OfficeView {
     const ov = this.props.overview;
     if (!ov) return false;
     const p = this.layout.props.find((x) => x.id === 'screen.overview');
-    let view = false;
-    if (p && this.root.visible) {
-      this.ovBox.min.fromArray(p.box.min);
-      this.ovBox.max.fromArray(p.box.max);
-      this.ovBox.applyMatrix4(this.root.matrixWorld);
-      this.ovFrustum.setFromProjectionMatrix(this.ovMat.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
-      // In view and big enough to read: the share of the view's height its middle spans (a far glimpse pages nothing).
-      if (this.ovFrustum.intersectsBox(this.ovBox)) {
-        const c = this.ovBox.getCenter(this.ovV.set(0, 0, 0));
-        const h = (this.ovBox.max.y - this.ovBox.min.y) / 2;
-        const top = this.ovV2.set(c.x, c.y + h, c.z).project(camera).y;
-        const bottom = this.ovV.set(c.x, c.y - h, c.z).project(camera).y;
-        this.ovShare = Math.abs(top - bottom) / 2;
-        view = this.ovShare >= OVERVIEW_READABLE;
-      } else this.ovShare = 0;
-    }
-    return ov.tick(now, view);
+    // In view and big enough to read: the share of the view's height its middle spans (a far glimpse pages nothing).
+    this.ovShare = p && this.root.visible ? this.viewer.share(p.box, this.root, camera) : 0;
+    return ov.tick(now, this.ovShare >= OVERVIEW_READABLE);
+  }
+
+  /**
+   * #74: whether the server rack is in view of `camera` and big enough on it for its LEDs to be seen (RACK_VISIBLE): the
+   * rack's whole box is tested, not only its monitor, so a look at the LEDs from across the room watches too.
+   */
+  tickRack(camera: THREE.Camera): boolean {
+    const p = this.layout.props.find((x) => x.id === 'server.rack');
+    this.rackShare = p && this.root.visible ? this.viewer.share(p.box, this.root, camera) : 0;
+    return this.rackShare >= RACK_VISIBLE;
+  }
+
+  /** #74: the activity LEDs' rates from a `host.disk` frame (null: no live data, the calm blink). */
+  setRackDisks(disks: readonly HostDiskRate[] | null): void {
+    this.props.rack?.setDisks(disks);
+  }
+
+  /** #74: the rack's monitor; it redraws only when its mode or the numbers change. */
+  setRackScreen(mode: RackMode, frame: HostStats | null): void {
+    this.props.rack?.setScreen(mode, frame);
+  }
+
+  /** #74: battery saver or reduced motion: steady LEDs. */
+  setRackMotion(on: boolean): void {
+    this.props.rack?.setMotion(on);
+  }
+
+  /** #74: shows or hides the whole rack (the perf spec's way to count what it draws). */
+  setRackShown(on: boolean): void {
+    if (this.props.rack) this.props.rack.group.visible = on;
+  }
+
+  /** #74: what the rack shows (test hook); null without one. */
+  rackInfo(): (RackInfo & { share: number }) | null {
+    const i = this.props.rack?.info();
+    return i ? { ...i, share: +this.rackShare.toFixed(3) } : null;
   }
 
   /** #118: the share of the view's height the wall screen spans (test hook). */
   ovShare = 0;
-  private readonly ovV = new THREE.Vector3();
-  private readonly ovV2 = new THREE.Vector3();
-
-  private readonly ovBox = new THREE.Box3();
-  private readonly ovFrustum = new THREE.Frustum();
-  private readonly ovMat = new THREE.Matrix4();
+  /** #74: the share the server rack spans (test hook). */
+  rackShare = 0;
+  /** The in-view test the wall screen and the rack share (render/propView.ts). */
+  private readonly viewer = new PropViewer();
 
   /** #118: what the wall screen shows (test hook); null without one. */
   overviewInfo(): (ReturnType<NonNullable<PropMeshes['overview']>['info']> & { share: number }) | null {
@@ -923,6 +949,7 @@ export class OfficeView {
     this.crowd.update(t);
     this.desks.update(t, camera);
     this.boardsBusy = this.boards.frame(performance.now());
+    this.props.rack?.setTime(t); // #74: the LEDs' clock, a uniform
     this.cardCam = cardCam;
     this.cards.update(cardCam, this.anchors, vp, moved || this.cardsDirty);
     this.cardsDirty = false;
