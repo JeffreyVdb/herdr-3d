@@ -162,7 +162,9 @@ make browsers          # download the Chromium revision the pinned Playwright ex
 - `go test ./internal/ai ./internal/server` never call a model (#92): `httptest` servers play Jev and an OpenAI-compatible
   endpoint, and a feature's tests take `ai.FakeClassifier` / `ai.FakeLLM`. `game/e2e/ai-integration.spec.ts` starts its own
   fake Jev and OpenAI servers on OS-leased loopback ports and the fixture bridge (`simjev=<url>`, `game/tools/fixture-ai.ts`)
-  calls them; no spec reaches a real provider. #90: `go test ./internal/followup ./internal/server` take the fakes too
+  calls them; no spec reaches a real provider. #90: `go test ./internal/followup ./internal/server` take the fakes too (#60: `go test ./internal/followup -run Live` measures
+the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_LIVE=<ai.json>` and
+`H3D_FOLLOWUP_LIVE_PLAN=low:8192,…`; it costs inference)
   (the server's run the real transcript fixtures `internal/transcript/testdata/*/followup_*.jsonl` through the usage
   tracker), and `game/e2e/followups.spec.ts` starts its own fake Jev and OpenAI servers the same way. #110:
   `go test ./internal/packup ./internal/server` take the fakes, and `game/e2e/m110-packup.spec.ts` its own fake servers. #118 phase 2: `go test ./internal/digest ./internal/server` take `ai.FakeLLM`
@@ -1119,6 +1121,11 @@ bridge (the test really calls the AI integration's fakes), `sim.turn {id, text}`
 worker's turn with that message and runs the pipeline when the feature is ready (a `followup` upsert), and
 `worker.answer_followup` sends the formatted answers as one `worker.prompt` (with `simecho=<ms>` it is echoed into the
 transcript). `window.__h3d.followups()` is the feature's state. `e2e/followups.spec.ts` drives the settings and the card.
+#60: `simfollowup=grill` seeds Pebble (demo-m5) with the incident's ten-question grill round as the bridge reads it
+(`game/fixtures/followup-grill.json`), `simfollowup=fallback` with its fallback (Retry reads the round;
+`fallback-fail`: it falls back again), no AI setup needed; `worker.retry_followup` and `worker.followup_message` work on
+both. For a UX look: `make dev`, then `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simfollowup%3Dgrill&floor=herdr-3d`
+and sit at Pebble's laptop.
 
 #110 on the simulating server (`tools/fixture-packup.ts`, rules at its top): `packup.get` / `set` / `test` like the
 bridge (the test runs a part of the labelled samples through the AI integration's fakes), and `packup.detect` cuts the
