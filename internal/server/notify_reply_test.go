@@ -201,20 +201,33 @@ func TestReplyFailuresSaidInTheChat(t *testing.T) {
 	// Lane full: one worker.keys held in herdr, 32 more waiting.
 	m1 := rb.finished(t, "w1")
 	gate := make(chan struct{})
+	defer close(gate) // Release herdr before bridge cleanup, even on a failed assertion.
+	started := make(chan struct{}, 1)
 	rb.term.mu.Lock()
 	rb.term.textGate = gate
+	rb.term.textStarted = started
 	rb.term.mu.Unlock()
-	for i := range 33 {
+	send := func(i int) {
 		raw, _ := json.Marshal(proto.WorkerKeysArgs{ID: rb.ids["w1"], Input: []proto.InputItem{text("slow")}})
 		rb.c.send(proto.Command{T: proto.CmdWorkerKeys, ReqID: "k" + itoa(i), Args: raw})
 	}
-	// The first is held in herdr, so the other 32 wait on the lane.
-	time.Sleep(100 * time.Millisecond)
+	send(0)
+	// Wait until the first command leaves the queue and blocks in herdr.
+	// Otherwise the burst can fill the queue before the lane starts.
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first input did not reach herdr")
+	}
+	for i := range 32 {
+		send(i + 1)
+	}
+	// A reply on the same connection proves all 32 commands were queued.
+	rb.c.mustAck(proto.CmdNotifyGet, struct{}{})
 	rb.reply(m1, "now add tests")
 	if a := rb.answer(t, 2); !strings.Contains(a.Text, "a lot of input waiting") {
 		t.Fatalf("busy: %+v", a)
 	}
-	close(gate)
 	for _, c := range rb.term.Calls() {
 		if strings.Contains(c, "now add tests") || strings.Contains(c, "hello") {
 			t.Fatalf("typed %q", c)
