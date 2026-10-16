@@ -4610,8 +4610,10 @@ typed into its worker. Nothing leaves the machine while it is off.
   answer in the game"), over 4096 characters ("too long (N characters)"), more than 6 replies to one worker or 20 in
   all within a minute, the worker gone, asleep or without an agent, its input lane full (32 waiting), herdr failing
   it, a `/handoff` (ask for it in the game). The bot's answers are bounded too (10 a minute; more are not sent).
-  Switched on, nothing sent while replies were off is typed (the first poll forgets the backlog, and a message dated
-  before the switch is dropped); switched off or unpaired, nothing more is typed, a poll already under way included.
+  Switched on, nothing sent while replies were off is typed (the first poll forgets the backlog, and only a message
+  dated after the second of the switch is typed: Telegram's dates are whole seconds, so one sent in that very second
+  is dropped too); switched off, unpaired or paired anew, nothing read before is typed, a poll or a reply already
+  under way included (the change waits for a reply being handed to its worker's lane).
   Replies on when the bridge starts (a restart, a release): what came while it was away is read, and typed when sent
   within the last 2 minutes; older is answered as not sent. Telegram keeps updates 24 hours at most. Replies stay on
   across unpairing: they read only the account paired at the time, and pause while there is none.
