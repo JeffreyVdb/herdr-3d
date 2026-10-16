@@ -1403,9 +1403,9 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
 | `worktree` | `{"path", "linked"}` of the worker's git checkout, `null` when its directory is not in a git work tree |
 | `dirty` | `git status --porcelain` lines (at most 50) |
 | `unpushed` | commits reachable from `HEAD` that are on no remote-tracking branch |
-| `can_delete` | the worker is in a linked worktree, the tree is clean and nothing is unpushed. Only then may `worker.fire` delete the worktree. |
+| `can_delete` | the worker is in a linked worktree, the tree is clean, nothing is unpushed and no schedule holds it (#63, below). Only then may `worker.fire` delete the worktree. |
 | `can_delete_branch` | `can_delete`, and the bridge recorded making a branch for this worker (`hire_branch`), the checkout is on that branch now, and every commit of that branch is on a remote. Only then may `worker.fire` use `delete_branch`: offer "delete worktree + branch" only when this is `true`. |
-| `reason` | why `can_delete` is false |
+| `reason` | why `can_delete` is false. #63: a worktree a schedule holds reads `used by scheduled agent '<title>' at <due>`, with `and <n> more` when several do (the earliest due is named); this comes before any dirty or unpushed reason. |
 | `can_fire`, `fire_blocked` | `false` (and why) when herdr would refuse to close the workspace: a repository's main checkout with an agent in it whose linked worktree workspaces are still open on the floor (herdr's `workspace_group_close_required`; send those home first). The bridge never closes a group. (An agentless main checkout is not a worker while worktrees are open, so there is nothing to send home: below.) |
 
 **`worker.fire`** sends the worker home:
@@ -1416,8 +1416,10 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
 {"t":"ack","req_id":"41","data":{"worktree":"kept","released":true}}
 ```
 
-1. `worktree` `delete` / `delete_branch` need a worker in a linked worktree (else `bad_request`) and a clean, fully
-   pushed tree, checked again now (else `not_clean`, and nothing happens). `delete_branch` also needs a branch the
+1. `worktree` `delete` / `delete_branch` need a worker in a linked worktree (else `bad_request`), no schedule holding
+   it (#63: `invalid_state`, the `message` ending in `worker.fire.prepare`'s `reason`; checked against the checkout
+   when the command arrives and against the tree's top before anything is touched, and nothing happens) and a clean,
+   fully pushed tree, checked again now (else `not_clean`, and nothing happens). `delete_branch` also needs a branch the
    bridge recorded making for this worker (`hire_branch`; an `h3d/…` name alone is not enough, else `bad_request`),
    the checkout still on that branch (read now), and every commit of that branch on a remote (`git rev-list --count
    refs/heads/<branch> --not --remotes`); else `not_clean`, and nothing happens.
@@ -1432,7 +1434,9 @@ back, the branch h3d/… is kept (it has commits since …)`) and in the audit r
    link, which is what sending home means (never used for sleep).
 3. `herdr workspace close <workspace>`, or for a deleted worktree `herdr worktree remove --workspace <workspace>`
    (it closes the workspace; never `--force`). If the tree became dirty, or (`delete_branch`) the checkout left the
-   branch or the branch got unpushed commits during the exit, the worktree is kept and `note` says so.
+   branch or the branch got unpushed commits during the exit, the worktree is kept and `note` says so. #63: so is a
+   worktree a schedule came to hold during the exit (`note`: `used by scheduled agent '<title>' at <due>: the worktree
+   is kept`), for a wrap-up's send home too.
 4. `worker.removed` with `reason: "sent_home"`, once the bridge sees the workspace gone (up to 5 s); the desk is free
    again and the name held as for any worker that leaves. For `delete_branch`, then — its commits counted once
    more — `git branch -D <recorded branch>` in the main checkout (safe: every commit is on a remote), and its
@@ -1469,7 +1473,8 @@ is `worker.fire`'s, step by step, with the worktree choice made up front.
    bridge reads (`--claude-projects` / `--codex-sessions`; else `invalid_state`, or `internal` when this bridge reads
    none), it is not blocked and has no `ask` (`invalid_state`), and it is not armed already (`busy`; one that needs you
    may be armed again). For `delete` / `delete_branch` the tree must be clean and pushed now, as `worker.fire.prepare`
-   reports it (`not_clean`, nothing sent). `prompt` is 1 byte to 16 KiB minus the footer, without NUL, and for Claude
+   reports it (`not_clean`, nothing sent), and no schedule may hold it (#63: `invalid_state` with
+   `worker.fire.prepare`'s `reason`, nothing sent; `keep` may still be armed). `prompt` is 1 byte to 16 KiB minus the footer, without NUL, and for Claude
    (typed, #95) with no control characters but line ends and tabs (`bad_request`).
    Then a fresh nonce (16 hex digits) is made, the transcript offset the bridge reads from is taken (where its tail
    of that transcript is now, within about 2 s), and `{worker, nonce, worktree, armed_at, transcript, offset}` is
@@ -1504,6 +1509,7 @@ is `worker.fire`'s, step by step, with the worktree choice made up front.
    | Seen | What follows |
    |---|---|
    | `CLEAN` | The tree is checked again (clean and pushed, for a delete). Still fine: `worker.fire`'s steps with the armed choice, strict (below), audited as a `worker.fire` row whose `result` has `"wrapup": {"nonce", "verdict": "clean"}`; then `worker.removed` with `reason: "sent_home"`. Not fine, or the send home fails: `needs_you` with why, nothing removed. |
+   | `CLEAN`, armed with a delete, and a schedule holds the worktree now (#63; made after the arm) | **Kept**: the worker is sent home with `keep` (the workspace closes, the worktree and branch stay; never a delete), and the note `used by scheduled agent '<title>' at <due>: the worktree is kept` is in the `worker.fire` row's `result`, as `wrapup.reason` and a step. Whether the tree is clean does not matter then. |
    | `BLOCKED: <reason>` | `needs_you` with the agent's reason. Nothing is touched. |
    | no result line, a malformed one, a wrong nonce, two markers | `needs_you`, `"did not report a wrap-up result"`. |
    | herdr says `blocked`, or the worker has an `ask` | keep waiting: the question shows as ever. |
@@ -4443,7 +4449,27 @@ that it was missed:
 - otherwise it fires late, and its prompt starts with: `This task was scheduled for 2026-10-17 10:45 UTC and is running
   at 2026-10-17 13:05 UTC, 2h 20m late. Check whether anything below is stale before acting.`
 
-`run_now` and `retry` skip the grace check (a retry of a late schedule still gets the late notice). Each schedule fires
+`run_now` and `retry` skip the grace check (a retry of a late schedule still gets the late notice).
+
+**Worktree hold.** #63 (part 2 of #61). A schedule that is `scheduled` or `waiting` **holds** the linked worktree its
+`cwd` is in (the worktree's top level or any directory under it, compared as canonical paths: cleaned, symlinks
+resolved where they exist, on separator boundaries, so `/x/wt` does not hold `/x/wt2`), whatever its `worktree` flag
+(a worktree hire still needs `cwd` to find the repository). Nothing in the bridge deletes a held worktree:
+
+- `worker.fire.prepare`: `can_delete` and `can_delete_branch` are `false`, and `reason` is `used by scheduled agent
+  '<title>' at <due>`; several holders: the earliest due is named, `… and <n> more`. `<due>` is the bridge's local time,
+  `2006-01-02 15:04 MST` (the zone of the bridge's clock, `TZ` / the host's zone), e.g. `used by scheduled agent 'After
+  the soak' at 2026-10-17 12:45 CEST and 2 more`.
+- `worker.fire` with `delete` / `delete_branch` and `worker.wrapup` with a delete: `invalid_state`, the same reason
+  (checked when the command arrives, not only in the dialog). A hold that comes while a send home's agent exits keeps
+  the worktree, with a `note`.
+- An armed wrap-up whose worktree is held at its `CLEAN` is sent home keeping it, with a note (see
+  [Wrap up](#wrap-up)).
+- `keep`, and sending the worker home, always work.
+
+The hold is read from the schedules each time: cancelling a schedule, its fire (`running`, then `done` or `failed`),
+`skipped` and `schedule.dismiss` release it. Removals outside the bridge (`git worktree remove`, `rm`) are not
+prevented: the schedule then fails when it fires (`working directory <cwd> no longer exists`). Each schedule fires
 once: the fire writes `running` before herdr is called, and a schedule a crash left `running` is resolved on startup:
 `done` if the bridge ever saw its worker, else `failed` `"bridge stopped while hiring"`. It is never fired again.
 
@@ -4520,7 +4546,7 @@ dismissed_at)`.
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started; #224: an agent handoff for a worker with a request running or a wrap-up armed, a wrap-up while a request runs, `worker.handoff_cancel` while it is being filed; #58: `session.create` of a name already being created; #60: `worker.retry_followup` while a retry of that follow-up runs |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read; #60 `worker.retry_followup` after 3 retries of that follow-up, or while follow-up questions are not `ready`; #62 a `schedule.*` command in a state it does not allow (see [Scheduled agents](#scheduled-agents)), or on a cancelled or dismissed schedule |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read; #60 `worker.retry_followup` after 3 retries of that follow-up, or while follow-up questions are not `ready`; #62 a `schedule.*` command in a state it does not allow (see [Scheduled agents](#scheduled-agents)), or on a cancelled or dismissed schedule; #63 `worker.fire` with `delete` / `delete_branch` or `worker.wrapup` with a delete of a worktree a schedule holds (the message ends in `used by scheduled agent '<title>' at <due>`, see "Worktree hold") |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |

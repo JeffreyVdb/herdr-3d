@@ -1427,6 +1427,7 @@ func (h *Hub) startFirePrepare(ctx context.Context, c *Client, cmd proto.Command
 	if err != nil {
 		return err
 	}
+	holds := h.scheduleHolds() // #63: read here, matched against the tree's top below
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
 		t := h.readTree(ctx, dir)
 		if linked && t.err == nil && t.top != "" {
@@ -1444,9 +1445,12 @@ func (h *Hub) startFirePrepare(ctx context.Context, c *Client, cmd proto.Command
 			res.Worktree = &proto.FireWorktree{Path: t.top, Linked: linked}
 			res.Dirty = append(res.Dirty, t.dirty[:min(len(t.dirty), maxDirtyLines)]...)
 			res.Unpushed = t.unpushed
+			held := holds.of(t.top)
 			switch why := t.problems(); {
 			case !linked:
 				res.Reason = "not in a linked worktree (only those can be deleted)"
+			case held != "":
+				res.Reason = held
 			case why != "":
 				res.Reason = why
 			default:
@@ -1516,6 +1520,11 @@ func (h *Hub) newFireOp(ctx context.Context, w *proto.Worker, f *floorState, cho
 			return nil, bad("%s does not work in a linked worktree: only keep is possible", w.Name)
 		case h.opts.Git == nil:
 			return nil, errors.New("deleting worktrees is not configured")
+		}
+		// #63: checked here against the checkout, and against the tree's
+		// top before anything is removed (fireCheck).
+		if why := h.scheduleHolds().of(op.checkout); why != "" {
+			return nil, fmt.Errorf("%w: %s", errInvalidState, why)
 		}
 	}
 	var made store.HireBranch
@@ -1589,16 +1598,26 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 	res := proto.FireResult{Worktree: proto.WorktreeKept}
 	remove := op.choice != proto.FireKeep
 	if remove {
-		why, err := h.fireCheck(ctx, op, rep)
+		why, held, err := h.fireCheck(ctx, op, rep)
 		switch {
 		case err != nil:
 			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %v", errFireFailed, err), rep)
 			return
+		case held != "" && op.wrapup != nil:
+			// #63: a wrap-up's CLEAN keeps a held worktree.
+			remove = false
+			res.Note = heldKept(held)
+			op.wrapup.Reason = res.Note
+			rep.step("%s", res.Note)
+		case held != "":
+			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %s", errInvalidState, held), rep)
+			return
 		case why != "":
 			h.finishFire(ctx, op, nil, fmt.Errorf("%w: %s: the worktree is kept", errNotClean, why), rep)
 			return
+		default:
+			rep.step("tree clean and pushed")
 		}
-		rep.step("tree clean and pushed")
 	}
 
 	exit := h.exitAgent(ctx, op, rep)
@@ -1625,7 +1644,15 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 	}
 
 	if remove {
-		if why, err := h.fireCheck(ctx, op, rep); err != nil || why != "" {
+		if why, held, err := h.fireCheck(ctx, op, rep); held != "" {
+			// #63: held while the agent exited: kept, never deleted.
+			remove = false
+			res.Note = heldKept(held)
+			if op.wrapup != nil {
+				op.wrapup.Reason = res.Note
+			}
+			rep.step("%s", res.Note)
+		} else if err != nil || why != "" {
 			if err != nil {
 				why = err.Error()
 			}
@@ -1688,25 +1715,37 @@ func (h *Hub) runFire(ctx context.Context, op *fireOp) {
 	h.finishFire(ctx, op, &res, nil, rep)
 }
 
-// fireCheck says why a worker's worktree may not be deleted now: its tree
-// is dirty or has commits on no remote, or (delete_branch) the checkout
-// is no longer on the branch the bridge made or that branch has commits
-// on no remote. err: the state could not be read.
-func (h *Hub) fireCheck(ctx context.Context, op *fireOp, rep *fireReport) (why string, err error) {
+// fireCheck says why a worker's worktree may not be deleted now: held, a
+// schedule's cwd is in it (#63); why, its tree is dirty or has commits on
+// no remote, or (delete_branch) the checkout is no longer on the branch the
+// bridge made or that branch has commits on no remote. err: the state
+// could not be read. Off the hub goroutine.
+func (h *Hub) fireCheck(ctx context.Context, op *fireOp, rep *fireReport) (why, held string, err error) {
 	t := h.readTree(ctx, op.checkout)
 	rep.Dirty, rep.Unpushed = t.dirty, t.unpushed
 	switch {
 	case t.err != nil:
-		return "", fmt.Errorf("reading the git state: %v", t.err)
+		return "", "", fmt.Errorf("reading the git state: %v", t.err)
 	case t.top == "":
-		return "", fmt.Errorf("%s is not a git work tree", op.checkout)
-	case t.problems() != "":
-		return t.problems(), nil
-	case op.branch == "":
-		return "", nil
+		return "", "", fmt.Errorf("%s is not a git work tree", op.checkout)
 	}
-	return h.branchDeletable(ctx, store.HireBranch{RepoRoot: op.repoRoot, Branch: op.branch}, t.top), nil
+	holds, err := query(ctx, h, h.scheduleHolds)
+	if err != nil {
+		return "", "", err
+	}
+	switch held := holds.of(t.top); {
+	case held != "":
+		return "", held, nil
+	case t.problems() != "":
+		return t.problems(), "", nil
+	case op.branch == "":
+		return "", "", nil
+	}
+	return h.branchDeletable(ctx, store.HireBranch{RepoRoot: op.repoRoot, Branch: op.branch}, t.top), "", nil
 }
+
+// heldKept is the note of a send home that kept a held worktree (#63).
+func heldKept(held string) string { return held + ": the worktree is kept" }
 
 // branchDeletable says why the branch the bridge made may not be deleted
 // with the worktree at checkout: the checkout is on another branch now
