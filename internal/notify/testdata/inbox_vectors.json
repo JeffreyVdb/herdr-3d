@@ -1,0 +1,1404 @@
+{
+  "comment": "Written by go test ./internal/server -run TestNotifyInboxVectors -update-notify-vectors. The inbox rule's cases: a worker as the protocol carries it (on a floor asleep or not) and what the game's WorldStore.workerView (display, since), inboxReason and inboxQueue (candidate, with freelancers off and on) say. internal/notify and game/src/world/notifyVectors.test.ts both check it.",
+  "vectors": [
+    {
+      "name": "working",
+      "asleep": false,
+      "worker": {
+        "id": "waa",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-waa",
+        "label": "worker waa",
+        "status": "working",
+        "name": "Pixel",
+        "desk_index": 0,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "working",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "idle",
+      "asleep": false,
+      "worker": {
+        "id": "wab",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wab",
+        "label": "worker wab",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 1,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "unknown status is idle",
+      "asleep": false,
+      "worker": {
+        "id": "wac",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wac",
+        "label": "worker wac",
+        "status": "unknown",
+        "name": "Pixel",
+        "desk_index": 2,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "blocked needs you",
+      "asleep": false,
+      "worker": {
+        "id": "wad",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wad",
+        "label": "worker wad",
+        "status": "blocked",
+        "name": "Pixel",
+        "desk_index": 3,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "done employee",
+      "asleep": false,
+      "worker": {
+        "id": "wae",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wae",
+        "label": "worker wae",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 4,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "done orchestrator",
+      "asleep": false,
+      "worker": {
+        "id": "waf",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-waf",
+        "label": "worker waf",
+        "status": "done",
+        "role": "orch",
+        "name": "Pixel",
+        "desk_index": 5,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "done coder (freelancer)",
+      "asleep": false,
+      "worker": {
+        "id": "wag",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wag",
+        "label": "worker wag",
+        "status": "done",
+        "role": "code",
+        "name": "Pixel",
+        "desk_index": 6,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "done reviewer, role in capitals",
+      "asleep": false,
+      "worker": {
+        "id": "wah",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wah",
+        "label": "worker wah",
+        "status": "done",
+        "role": "Review",
+        "name": "Pixel",
+        "desk_index": 7,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "done freelancer by its label",
+      "asleep": false,
+      "worker": {
+        "id": "wai",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wai",
+        "label": "CODE|h3d-11|r1",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 8,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "an unknown role is no crew, whatever the label",
+      "asleep": false,
+      "worker": {
+        "id": "waj",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-waj",
+        "label": "CODE|x",
+        "status": "done",
+        "role": "designer",
+        "name": "Pixel",
+        "desk_index": 9,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "ask while idle",
+      "asleep": false,
+      "worker": {
+        "id": "wak",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wak",
+        "label": "worker wak",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 10,
+        "status_since": 1000,
+        "ask": {
+          "tool_use_id": "toolu_1",
+          "source": "transcript",
+          "agent": "claude",
+          "questions": [
+            {
+              "header": "Pick",
+              "question": "Which color?",
+              "multi": false,
+              "other": false,
+              "options": [
+                {
+                  "label": "Green"
+                },
+                {
+                  "label": "Blue"
+                }
+              ]
+            }
+          ],
+          "since": 1500
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Question",
+        "since": 1500,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "ask while working",
+      "asleep": false,
+      "worker": {
+        "id": "wal",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wal",
+        "label": "worker wal",
+        "status": "working",
+        "name": "Pixel",
+        "desk_index": 11,
+        "status_since": 1000,
+        "ask": {
+          "tool_use_id": "toolu_1",
+          "source": "transcript",
+          "agent": "claude",
+          "questions": [
+            {
+              "header": "Pick",
+              "question": "Which color?",
+              "multi": false,
+              "other": false,
+              "options": [
+                {
+                  "label": "Green"
+                },
+                {
+                  "label": "Blue"
+                }
+              ]
+            }
+          ],
+          "since": 1500
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Question",
+        "since": 1500,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "ask without options is not an ask",
+      "asleep": false,
+      "worker": {
+        "id": "wam",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wam",
+        "label": "worker wam",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 12,
+        "status_since": 1000,
+        "ask": {
+          "tool_use_id": "toolu_1",
+          "source": "transcript",
+          "agent": "claude",
+          "questions": [
+            {
+              "header": "Pick",
+              "question": "Which color?",
+              "multi": false,
+              "other": false,
+              "options": null
+            }
+          ],
+          "since": 1500
+        }
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "ask without a tool use id is not an ask",
+      "asleep": false,
+      "worker": {
+        "id": "wan",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wan",
+        "label": "worker wan",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 13,
+        "status_since": 1000,
+        "ask": {
+          "tool_use_id": "",
+          "source": "",
+          "agent": "",
+          "questions": [
+            {
+              "header": "Pick",
+              "question": "Which color?",
+              "multi": false,
+              "other": false,
+              "options": [
+                {
+                  "label": "Green"
+                },
+                {
+                  "label": "Blue"
+                }
+              ]
+            }
+          ],
+          "since": 1500
+        }
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "ask with no question is not an ask",
+      "asleep": false,
+      "worker": {
+        "id": "wao",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wao",
+        "label": "worker wao",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 14,
+        "status_since": 1000,
+        "ask": {
+          "tool_use_id": "t",
+          "source": "",
+          "agent": "",
+          "questions": [],
+          "since": 1500
+        }
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "secret ask",
+      "asleep": false,
+      "worker": {
+        "id": "wap",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wap",
+        "label": "worker wap",
+        "status": "blocked",
+        "name": "Pixel",
+        "desk_index": 15,
+        "status_since": 1000,
+        "ask": {
+          "tool_use_id": "t",
+          "source": "",
+          "agent": "",
+          "questions": [
+            {
+              "header": "",
+              "question": "API key?",
+              "multi": false,
+              "other": false,
+              "secret": true,
+              "options": []
+            }
+          ],
+          "since": 1600
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Question",
+        "since": 1600,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "follow-up after done",
+      "asleep": false,
+      "worker": {
+        "id": "waq",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-waq",
+        "label": "worker waq",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 16,
+        "status_since": 1000,
+        "followup": {
+          "turn_id": "turn-1",
+          "questions": [
+            {
+              "id": "q1",
+              "question": "Ship it?",
+              "kind": "yes_no"
+            }
+          ],
+          "score": 0,
+          "source": "model",
+          "at": 1700
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Follow-up",
+        "since": 1700,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "ask wins over a follow-up",
+      "asleep": false,
+      "worker": {
+        "id": "war",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-war",
+        "label": "worker war",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 17,
+        "status_since": 1000,
+        "ask": {
+          "tool_use_id": "toolu_1",
+          "source": "transcript",
+          "agent": "claude",
+          "questions": [
+            {
+              "header": "Pick",
+              "question": "Which color?",
+              "multi": false,
+              "other": false,
+              "options": [
+                {
+                  "label": "Green"
+                },
+                {
+                  "label": "Blue"
+                }
+              ]
+            }
+          ],
+          "since": 1500
+        },
+        "followup": {
+          "turn_id": "turn-1",
+          "questions": [
+            {
+              "id": "q1",
+              "question": "Ship it?",
+              "kind": "yes_no"
+            }
+          ],
+          "score": 0,
+          "source": "model",
+          "at": 1700
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Question",
+        "since": 1500,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "follow-up choice without options is none",
+      "asleep": false,
+      "worker": {
+        "id": "was",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-was",
+        "label": "worker was",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 18,
+        "status_since": 1000,
+        "followup": {
+          "turn_id": "turn-1",
+          "questions": [
+            {
+              "id": "q",
+              "question": "A or B?",
+              "kind": "choice"
+            }
+          ],
+          "score": 0,
+          "source": "model",
+          "at": 1700
+        }
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "follow-up choice with options",
+      "asleep": false,
+      "worker": {
+        "id": "wat",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wat",
+        "label": "worker wat",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 19,
+        "status_since": 1000,
+        "followup": {
+          "turn_id": "turn-1",
+          "questions": [
+            {
+              "id": "q",
+              "question": "A or B?",
+              "kind": "choice",
+              "options": [
+                "A",
+                "B"
+              ]
+            }
+          ],
+          "score": 0,
+          "source": "model",
+          "at": 1700
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Follow-up",
+        "since": 1700,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "follow-up of an unknown kind is none",
+      "asleep": false,
+      "worker": {
+        "id": "wau",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wau",
+        "label": "worker wau",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 20,
+        "status_since": 1000,
+        "followup": {
+          "turn_id": "turn-1",
+          "questions": [
+            {
+              "id": "q",
+              "question": "?",
+              "kind": "essay"
+            }
+          ],
+          "score": 0,
+          "source": "model",
+          "at": 1700
+        }
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "follow-up question without an id is none",
+      "asleep": false,
+      "worker": {
+        "id": "wav",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wav",
+        "label": "worker wav",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 21,
+        "status_since": 1000,
+        "followup": {
+          "turn_id": "turn-1",
+          "questions": [
+            {
+              "id": "",
+              "question": "?",
+              "kind": "open"
+            }
+          ],
+          "score": 0,
+          "source": "model",
+          "at": 1700
+        }
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "wrap-up stuck",
+      "asleep": false,
+      "worker": {
+        "id": "waw",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-waw",
+        "label": "worker waw",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 22,
+        "status_since": 1000,
+        "wrapup": {
+          "state": "needs_you",
+          "worktree": "",
+          "armed_at": 1
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Wrap-up stuck",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "wrap-up armed and done",
+      "asleep": false,
+      "worker": {
+        "id": "wax",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wax",
+        "label": "worker wax",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 23,
+        "status_since": 1000,
+        "wrapup": {
+          "state": "armed",
+          "worktree": "",
+          "armed_at": 1
+        }
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "orchestrator over the cap",
+      "asleep": false,
+      "worker": {
+        "id": "way",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-way",
+        "label": "worker way",
+        "status": "idle",
+        "role": "orch",
+        "name": "Pixel",
+        "desk_index": 24,
+        "status_since": 1000,
+        "over_cap": true
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "orchestrator at the cap waiting for you",
+      "asleep": false,
+      "worker": {
+        "id": "waz",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-waz",
+        "label": "worker waz",
+        "status": "idle",
+        "role": "orch",
+        "name": "Pixel",
+        "desk_index": 25,
+        "status_since": 1000,
+        "phase": "waiting_user",
+        "pass": 3
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "orchestrator at the cap, reviewing",
+      "asleep": false,
+      "worker": {
+        "id": "wba",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wba",
+        "label": "worker wba",
+        "status": "working",
+        "role": "orch",
+        "name": "Pixel",
+        "desk_index": 26,
+        "status_since": 1000,
+        "phase": "review",
+        "pass": 3
+      },
+      "expect": {
+        "display": "working",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "orchestrator past the cap",
+      "asleep": false,
+      "worker": {
+        "id": "wbb",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbb",
+        "label": "worker wbb",
+        "status": "working",
+        "role": "orch",
+        "name": "Pixel",
+        "desk_index": 27,
+        "status_since": 1000,
+        "pass": 4
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "a coder's over_cap does not count",
+      "asleep": false,
+      "worker": {
+        "id": "wbc",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbc",
+        "label": "worker wbc",
+        "status": "idle",
+        "role": "code",
+        "name": "Pixel",
+        "desk_index": 28,
+        "status_since": 1000,
+        "over_cap": true
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "report request",
+      "asleep": false,
+      "worker": {
+        "id": "wbd",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbd",
+        "label": "worker wbd",
+        "status": "done",
+        "role": "code",
+        "name": "Pixel",
+        "desk_index": 29,
+        "status_since": 1000,
+        "report": {
+          "state": "ready",
+          "input_required": "I need the staging password"
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Report request",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "report request resolved",
+      "asleep": false,
+      "worker": {
+        "id": "wbe",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbe",
+        "label": "worker wbe",
+        "status": "done",
+        "role": "code",
+        "name": "Pixel",
+        "desk_index": 30,
+        "status_since": 1000,
+        "report": {
+          "state": "ready",
+          "input_required": "I need the staging password",
+          "input_resolved": {
+            "by": "orchestrator",
+            "at": 5
+          }
+        }
+      },
+      "expect": {
+        "display": "done",
+        "reason": "Finished",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "report request of blanks",
+      "asleep": false,
+      "worker": {
+        "id": "wbf",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbf",
+        "label": "worker wbf",
+        "status": "idle",
+        "role": "code",
+        "name": "Pixel",
+        "desk_index": 31,
+        "status_since": 1000,
+        "report": {
+          "state": "ready",
+          "input_required": "   "
+        }
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "report request of an invalid report",
+      "asleep": false,
+      "worker": {
+        "id": "wbg",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbg",
+        "label": "worker wbg",
+        "status": "idle",
+        "role": "review",
+        "name": "Pixel",
+        "desk_index": 32,
+        "status_since": 1000,
+        "report": {
+          "state": "invalid",
+          "input_required": "help"
+        }
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "an employee's report request does not count",
+      "asleep": false,
+      "worker": {
+        "id": "wbh",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbh",
+        "label": "worker wbh",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 33,
+        "status_since": 1000,
+        "report": {
+          "state": "ready",
+          "input_required": "help"
+        }
+      },
+      "expect": {
+        "display": "idle",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "waiting while idle",
+      "asleep": false,
+      "worker": {
+        "id": "wbi",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbi",
+        "label": "worker wbi",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 34,
+        "status_since": 1000,
+        "activity": {
+          "kind": "waiting",
+          "detail": "Testing in the background",
+          "since": 900,
+          "source": "rule"
+        }
+      },
+      "expect": {
+        "display": "waiting",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "waiting while done",
+      "asleep": false,
+      "worker": {
+        "id": "wbj",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbj",
+        "label": "worker wbj",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 35,
+        "status_since": 1000,
+        "activity": {
+          "kind": "waiting",
+          "detail": "Testing in the background",
+          "since": 900,
+          "source": "rule"
+        }
+      },
+      "expect": {
+        "display": "waiting",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "waiting while working is working",
+      "asleep": false,
+      "worker": {
+        "id": "wbk",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbk",
+        "label": "worker wbk",
+        "status": "working",
+        "name": "Pixel",
+        "desk_index": 36,
+        "status_since": 1000,
+        "activity": {
+          "kind": "waiting",
+          "detail": "Testing in the background",
+          "since": 900,
+          "source": "rule"
+        }
+      },
+      "expect": {
+        "display": "working",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "waiting with an ask needs you",
+      "asleep": false,
+      "worker": {
+        "id": "wbl",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbl",
+        "label": "worker wbl",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 37,
+        "status_since": 1000,
+        "ask": {
+          "tool_use_id": "toolu_1",
+          "source": "transcript",
+          "agent": "claude",
+          "questions": [
+            {
+              "header": "Pick",
+              "question": "Which color?",
+              "multi": false,
+              "other": false,
+              "options": [
+                {
+                  "label": "Green"
+                },
+                {
+                  "label": "Blue"
+                }
+              ]
+            }
+          ],
+          "since": 1500
+        },
+        "activity": {
+          "kind": "waiting",
+          "detail": "Testing in the background",
+          "since": 900,
+          "source": "rule"
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Question",
+        "since": 1500,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "blocked only by a Codex async question works",
+      "asleep": false,
+      "worker": {
+        "id": "wbm",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbm",
+        "label": "worker wbm",
+        "status": "blocked",
+        "name": "Pixel",
+        "desk_index": 38,
+        "status_since": 1000,
+        "codex": {
+          "mode": "shared",
+          "server": "running",
+          "attached": true,
+          "async_blocked": true
+        }
+      },
+      "expect": {
+        "display": "working",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "a real Codex block needs you",
+      "asleep": false,
+      "worker": {
+        "id": "wbn",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbn",
+        "label": "worker wbn",
+        "status": "blocked",
+        "name": "Pixel",
+        "desk_index": 39,
+        "status_since": 1000,
+        "codex": {
+          "mode": "shared",
+          "server": "running",
+          "attached": true
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "async_blocked of a legacy Codex does not count",
+      "asleep": false,
+      "worker": {
+        "id": "wbo",
+        "session": "awake",
+        "floor": "awake",
+        "workspace_id": "ws-wbo",
+        "label": "worker wbo",
+        "status": "blocked",
+        "name": "Pixel",
+        "desk_index": 40,
+        "status_since": 1000,
+        "codex": {
+          "mode": "legacy",
+          "async_blocked": true
+        }
+      },
+      "expect": {
+        "display": "needs_you",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": true,
+        "candidate_with_freelancers": true
+      }
+    },
+    {
+      "name": "asleep and blocked",
+      "asleep": true,
+      "worker": {
+        "id": "wbp",
+        "session": "sleepy",
+        "floor": "sleepy",
+        "workspace_id": "ws-wbp",
+        "label": "worker wbp",
+        "status": "blocked",
+        "name": "Pixel",
+        "desk_index": 41,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "asleep",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "asleep and done",
+      "asleep": true,
+      "worker": {
+        "id": "wbq",
+        "session": "sleepy",
+        "floor": "sleepy",
+        "workspace_id": "ws-wbq",
+        "label": "worker wbq",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 42,
+        "status_since": 1000
+      },
+      "expect": {
+        "display": "asleep",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "asleep with an ask",
+      "asleep": true,
+      "worker": {
+        "id": "wbr",
+        "session": "sleepy",
+        "floor": "sleepy",
+        "workspace_id": "ws-wbr",
+        "label": "worker wbr",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 43,
+        "status_since": 1000,
+        "ask": {
+          "tool_use_id": "toolu_1",
+          "source": "transcript",
+          "agent": "claude",
+          "questions": [
+            {
+              "header": "Pick",
+              "question": "Which color?",
+              "multi": false,
+              "other": false,
+              "options": [
+                {
+                  "label": "Green"
+                },
+                {
+                  "label": "Blue"
+                }
+              ]
+            }
+          ],
+          "since": 1500
+        }
+      },
+      "expect": {
+        "display": "asleep",
+        "reason": "Question",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "asleep with a follow-up",
+      "asleep": true,
+      "worker": {
+        "id": "wbs",
+        "session": "sleepy",
+        "floor": "sleepy",
+        "workspace_id": "ws-wbs",
+        "label": "worker wbs",
+        "status": "done",
+        "name": "Pixel",
+        "desk_index": 44,
+        "status_since": 1000,
+        "followup": {
+          "turn_id": "turn-1",
+          "questions": [
+            {
+              "id": "q1",
+              "question": "Ship it?",
+              "kind": "yes_no"
+            }
+          ],
+          "score": 0,
+          "source": "model",
+          "at": 1700
+        }
+      },
+      "expect": {
+        "display": "asleep",
+        "reason": "Follow-up",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "asleep with a stuck wrap-up",
+      "asleep": true,
+      "worker": {
+        "id": "wbt",
+        "session": "sleepy",
+        "floor": "sleepy",
+        "workspace_id": "ws-wbt",
+        "label": "worker wbt",
+        "status": "idle",
+        "name": "Pixel",
+        "desk_index": 45,
+        "status_since": 1000,
+        "wrapup": {
+          "state": "needs_you",
+          "worktree": "",
+          "armed_at": 0
+        }
+      },
+      "expect": {
+        "display": "asleep",
+        "reason": "Wrap-up stuck",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    },
+    {
+      "name": "asleep orchestrator over the cap",
+      "asleep": true,
+      "worker": {
+        "id": "wbu",
+        "session": "sleepy",
+        "floor": "sleepy",
+        "workspace_id": "ws-wbu",
+        "label": "worker wbu",
+        "status": "idle",
+        "role": "orch",
+        "name": "Pixel",
+        "desk_index": 46,
+        "status_since": 1000,
+        "over_cap": true
+      },
+      "expect": {
+        "display": "asleep",
+        "reason": "Needs you",
+        "since": 1000,
+        "candidate": false,
+        "candidate_with_freelancers": false
+      }
+    }
+  ]
+}

@@ -127,6 +127,15 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'repo_discovery.refresh': 'scan for repositories',
   'worker.answer_async': "answer a Codex worker's question", // #156
   'worker.dismiss_async': "dismiss a Codex worker's question",
+  // #11
+  'notify.get': 'keep the Telegram notifications',
+  'notify.set': 'keep the Telegram notifications',
+  'notify.test': 'send a Telegram test message',
+  'notify.token.set': 'save the Telegram bot token',
+  'notify.token.clear': 'remove the Telegram bot token',
+  'notify.pair.start': 'pair a Telegram account',
+  'notify.pair.cancel': 'pair a Telegram account',
+  'notify.unpair': 'unpair the Telegram account',
   // #118
   'digest.get': 'keep the floor overview summaries',
   'digest.set': 'keep the floor overview summaries',

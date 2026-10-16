@@ -257,6 +257,10 @@ service or a handoff directory, or from before #9; a worker's job is its own `ll
 `activity` (#98) is "Classify unknown commands"' state (see [Activity](#activity)), left out by a bridge without the AI
 service or from before #98; a worker's own `activity` is in the worker.
 
+`notify` (#11) is the Telegram notifications' settings and channel state (see [Notifications](#notifications)), left
+out by a bridge without a notification channel or from before #11. It never holds the bot token: `key_set` and its
+last four characters only.
+
 `inbox_dismissed` (#106) holds the dismissed rows of the game's inbox: worker id → the `status_since` of the done episode
 that was dismissed (see [Inbox](#inbox)); `{}` when there are none. A bridge from before #106 leaves the key out: a
 client reads that as `{}`.
@@ -547,6 +551,7 @@ and remember the last `seq` applied.
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
 | `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
 | `digest.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `daily_cap`, `calls_today`, `reasoning_effort`, `max_tokens`, `reasoning`, `effort_stale` | #118: the floor overview summaries' state changed (a setting, a call counted, a passing test, the LLM's state); the whole state, flat in the event. Its `roles` has `llm` only: decode it by its `t` (see [Floor overview summaries](#floor-overview-summaries)) |
+| `notify.update` | `enabled`, `state`, `missing`?, `env`, `tested`, `events`, `quiet`, `freelancers`, `channel`, `last_error`?, `dropped`? | #11: the Telegram notifications' state changed (a setting, the token, a pairing, a test, a delivery's failure or the next success); the whole state, flat in the event, never a token (see [Notifications](#notifications)) |
 | `handoff_llm.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `input_bytes`, `max_tokens`, `reasoning_effort`, `reasoning`, `effort_stale`, `timeout_s`, `prompt_version`, `categories` | #9: the LLM handoffs' state changed (a setting, a passing test, the LLM's state or config); the whole state, flat in the event (see [LLM handoffs](#llm-handoffs)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
@@ -704,6 +709,14 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `digest.set` | `{"enabled"?: bool, "daily_cap"?: 1–10000, "reasoning_effort"?: string, "max_tokens"?: 64–16384}` | its state; `reasoning_effort` `""` is the provider's default, else one the model's catalog lists (`bad_request` otherwise) (#174) | `digest.update` (before the ack) |
 | `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?, "diag"?}], "latency_ms"}` (`diag`: the call's sanitized [diagnostics](#floor-overview-summaries)) | `digest.update` when it changes `tested` |
 | `digest.retry` | `{"id"?: worker id}` | `{"retried": n}`: the failed lines of that worker (every worker without an id) are due again, their attempts counted anew; `incomplete` while the feature is off or the LLM not ready; `unknown_worker` (#174) | `worker.upsert` of the workers whose line status changed |
+| `notify.get` | `{}` | the notifications' state (see [Notifications](#notifications)) | — |
+| `notify.set` | `{"enabled"?: bool, "events"?: {"needs_you"?: bool, "done"?: bool}, "quiet"?: bool, "freelancers"?: bool}` | its state; switching on needs a token (`not_configured`), a paired account (`not_paired`) and a delivered `notify.test` of both within 30 minutes (`test_required`); `env_locked` while the environment sets it | `notify.update` (before the ack) |
+| `notify.test` | `{}` | `{"ok": true, "latency_ms"}`: the test message reached Telegram for the paired account; else its delivery's code (`blocked`, `unauthorized`, `rate_limited`, `unreachable`, `timeout`, `provider_failed`) | `notify.update` when it changes `tested` or `last_error` |
+| `notify.token.set` | `{"key": bot token}` | its state, once Telegram's `getMe` accepted the token (`bad_request`: not shaped like one; `unauthorized`); another bot's token unpairs; `env_locked` when the environment gives the token. Audited as `{"key_given": true}` | `notify.update` (before the ack) |
+| `notify.token.clear` | `{}` | its state: the token and the paired account forgotten (`env_locked` as above) | `notify.update` (before the ack) |
+| `notify.pair.start` | `{}` | its state with `channel.pairing`: a one-time code to send the bot (`not_configured` without a token; Telegram's `getMe` checks it first) | `notify.update` (before the ack, and as the pairing moves) |
+| `notify.pair.cancel` | `{}` | its state: the bridge stops waiting for the code | `notify.update` (before the ack) |
+| `notify.unpair` | `{}` | its state: the paired account forgotten (the token stays) | `notify.update` (before the ack) |
 | `handoff_llm.get` | `{}` | the LLM handoffs' state (see [LLM handoffs](#llm-handoffs)); it reads the LLM model's reasoning from its catalog when that was not read lately | — |
 | `handoff_llm.set` | `{"enabled"?: bool, "input_bytes"?: 16384–786432, "max_tokens"?: 1024–32768, "reasoning_effort"?: string}` | its state; switching on needs a passing `handoff_llm.test` of the config in use (`test_required`) and the LLM ready (`incomplete`); `env_locked` while the environment sets it | `handoff_llm.update` (before the ack) |
 | `handoff_llm.test` | `{}` | `{"ok", "reason"?, "title"?, "bytes", "latency_ms", "diag"?}`: the LLM wrote a handoff of a synthetic session | `handoff_llm.update` when it changes `tested` or the binding |
@@ -4538,6 +4551,55 @@ bridge restart and a second browser.
 Stored in SQLite `inbox_dismissed (worker_uuid PRIMARY KEY REFERENCES worker(id) ON DELETE CASCADE, status_since,
 dismissed_at)`.
 
+### Notifications
+
+#11. The bridge sends a Telegram message to your phone when a worker **needs you** or **finishes**, by the inbox's
+own rule: the game's (`WorldStore.workerView`, `inboxReason`, `inboxQueue`), ported to the bridge
+(`internal/notify`) and pinned to it by shared vectors (`internal/notify/testdata/inbox_vectors.json`). It is one
+way: the only messages the bridge reads are a pairing's, and only while a pairing waits. Nothing leaves the machine
+while it is off.
+
+- **Who notifies**: a worker needing you (any role: blocked, an `ask`, a `followup`, a wrap-up `needs_you`, an
+  orchestrator over its cap, a freelancer's report request), at once; a worker `done`, after **5 seconds** if it is
+  still the same done episode (cancelled when it leaves done; it settles again if it comes back). A freelancer's done
+  only with `freelancers` on (off by default, as the inbox's). Waiting workers (#98) and asleep floors never notify.
+  The inbox's read and dismissed rows (#106) are the browser's; the bridge ignores them.
+- **Once per episode**: an episode is the worker, needs-you or done, and its `since` (`ask.since`, else `followup.at`,
+  else `status_since`). What the bridge sees of a worker first (its start, a herdr session back) is known without a
+  message, so a restart sends nothing old; so is an episode that starts while the feature, its event or the channel
+  is off, or the floor sleeps: switching on later, or a floor waking, sends nothing old either.
+- **The message** (plain text, no link previews; `quiet` delivers it without a sound): the worker's name, the reason
+  (`Question`, `Follow-up`, `Wrap-up stuck`, `Report request`, `Needs you`, `Finished`) and one line: the overview's
+  now line (else its task line), else the last line of the agent's last text, else none, with anything shaped like a
+  key or token removed (`digest.Scrub`), at most 200 characters. A worker whose `ask` has a `secret` question gets no
+  line at all.
+- **The token**: from @BotFather. `notify.token.set` checks it with Telegram's `getMe` and keeps it in `telegram.json`
+  (0600, next to the database; `--telegram-file`, `HERDR_WORLD_TELEGRAM_FILE`), never in SQLite, never in a view, an
+  event, an error, a log line or an audit row (`channel.key_set`, `channel.key_hint`: its last four characters).
+  `--telegram-key-file` / `HERDR_WORLD_TELEGRAM_KEY_FILE` gives it from a file instead: `channel.key_env`, `env` lists
+  `token`, and `notify.token.*` are `env_locked`.
+- **Pairing**: `notify.pair.start` shows `channel.pairing` `{"state": "waiting", "code": "ABCD-EFGH", "expires_at"}`
+  (a one-time code, 10 minutes). Send it to the bot (`channel.bot`, its username) from your Telegram account: the
+  first private message whose text is the code (any case, spaces and dashes ignored) pairs **its sender** (Telegram's
+  `from.id`), and every message then goes to that account (`channel.paired {"name", "at"}`: a first name and when;
+  never the id). Every other message, from anyone, is ignored without a reply. The bridge long-polls Telegram's
+  `getUpdates` only while the code waits; a poll that fails shows `state` `error`, another program reading the bot's
+  updates (a webhook, a second bridge with that token: Telegram's 409) `conflict`, both retried with a backoff; an
+  unused code ends as `{"state": "expired"}`. `notify.pair.cancel` stops it, `notify.unpair` forgets the account.
+- **Settings** (bridge-wide, SQLite `notify_settings`): `enabled`, `events {"needs_you", "done"}`, `quiet`,
+  `freelancers`. `HERDR_WORLD_NOTIFY_ENABLED` / `--notify-enabled` (`true` / `false`) wins over the stored switch and
+  lists `enabled` in `env` (`env_locked`); it needs no test, the channel must still be ready. Otherwise switching on
+  needs a token, a paired account and a `notify.test` delivered with them in the last 30 minutes (`tested`).
+- **State**: `off`; `incomplete` (on, `missing` lists `token` and/or `recipient`: nothing is sent); `ready`; `blocked`
+  (on, but Telegram refused the last message: the bot blocked or never started, or the token revoked; `last_error`
+  says which, until a delivery works).
+- **Delivery**: a queue of 32 messages (a full one drops and counts it, `dropped`); at most 4 attempts; Telegram's
+  `retry_after` is honoured on a 429 (more than 2 minutes: given up), a 5xx or a network failure waits 1, 2 then 4 s.
+  A Telegram outage never holds up the bridge.
+- **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`
+  and `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}`. Never a
+  message's text, a code, a token or a Telegram id.
+
 ### Host stats
 
 #74. The game's server rack shows the CPU and memory of the machine the bridge runs on, the number of pending system
@@ -4599,6 +4661,7 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
 | `bad_request` | not a JSON object with `t`; missing `req_id`; bad or unknown `args` fields; invalid name; a second `hello` |
 | `auth_failed`, `no_models_endpoint`, `unreachable`, `timeout`, `bad_response`, `truncated`, `empty_answer`, `incomplete`, `test_required`, `env_locked` | #92 `ai.*` (see [AI integration](#ai-integration)); `rate_limited` and `provider_failed` are used there too; #90 `followups.*` and #110 `packup.*` use `incomplete`, `test_required`, `env_locked` and, from their tests' calls, the `ai.*` ones (`packup.detect` never fails on a model: no match); #98 `activity.set` uses `env_locked`; #118 `digest.*` use `incomplete`, `test_required`, `env_locked`, `bad_request` (#174: also a reasoning effort or budget the model or the range refuses; `digest.retry` also `unknown_worker`) and, from its test's calls, the `ai.*` ones (`truncated`, `empty_answer`); #211 `hire.interpret` never fails with them: they are its result's `error` (see [Hire interpretation](#hire-interpretation)) |
 | `bad_url`, `key_required`, `not_configured`, `unauthorized`, `forbidden` | #184 `kaneo.*` and a floor's Kaneo link (see [Kaneo](#kaneo)); `unauthorized` (the provider refused the key, HTTP 401, maybe its quota) and `forbidden` (a permission problem, HTTP 403) also from the board commands of a provider that tells them apart; `unreachable`, `timeout`, `test_required`, `rate_limited` and `provider_failed` are used there too |
+| `not_paired`, `blocked`, `conflict`, `dropped` | #11 `notify.*` (see [Notifications](#notifications)): no Telegram account is paired; Telegram will not deliver to it (the bot blocked or never started, HTTP 403, or 400 "chat not found"); another program reads the bot's updates (409; a pairing's state, never a command's answer); an alert the full queue dropped (an audit row's code only). `test_required`, `env_locked`, `not_configured` (no token), `unauthorized` (Telegram refused the token), `bad_request`, `rate_limited`, `unreachable`, `timeout` and `provider_failed` are used there too |
 | `unknown_command` | `t` is not a command of this protocol version. The connection stays open. |
 | `not_found` | no building with that id; #62 no schedule with that id; a `transcript.item` id that is not in the transcript, a `transcript.image` hash this connection was not sent (or an image that can no longer be read), or a subagent (`agent`) without a transcript; no team preset with that id (`preset.update`, `preset.delete`, `run.prepare`, `run.start`); a board item id that is not on the floor's provider, or a `work_item` that is not on its board |
 | `name_taken` | another building, or another team preset, already has that name (ignoring case); #58 `session.create`: a floor, a herdr session (also an asleep one), a session folder or a loaded `herdr-s-<name>` unit has that name |

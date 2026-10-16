@@ -1371,3 +1371,95 @@ dialog.settings {
     flex-wrap: wrap;
   }
 }
+
+/* #11: Telegram. Three steps in their order (the token, the account, the test), each a block with its state, then
+ * the switch and its options. The pairing code is the one thing to read off the screen and type on a phone: large,
+ * spaced, in the code face (no 0/O or 1/I in its alphabet), in a well of its own with when it expires under it. */
+.settings-tg {
+  display: flex;
+  flex-direction: column;
+}
+.settings-tg[hidden] {
+  display: none;
+}
+.settings-tg-line {
+  margin: 0;
+}
+.settings-tg .settings-fu-actions {
+  flex-wrap: wrap;
+}
+.settings-tg-code {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--well);
+}
+.settings-tg-code[hidden] {
+  display: none;
+}
+.settings-tg-code-value {
+  font-family: var(--font-code);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  user-select: all;
+}
+.settings-tg-code-hint {
+  flex: 1 1 220px;
+  margin: 0;
+}
+.settings-tg-open {
+  text-decoration: none;
+}
+/* A step's buttons come and go with its state (Pair / Cancel pairing / Unpair): .btn's display must not keep them. */
+.settings-tg .btn[hidden],
+.settings-tg .settings-link[hidden] {
+  display: none;
+}
+.settings-tg-opts {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+.settings-tg-events {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.settings-tg-events legend {
+  margin-bottom: 2px;
+  padding: 0;
+  font-size: 12.5px;
+}
+.settings-tg-opts .settings-switch {
+  font-weight: 400;
+}
+.settings-tg-opts > .settings-switch:first-of-type {
+  font-weight: 700;
+}
+.settings-tg-opts .settings-switch:has(input:disabled) {
+  cursor: not-allowed;
+}
+.settings-tg-opts .settings-switch input:disabled ~ span {
+  opacity: 0.6;
+}
+.settings-tg-opts .settings-field-error[hidden] {
+  display: none;
+}
+@media (max-width: 600px) {
+  .settings-tg-code-value {
+    font-size: 22px;
+  }
+  .settings-tg .btn--sm {
+    min-height: 44px;
+  }
+}

@@ -448,6 +448,8 @@ export interface World {
   digest?: DigestState;
   /** #9 LLM handoffs: the feature's settings and state (absent from an older bridge, or one without the AI service or a cabinet). */
   handoff_llm?: HandoffLLMState;
+  /** #11 Telegram notifications: the settings and the channel's state (absent from an older bridge, or one without a channel). Never a token. */
+  notify?: NotifyState;
   /** #106 the inbox's dismissed finished rows: worker id → the `status_since` of the done episode hidden (absent from an older bridge: none). */
   inbox_dismissed?: Record<string, number>;
   /** #155 the shared Codex server switch (absent from an older bridge). */
@@ -568,6 +570,8 @@ export type WorldEvent =
   | ActivityUpdate
   // #118 floor overview summaries
   | DigestUpdate
+  // #11 Telegram notifications
+  | NotifyUpdate
   | HandoffLLMUpdate
   // #106 the inbox: a finished row was dismissed
   | InboxDismissed
@@ -914,6 +918,16 @@ export interface CommandArgs {
   'digest.test': Record<string, never>;
   /** #174: try the failed summary lines of a worker (every worker without an id) again; acks `{ retried }`. */
   'digest.retry': { id?: string };
+  // #11 Telegram notifications (docs/protocol.md "Notifications"): each acks `NotifyState`, `notify.test` `NotifyTestAck`.
+  'notify.get': Record<string, never>;
+  'notify.set': { enabled?: boolean; events?: { needs_you?: boolean; done?: boolean }; quiet?: boolean; freelancers?: boolean };
+  'notify.test': Record<string, never>;
+  /** The bot token from @BotFather: checked by the bridge (getMe) and kept there; never sent back, never logged (`loggedArgs`). */
+  'notify.token.set': { key: string };
+  'notify.token.clear': Record<string, never>;
+  'notify.pair.start': Record<string, never>;
+  'notify.pair.cancel': Record<string, never>;
+  'notify.unpair': Record<string, never>;
   // #9 LLM handoffs (docs/protocol.md "LLM handoffs"). `handoff_llm.test` acks `HandoffLLMTestAck`.
   'handoff_llm.get': Record<string, never>;
   /** `input_bytes` the transcript budget, `max_tokens` the completion budget (reasoning included), `reasoning_effort` "" the provider's default. */
@@ -1222,6 +1236,7 @@ const EVENT_TYPES = new Set([
   'worker.activity', // #98 what the agent is doing
   'activity.update', // #98 activity settings
   'digest.update', // #118 floor overview summaries
+  'notify.update', // #11 Telegram notifications
   'handoff_llm.update', // #9 LLM handoffs
   'inbox.dismissed', // #106 the inbox: a finished row dismissed
   'handoff.added', // #223 the filing cabinet
@@ -1312,6 +1327,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #118 floor overview summaries: the fields of `DigestState` flat in the event.
     case 'digest.update':
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
+    // #11 Telegram notifications: the fields of `NotifyState` flat in the event.
+    case 'notify.update':
+      return typeof o.enabled === 'boolean' && typeof o.state === 'string' && isObj(o.channel);
     // #9 LLM handoffs: the fields of `HandoffLLMState` flat in the event.
     case 'handoff_llm.update':
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
@@ -2428,6 +2446,65 @@ export interface DigestTestAck {
   ok: boolean;
   reason?: string;
   samples: Array<{ kind: 'task' | 'now'; line?: string; error?: string; diag?: CallDiagnostics }>;
+  latency_ms: number;
+}
+
+// #11 Telegram notifications (docs/protocol.md "Notifications"): the bridge messages the paired Telegram account when a
+// worker needs you or finishes. The bot token stays on the bridge: the state has `key_set` and a four-character hint.
+
+/** off: switched off (nothing leaves the machine); incomplete: on, no token or no paired account; ready; blocked: the last message was refused (the bot blocked, the token revoked). */
+export type NotifyFeatureState = 'off' | 'incomplete' | 'ready' | 'blocked';
+
+/** A pairing: waiting for its code (or retrying after a conflict or a failure), or expired. */
+export interface NotifyPairing {
+  state: 'waiting' | 'conflict' | 'error' | 'expired';
+  /** The one-time code (`ABCD-EFGH`); absent once expired. */
+  code?: string;
+  expires_at?: number;
+  message?: string;
+}
+
+/** The channel (Telegram) as the bridge shows it: never the token. */
+export interface NotifyChannel {
+  provider: string;
+  key_set: boolean;
+  /** The token's last four characters. */
+  key_hint?: string;
+  /** The bot's username (no @), once Telegram said it. */
+  bot?: string;
+  /** The bridge environment gives the token (HERDR_WORLD_TELEGRAM_KEY_FILE): it cannot be changed here. */
+  key_env?: boolean;
+  paired?: { name?: string; at: number };
+  pairing?: NotifyPairing;
+}
+
+export interface NotifyState {
+  enabled: boolean;
+  state: NotifyFeatureState;
+  /** What the channel lacks: `token`, `recipient`. */
+  missing?: string[];
+  /** The fields the bridge environment sets (`enabled`: HERDR_WORLD_NOTIFY_ENABLED, `token`): read-only here. */
+  env: string[];
+  /** A passing notify.test covers the token and account in use: it can be switched on. */
+  tested: boolean;
+  events: { needs_you: boolean; done: boolean };
+  quiet: boolean;
+  freelancers: boolean;
+  channel: NotifyChannel;
+  last_error?: { code: string; message: string; at: number };
+  /** Alerts dropped since the bridge started (a full queue). */
+  dropped?: number;
+}
+
+/** `notify.update`: the whole state, flat. */
+export interface NotifyUpdate extends NotifyState {
+  t: 'notify.update';
+  seq: number;
+}
+
+/** `notify.test` ack. */
+export interface NotifyTestAck {
+  ok: boolean;
   latency_ms: number;
 }
 

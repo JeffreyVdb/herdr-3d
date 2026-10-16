@@ -37,6 +37,7 @@ import { CodexServerBook } from './codexServer';
 import { RepoDiscoveryBook } from './repoDiscovery';
 import { RepoRefsBook } from './repoRefs';
 import { KaneoBook } from './kaneo';
+import { NotifyBook } from './notifySettings';
 import { HandoffBook } from './handoff';
 import { floorGroups, FloorListBook } from './floorList';
 import { LimitBook } from './limits';
@@ -239,6 +240,7 @@ export class WorldStore {
   readonly repoRefs = new RepoRefsBook(); // #247
   readonly repoDiscovery = new RepoDiscoveryBook(); // #54
   readonly kaneo = new KaneoBook(); // #184
+  readonly notifySettings = new NotifyBook(); // #11
   readonly handoffs = new HandoffBook(); // #223
   /** #58 stage 4: Settings → Floors' rows, refreshed after every change that moves floors or workers. */
   readonly floorList = new FloorListBook(() => floorGroups(this.floors.values(), this.workers.values()));
@@ -284,6 +286,7 @@ export class WorldStore {
     this.packup.reset(s.world.packup); // #110
     this.activitySettings.reset(s.world.activity); // #98
     this.digestSettings.reset(s.world.digest); // #118
+    this.notifySettings.reset(s.world.notify); // #11
     this.handoffLlm.reset(s.world.handoff_llm); // #9
     this.codexServer.reset(s.world.codex_server); // #155
     this.repoRefs.reset(s.world.repo_refs); // #247
@@ -433,6 +436,9 @@ export class WorldStore {
         break;
       case 'digest.update': // #118 floor overview summaries
         this.digestSettings.upsert(e);
+        break;
+      case 'notify.update': // #11 Telegram notifications
+        this.notifySettings.upsert(e);
         break;
       case 'handoff_llm.update': // #9 LLM handoffs
         this.handoffLlm.upsert(e);

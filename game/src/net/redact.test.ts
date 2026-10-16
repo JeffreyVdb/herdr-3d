@@ -24,4 +24,11 @@ describe('loggedArgs (#92: a typed key is never kept in the command log)', () =>
     expect(loggedArgs('kaneo.test', { url: 'https://k.test', key: 'secret' })).toEqual({ url: 'https://k.test', key: REDACTED });
     expect(loggedArgs('kaneo.set', { key: 'secret', default_workspace: null })).toEqual({ key: REDACTED, default_workspace: null });
   });
+
+  it('#11: replaces the Telegram bot token', () => {
+    const token = '123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw';
+    const out = loggedArgs('notify.token.set', { key: token });
+    expect(out).toEqual({ key: REDACTED });
+    expect(JSON.stringify(out)).not.toContain('AAHdq');
+  });
 });

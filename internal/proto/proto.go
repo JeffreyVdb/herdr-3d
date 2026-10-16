@@ -210,6 +210,9 @@ type World struct {
 	// #9: the LLM handoffs' settings and state. nil (left out) when the
 	// bridge has no AI service or no handoff directory.
 	HandoffLLM *HandoffLLMState `json:"handoff_llm,omitempty"`
+	// #11: the notifications' settings and state. nil (left out) when the
+	// bridge has no notification channel.
+	Notify *NotifyState `json:"notify,omitempty"`
 	// #106 inbox: the dismissed finished rows, worker id → the status_since
 	// of the done episode hidden. Always present ({} when none).
 	InboxDismissed map[string]int64 `json:"inbox_dismissed"`

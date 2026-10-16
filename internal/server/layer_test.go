@@ -81,6 +81,45 @@ func TestKaneoSettingsIsProviderNeutral(t *testing.T) {
 	}
 }
 
+// #11: the notifications' core (internal/notify: the inbox rule, the
+// episodes, the settings, the queue) is provider neutral: it imports nothing
+// of the module and no net/http, and reaches a provider only through its
+// Channel. The Telegram Bot API (internal/notify/telegram) is the app's to
+// wire in: the hub, the store and the protocol never import it.
+func TestNotifyCoreIsProviderNeutral(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go tool")
+	}
+	const mod = "github.com/JeffreyVdb/herdr-3d/internal/"
+	deps := func(pkg string) []string {
+		out, err := exec.Command("go", "list", "-deps", mod+pkg).CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list -deps %s: %v\n%s", pkg, err, out)
+		}
+		return strings.Fields(string(out))
+	}
+	for _, dep := range deps("notify") {
+		if dep == "net/http" || dep == "net" || (strings.HasPrefix(dep, mod) && dep != mod+"notify") {
+			t.Errorf("internal/notify depends on %s", dep)
+		}
+	}
+	for _, pkg := range []string{"server", "store", "proto"} {
+		for _, dep := range deps(pkg) {
+			if dep == mod+"notify/telegram" {
+				t.Errorf("internal/%s depends on %s", pkg, dep)
+			}
+		}
+	}
+	wired := false
+	for _, dep := range deps("app") {
+		wired = wired || dep == mod+"notify/telegram"
+	}
+	if !wired {
+		t.Error("internal/app does not wire the Telegram channel in")
+	}
+}
+
 // #92: internal/ai is generic. It reaches no feature and no part of the
 // bridge: only the standard library. The server, the protocol and the app
 // carry its settings and its state; the features of later tickets take its

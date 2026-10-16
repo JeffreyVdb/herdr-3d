@@ -184,7 +184,7 @@ func (c *client) event() proto.Event {
 	c.t.Helper()
 	m := c.next()
 	var ev proto.Event
-	if m.env.T == proto.EvActivityUpdate || m.env.T == proto.EvPackupUpdate || m.env.T == proto.EvDigestUpdate || m.env.T == proto.EvCodexServerUpdate || m.env.T == proto.EvKaneoUpdate || m.env.T == proto.EvRepoRefsUpdate || m.env.T == proto.EvRepoDiscoveryUpdate || m.env.T == proto.EvHandoffLLMUpdate { // #98, #110, #118, #155, #184, #247, #54, #9: their flat fields are not Event's
+	if m.env.T == proto.EvActivityUpdate || m.env.T == proto.EvPackupUpdate || m.env.T == proto.EvDigestUpdate || m.env.T == proto.EvCodexServerUpdate || m.env.T == proto.EvKaneoUpdate || m.env.T == proto.EvRepoRefsUpdate || m.env.T == proto.EvRepoDiscoveryUpdate || m.env.T == proto.EvHandoffLLMUpdate || m.env.T == proto.EvNotifyUpdate { // #98, #110, #118, #155, #184, #247, #54, #9, #11: their flat fields are not Event's
 		return proto.Event{T: m.env.T, Seq: m.env.Seq}
 	}
 	if err := json.Unmarshal(m.raw, &ev); err != nil {

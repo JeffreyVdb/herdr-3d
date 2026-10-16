@@ -93,6 +93,7 @@ import { inboxQueue, inboxReason, inboxRequest, inboxWhere, type InboxCandidate 
 // #92 AI integration
 import { aiSection } from './ui/aiSection';
 import { kaneoSection } from './ui/kaneoSection';
+import { telegramSection } from './ui/telegramSection';
 // #90 follow-up questions
 import { followupsSection } from './ui/followupsSection';
 import { packupSection } from './ui/packupSection';
@@ -494,6 +495,8 @@ export class App {
     });
     // #184: the Kaneo instance a floor can use as its issue board instead of GitHub.
     settings.addSection('kaneo', 'Kaneo', kaneoSection({ book: this.store.kaneo, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'integrations' });
+    // #11: the bridge messages your Telegram account when a worker needs you or finishes (absent without a channel).
+    settings.addSection('telegram', 'Telegram', telegramSection({ book: this.store.notifySettings, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'integrations' });
     this.store.ai.onChange((notice) => {
       this.hud.setAiChip(aiChip(this.store.ai.state));
       if (notice) this.hud.toast(notice, 7000, 'error');
