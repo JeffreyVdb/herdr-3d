@@ -487,7 +487,8 @@ func (f *FakeChannel) Cleared() []Ref {
 
 // Tap hands the service a tap on msg's button with data, as the
 // recipient's, if replies are read (false: dropped, as a channel that
-// does not listen does).
+// does not listen does). One the service refuses is answered without a
+// word, as the Telegram channel does.
 func (f *FakeChannel) Tap(id string, msg Ref, data string) bool {
 	if !f.Listening() {
 		return false
@@ -499,7 +500,9 @@ func (f *FakeChannel) Tap(id string, msg Ref, data string) bool {
 	if h == nil {
 		return false
 	}
-	h(t)
+	if !h(t) {
+		_ = f.AnswerTap(context.Background(), id, "")
+	}
 	return true
 }
 

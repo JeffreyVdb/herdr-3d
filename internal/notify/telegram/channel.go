@@ -702,13 +702,13 @@ func (l *reader) dispatch(ctx context.Context, t string, p *pairState, ups []upd
 		}
 		if q := u.CallbackQuery; q != nil {
 			// #14: a tap. The paired person's goes to the service, which
-			// answers it; any other is answered here without a word (its
-			// spinner stops).
-			if tp, ok := c.tapOf(q); ok {
-				c.hooks.Tap(tp)
+			// answers it; any other, or one the service refuses (its queue
+			// is full), is answered here without a word (its spinner stops).
+			tp, ok := c.tapOf(q)
+			if ok && c.hooks.Tap(tp) {
 				continue
 			}
-			if p != nil {
+			if !ok && p != nil {
 				l.res.Ignored++
 			}
 			if q.ID != "" {

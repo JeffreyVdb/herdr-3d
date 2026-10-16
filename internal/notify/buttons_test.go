@@ -463,6 +463,34 @@ func TestCardRepliesOff(t *testing.T) {
 	}
 }
 
+// The replier behind: past ReplyQueue waiting a tap is refused, and the
+// channel answers it, so every tap is answered exactly once.
+func TestCardTapQueueFull(t *testing.T) {
+	r := newRigWith(t, true, func(_ *Options, st *Settings) { st.Replies = true })
+	waitListening(t, r.ch)
+	entered, release := make(chan struct{}), make(chan struct{})
+	r.svc.job(func(context.Context) { close(entered); <-release })
+	<-entered
+	for i := range ReplyQueue + 1 {
+		if !r.ch.Tap("tap-"+strconv.Itoa(i), Ref{FakeChatID, 999}, "old:o1") {
+			t.Fatal("tap not handed over")
+		}
+	}
+	drained := make(chan struct{})
+	r.svc.job(func(context.Context) { close(drained) })
+	close(release)
+	<-drained
+	got := map[string]int{}
+	for _, a := range r.ch.TapAnswers() {
+		got[a.ID]++
+	}
+	for i := range ReplyQueue + 1 {
+		if id := "tap-" + strconv.Itoa(i); got[id] != 1 {
+			t.Fatalf("%s answered %d times (%d answers)", id, got[id], len(r.ch.TapAnswers()))
+		}
+	}
+}
+
 // A card stays within Telegram's bounds whatever the ask: its text, the
 // data of its buttons; a long description and preview are cut.
 func TestCardBounds(t *testing.T) {

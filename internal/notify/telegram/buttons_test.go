@@ -312,6 +312,40 @@ func TestCardTapsOfOthers(t *testing.T) {
 	}
 }
 
+// A tap the service refuses (its queue full) is answered here without a
+// word, once, and is no pairing's stray update.
+func TestCardTapRefused(t *testing.T) {
+	r := pairedRigRun(t, true, false)
+	var mu sync.Mutex
+	var handed []string
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.ch.Run(ctx, notify.Hooks{Tap: func(tp notify.Tap) bool {
+			mu.Lock()
+			handed = append(handed, tp.ID)
+			mu.Unlock()
+			return false
+		}, Listen: true})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	id := r.tg.pushTap(ada(), 42, 1, "0badc0de:o1")
+	waitFor(t, "the tap's answer", func() bool { return len(r.tg.requests("answerCallbackQuery")) == 1 })
+	rq := r.tg.requests("answerCallbackQuery")[0]
+	if text, _ := rq.body["text"].(string); rq.body["callback_query_id"] != id || text != "" {
+		t.Fatalf("answer %+v", rq.body)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(handed, []string{id}) {
+		t.Fatalf("handed over %q", handed)
+	}
+}
+
 // Replies off: the open cards say so (no more taps are read).
 func TestCardRepliesOffOverHTTP(t *testing.T) {
 	cr := newCardRig(t)

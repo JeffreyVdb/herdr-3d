@@ -145,8 +145,10 @@ type Hooks struct {
 	// (Channel.Listen). It must not block.
 	Reply func(Reply)
 	// Tap gets each button the recipient tapped while replies are read
-	// (#14). It must not block. Nil: a tap is answered without a word.
-	Tap func(Tap)
+	// (#14). It must not block. False: not taken (its queue is full), and
+	// the Channel answers it without a word, as it does every tap when Tap
+	// is nil.
+	Tap func(Tap) bool
 	// Listen: replies were on when the bridge started, so what came while
 	// it was away is read too (the service answers what is too old). Else
 	// reading starts from what is sent next.

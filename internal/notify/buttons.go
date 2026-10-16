@@ -289,8 +289,8 @@ func (s *Service) job(fn func(context.Context)) {
 }
 
 // tapped is the channel's Hooks.Tap: it never blocks. Past ReplyQueue
-// waiting the tap is dropped.
-func (s *Service) tapped(t Tap) {
+// waiting the tap is refused (false): the channel answers it.
+func (s *Service) tapped(t Tap) bool {
 	s.rp.mu.Lock()
 	full := s.rp.taps >= ReplyQueue
 	if !full {
@@ -304,10 +304,11 @@ func (s *Service) tapped(t Tap) {
 	}
 	s.rp.mu.Unlock()
 	if full {
-		s.opts.Log.Warn("notifications: a tap was dropped (the replier is behind)")
-		return
+		s.opts.Log.Warn("notifications: a tap was refused (the replier is behind)")
+		return false
 	}
 	s.poke()
+	return true
 }
 
 // seen takes what worker id asks now (the loop's, on a change): the cards
