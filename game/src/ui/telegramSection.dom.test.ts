@@ -17,6 +17,7 @@ function view(o: View = {}): View {
     events: { needs_you: true, done: true },
     quiet: false,
     freelancers: false,
+    replies: false,
     ...rest,
     channel: { provider: 'telegram', key_set: false, ...(channel as View | undefined) },
   };
@@ -35,14 +36,16 @@ function mount(v: View, answer: (t: string) => CommandResult = () => ({ ok: true
   const book = new NotifyBook();
   book.reset(v);
   const sent: string[] = [];
+  const args: unknown[] = [];
   let pending: Array<() => void> = [];
   const rig = { hold: false };
   const body = document.createElement('div');
   document.body.append(body);
   const handle = telegramSection({
     book,
-    send: (t) => {
+    send: (t, a) => {
       sent.push(t);
+      args.push(a);
       const r = answer(t);
       if (!rig.hold) return Promise.resolve(r);
       return new Promise<CommandResult>((res) => pending.push(() => res(r)));
@@ -60,7 +63,7 @@ function mount(v: View, answer: (t: string) => CommandResult = () => ({ ok: true
     pending = [];
     p.forEach((f) => f());
   };
-  return { book, body, sent, rig, button, box, dest, badge, status, flush, release, handle };
+  return { book, body, sent, args, rig, button, box, dest, badge, status, flush, release, handle };
 }
 
 describe('telegramDestination: the one destination status (#12)', () => {
@@ -415,5 +418,68 @@ describe('Settings → Telegram keeps the keyboard in the section (#12)', () => 
     m.release();
     await m.flush();
     expect(document.activeElement).toBe(outside);
+  });
+});
+
+describe('Settings → Telegram: Allow replies (#13)', () => {
+  const hint = (body: HTMLElement) => body.querySelector<HTMLElement>('.settings-tg-replies .settings-field-hint')!.textContent;
+
+  it('is off by default, its own block apart from the notifications switch, and waits for a paired account', () => {
+    const m = mount(view({ channel: TOKEN }));
+    const box = m.box(/^Allow replies$/);
+    const block = m.body.querySelector<HTMLElement>('.settings-tg-replies')!;
+    expect(block.getAttribute('role')).toBe('group');
+    expect(block.contains(m.box(/Send Telegram notifications/))).toBe(false);
+    expect(block.textContent).toContain('Only messages from your paired account count');
+    expect(block.textContent).toContain('types your reply into that worker');
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(true);
+    expect(hint(m.body)).toBe('Pair your account first.');
+    // Described by what it agrees to and its state.
+    const ids = box.getAttribute('aria-describedby')!.split(' ');
+    expect(ids.map((i) => document.getElementById(i)?.textContent ?? '')).toEqual([expect.stringContaining('paired account'), 'Pair your account first.']);
+  });
+
+  it('paired: switched on and off with notify.set {replies}, its state said, the keyboard kept on it', async () => {
+    let replies = false;
+    const m = mount(view({ channel: ADA }), (t) => (t === 'notify.set' ? { ok: true, data: view({ channel: ADA, replies }) } : { ok: true, data: null }));
+    const box = m.box(/^Allow replies$/);
+    expect(box.disabled).toBe(false);
+    expect(hint(m.body)).toBe('Off: nothing you send the bot reaches a worker.');
+    box.focus();
+    replies = true;
+    box.click();
+    await m.flush();
+    expect(m.sent.at(-1)).toBe('notify.set');
+    expect(m.args.at(-1)).toEqual({ replies: true });
+    expect(box.checked).toBe(true);
+    expect(m.status().textContent).toContain('Replies on.');
+    expect(hint(m.body)).toBe('On: a reply to a notification from Ada is typed into its worker.');
+    expect(document.activeElement).toBe(box);
+    replies = false;
+    box.click();
+    await m.flush();
+    expect(m.args.at(-1)).toEqual({ replies: false });
+    expect(m.status().textContent).toContain('Replies off.');
+    // The notifications switch is untouched by it.
+    expect(m.args.some((a) => typeof a === 'object' && a !== null && 'enabled' in a)).toBe(false);
+  });
+
+  it('on while unpaired: paused, and can still be switched off', () => {
+    const m = mount(view({ replies: true, channel: TOKEN }));
+    const box = m.box(/^Allow replies$/);
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(false);
+    expect(hint(m.body)).toBe('On, but paused: no paired account. Nothing reaches a worker.');
+  });
+
+  it('a refusal says why and puts the switch back', async () => {
+    const m = mount(view({ channel: ADA }), (t) => (t === 'notify.set' ? { ok: false, code: 'not_paired', message: 'pair your Telegram account first' } : { ok: true, data: null }));
+    const box = m.box(/^Allow replies$/);
+    box.click();
+    await m.flush();
+    await m.flush();
+    expect(m.status().textContent).toBe(notifyFailureText('not_paired', ''));
+    expect(box.checked).toBe(false);
   });
 });

@@ -16,6 +16,7 @@
 //   makes the next tests `blocked` (the 403 of a bot you blocked), `{blocked: false}` undoes it.
 // - `notify.set` patches enabled, events, quiet and freelancers; switching on needs the token, the account and a
 //   test that passed with them (`not_configured`, `not_paired`, `test_required`), and is `env_locked` under `env`.
+//   #13: and `replies` (off), whose switching on needs the token and the account only (no test).
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 
@@ -52,6 +53,7 @@ export class TelegramSim {
   private events = { needs_you: true, done: true };
   private quiet = false;
   private freelancers = false;
+  private replies = false;
   private blocked = false;
   private lastError: { code: string; message: string; at: number } | null = null;
 
@@ -88,6 +90,7 @@ export class TelegramSim {
       events: { ...this.events },
       quiet: this.quiet,
       freelancers: this.freelancers,
+      replies: this.replies,
       channel,
     };
     if (missing.length) v.missing = missing;
@@ -121,7 +124,7 @@ export class TelegramSim {
           this.only(a, []);
           break;
         case 'notify.set':
-          this.only(a, ['enabled', 'events', 'quiet', 'freelancers']);
+          this.only(a, ['enabled', 'events', 'quiet', 'freelancers', 'replies']);
           this.set(a);
           break;
         case 'notify.test':
@@ -236,6 +239,11 @@ export class TelegramSim {
     const done = bool('events.done', ev.done);
     const quiet = bool('quiet', a.quiet);
     const freelancers = bool('freelancers', a.freelancers);
+    const replies = bool('replies', a.replies);
+    if (replies && !this.replies) {
+      if (!this.token) throw this.d.error('not_configured', 'set the bot token first');
+      if (!this.paired) throw this.d.error('not_paired', 'pair your Telegram account first');
+    }
     if (enabled !== undefined) {
       if (this.mode === 'env') {
         if (enabled !== this.enabled) throw this.d.error('env_locked', 'notifications are switched by the bridge environment (HERDR_WORLD_NOTIFY_ENABLED)');
@@ -250,6 +258,7 @@ export class TelegramSim {
     if (done !== undefined) this.events.done = done;
     if (quiet !== undefined) this.quiet = quiet;
     if (freelancers !== undefined) this.freelancers = freelancers;
+    if (replies !== undefined) this.replies = replies;
   }
 
   private control(a: Obj, _send: Send): void {

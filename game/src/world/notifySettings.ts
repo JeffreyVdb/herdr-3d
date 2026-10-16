@@ -46,6 +46,7 @@ export function notifyStateOf(v: unknown): NotifyState | null {
     events: { needs_you: ev.needs_you !== false, done: ev.done !== false },
     quiet: v.quiet === true,
     freelancers: v.freelancers === true,
+    replies: v.replies === true,
     channel: channelOf(v.channel),
   };
   const missing = Array.isArray(v.missing) ? v.missing.filter((x): x is string => x === 'token' || x === 'recipient') : [];
