@@ -98,7 +98,7 @@ func TestCodexShareBridgeWorkers(t *testing.T) {
 // own server; switched off again (rollback) the running shared worker keeps
 // its server and answers while the next hire is legacy; on again changes
 // only later hires. A Codex the bridge does not support (a fake
-// codex-cli 0.163.0, a line not verified, as the bridge's codex) falls back with a note that says
+// codex-cli 0.999.0, a line not verified, as the bridge's codex) falls back with a note that says
 // what is supported. A Claude hire is untouched by the switch.
 func TestCodexShareBridgeRollout(t *testing.T) {
 	f := newFx(t, fxOptions{noMCP: true}, "bare-l1", "bare-s1", "bare-l2", "bare-s2", "bare-u")
@@ -193,7 +193,7 @@ func TestCodexShareBridgeRollout(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(fake), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		f.write(fake, "#!/bin/sh\necho 'codex-cli 0.163.0'\n", 0o755)
+		f.write(fake, "#!/bin/sh\necho 'codex-cli 0.999.0'\n", 0o755)
 		b.o.codexCLI = fake
 		b.restart()
 		c = b.dial("game-after-restart")
@@ -207,7 +207,7 @@ func TestCodexShareBridgeRollout(t *testing.T) {
 		}
 		f.record("15-note.txt", u.res.Codex.Note+"\n")
 		if u.res.Codex.Mode != proto.CodexModeLegacy ||
-			!strings.Contains(u.res.Codex.Note, "0.163.0") || !strings.Contains(u.res.Codex.Note, "supported: codex-cli "+codexapp.Supported()) ||
+			!strings.Contains(u.res.Codex.Note, "0.999.0") || !strings.Contains(u.res.Codex.Note, "supported: codex-cli "+codexapp.Supported()) ||
 			!strings.Contains(u.res.Codex.Note, "the usual way") {
 			t.Fatalf("an unsupported Codex: %+v", u.res.Codex)
 		}
@@ -224,10 +224,36 @@ func TestCodexShareBridgeRollout(t *testing.T) {
 		}
 	})
 
+	t.Run("15 accepting unverified versions survives a restart and keeps shared transcripts", func(t *testing.T) {
+		allow := true
+		c.ack(proto.CmdCodexServerSet, proto.CodexServerSetArgs{AllowUnverified: &allow}, 10*time.Second, nil)
+		b.restart()
+		c = b.dial("game-with-unverified-allowed")
+		c.wait("the running floor", 30*time.Second, func() bool { return c.floor(f.h.Name).State == "running" })
+		if cs := c.codexServer(); !cs.Enabled || !cs.AllowUnverified {
+			t.Fatalf("preferences after restart: %+v", cs)
+		}
+		u := c.hire("15-accepted", "bare-u", 6)
+		if u.res.Codex == nil || u.res.Codex.Mode != proto.CodexModeShared || u.res.Codex.Note != "" {
+			t.Fatalf("accepted unverified CLI fell back: %+v", u.res.Codex)
+		}
+		c.prompt("15-accepted-turn", u.id, "MOCK:say unverified-shared-still-works")
+		c.settle(u)
+		c.attached("15-accepted-joined", u.id)
+		var tr proto.TranscriptWatchResult
+		raw := c.ack(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: u.id, Limit: 50}, 30*time.Second, &tr)
+		if !strings.Contains(string(raw), "unverified-shared-still-works") {
+			t.Fatal("shared transcript lost the conversation")
+		}
+		f.record("15-accepted-transcript.json", scrub(f, string(raw)))
+		c.ack(proto.CmdTranscriptUnwatch, proto.WorkerArgs{ID: u.id}, 10*time.Second, nil)
+	})
+
 	t.Run("14 a Claude hire is untouched by the switch", func(t *testing.T) {
 		if _, err := exec.LookPath("claude"); err != nil {
 			t.Skip("claude is not installed")
 		}
+		c.setShared(true)
 		dir := t.TempDir()
 		desk := 5
 		model := server.HireOptions().Claude.Models[0]
@@ -242,7 +268,10 @@ func TestCodexShareBridgeRollout(t *testing.T) {
 		if res.Codex != nil || w.Codex != nil || rec || !containsRun(argv, "--model", model) || slices.Contains(argv, "--remote") {
 			t.Errorf("a Claude hire with the switch on: codex %+v, record %v, argv %q", res.Codex, rec, argv)
 		}
-		c.ack(proto.CmdWorkerFire, proto.WorkerFireArgs{ID: res.ID}, 2*time.Minute, nil)
+		f.snap("14-claude-tui", res.WorkspaceID+":p1")
+		// The private HOME has no Claude onboarding/auth state. This check
+		// verifies launch isolation; fixture session cleanup stops the TUI.
+		// /exit is not a command while Claude is still choosing its theme.
 	})
 	f.record("bridge-events.txt", strings.Join(c.eventLog(), "\n")+"\n")
 }

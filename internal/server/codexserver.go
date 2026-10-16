@@ -33,7 +33,7 @@ import (
 // (codexapp). Tests pass a fake.
 type CodexHost interface {
 	// Preflight refuses an unsupported Codex or a blocked .envrc in dir.
-	Preflight(ctx context.Context, dir string) error
+	Preflight(ctx context.Context, dir string, policy codexapp.VersionPolicy) error
 	// Prepare writes the launch's launcher.
 	Prepare(l codexapp.Launch) error
 	// WaitReady waits until the launch's server answers on its socket and
@@ -78,8 +78,11 @@ func NewCodexHost(codex, direnv string) CodexHost {
 
 type codexHost struct{ pre codexapp.Preflight }
 
-func (c codexHost) Preflight(ctx context.Context, dir string) error { return c.pre.Check(ctx, dir) }
-func (codexHost) Prepare(l codexapp.Launch) error                   { return l.Write() }
+func (c codexHost) Preflight(ctx context.Context, dir string, policy codexapp.VersionPolicy) error {
+	c.pre.VersionPolicy = policy
+	return c.pre.Check(ctx, dir)
+}
+func (codexHost) Prepare(l codexapp.Launch) error { return l.Write() }
 func (codexHost) WaitReady(ctx context.Context, sock string) (string, error) {
 	return codexapp.WaitReady(ctx, sock)
 }
@@ -99,6 +102,7 @@ func (codexHost) Watch(o codexapp.Options) (CodexWatch, error) { return codexapp
 // codexState is the hub's part of the feature (hub goroutine).
 type codexState struct {
 	enabled  bool
+	policy   codexapp.VersionPolicy
 	last     string                          // the switch as last published
 	launches map[string]store.CodexLaunch    // by worker id (mirrors codex_launch)
 	server   map[string]string               // worker id → proto.CodexServer* of a shared worker
@@ -121,6 +125,7 @@ type codexState struct {
 type codexWatch struct {
 	w             CodexWatch
 	thread, token string
+	policy        codexapp.VersionPolicy
 	attached      bool
 	// #156, while attached: the running turn ("" when idle) and the server
 	// requests (approvals, blocking questions) not resolved yet.
@@ -145,7 +150,8 @@ func (h *Hub) initCodex(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	h.cx.enabled = en && h.codexAvailable()
+	h.cx.enabled = en.Enabled && h.codexAvailable()
+	h.cx.policy.AllowUnverified = en.AllowUnverified
 	if h.cx.launches, err = h.st.CodexLaunches(ctx); err != nil {
 		return err
 	}
@@ -180,10 +186,12 @@ func serverOf(l store.CodexLaunch) codexapp.Server {
 
 // codexServerView is the switch for the snapshot.
 func (h *Hub) codexServerView() *proto.CodexServer {
-	return &proto.CodexServer{Enabled: h.cx.enabled, Available: h.codexAvailable()}
+	return &proto.CodexServer{Enabled: h.cx.enabled, Available: h.codexAvailable(), AllowUnverified: h.cx.policy.AllowUnverified}
 }
 
-func (h *Hub) codexSwitchKey() string { return fmt.Sprint(h.cx.enabled, h.codexAvailable()) }
+func (h *Hub) codexSwitchKey() string {
+	return fmt.Sprint(h.cx.enabled, h.codexAvailable(), h.cx.policy.AllowUnverified)
+}
 
 // publishCodexServer emits codex_server.update when the switch changed.
 func (h *Hub) publishCodexServer() {
@@ -206,16 +214,27 @@ func (h *Hub) startCodexServer(ctx context.Context, c *Client, cmd proto.Command
 		if err := decodeArgs(cmd.Args, &a); err != nil {
 			return err
 		}
-		if a.Enabled == nil {
-			return bad("enabled is required")
+		if a.Enabled == nil && a.AllowUnverified == nil {
+			return bad("enabled or allow_unverified is required")
 		}
-		if *a.Enabled && !h.codexAvailable() {
+		settings := store.CodexServerSettings{Enabled: h.cx.enabled, AllowUnverified: h.cx.policy.AllowUnverified}
+		if a.Enabled != nil {
+			settings.Enabled = *a.Enabled
+		}
+		if a.AllowUnverified != nil {
+			settings.AllowUnverified = *a.AllowUnverified
+		}
+		if settings.Enabled && !h.codexAvailable() {
 			return fmt.Errorf("%w: this bridge has no private run directory for Codex servers", errUnsupported)
 		}
-		if err := h.st.SaveCodexServerSettings(ctx, *a.Enabled); err != nil {
+		if err := h.st.SaveCodexServerSettings(ctx, settings); err != nil {
 			return err
 		}
-		h.cx.enabled = *a.Enabled
+		h.cx.enabled = settings.Enabled
+		h.cx.policy.AllowUnverified = settings.AllowUnverified
+		// Refresh bridge connections under the new policy. This never
+		// restarts a worker's terminal, server or model turn.
+		h.syncCodexWatches(ctx)
 		h.publishCodexServer()
 	} else if err := decodeArgs(cmd.Args, &struct{}{}); err != nil {
 		return err
@@ -351,7 +370,7 @@ func (h *Hub) syncCodexWatches(ctx context.Context) {
 		l := h.cx.launches[id]
 		retry := cw.failed && !cw.permanent && time.Since(cw.failedAt) >= h.opts.CodexRejoin ||
 			cw.attached && cw.unresolved && time.Since(cw.unresolvedAt) >= h.opts.CodexRejoin
-		if retry || !h.wantsCodexWatch(id) || l.Thread != cw.thread || l.Token != cw.token {
+		if retry || cw.policy != h.cx.policy || !h.wantsCodexWatch(id) || l.Thread != cw.thread || l.Token != cw.token {
 			delete(h.cx.watches, id)
 			go cw.w.Close() // never on the hub goroutine: its events go through do
 			h.refreshCodex(id)
@@ -361,9 +380,9 @@ func (h *Hub) syncCodexWatches(ctx context.Context) {
 		if h.cx.watches[id] != nil || !h.wantsCodexWatch(id) {
 			continue
 		}
-		cw := &codexWatch{thread: l.Thread, token: l.Token, requests: map[string]bool{}}
+		cw := &codexWatch{thread: l.Thread, token: l.Token, policy: h.cx.policy, requests: map[string]bool{}}
 		w, err := h.opts.CodexHost.Watch(codexapp.Options{Socket: launchOf(l).Socket(), Thread: cw.thread,
-			ClientVersion: version.Version, OnEvent: func(e codexapp.Event) {
+			ClientVersion: version.Version, VersionPolicy: cw.policy, OnEvent: func(e codexapp.Event) {
 				_ = h.do(ctx, func(ctx context.Context) { h.codexEvent(ctx, id, cw, e) })
 			}})
 		if err != nil {
@@ -430,6 +449,7 @@ type sharedLaunch struct {
 	id, session, pane, agent string
 	agentDef                 herdr.Agent
 	rec                      store.CodexLaunch
+	policy                   codexapp.VersionPolicy
 }
 
 // errNotShared means a shared launch did not get as far as the TUI: the
@@ -475,7 +495,7 @@ func (h *Hub) startSharedServer(ctx context.Context, sl *sharedLaunch, hh interf
 	if err != nil {
 		return stop(err)
 	}
-	if err := codexapp.CheckUserAgent(ua); err != nil {
+	if err := sl.policy.CheckUserAgent(ua); err != nil {
 		return stop(err)
 	}
 	s, err := host.FindServer(l)
@@ -585,10 +605,10 @@ func (h *Hub) hireShared(ctx context.Context, op *hireOp, pane, dir string, a he
 	if !shellLine(dir) {
 		return legacy(fmt.Errorf("the path %s has characters the shared launch does not pass", dir))
 	}
-	if err := h.opts.CodexHost.Preflight(ctx, dir); err != nil {
+	if err := h.opts.CodexHost.Preflight(ctx, dir, op.codexPolicy); err != nil {
 		return legacy(err)
 	}
-	sl := &sharedLaunch{id: op.id, session: op.session, pane: pane, agent: op.agent, agentDef: a, rec: rec}
+	sl := &sharedLaunch{id: op.id, session: op.session, pane: pane, agent: op.agent, agentDef: a, rec: rec, policy: op.codexPolicy}
 	if err := h.startSharedServer(ctx, sl, hh); err != nil {
 		return legacy(err)
 	}

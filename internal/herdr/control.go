@@ -27,7 +27,8 @@ import (
 // whose only variable is a validated session name in single quotes, and the
 // one `setsid -f <shell> <launcher>` line typed into a pane). It creates
 // and closes only single workspaces (never a group), renames only a hired
-// worker's root pane (its identity marker), types into a pane only a
+// worker's root pane (its identity marker) and restores a just-started Codex's
+// agent name after hook review, types into a pane only a
 // resume command, a hire's first prompt, the agents' exit commands, a
 // fixed set of keys and (M5) what the player types or prompts at a laptop,
 // never focuses anything and never uses systemctl.
@@ -124,6 +125,7 @@ const (
 
 // #155: control operations of a shared-server Codex worker.
 const (
+	opRestoreCodexName  = "rename-started-agent"
 	opStartCodexServer  = "start-codex-server"
 	opStartCodexRemote  = "start-codex-remote"
 	opResumeCodexRemote = "resume-codex-remote"
@@ -144,6 +146,8 @@ const (
 // placeholders); everything else is literal. TestControlAllowlist is the
 // tripwire: widening this needs review.
 var controlShapes = map[string][]string{
+	// Restore only a just-started Codex's name after a hook-review startup timeout.
+	opRestoreCodexName: {"{herdr}", "--session", "{session}", "agent", "rename", "{pane}", "{agent}"},
 	// Wake: a supervised headless server with the user's login environment
 	// (docs/research/herdr-followup.md §2b), in the policy's shell (#68).
 	opStart: {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",

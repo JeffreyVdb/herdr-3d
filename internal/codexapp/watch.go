@@ -40,6 +40,8 @@ type Options struct {
 	Socket, Thread string
 	// ClientVersion is the bridge's version, sent in clientInfo.
 	ClientVersion string
+	// VersionPolicy controls admission of unverified releases.
+	VersionPolicy VersionPolicy
 	// OnEvent receives the watcher's events in order, on its goroutine. It
 	// must not block for long.
 	OnEvent func(Event)
@@ -332,7 +334,7 @@ func (w *Watcher) join(ctx context.Context, c *conn) (*Thread, string, error) {
 	}, &init); err != nil {
 		return nil, "", err
 	}
-	if err := CheckUserAgent(init.UserAgent); err != nil {
+	if err := w.o.VersionPolicy.CheckUserAgent(init.UserAgent); err != nil {
 		return nil, init.UserAgent, err
 	}
 	if err := c.notify(cctx, "initialized"); err != nil {
@@ -506,12 +508,12 @@ func (w *Watcher) leave(c *conn) {
 // SupportedLines are the Codex release lines the shared launch was verified
 // against, each with the real TUI and the bridge's full stack
 // (docs/research/codex-shared-tui.md): 0.160 with codex-cli 0.160.1 (#155),
-// 0.161 with codex-cli 0.161.0 (#186), 0.162 with codex-cli 0.162.0. A line is a major.minor that
-// matches exactly: a later release is not supported until it is verified
-// and added here.
-var SupportedLines = []string{"0.160", "0.161", "0.162"}
+// 0.161 with codex-cli 0.161.0 (#186), 0.162 with codex-cli 0.162.0, and
+// 0.163 with codex-cli 0.163.0. A line matches major.minor exactly.
+// Unverified releases require an explicit opt-in.
+var SupportedLines = []string{"0.160", "0.161", "0.162", "0.163"}
 
-// Supported names SupportedLines for a person ("0.160.x, 0.161.x or 0.162.x").
+// Supported names SupportedLines for a person ("0.160.x, 0.161.x, 0.162.x or 0.163.x").
 func Supported() string {
 	xs := make([]string, len(SupportedLines))
 	for i, l := range SupportedLines {
@@ -523,10 +525,26 @@ func Supported() string {
 	return strings.Join(xs[:len(xs)-1], ", ") + " or " + xs[len(xs)-1]
 }
 
+// VersionPolicy controls compatibility checks, independently of protocol,
+// thread identity, process ownership and environment checks. Its zero value
+// accepts only verified releases.
+type VersionPolicy struct {
+	AllowUnverified bool
+}
+
+var releaseVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$`)
+
+func (p VersionPolicy) accepts(v string) bool {
+	return supported(v) || p.AllowUnverified && releaseVersion.MatchString(v)
+}
+
 // CheckVersion checks `codex --version` output ("codex-cli 0.160.1").
-func CheckVersion(out string) error {
+func CheckVersion(out string) error { return (VersionPolicy{}).CheckVersion(out) }
+
+// CheckVersion validates the CLI identity and applies the release policy.
+func (p VersionPolicy) CheckVersion(out string) error {
 	f := strings.Fields(strings.TrimSpace(out))
-	if len(f) != 2 || f[0] != "codex-cli" || !supported(f[1]) {
+	if len(f) != 2 || f[0] != "codex-cli" || !p.accepts(f[1]) {
 		return fmt.Errorf("%w: %q (supported: codex-cli %s)", ErrUnsupported, strings.TrimSpace(out), Supported())
 	}
 	return nil
@@ -534,10 +552,13 @@ func CheckVersion(out string) error {
 
 // CheckUserAgent checks the version in an app-server's userAgent
 // ("<client>/0.160.1 (…) …", the client name first).
-func CheckUserAgent(ua string) error {
+func CheckUserAgent(ua string) error { return (VersionPolicy{}).CheckUserAgent(ua) }
+
+// CheckUserAgent applies the same release policy to the server actually started.
+func (p VersionPolicy) CheckUserAgent(ua string) error {
 	first, _, _ := strings.Cut(ua, " ")
-	_, v, ok := strings.Cut(first, "/")
-	if !ok || !supported(v) {
+	client, v, ok := strings.Cut(first, "/")
+	if !ok || client == "" || !p.accepts(v) {
 		return fmt.Errorf("%w: app-server %q (supported: %s)", ErrUnsupported, ua, Supported())
 	}
 	return nil

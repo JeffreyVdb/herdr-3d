@@ -360,7 +360,7 @@ func TestWatcherGivesUp(t *testing.T) {
 // watcher at once: retrying would not change them.
 func TestWatcherRefusesWithoutRetry(t *testing.T) {
 	for name, mod := range map[string]func(*fakeServer){
-		"unsupported": func(f *fakeServer) { f.ua = ClientName + "/0.163.0 (Linux)" },
+		"unsupported": func(f *fakeServer) { f.ua = ClientName + "/0.999.0 (Linux)" },
 		"ephemeral":   func(f *fakeServer) { f.thread["ephemeral"] = true },
 		"other":       func(f *fakeServer) { f.thread["id"] = "th2" },
 	} {
@@ -394,7 +394,7 @@ func TestVersionChecks(t *testing.T) {
 	for v, ok := range map[string]bool{
 		"codex-cli 0.160.1\n": true, "codex-cli 0.160.12": true, "codex-cli 0.161.0": true, "codex-cli 0.161.7\n": true,
 		"codex-cli 0.162.0": true, "codex-cli 0.162.3": true,
-		"codex-cli 0.163.0": false, "codex-cli 0.159.9": false, "codex-cli 0.16.0": false, "codex-cli 0.1610.0": false,
+		"codex-cli 0.999.0": false, "codex-cli 0.159.9": false, "codex-cli 0.16.0": false, "codex-cli 0.1610.0": false,
 		"codex-cli 0.160.": false, "codex-cli 0.161.": false, "codex-cli 0.162.": false, "codex-cli 0.162.0-alpha.1": false, "codex-cli 0.160.1-alpha": false, "codex-cli 0.161.0-alpha.3": false,
 		"codex 0.160.1": false, "codex-cli 1.161.0": false, "": false,
 	} {
@@ -406,7 +406,7 @@ func TestVersionChecks(t *testing.T) {
 		"herdr_3d/0.160.1 (AlmaLinux 10.2.0; x86_64) xterm-256color (herdr_3d; v1)": true,
 		"herdr_3d/0.161.0 (AlmaLinux 10.2.0; x86_64) dumb (herdr_3d; v1)":           true,
 		"codex_cli_rs/0.160.3": true, "codex_cli_rs/0.161.12": true, "herdr_3d/0.162.0 (x)": true,
-		"herdr_3d/0.159.9 (x)": false, "herdr_3d/0.163.0 (x)": false, "herdr_3d/0.161.0-alpha.1 (x)": false,
+		"herdr_3d/0.159.9 (x)": false, "herdr_3d/0.999.0 (x)": false, "herdr_3d/0.161.0-alpha.1 (x)": false,
 		"herdr_3d": false, "": false,
 	} {
 		if err := CheckUserAgent(ua); (err == nil) != ok {
@@ -414,12 +414,70 @@ func TestVersionChecks(t *testing.T) {
 		}
 	}
 	// The refusal names the version and every verified line.
-	err := CheckVersion("codex-cli 0.163.0")
-	if want := `unsupported Codex version: "codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x)`; err == nil || err.Error() != want {
+	err := CheckVersion("codex-cli 0.999.0")
+	if want := `unsupported Codex version: "codex-cli 0.999.0" (supported: codex-cli 0.160.x, 0.161.x, 0.162.x or 0.163.x)`; err == nil || err.Error() != want {
 		t.Errorf("CheckVersion error %v, want %s", err, want)
 	}
 	err = CheckUserAgent("herdr_3d/0.159.9 (x)")
-	if want := `unsupported Codex version: app-server "herdr_3d/0.159.9 (x)" (supported: 0.160.x, 0.161.x or 0.162.x)`; err == nil || err.Error() != want {
+	if want := `unsupported Codex version: app-server "herdr_3d/0.159.9 (x)" (supported: 0.160.x, 0.161.x, 0.162.x or 0.163.x)`; err == nil || err.Error() != want {
 		t.Errorf("CheckUserAgent error %v, want %s", err, want)
+	}
+}
+
+func TestCodex163Compatibility(t *testing.T) {
+	if err := CheckVersion("codex-cli 0.163.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckUserAgent("herdr_3d/0.163.0 (Linux; x86_64) xterm"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUnverifiedVersionPolicy(t *testing.T) {
+	allow := VersionPolicy{AllowUnverified: true}
+	for _, v := range []string{"0.999.0", "0.163.1", "0.159.9", "0.164.0-alpha.1"} {
+		if err := allow.CheckVersion("codex-cli " + v); err != nil {
+			t.Error(err)
+		}
+		if err := allow.CheckUserAgent("herdr_3d/" + v + " (Linux)"); err != nil {
+			t.Error(err)
+		}
+	}
+	for _, v := range []string{"", "codex 0.999.0", "codex-cli garbage", "codex-cli 0.999.", "codex-cli 0.999.0 extra"} {
+		if err := allow.CheckVersion(v); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("accepted malformed CLI identity %q: %v", v, err)
+		}
+	}
+	for _, ua := range []string{"", "herdr_3d", "/0.999.0", "herdr_3d/garbage"} {
+		if err := allow.CheckUserAgent(ua); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("accepted malformed server identity %q: %v", ua, err)
+		}
+	}
+}
+
+func TestWatcherUnverifiedOptIn(t *testing.T) {
+	for _, refused := range []string{"", "ephemeral", "wrong thread"} {
+		t.Run(refused, func(t *testing.T) {
+			f := newFakeServer(t)
+			f.ua = "herdr_3d/0.999.0 (Linux)"
+			if refused == "ephemeral" {
+				f.thread["ephemeral"] = true
+			}
+			if refused == "wrong thread" {
+				f.thread["id"] = "other"
+			}
+			r := newRecorder()
+			watch(t, f, r, func(o *Options) { o.VersionPolicy.AllowUnverified = true })
+			if refused == "" {
+				if e := r.wait(t, EvJoined); e.UserAgent != f.ua {
+					t.Fatalf("joined %+v", e)
+				}
+			} else {
+				e := r.wait(t, EvFailed)
+				if !errors.Is(e.Err, ErrEphemeral) && !errors.Is(e.Err, ErrWrongThread) {
+					t.Fatalf("failure %+v", e)
+				}
+			}
+		})
 	}
 }

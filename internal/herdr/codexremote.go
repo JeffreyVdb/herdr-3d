@@ -2,6 +2,7 @@ package herdr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -41,7 +42,7 @@ func (c *Control) StartCodexRemote(ctx context.Context, session, pane, name stri
 		return err
 	}
 	_, err = c.run(ctx, opStartCodexRemote, vars)
-	return err
+	return c.codexStartupResult(ctx, session, pane, name, err)
 }
 
 // ResumeCodexRemote resumes a Codex thread in a pane attached to the
@@ -55,7 +56,7 @@ func (c *Control) ResumeCodexRemote(ctx context.Context, session, pane, name, th
 	}
 	vars["id"] = thread
 	_, err = c.run(ctx, opResumeCodexRemote, vars)
-	return err
+	return c.codexStartupResult(ctx, session, pane, name, err)
 }
 
 func (c *Control) remoteVars(session, pane, name string, a Agent, r Remote) (map[string]string, error) {
@@ -80,5 +81,24 @@ func (c *Control) ResumeCodexEmbedded(ctx context.Context, session, pane, name, 
 	}
 	_, err := c.run(ctx, opResumeCodexEmbedded, map[string]string{"session": session, "pane": pane, "agent": name,
 		"id": thread, "model": a.Model, "effort": a.Effort})
-	return err
+	return c.codexStartupResult(ctx, session, pane, name, err)
+}
+
+// codexStartupResult recognises a running Codex awaiting hook consent.
+// Herdr 0.9.3 can time out (or lose the pending name) on this startup dialog.
+// Restore only the requested name on the existing agent in this pane, then
+// report a recoverable startup block. Never send a key or trust a hook.
+func (c *Control) codexStartupResult(ctx context.Context, session, pane, name string, err error) error {
+	var api *APIError
+	if !errors.As(err, &api) || (api.Code != "timeout" && api.Code != "agent_name_not_found") || ctx.Err() != nil {
+		return err
+	}
+	screen, readErr := c.ReadPane(ctx, session, pane)
+	if readErr != nil || !strings.Contains(screen, "Hooks need review") || !strings.Contains(screen, "Trust all and continue") || !strings.Contains(screen, "Continue without trusting") {
+		return err
+	}
+	if _, renameErr := c.run(ctx, opRestoreCodexName, map[string]string{"session": session, "pane": pane, "agent": name}); renameErr != nil {
+		return fmt.Errorf("%w; restoring the Codex name during hook review: %v", err, renameErr)
+	}
+	return &APIError{Code: "agent_not_ready", Message: "Codex asks to review its hooks in the terminal"}
 }

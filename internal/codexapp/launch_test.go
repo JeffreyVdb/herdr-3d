@@ -238,7 +238,7 @@ func TestPreflight(t *testing.T) {
 	if err := p.Check(context.Background(), "/r"); err != nil {
 		t.Fatalf("a verified line (0.161): %v", err)
 	}
-	reply["--version"] = "codex-cli 0.163.0"
+	reply["--version"] = "codex-cli 0.999.0"
 	if err := p.Check(context.Background(), "/r"); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("new codex: %v", err)
 	}
@@ -250,5 +250,21 @@ func TestPreflight(t *testing.T) {
 	p.Direnv = "no-such-direnv-h3d"
 	if err := p.Check(context.Background(), "/r"); err != nil {
 		t.Fatalf("no direnv: %v", err)
+	}
+}
+
+func TestPreflightUnverifiedStillChecksEnvironment(t *testing.T) {
+	p := Preflight{Codex: "codex", Direnv: "sh", VersionPolicy: VersionPolicy{AllowUnverified: true}, Run: func(_ context.Context, _ string, argv ...string) ([]byte, error) {
+		if argv[1] == "--version" {
+			return []byte("codex-cli 0.999.0"), nil
+		}
+		return []byte(`{"state":{"foundRC":{"allowed":1,"path":"/r/.envrc"}}}`), nil
+	}}
+	if err := p.Check(context.Background(), "/r"); !errors.Is(err, ErrEnvrcBlocked) {
+		t.Fatalf("blocked environment accepted: %v", err)
+	}
+	p.Run = func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("cannot execute") }
+	if err := p.Check(context.Background(), "/r"); err == nil {
+		t.Fatal("failed executable accepted")
 	}
 }

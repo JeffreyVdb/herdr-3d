@@ -100,7 +100,7 @@ git remote set-url --push archive DISABLED   # pushing to it fails
 make setup             # fresh worktree: toolchain check, game deps, Go modules (then make lint, make shot)
 make build test lint   # Go binaries -> bin/, game bundle -> game/dist/, go test + vitest, vet/gofmt/tsc
 make integration       # bridge against a real herdr (and systemd-run) in throwaway sessions (see below)
-make codex-shared-tui  # #154/#155: real Codex TUI (codex-cli 0.160.1, 0.161.0 or 0.162.0; any other skips) + a second app-server client, mock model, throwaway herdr sessions
+make codex-shared-tui  # #154/#155: real Codex TUI (codex-cli 0.160.1, 0.161.0, 0.162.0 or 0.163.0; any other skips) + a second app-server client, mock model, throwaway herdr sessions
                        # (H3D_CODEXSHARE_REAL=1 adds #155's and #158's real-model smokes on ~/.codex: costs inference)
 make codex-shared-bridge  # #158 only: herdr-world itself (app.Serve) driven over its WebSocket against that fixture
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)

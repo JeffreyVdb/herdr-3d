@@ -116,7 +116,7 @@ func (b *bridge) start() {
 	go func() {
 		defer logf.Close()
 		served <- app.Serve(ctx, app.ServeConfig{
-			Socket: b.sock, DB: b.o.db, Herdr: &herdr.Client{Bin: f.h.Bin}, Only: only,
+			Socket: b.sock, DB: b.o.db, Herdr: fixtureHerdrClient{Client: &herdr.Client{Bin: f.h.Bin}, h: f.h}, Only: only,
 			Log:  slog.New(slog.NewTextHandler(logf, &slog.HandlerOptions{Level: slog.LevelDebug})),
 			Name: "herdr-world", Ready: func() { close(ready) },
 			Control: b.ctl, Git: &gitops.Git{}, CodexRun: b.run, ClaudeCLI: "claude", CodexCLI: b.o.codexCLI, CodexSessions: b.o.sessions,
@@ -164,13 +164,32 @@ func (b *bridge) runner() herdr.Runner {
 			}
 			return nil, nil, b.f.h.start(ctx)
 		}
-		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-		cmd.Env = herdr.CleanEnv(os.Environ())
-		var out, errb strings.Builder
-		cmd.Stdout, cmd.Stderr = &out, &errb
-		err := cmd.Run()
-		return []byte(out.String()), []byte(errb.String()), err
+		return b.f.runControl(ctx, argv)
 	}
+}
+
+// fixtureHerdrClient discovers sessions in the same environment that started
+// them. Bash fixtures have a private HOME, including a private Herdr session directory.
+// Socket reads still use the production client unchanged.
+type fixtureHerdrClient struct {
+	*herdr.Client
+	h *Herdr
+}
+
+func (c fixtureHerdrClient) ListSessions(ctx context.Context) ([]herdr.Session, error) {
+	cmd := exec.CommandContext(ctx, c.h.Bin, "session", "list", "--json")
+	cmd.Env = herdr.CleanEnv(c.h.Env)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var res struct {
+		Sessions []herdr.Session `json:"sessions"`
+	}
+	if err := json.Unmarshal(out, &res); err != nil {
+		return nil, err
+	}
+	return res.Sessions, nil
 }
 
 // bclient is one protocol client of the bridge (a game).

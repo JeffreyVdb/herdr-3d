@@ -301,6 +301,8 @@ export interface AsyncAnswerAck {
 
 /** #155: the shared Codex server switch (`codex_server` in the snapshot, `codex_server.update`). */
 export interface CodexServerState {
+  /** Compatibility opt-in; absent on bridges that do not support it. */
+  allow_unverified?: boolean;
   /** New Codex workers get their own app-server. */
   enabled: boolean;
   /** The bridge can launch them; without it the switch cannot be turned on. */
@@ -888,7 +890,7 @@ export interface CommandArgs {
   /** A workspace's projects with the saved connection: `{workspace_id, projects, generation}`. */
   'kaneo.projects': { workspace_id: string };
   'codex_server.get': Record<string, never>; // #155
-  'codex_server.set': { enabled: boolean };
+  'codex_server.set': { enabled?: boolean; allow_unverified?: boolean };
   'repo_refs.get': Record<string, never>; // #247
   'repo_refs.set': { all_buildings: boolean };
   // #54 repository discovery (docs/protocol.md "Repository discovery"): each acks `RepoDiscoveryState`.

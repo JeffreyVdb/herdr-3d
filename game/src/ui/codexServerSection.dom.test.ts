@@ -18,7 +18,7 @@ function mount(s: Record<string, unknown> | null, answer?: (args: Record<string,
       book,
       send: ((t: string, args: Record<string, unknown>) => {
         sent.push({ t, args });
-        return Promise.resolve(answer ? answer(args) : { ok: true, data: { enabled: args.enabled, available: true } });
+        return Promise.resolve(answer ? answer(args) : { ok: true, data: { ...book.state, ...args } });
       }) as never,
     }),
     { store: 'bridge', group: 'workers' },
@@ -72,6 +72,40 @@ describe('the shared Codex server switch (#155)', () => {
     expect(m.root.querySelector('.settings-status')!.classList.contains('settings-field-error')).toBe(true);
   });
 
+  it('saves the compatibility choice, preserves the server switch, and follows updates', async () => {
+    const m = mount({ enabled: true, available: true, allow_unverified: false });
+    const risk = m.root.querySelector<HTMLInputElement>('input[id$="-unverified"]')!;
+    expect(risk.checked).toBe(false);
+    expect(risk.disabled).toBe(false);
+    expect(m.root.textContent).toContain('I accept');
+    risk.focus();
+    risk.click();
+    risk.blur();
+    expect(m.box().disabled).toBe(true);
+    await m.flush();
+    expect(m.sent).toEqual([{ t: 'codex_server.set', args: { allow_unverified: true } }]);
+    expect(m.book.state).toEqual({ enabled: true, available: true, allow_unverified: true });
+    expect(document.activeElement).toBe(risk);
+    expect(m.text('.settings-status')).toContain('including future upgrades');
+    m.box().click();
+    await m.flush();
+    expect(m.book.state?.allow_unverified).toBe(true);
+    m.book.upsert({ enabled: true, available: true, allow_unverified: false });
+    expect(risk.checked).toBe(false);
+  });
+
+  it('restores the compatibility preference on failure and hides it for older bridges', async () => {
+    const m = mount({ enabled: true, available: true, allow_unverified: false }, () => ({ ok: false, code: 'offline', message: '' }) as CommandResult);
+    const risk = m.root.querySelector<HTMLInputElement>('input[id$="-unverified"]')!;
+    risk.click();
+    await m.flush();
+    expect(risk.checked).toBe(false);
+    expect(m.text('.settings-status')).toContain('Not connected');
+    m.book.upsert({ enabled: true, available: true });
+    expect(risk.parentElement!.hidden).toBe(true);
+    expect(m.book.upsert({ enabled: true, available: true, allow_unverified: 'yes' })).toBe(false);
+  });
+
   it('is disabled, with why, on a bridge that cannot start the servers', () => {
     const m = mount({ enabled: false, available: false });
     expect(m.box().disabled).toBe(true);
@@ -101,15 +135,15 @@ describe('what a worker’s Codex launch tells you (#155)', () => {
     ).toEqual({ tone: 'note', text: 'No own Codex server this time: app-server connection failed. It runs with Codex’s built-in one; the next wake tries its own again.' });
     expect(codexNotice({ codex: { mode: 'legacy' } })).toBeNull();
     // #186: a Codex the shared server is not verified with, by its CLI or by its server's userAgent: the version, plainly.
-    for (const why of ['"codex-cli 0.163.0" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x)', 'app-server "herdr_3d/0.163.0 (Linux; x86_64) xterm" (supported: 0.160.x, 0.161.x or 0.162.x)']) {
+    for (const why of ['"codex-cli 0.999.0" (supported: codex-cli 0.160.x, 0.161.x, 0.162.x or 0.163.x)', 'app-server "herdr_3d/0.999.0 (Linux; x86_64) xterm" (supported: 0.160.x, 0.161.x, 0.162.x or 0.163.x)']) {
       expect(codexNotice({ codex: { mode: 'legacy', note: `shared Codex server: unsupported Codex version: ${why}; started the usual way` } })).toEqual({
         tone: 'note',
-        text: 'No own Codex server: the shared Codex server is not verified with Codex 0.163.0 yet (verified: 0.160.x, 0.161.x or 0.162.x). It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript.',
+        text: 'No own Codex server: the shared Codex server is not verified with Codex 0.999.0 yet (verified: 0.160.x, 0.161.x, 0.162.x or 0.163.x). It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript.',
       });
     }
     expect(
-      codexNotice({ codex: { mode: 'shared', server: 'stopped', note: 'shared Codex server: unsupported Codex version: "codex-cli 0.159.9" (supported: codex-cli 0.160.x, 0.161.x or 0.162.x); started without its own server, on Codex\'s built-in one' } }),
-    ).toEqual({ tone: 'note', text: 'No own Codex server this time: the shared Codex server is not verified with Codex 0.159.9 yet (verified: 0.160.x, 0.161.x or 0.162.x). It runs with Codex’s built-in one; the next wake tries its own again.' });
+      codexNotice({ codex: { mode: 'shared', server: 'stopped', note: 'shared Codex server: unsupported Codex version: "codex-cli 0.159.9" (supported: codex-cli 0.160.x, 0.161.x, 0.162.x or 0.163.x); started without its own server, on Codex\'s built-in one' } }),
+    ).toEqual({ tone: 'note', text: 'No own Codex server this time: the shared Codex server is not verified with Codex 0.159.9 yet (verified: 0.160.x, 0.161.x, 0.162.x or 0.163.x). It runs with Codex’s built-in one; the next wake tries its own again.' });
     expect(codexNotice({})).toBeNull();
   });
 });

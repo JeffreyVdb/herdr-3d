@@ -197,6 +197,8 @@ var migrations = []string{
 	migrationRepoDiscovery,
 	// #58: virtual floors, workers' and run launches' floors, hidden floors.
 	migrationVirtualFloors,
+	// Explicit compatibility opt-in, off for existing databases.
+	migrationCodexVersionPolicy,
 }
 
 // Fingerprint kinds.

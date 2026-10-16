@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -111,6 +112,7 @@ type hireOp struct {
 	harness, model, effort     string
 	cwd, prompt, branch, repo  string
 	worktree                   bool
+	codexPolicy                codexapp.VersionPolicy
 	shared                     bool // #155: a Codex hire with its own app-server
 	hiredAt                    int64
 	client                     *Client
@@ -475,7 +477,7 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 	op := &hireOp{id: id, session: f.session, floor: a.Floor, desk: desk, name: name, label: a.Label, marker: "h3d-" + hex[:12],
 		agent: slug(name) + "-" + hex[:6], harness: a.Harness, model: a.Model, effort: a.Effort, cwd: cwd,
 		prompt: a.Prompt, worktree: a.Worktree, hiredAt: at.UnixMilli(), client: c, cmd: cmd,
-		notify: make(chan struct{}, 1), launched: launched, compose: compose, shared: a.Harness == "codex" && h.cx.enabled}
+		notify: make(chan struct{}, 1), launched: launched, compose: compose, shared: a.Harness == "codex" && h.cx.enabled, codexPolicy: h.cx.policy}
 	if a.Worktree {
 		op.branch = "h3d/" + op.agent
 	}
@@ -676,7 +678,7 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	if note != "" {
 		rep.step("%s", note)
 	}
-	hooks := op.shared && h.hooksReviewShows(ctx, op, created.PaneID, rep) // #155 (B8)
+	hooks := op.harness == "codex" && h.hooksReviewShows(ctx, op, created.PaneID, rep) // #155 (B8)
 
 	if !h.awaitHire(ctx, op, time.Now().Add(h.opts.SeenTimeout), func() bool { return op.seen }) {
 		if ctx.Err() != nil {

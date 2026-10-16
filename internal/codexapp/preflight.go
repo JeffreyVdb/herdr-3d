@@ -43,6 +43,7 @@ var ErrEnvrcBlocked = errors.New(".envrc is blocked")
 type Preflight struct {
 	Codex, Direnv string
 	Run           Runner
+	VersionPolicy VersionPolicy
 	Timeout       time.Duration // per command (default 5 s)
 }
 
@@ -62,7 +63,7 @@ func (p Preflight) Check(ctx context.Context, dir string) error {
 	if err != nil {
 		return fmt.Errorf("%w: codex --version: %v", ErrUnsupported, err)
 	}
-	if err := CheckVersion(string(out)); err != nil {
+	if err := p.VersionPolicy.CheckVersion(string(out)); err != nil {
 		return err
 	}
 	if p.Direnv == "" {
