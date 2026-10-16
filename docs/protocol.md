@@ -356,7 +356,7 @@ floor with no workers and an `error`).
 | `usage` | object, optional | its agent session's token counts and cost estimate (see [Usage and cost](#usage-and-cost)); absent without an `agent_session` (a running Codex excepted), or until the bridge found its transcript |
 | `question` | object, optional | what the screen of a `blocked` worker asks, while it is blocked (see [Blocked workers](#blocked-workers-question-quick-reply-approve--deny)) |
 | `ask` | object, optional | #57: the structured question (Claude's AskUserQuestion, Codex's request_user_input) its agent's latest turn waits on, read from its transcript whatever `status` says (see [Laptops: asks](#laptops-asks)) |
-| `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "label"?, "question", "kind": "yes_no" \| "choice" \| "open", "options"?, "context"?, "recommendation"?: {"text", "why"?, "option"?}}], "score", "source": "parsed" \| "model" \| "fallback", "at", "tail"?, "error"?, "unlisted"?, "retries"?}` (#60: `label` … `retries`, `parsed`), until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
+| `followup` | object, optional | #90: the open questions of its agent's final message, `{"turn_id", "questions": [{"id", "label"?, "question", "kind": "yes_no" \| "choice" \| "open", "options"?, "context"?, "recommendation"?: {"text", "why"?, "option"?, "cut"?}}], "score", "source": "parsed" \| "model" \| "fallback", "at", "tail"?, "error"?, "unlisted"?, "retries"?}` (#60: `label` … `retries`, `parsed`), until answered, dismissed or moot (see [Follow-up questions](#follow-up-questions)) |
 | `handoff` | object, optional | #223: its agent's latest completed final reply a literal handoff can file, `{"id", "session", "revision", "harness", "message"?, "turn"?, "source": "message" \| "last_agent_message", "bytes", "images"?, "too_large"?}`: the bridge's identity of it, never its text (see [Handoffs](#handoffs)) |
 | `llm_handoff` | object, optional | #9: its latest LLM handoff job, `{"op", "state": "queued" \| "running" \| "filed" \| "failed" \| "cancelled", "code"?, "message"?, "started_at", "updated_at", "model"?, "host"?, "send_home"?, "handoff"?, "send_home_result"?, "send_home_reason"?}`, while it runs and once settled until a new one starts or the worker leaves (see [LLM handoffs](#llm-handoffs)) |
 | `activity` | object, optional | #98: what its agent is doing right now, `{"kind", "detail"?, "since", "source", "image"?, "tasks"?}`: while `status` is `working`, and while `idle` or `done` only as `waiting` on open background tasks; absent otherwise and for harnesses other than Claude and Codex (see [Activity](#activity)) |
@@ -3378,8 +3378,10 @@ assistant `response_item` (else `task_complete`'s `last_agent_message`). A new p
    reports, are counted in `unlisted`), each 1–300 characters (whitespace folded), `kind` `yes_no`, `choice` (2–8
    options of 1–300 characters) or `open`; options of the other kinds are dropped. One invalid question does not cost
    the round: an empty, over-long or unknown-kind question is left out and counted in `unlisted`; a choice with bad
-   options becomes `open`, its options listed in `context`. `context` and `recommendation.text` are cut at 1,200
-   characters, `why` at 600. The call: an 8,192-token completion budget, reasoning effort `low` when the model's
+   options becomes `open`, its options listed in `context`. `context` is cut at 1,200 characters, `why` at 600.
+   By either reader, `recommendation.text` is kept whole up to 8,000 bytes, an answer's bound, so accepting it sends
+   all of it; a longer one is its first 8,000 bytes (ending `…`) with `cut: true`: shown, never filled in as an answer
+   nor called the agent's recommendation (an `option` it names still is: the option goes whole). The call: an 8,192-token completion budget, reasoning effort `low` when the model's
    catalog lists it (never sent when the catalog does not describe the model), no partial answer, its own 45 s
    timeout and no retry of a call that may have reached the provider; cut off at the budget or empty, it is asked once
    more with effort `none` (or `minimal`, the first the model takes). An answer with no valid question, or an LLM
@@ -3419,7 +3421,7 @@ Unanswered: 3
 Only the answered questions are listed, numbered as asked; a note follows its value after a space. #60: a question with
 a `label` (a grill round's) is named by it and its question instead, so the agent pairs each answer with its own
 question; an answer that is the question's recommendation as it was (its option, or an open question's whole text, no
-note) says so; the questions left unanswered follow on one line; the request's `note` ends the prompt after a blank
+note; never a `cut` one's text) says so; the questions left unanswered follow on one line; the request's `note` ends the prompt after a blank
 line:
 
 ```

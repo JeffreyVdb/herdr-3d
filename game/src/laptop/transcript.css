@@ -2521,11 +2521,15 @@
   font-size: calc(13px * var(--tx-k, 1));
   line-height: 1.45;
 }
-.tx-fu-rec-why {
+.tx-fu-rec-why,
+.tx-fu-rec-cut {
   margin-top: 4px;
   color: var(--ctl-text-2);
   font-size: calc(12px * var(--tx-k, 1));
   line-height: 1.4;
+}
+.tx-fu-rec-cut {
+  margin-bottom: 0;
 }
 .tx-fu-carry {
   display: grid;

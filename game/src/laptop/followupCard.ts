@@ -798,6 +798,10 @@ export class FollowupCard {
         ),
       );
     const box = h('div', { class: `tx-fu-rec${using ? ' is-using' : ''}` }, head, markdown('tx-md tx-fu-rec-text', r.text));
+    if (r.cut)
+      box.append(
+        h('p', { class: 'tx-fu-rec-cut', role: 'note' }, `It is longer than an answer can be, so it is cut here and cannot be used as it is: ${this.host.message ? 'Show the whole message' : 'the agent’s message'} has all of it.`),
+      );
     if (r.why) box.append(markdown('tx-md tx-fu-rec-why', r.why));
     return box;
   }

@@ -2185,6 +2185,8 @@ export interface FollowupRecommendation {
   why?: string;
   /** The index of the option it names (a choice). */
   option?: number;
+  /** Its text is over an answer's 8,000 bytes: `text` is its start (with "…"), shown but never accepted as the answer (its `option` still is). */
+  cut?: boolean;
 }
 
 /** A worker's open questions (`Worker.followup`). */

@@ -33,6 +33,7 @@ function questionOf(q: unknown): FollowupQuestion | null {
     const why = str(r.why);
     if (why) rec.why = why;
     if (typeof r.option === 'number' && Number.isInteger(r.option) && r.option >= 0 && r.option < (out.options?.length ?? 0)) rec.option = r.option;
+    if (r.cut === true) rec.cut = true;
     out.recommendation = rec;
   }
   return out;
@@ -145,8 +146,9 @@ export function answerFollowupArgs(id: string, f: Followup, picks: FollowupPick[
 
 /**
  * What accepting question qi's recommendation picks: a choice's option it names (else its text, as the typed answer),
- * Yes / No when the text starts with one, an open question's whole text. Null: it has none, or it is a yes / no
- * question whose recommendation says neither (the card shows it, to read).
+ * Yes / No when the text starts with one, an open question's whole text. Null: it has none, it is a yes / no question
+ * whose recommendation says neither, or its text would be the answer but is cut (too long to send: the card shows it,
+ * to read, with the whole message).
  */
 export function recommendedPick(f: Followup, qi: number): FollowupPick | null {
   const q = f.questions[qi];
@@ -155,14 +157,15 @@ export function recommendedPick(f: Followup, qi: number): FollowupPick | null {
   switch (q.kind) {
     case 'choice': {
       const o = r.option !== undefined ? q.options?.[r.option] : undefined;
-      return o !== undefined ? { value: o, text: '' } : { value: null, text: r.text.trim() };
+      if (o !== undefined) return { value: o, text: '' };
+      return r.cut ? null : { value: null, text: r.text.trim() };
     }
     case 'yes_no': {
       const m = /^[\s*_]*(yes|no)\b/i.exec(r.text);
       return m ? { value: m[1]!.toLowerCase() === 'yes' ? 'Yes' : 'No', text: '' } : null;
     }
     default:
-      return { value: null, text: r.text.trim() };
+      return r.cut ? null : { value: null, text: r.text.trim() };
   }
 }
 
@@ -196,7 +199,7 @@ export function isRecommended(f: Followup, picks: FollowupPick[], qi: number): b
   const a = answerOf(f, picks, qi);
   if (!q || !r || !a || a.note) return false;
   if (q.kind === 'choice' && r.option !== undefined) return a.value === q.options?.[r.option];
-  return q.kind === 'open' && a.value === r.text.trim();
+  return q.kind === 'open' && !r.cut && a.value === r.text.trim();
 }
 
 /** The questions left unanswered, by name (`Q12`, or a number). */

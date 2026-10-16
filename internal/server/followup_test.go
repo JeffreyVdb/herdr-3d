@@ -715,6 +715,35 @@ func TestFollowupPromptPairs(t *testing.T) {
 	}
 }
 
+// #60: an accepted recommendation goes whole, however long an answer may be
+// (the reviewer's 1,446 bytes, the bound itself) and fits one prompt; a cut
+// one is never sent as the agent's recommendation.
+func TestFollowupPromptLongRecommendation(t *testing.T) {
+	long := strings.Repeat("Prepare audit rows before cutover. ", 40) + "Never delete the existing production database."
+	limit := strings.Repeat("x", followup.MaxRecommendationLen)
+	qs, _, err := followup.ParseRound("❓ **Q1** - **Cutover**: What then?\n\n➡️ " + long + "\n\n" +
+		"❓ **Q2** - **Rows**: How many?\n\n➡️ " + limit + "\n\n" +
+		"❓ **Q3** - **Old data**: Keep it?\n\n➡️ " + limit + "y\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &proto.Followup{Source: proto.FollowupParsed, Questions: qs}
+	cut := qs[2].Recommendation
+	if !cut.Cut {
+		t.Fatalf("Q3's recommendation is not cut: %d bytes", len(cut.Text))
+	}
+	for _, a := range []proto.FollowupAnswer{{ID: "q1", Value: qs[0].Recommendation.Text}, {ID: "q2", Value: qs[1].Recommendation.Text}} {
+		text, err := server.FollowupPrompt(f, []proto.FollowupAnswer{a}, "")
+		if err != nil || !strings.Contains(text, " → "+a.Value+" "+server.FollowupRecommended+"\n") || len(text) > 16<<10 {
+			t.Fatalf("%s accepted: %d bytes, %v", a.ID, len(text), err)
+		}
+	}
+	text, err := server.FollowupPrompt(f, []proto.FollowupAnswer{{ID: "q3", Value: cut.Text}}, "")
+	if err != nil || strings.Contains(text, server.FollowupRecommended) {
+		t.Fatalf("a cut recommendation sent back: %q…, %v", text[:80], err)
+	}
+}
+
 // #60: a fallback says why, keeps its message for worker.followup_message
 // and can be retried (the extraction only, never the classifier), also
 // after a restart; the recovered round is what a later restart restores.

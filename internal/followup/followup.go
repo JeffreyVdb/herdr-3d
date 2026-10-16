@@ -118,6 +118,19 @@ type Recommendation struct {
 	Why string `json:"why,omitempty"`
 	// Option is the index of the option it names, for a choice.
 	Option *int `json:"option,omitempty"`
+	// Cut: the agent's text is over MaxRecommendationLen bytes, more than an
+	// answer may be, so Text is its start (with "…"). It is shown, never
+	// accepted as the answer (its Option, sent whole, still is).
+	Cut bool `json:"cut,omitempty"`
+}
+
+// recommendation is a Recommendation of text (trimmed Markdown, not empty):
+// whole when an answer can hold it, else cut.
+func recommendation(text string) *Recommendation {
+	if len(text) <= MaxRecommendationLen {
+		return &Recommendation{Text: text}
+	}
+	return &Recommendation{Text: clipBytes(text, MaxRecommendationLen), Cut: true}
 }
 
 // Followup is a worker's open questions (proto.Worker.Followup).
@@ -322,8 +335,9 @@ func request(text, effort string) ai.Request {
 //     or over 300 characters, is an open question, its options listed in
 //     its context;
 //   - options of yes_no and open are dropped (they are implied); a label
-//     that is no short name is dropped; the context, recommendation and why
-//     are cut to their bounds.
+//     that is no short name is dropped; the context and why are cut to their
+//     bounds, a recommendation over an answer's bound is cut and marked so
+//     (Recommendation.Cut).
 func Parse(text string) ([]Question, int, error) {
 	obj, ok := ai.FirstJSONObject(text)
 	if !ok {
@@ -390,8 +404,9 @@ func Parse(text string) ([]Question, int, error) {
 			unlisted++
 			continue
 		}
-		if t := clip(markdown(r.Recommendation), MaxRecommendationLen); t != "" {
-			rec := &Recommendation{Text: t, Why: clip(markdown(r.Why), MaxWhyLen)}
+		if t := markdown(r.Recommendation); t != "" {
+			rec := recommendation(t)
+			rec.Why = clip(markdown(r.Why), MaxWhyLen)
 			if k := r.Option - 1; q.Kind == KindChoice && k >= 0 && k < len(q.Options) {
 				rec.Option = &k
 			}
@@ -438,4 +453,18 @@ func clip(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n]) + "…"
+}
+
+// clipBytes cuts s to at most n bytes with its "…", never inside a UTF-8
+// sequence.
+func clipBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	const more = "…"
+	end := max(n-len(more), 0)
+	for end > 0 && !utf8.RuneStart(s[end]) {
+		end--
+	}
+	return s[:end] + more
 }

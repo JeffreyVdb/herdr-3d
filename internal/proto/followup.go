@@ -76,8 +76,9 @@ type FollowupsTestArgs struct {
 }
 
 // MaxFollowupAnswer bounds one answer's value and its note, and the round's
-// note, in bytes (#60: an accepted recommendation is copied whole).
-const MaxFollowupAnswer = 8000
+// note, in bytes (#60: a recommendation's bound, so an accepted one is copied
+// whole; a longer one is cut and never offered to accept).
+const MaxFollowupAnswer = followup.MaxRecommendationLen
 
 // FollowupAnswer answers one question: value is the answer (yes_no: "Yes" or
 // "No"; choice: an option or the typed Other; open: the text), note an

@@ -14,6 +14,7 @@ import {
   followupsStateOf,
   isRecommended,
   pickValue,
+  recommendationsLeft,
   recommendedPick,
   setText,
   unansweredNames,
@@ -139,6 +140,33 @@ describe('grill rounds (#60)', () => {
     // The round's note ends the prompt.
     expect(followupPrompt(f, emptyFollowupPicks(f), 'Later.')).toMatch(/\nUnanswered: Q8, .*Q17\n\nLater\.$/);
     expect(answerFollowupArgs('w', f, emptyFollowupPicks(f), ' Later. ')).toEqual({ id: 'w', turn_id: f.turn_id, answers: [], note: 'Later.' });
+  });
+
+  it('copies a long recommendation whole, and never accepts a cut one', () => {
+    const long = 'Prepare audit rows before cutover. '.repeat(40) + 'Never delete the existing production database.';
+    const cutText = `${'Prepare audit rows before cutover. '.repeat(228)}…`;
+    const f = validFollowup({ turn_id: 't', score: 1, source: 'parsed', at: 1, questions: [
+      { id: 'q1', label: 'Q1', question: 'Cutover?', kind: 'open', recommendation: { text: long } },
+      { id: 'q2', label: 'Q2', question: 'Old data?', kind: 'open', recommendation: { text: cutText, cut: true } },
+      { id: 'q3', label: 'Q3', question: 'Which?', kind: 'choice', options: ['(a) Keep', '(b) Drop'], recommendation: { text: `(a). ${cutText}`, option: 0, cut: true } },
+      { id: 'q4', label: 'Q4', question: 'How?', kind: 'choice', options: ['(a) Fast', '(b) Slow'], recommendation: { text: cutText, cut: true } },
+    ] })!;
+    expect(f.questions[1]!.recommendation).toEqual({ text: cutText, cut: true });
+    // One accepted: all of it, the agent's recommendation.
+    const one = acceptRecommendation(f, emptyFollowupPicks(f), 0);
+    expect(one[0]).toEqual({ value: null, text: long });
+    expect(followupPrompt(f, one)).toContain(`- Q1 Cutover? → ${long} (your recommendation)\n`);
+    // A cut text is not offered (its option, sent whole, is).
+    expect([1, 2, 3].map((i) => recommendedPick(f, i))).toEqual([null, { value: '(a) Keep', text: '' }, null]);
+    expect(recommendationsLeft(f, emptyFollowupPicks(f))).toBe(2);
+    const all = acceptAllRecommendations(f, emptyFollowupPicks(f));
+    expect(all.filled).toBe(2);
+    expect(all.picks.map((p) => p.value ?? p.text)).toEqual([long, '', '(a) Keep', '']);
+    expect(followupPrompt(f, all.picks)).toBe(
+      'Answers to your open questions:\n' + `- Q1 Cutover? → ${long} (your recommendation)\n` + '- Q3 Which? → (a) Keep (your recommendation)\n' + 'Unanswered: Q2, Q4',
+    );
+    // Typed out as it is shown, it is your answer, not the agent's.
+    expect(isRecommended(f, setText(f, all.picks, 1, cutText), 1)).toBe(false);
   });
 
   it('a yes / no recommendation picks Yes or No when it says one', () => {

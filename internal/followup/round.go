@@ -42,11 +42,16 @@ const MaxRoundQuestions = 30
 // Bounds of a question's Markdown parts, in characters (longer is cut, with
 // "…": the full message has the rest).
 const (
-	MaxContextLen        = 1200
-	MaxRecommendationLen = 1200
-	MaxWhyLen            = 600
-	MaxLabelLen          = 12
+	MaxContextLen = 1200
+	MaxWhyLen     = 600
+	MaxLabelLen   = 12
 )
+
+// MaxRecommendationLen bounds a recommendation's text, in bytes: the most an
+// answer may be (proto.MaxFollowupAnswer is this), so one accepted as it is
+// is sent whole. A longer one is cut (Recommendation.Cut) and never offered
+// to accept: the full message has all of it.
+const MaxRecommendationLen = 8000
 
 // ErrNotARound: the message has no ❓ block.
 var ErrNotARound = errors.New("not a grill round")
@@ -161,7 +166,7 @@ func roundQuestion(lines []string) Question {
 	}
 	q.Context = clip(strings.TrimSpace(context), MaxContextLen)
 	if text := strings.TrimSpace(strings.Join(rec, "\n")); text != "" {
-		r := &Recommendation{Text: clip(text, MaxRecommendationLen)}
+		r := recommendation(text)
 		if m := recLetter.FindStringSubmatch(text); m != nil && q.Kind == KindChoice {
 			if k := int(m[1][0] - 'a'); k < len(q.Options) {
 				r.Option = &k

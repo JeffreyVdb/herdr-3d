@@ -530,7 +530,7 @@ func followupPrompt(f *proto.Followup, answers []proto.FollowupAnswer, note stri
 }
 
 // recommended: answer a is question q's recommendation as it was (its
-// option, or its whole text), with no note.
+// option, or its whole text: never a cut one's), with no note.
 func recommended(q proto.FollowupQuestion, a proto.FollowupAnswer) bool {
 	r := q.Recommendation
 	if r == nil || a.Note != "" {
@@ -539,7 +539,7 @@ func recommended(q proto.FollowupQuestion, a proto.FollowupAnswer) bool {
 	if q.Kind == proto.FollowupChoice && r.Option != nil && *r.Option >= 0 && *r.Option < len(q.Options) {
 		return a.Value == q.Options[*r.Option]
 	}
-	return q.Kind == proto.FollowupOpen && a.Value == strings.TrimSpace(r.Text)
+	return q.Kind == proto.FollowupOpen && !r.Cut && a.Value == strings.TrimSpace(r.Text)
 }
 
 // startAnswerFollowup answers worker.answer_followup: the answers as one

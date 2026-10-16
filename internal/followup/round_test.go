@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
@@ -278,6 +279,53 @@ func TestParseKeepsRecommendations(t *testing.T) {
 	b, _ := json.Marshal(qs[0])
 	if !strings.Contains(string(b), `"recommendation":{"text":"(c), default on.","why":"The whole point is not having to remember.","option":2}`) {
 		t.Fatalf("JSON = %s", b)
+	}
+}
+
+// A long recommendation is kept whole when an answer can hold it (accepting
+// it sends all of it), else cut on a character and marked Cut (never
+// offered to accept), by both readers.
+func TestRecommendationIsWholeOrMarkedCut(t *testing.T) {
+	whole := strings.Repeat("Prepare audit rows before cutover. ", 40) + "Never delete the existing production database."
+	over := strings.Repeat("Prepare audit rows before cutover. ", 240) + "Never delete the existing production database."
+	multi := strings.Repeat("é", followup.MaxRecommendationLen/2+1) // 2 bytes each, one over
+	limit := strings.Repeat("x", followup.MaxRecommendationLen)
+	readers := map[string]func(rec string) (*followup.Recommendation, error){
+		"round": func(rec string) (*followup.Recommendation, error) {
+			qs, _, err := followup.ParseRound("❓ **Q1** - **Cutover**: What do we do with the old database?\n\n➡️ " + rec + "\n")
+			if err != nil {
+				return nil, err
+			}
+			return qs[0].Recommendation, nil
+		},
+		"llm": func(rec string) (*followup.Recommendation, error) {
+			b, _ := json.Marshal(rec)
+			qs, _, err := followup.Parse(`{"questions":[{"label":"Q1","question":"What do we do with the old database?","kind":"open","recommendation":` + string(b) + `}]}`)
+			if err != nil {
+				return nil, err
+			}
+			return qs[0].Recommendation, nil
+		},
+	}
+	for name, read := range readers {
+		t.Run(name, func(t *testing.T) {
+			for _, rec := range []string{whole, limit} {
+				r, err := read(rec)
+				if err != nil || r == nil || r.Text != rec || r.Cut {
+					t.Fatalf("%d bytes: %+v, %v; want it whole", len(rec), r, err)
+				}
+			}
+			for _, rec := range []string{over, multi} {
+				r, err := read(rec)
+				if err != nil || r == nil || !r.Cut || len(r.Text) > followup.MaxRecommendationLen || !utf8.ValidString(r.Text) ||
+					!strings.HasSuffix(r.Text, "…") || !strings.HasPrefix(rec, strings.TrimSuffix(r.Text, "…")) {
+					t.Fatalf("%d bytes: %d bytes back, cut %v, %v; want its start, marked cut", len(rec), len(r.Text), r != nil && r.Cut, err)
+				}
+				if b, _ := json.Marshal(r); !strings.Contains(string(b), `"cut":true`) {
+					t.Fatalf("JSON = %s", b)
+				}
+			}
+		})
 	}
 }
 

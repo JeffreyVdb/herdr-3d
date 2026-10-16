@@ -391,4 +391,20 @@ describe('FollowupCard, a grill round (#60)', () => {
     c.set({ ...grill(), unlisted: 2 });
     expect(c.el.querySelector('.tx-fu-unlisted')?.textContent).toMatch(/^2 more questions are only in the agent’s message/);
   });
+
+  it('a cut recommendation is shown with the whole message, never offered to use', () => {
+    const t = grillHost();
+    const c = (card = new FollowupCard(t.h));
+    document.body.append(c.el);
+    const f = grill();
+    f.questions[0]!.recommendation = { text: 'Store the full spec …', cut: true };
+    c.set(f);
+    expect(c.el.querySelector('.tx-fu-rec-text')?.textContent).toMatch(/^Store the full spec/);
+    expect(c.el.querySelector('.tx-fu-rec-cut')?.textContent).toMatch(/cannot be used as it is: Show the whole message has all of it\.$/);
+    expect(c.el.querySelector('[data-key="use-rec"]')).toBeNull();
+    expect(c.el.querySelector('.tx-ask-keys')?.textContent).not.toContain('R recommendation');
+    press(c, 'r');
+    expect(c.el.querySelector('.tx-fu-progress')?.textContent).toBe('0 of 10 answered');
+    expect(c.el.querySelector('[data-key="message"]')).not.toBeNull();
+  });
 });
