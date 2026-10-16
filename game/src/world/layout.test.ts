@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blocked, moveWithCollision, pickNearest, rayBox } from './collide';
 import { assignDesks, deskCountFallback, displayStatus, modelCue, modelText, taskLine } from './derive';
-import { COUNTER_RECT, COUNTER_TOP, EYE_HEIGHT, HEAD, floorLayout, openingsFor, outlineOf, overviewScreenBox, podGrid, POST_W, ROOM_HEIGHT, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
+import { COUNTER_RECT, COUNTER_TOP, EYE_HEIGHT, HEAD, floorLayout, openingsFor, outlineOf, overviewScreenBox, podGrid, POST_W, RACK_BOX, ROOM_HEIGHT, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
 
 describe('deskCountFallback', () => {
   it.each([
@@ -136,7 +136,7 @@ describe('floorLayout', () => {
   it('has every placeholder prop, labelled', () => {
     const ids = floorLayout(20).props.map((p) => p.id);
     expect(ids.sort()).toEqual(
-      ['board.issues', 'board.prs', 'board.services', 'clock', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'screen.overview', 'tv', 'whiteboard'].sort(),
+      ['board.issues', 'board.prs', 'board.services', 'clock', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'screen.overview', 'server.rack', 'tv', 'whiteboard'].sort(),
     );
   });
 
@@ -242,6 +242,50 @@ describe('floorLayout', () => {
       const r = radio as NonNullable<typeof radio>;
       const rc: [number, number, number] = [(r.min[0] + r.max[0]) / 2, (r.min[1] + r.max[1]) / 2, (r.min[2] + r.max[2]) / 2];
       for (const z of [3.7, 4.1, 4.5, 4.8]) expect(pick([1.3, EYE_HEIGHT, z], rc), `from z=${z}`).toBe('radio');
+    }
+  });
+
+  it('#74: stands the server rack against the north wall between the lounge window and the whiteboard, on every floor', () => {
+    for (const n of [0, 6, 20, 62, 96]) {
+      const l = floorLayout(n);
+      const rack = l.props.find((p) => p.id === 'server.rack');
+      expect(rack, `${n} desks`).toMatchObject({ label: 'Server rack', milestone: null, solid: true });
+      const b = (rack as NonNullable<typeof rack>).box;
+      expect(b).toEqual({ min: [RACK_BOX[0], RACK_BOX[1], RACK_BOX[2]], max: [RACK_BOX[3], RACK_BOX[4], RACK_BOX[5]] });
+      // On the floor, against the north wall, a short rack: its monitor is no higher than a tall person's chest.
+      expect(b.min[1]).toBe(0);
+      expect(b.min[2]).toBe(0);
+      expect(b.max[1]).toBeGreaterThan(1.2);
+      expect(b.max[1]).toBeLessThanOrEqual(1.5);
+      // Clear of the north windows (their frames reach 5 cm past the hole): the lounge window and the corner office's.
+      for (const o of l.openings.filter((o) => o.wall === 'north' && o.kind === 'window')) {
+        expect(b.min[0] >= o.u1 + 0.05 || b.max[0] <= o.u0 - 0.05, `window ${o.u0}-${o.u1}`).toBe(true);
+      }
+      // East of the rug, west of the whiteboard (with room to walk between them).
+      expect(b.min[0]).toBeGreaterThanOrEqual(l.rug.x1);
+      const wb = l.props.find((p) => p.id === 'whiteboard') as NonNullable<ReturnType<typeof floorLayout>['props'][number]>;
+      expect(wb.box.min[0] - b.max[0]).toBeGreaterThanOrEqual(1);
+      // It overlaps no other prop, and none of the mezzanine's posts with the room they keep around them.
+      for (const p of l.props) {
+        if (p.id === 'server.rack') continue;
+        const o = p.box;
+        const hit = b.min[0] < o.max[0] && b.max[0] > o.min[0] && b.min[1] < o.max[1] && b.max[1] > o.min[1] && b.min[2] < o.max[2] && b.max[2] > o.min[2];
+        expect(hit, `${p.id} at ${n} desks`).toBe(false);
+      }
+      for (const p of l.mezzanine.posts) {
+        const h = POST_W / 2;
+        expect(p.x - h > b.max[0] + 0.5 || p.z - h > b.max[2] + 0.5, `post at ${p.x},${p.z}`).toBe(true);
+      }
+      // Solid (a collider), and nothing else blocks the way to stand in front of it.
+      expect(l.colliders).toContainEqual({ x0: RACK_BOX[0], z0: RACK_BOX[2], x1: RACK_BOX[3], z1: RACK_BOX[5] });
+      const stand = { x: (b.min[0] + b.max[0]) / 2, z: 1.7 };
+      expect(blocked(stand, 0.28, l.colliders), `standing at ${stand.x},${stand.z}`).toBe(false);
+      // Aimed at from there, the rack is what you hit (its monitor, at eye height).
+      const mid: [number, number, number] = [stand.x, 1.25, b.max[2]];
+      const from: [number, number, number] = [stand.x, EYE_HEIGHT, stand.z];
+      const d: [number, number, number] = [mid[0] - from[0], mid[1] - from[1], mid[2] - from[2]];
+      const len = Math.hypot(...d);
+      expect(pickNearest(from, [d[0] / len, d[1] / len, d[2] / len], l.props.map((p) => ({ boxes: [p.box], value: p.id })), 3)?.value, `${n} desks`).toBe('server.rack');
     }
   });
 

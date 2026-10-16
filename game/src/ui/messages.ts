@@ -77,6 +77,8 @@ const DOES: Record<CommandName | LogoAction, string> = {
   // M7
   'board.watch': 'show the issues and pull request boards',
   'board.unwatch': 'show the issues and pull request boards',
+  'host.watch': 'read the server rack’s host stats',
+  'host.unwatch': 'read the server rack’s host stats',
   'board.refresh': 'show the issues and pull request boards',
   'limits.refresh': 'read the plan limits',
   'ai.get': 'keep the AI integration',

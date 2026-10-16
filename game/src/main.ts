@@ -316,6 +316,8 @@ export interface H3DDebug {
   simBoards(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #184: the fixture simulator's `sim.kaneo` (make a Kaneo board's polls fail, the next placed move stale, …). */
   simKaneo(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #74: the fixture simulator's `sim.host` (script the host's numbers) and `sim.host_log` (the commands and frames of this connection). */
+  simHost(t: 'sim.host' | 'sim.host_log', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M17: the light as shown (`daylight`, eased) and its `target`, the zone and where it comes from, the latitude, whether the time is pinned, the office lamps and what the wall clock's face shows. */
   daylight(): ReturnType<import('./app').App['daylightInfo']> | null;
   /** M13: the screen share (phase, surface, paused, video size), what this floor's TV shows, the frames answered and who looked. */
@@ -337,6 +339,10 @@ export interface H3DDebug {
   pendingPings(): string[];
   /** #118: the floor overview page and the lounge wall's screen (what each shows). */
   overview(): ReturnType<import('./app').App['overviewInfo']> | null;
+  /** #74: the server rack: what it shows (screen mode, redraws, LED rates), the host watch and the commands sent for it. */
+  rack(): ReturnType<import('./app').App['rackInfo']> | null;
+  /** #74: shows or hides the floor's rack. */
+  rackShown(on: boolean): void;
 }
 
 declare global {
@@ -623,6 +629,11 @@ const h3d: H3DDebug = {
     const r = await app.client.request('sim.kaneo' as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
+  simHost: async (t, args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request(t as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   logos: () => app?.logoInfo() ?? null,
   daylight: () => app?.daylightInfo() ?? null,
   screen: () => (app ? structuredClone(app.screenInfo()) : null),
@@ -639,6 +650,8 @@ const h3d: H3DDebug = {
   wbLog: () => structuredClone(app?.wbLog ?? []),
   pendingPings: () => app?.pendingPings() ?? [],
   overview: () => (app ? structuredClone(app.overviewInfo()) : null),
+  rack: () => (app ? structuredClone(app.rackInfo()) : null),
+  rackShown: (on) => app?.rackShown(on),
   openChanges: (id) => {
     if (app?.changes.worker !== id) app?.toggleChanges(id);
   },

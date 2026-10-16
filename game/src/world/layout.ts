@@ -60,7 +60,8 @@ export type PropKind =
   | 'dropzone'
   | 'elevator'
   | 'clock'
-  | 'screen.overview';
+  | 'screen.overview'
+  | 'server.rack';
 
 export interface Prop {
   id: PropKind;
@@ -224,6 +225,12 @@ export const COUNTER_RECT: Rect = { x0: 0, z0: 3.4, x1: 0.65, z1: 4.8 };
 export const COUNTER_TOP = 0.9;
 /** The radio: 0.3 m deep, 0.34 m wide, 0.24 m tall, at the counter's north-east end beside the coffee machine. */
 const RADIO_BOX = [0.16, COUNTER_TOP, 4.4, 0.46, COUNTER_TOP + 0.24, 4.74] as const;
+/**
+ * #74: the server rack, against the north wall between the lounge window (x 1.0 to 4.6) and the whiteboard (west edge 7.35
+ * and up), clear of the rug (ends x 5.2) and the mezzanine posts. 0.64 m wide and 0.68 m deep, its body 1.0 m tall and the
+ * monitor on top of it up to 1.45 m. Facing the room (+z). The same on every floor.
+ */
+export const RACK_BOX = [5.6, 0, 0, 6.24, 1.45, 0.68] as const;
 const rectOf = (b: Box3): Rect => ({ x0: b.min[0], z0: b.min[2], x1: b.max[0], z1: b.max[2] });
 const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
@@ -386,6 +393,8 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
     { id: 'clock', label: 'Clock', milestone: null, box: box(width / 2 - 0.55, 1.78, bz - 0.17, width / 2 + 0.55, 2.3, bz - 0.1), solid: false },
     // #118: the floor overview, the lounge wall's big screen (E opens it; O from anywhere on the floor).
     { id: 'screen.overview', label: 'Floor overview', milestone: '#118', box: overviewScreenBox(depth), solid: false },
+    // #74: the server rack with its monitor and keyboard on top; it only shows a line on the HUD, nothing to press.
+    { id: 'server.rack', label: 'Server rack', milestone: null, box: box(...RACK_BOX), solid: true },
   ];
   // Lounge furniture beyond the sofa: coffee table and the coffee counter.
   colliders.push(...props.filter((p) => p.solid).map((p) => rectOf(p.box)));

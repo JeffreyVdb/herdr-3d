@@ -29,6 +29,8 @@
 // Claude models to the hire options (a long model list). #74: `simzoom=old|single|split|headless` plays the bridge's pane zoom
 // (tools/fixture-screen.ts). #58: `simecho=<ms>` writes a prompt's `user` item to its
 // worker's transcript watch that long after the turn takes it (tools/fixture-panels.ts; absent: never).
+// #74: `simhost=ok|hot|noupdates|busy` scripts the server rack's host stats and `simhostms=<ms>` their period (default 5000;
+// tools/fixture-host.ts), `simfail=no_host` plays a bridge before them.
 // #92: `simjev=<url>` is where the simulated bridge calls Jev (the e2e's fake), `simai=off` a bridge without the AI service, `simfail=no_ai` one before it
 // (tools/fixture-ai.ts). #90: `sim.turn {id, text}` ends a worker's turn with that message, and follow-up questions
 // run on it once switched on (tools/fixture-followup.ts).
@@ -209,6 +211,9 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // M6 crew: the scripted freelancer plays by itself (tools/fixture-crew.ts).
             // M10: the plan limits' readings (tools/fixture-limits.ts).
             ...(q.get('simlimits') ? { limits: q.get('simlimits') as string } : {}),
+            // #74: the server rack's host stats: the scripted numbers and their period (tools/fixture-host.ts).
+            ...(q.get('simhost') ? { host: q.get('simhost') as string } : {}),
+            ...(q.get('simhostms') ? { hostMs: Math.max(100, Number(q.get('simhostms')) || 5000) } : {}),
             // #92: AI integration: Jev's address (the e2e's fake) and a bridge without the service.
             ...(q.get('simjev') ? { jev: q.get('simjev') as string } : {}),
             ...(q.get('simai') === 'off' ? { ai: 'off' as const } : {}),

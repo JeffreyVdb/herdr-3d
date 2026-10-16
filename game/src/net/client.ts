@@ -11,12 +11,14 @@ import {
   isTranscriptClosed,
   isTranscriptItems,
   isBoardMessage,
+  isHostMessage,
   isScreenMessage,
   parseMessage,
   type CommandArgs,
   type CommandName,
   type BoardMessage,
   type ConnMessage,
+  type HostMessage,
   type ScreenMessage,
   type Hello,
   type Snapshot,
@@ -99,6 +101,8 @@ export interface ClientHandlers {
   onBoard?(m: BoardMessage): void;
   /** M13: screen share messages of this connection (no seq, never replayed): frame requests and who looked. */
   onScreen?(m: ScreenMessage): void;
+  /** #74: host stats and disk frames of this connection's `host.watch` (no seq, never replayed). */
+  onHost?(m: HostMessage): void;
 }
 
 export interface ClientOptions {
@@ -433,6 +437,11 @@ export class BridgeClient {
     // M13: a frame request for the shared screen, or who looked at it.
     if (isScreenMessage(m)) {
       this.o.handlers.onScreen?.(m);
+      return;
+    }
+    // #74: the host's stats and disk activity, while this connection watches the rack.
+    if (isHostMessage(m)) {
+      this.o.handlers.onHost?.(m);
       return;
     }
     // Everything else (acks, unknown types) is ignored.

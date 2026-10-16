@@ -857,6 +857,9 @@ export interface CommandArgs {
   'board.watch': { floor: string };
   'board.unwatch': { floor: string };
   'board.refresh': { floor: string };
+  // #74 server rack: the bridge host's CPU, memory, updates and disk activity, sampled only while watched (docs/protocol.md "Host stats").
+  'host.watch': Record<string, never>;
+  'host.unwatch': Record<string, never>;
   /** M10 limits: read the plan limits now (at most every 20 s). */
   'limits.refresh': Record<string, never>;
   // #92 AI integration (docs/protocol.md "AI integration"). A key is sent here and nowhere else, and never comes back.
@@ -2478,6 +2481,63 @@ export function isScreenMessage(m: ServerMessage): m is ScreenMessage {
   const o = m as unknown as Obj;
   if (m.t === 'screen.frame_request') return isStr(o.req_id) && /^[0-9a-f]{32}$/.test(o.req_id);
   if (m.t === 'screen.grabbed') return isStr(o.requester) && isStr(o.floor);
+  return false;
+}
+
+// ---- #74 host stats (docs/protocol.md "Host stats") ---------------------------------------------------------------
+
+/** `host.stats`: one sample of the bridge host, every 5 s to a connection that sent `host.watch` (no `seq`, never replayed). */
+export interface HostStats {
+  t: 'host.stats';
+  /** Share of CPU time in use across all cores; null until two samples exist. */
+  cpu_pct: number | null;
+  cpus: number;
+  load1: number;
+  mem_used_pct: number;
+  mem_used_bytes: number;
+  mem_total_bytes: number;
+  /** RFC 3339, UTC. */
+  sampled_at: string;
+  /** Pending pacman updates: absent on a host that is not Arch-based, and until a check has worked. */
+  updates?: { count: number; checked_at: string };
+}
+
+export interface HostDiskRate {
+  name: string;
+  r_iops: number;
+  w_iops: number;
+  r_bps: number;
+  w_bps: number;
+}
+
+/** `host.disk`: the physical disks' activity over the last second, every second to a watching connection. */
+export interface HostDisk {
+  t: 'host.disk';
+  disks: HostDiskRate[];
+}
+
+export type HostMessage = HostStats | HostDisk;
+
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** The connection-scoped host messages (no `seq`). */
+export function isHostMessage(m: ServerMessage): m is HostMessage {
+  const o = m as unknown as Obj;
+  if (m.t === 'host.stats') {
+    const u = o.updates;
+    return (
+      (o.cpu_pct === null || isNum(o.cpu_pct)) &&
+      isNum(o.cpus) &&
+      isNum(o.mem_used_pct) &&
+      isNum(o.mem_used_bytes) &&
+      isNum(o.mem_total_bytes) &&
+      isStr(o.sampled_at) &&
+      (u === undefined || (isObj(u) && isNum(u.count) && isStr(u.checked_at)))
+    );
+  }
+  if (m.t === 'host.disk') {
+    return Array.isArray(o.disks) && o.disks.every((d) => isObj(d) && isStr(d.name) && isNum(d.r_iops) && isNum(d.w_iops));
+  }
   return false;
 }
 
