@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -243,6 +244,44 @@ func TestNotifyCommands(t *testing.T) {
 	_, r = c.command(proto.CmdNotifyTokenSet, "r8", proto.NotifyTokenSetArgs{Key: " "})
 	if got := code(r); got != notify.CodeBadRequest {
 		t.Fatalf("blank token: %s", got)
+	}
+}
+
+// #12: notify.token.set args that do not decode (the token as a bare string,
+// or under the right key with the wrong type) are refused, and their audit
+// row is redacted() whole: a size, never the token's bytes.
+func TestNotifyTokenSetAuditUnparsableArgs(t *testing.T) {
+	t.Parallel()
+	b := startBridge(t, "", server.Options{NotifyChannel: notify.NewFakeChannel(false)})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	const tok = "123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
+	cases := []json.RawMessage{
+		json.RawMessage(`"` + tok + `"`),
+		json.RawMessage(`{"key":["` + tok + `"]}`),
+		json.RawMessage(`["` + tok + `"]`),
+	}
+	for i, args := range cases {
+		_, r := c.command(proto.CmdNotifyTokenSet, fmt.Sprintf("r%d", i), args)
+		if r.env.T != proto.TError || strings.Contains(string(r.raw), "AAHdq") {
+			t.Fatalf("args %s: %s", args, r.raw)
+		}
+	}
+	rows := notifyRows(t, b.st, proto.CmdNotifyTokenSet)
+	if len(rows) != len(cases) {
+		t.Fatalf("%d token.set rows, want %d: %+v", len(rows), len(cases), rows)
+	}
+	for _, row := range rows {
+		if strings.Contains(row.Args, "AAHdq") || strings.Contains(row.Error, "AAHdq") || strings.Contains(row.Result, "AAHdq") {
+			t.Fatalf("token in the audit log: %+v", row)
+		}
+		var a struct {
+			Redacted bool `json:"redacted"`
+			Bytes    int  `json:"bytes"`
+		}
+		if err := json.Unmarshal([]byte(row.Args), &a); err != nil || !a.Redacted || a.Bytes == 0 {
+			t.Fatalf("not redacted: %+v", row)
+		}
 	}
 }
 
