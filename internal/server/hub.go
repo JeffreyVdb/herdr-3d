@@ -2042,15 +2042,28 @@ func (h *Hub) floorView(floor string, f *floorState) proto.Floor {
 }
 
 // deskCount is how many desks a floor renders: every occupied desk, and
-// otherwise its workers plus spares (at least minDesks), capped at MaxDesks.
+// otherwise its workers and pending hires plus spares (at least minDesks),
+// capped at MaxDesks.
 func (h *Hub) deskCount(floor string, f *floorState) int {
 	highest := -1
+	count := len(f.order)
 	for _, id := range f.order {
 		if d, ok := h.desks[floor][id]; ok && d > highest {
 			highest = d
 		}
 	}
-	return max(highest+1, min(h.opts.MaxDesks, max(minDesks, len(f.order)+spareDesks)))
+	// Virtual floors' hires live on their base session, just like real
+	// floors'. Count only reservations not already seated by an observation.
+	for _, op := range f.hires {
+		if op.floor != floor {
+			continue
+		}
+		highest = max(highest, op.desk)
+		if !op.seen {
+			count++
+		}
+	}
+	return max(highest+1, min(h.opts.MaxDesks, max(minDesks, count+spareDesks)))
 }
 
 // syncLayout emits building and floor events for whatever changed since the
