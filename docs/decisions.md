@@ -1660,3 +1660,19 @@ sleeps, never api.telegram.org), `go test ./internal/server -run 'Notify'`, `gam
 | 11 | Audit | Bridge rows `notify.send` (worker id, kind, attempts, HTTP status, error code) and `notify.pair` (outcome, ignored updates, failed polls, the last status): never a text, a code, a token or a Telegram id. `notify.token.set` is audited as `{"key_given":true}`; the game's `loggedArgs` redacts its `key`. |
 | 12 | Backoff | A queue of 32 alerts (a full one drops and audits `dropped`); at most 4 attempts; a 429 waits `retry_after` (more than 2 minutes: given up), a 5xx or a network failure 1, 2, 4 s (capped at 30 s); 401/404 is `unauthorized`, 403 and 400 “chat not found” `blocked`, which the view's state shows (`blocked`) until a delivery works. A Telegram outage never stalls the hub. |
 | 13 | Protocol and game | `World.notify`, `notify.update` (the state flat), `notify.get` / `set` / `test` / `token.set` / `token.clear` / `pair.start` / `pair.cancel` / `unpair`. Settings → Telegram (Integrations, kept on the bridge): the token, the account (the code large, the bot's chat linked), the test, then the switch and its options, as three ordered steps since each needs the one before. The browser-kept “Notifications” section (desktop notifications, the chime) is unchanged. |
+
+## 2026-10-16 — #12: the Telegram section's destination status and keyboard
+
+#11 built Settings → Telegram (Integrations): it is #12's "Notifications" section, so nothing moved and the protocol
+did not change. #12 adds one destination status at its top and keeps the keyboard in the section through every
+action. Code: `game/src/ui/telegramSection.ts` (`telegramDestination`, `land`), `.settings-tg-dest*` in
+`settings.css`; tests `telegramSection.dom.test.ts`, `e2e/h11-telegram.spec.ts` (the acceptance journey and a
+keyboard-only one), `TestNotifyTokenSetAuditUnparsableArgs`.
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | The status | From the `notify` state alone, first match: no token → **Not configured** (a refused token is never saved, so a failed check lands here; the command's error says why); `last_error` → **Error**, Telegram's reason (the bridge keeps it until a message gets through or the token or account changes, whatever the switch; `blocked` is one); a pairing retrying (`conflict`, `error`) → **Error**; no account (a code waiting or not) → **Not configured**; else **Paired**, alerts on or off. The separate "Last message not delivered" line is gone: the status says it. |
+| 2 | Screen readers | One live region, the section's status line. A status change no action here made (the phone sent the code, a message bounced) is said there; an action's own line already says what it changed, so nothing is said twice. |
+| 3 | Focus | Controls stay natively disabled while a command is on its way; after it the keyboard lands on: token saved → Pair (Enter or the button); Pair → Cancel pairing, then the paired phone → Send test message; Cancel pairing / Unpair → Pair; Remove token → the token field; Test and the switches → themselves; a failure → the control used. Never pulled from where the user went meanwhile. |
+| 4 | The sim | `tools/fixture-telegram.ts` forgets the last error on pair, cancel and unpair, like the bridge's `Service.after`. |
+| 5 | Out of scope | `digestSection.ts` loses the focus the same way (a control disabled while busy); not changed here. |
