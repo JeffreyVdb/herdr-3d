@@ -454,7 +454,7 @@ describe('Settings → Telegram: Allow replies (#13)', () => {
     expect(m.args.at(-1)).toEqual({ replies: true });
     expect(box.checked).toBe(true);
     expect(m.status().textContent).toContain('Replies on.');
-    expect(hint(m.body)).toBe('On: a reply to a notification from Ada is typed into its worker.');
+    expect(hint(m.body)).toBe("On: your reply to a worker's notification is typed into that worker.");
     expect(document.activeElement).toBe(box);
     replies = false;
     box.click();

@@ -375,7 +375,7 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
       replies.box.disabled = busy || (!s.replies && !ready);
       repliesHint.textContent = s.replies
         ? ready
-          ? `On: a reply to a notification from ${c.paired?.name || 'your account'} is typed into its worker.`
+          ? "On: your reply to a worker's notification is typed into that worker."
           : 'On, but paused: no paired account. Nothing reaches a worker.'
         : !ready
           ? 'Pair your account first.'

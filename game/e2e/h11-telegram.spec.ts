@@ -303,7 +303,7 @@ test('Allow replies: off by default, its own switch, mouse and keyboard', async 
   await replies.check();
   await expect(status).toContainText('Replies on.');
   await expect(replies).toBeChecked();
-  await expect(block).toContainText('On: a reply to a notification from Ada is typed into its worker.');
+  await expect(block).toContainText("On: your reply to a worker's notification is typed into that worker.");
   await shot(page, 'h13-telegram-replies');
   // Keyboard: from the freelancers' switch, Tab, then Space; the focus stays.
   await tg.getByLabel(/Also when a freelancer/).focus();
