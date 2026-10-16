@@ -27,6 +27,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/handoffllm"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
+	"github.com/JeffreyVdb/herdr-3d/internal/hoststats"
 	"github.com/JeffreyVdb/herdr-3d/internal/kaneoconf"
 	"github.com/JeffreyVdb/herdr-3d/internal/limits"
 	"github.com/JeffreyVdb/herdr-3d/internal/packup"
@@ -321,6 +322,15 @@ type Options struct {
 	// #62 scheduled agents: ScheduleTick is how often the runner looks at
 	// the wall clock (Now) for due schedules (default DefaultScheduleTick).
 	ScheduleTick time.Duration
+
+	// #74 server rack: HostStatsPoll is how often CPU, memory and updates
+	// are sampled while a connection watches (default
+	// hoststats.DefaultStatsEvery, 5 s). HostStats says how the host is
+	// read (nil: the real /proc, /sys and clock, and pending updates
+	// through checkupdates on a supported host; tests pass fixture roots, a
+	// fake clock and a fake runner).
+	HostStatsPoll time.Duration
+	HostStats     *hoststats.Config
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -436,6 +446,7 @@ type Hub struct {
 	rr repoRefsState // #247 repositories on other floors
 	rd repoDiscState // #54 repository discovery
 	sc scheduleState // #62 scheduled agents
+	hs hostState     // #74 server rack
 }
 
 // sessionState is what the floors of one herdr session share (#58): its
@@ -650,6 +661,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	h.initTranscripts() // M16 transcript
 	h.initRuns()        // M6 runs
 	h.initScreen()      // M13 screen
+	h.initHostStats()   // #74 server rack
 	if h.opts.RunLaunch == nil {
 		h.opts.RunLaunch = storeRunLaunch(st, h.log)
 	}
@@ -755,6 +767,7 @@ func (h *Hub) Rescans() <-chan struct{} { return h.rescan }
 func (h *Hub) Run(ctx context.Context) error {
 	defer close(h.done)
 	defer h.wg.Wait()
+	defer h.stopHostSampler() // #74
 	if h.opts.RepoOf != nil {
 		h.wg.Add(1)
 		go h.suggester(ctx)
@@ -883,6 +896,7 @@ func (h *Hub) Leave(c *Client) {
 		h.dropBoardWatch(c)                     // M7 boards
 		h.standsOn(context.Background(), c, "") // #98
 		h.dropScreen(c)                         // M13 screen
+		h.dropHostWatch(c)                      // #74 server rack
 	})
 }
 
@@ -1046,6 +1060,11 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startWhiteboardPin
 		case proto.CmdDropsList:
 			start = h.startDropsList
+		// #74 server rack
+		case proto.CmdHostWatch:
+			start = h.startHostWatch
+		case proto.CmdHostUnwatch:
+			start = h.startHostUnwatch
 		// #62 scheduled agents
 		case proto.CmdScheduleCreate, proto.CmdScheduleUpdate, proto.CmdScheduleCancel, proto.CmdScheduleRunNow,
 			proto.CmdScheduleRetry, proto.CmdScheduleDismiss:
