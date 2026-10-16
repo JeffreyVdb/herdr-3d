@@ -426,16 +426,18 @@ func (s *Service) flush(ctx context.Context) {
 	}
 }
 
-// edit shows c on question i's card, unless it shows that already.
+// edit shows c on question i's card, unless it shows that already (a
+// failed edit is tried again with the next one).
 func (s *Service) edit(ctx context.Context, ss *session, i int, c Card) {
 	q := ss.qs[i]
 	if !q.card.Valid() || cardEqual(q.shown, c) {
 		return
 	}
-	q.shown = c
 	if err := s.call(ctx, func(ctx context.Context) error { return s.opts.Channel.EditCard(ctx, q.card, c) }); err != nil {
 		s.opts.Log.Warn("notifications: a card was not edited", "worker", ss.worker, "code", CodeOf(err))
+		return
 	}
+	q.shown = c
 }
 
 func cardEqual(a, b Card) bool {
