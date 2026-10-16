@@ -190,6 +190,82 @@ func TestSystemOpenDescendantHoldingThePipe(t *testing.T) {
 	}
 }
 
+// #81 round 2: the opener's exit status is its own. A failure late in the grace
+// window, while a descendant (a browser it started) still holds the output pipe,
+// is an error with its exit code and output, not a success because the pipe
+// outlived the window. The shape is the reviewer's repro on a shorter clock.
+func TestSystemOpenLateFailureWithADescendantHoldingThePipe(t *testing.T) {
+	const grace = 1500 * time.Millisecond
+	pidfile := filepath.Join(t.TempDir(), "pid")
+	fakeBin(t, "xdg-open", `sleep 30 &
+echo $! > `+pidfile+`
+sleep 1.3
+echo failure >&2
+exit 4`)
+	start := time.Now()
+	err := newSystemOpener("linux", exec.Command, grace)(context.Background(), "https://github.com/a/b")
+	d := time.Since(start)
+	if pids := readInts(t, pidfile); len(pids) == 1 {
+		killAtCleanup(t, pids[0])
+	}
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 4 || !strings.Contains(err.Error(), "failure") {
+		t.Fatalf("err %v: want exit status 4 with its stderr", err)
+	}
+	if d > grace+500*time.Millisecond {
+		t.Fatalf("took %v: want an answer by the end of the %v window plus a little", d, grace)
+	}
+}
+
+// A descendant that writes to the inherited stdout/stderr after the opener
+// exited 0 (a browser logging) must not find the pipe closed: no EPIPE, no
+// SIGPIPE. The answer does not wait for it.
+func TestSystemOpenLateDescendantOutputDoesNotGetEPIPE(t *testing.T) {
+	dir := t.TempDir()
+	rec := filepath.Join(dir, "rc")
+	// SIGPIPE ignored, so a closed pipe shows as a failed echo (rc 1); left
+	// at its default it would kill the subshell and rec would never appear.
+	fakeBin(t, "xdg-open", `( trap '' PIPE; sleep 1.2; echo late output 2>/dev/null; echo $? > `+rec+`.tmp; mv `+rec+`.tmp `+rec+` ) &
+exit 0`)
+	start := time.Now()
+	if err := newSystemOpener("linux", exec.Command, 2*time.Second)(context.Background(), "https://github.com/a/b"); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("took %v: the answer waited for the descendant", d)
+	}
+	waitFor(t, "the descendant's late write", func() bool { _, err := os.Stat(rec); return err == nil })
+	if b, _ := os.ReadFile(rec); strings.TrimSpace(string(b)) != "0" {
+		t.Fatalf("the descendant's write failed (echo status %q): the helper closed the pipe early", b)
+	}
+}
+
+// Both ends of the pipe are closed on every path: success, failure, a missing
+// executable and a descendant that finally lets go.
+func TestSystemOpenLeavesNoDescriptorsBehind(t *testing.T) {
+	fds := func() int {
+		ents, err := os.ReadDir("/proc/self/fd")
+		if err != nil {
+			t.Skip("no /proc/self/fd")
+		}
+		return len(ents)
+	}
+	fakeBin(t, "xdg-open", `case "$1" in
+*fail*) echo nope >&2; exit 4;;
+*bg*) (sleep 0.3 &) ; exit 0;;
+esac`)
+	open := newSystemOpener("linux", exec.Command, testGrace)
+	missing := newSystemOpener("linux", func(string, ...string) *exec.Cmd { return exec.Command("/nonexistent/xdg-open") }, testGrace)
+	before := fds()
+	for range 15 {
+		_ = open(context.Background(), "https://github.com/ok")
+		_ = open(context.Background(), "https://github.com/fail")
+		_ = open(context.Background(), "https://github.com/bg")
+		_ = missing(context.Background(), "https://github.com/a/b")
+	}
+	waitFor(t, "the pipes to be closed", func() bool { return fds() <= before+4 })
+}
+
 // The game going away ends the wait at once and leaves the launch alone.
 func TestSystemOpenCancellationDoesNotKillALaunch(t *testing.T) {
 	pidfile := filepath.Join(t.TempDir(), "pid")
