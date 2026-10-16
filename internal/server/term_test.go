@@ -81,9 +81,10 @@ type fakeTerm struct {
 	queueErrs []error           // QueuePrompt results in turn
 	// #95: TypePrompt's results in turn, and what the agent does once a
 	// prompt is typed (startTermBridge: it starts working).
-	typeErrs []error
-	onTyped  func(pane string)
-	textGate chan struct{}
+	typeErrs    []error
+	onTyped     func(pane string)
+	textGate    chan struct{}
+	textStarted chan struct{}
 	// #95 R1: typing, when set, is what TypePrompt does (its error is
 	// TypePrompt's); EraseTyped's results in turn.
 	typing    func(ctx context.Context) error
@@ -180,8 +181,13 @@ func (f *fakeTerm) SendKeys(_ context.Context, session, pane string, keys ...str
 func (f *fakeTerm) SendText(_ context.Context, session, pane, text string) error {
 	f.mu.Lock()
 	gate := f.textGate
+	started := f.textStarted
 	f.mu.Unlock()
 	if gate != nil && strings.HasPrefix(text, "slow") {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
 		<-gate
 	}
 	f.record("text %s %q", pane, text)

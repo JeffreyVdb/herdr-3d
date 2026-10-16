@@ -58,6 +58,10 @@ var (
 	errInputFailed  = errors.New("input failed")
 	errPromptFailed = errors.New("prompt failed")
 	errStale        = errors.New("stale")
+	// #13: what a Telegram reply's refusal is recognised by (wrapped, the
+	// messages unchanged).
+	errAskWaiting = errors.New("waits on its question")
+	errLaneFull   = errors.New("waiting for this worker")
 )
 
 // termWorker is the worker a laptop command is for: known, on a watched
@@ -96,18 +100,42 @@ type laneTarget struct {
 	err           error
 }
 
+// inputWork is a queued input's work: the worker's pane as it is when its
+// turn comes.
+type inputWork func(ctx context.Context, session, pane string) (any, error)
+
+// inputEnd gets a queued input's outcome, on its lane once it is done.
+type inputEnd func(ctx context.Context, data any, err error)
+
 // startInput queues work on the worker's input lane (hub goroutine). The
 // work gets the worker's pane as it is when its turn comes; its audit row
 // and reply follow when it is done.
-func (h *Hub) startInput(ctx context.Context, c *Client, cmd proto.Command, id string,
-	work func(ctx context.Context, session, pane string) (any, error)) error {
+func (h *Hub) startInput(ctx context.Context, c *Client, cmd proto.Command, id string, work inputWork) error {
+	return h.queueInput(ctx, id, work, h.endCommand(c, cmd))
+}
+
+// endCommand is a client command's inputEnd: its audit row and its reply.
+func (h *Hub) endCommand(c *Client, cmd proto.Command) inputEnd {
+	return func(ctx context.Context, data any, err error) {
+		if derr := h.doWait(ctx, func() {
+			h.audit(ctx, c, cmd, err)
+			h.reply(c, cmd, data, err)
+		}); derr != nil {
+			h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
+		}
+	}
+}
+
+// queueInput is startInput for any caller (hub goroutine): end gets the
+// outcome (#13: a Telegram reply's, with no client).
+func (h *Hub) queueInput(ctx context.Context, id string, work inputWork, end inputEnd) error {
 	l := h.lanes[id]
 	if l == nil {
 		l = &inputLane{}
 		h.lanes[id] = l
 	}
 	if len(l.jobs) >= maxQueuedInputs {
-		return fmt.Errorf("%w: %d commands are already waiting for this worker", errInputFailed, len(l.jobs))
+		return fmt.Errorf("%w: %d commands are already %w", errInputFailed, len(l.jobs), errLaneFull)
 	}
 	h.queueLane(ctx, id, func(ctx context.Context) {
 		t, err := query(ctx, h, func() laneTarget {
@@ -123,12 +151,7 @@ func (h *Hub) startInput(ctx context.Context, c *Client, cmd proto.Command, id s
 				data, err = work(ctx, t.session, t.pane)
 			}
 		}
-		if derr := h.doWait(ctx, func() {
-			h.audit(ctx, c, cmd, err)
-			h.reply(c, cmd, data, err)
-		}); derr != nil {
-			h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
-		}
+		end(ctx, data, err)
 	})
 	return nil
 }
@@ -284,6 +307,27 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	handoff := func(instruction string) error {
+		op := a.Op
+		if op == "" {
+			op = "prompt-" + randHex(8)
+		}
+		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.ID, op: op, instruction: instruction, prompt: true,
+			answer: func(r proto.AgentHandoff, existing, queued bool) any {
+				return proto.PromptResult{Queued: queued, Handoff: &r, Existing: existing}
+			}})
+	}
+	return h.queuePrompt(ctx, a, handoff, h.endCommand(c, cmd))
+}
+
+// errHandoffInGame refuses a /handoff that does not come from the game
+// (#13: a Telegram reply): the agent handoff is a client's command.
+var errHandoffInGame = fmt.Errorf("%w: ask for a handoff in the game", errInvalidState)
+
+// queuePrompt is worker.prompt's checks and its queueing on the worker's
+// lane (hub goroutine), for a client's command and (#13) a Telegram reply
+// alike: handoff starts a /handoff (nil: refused), end gets the outcome.
+func (h *Hub) queuePrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(instruction string) error, end inputEnd) error {
 	if !h.promptSourceOK(a.Text) {
 		return badPromptText("text", len(a.Text))
 	}
@@ -305,19 +349,15 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 		}
 	}
 	if w.Ask != nil { // #57: its dialog would take the text
-		return fmt.Errorf("%w: %s waits on its question: answer it first (worker.answer_ask)", errInvalidState, w.Name)
+		return fmt.Errorf("%w: %s %w: answer it first (worker.answer_ask)", errInvalidState, w.Name, errAskWaiting)
 	}
 	// #224: exactly "/handoff [instruction]" asks the agent for a handoff
 	// the bridge files, before any translation.
 	if instruction, ok := handoffCommand(a.Text); ok && h.ho.svc != nil {
-		op := a.Op
-		if op == "" {
-			op = "prompt-" + randHex(8)
+		if handoff == nil {
+			return errHandoffInGame
 		}
-		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.ID, op: op, instruction: instruction, prompt: true,
-			answer: func(r proto.AgentHandoff, existing, queued bool) any {
-				return proto.PromptResult{Queued: queued, Handoff: &r, Existing: existing}
-			}})
+		return handoff(instruction)
 	}
 	// #140: a built-in whose output or dialog shows only in the terminal,
 	// as typed: it starts no turn, so it is sent without waiting for one.
@@ -325,7 +365,7 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
-	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
+	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		typed := a.Text
 		if rewrites {
 			text, err := h.composerPrompt(ctx, a.ID, kind, a.Text, "text")
@@ -355,7 +395,7 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 			}
 		}
 		return res, err
-	})
+	}, end)
 }
 
 // typesPrompts reports whether prompts to an agent of this kind are typed
@@ -422,7 +462,7 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	t := h.opts.Term
 	switch cur.status {
 	case statusAsking:
-		return nil, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
+		return nil, fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting)
 	case statusBlocked:
 		// #156: blocked only by a shared Codex worker's async question:
 		// through its app-server (herdr would refuse it).
@@ -467,7 +507,7 @@ func (h *Hub) terminalPrompt(ctx context.Context, a proto.WorkerPromptArgs, sess
 	}
 	switch cur.status {
 	case statusAsking:
-		return nil, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
+		return nil, fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting)
 	case statusBlocked:
 		return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
 	}
@@ -560,7 +600,7 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 		s := cur.status
 		switch {
 		case s == statusAsking && !settling:
-			return cur, fmt.Errorf("%w: the worker waits on its question: answer it first", errInvalidState)
+			return cur, fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting)
 		case s == statusBlocked && !settling:
 			return cur, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
 		}

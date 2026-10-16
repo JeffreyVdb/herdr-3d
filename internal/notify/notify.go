@@ -7,7 +7,9 @@
 // Destination (one message) and Channel (its credentials and the pairing of
 // its recipient). The Telegram Bot API is internal/notify/telegram's; the
 // app wires it in. This package knows no HTTP (TestNotifyCoreIsProviderNeutral):
-// nothing here reaches the network but through a Channel.
+// nothing here reaches the network but through a Channel. #13: a reply to a
+// notification is typed into its worker (reply.go): the Channel hands the
+// recipient's messages in and confirms or answers them; the hub types them.
 package notify
 
 import (
@@ -20,6 +22,9 @@ import (
 
 // Notification is one message.
 type Notification struct {
+	// WorkerID is the worker it is about (#13: a reply to it is typed into
+	// that worker; never in Text).
+	WorkerID string
 	// Name is the worker's display name; Reason why it notifies (Reason*).
 	Name, Reason string
 	// Line is one line of what the worker did or asks (scrubbed by the
@@ -61,11 +66,54 @@ func OneLine(s string, max int) string {
 	return strings.TrimRight(string(r[:max-1]), " ") + "…"
 }
 
+// Ref names a message at the provider (#13): the chat it is in and its id
+// there (Telegram's are unique within a chat only). A zero Message is none.
+type Ref struct {
+	Chat, Message int64
+}
+
+// Valid: it names a message.
+func (r Ref) Valid() bool { return r.Message != 0 }
+
 // Destination delivers one message to the paired recipient.
 type Destination interface {
-	// Send delivers n; a *SendError says why it did not (its message holds
-	// no secret).
-	Send(ctx context.Context, n Notification) error
+	// Send delivers n and names the message it became (a zero Ref when the
+	// provider did not say); a *SendError says why it did not (its message
+	// holds no secret).
+	Send(ctx context.Context, n Notification) (Ref, error)
+}
+
+// Reply is a message the paired recipient sent (#13). The Channel checked
+// who sent it: their own private chat with the bot, typed by them; every
+// other sender is dropped there without a word.
+type Reply struct {
+	// Ref is the message itself: what Confirm and Answer take.
+	Ref Ref
+	// To is the bot's message it replies to (not Valid: not a reply).
+	To Ref
+	// Text is what was typed ("": a message without text, a photo).
+	Text string
+	// At is when it was sent (the provider's clock).
+	At time.Time
+	// Relayed: not typed here by the recipient (forwarded, or sent through
+	// another bot).
+	Relayed bool
+	// Epoch is the Channel's: the switch and the recipient it was read
+	// under (Hold compares it).
+	Epoch uint64
+}
+
+// Hooks are what a Channel's Run tells the service.
+type Hooks struct {
+	// Pair is told how each pairing ended.
+	Pair func(PairResult)
+	// Reply gets each message the recipient sent while replies are read
+	// (Channel.Listen). It must not block.
+	Reply func(Reply)
+	// Listen: replies were on when the bridge started, so what came while
+	// it was away is read too (the service answers what is too old). Else
+	// reading starts from what is sent next.
+	Listen bool
 }
 
 // Channel is a Destination with its configuration: a token, and a
@@ -91,9 +139,25 @@ type Channel interface {
 	Unpair() error
 	// Changes signals (coalesced) that State changed.
 	Changes() <-chan struct{}
-	// Run does the channel's background work (the pairing's polling, only
-	// while pairing) until ctx is done; pair is told how each pairing ended.
-	Run(ctx context.Context, pair func(PairResult))
+	// Listen switches reading the recipient's replies on or off (#13): on,
+	// and paired, Run reads them and hands each to Hooks.Reply; switched on,
+	// what was sent before is never handed over. Off, none is handed over
+	// from then on, even of a read already under way.
+	Listen(on bool)
+	// Hold runs fn (the reply's hand-off to its worker) while r is still
+	// the recipient's under the switch it was read under: false, and fn not
+	// run, once Listen switched off, the recipient was unpaired or another
+	// paired, or the token changed since. Those wait for fn: once they
+	// return, no reply read before is handed over.
+	Hold(r Reply, fn func()) bool
+	// Confirm marks a reply as typed into its worker (Telegram: a 👍
+	// reaction); Answer answers a message with a short text of the
+	// service's (a refusal, a hint), as a reply to it.
+	Confirm(ctx context.Context, msg Ref) error
+	Answer(ctx context.Context, msg Ref, text string) error
+	// Run does the channel's background work until ctx is done: one reader
+	// of the provider's updates, while a pairing waits or replies are read.
+	Run(ctx context.Context, h Hooks)
 }
 
 // ChannelState is a channel as the protocol shows it: never the token.

@@ -203,6 +203,8 @@ var migrations = []string{
 	migrationSchedule,
 	// #11: the notifications' settings.
 	migrationNotify,
+	// #13: the replies' switch and the sent notifications' workers.
+	migrationNotifyReplies,
 }
 
 // Fingerprint kinds.

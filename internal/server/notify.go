@@ -9,7 +9,8 @@ package server
 // (TestNotifyEmitNeverBlocks). The service decides (the inbox rule, the
 // episodes, the done settle) and sends from its own goroutines. The server
 // knows notify's interfaces only: the Telegram channel is the app's
-// (TestNotifyCoreIsProviderNeutral).
+// (TestNotifyCoreIsProviderNeutral). #13: a reply to a notification is
+// typed into its worker through worker.prompt's own path (replyPrompt).
 
 import (
 	"context"
@@ -17,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/digest"
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
@@ -43,6 +45,14 @@ func (s notifyStore) SaveNotifySettings(ctx context.Context, n notify.Settings) 
 	return s.st.SaveNotifySettings(ctx, store.NotifySettings(n))
 }
 
+func (s notifyStore) SaveNotifyMessage(ctx context.Context, msg notify.Ref, worker string, at time.Time) error {
+	return s.st.SaveNotifyMessage(ctx, msg.Chat, msg.Message, worker, at)
+}
+
+func (s notifyStore) NotifyMessage(ctx context.Context, msg notify.Ref) (string, time.Time, bool, error) {
+	return s.st.NotifyMessage(ctx, msg.Chat, msg.Message)
+}
+
 // initNotify opens the service when the bridge has a channel.
 func (h *Hub) initNotify(ctx context.Context) error {
 	if h.opts.NotifyChannel == nil {
@@ -50,7 +60,7 @@ func (h *Hub) initNotify(ctx context.Context) error {
 	}
 	svc, err := notify.New(ctx, notify.Options{Store: notifyStore{h.st}, Channel: h.opts.NotifyChannel,
 		EnvEnabled: h.opts.NotifyEnabled, Clock: h.opts.NotifyClock, Settle: h.opts.NotifySettle,
-		Audit: h.auditNotify, Log: h.log})
+		Audit: h.auditNotify, Prompt: h.replyPrompt, Log: h.log})
 	if err != nil {
 		return fmt.Errorf("notifications: %w", err)
 	}
@@ -237,7 +247,57 @@ func lastTextLine(steps []transcript.DigestStep) string {
 	return ""
 }
 
-// auditNotify writes a bridge-originated notify.send or notify.pair row.
+// replyPrompt is the service's Prompt (#13): a Telegram reply typed into
+// worker id as worker.prompt types a client's (queuePrompt: the same checks,
+// side effects, lane and herdr calls), with no client: no command reply,
+// and no worker.prompt audit row (the service writes notify.reply, by the
+// text's lengths). A /handoff is refused: it is the game's.
+func (h *Hub) replyPrompt(ctx context.Context, id, text string, done func(error)) error {
+	res := make(chan error, 1)
+	err := h.do(ctx, func(hctx context.Context) {
+		res <- h.queuePrompt(hctx, proto.WorkerPromptArgs{ID: id, Text: text}, nil, func(_ context.Context, _ any, err error) {
+			done(replyError(err))
+		})
+	})
+	if err != nil {
+		return replyError(err)
+	}
+	select {
+	case err := <-res:
+		return replyError(err)
+	case <-ctx.Done():
+		return replyError(ctx.Err())
+	case <-h.done:
+		return replyError(errHubStopped)
+	}
+}
+
+// replyError is err as the service tells it (nil stays nil).
+func replyError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var bad *badArgsError
+	kind := notify.ReplyFailed
+	switch {
+	case errors.Is(err, errAskWaiting):
+		kind = notify.ReplyAsk
+	case errors.Is(err, errLaneFull):
+		kind = notify.ReplyBusy
+	case errors.Is(err, errUnknownWorker):
+		kind = notify.ReplyGone
+	case errors.Is(err, errHandoffInGame):
+		kind = notify.ReplyHandoff
+	case errors.As(err, &bad):
+		kind = notify.ReplyBadText
+	case errors.Is(err, errInvalidState):
+		kind = notify.ReplyState
+	}
+	return &notify.ReplyError{Kind: kind, Err: err}
+}
+
+// auditNotify writes a bridge-originated notify.send, notify.pair or (#13)
+// notify.reply row.
 func (h *Hub) auditNotify(ctx context.Context, cmd string, args any, err error) {
 	if e := h.st.Audit(ctx, digestAuditClient, cmd, mustJSON(args), err); e != nil {
 		h.log.Error("audit log write failed", "err", e)
@@ -278,7 +338,7 @@ func (h *Hub) startNotify(ctx context.Context, c *Client, cmd proto.Command) err
 		if err := decodeArgs(cmd.Args, &a); err != nil {
 			return err
 		}
-		u := notify.Update{Enabled: a.Enabled, Quiet: a.Quiet, Freelancers: a.Freelancers}
+		u := notify.Update{Enabled: a.Enabled, Quiet: a.Quiet, Freelancers: a.Freelancers, Replies: a.Replies}
 		if e := a.Events; e != nil {
 			u.NeedsYou, u.Done = e.NeedsYou, e.Done
 		}

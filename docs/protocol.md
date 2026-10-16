@@ -551,7 +551,7 @@ and remember the last `seq` applied.
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
 | `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
 | `digest.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `daily_cap`, `calls_today`, `reasoning_effort`, `max_tokens`, `reasoning`, `effort_stale` | #118: the floor overview summaries' state changed (a setting, a call counted, a passing test, the LLM's state); the whole state, flat in the event. Its `roles` has `llm` only: decode it by its `t` (see [Floor overview summaries](#floor-overview-summaries)) |
-| `notify.update` | `enabled`, `state`, `missing`?, `env`, `tested`, `events`, `quiet`, `freelancers`, `channel`, `last_error`?, `dropped`? | #11: the Telegram notifications' state changed (a setting, the token, a pairing, a test, a delivery's failure or the next success); the whole state, flat in the event, never a token (see [Notifications](#notifications)) |
+| `notify.update` | `enabled`, `state`, `missing`?, `env`, `tested`, `events`, `quiet`, `freelancers`, `replies`, `channel`, `last_error`?, `dropped`? | #11: the Telegram notifications' state changed (a setting, the token, a pairing, a test, a delivery's failure or the next success); the whole state, flat in the event, never a token (see [Notifications](#notifications)) |
 | `handoff_llm.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `input_bytes`, `max_tokens`, `reasoning_effort`, `reasoning`, `effort_stale`, `timeout_s`, `prompt_version`, `categories` | #9: the LLM handoffs' state changed (a setting, a passing test, the LLM's state or config); the whole state, flat in the event (see [LLM handoffs](#llm-handoffs)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
@@ -710,7 +710,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?, "diag"?}], "latency_ms"}` (`diag`: the call's sanitized [diagnostics](#floor-overview-summaries)) | `digest.update` when it changes `tested` |
 | `digest.retry` | `{"id"?: worker id}` | `{"retried": n}`: the failed lines of that worker (every worker without an id) are due again, their attempts counted anew; `incomplete` while the feature is off or the LLM not ready; `unknown_worker` (#174) | `worker.upsert` of the workers whose line status changed |
 | `notify.get` | `{}` | the notifications' state (see [Notifications](#notifications)) | — |
-| `notify.set` | `{"enabled"?: bool, "events"?: {"needs_you"?: bool, "done"?: bool}, "quiet"?: bool, "freelancers"?: bool}` | its state; switching on needs a token (`not_configured`), a paired account (`not_paired`) and a delivered `notify.test` of both within 30 minutes (`test_required`); `env_locked` while the environment sets it | `notify.update` (before the ack) |
+| `notify.set` | `{"enabled"?: bool, "events"?: {"needs_you"?: bool, "done"?: bool}, "quiet"?: bool, "freelancers"?: bool, "replies"?: bool}` | its state; switching on needs a token (`not_configured`), a paired account (`not_paired`) and a delivered `notify.test` of both within 30 minutes (`test_required`); `env_locked` while the environment sets it. #13: switching `replies` on needs a token and a paired account (no test) | `notify.update` (before the ack) |
 | `notify.test` | `{}` | `{"ok": true, "latency_ms"}`: the test message reached Telegram for the paired account; else its delivery's code (`blocked`, `unauthorized`, `rate_limited`, `unreachable`, `timeout`, `provider_failed`) | `notify.update` when it changes `tested` or `last_error` |
 | `notify.token.set` | `{"key": bot token}` | its state, once Telegram's `getMe` accepted the token (`bad_request`: not shaped like one; `unauthorized`); another bot's token unpairs; `env_locked` when the environment gives the token. Audited as `{"key_given": true}` | `notify.update` (before the ack) |
 | `notify.token.clear` | `{}` | its state: the token and the paired account forgotten (`env_locked` as above) | `notify.update` (before the ack) |
@@ -4555,9 +4555,9 @@ dismissed_at)`.
 
 #11. The bridge sends a Telegram message to your phone when a worker **needs you** or **finishes**, by the inbox's
 own rule: the game's (`WorldStore.workerView`, `inboxReason`, `inboxQueue`), ported to the bridge
-(`internal/notify`) and pinned to it by shared vectors (`internal/notify/testdata/inbox_vectors.json`). It is one
-way: the only messages the bridge reads are a pairing's, and only while a pairing waits. Nothing leaves the machine
-while it is off.
+(`internal/notify`) and pinned to it by shared vectors (`internal/notify/testdata/inbox_vectors.json`). The bridge
+reads the bot's messages only while a pairing waits or (#13) **replies** are on: then a reply to a notification is
+typed into its worker. Nothing leaves the machine while it is off.
 
 - **Who notifies**: a worker needing you (any role: blocked, an `ask`, a `followup`, a wrap-up `needs_you`, an
   orchestrator over its cap, a freelancer's report request), at once; a worker `done`, after **5 seconds** if it is
@@ -4583,11 +4583,12 @@ while it is off.
   first private message whose text is the code (any case, spaces and dashes ignored) pairs **its sender** (Telegram's
   `from.id`), and every message then goes to that account (`channel.paired {"name", "at"}`: a first name and when;
   never the id). Every other message, from anyone, is ignored without a reply. The bridge long-polls Telegram's
-  `getUpdates` only while the code waits; a poll that fails shows `state` `error`, another program reading the bot's
-  updates (a webhook, a second bridge with that token: Telegram's 409) `conflict`, both retried with a backoff; an
-  unused code ends as `{"state": "expired"}`. `notify.pair.cancel` stops it, `notify.unpair` forgets the account.
+  `getUpdates` only while the code waits (or replies are read, below: one poll loop serves both, so there is never a
+  second reader); a poll that fails shows `state` `error`, another program reading the bot's updates (a webhook, a
+  second bridge with that token: Telegram's 409) `conflict`, both retried with a backoff; an unused code ends as
+  `{"state": "expired"}`. `notify.pair.cancel` stops it, `notify.unpair` forgets the account.
 - **Settings** (bridge-wide, SQLite `notify_settings`): `enabled`, `events {"needs_you", "done"}`, `quiet`,
-  `freelancers`. `HERDR_WORLD_NOTIFY_ENABLED` / `--notify-enabled` (`true` / `false`) wins over the stored switch and
+  `freelancers`, `replies` (#13, off by default, apart from `enabled`: no environment override). `HERDR_WORLD_NOTIFY_ENABLED` / `--notify-enabled` (`true` / `false`) wins over the stored switch and
   lists `enabled` in `env` (`env_locked`); it needs no test, the channel must still be ready. Otherwise switching on
   needs a token, a paired account and a `notify.test` delivered with them in the last 30 minutes (`tested`).
 - **State**: `off`; `incomplete` (on, `missing` lists `token` and/or `recipient`: nothing is sent); `ready`; `blocked`
@@ -4596,9 +4597,32 @@ while it is off.
 - **Delivery**: a queue of 32 messages (a full one drops and counts it, `dropped`); at most 4 attempts; Telegram's
   `retry_after` is honoured on a 429 (more than 2 minutes: given up), a 5xx or a network failure waits 1, 2 then 4 s.
   A Telegram outage never holds up the bridge.
-- **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`
-  and `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}`. Never a
-  message's text, a code, a token or a Telegram id.
+- **Replies** (#13; `replies` on, a paired account): **reply** (Telegram's reply-to) to a notification and the bridge
+  types your text into that notification's worker, through `worker.prompt`'s own checks, input lane and herdr calls,
+  so the transcript shows it as your next prompt and typing from the game and the phone is serialised. The bridge
+  remembers which worker each delivered notification was about (SQLite `notify_message`, keyed on Telegram's chat and
+  message id: the newest 500, none older than 7 days). Only messages in your private chat with the bot, from the
+  paired account (`from.id`), typed by you, count: another sender, a group, a bot, a message on behalf of a chat are
+  dropped without a word; a forward or a message through another bot is refused. Typed into its worker, your reply
+  gets a 👍 reaction; otherwise the bot answers it (as a reply) with one fixed sentence, never your text: not a reply
+  to a notification or no text (how to reply), a notification it no longer knows ("I no longer know which worker
+  this was, reply to a newer notification"), the worker's ask (#57: "This worker has a question, tap an answer or
+  answer in the game"), over 4096 characters ("too long (N characters)"), more than 6 replies to one worker or 20 in
+  all within a minute, the worker gone, asleep or without an agent, its input lane full (32 waiting), herdr failing
+  it, a `/handoff` (ask for it in the game). The bot's answers are bounded too (10 a minute; more are not sent).
+  Switched on, nothing sent while replies were off is typed (the first poll forgets the backlog, and only a message
+  dated after the second of the switch is typed: Telegram's dates are whole seconds, so one sent in that very second
+  is dropped too); switched off, unpaired or paired anew, nothing read before is typed, a poll or a reply already
+  under way included (the change waits for a reply being handed to its worker's lane).
+  Replies on when the bridge starts (a restart, a release): what came while it was away is read, and typed when sent
+  within the last 2 minutes; older is answered as not sent. Telegram keeps updates 24 hours at most. Replies stay on
+  across unpairing: they read only the account paired at the time, and pause while there is none.
+- **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`,
+  `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}` and (#13)
+  `notify.reply` `{"id"?, "text_bytes", "text_runes", "outcome"}` (`sent`, else the refusal: `not_a_reply`,
+  `no_text`, `relayed`, `stale`, `too_long`, `unknown`, `rate_limited`, `ask`, `gone`, `invalid_state`, `busy`,
+  `bad_text`, `handoff`, `failed`). A reply's prompt writes no `worker.prompt` row. Never a message's text, a code, a
+  token or a Telegram id.
 
 ### Host stats
 

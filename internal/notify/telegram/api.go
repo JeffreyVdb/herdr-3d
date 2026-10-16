@@ -99,7 +99,14 @@ type message struct {
 	MessageID int64  `json:"message_id"`
 	From      *user  `json:"from"`
 	Chat      chat   `json:"chat"`
+	Date      int64  `json:"date"` // unix seconds
 	Text      string `json:"text"`
+	// #13: the message it replies to, and what says it was not typed here
+	// by its sender (only whether they are there is read).
+	ReplyTo       *message  `json:"reply_to_message,omitempty"`
+	SenderChat    *chat     `json:"sender_chat,omitempty"`
+	ForwardOrigin *struct{} `json:"forward_origin,omitempty"`
+	ViaBot        *user     `json:"via_bot,omitempty"`
 }
 
 type update struct {
@@ -217,21 +224,69 @@ type linkPreview struct {
 	IsDisabled bool `json:"is_disabled"`
 }
 
-type sendMessage struct {
-	ChatID              int64       `json:"chat_id"`
-	Text                string      `json:"text"`
-	DisableNotification bool        `json:"disable_notification,omitempty"`
-	LinkPreview         linkPreview `json:"link_preview_options"`
+// replyParameters makes a message a reply (#13); sent even when the
+// message replied to is gone.
+type replyParameters struct {
+	MessageID                int64 `json:"message_id"`
+	AllowSendingWithoutReply bool  `json:"allow_sending_without_reply"`
 }
 
-// send sends plain text (no parse_mode: nothing in it is markup).
-func (a api) send(ctx context.Context, token string, chatID int64, text string, quiet bool) error {
-	text = clip(Scrub(text, token), textMax)
-	if strings.TrimSpace(text) == "" {
-		text = "herdr-3d"
+type sendMessage struct {
+	ChatID              int64            `json:"chat_id"`
+	Text                string           `json:"text"`
+	DisableNotification bool             `json:"disable_notification,omitempty"`
+	LinkPreview         linkPreview      `json:"link_preview_options"`
+	ReplyParameters     *replyParameters `json:"reply_parameters,omitempty"`
+}
+
+// send sends plain text (no parse_mode: nothing in it is markup) and names
+// the message it became (#13: a zero Ref when Telegram did not say).
+func (a api) send(ctx context.Context, token string, chatID int64, text string, quiet bool) (notify.Ref, error) {
+	return a.sendMessage(ctx, token, sendMessage{ChatID: chatID, Text: text, DisableNotification: quiet})
+}
+
+// answer sends text as a reply to message msg in chatID (#13).
+func (a api) answer(ctx context.Context, token string, chatID, msg int64, text string) error {
+	_, err := a.sendMessage(ctx, token, sendMessage{ChatID: chatID, Text: text,
+		ReplyParameters: &replyParameters{MessageID: msg, AllowSendingWithoutReply: true}})
+	return err
+}
+
+func (a api) sendMessage(ctx context.Context, token string, m sendMessage) (notify.Ref, error) {
+	m.Text = clip(Scrub(m.Text, token), textMax)
+	if strings.TrimSpace(m.Text) == "" {
+		m.Text = "herdr-3d"
 	}
-	return a.call(ctx, token, "sendMessage", sendMessage{ChatID: chatID, Text: text, DisableNotification: quiet,
-		LinkPreview: linkPreview{IsDisabled: true}}, nil)
+	m.LinkPreview = linkPreview{IsDisabled: true}
+	var raw json.RawMessage
+	if err := a.call(ctx, token, "sendMessage", m, &raw); err != nil {
+		return notify.Ref{}, err
+	}
+	// Delivered, whatever the answer holds: a message it cannot name is
+	// just not replied to.
+	var sent message
+	if json.Unmarshal(raw, &sent) != nil {
+		return notify.Ref{}, nil
+	}
+	return notify.Ref{Chat: sent.Chat.ID, Message: sent.MessageID}, nil
+}
+
+type reactionType struct {
+	Type  string `json:"type"`
+	Emoji string `json:"emoji"`
+}
+
+type setMessageReaction struct {
+	ChatID    int64          `json:"chat_id"`
+	MessageID int64          `json:"message_id"`
+	Reaction  []reactionType `json:"reaction"`
+}
+
+// react sets emoji (one of Telegram's reaction emoji) on message msg in
+// chatID (#13).
+func (a api) react(ctx context.Context, token string, chatID, msg int64, emoji string) error {
+	return a.call(ctx, token, "setMessageReaction", setMessageReaction{ChatID: chatID, MessageID: msg,
+		Reaction: []reactionType{{Type: "emoji", Emoji: emoji}}}, nil)
 }
 
 type getUpdates struct {

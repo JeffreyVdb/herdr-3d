@@ -45,8 +45,9 @@ const (
 
 // The bridge-originated audit rows.
 const (
-	AuditSend = "notify.send"
-	AuditPair = "notify.pair"
+	AuditSend  = "notify.send"
+	AuditPair  = "notify.pair"
+	AuditReply = "notify.reply" // #13
 )
 
 // Settings are what the store keeps.
@@ -59,15 +60,24 @@ type Settings struct {
 	// Freelancers: a freelancer's done notifies too (the game inbox's
 	// default: no).
 	Freelancers bool
+	// Replies (#13): a reply to a notification is typed into its worker.
+	// Off by default, and apart from Enabled.
+	Replies bool
 }
 
-// DefaultSettings: off, both events, with sound, no freelancers.
+// DefaultSettings: off, both events, with sound, no freelancers, no
+// replies.
 func DefaultSettings() Settings { return Settings{NeedsYou: true, Done: true} }
 
-// Store keeps the settings (the bridge's database).
+// Store keeps the settings (the bridge's database), and (#13) which worker
+// each sent notification was about, bounded (the store forgets the oldest).
 type Store interface {
 	LoadNotifySettings(ctx context.Context) (Settings, bool, error)
 	SaveNotifySettings(ctx context.Context, s Settings) error
+	SaveNotifyMessage(ctx context.Context, msg Ref, worker string, at time.Time) error
+	// NotifyMessage is the worker msg was about and when it was sent (ok
+	// false: none, or forgotten).
+	NotifyMessage(ctx context.Context, msg Ref) (worker string, at time.Time, ok bool, err error)
 }
 
 // Options configure a Service.
@@ -81,10 +91,16 @@ type Options struct {
 	Clock      Clock         // default RealClock
 	Settle     time.Duration // default DefaultSettle
 	Queue      int           // default DefaultQueue
-	// Audit writes a bridge-originated audit row (AuditSend, AuditPair):
-	// args hold no text, token, code or provider id.
+	// Audit writes a bridge-originated audit row (AuditSend, AuditPair,
+	// AuditReply): args hold no text, token, code or provider id.
 	Audit func(ctx context.Context, cmd string, args any, err error)
-	Log   *slog.Logger
+	// Prompt (#13) types a reply's text into worker id as you would in the
+	// game (the hub's worker.prompt: its checks, the worker's input lane).
+	// An error refuses it at once; else done is called once, when the lane
+	// typed it (nil) or failed. A *ReplyError says why (else ReplyFailed).
+	// Nil: replies are refused.
+	Prompt func(ctx context.Context, id, text string, done func(error)) error
+	Log    *slog.Logger
 }
 
 // Events is which events notify.
@@ -110,12 +126,14 @@ type View struct {
 	// Env lists the fields the bridge environment sets ("enabled", "token").
 	Env []string `json:"env"`
 	// Tested: a passing notify.test covers the token and recipient in use.
-	Tested      bool         `json:"tested"`
-	Events      Events       `json:"events"`
-	Quiet       bool         `json:"quiet"`
-	Freelancers bool         `json:"freelancers"`
-	Channel     ChannelState `json:"channel"`
-	LastError   *LastError   `json:"last_error,omitempty"`
+	Tested      bool   `json:"tested"`
+	Events      Events `json:"events"`
+	Quiet       bool   `json:"quiet"`
+	Freelancers bool   `json:"freelancers"`
+	// Replies (#13): a reply to a notification is typed into its worker.
+	Replies   bool         `json:"replies"`
+	Channel   ChannelState `json:"channel"`
+	LastError *LastError   `json:"last_error,omitempty"`
 	// Dropped counts the alerts and sightings dropped since the bridge
 	// started (a full queue).
 	Dropped int64 `json:"dropped,omitempty"`
@@ -123,7 +141,7 @@ type View struct {
 
 // Update is a change of the settings: a nil field is kept.
 type Update struct {
-	Enabled, NeedsYou, Done, Quiet, Freelancers *bool
+	Enabled, NeedsYou, Done, Quiet, Freelancers, Replies *bool
 }
 
 // TestResult is notify.test's answer.
@@ -157,10 +175,17 @@ type Service struct {
 	kick   chan struct{}
 	queue  chan job
 
-	mu     sync.Mutex
-	set    Settings
-	passed *passedTest
-	last   *LastError
+	// applying serialises Apply: the channel listens as the settings it
+	// committed last say (#13).
+	applying sync.Mutex
+	mu       sync.Mutex
+	set      Settings
+	passed   *passedTest
+	last     *LastError
+	// since is when replies were switched on (zero: on at the start).
+	since time.Time
+
+	rp replies // #13: the replier's
 
 	obsMu    sync.Mutex
 	obs      []Observation
@@ -188,7 +213,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 		opts.Log = slog.New(slog.DiscardHandler)
 	}
 	s := &Service{opts: opts, change: make(chan struct{}, 1), kick: make(chan struct{}, 1),
-		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle)}
+		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle), rp: newReplies()}
 	if opts.Store != nil {
 		st, ok, err := opts.Store.LoadNotifySettings(ctx)
 		if err != nil {
@@ -198,6 +223,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 			s.set = st
 		}
 	}
+	opts.Channel.Listen(s.set.Replies) // #13
 	return s, nil
 }
 
@@ -234,7 +260,7 @@ func (s *Service) View() View {
 	defer s.mu.Unlock()
 	v := View{Enabled: s.enabledLocked(), Env: []string{}, Tested: ready && s.testedLocked(fp),
 		Events: Events{NeedsYou: s.set.NeedsYou, Done: s.set.Done}, Quiet: s.set.Quiet, Freelancers: s.set.Freelancers,
-		Channel: ch, Dropped: s.dropped.Load()}
+		Replies: s.set.Replies, Channel: ch, Dropped: s.dropped.Load()}
 	if s.opts.EnvEnabled != nil {
 		v.Env = append(v.Env, "enabled")
 	}
@@ -297,6 +323,8 @@ func (s *Service) quiet() bool {
 // paired recipient and a passing notify.test of both (not under the
 // environment's switch, which cannot be changed here).
 func (s *Service) Apply(ctx context.Context, u Update) error {
+	s.applying.Lock()
+	defer s.applying.Unlock()
 	ch := s.opts.Channel.State()
 	ready := s.opts.Channel.Ready()
 	fp := s.opts.Channel.Fingerprint()
@@ -325,10 +353,23 @@ func (s *Service) Apply(ctx context.Context, u Update) error {
 			next.Enabled = *u.Enabled
 		}
 	}
+	// #13: replies need a token and a paired account (no test: nothing is
+	// sent to switch them on).
+	if u.Replies != nil && *u.Replies && !s.set.Replies {
+		switch {
+		case !ch.KeySet:
+			s.mu.Unlock()
+			return &Error{CodeNotConfigured, "set the bot token first"}
+		case !ready:
+			s.mu.Unlock()
+			return &Error{CodeNotPaired, "pair your Telegram account first"}
+		}
+	}
 	for _, f := range []struct {
 		v   *bool
 		dst *bool
-	}{{u.NeedsYou, &next.NeedsYou}, {u.Done, &next.Done}, {u.Quiet, &next.Quiet}, {u.Freelancers, &next.Freelancers}} {
+	}{{u.NeedsYou, &next.NeedsYou}, {u.Done, &next.Done}, {u.Quiet, &next.Quiet}, {u.Freelancers, &next.Freelancers},
+		{u.Replies, &next.Replies}} {
 		if f.v != nil {
 			*f.dst = *f.v
 		}
@@ -339,8 +380,15 @@ func (s *Service) Apply(ctx context.Context, u Update) error {
 			return fmt.Errorf("the settings could not be saved: %w", err)
 		}
 	}
+	listen := next.Replies != s.set.Replies
+	if listen && next.Replies {
+		s.since = s.now()
+	}
 	s.set = next
 	s.mu.Unlock()
+	if listen {
+		s.opts.Channel.Listen(next.Replies)
+	}
 	s.signal()
 	return nil
 }
@@ -359,7 +407,7 @@ func (s *Service) Test(ctx context.Context) (*TestResult, error) {
 	fp := ch.Fingerprint()
 	start := s.now()
 	sctx, cancel := context.WithTimeout(ctx, SendTimeout)
-	err := ch.Send(sctx, Notification{Test: true, Quiet: s.quiet()})
+	_, err := ch.Send(sctx, Notification{Test: true, Quiet: s.quiet()})
 	cancel()
 	s.record(err)
 	if err != nil {
@@ -447,14 +495,21 @@ func (s *Service) Run(ctx context.Context) {
 		return
 	}
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 	go func() {
 		defer wg.Done()
 		s.sender(ctx)
 	}()
 	go func() {
 		defer wg.Done()
-		s.opts.Channel.Run(ctx, s.paired)
+		s.replier(ctx)
+	}()
+	s.mu.Lock()
+	listen := s.set.Replies
+	s.mu.Unlock()
+	go func() {
+		defer wg.Done()
+		s.opts.Channel.Run(ctx, Hooks{Pair: s.paired, Reply: s.inbound, Listen: listen})
 	}()
 	defer wg.Wait()
 	var timer Timer
@@ -578,16 +633,17 @@ func Backoff(n int) time.Duration {
 // backoff after a network failure or a 5xx; then audited. Switched off
 // meanwhile, it is dropped unsent.
 func (s *Service) deliver(ctx context.Context, a Alert) {
-	n := Notification{Name: a.Name, Reason: a.Reason, Line: a.Line, Quiet: s.quiet()}
+	n := Notification{WorkerID: a.WorkerID, Name: a.Name, Reason: a.Reason, Line: a.Line, Quiet: s.quiet()}
 	row := sendAudit{ID: a.WorkerID, Kind: string(a.Kind)}
 	var err error
+	var ref Ref
 	for row.Attempts < MaxAttempts {
 		if !s.allowed(a.Kind) {
 			return
 		}
 		row.Attempts++
 		sctx, cancel := context.WithTimeout(ctx, SendTimeout)
-		err = s.opts.Channel.Send(sctx, n)
+		ref, err = s.opts.Channel.Send(sctx, n)
 		cancel()
 		if err == nil || ctx.Err() != nil {
 			break
@@ -625,6 +681,7 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 		s.opts.Log.Warn("notification not delivered", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts, "code", row.Code, "status", row.Status)
 	} else {
 		s.opts.Log.Info("notification sent", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts)
+		s.remember(ctx, ref, a.WorkerID)
 	}
 	s.audit(ctx, AuditSend, row, aerr)
 }

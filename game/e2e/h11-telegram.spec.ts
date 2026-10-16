@@ -282,3 +282,54 @@ test('keyboard only: the same journey with Tab, Shift+Tab, Enter and Space, the 
   await noTokenAnywhere(page);
   clean();
 });
+
+// #13: Allow replies, its own block under the notification options: off by default, switched with the mouse and with
+// the keyboard (the focus stays on it), apart from the notifications switch, and waiting for a paired account.
+test('Allow replies: off by default, its own switch, mouse and keyboard', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '', `${SIM}&simtelegram=paired`);
+  const tg = await telegram(page);
+  const status = tg.locator('.settings-status');
+  const block = tg.getByRole('group', { name: 'Replies from Telegram' });
+  const replies = block.getByLabel('Allow replies');
+  await expect(block).toContainText('Only messages from your paired account count');
+  await expect(replies).not.toBeChecked();
+  await expect(replies).toBeEnabled();
+  await expect(block).toContainText('Off: nothing you send the bot reaches a worker.');
+  // The notifications switch waits for a test; replies do not, and are not it.
+  await expect(tg.getByLabel('Send Telegram notifications')).toBeDisabled();
+  await expect(block.getByLabel('Send Telegram notifications')).toHaveCount(0);
+  // Mouse.
+  await replies.check();
+  await expect(status).toContainText('Replies on.');
+  await expect(replies).toBeChecked();
+  await expect(block).toContainText("On: your reply to a worker's notification is typed into that worker.");
+  await shot(page, 'h13-telegram-replies');
+  // Keyboard: from the freelancers' switch, Tab, then Space; the focus stays.
+  await tg.getByLabel(/Also when a freelancer/).focus();
+  await page.keyboard.press('Tab');
+  await expect(replies).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(status).toContainText('Replies off.');
+  await expect(replies).not.toBeChecked();
+  await expect(replies).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(replies).toBeChecked();
+  await expect(replies).toBeFocused();
+  const sets = (await notifySent(page)).filter((c) => c.t === 'notify.set').map((c) => c.args);
+  expect(sets).toEqual([{ replies: true }, { replies: false }, { replies: true }]);
+  // A phone: the block fits, no sideways scroll.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await block.scrollIntoViewIfNeeded();
+  await expect(replies).toBeInViewport();
+  expect(await page.evaluate(() => { const b = document.querySelector('dialog.settings .settings-body')!; return b.scrollWidth <= b.clientWidth; })).toBe(true);
+  await shot(page, 'h13-telegram-replies-phone');
+  // Unpaired, replies on: paused; switched off, they wait for an account.
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await tg.getByRole('button', { name: 'Unpair' }).click();
+  await expect(block).toContainText('On, but paused: no paired account.');
+  await replies.uncheck();
+  await expect(replies).toBeDisabled();
+  await expect(block).toContainText('Pair your account first.');
+  clean();
+});

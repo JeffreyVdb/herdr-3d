@@ -1483,6 +1483,22 @@ dialog.settings {
 .settings-tg-opts > .settings-switch:first-of-type {
   font-weight: 700;
 }
+/* #13: replies type into workers, which nothing above does: a block of its own under a rule, its switch as bold as
+ * the notifications' one. */
+.settings-tg-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line);
+}
+.settings-tg-replies .settings-field-hint {
+  margin: 0;
+}
+.settings-tg-opts .settings-tg-replies .settings-switch {
+  font-weight: 700;
+}
 .settings-tg-opts .settings-switch:has(input:disabled) {
   cursor: not-allowed;
 }

@@ -15,7 +15,11 @@ export interface TelegramSectionHost {
 
 /** What leaves the machine, shown above the switch: it is what the switch agrees to. */
 export const TELEGRAM_PRIVACY =
-  'Each message holds the worker’s name, why it needs you or that it finished, and one line of what it did: the floor overview’s line, else the last line it wrote, with anything shaped like a key or token removed. A question marked secret is never included. Messages go through Telegram’s servers to your account only; nothing is sent while this is off. Saving the token, Pair and Send test message still contact Telegram, even while it is off.';
+  'Each message holds the worker’s name, why it needs you or that it finished, and one line of what it did: the floor overview’s line, else the last line it wrote, with anything shaped like a key or token removed. A question marked secret is never included. Messages go through Telegram’s servers to your account only; nothing is sent while this is off. Saving the token, Pair, Send test message and Allow replies (below) still contact Telegram, even while it is off.';
+
+/** #13: what Allow replies agrees to, shown above its switch. */
+export const TELEGRAM_REPLIES =
+  'Reply to a notification in Telegram and the bridge types your reply into that worker, as you would in the game. Only messages from your paired account count, and only replies to a notification; everything else the bot receives does nothing. A 👍 on your reply means it was sent; otherwise the bot says why not. This is separate from the notifications switch above.';
 
 const BOTFATHER = 'https://t.me/BotFather';
 const CONFIRM_MS = 4000;
@@ -94,7 +98,8 @@ function check(id: string, text: string): { label: HTMLLabelElement; box: HTMLIn
  * checked by the bridge with Telegram, never shown again), the account (a one-time code you send the bot; whoever
  * sends it is paired, every other message is ignored), and a test message. Then the switch (off until a test
  * reached you with this bot and account; the bridge's environment can set it, and then it is read-only here), the
- * two events, quiet delivery and freelancers' finished work.
+ * two events, quiet delivery and freelancers' finished work. #13: then Allow replies, a block of its own: a reply to a
+ * notification is typed into its worker (off by default, needs a paired account, no test).
  */
 export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) => SectionHandle {
   return (body) => {
@@ -209,10 +214,23 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     events.append(needs.label, done.label);
     const quiet = check(`${id}-quiet`, 'Quiet: deliver without a sound');
     const freelancers = check(`${id}-freelancers`, 'Also when a freelancer (coder, reviewer) finishes');
+    // #13: replies, their own block: they type into workers, which the notifications switch never does.
+    const replyBlock = el('div', 'settings-tg-replies');
+    replyBlock.setAttribute('role', 'group');
+    const replyTitle = el('h4', 'settings-role-title', 'Replies from Telegram');
+    replyTitle.id = `${id}-replies-h`;
+    replyBlock.setAttribute('aria-labelledby', replyTitle.id);
+    const replyNote = el('p', 'settings-fu-privacy', TELEGRAM_REPLIES);
+    replyNote.id = `${id}-replies-note`;
+    const replies = check(`${id}-replies`, 'Allow replies');
+    replies.box.setAttribute('aria-describedby', `${id}-replies-note ${id}-replies-hint`);
+    const repliesHint = el('p', 'settings-field-hint');
+    repliesHint.id = `${id}-replies-hint`;
+    replyBlock.append(replyTitle, replyNote, replies.label, repliesHint);
     const status = el('p', 'settings-status');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
-    opts.append(privacy, on.label, onHint, events, quiet.label, freelancers.label, status);
+    opts.append(privacy, on.label, onHint, events, quiet.label, freelancers.label, replyBlock, status);
 
     root.append(dest, tokenBlock, pairBlock, testBlock, opts);
     body.append(lede, missing, root);
@@ -352,6 +370,16 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
             : s.tested
               ? 'The test reached you: you can switch it on.'
               : 'Send the test message first: it has to reach you.';
+      // #13: replies. Switching them on needs a paired account (no test); on, they pause while there is none.
+      replies.box.checked = wanted.get(replies.box) ?? s.replies;
+      replies.box.disabled = busy || (!s.replies && !ready);
+      repliesHint.textContent = s.replies
+        ? ready
+          ? "On: your reply to a worker's notification is typed into that worker."
+          : 'On, but paused: no paired account. Nothing reaches a worker.'
+        : !ready
+          ? 'Pair your account first.'
+          : 'Off: nothing you send the bot reaches a worker.';
       for (const [box, v] of [
         [needs.box, s.events.needs_you],
         [done.box, s.events.done],
@@ -506,6 +534,13 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     done.box.addEventListener('change', () => set(done.box, { events: { done: done.box.checked } }, 'Saved.'));
     quiet.box.addEventListener('change', () => set(quiet.box, { quiet: quiet.box.checked }, quiet.box.checked ? 'Saved: messages arrive without a sound.' : 'Saved: messages arrive with a sound.'));
     freelancers.box.addEventListener('change', () => set(freelancers.box, { freelancers: freelancers.box.checked }, 'Saved.'));
+    replies.box.addEventListener('change', () =>
+      set(
+        replies.box,
+        { replies: replies.box.checked },
+        replies.box.checked ? 'Replies on. Reply to a notification in Telegram to type into its worker.' : 'Replies off. Nothing you send the bot reaches a worker.',
+      ),
+    );
 
     const off = host.book.onChange(sync);
     sync();

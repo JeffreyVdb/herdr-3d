@@ -920,7 +920,7 @@ export interface CommandArgs {
   'digest.retry': { id?: string };
   // #11 Telegram notifications (docs/protocol.md "Notifications"): each acks `NotifyState`, `notify.test` `NotifyTestAck`.
   'notify.get': Record<string, never>;
-  'notify.set': { enabled?: boolean; events?: { needs_you?: boolean; done?: boolean }; quiet?: boolean; freelancers?: boolean };
+  'notify.set': { enabled?: boolean; events?: { needs_you?: boolean; done?: boolean }; quiet?: boolean; freelancers?: boolean; replies?: boolean };
   'notify.test': Record<string, never>;
   /** The bot token from @BotFather: checked by the bridge (getMe) and kept there; never sent back, never logged (`loggedArgs`). */
   'notify.token.set': { key: string };
@@ -2490,6 +2490,8 @@ export interface NotifyState {
   events: { needs_you: boolean; done: boolean };
   quiet: boolean;
   freelancers: boolean;
+  /** #13: a reply to a notification, from the paired account, is typed into its worker. Off by default. */
+  replies: boolean;
   channel: NotifyChannel;
   last_error?: { code: string; message: string; at: number };
   /** Alerts dropped since the bridge started (a full queue). */
