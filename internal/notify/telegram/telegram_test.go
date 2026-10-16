@@ -41,6 +41,7 @@ type fakeTG struct {
 	reqC    chan struct{}
 	failGet func(n int) (int, string) // getUpdates' n-th call (from 0): a status and a body, or 0
 	failMsg func(n int) (int, string) // sendMessage's
+	holdGet func(n int)               // runs before getUpdates' n-th call reads the queue
 	gets    int
 	msgs    int
 }
@@ -98,6 +99,12 @@ func (f *fakeTG) serve(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprint(w, b)
 				return
 			}
+		}
+		f.mu.Lock()
+		hold := f.holdGet
+		f.mu.Unlock()
+		if hold != nil {
+			hold(n)
 		}
 		offset, _ := body["offset"].(float64) // omitted: 0
 		timeout, _ := body["timeout"].(float64)
@@ -343,6 +350,47 @@ func TestPairingCodeExpires(t *testing.T) {
 	}
 	if len(r.tg.requests("sendMessage")) != 0 {
 		t.Fatal("a message went out")
+	}
+}
+
+// A code that arrives in a long poll answered after the deadline is too
+// late: nothing is stored, nobody is greeted.
+func TestPairingCodeExpiresInFlight(t *testing.T) {
+	r := newRig(t, Options{PairTTL: 10 * time.Minute})
+	inFlight, release := make(chan struct{}), make(chan struct{})
+	r.tg.mu.Lock()
+	r.tg.holdGet = func(n int) {
+		if n == 1 { // the first long poll
+			close(inFlight)
+			<-release
+		}
+	}
+	r.tg.mu.Unlock()
+	code := r.startPairing(t)
+	<-inFlight
+	r.clock.Advance(10*time.Minute + time.Second)
+	r.tg.push(42, "private", code, false)
+	close(release)
+	waitFor(t, "the expiry", func() bool { return len(r.pairResults()) == 1 })
+	if res := r.pairResults()[0]; res.Outcome != notify.PairTimedOut {
+		t.Fatalf("result %+v", res)
+	}
+	st := r.ch.State()
+	if r.ch.Ready() || st.Paired != nil {
+		t.Fatalf("paired after expiry: %+v", st)
+	}
+	if st.Pairing == nil || st.Pairing.State != notify.PairExpired {
+		t.Fatalf("pairing %+v", st.Pairing)
+	}
+	if len(r.tg.requests("sendMessage")) != 0 {
+		t.Fatal("a greeting went out")
+	}
+	if _, err := os.Stat(r.file); err == nil {
+		var s Stored
+		b, _ := os.ReadFile(r.file)
+		if json.Unmarshal(b, &s) == nil && s.UserID != 0 {
+			t.Fatalf("stored %+v", s)
+		}
 	}
 }
 

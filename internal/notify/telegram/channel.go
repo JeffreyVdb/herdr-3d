@@ -439,10 +439,14 @@ func (c *Channel) poll(ctx context.Context, p *pairState) notify.PairResult {
 	}
 	fails := 0
 	for {
-		if done, ok := c.match(ctx, p, t, ups, &offset, &res); done {
-			if ok {
-				res.Outcome = notify.PairedOK
-			}
+		// A batch answered after the deadline is too late, however long the
+		// poll took to come back.
+		if c.expired(p) {
+			res.Outcome = notify.PairTimedOut
+			return res
+		}
+		if outcome := c.match(ctx, p, t, ups, &offset, &res); outcome != "" {
+			res.Outcome = outcome
 			return res
 		}
 		if ctx.Err() != nil {
@@ -481,9 +485,14 @@ func (c *Channel) poll(ctx context.Context, p *pairState) notify.PairResult {
 	}
 }
 
-// match reads a batch of updates for p's code. done: the pairing is over
-// (ok: paired; else superseded meanwhile).
-func (c *Channel) match(ctx context.Context, p *pairState, t string, ups []update, offset *int64, res *notify.PairResult) (done, ok bool) {
+// expired: p's code is past its deadline and can no longer pair.
+func (c *Channel) expired(p *pairState) bool {
+	return !c.opts.Clock.Now().Before(p.expires)
+}
+
+// match reads a batch of updates for p's code: the pairing's outcome once it
+// is over (paired, expired, or cancelled when superseded meanwhile), else "".
+func (c *Channel) match(ctx context.Context, p *pairState, t string, ups []update, offset *int64, res *notify.PairResult) string {
 	for _, u := range ups {
 		*offset = max(*offset, u.UpdateID+1)
 		m := u.Message
@@ -491,23 +500,27 @@ func (c *Channel) match(ctx context.Context, p *pairState, t string, ups []updat
 			res.Ignored++
 			continue
 		}
-		if !c.paired(ctx, p, t, *m.From) {
-			return true, false
+		outcome := c.paired(ctx, p, t, *m.From)
+		if outcome == notify.PairedOK {
+			// Confirm what was read, so the code is not read again.
+			_, _ = c.api.updates(ctx, t, *offset, 0)
 		}
-		// Confirm what was read, so the code is not read again.
-		_, _ = c.api.updates(ctx, t, *offset, 0)
-		return true, true
+		return outcome
 	}
-	return false, false
+	return ""
 }
 
 // paired stores who sent the code (from.id: the person, never the chat)
-// and greets them.
-func (c *Channel) paired(ctx context.Context, p *pairState, token string, from user) bool {
+// and greets them, unless the code expired or was superseded meanwhile.
+func (c *Channel) paired(ctx context.Context, p *pairState, token string, from user) string {
 	c.mu.Lock()
 	if c.pair != p || c.tokenLocked() != token {
 		c.mu.Unlock()
-		return false
+		return notify.PairCancelled
+	}
+	if c.expired(p) {
+		c.mu.Unlock()
+		return notify.PairTimedOut
 	}
 	next := c.stored
 	next.BotID = botID(token)
@@ -516,7 +529,7 @@ func (c *Channel) paired(ctx context.Context, p *pairState, token string, from u
 		c.mu.Unlock()
 		c.opts.Log.Error("telegram: the pairing could not be saved", "err", err)
 		c.setPairState(p, notify.PairError, "The pairing could not be saved on the bridge.")
-		return false
+		return notify.PairCancelled
 	}
 	c.stored = next
 	c.pair, c.ended = nil, nil // paired: the code is spent
@@ -527,7 +540,7 @@ func (c *Channel) paired(ctx context.Context, p *pairState, token string, from u
 	if err := c.api.send(sctx, token, from.ID, PairedText, false); err != nil {
 		c.opts.Log.Warn("telegram: the pairing greeting was not delivered", "code", notify.CodeOf(err))
 	}
-	return true
+	return notify.PairedOK
 }
 
 func statusOf(err error) int {
