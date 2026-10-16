@@ -3,9 +3,11 @@
 package codexshare
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -73,7 +75,18 @@ func (e *eventLog) methods() []string {
 // control is the bridge's write path aimed at the fixture's session, with
 // the fixture's run directory as its codex run directory.
 func (f *fx) control(run string) *herdr.Control {
-	return &herdr.Control{CodexRun: run, Timeout: 90 * time.Second, Shell: f.sh}
+	return &herdr.Control{Herdr: f.h.Bin, CodexRun: run, Timeout: 90 * time.Second, Shell: f.sh, Run: f.runControl}
+}
+
+// runControl gives every fixture control command the session server's
+// environment, including the private home used by Bash fixtures.
+func (f *fx) runControl(ctx context.Context, argv []string) ([]byte, []byte, error) {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = herdr.CleanEnv(f.h.Env)
+	var out, errb strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	err := cmd.Run()
+	return []byte(out.String()), []byte(errb.String()), err
 }
 
 // startShared starts ws's server from its pane (the launcher typed with

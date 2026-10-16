@@ -20,6 +20,7 @@ import (
 // Changing either must be a deliberate, reviewed change to this test.
 func TestControlAllowlist(t *testing.T) {
 	want := map[string][]string{
+		"rename-started-agent": {"{herdr}", "--session", "{session}", "agent", "rename", "{pane}", "{agent}"},
 		"start": {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
 			"--working-directory={home}", "{shell}", "-l", "-c", "exec herdr --session '{session}' server"},
 		"stop": {"{herdr}", "session", "stop", "{session}", "--json"},

@@ -26,29 +26,39 @@ describe('the fixture’s shared Codex server switch (#155)', () => {
     const { s, sent, run } = sim();
     const world: Record<string, unknown> = {};
     s.decorate(world);
-    expect(world.codex_server).toEqual({ enabled: false, available: true });
-    expect(run('codex_server.set', { enabled: true })).toEqual({ enabled: true, available: true });
-    expect(sent).toEqual([{ t: 'codex_server.update', enabled: true, available: true }]);
-    expect(run('codex_server.get')).toEqual({ enabled: true, available: true });
+    expect(world.codex_server).toEqual({ enabled: false, available: true, allow_unverified: false });
+    expect(run('codex_server.set', { enabled: true })).toEqual({ enabled: true, available: true, allow_unverified: false });
+    expect(sent).toEqual([{ t: 'codex_server.update', enabled: true, available: true, allow_unverified: false }]);
+    expect(run('codex_server.get')).toEqual({ enabled: true, available: true, allow_unverified: false });
   });
 
   it('refuses a missing enabled, and switching on without a run directory', () => {
     const { run } = sim(false);
-    expect(() => run('codex_server.set', {})).toThrow(/enabled is required/);
+    expect(() => run('codex_server.set', {})).toThrow(/enabled or allow_unverified is required/);
     try {
       run('codex_server.set', { enabled: true });
       throw new Error('accepted');
     } catch (e) {
       expect((e as CmdError).code).toBe('unsupported');
     }
-    expect(run('codex_server.set', { enabled: false })).toEqual({ enabled: false, available: false });
+    expect(run('codex_server.set', { enabled: false })).toEqual({ enabled: false, available: false, allow_unverified: false });
+  });
+
+  it('accepting the risk persists across enabled-only commands and removes the version fallback', () => {
+    const { s, run } = sim(true, true);
+    run('codex_server.set', { allow_unverified: true });
+    run('codex_server.set', { enabled: true });
+    expect(run('codex_server.get')).toMatchObject({ enabled: true, allow_unverified: true });
+    expect(s.hire('codex')).toBeUndefined();
+    run('codex_server.set', { allow_unverified: false });
+    expect(s.hire('codex')?.mode).toBe('legacy');
   });
 
   it('#186: on an unverified Codex, a Codex hire with the switch on falls back; otherwise hires are untouched', () => {
     const { s, run } = sim(true, true);
     expect(s.hire('codex')).toBeUndefined();
     run('codex_server.set', { enabled: true });
-    expect(s.hire('codex')).toMatchObject({ mode: 'legacy', note: expect.stringContaining('"codex-cli 0.163.0"') });
+    expect(s.hire('codex')).toMatchObject({ mode: 'legacy', note: expect.stringContaining('"codex-cli 0.999.0"') });
     expect(s.hire('claude')).toBeUndefined();
     const plain = sim();
     plain.run('codex_server.set', { enabled: true });

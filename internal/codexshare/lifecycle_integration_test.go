@@ -45,7 +45,9 @@ func (f *fx) lastModelRequest() string {
 // bridge disconnecting, reconnecting, the TUI closing and reopening, the
 // 60 s unload, the server restarting and the worker stopping.
 func TestCodexShareLifecycle(t *testing.T) {
-	f := newFx(t, fxOptions{top: `developer_instructions = "H3D_DEV_INSTRUCTIONS stay"`}, "ws-a")
+	// Pin the lifecycle under test: 0.163 raised the default to 30 minutes.
+	f := newFx(t, fxOptions{top: `developer_instructions = "H3D_DEV_INSTRUCTIONS stay"
+thread_unload_delay_secs = 60`}, "ws-a")
 	w := f.sharedWorker("ws-a", "worker")
 	c, th := w.bridge, w.thread.ID
 	ws := filepath.Join(f.root, "ws-a")

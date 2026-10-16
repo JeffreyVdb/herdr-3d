@@ -1511,3 +1511,27 @@ questions"). Code: `internal/followup/round.go` (the reader), `internal/followup
 | 8 | Answers | Paired by label: `- Q9 <question> → <answer>`; an answer that is the recommendation as it was gets ` (your recommendation)`; `Unanswered: Q12, Q15` lists the rest; an optional round `note` ends the prompt. A round without labels keeps `n. <question> → <answer>` (plus the Unanswered line). Values and notes may be 8,000 bytes (an accepted recommendation is copied whole, decision 10); the whole prompt is still bound by herdr's 16 KiB (all ten of the incident's recommendations accepted fit; a round whose accepted answers go over is refused with `bad_request`, which the card shows, never cut). |
 | 9 | The card | Per question: its label, its context rendered (the transcript's Markdown rules: marked + DOMPurify), its options with the recommended one marked, the recommendation with **Use recommendation** (R), its own answer. **Use all recommendations** fills only the unanswered (yours stay). Nothing fills-and-sends: Send / Ctrl+Enter is the only way, Enter in a text moves on, R in a text is a letter. The foot says how many are answered and which go as unanswered. A fallback says the questions could not be prepared and why, offers Retry and the whole message, and keeps the free answer: after a retry reads the questions it becomes the round's note. Picks and the note are kept per worker and turn (`FollowupDrafts`, storage where allowed) across a retry, a reconnect, standing up and a reload. |
 | 10 | A long recommendation | **Whole up to an answer's bound, else shown and never accepted.** Review found both readers cut `recommendation.text` at 1,200 characters with `…`, and Use recommendation then sent that start as the agent's recommendation (a 1,446-byte one lost its last sentence, "Never delete the existing production database."). The bound is now in bytes and is the answer's: `followup.MaxRecommendationLen` = 8,000 = `proto.MaxFollowupAnswer` (one constant, so they cannot drift). Up to it the text is kept whole by the reader and by `Parse`; one 8,000-byte answer with its label, question (≤ 300 characters) and the marker stays under herdr's 16 KiB. Over it, the text is its first 8,000 bytes (never inside a character) with `cut: true`: the card shows it with a line pointing at **Show the whole message**, offers no Use recommendation (nor R, nor Use all for it), and the bridge never adds ` (your recommendation)` to a cut text, even typed out. **The bridge refuses a cut text sent as an answer itself** (review round 3, the user's decision): a client that drops `cut` (the branch's own earlier one did) offered it as Use recommendation, and the bridge acked the 8,000-byte start of an 8,446-byte recommendation without its last sentence. `worker.answer_followup` is now `bad_request` ("Q12's recommendation was too long to send whole: read the whole message and write your answer") for a value or note that is the cut text with or without its `…`, its spaces and line breaks folded; nothing goes to the worker and the follow-up stays open. A typed answer that differs, and a named option, are sent. A choice whose cut recommendation names an option still offers the option: the option is what is sent, whole. The LLM budget still holds: 8,192 tokens is ~32 KB of JSON against the round's measured ~1.8k tokens, and an 8,000-byte recommendation is ~2k tokens; an answer cut off at the budget goes to the retry and then the fallback (decision 4), never a silently short recommendation. |
+
+## 2026-10-16 — Codex compatibility preference and 0.163.0
+
+Codex upgrades should not force a player who accepts compatibility risk to wait for another herdr-3d release. The
+working model stays one Codex terminal managed inside Herdr, with the bridge following its conversation and tool
+steps in the transcript.
+
+- **Settings → Codex workers → Allow unverified Codex versions** is a separate, bridge-wide preference, off by
+  default and stored in SQLite. It persists across bridge restarts and future upgrades. The UI names the risk:
+  transcript updates or question replies may stop working on an untested release. Codex 0.163 is added to the
+  verified set, so it does not need this opt-in.
+- The same policy covers CLI preflight, the actual server's handshake on hire/wake, and thread connections.
+  Changing it refreshes bridge connections; it does not relaunch terminals, servers or turns. Existing legacy
+  workers keep their launch mode. The opt-in only relaxes the release allowlist: command failures, malformed
+  versions, blocked environments, process ownership and thread identity checks still apply.
+- `codex_server.set` patches either preference, preserving omitted fields. An old client's launch-switch change
+  cannot reset the risk preference. Older bridges omit `allow_unverified`, so the new game hides that control.
+- A Codex waiting at **Hooks need review** can make Herdr 0.9.3 return `timeout` or `agent_name_not_found` and drop
+  its pending agent name. The adapter recognizes that complete dialog after those errors, restores the requested
+  name on the existing pane, and returns the existing recoverable `agent_not_ready` result. The hire holds its first
+  prompt for the player. It neither approves hooks nor starts a second terminal. This covers both shared and
+  embedded Codex launches and their resume paths; other startup errors retain their normal handling.
+
+Verification and upstream details are in [Codex shared TUI research §15](research/codex-shared-tui.md#15-codex-01630).

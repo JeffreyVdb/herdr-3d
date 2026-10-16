@@ -187,6 +187,28 @@ func TestCodexShareBridgeRegression(t *testing.T) {
 		}
 	})
 
+	t.Run("9 a shell command and its result reach the transcript", func(t *testing.T) {
+		c.prompt("9-shell", w.id, "MOCK:shell printf transcript-tool-result")
+		c.settle(w)
+		var tr proto.TranscriptWatchResult
+		raw := c.ack(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: w.id, Limit: 200}, 30*time.Second, &tr)
+		f.record("9-shell-transcript.json", scrub(f, string(raw)))
+		found := false
+		for _, it := range tr.Items {
+			if it.Hidden || it.Kind != proto.ItemTool || it.Tool == nil {
+				continue
+			}
+			if strings.Contains(it.Tool.InputSummary, "printf transcript-tool-result") &&
+				strings.Contains(it.Tool.OutputText, "transcript-tool-result") && it.Tool.Status == proto.ToolOK {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("the transcript lost the completed shell command or its result")
+		}
+		c.ack(proto.CmdTranscriptUnwatch, proto.WorkerArgs{ID: w.id}, 10*time.Second, nil)
+	})
+
 	t.Run("9 the transcript subscription: the same conversation, no turn, the image marker as an image", func(t *testing.T) {
 		models := f.mock.ModelRequests()
 		v := c.view("9g-before-watch", w.id)

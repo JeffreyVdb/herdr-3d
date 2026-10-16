@@ -261,7 +261,7 @@ service or from before #98; a worker's own `activity` is in the worker.
 that was dismissed (see [Inbox](#inbox)); `{}` when there are none. A bridge from before #106 leaves the key out: a
 client reads that as `{}`.
 
-`codex_server` (#155) is the shared Codex server switch, `{"enabled", "available"}` (see
+`codex_server` (#155) is the shared Codex server switch, `{"enabled", "available", "allow_unverified"}` (see
 [Shared Codex server](#shared-codex-server)); a bridge from before #155 leaves it out.
 
 `repo_refs` (#247) is the "Repositories from other buildings" switch, `{"all_buildings": bool}` (see
@@ -546,7 +546,7 @@ and remember the last `seq` applied.
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
-| `codex_server.update` | `enabled`, `available` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
+| `codex_server.update` | `enabled`, `available`, `allow_unverified` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
 | `repo_refs.update` | `all_buildings` | #247: the "Repositories from other buildings" switch changed (flat in the event, see [Repositories on other floors](#repositories-on-other-floors)) |
 | `repo_discovery.update` | `roots`, `interval_minutes`, `status` | #54: repository discovery's settings or a scan's status changed (a scan started, progressed, ended); flat in the event. `status.revision` moves only when the discovered repositories did (see [Repository discovery](#repository-discovery)) |
 | `handoff.added` | `floor_id`, `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (#58: `floor_id` is its floor, `session` that floor's session; before #58 `session` was the floor, which it still is for a real floor; `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
@@ -686,8 +686,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `inbox.dismiss` | `{"id", "status_since"}` | `{"dismissed": bool}` (see [Inbox](#inbox)) | `inbox.dismissed` (before the ack) when the dismissal is new |
 | `activity.get` | `{}` | "Classify unknown commands"' state (see [Activity](#activity)) | — |
 | `activity.set` | `{"model_enabled"?: bool, "threshold"?: 0.05–0.99, "margin"?: 0–0.9, "daily_cap"?: 1–100000}` | its state | `activity.update` (before the ack) |
-| `codex_server.get` | `{}` | `{"enabled", "available"}`, the shared Codex server switch (see [Shared Codex server](#shared-codex-server)) | — |
-| `codex_server.set` | `{"enabled": bool}` | the switch; switching on without `available` is `unsupported` | `codex_server.update` (before the ack) when it changes |
+| `codex_server.get` | `{}` | `{"enabled", "available", "allow_unverified"}`, the shared Codex server switch (see [Shared Codex server](#shared-codex-server)) | — |
+| `codex_server.set` | `{"enabled"?: bool, "allow_unverified"?: bool}` | the switch; switching on without `available` is `unsupported` | `codex_server.update` (before the ack) when it changes |
 | `repo_refs.get` | `{}` | `{"all_buildings"}`, the "Repositories from other buildings" switch (see [Repositories on other floors](#repositories-on-other-floors)) | — |
 | `repo_refs.set` | `{"all_buildings": bool}` | the switch | `repo_refs.update` (before the ack) when it changes |
 | `repo_discovery.get` | `{}` | `{"roots", "interval_minutes", "status"}` (see [Repository discovery](#repository-discovery)) | — |
@@ -3872,22 +3872,31 @@ Codex app-server **of its own**, started from its pane, which the bridge can joi
 stays the place you work: herdr's start, prompt, read, wait and send-keys work on it as before. Off by default.
 
 ```json
-"codex_server":{"enabled":false,"available":true}
+"codex_server":{"enabled":false,"available":true,"allow_unverified":false}
 {"t":"codex_server.set","req_id":"c1","args":{"enabled":true}}
-{"t":"codex_server.update","seq":2210,"enabled":true,"available":true}
-{"t":"ack","req_id":"c1","data":{"enabled":true,"available":true}}
+{"t":"codex_server.update","seq":2210,"enabled":true,"available":true,"allow_unverified":false}
+{"t":"ack","req_id":"c1","data":{"enabled":true,"available":true,"allow_unverified":false}}
 ```
 
 **The switch** (bridge-wide, SQLite `codex_server_settings`): `codex_server.get` answers it, the snapshot's
-`codex_server` holds it (always present), `codex_server.update` carries it flat. `codex_server.set {enabled}` needs
-`enabled` (`bad_request`); switching on a bridge whose `available` is false (no `--codex-run` directory) is
-`unsupported`. It applies to **new hires only**: every Codex worker keeps the mode it was launched with (SQLite
+`codex_server` holds it (always present), `codex_server.update` carries it flat. `codex_server.set` patches `enabled` and/or `allow_unverified`; at least one boolean is required
+(`bad_request`). Omitted fields retain their saved values; switching on a bridge whose `available` is false (no `--codex-run` directory) is
+`unsupported`. The `enabled` switch applies to **new hires only**: every Codex worker keeps the mode it was launched with (SQLite
 `codex_launch`), so switching never migrates, interrupts or relaunches a running worker, and a worker launched the
 old way keeps today's exact resume. Claude hires are not affected.
 
+**Compatibility preference.** Settings → Codex workers → **Allow unverified Codex versions** sets
+`allow_unverified` (default false, persisted across bridge restarts and Codex upgrades). It permits unverified
+release versions in the CLI preflight, the server handshake on hire/wake, and the bridge's thread connection.
+Changing it refreshes those bridge connections without restarting the terminal, server or model turn. It does not
+change the launch mode of existing workers. A worker that already fell back must be rehired to get its own server.
+Malformed version identities, failed commands, blocked `.envrc`, thread identity checks and server failures still
+fail normally. This preference accepts compatibility risk; it does not mark an untested version as verified.
+Old clients' `enabled`-only updates preserve it. The game hides this preference on older bridges that omit the field.
+
 **A shared hire** (`worker.hire` with `harness: "codex"` while the switch is on), in place of step 3's `agent start`:
 
-1. Checks: `codex --version` is `codex-cli 0.160.x` (the release line #154 verified), the hire's directory (the
+1. Checks: `codex --version` is a verified release (0.160.x–0.163.x), or `allow_unverified` is on; the hire's directory (the
    worktree's checkout for a worktree hire) passes the launch's path rule (letters, digits and `._/+@,=:-`), and its
    `.envrc`, if any, is allowed (`direnv status --json`; a blocked one would leave the server without its variables
    and Codex would say nothing).
@@ -3898,7 +3907,7 @@ old way keeps today's exact resume. Claude hires are not affected.
    `HERDR_PANE_ID` (whose session-id hook then reports to this pane). The launcher marks every process of the server
    with a random token, records its pid, and runs `codex app-server -c 'projects={"<dir>"={trust_level="trusted"}}'
    --listen unix://<--codex-run>/<marker hex>.sock` (the directory is trusted in memory; `config.toml` is not written).
-3. The socket must answer within 20 s with a supported server (`initialize`'s `userAgent`, `…/0.160.x`); its process
+3. The socket must answer within 20 s with a supported server (the same compatibility policy applied to `initialize`'s `userAgent`); its process
    is found by its token and recorded with its start time.
 4. `agent start <name> --kind codex --pane <pane> --timeout 30000 -- --remote unix://<socket> -C <dir> -m <model> -c
    model_reasoning_effort=<effort> --dangerously-bypass-approvals-and-sandbox`.

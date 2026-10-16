@@ -39,6 +39,27 @@ test('off by default; on and off again, each saying what changes', async ({ page
   clean();
 });
 
+test('the compatibility opt-in is saved and remains visible on a phone', async ({ page }) => {
+  const clean = watchErrors(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openGame(page, 'demo-m5', '', 'play=none&sim=1&simusage=0');
+  let section = await openSection(page);
+  const label = 'Allow unverified Codex versions';
+  await expect(section.getByRole('checkbox', { name: label })).not.toBeChecked();
+  await expect(section.getByRole('checkbox', { name: label })).toHaveAccessibleDescription(/I accept.*future upgrades/);
+  await section.getByRole('checkbox', { name: label }).check();
+  await expect(section.locator('.settings-status')).toContainText('including future upgrades');
+  await page.keyboard.press('Escape');
+  section = await openSection(page);
+  await expect(section.getByRole('checkbox', { name: label })).toBeChecked();
+  await section.getByRole('checkbox', { name: label }).scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await shot(page, 'settings-codex-unverified-phone');
+  await section.getByRole('checkbox', { name: label }).uncheck();
+  await expect(section.locator('.settings-status')).toContainText('require a verified Codex version');
+  clean();
+});
+
 test('a bridge that cannot start the servers: disabled, with why', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m5', '', 'play=none&sim=1&simusage=0&simfail=no_codex_run');
@@ -90,7 +111,7 @@ test('the seat bar’s Codex notice fits a phone, and a wide window keeps its ro
 });
 
 // #186: a Codex hire that asked for its own server and got Codex's built-in one (`simfail=codex_unverified`: a
-// codex-cli 0.163.0 the shared server is not verified with) is hired: a warning toast, with its own sign, that names the
+// codex-cli 0.999.0 the shared server is not verified with) is hired: a warning toast, with its own sign, that names the
 // version and what it costs, not the red of a failed hire.
 test('a hire that falls back to Codex’s built-in server is a warning, not an error', async ({ page }) => {
   test.setTimeout(120_000);
@@ -122,7 +143,7 @@ test('a hire that falls back to Codex’s built-in server is a warning, not an e
   await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
   const toast = page.locator('.toast');
   await expect(toast).toHaveText(
-    /^Hired .* at Desk 15 .*Here they come\. No own Codex server: the shared Codex server is not verified with Codex 0\.162\.0 yet \(verified: 0\.160\.x or 0\.161\.x\)\. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript\.$/,
+    /^Hired .* at Desk 15 .*Here they come\. No own Codex server: the shared Codex server is not verified with Codex 0\.999\.0 yet \(verified: 0\.160\.x, 0\.161\.x, 0\.162\.x or 0\.163\.x\)\. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript\.$/,
   );
   await expect(toast).toHaveAttribute('data-kind', 'warn');
   // Not colour alone: the warning's drawn sign.

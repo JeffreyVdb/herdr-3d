@@ -49,6 +49,17 @@ func (f *fx) trustHooks(label, agent, pane string) {
 	f.waitScreen(label+"-after-trust", pane, 15*time.Second, func(s string) bool {
 		return !strings.Contains(s, "Hooks need review") && strings.Contains(s, "Ask Codex")
 	})
+	// Direct fixture launches use native Herdr rather than Control's startup
+	// recovery. Herdr may have discarded their pending name during review.
+	// Restore it explicitly, as the production adapter does, for named CLI tests.
+	if agent != pane {
+		if _, _, err := f.h.AgentGet(f.ctx, agent); err != nil {
+			if _, err := f.h.Run(f.ctx, "agent", "rename", pane, agent); err != nil {
+				f.t.Fatal(err)
+			}
+			f.record(label+"-name-restored.txt", agent+" -> "+pane+"\n")
+		}
+	}
 }
 
 // agentRaw records `herdr agent get` for target as evidence.

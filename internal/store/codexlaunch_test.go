@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -12,21 +13,21 @@ func TestCodexServerSettings(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "world.db")
 	st := open(t, path)
-	if en, ok, err := st.LoadCodexServerSettings(ctx); en || ok || err != nil {
+	if en, ok, err := st.LoadCodexServerSettings(ctx); en.Enabled || en.AllowUnverified || ok || err != nil {
 		t.Fatalf("fresh settings: %v %v %v", en, ok, err)
 	}
-	if err := st.SaveCodexServerSettings(ctx, true); err != nil {
+	if err := st.SaveCodexServerSettings(ctx, store.CodexServerSettings{Enabled: true, AllowUnverified: true}); err != nil {
 		t.Fatal(err)
 	}
 	st.Close()
 	st = open(t, path)
-	if en, ok, err := st.LoadCodexServerSettings(ctx); !en || !ok || err != nil {
+	if en, ok, err := st.LoadCodexServerSettings(ctx); !en.Enabled || !en.AllowUnverified || !ok || err != nil {
 		t.Fatalf("after reopen: %v %v %v", en, ok, err)
 	}
-	if err := st.SaveCodexServerSettings(ctx, false); err != nil {
+	if err := st.SaveCodexServerSettings(ctx, store.CodexServerSettings{}); err != nil {
 		t.Fatal(err)
 	}
-	if en, ok, _ := st.LoadCodexServerSettings(ctx); en || !ok {
+	if en, ok, _ := st.LoadCodexServerSettings(ctx); en.Enabled || en.AllowUnverified || !ok {
 		t.Fatal("switch not turned off")
 	}
 }
@@ -100,5 +101,28 @@ func TestCodexAsyncSends(t *testing.T) {
 	}
 	if all, _ = st.CodexAsyncSends(ctx); len(all) != 1 || len(all["w1"]) != 1 || all["w1"][0] != a {
 		t.Fatalf("after forget %+v", all)
+	}
+}
+
+func TestCodexVersionPolicyMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const before = 26
+	for _, q := range store.Migrations[:before] {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`INSERT INTO codex_server_settings (id, enabled, updated_at) VALUES (1, 1, 't'); PRAGMA user_version = 26`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	st := open(t, path)
+	s, ok, err := st.LoadCodexServerSettings(context.Background())
+	if err != nil || !ok || !s.Enabled || s.AllowUnverified {
+		t.Fatalf("migrated %+v, %v, %v", s, ok, err)
 	}
 }

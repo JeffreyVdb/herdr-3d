@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -249,6 +250,18 @@ func TestWatch(t *testing.T) {
 	}
 }
 
+// probeGate keeps liveness probes out of a scripted server restart.
+type probeGate struct {
+	watch.Herdr
+	mu sync.Mutex
+}
+
+func (h *probeGate) Ping(ctx context.Context, socket string) (*herdr.Pong, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.Herdr.Ping(ctx, socket)
+}
+
 // TestWatchFreshAfterUnseenRestart: a session that stops and starts again
 // between two polls cannot vouch for continuity.
 func TestWatchFreshAfterUnseenRestart(t *testing.T) {
@@ -257,12 +270,19 @@ func TestWatchFreshAfterUnseenRestart(t *testing.T) {
 	srv := herdrtest.Start(t, s.SessionDir)
 	lister := herdrtest.NewLister()
 	lister.Set(s)
-	rec := start(t, lister, nil)
+	h := &probeGate{Herdr: lister}
+	rec := start(t, h, nil)
 	first := rec.floor("s", "running", func(f world.FloorObs) bool { return f.Running })
 
-	srv.Close()
-	srv2 := herdrtest.Start(t, s.SessionDir)
-	srv2.SetSnapshot(herdrtest.SnapshotFixture(t, "snapshot.json"))
+	// No liveness probe may see the stopped socket: that would exercise an
+	// observed stop and wake, where continuity is expected instead.
+	func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		srv.Close()
+		srv2 := herdrtest.Start(t, s.SessionDir)
+		srv2.SetSnapshot(herdrtest.SnapshotFixture(t, "snapshot.json"))
+	}()
 	f := rec.floor("s", "running again", func(f world.FloorObs) bool { return f.Gen > first.Gen && f.Running && len(f.Workers) > 0 })
 	if !f.Fresh {
 		t.Fatalf("restart not marked fresh: %+v", f)

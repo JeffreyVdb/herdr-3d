@@ -36,6 +36,8 @@ type CodexServer struct {
 	// Available: this bridge can launch them (it knows a private run
 	// directory); without it codex_server.set refuses to switch on.
 	Available bool `json:"available"`
+	// AllowUnverified accepts the compatibility risk of untested Codex releases.
+	AllowUnverified bool `json:"allow_unverified"`
 }
 
 // CodexServerUpdate is the codex_server.update event.
@@ -47,7 +49,8 @@ type CodexServerUpdate struct {
 
 // CodexServerSetArgs are the args of codex_server.set.
 type CodexServerSetArgs struct {
-	Enabled *bool `json:"enabled"`
+	Enabled         *bool `json:"enabled,omitempty"`
+	AllowUnverified *bool `json:"allow_unverified,omitempty"`
 }
 
 // Codex launch modes (WorkerCodex.Mode).

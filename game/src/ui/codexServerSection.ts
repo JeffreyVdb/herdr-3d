@@ -35,23 +35,39 @@ export function codexServerSection(host: CodexServerSectionHost): (body: HTMLEle
     const toggle = el('label', 'settings-switch');
     toggle.htmlFor = box.id;
     toggle.append(box, el('span', '', 'Give new Codex workers their own Codex server'));
+    const riskBox = el('input');
+    riskBox.type = 'checkbox';
+    riskBox.id = `${id}-unverified`;
+    const riskToggle = el('label', 'settings-switch');
+    riskToggle.htmlFor = riskBox.id;
+    riskToggle.append(riskBox, el('span', '', 'Allow unverified Codex versions'));
+    const riskHint = el(
+      'p',
+      'settings-field-hint',
+      'Keep using the terminal’s own server after Codex upgrades. I accept that transcript updates or question replies may stop working on an untested version. Saved for future upgrades; applies to new servers and reconnects.',
+    );
+    riskHint.id = `${id}-unverified-hint`;
+    riskBox.setAttribute('aria-describedby', riskHint.id);
     const status = el('p', 'settings-status');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
     // The shared look of a feature's switch: its hint under its words, a disabled switch dimmed.
     const controls = el('div', 'settings-act');
-    controls.append(toggle, hint, status);
+    controls.append(toggle, hint, riskToggle, riskHint, status);
     body.append(lede, controls);
 
     let busy = false;
-    let wanted: boolean | null = null;
+    let wanted: CommandArgs['codex_server.set'] | null = null;
     let note: { text: string; error: boolean } | null = null;
 
     function sync(): void {
       const s = host.book.state;
       section.setHidden(!s);
       if (!s) return;
-      box.checked = wanted ?? s.enabled;
+      box.checked = wanted?.enabled ?? s.enabled;
+      riskBox.checked = wanted?.allow_unverified ?? s.allow_unverified ?? false;
+      riskToggle.hidden = riskHint.hidden = s.allow_unverified === undefined;
+      riskBox.disabled = busy || !s.available;
       box.disabled = busy || (!s.available && !s.enabled);
       hint.textContent = s.available
         ? 'Applies to Codex workers hired from now on. Workers already at their desks keep the way they were started.'
@@ -61,25 +77,32 @@ export function codexServerSection(host: CodexServerSectionHost): (body: HTMLEle
       status.hidden = !note;
     }
 
-    box.addEventListener('change', () => {
-      const on = box.checked;
-      // Disabled while it is sent, the switch loses the focus: it gets it back after, unless it went elsewhere.
-      const focused = document.activeElement === box;
-      wanted = on;
+    function save(control: HTMLInputElement, args: CommandArgs['codex_server.set'], success: string): void {
+      const focused = document.activeElement === control;
+      wanted = args;
       busy = true;
-      note = { text: on ? 'Switching on…' : 'Switching off…', error: false };
+      note = { text: 'Saving…', error: false };
       sync();
-      void host.send('codex_server.set', { enabled: on }).then((r) => {
+      void host.send('codex_server.set', args).then((r) => {
         busy = false;
         wanted = null;
         if (r.ok) host.book.upsert(r.data);
-        note = r.ok
-          ? { text: on ? 'On. The next Codex hire gets its own server.' : 'Off. New Codex workers use the server built into their terminal.', error: false }
-          : { text: codexServerFailureText(r.code, r.message), error: true };
+        note = r.ok ? { text: success, error: false } : { text: codexServerFailureText(r.code, r.message), error: true };
         sync();
         const now = document.activeElement;
-        if (focused && box.isConnected && !box.disabled && (!now || now === document.body)) box.focus({ preventScroll: true });
+        if (focused && control.isConnected && !control.disabled && (!now || now === document.body)) control.focus({ preventScroll: true });
       });
+    }
+
+    box.addEventListener('change', () => {
+      save(box, { enabled: box.checked }, box.checked
+        ? 'On. The next Codex hire gets its own server.'
+        : 'Off. New Codex workers use the server built into their terminal.');
+    });
+    riskBox.addEventListener('change', () => {
+      save(riskBox, { allow_unverified: riskBox.checked }, riskBox.checked
+        ? 'Saved. Unverified Codex versions are allowed, including future upgrades.'
+        : 'Saved. New servers and reconnects require a verified Codex version.');
     });
 
     const off = host.book.onChange(sync);
