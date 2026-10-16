@@ -226,9 +226,11 @@ func (s *Service) replier(ctx context.Context) {
 // reply checks r and has it typed into its notification's worker.
 func (s *Service) reply(ctx context.Context, r Reply) {
 	on, since := s.listening()
-	// Switched off or unpaired meanwhile, or sent before replies were on:
-	// not for a worker, and not answered.
-	if !on || (!since.IsZero() && r.At.Before(since.Truncate(time.Second))) {
+	// Switched off or unpaired meanwhile, or not sent after replies were
+	// switched on: not for a worker, and not answered. At is in whole
+	// seconds: one sent in the second they were switched on is dropped too
+	// (it may have been sent while they were off).
+	if !on || (!since.IsZero() && !r.At.After(since)) {
 		return
 	}
 	row := replyAudit{TextBytes: len(r.Text), TextRunes: utf8.RuneCountInString(r.Text)}
@@ -285,12 +287,20 @@ func (s *Service) reply(ctx context.Context, r Reply) {
 		refuse(ReplyFailed, answers[ReplyFailed])
 		return
 	}
-	err := s.opts.Prompt(ctx, id, r.Text, func(err error) {
-		s.rp.mu.Lock()
-		s.rp.ended = append(s.rp.ended, done{r, row, err})
-		s.rp.mu.Unlock()
-		s.poke()
-	})
+	// Handed over only while it is still the recipient's under the switch
+	// it was read under: switched off, unpaired or paired anew meanwhile,
+	// it is dropped without a word.
+	var err error
+	if !s.opts.Channel.Hold(r, func() {
+		err = s.opts.Prompt(ctx, id, r.Text, func(err error) {
+			s.rp.mu.Lock()
+			s.rp.ended = append(s.rp.ended, done{r, row, err})
+			s.rp.mu.Unlock()
+			s.poke()
+		})
+	}) {
+		return
+	}
 	if err != nil {
 		s.ended(ctx, done{r, row, err})
 	}

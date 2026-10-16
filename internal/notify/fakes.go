@@ -13,6 +13,8 @@ var _ Channel = (*FakeChannel)(nil)
 // reply, while it listens, and the confirmations and answers are recorded.
 // Safe for concurrent use.
 type FakeChannel struct {
+	// hold is Hold's: taken before mu by what changes the epoch.
+	hold sync.Mutex
 	mu   sync.Mutex
 	st   ChannelState
 	sent []Notification
@@ -23,6 +25,7 @@ type FakeChannel struct {
 	sentC   chan struct{}
 	hooks   Hooks
 	listen  bool
+	epoch   uint64
 
 	confirmed []Ref
 	answered  []FakeAnswer
@@ -120,9 +123,12 @@ func (f *FakeChannel) Fingerprint() string {
 
 // SetState replaces the state (a token set elsewhere, a recipient paired).
 func (f *FakeChannel) SetState(st ChannelState) {
+	f.hold.Lock()
 	f.mu.Lock()
 	f.st = st
+	f.epoch++
 	f.mu.Unlock()
+	f.hold.Unlock()
 	f.signal()
 }
 
@@ -134,21 +140,27 @@ func (f *FakeChannel) signal() {
 }
 
 func (f *FakeChannel) SetToken(_ context.Context, token string) error {
+	f.hold.Lock()
+	defer f.hold.Unlock()
 	f.mu.Lock()
 	if f.st.KeyEnv {
 		f.mu.Unlock()
 		return &Error{CodeEnvLocked, "the bot token is set by the bridge environment"}
 	}
 	f.st.KeySet, f.st.KeyHint, f.st.Paired = true, token[max(0, len(token)-4):], nil
+	f.epoch++
 	f.mu.Unlock()
 	f.signal()
 	return nil
 }
 
 func (f *FakeChannel) ClearToken() error {
+	f.hold.Lock()
 	f.mu.Lock()
 	f.st = ChannelState{Provider: f.st.Provider}
+	f.epoch++
 	f.mu.Unlock()
+	f.hold.Unlock()
 	f.signal()
 	return nil
 }
@@ -175,10 +187,13 @@ func (f *FakeChannel) CancelPairing() error {
 
 // CompletePairing pairs Name as if the code had arrived.
 func (f *FakeChannel) CompletePairing(name string) {
+	f.hold.Lock()
 	f.mu.Lock()
 	f.st.Pairing, f.st.Paired = nil, &Recipient{Name: name, At: 2}
+	f.epoch++
 	pair := f.hooks.Pair
 	f.mu.Unlock()
+	f.hold.Unlock()
 	if pair != nil {
 		pair(PairResult{Outcome: PairedOK, Ignored: 1})
 	}
@@ -186,9 +201,12 @@ func (f *FakeChannel) CompletePairing(name string) {
 }
 
 func (f *FakeChannel) Unpair() error {
+	f.hold.Lock()
 	f.mu.Lock()
 	f.st.Paired = nil
+	f.epoch++
 	f.mu.Unlock()
+	f.hold.Unlock()
 	f.signal()
 	return nil
 }
@@ -204,16 +222,34 @@ func (f *FakeChannel) Run(ctx context.Context, h Hooks) {
 }
 
 func (f *FakeChannel) Listen(on bool) {
+	f.hold.Lock()
 	f.mu.Lock()
-	f.listen = on
+	if f.listen != on {
+		f.listen = on
+		f.epoch++
+	}
 	f.mu.Unlock()
+	f.hold.Unlock()
 }
 
 // Listening: replies are read (Run has started, Listen on, paired).
 func (f *FakeChannel) Listening() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.listen && f.hooks.Reply != nil && f.st.KeySet && f.st.Paired != nil
+	return f.listenLocked() && f.hooks.Reply != nil
+}
+
+func (f *FakeChannel) listenLocked() bool {
+	return f.listen && f.st.KeySet && f.st.Paired != nil
+}
+
+// Stamp is r as read now (its Epoch), for a test that hands the service a
+// reply itself.
+func (f *FakeChannel) Stamp(r Reply) Reply {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r.Epoch = f.epoch
+	return r
 }
 
 // Deliver hands the service r as the recipient's message, if replies are
@@ -224,9 +260,22 @@ func (f *FakeChannel) Deliver(r Reply) bool {
 	}
 	f.mu.Lock()
 	h := f.hooks.Reply
+	r.Epoch = f.epoch
 	f.mu.Unlock()
 	h(r)
 	return true
+}
+
+func (f *FakeChannel) Hold(r Reply, fn func()) bool {
+	f.hold.Lock()
+	defer f.hold.Unlock()
+	f.mu.Lock()
+	ok := f.listenLocked() && r.Epoch == f.epoch
+	f.mu.Unlock()
+	if ok {
+		fn()
+	}
+	return ok
 }
 
 func (f *FakeChannel) Confirm(_ context.Context, msg Ref) error {

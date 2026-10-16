@@ -221,6 +221,8 @@ type rig struct {
 	// #13: the replies handed over; Listen at the start.
 	replies       []notify.Reply
 	listenAtStart bool
+	// noRun: the test runs the channel itself (newRigBefore does not).
+	noRun bool
 }
 
 func (r *rig) hookReply(rp notify.Reply) {
@@ -261,6 +263,9 @@ func newRigBefore(t *testing.T, opts Options, before func(*rig)) *rig {
 	r.ch = ch
 	if before != nil {
 		before(r)
+	}
+	if r.noRun {
+		return r
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

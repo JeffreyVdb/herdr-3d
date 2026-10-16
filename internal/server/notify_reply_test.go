@@ -50,6 +50,9 @@ func (rb *replyBridge) repliesOn(t *testing.T) {
 	if !rb.ch.Listening() {
 		t.Fatal("the channel does not listen")
 	}
+	// A reply of the second they were switched on is dropped (it may have
+	// been sent while they were off).
+	rb.clock.Advance(time.Second)
 }
 
 // finished has workspace ws finish and waits for its notification (after

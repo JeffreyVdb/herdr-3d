@@ -102,6 +102,11 @@ type Channel struct {
 	listen    bool
 	hooks     notify.Hooks
 	interrupt context.CancelFunc
+	// epoch counts the changes of the switch, the token and the recipient
+	// (a Reply is stamped with it); hold is Hold's, taken before mu by those
+	// changes, so they wait for a hand-off under way.
+	epoch uint64
+	hold  sync.Mutex
 }
 
 var _ notify.Channel = (*Channel)(nil)
@@ -256,16 +261,34 @@ func (c *Channel) Answer(ctx context.Context, msg notify.Ref, text string) error
 
 // Listen switches reading replies on or off (#13).
 func (c *Channel) Listen(on bool) {
+	c.hold.Lock()
 	c.mu.Lock()
 	changed := c.listen != on
 	c.listen = on
 	if changed {
+		c.epoch++
 		c.interruptLocked()
 	}
 	c.mu.Unlock()
+	c.hold.Unlock()
 	if changed {
 		c.poke()
 	}
+}
+
+// Hold runs fn while r is still the paired person's under the switch it
+// was read under (#13): the switch, the token and the recipient change
+// only after fn.
+func (c *Channel) Hold(r notify.Reply, fn func()) bool {
+	c.hold.Lock()
+	defer c.hold.Unlock()
+	c.mu.Lock()
+	ok := c.listen && c.pairedLocked() && r.Epoch == c.epoch
+	c.mu.Unlock()
+	if ok {
+		fn()
+	}
+	return ok
 }
 
 // poke wakes an idle loop.
@@ -304,6 +327,8 @@ func (c *Channel) SetToken(ctx context.Context, token string) error {
 	if !me.IsBot {
 		return &notify.Error{Code: notify.CodeBadRequest, Msg: "that token is not a bot's"}
 	}
+	c.hold.Lock()
+	defer c.hold.Unlock()
 	c.mu.Lock()
 	next := c.stored
 	if next.BotID != botID(token) {
@@ -315,6 +340,7 @@ func (c *Channel) SetToken(ctx context.Context, token string) error {
 		return fmt.Errorf("saving the Telegram settings failed: %w", err)
 	}
 	c.stored = next
+	c.epoch++
 	c.stopPairLocked()
 	c.mu.Unlock()
 	c.poke()
@@ -327,12 +353,15 @@ func (c *Channel) ClearToken() error {
 	if c.opts.KeyFile != "" {
 		return envLocked()
 	}
+	c.hold.Lock()
+	defer c.hold.Unlock()
 	c.mu.Lock()
 	if err := c.file.save(Stored{}); err != nil {
 		c.mu.Unlock()
 		return fmt.Errorf("saving the Telegram settings failed: %w", err)
 	}
 	c.stored = Stored{}
+	c.epoch++
 	c.stopPairLocked()
 	c.interruptLocked() // #13: and a reply poll
 	c.ended = nil
@@ -343,6 +372,8 @@ func (c *Channel) ClearToken() error {
 
 // Unpair forgets the paired person (the token stays).
 func (c *Channel) Unpair() error {
+	c.hold.Lock()
+	defer c.hold.Unlock()
 	c.mu.Lock()
 	next := c.stored
 	next.UserID, next.UserName, next.PairedAt = 0, "", 0
@@ -351,6 +382,7 @@ func (c *Channel) Unpair() error {
 		return fmt.Errorf("saving the Telegram settings failed: %w", err)
 	}
 	c.stored = next
+	c.epoch++
 	c.interruptLocked() // #13: their replies are not read any more
 	c.mu.Unlock()
 	c.signal()
@@ -667,7 +699,7 @@ func (c *Channel) replyOf(m *message) (notify.Reply, bool) {
 		return notify.Reply{}, false
 	}
 	r := notify.Reply{Ref: notify.Ref{Chat: m.Chat.ID, Message: m.MessageID}, Text: m.Text, At: time.Unix(m.Date, 0),
-		Relayed: m.ForwardOrigin != nil || m.ViaBot != nil}
+		Relayed: m.ForwardOrigin != nil || m.ViaBot != nil, Epoch: c.epoch}
 	if to := m.ReplyTo; to != nil && to.From != nil && to.From.IsBot && strconv.FormatInt(to.From.ID, 10) == c.stored.BotID {
 		r.To = notify.Ref{Chat: m.Chat.ID, Message: to.MessageID}
 	}
@@ -699,13 +731,16 @@ func (c *Channel) expired(p *pairState) bool {
 // paired stores who sent the code (from.id: the person, never the chat)
 // and greets them, unless the code expired or was superseded meanwhile.
 func (c *Channel) paired(ctx context.Context, p *pairState, token string, from user) string {
+	c.hold.Lock()
 	c.mu.Lock()
 	if c.pair != p || c.tokenLocked() != token {
 		c.mu.Unlock()
+		c.hold.Unlock()
 		return notify.PairCancelled
 	}
 	if c.expired(p) {
 		c.mu.Unlock()
+		c.hold.Unlock()
 		return notify.PairTimedOut
 	}
 	next := c.stored
@@ -713,13 +748,17 @@ func (c *Channel) paired(ctx context.Context, p *pairState, token string, from u
 	next.UserID, next.UserName, next.PairedAt = from.ID, clip(strings.TrimSpace(from.FirstName), nameMax), c.opts.Clock.Now().UnixMilli()
 	if err := c.file.save(next); err != nil {
 		c.mu.Unlock()
+		c.hold.Unlock()
 		c.opts.Log.Error("telegram: the pairing could not be saved", "err", err)
 		c.setPairState(p, notify.PairError, "The pairing could not be saved on the bridge.")
 		return notify.PairCancelled
 	}
 	c.stored = next
+	// #13: no reply of whoever was paired before is handed over.
+	c.epoch++
 	c.pair, c.ended = nil, nil // paired: the code is spent
 	c.mu.Unlock()
+	c.hold.Unlock()
 	c.signal()
 	sctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()

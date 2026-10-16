@@ -14,22 +14,21 @@ const botUserID = 123456789 // the token's bot
 
 // pairedRig is a rig with the token and Ada (42) paired before it started;
 // listen: replies on from the start.
-func pairedRig(t *testing.T, listen bool) *rig {
+func pairedRig(t *testing.T, listen bool) *rig { return pairedRigRun(t, listen, true) }
+
+// pairedRigRun is pairedRig whose channel's Run the test starts itself
+// unless run (a notify.Service's Run: the one reader of the updates).
+func pairedRigRun(t *testing.T, listen, run bool) *rig {
 	t.Helper()
 	file := t.TempDir() + "/telegram.json"
 	if err := (fileStore{file}).save(Stored{Token: token, BotID: "123456789", Bot: "herdr3d_bot", UserID: 42, UserName: "Ada", PairedAt: 1}); err != nil {
 		t.Fatal(err)
 	}
-	return newListeningRig(t, Options{File: file}, listen)
-}
-
-// newListeningRig is newRig whose channel listens (or not) before Run.
-func newListeningRig(t *testing.T, opts Options, listen bool) *rig {
-	t.Helper()
-	return newRigBefore(t, opts, func(r *rig) {
+	return newRigBefore(t, Options{File: file}, func(r *rig) {
 		r.listenAtStart = listen
 		r.tg.now = r.clock.Now
 		r.ch.Listen(listen)
+		r.noRun = !run
 	})
 }
 
@@ -75,7 +74,8 @@ func TestRepliesFromThePairedPersonOnly(t *testing.T) {
 		t.Fatalf("replies %+v", got)
 	}
 	at := time.Unix(r.clock.Now().Unix(), 0)
-	if want := (notify.Reply{Ref: notify.Ref{Chat: 42, Message: id}, To: ref, Text: "now add tests", At: at}); got[0] != want {
+	// Epoch 1: read after the one switch on.
+	if want := (notify.Reply{Ref: notify.Ref{Chat: 42, Message: id}, To: ref, Text: "now add tests", At: at, Epoch: 1}); got[0] != want {
 		t.Fatalf("reply %+v, want %+v", got[0], want)
 	}
 	if !got[1].Relayed || !got[2].Relayed || got[0].Relayed {
@@ -235,13 +235,70 @@ func TestOneReaderOfUpdates(t *testing.T) {
 	if most != 1 {
 		t.Fatalf("%d getUpdates at once", most)
 	}
+	// Ada's reply read before Bob paired is not handed over any more; Bob's is.
+	if r.ch.Hold(got[1], func() {}) || !r.ch.Hold(got[2], func() {}) {
+		t.Fatal("held across the new pairing")
+	}
+}
+
+// Hold hands a reply over only under the switch and the recipient it was
+// read under; switching off, unpairing or clearing the token wait for a
+// hand-off under way, and refuse those read before.
+func TestHoldUntilRevoked(t *testing.T) {
+	read := func(r *rig) notify.Reply {
+		r.tg.pushMsg(&message{From: ada(), Chat: chat{ID: 42, Type: "private"}, Text: "go", ReplyTo: replyTo(1)})
+		got := waitReplies(t, r, len(r.gotReplies())+1)
+		return got[len(got)-1]
+	}
+	r := pairedRig(t, true)
+	rp := read(r)
+	ran := false
+	if !r.ch.Hold(rp, func() { ran = true }) || !ran {
+		t.Fatal("a fresh reply not handed over")
+	}
+	// Off and on again: what was read before stays refused.
+	r.ch.Listen(false)
+	r.ch.Listen(true)
+	if r.ch.Hold(rp, func() { t.Error("handed over after off and on") }) {
+		t.Fatal("held after off and on")
+	}
+	for _, c := range []struct {
+		name   string
+		revoke func(*Channel) error
+	}{
+		{"off", func(ch *Channel) error { ch.Listen(false); return nil }},
+		{"unpair", (*Channel).Unpair},
+		{"clear the token", (*Channel).ClearToken},
+	} {
+		r := pairedRig(t, true)
+		rp := read(r)
+		entered, release, revoked := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+		go r.ch.Hold(rp, func() {
+			close(entered)
+			<-release
+		})
+		<-entered
+		go func() { revoked <- c.revoke(r.ch) }()
+		select {
+		case <-revoked:
+			t.Fatalf("%s: did not wait for the hand-off", c.name)
+		case <-time.After(50 * time.Millisecond):
+		}
+		close(release)
+		if err := <-revoked; err != nil {
+			t.Fatal(err)
+		}
+		if r.ch.Hold(rp, func() { t.Errorf("%s: handed over after", c.name) }) {
+			t.Fatalf("%s: held after", c.name)
+		}
+	}
 }
 
 // The whole path against the fake Bot API: a needs-you message, Ada's
 // reply to it typed into its worker and 👍'd; refused while it asks, with
 // the ticket's sentence as a reply to hers.
 func TestReplyRoundTripOverHTTP(t *testing.T) {
-	r := pairedRig(t, true)
+	r := pairedRigRun(t, true, false) // the service runs the channel
 	st := notify.NewFakeStore()
 	set := notify.DefaultSettings()
 	set.Enabled, set.Replies = true, true

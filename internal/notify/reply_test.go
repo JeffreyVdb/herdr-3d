@@ -304,10 +304,12 @@ func TestRepliesSwitch(t *testing.T) {
 	if err := r.svc.Apply(context.Background(), Update{Replies: &on}); err != nil {
 		t.Fatal(err)
 	}
-	if !r.ch.Listening() || !r.svc.View().Replies || !r.store.set.Replies {
+	waitListening(t, r.ch) // the channel's Run may not have started yet
+	if !r.svc.View().Replies || !r.store.set.Replies {
 		t.Fatal("not on")
 	}
 	r.ch.Deliver(Reply{Ref: Ref{FakeChatID, 2}, To: a, Text: "from before", At: before})
+	r.clock.Advance(time.Second) // a reply of the second they were switched on is dropped too
 	rp := r.reply(a, "after")
 	if !r.ch.WaitReplied(1, 5*time.Second) {
 		t.Fatal("the reply after was not confirmed")
@@ -345,5 +347,153 @@ func TestRepliesSwitch(t *testing.T) {
 	}
 	if err := r.svc.Apply(context.Background(), Update{Replies: &on}); CodeOf(err) != CodeNotPaired {
 		t.Fatalf("on while unpaired: %v", err)
+	}
+}
+
+// A reply sent while replies were off, in the second they were switched
+// on (Telegram dates are whole seconds), is dropped: only one dated after
+// that second goes.
+func TestReplySameSecondBacklog(t *testing.T) {
+	ctx := context.Background()
+	clock := NewFakeClock(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC))
+	st := NewFakeStore()
+	ch := NewFakeChannel(true)
+	to := Ref{FakeChatID, 1}
+	if err := st.SaveNotifyMessage(ctx, to, "w-a", clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	p := &prompter{}
+	svc, err := New(ctx, Options{Store: st, Channel: ch, Clock: clock, Prompt: p.prompt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sec := clock.Now()
+	clock.Advance(500 * time.Millisecond)
+	on := true
+	if err := svc.Apply(ctx, Update{Replies: &on}); err != nil {
+		t.Fatal(err)
+	}
+	svc.reply(ctx, ch.Stamp(Reply{Ref: Ref{FakeChatID, 2}, To: to, Text: "sent while off", At: sec}))
+	if typed := p.all(); len(typed) != 0 {
+		t.Fatalf("typed %q", typed)
+	}
+	svc.reply(ctx, ch.Stamp(Reply{Ref: Ref{FakeChatID, 3}, To: to, Text: "after", At: sec.Add(time.Second)}))
+	if typed := p.all(); len(typed) != 1 || typed[0] != "w-a: after" {
+		t.Fatalf("typed %q", typed)
+	}
+}
+
+// blockingLookup holds NotifyMessage until released.
+type blockingLookup struct {
+	*FakeStore
+	entered, release chan struct{}
+}
+
+func (s *blockingLookup) NotifyMessage(ctx context.Context, msg Ref) (string, time.Time, bool, error) {
+	close(s.entered)
+	<-s.release
+	return s.FakeStore.NotifyMessage(ctx, msg)
+}
+
+// Switched off, unpaired, paired anew or the token cleared after a reply
+// was read and before its hand-off: it is not typed, nor answered.
+func TestReplyRevokedBeforeItsHandOff(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		revoke func(*Service, *FakeChannel) error
+		typed  bool
+	}{
+		{"kept", func(*Service, *FakeChannel) error { return nil }, true},
+		{"off", func(s *Service, _ *FakeChannel) error {
+			off := false
+			return s.Apply(context.Background(), Update{Replies: &off})
+		}, false},
+		{"unpaired", func(s *Service, _ *FakeChannel) error { return s.Unpair() }, false},
+		{"paired anew", func(_ *Service, ch *FakeChannel) error { ch.CompletePairing("Bob"); return nil }, false},
+		{"token cleared", func(s *Service, _ *FakeChannel) error { return s.ClearToken() }, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			base := NewFakeStore()
+			set := DefaultSettings()
+			set.Replies = true
+			if err := base.SaveNotifySettings(ctx, set); err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			to := Ref{FakeChatID, 1}
+			if err := base.SaveNotifyMessage(ctx, to, "w-a", now); err != nil {
+				t.Fatal(err)
+			}
+			st := &blockingLookup{base, make(chan struct{}), make(chan struct{})}
+			ch := NewFakeChannel(true)
+			p := &prompter{}
+			svc, err := New(ctx, Options{Store: st, Channel: ch, Prompt: p.prompt})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rp := ch.Stamp(Reply{Ref: Ref{FakeChatID, 2}, To: to, Text: "go", At: now})
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				svc.reply(ctx, rp)
+			}()
+			<-st.entered
+			if err := c.revoke(svc, ch); err != nil {
+				t.Fatal(err)
+			}
+			close(st.release)
+			<-done
+			if typed := len(p.all()) == 1; typed != c.typed {
+				t.Fatalf("typed %q", p.all())
+			}
+			if len(ch.Answered()) != 0 {
+				t.Fatalf("answered %+v", ch.Answered())
+			}
+		})
+	}
+}
+
+// listenGate holds Listen(true) until released.
+type listenGate struct {
+	*FakeChannel
+	entered, release chan struct{}
+}
+
+func (c *listenGate) Listen(on bool) {
+	if on {
+		close(c.entered)
+		<-c.release
+	}
+	c.FakeChannel.Listen(on)
+}
+
+// Overlapping notify.set commands: the channel listens as the settings
+// committed last say.
+func TestApplyListensAsCommitted(t *testing.T) {
+	ctx := context.Background()
+	ch := &listenGate{NewFakeChannel(true), make(chan struct{}), make(chan struct{})}
+	svc, err := New(ctx, Options{Channel: ch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	on, off := true, false
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() { first <- svc.Apply(ctx, Update{Replies: &on}) }()
+	<-ch.entered
+	go func() { second <- svc.Apply(ctx, Update{Replies: &off}) }()
+	time.Sleep(20 * time.Millisecond) // the second one waits for the first
+	close(ch.release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	ch.mu.Lock()
+	listen := ch.listen
+	ch.mu.Unlock()
+	if v := svc.View(); listen != v.Replies || v.Replies {
+		t.Fatalf("listening %v, replies %v", listen, v.Replies)
 	}
 }

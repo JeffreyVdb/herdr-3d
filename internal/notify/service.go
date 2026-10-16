@@ -175,10 +175,13 @@ type Service struct {
 	kick   chan struct{}
 	queue  chan job
 
-	mu     sync.Mutex
-	set    Settings
-	passed *passedTest
-	last   *LastError
+	// applying serialises Apply: the channel listens as the settings it
+	// committed last say (#13).
+	applying sync.Mutex
+	mu       sync.Mutex
+	set      Settings
+	passed   *passedTest
+	last     *LastError
 	// since is when replies were switched on (zero: on at the start).
 	since time.Time
 
@@ -320,6 +323,8 @@ func (s *Service) quiet() bool {
 // paired recipient and a passing notify.test of both (not under the
 // environment's switch, which cannot be changed here).
 func (s *Service) Apply(ctx context.Context, u Update) error {
+	s.applying.Lock()
+	defer s.applying.Unlock()
 	ch := s.opts.Channel.State()
 	ready := s.opts.Channel.Ready()
 	fp := s.opts.Channel.Fingerprint()

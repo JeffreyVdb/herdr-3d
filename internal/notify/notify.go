@@ -98,6 +98,9 @@ type Reply struct {
 	// Relayed: not typed here by the recipient (forwarded, or sent through
 	// another bot).
 	Relayed bool
+	// Epoch is the Channel's: the switch and the recipient it was read
+	// under (Hold compares it).
+	Epoch uint64
 }
 
 // Hooks are what a Channel's Run tells the service.
@@ -141,6 +144,12 @@ type Channel interface {
 	// what was sent before is never handed over. Off, none is handed over
 	// from then on, even of a read already under way.
 	Listen(on bool)
+	// Hold runs fn (the reply's hand-off to its worker) while r is still
+	// the recipient's under the switch it was read under: false, and fn not
+	// run, once Listen switched off, the recipient was unpaired or another
+	// paired, or the token changed since. Those wait for fn: once they
+	// return, no reply read before is handed over.
+	Hold(r Reply, fn func()) bool
 	// Confirm marks a reply as typed into its worker (Telegram: a 👍
 	// reaction); Answer answers a message with a short text of the
 	// service's (a refusal, a hint), as a reply to it.
