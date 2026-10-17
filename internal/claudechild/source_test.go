@@ -421,7 +421,9 @@ func TestInterrupted(t *testing.T) {
 	r.meta(agent, fx.meta[agent], false, when("2026-10-17T20:50:45.700Z"))
 	r.poll()
 	r.main(fx.parent[1:]...)
-	r.child(agent, `{"type":"user","isSidechain":true,"agentId":"a2b5d93218f6be8b1","sessionId":"ef90ce79-0e17-4ce3-9cb6-8083169e2635","timestamp":"2026-10-17T20:50:53.917Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}`)
+	r.child(agent, `{"type":"user","isSidechain":true,"agentId":"a2b5d93218f6be8b1","sessionId":"ef90ce79-0e17-4ce3-9cb6-8083169e2635","timestamp":"2026-10-17T20:50:53.917Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}`,
+		// A meta record of no origin (a reminder) sets it to no work either.
+		`{"type":"user","isMeta":true,"isSidechain":true,"agentId":"a2b5d93218f6be8b1","sessionId":"ef90ce79-0e17-4ce3-9cb6-8083169e2635","timestamp":"2026-10-17T20:50:54.000Z","message":{"role":"user","content":"<system-reminder>x</system-reminder>"}}`)
 	r.poll()
 	c := r.one(agent)
 	if c.State != proto.ChildInterrupted || c.EndedAt != ts("2026-10-17T20:50:53.914Z") || c.Transcript != proto.TranscriptAvailable {
@@ -490,7 +492,7 @@ func TestResumeAndStopHookContinuation(t *testing.T) {
 		t.Fatalf("done = %+v", c)
 	}
 	id := c.ID
-	r.child(agent, `{"type":"user","isSidechain":true,"agentId":"a8db619749ca642d6","sessionId":"f41bf49f-1bb1-4510-8e0a-338094e2a6ba","timestamp":"2026-10-17T20:44:10.000Z","message":{"role":"user","content":"The coordinator sent a message while you were working:\nCount again"}}`,
+	r.child(agent, `{"parentUuid":"d21d81f2-fc8d-475b-aafd-bf7b116f262a","isSidechain":true,"promptId":"092985fe-ae35-468a-bfc1-12232b050eb0","agentId":"a8db619749ca642d6","type":"user","message":{"role":"user","content":"The coordinator sent a message while you were working:\nCount again.\n\nAddress this before completing your current task."},"isMeta":true,"uuid":"d06950e7-5332-4bd7-8105-1e827ffa6b79","timestamp":"2026-10-17T20:44:10.000Z","origin":{"kind":"coordinator"},"userType":"external","entrypoint":"cli","sessionId":"f41bf49f-1bb1-4510-8e0a-338094e2a6ba","version":"2.1.302","gitBranch":"HEAD"}`,
 		`{"type":"assistant","isSidechain":true,"agentId":"a8db619749ca642d6","sessionId":"f41bf49f-1bb1-4510-8e0a-338094e2a6ba","timestamp":"2026-10-17T20:44:11.000Z","message":{"role":"assistant","content":[{"type":"text","text":"2"}]}}`)
 	r.hook(`{"session_id":"f41bf49f-1bb1-4510-8e0a-338094e2a6ba","agent_id":"a8db619749ca642d6","agent_type":"general-purpose","hook_event_name":"SubagentStart"}`)
 	r.poll()

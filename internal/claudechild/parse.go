@@ -23,6 +23,12 @@ type line struct {
 	SessionID string `json:"sessionId"`
 	AgentID   string `json:"agentId"`
 	IsMeta    bool   `json:"isMeta"`
+	// Origin is where a meta user record came from: "coordinator" (a
+	// SendMessage to the child), "task-notification" (its own background
+	// task ended), …
+	Origin *struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
 	Operation string `json:"operation"`
 	// Content is a queue-operation's text.
 	Content json.RawMessage `json:"content"`
@@ -128,11 +134,13 @@ func result(raw json.RawMessage) agentResult {
 // a prompt to the child.
 const interrupted = "[Request interrupted"
 
-// prompt reports whether a user record is a prompt to the agent (its task,
-// a resume's message, a Stop-hook's feedback): text, no tool result, not an
-// interruption marker and not a meta record.
+// prompt reports whether a user record sets the agent to work: its task, a
+// Stop hook's feedback, or (a meta record with an origin) a message sent to
+// it (SendMessage: "coordinator") or its own background task's end that
+// wakes it ("task-notification"). Text, no tool result, not an
+// interruption marker.
 func (l *line) prompt() bool {
-	if l.Type != "user" || l.IsMeta || l.Message == nil {
+	if l.Type != "user" || l.Message == nil || (l.IsMeta && (l.Origin == nil || l.Origin.Kind == "")) {
 		return false
 	}
 	text := false
