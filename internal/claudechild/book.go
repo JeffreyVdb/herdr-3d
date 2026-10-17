@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/json"
+	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/childagents"
@@ -33,7 +35,7 @@ type facts struct {
 	dispatch map[string]*dispatch // by tool_use id
 	results  map[string]ended     // by tool_use id: the call's result, in its own file
 	pairs    map[string]string    // tool_use id → agentId, from its result
-	notes    []note
+	notes    map[note]bool        // task notifications (each is in two records)
 	metas    map[string]metaFact // by agentId
 	files    map[string]*file    // by agentId
 	gone     map[string]bool     // agentIds whose file went
@@ -41,7 +43,7 @@ type facts struct {
 
 func newFacts() *facts {
 	return &facts{dispatch: map[string]*dispatch{}, results: map[string]ended{}, pairs: map[string]string{},
-		metas: map[string]metaFact{}, files: map[string]*file{}, gone: map[string]bool{}}
+		notes: map[note]bool{}, metas: map[string]metaFact{}, files: map[string]*file{}, gone: map[string]bool{}}
 }
 
 // dispatch is an Agent call: a child started (or about to).
@@ -104,10 +106,15 @@ func newHookFacts() *hookFacts {
 	return &hookFacts{dispatch: map[string]*dispatch{}, pairs: map[string]string{}, types: map[string]string{}}
 }
 
-// mainLine records what a main transcript line shows.
+// toolUseIDRe finds the calls a line's tool results answer, so most lines
+// are never decoded here (the usage reads every one already).
+var toolUseIDRe = regexp.MustCompile(`"tool_use_id"\s*:\s*"([^"\\]{1,128})"`)
+
+// mainLine records what a main transcript line shows: only a line with an
+// Agent call, a result of a known call or a task notification is decoded.
 func (f *facts) mainLine(b []byte) {
-	if !bytes.Contains(b, []byte(`"tool_use"`)) && !bytes.Contains(b, []byte(`"tool_result"`)) &&
-		!bytes.Contains(b, []byte("task-notification")) {
+	call := bytes.Contains(b, []byte(`"tool_use"`)) && (bytes.Contains(b, []byte(`"Agent"`)) || bytes.Contains(b, []byte(`"Task"`)))
+	if !call && !bytes.Contains(b, []byte("task-notification")) && !f.answers(b) {
 		return
 	}
 	var l line
@@ -115,6 +122,19 @@ func (f *facts) mainLine(b []byte) {
 		return
 	}
 	f.record("", &l)
+}
+
+// answers reports whether a line holds the result of a known call.
+func (f *facts) answers(b []byte) bool {
+	if !bytes.Contains(b, []byte(`"tool_result"`)) {
+		return false
+	}
+	for _, m := range toolUseIDRe.FindAllSubmatch(b, -1) {
+		if f.dispatch[string(m[1])] != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // childLine records what a line of child agent's transcript shows.
@@ -217,22 +237,25 @@ func (f *facts) record(home string, l *line) {
 					f.pairs[b.ToolUseID] = res.AgentID
 				}
 			case "text":
-				f.notes = append(f.notes, notes(b.Text, ts)...)
+				f.note(b.Text, ts)
 			}
 		}
 	case "queue-operation":
 		var s string
 		if l.Operation == "enqueue" && json.Unmarshal(l.Content, &s) == nil {
-			f.notes = append(f.notes, notes(s, ts)...)
+			f.note(s, ts)
 		}
 	}
 }
 
-// notes reads a text's task notifications as ends. completed is completed;
-// killed (stopped) and failed are interrupted: stopped before the task was
-// done (phase 1 has no failed state). Another status says nothing.
-func notes(text string, ts int64) []note {
-	var out []note
+// note records a text's task notifications as ends. completed is
+// completed; killed (stopped) and failed are interrupted: stopped before the
+// task was done (phase 1 has no failed state). Another status says nothing.
+// A background shell's notification names no child and stays unmatched.
+func (f *facts) note(text string, ts int64) {
+	if !strings.Contains(text, "<task-notification>") {
+		return
+	}
 	for _, n := range notifications(text) {
 		var state string
 		switch n.status {
@@ -243,9 +266,8 @@ func notes(text string, ts int64) []note {
 		default:
 			continue
 		}
-		out = append(out, note{agent: n.taskID, tool: n.toolUseID, ended: ended{state: state, ts: ts}})
+		f.notes[note{agent: n.taskID, tool: n.toolUseID, ended: ended{state: state, ts: ts}}] = true
 	}
-	return out
 }
 
 // metaFile records a child's meta file.
@@ -351,7 +373,7 @@ func pair(f *facts, h *hookFacts) []kid {
 	for _, t := range sortedKeys(f.pairs) {
 		link(t, f.pairs[t])
 	}
-	for _, n := range f.notes {
+	for _, n := range sortedNotes(f) {
 		link(n.tool, n.agent)
 	}
 	for _, t := range sortedKeys(h.pairs) {
@@ -397,6 +419,18 @@ func pair(f *facts, h *hookFacts) []kid {
 	return kids
 }
 
+// sortedNotes are the notifications in their order (time, then ids).
+func sortedNotes(f *facts) []note {
+	ns := make([]note, 0, len(f.notes))
+	for n := range f.notes {
+		ns = append(ns, n)
+	}
+	slices.SortFunc(ns, func(a, b note) int {
+		return cmp.Or(cmp.Compare(a.ts, b.ts), cmp.Compare(a.agent, b.agent), cmp.Compare(a.tool, b.tool), cmp.Compare(a.state, b.state))
+	})
+	return ns
+}
+
 func sortedKeys[V any](m map[string]V) []string {
 	ks := make([]string, 0, len(m))
 	for k := range m {
@@ -426,7 +460,7 @@ func endedOf(f *facts, k kid) end {
 	if k.tool != "" {
 		take(f.results[k.tool])
 	}
-	for _, n := range f.notes {
+	for n := range f.notes {
 		if (k.agent != "" && n.agent == k.agent) || (k.tool != "" && n.tool == k.tool) {
 			take(n.ended)
 		}

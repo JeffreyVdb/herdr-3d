@@ -204,8 +204,8 @@ func (r *rig) apply() {
 // rows is the worker's children now.
 func (r *rig) rows() []proto.Child { return r.reg.Children("w") }
 
-// one is the only child, which must have the native or dispatch id.
-func (r *rig) one(native, dispatch string) proto.Child {
+// one is the only child, which must have the native id ("": none yet).
+func (r *rig) one(native string) proto.Child {
 	r.t.Helper()
 	cs := r.rows()
 	if len(cs) != 1 {
@@ -215,7 +215,6 @@ func (r *rig) one(native, dispatch string) proto.Child {
 	if c.NativeID != native {
 		r.t.Fatalf("native id %q, want %q (%+v)", c.NativeID, native, c)
 	}
-	_ = dispatch
 	return c
 }
 
@@ -248,7 +247,7 @@ func TestForegroundVisibleBeforeResult(t *testing.T) {
 	r := newRig(t, "a")
 	r.main(fx.parent[0]) // the Agent tool_use
 	r.poll()
-	c := r.one("", "")
+	c := r.one("")
 	if c.State != proto.ChildRunning || c.Transcript != proto.TranscriptPending || c.Parent != proto.ParentRoot ||
 		c.Type != "general-purpose" || c.Description != "sleeper" || c.StartedAt != ts("2026-10-17T20:43:35.065Z") {
 		t.Fatalf("provisional row = %+v", c)
@@ -256,12 +255,12 @@ func TestForegroundVisibleBeforeResult(t *testing.T) {
 	id := c.ID
 	r.child(agent, fx.child[agent][:6]...)
 	r.poll() // its file, no meta yet: held for its pairing, the one row stays
-	if c := r.one("", ""); c.ID != id {
+	if c := r.one(""); c.ID != id {
 		t.Fatalf("row %+v", c)
 	}
 	r.meta(agent, fx.meta[agent], false, when("2026-10-17T20:43:35.150Z"))
 	r.poll()
-	c = r.one(agent, "")
+	c = r.one(agent)
 	if c.ID != id || c.State != proto.ChildRunning || c.Transcript != proto.TranscriptAvailable || c.EndedAt != 0 {
 		t.Fatalf("paired row = %+v", c)
 	}
@@ -269,7 +268,7 @@ func TestForegroundVisibleBeforeResult(t *testing.T) {
 	r.meta(agent, fx.meta[agent], true, when("2026-10-17T20:43:56.740Z"))
 	r.main(fx.parent[1:]...) // the result
 	r.poll()
-	c = r.one(agent, "")
+	c = r.one(agent)
 	if c.ID != id || c.State != proto.ChildCompleted || c.EndedAt != ts("2026-10-17T20:43:56.796Z") || c.Source != proto.ChildFromTranscript {
 		t.Fatalf("completed row = %+v", c)
 	}
@@ -285,7 +284,7 @@ func TestBackgroundAndParentIdle(t *testing.T) {
 	r := newRig(t, "b")
 	r.main(fx.parent[:2]...) // tool_use, async_launched
 	r.poll()
-	c := r.one(agent, "")
+	c := r.one(agent)
 	if c.State != proto.ChildRunning || c.Transcript != proto.TranscriptPending {
 		t.Fatalf("launched = %+v", c)
 	}
@@ -297,13 +296,13 @@ func TestBackgroundAndParentIdle(t *testing.T) {
 	for range 5 {
 		r.poll() // quiet logs
 	}
-	if c = r.one(agent, ""); c.State != proto.ChildRunning || c.Transcript != proto.TranscriptAvailable {
+	if c = r.one(agent); c.State != proto.ChildRunning || c.Transcript != proto.TranscriptAvailable {
 		t.Fatalf("while the root idles = %+v", c)
 	}
 	r.child(agent, fx.child[agent][10:]...)
 	r.main(fx.parent[2:]...) // the notification (queue-operation, then the user record)
 	r.poll()
-	if c = r.one(agent, ""); c.State != proto.ChildCompleted || c.EndedAt != ts("2026-10-17T20:48:00.443Z") {
+	if c = r.one(agent); c.State != proto.ChildCompleted || c.EndedAt != ts("2026-10-17T20:48:00.443Z") {
 		t.Fatalf("notified = %+v", c)
 	}
 	r.noRemovals()
@@ -424,7 +423,7 @@ func TestInterrupted(t *testing.T) {
 	r.main(fx.parent[1:]...)
 	r.child(agent, `{"type":"user","isSidechain":true,"agentId":"a2b5d93218f6be8b1","sessionId":"ef90ce79-0e17-4ce3-9cb6-8083169e2635","timestamp":"2026-10-17T20:50:53.917Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}`)
 	r.poll()
-	c := r.one(agent, "")
+	c := r.one(agent)
 	if c.State != proto.ChildInterrupted || c.EndedAt != ts("2026-10-17T20:50:53.914Z") || c.Transcript != proto.TranscriptAvailable {
 		t.Fatalf("interrupted = %+v", c)
 	}
@@ -441,7 +440,7 @@ func TestForkCopiedCallIsNoSpawn(t *testing.T) {
 	r.child(agent, fx.child[agent][:6]...)
 	r.meta(agent, fx.meta[agent], false, when("2026-10-17T20:47:38.450Z"))
 	r.poll()
-	c := r.one(agent, "")
+	c := r.one(agent)
 	if c.State != proto.ChildRunning || c.Type != "fork" || c.Parent != proto.ParentRoot {
 		t.Fatalf("fork = %+v", c)
 	}
@@ -449,7 +448,7 @@ func TestForkCopiedCallIsNoSpawn(t *testing.T) {
 	r.meta(agent, fx.meta[agent], true, when("2026-10-17T20:48:00.800Z"))
 	r.main(fx.parent[1:]...)
 	r.poll()
-	if c = r.one(agent, ""); c.State != proto.ChildCompleted {
+	if c = r.one(agent); c.State != proto.ChildCompleted {
 		t.Fatalf("fork = %+v", c)
 	}
 	r.noRemovals()
@@ -462,14 +461,14 @@ func TestDefaultBackground(t *testing.T) {
 	r := newRig(t, "g2")
 	r.main(fx.parent[:2]...)
 	r.poll()
-	if c := r.one(agent, ""); c.State != proto.ChildRunning {
+	if c := r.one(agent); c.State != proto.ChildRunning {
 		t.Fatalf("launched = %+v", c)
 	}
 	r.child(agent, fx.child[agent]...)
 	r.meta(agent, fx.meta[agent], true, when("2026-10-17T20:49:24.450Z"))
 	r.main(fx.parent[2:]...)
 	r.poll()
-	if c := r.one(agent, ""); c.State != proto.ChildCompleted {
+	if c := r.one(agent); c.State != proto.ChildCompleted {
 		t.Fatalf("done = %+v", c)
 	}
 }
@@ -486,7 +485,7 @@ func TestResumeAndStopHookContinuation(t *testing.T) {
 	r.child(agent, fx.child[agent]...)
 	r.meta(agent, fx.meta[agent], true, when("2026-10-17T20:43:56.740Z"))
 	r.poll()
-	c := r.one(agent, "")
+	c := r.one(agent)
 	if c.State != proto.ChildCompleted {
 		t.Fatalf("done = %+v", c)
 	}
@@ -495,7 +494,7 @@ func TestResumeAndStopHookContinuation(t *testing.T) {
 		`{"type":"assistant","isSidechain":true,"agentId":"a8db619749ca642d6","sessionId":"f41bf49f-1bb1-4510-8e0a-338094e2a6ba","timestamp":"2026-10-17T20:44:11.000Z","message":{"role":"assistant","content":[{"type":"text","text":"2"}]}}`)
 	r.hook(`{"session_id":"f41bf49f-1bb1-4510-8e0a-338094e2a6ba","agent_id":"a8db619749ca642d6","agent_type":"general-purpose","hook_event_name":"SubagentStart"}`)
 	r.poll()
-	c = r.one(agent, "")
+	c = r.one(agent)
 	if c.ID != id || c.State != proto.ChildRunning || c.EndedAt != 0 {
 		t.Fatalf("resumed = %+v", c)
 	}
@@ -504,12 +503,12 @@ func TestResumeAndStopHookContinuation(t *testing.T) {
 	r.child(agent, `{"type":"user","isSidechain":true,"agentId":"a8db619749ca642d6","sessionId":"f41bf49f-1bb1-4510-8e0a-338094e2a6ba","timestamp":"2026-10-17T20:44:12.000Z","message":{"role":"user","content":"Stop hook feedback: Before you finish, also reply with the word twice."}}`)
 	r.hook(`{"session_id":"f41bf49f-1bb1-4510-8e0a-338094e2a6ba","agent_id":"a8db619749ca642d6","agent_type":"general-purpose","hook_event_name":"SubagentStop","stop_hook_active":true}`)
 	r.poll()
-	if c = r.one(agent, ""); c.State != proto.ChildRunning {
+	if c = r.one(agent); c.State != proto.ChildRunning {
 		t.Fatalf("continued = %+v", c)
 	}
 	r.meta(agent, fx.meta[agent], true, when("2026-10-17T20:44:13.000Z"))
 	r.poll()
-	if c = r.one(agent, ""); c.ID != id || c.State != proto.ChildCompleted || c.EndedAt != ts("2026-10-17T20:44:13.000Z") {
+	if c = r.one(agent); c.ID != id || c.State != proto.ChildCompleted || c.EndedAt != ts("2026-10-17T20:44:13.000Z") {
 		t.Fatalf("done again = %+v", c)
 	}
 	r.noRemovals()
@@ -627,13 +626,13 @@ func TestFileGoneAndPending(t *testing.T) {
 	r := newRig(t, "b")
 	r.main(fx.parent[0])
 	r.poll()
-	if c := r.one("", ""); c.Transcript != proto.TranscriptPending {
+	if c := r.one(""); c.Transcript != proto.TranscriptPending {
 		t.Fatalf("pending = %+v", c)
 	}
 	r.main(fx.parent[1])
 	r.child(agent, fx.child[agent]...)
 	r.poll()
-	if c := r.one(agent, ""); c.Transcript != proto.TranscriptAvailable {
+	if c := r.one(agent); c.Transcript != proto.TranscriptAvailable {
 		t.Fatalf("available = %+v", c)
 	}
 	if err := os.Remove(r.path("agent-" + agent + ".jsonl")); err != nil {
@@ -675,7 +674,7 @@ func TestTolerantReading(t *testing.T) {
 	r.child(agent, fx.child[agent][:3]...)
 	appendRaw(t, r.path("agent-"+agent+".meta.json"), `{"agentType":7,"toolUseId":"toolu_015sQxegDivBtkxbTPKcRffk","spawnDepth":"one"}`)
 	r.poll()
-	c := r.one(agent, "")
+	c := r.one(agent)
 	if c.Type != "general-purpose" || c.Parent != proto.ParentRoot {
 		t.Fatalf("row = %+v", c)
 	}
@@ -685,7 +684,7 @@ func TestTolerantReading(t *testing.T) {
 	}
 	r.child(agent, fx.child[agent][3:5]...)
 	r.poll()
-	if c2 := r.one(agent, ""); c2.ID != c.ID {
+	if c2 := r.one(agent); c2.ID != c.ID {
 		t.Fatalf("after replacement %+v", c2)
 	}
 	r.noRemovals()
