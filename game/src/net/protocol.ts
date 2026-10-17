@@ -236,6 +236,12 @@ export interface Worker {
   llm_handoff?: LLMHandoff;
   /** #155: how a Codex worker the bridge hired was launched (absent for other workers). */
   codex?: WorkerCodex;
+  /**
+   * #22: the generation of its native child agents. It rises when its root agent session is replaced: its children of an
+   * older one are gone (no `child.removed` comes for them). From one bridge-wide counter: compare it per worker only.
+   * Absent from a bridge before #22.
+   */
+  child_generation?: number;
 }
 
 /**
@@ -471,6 +477,11 @@ export interface World {
    * `hire.prepare`'s lines). Absent from an older bridge, which refuses the field: never send it there.
    */
   herdr_instructions?: boolean;
+  /**
+   * #22 native child agents: every worker's, the workers in snapshot order and each one's in the order first seen (a parent
+   * may come after its child). Absent from a bridge before #22: a client reads that as `[]`.
+   */
+  children?: Child[];
 }
 
 export interface Hello {
@@ -601,6 +612,9 @@ export type WorldEvent =
   // #93 hire presets
   | HirePresetUpsert
   | HirePresetRemoved
+  // #22 native child agents
+  | ChildUpsert
+  | ChildRemoved
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -1287,6 +1301,8 @@ const EVENT_TYPES = new Set([
   'schedule.removed',
   'hire_preset.upsert', // #93 hire presets
   'hire_preset.removed',
+  'child.upsert', // #22 native child agents
+  'child.removed',
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -1405,6 +1421,11 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return isObj(o.hire_preset) && isStr(o.hire_preset.id) && isStr(o.hire_preset.name);
     case 'hire_preset.removed':
       return isStr(o.id);
+    // #22: a native child agent seen or changed (the whole child: `decodeChild` reads it), or gone.
+    case 'child.upsert':
+      return isObj(o.child) && isStr(o.child.id) && isStr(o.child.worker_id) && isInt(o.child.generation);
+    case 'child.removed':
+      return isStr(o.id) && isStr(o.worker_id) && isInt(o.generation);
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
@@ -3243,4 +3264,93 @@ export interface HirePresetRemoved {
   t: 'hire_preset.removed';
   seq: number;
   id: string;
+}
+
+// #22 native child agents (docs/protocol.md "Native child agents"): the subagents a worker's own Claude Code or Codex
+// session runs. The board shows them from phase 3 of #20 on; `world/children.ts` keeps them.
+
+/** Lifecycle states, kept apart: nothing turns one into another but the bridge's evidence. */
+export type ChildState = 'running' | 'completed' | 'idle' | 'shut_down' | 'interrupted' | 'unknown';
+export const CHILD_STATES: readonly ChildState[] = ['running', 'completed', 'idle', 'shut_down', 'interrupted', 'unknown'];
+/** The immediate parent: the root worker's own session, another child (`parent_id`), or not known yet (never the root). */
+export type ChildParent = 'root' | 'child' | 'unresolved';
+export type ChildTranscript = 'available' | 'pending' | 'unavailable';
+
+/** One native child agent: `World.children`, `child.upsert`. */
+export interface Child {
+  /** The bridge's row id: it never changes for the life of the row, also when `native_id` arrives. */
+  id: string;
+  /** The provider's id (Claude's agentId, Codex's child thread id); absent while provisional. */
+  native_id?: string;
+  provider: 'claude' | 'codex' | string;
+  /** The root worker that owns it, the root agent session it belongs to, and that worker's child generation. */
+  worker_id: string;
+  agent_session: string;
+  generation: number;
+  parent: ChildParent;
+  /** With `parent: 'child'`: that child's row id. */
+  parent_id?: string;
+  name?: string;
+  type?: string;
+  description?: string;
+  state: ChildState;
+  /** The evidence source that set `state` (`hook`, `transcript`, `app_server`, `rollout`, `fixture`, …). */
+  source: string;
+  /** Unix ms on the provider's clock, when known. */
+  started_at?: number;
+  last_activity_at?: number;
+  ended_at?: number;
+  transcript: ChildTranscript;
+}
+
+/** `child.upsert`: a child seen first or changed; the whole child. */
+export interface ChildUpsert {
+  t: 'child.upsert';
+  seq: number;
+  child: Child;
+}
+
+/** `child.removed`: a child gone from the provider's evidence (or merged into the row seen first). */
+export interface ChildRemoved {
+  t: 'child.removed';
+  seq: number;
+  id: string;
+  worker_id: string;
+  generation: number;
+}
+
+const CHILD_TRANSCRIPTS: readonly string[] = ['available', 'pending', 'unavailable'];
+
+/**
+ * #22: a child as the game keeps it, or null without its id, worker and generation. Nothing is guessed: a parent that is
+ * missing or not one of the three (or `child` without `parent_id`) is `unresolved`, never the root; a state that is missing
+ * or unknown to this client is `unknown`; a transcript `unavailable`.
+ */
+export function decodeChild(v: unknown): Child | null {
+  if (!isObj(v) || !isStr(v.id) || !isStr(v.worker_id) || !isInt(v.generation)) return null;
+  const c: Child = {
+    id: v.id,
+    provider: isStr(v.provider) ? v.provider : '',
+    worker_id: v.worker_id,
+    agent_session: isStr(v.agent_session) ? v.agent_session : '',
+    generation: v.generation,
+    parent: 'unresolved',
+    state: CHILD_STATES.includes(v.state as ChildState) ? (v.state as ChildState) : 'unknown',
+    source: isStr(v.source) ? v.source : '',
+    transcript: CHILD_TRANSCRIPTS.includes(v.transcript as string) ? (v.transcript as ChildTranscript) : 'unavailable',
+  };
+  if (v.parent === 'root') c.parent = 'root';
+  else if (v.parent === 'child' && isStr(v.parent_id) && v.parent_id) {
+    c.parent = 'child';
+    c.parent_id = v.parent_id;
+  }
+  for (const k of ['native_id', 'name', 'type', 'description'] as const) {
+    const x = v[k];
+    if (isStr(x) && x) c[k] = x;
+  }
+  for (const k of ['started_at', 'last_activity_at', 'ended_at'] as const) {
+    const x = v[k];
+    if (isInt(x) && x > 0) c[k] = x;
+  }
+  return c;
 }
