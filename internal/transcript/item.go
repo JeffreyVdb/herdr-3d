@@ -44,6 +44,9 @@ const (
 	// running (no output yet): it adds to that call, if there is one. The
 	// index is built in file order, so "still running" is where the line is.
 	linkScript
+	// linkMerge (#56): more of the item with id, if there is one (a Codex
+	// SubAgentActivity event of its collaboration call); else nothing.
+	linkMerge
 )
 
 // contrib is what one line gives one item. Parsing is deterministic, so
@@ -210,6 +213,11 @@ func (b *builder) finish(full bool) proto.TranscriptItem {
 				a.Question, a.Answer, it.Truncated = cut(a.Question, MaxText), cut(a.Answer, MaxText), true
 			}
 		}
+	}
+	if c := it.Collab; c != nil && len(c.Prompt) > MaxText {
+		cc := *c
+		cc.Prompt, it.Truncated = cut(c.Prompt, MaxText), true
+		it.Collab = &cc
 	}
 	if n := it.Notice; n != nil {
 		limit := MaxText

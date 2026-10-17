@@ -266,7 +266,7 @@ func TestCodexLines(t *testing.T) {
 		}},
 		{"a generated image", []string{"generated.jsonl"}, []want{{kind: proto.ItemAssistant, id: "img:call_QjS7MQbBDcgOE4dkGsXea7nA", images: true}}},
 		{"agents", []string{"agents.jsonl"}, []want{
-			{kind: proto.ItemTool, tool: "collaboration.spawn_agent", status: proto.ToolRunning},
+			{kind: proto.ItemTool, tool: "spawn_agent", status: proto.ToolRunning},
 			hidden("inter_agent_communication_metadata"),
 			{kind: proto.ItemNotice, source: "agent_message", text: "/root/spec → /root"},
 			hidden("event_msg/thread_settings_applied"),

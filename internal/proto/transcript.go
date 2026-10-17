@@ -74,8 +74,11 @@ type TranscriptItem struct {
 	Truncated bool                `json:"truncated,omitempty"` // a part's text was cut (transcript.item has it all)
 	Tool      *TranscriptTool     `json:"tool,omitempty"`
 	Subagent  *TranscriptSubagent `json:"subagent,omitempty"`
-	Notice    *TranscriptNotice   `json:"notice,omitempty"`
-	RawType   string              `json:"raw_type,omitempty"` // unknown: the line or block type not recognised
+	// Collab (#56): a Codex collaboration call (a tool item) or an
+	// inter-agent message (a notice item), read for the view.
+	Collab  *TranscriptCollab `json:"collab,omitempty"`
+	Notice  *TranscriptNotice `json:"notice,omitempty"`
+	RawType string            `json:"raw_type,omitempty"` // unknown: the line or block type not recognised
 }
 
 // TranscriptAnswer is one answer of a Codex async-question reply: the
@@ -241,6 +244,49 @@ type TranscriptSubagent struct {
 	AgentID     string `json:"agent_id"`
 	Description string `json:"description"`
 	Status      string `json:"status"`
+}
+
+// Collaboration kinds (#56): the Codex call (spawn_agent, send_message,
+// followup_task, wait_agent, close_agent) or an inter-agent message.
+const (
+	CollabSpawn    = "spawn"
+	CollabSend     = "send"
+	CollabFollowup = "followup"
+	CollabWait     = "wait"
+	CollabClose    = "close"
+	CollabInbound  = "inbound"
+)
+
+// TranscriptCollab (#56) is what a Codex collaboration call or inter-agent
+// message says in plain text. Multi-agent v2 encrypts the message itself
+// (the Responses API does; nothing local can read it): Encrypted, and no
+// Prompt. Every field is "" when the source does not say it.
+type TranscriptCollab struct {
+	Kind string `json:"kind"`
+	// TaskName is a spawn's task name ("gpu_research"); Target the agent a
+	// send, followup or close is for, as the call names it.
+	TaskName string `json:"task_name,omitempty"`
+	Target   string `json:"target,omitempty"`
+	// AgentPath is the agent's path ("/root/gpu_research"): the call's
+	// output or its SubAgentActivity event. Inbound: the sender.
+	AgentPath string `json:"agent_path,omitempty"`
+	// AgentType is a spawn's role (agent_type), when enabled.
+	AgentType string `json:"agent_type,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
+	// ForkTurns is how much of the parent's history a spawn takes: "none",
+	// "all" or a number of turns, as Codex wrote it.
+	ForkTurns string `json:"fork_turns,omitempty"`
+	// ThreadID is the child's thread (agent_thread_id; a v1 agent_id).
+	ThreadID string `json:"thread_id,omitempty"`
+	Nickname string `json:"nickname,omitempty"`
+	// Recipient and MessageType (NEW_TASK, MESSAGE, FINAL_ANSWER, …) are an
+	// inbound message's header.
+	Recipient   string `json:"recipient,omitempty"`
+	MessageType string `json:"message_type,omitempty"`
+	Encrypted   bool   `json:"encrypted,omitempty"`
+	// Prompt is the message in plain text (a v1 spawn, a plain payload).
+	Prompt string `json:"prompt,omitempty"`
 }
 
 // TranscriptNotice is a notice's text and where it came from.
