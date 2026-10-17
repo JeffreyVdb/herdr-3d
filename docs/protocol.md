@@ -288,6 +288,10 @@ as `[]`.
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
+`hire_presets` (#93) are the hire presets of every floor and the global ones, by name ignoring case (see [Hire
+presets](#hire-presets)); `[]` when there are none. A bridge from before #93 leaves the key out: a client reads that as
+"hire presets are unavailable", not as an empty list.
+
 `screen` (M13) is `{"sharing": false}`, or `{"sharing": true, "surface": "browser|window|monitor"}` while a connected
 game shares its screen (see [Screen share](#screen-share)); a bridge from before M13 leaves it out.
 
@@ -563,6 +567,8 @@ and remember the last `seq` applied.
 | `handoff.removed` | `floor_id`, `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
 | `schedule.upsert` | `schedule` | #62: a schedule was created or updated, or its state changed (a fire began, waits, ended); the whole schedule (see [Scheduled agents](#scheduled-agents)) |
 | `schedule.removed` | `id`, `floor_id` | #62: a schedule left the view: cancelled, dismissed, or a `done` one pruned beyond its floor's last 50 |
+| `hire_preset.upsert` | `hire_preset` | #93: a hire preset was created or changed; the whole preset (see [Hire presets](#hire-presets)) |
+| `hire_preset.removed` | `id` | #93: a hire preset was deleted, or its virtual floor was |
 | `kaneo.update` | the fields of the Kaneo state | #184: the Kaneo connection changed (saved, cleared, paused by a refused key, resumed); flat in the event, never a key (see [Kaneo](#kaneo)). Like `packup.update`, decode it by its `t`: its `state` and `last_error` are not `ai.update`'s |
 
 ```json
@@ -634,7 +640,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `session.create` | `{"name": string}`: #58, a new herdr session (see [New herdr sessions](#new-herdr-sessions)) | `{"session": string}`, once its floor is in the world | the new floor's `floor.upsert` (`state: "running"`, in the unassigned lot), before the ack |
 | `floor.create` | `{"name": string, "base_session": string}`: #58, a virtual floor on a discovered session (see [Virtual floors](#virtual-floors)) | the new floor (a `Floor`) | its `floor.upsert` (and `building.upsert` when it joined its base's building), to every client |
 | `floor.rename` | `{"floor": string, "name": string}`: a virtual floor's display name | — | `floor.upsert` |
-| `floor.delete` | `{"floor": string, "move_workers"?: bool}`: a virtual floor; refused while it has workers unless `move_workers` is `true`, which moves them to its base session's real floor first | — | `floor.removed` (with `floor_id`), `building.upsert` when it was in a building; with moved workers, their `worker.upsert` on the real floor (new `floor`, `desk_index`, maybe `name`) after the `floor.removed` |
+| `floor.delete` | `{"floor": string, "move_workers"?: bool}`: a virtual floor; refused while it has workers unless `move_workers` is `true`, which moves them to its base session's real floor first | — | `floor.removed` (with `floor_id`), `building.upsert` when it was in a building, #93 `hire_preset.removed` for each of its own hire presets; with moved workers, their `worker.upsert` on the real floor (new `floor`, `desk_index`, maybe `name`) after the `floor.removed` |
 | `floor.hide` | `{"floor": string, "hidden": bool}`: #58 decision 2, a floor's stored hidden setting (any floor; see [Virtual floors](#virtual-floors)) | — | `floor.upsert` with `hidden`, to every client; none when it was already so |
 | `hire.prepare` | `{"floor"|"session": string, "cwd"?: string}` | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity"}` (see [Hire and send home](#hire-and-send-home)) | — |
 | `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
@@ -744,6 +750,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `schedule.run_now` | `{"id"}`; only while `scheduled` | the schedule, as its fire left it (`running`, `waiting` or `failed`) | `schedule.upsert`, then the hire's |
 | `schedule.retry` | `{"id"}`; only while `failed` or `skipped`: the same spec, fired now | the schedule, as its fire left it | `schedule.upsert`, then the hire's |
 | `schedule.dismiss` | `{"id"}`; only while `failed` or `skipped` | the schedule, with `dismissed_at` | `schedule.removed` |
+| `hire_preset.create` | #93: `{"name", "floor"?, "prompt", "harness", "model", "effort"}`; `floor` empty or absent: global (see [Hire presets](#hire-presets)) | the preset | `hire_preset.upsert` |
+| `hire_preset.update` | `{"id", …}`: `hire_preset.create`'s args, the whole spec replaced (its scope too) | the preset | `hire_preset.upsert`; none when nothing changed |
+| `hire_preset.delete` | `{"id"}` | — | `hire_preset.removed` |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -1267,7 +1276,7 @@ put to sleep the base session, and with it every floor on it; their `state` and 
 |---|---|
 | `floor.create` | `name`: trimmed, 1–64 bytes, no control characters (`bad_request`); `base_session`: a discovered session (`unknown_session`) the bridge watches (`--sessions`, `unknown_session`) |
 | `floor.rename` | `floor`: a virtual floor (a real floor: `bad_request`; unknown: `not_found`); `name` as above |
-| `floor.delete` | `floor` as above; without `move_workers`, refused with `invalid_state` while workers are on it ("floor “Frontend” has 2 workers: …", hires in flight count; while its base session is away, the workers stored on it). With `move_workers: true` its workers (in the world or only stored) go to the base session's real floor, which seats them at its lowest free desks and names them as newcomers (a name already taken there changes); `busy` while a hire on it is in flight. Its desks, names, settings, last hire, last preset, board cache, building place and hidden setting go; its handoffs and its whiteboard folder stay (files are never deleted with a definition; the id is never minted again) |
+| `floor.delete` | `floor` as above; without `move_workers`, refused with `invalid_state` while workers are on it ("floor “Frontend” has 2 workers: …", hires in flight count; while its base session is away, the workers stored on it). With `move_workers: true` its workers (in the world or only stored) go to the base session's real floor, which seats them at its lowest free desks and names them as newcomers (a name already taken there changes); `busy` while a hire on it is in flight. Its desks, names, settings, last hire, last preset, board cache, building place, hidden setting and (#93) its own hire presets go (`hire_preset.removed` each; global ones stay); its handoffs and its whiteboard folder stay (files are never deleted with a definition; the id is never minted again) |
 | `floor.hide` | `floor`: a floor in the world (`unknown_session`), or a virtual floor whose session is away; `hidden`: the setting |
 
 **Hidden (decision 2).** `hidden` is stored per floor (real or virtual) and set with `floor.hide`; the bridge only
@@ -4521,6 +4530,52 @@ Stored in SQLite `schedule (id, floor, title, prompt, due_at, on_miss, max_laten
 worktree, wake_floor, handoff_path, source, source_worker, source_message, state, state_reason, seen_at, fired_at,
 worker_id, created_at, updated_at, dismissed_at)`; `seen_at` is when the runner first saw it due (a late run's mark).
 A floor keeps its last 50 `done` schedules, by `fired_at`; older ones are deleted.
+
+### Hire presets
+
+#93. A hire preset is a named first prompt with the harness, model and effort to hire it with: a job that comes back
+("Deploy a release to A, B and C") saved once and hired again whenever it is needed. It has one of two scopes: **one
+floor** (`floor`, a floor id: a session's real floor or a virtual floor, never a building or a base session) or
+**global** (no `floor`: every floor of every building this bridge serves; there is no building scope, and nothing is
+shared across bridges). Hire presets are not team presets (`preset.*`: five roles of a run) and not the game's task
+levels (a named choice without a prompt, kept in the browser). Nothing here hires: using a preset is an ordinary
+`worker.hire` the client sends with the preset's prompt and choice, after the player reviewed them, so every hire rule
+(desks, caps, worktrees, a virtual floor's wake, the background hire) is `worker.hire`'s.
+
+```json
+{"t":"hire_preset.create","req_id":"h1","args":{"name":"Deploy release","floor":"herdr-3d",
+ "prompt":"Deploy the release to A, B and C, and report each one.","harness":"claude","model":"claude-sonnet-5-5","effort":"low"}}
+{"t":"hire_preset.upsert","seq":2301,"hire_preset":{"id":"hp_3c9a1e7b2d4086f5","name":"Deploy release","floor":"herdr-3d",
+ "prompt":"Deploy the release to A, B and C, and report each one.","harness":"claude","model":"claude-sonnet-5-5","effort":"low",
+ "created_at":1792237523778,"updated_at":1792237523778}}
+{"t":"ack","req_id":"h1","data":{"id":"hp_3c9a1e7b2d4086f5","name":"Deploy release","floor":"herdr-3d","…":"…"}}
+```
+
+**The spec**, checked on create and on every update (`bad_request` unless said otherwise):
+
+- `name`: trimmed, 1–40 bytes of UTF-8 without control characters (the team presets' rule), unique ignoring case
+  **within its scope** (`name_taken`): the same name on two floors, or on a floor and globally, is allowed, and the two
+  stay separate presets (a floor's never hides a global one).
+- `floor`: absent or `""` is global; otherwise a floor the bridge knows (a real floor it sees, or a defined virtual
+  floor; `unknown_session` otherwise). An update that keeps the preset's floor does not check it again, so a floor
+  discovery does not list for now keeps its presets editable.
+- `prompt`: required, `worker.hire`'s first-prompt rules: 1–32 KiB of UTF-8, not blank, no NUL, not starting with `--`;
+  for Claude (typed) no control characters other than line ends and tabs.
+- `harness`, `model`, `effort`: one of `hire_options` (the catalog's own check, an effort of the model's included); a
+  harness the bridge cannot start is refused.
+
+`hire_preset.update` replaces the whole spec (moving a preset between a floor and global too); one that changes nothing
+sends no event. An unknown id is `not_found`. `created_at` and `updated_at` are unix ms; an update moves `updated_at`
+(clients use it to tell an editor that the preset changed elsewhere).
+
+**Lifecycle.** Presets are keyed by floor id: renaming a floor, moving it to another building, hiding it, putting it to
+sleep or its session going away for a while change none of them. Deleting a virtual floor (`floor.delete`) deletes its
+own presets in the same transaction (`hire_preset.removed` each); global ones stay, and none moves to the base floor.
+A catalog that later lacks a preset's model or effort leaves the preset as stored: the client shows the saved values
+and why they cannot be hired, and `worker.hire` would refuse them as usual.
+
+Stored in SQLite `hire_preset (id, name, floor, prompt, harness, model, effort, created_at, updated_at)`, `floor` NULL
+for a global one, with a unique index on (scope, `lower(name)`).
 
 ### Inbox
 
