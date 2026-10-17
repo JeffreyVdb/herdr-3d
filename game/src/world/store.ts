@@ -40,6 +40,7 @@ import { KaneoBook } from './kaneo';
 import { NotifyBook } from './notifySettings';
 import { HandoffBook } from './handoff';
 import { ScheduleBook } from './schedule';
+import { ChildBook } from './children';
 import { floorGroups, FloorListBook } from './floorList';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
@@ -245,6 +246,8 @@ export class WorldStore {
   readonly notifySettings = new NotifyBook(); // #11
   readonly handoffs = new HandoffBook(); // #223
   readonly schedules = new ScheduleBook(); // #64 schedules
+  /** #22 native child agents, per worker and generation (`known` false from a bridge before #22: none). */
+  readonly children = new ChildBook();
   /** #93 hire presets (`known` false from a bridge before #93: unavailable). */
   readonly hirePresets = new HirePresetBook();
   /** #58 stage 4: Settings → Floors' rows, refreshed after every change that moves floors or workers. */
@@ -299,6 +302,7 @@ export class WorldStore {
     this.kaneo.reset(s.world.kaneo); // #184
     this.handoffs.reset(s.world.handoffs); // #223
     this.schedules.reset(s.world.schedules); // #64 schedules (a bridge before #62 sends none)
+    this.children.reset(s.world.children, s.world.workers.filter((w) => w && typeof w.id === 'string')); // #22 (none before #22)
     this.hirePresets.reset(s.world.hire_presets, s.world.herdr_instructions); // #93 (a bridge before #93 sends none), #95
     this.inboxDismissed.clear(); // #106
     for (const [id, since] of Object.entries(s.world.inbox_dismissed ?? {})) if (Number.isInteger(since)) this.inboxDismissed.set(id, since);
@@ -355,6 +359,7 @@ export class WorldStore {
         else if (w.status_since !== undefined) this.since.set(w.id, w.status_since);
         this.workers.set(w.id, w);
         this.crewSeen.observe(w);
+        this.children.worker(w.id, w.child_generation); // #22: a replaced session's children are gone
         c.floors.add(w.floor);
         // #58: a worker can move between floors of one session (a deleted virtual floor's workers go to the real one).
         if (!old || old.floor !== w.floor || old.desk_index !== w.desk_index) {
@@ -485,6 +490,13 @@ export class WorldStore {
       case 'hire_preset.removed':
         this.hirePresets.remove(e.id);
         break;
+      // #22 native child agents: no part of the scene yet (the board, phase 3 of #20, reads `children.version`).
+      case 'child.upsert':
+        this.children.upsert(e.child);
+        break;
+      case 'child.removed':
+        this.children.removed(e);
+        break;
       // #106: the inbox hides that worker's done episode. Not part of the scene, but the inbox's pings follow it (a
       // dismissed done must not ping when its settle delay ends), so the worker counts as changed.
       case 'inbox.dismissed': {
@@ -503,6 +515,7 @@ export class WorldStore {
 
   private dropWorker(id: string): void {
     this.workers.delete(id);
+    this.children.removeWorker(id); // #22
     this.inboxDismissed.delete(id);
     this.since.delete(id);
     this.localDesks.delete(id);

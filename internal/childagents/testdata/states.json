@@ -1,0 +1,30 @@
+{
+  "description": "Every lifecycle state, kept apart. A child with no state evidence, or with a state outside the list, is unknown; one with no parent evidence is unresolved. A removed child is gone.",
+  "workers": [{"name": "w1", "agent_session": "sess-s1"}],
+  "steps": [
+    {"evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-run", "parent": {"kind": "root"}, "name": "running", "state": "running", "source": "fixture", "started_at": 1792000400001}},
+    {"evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-done", "parent": {"kind": "root"}, "name": "completed", "state": "completed", "source": "fixture", "started_at": 1792000400002, "ended_at": 1792000400100}},
+    {"evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-idle", "parent": {"kind": "root"}, "name": "idle", "state": "idle", "source": "fixture", "started_at": 1792000400003}},
+    {"evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-off", "parent": {"kind": "root"}, "name": "shut down", "state": "shut_down", "source": "fixture", "started_at": 1792000400004, "ended_at": 1792000400200}},
+    {"evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-int", "parent": {"kind": "root"}, "name": "interrupted", "state": "interrupted", "source": "fixture", "started_at": 1792000400005, "ended_at": 1792000400300}},
+    {"evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-unk", "parent": {"kind": "root"}, "name": "disconnected", "state": "unknown", "source": "fixture", "started_at": 1792000400006}},
+    {"note": "no state and no parent in the evidence", "evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-none", "name": "no state", "source": "fixture", "started_at": 1792000400007}},
+    {"note": "a state outside the list is read as unknown", "evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-bad", "parent": {"kind": "root"}, "name": "bad state", "state": "done", "source": "fixture", "started_at": 1792000400008}},
+    {"evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-gone", "parent": {"kind": "root"}, "name": "removed", "state": "running", "source": "fixture", "started_at": 1792000400009}},
+    {"note": "a completed child resumed: running again, no end", "evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-run", "state": "completed", "source": "fixture", "ended_at": 1792000400400}},
+    {"evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-run", "state": "running", "source": "fixture", "last_activity_at": 1792000400500}},
+    {"evidence": {"session": "sess-s1", "provider": "claude", "native_id": "s-gone", "removed": true, "source": "fixture"}}
+  ],
+  "expect": {
+    "w1": [
+      {"native_id": "s-run", "provider": "claude", "parent": "root", "name": "running", "state": "running", "source": "fixture", "started_at": 1792000400001, "last_activity_at": 1792000400500, "transcript": "unavailable"},
+      {"native_id": "s-done", "provider": "claude", "parent": "root", "name": "completed", "state": "completed", "source": "fixture", "started_at": 1792000400002, "ended_at": 1792000400100, "transcript": "unavailable"},
+      {"native_id": "s-idle", "provider": "claude", "parent": "root", "name": "idle", "state": "idle", "source": "fixture", "started_at": 1792000400003, "transcript": "unavailable"},
+      {"native_id": "s-off", "provider": "claude", "parent": "root", "name": "shut down", "state": "shut_down", "source": "fixture", "started_at": 1792000400004, "ended_at": 1792000400200, "transcript": "unavailable"},
+      {"native_id": "s-int", "provider": "claude", "parent": "root", "name": "interrupted", "state": "interrupted", "source": "fixture", "started_at": 1792000400005, "ended_at": 1792000400300, "transcript": "unavailable"},
+      {"native_id": "s-unk", "provider": "claude", "parent": "root", "name": "disconnected", "state": "unknown", "source": "fixture", "started_at": 1792000400006, "transcript": "unavailable"},
+      {"native_id": "s-none", "provider": "claude", "parent": "unresolved", "name": "no state", "state": "unknown", "source": "fixture", "started_at": 1792000400007, "transcript": "unavailable"},
+      {"native_id": "s-bad", "provider": "claude", "parent": "root", "name": "bad state", "state": "unknown", "source": "fixture", "started_at": 1792000400008, "transcript": "unavailable"}
+    ]
+  }
+}

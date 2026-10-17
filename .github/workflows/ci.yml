@@ -36,7 +36,7 @@ jobs:
           GO_INPUTS: '^(cmd|internal|game/fixtures)/|^(go\.mod|go\.sum|Makefile|\.github/workflows/ci\.yml)$'
           # game/ is the app and its tests; the tests also read docs/shortcuts.md
           # (the generated shortcuts table) and the Go whiteboard testdata.
-          GAME_INPUTS: '^(game|internal/whiteboard/testdata|internal/notify/testdata)/|^(docs/shortcuts\.md|Makefile|\.github/workflows/ci\.yml)$'
+          GAME_INPUTS: '^(game|internal/whiteboard/testdata|internal/notify/testdata|internal/childagents/testdata)/|^(docs/shortcuts\.md|Makefile|\.github/workflows/ci\.yml)$'
         run: |
           if [ "$EVENT" != push ] || [ "$REF_NAME" = main ]; then
             go=true

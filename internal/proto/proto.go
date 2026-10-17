@@ -237,6 +237,10 @@ type World struct {
 	// the hire presets' herdr_instructions, hire.prepare's lines). Always
 	// true: a bridge before #95 leaves it out, and refuses the field.
 	HerdrInstructions bool `json:"herdr_instructions,omitempty"`
+	// #22: the native child agents of every worker, the workers in snapshot
+	// order and each worker's in the order the bridge first saw them.
+	// Always present ([] when none): a bridge before #22 leaves it out.
+	Children []Child `json:"children"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -432,6 +436,12 @@ type Worker struct {
 	// #155: Codex is how a Codex worker the bridge hired was launched
 	// (absent for other workers).
 	Codex *WorkerCodex `json:"codex,omitempty"`
+	// #22: ChildGeneration is the generation of the worker's native child
+	// agents: it rises when its root agent session is replaced, and a
+	// client then drops the worker's children of an older one (see Child).
+	// From one bridge-wide counter, so it only rises for a worker; compare
+	// it per worker only. 0 (left out) from a bridge before #22.
+	ChildGeneration uint64 `json:"child_generation,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
 	// Round is the h3d_round token, else the label's trailing |r<N>.
@@ -647,6 +657,11 @@ type Event struct {
 	// #93 hire presets: HirePreset is set on hire_preset.upsert; ID names
 	// the preset on hire_preset.removed.
 	HirePreset *HirePreset `json:"hire_preset,omitempty"`
+	// #22 native child agents: Child is set on child.upsert; ID, WorkerID
+	// and Generation name the row on child.removed.
+	Child      *Child `json:"child,omitempty"`
+	WorkerID   string `json:"worker_id,omitempty"`
+	Generation uint64 `json:"generation,omitempty"`
 }
 
 // Command is a client request. Args depend on T (see the *Args types).

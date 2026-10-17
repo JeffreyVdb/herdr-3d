@@ -285,6 +285,9 @@ the `failed` and `skipped` ones not dismissed, and each floor's last 50 `done` o
 agents](#scheduled-agents)); `[]` when there are none. A bridge from before #62 leaves the key out: a client reads that
 as `[]`.
 
+`children` (#22) are every worker's native child agents (see [Native child agents](#native-child-agents-22)); `[]` when
+there are none. A bridge from before #22 leaves the key out: a client reads that as `[]`.
+
 `presets` are the team presets, by name ignoring case (see [Team presets and starting a
 run](#team-presets-and-starting-a-run)); `[]` when there are none.
 
@@ -387,6 +390,7 @@ floor with no workers and an `error`).
 | `phase`, `pass` | string, int ≥ 0, optional | orchestrators: the `h3d_phase` / `h3d_pass` tokens (`research\|coding\|review\|fixing\|waiting_user\|pr\|done`, others passed through, ≤ 32 bytes), remembered like `harness` |
 | `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
 | `report` | object, optional | freelancers: their write-code report (see [Runs and freelancers](#runs-and-freelancers)) |
+| `child_generation` | int ≥ 1 | #22: the generation of its native child agents: it rises when its root agent session is replaced, and its children of an older one are gone (see [Native child agents](#native-child-agents-22)); absent from a bridge before #22 |
 | `codex` | object, optional | #155: how a Codex worker the bridge hired was launched, `{"mode": "shared" \| "legacy", "server"?: "starting" \| "running" \| "down" \| "stopped", "note"?, "attached"?, "thread"?, "turn"?, "questions"?, "async_blocked"?}` (see [Shared Codex server](#shared-codex-server); #156: `thread`, `turn` and `questions` in [Codex async questions](#codex-async-questions); #157: `async_blocked` there too); absent for other workers, and for Codex hires made with the switch off |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
@@ -535,6 +539,100 @@ worker's own state. Card, look-at bar and inbox call it a **Report request**, ne
 asked no question), and say who is asked: `input_for`, else the worker's orchestrator (`orch_id`: "Asked of the
 orchestrator (Cog)"), else you ("Asked of you"). The inbox row opens the complete text.
 
+### Native child agents (#22)
+
+#22, phase 1 of #20. The subagents a worker's own Claude Code or Codex session runs (Claude's `agentId`, a Codex child
+thread's `thread.id`) are its **native child agents**: conversations inside the worker, not panes, freelancers or desks.
+The bridge publishes them whether or not a transcript is open: `children` in the snapshot, `child.upsert` and
+`child.removed` events, and each worker's `child_generation`. This phase is the model and the protocol only: the bridge
+has no provider source yet (Claude Code: #23; Codex rollouts: #25; the shared Codex server: #27), so it sends
+`"children": []` and no child event. The board shows them from #24 on; opening a child's own transcript is #26.
+
+```json
+{"t":"child.upsert","seq":1210,"child":{"id":"ch_7f3a09c2e1d4b856","native_id":"a3f9c1e2","provider":"claude",
+  "worker_id":"6db1905e-9e85-42f4-911c-b05e31b84c68","agent_session":"c6f58eef-ca04-4fe4-a564-3b15f8311bf3",
+  "generation":4,"parent":"root","type":"Explore","description":"Find the hub's session handling","state":"running",
+  "source":"hook","started_at":1792000000000,"last_activity_at":1792000005000,"transcript":"available"}}
+{"t":"child.removed","seq":1211,"id":"ch_7f3a09c2e1d4b856","worker_id":"6db1905e-9e85-42f4-911c-b05e31b84c68","generation":4}
+```
+
+| field | type | |
+|---|---|---|
+| `id` | string | the bridge's row id, `ch_<16 hex>`: it never changes for the life of the row, also when `native_id` arrives |
+| `native_id` | string, optional | the provider's id (Claude's `agentId`, Codex's child `thread.id`); absent while the row is **provisional** (see below) |
+| `provider` | `claude` \| `codex` | |
+| `worker_id` | string | the root worker that owns it |
+| `agent_session` | string | that worker's root agent session it belongs to |
+| `generation` | int ≥ 1 | the worker's `child_generation` the row belongs to |
+| `parent` | `root` \| `child` \| `unresolved` | its immediate parent; always present (see below) |
+| `parent_id` | string, optional | with `parent: "child"` only: that child's `id` |
+| `name`, `type`, `description` | string, optional | as the provider gives them (Claude: the subagent type and the task's description; Codex: the nickname and role); at most 128, 128 and 1000 bytes |
+| `state` | `running` \| `completed` \| `idle` \| `shut_down` \| `interrupted` \| `unknown` | its lifecycle (see below) |
+| `source` | string | the evidence source that set `state`: `hook` (Claude's `SubagentStart`/`SubagentStop`), `transcript`, `app_server`, `rollout`, `fixture` (the test source); a client shows any other as it is |
+| `started_at`, `last_activity_at`, `ended_at` | int, optional | unix **milliseconds**, from the evidence (the provider's clock, not the bridge's as `status_since`); absent when not known. `started_at` keeps the earliest seen, `last_activity_at` the latest |
+| `transcript` | `available` \| `pending` \| `unavailable` | whether it has a transcript to open, one is expected but not written yet, or none is known (the default) |
+
+**States** are kept apart: `running` (working now), `completed` (its task completed), `idle` (idle and reusable: it can be
+messaged again), `shut_down` (closed for good), `interrupted` (stopped before it completed) and `unknown` (disconnected, or
+no evidence of a state). Only evidence moves a child between them; nothing times out, so a child whose log goes quiet
+keeps its state (quiet logs never imply completion; a lost process shows as `unknown` or `interrupted` once a source says
+so). A child seen without a state, or with one this list does not have, is `unknown`, never a guess; a client reads a
+value it does not know as `unknown` too. A child `running` again after it ended (resumed) loses its `ended_at`.
+
+**The parent** comes from evidence only, never from timing, launch order or which child was running: `root` (the worker's
+own session started it), `child` (another child, `parent_id`) or `unresolved` (not known yet: the evidence named no
+parent, or one the bridge has not seen). `unresolved` is its own value: a client shows such a child directly under its
+root worker until an upsert resolves it, and never reads it as `root`; a missing or unknown `parent`, or `child` without
+`parent_id`, is `unresolved`. A removed parent leaves its children `unresolved` (resolved again should it come back);
+evidence that would make a cycle is ignored. Children nest to any depth the provider shows.
+
+**Generations.** A worker's `child_generation` (in the worker table) is from one bridge-wide counter: it only rises for a
+worker, so compare it per worker, never across workers. A worker gets one when first seen and a new one when its root
+agent session is **replaced**: `agent_session` changes from a value to another one or to none (a first session after none
+is no replacement: nothing can have attached meanwhile). That `worker.upsert`, with the new `agent_session` and the
+higher `child_generation`, is the replacement: the worker's children of the older generation are gone with it (no
+`child.removed` is sent for them), and the bridge drops any later evidence of the old session, so a child of a replaced
+session never attaches to the new one, even one whose native id the new session reuses (a new row). Every child and
+`child.removed` carries its generation, and a client drops anything of a generation older than its worker's (the bridge
+sends none; it guards the client's own state); a child of a newer one first drops the worker's children. A worker's
+`worker.removed` takes its children too, again without `child.removed`; should it come back, its generation is higher.
+
+**Provisional rows.** A child seen first from its dispatch (Claude's `Agent` tool call, Codex's spawn call), before the
+provider named it, gets a row without `native_id`. When the native id arrives it is **the same row**: one `child.upsert`
+with the same `id` and `native_id` set; never a second row, a flicker or a removal and an add. Later evidence by either id
+is that row. One case does remove a row: a child seen both by its native id alone (a Claude `SubagentStart` hook names no
+tool call) and from its dispatch before the evidence that links the two. The row seen first stays and the other merges
+into it: a `child.removed` of the other first, then `child.upsert`s of the one that stays and of the merged row's children.
+The row that stays keeps every field either row observed, as if one row had seen both rows' evidence in the order the
+bridge observed it: a field only one has is kept; of a `name`, `type`, `description`, `transcript`, `ended_at` (a resumed
+`running` clears it) or `state` (with its `source`) both have, the one observed later; the earliest `started_at` and the
+latest `last_activity_at`. Its parent is the one of the two observed later if it is still a parent once they are one row,
+else the other's, else `unresolved`: never the row itself (a parent that was the other row) nor a cycle; the merged row's
+children go under it unless that would make a cycle (then `unresolved`). A client that is sent a row whose parent chain
+comes back to it anyway shows it directly under its root worker, never hides it.
+
+**Order.** The child events are ordinary events of the `seq` stream: replayed after a reconnect (`since_seq`) like every
+other, and ordered per worker by the one `seq`, with the worker's own events too. The `worker.upsert` that raises a
+`child_generation` comes before any child of the new generation; within one observation `child.removed` comes first, then
+the upsert of the child observed, then those of the children it resolved or orphaned (so a new parent comes before the
+children that waited for it). The snapshot's `children` follow the workers' order, each worker's children in the order
+first seen: a parent may come after its child, so build the tree by `parent_id`, never by position.
+
+**Restart.** Nothing of the children is persisted (no SQLite). A bridge starts with none and rebuilds them from the
+providers' evidence alone: whenever it binds a worker to a root session it has not bound (every worker after a restart,
+a worker's first session, a replacement), each source replays that session's evidence (what the provider still shows: its
+transcripts, its server's threads) in observation order. A client sees the new epoch and takes a fresh snapshot anyway.
+Row ids are made from the worker, the generation and the first id seen, so the same evidence makes the same rows, but a
+client never keeps them across epochs. A root session has at most 500 children; evidence of a new one beyond is dropped.
+
+The bridge's side is `internal/childagents` (`Registry`, the `Source` interface, `Evidence`), the game's
+`game/src/world/children.ts` (`ChildBook`, `childTree`) with `decodeChild` in `net/protocol.ts`. The fixtures are
+`internal/childagents/testdata/*.json` (scripts of evidence and session changes, with the trees each worker must end
+with): `go test ./internal/server -run TestChildFixtures` plays each through a bridge and writes the frames a client gets
+as `game/fixtures/children-<name>.jsonl` (`H3D_UPDATE_FIXTURES=1`), which Vitest feeds through the decoder and the store.
+To build against them before a provider lands, the fixture bridge plays one: `make dev`, then
+`?ws=%2Ffixture%2Fchildren-nested&floor=office` (one recorded event every 2.5 s; `%3Fplay%3Dall` at once).
+
 ## Events
 
 Every change is an event with a strictly increasing `seq` (+1 per event, per epoch). Clients should apply them in order
@@ -573,6 +671,8 @@ and remember the last `seq` applied.
 | `schedule.removed` | `id`, `floor_id` | #62: a schedule left the view: cancelled, dismissed, or a `done` one pruned beyond its floor's last 50 |
 | `hire_preset.upsert` | `hire_preset` | #93: a hire preset was created or changed; the whole preset (see [Hire presets](#hire-presets)) |
 | `hire_preset.removed` | `id` | #93: a hire preset was deleted, or its virtual floor was |
+| `child.upsert` | `child` | #22: a native child agent was seen first or changed (the whole child: see [Native child agents](#native-child-agents-22)) |
+| `child.removed` | `id`, `worker_id`, `generation` | #22: a child went from the provider's evidence, or merged into the row seen first. A worker's children go with its `worker.removed` and with a `worker.upsert` that raises its `child_generation`, without one |
 | `kaneo.update` | the fields of the Kaneo state | #184: the Kaneo connection changed (saved, cleared, paused by a refused key, resumed); flat in the event, never a key (see [Kaneo](#kaneo)). Like `packup.update`, decode it by its `t`: its `state` and `last_error` are not `ai.update`'s |
 
 ```json

@@ -20,6 +20,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/activity"
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
+	"github.com/JeffreyVdb/herdr-3d/internal/childagents"
 	"github.com/JeffreyVdb/herdr-3d/internal/digest"
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
@@ -349,6 +350,11 @@ type Options struct {
 	// fake clock and a fake runner).
 	HostStatsPoll time.Duration
 	HostStats     *hoststats.Config
+
+	// #22 native child agents: ChildSources report the workers' native
+	// children (none yet in production: the providers are #20's later
+	// phases; tests pass childagentstest.FixtureSource).
+	ChildSources []childagents.Source
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
@@ -466,6 +472,7 @@ type Hub struct {
 	rd repoDiscState // #54 repository discovery
 	sc scheduleState // #62 scheduled agents
 	hs hostState     // #74 server rack
+	ch childState    // #22 native child agents
 
 	hirePresets map[string]store.HirePreset // #93: by id (mirrors hire_preset)
 }
@@ -753,6 +760,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initBoards(ctx); err != nil { // M7 boards
 		return nil, err
 	}
+	h.ch = childState{reg: childagents.New()}    // #22
 	if err := h.loadSchedules(ctx); err != nil { // #62
 		return nil, err
 	}
@@ -832,6 +840,7 @@ func (h *Hub) Run(ctx context.Context) error {
 		go h.runNotify(ctx)
 		go h.trackNotify(ctx)
 	}
+	h.runChildSources(ctx)      // #22
 	var codexC <-chan time.Time // #155
 	if h.codexAvailable() || len(h.cx.launches) > 0 {
 		t := time.NewTicker(h.opts.CodexPoll)
@@ -1421,6 +1430,7 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 			delete(h.dg, id)                               // #118
 			delete(h.dgs.ws, id)                           // #118 phase 2
 			h.dropFollowup(context.Background(), id, true) // #90: gone
+			h.ch.reg.Remove(id)                            // #22: its children go with its worker.removed
 			if w != nil {
 				h.emit(proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: w.Session, FloorID: w.Floor, WorkspaceID: w.WorkspaceID})
 			}
@@ -1602,6 +1612,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		delete(h.dgs.ws, id)          // #118 phase 2
 		h.dropFollowup(ctx, id, true) // #90: gone
 		delete(h.ho.cands, id)        // #223
+		h.ch.reg.Remove(id)           // #22: its children go with its worker.removed
 		if w == nil {
 			continue
 		}
@@ -1729,7 +1740,8 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 			h.seatedNew(id, at) // M6 runs
 		}
 		next := workerView(id, session, w, metas[i], names[i], desk, h.resume[id])
-		h.withRun(next, w, metas[i], links[id]) // M6 runs
+		next.ChildGeneration = h.childSession(id, next.AgentSession) // #22: a replaced session drops its children
+		h.withRun(next, w, metas[i], links[id])                      // M6 runs
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}
@@ -2162,7 +2174,7 @@ func (h *Hub) syncLayout() {
 func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
-		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews()} // M6 launch: presets; M10 limits
+		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews(), Children: []proto.Child{}} // M6 launch: presets; M10 limits; #22
 	w.Screen = h.screenView()                 // M13 screen
 	w.AI = h.aiView()                         // #92 AI integration
 	w.Kaneo = h.kaneoView()                   // #184 Kaneo
@@ -2200,6 +2212,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 		for _, id := range f.order {
 			if wk := h.workers[id]; wk != nil {
 				w.Workers = append(w.Workers, *wk)
+				w.Children = append(w.Children, h.ch.reg.Children(id)...) // #22
 			}
 		}
 	}

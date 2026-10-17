@@ -1,0 +1,19 @@
+{
+  "description": "A worker's root session is replaced: its children go, late evidence of the old session (an update and a new child) is dropped, and a child id the new session reuses is a new row with nothing of the old one. A removed worker's children go with it.",
+  "workers": [{"name": "w1", "agent_session": "sess-r1"}, {"name": "w2", "agent_session": "sess-r2"}],
+  "steps": [
+    {"evidence": {"session": "sess-r1", "provider": "claude", "native_id": "old-1", "parent": {"kind": "root"}, "type": "Explore", "description": "From the old session", "state": "running", "source": "hook", "started_at": 1792000500000, "transcript": "available"}},
+    {"evidence": {"session": "sess-r2", "provider": "claude", "native_id": "w2-1", "parent": {"kind": "root"}, "type": "Plan", "state": "running", "source": "hook", "started_at": 1792000500500}},
+    {"note": "herdr reports w1's new root session", "session": {"name": "w1", "agent_session": "sess-r1b"}},
+    {"note": "late, from the old session: dropped", "evidence": {"session": "sess-r1", "provider": "claude", "native_id": "old-1", "state": "completed", "source": "hook", "ended_at": 1792000501000}},
+    {"note": "late, a new child of the old session: dropped", "evidence": {"session": "sess-r1", "provider": "claude", "native_id": "old-2", "parent": {"kind": "root"}, "state": "running", "source": "transcript", "started_at": 1792000501500}},
+    {"note": "the new session reuses the id old-1", "evidence": {"session": "sess-r1b", "provider": "claude", "native_id": "old-1", "parent": {"kind": "root"}, "state": "running", "source": "hook", "started_at": 1792000502000}},
+    {"remove_worker": "w2"}
+  ],
+  "expect": {
+    "w1": [
+      {"native_id": "old-1", "provider": "claude", "parent": "root", "state": "running", "source": "hook", "started_at": 1792000502000, "transcript": "unavailable"}
+    ],
+    "w2": []
+  }
+}
