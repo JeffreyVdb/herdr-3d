@@ -23,11 +23,12 @@ import {
   type ReviewSection,
 } from '../world/hireReview';
 import { labelsOf, modelLabel } from '../world/modelLabel';
+import type { HeldReview } from '../world/palette';
 import { backdropPolicy } from './dismiss';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
 import { capacityBlock, chips, gitView, modelField, worktreeControl, type HireHost, type HireSummary } from './hire';
-import { HireCoordinator, notPromptedText, type HireOutcome } from './hireCoordinator';
+import { backgroundOutcomeText, HireCoordinator, notPromptedText, type HireOutcome } from './hireCoordinator';
 import { hiredToast } from './hiredToast';
 import { failureText } from './messages';
 
@@ -47,6 +48,11 @@ import { failureText } from './messages';
  *
  * Late answers (the interpreter's, `hire.prepare`'s) are guarded by a counter: an `epoch` that every open and close bumps,
  * and the review's edit count (`ticket`), so a reply never changes a field the human edited after it was asked for.
+ *
+ * #33: a background hire hands no draft to the coordinator, so the review keeps what was reviewed when Hire was pressed
+ * (`Reviewed`). Refused or unanswered, it gives it back: the review opens again with it when nothing else is open (its
+ * status line says what happened), else it is held in memory (lost on a reload) behind the toast's "Review again" and a
+ * palette row, until it is opened. Giving it back never presses Hire; a new press is a new hire.
  */
 
 /** The sections' titles. */
@@ -75,6 +81,31 @@ export interface ReviewSummary {
   blocker: string | null;
   status: string;
   error: boolean;
+}
+
+/** #33: what was reviewed when a background Hire was pressed: what a refused or unanswered hire gives back. */
+interface Reviewed {
+  floor: string;
+  desk: number;
+  choice: ReviewChoice;
+  f: { label: string; cwd: string; worktree: boolean };
+  changed: { label: boolean; cwd: boolean; worktree: boolean };
+  prep: HirePrepare;
+  pending: HireInterpretation | null;
+  keep: Array<{ harness: string; model: string }>;
+  openSet: Set<ReviewSection>;
+  defaultCwd: string;
+  checked: string | null;
+}
+
+type GivenBack = Extract<HireOutcome, { kind: 'failed' | 'unknown' }>;
+
+/** #33: a review given back while something else was open: it waits for "Review again". */
+interface Held {
+  reviewed: Reviewed;
+  outcome: GivenBack;
+  /** What the outcome's message says (the status line once it is open again). */
+  text: string;
 }
 
 export class HireReviewDialog {
@@ -126,6 +157,9 @@ export class HireReviewDialog {
   /** What an empty Folder means: the folder the first prepare chose (the server's default for this floor). */
   private defaultCwd = '';
   private hadWhereIssue = false;
+  /** #33: reviews given back while something else was open, by id, in the order they were held. */
+  private readonly held = new Map<string, Held>();
+  private heldSerial = 0;
   private readonly hires: HireCoordinator;
   private static serial = 0;
   private readonly id = ++HireReviewDialog.serial;
@@ -810,11 +844,13 @@ export class HireReviewDialog {
     // Read once, here: a change in Settings while the hire is on its way does not change how it ends.
     const opening = this.opening;
     const background = this.host.hirePrefs?.hireInBackground === true;
+    // #33: the coordinator gets no draft: what was reviewed is kept here, for a background hire that is refused or unanswered.
+    const reviewed = this.reviewed();
     this.state = 'hiring';
     this.hiringText = null;
     this.setStatus('');
     const op = this.hires.start(
-      { key: `review:${this.id}:${epoch}`, floor, where: this.floorName(), desk, args, who, prompt: null, background },
+      { key: `review:${this.id}:${epoch}`, floor, where: this.floorName(), desk, args, who, prompt: null, background, kept: true },
       {
         hiring: (sent) => {
           if (background || !this.dialog.open || epoch !== this.epoch) return;
@@ -831,7 +867,8 @@ export class HireReviewDialog {
       if (this.wakes()) this.host.toast(`Waking floor ${this.floorName()}… ${who} is hired once it is up.`, 'info');
       this.close();
       const o = await op.done;
-      if ((o.kind === 'failed' || o.kind === 'not_sent') && opening === this.opening && !document.querySelector('dialog[open]')) {
+      if (o.kind === 'failed' || o.kind === 'unknown') return this.giveBack(reviewed, o, backgroundOutcomeText(op.request, o));
+      if (o.kind === 'not_sent' && opening === this.opening && !document.querySelector('dialog[open]')) {
         this.dialog.showModal();
         this.landed(o, { floor, desk, who, epoch: this.epoch });
         this.focusFirst();
@@ -865,6 +902,100 @@ export class HireReviewDialog {
     // Back to the review as it was: nothing was cleared, a new press is a new hire (never after an unknown outcome unasked).
     this.setStatus(o.kind === 'unknown' ? `${msg} Look at the desk before you hire again.` : msg, true);
     this.render();
+  }
+
+  // ---- a task given back (#33) -----------------------------------------------------------
+
+  private reviewed(): Reviewed {
+    return {
+      floor: this.floor,
+      desk: this.desk,
+      choice: { ...this.choice },
+      f: { ...this.f },
+      changed: { ...this.changed },
+      prep: this.prep as HirePrepare,
+      pending: this.pending,
+      keep: [...this.keep],
+      openSet: new Set(this.openSet),
+      defaultCwd: this.defaultCwd,
+      checked: this.checked,
+    };
+  }
+
+  /**
+   * A background hire was refused or got no answer (the coordinator said nothing: `kept`). The review opens again with
+   * what was reviewed when nothing else is open and its floor can take a hire; else it is held, and the toast says so
+   * with "Review again" (the palette lists it too). A review being edited is never closed, reset or overwritten.
+   */
+  private giveBack(r: Reviewed, o: GivenBack, text: string): void {
+    if (!document.querySelector('dialog[open]') && !this.unavailable(r.floor)) {
+      this.restore(r, o.kind === 'failed' ? failureText('worker.hire', o.code, o.message, { floor: this.host.store.floorName(r.floor), desk: r.desk + 1 }) : text);
+      return;
+    }
+    const id = String(++this.heldSerial);
+    this.held.set(id, { reviewed: r, outcome: o, text });
+    this.host.toast(`${text} The task is kept: review it again here or from the command palette.`, o.kind === 'failed' ? 'error' : 'warn', { label: 'Review again', run: () => void this.reopenHeld(id) });
+  }
+
+  /** The reviews held now (the palette's rows). */
+  heldReviews(): HeldReview[] {
+    return [...this.held].map(([id, h]) => ({ id, desk: h.reviewed.desk, where: this.host.store.floorName(h.reviewed.floor), task: h.reviewed.choice.task, outcome: h.outcome.kind }));
+  }
+
+  /**
+   * Opens held review `id` again ("Review again", its palette row): from then on an ordinary review. While another
+   * dialog is open, or its floor cannot take a hire now, the toast says so and it stays held (false).
+   */
+  reopenHeld(id: string): boolean {
+    const h = this.held.get(id);
+    if (!h) return false;
+    const r = h.reviewed;
+    const at = `Desk ${r.desk + 1} of ${this.host.store.floorName(r.floor)}`;
+    const why = this.dialog.open ? 'A hire review is open: finish or close it first.' : document.querySelector('dialog[open]') ? 'Close the open dialog first.' : this.unavailable(r.floor);
+    if (why) {
+      this.host.toast(`${why} The task for ${at} is still kept.`, 'info');
+      return false;
+    }
+    this.held.delete(id);
+    this.restore(r, h.outcome.kind === 'failed' ? failureText('worker.hire', h.outcome.code, h.outcome.message, { floor: this.host.store.floorName(r.floor), desk: r.desk + 1 }) : h.text);
+    return true;
+  }
+
+  /** Why the floor cannot take a hire now (gone, or asleep and not virtual), as `refresh` would close the review for it. */
+  private unavailable(floor: string): string | null {
+    const fv = this.host.store.floorView(floor);
+    if (!fv) return `${this.host.store.floorName(floor)} is not there right now.`;
+    if (fv.asleep && !fv.virtual) return `${this.host.store.floorName(floor)} is asleep; wake it to hire.`;
+    return null;
+  }
+
+  /** The review as it was reviewed, open again in `ready` with `status` (Hire never pressed: a new press is a new hire). */
+  private restore(r: Reviewed, status: string): void {
+    this.epoch++;
+    this.opening++;
+    this.floor = r.floor;
+    this.desk = r.desk;
+    this.prep = r.prep;
+    this.pending = r.pending;
+    this.choice = r.choice;
+    this.keep = [...r.keep];
+    this.openSet = new Set(r.openSet);
+    this.f = { ...r.f };
+    this.changed = { ...r.changed };
+    this.defaultCwd = r.defaultCwd;
+    this.checked = r.checked;
+    this.modelQuery = '';
+    this.refetching = false;
+    this.hadWhereIssue = false;
+    this.checking = false;
+    this.hiringText = null;
+    this.state = 'ready';
+    this.panelKeys.clear();
+    this.taskEl.value = this.choice.task;
+    this.setStatus(status, true);
+    this.render();
+    if (!this.dialog.open) this.dialog.showModal();
+    this.focusFirst();
   }
 
   // ---- test hook ------------------------------------------------------------------------

@@ -31,7 +31,7 @@ import { HireCoordinator, notPromptedText, type HireCoordinatorHost, type HireOu
 import type { HireModelPrefs } from './hireModelPrefs';
 import type { HirePrefs } from './hirePrefs';
 import type { TaskLevels } from './taskLevels';
-import type { ToastKind } from './hud';
+import type { ToastAction, ToastKind } from './hud';
 // M10 limits
 import { planLimits } from './limits';
 // M6 start
@@ -60,7 +60,8 @@ export interface DialogHost {
   readonly store: WorldStore;
   send<T extends CommandName>(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   unsupported(t: CommandName): boolean;
-  toast(msg: string, kind: ToastKind): void;
+  /** #33 `action`: the toast is a control (a held review's "Review again"). */
+  toast(msg: string, kind: ToastKind, action?: ToastAction): void;
   now(): number;
 }
 

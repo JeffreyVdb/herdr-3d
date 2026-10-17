@@ -19,7 +19,7 @@
 import { BINDINGS, PALETTE_ONLY, bindingCaps, isMac, scopesOf, type ActionId, type Binding, type PaletteOnlyId, type Scope } from '../input/shortcuts';
 import { isOnline, type BridgeList, type BridgeState } from '../net/bridges';
 import { inboxWhere } from './inbox';
-import { rankByName } from './rank';
+import { rankByKeys, rankByName } from './rank';
 import type { Counts, FloorView, WorldStore } from './store';
 
 // ---- commands -----------------------------------------------------------------------------------------
@@ -226,3 +226,40 @@ export function bridgeRow(list: BridgeList | null, item: BridgeItem): BridgeRow 
 
 /** Are there bridges besides the one in use? */
 export const otherBridges = (list: BridgeList | null): number => (list?.bridges ?? []).filter((b) => b.id !== list?.active).length;
+
+// ---- held reviews (#33) -------------------------------------------------------------------------------
+
+/** #33: the review of a dictated hire, held after its background hire was refused or got no answer (ui/hireReview.ts). */
+export interface HeldReview {
+  id: string;
+  desk: number;
+  /** The floor's name. */
+  where: string;
+  task: string;
+  outcome: 'failed' | 'unknown';
+}
+
+/** A held review's row: its name and the characters of it the query matched (none for a match on its task or words). */
+export interface HeldRow {
+  review: HeldReview;
+  name: string;
+  hits: number[];
+}
+
+/** What else finds a held review's row besides its name and task. */
+const HELD_WORDS = ['hire again', 'failed hire', 'kept task'];
+
+/** A held review's row name: the toast's action, and where. */
+export const heldName = (r: Pick<HeldReview, 'desk' | 'where'>): string => `Review again: Desk ${r.desk + 1} of ${r.where}`;
+
+/**
+ * The held reviews whose name, task or words hold `query`, in the order they were held (the query filters and never
+ * reorders, as for floors). They head the commands: they are there only while a task waits to be hired again.
+ */
+export function heldList(held: readonly HeldReview[], query: string): HeldRow[] {
+  const rows = held.map((review) => ({ review, name: heldName(review), hits: [] as number[] }));
+  const q = query.trim();
+  if (q === '') return rows;
+  const hit = new Map(rankByKeys(rows, q, (r) => [r.name, r.review.task, ...HELD_WORDS]).map((r) => [r.item.review.id, r.key === 0 ? r.hits : []]));
+  return rows.filter((r) => hit.has(r.review.id)).map((r) => ({ ...r, hits: hit.get(r.review.id) as number[] }));
+}

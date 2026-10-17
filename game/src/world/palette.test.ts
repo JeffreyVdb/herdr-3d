@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BINDINGS, type Scope } from '../input/shortcuts';
 import type { Building, Floor, Snapshot, Worker } from '../net/protocol';
-import { COMMAND_ORDER, filterCommands, floorList, floorRow, floorsNeedingYou, needsFloorPick, paletteCommands, parseQuery } from './palette';
+import { COMMAND_ORDER, filterCommands, floorList, floorRow, floorsNeedingYou, heldList, needsFloorPick, paletteCommands, parseQuery, type HeldReview } from './palette';
 import { WorldStore } from './store';
 
 const floor = (session: string, building: string | null, over: Partial<Floor> = {}): Floor => ({ session, state: 'running', building, index: 0, ...over });
@@ -188,6 +188,34 @@ describe('commands: matching', () => {
 
   it('ignores case and matches nothing for nonsense', () => {
     expect(find('HIRE')[0]).toBe('hire');
+    expect(find('zzzz')).toEqual([]);
+  });
+});
+
+// #33: dictated hires' reviews held after a refused or unanswered background hire.
+describe('held reviews', () => {
+  const held: HeldReview[] = [
+    { id: '1', desk: 14, where: 'pastry', task: 'proof the first batch.', outcome: 'failed' },
+    { id: '2', desk: 15, where: 'pastry', task: 'sweep the bakery floor.', outcome: 'unknown' },
+  ];
+  const find = (q: string) => heldList(held, q).map((r) => [r.review.id, r.name, r.hits.length > 0]);
+
+  it('one row each, in the order they were held, named by desk and floor', () => {
+    expect(find('')).toEqual([
+      ['1', 'Review again: Desk 15 of pastry', false],
+      ['2', 'Review again: Desk 16 of pastry', false],
+    ]);
+    expect(heldList([], '')).toEqual([]);
+  });
+
+  it('a query filters, never reorders: by the name (marked), the task or the words that find it (nothing marked)', () => {
+    expect(find('review')).toEqual([
+      ['1', 'Review again: Desk 15 of pastry', true],
+      ['2', 'Review again: Desk 16 of pastry', true],
+    ]);
+    expect(find('desk 16')).toEqual([['2', 'Review again: Desk 16 of pastry', true]]);
+    expect(find('sweep')).toEqual([['2', 'Review again: Desk 16 of pastry', false]]);
+    expect(find('failed hire').map((r) => r[0])).toEqual(['1', '2']);
     expect(find('zzzz')).toEqual([]);
   });
 });

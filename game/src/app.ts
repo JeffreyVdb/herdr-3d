@@ -22,7 +22,7 @@ import { browserZone, type Daylight } from './world/daylight';
 import { TimePrefs } from './ui/timePrefs';
 import { RadioLink } from './radio/link';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
-import { Hud, type PlanLabel, type ToastKind } from './ui/hud';
+import { Hud, type PlanLabel, type ToastAction, type ToastKind } from './ui/hud';
 import { h, icon } from './ui/dom';
 import { HireDialog, type HirePrefill } from './ui/hire';
 import { HireReviewDialog } from './ui/hireReview';
@@ -424,6 +424,7 @@ export class App {
       run: (c, floor) => void this.runPaletteCommand(c, floor),
       goTo: (s) => void this.goToFloor(s),
       bridges: { book: this.bridges, switchTo: (b) => void this.switchBridge(b), openSettings: () => this.openSettingsAt('bridges') },
+      held: { list: () => this.hireReview.heldReviews(), review: (id) => void this.reviewHeld(id) },
     });
     this.dictation = new DictationBar(o.host, {
       submit: (text, live) => this.interpretDictation(text, live),
@@ -665,7 +666,7 @@ export class App {
       store: this.store,
       send: <T extends CommandName>(t: T, args: CommandArgs[T]) => this.send(t, args),
       unsupported: (t: CommandName) => this.unsupported.has(t),
-      toast: (m: string, kind: ToastKind) => this.hud.toast(m, kind === 'error' ? 6500 : kind === 'warn' ? 9000 : 3600, kind),
+      toast: (m: string, kind: ToastKind, action?: ToastAction) => this.hud.toast(m, kind === 'error' ? 6500 : kind === 'warn' ? 9000 : 3600, kind, false, action),
       now: () => Date.now(),
     };
     const upload = (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal);
@@ -3293,6 +3294,15 @@ export class App {
     const b = binding(command.id);
     const chord = b.keys[0];
     this.actions[command.id as DispatchedId]({ binding: b, chord: chord ?? {}, code: chord?.code ?? '' });
+  }
+
+  /**
+   * #33: a held review picked from the palette. A review open (being edited) is never closed for it: the review says so
+   * and keeps it held. Else the modals go, as for a palette command, and it opens over wherever you are.
+   */
+  private async reviewHeld(id: string): Promise<void> {
+    if (!this.hireReview.isOpen && (this.transitioning || !(await this.dismissOverlays()) || this.transitioning)) return;
+    this.hireReview.reopenHeld(id);
   }
 
   /** #147: a floor picked from the palette's `@` list: the modals go, you get up from a seat, the elevator takes you there. */

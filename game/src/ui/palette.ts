@@ -1,5 +1,6 @@
 import type { BridgeBook, BridgeEntry } from '../net/bridges';
-import { bridgeList, bridgeRow, filterCommands, floorList, floorRow, floorsNeedingYou, needsFloorPick, otherBridges, parseQuery, type BridgeItem, type BridgeRow, type CommandMatch, type FloorItem, type FloorRow, type FloorSource, type PaletteCommand } from '../world/palette';
+import { taskPreview } from '../world/hireReview';
+import { bridgeList, bridgeRow, filterCommands, floorList, floorRow, floorsNeedingYou, heldList, needsFloorPick, otherBridges, parseQuery, type BridgeItem, type BridgeRow, type CommandMatch, type FloorItem, type FloorRow, type FloorSource, type HeldReview, type HeldRow, type PaletteCommand } from '../world/palette';
 import { bridgeDot, bridgeStateText } from './bridgeState';
 import { backdropPolicy } from './dismiss';
 import { h } from './dom';
@@ -25,6 +26,9 @@ import './palette.css';
  * by name. Their order is fixed like the floors' and their dots are read again whenever the list is (every two seconds
  * while it shows; the helper answers from what it last saw, so opening it never waits on ssh). Enter switches. With no
  * other bridge, one row says so and opens Settings → Bridges.
+ *
+ * #33: a dictated hire's review held after its background hire was refused or got no answer heads the commands, one row
+ * each ("Review again: Desk 15 of pastry", the outcome, the task's first words), only while it is held; Enter opens it.
  */
 
 export interface PaletteHost {
@@ -41,6 +45,14 @@ export interface PaletteHost {
   goTo(floor: string): void;
   /** #57: the helper's bridges (absent: no Switch bridge). */
   bridges?: PaletteBridges;
+  /** #33: the held reviews of dictated hires (absent: none). */
+  held?: PaletteHeld;
+}
+
+export interface PaletteHeld {
+  list(): HeldReview[];
+  /** The palette is closed: open held review `id` again. */
+  review(id: string): void;
 }
 
 export interface PaletteBridges {
@@ -111,6 +123,9 @@ export class Palette {
   private commands: PaletteCommand[] = [];
   private matches: CommandMatch[] = [];
   private floors: FloorItem[] = [];
+  /** #33: the held reviews when it opened, and the ones the query matches. */
+  private held: HeldReview[] = [];
+  private heldRows: HeldRow[] = [];
   private pick: PaletteCommand | null = null;
   /** #57: listing bridges (after Switch bridge), their fixed order, and the poll that keeps their dots live. */
   private bridgeMode = false;
@@ -165,6 +180,7 @@ export class Palette {
     if (this.dialog.open) return;
     this.opener = from;
     this.commands = this.host.commands();
+    this.held = this.host.held?.list() ?? [];
     this.pick = null;
     this.bridgeMode = false;
     this.input.value = '';
@@ -219,6 +235,7 @@ export class Palette {
     if (q.mode === 'commands') {
       this.pick = null;
       this.matches = filterCommands(this.commands, q.query);
+      this.heldRows = heldList(this.held, q.query);
     } else if (q.mode === 'bridges') this.bridgeItems = bridgeList(this.host.bridges?.book.list ?? null, q.query);
     else this.floors = floorList(this.host.store, q.query);
     this.draw(true);
@@ -238,6 +255,7 @@ export class Palette {
     let empty = '';
     let note = '';
     if (q.mode === 'commands') {
+      for (const r of this.heldRows) rows.push(this.heldRow(r));
       for (const m of this.matches) rows.push(this.commandRow(m));
       if (rows.length === 0) empty = `No command matches “${q.query}”.`;
     } else if (q.mode === 'bridges') {
@@ -282,6 +300,28 @@ export class Palette {
     const el = h('li', { class: 'pal-opt', role: 'option', 'aria-selected': 'false', 'data-kind': 'command' }, marked('pal-name', c.name, m.hits), asks, caps);
     el.dataset.sig = `${asks ? 1 : 0}`;
     return { key: `c:${c.id}`, el, enabled: true, act: () => this.runCommand(c) };
+  }
+
+  /** #33: a held review: where, how its hire ended, its task's first words; Enter opens it again. */
+  private heldRow(r: HeldRow): Row {
+    const failed = r.review.outcome === 'failed';
+    const el = h(
+      'li',
+      { class: 'pal-opt pal-opt--held', role: 'option', 'aria-selected': 'false', 'data-kind': 'held', 'data-held': r.review.id },
+      marked('pal-name', r.name, r.hits),
+      h('span', { class: `pal-held-why${failed ? ' pal-held-why--failed' : ''}` }, failed ? 'Not hired' : 'No answer'),
+      h('span', { class: 'pal-held-task' }, `“${taskPreview(r.review.task, 80)}”`),
+    );
+    el.dataset.sig = r.review.id;
+    return {
+      key: `h:${r.review.id}`,
+      el,
+      enabled: true,
+      act: () => {
+        this.close(false);
+        this.host.held?.review(r.review.id);
+      },
+    };
   }
 
   private floorRow(f: FloorRow, online: boolean): Row {

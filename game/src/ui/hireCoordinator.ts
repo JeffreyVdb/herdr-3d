@@ -19,6 +19,8 @@ import { failureText } from './messages';
  * In the foreground the caller waits and says what happened (the dialog's status line, its toast, the go-to). In the
  * background the caller has already moved on, so the coordinator says it itself, once: "Agent spawned successfully." and
  * one beep, or a direct error. Never through the inbox, its pulses, desktop notifications or pings; never a go-to.
+ * #33: except a refusal or an unknown outcome of a hire whose caller keeps its task (`kept`: a dictated review): the
+ * caller says it, where the task is (the review open again, or held behind the toast's action).
  *
  * A dropped connection or a timeout does not say whether the worker was hired (the bridge may have done it): that is an
  * unknown outcome, never a second `worker.hire`.
@@ -72,6 +74,8 @@ export interface HireRequest {
   background: boolean;
   /** #95: bytes the bridge adds to the prompt (`args.herdr_instructions`: a blank line and the lines); they count against the limit. */
   added?: number;
+  /** #33: the caller keeps the task of a background hire that is refused or gets no answer, and says so itself (not the coordinator). */
+  kept?: boolean;
 }
 
 type NotResolved = Exclude<ResolveResult, { ok: true }>;
@@ -105,6 +109,20 @@ export interface HireObserver {
 export function uploadFailedText(failed: FailedImage[], where = ''): string {
   const names = failed.map((f) => `image ${f.numbers.join(' and ') || '?'} (${f.name})`).join(', ');
   return `Nothing was hired${where}: ${names} did not upload (${failed[0]?.message ?? 'unknown error'}). Retry ${failed.length === 1 ? 'it' : 'them'} on the picture, or remove ${failed.length === 1 ? 'it' : 'them'}, then hire again. Your prompt is kept.`;
+}
+
+/** A background hire that was refused or got no answer, as its message says it (it names its desk: hires end in any order). */
+export function backgroundOutcomeText(req: Pick<HireRequest, 'desk' | 'floor' | 'where'>, o: Extract<HireOutcome, { kind: 'failed' | 'unknown' }>): string {
+  const desk = `Desk ${req.desk + 1}`;
+  const floor = req.where ?? req.floor;
+  if (o.kind === 'unknown') return unknownText(desk, floor, o.code);
+  const msg = failureText('worker.hire', o.code, o.message, { floor, desk: req.desk + 1 });
+  return msg.includes(desk) ? msg : `${desk} of ${floor} · ${msg}`;
+}
+
+/** No answer about a hire (`desk`: "Desk 15"): it may have happened, so the desk is looked at before a new Hire. */
+export function unknownText(desk: string, floor: string, code: 'timeout' | 'disconnected'): string {
+  return `No answer about the hire at ${desk} of ${floor}: ${code === 'timeout' ? 'herdr-world did not answer in time' : 'the connection dropped'}. It may still have gone through: look at the desk before you hire again.`;
 }
 
 /** The first task that never reached a worker that is there (`prompted: false`). */
@@ -218,14 +236,11 @@ export class HireCoordinator {
         this.host.toast(o.message ? which(o.message) : `Nothing was hired at ${desk}. Your prompt is kept in its hire dialog.`, 'error');
         return;
       case 'failed':
-        this.host.toast(which(failureText('worker.hire', o.code, o.message, { floor, desk: req.desk + 1 })), 'error');
+        // #33: a kept task's caller says it (where the task is now).
+        if (!req.kept) this.host.toast(backgroundOutcomeText(req, o), 'error');
         return;
       case 'unknown':
-        // (#214: a dictated review hands over no draft: no hire dialog keeps its task.)
-        this.host.toast(
-          `No answer about the hire at ${desk} of ${floor}: ${o.code === 'timeout' ? 'herdr-world did not answer in time' : 'the connection dropped'}. It may still have gone through: look at the desk before you hire again.${req.prompt ? ' The task stays in its hire dialog.' : ''}`,
-          'warn',
-        );
+        if (!req.kept) this.host.toast(`${backgroundOutcomeText(req, o)}${req.prompt ? ' The task stays in its hire dialog.' : ''}`, 'warn');
         return;
     }
   }

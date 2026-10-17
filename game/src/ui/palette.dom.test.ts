@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Scope } from '../input/shortcuts';
 import type { Building, Floor, Snapshot, Worker } from '../net/protocol';
-import { paletteCommands, type PaletteCommand } from '../world/palette';
+import { paletteCommands, type HeldReview, type PaletteCommand } from '../world/palette';
 import { WorldStore } from '../world/store';
 import { Palette, type PaletteHost } from './palette';
 
@@ -22,7 +22,7 @@ const floor = (session: string, building: string | null, over: Partial<Floor> = 
 const worker = (id: string, session: string, status: string): Worker => ({ id, session, workspace_id: `ws-${id}`, label: id, status });
 const B = (id: string, name: string, floors: string[], sort = 0): Building => ({ id, name, sort, floors });
 
-function setup(opts: { here?: string | null; online?: boolean; scopes?: Scope[] } = {}) {
+function setup(opts: { here?: string | null; online?: boolean; scopes?: Scope[]; held?: HeldReview[] } = {}) {
   const store = new WorldStore(0);
   const snap: Snapshot = {
     t: 'world.snapshot',
@@ -38,7 +38,16 @@ function setup(opts: { here?: string | null; online?: boolean; scopes?: Scope[] 
   const state = { here: opts.here ?? null, online: opts.online ?? true };
   const run = vi.fn<(c: PaletteCommand, f: string | null) => void>();
   const goTo = vi.fn<(s: string) => void>();
-  const host: PaletteHost = { commands: () => paletteCommands(new Set<Scope>(opts.scopes ?? ['any', 'city']), false), store, here: () => state.here, online: () => state.online, run, goTo };
+  const review = vi.fn<(id: string) => void>();
+  const host: PaletteHost = {
+    commands: () => paletteCommands(new Set<Scope>(opts.scopes ?? ['any', 'city']), false),
+    store,
+    here: () => state.here,
+    online: () => state.online,
+    run,
+    goTo,
+    ...(opts.held ? { held: { list: () => opts.held ?? [], review } } : {}),
+  };
   const field = document.createElement('input');
   document.body.append(field);
   const palette = new Palette(document.body, host);
@@ -56,7 +65,7 @@ function setup(opts: { here?: string | null; online?: boolean; scopes?: Scope[] 
     input.dispatchEvent(new Event('input', { bubbles: true }));
   };
   const active = () => rows().find((r) => r.getAttribute('aria-selected') === 'true');
-  return { palette, store, dlg, input, rows, names, press, type, active, run, goTo, state, field };
+  return { palette, store, dlg, input, rows, names, press, type, active, run, goTo, review, state, field };
 }
 
 describe('the command palette (#147)', () => {
@@ -311,5 +320,42 @@ describe('the command palette (#147)', () => {
     (t.dlg.querySelector('.pal-hint') as HTMLButtonElement).click();
     expect(t.input.value).toBe('@');
     expect(t.names()[0]).toBe('Zeta › z-low');
+  });
+});
+
+// #33: a dictated hire's review held after its background hire was refused or got no answer.
+describe('held reviews in the palette', () => {
+  const held: HeldReview[] = [
+    { id: '1', desk: 14, where: 'pastry', task: 'proof the first batch.', outcome: 'failed' },
+    { id: '2', desk: 15, where: 'pastry', task: 'sweep the bakery floor.', outcome: 'unknown' },
+  ];
+
+  it('head the commands, one row each: where, how the hire ended, the task; Enter opens it and closes the palette', () => {
+    const t = setup({ held });
+    t.palette.open(null);
+    expect(t.names().slice(0, 3)).toEqual(['Review again: Desk 15 of pastry', 'Review again: Desk 16 of pastry', 'Hire']);
+    const [a, b] = t.rows();
+    expect(a?.dataset).toMatchObject({ kind: 'held', held: '1' });
+    expect(a?.querySelector('.pal-held-why')?.textContent).toBe('Not hired');
+    expect(b?.querySelector('.pal-held-why')?.textContent).toBe('No answer');
+    expect(b?.querySelector('.pal-held-task')?.textContent).toBe('“sweep the bakery floor.”');
+    expect(t.active()).toBe(a);
+    t.press('ArrowDown');
+    t.press('Enter');
+    expect(t.review).toHaveBeenCalledWith('2');
+    expect(t.run).not.toHaveBeenCalled();
+    expect(t.palette.isOpen).toBe(false);
+  });
+
+  it('a query filters them with the commands; none held, none listed', () => {
+    const t = setup({ held });
+    t.palette.open(null);
+    t.type('sweep');
+    expect(t.names()).toEqual(['Review again: Desk 16 of pastry']);
+    t.type('settings');
+    expect(t.names()).toEqual(['Settings']);
+    const none = setup({ held: [] });
+    none.palette.open(null);
+    expect(none.rows().some((r) => r.dataset.kind === 'held')).toBe(false);
   });
 });
