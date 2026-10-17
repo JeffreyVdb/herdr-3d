@@ -321,6 +321,18 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   `scheduled` or `waiting` schedule holds the linked worktree its `cwd` is in (`internal/server/schedulehold.go`,
   derived from the schedules on each check, never cached): send-home prepare, fire and wrap-up refuse to delete it, and
   a wrap-up's CLEAN keeps it instead.
+- **Hire presets** (#93; details in `protocol.md` "Hire presets", `decisions.md` "#93"): a named first prompt with its
+  harness, model and effort, on one floor (a floor id) or global, stored in SQLite `hire_preset`
+  (`internal/store/hirepreset.go`; a virtual floor's delete removes its own in the same transaction) and mirrored by the
+  hub (`internal/server/hirepreset.go`: `hire_preset.*` persist first, then `hire_preset.upsert` / `.removed`; each field
+  checked as `worker.hire` checks it, the tuple by `validHireIn`). Nothing in the bridge hires from a preset: the game's
+  "Hire preset" tab (`game/src/ui/hirePresets.ts`, the third desk tab beside Hire worker and Hire orchestrator) opens the
+  ordinary hire dialog with the preset's prompt and **exact** choice (`HirePrefill.preset`): the dialog then never
+  resolves the choice (`resolveForm` and `prepare` leave it; `offeredOptions` keeps a model Settings hides; `pickExact`
+  for the player's own picks), and `world/hirePresets.ts` `exactProblem` names what the whole catalog lacks, which blocks
+  Hire until the player repairs it. The hire goes through `HireCoordinator` and `worker.hire` like any other. Save as
+  preset… opens the editor over the form; the client's `HirePresetBook` follows the events (`known` false: an older
+  bridge, the tab says hire presets are unavailable).
 - **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
   bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
   the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket

@@ -464,6 +464,8 @@ export interface World {
   handoffs?: HandoffCabinet;
   /** #62 scheduled agents: the upcoming, the failed and skipped not dismissed, each floor's last 50 done (absent from a bridge before #62: none). */
   schedules?: Schedule[];
+  /** #93 hire presets: every floor's and the global ones, by name ignoring case (absent from a bridge before #93: unavailable; `[]` when none). */
+  hire_presets?: HirePreset[];
 }
 
 export interface Hello {
@@ -591,6 +593,9 @@ export type WorldEvent =
   // #62 scheduled agents
   | ScheduleUpsert
   | ScheduleRemoved
+  // #93 hire presets
+  | HirePresetUpsert
+  | HirePresetRemoved
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -990,6 +995,11 @@ export interface CommandArgs {
   'schedule.retry': { id: string };
   /** While `failed` or `skipped`: out of view (`schedule.removed`). */
   'schedule.dismiss': { id: string };
+  // #93 hire presets (docs/protocol.md "Hire presets"); create and update ack the `HirePreset` as stored.
+  'hire_preset.create': HirePresetSpec;
+  /** The whole spec replaces the preset's, its scope too. */
+  'hire_preset.update': { id: string } & HirePresetSpec;
+  'hire_preset.delete': { id: string };
 }
 
 // M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
@@ -1264,6 +1274,8 @@ const EVENT_TYPES = new Set([
   'kaneo.update', // #184 the Kaneo connection
   'schedule.upsert', // #62 scheduled agents
   'schedule.removed',
+  'hire_preset.upsert', // #93 hire presets
+  'hire_preset.removed',
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -1376,6 +1388,11 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     case 'schedule.upsert':
       return isObj(o.schedule) && isStr(o.schedule.id) && isStr(o.schedule.floor) && isStr(o.schedule.state) && isInt(o.schedule.due_at);
     case 'schedule.removed':
+      return isStr(o.id);
+    // #93: a hire preset created or changed; one deleted (or its virtual floor).
+    case 'hire_preset.upsert':
+      return isObj(o.hire_preset) && isStr(o.hire_preset.id) && isStr(o.hire_preset.name);
+    case 'hire_preset.removed':
       return isStr(o.id);
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
@@ -3165,4 +3182,44 @@ export interface ScheduleRemoved {
   seq: number;
   id: string;
   floor_id?: string;
+}
+
+// #93 hire presets (docs/protocol.md "Hire presets"): a named first prompt with the harness, model and effort to hire it
+// with, on one floor or global. Using one is an ordinary `worker.hire`.
+
+/** A stored hire preset. `floor` (a floor id) absent: global. */
+export interface HirePreset {
+  id: string;
+  name: string;
+  floor?: string;
+  prompt: string;
+  harness: string;
+  model: string;
+  effort: string;
+  /** Unix ms. */
+  created_at: number;
+  /** Unix ms; an editor opened before a newer one is stale. */
+  updated_at: number;
+}
+
+/** What a preset holds: `hire_preset.create`'s args. `floor` empty or absent: global. */
+export interface HirePresetSpec {
+  name: string;
+  floor?: string;
+  prompt: string;
+  harness: string;
+  model: string;
+  effort: string;
+}
+
+export interface HirePresetUpsert {
+  t: 'hire_preset.upsert';
+  seq: number;
+  hire_preset: HirePreset;
+}
+
+export interface HirePresetRemoved {
+  t: 'hire_preset.removed';
+  seq: number;
+  id: string;
 }

@@ -548,14 +548,16 @@ export class StartRunDialog {
     this.tabsSlot.replaceChildren(
       deskTabs(
         'orch',
-        () => {
+        (t) => {
           if (this.state === 'starting') return;
-          // The Worker tab takes over, focus and all; what opened this dialog is the hire dialog's to restore.
+          // The Worker (or #93 Preset) tab takes over, focus and all; what opened this dialog is that dialog's to restore.
           this.returnTo = null;
           this.close();
-          this.host.hireAt(this.floor, this.f.desk);
+          if (t === 'preset') this.host.presetsAt?.(this.floor, this.f.desk);
+          else this.host.hireAt(this.floor, this.f.desk);
         },
         null,
+        !!this.host.presetsAt,
       ),
     );
 

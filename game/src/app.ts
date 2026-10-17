@@ -71,6 +71,7 @@ import { promptBlocker } from './world/prompt';
 // M6 start: starting a run from an empty desk or the top bar; team presets.
 import { m6StartButtons, type M6StartButtons } from './ui/startButtons';
 import { PresetsPanel } from './ui/presets';
+import { HirePresetsDialog } from './ui/hirePresets';
 import { AddFloorDialog, addFloorButton } from './ui/addFloor';
 import { addedFloorText } from './world/addFloor';
 import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/startRun';
@@ -308,6 +309,8 @@ export class App {
   /** M6 start: the start-run dialog, the team presets panel and their top bar buttons. */
   readonly startRun: StartRunDialog;
   readonly presetsPanel: PresetsPanel;
+  /** #93: the "Hire preset" tab of an empty desk, and the hire presets' editor. */
+  readonly hirePresets: HirePresetsDialog;
   /** #58: the Add floor dialog (the top bar in the city, the Buildings panel's lot). */
   readonly addFloor: AddFloorDialog;
   private readonly m6Buttons: M6StartButtons;
@@ -694,12 +697,36 @@ export class App {
       workerView: (id) => this.store.workerView(id),
       holdTask: (id, text, from) => this.prompt.holdTask(id, text, from instanceof PromptDraft ? from : undefined),
     });
+    // #93: the desk dialogs' third tab; "Save as preset…" opens its editor over the hire form.
+    const presetsAt = (s: string, d: number) => {
+      this.hirePresets.open(s, d);
+      this.hirePresets.focusTab();
+    };
     this.hire = new HireDialog(o.host, {
       ...hireHost,
       hirePrefs: this.hirePrefs,
       hires: this.hires,
       goTo: (id) => this.goToNewHire(id),
       orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ floor: s, desk: d }, true) },
+      presetsAt,
+      savePreset: (seed, from) => this.hirePresets.create(seed, from),
+    });
+    this.hirePresets = new HirePresetsDialog(o.host, {
+      ...dialogHost,
+      modelPrefs: this.hireModelPrefs,
+      hireAt: (s, d) => {
+        this.hire.open(s, d);
+        this.hire.focusTab();
+      },
+      orchestrate: { off: () => runUnsupported(hireHost), open: (s, d) => this.startRun.open({ floor: s, desk: d }, true) },
+      use: (s, d, p, replace) =>
+        this.hire.open(s, d, {
+          prompt: p.prompt,
+          choice: { harness: p.harness, model: p.model, effort: p.effort },
+          preset: { id: p.id, name: p.name, scope: p.floor ? 'floor' : 'global' },
+          ...(replace ? { replaceDraft: true as const } : {}),
+        }),
+      unsent: (s, d) => this.hire.unsent(s, d),
     });
     this.hireReview = new HireReviewDialog(o.host, { ...hireHost, hirePrefs: this.hirePrefs, hires: this.hires, goTo: (id) => this.goToNewHire(id) });
     // M6 start
@@ -721,6 +748,7 @@ export class App {
         this.hire.open(s, d);
         this.hire.focusTab();
       },
+      presetsAt,
       openPresets: (from) => this.presetsPanel.open(from),
       started: (id, item) => {
         this.followOrch(id);
@@ -932,6 +960,7 @@ export class App {
     this.playFilings();
     this.startRun.refresh();
     this.presetsPanel.refresh();
+    this.hirePresets.refresh(); // #93
     this.addFloor.refresh(); // #58
     this.limitsWidget.update();
     this.inbox.set(this.inboxEntries());
@@ -1623,7 +1652,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */

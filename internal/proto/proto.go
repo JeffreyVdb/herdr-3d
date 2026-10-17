@@ -230,6 +230,9 @@ type World struct {
 	// not dismissed, and each floor's last ScheduleKeepDone done ones, by
 	// due time. Always present ([] when none).
 	Schedules []Schedule `json:"schedules"`
+	// #93 hire presets: every floor's and the global ones, by name ignoring
+	// case. Always present ([] when none): a bridge before #93 leaves it out.
+	HirePresets []HirePreset `json:"hire_presets"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -637,6 +640,9 @@ type Event struct {
 	// #62 scheduled agents: Schedule is set on schedule.upsert; ID and
 	// FloorID name the schedule on schedule.removed.
 	Schedule *Schedule `json:"schedule,omitempty"`
+	// #93 hire presets: HirePreset is set on hire_preset.upsert; ID names
+	// the preset on hire_preset.removed.
+	HirePreset *HirePreset `json:"hire_preset,omitempty"`
 }
 
 // Command is a client request. Args depend on T (see the *Args types).

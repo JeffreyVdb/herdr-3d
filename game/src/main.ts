@@ -29,6 +29,7 @@ import type { InboxChip } from './ui/inbox';
 import type { PromptSummary } from './ui/prompt';
 // M6 start
 import type { PresetsSummary } from './ui/presets';
+import type { HirePresetsSummary } from './ui/hirePresets';
 import type { AddFloorSummary } from './ui/addFloor';
 import type { StartRunOptions, StartRunSummary } from './ui/startRun';
 // M7: boards
@@ -236,7 +237,7 @@ export interface H3DDebug {
   /** M4: opens the send-home dialog for a worker. */
   openSendHome(workerId: string): void;
   /** M4: what the open hire / send-home dialog shows, null when neither is open; M6: the presets panel (on top), else the start-run dialog first. */
-  dialog(): HireSummary | ReviewSummary | SendHomeSummary | StartRunSummary | PresetsSummary | AddFloorSummary | OpenPrSummary | DictationSummary | null;
+  dialog(): HireSummary | ReviewSummary | SendHomeSummary | StartRunSummary | PresetsSummary | HirePresetsSummary | AddFloorSummary | OpenPrSummary | DictationSummary | null;
   /** M6: the start-run dialog for a floor (default: yours) and desk (default: its first free one), as the top bar's Run and M7 open it. */
   openStartRun(o?: Partial<StartRunOptions>): void;
   /** M6: the team presets panel. */
@@ -558,7 +559,7 @@ const h3d: H3DDebug = {
     return r.ok ? { ok: true } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   openSendHome: (id) => app?.openSendHome(id),
-  dialog: () => app?.addFloor.summary() ?? app?.presetsPanel.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.hireReview.summary() ?? app?.sendHome.summary() ?? app?.dictation.summary() ?? null,
+  dialog: () => app?.addFloor.summary() ?? app?.presetsPanel.summary() ?? app?.hirePresets.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.hireReview.summary() ?? app?.sendHome.summary() ?? app?.dictation.summary() ?? null,
   openStartRun: (o) => app?.openStartRun(o),
   openPresets: () => app?.openPresets(),
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],

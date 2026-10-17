@@ -205,6 +205,15 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simschedules%3D8&floor=herdr-3d`, Menu → Schedules
   (`window.__h3d.simSchedule('sim.schedule_fire', {id, late_ms: 10800000})` plays a late fire; close the dialog first to
   see its toast).
+- #93 hire presets: `go test ./internal/store ./internal/server -run HirePreset` (persistence across a reopen and a
+  bridge restart, scoped names compared with full Unicode case folding, never finer than the game's `toLowerCase`, a deleted virtual floor's own presets, every field checked against the fallback
+  catalog); `game/src/world/hirePresets.test.ts`, `ui/hirePresets.dom.test.ts` (the list, Use and its replace question,
+  the editor's scope, stale and repair states, a bridge-only `name_taken` shown on the name field, a late delete reply leaving a newer view alone, focus kept on live re-render) and `ui/hire.preset.dom.test.ts` (the hire form's exact choice: a hidden
+  model kept, a removed one or a missing effort shown and blocking Hire, per-launch edits); `game/e2e/h93-hire-presets.spec.ts`
+  drives the fixture bridge's presets (`tools/fixture-hirepreset.ts`: `simhirepresets=<key>` shares them between a key's
+  connections and across a reload, `simfail=no_hire_presets` plays an older bridge; each test takes its own key). For a
+  UX look: `make dev`, then `?ws=%2Ffixture%2Fdemo-m3%3Fplay%3Dnone%26sim%3D1%26simhirepresets%3Dlook&floor=pastry`, H
+  (or the + of a free desk) → the Hire preset tab.
 - #224: `go test ./internal/server -run AgentHandoff` asks the agent against fake transcripts the usage tracker reads
   (Claude's slash-command tags, Codex's `<skill>` message), a fake catalog and the fake herdr's typed and submitted
   prompts (exactly one per request), files and fails it every way; `go test ./internal/usage -run Cache` has the cache
@@ -1002,6 +1011,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   (`verdict` / `blockers` / `input_required` / `summary`) and closes it; `simcrew=<ms>` plays that round by itself;
   #64 schedules: `fixture-schedule.ts`, the scheduled agents, whose rules are at its top (the spec's checks,
   the state rules and their errors, the fire through the simulator's own hire, `simschedules=<n>`, `sim.schedule_fire`);
+  #93: `fixture-hirepreset.ts`, the hire presets, whose rules are at its top (the bridge's checks and codes, scoped
+  names, `simhirepresets=<key>` sharing a key's presets, a deleted virtual floor's own presets going with it);
   #213: `fixture-interpret.ts`, `hire.interpret` for the dictation bar, whose rules are at its top: no resolution rule of
   `internal/hireintent`, one JSON-mode call through the AI integration (`fixture-ai.ts`) to the LLM the game set up, its
   answer `{intent, reason?, hire?}` checked (shape, the task's span) and passed on with the bridge's `sources`, errors as

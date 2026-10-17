@@ -108,6 +108,10 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'schedule.run_now': 'start scheduled agents now',
   'schedule.retry': 'retry scheduled agents',
   'schedule.dismiss': 'dismiss scheduled agents',
+  // #93 hire presets
+  'hire_preset.create': 'keep hire presets',
+  'hire_preset.update': 'keep hire presets',
+  'hire_preset.delete': 'keep hire presets',
   // #110
   'packup.get': 'keep pack up on request',
   'packup.set': 'keep pack up on request',
@@ -202,6 +206,13 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
       case 'unknown_session':
         return t === 'floor.create' ? said || 'That session is gone, or this bridge does not watch it.' : `${which} is gone: its herdr session is away.`;
     }
+  }
+  // #93: a hire preset's name is taken in its scope, or the preset went meanwhile; the bridge words the rest.
+  if (t === 'hire_preset.create' || t === 'hire_preset.update' || t === 'hire_preset.delete') {
+    if (code === 'name_taken') return `${sentence(why.replace(/^name already used:\s*/i, '')) || 'Another preset of that scope has that name.'} Pick another name.`;
+    if (code === 'not_found') return 'That preset was deleted meanwhile (by another client). Nothing was changed.';
+    if (code === 'unknown_session') return `herdr-world does not know ${ctx.floor ?? 'that floor'} any more: save the preset as Global, or on a floor that exists.`;
+    if (code === 'bad_request') return `herdr-world refused the preset: ${why.replace(/^invalid argument:\s*/i, '')}`;
   }
   // #184: the Kaneo connection's own failures, and a floor's Kaneo link checked at save.
   if ((t.startsWith('kaneo.') || t === 'floor.settings.set') && KANEO_CODES.has(code)) return kaneoFailureText(code, why);
