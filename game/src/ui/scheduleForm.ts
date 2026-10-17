@@ -55,6 +55,8 @@ export interface ScheduleFormOpen {
   /** Edit this one (it must be `scheduled`). */
   edit?: Schedule;
   prefill?: ScheduleFormPrefill;
+  /** Opened over the laptop you sit at (a transcript's follow-up): the seat stays. */
+  seated?: boolean;
 }
 
 type HandoffMode = 'none' | 'keep' | 'cabinet' | 'transcript';
@@ -129,6 +131,7 @@ export class ScheduleFormDialog {
   private readonly zone = browserZone();
 
   private mode: 'create' | 'edit' = 'create';
+  private seated = false;
   private editId = '';
   private f: ScheduleForm = this.blank('');
   private prefill: ScheduleFormPrefill = {};
@@ -156,6 +159,8 @@ export class ScheduleFormDialog {
   private statusError = false;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private modelQuery = '';
+  /** When the time field was last read. */
+  private parsedAt = 0;
 
   constructor(
     parent: HTMLElement,
@@ -268,6 +273,11 @@ export class ScheduleFormDialog {
     return this.dialog.open;
   }
 
+  /** Opened over the laptop you sit at: the seat stays. */
+  get keepsSeat(): boolean {
+    return this.dialog.open && this.seated;
+  }
+
   close(): void {
     if (this.dialog.open) this.dialog.close();
   }
@@ -291,6 +301,7 @@ export class ScheduleFormDialog {
     this.gen++;
     const e = o.edit;
     this.mode = e ? 'edit' : 'create';
+    this.seated = o.seated === true;
     this.editId = e?.id ?? '';
     this.prefill = o.prefill ?? {};
     const p = this.prefill;
@@ -423,7 +434,9 @@ export class ScheduleFormDialog {
 
   /** Reads the time field again (also every 15 s, so "in 2h" and the countdown stay true). */
   private reparse(render = true): void {
-    const r = parseWhen(this.whenIn.value, this.host.now(), this.zone);
+    // One instant for the reading and its countdown: "in 2h" says "in 2 h", not "in 1 h 59 min" a millisecond later.
+    this.parsedAt = this.host.now();
+    const r = parseWhen(this.whenIn.value, this.parsedAt, this.zone);
     this.f.due = r.ok ? r.at : null;
     this.f.dueError = r.ok ? '' : r.error;
     if (r.ok) this.picker.value = wallText(r.at, this.zone, 'T');
@@ -436,7 +449,7 @@ export class ScheduleFormDialog {
     const el = this.resolvedEl;
     if (this.f.due !== null) {
       el.dataset.error = 'false';
-      el.replaceChildren(h('b', {}, whenText(this.f.due, this.zone)), h('span', {}, utcHint(this.f.due, this.zone)), h('span', {}, countdownText(this.f.due, this.host.now())));
+      el.replaceChildren(h('b', {}, whenText(this.f.due, this.zone)), h('span', {}, utcHint(this.f.due, this.zone)), h('span', {}, countdownText(this.f.due, this.parsedAt)));
     } else if (this.whenIn.value.trim()) {
       el.dataset.error = 'true';
       el.replaceChildren(this.f.dueError);

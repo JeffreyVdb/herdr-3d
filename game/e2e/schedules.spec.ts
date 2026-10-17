@@ -94,7 +94,7 @@ test('“Schedule follow-up…” files the reply once, as written, and schedule
   await expect(form).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.preparing)).toBe(false);
   const f = await page.evaluate(() => window.__h3d.scheduleForm());
-  expect(f).toMatchObject({ handoff: 'transcript', when: '', due: null, harness: w.harness, model: w.model });
+  expect(f).toMatchObject({ handoff: 'transcript', when: '', due: null, harness: w.harness, cwd: w.cwd });
   await form.locator('#sf-title-in').fill('After the soak');
   await form.locator('#sf-when').fill('tomorrow 10:45 UTC');
   await shot(page, 'h64-follow-up-form');
@@ -125,7 +125,7 @@ test('a fire updates the open dialog live; with it closed, a toast’s click ope
   expect(soak.actions).toEqual(['edit', 'run-now', 'cancel']);
   // Played 3 h late by the bridge: running, then done with the late badge, without closing the dialog.
   await page.locator(`.sch-row[data-id="${soak.id}"] [data-act="edit"]`).focus();
-  expect((await page.evaluate((id) => window.__h3d.simSchedule('sim.schedule_fire', { id, late_ms: 3 * HOUR }), soak.id)).ok).toBe(true);
+  expect((await page.evaluate((id) => window.__h3d.simSchedule('sim.schedule_fire', { id, late_ms: 3 * 3_600_000 }), soak.id)).ok).toBe(true);
   await expect.poll(async () => (await list(page))?.done.find((r) => r.id === soak.id)?.late ?? null).toBe('+3h late');
   await expect(page.locator(`.sch-row[data-id="${soak.id}"] .sch-late`)).toHaveText('+3h late');
   // No toast while the dialog shows it.

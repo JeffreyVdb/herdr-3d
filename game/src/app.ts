@@ -1511,7 +1511,7 @@ export class App {
     const v = this.store.workerView(id);
     if (!w || !v) return;
     const choice = w.harness && w.model && w.effort ? { harness: w.harness, model: w.model, effort: w.effort } : undefined;
-    this.scheduleForm.open({ floor: v.worker.floor, prefill: { ...(choice ? { choice } : {}), ...(w.cwd ? { cwd: w.cwd } : {}), transcript: { worker: id, name: v.name, candidate: c } } });
+    this.scheduleForm.open({ floor: v.worker.floor, seated: !!this.laptops.seated, prefill: { ...(choice ? { choice } : {}), ...(w.cwd ? { cwd: w.cwd } : {}), transcript: { worker: id, name: v.name, candidate: c } } });
   }
 
   /**
@@ -3532,7 +3532,7 @@ export class App {
     const onFloor = this.mode === 'floor' && (this.place.area === 'floor' || this.place.area === 'fire-escape');
     // #110: a pack-up check's dialog keeps you seated (the prompt box and its draft stay); it still owns the keys.
     // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
-    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.overview.isOpen) || this.hud.sheetOpen || this.transitioning;
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.orphaned && !this.laptops.seated) {
       this.orphaned = false;
