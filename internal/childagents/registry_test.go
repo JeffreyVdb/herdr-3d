@@ -260,6 +260,161 @@ func TestMergeKeepsEveryObservedField(t *testing.T) {
 	})
 }
 
+// A merge never makes a row its own parent nor any longer cycle: the parent
+// that named the dropped row resolves to the other row's parent, or
+// unresolved, and the dropped row's children go under the row kept through
+// the cycle check. Checked on the registry and on what a client builds from
+// the events.
+func TestMergeMakesNoCycle(t *testing.T) {
+	root := &childagents.ParentRef{Kind: proto.ParentRoot}
+	underNative := func(id string) *childagents.ParentRef {
+		return &childagents.ParentRef{Kind: proto.ParentChild, NativeID: id}
+	}
+	underDispatch := func(id string) *childagents.ParentRef {
+		return &childagents.ParentRef{Kind: proto.ParentChild, DispatchID: id}
+	}
+	type want struct{ parent, parentNative string } // parentNative: the parent row's native id
+	for _, tc := range []struct {
+		name   string
+		steps  []childagents.Evidence
+		events string // of the link, by native id ("d": provisional)
+		want   map[string]want
+	}{{
+		// a names dispatch d as its parent; d is a root child; d is a.
+		name: "self",
+		steps: []childagents.Evidence{
+			{NativeID: "a", Parent: underDispatch("d")},
+			{DispatchID: "d", Parent: root},
+		},
+		events: "child.removed:d child.upsert:a ",
+		want:   map[string]want{"a": {parent: proto.ParentRoot}},
+	}, {
+		// a under b under d, then d is a: d's own parent (root, observed
+		// later) is a's, and b goes under a.
+		name: "longer",
+		steps: []childagents.Evidence{
+			{NativeID: "a", Parent: underNative("b")},
+			{NativeID: "b", Parent: underDispatch("d")},
+			{DispatchID: "d", Parent: root},
+		},
+		events: "child.removed:d child.upsert:a child.upsert:b ",
+		want:   map[string]want{"a": {parent: proto.ParentRoot}, "b": {parent: proto.ParentChild, parentNative: "a"}},
+	}, {
+		// The same with no parent seen for d: a's own (b) would be a cycle
+		// once b goes under a, so a is unresolved, never a guess.
+		name: "longer, no other parent",
+		steps: []childagents.Evidence{
+			{NativeID: "a", Parent: underNative("b")},
+			{NativeID: "b", Parent: underDispatch("d")},
+			{DispatchID: "d"},
+		},
+		events: "child.removed:d child.upsert:a child.upsert:b ",
+		want:   map[string]want{"a": {parent: proto.ParentUnresolved}, "b": {parent: proto.ParentChild, parentNative: "a"}},
+	}, {
+		// d (kept, seen first) under b under a, then d is a: a's parent
+		// (b, observed later) is a cycle, so d keeps its own (root).
+		name: "kept row's own parent",
+		steps: []childagents.Evidence{
+			{DispatchID: "d", Parent: root},
+			{NativeID: "b", Parent: underDispatch("d")},
+			{NativeID: "a", Parent: underNative("b")},
+		},
+		events: "child.removed:a child.upsert:a ",
+		want:   map[string]want{"a": {parent: proto.ParentRoot}, "b": {parent: proto.ParentChild, parentNative: "a"}},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := childagents.New()
+			r.Worker("w", "s")
+			client := map[string]proto.Child{} // what a client holds, from the events
+			names := map[string]string{}       // row id → native id, "d" while provisional
+			play := func(evs []proto.Event) {
+				for _, ev := range evs {
+					switch ev.T {
+					case proto.EvChildUpsert:
+						client[ev.Child.ID] = *ev.Child
+						names[ev.Child.ID] = cmpOr(ev.Child.NativeID, "d")
+					case proto.EvChildRemoved:
+						delete(client, ev.ID)
+					}
+				}
+			}
+			for _, e := range tc.steps {
+				e.Session, e.Provider, e.Source = "s", proto.ChildClaude, "transcript"
+				play(apply(t, r, e))
+			}
+			evs := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "d", NativeID: "a", Source: "transcript"})
+			got := ""
+			for _, ev := range evs {
+				name := names[ev.ID]
+				if ev.Child != nil {
+					name = cmpOr(ev.Child.NativeID, "d")
+				}
+				got += ev.T + ":" + name + " "
+			}
+			play(evs)
+			if got != tc.events {
+				t.Errorf("events %s, want %s", got, tc.events)
+			}
+			cs := r.Children("w")
+			if len(cs) != len(client) {
+				t.Fatalf("registry %+v, client %+v", cs, client)
+			}
+			byID := map[string]proto.Child{}
+			for _, c := range cs {
+				byID[c.ID] = c
+				if client[c.ID] != c {
+					t.Errorf("client has %+v, registry %+v", client[c.ID], c)
+				}
+			}
+			for _, c := range cs {
+				w, ok := tc.want[c.NativeID]
+				if !ok {
+					t.Fatalf("unexpected %+v", c)
+				}
+				if c.Parent != w.parent || (w.parent == proto.ParentChild) != (c.ParentID != "") ||
+					(c.ParentID != "" && byID[c.ParentID].NativeID != w.parentNative) {
+					t.Errorf("%s: parent %s %q, want %+v", c.NativeID, c.Parent, c.ParentID, w)
+				}
+				// No row is its own ancestor.
+				seen := map[string]bool{}
+				for p := c; p.Parent == proto.ParentChild; p = byID[p.ParentID] {
+					if seen[p.ID] {
+						t.Fatalf("%s: cycle through %s", c.NativeID, p.ID)
+					}
+					seen[p.ID] = true
+				}
+			}
+		})
+	}
+}
+
+func cmpOr(s, or string) string {
+	if s == "" {
+		return or
+	}
+	return s
+}
+
+// Tree, like the game's childTree, shows a row in a cycle at the top
+// rather than lose it and its descendants.
+func TestTreeShowsACycleAtTheTop(t *testing.T) {
+	c := func(id, parent string, at int64) proto.Child {
+		return proto.Child{ID: id, NativeID: id, Parent: proto.ParentChild, ParentID: parent, StartedAt: at}
+	}
+	var shape func(ns []childagentstest.Node) string
+	shape = func(ns []childagentstest.Node) string {
+		s := ""
+		for _, n := range ns {
+			s += n.NativeID + "[" + shape(n.Children) + "]"
+		}
+		return s
+	}
+	got := shape(childagentstest.Tree([]proto.Child{c("self", "self", 1), c("x", "y", 2), c("y", "x", 3), c("k", "y", 4), c("s", "self", 5)}))
+	if want := "self[s[]]x[]y[k[]]"; got != want {
+		t.Fatalf("tree %s, want %s", got, want)
+	}
+}
+
 // Generations: one bridge-wide counter, so a worker's only rises (also
 // after it left and came back). A replaced session (X→Y, X→none) drops the
 // children and the old session's evidence; a first session (none→X) is no

@@ -606,7 +606,10 @@ into it: a `child.removed` of the other first, then `child.upsert`s of the one t
 The row that stays keeps every field either row observed, as if one row had seen both rows' evidence in the order the
 bridge observed it: a field only one has is kept; of a `name`, `type`, `description`, `transcript`, `ended_at` (a resumed
 `running` clears it) or `state` (with its `source`) both have, the one observed later; the earliest `started_at` and the
-latest `last_activity_at`.
+latest `last_activity_at`. Its parent is the one of the two observed later if it is still a parent once they are one row,
+else the other's, else `unresolved`: never the row itself (a parent that was the other row) nor a cycle; the merged row's
+children go under it unless that would make a cycle (then `unresolved`). A client that is sent a row whose parent chain
+comes back to it anyway shows it directly under its root worker, never hides it.
 
 **Order.** The child events are ordinary events of the `seq` stream: replayed after a reconnect (`since_seq`) like every
 other, and ordered per worker by the one `seq`, with the worker's own events too. The `worker.upsert` that raises a

@@ -1,0 +1,29 @@
+{
+  "description": "Rows merged by a late link keep every field either row observed (the later one where both have one) and never make a cycle: a parent that named the merged row resolves to that row's own parent, or unresolved.",
+  "workers": [{"name": "w1", "agent_session": "sess-m1"}, {"name": "w2", "agent_session": "sess-m2"}, {"name": "w3", "agent_session": "sess-m3"}],
+  "steps": [
+    {"note": "w1: a dispatch with no state, then a hook's native child with everything", "evidence": {"session": "sess-m1", "provider": "claude", "dispatch_id": "toolu_m1", "source": "transcript"}},
+    {"evidence": {"session": "sess-m1", "provider": "claude", "native_id": "m1", "name": "Ada", "state": "running", "source": "hook", "started_at": 10, "last_activity_at": 20, "transcript": "available"}},
+    {"note": "the link names nothing else: the row kept (the dispatch's) keeps the hook's fields", "evidence": {"session": "sess-m1", "provider": "claude", "dispatch_id": "toolu_m1", "native_id": "m1", "source": "transcript"}},
+    {"note": "w2: a native child names a dispatch as its parent; that dispatch is a root child", "evidence": {"session": "sess-m2", "provider": "claude", "native_id": "m2", "parent": {"kind": "child", "dispatch_id": "toolu_m2"}, "state": "running", "source": "hook"}},
+    {"evidence": {"session": "sess-m2", "provider": "claude", "dispatch_id": "toolu_m2", "parent": {"kind": "root"}, "source": "transcript"}},
+    {"note": "the dispatch is the native child: never its own parent, the dispatch's root instead", "evidence": {"session": "sess-m2", "provider": "claude", "dispatch_id": "toolu_m2", "native_id": "m2", "source": "transcript"}},
+    {"note": "w3: m3a under m3b under the dispatch toolu_m3, a root child", "evidence": {"session": "sess-m3", "provider": "codex", "native_id": "m3a", "parent": {"kind": "child", "native_id": "m3b"}, "source": "rollout"}},
+    {"evidence": {"session": "sess-m3", "provider": "codex", "native_id": "m3b", "parent": {"kind": "child", "dispatch_id": "toolu_m3"}, "source": "rollout"}},
+    {"evidence": {"session": "sess-m3", "provider": "codex", "dispatch_id": "toolu_m3", "parent": {"kind": "root"}, "source": "rollout"}},
+    {"note": "the dispatch is m3a: m3a takes its root and m3b goes under m3a, no cycle", "evidence": {"session": "sess-m3", "provider": "codex", "dispatch_id": "toolu_m3", "native_id": "m3a", "source": "rollout"}}
+  ],
+  "expect": {
+    "w1": [
+      {"native_id": "m1", "provider": "claude", "parent": "unresolved", "name": "Ada", "state": "running", "source": "hook", "started_at": 10, "last_activity_at": 20, "transcript": "available"}
+    ],
+    "w2": [
+      {"native_id": "m2", "provider": "claude", "parent": "root", "state": "running", "source": "hook", "transcript": "unavailable"}
+    ],
+    "w3": [
+      {"native_id": "m3a", "provider": "codex", "parent": "root", "state": "unknown", "source": "rollout", "transcript": "unavailable", "children": [
+        {"native_id": "m3b", "provider": "codex", "parent": "child", "state": "unknown", "source": "rollout", "transcript": "unavailable"}
+      ]}
+    ]
+  }
+}

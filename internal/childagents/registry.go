@@ -60,7 +60,7 @@ type row struct {
 
 // seen is when evidence last set each last-wins field of a row, in its
 // root's observation order (0: never): a merge keeps the later of two rows'.
-type seen struct{ name, typ, desc, state, ended, transcript int }
+type seen struct{ name, typ, desc, state, ended, transcript, parent int }
 
 // New returns an empty registry.
 func New() *Registry {
@@ -216,8 +216,8 @@ func (r *Registry) Apply(e Evidence) ([]proto.Event, error) {
 		}
 	}
 	cur.merge(e, rt.obs)
-	if e.Parent != nil {
-		ch.setParent(cur, e.Parent)
+	if e.Parent != nil && ch.setParent(cur, e.Parent) {
+		cur.seen.parent = rt.obs
 	}
 	ch.resolveWaiting(cur)
 	return ch.events(), nil
@@ -381,24 +381,32 @@ func (ch *changes) events() []proto.Event {
 
 // setParent applies a parent the evidence names. A child parent the root
 // has no row of yet leaves the child unresolved until it shows up; one that
-// would make a cycle (itself, or one of its own descendants) is ignored.
-func (ch *changes) setParent(rw *row, p *ParentRef) {
+// would make a cycle (itself, or one of its own descendants) is ignored
+// (false).
+func (ch *changes) setParent(rw *row, p *ParentRef) bool {
 	if p.Kind == proto.ParentRoot {
 		rw.want = nil
 		rw.c.Parent, rw.c.ParentID = proto.ParentRoot, ""
-		return
+		return true
 	}
 	par := ch.rt.find(rw.c.Provider, p)
 	if par == nil {
 		rw.want = p
 		rw.c.Parent, rw.c.ParentID = proto.ParentUnresolved, ""
-		return
+		return true
 	}
+	return ch.link(rw, par)
+}
+
+// link puts rw under par, unless that would make a cycle (par is rw or one
+// of its descendants): false then, and nothing changes.
+func (ch *changes) link(rw, par *row) bool {
 	if ch.rt.descends(par, rw) {
-		return
+		return false
 	}
 	rw.want = nil
 	rw.c.Parent, rw.c.ParentID = proto.ParentChild, par.c.ID
+	return true
 }
 
 // resolveWaiting gives the children that wait for rw as their parent their
@@ -468,6 +476,13 @@ func (ch *changes) remove(rw *row) {
 
 // merge folds gone into keep: its ids name keep from now on, keep keeps
 // every field either observed (fold) and gone's children are keep's.
+//
+// keep's parent is the parent of the two rows observed later (seen.parent)
+// if it is still one once they are one row, else the other's, else
+// unresolved: never keep itself (a parent that was the other row) nor one
+// of their descendants (a cycle). gone's children then go under keep
+// through link's cycle check; one that would make a cycle is unresolved,
+// waiting for keep.
 func (ch *changes) merge(keep, gone *row) {
 	rt := ch.rt
 	ch.touch(keep)
@@ -488,17 +503,53 @@ func (ch *changes) merge(keep, gone *row) {
 	if keep.dispatch == "" {
 		keep.dispatch = gone.dispatch
 	}
-	if keep.c.Parent == proto.ParentUnresolved && gone.c.Parent != proto.ParentUnresolved && gone.c.ParentID != keep.c.ID {
-		keep.c.Parent, keep.c.ParentID, keep.want = gone.c.Parent, gone.c.ParentID, nil
+	first, second := keep, gone
+	if gone.seen.parent > keep.seen.parent {
+		first, second = gone, keep
+	}
+	if !ch.adoptParent(keep, gone, first) && !ch.adoptParent(keep, gone, second) {
+		keep.c.Parent, keep.c.ParentID, keep.want, keep.seen.parent = proto.ParentUnresolved, "", nil, 0
 	}
 	ch.drop(gone)
+	ref := &ParentRef{Kind: proto.ParentChild, NativeID: keep.c.NativeID, DispatchID: keep.dispatch}
 	for _, id := range rt.order {
 		c := rt.rows[id]
-		if c.c.Parent == proto.ParentChild && c.c.ParentID == gone.c.ID {
-			ch.touch(c)
-			c.c.ParentID = keep.c.ID
+		if c == keep || c.c.Parent != proto.ParentChild || c.c.ParentID != gone.c.ID {
+			continue
+		}
+		ch.touch(c)
+		if !ch.link(c, keep) {
+			c.c.Parent, c.c.ParentID, c.want = proto.ParentUnresolved, "", ref
 		}
 	}
+}
+
+// adoptParent gives keep, merging gone into it, the parent from (one of
+// the two) has, if it is still a parent once gone is keep: not keep or gone
+// themselves nor one of their descendants. False: it is not, or from has
+// no parent evidence.
+func (ch *changes) adoptParent(keep, gone, from *row) bool {
+	if from.seen.parent == 0 {
+		return false
+	}
+	p, want, at := from.c, from.want, from.seen.parent
+	var par *row
+	switch {
+	case p.Parent == proto.ParentChild:
+		if par = ch.rt.rows[p.ParentID]; par == nil {
+			return false
+		}
+	case p.Parent == proto.ParentUnresolved && want != nil:
+		par = ch.rt.find(keep.c.Provider, want) // gone's ids find keep by now
+	}
+	if par != nil {
+		if ch.rt.descends(par, keep) || ch.rt.descends(par, gone) {
+			return false
+		}
+		p.Parent, p.ParentID, want = proto.ParentChild, par.c.ID, nil
+	}
+	keep.c.Parent, keep.c.ParentID, keep.want, keep.seen.parent = p.Parent, p.ParentID, want, at
+	return true
 }
 
 func (ch *changes) drop(rw *row) {
