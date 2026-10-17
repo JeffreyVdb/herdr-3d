@@ -151,6 +151,11 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   // #58 decision 3: a hire on an asleep virtual floor wakes its session first (up to ~30 s more).
   'worker.hire': 120_000,
   'worker.fire.prepare': 20_000,
+  // #62: a create or update checks the folder and writes SQLite; run now and retry start the fire (a wake waits).
+  'schedule.create': 20_000,
+  'schedule.update': 20_000,
+  'schedule.run_now': 20_000,
+  'schedule.retry': 20_000,
   'worker.fire': 45_000,
   // #83: the arm checks git, waits for the tracker's next round (~2 s), then prompts like worker.prompt.
   'worker.wrapup': 30_000,

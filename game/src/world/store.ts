@@ -39,6 +39,7 @@ import { RepoRefsBook } from './repoRefs';
 import { KaneoBook } from './kaneo';
 import { NotifyBook } from './notifySettings';
 import { HandoffBook } from './handoff';
+import { ScheduleBook } from './schedule';
 import { floorGroups, FloorListBook } from './floorList';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
@@ -242,6 +243,7 @@ export class WorldStore {
   readonly kaneo = new KaneoBook(); // #184
   readonly notifySettings = new NotifyBook(); // #11
   readonly handoffs = new HandoffBook(); // #223
+  readonly schedules = new ScheduleBook(); // #64 schedules
   /** #58 stage 4: Settings → Floors' rows, refreshed after every change that moves floors or workers. */
   readonly floorList = new FloorListBook(() => floorGroups(this.floors.values(), this.workers.values()));
   /** #58: the floor you stand on, listed even while hidden and empty (see `pin`). */
@@ -293,6 +295,7 @@ export class WorldStore {
     this.repoDiscovery.reset(s.world.repo_discovery); // #54
     this.kaneo.reset(s.world.kaneo); // #184
     this.handoffs.reset(s.world.handoffs); // #223
+    this.schedules.reset(s.world.schedules); // #64 schedules (a bridge before #62 sends none)
     this.inboxDismissed.clear(); // #106
     for (const [id, since] of Object.entries(s.world.inbox_dismissed ?? {})) if (Number.isInteger(since)) this.inboxDismissed.set(id, since);
     this.seq = s.seq;
@@ -463,6 +466,13 @@ export class WorldStore {
       case 'handoff.removed':
         this.handoffs.removed(e);
         c.floors.add(e.floor_id ?? e.session);
+        break;
+      // #64 schedules
+      case 'schedule.upsert':
+        this.schedules.upsert(e.schedule);
+        break;
+      case 'schedule.removed':
+        this.schedules.removed(e);
         break;
       // #106: the inbox hides that worker's done episode. Not part of the scene, but the inbox's pings follow it (a
       // dismissed done must not ping when its settle delay ends), so the worker counts as changed.
