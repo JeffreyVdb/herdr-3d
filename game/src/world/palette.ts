@@ -46,6 +46,7 @@ export const COMMAND_ORDER: readonly PaletteCommandId[] = [
   'run',
   'overview',
   'overview.all',
+  'schedules',
   'elevator',
   'buildings',
   'inbox',

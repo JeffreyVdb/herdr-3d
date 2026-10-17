@@ -196,6 +196,15 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   with the AI fakes and the fake herdr's prompt and key calls counted (none may happen); `game/e2e/h223-handoff.spec.ts`
   drives the fixture bridge's handoffs (`tools/fixture-handoff.ts`: `sim.final`, `sim.prompt_turn`,
   `sim.handoff_fail`, `simhandoffs=<n>`, `simfail=no_handoff`).
+- #64 schedules (part 3 of #61, the game's scheduled agents dialog): `game/src/world/scheduleTime.test.ts` checks the
+  form's time parsing against Node's own `Temporal` (disambiguation `'compatible'`) across UTC, Brussels, New York,
+  Kolkata and Lord Howe, with the zone a parameter (no `TZ`); the dialog and form have jsdom tests
+  (`ui/schedules.dom.test.ts`, `ui/scheduleForm.dom.test.ts`); `game/e2e/schedules.spec.ts` drives the fixture bridge's
+  schedules (`tools/fixture-schedule.ts`: `simschedules=<n>`, `sim.schedule_fire {id, late_ms?, fail?, skip?}`,
+  `sim.schedule_fail {code}`, `simfail=no_schedules`). For a UX look: `make dev`, then
+  `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simschedules%3D8&floor=herdr-3d`, Menu → Schedules
+  (`window.__h3d.simSchedule('sim.schedule_fire', {id, late_ms: 10800000})` plays a late fire; close the dialog first to
+  see its toast).
 - #224: `go test ./internal/server -run AgentHandoff` asks the agent against fake transcripts the usage tracker reads
   (Claude's slash-command tags, Codex's `<skill>` message), a fake catalog and the fake herdr's typed and submitted
   prompts (exactly one per request), files and fails it every way; `go test ./internal/usage -run Cache` has the cache
@@ -851,7 +860,10 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   background tasks: its own band row and HUD count, never idle, never in N's queue); #118: the floor overview's tree
   (`overview.ts`: orchestrators over their freelancers, ghost rows, Unlinked, the order that never follows a status,
   each row's light, ticket, task, now and since, the top bar's counts as items; `layout.ts` `overviewScreenBox` sizes
-  the lounge wall's screen). Pure logic, covered by vitest.
+  the lounge wall's screen); #64 schedules: the bridge's scheduled agents (`schedule.ts`: `ScheduleBook`, the dialog's
+  sections, lateness past the 5-minute grace, the toasts, the form's checks and spec, refused commands in words) and the
+  form's time (`scheduleTime.ts`: relative durations, wall clock in a given zone or UTC, Temporal's `'compatible'`
+  disambiguation without Temporal). Pure logic, covered by vitest.
 - `src/render` — city dollhouse, office floor, instanced rigid-part workers / desks, speech-bubble cards, frame policy;
   M3b: the walk scene (`walk.ts`), the building and street from outside (`outside.ts`, baked into one mesh by
   `bake.ts`) and the lobby (`lobby.ts`). M3c: the corner office (`mezzanine.ts`: two merged vertex-coloured toon
@@ -942,7 +954,10 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   Notifications (`notifySection.ts`: desktop notifications and their permission, the chime and its Test) and its pings; #118:
   the floor overview page (`overview.ts`, `overview.css`: the `inset: 0` layer over everything, its grow out of the
   wall screen, the tree's keys, live rows) and its collapsed groups (`overviewPrefs.ts`, `h3d.overview.collapsed`), and
-  Settings → Floor overview summaries (`digestSection.ts`, its state in `world/digestSettings.ts`); the
+  Settings → Floor overview summaries (`digestSection.ts`, its state in `world/digestSettings.ts`); #64 schedules: the scheduled agents
+  dialog (`schedules.ts`: Upcoming, Needs attention, Scheduled successfully, All floors; `openSchedules({floor?, allFloors?,
+  focus?})` in `app.ts` is every entry point's) and its create / edit form (`scheduleForm.ts`, shared by "New", Edit and the
+  transcript's "Schedule follow-up…"), styled in `schedules.css`; `Hud.toast`'s optional action (a click opens what it is about); the
   desktop notification of a new entry with the game in the background (`desktopNotify.ts`; when one pings,
   `world/inboxPings.ts`: settle delay, snapshot silence, burst cap). Hidden, named hooks
   wait for later tickets:
@@ -985,6 +1000,8 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   `sim.crew {step: hire|onboard|work|report|leave}` (the simulator's own, like `sim.watches`) seats a `CODE`
   freelancer of an ORCH's run at the free desk nearest it, gives it an agent, sets it working, hands in its report
   (`verdict` / `blockers` / `input_required` / `summary`) and closes it; `simcrew=<ms>` plays that round by itself;
+  #64 schedules: `fixture-schedule.ts`, the scheduled agents, whose rules are at its top (the spec's checks,
+  the state rules and their errors, the fire through the simulator's own hire, `simschedules=<n>`, `sim.schedule_fire`);
   #213: `fixture-interpret.ts`, `hire.interpret` for the dictation bar, whose rules are at its top: no resolution rule of
   `internal/hireintent`, one JSON-mode call through the AI integration (`fixture-ai.ts`) to the LLM the game set up, its
   answer `{intent, reason?, hire?}` checked (shape, the task's span) and passed on with the bridge's `sources`, errors as

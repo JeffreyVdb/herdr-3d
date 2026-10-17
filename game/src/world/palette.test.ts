@@ -111,7 +111,7 @@ describe('commands', () => {
   it('lists every palette row of the table, once, in the order the palette keeps', () => {
     const inTable = (BINDINGS as readonly { id: string; palette?: unknown }[]).filter((b) => b.palette).map((b) => b.id);
     for (const id of inTable) expect(COMMAND_ORDER, id).toContain(id);
-    for (const id of COMMAND_ORDER) expect([...inTable, 'presets', 'about', 'overview.all', 'bridge.switch'], id).toContain(id);
+    for (const id of COMMAND_ORDER) expect([...inTable, 'presets', 'about', 'overview.all', 'schedules', 'bridge.switch'], id).toContain(id);
     expect(new Set(COMMAND_ORDER).size).toBe(COMMAND_ORDER.length);
   });
 

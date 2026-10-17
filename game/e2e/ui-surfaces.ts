@@ -578,6 +578,32 @@ export const SURFACES: Surface[] = [
     root: 'dialog.cab',
   },
   {
+    // #64 schedules: the scheduled agents dialog with every state (simschedules), and its create form.
+    name: 'schedules',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simschedules=8`,
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openSchedules({ floor: 'herdr-3d' }));
+      await expect(page.locator('dialog.sch .sch-row').first()).toBeVisible();
+    },
+    root: 'dialog.sch',
+  },
+  {
+    name: 'schedule-form',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simschedules=8`,
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openSchedules({ floor: 'herdr-3d' }));
+      await page.locator('dialog.sch [data-key="new"]').click();
+      await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.harness)).not.toBe('');
+      await page.locator('#sf-title-in').fill('After the soak');
+      await page.locator('#sf-when').fill('tomorrow 10:45 UTC');
+    },
+    root: 'dialog.desk-dlg--sched',
+  },
+  {
     name: 'changes',
     fixture: 'demo-m4',
     open: async (page) => {

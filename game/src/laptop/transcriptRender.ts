@@ -69,6 +69,8 @@ export interface TranscriptRenderHost {
   followupDrafts?: { get(turn: string): FollowupDraft | null; set(turn: string, d: FollowupDraft): void; clear(turn: string): void };
   /** #223: the inline Handoff button on the worker's latest completed reply was pressed (none: no button). */
   onHandoff?(c: HandoffCandidate): void;
+  /** #64 schedules: "Schedule follow-up…" beside it, on the same reply (none: no button). */
+  onScheduleFollowup?(c: HandoffCandidate): void;
   /** #157: answers a Codex worker's async questions (none: the card cannot send). */
   onAnswerAsync?(args: CommandArgs['worker.answer_async']): Promise<AsyncResult>;
   /** #157: hides them in the bridge. */
@@ -250,6 +252,8 @@ type PinnedCard = 'followup' | 'asyncq';
 let cardIds = 0;
 /** #223: ids for the Handoff button's note. */
 let handoffIds = 0;
+/** #64 schedules: the follow-up button's clock. */
+const CLOCK = '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>';
 /** #157: a screen this short (a phone's laptop) has no room for a pinned card beside the timeline (`fit()`). */
 const SHORT_SCREEN = 300;
 /** #157: the least room a pinned card's questions keep beside the timeline (a question and an answer): less, it takes the timeline's. */
@@ -1180,7 +1184,7 @@ class Transcript implements TranscriptView {
    * without it has none: never the last row of a partial page). A row rebuilt by an update gets it back.
    */
   private syncHandoff(): void {
-    const c = this.host.onHandoff ? this.handoff : null;
+    const c = this.host.onHandoff || this.host.onScheduleFollowup ? this.handoff : null;
     const id = handoffRow(this.timeline.values(), c);
     const row = id ? this.timeline.row(id) : undefined;
     const btn = this.handoffEl;
@@ -1192,13 +1196,24 @@ class Transcript implements TranscriptView {
     const el = h(
       'div',
       { class: 'tx-handoff', 'data-cand': c.id },
-      h(
-        'button',
-        { class: 'tx-handoff-btn', 'data-key': 'handoff', 'aria-describedby': note, title: 'File this reply in the cabinet, exactly as written', onclick: () => this.host.onHandoff?.(c) },
-        icon(ICON.folder),
-        'Handoff',
-      ),
-      h('span', { class: 'tx-handoff-note', id: note }, 'Save this message as written · no AI call'),
+      this.host.onHandoff
+        ? h(
+            'button',
+            { class: 'tx-handoff-btn', 'data-key': 'handoff', 'aria-describedby': note, title: 'File this reply in the cabinet, exactly as written', onclick: () => this.host.onHandoff?.(c) },
+            icon(ICON.folder),
+            'Handoff',
+          )
+        : null,
+      // #64 schedules: a fresh worker later, with this reply attached as a literal handoff (the form files it on Save).
+      this.host.onScheduleFollowup
+        ? h(
+            'button',
+            { class: 'tx-sched-btn', 'data-key': 'schedule', title: 'Hire a fresh worker later that goes on from this reply', onclick: () => this.host.onScheduleFollowup?.(c) },
+            icon(CLOCK),
+            'Schedule follow-up…',
+          )
+        : null,
+      this.host.onHandoff ? h('span', { class: 'tx-handoff-note', id: note }, 'Save this message as written · no AI call') : null,
     );
     row.append(el);
     this.handoffEl = el;

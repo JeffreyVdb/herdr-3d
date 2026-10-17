@@ -89,4 +89,39 @@ describe('the inline Handoff button', () => {
     view.setHandoff?.(cand('msg_c', 'codex'));
     expect(buttons()).toHaveLength(0);
   });
+
+  // #64 schedules: "Schedule follow-up…" sits beside it on the same row, with the same candidate rule.
+  it('“Schedule follow-up…” is beside it on the same reply, and follows the candidate', () => {
+    const follow: HandoffCandidate[] = [];
+    view = mountTranscript(container, { ...host(), onScheduleFollowup: (c: HandoffCandidate) => follow.push(c) });
+    view.setItems([it2('u1', 1, 'user'), it2('msg_a#0', 2, 'assistant', 'Soak started.')]);
+    expect(container.querySelector('.tx-sched-btn')).toBeNull();
+    view.setHandoff?.(cand('msg_a'));
+    const sched = [...container.querySelectorAll<HTMLButtonElement>('.tx-sched-btn')];
+    expect(sched).toHaveLength(1);
+    expect(sched[0]?.textContent).toBe('Schedule follow-up…');
+    expect(sched[0]?.dataset.key).toBe('schedule');
+    expect(rowOf(sched[0] as HTMLButtonElement)).toBe('msg_a#0');
+    expect(sched[0]?.parentElement).toBe(buttons()[0]?.parentElement);
+    expect(buttons()).toHaveLength(1);
+    sched[0]?.click();
+    expect(follow.map((c) => c.id)).toEqual(['c-msg_a']);
+    expect(pressed).toEqual([]);
+    view.setHandoff?.(null);
+    expect(container.querySelector('.tx-sched-btn')).toBeNull();
+  });
+
+  it('“Schedule follow-up…” alone without a Handoff hook, and absent without its own', () => {
+    view = mountTranscript(container, { ...host(false), onScheduleFollowup: () => undefined });
+    view.setItems([it2('msg_a#0', 1, 'assistant')]);
+    view.setHandoff?.(cand('msg_a'));
+    expect(buttons()).toHaveLength(0);
+    expect(container.querySelectorAll('.tx-sched-btn')).toHaveLength(1);
+    expect(container.querySelector('.tx-handoff-note')).toBeNull();
+    view.destroy();
+    view = mountTranscript(container, host());
+    view.setItems([it2('msg_a#0', 1, 'assistant')]);
+    view.setHandoff?.(cand('msg_a'));
+    expect(container.querySelector('.tx-sched-btn')).toBeNull();
+  });
 });

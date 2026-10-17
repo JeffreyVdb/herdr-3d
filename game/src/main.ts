@@ -20,6 +20,8 @@ import type { DictationSummary } from './ui/dictation';
 import type { HireInterpretation } from './net/protocol';
 import type { HandoffDialogSummary } from './ui/handoffDialog';
 import type { CabinetSummary } from './ui/cabinet';
+import type { SchedulesOpen, SchedulesSummary } from './ui/schedules';
+import type { ScheduleFormSummary } from './ui/scheduleForm';
 import type { PanelSummary } from './ui/panels';
 import type { SendHomeSummary } from './ui/sendHome';
 import type { ChangesSummary } from './ui/changes';
@@ -253,6 +255,13 @@ export interface H3DDebug {
   filing(): { drawers: [number, number, number] | null; walks: string[] };
   openHandoff(id: string): void;
   openCabinet(floor?: string): void;
+  /** #64 schedules: the scheduled agents dialog and its form as shown; open the dialog (as the Menu and palette do); the toast up now. */
+  schedules(): SchedulesSummary | null;
+  scheduleForm(): ScheduleFormSummary | null;
+  openSchedules(o?: SchedulesOpen): void;
+  toastState(): { shown: boolean; text: string; kind: string; action: string | null } | null;
+  /** #64 schedules: the fixture bridge's schedule plays (`sim=1`, tools/fixture-schedule.ts). */
+  simSchedule(t: 'sim.schedule_fire' | 'sim.schedule_fail', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** M4: plays walks `k` times as fast (tests). */
   arrivalRate(k: number): void;
   /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
@@ -559,6 +568,15 @@ const h3d: H3DDebug = {
   filing: () => app?.filingStates() ?? { drawers: null, walks: [] },
   openHandoff: (id) => app?.openHandoff(id, false),
   openCabinet: (floor) => app?.openCabinet(floor ?? app.hereFloor()),
+  schedules: () => app?.schedules.summary() ?? null,
+  scheduleForm: () => app?.scheduleForm.summary() ?? null,
+  openSchedules: (o) => app?.openSchedules(o),
+  toastState: () => app?.hud.toastState() ?? null,
+  simSchedule: async (t, args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request(t as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
   mezzDoor: () => app?.office?.mezzDoor01 ?? 0,
   desks: () => app?.deskStates() ?? [],
   deskArt: (d) => {

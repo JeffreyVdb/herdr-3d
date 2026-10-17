@@ -89,6 +89,11 @@ export interface PlanLabel {
 
 /** A toast's weight: `info` says what happened; `warn` (#186) that it worked, with a catch you should know; `error` that it failed or needs you. */
 export type ToastKind = 'info' | 'warn' | 'error';
+/** #64 schedules: what an actionable toast does when clicked, and its button's words. */
+export interface ToastAction {
+  label: string;
+  run(): void;
+}
 
 /** All DOM UI over the canvas. Pure presentation: the app feeds it state. */
 export class Hud {
@@ -147,6 +152,8 @@ export class Hud {
   private readonly doors = el('div', 'doors', '<div class="door"></div><div class="door"></div><div class="doors-label"></div>');
   private readonly dialog = el('dialog', 'sheet');
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  /** #64 schedules: what a click on the toast up now does (null: a plain toast, which takes no pointer). */
+  private toastAction: ToastAction | null = null;
   private toastSoft = false;
   private listeners = new Map<HudAction, Array<() => void>>();
   private promptKey = '';
@@ -267,6 +274,13 @@ export class Hud {
     this.toastEl.hidden = true;
     this.toastEl.setAttribute('role', 'status');
     this.toastEl.setAttribute('aria-live', 'polite');
+    // #64 schedules: an actionable toast takes a click anywhere on it; its button is the keyboard's way.
+    this.toastEl.addEventListener('click', () => {
+      const a = this.toastAction;
+      if (!a || this.toastEl.hidden) return;
+      this.hideToast();
+      a.run();
+    });
     // A read-only sheet: the backdrop closes it only when the press and the click both began there (#51).
     backdropPolicy(this.dialog, 'sheet', () => this.dialog.close());
     this.root.append(this.floorList, this.buildingList, this.plan, bar, this.reticle, this.prompt, this.hint, this.notice, this.toastEl, this.doors);
@@ -766,18 +780,49 @@ export class Hud {
     this.notice.replaceChildren(h, p);
   }
 
-  toast(msg: string, ms = 3200, kind: ToastKind = 'info', soft = false): void {
+  /**
+   * A message over the scene. #64 schedules: with `action` the toast is a control: a click on it (or its button, the
+   * keyboard's way, named `action.label`) runs it and hides the toast; a plain toast takes no pointer.
+   */
+  toast(msg: string, ms = 3200, kind: ToastKind = 'info', soft = false, action?: ToastAction): void {
     // A soft toast (M15's "now playing") never covers a message that is still up.
     if (soft && !this.toastEl.hidden && !this.toastSoft) return;
     this.toastSoft = soft;
-    this.toastEl.textContent = msg;
+    this.toastAction = action ?? null;
+    if (action) {
+      const b = el('button', 'toast-act', '');
+      b.type = 'button';
+      b.textContent = action.label;
+      const text = el('span', 'toast-msg', '');
+      text.textContent = msg;
+      this.toastEl.replaceChildren(text, b);
+      this.toastEl.dataset.action = 'true';
+    } else {
+      this.toastEl.textContent = msg;
+      delete this.toastEl.dataset.action;
+    }
     this.toastEl.dataset.kind = kind;
     this.toastEl.hidden = false;
     this.placeToast();
     // A toast right after a screen dialog closed (a hire's): the limits plate that dialog folded is back a moment later.
     requestAnimationFrame(() => this.toastEl.hidden || this.placeToast());
     if (this.toastTimer) clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => (this.toastEl.hidden = true), ms);
+    this.toastTimer = setTimeout(() => this.hideToast(), ms);
+  }
+
+  private hideToast(): void {
+    if (this.toastTimer) clearTimeout(this.toastTimer);
+    this.toastTimer = null;
+    this.toastEl.hidden = true;
+    // A hidden toast is no control: nothing of it stays clickable or in the tab order.
+    this.toastAction = null;
+    delete this.toastEl.dataset.action;
+    this.toastEl.querySelector('.toast-act')?.remove();
+  }
+
+  /** The toast as shown (test hook): its text, kind, and the action's label. */
+  toastState(): { shown: boolean; text: string; kind: string; action: string | null } {
+    return { shown: !this.toastEl.hidden, text: this.toastEl.querySelector('.toast-msg')?.textContent ?? this.toastEl.textContent ?? '', kind: this.toastEl.dataset.kind ?? '', action: this.toastAction?.label ?? null };
   }
 
   /** A long toast (M13's macOS denial) that the plan limits panel would cover goes under the panel instead. */

@@ -240,6 +240,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             transcript: q.get('simtx') || name,
             // #223: the filing cabinet starts with this many handoffs on the first floor (tools/fixture-handoff.ts).
             ...(q.get('simhandoffs') ? { handoffs: Math.min(40, Math.max(0, Number(q.get('simhandoffs')) || 0)) } : {}),
+            // #64 schedules: this many schedules in every state across the first two floors (tools/fixture-schedule.ts).
+            ...(q.get('simschedules') ? { schedules: Math.min(80, Math.max(0, Number(q.get('simschedules')) || 0)) } : {}),
             // #9: LLM handoffs with no endpoint: the feature's state and the jobs' outcome (tools/fixture-handoff.ts).
             ...(q.get('simhandoffllm') ? { handoffLlm: q.get('simhandoffllm') as string } : {}),
             ...(q.get('simhandoffllmout') ? { handoffLlmOut: q.get('simhandoffllmout') as string } : {}),

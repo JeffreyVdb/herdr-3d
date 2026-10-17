@@ -101,6 +101,13 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'handoff.list': 'open the filing cabinet',
   'handoff.get': 'open the filing cabinet',
   'handoff.delete': 'delete handoffs',
+  // #62 scheduled agents
+  'schedule.create': 'schedule agents',
+  'schedule.update': 'change scheduled agents',
+  'schedule.cancel': 'cancel scheduled agents',
+  'schedule.run_now': 'start scheduled agents now',
+  'schedule.retry': 'retry scheduled agents',
+  'schedule.dismiss': 'dismiss scheduled agents',
   // #110
   'packup.get': 'keep pack up on request',
   'packup.set': 'keep pack up on request',

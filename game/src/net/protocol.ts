@@ -462,6 +462,8 @@ export interface World {
   kaneo?: KaneoState;
   /** #223 the filing cabinet: each floor's handoff count (absent from an older bridge, or one without a handoff directory). */
   handoffs?: HandoffCabinet;
+  /** #62 scheduled agents: the upcoming, the failed and skipped not dismissed, each floor's last 50 done (absent from a bridge before #62: none). */
+  schedules?: Schedule[];
 }
 
 export interface Hello {
@@ -586,6 +588,9 @@ export type WorldEvent =
   | RepoDiscoveryUpdate
   // #184 the Kaneo connection
   | KaneoUpdate
+  // #62 scheduled agents
+  | ScheduleUpsert
+  | ScheduleRemoved
   // M13 whiteboard
   | WhiteboardUpdated;
 
@@ -973,6 +978,18 @@ export interface CommandArgs {
   'handoff.get': { id: number };
   /** To the trash (acks `{handoff}`). */
   'handoff.delete': { id: number; confirm: true };
+  // #62 scheduled agents (docs/protocol.md "Scheduled agents"); every one acks the `Schedule` as the bridge left it.
+  'schedule.create': ScheduleSpec;
+  /** The whole spec, replaced; only while `scheduled`. No `source`; `floor` is the schedule's own (or empty). */
+  'schedule.update': { id: string } & Omit<ScheduleSpec, 'source'>;
+  /** While `scheduled` or `waiting`; `schedule.removed` follows. */
+  'schedule.cancel': { id: string };
+  /** While `scheduled`: fires now, without the grace check. */
+  'schedule.run_now': { id: string };
+  /** While `failed` or `skipped`: the same spec, fired now. */
+  'schedule.retry': { id: string };
+  /** While `failed` or `skipped`: out of view (`schedule.removed`). */
+  'schedule.dismiss': { id: string };
 }
 
 // M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
@@ -1245,6 +1262,8 @@ const EVENT_TYPES = new Set([
   'repo_refs.update', // #247 the "Repositories from other buildings" switch
   'repo_discovery.update', // #54 repository discovery
   'kaneo.update', // #184 the Kaneo connection
+  'schedule.upsert', // #62 scheduled agents
+  'schedule.removed',
   'screen.state', // M13 screen
   // M13 whiteboard
   'whiteboard.updated',
@@ -1353,6 +1372,11 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return isStr(o.session) && isObj(o.handoff) && isInt(o.handoff.id) && isInt(o.handoff_count);
     case 'handoff.removed':
       return isStr(o.session) && isInt(o.handoff_id) && isInt(o.handoff_count);
+    // #62: a schedule created, changed or moved on; one that left the view.
+    case 'schedule.upsert':
+      return isObj(o.schedule) && isStr(o.schedule.id) && isStr(o.schedule.floor) && isStr(o.schedule.state) && isInt(o.schedule.due_at);
+    case 'schedule.removed':
+      return isStr(o.id);
     // M13 screen: the fields of `ScreenState` flat in the event.
     case 'screen.state':
       return typeof o.sharing === 'boolean';
@@ -3062,4 +3086,83 @@ export interface HandoffRemoved {
   floor_id?: string;
   handoff_id: number;
   handoff_count: number;
+}
+
+// #62 scheduled agents (docs/protocol.md "Scheduled agents"). The game's dialog is #64 (part 3 of #61).
+
+/** Where a schedule came from: made by hand, from a transcript row (the source worker and message), or a suggestion. */
+export interface ScheduleSource {
+  kind: 'manual' | 'transcript' | 'suggestion';
+  worker?: string;
+  message?: string;
+}
+
+export type ScheduleState = 'scheduled' | 'waiting' | 'running' | 'done' | 'failed' | 'skipped' | 'cancelled';
+
+/** What a schedule fires: `schedule.create`'s args (and `schedule.update`'s, with its id and without `source`). */
+export interface ScheduleSpec {
+  floor: string;
+  /** 1–200 bytes, no control characters. */
+  title: string;
+  /** At most 32 KiB; empty only with a `handoff_path`. */
+  prompt: string;
+  /** Unix ms, UTC; in the future. */
+  due_at: number;
+  on_miss?: 'run_late' | 'skip';
+  /** Positive, `run_late` only; absent: no limit. */
+  max_lateness_ms?: number;
+  harness: string;
+  model: string;
+  effort: string;
+  /** An absolute directory that exists now; never replaced by another one. */
+  cwd: string;
+  worktree?: boolean;
+  /** Absent: true. */
+  wake_floor?: boolean;
+  handoff_path?: string;
+  /** Create only (absent: manual). */
+  source?: ScheduleSource;
+}
+
+/** One schedule as the bridge shows it: every `schedule.*` ack, `World.schedules`, `schedule.upsert`. */
+export interface Schedule {
+  id: string;
+  floor: string;
+  title: string;
+  prompt: string;
+  due_at: number;
+  on_miss: 'run_late' | 'skip';
+  max_lateness_ms?: number;
+  harness: string;
+  model: string;
+  effort: string;
+  cwd: string;
+  worktree: boolean;
+  wake_floor: boolean;
+  handoff_path?: string;
+  source: ScheduleSource;
+  state: ScheduleState;
+  /** Why it waits, failed or was skipped (names the flag or path). */
+  state_reason?: string;
+  /** When its hire began (unix ms) and the worker it hired. */
+  fired_at?: number;
+  worker_id?: string;
+  created_at: number;
+  updated_at: number;
+  dismissed_at?: number;
+}
+
+/** `schedule.upsert`: created, changed, or its state moved on (a fire began, waits, ended). */
+export interface ScheduleUpsert {
+  t: 'schedule.upsert';
+  seq: number;
+  schedule: Schedule;
+}
+
+/** `schedule.removed`: it left the view (cancelled, dismissed, a done one pruned past its floor's last 50). */
+export interface ScheduleRemoved {
+  t: 'schedule.removed';
+  seq: number;
+  id: string;
+  floor_id?: string;
 }

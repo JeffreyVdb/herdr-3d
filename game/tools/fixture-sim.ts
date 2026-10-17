@@ -67,6 +67,8 @@ import { CodexQuestionsSim } from './fixture-codex-questions.ts';
 import { HostSim } from './fixture-host.ts';
 // #223: literal handoffs and the filing cabinet (`worker.handoff*`, `handoff.*`, `sim.final`, `simhandoffs=<n>`, `simfail=no_handoff`).
 import { HandoffSim } from './fixture-handoff.ts';
+// #64 schedules: scheduled agents (`schedule.*`, `sim.schedule_fire`, `sim.schedule_fail`, `simschedules=<n>`, `simfail=no_schedules`).
+import { ScheduleSim } from './fixture-schedule.ts';
 
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
@@ -120,6 +122,8 @@ export interface SimOptions {
   /** #9: the LLM handoffs' state and outcome with no endpoint (`simhandoffllm=`, `simhandoffllmout=`; tools/fixture-handoff.ts). */
   handoffLlm?: string;
   handoffLlmOut?: string;
+  /** #64 schedules: this many schedules across the first two floors to start with (`simschedules=<n>`; tools/fixture-schedule.ts). */
+  schedules?: number;
   /** #247: `simrepos=<key>`: demo-m5's floors set up for `@r:`, the shared switch shared by the key's connections (tools/fixture-repos.ts). */
   repos?: string;
   now?: () => number;
@@ -274,6 +278,8 @@ export class SimWorld {
     this.caps = o.caps ?? {};
     this.handoffMode = o.fail === 'no_handoff' ? 'off' : 'on'; // #223
     this.handoffSeed = o.handoffs ?? 0;
+    this.scheduleMode = o.fail === 'no_schedules' ? 'off' : 'on'; // #64 schedules
+    this.scheduleSeed = o.schedules ?? 0;
     this.handoffLlm = { ...(o.handoffLlm ? { state: o.handoffLlm } : {}), ...(o.handoffLlmOut ? { outcome: o.handoffLlmOut } : {}) }; // #9
     this.now = o.now ?? (() => Date.now());
     this.setT = o.setTimeout ?? ((fn, ms) => setTimeout(fn, ms));
@@ -448,6 +454,8 @@ export class SimWorld {
   private readonly transcripts: TranscriptSim;
   private readonly handoffMode: 'on' | 'off';
   private readonly handoffSeed: number;
+  private readonly scheduleMode: 'on' | 'off';
+  private readonly scheduleSeed: number;
   private readonly handoffLlm: { state?: string; outcome?: string };
   /** #98: the agents' activities (tools/fixture-activity.ts). */
   private readonly activity: ActivitySim;
@@ -579,6 +587,7 @@ export class SimWorld {
     this.kaneo.decorate(world); // #184
     this.telegram.decorate(world); // #11
     this.handoffs.decorate(world); // #223
+    this.schedules.decorate(world); // #64 schedules
     this.inbox.decorate(world); // #106
     this.share.decorate(world); // M13
     const out = structuredClone(world);
@@ -712,6 +721,7 @@ export class SimWorld {
       if (this.repos.handle(m.t, a, send, ack)) return; // #247
       if (this.inbox.handle(m.t, a, send, ack)) return; // #106
       if (this.handoffs.handle(m.t, a, send, ack, fail)) return; // #223, #9
+      if (this.schedules.handle(m.t, a, send, ack, fail)) return; // #64 schedules
       if (this.share.handle(m.t, a, send, ack, fail)) return; // M13
       switch (m.t) {
         case 'sim.advance':
@@ -1276,6 +1286,47 @@ export class SimWorld {
       this.handoffLlm,
     );
     return this.handoffSim;
+  }
+
+  // ---- #64 schedules: scheduled agents (tools/fixture-schedule.ts) ------
+
+  private scheduleSim: ScheduleSim | null = null;
+
+  private get schedules(): ScheduleSim {
+    this.scheduleSim ??= new ScheduleSim(
+      {
+        floors: () => [...this.sorted().flatMap((b) => b.floors), ...[...this.floors.values()].filter((f) => f.building === null).map((f) => f.session)],
+        floor: (id) => this.floors.get(id),
+        hire: this.hire,
+        workers: this.workers,
+        emit: (send, m) => this.emit(send, m),
+        out: () => this.out,
+        error: (code, message) => new CmdError(code, message),
+        now: () => this.now(),
+        later: (fn, ms) => {
+          const h = this.setT(() => {
+            this.timers.delete(h);
+            fn();
+          }, ms);
+          this.timers.add(h);
+          return h;
+        },
+        cancel: (h) => {
+          this.clearT(h);
+          this.timers.delete(h);
+        },
+        freeDesk: (id) => {
+          const f = this.floors.get(id);
+          const n = f?.desks ?? 0;
+          for (let d = 0; d < n; d++) if (!this.hiring.has(`${id}:${d}`) && !this.workers.some((w) => w.session === id && w.desk_index === d)) return d;
+          return null;
+        },
+        hireWorker: (a, send, ack, fail) => this.hireWorker(a, send, ack, fail),
+      },
+      this.scheduleMode !== 'off',
+      this.scheduleSeed,
+    );
+    return this.scheduleSim;
   }
 
   // ---- #213: the dictation bar's interpreter (tools/fixture-interpret.ts) ------
