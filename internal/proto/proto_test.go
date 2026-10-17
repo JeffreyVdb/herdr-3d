@@ -54,3 +54,39 @@ func TestHarnessOptionsModelLabels(t *testing.T) {
 		t.Errorf("decode without labels = %+v, %v", out, err)
 	}
 }
+
+// #22: the child events' fields survive Event's embedded flat structs (a
+// name two of them share would silently drop out of the JSON), and the
+// snapshot always has its children.
+func TestChildWire(t *testing.T) {
+	b, err := json.Marshal(Event{T: EvChildRemoved, Seq: 7, ID: "ch_1", WorkerID: "w", Generation: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"t":"child.removed","seq":7,"id":"ch_1","worker_id":"w","generation":3}` {
+		t.Errorf("child.removed = %s", b)
+	}
+	c := Child{ID: "ch_1", Provider: ChildClaude, WorkerID: "w", AgentSession: "s", Generation: 3, Parent: ParentUnresolved,
+		State: ChildUnknown, Source: ChildFromFixture, Transcript: TranscriptUnavailable}
+	b, _ = json.Marshal(Event{T: EvChildUpsert, Seq: 8, Child: &c})
+	want := `{"t":"child.upsert","seq":8,"child":{"id":"ch_1","provider":"claude","worker_id":"w","agent_session":"s","generation":3,` +
+		`"parent":"unresolved","state":"unknown","source":"fixture","transcript":"unavailable"}}`
+	if string(b) != want {
+		t.Errorf("child.upsert = %s", b)
+	}
+	var back Event
+	if err := json.Unmarshal(b, &back); err != nil || back.Child == nil || *back.Child != c {
+		t.Errorf("round trip = %+v, %v", back.Child, err)
+	}
+	b, _ = json.Marshal(World{})
+	var m map[string]json.RawMessage
+	_ = json.Unmarshal(b, &m)
+	if string(m["children"]) != "null" {
+		t.Errorf("children = %s", m["children"])
+	}
+	b, _ = json.Marshal(Worker{ID: "w"})
+	m = nil
+	if _ = json.Unmarshal(b, &m); m["child_generation"] != nil {
+		t.Errorf("child_generation of 0 = %s", m["child_generation"])
+	}
+}

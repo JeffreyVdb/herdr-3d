@@ -1,0 +1,17 @@
+{
+  "description": "A child that names a parent the bridge has not seen stays unresolved (under its root worker) until that parent shows up; one whose evidence names no parent stays unresolved for good. Nothing is inferred from timing.",
+  "workers": [{"name": "w1", "agent_session": "sess-u1"}],
+  "steps": [
+    {"evidence": {"session": "sess-u1", "provider": "claude", "native_id": "b1", "parent": {"kind": "child", "native_id": "a-parent"}, "type": "Explore", "state": "running", "source": "transcript", "started_at": 1792000200000}},
+    {"evidence": {"session": "sess-u1", "provider": "claude", "native_id": "c1", "type": "Plan", "state": "running", "source": "hook", "started_at": 1792000201000}},
+    {"note": "the parent shows up: b1 is resolved under it, c1 is not touched", "evidence": {"session": "sess-u1", "provider": "claude", "native_id": "a-parent", "parent": {"kind": "root"}, "type": "general-purpose", "state": "running", "source": "hook", "started_at": 1792000199000}}
+  ],
+  "expect": {
+    "w1": [
+      {"native_id": "a-parent", "provider": "claude", "parent": "root", "type": "general-purpose", "state": "running", "source": "hook", "started_at": 1792000199000, "transcript": "unavailable", "children": [
+        {"native_id": "b1", "provider": "claude", "parent": "child", "type": "Explore", "state": "running", "source": "transcript", "started_at": 1792000200000, "transcript": "unavailable"}
+      ]},
+      {"native_id": "c1", "provider": "claude", "parent": "unresolved", "type": "Plan", "state": "running", "source": "hook", "started_at": 1792000201000, "transcript": "unavailable"}
+    ]
+  }
+}

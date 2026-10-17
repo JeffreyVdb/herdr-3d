@@ -1,0 +1,20 @@
+{
+  "description": "Codex children three deep: each names its immediate parent by its thread id.",
+  "workers": [{"name": "w1", "agent_session": "sess-n1"}],
+  "steps": [
+    {"evidence": {"session": "sess-n1", "provider": "codex", "native_id": "th-a", "parent": {"kind": "root"}, "name": "Ada", "type": "worker", "state": "running", "source": "app_server", "started_at": 1792000100000, "transcript": "available"}},
+    {"evidence": {"session": "sess-n1", "provider": "codex", "native_id": "th-b", "parent": {"kind": "child", "native_id": "th-a"}, "name": "Bell", "type": "explorer", "state": "running", "source": "app_server", "started_at": 1792000101000, "transcript": "available"}},
+    {"evidence": {"session": "sess-n1", "provider": "codex", "native_id": "th-c", "parent": {"kind": "child", "native_id": "th-b"}, "name": "Curie", "state": "running", "source": "app_server", "started_at": 1792000102000}},
+    {"evidence": {"session": "sess-n1", "provider": "codex", "native_id": "th-c", "state": "completed", "source": "app_server", "ended_at": 1792000103000}},
+    {"evidence": {"session": "sess-n1", "provider": "codex", "native_id": "th-b", "state": "idle", "source": "app_server", "last_activity_at": 1792000104000}}
+  ],
+  "expect": {
+    "w1": [
+      {"native_id": "th-a", "provider": "codex", "parent": "root", "name": "Ada", "type": "worker", "state": "running", "source": "app_server", "started_at": 1792000100000, "transcript": "available", "children": [
+        {"native_id": "th-b", "provider": "codex", "parent": "child", "name": "Bell", "type": "explorer", "state": "idle", "source": "app_server", "started_at": 1792000101000, "last_activity_at": 1792000104000, "transcript": "available", "children": [
+          {"native_id": "th-c", "provider": "codex", "parent": "child", "name": "Curie", "state": "completed", "source": "app_server", "started_at": 1792000102000, "ended_at": 1792000103000, "transcript": "unavailable"}
+        ]}
+      ]}
+    ]
+  }
+}

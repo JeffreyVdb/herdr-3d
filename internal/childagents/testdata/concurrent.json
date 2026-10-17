@@ -1,0 +1,21 @@
+{
+  "description": "Two concurrent Claude children of one worker, each tracked by its own id; one completes, the other goes quiet and stays running (quiet logs are no completion). Another worker's Codex child stays its own.",
+  "workers": [{"name": "w1", "agent_session": "sess-c1"}, {"name": "w2", "agent_session": "sess-c2"}],
+  "steps": [
+    {"evidence": {"session": "sess-c1", "provider": "claude", "native_id": "a1", "parent": {"kind": "root"}, "type": "Explore", "description": "Find the hub's session handling", "state": "running", "source": "hook", "started_at": 1792000000000, "transcript": "pending"}},
+    {"evidence": {"session": "sess-c1", "provider": "claude", "native_id": "a2", "parent": {"kind": "root"}, "type": "general-purpose", "description": "Write the registry tests", "state": "running", "source": "hook", "started_at": 1792000001000, "transcript": "pending"}},
+    {"evidence": {"session": "sess-c2", "provider": "codex", "native_id": "019a0c1e-th01", "parent": {"kind": "root"}, "name": "Sagan", "type": "explorer", "state": "running", "source": "rollout", "started_at": 1792000002000, "transcript": "available"}},
+    {"evidence": {"session": "sess-c1", "provider": "claude", "native_id": "a1", "source": "transcript", "last_activity_at": 1792000005000, "transcript": "available"}},
+    {"evidence": {"session": "sess-c1", "provider": "claude", "native_id": "a2", "source": "transcript", "last_activity_at": 1792000006000, "transcript": "available"}},
+    {"note": "a1 completes; a2 is never heard from again", "evidence": {"session": "sess-c1", "provider": "claude", "native_id": "a1", "state": "completed", "source": "hook", "last_activity_at": 1792000009000, "ended_at": 1792000009000}}
+  ],
+  "expect": {
+    "w1": [
+      {"native_id": "a1", "provider": "claude", "parent": "root", "type": "Explore", "description": "Find the hub's session handling", "state": "completed", "source": "hook", "started_at": 1792000000000, "last_activity_at": 1792000009000, "ended_at": 1792000009000, "transcript": "available"},
+      {"native_id": "a2", "provider": "claude", "parent": "root", "type": "general-purpose", "description": "Write the registry tests", "state": "running", "source": "hook", "started_at": 1792000001000, "last_activity_at": 1792000006000, "transcript": "available"}
+    ],
+    "w2": [
+      {"native_id": "019a0c1e-th01", "provider": "codex", "parent": "root", "name": "Sagan", "type": "explorer", "state": "running", "source": "rollout", "started_at": 1792000002000, "transcript": "available"}
+    ]
+  }
+}
