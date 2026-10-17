@@ -5,7 +5,8 @@ import { enter } from './m7';
 // #184: Kaneo as a floor's issue tracker, on demo-m6 with the simulating fixture server (tools/fixture-kaneo.ts):
 // Settings → Kaneo (test and save the connection), a floor's tracker, workspace and project, and its Kaneo board.
 // `simkaneo=connected` starts with https://kaneo.example.test saved (default workspace Studio); `simkaneoslow` is how
-// long the Slow lane workspace's projects take. `open=none` records "Open in Kaneo" instead of opening a window.
+// long the Slow lane workspace's projects take (and, #102, a task's description with `sim.kaneo {detail: "slow"}`).
+// `open=none` records "Open in Kaneo" instead of opening a window.
 
 const SIM = 'play=none&sim=1&simms=150&simusage=0';
 const EXTRA = '&open=none';
@@ -155,5 +156,44 @@ test('a refused key pauses the Kaneo board, and a re-test in Settings resumes it
   await expect(k.locator('.settings-badge')).toHaveText('Paused');
   await k.getByRole('button', { name: 'Test connection' }).click();
   await expect(k.locator('.settings-badge')).toHaveText('Connected');
+  clean();
+});
+
+test('#102: Ask a worker… on a Kaneo task sends its key and link only, while its description loads and after it failed', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', EXTRA, `${SIM}&simkaneo=connected&simkaneoslow=120000`);
+  const panel = await floorSettings(page);
+  await panel.locator('label.tracker-opt', { hasText: 'Kaneo' }).click();
+  await panel.locator('#set-kaneoProject').selectOption({ label: 'herdr-3d' });
+  await panel.getByRole('button', { name: 'Save settings' }).click();
+  await expect(panel.locator('p.panel-status[role="status"]')).toContainText('Saved');
+  await page.keyboard.press('Escape');
+  const link = 'https://kaneo.example.test/dashboard/workspace/ws-studio/project/p-herdr/task/task-hrd-4';
+  const want = `Investigate HRD-4 (${link}) and report back. Don't change code.`;
+  for (const detail of ['slow', 'fail'] as const) {
+    await page.evaluate((d) => window.__h3d.simKaneo({ detail: d }), detail);
+    await openMenu(page);
+    await page.locator('.topbar button', { hasText: 'Issues' }).click();
+    const board = page.locator('dialog.desk-dlg--board');
+    await expect(board.locator('h2')).toHaveText('Tasks · lab');
+    await board.locator('.bd-card', { hasText: 'HRD-4' }).click();
+    const item = page.locator('dialog.desk-dlg--item');
+    if (detail === 'slow') await expect(item.locator('.bd-loading')).toHaveText('Reading it from Kaneo…');
+    else await expect(item.getByRole('button', { name: 'Try again' })).toBeVisible();
+    await expect(item).not.toContainText('Step 40');
+    const ask = item.locator('[data-key="ask"]');
+    await expect(ask).toBeVisible();
+    await expect(ask).not.toHaveAttribute('aria-disabled', 'true');
+    await shot(page, `h102-kaneo-ask-${detail}`);
+    await ask.click();
+    await expect.poll(async () => ((await page.evaluate(() => window.__h3d.dialog())) as { kind: string; state: string } | null)?.state ?? null, { timeout: 10_000 }).toBe('ready');
+    const d = (await page.evaluate(() => window.__h3d.dialog())) as { kind: string; form: { prompt: string } };
+    expect(d.kind).toBe('hire');
+    expect(d.form.prompt).toBe(want);
+    await expect(page.locator('#hire-task')).toHaveText(want);
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => await page.evaluate(() => window.__h3d.dialog())).toBeNull();
+  }
   clean();
 });

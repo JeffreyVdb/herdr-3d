@@ -274,13 +274,12 @@ describe('overlay helpers', () => {
 });
 
 describe('Kaneo wording (#184)', () => {
-  it('asks a worker with the task itself, bounded, and sends nobody to gh', async () => {
-    const { askItemPrompt, freshness } = await import('./boards');
-    const p = askItemPrompt('Kaneo', { key: 'HRD-3', title: ' Lobby ', url: 'https://k.test/t' }, 'x'.repeat(5000));
-    expect(p.startsWith('Investigate Kaneo task HRD-3: Lobby (https://k.test/t)')).toBe(true);
-    expect(p).toContain('[The description goes on in Kaneo.]');
-    expect(p).toContain("don't look it up with gh");
-    expect(p.length).toBeLessThan(4300);
+  it('asks a worker about a task by its key and link only, like an issue (#102)', async () => {
+    const boards = await import('./boards');
+    const { freshness } = boards;
+    expect(boards.askPrompt('HRD-3', 'https://k.test/dashboard/workspace/w/project/p/task/t3')).toBe("Investigate HRD-3 (https://k.test/dashboard/workspace/w/project/p/task/t3) and report back. Don't change code.");
+    expect(Object.keys(boards)).not.toContain('askItemPrompt');
+    expect(Object.keys(boards)).not.toContain('askInlinesItem');
     const f = freshness({ stale: true, error: '403', error_code: 'forbidden', fetched_at: 0, provider_name: 'Kaneo' }, 0, () => 'now');
     expect(f).toContain('permission problem');
   });

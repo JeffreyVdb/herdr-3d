@@ -1,9 +1,7 @@
 package server_test
 
 import (
-	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
@@ -108,21 +106,25 @@ func TestRunPromptNamesTheFloor(t *testing.T) {
 	}
 }
 
-// #184: an item's ticket inlines what the provider gave, its description
-// bounded, and the item line replaces the status line.
+// #184, #102: an item's ticket is its canonical URL, like an issue's, with
+// no status line, and with extra instructions after the floor line; with no
+// URL it is "<Provider> task <key>", never a bare number.
 func TestItemPrompt(t *testing.T) {
 	t.Parallel()
-	ticket := &proto.RunTicket{Kind: proto.TicketItem, ProviderName: "Kaneo", Body: "Do it.",
+	ticket := &proto.RunTicket{Kind: proto.TicketItem, ProviderName: "Kaneo",
 		Item: &proto.WorkItemRef{Provider: "kaneo", ID: "t1", Key: "HRD-3", Title: " Lobby ", URL: "https://tasks.example.test/x"}}
-	got := server.TicketPrompt("$write-code", ticket, buildTeam, "s", "")
-	want := "$write-code Kaneo task HRD-3: Lobby\nhttps://tasks.example.test/x\n\nDo it.\n\n" + buildHead +
-		"\n\nThis ticket is a Kaneo task, not a GitHub issue: everything the bridge read of it is above. Don't look it up with gh, and leave its status on the Kaneo board to people."
-	if got != want {
-		t.Fatalf("prompt =\n%s\nwant\n%s", got, want)
+	for call, extra := range map[string]string{"$write-code": "", "/write-code": "  Keep it small.\n"} {
+		want := call + " https://tasks.example.test/x\n\n" + buildHead
+		if extra != "" {
+			want += "\n\nKeep it small."
+		}
+		if got := server.TicketPrompt(call, ticket, buildTeam, "s", extra); got != want {
+			t.Fatalf("prompt =\n%s\nwant\n%s", got, want)
+		}
 	}
-	ticket.Body = strings.Repeat("é", 4000) // 8000 bytes
-	if s := server.ItemTicket(ticket); len(s) > 6200 || !strings.HasSuffix(s, "[The description goes on in Kaneo; this is its first part.]") || !utf8.ValidString(s) {
-		t.Fatalf("long body: %d bytes, valid %v", len(s), utf8.ValidString(s))
+	ticket.Item.URL = ""
+	if got, want := server.TicketPrompt("/write-code", ticket, buildTeam, "s", ""), "/write-code Kaneo task HRD-3\n\n"+buildHead; got != want {
+		t.Fatalf("prompt without a URL =\n%s\nwant\n%s", got, want)
 	}
 	// An issue's prompt is the one it always was.
 	issue := &proto.RunTicket{Kind: proto.TicketIssue, Repo: "JeffreyVdb/lab", Number: 3, URL: server.IssueURL("JeffreyVdb/lab", 3)}

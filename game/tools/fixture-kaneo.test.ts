@@ -3,6 +3,7 @@ import type { BoardIssues, Snapshot, WorldEvent } from '../src/net/protocol';
 import { WorldStore } from '../src/world/store';
 import { loadFixture } from './fixture-server';
 import { SimWorld, type SimOptions } from './fixture-sim';
+import { herdrInstructions } from './fixture-start';
 
 type Msg = Record<string, unknown>;
 
@@ -124,15 +125,36 @@ describe('the simulated Kaneo connection (#184)', () => {
     expect(r.issues().at(-1)?.stale).toBe(false);
   });
 
-  it('a run on a Kaneo task: an item ticket, its text in the prompt, the orchestrator on the item', () => {
+  it('a run on a Kaneo task: an item ticket, named by its link in the prompt (#102), in the preview and the start', () => {
     const r = rig({ stepMs: 20 });
     connect(r);
     linkKaneo(r);
-    const prep = r.cmd('run.prepare', { session: 'herdr-3d', work_item: { provider: 'kaneo', id: 'task-hrd-4' } }).ack()?.data as Msg;
-    expect(prep.ticket).toMatchObject({ kind: 'item', item: { key: 'HRD-4' }, provider_name: 'Kaneo' });
+    const link = `${URL}/dashboard/workspace/ws-studio/project/p-herdr/task/task-hrd-4`;
+    const prep = r.cmd('run.prepare', { session: 'herdr-3d', work_item: { provider: 'kaneo', id: 'task-hrd-4' }, extra: 'Keep it small.' }).ack()?.data as Msg;
+    expect(prep.ticket).toEqual({ kind: 'item', url: link, item: { provider: 'kaneo', id: 'task-hrd-4', key: 'HRD-4', title: 'A task with a long description', url: link }, provider_name: 'Kaneo' });
     expect(prep.label).toBe('ORCH|hrd-4');
-    expect(String(prep.prompt)).toContain('Kaneo task HRD-4: A task with a long description');
-    expect(String(prep.prompt)).toContain('not a GitHub issue');
-    expect(prep.ticket).not.toHaveProperty('body');
+    const prompt = String(prep.prompt);
+    expect(prompt.startsWith(`/write-code ${link}\n\nTeam:\n`)).toBe(true);
+    expect(prompt.endsWith(`\n\n${herdrInstructions('herdr-3d')}\n\nKeep it small.`)).toBe(true);
+    for (const not of ['Step 40', 'A task with a long description', 'not a GitHub issue', 'with gh', 'Move the ticket status']) expect(prompt).not.toContain(not);
+    const started = r.cmd('run.start', { session: 'herdr-3d', desk_index: 12, work_item: { provider: 'kaneo', id: 'task-hrd-4' }, preset: prep.preset, orch: prep.orch, extra: 'Keep it small.' });
+    r.settle();
+    expect(started.err()).toBeUndefined();
+    expect((started.ack()?.data as Msg).prompt).toBe(prompt);
+  });
+
+  it('#102: a task’s description can be slow to read, or fail, and comes back at once again', () => {
+    const r = rig();
+    connect(r);
+    linkKaneo(r);
+    expect(r.cmd('sim.kaneo', { detail: 'fail' }).ack()?.data).toMatchObject({ detail: 'fail' });
+    expect(r.cmd('issue.get', { session: 'herdr-3d', id: 'task-hrd-4' }).err()?.code).toBe('provider_failed');
+    r.cmd('sim.kaneo', { detail: 'slow' });
+    const slow = r.cmd('issue.get', { session: 'herdr-3d', id: 'task-hrd-4' });
+    expect(slow.ack()).toBeUndefined();
+    r.settle();
+    expect((slow.ack()?.data as Msg).body).toContain('Step 40');
+    r.cmd('sim.kaneo', { detail: null });
+    expect((r.cmd('issue.get', { session: 'herdr-3d', id: 'task-hrd-4' }).ack()?.data as Msg).body).toContain('Step 40');
   });
 });

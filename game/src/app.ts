@@ -78,7 +78,7 @@ import { runUnsupported, StartRunDialog, type StartRunOptions } from './ui/start
 // M6 crew: freelancers drop in (M6b) and walk out with their briefcase.
 import { crewRole, inputRequired, isFreelancer } from './world/crew';
 // M7: the issues and pull request boards.
-import { askInlinesItem, askItemPrompt, askPrompt, BoardBook, nearestDesk, resolveConflictsPrompt, reviewPrompt } from './world/boards';
+import { askPrompt, BoardBook, nearestDesk, resolveConflictsPrompt, reviewPrompt } from './world/boards';
 import { BoardsPanel, type BoardOff, type BoardState } from './ui/boards/panel';
 import { openExternal } from './ui/boards/external';
 import { OpenPrDialog } from './ui/boards/openPr';
@@ -787,7 +787,7 @@ export class App {
       refresh: (floor) => void this.sendBoard('board.refresh', { floor }),
       external: (url) => this.external(url),
       handTo: (floor, card, provider) => this.handTo(floor, card, provider),
-      ask: (floor, card, provider, body) => this.askAbout(floor, card, provider, body),
+      ask: (floor, card) => this.askAbout(floor, card),
       review: (floor, pr) => this.reviewPr(floor, pr),
       resolve: (floor, pr, method) => this.resolvePr(floor, pr, method),
       whyNoRun: (floor) => this.whyNoRun(floor),
@@ -2925,16 +2925,14 @@ export class App {
   }
 
   /**
-   * "Ask a worker…": the hire dialog at the nearest free desk with a first prompt to look into it. #184: a GitHub
-   * issue goes by its link (the worker can read it with gh); a Kaneo task carries its title and description, which
-   * the worker could not read itself.
+   * "Ask a worker…": the hire dialog at the nearest free desk with a first prompt to look into it. The item goes by its
+   * key and link, a Kaneo task too (#102): the worker reads it with the tools it has, so nothing waits for its
+   * description.
    */
-  private askAbout(floor: string, card: IssueCard, provider: string, body: string | null): void {
-    if (askInlinesItem(provider) && body === null) return; // the board offers it only once the description is read
+  private askAbout(floor: string, card: IssueCard): void {
     const desk = this.nearestFreeDesk(floor);
     this.boardsPanel.close();
-    const prompt = askInlinesItem(provider) ? askItemPrompt(this.boardsPanel.providerLabel(), card, body) : askPrompt(card.key, card.url);
-    this.openHire(desk ?? undefined, { prompt }, floor);
+    this.openHire(desk ?? undefined, { prompt: askPrompt(card.key, card.url) }, floor);
   }
 
   /** "Review with a worker": the hire dialog with the last team's reviewer and the code-review prompt for the PR. */

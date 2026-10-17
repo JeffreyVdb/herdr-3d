@@ -1758,13 +1758,16 @@ link whether or not the orchestrator tags them, and the write-code skill itself 
 a pull request means QA, its merge means Done); a free-text ticket has none. With no `extra`, the blank line before it is
 left out too. (A pure function, `server.RunPrompt`.)
 
-#184: an `item` ticket (a Kaneo task) is one an agent cannot read where it lives (no `gh`, and the integration key never
-reaches an agent), so the prompt carries what the provider gave: `/write-code Kaneo task HRD-12: <title>`, the task's
-URL on the next line, then its description (the first 6000 bytes, then "[The description goes on in Kaneo; this is its
-first part.]"); in place of the status line, "This ticket is a Kaneo task, not a GitHub issue: everything the bridge
-read of it is above. Don't look it up with gh, and leave its status on the Kaneo board to people." The label is
-`ORCH|<key>` in lower case (`ORCH|hrd-12`). (`server.TicketPrompt`; the issue and text prompts are `RunPrompt`'s, byte for
-byte.) The game's "Ask a worker…" on a Kaneo task likewise puts the title and the description in the first prompt.
+#184, #102: an `item` ticket (a Kaneo task) is named by its canonical URL, as an issue is: `/write-code
+https://kaneo.example.test/dashboard/workspace/<workspace>/project/<project>/task/<task>` (the instance, workspace,
+project and task id; `$write-code` for Codex), then the team, the placement line, the floor line and the `extra`. Nothing
+of the task is copied in (no title, no description) and there is no status line (a Kaneo board need not have the issue
+line's QA and Done columns): the orchestrator reads the task, and follows its status, with the tools and credentials it
+has (Kaneo's CLI or MCP server take that id), and asks the user when it cannot. A task without a URL is named
+`Kaneo task <key>`, never by a bare number. The label is `ORCH|<key>` in lower case (`ORCH|hrd-12`).
+(`server.TicketPrompt`; the issue and text prompts are `RunPrompt`'s, byte for byte.) The game's "Ask a worker…" on a
+Kaneo task likewise sends only its key and link ("Investigate HRD-12 (<url>) and report back. Don't change code.", as
+for an issue), and is offered whether or not the task's description has been read.
 
 **`run.start`** hires the orchestrator and gives it the prompt:
 
@@ -1790,8 +1793,8 @@ byte.) The game's "Ask a worker…" on a Kaneo task likewise puts the title and 
 
 #39: what a person typed reaches a Codex orchestrator as `worker.hire`'s first task does (see [Completion before a
 hire](#completion-before-a-hire)): the `extra` inside the composed prompt, or an edited `prompt` whole, rewritten once
-when the hire sends it; the ticket the bridge composes around the extra (an issue's URL, a Kaneo task's title and
-description) never is, whatever it holds. The ack's `prompt` is the text sent (rewritten). `run.prepare`'s `prompt` is
+when the hire sends it; the ticket the bridge composes around the extra (an issue's URL, a Kaneo task's URL) never is,
+whatever it holds. The ack's `prompt` is the text sent (rewritten). `run.prepare`'s `prompt` is
 the preview as typed (never rewritten).
 
 It is the [`worker.hire`](#hire-and-send-home) hire, the same code path, events, rollback and audit: at `desk_index`,
@@ -1943,8 +1946,8 @@ dropped as after a successful write), so it shows what GitHub has. An anchor the
   alternative to `issue` and `text`. The bridge resolves it through the floor's issue provider (GitHub: to the M6 issue
   path, the URL in the prompt) and stores the launch as M6 does. A provider other than the floor's, an id that is not an
   item of the floor's board (not on the last board, once one was read): `not_found`. #184: an item of a provider that
-  numbers no GitHub issues (Kaneo) is read with the provider's `issue.get` (its key, title, URL and description) into an
-  `item` ticket, and the launch keeps `{provider, id}` and the key (never a repo or a number); see [Team presets and
+  numbers no GitHub issues (Kaneo) is read with the provider's `issue.get` (which checks it and gives its key, title and
+  URL; #102: the prompt names it by its URL) into an `item` ticket, and the launch keeps `{provider, id}` and the key (never a repo or a number); see [Team presets and
   starting a run](#team-presets-and-starting-a-run). A `run.start` whose item is still being read when the floor's
   board source changes (another tracker, Kaneo connection or project) starts nothing and is `stale`.
 

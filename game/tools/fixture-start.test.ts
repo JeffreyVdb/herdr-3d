@@ -3,7 +3,7 @@ import type { Snapshot, WorldEvent } from '../src/net/protocol';
 import { WorldStore } from '../src/world/store';
 import { loadFixture } from './fixture-server';
 import { SimWorld } from './fixture-sim';
-import { composePrompt, ISSUE_STATUS_LINE, PLACEMENT_LINE, runLabel, SIM_BUILD_TEAM } from './fixture-start';
+import { composePrompt, floorLine, ISSUE_STATUS_LINE, itemRef, PLACEMENT_LINE, runLabel, SIM_BUILD_TEAM } from './fixture-start';
 
 type Msg = Record<string, unknown>;
 
@@ -38,19 +38,24 @@ function rig(fail?: string) {
 const last = (ms: Msg[]) => ms[ms.length - 1] as Msg;
 const data = (m: Msg | undefined) => (m?.t === 'ack' ? (m.data as Record<string, unknown>) : undefined);
 const ROLES = SIM_BUILD_TEAM.roles;
-const TEAM = ['Team:', '- coders: claude claude-opus-5-5, effort medium', '- reviewers: codex gpt-6-sol, reasoning high', '- ux reviewers: codex gpt-6-sol, reasoning high', '- researchers: codex gpt-6-sol, reasoning low', '', PLACEMENT_LINE];
+const TEAM = ['Team:', '- coders: claude claude-opus-5-5, effort medium', '- reviewers: codex gpt-6-sol, reasoning high', '- ux reviewers: codex gpt-6-sol, reasoning high', '- researchers: codex gpt-6-sol, reasoning low', '', PLACEMENT_LINE, '', floorLine('herdr-3d')];
 
 describe('composePrompt (contract 2.2)', () => {
   const url = 'https://github.com/JeffreyVdb/lab/issues/3';
   it('claude ORCH, issue, no extra', () => {
-    expect(composePrompt(ROLES.orch, url, ROLES, '', true)).toBe([`/write-code ${url}`, '', ...TEAM, '', ISSUE_STATUS_LINE].join('\n'));
+    expect(composePrompt(ROLES.orch, url, ROLES, 'herdr-3d', '', true)).toBe([`/write-code ${url}`, '', ...TEAM, '', ISSUE_STATUS_LINE].join('\n'));
   });
   it('codex ORCH, issue, extra (trimmed)', () => {
-    expect(composePrompt({ harness: 'codex', model: 'gpt-6-sol', effort: 'high' }, url, ROLES, '  Keep the diff small.\n', true)).toBe([`$write-code ${url}`, '', ...TEAM, '', ISSUE_STATUS_LINE, '', 'Keep the diff small.'].join('\n'));
+    expect(composePrompt({ harness: 'codex', model: 'gpt-6-sol', effort: 'high' }, url, ROLES, 'herdr-3d', '  Keep the diff small.\n', true)).toBe([`$write-code ${url}`, '', ...TEAM, '', ISSUE_STATUS_LINE, '', 'Keep the diff small.'].join('\n'));
   });
   it('free text spanning lines, trimmed; a blank extra leaves no block', () => {
-    expect(composePrompt(ROLES.orch, '  Add a dark mode\nto settings ', ROLES, ' \n ')).toBe(['/write-code Add a dark mode\nto settings', '', ...TEAM].join('\n'));
-    expect(composePrompt({ harness: 'codex', model: 'gpt-6-luna', effort: 'low' }, 'Fix it', ROLES, 'x')).toBe(['$write-code Fix it', '', ...TEAM, '', 'x'].join('\n'));
+    expect(composePrompt(ROLES.orch, '  Add a dark mode\nto settings ', ROLES, 'herdr-3d', ' \n ')).toBe(['/write-code Add a dark mode\nto settings', '', ...TEAM].join('\n'));
+    expect(composePrompt({ harness: 'codex', model: 'gpt-6-luna', effort: 'low' }, 'Fix it', ROLES, 'herdr-3d', 'x')).toBe(['$write-code Fix it', '', ...TEAM, '', 'x'].join('\n'));
+  });
+  it('#102: names an item by its URL, else "<Provider> task <key>", with no status line', () => {
+    const it3 = { provider: 'kaneo', id: 't3', key: 'HRD-3', title: 'Lobby', url: 'https://k.test/dashboard/workspace/w/project/p/task/t3' };
+    expect(composePrompt(ROLES.orch, itemRef('Kaneo', it3), ROLES, 'herdr-3d', 'x')).toBe([`/write-code ${it3.url}`, '', ...TEAM, '', 'x'].join('\n'));
+    expect(itemRef('Kaneo', { ...it3, url: '' })).toBe('Kaneo task HRD-3');
   });
   it('labels a run ORCH|issue-<n> or ORCH|<slug>, at most 10 characters after the bar', () => {
     expect(runLabel({ kind: 'issue', number: 3 })).toBe('ORCH|issue-3');

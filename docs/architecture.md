@@ -289,7 +289,8 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   floor's board, its cache and any late poll. A run-time 401 (maybe the key's quota) pauses every Kaneo floor's polling
   for 5 minutes, ended by a passing re-test; a 403 is a permission problem. Kaneo's virtual `planned` and `archived`
   statuses are columns with a `kind`; `close` is off (completion is a final column; a task is never deleted). Runs on
-  a Kaneo task keep `{provider, id}` in `run_launch` and inline the task in the prompt (an agent cannot read Kaneo).
+  a Kaneo task keep `{provider, id}` in `run_launch` and name the task by its canonical URL in the prompt (#102): the
+  agent reads it with its own tools; no description is copied in.
   "Open in Kaneo" from the helper works for the saved instance's host only, which the bridge names on its own
   `/healthz` for the helper.
 - **Repository discovery** (#54, built; details in `protocol.md` "Repository discovery"): the bridge scans folders on

@@ -43,8 +43,8 @@ const board = (over: Partial<BoardIssues> = {}): BoardIssues => ({
 
 type Answer = { ok: true; data: unknown } | { ok: false; code: string; message: string };
 
-/** `get`, when given, answers issue.get (the test resolves it when it likes). */
-function setup(issues: BoardIssues, get?: () => Promise<Answer>) {
+/** `get`, when given, answers issue.get (the test resolves it when it likes); `over` replaces host methods. */
+function setup(issues: BoardIssues, get?: () => Promise<Answer>, over: Partial<BoardsHost> = {}) {
   const state: BoardState = { issues, prs: null, off: null };
   const sent: Array<{ t: string; args: Record<string, unknown> }> = [];
   const asked: unknown[][] = [];
@@ -68,6 +68,7 @@ function setup(issues: BoardIssues, get?: () => Promise<Answer>) {
     goTo: () => {},
     handTo: () => {},
     ask: (...a: unknown[]) => asked.push(a),
+    ...over,
   } as unknown as BoardsHost;
   const panel = new BoardsPanel(document.body, host);
   return { panel, sent, asked, opened };
@@ -106,7 +107,7 @@ describe('a Kaneo board (#184)', () => {
     expect(document.querySelector('.bd-body')!.textContent).not.toMatch(/ago|recently/); // no timestamps to invent
   });
 
-  it('offers no GitHub close, opens the task in Kaneo, and asks a worker with the description it read', async () => {
+  it('offers no GitHub close, opens the task in Kaneo, and asks a worker about the card alone', async () => {
     const { panel, asked, opened } = setup(board());
     panel.openItem('issues', 'floor', 't1');
     await tick();
@@ -118,33 +119,40 @@ describe('a Kaneo board (#184)', () => {
     foot.querySelector<HTMLButtonElement>('[data-key="open"]')!.click();
     expect(opened).toEqual(['https://tasks.example.test/dashboard/workspace/w/project/p/task/t1']);
     foot.querySelector<HTMLButtonElement>('[data-key="ask"]')!.click();
-    expect(asked[0]?.slice(2)).toEqual(['kaneo', 'The **description**']);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toEqual(['floor', expect.objectContaining({ id: 't1', key: 'HRD-1' })]);
   });
 
-  it('asks a worker only once the task’s description is read: not while it loads, not after it failed', async () => {
+  it('#102: asks a worker while the task’s description loads and after it failed: the ask needs only the card', async () => {
     let answer: (a: Answer) => void = () => {};
     const { panel, asked } = setup(board(), () => new Promise<Answer>((r) => (answer = r)));
     panel.openItem('issues', 'floor', 't1');
     await tick();
     const ask = () => document.querySelector<HTMLButtonElement>('[data-key="ask"]')!;
-    expect(ask().getAttribute('aria-disabled')).toBe('true');
-    expect(ask().title).toContain('Reading');
+    expect(document.querySelector('.bd-loading')).not.toBeNull();
+    expect(ask().getAttribute('aria-disabled')).toBeNull();
+    expect(ask().title).toBe('Hire a worker to look into it and report back, without changing code');
     ask().click();
-    expect(asked).toHaveLength(0);
-    expect(document.querySelector('.dd-status--error')!.textContent).toContain('description');
+    expect(asked).toEqual([['floor', expect.objectContaining({ id: 't1' })]]);
+    expect(document.querySelector('.dd-status--error')).toBeNull();
     answer({ ok: false, code: 'timeout', message: '' });
     await tick();
-    expect(ask().getAttribute('aria-disabled')).toBe('true');
-    ask().click();
-    expect(asked).toHaveLength(0);
-    // Try again reads it, and then the ask carries it.
-    document.querySelector<HTMLButtonElement>('[data-key="retry"]')!.click();
-    await tick();
-    answer({ ok: true, data: { card: task('t1', 'to-do'), body: 'Read at last', author: { name: '' }, created_at: 0, comments: [] } });
-    await tick();
+    expect(document.querySelector('[data-key="retry"]')).not.toBeNull();
     expect(ask().getAttribute('aria-disabled')).toBeNull();
     ask().click();
-    expect(asked[0]?.slice(2)).toEqual(['kaneo', 'Read at last']);
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).toEqual(['floor', expect.objectContaining({ id: 't1' })]);
+  });
+
+  it('#102: a floor that cannot hire still says why, whatever the description', async () => {
+    const { panel, asked } = setup(board(), undefined, { whyNoHire: () => 'No free desk.' });
+    panel.openItem('issues', 'floor', 't1');
+    await tick();
+    const ask = document.querySelector<HTMLButtonElement>('[data-key="ask"]')!;
+    expect(ask.getAttribute('aria-disabled')).toBe('true');
+    ask.click();
+    expect(asked).toHaveLength(0);
+    expect(document.querySelector('.dd-status--error')!.textContent).toBe('No free desk.');
   });
 
   it('says a truncated board is incomplete, and a drop there moves only the status', async () => {
