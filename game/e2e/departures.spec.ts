@@ -110,8 +110,8 @@ test('the lobby’s board: a group per floor of the building; E at a group opens
   await expect(page.locator('dialog.sch')).toBeHidden();
 
   // The header, above the groups: every floor's, every building's.
-  const head: V3 = [(b.min[0] + b.max[0]) / 2, b.max[1] - 0.15, b.max[2]];
-  await aimAt(page, head, 'south', 2.2);
+  const head: V3 = [(b.min[0] + b.max[0]) / 2, b.max[1] - 0.2, b.max[2]];
+  await aimAt(page, head, 'south', 1.6);
   expect(await page.evaluate(() => window.__h3d.target())).toMatchObject({ kind: 'board', id: 'board.departures', label: 'Departures board' });
   await page.keyboard.press('e');
   await expect(page.locator('dialog.sch')).toBeVisible();
