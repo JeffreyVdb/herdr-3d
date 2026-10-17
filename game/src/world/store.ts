@@ -43,6 +43,7 @@ import { ScheduleBook } from './schedule';
 import { floorGroups, FloorListBook } from './floorList';
 import { LimitBook } from './limits';
 import { PresetBook } from './presets';
+import { HirePresetBook } from './hirePresets';
 // M6 crew: write-code roles, freelancer lifecycles, over-cap orchestrators.
 import { CrewMemory, crewView, type CrewView } from './crew';
 // #98: what the agent is doing (the waiting display status).
@@ -244,6 +245,8 @@ export class WorldStore {
   readonly notifySettings = new NotifyBook(); // #11
   readonly handoffs = new HandoffBook(); // #223
   readonly schedules = new ScheduleBook(); // #64 schedules
+  /** #93 hire presets (`known` false from a bridge before #93: unavailable). */
+  readonly hirePresets = new HirePresetBook();
   /** #58 stage 4: Settings → Floors' rows, refreshed after every change that moves floors or workers. */
   readonly floorList = new FloorListBook(() => floorGroups(this.floors.values(), this.workers.values()));
   /** #58: the floor you stand on, listed even while hidden and empty (see `pin`). */
@@ -296,6 +299,7 @@ export class WorldStore {
     this.kaneo.reset(s.world.kaneo); // #184
     this.handoffs.reset(s.world.handoffs); // #223
     this.schedules.reset(s.world.schedules); // #64 schedules (a bridge before #62 sends none)
+    this.hirePresets.reset(s.world.hire_presets); // #93 (a bridge before #93 sends none)
     this.inboxDismissed.clear(); // #106
     for (const [id, since] of Object.entries(s.world.inbox_dismissed ?? {})) if (Number.isInteger(since)) this.inboxDismissed.set(id, since);
     this.seq = s.seq;
@@ -473,6 +477,13 @@ export class WorldStore {
         break;
       case 'schedule.removed':
         this.schedules.removed(e);
+        break;
+      // #93 hire presets: no part of the scene; dialogs re-render on `hirePresets.version`.
+      case 'hire_preset.upsert':
+        this.hirePresets.upsert(e.hire_preset);
+        break;
+      case 'hire_preset.removed':
+        this.hirePresets.remove(e.id);
         break;
       // #106: the inbox hides that worker's done episode. Not part of the scene, but the inbox's pings follow it (a
       // dismissed done must not ping when its settle delay ends), so the worker counts as changed.

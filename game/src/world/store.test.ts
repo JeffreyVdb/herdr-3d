@@ -386,3 +386,22 @@ describe('WorldStore: building logos (M3d)', () => {
     expect(s.inboxDismissed.size).toBe(0);
   });
 });
+
+describe('WorldStore hire presets (#93)', () => {
+  const p = { id: 'hp_1', name: 'Deploy', floor: 'top', prompt: 'Deploy.', harness: 'claude', model: 'claude-opus-5-5', effort: 'low', created_at: 1, updated_at: 1 };
+
+  it('takes the snapshot’s hire_presets, follows upsert and removed, and a bridge before #93 sends none', () => {
+    const s = new WorldStore(1000);
+    s.applySnapshot(snap({ hire_presets: [p] }));
+    expect(s.hirePresets.known).toBe(true);
+    expect(s.hirePresets.forFloor('top').floor.map((x) => x.id)).toEqual(['hp_1']);
+    const v = s.hirePresets.version;
+    s.applyEvent({ t: 'hire_preset.upsert', seq: 11, hire_preset: { id: 'hp_2', name: 'Deploy', prompt: 'Deploy.', harness: 'claude', model: 'claude-opus-5-5', effort: 'low', created_at: 1, updated_at: 1 } });
+    expect(s.hirePresets.forFloor('bottom').global.map((x) => x.id)).toEqual(['hp_2']);
+    s.applyEvent({ t: 'hire_preset.removed', seq: 12, id: 'hp_1' });
+    expect(s.hirePresets.get('hp_1')).toBeNull();
+    expect(s.hirePresets.version).toBe(v + 2);
+    s.applySnapshot(snap({}, 20));
+    expect(s.hirePresets.known).toBe(false);
+  });
+});
