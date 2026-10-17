@@ -5,7 +5,8 @@ import { frames, openGame, shot, watchErrors } from './game';
 // tools/fixture-schedule.ts: schedules in every state on the first two floors). The floor's board stands on the board
 // partition: E at it (from the desks' side or the elevator's) opens the schedule dialog on that floor, and a fire moves
 // its rows on live. The lobby's board has a group per floor of the building: E at a group opens that floor's
-// schedules, anywhere else on the board every floor's.
+// schedules, anywhere else on the board every floor's. A click on a board (the crosshair's, or the pointer's) opens
+// what E would.
 
 const SIM = 'play=none&sim=1&simms=150&simusage=0&simschedules=8';
 
@@ -114,6 +115,53 @@ test('the lobby’s board: a group per floor of the building; E at a group opens
   await aimAt(page, head, 'south', 1.6);
   expect(await page.evaluate(() => window.__h3d.target())).toMatchObject({ kind: 'board', id: 'board.departures', label: 'Departures board' });
   await page.keyboard.press('e');
+  await expect(page.locator('dialog.sch')).toBeVisible();
+  expect(await dialog(page)).toMatchObject({ open: true, floor: null, allFloors: true });
+  clean();
+});
+
+test('a click on a board opens what E would: a lobby group its floor, the lobby board’s header every floor, the floor’s board its floor', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', SIM);
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  // The crosshair is the canvas's centre: a click there without pointer lock aims as the crosshair does.
+  const canvas = (await page.locator('canvas').first().boundingBox())!;
+  const click = () => page.mouse.click(canvas.x + canvas.width / 2, canvas.y + canvas.height / 2);
+
+  // The floor's board, from the desks' side: this floor's schedules.
+  const L = await page.evaluate(() => window.__h3d.layout('herdr-3d'));
+  const fb = L!.props.find((p) => p.id === 'board.departures')!.box;
+  await aimAt(page, [(fb.min[0] + fb.max[0]) / 2, (fb.min[1] + fb.max[1]) / 2 + 0.1, fb.min[2]], 'north', 2.2);
+  expect(await page.evaluate(() => window.__h3d.lookAt())).toMatchObject({ kind: 'board', id: 'board.departures' });
+  await expect(page.locator('.prompt')).toContainText('Click');
+  await click();
+  await expect(page.locator('dialog.sch')).toBeVisible();
+  expect(await dialog(page)).toMatchObject({ open: true, floor: 'herdr-3d', allFloors: false });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.sch')).toBeHidden();
+
+  // The lobby: a group, then the header.
+  await page.evaluate(() => window.__h3d.enterLobby());
+  await frames(page, 3);
+  const info = async () => (await page.evaluate(() => window.__h3d.departures()))?.lobby ?? null;
+  await expect.poll(async () => (await info())?.groups.length ?? 0).toBeGreaterThan(0);
+  const lobby = (await info())!;
+  const g = lobby.groups.find((x) => x.floor !== 'herdr-3d') ?? lobby.groups[0]!;
+  await aimAt(page, [(g.box.min[0] + g.box.max[0]) / 2, (g.box.min[1] + g.box.max[1]) / 2, g.box.max[2]], 'south', 2.2);
+  expect(await page.evaluate(() => window.__h3d.target())).toMatchObject({ kind: 'board', id: 'board.departures', label: expect.stringMatching(/^Departures: /) });
+  await expect(page.locator('.prompt')).toContainText('Click');
+  await shot(page, 'h65-lobby-click-prompt');
+  await click();
+  await expect(page.locator('dialog.sch')).toBeVisible();
+  expect(await dialog(page)).toMatchObject({ open: true, floor: g.floor, allFloors: false });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('dialog.sch')).toBeHidden();
+
+  const b = lobby.board;
+  await aimAt(page, [(b.min[0] + b.max[0]) / 2, b.max[1] - 0.2, b.max[2]], 'south', 1.6);
+  expect(await page.evaluate(() => window.__h3d.target())).toMatchObject({ kind: 'board', id: 'board.departures', label: 'Departures board' });
+  await click();
   await expect(page.locator('dialog.sch')).toBeVisible();
   expect(await dialog(page)).toMatchObject({ open: true, floor: null, allFloors: true });
   clean();
