@@ -28,7 +28,13 @@ const child = (id: string, over: Partial<Child> = {}): Child => ({
 const snap = (workers: Worker[], children?: Child[], seq = 10): Snapshot => ({
   t: 'world.snapshot',
   seq,
-  world: { buildings: [], unassigned: ['office'], floors: [{ session: 'office', state: 'running', building: null, index: null }], workers, children },
+  world: {
+    buildings: [],
+    unassigned: ['office'],
+    floors: [{ session: 'office', state: 'running', building: null, index: null }],
+    workers,
+    ...(children ? { children } : {}),
+  },
 });
 
 /** One frame as the client gets it: through the decoder. */
