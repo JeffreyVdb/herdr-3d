@@ -70,6 +70,7 @@ type ended struct {
 
 type note struct {
 	agent, tool string
+	home        string // the agentId of the child whose transcript holds it ("": the main one)
 	ended
 }
 
@@ -143,9 +144,10 @@ func (f *facts) answers(b []byte) bool {
 }
 
 // childLine records what a line of child agent's transcript shows. A file
-// whose first records name another session or agent shows nothing at all;
-// and nothing in a file counts before a record of it named this session
-// (every record that does, a call, a result or a notification, names it).
+// whose first records name another session or agent shows nothing at all,
+// also what it showed before one did (retracted); and nothing in a file
+// counts before a record of it named this session (every record that does,
+// a call, a result or a notification, names it).
 func (f *facts) childLine(session, agent string, b []byte) {
 	var l line
 	if json.Unmarshal(b, &l) != nil {
@@ -154,6 +156,7 @@ func (f *facts) childLine(session, agent string, b []byte) {
 	fl := f.file(agent)
 	delete(f.gone, agent)
 	fl.lines++
+	wasBad := fl.bad
 	if !fl.bad && !fl.sessionOK && l.SessionID != "" {
 		fl.sessionOK, fl.bad = l.SessionID == session, l.SessionID != session
 	}
@@ -161,6 +164,9 @@ func (f *facts) childLine(session, agent string, b []byte) {
 		fl.agentOK, fl.bad = l.AgentID == agent, l.AgentID != agent
 	}
 	if fl.bad {
+		if !wasBad {
+			f.retract(agent)
+		}
 		return
 	}
 	if l.Type == "fork-context-ref" {
@@ -187,6 +193,24 @@ func (f *facts) childLine(session, agent string, b []byte) {
 	}
 	if fl.sessionOK {
 		f.record(agent, &l)
+	}
+}
+
+// retract forgets what a child's transcript showed: its calls, their
+// results and pairings (a result counts only in its call's transcript),
+// its notifications.
+func (f *facts) retract(home string) {
+	for id, d := range f.dispatch {
+		if d.home == home {
+			delete(f.dispatch, id)
+			delete(f.results, id)
+			delete(f.pairs, id)
+		}
+	}
+	for n := range f.notes {
+		if n.home == home {
+			delete(f.notes, n)
+		}
 	}
 }
 
@@ -252,13 +276,13 @@ func (f *facts) record(home string, l *line) {
 					f.pairs[b.ToolUseID] = res.AgentID
 				}
 			case "text":
-				f.note(b.Text, ts)
+				f.note(home, b.Text, ts)
 			}
 		}
 	case "queue-operation":
 		var s string
 		if l.Operation == "enqueue" && json.Unmarshal(l.Content, &s) == nil {
-			f.note(s, ts)
+			f.note(home, s, ts)
 		}
 	}
 }
@@ -267,7 +291,7 @@ func (f *facts) record(home string, l *line) {
 // completed; killed (stopped) and failed are interrupted: stopped before the
 // task was done (phase 1 has no failed state). Another status says nothing.
 // A background shell's notification names no child and stays unmatched.
-func (f *facts) note(text string, ts int64) {
+func (f *facts) note(home, text string, ts int64) {
 	if !strings.Contains(text, "<task-notification>") {
 		return
 	}
@@ -281,7 +305,7 @@ func (f *facts) note(text string, ts int64) {
 		default:
 			continue
 		}
-		f.notes[note{agent: n.taskID, tool: n.toolUseID, ended: ended{state: state, ts: ts}}] = true
+		f.notes[note{agent: n.taskID, tool: n.toolUseID, home: home, ended: ended{state: state, ts: ts}}] = true
 	}
 }
 
@@ -442,7 +466,7 @@ func sortedNotes(f *facts) []note {
 		ns = append(ns, n)
 	}
 	slices.SortFunc(ns, func(a, b note) int {
-		return cmp.Or(cmp.Compare(a.ts, b.ts), cmp.Compare(a.agent, b.agent), cmp.Compare(a.tool, b.tool), cmp.Compare(a.state, b.state))
+		return cmp.Or(cmp.Compare(a.ts, b.ts), cmp.Compare(a.agent, b.agent), cmp.Compare(a.tool, b.tool), cmp.Compare(a.state, b.state), cmp.Compare(a.home, b.home))
 	})
 	return ns
 }

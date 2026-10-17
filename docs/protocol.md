@@ -675,8 +675,9 @@ call's own result says so. A child whose root process died without a result stay
 verified) and an internal helper (prompt suggestion, `/btw`: hooks with an empty `agent_type`, no call, no file) make no
 row. A fork (`subagent_type: "fork"`) is a child; the copy of its spawning call at the start of its file is not a call.
 A child file whose first records name another session or agent is ignored whole: no row of its own, and no call,
-result or notification in it counts. Its file removed (Claude Code's cleanup) removes its row (`child.removed`), also a
-running child's whose only pairing is its meta (kept for that); the root's transcript gone removes them all.
+result or notification in it counts, also one read before a record named the other session or agent. Its file removed
+(Claude Code's cleanup) removes its row (`child.removed`), also a running child's whose only pairing is its meta (kept
+for that); the root's transcript gone removes them all.
 
 **The bridge's hooks.** `-claude-hooks DIR` (`$HERDR_WORLD_CLAUDE_HOOKS`, default `claude-hooks` next to the database,
 `-` for none) holds the bridge's own Claude settings file, `settings.json` (0600), and the log its hooks append to,

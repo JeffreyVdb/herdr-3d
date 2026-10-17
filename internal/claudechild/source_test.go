@@ -745,6 +745,59 @@ func TestForeignChildFileIgnored(t *testing.T) {
 	})
 }
 
+// A file whose records name this session but no agent, until one names
+// another agent, is foreign from the start: what it showed before is
+// retracted. One naming this agent then is this child's, the call kept.
+func TestForeignChildFileFoundLate(t *testing.T) {
+	const (
+		call   = `{"type":"assistant","sessionId":"right-session","timestamp":"2026-10-17T20:43:35Z","message":{"content":[{"type":"tool_use","id":"toolu_delayed","name":"Agent","input":{}}]}}`
+		result = `{"type":"user","sessionId":"right-session","timestamp":"2026-10-17T20:43:40Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_delayed","content":"done"}]},"toolUseResult":{"status":"completed","agentId":"a333"}}`
+	)
+	named := func(agent string) string {
+		return `{"type":"user","sessionId":"right-session","agentId":"` + agent + `","message":{"content":"hello"}}`
+	}
+	for name, ls := range map[string][]string{
+		"call":   {call, named("a222")},
+		"result": {call, result, named("a222")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFacts()
+			for _, l := range ls {
+				f.childLine("right-session", "a111", []byte(l))
+			}
+			if out := derive("right-session", f, newHookFacts(), time.Now()); len(out) != 0 {
+				t.Fatalf("evidence = %+v", out)
+			}
+			if len(f.dispatch)+len(f.results)+len(f.pairs) != 0 {
+				t.Fatalf("kept: %v %v %v", f.dispatch, f.results, f.pairs)
+			}
+		})
+	}
+	t.Run("legit", func(t *testing.T) {
+		f := newFacts()
+		f.childLine("right-session", "a111", []byte(call))
+		f.childLine("right-session", "a111", []byte(named("a111")))
+		// The file's own row is held this poll (its pairing may be on its way).
+		out := derive("right-session", f, newHookFacts(), time.Now())
+		if len(out) != 1 || out[0].DispatchID != "toolu_delayed" || out[0].Parent.NativeID != "a111" {
+			t.Fatalf("evidence = %+v", out)
+		}
+	})
+	// Its notification of this session's running child ends nothing.
+	t.Run("notification", func(t *testing.T) {
+		fx := load(t, "b")
+		const agent = "a4a204a6a6e12e123"
+		r := newRig(t, "b")
+		r.main(fx.parent[:2]...)
+		r.child(agent, fx.child[agent][:6]...)
+		r.child("a111", fx.parent[3], `{"type":"user","sessionId":"`+cases["b"]+`","agentId":"a222","message":{"content":"hello"}}`)
+		r.poll()
+		if c := r.one(agent); c.State != proto.ChildRunning {
+			t.Fatalf("row = %+v", c)
+		}
+	})
+}
+
 // An agent-team teammate's spawn (team_name) is no subagent row, and
 // neither is an internal helper only a hook shows.
 func TestTeammateAndHelperNoRows(t *testing.T) {
