@@ -467,8 +467,9 @@ export function paintFloorBoard(g: CanvasRenderingContext2D, W: number, H: numbe
 }
 
 /**
- * The lobby board: "Departures" and the building (its logo when it has one), then a group per floor in the plan's
- * cells: the floor's number on a flap, its name, its attention count, and its departures as the floor board's rows.
+ * The lobby board: "Departures" and the building (its logo when it has one; which floors and page, when they take more
+ * than one), then a group per floor of the page in the plan's cells: the floor's number on a flap, its name, its
+ * attention count, and its departures as the floor board's rows.
  * Exported for its test.
  */
 export function paintLobbyBoard(g: CanvasRenderingContext2D, W: number, H: number, m: LobbyBoardModel): void {

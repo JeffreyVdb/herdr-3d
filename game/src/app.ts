@@ -3339,7 +3339,29 @@ export class App {
     if (this.laptops.seated) return this.laptops.focusSeat();
     if (!this.planOpen && this.clickPrints(e)) return;
     if (!this.planOpen && this.clickBoardHolder(e)) return;
+    if (!this.planOpen && this.clickDepartures(e)) return;
     if (!this.planOpen) this.walker.requestLock();
+  }
+
+  /**
+   * #65: a click on a departures board (from the crosshair while the mouse looks, else the pointer, as a print or a
+   * holder's tag): what E at it opens. A lobby group: its floor's schedules; elsewhere on the lobby's board: every floor's.
+   */
+  private clickDepartures(e: PointerEvent): boolean {
+    const area = this.place.area;
+    if (area !== 'floor' && area !== 'lobby') return false;
+    const canvas = this.r.domElement;
+    const rect = canvas.getBoundingClientRect();
+    const locked = document.pointerLockElement === canvas;
+    const x = locked ? 0 : ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = locked ? 0 : -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    this.walker.applyTo(this.fpCam, this.walk.base);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(x, y), this.fpCam);
+    const t = this.targetAlong(ray.ray.origin, ray.ray.direction);
+    if (t?.kind !== 'board' || t.id !== 'board.departures') return false;
+    this.openSchedules(departuresScope(t.floor, this.office?.id ?? null));
+    return true;
   }
 
   /** M16 phase 2: a click on a print lying on a desk (from the crosshair while the mouse looks, else the pointer). */
@@ -3687,15 +3709,19 @@ export class App {
 
   private computeLookAt(): Target | null {
     this.fpCam.getWorldDirection(this.ray);
-    const o = this.fpCam.position;
+    return this.targetAlong(this.fpCam.position, this.ray);
+  }
+
+  /** What a look from `o` (the camera's frame) along `dir` picks: the crosshair's, or (#65) a click's. */
+  private targetAlong(o: THREE.Vector3, dir: THREE.Vector3): Target | null {
     const area = this.place.area;
     if (area === 'floor' && this.office) {
       // Your desk only from inside your office, standing (E sits you down).
-      return this.office.pick([o.x, o.y, o.z], [this.ray.x, this.ray.y, this.ray.z], this.overlooking ? overlookReach(this.office.layout) : REACH, this.inOffice() && !this.walker.sitting);
+      return this.office.pick([o.x, o.y, o.z], [dir.x, dir.y, dir.z], this.overlooking ? overlookReach(this.office.layout) : REACH, this.inOffice() && !this.walker.sitting);
     }
     const lobby = this.walk.outside?.lobby;
     if (area === 'lobby' && lobby) {
-      const t = lobby.pick([o.x, o.y + this.walk.base, o.z], [this.ray.x, this.ray.y, this.ray.z], REACH);
+      const t = lobby.pick([o.x, o.y + this.walk.base, o.z], [dir.x, dir.y, dir.z], REACH);
       return t ? this.lobbyTarget(t) : null;
     }
     return null;
