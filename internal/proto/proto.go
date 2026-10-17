@@ -233,6 +233,10 @@ type World struct {
 	// #93 hire presets: every floor's and the global ones, by name ignoring
 	// case. Always present ([] when none): a bridge before #93 leaves it out.
 	HirePresets []HirePreset `json:"hire_presets"`
+	// #95: the bridge adds the herdr hiring instructions (worker.hire's and
+	// the hire presets' herdr_instructions, hire.prepare's lines). Always
+	// true: a bridge before #95 leaves it out, and refuses the field.
+	HerdrInstructions bool `json:"herdr_instructions,omitempty"`
 }
 
 // HireOptions lists what can be hired, per harness.
@@ -740,6 +744,10 @@ type HirePrepareResult struct {
 	Label        string   `json:"label"`
 	Git          *HireGit `json:"git"`
 	Capacity     Capacity `json:"capacity"`
+	// HerdrInstructions (#95) are the herdr hiring instructions for this
+	// floor, exactly as a worker.hire with herdr_instructions adds them
+	// (after a blank line). A bridge before #95 leaves them out.
+	HerdrInstructions string `json:"herdr_instructions,omitempty"`
 }
 
 // HireGit is the git state of a hire's cwd: the base a worktree hire
@@ -787,6 +795,9 @@ type WorkerHireArgs struct {
 	Cwd       string `json:"cwd,omitempty"`
 	Worktree  bool   `json:"worktree,omitempty"`
 	Prompt    string `json:"prompt,omitempty"`
+	// #95: add the herdr hiring instructions for the floor (hire.prepare's
+	// herdr_instructions) to Prompt, after a blank line. It needs a prompt.
+	HerdrInstructions bool `json:"herdr_instructions,omitempty"`
 }
 
 // HireResult is the ack data of worker.hire.
