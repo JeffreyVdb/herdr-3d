@@ -574,7 +574,8 @@ export class Hud {
     if (w) shown.push(...crewBarKey(w));
     if (t?.id === 'radio') shown.push(this.radioName);
     if (t && this.propInfo.has(t.id)) shown.push(this.propInfo.get(t.id) ?? '');
-    const key = t ? JSON.stringify([t.kind, t.id, ...shown, ...(t.kind === 'board' ? [this.boardInfo.get(t.id) ?? null, this.boardHolder] : [])]) : '';
+    // #65: the label too: a lobby's departures groups share their id and differ by their floor's name.
+    const key = t ? JSON.stringify([t.kind, t.id, t.label, ...shown, ...(t.kind === 'board' ? [this.boardInfo.get(t.id) ?? null, this.boardHolder] : [])]) : '';
     if (key === this.promptKey) return;
     this.promptKey = key;
     this.reticle.classList.toggle('is-target', !!t);
@@ -678,6 +679,15 @@ export class Hud {
         keys.append(k);
       }
       this.prompt.setAttribute('aria-label', `${name} · E Open`);
+    } else if (t.kind === 'board' && t.id === 'board.departures') {
+      // #65: a departures board opens the scheduled agents: its floor's (the floor's board says its next departure), a
+      // lobby group's floor's, or anywhere else on the lobby's board every floor's.
+      const info = t.floor === undefined ? (this.propInfo.get('board.departures') ?? 'This floor’s scheduled agents') : t.floor === null ? 'Every floor’s scheduled agents, in every building' : 'This floor’s scheduled agents';
+      line.append(text('prompt-name', t.label), text('prompt-task', info));
+      const k = el('span', 'key');
+      k.append(el('kbd', '', 'E'), document.createTextNode('Schedules'));
+      keys.append(k);
+      this.prompt.setAttribute('aria-label', `${t.label}: ${info} · E Schedules`);
     } else if (t.kind === 'prop' && t.id === 'tv') {
       // M13: the screen-share TV says whether it shows your screen; the top bar's control starts and stops it.
       const info = this.propInfo.get('tv') ?? 'Off · Share screen in the top bar';

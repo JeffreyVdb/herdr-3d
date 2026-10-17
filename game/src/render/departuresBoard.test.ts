@@ -124,27 +124,32 @@ describe('the floor board’s texture (#65)', () => {
     expect(flapInks.slice(0, 4).every((f) => f === WALL_COLORS.accent)).toBe(true);
   });
 
-  it('a long title is cut with an ellipsis before the status column, whatever the status says', () => {
+  it('a long title is cut with an ellipsis before the status column; a countdown’s seconds never move the cut', () => {
     const long = 'Rotate every staging credential, then re-run the nightly soak against the new cluster and file the report';
-    for (const status of ['in 9s', 'Delayed +2h 20m']) {
+    const u = 378 / 100;
+    const style = { flapW: u * 8, flapH: u * 13, title: u * 8, status: u * 7, day: 0 };
+    const cut = (rows: DepartureRow[]) => {
       const r = recorder();
-      const state = status.startsWith('Delayed') ? 'delayed' : 'scheduled';
-      paintFloorBoard(r.g, r.W, r.H, board({ rows: [row({ title: long, status, state })] }));
-      const t = r.texts.find((x) => x.s.startsWith('Rotate')) as Text;
+      const rects: number[][] = [];
+      (r.g as unknown as Record<string, unknown>).roundRect = (x: number, y: number, w: number, h: number) => void rects.push([x, y, w, h]);
+      paintFloorBoard(r.g, r.W, r.H, board({ rows }));
+      return { t: r.texts.find((x) => x.s.startsWith('Rotate')) as Text, texts: r.texts, rects, W: r.W };
+    };
+    // Countdowns: the column keeps room for the widest one (`in 23h 59m`, 10 characters in the fake), whatever this one says.
+    for (const status of ['in 9s', 'in 59m 59s', 'in 4h 05m']) {
+      const { t, W } = cut([row({ title: long, status })]);
       expect(t.s.endsWith('…')).toBe(true);
-      expect(t.s.length).toBeLessThan(long.length);
       expect(t.s.slice(0, -1)).toBe(t.s.slice(0, -1).trimEnd());
-      // Measured: it ends before the status column (the widest status's room), with a gap.
-      const u = r.H / 100;
-      const g = r.g;
-      g.font = '';
-      const room = 10 * 'Delayed +23h 59m'.length + u * 7 * 0.86;
-      const col = rowColumns(u * 5, r.W - u * 5, { flapW: u * 8, flapH: u * 13, title: u * 8, status: u * 7, day: 0 }, room);
+      const col = rowColumns(u * 5, W - u * 5, style, 100);
       expect(t.x).toBeCloseTo(col.title, 6);
-      expect(t.x + t.s.length * 10).toBeLessThanOrEqual(col.statusLeft - u * 8 * 0.9 + 1e-6);
-      // The same cut for a short status and a long one: the column does not move.
       expect(t.s.length).toBe(Math.floor(col.titleMax / 10));
     }
+    // A chip: the cut ends before the chip's left edge, with a gap; every title of the board is cut at the same place.
+    const { t, texts, rects, W } = cut([row({ title: long, status: 'Delayed +2h 20m', state: 'delayed' }), row({ id: 'b', title: `${long} again`, status: 'in 9s' })]);
+    const chipX = Math.min(...rects.filter((r) => r[0]! > W / 2).map((r) => r[0]!));
+    expect(t.x + t.s.length * 10).toBeLessThanOrEqual(chipX - u * 8 * 0.9 + 1e-6);
+    const other = texts.find((x) => x.s.startsWith('Rotate') && x !== t) as Text;
+    expect(other.s.length).toBe(t.s.length);
   });
 
   it('the sun yellow on a flap and white titles on the ink read', () => {
@@ -223,7 +228,7 @@ describe('the lobby board’s texture (#65)', () => {
     { id: 'pastry', name: 'pastry', level: 3 },
   ];
   const lobby = (b: ScheduleBook): LobbyBoardModel => {
-    const plan = lobbyBoardPlan(floors.length, 4.3, 2.3);
+    const plan = lobbyBoardPlan(floors.length, 5.5, 2.7);
     return { ...lobbyDepartures(b, floors, T, TZ, plan.lines), building: 'Work', plan, logo: null };
   };
 
@@ -255,7 +260,7 @@ describe('the lobby board’s texture (#65)', () => {
   it('the lobby board redraws on a new logo or floors (invalidate), not otherwise', () => {
     const b = new ScheduleBook();
     b.reset([]);
-    const mesh = buildLobbyDepartures({ min: [6.8, 1, 0], max: [11.2, 3.4, 0.1] });
+    const mesh = buildLobbyDepartures({ min: [6.2, 1, 0], max: [11.8, 3.8, 0.1] });
     let logo: LobbyBoardModel['logo'] = null;
     const model = () => ({ ...lobby(b), logo });
     expect(mesh.tick(b.version, T, true, model)).toBe(true);

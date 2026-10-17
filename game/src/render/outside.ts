@@ -116,7 +116,7 @@ export class OutsideView {
     this.buildFireEscape(b);
     this.buildStreet(b, glow, pools);
     this.buildNeighbours(b, glow);
-    this.lobby = new LobbyView(plan, b, inner, look.name, tint, look.floors.map((f) => f.name));
+    this.lobby = new LobbyView(plan, b, inner, look.name, tint, look.floors.map((f) => ({ id: f.id, name: f.name })));
     this.baked = new THREE.Mesh(b.build(), bakedMaterial());
     this.baked.name = 'outside.baked';
     this.panes = new THREE.Mesh(panes.build(), this.paneMaterial());

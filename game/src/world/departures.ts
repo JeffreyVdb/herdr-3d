@@ -143,6 +143,25 @@ export function lobbyDepartures(book: Pick<ScheduleBook, 'known' | 'all'>, floor
 }
 
 /**
+ * The floor board's line on the HUD while you aim at it: the next departure and what else is on, in words that change
+ * when a departure moves on, not every second (no countdown). Pure.
+ */
+export function departuresLine(m: Pick<FloorBoard, 'known' | 'rows' | 'attention' | 'later'> | null): string {
+  if (!m) return 'This floor’s scheduled agents';
+  if (!m.known) return 'This herdr-world can’t schedule agents yet';
+  const parts: string[] = [];
+  const r = m.rows[0];
+  if (r) {
+    const what = { scheduled: `at ${r.time}`, due: 'due now', boarding: 'boarding', departing: 'departing', delayed: 'delayed' }[r.state];
+    parts.push(`Next: “${r.title}” ${what}`);
+    const more = m.rows.length - 1 + m.later;
+    if (more > 0) parts.push(`${more} more`);
+  } else parts.push('No departures scheduled');
+  if (m.attention > 0) parts.push(`${m.attention} ${m.attention === 1 ? 'needs' : 'need'} attention`);
+  return parts.join(' · ');
+}
+
+/**
  * What E on a board opens: a floor's board (`floor` undefined: the floor you are on, `here`) or a lobby group (its
  * floor) that floor's schedules; the lobby board anywhere else (`null`) every floor's, every building's.
  */
@@ -172,17 +191,17 @@ export interface LobbyPlan {
 }
 
 /** The lobby board's measures (metres): its margin, header, the gap under it and between columns, a line's height. */
-const LOBBY_MARGIN = 0.12;
-const LOBBY_HEAD = 0.42;
+const LOBBY_MARGIN = 0.14;
+const LOBBY_HEAD = 0.5;
 const LOBBY_GAP = 0.06;
-const LOBBY_COL_GAP = 0.2;
+const LOBBY_COL_GAP = 0.24;
 /** A group's gap below it, in lines. */
 const LOBBY_ROW_GAP = 0.5;
 /** A line no bigger than this (type would outgrow the columns), and while it can be, no smaller. */
-const LINE_MAX = 0.2;
+const LINE_MAX = 0.24;
 const LINE_MIN = 0.14;
 /** A column at least this wide holds a time, a title and a countdown. */
-const CELL_MIN = 1.9;
+const CELL_MIN = 2.2;
 
 /**
  * How `n` floors' groups fit a `w` × `h` m lobby board: three departures a floor while a line can stay `LINE_MIN` tall,

@@ -350,6 +350,8 @@ export interface H3DDebug {
   pendingPings(): string[];
   /** #118: the floor overview page and the lounge wall's screen (what each shows). */
   overview(): ReturnType<import('./app').App['overviewInfo']> | null;
+  /** #65: the departures boards: the floor's and the lobby's (what each shows, its redraws, the lobby's groups' boxes). */
+  departures(): ReturnType<import('./app').App['departuresInfo']> | null;
   /** #74: the server rack: what it shows (screen mode, redraws, LED rates), the host watch and the commands sent for it. */
   rack(): ReturnType<import('./app').App['rackInfo']> | null;
   /** #74: shows or hides the floor's rack. */
@@ -675,6 +677,7 @@ const h3d: H3DDebug = {
   wbLog: () => structuredClone(app?.wbLog ?? []),
   pendingPings: () => app?.pendingPings() ?? [],
   overview: () => (app ? structuredClone(app.overviewInfo()) : null),
+  departures: () => (app ? structuredClone(app.departuresInfo()) : null),
   rack: () => (app ? structuredClone(app.rackInfo()) : null),
   rackShown: (on) => app?.rackShown(on),
   openChanges: (id) => {

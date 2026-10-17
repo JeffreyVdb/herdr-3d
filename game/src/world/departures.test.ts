@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Schedule } from '../net/protocol';
-import { boardCountdown, boardTime, cellAt, cellBoxes, departureState, departuresScope, floorDepartures, lobbyBoardPlan, lobbyDepartures, type LobbyFloor } from './departures';
+import { boardCountdown, boardTime, cellAt, cellBoxes, departuresLine, departureState, departuresScope, floorDepartures, lobbyBoardPlan, lobbyDepartures, type LobbyFloor } from './departures';
 import { ScheduleBook, SCHEDULE_GRACE_MS } from './schedule';
 
 // #65 (part 4 of #61): the departures boards' text model. The board draws exactly this, so a board redraws only when
@@ -188,6 +188,20 @@ describe('the lobby board (#65)', () => {
   });
 });
 
+describe('the floor board on the HUD (#65)', () => {
+  it('names the next departure, how many more, and the attention count; no countdown, so it holds still', () => {
+    const b = book([sched('a', { due_at: T + 10 * M, title: 'Soak cleanup' }), sched('b', { due_at: T + 2 * H }), sched('f', { state: 'failed' })]);
+    const line = departuresLine(floorDepartures(b, 'herdr-3d', T, TZ));
+    expect(line).toBe('Next: “Soak cleanup” at 09:10 · 1 more · 1 needs attention');
+    expect(departuresLine(floorDepartures(b, 'herdr-3d', T + 7 * S, TZ))).toBe(line);
+    expect(departuresLine(floorDepartures(book([sched('w', { state: 'waiting', title: 'W' })]), 'herdr-3d', T, TZ))).toBe('Next: “W” boarding');
+    expect(departuresLine(floorDepartures(book([sched('l', { due_at: T - H, title: 'L' })]), 'herdr-3d', T, TZ))).toBe('Next: “L” delayed');
+    expect(departuresLine(floorDepartures(book([]), 'herdr-3d', T, TZ))).toBe('No departures scheduled');
+    expect(departuresLine(floorDepartures(book([sched('f', { state: 'skipped' }), sched('g', { state: 'failed' })]), 'herdr-3d', T, TZ))).toBe('No departures scheduled · 2 need attention');
+    expect(departuresLine(floorDepartures(book(undefined), 'herdr-3d', T, TZ))).toBe('This herdr-world can’t schedule agents yet');
+  });
+});
+
 describe('what a board opens (#65)', () => {
   it('a floor’s board or a lobby group: that floor; the lobby board elsewhere: all floors', () => {
     expect(departuresScope(undefined, 'herdr-3d')).toEqual({ floor: 'herdr-3d' });
@@ -199,14 +213,15 @@ describe('what a board opens (#65)', () => {
 });
 
 describe('the lobby board’s groups (#65)', () => {
-  // The lobby board: 4.4 × 2.4 m.
-  const W = 4.4;
-  const Hm = 2.4;
+  // The lobby board's face: 5.5 × 2.7 m.
+  const W = 5.5;
+  const Hm = 2.7;
 
   it('three lines a floor while they fit, the biggest type that does; fewer lines for a tall building', () => {
     expect(lobbyBoardPlan(1, W, Hm)).toMatchObject({ cols: 1, rows: 1, lines: 3 });
     expect(lobbyBoardPlan(3, W, Hm)).toMatchObject({ cols: 2, rows: 2, lines: 3 });
-    expect(lobbyBoardPlan(6, W, Hm)).toMatchObject({ cols: 2, rows: 3, lines: 2 });
+    expect(lobbyBoardPlan(6, W, Hm)).toMatchObject({ cols: 2, rows: 3, lines: 3 });
+    expect(lobbyBoardPlan(8, W, Hm)).toMatchObject({ cols: 2, rows: 4, lines: 2 });
     expect(lobbyBoardPlan(12, W, Hm)).toMatchObject({ cols: 2, rows: 6, lines: 1 });
     expect(lobbyBoardPlan(0, W, Hm).cells).toEqual([]);
   });
@@ -236,14 +251,14 @@ describe('the lobby board’s groups (#65)', () => {
   });
 
   it('a group’s pick box is its cell on the board’s face, a centimetre proud of it', () => {
-    const board = { min: [1, 1, 0], max: [5.4, 3.4, 0.1] } as { min: [number, number, number]; max: [number, number, number] };
+    const board = { min: [1, 1, 0], max: [6.5, 3.7, 0.1] } as { min: [number, number, number]; max: [number, number, number] };
     const p = lobbyBoardPlan(1, W, Hm);
     const [b] = cellBoxes(board, p.cells);
     const c = p.cells[0]!;
-    expect(b!.min[0]).toBeCloseTo(1 + c.u0 * 4.4, 6);
-    expect(b!.max[0]).toBeCloseTo(1 + c.u1 * 4.4, 6);
-    expect(b!.max[1]).toBeCloseTo(3.4 - c.v0 * 2.4, 6);
-    expect(b!.min[1]).toBeCloseTo(3.4 - c.v1 * 2.4, 6);
+    expect(b!.min[0]).toBeCloseTo(1 + c.u0 * W, 6);
+    expect(b!.max[0]).toBeCloseTo(1 + c.u1 * W, 6);
+    expect(b!.max[1]).toBeCloseTo(3.7 - c.v0 * Hm, 6);
+    expect(b!.min[1]).toBeCloseTo(3.7 - c.v1 * Hm, 6);
     expect(b!.min[2]).toBe(0);
     expect(b!.max[2]).toBeCloseTo(0.11, 6);
   });

@@ -243,8 +243,8 @@ export function attentionText(n: number): string {
 export const OLD_BRIDGE = 'This herdr-world can’t schedule agents yet';
 export const EMPTY = 'No departures scheduled';
 
-/** The widest status a row keeps room for: every title is cut at the same place, whatever its status says. */
-const STATUS_ROOM = 'Delayed +23h 59m';
+/** A countdown keeps room for its widest (`in 59m 59s` and `in 6d 23h` are narrower), so a title is not cut anew each second. */
+const COUNTDOWN_ROOM = 'in 23h 59m';
 
 /** A row's measures, in px: the time's flaps and the gap after them, the title's and the status's sizes. */
 interface RowStyle {
@@ -308,11 +308,16 @@ function flaps(g: CanvasRenderingContext2D, text: string, x: number, mid: number
   return at - x;
 }
 
+/** A status chip's width (its text in `size` px, half that either side). */
+function chipW(g: CanvasRenderingContext2D, text: string, size: number): number {
+  g.font = `700 ${Math.round(size)}px ${FONT}`;
+  return g.measureText(text).width + size;
+}
+
 /** A status chip, right-aligned at `right` and centred on `mid`; returns its width. */
 function chip(g: CanvasRenderingContext2D, text: string, right: number, mid: number, size: number, bg: string): number {
-  g.font = `700 ${Math.round(size)}px ${FONT}`;
+  const w = chipW(g, text, size);
   const padX = size * 0.5;
-  const w = g.measureText(text).width + padX * 2;
   const h = size * 1.55;
   g.fillStyle = bg;
   g.beginPath();
@@ -360,10 +365,21 @@ function paintRow(g: CanvasRenderingContext2D, r: DepartureRow, x: number, right
   }
 }
 
-/** The room the widest status takes in the status font (a chip's, which is wider). */
-function statusRoom(g: CanvasRenderingContext2D, size: number): number {
-  g.font = `700 ${Math.round(size * 0.86)}px ${FONT}`;
-  return g.measureText(STATUS_ROOM).width + size * 0.86;
+/**
+ * The status column's room: what the widest of the rows' statuses takes (a chip's text as it is, a countdown its widest
+ * form), so every title of the board or the group is cut at the same place, and that place moves only when a row's
+ * state does, never with a countdown's seconds.
+ */
+function statusRoom(g: CanvasRenderingContext2D, size: number, rows: readonly DepartureRow[]): number {
+  let room = 0;
+  for (const r of rows) {
+    if (r.state === 'boarding' || r.state === 'departing' || r.state === 'delayed') room = Math.max(room, chipW(g, r.status, size * 0.86));
+    else {
+      g.font = `${r.state === 'due' ? 700 : 500} ${Math.round(size)}px ${FONT}`;
+      room = Math.max(room, g.measureText(r.state === 'due' ? r.status : COUNTDOWN_ROOM).width);
+    }
+  }
+  return room;
 }
 
 /** The room a day before the flaps takes, when a row has one. */
@@ -413,7 +429,7 @@ export function paintFloorBoard(g: CanvasRenderingContext2D, W: number, H: numbe
   }
   const style: RowStyle = { flapW: u * 8, flapH: u * 13, title: u * 8, status: u * 7, day: 0 };
   style.day = dayRoom(g, m.rows, style.flapH, style.flapW);
-  const room = statusRoom(g, style.status);
+  const room = statusRoom(g, style.status, m.rows);
   m.rows.forEach((r, i) => {
     const mid = top + rowH * i + rowH / 2;
     paintRow(g, r, pad, W - pad, mid, style, room);
@@ -519,9 +535,9 @@ export function paintLobbyBoard(g: CanvasRenderingContext2D, W: number, H: numbe
       fitText(g, m.known ? EMPTY : '—', x, y + line * 1.5 + line * 0.15, right - x);
       return;
     }
-    const style: RowStyle = { flapW: line * 0.46, flapH: line * 0.74, title: line * 0.46, status: line * 0.42, day: 0 };
+    const style: RowStyle = { flapW: line * 0.4, flapH: line * 0.72, title: line * 0.46, status: line * 0.42, day: 0 };
     style.day = dayRoom(g, gr.rows, style.flapH, style.flapW);
-    const room = statusRoom(g, style.status);
+    const room = statusRoom(g, style.status, gr.rows);
     gr.rows.forEach((row, k) => paintRow(g, row, x, right, y + line * (1.5 + k), style, room));
   });
 }

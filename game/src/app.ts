@@ -12,12 +12,13 @@ import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec } from './render/arrivals';
 import { memberOf, OfficeView, REACH, seatOf, type Target } from './render/office';
+import type { LobbyTarget, LobbyView } from './render/lobby';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
 import { WalkView } from './render/walk';
 import { DaylightEase, lookOf } from './render/daylook';
 import { TimeOfDay, overridesFrom } from './world/timeOfDay';
-import type { Daylight } from './world/daylight';
+import { browserZone, type Daylight } from './world/daylight';
 import { TimePrefs } from './ui/timePrefs';
 import { RadioLink } from './radio/link';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
@@ -32,6 +33,7 @@ import { Cabinet } from './ui/cabinet';
 import { SchedulesDialog, type SchedulesOpen } from './ui/schedules';
 import { ScheduleFormDialog } from './ui/scheduleForm';
 import { scheduleToast } from './world/schedule';
+import { departuresLine, departuresScope } from './world/departures';
 import { agentHandoffNote, drawerFill, hireTask } from './world/handoff';
 import { fromHandoff } from './world/hireReview';
 import { needsYouText, sentHomeText, wrapUpOf } from './world/wrapup';
@@ -329,6 +331,8 @@ export class App {
   /** #118: the floor overview page, and when the wall screen and the page last had the world as it is. */
   readonly overview: OverviewOverlay;
   private overviewDirty = true;
+  /** #65: the departures boards' clock zone (the schedule dialog's: the browser's). */
+  private readonly zone = browserZone();
   private overviewAt = 0;
   private overviewOffice: OfficeView | null = null;
   private readonly wbStates = new Map<string, WhiteboardState>();
@@ -2088,6 +2092,8 @@ export class App {
       this.walk.setOffice(this.office, this.loaded === null ? 0 : floorY(this.loaded));
     }
     o.setFloors(ctx.floors.map((f) => f.asleep));
+    o.lobby.setDepartureFloors(ctx.floors); // #65: a rename reaches the lobby board
+    this.lobbyTargets.clear();
     this.showLobbyLogo();
     this.worldCache = null;
   }
@@ -2528,6 +2534,19 @@ export class App {
     o?.tickOverview(Date.now(), this.fpCam);
   }
 
+  /**
+   * #65: the departures boards follow the schedules (snapshot, upserts, removals: `ScheduleBook.version`) and their
+   * countdowns; idle, each is two comparisons. The floor's board says its next departure on the HUD when it changes.
+   */
+  private stepDepartures(): void {
+    const now = Date.now();
+    const book = this.store.schedules;
+    const o = this.office;
+    if (o?.tickDepartures(now, this.fpCam, book, this.zone)) this.hud.setPropInfo('board.departures', departuresLine(o.departuresInfo()?.model ?? null));
+    const area = this.place.area;
+    if (this.mode === 'floor' && (area === 'lobby' || area === 'street')) this.walk.outside?.lobby.tickDepartures(now, this.fpCam, book, this.zone);
+  }
+
   /** #74: the rack's watch: wanted while it is in view on the floor you stand on (the link decides when to ask the bridge). */
   private stepRack(): void {
     this.rack.step({
@@ -2547,6 +2566,11 @@ export class App {
   /** #74: what the rack shows and what the game knows of the host (test hook). */
   rackInfo(): { link: ReturnType<RackLink['info']>; rack: ReturnType<OfficeView['rackInfo']>; sent: RackLink['log'] } {
     return { link: this.rack.info(), rack: this.office?.rackInfo() ?? null, sent: this.rack.log };
+  }
+
+  /** #65: what the departures boards show: the floor's, and the lobby's of the building you are in (test hook). */
+  departuresInfo(): { floor: ReturnType<OfficeView['departuresInfo']>; lobby: ReturnType<LobbyView['departuresInfo']> | null } {
+    return { floor: this.office?.departuresInfo() ?? null, lobby: this.walk.outside?.lobby.departuresInfo() ?? null };
   }
 
   /** #118: what the overview page and the wall screen show (test hook). */
@@ -3084,6 +3108,8 @@ export class App {
     },
     'whiteboard.open': () => this.openWhiteboard(),
     'overview.open': () => this.openOverview(true),
+    // #65: a floor's departures board, a lobby group: that floor's schedules; the lobby board elsewhere: every floor's.
+    'departures.open': () => this.aimed('board', (t) => this.openSchedules(departuresScope(t.floor, this.office?.id ?? null))),
     'radio.genre': () => this.radio.cycle(),
     'radio.track': () => this.radio.skip(),
   };
@@ -3492,6 +3518,7 @@ export class App {
     this.stepDaylight(dt);
     this.stepOverview(performance.now()); // #118
     this.stepRack(); // #74
+    this.stepDepartures(); // #65
     if (this.mode === 'floor' && this.building) {
       if (this.walker.step(dt, this.walkWorldNow())) {
         this.cameraMoved = true;
@@ -3668,12 +3695,28 @@ export class App {
     const lobby = this.walk.outside?.lobby;
     if (area === 'lobby' && lobby) {
       const t = lobby.pick([o.x, o.y + this.walk.base, o.z], [this.ray.x, this.ray.y, this.ray.z], REACH);
-      return t ? LOBBY_TARGETS[t] : null;
+      return t ? this.lobbyTarget(t) : null;
     }
     return null;
   }
 
   // ---- #124: picking a target without aiming ------------------------------------------------
+
+  /** #65: lobby targets as the HUD and the keys see them, one object each (cleared with the building: names change). */
+  private readonly lobbyTargets = new Map<LobbyTarget, Target>();
+
+  /** A lobby pick as a target: the reception, the elevator, or (#65) the departures board: a floor's group on it, or elsewhere. */
+  private lobbyTarget(t: LobbyTarget): Target {
+    if (t === 'reception' || t === 'elevator') return LOBBY_TARGETS[t];
+    let out = this.lobbyTargets.get(t);
+    if (!out) {
+      const floor = t === 'departures' ? null : t.slice('departures:'.length);
+      const name = floor === null ? null : (this.store.floorView(floor)?.name ?? floor);
+      out = { kind: 'board', id: 'board.departures', label: name === null ? 'Departures board' : `Departures: ${name}`, milestone: '#65', floor };
+      this.lobbyTargets.set(t, out);
+    }
+    return out;
+  }
 
   /** The worker, desk or prop picked with T, while it holds: you have not moved or turned since and it is still there. */
   private pickedTarget(): Target | null {
@@ -4238,7 +4281,7 @@ function aimScope(t: Target): Scope | null {
     case 'own-desk':
       return 'aim:own-desk';
     case 'board':
-      return t.id === 'board.issues' || t.id === 'board.prs' ? 'aim:board' : null;
+      return t.id === 'board.issues' || t.id === 'board.prs' ? 'aim:board' : t.id === 'board.departures' ? 'aim:departures' : null;
     case 'prop':
       return t.id === 'elevator' ? 'aim:elevator' : t.id === 'whiteboard' ? 'aim:whiteboard' : t.id === 'radio' ? 'aim:radio' : t.id === 'reception' ? 'aim:reception' : t.id === 'screen.overview' ? 'aim:overview' : t.id === 'filing' ? 'aim:cabinet' : null;
   }

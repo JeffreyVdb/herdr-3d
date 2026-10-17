@@ -11,6 +11,10 @@ import { OFFICE } from './palette';
 import { LogoSign } from './logoSign';
 import type { LogoEntry } from './logos';
 import { canvasTexture, elevatorMeshes } from './props';
+import { buildLobbyDepartures, type LobbyDeparturesMesh, type LobbyBoardModel } from './departuresBoard';
+import { PropViewer } from './propView';
+import { cellBoxes, lobbyBoardPlan, lobbyDepartures, type LobbyFloor, type LobbyPlan } from '../world/departures';
+import type { ScheduleBook } from '../world/schedule';
 
 /**
  * The lobby on the ground storey: a glass front onto the sidewalk with
@@ -20,10 +24,15 @@ import { canvasTexture, elevatorMeshes } from './props';
  * floor. Its static parts are baked: the front and the canopy into the
  * outside mesh, the room into a mesh of its own (M17: its own lights keep it
  * lit at night, when the street darkens); the glass, the doors, the elevator,
- * the signs and the receptionist are their own meshes.
+ * the signs and the receptionist are their own meshes. #65: a departures board on
+ * the north wall, a group per floor of the building.
  */
 
-export type LobbyTarget = 'reception' | 'elevator';
+/** What a look picks in the lobby; #65: the departures board, a floor's group on it (`departures:<floor id>`) or elsewhere on it. */
+export type LobbyTarget = 'reception' | 'elevator' | 'departures' | `departures:${string}`;
+
+/** #65: the lobby board keeps its countdowns going while it spans this share of the view's height or more. */
+const DEPARTURES_VISIBLE = 0.04;
 
 const C = {
   floor: 0xece5d7,
@@ -49,15 +58,24 @@ export class LobbyView {
   private readonly glassMat: THREE.MeshBasicNodeMaterial;
   /** M3d: the entrance sign and the reception wall, which show the logo when there is one. */
   readonly signs: { canopy: LogoSign; wall: LogoSign };
+  /** #65: the departures board, its groups' plan and what it shows besides the schedules (the floors, the logo). */
+  readonly departures: LobbyDeparturesMesh;
+  readonly departuresPlan: LobbyPlan;
+  private depFloors: LobbyFloor[];
+  private depLogo: LogoEntry | null = null;
+  private readonly viewer = new PropViewer();
+  /** #65: the share of the view's height the board spans, when it last looked (test hook). */
+  depShare = 0;
 
   constructor(
     private readonly plan: BuildingPlan,
     b: Baker,
     /** The room itself (floor, walls, ceiling, desk, bench, plants): baked apart from the front. */
     inner: Baker,
-    name: string,
+    private readonly name: string,
     tint: number,
-    floors: string[],
+    /** Ground floor first. */
+    floors: Array<{ id: string; name: string }>,
   ) {
     this.group.name = 'lobby';
     const { width: W, depth: D } = plan;
@@ -200,7 +218,7 @@ export class LobbyView {
     leaves2.dispose();
 
     // A floor directory on the east wall, near the elevator.
-    const dirTex = this.tex(directoryTexture(name, floors));
+    const dirTex = this.tex(directoryTexture(name, floors.map((f) => f.name)));
     const dh = Math.min(1.6, 0.5 + floors.length * 0.22);
     const dir = new THREE.Mesh(new THREE.PlaneGeometry(1.5, dh).rotateY(-Math.PI / 2), new THREE.MeshBasicNodeMaterial({ map: dirTex }));
     dir.position.set(W - 0.01, 1.55, D - 3.2);
@@ -214,10 +232,53 @@ export class LobbyView {
     this.slot.position.set(L.receptionist.x, 0, L.receptionist.z);
     this.slot.name = 'lobby.receptionist';
     this.group.add(this.slot);
+    // #65: the departures board on the north wall; each floor's group is a pick box of its own, a centimetre proud of the
+    // board, so a look at a group picks that floor and one anywhere else on the board picks the board (every floor).
+    this.departures = buildLobbyDepartures(L.departures);
+    this.group.add(this.departures.group);
+    const scr = this.departures.screen;
+    this.departuresPlan = lobbyBoardPlan(floors.length, scr.max[0] - scr.min[0], scr.max[1] - scr.min[1]);
+    this.depFloors = floors.map((f, i) => ({ id: f.id, name: f.name, level: i + 1 }));
+    // The groups read top floor first (`lobbyDepartures`): cell i is floor n - 1 - i.
+    const cells = cellBoxes(scr, this.departuresPlan.cells);
+
     this.targets = [
       { boxes: [L.deskBox, { min: [L.receptionist.x - 0.35, 0, L.receptionist.z - 0.35], max: [L.receptionist.x + 0.35, 1.7, L.receptionist.z + 0.35] }], value: 'reception' },
       { boxes: [L.elevator], value: 'elevator' },
+      { boxes: [L.departures], value: 'departures' },
+      ...cells.map((b, i) => ({ boxes: [b], value: `departures:${floors[floors.length - 1 - i]?.id ?? ''}` as LobbyTarget })),
     ];
+  }
+
+  /** #65: the floors' names as they are now (a rename does not rebuild the lobby); the board looks again when they changed. */
+  setDepartureFloors(floors: ReadonlyArray<{ id: string; name: string }>): void {
+    if (floors.length === this.depFloors.length && floors.every((f, i) => f.id === this.depFloors[i]?.id && f.name === this.depFloors[i]?.name)) return;
+    this.depFloors = floors.map((f, i) => ({ id: f.id, name: f.name, level: i + 1 }));
+    this.departures.invalidate();
+  }
+
+  /**
+   * #65: the departures board: looks at the schedules when they changed or a countdown turns (two comparisons
+   * otherwise), draws what changed while in view; true when it drew. `tz`: the zone its times are on.
+   */
+  tickDepartures(now: number, camera: THREE.Camera, book: Pick<ScheduleBook, 'version' | 'known' | 'all'>, tz: string): boolean {
+    const d = this.departures;
+    if (!d.due(book.version, now)) return false;
+    this.depShare = this.group.visible ? this.viewer.share(this.plan.lobby.departures, this.group, camera) : 0;
+    return d.tick(book.version, now, this.depShare >= DEPARTURES_VISIBLE, (at) => this.departuresModel(book, at, tz));
+  }
+
+  /** #65: what the departures board shows, how much of the view it spans, and where its groups are (test hook). */
+  departuresInfo(): ReturnType<LobbyDeparturesMesh['info']> & { share: number; board: Box3; groups: Array<{ floor: string; box: Box3 }> } {
+    const groups = this.targets.flatMap((t) => (t.value.startsWith('departures:') && t.boxes[0] ? [{ floor: t.value.slice('departures:'.length), box: t.boxes[0] }] : []));
+    return { ...this.departures.info(), share: +this.depShare.toFixed(3), board: this.plan.lobby.departures, groups };
+  }
+
+  private departuresModel(book: Pick<ScheduleBook, 'known' | 'all'>, now: number, tz: string): LobbyBoardModel {
+    const l = lobbyDepartures(book, this.depFloors, now, tz, this.departuresPlan.lines);
+    const e = this.depLogo;
+    const image = e?.texture.image as CanvasImageSource | undefined;
+    return { ...l, building: this.name, plan: this.departuresPlan, logo: e && image ? { hash: e.hash, image, width: e.width, height: e.height } : null };
   }
 
   private tex(t: THREE.Texture): THREE.Texture {
@@ -229,6 +290,11 @@ export class LobbyView {
   setLogo(entry: LogoEntry | null): void {
     this.signs.canopy.set(entry);
     this.signs.wall.set(entry);
+    // #65: the departures board's header shows it too.
+    if (entry?.hash !== this.depLogo?.hash) {
+      this.depLogo = entry;
+      this.departures.invalidate();
+    }
   }
 
   /** Puts the receptionist (its feet at its origin, facing +z) behind the desk. */
@@ -267,6 +333,7 @@ export class LobbyView {
   }
 
   dispose(): void {
+    this.departures.dispose(); // its canvas texture (and its meshes, before the traverse)
     this.group.traverse((o) => {
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
