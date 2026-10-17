@@ -36,9 +36,9 @@ type facts struct {
 	results  map[string]ended     // by tool_use id: the call's result, in its own file
 	pairs    map[string]string    // tool_use id → agentId, from its result
 	notes    map[note]bool        // task notifications (each is in two records)
-	metas    map[string]metaFact // by agentId
-	files    map[string]*file    // by agentId
-	gone     map[string]bool     // agentIds whose file went
+	metas    map[string]metaFact  // by agentId
+	files    map[string]*file     // by agentId
+	gone     map[string]bool      // agentIds whose file went
 }
 
 func newFacts() *facts {
@@ -111,17 +111,19 @@ func newHookFacts() *hookFacts {
 var toolUseIDRe = regexp.MustCompile(`"tool_use_id"\s*:\s*"([^"\\]{1,128})"`)
 
 // mainLine records what a main transcript line shows: only a line with an
-// Agent call, a result of a known call or a task notification is decoded.
-func (f *facts) mainLine(b []byte) {
+// Agent call, a result of a known call or a task notification is decoded
+// (true: it was).
+func (f *facts) mainLine(b []byte) bool {
 	call := bytes.Contains(b, []byte(`"tool_use"`)) && (bytes.Contains(b, []byte(`"Agent"`)) || bytes.Contains(b, []byte(`"Task"`)))
 	if !call && !bytes.Contains(b, []byte("task-notification")) && !f.answers(b) {
-		return
+		return false
 	}
 	var l line
 	if json.Unmarshal(b, &l) != nil {
-		return
+		return false
 	}
 	f.record("", &l)
+	return true
 }
 
 // answers reports whether a line holds the result of a known call.

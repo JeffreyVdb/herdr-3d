@@ -165,8 +165,9 @@ func (l *Listener) lock() bool {
 func (l *Listener) Main(_ int64, line []byte) {
 	if l.lock() {
 		defer l.src.mu.Unlock()
-		l.f.mainLine(line)
-		l.pending = true
+		if l.f.mainLine(line) {
+			l.pending = true
+		}
 	}
 }
 
@@ -279,8 +280,8 @@ func (l *Listener) Close() {
 		s.evict()
 		return
 	}
-	if owner { // the next reader's facts are the session's now
-		s.flush(b, s.opts.Now())
+	if owner { // the next reader's facts are the session's now: sent after its next read, which may be its first
+		b.readers[0].pending = true
 	}
 }
 

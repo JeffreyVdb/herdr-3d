@@ -703,3 +703,26 @@ func appendRaw(t *testing.T, path, s string) {
 		t.Fatal(err)
 	}
 }
+
+// Two workers claiming one session read it twice: the first reader's
+// facts are the session's; when it closes, the other's take over at its
+// next read, and no row goes meanwhile.
+func TestSecondReaderTakesOver(t *testing.T) {
+	fx := load(t, "b")
+	const agent = "a4a204a6a6e12e123"
+	r := newRig(t, "b")
+	r.main(fx.parent...)
+	r.child(agent, fx.child[agent]...)
+	r.poll()
+	second := usage.NewSession(usage.Claude, r.session, usage.Roots{ClaudeProjects: filepath.Dir(r.dir)}, usage.DefaultPricing())
+	l2 := r.src.Listener(r.session)
+	second.SetChildren(l2)
+	r.l.Close()
+	r.apply()
+	second.Poll(r.now.Add(time.Second))
+	r.apply()
+	if c := r.one(agent); c.State != proto.ChildCompleted {
+		t.Fatalf("row %+v", c)
+	}
+	r.noRemovals()
+}
