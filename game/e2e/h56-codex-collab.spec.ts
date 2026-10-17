@@ -48,5 +48,13 @@ test('Codex collaboration calls read as what happened; the raw call is one more 
   await spawn.scrollIntoViewIfNeeded();
   await frames(page, 4);
   await shot(page, 'h56-codex-collab-390');
+  // The raw request is not clipped: a 5 KB unbroken ciphertext wraps inside its box at 390 px, the row does not widen.
+  const fit = await raw.evaluate((d) => {
+    const pre = d.querySelector('pre') as HTMLElement;
+    pre.textContent = `{"task_name":"gpu_research","message":"gAAAAAB${'x'.repeat(5000)}"}`;
+    const list = d.closest('.tx-list') as HTMLElement;
+    return { pre: pre.scrollWidth - pre.clientWidth, list: list.scrollWidth - list.clientWidth, scrolls: pre.scrollHeight > pre.clientHeight };
+  });
+  expect(fit).toEqual({ pre: 0, list: 0, scrolls: true });
   clean();
 });
