@@ -3,7 +3,7 @@ import type { Snapshot, WorldEvent } from '../src/net/protocol';
 import { WorldStore } from '../src/world/store';
 import { loadFixture } from './fixture-server';
 import { SimWorld } from './fixture-sim';
-import { composePrompt, ISSUE_STATUS_LINE, PLACEMENT_LINE, runLabel, SIM_BUILD_TEAM } from './fixture-start';
+import { composePrompt, ISSUE_STATUS_LINE, itemRef, PLACEMENT_LINE, runLabel, SIM_BUILD_TEAM } from './fixture-start';
 
 type Msg = Record<string, unknown>;
 
@@ -51,6 +51,11 @@ describe('composePrompt (contract 2.2)', () => {
   it('free text spanning lines, trimmed; a blank extra leaves no block', () => {
     expect(composePrompt(ROLES.orch, '  Add a dark mode\nto settings ', ROLES, ' \n ')).toBe(['/write-code Add a dark mode\nto settings', '', ...TEAM].join('\n'));
     expect(composePrompt({ harness: 'codex', model: 'gpt-6-luna', effort: 'low' }, 'Fix it', ROLES, 'x')).toBe(['$write-code Fix it', '', ...TEAM, '', 'x'].join('\n'));
+  });
+  it('#102: names an item by its URL, else "<Provider> task <key>", with no status line', () => {
+    const it3 = { provider: 'kaneo', id: 't3', key: 'HRD-3', title: 'Lobby', url: 'https://k.test/dashboard/workspace/w/project/p/task/t3' };
+    expect(composePrompt(ROLES.orch, itemRef('Kaneo', it3), ROLES, 'x')).toBe([`/write-code ${it3.url}`, '', ...TEAM, '', 'x'].join('\n'));
+    expect(itemRef('Kaneo', { ...it3, url: '' })).toBe('Kaneo task HRD-3');
   });
   it('labels a run ORCH|issue-<n> or ORCH|<slug>, at most 10 characters after the bar', () => {
     expect(runLabel({ kind: 'issue', number: 3 })).toBe('ORCH|issue-3');

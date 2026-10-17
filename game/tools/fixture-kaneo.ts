@@ -24,8 +24,10 @@
 //   leaves out (fetched with `issue.get`). Writes queue a poll. A drop with `after` on the truncated board is
 //   `unsupported`. `sim.kaneo` (the simulator's own command) makes the next polls fail (`{fail: "unauthorized" |
 //   "forbidden" | "message" | null}`: a refused key pauses the board for five minutes), the next placed move stale
-//   (`{stale: true}`: the 409 of a board that changed), or polls (`{poll: true}`).
-// - A run on a Kaneo task is an `item` ticket: the prompt carries the key, title, link and description.
+//   (`{stale: true}`: the 409 of a board that changed), or polls (`{poll: true}`). #102: `{detail: "slow" | "fail" |
+//   null}` (or `simkaneodetail=slow|fail` to start with) makes every later `issue.get` answer after `simkaneoslow` ms,
+//   or fail (`provider_failed`): the task panel's pending and failed description.
+// - A run on a Kaneo task is an `item` ticket: the prompt names the task by its link (#102), like the bridge's.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { BoardColumn, BoardComment, Floor, FloorSettings, IssueCard, KaneoProject, KaneoWorkspace } from '../src/net/protocol.ts';
@@ -34,6 +36,7 @@ type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
 
 export type KaneoMode = 'off' | 'connected' | 'unavailable' | 'old';
+export type KaneoDetail = 'slow' | 'fail' | null;
 
 export interface KaneoDeps {
   floors: Map<string, Floor>;
@@ -144,11 +147,14 @@ export class KaneoSim {
   private failing: string | null = null;
   private staleNext = false;
   private pending = false;
+  /** #102: how `issue.get` answers: at once (null), after `slowMs`, or with a failure. */
+  private detail: KaneoDetail;
 
-  constructor(d: KaneoDeps, mode: KaneoMode = 'off', slowMs = 1500) {
+  constructor(d: KaneoDeps, mode: KaneoMode = 'off', slowMs = 1500, detail: KaneoDetail = null) {
     this.d = d;
     this.mode = mode;
     this.slowMs = slowMs;
+    this.detail = detail;
     if (mode === 'connected') {
       this.generation = 1;
       this.state = { url: SIM_KANEO_URL, api_base: `${SIM_KANEO_URL}/api`, web_origin: SIM_KANEO_URL, key: 'sim-key', default_workspace: SIM_KANEO_WORKSPACES[0]!, generation: 1 };
@@ -469,7 +475,10 @@ export class KaneoSim {
         return ack({ queued: true });
       case 'issue.get': {
         const c = this.card(session, a);
-        return ack({ card: c.card, body: c.body, author: { name: '' }, created_at: 0, comments: c.comments, comments_truncated: false });
+        if (this.detail === 'fail') throw this.d.error('provider_failed', 'kaneo: 502 Bad Gateway');
+        const answer = () => ack({ card: c.card, body: c.body, author: { name: '' }, created_at: 0, comments: c.comments, comments_truncated: false });
+        if (this.detail === 'slow') return void this.d.later(answer, this.slowMs);
+        return answer();
       }
       case 'issue.comment': {
         const c = this.card(session, a);
@@ -540,13 +549,14 @@ export class KaneoSim {
       }
     }
     if (a.stale === true) this.staleNext = true;
+    if ('detail' in a) this.detail = a.detail === 'slow' || a.detail === 'fail' ? a.detail : null;
     const session = this.watching?.session;
     if (session && (a.poll === true || 'fail' in a)) this.queue(session, 10);
-    return { watching: session ?? null, failing: this.failing };
+    return { watching: session ?? null, failing: this.failing, detail: this.detail };
   }
 
   /** A run's ticket of a Kaneo task (the bridge resolves it through the tracker); null: not a Kaneo item of the floor. */
-  resolveWorkItem(session: string, wi: { provider?: unknown; id?: unknown }): { item: { provider: string; id: string; key: string; title: string; url: string }; body: string } | null {
+  resolveWorkItem(session: string, wi: { provider?: unknown; id?: unknown }): { item: { provider: string; id: string; key: string; title: string; url: string } } | null {
     if (wi.provider !== 'kaneo' || typeof wi.id !== 'string' || !this.isKaneo(session) || !this.state) return null;
     let p: SimProject;
     try {
@@ -556,6 +566,6 @@ export class KaneoSim {
     }
     const t = p.tasks.find((x) => x.card.id === wi.id);
     if (!t) return null;
-    return { item: { provider: 'kaneo', id: t.card.id, key: t.card.key, title: t.card.title, url: t.card.url ?? '' }, body: t.body };
+    return { item: { provider: 'kaneo', id: t.card.id, key: t.card.key, title: t.card.title, url: t.card.url ?? '' } };
   }
 }

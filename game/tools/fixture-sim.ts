@@ -33,7 +33,7 @@ import { herdrInstructions, StartSim } from './fixture-start.ts';
 import { CrewSim } from './fixture-crew.ts';
 // M7: the issues and pull request boards (`board.watch`, `sim.boards`, `simfail=no_m7`).
 import { BoardSim } from './fixture-boards.ts';
-import { KaneoSim, type KaneoMode } from './fixture-kaneo.ts';
+import { KaneoSim, type KaneoDetail, type KaneoMode } from './fixture-kaneo.ts';
 import { TelegramSim, type TelegramMode } from './fixture-telegram.ts';
 // M10: the plan limits (`limits.refresh`, `simlimits=<scenario>`, `simfail=no_m10`).
 import { LimitsSim } from './fixture-limits.ts';
@@ -116,6 +116,8 @@ export interface SimOptions {
   /** #184: the Kaneo connection to start with (`simkaneo=off|connected|unavailable|old`, tools/fixture-kaneo.ts), and how long its slow answers take (`simkaneoslow=<ms>`). */
   kaneo?: KaneoMode;
   kaneoSlowMs?: number;
+  /** #102: how a Kaneo task's `issue.get` answers to start with (`simkaneodetail=slow|fail`; `sim.kaneo {detail}` changes it). */
+  kaneoDetail?: KaneoDetail;
   /** #11: the Telegram notifications to start with (`simtelegram=off|token|paired|on|env|old`, tools/fixture-telegram.ts), and when a pairing's code arrives (`simtelegrampair=<ms>`; absent: only by `sim.telegram {pair: true}`). */
   telegram?: TelegramMode;
   telegramPairMs?: number;
@@ -427,6 +429,7 @@ export class SimWorld {
       },
       o.kaneo ?? 'off',
       o.kaneoSlowMs ?? 1500,
+      o.kaneoDetail ?? null,
     );
     this.telegram = new TelegramSim(
       {
