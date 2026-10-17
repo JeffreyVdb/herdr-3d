@@ -16,11 +16,12 @@ import (
 // herdr session's name, a virtual floor's id is "v-" and 12 lower-case hex
 // digits. Every floor-keyed table (desk_assignment.floor, worker_name.floor,
 // floor_repo, floor_hire_last, floor_preset_last, board_cache, board_open_pr,
-// board_merge_announced, floor_assignment, handoff*.floor) holds floor ids
-// in its old session_name / floor column: a real floor's id is the name it
-// was stored under, so no existing row changes. worker.session_name and
-// run_launch.session stay the herdr session (where the workspace lives);
-// their new floor_id is the floor the worker belongs to.
+// board_merge_announced, floor_assignment, handoff*.floor, and #93's
+// hire_preset.floor) holds floor ids in its old session_name / floor column:
+// a real floor's id is the name it was stored under, so no existing row
+// changes. worker.session_name and run_launch.session stay the herdr session
+// (where the workspace lives); their new floor_id is the floor the worker
+// belongs to.
 //
 // floor_hidden is the per-floor "hidden" setting (decision 2): a row means
 // the floor is hidden. It is its own table because a floor_repo row goes
@@ -206,10 +207,10 @@ func (s *Store) SetWorkerFloor(ctx context.Context, workerID, floor string) erro
 
 // DeleteVirtualFloor removes a virtual floor and the rows keyed by it:
 // desks, names, settings, last hire, last preset, board caches, its place in
-// a building and its hidden flag. Unless moveWorkers, it refuses
-// (ErrFloorHasWorkers) while an open stored worker is attributed to it;
-// with it, they go back to their session's real floor, as closed ones
-// always do. Handoffs are kept.
+// a building, its hidden flag and (#93) its own hire presets (global ones
+// stay). Unless moveWorkers, it refuses (ErrFloorHasWorkers) while an open
+// stored worker is attributed to it; with it, they go back to their
+// session's real floor, as closed ones always do. Handoffs are kept.
 func (s *Store) DeleteVirtualFloor(ctx context.Context, id string, moveWorkers bool) error {
 	return s.tx(ctx, func(tx *sql.Tx) error {
 		var n int
@@ -243,6 +244,7 @@ func (s *Store) DeleteVirtualFloor(ctx context.Context, id string, moveWorkers b
 			`DELETE FROM board_merge_announced WHERE session_name = ?`,
 			`DELETE FROM floor_assignment WHERE session_name = ?`,
 			`DELETE FROM floor_hidden WHERE floor = ?`,
+			`DELETE FROM hire_preset WHERE floor = ?`,
 			`DELETE FROM virtual_floor WHERE id = ?`,
 		} {
 			if _, err := tx.ExecContext(ctx, q, id); err != nil {

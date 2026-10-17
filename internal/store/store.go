@@ -205,6 +205,8 @@ var migrations = []string{
 	migrationNotify,
 	// #13: the replies' switch and the sent notifications' workers.
 	migrationNotifyReplies,
+	// #93: hire presets, on a floor or global.
+	migrationHirePreset,
 }
 
 // Fingerprint kinds.
