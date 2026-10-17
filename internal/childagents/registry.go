@@ -44,6 +44,7 @@ type root struct {
 	native          map[string]string // provider + native id → row id
 	dispatch        map[string]string // provider + dispatch id → row id
 	births          int               // rows made so far
+	obs             int               // observations applied so far
 }
 
 type row struct {
@@ -53,7 +54,13 @@ type row struct {
 	// want is the parent the evidence named that has no row yet (the
 	// child's Parent is unresolved meanwhile).
 	want *ParentRef
+	// seen is when evidence last set each of its last-wins fields.
+	seen seen
 }
+
+// seen is when evidence last set each last-wins field of a row, in its
+// root's observation order (0: never): a merge keeps the later of two rows'.
+type seen struct{ name, typ, desc, state, ended, transcript int }
 
 // New returns an empty registry.
 func New() *Registry {
@@ -157,6 +164,7 @@ func (r *Registry) Apply(e Evidence) ([]proto.Event, error) {
 		return nil, ErrUnbound
 	}
 	rt := r.roots[wid]
+	rt.obs++
 	ch := changes{rt: rt, before: map[string]proto.Child{}}
 	var byNative, byDispatch *row
 	if e.NativeID != "" {
@@ -207,7 +215,7 @@ func (r *Registry) Apply(e Evidence) ([]proto.Event, error) {
 			cur.dispatch = e.DispatchID
 		}
 	}
-	merge(&cur.c, e)
+	cur.merge(e, rt.obs)
 	if e.Parent != nil {
 		ch.setParent(cur, e.Parent)
 	}
@@ -264,22 +272,23 @@ func (rt *root) add(e Evidence) *row {
 	return rw
 }
 
-// merge applies e's fields to c: a set field replaces, an empty one keeps.
-func merge(c *proto.Child, e Evidence) {
+// merge applies e's fields, observed at, to the row: a set field replaces,
+// an empty one keeps.
+func (rw *row) merge(e Evidence, at int) {
+	c := &rw.c
 	if e.Name != "" {
-		c.Name = clip(e.Name, maxName)
+		c.Name, rw.seen.name = clip(e.Name, maxName), at
 	}
 	if e.Type != "" {
-		c.Type = clip(e.Type, maxName)
+		c.Type, rw.seen.typ = clip(e.Type, maxName), at
 	}
 	if e.Description != "" {
-		c.Description = clip(e.Description, maxDesc)
+		c.Description, rw.seen.desc = clip(e.Description, maxDesc), at
 	}
 	if e.State != "" {
-		c.State = validState(e.State)
-		c.Source = e.Source
+		c.State, c.Source, rw.seen.state = validState(e.State), e.Source, at
 		if c.State == proto.ChildRunning && e.EndedAt == 0 {
-			c.EndedAt = 0 // running again (resumed): no end yet
+			c.EndedAt, rw.seen.ended = 0, at // running again (resumed): no end yet
 		}
 	}
 	if e.StartedAt > 0 && (c.StartedAt == 0 || e.StartedAt < c.StartedAt) {
@@ -289,11 +298,42 @@ func merge(c *proto.Child, e Evidence) {
 		c.LastActivityAt = e.LastActivityAt
 	}
 	if e.EndedAt > 0 {
-		c.EndedAt = e.EndedAt
+		c.EndedAt, rw.seen.ended = e.EndedAt, at
 	}
 	if validTranscript(e.Transcript) {
-		c.Transcript = e.Transcript
+		c.Transcript, rw.seen.transcript = e.Transcript, at
 	}
+}
+
+// fold takes into rw what gone observed: as if one row had seen both rows'
+// evidence in observation order. A last-wins field takes the value set
+// later (State with its Source; EndedAt, also cleared by a resumed
+// running), StartedAt the earliest, LastActivityAt the latest; a field only
+// one row has is kept.
+func (rw *row) fold(gone *row) {
+	c, g := &rw.c, &gone.c
+	if gone.seen.name > rw.seen.name {
+		c.Name, rw.seen.name = g.Name, gone.seen.name
+	}
+	if gone.seen.typ > rw.seen.typ {
+		c.Type, rw.seen.typ = g.Type, gone.seen.typ
+	}
+	if gone.seen.desc > rw.seen.desc {
+		c.Description, rw.seen.desc = g.Description, gone.seen.desc
+	}
+	if gone.seen.state > rw.seen.state {
+		c.State, c.Source, rw.seen.state = g.State, g.Source, gone.seen.state
+	}
+	if gone.seen.ended > rw.seen.ended {
+		c.EndedAt, rw.seen.ended = g.EndedAt, gone.seen.ended
+	}
+	if gone.seen.transcript > rw.seen.transcript {
+		c.Transcript, rw.seen.transcript = g.Transcript, gone.seen.transcript
+	}
+	if g.StartedAt > 0 && (c.StartedAt == 0 || g.StartedAt < c.StartedAt) {
+		c.StartedAt = g.StartedAt
+	}
+	c.LastActivityAt = max(c.LastActivityAt, g.LastActivityAt)
 }
 
 // clip cuts s to at most n bytes on a rune boundary.
@@ -426,11 +466,12 @@ func (ch *changes) remove(rw *row) {
 	}
 }
 
-// merge folds gone into keep: its ids name keep from now on and its
-// children are keep's.
+// merge folds gone into keep: its ids name keep from now on, keep keeps
+// every field either observed (fold) and gone's children are keep's.
 func (ch *changes) merge(keep, gone *row) {
 	rt := ch.rt
 	ch.touch(keep)
+	keep.fold(gone)
 	for k, id := range rt.native {
 		if id == gone.c.ID {
 			rt.native[k] = keep.c.ID

@@ -7,13 +7,13 @@
     {"note": "the native id of toolu_01 arrives: the same row gains it", "evidence": {"session": "sess-p1", "provider": "claude", "dispatch_id": "toolu_01", "native_id": "a11", "source": "transcript"}},
     {"note": "keyed by the native id only: still that row", "evidence": {"session": "sess-p1", "provider": "claude", "native_id": "a11", "state": "completed", "source": "hook", "ended_at": 1792000305000, "transcript": "available"}},
     {"note": "a hook sees toolu_02's child by its native id before the transcript linked them: a second row for now", "evidence": {"session": "sess-p1", "provider": "claude", "native_id": "a22", "type": "Plan", "state": "running", "source": "hook", "started_at": 1792000301500}},
-    {"note": "the link: the row seen first stays, the other merges into it (a child.removed)", "evidence": {"session": "sess-p1", "provider": "claude", "dispatch_id": "toolu_02", "native_id": "a22", "source": "transcript", "transcript": "available"}},
+    {"note": "the link: the row seen first stays, the other merges into it (a child.removed); the hook's state, observed later, wins with its source", "evidence": {"session": "sess-p1", "provider": "claude", "dispatch_id": "toolu_02", "native_id": "a22", "source": "transcript", "transcript": "available"}},
     {"evidence": {"session": "sess-p1", "provider": "claude", "native_id": "a22", "source": "transcript", "last_activity_at": 1792000306000}}
   ],
   "expect": {
     "w1": [
       {"native_id": "a11", "provider": "claude", "parent": "root", "type": "Explore", "description": "Map the protocol docs", "state": "completed", "source": "hook", "started_at": 1792000300000, "ended_at": 1792000305000, "transcript": "available", "children": [
-        {"native_id": "a22", "provider": "claude", "parent": "child", "type": "Plan", "description": "Plan the board rows", "state": "running", "source": "transcript", "started_at": 1792000301000, "last_activity_at": 1792000306000, "transcript": "available"}
+        {"native_id": "a22", "provider": "claude", "parent": "child", "type": "Plan", "description": "Plan the board rows", "state": "running", "source": "hook", "started_at": 1792000301000, "last_activity_at": 1792000306000, "transcript": "available"}
       ]}
     ]
   }

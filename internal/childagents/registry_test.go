@@ -206,6 +206,60 @@ func TestMergeKeepsTheRowSeenFirst(t *testing.T) {
 	}
 }
 
+// A merge keeps every field either row observed: a field one row has is
+// kept, a last-wins field both have takes the one observed later (the state
+// with its source), started_at the earliest, last_activity_at the latest.
+func TestMergeKeepsEveryObservedField(t *testing.T) {
+	t.Run("only the merged row has them", func(t *testing.T) {
+		r := childagents.New()
+		r.Worker("w", "s")
+		d := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "d", Source: "transcript"})[0].Child.ID
+		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, NativeID: "a", State: proto.ChildRunning, Source: "hook",
+			Name: "Ada", StartedAt: 10, LastActivityAt: 20, Transcript: proto.TranscriptAvailable})
+		evs := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "d", NativeID: "a", Source: "transcript"})
+		want := proto.Child{ID: d, NativeID: "a", Provider: proto.ChildClaude, WorkerID: "w", AgentSession: "s", Generation: r.Generation("w"),
+			Parent: proto.ParentUnresolved, Name: "Ada", State: proto.ChildRunning, Source: "hook", StartedAt: 10, LastActivityAt: 20,
+			Transcript: proto.TranscriptAvailable}
+		if len(evs) != 2 || evs[1].Child == nil || *evs[1].Child != want {
+			t.Fatalf("events %s\n%+v\nwant upsert of %+v", kinds(evs), evs, want)
+		}
+		if cs := r.Children("w"); len(cs) != 1 || cs[0] != want {
+			t.Fatalf("children = %+v", cs)
+		}
+	})
+	t.Run("both rows have them", func(t *testing.T) {
+		r := childagents.New()
+		r.Worker("w", "s")
+		// The provisional row: completed (older), its type and description.
+		d := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildCodex, DispatchID: "d", State: proto.ChildCompleted, Source: "rollout",
+			Type: "worker", Description: "first", StartedAt: 30, LastActivityAt: 40, EndedAt: 45, Transcript: proto.TranscriptPending})[0].Child.ID
+		// The native row: running again (newer: clears the end), a newer
+		// description, no type, an earlier start, an earlier activity.
+		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildCodex, NativeID: "a", State: proto.ChildRunning, Source: "app_server",
+			Name: "Ada", Description: "second", StartedAt: 25, LastActivityAt: 35})
+		// Then the provisional row's transcript, newer than nothing.
+		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildCodex, DispatchID: "d", Source: "rollout", Transcript: proto.TranscriptAvailable})
+		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildCodex, DispatchID: "d", NativeID: "a", Source: "rollout"})
+		want := proto.Child{ID: d, NativeID: "a", Provider: proto.ChildCodex, WorkerID: "w", AgentSession: "s", Generation: r.Generation("w"),
+			Parent: proto.ParentUnresolved, Name: "Ada", Type: "worker", Description: "second", State: proto.ChildRunning, Source: "app_server",
+			StartedAt: 25, LastActivityAt: 40, Transcript: proto.TranscriptAvailable}
+		if cs := r.Children("w"); len(cs) != 1 || cs[0] != want {
+			t.Fatalf("children = %+v\nwant %+v", cs, want)
+		}
+	})
+	t.Run("the row kept observed later", func(t *testing.T) {
+		r := childagents.New()
+		r.Worker("w", "s")
+		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "d", Source: "transcript"})
+		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, NativeID: "a", State: proto.ChildRunning, Source: "hook", Name: "Old"})
+		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "d", State: proto.ChildInterrupted, Source: "transcript", Name: "New", EndedAt: 50})
+		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "d", NativeID: "a", Source: "transcript"})
+		if cs := r.Children("w"); len(cs) != 1 || cs[0].State != proto.ChildInterrupted || cs[0].Source != "transcript" || cs[0].Name != "New" || cs[0].EndedAt != 50 {
+			t.Fatalf("children = %+v", cs)
+		}
+	})
+}
+
 // Generations: one bridge-wide counter, so a worker's only rises (also
 // after it left and came back). A replaced session (X→Y, X→none) drops the
 // children and the old session's evidence; a first session (none→X) is no

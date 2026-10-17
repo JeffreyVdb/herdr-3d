@@ -603,6 +603,10 @@ with the same `id` and `native_id` set; never a second row, a flicker or a remov
 is that row. One case does remove a row: a child seen both by its native id alone (a Claude `SubagentStart` hook names no
 tool call) and from its dispatch before the evidence that links the two. The row seen first stays and the other merges
 into it: a `child.removed` of the other first, then `child.upsert`s of the one that stays and of the merged row's children.
+The row that stays keeps every field either row observed, as if one row had seen both rows' evidence in the order the
+bridge observed it: a field only one has is kept; of a `name`, `type`, `description`, `transcript`, `ended_at` (a resumed
+`running` clears it) or `state` (with its `source`) both have, the one observed later; the earliest `started_at` and the
+latest `last_activity_at`.
 
 **Order.** The child events are ordinary events of the `seq` stream: replayed after a reconnect (`since_seq`) like every
 other, and ordered per worker by the one `seq`, with the worker's own events too. The `worker.upsert` that raises a
