@@ -9,15 +9,18 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // migrationHirePreset creates hire_preset: floor NULL is a global preset.
 // created_at and updated_at are unix ms. A name is unique ignoring case
-// within its scope (the index reads a global one's floor as the empty
-// string, which no floor id is).
+// within its scope: name_key is the name folded in Go (hirePresetNameKey),
+// not by SQLite's lower(), which folds ASCII only. The index reads a global
+// one's floor as the empty string, which no floor id is.
 const migrationHirePreset = `CREATE TABLE hire_preset (
 		id         TEXT PRIMARY KEY,
 		name       TEXT NOT NULL,
+		name_key   TEXT NOT NULL,
 		floor      TEXT CHECK (floor IS NULL OR floor <> ''),
 		prompt     TEXT NOT NULL,
 		harness    TEXT NOT NULL,
@@ -26,7 +29,7 @@ const migrationHirePreset = `CREATE TABLE hire_preset (
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
 	);
-	CREATE UNIQUE INDEX hire_preset_name ON hire_preset(COALESCE(floor, ''), lower(name));`
+	CREATE UNIQUE INDEX hire_preset_name ON hire_preset(COALESCE(floor, ''), name_key);`
 
 // HirePreset is a stored hire preset. Floor is "" for a global one. The
 // caller validates the prompt and the tuple; the store checks the name.
@@ -37,10 +40,14 @@ type HirePreset struct {
 	CreatedAt, UpdatedAt   int64
 }
 
+// hirePresetNameKey folds a name's case for uniqueness: strings.ToLower,
+// Unicode-wide like the game's toLowerCase (so É and é are one name).
+func hirePresetNameKey(name string) string { return strings.ToLower(name) }
+
 func hirePresetNameTaken(ctx context.Context, tx *sql.Tx, name, floor, exceptID string) error {
 	var n int
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM hire_preset WHERE COALESCE(floor, '') = ? AND lower(name) = lower(?) AND id != ?`,
-		floor, name, exceptID).Scan(&n)
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM hire_preset WHERE COALESCE(floor, '') = ? AND name_key = ? AND id != ?`,
+		floor, hirePresetNameKey(name), exceptID).Scan(&n)
 	if err != nil {
 		return err
 	}
@@ -57,7 +64,7 @@ func hirePresetNameTaken(ctx context.Context, tx *sql.Tx, name, floor, exceptID 
 // HirePresets returns every hire preset, by name ignoring case.
 func (s *Store) HirePresets(ctx context.Context) ([]HirePreset, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(floor, ''), prompt, harness, model, effort, created_at, updated_at
-		FROM hire_preset ORDER BY lower(name), id`)
+		FROM hire_preset ORDER BY name_key, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -84,8 +91,8 @@ func (s *Store) CreateHirePreset(ctx context.Context, p HirePreset) error {
 		if err := hirePresetNameTaken(ctx, tx, name, p.Floor, ""); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO hire_preset (id, name, floor, prompt, harness, model, effort, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.ID, name, null(p.Floor), p.Prompt, p.Harness, p.Model, p.Effort, p.CreatedAt, p.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO hire_preset (id, name, name_key, floor, prompt, harness, model, effort, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.ID, name, hirePresetNameKey(name), null(p.Floor), p.Prompt, p.Harness, p.Model, p.Effort, p.CreatedAt, p.UpdatedAt)
 		return err
 	})
 }
@@ -101,8 +108,8 @@ func (s *Store) UpdateHirePreset(ctx context.Context, p HirePreset) error {
 		if err := hirePresetNameTaken(ctx, tx, name, p.Floor, p.ID); err != nil {
 			return err
 		}
-		res, err := tx.ExecContext(ctx, `UPDATE hire_preset SET name = ?, floor = ?, prompt = ?, harness = ?, model = ?, effort = ?,
-			updated_at = ? WHERE id = ?`, name, null(p.Floor), p.Prompt, p.Harness, p.Model, p.Effort, p.UpdatedAt, p.ID)
+		res, err := tx.ExecContext(ctx, `UPDATE hire_preset SET name = ?, name_key = ?, floor = ?, prompt = ?, harness = ?, model = ?, effort = ?,
+			updated_at = ? WHERE id = ?`, name, hirePresetNameKey(name), null(p.Floor), p.Prompt, p.Harness, p.Model, p.Effort, p.UpdatedAt, p.ID)
 		if err != nil {
 			return err
 		}

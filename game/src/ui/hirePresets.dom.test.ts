@@ -233,6 +233,54 @@ describe('HirePresetsDialog (#93)', () => {
     expect(summary(dlg).groups.global.map((r) => r.name)).toEqual(['From elsewhere']);
   });
 
+  it('a delete reply leaves an editor opened meanwhile as it is, also after a close and reopen', async () => {
+    for (const reopen of [false, true]) {
+      document.body.replaceChildren();
+      const a = preset('Audit', 'web');
+      const b = preset('Build', 'web');
+      const { dlg, book, replies } = setup([a, b]);
+      let resolve = (_: unknown) => {};
+      replies['hire_preset.delete'] = () => new Promise((r) => (resolve = r));
+      dlg.open('web', 0);
+      click(`delete:${a.id}`);
+      click(`confirm-delete:${a.id}`);
+      if (reopen) {
+        dlg.close();
+        dlg.open('web', 0);
+      } else click(`keep:${a.id}`);
+      click(`edit:${b.id}`);
+      type('#hp-name', 'Build all');
+      book.remove(a.id);
+      dlg.refresh();
+      resolve({ ok: true });
+      await tick();
+      const s = summary(dlg);
+      expect(s.view).toBe('edit');
+      expect(s.editing).toMatchObject({ id: b.id, draft: { name: 'Build all' } });
+      expect((document.querySelector('#hp-name') as HTMLInputElement).value).toBe('Build all');
+      expect(s.state).toBe('ready');
+    }
+  });
+
+  it('keeps focus on the header and the tabs when the list or the editor re-renders live', () => {
+    const p = preset('Deploy', 'web');
+    const { dlg, book } = setup([p]);
+    dlg.open('web', 0);
+    for (const key of ['close', 'tab:preset', 'tab:worker']) {
+      (document.querySelector(`[data-key="${key}"]`) as HTMLElement).focus();
+      book.upsert(preset(`Other ${key}`, null));
+      dlg.refresh();
+      expect((document.activeElement as HTMLElement).dataset.key).toBe(key);
+    }
+    click(`edit:${p.id}`);
+    for (const key of ['back', 'close']) {
+      (document.querySelector(`[data-key="${key}"]`) as HTMLElement).focus();
+      book.upsert(preset(`Editing ${key}`, null));
+      dlg.refresh();
+      expect((document.activeElement as HTMLElement).dataset.key).toBe(key);
+    }
+  });
+
   it('opened from the hire form, the editor saves and goes back to it with a toast', async () => {
     const { dlg, sent, toasts } = setup([]);
     const from = document.body.appendChild(document.createElement('button'));

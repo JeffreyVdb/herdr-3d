@@ -46,6 +46,9 @@ describe('fixture hire presets (#93)', () => {
     expect(data).toMatchObject({ name: 'Deploy', floor: 'f1', model: 'gpt-6-sol' });
     expect(events.map((e) => e.t)).toEqual(['hire_preset.upsert']);
     expect(r.err('hire_preset.create', spec({ name: 'DEPLOY' }))).toBe('name_taken');
+    const equipe = r.ack('hire_preset.create', spec({ name: 'Équipe' })).data;
+    expect(r.err('hire_preset.create', spec({ name: 'équipe' }))).toBe('name_taken');
+    r.ack('hire_preset.delete', { id: equipe.id });
     r.ack('hire_preset.create', spec({ floor: 'f2' }));
     const global = r.ack('hire_preset.create', spec({ floor: undefined })).data;
     expect(global).not.toHaveProperty('floor');

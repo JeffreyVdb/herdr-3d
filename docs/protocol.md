@@ -4554,7 +4554,7 @@ levels (a named choice without a prompt, kept in the browser). Nothing here hire
 **The spec**, checked on create and on every update (`bad_request` unless said otherwise):
 
 - `name`: trimmed, 1–40 bytes of UTF-8 without control characters (the team presets' rule), unique ignoring case
-  **within its scope** (`name_taken`): the same name on two floors, or on a floor and globally, is allowed, and the two
+  (Unicode-wide: `Équipe` and `équipe` are one name) **within its scope** (`name_taken`): the same name on two floors, or on a floor and globally, is allowed, and the two
   stay separate presets (a floor's never hides a global one).
 - `floor`: absent or `""` is global; otherwise a floor the bridge knows (a real floor it sees, or a defined virtual
   floor; `unknown_session` otherwise). An update that keeps the preset's floor does not check it again, so a floor
@@ -4574,8 +4574,9 @@ own presets in the same transaction (`hire_preset.removed` each); global ones st
 A catalog that later lacks a preset's model or effort leaves the preset as stored: the client shows the saved values
 and why they cannot be hired, and `worker.hire` would refuse them as usual.
 
-Stored in SQLite `hire_preset (id, name, floor, prompt, harness, model, effort, created_at, updated_at)`, `floor` NULL
-for a global one, with a unique index on (scope, `lower(name)`).
+Stored in SQLite `hire_preset (id, name, name_key, floor, prompt, harness, model, effort, created_at, updated_at)`,
+`floor` NULL for a global one, with a unique index on (scope, `name_key`): the name lowercased by the bridge (Go's
+`strings.ToLower`, Unicode-wide like the game's `toLowerCase`), not SQLite's ASCII-only `lower()`.
 
 ### Inbox
 

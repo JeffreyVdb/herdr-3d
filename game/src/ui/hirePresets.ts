@@ -95,6 +95,8 @@ export class HirePresetsDialog {
   private returnScope: ParentNode | null = null;
   private seenVersion = -1;
   private busy = false;
+  /** Counts the openings (open, create): a reply for an earlier one has no say in this one. */
+  private opening = 0;
   /** The editor's model filter (a long list); a harness switch clears it. */
   private modelQuery = '';
 
@@ -154,6 +156,7 @@ export class HirePresetsDialog {
     this.floor = floor;
     this.desk = desk;
     this.returnTo = null;
+    this.opening++;
     this.view = { kind: 'list', confirm: null, replacing: null };
     this.setStatus('');
     this.busy = false;
@@ -168,6 +171,8 @@ export class HirePresetsDialog {
     this.desk = null;
     this.returnTo = from;
     this.returnScope = from?.closest('dialog') ?? document;
+    this.opening++;
+    this.busy = false;
     const note = seed.imagesLeftOut ? `The ${seed.imagesLeftOut === 1 ? 'image' : `${seed.imagesLeftOut} images`} of the first task ${seed.imagesLeftOut === 1 ? 'is' : 'are'} not saved: a preset keeps text only.` : null;
     this.edit(null, { name: '', prompt: seed.prompt, harness: seed.harness, model: seed.model, effort: seed.effort, scope: 'floor' }, note);
     if (!this.dialog.open) this.dialog.showModal();
@@ -242,17 +247,22 @@ export class HirePresetsDialog {
     const plate = editing
       ? h('div', { class: 'dd-plate dd-plate--preset', 'aria-hidden': 'true' }, icon(PRESET_ICON))
       : h('div', { class: 'dd-plate dd-plate--desk', 'aria-hidden': 'true' }, icon(DESK_PLUS), h('b', {}, String((this.desk ?? 0) + 1)));
-    this.head.replaceChildren(
-      ...(back ? [h('button', { class: 'btn btn--icon', 'data-key': 'back', 'aria-label': 'Back to the presets', title: 'Back to the presets (Esc)', onclick: () => this.toList(v.id) }, icon(ICON.back))] : []),
-      plate,
-      h('div', { class: 'dd-titles' }, h('h2', { id: 'hp-title' }, title), h('p', { id: 'hp-sub' }, editing ? 'A first task and the model to hire it with' : `${this.floorName()} · ${where}`)),
-      h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
+    // Header and tabs keep focus across a live re-render, as the body and the actions do.
+    replaceKeepingFocus(
+      this.head,
+      [
+        ...(back ? [h('button', { class: 'btn btn--icon', 'data-key': 'back', 'aria-label': 'Back to the presets', title: 'Back to the presets (Esc)', onclick: () => this.toList(v.id) }, icon(ICON.back))] : []),
+        plate,
+        h('div', { class: 'dd-titles' }, h('h2', { id: 'hp-title' }, title), h('p', { id: 'hp-sub' }, editing ? 'A first task and the model to hire it with' : `${this.floorName()} · ${where}`)),
+        h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
+      ],
+      'close',
     );
     // The desk's tabs, while the list is for a desk.
     this.tabs.hidden = editing || this.desk === null;
     if (!this.tabs.hidden) {
       const orch = this.host.orchestrate;
-      this.tabs.replaceChildren(
+      replaceKeepingFocus(this.tabs, [
         deskTabs(
           'preset',
           (t) => {
@@ -265,7 +275,7 @@ export class HirePresetsDialog {
           orch ? orch.off() : false,
           true,
         ),
-      );
+      ]);
     }
     if (v.kind === 'list') this.renderList(v);
     else this.renderEdit(v);
@@ -594,10 +604,22 @@ export class HirePresetsDialog {
     if (this.busy) return;
     this.busy = true;
     this.render();
+    const v = this.view;
+    const opening = this.opening;
     const r = await this.host.send('hire_preset.delete', { id: p.id });
+    // Opened again meanwhile: that dialog is gone, and this one has its own busy.
+    if (this.opening !== opening) return;
     this.busy = false;
     if (!this.dialog.open) return;
-    if (r.ok || r.code === 'not_found') {
+    const failed = !r.ok && r.code !== 'not_found';
+    if (this.view !== v) {
+      // The player moved on (Keep it, then an editor): that view stays as it is, the list following the store anyway.
+      // Only a refusal is said, and only a list re-renders (its Delete buttons were held while busy).
+      if (failed) this.setStatus(failureText('hire_preset.delete', r.code, r.message), true);
+      if (this.view.kind === 'list') this.render();
+      return;
+    }
+    if (!failed) {
       this.setStatus(`Deleted “${p.name}”.`);
       this.toList(null);
       return;

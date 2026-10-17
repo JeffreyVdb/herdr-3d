@@ -162,3 +162,44 @@ func TestHirePresetsFollowTheFloor(t *testing.T) {
 		t.Fatalf("after deleting the floor = %q", got)
 	}
 }
+
+// #93: the scope's names ignore case beyond ASCII, as the game's
+// toLowerCase does: "Équipe" and "équipe" are one name on a floor and
+// globally, on create and on update, yet allowed once per scope.
+func TestHirePresetNamesFoldUnicode(t *testing.T) {
+	ctx := context.Background()
+	st := open(t, filepath.Join(t.TempDir(), "world.db"))
+	add := func(id, name, floor string) error {
+		return st.CreateHirePreset(ctx, store.HirePreset{ID: id, Name: name, Floor: floor, Prompt: "p", Harness: "claude", Model: "m", Effort: "e"})
+	}
+	for i, floor := range []string{"s", "t", "v-0123456789ab", ""} {
+		if err := add("hp_"+string(rune('a'+i)), "Équipe", floor); err != nil {
+			t.Fatalf("Équipe on %q: %v", floor, err)
+		}
+	}
+	for _, c := range []struct{ name, floor string }{{"équipe", "s"}, {"ÉQUIPE", ""}, {"équipe", "v-0123456789ab"}} {
+		if err := add("hp_x", c.name, c.floor); !errors.Is(err, store.ErrNameTaken) {
+			t.Fatalf("%q on %q: %v", c.name, c.floor, err)
+		}
+	}
+	// Renaming to the other case of another's name in the scope is refused; moving there too.
+	if err := add("hp_e", "Straße", "s"); err != nil {
+		t.Fatal(err)
+	}
+	rename := store.HirePreset{ID: "hp_e", Name: "équipe", Floor: "s", Prompt: "p", Harness: "claude", Model: "m", Effort: "e"}
+	if err := st.UpdateHirePreset(ctx, rename); !errors.Is(err, store.ErrNameTaken) {
+		t.Fatalf("rename to équipe: %v", err)
+	}
+	if err := add("hp_f", "équipe", "u"); err != nil {
+		t.Fatal(err)
+	}
+	move := store.HirePreset{ID: "hp_f", Name: "équipe", Floor: "", Prompt: "p", Harness: "claude", Model: "m", Effort: "e"}
+	if err := st.UpdateHirePreset(ctx, move); !errors.Is(err, store.ErrNameTaken) {
+		t.Fatalf("move équipe global: %v", err)
+	}
+	// Its own name in another case is fine.
+	rename.ID, rename.Name = "hp_a", "ÉQUIPE"
+	if err := st.UpdateHirePreset(ctx, rename); err != nil {
+		t.Fatalf("rename to itself: %v", err)
+	}
+}

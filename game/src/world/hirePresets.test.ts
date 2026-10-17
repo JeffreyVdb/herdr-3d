@@ -61,6 +61,14 @@ describe('HirePresetBook', () => {
     expect(b.nameTaken('GLOBAL', '')).toBe(true);
     expect(b.nameTaken('global', 'herdr-3d')).toBe(false);
   });
+
+  it('ignores case beyond ASCII, as the bridge does', () => {
+    const b = new HirePresetBook();
+    b.reset([preset({ id: 'a', name: 'Équipe', floor: 'herdr-3d' })]);
+    expect(b.nameTaken('équipe', 'herdr-3d')).toBe(true);
+    expect(b.nameTaken('ÉQUIPE', 'herdr-3d')).toBe(true);
+    expect(b.nameTaken('équipe', '')).toBe(false);
+  });
 });
 
 describe('exactProblem', () => {
