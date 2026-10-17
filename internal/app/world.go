@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
+	"github.com/JeffreyVdb/herdr-3d/internal/claudechild"
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
 	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
 	"github.com/JeffreyVdb/herdr-3d/internal/fileindex"
@@ -172,6 +174,13 @@ func DefaultRunsDir() string {
 	}
 	return filepath.Join(dir, "write-code", "runs")
 }
+
+// #23 Claude subagents: the directory of the bridge's own Claude Code hook
+// settings and their log ("-": no hooks, the transcripts alone).
+const EnvClaudeHooks = "HERDR_WORLD_CLAUDE_HOOKS"
+
+// DefaultClaudeHooks is claude-hooks next to the database.
+func DefaultClaudeHooks(db string) string { return filepath.Join(filepath.Dir(db), "claude-hooks") }
 
 // #223 handoffs: the filing cabinet's directory.
 const EnvHandoffDir = "HERDR_WORLD_HANDOFF_DIR"
@@ -461,6 +470,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	noLimits := fs.Bool("no-limits", false, "do not read the Claude and Codex plan limits")                                     // M10 limits
 	codexSessions := fs.String("codex-sessions", envOr(EnvCodex, codex.DefaultSessionsDir()), "Codex rollout directory, for the sleep backfill and usage ($"+EnvCodex+")")
 	claudeProjects := fs.String("claude-projects", envOr(EnvClaudeProjects, usage.DefaultClaudeProjects()), "Claude Code transcript directory, for usage ($"+EnvClaudeProjects+")")
+	claudeHooks := fs.String("claude-hooks", os.Getenv(EnvClaudeHooks), "directory of the bridge's own Claude Code hook settings and log, passed to the Claude workers it starts, \"-\" for none (default claude-hooks next to the database) (#23) ($"+EnvClaudeHooks+")")
 	codexCLI := fs.String("codex-cli", envOr(EnvCodexCLI, "codex"), "Codex binary for model and command discovery ($"+EnvCodexCLI+")")
 	claudeCLI := fs.String("claude-cli", envOr(EnvClaudeCLI, "claude"), "Claude Code binary for model and command discovery ($"+EnvClaudeCLI+")")
 	runsDir := fs.String("runs-dir", envOr(EnvRunsDir, DefaultRunsDir()), "write-code runs directory, for the freelancers' reports ($"+EnvRunsDir+")")                                                       // M6 runs
@@ -645,7 +655,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		WakeTimeout: wakeTimeout, ResumeTimeout: resumeTimeout, WrapUpTimeout: wrapUpTimeout, CodexSessions: *codexSessions,
 		RepoOf: (&gitremote.Resolver{Git: *gitBin}).Repo, Git: &gitops.Git{Bin: *gitBin}, Caps: caps,
 		ClaudeProjects: *claudeProjects, Pricing: pricing, HireOptions: &hireOptions,
-		ClaudeCLI: *claudeCLI, CodexCLI: *codexCLI, // #136 worker.commands
+		ClaudeHooks: orDefault(*claudeHooks, DefaultClaudeHooks(*db)), ClaudeCLI: *claudeCLI, CodexCLI: *codexCLI, // #23 hooks; #136 worker.commands
 		RG:         *rgBin, // #137 worker.files
 		MaxWatches: maxWatches, MaxObservers: maxObservers, MaxTranscriptWatches: maxTxWatches,
 		RunsDir:          *runsDir,                                                          // M6 runs
@@ -717,6 +727,10 @@ type ServeConfig struct {
 	// RepoOf finds a directory's GitHub repo for the floor suggestion (nil:
 	// no suggestions).
 	RepoOf func(ctx context.Context, dir string) string
+	// #23: ClaudeHooks is the directory of the bridge's Claude hook settings
+	// and their log ("" or "-": no hooks). With ClaudeProjects, the Claude
+	// workers' subagents are read from their transcripts either way.
+	ClaudeHooks string
 	// M5 usage: ClaudeProjects is the Claude Code transcript directory; with
 	// CodexSessions, where workers' usage is read from ("" and "": no
 	// usage). Pricing prices it (nil: the built-in table).
@@ -858,6 +872,11 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 	if cfg.ClaudeProjects != "" || cfg.CodexSessions != "" { // M5 usage
 		opts.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: cfg.ClaudeProjects, CodexSessions: cfg.CodexSessions},
 			Pricing: cfg.Pricing, Images: cfg.TranscriptImages}
+	}
+	if cfg.ClaudeProjects != "" { // #23 Claude subagents, from the usage tracker's reads (and the hooks')
+		src := claudeChildren(log, cfg.ClaudeHooks, cfg.Control)
+		opts.ChildSources = append(opts.ChildSources, src)
+		opts.Usage.ClaudeChildren = func(session string) server.ChildReader { return src.Listener(session) }
 	}
 	opts.RunsDir, opts.ReportPoll = cfg.RunsDir, cfg.ReportPoll // M6 runs
 	opts.Boards = cfg.Boards                                    // M7 boards
@@ -1181,4 +1200,34 @@ func mustMarshal(v any) json.RawMessage {
 		panic(err)
 	}
 	return b
+}
+
+// claudeChildren is the Claude child-agent source (#23). With a hooks
+// directory it installs the bridge's hook settings there, which Control
+// passes to the Claude workers it starts and resumes, and reads their log;
+// without one (or without flock), the transcripts alone.
+func claudeChildren(log *slog.Logger, dir string, control *herdr.Control) *claudechild.Source {
+	opts := claudechild.Options{Log: log}
+	if dir == "" || dir == "-" {
+		return claudechild.New(opts)
+	}
+	flock, ferr := exec.LookPath("flock")
+	cat, cerr := exec.LookPath("cat")
+	abs, aerr := filepath.Abs(dir)
+	if err := errors.Join(ferr, cerr, aerr); err != nil {
+		log.Warn("claude hooks not installed: subagents are read from the transcripts only", "err", err)
+		return claudechild.New(opts)
+	}
+	flock, _ = filepath.Abs(flock)
+	cat, _ = filepath.Abs(cat)
+	settings, hookLog, err := claudechild.InstallHooks(abs, flock, cat)
+	if err != nil {
+		log.Warn("claude hooks not installed: subagents are read from the transcripts only", "err", err)
+		return claudechild.New(opts)
+	}
+	if control != nil {
+		control.ClaudeSettings = settings
+	}
+	opts.HookLog = hookLog
+	return claudechild.New(opts)
 }

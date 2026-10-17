@@ -63,6 +63,12 @@ type Control struct {
 	// is refused; empty refuses them all.
 	CodexRun string
 
+	// #23: ClaudeSettings is the bridge's own Claude Code settings file
+	// (its observational hooks), passed with --settings to every Claude it
+	// starts or resumes ("": none). It merges with the user's and the
+	// project's settings, which are never touched.
+	ClaudeSettings string
+
 	// #68: Shell is the shell policy: bash (the default) or fish, an
 	// explicit compatibility option. It picks the interpreter of a woken
 	// floor's login environment and of the shared Codex launcher, and the
@@ -91,9 +97,12 @@ const (
 	// #58: a new session (newsession.go).
 	opCreateSession = "create-session"
 	opResumeClaude  = "resume-claude"
-	opResumeCodex   = "resume-codex"
-	opReportCodex   = "report-codex-session"
-	opProcessInfo   = "process-info"
+	// #23: the same with the bridge's Claude settings file (its hooks).
+	opResumeClaudeSettings = "resume-claude-settings"
+	opStartClaudeSettings  = "start-claude-settings"
+	opResumeCodex          = "resume-codex"
+	opReportCodex          = "report-codex-session"
+	opProcessInfo          = "process-info"
 
 	opWorkspaceCreate = "workspace-create"
 	opWorktreeCreate  = "worktree-create"
@@ -161,7 +170,11 @@ var controlShapes = map[string][]string{
 	opStop: {"{herdr}", "session", "stop", "{session}", "--json"},
 	// Wake fallback for an agent herdr did not resume.
 	opResumeClaude: {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "claude --resume {id}"},
-	opResumeCodex:  {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "codex resume {id}"},
+	// #23: with the bridge's hooks; the file is a plain absolute path, so
+	// single quotes hold it in any shell.
+	opResumeClaudeSettings: {"{herdr}", "--session", "{session}", "pane", "run", "{pane}",
+		"claude --settings '{settings}' --resume {id}"},
+	opResumeCodex: {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "codex resume {id}"},
 	// Sleep: backfill a Codex pane's session id so it can resume.
 	opReportCodex: {"{herdr}", "--session", "{session}", "pane", "report-agent-session", "{pane}",
 		"--source", "herdr:codex", "--agent", "codex", "--agent-session-id", "{id}"},
@@ -179,6 +192,11 @@ var controlShapes = map[string][]string{
 	opStartClaude: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "claude",
 		"--pane", "{pane}", "--timeout", "30000", "--",
 		"--model", "{model}", "--effort", "{effort}", "--permission-mode", "bypassPermissions", "--name", "{label}"},
+	// #23: the same with the bridge's Claude settings file (its hooks).
+	opStartClaudeSettings: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "claude",
+		"--pane", "{pane}", "--timeout", "30000", "--",
+		"--model", "{model}", "--effort", "{effort}", "--permission-mode", "bypassPermissions", "--name", "{label}",
+		"--settings", "{settings}"},
 	opStartCodex: {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
 		"--pane", "{pane}", "--timeout", "30000", "--",
 		"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
@@ -361,6 +379,14 @@ func validRunFile(path, ext string) bool {
 		!strings.Contains(path, "..")
 }
 
+// validSettingsFile reports whether path may name the bridge's Claude
+// settings file (#23): a plain, clean absolute path of a .json file, typed
+// into a pane's shell in single quotes on a resume.
+func validSettingsFile(path string) bool {
+	return plainPathRe.MatchString(path) && filepath.Clean(path) == path && strings.HasSuffix(path, ".json") &&
+		!strings.Contains(path, "..")
+}
+
 // ValidWorkspaceID reports whether id looks like a herdr workspace id ("w1").
 func ValidWorkspaceID(id string) bool { return workspaceIDRe.MatchString(id) }
 
@@ -405,7 +431,11 @@ func (c *Control) ResumeAgent(ctx context.Context, session, pane, harness, agent
 	if !ok {
 		return fmt.Errorf("%w: cannot resume harness %q", ErrNotAllowed, harness)
 	}
-	_, err := c.run(ctx, op, map[string]string{"session": session, "pane": pane, "id": agentSession})
+	vars := map[string]string{"session": session, "pane": pane, "id": agentSession}
+	if op == opResumeClaude && c.ClaudeSettings != "" { // #23
+		op, vars["settings"] = opResumeClaudeSettings, c.ClaudeSettings
+	}
+	_, err := c.run(ctx, op, vars)
 	return err
 }
 
@@ -510,6 +540,9 @@ var placeholders = map[string]func(string) bool{
 	"launcher": func(s string) bool { return validRunFile(s, ".sh") || validRunFile(s, ".fish") },
 	"socket":   func(s string) bool { return validRunFile(s, ".sock") },
 	"cwd":      ValidPlainDir,
+
+	// #23
+	"settings": validSettingsFile,
 }
 
 // secretPlaceholders are what a person typed: a refused value is never
@@ -530,7 +563,7 @@ func (c *Control) run(ctx context.Context, op string, vars map[string]string) ([
 		switch op {
 		case opStop:
 			timeout = 45 * time.Second
-		case opStartClaude, opStartCodex, opStartCodexRemote, opResumeCodexRemote, opResumeCodexEmbedded, opWorktreeCreate, opWorktreeRemove:
+		case opStartClaude, opStartClaudeSettings, opStartCodex, opStartCodexRemote, opResumeCodexRemote, opResumeCodexEmbedded, opWorktreeCreate, opWorktreeRemove:
 			timeout = 40 * time.Second // agent start waits up to 30 s itself
 		}
 	}
