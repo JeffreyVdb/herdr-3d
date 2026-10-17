@@ -4,6 +4,7 @@ import type { HireOptions, HirePrepare } from '../net/protocol';
 import type { Draft } from './composer/draft';
 import { HireDialog, type HireHost, type HirePrefill, type HireSummary } from './hire';
 import { HireModelPrefs } from './hireModelPrefs';
+import { HirePresetBook } from '../world/hirePresets';
 
 // #93: a form opened from a hire preset holds the preset's exact choice: a hidden model stays offered and picked, a
 // removed model or an effort the model lacks is shown and blocks Hire until the player picks; nothing is resolved to
@@ -191,6 +192,24 @@ describe('HireDialog from a hire preset (#93)', () => {
     await tick();
     dlg.close();
     expect(dlg.unsent('floor', 2)?.text).toBe(PROMPT);
+  });
+
+  it('an edit or a deletion of the preset elsewhere never rewrites the open form', async () => {
+    const { dlg, host } = setup();
+    const book = new HirePresetBook();
+    book.reset([{ id: 'hp_1', name: 'Deploy', floor: 'floor', prompt: PROMPT, harness: 'codex', model: 'x-2', effort: 'ultra', created_at: 1, updated_at: 1 }]);
+    (host.store as unknown as { hirePresets: HirePresetBook }).hirePresets = book;
+    dlg.open('floor', 0, fromPreset({ harness: 'codex', model: 'x-2', effort: 'ultra' }));
+    await tick();
+    const before = summary(dlg);
+    book.upsert({ id: 'hp_1', name: 'Deploy v2', floor: 'floor', prompt: 'Something else.', harness: 'claude', model: 'y-1', effort: 'low', created_at: 1, updated_at: 2 });
+    dlg.refresh();
+    expect(summary(dlg).form).toEqual(before.form);
+    expect(summary(dlg).preset).toEqual(before.preset);
+    book.remove('hp_1');
+    dlg.refresh();
+    expect(summary(dlg).form).toEqual(before.form);
+    expect(summary(dlg).blocker).toBeNull();
   });
 
   it('“Save as preset…” hands the editor the form’s text, choice and floor, images left out and counted', async () => {
