@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptItem, Usage } from '../net/protocol';
 import { Draft as PromptDraft } from '../ui/composer/draft';
 import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs } from '../ui/themePrefs';
 import { SendGate } from './transcriptDrafts';
-import { duration, loadHighlighter, mountTranscript, parseHunk, renderMarkdown, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
+import { COLLAB_ENCRYPTED, duration, loadHighlighter, mountTranscript, parseHunk, renderMarkdown, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 interface FakeHost extends TranscriptRenderHost {
   prompts: string[];
@@ -450,6 +452,136 @@ describe('#183: your answer to a Codex async question', () => {
     const empty = answered([{ question: 'q', answer: '' }]);
     view.setItems([empty]);
     expect(row(empty.id).querySelector('.tx-ans')).not.toBeNull();
+  });
+});
+
+describe('#56: Codex collaboration calls and messages', () => {
+  // What the bridge makes of its trimmed real rollout (internal/transcript/testdata/codex/collab*.jsonl).
+  const COLLAB = JSON.parse(readFileSync(join(import.meta.dirname, '../../fixtures/transcript/codex-collab.json'), 'utf8')) as TranscriptItem[];
+  const SPAWN = 'call_b29014c00922488d89e346e245b44af0';
+  const FORK = 'call_bb905e7596064beaae8faf916557d34b';
+  const V1 = 'call_c56v1spawn0000000000000000001';
+  const said = (r: HTMLElement) => `${r.querySelector('.tx-collab-verb')?.textContent ?? ''} ${r.querySelector('.tx-collab-sum')?.textContent ?? ''}`;
+  /** What shows without a click: the row less its closed body and the closed raw request. */
+  const visible = (el: HTMLElement) => {
+    const c = el.cloneNode(true) as HTMLElement;
+    c.querySelectorAll('details, [hidden]').forEach((d) => d.remove());
+    return c.textContent ?? '';
+  };
+  const open = (r: HTMLElement) => (r.querySelector('.tx-tool-row') as HTMLButtonElement).click();
+  const fields = (r: HTMLElement) => [...r.querySelectorAll('.tx-collab-fields dt')].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
+
+  it('every call and message reads as what happened; no namespace and no ciphertext without a click', () => {
+    mount();
+    view.setItems(COLLAB);
+    const heads = $$('.tx-collab').map((r) => said(r));
+    expect(heads).toEqual([
+      'Spawn subagent gpu_research on gpt-6.1-sol high',
+      'Message to /root/gpu_research',
+      'Reply from /root/gpu_research',
+      'Spawn subagent runtime_research on gpt-6.1-sol high, with full context',
+      'Message to /root/runtime_research',
+      'Wait for subagents ',
+      'Final reply from /root/gpu_research',
+      'Close /root/gpu_research',
+      'Spawn subagent Meitner',
+    ]);
+    for (const r of $$('.tx-collab')) {
+      expect(visible(r)).not.toContain('collaboration.');
+      expect(visible(r)).not.toContain('gAAAAA');
+    }
+    // The names are set as names; the words around them are not.
+    expect([...row(SPAWN).querySelectorAll('.tx-collab-id')].map((e) => e.textContent)).toEqual(['gpu_research', 'gpt-6.1-sol', 'high']);
+    expect(row(SPAWN).querySelector('.tx-tool-status')?.textContent).toBe('done');
+    // A plain reply shows as the agent said it; an encrypted one has nothing to show until opened.
+    expect(visible(row('amsg_01a1439f-e866-77e0-889d-fbf8faceb33d'))).toContain('Wrote the GPU notes');
+    expect(row('amsg_01a1439e-91da-79c2-a082-1052d8081541').querySelector('.tx-collab-said')).toBeNull();
+  });
+
+  it('opened: the labelled facts first, then the encrypted note, then the raw request, closed, with the untouched call', () => {
+    mount();
+    view.setItems(COLLAB);
+    const r = row(SPAWN);
+    open(r);
+    const body = r.querySelector('.tx-tool-body') as HTMLElement;
+    expect(body.hidden).toBe(false);
+    expect(fields(r)).toEqual([
+      ['Agent', '/root/gpu_research'],
+      ['Model', 'gpt-6.1-sol'],
+      ['Effort', 'high'],
+      ['Thread', '01a1439d-d782-7322-8469-ee452eaa3190'],
+    ]);
+    expect([...body.children].map((e) => e.className)).toEqual(['tx-collab-fields', 'tx-note', 'tx-ans-raw tx-collab-raw']);
+    expect(body.querySelector('.tx-note')?.textContent).toBe(COLLAB_ENCRYPTED);
+    const raw = body.querySelector('details') as HTMLDetailsElement;
+    expect(raw.open).toBe(false);
+    expect(raw.querySelector('summary')?.textContent).toBe('Raw request');
+    const [args, out] = [...raw.querySelectorAll('pre')].map((p) => p.textContent ?? '');
+    expect(JSON.parse(args)).toEqual({ task_name: 'gpu_research', message: 'gAAAAABstub0000' });
+    expect(out).toBe('{"task_name":"/root/gpu_research"}');
+    expect(visible(r)).not.toContain('gAAAAA');
+    // The fork is said in words, in the list as in the header.
+    open(row(FORK));
+    expect(fields(row(FORK))).toContainEqual(['Context', 'full context']);
+  });
+
+  it('a v1 spawn shows its plain message in place of the note; a header degrades to what is known', () => {
+    mount();
+    view.setItems(COLLAB);
+    const r = row(V1);
+    open(r);
+    expect(r.querySelector('.tx-collab-prompt')?.textContent?.trim()).toBe('Find where the transcript parser names Codex tool rows.');
+    expect(r.querySelector('.tx-note')).toBeNull();
+    expect(fields(r)).toEqual([
+      ['Nickname', 'Meitner'],
+      ['Role', 'explorer'],
+      ['Thread', '0199a0b1-0000-7000-8000-000000000001'],
+    ]);
+    // No model or effort (an older Codex): the name alone; nothing known: the verb alone.
+    const bare = item('tool', { tool: { name: 'spawn_agent', input_summary: 'docs', status: 'running' }, collab: { kind: 'spawn', task_name: 'docs', encrypted: true } });
+    const none = item('tool', { tool: { name: 'spawn_agent', input_summary: '', status: 'ok' }, collab: { kind: 'spawn' } });
+    const effortOnly = item('tool', { tool: { name: 'spawn_agent', input_summary: 'x', status: 'ok' }, collab: { kind: 'spawn', task_name: 'x', effort: 'low', fork_turns: '3' } });
+    view.setItems([bare, none, effortOnly]);
+    expect(said(row(bare.id))).toBe('Spawn subagent docs');
+    expect(said(row(none.id))).toBe('Spawn subagent ');
+    expect(said(row(effortOnly.id))).toBe('Spawn subagent x on low, with the last 3 turns');
+    open(row(none.id));
+    expect(row(none.id).querySelector('.tx-collab-fields')).toBeNull();
+  });
+
+  it('a wait says when it timed out; a child’s task from its parent and a parent’s message down read the right way', () => {
+    mount();
+    const wait = item('tool', { tool: { name: 'wait_agent', input_summary: '', status: 'ok', output_text: '{"message":"Wait timed out.","timed_out":true}' }, collab: { kind: 'wait' } });
+    const task = item('notice', { notice: { text: '/root → /root/a', source: 'agent_message' }, collab: { kind: 'inbound', agent_path: '/root', recipient: '/root/a', message_type: 'NEW_TASK', encrypted: true } });
+    const down = item('notice', { notice: { text: '/root → /root/a', source: 'agent_message' }, collab: { kind: 'inbound', agent_path: '/root', recipient: '/root/a', message_type: 'MESSAGE', encrypted: true } });
+    view.setItems([wait, task, down]);
+    expect(said(row(wait.id))).toBe('Wait for subagents timed out');
+    expect(said(row(task.id))).toBe('Task from /root');
+    expect(said(row(down.id))).toBe('Message from /root');
+    open(row(task.id));
+    expect(fields(row(task.id))).toEqual([
+      ['From', '/root'],
+      ['To', '/root/a'],
+      ['Type', 'New task'],
+    ]);
+    expect(row(task.id).querySelector('.tx-note')?.textContent).toBe(COLLAB_ENCRYPTED);
+    // A message has no call to show raw.
+    expect(row(task.id).querySelector('details')).toBeNull();
+  });
+
+  it('text stays text: a plain message cannot inject markup', () => {
+    mount();
+    const r = item('notice', { notice: { text: 'x', source: 'agent_message' }, collab: { kind: 'inbound', agent_path: '/root/x', recipient: '/root', prompt: '<img src=x onerror="window.__pwned=1"> done' } });
+    view.setItems([r]);
+    expect(row(r.id).querySelector('img[onerror]')).toBeNull();
+    expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
+  });
+
+  it('calls hide with tool calls; a message from another agent stays', () => {
+    mount();
+    view.setItems(COLLAB);
+    expect(row(SPAWN).classList.contains('tx-toolrow')).toBe(true);
+    expect(row('amsg_01a1439f-e866-77e0-889d-fbf8faceb33d').classList.contains('tx-toolrow')).toBe(false);
   });
 });
 
