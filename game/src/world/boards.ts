@@ -380,28 +380,11 @@ export function nearestDesk(slots: ReadonlyArray<{ desk: { x: number; z: number 
 
 // ---- copy ---------------------------------------------------------------------------------------------------------------
 
-/** The first prompt of "Ask a worker…": investigate, don't change code. */
-export const askPrompt = (key: string, url: string | undefined): string => `Investigate ${key}${url ? ` (${url})` : ''} and report back. Don't change code.`;
-
-/** #184: how much of a description "Ask a worker…" hands over (the worker cannot read the provider itself). */
-const ASK_BODY_MAX = 4000;
-
-/** #184: whether "Ask a worker…" hands the item's description over (an agent cannot read the provider's items). */
-export const askInlinesItem = (provider: string | undefined): boolean => provider === 'kaneo';
-
 /**
- * #184: "Ask a worker…" for a provider whose items an agent cannot read (no GitHub issue to `gh issue view`, and the
- * bridge's key never reaches an agent): the key, title, link and the description it was given (its start), then the
- * same ask. GitHub keeps `askPrompt`.
+ * The first prompt of "Ask a worker…": investigate, don't change code. The item goes by its key and link, a Kaneo task
+ * too (#102): the worker reads it with the tools it has.
  */
-export function askItemPrompt(provider: string, card: Pick<IssueCard, 'key' | 'title' | 'url'>, body: string | null): string {
-  const lines = [`Investigate ${provider} task ${card.key}: ${card.title.trim()}${card.url ? ` (${card.url})` : ''}`];
-  let text = (body ?? '').trim();
-  if (text.length > ASK_BODY_MAX) text = `${text.slice(0, ASK_BODY_MAX).trimEnd()}\n\n[The description goes on in ${provider}.]`;
-  if (text) lines.push('', text);
-  lines.push('', `It is a ${provider} task, not a GitHub issue: don't look it up with gh. Report back; don't change code.`);
-  return lines.join('\n');
-}
+export const askPrompt = (key: string, url: string | undefined): string => `Investigate ${key}${url ? ` (${url})` : ''} and report back. Don't change code.`;
 
 /** #184: what one item of the provider is called: GitHub's are issues, Kaneo's tasks. */
 export const itemWord = (provider: string | undefined): string => (provider === 'kaneo' ? 'task' : 'issue');
