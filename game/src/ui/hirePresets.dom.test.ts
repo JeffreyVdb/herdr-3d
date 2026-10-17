@@ -431,6 +431,62 @@ describe('HirePresetsDialog: herdr hiring instructions (#95)', () => {
     expect(summary(dlg).editing?.nudge).toBe(true);
   });
 
+  it('Save as is outlives the editor: the saved preset is not asked about again for that text, an edited text is', async () => {
+    const p = preset('Dependabot', 'web', { prompt: DEPENDABOT });
+    const { dlg, sent, replies } = setup([p], null, ready);
+    replies['hire_preset.check'] = () => ({ ok: true, data: { delegates: true, score: 0.93 } });
+    const checks = () => sent.filter(([t]) => t === 'hire_preset.check').length;
+    dlg.open('web', 0);
+    click(`edit:${p.id}`);
+    await submit();
+    expect(summary(dlg).editing?.nudge).toBe(true);
+    click('nudge-as-is');
+    await tick();
+    expect(summary(dlg).view).toBe('list');
+    // Reopened, the same text saves with no question (a new name or model is no new text).
+    click(`edit:${p.id}`);
+    type('#hp-name', 'Dependabot sweep');
+    await submit();
+    expect(checks()).toBe(1);
+    expect(sent.at(-1)).toEqual(['hire_preset.update', expect.objectContaining({ id: p.id, name: 'Dependabot sweep', herdr_instructions: false })]);
+    // Also after a close and reopen of the dialog.
+    dlg.close();
+    dlg.open('web', 0);
+    click(`edit:${p.id}`);
+    await submit();
+    expect(checks()).toBe(1);
+    expect(summary(dlg).view).toBe('list');
+    // Another text is asked about.
+    click(`edit:${p.id}`);
+    type('#hp-prompt', `${DEPENDABOT} Then report.`);
+    await submit();
+    expect(checks()).toBe(2);
+    expect(summary(dlg).editing?.nudge).toBe(true);
+  });
+
+  it('Save as is on a new preset (also one saved from the hire form) carries over to the preset the bridge created', async () => {
+    for (const fromForm of [false, true]) {
+      const { dlg, sent, replies } = setup([], null, ready);
+      replies['hire_preset.check'] = () => ({ ok: true, data: { delegates: true, score: 0.93 } });
+      const checks = () => sent.filter(([t]) => t === 'hire_preset.check').length;
+      if (fromForm) {
+        dlg.create({ floor: 'web', prompt: DEPENDABOT, harness: 'codex', model: 'x-1', effort: 'low', imagesLeftOut: 0 });
+        type('#hp-name', 'Dependabot');
+        await submit();
+      } else await fresh(dlg, DEPENDABOT);
+      click('nudge-as-is');
+      await tick();
+      expect(created(sent), String(fromForm)).toEqual([expect.objectContaining({ prompt: DEPENDABOT, herdr_instructions: false })]);
+      dlg.open('web', 0);
+      const id = summary(dlg).groups.floor.find((r) => r.name === 'Dependabot')?.id as string;
+      click(`edit:${id}`);
+      await submit();
+      expect(checks(), String(fromForm)).toBe(1);
+      expect(sent.at(-1), String(fromForm)).toEqual(['hire_preset.update', expect.objectContaining({ id, prompt: DEPENDABOT })]);
+      document.body.replaceChildren();
+    }
+  });
+
   it('Esc closes the question and goes back to the editor without saving (also over the hire form)', async () => {
     for (const fromForm of [false, true]) {
       const { dlg, sent, replies } = setup([], null, ready);

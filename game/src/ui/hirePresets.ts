@@ -116,6 +116,8 @@ export class HirePresetsDialog {
   private opening = 0;
   /** The editor's model filter (a long list); a harness switch clears it. */
   private modelQuery = '';
+  /** #95: per preset id, the prompt "Save as is" was answered for and saved with: its editors don't ask again for it. */
+  private readonly declined = new Map<string, string>();
 
   constructor(
     parent: HTMLElement,
@@ -604,7 +606,7 @@ export class HirePresetsDialog {
     const draft: HirePresetDraft = p
       ? draftFrom(p, this.floor)
       : (seed ?? { name: '', prompt: '', ...resolveVisibleChoice(options, null), scope: 'floor', instructions: false });
-    this.view = { kind: 'edit', id: p?.id ?? null, draft, error: null, saving: false, seen: p ? structuredClone(p) : null, note, nudge: false, dismissed: null };
+    this.view = { kind: 'edit', id: p?.id ?? null, draft, error: null, saving: false, seen: p ? structuredClone(p) : null, note, nudge: false, dismissed: p ? (this.declined.get(p.id) ?? null) : null };
     this.modelQuery = '';
     this.setStatus('');
     this.render();
@@ -665,6 +667,8 @@ export class HirePresetsDialog {
     v.saving = false;
     if (r.ok) {
       const saved = r.data as HirePreset | undefined;
+      const id = saved?.id ?? current?.id;
+      if (id && v.dismissed !== null) this.declined.set(id, v.dismissed);
       const done = `${current ? 'Saved' : 'Created'} hire preset “${spec.name}” (${spec.floor ? 'this floor' : 'global'}).`;
       if (this.desk === null) {
         this.close();
