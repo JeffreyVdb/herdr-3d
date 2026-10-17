@@ -45,6 +45,7 @@ function setup(workers: Worker[] = CITY, over: Partial<OverviewHost> = {}, filte
     cityData: () => ({ tree: buildCityOverview(store), where: '3 floors in 1 building', counts: cityCountItems(store.city().flatMap((b) => b.floors)) }),
     goToFloor: vi.fn(),
     goTo: vi.fn(),
+    goToChild: vi.fn(),
     openTicket: vi.fn(),
     retrySummary: vi.fn(),
     hire: vi.fn(),

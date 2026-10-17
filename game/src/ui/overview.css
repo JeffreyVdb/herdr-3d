@@ -40,6 +40,8 @@
   --ov-mono: var(--data-font);
   --ov-blink: 1100ms;
   --ov-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  /* #24: the indent per nesting level (ui/overview.ts STEP); a row's own level is its `--nest`, capped at NEST_MAX. */
+  --ov-step: 20px;
   position: fixed;
   inset: 0;
   z-index: 30;
@@ -413,8 +415,107 @@
     0 8px 20px rgb(0 0 0 / 40%),
     inset 0 0 0 2px var(--ov-accent);
 }
-.ov-row--child .ov-who {
-  padding-left: 30px;
+
+/*
+ * #24: a native child agent: a conversation inside the worker above it, not a desk, so a quieter, tighter row: a diamond
+ * pip where a worker has its lamp (its state, steady: only workers blink), its name in the board's face a size down and
+ * not in capitals, what it was asked in one line, its state in words at the right. One with no parent known has a
+ * detached, dashed elbow and says so.
+ */
+.ov-row--child {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.ov-row--child .ov-fold {
+  top: 5px;
+}
+.ov-row--child[aria-expanded='true']::after {
+  top: 27px;
+}
+.ov-row--child .ov-name {
+  font-size: 17px;
+  font-weight: 680;
+  letter-spacing: 0.005em;
+  text-transform: none;
+}
+.ov-row--child .ov-mark {
+  width: 14px;
+  height: 14px;
+  margin-right: -4px;
+}
+.ov-row--child .ov-what {
+  padding-top: 1px;
+}
+.ov-row--child .ov-since {
+  padding-top: 2px;
+  font-size: 12px;
+}
+.ov-pip {
+  width: 9px;
+  height: 9px;
+  margin: 5.5px 0 0 10.5px;
+  border-radius: 1.5px;
+  background: var(--pip, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--pip-ring, var(--pip, var(--idle)));
+  transform: rotate(45deg);
+}
+.ov-row--child[data-state='running'] {
+  --pip: var(--working);
+}
+.ov-row--child[data-state='completed'] {
+  --pip: var(--done);
+}
+.ov-row--child[data-state='idle'] {
+  --pip-ring: var(--idle);
+}
+.ov-row--child[data-state='shut_down'] {
+  --pip-ring: var(--asleep);
+}
+/* Stopped part way: half filled. */
+.ov-row--child[data-state='interrupted'] .ov-pip {
+  background: linear-gradient(135deg, var(--waiting) 50%, transparent 50%);
+  box-shadow: inset 0 0 0 1.5px var(--waiting);
+}
+/* No evidence of a state: an outline only, dashed, in the quietest ink (never one of the other states' colours). */
+.ov-row--child[data-state='unknown'] .ov-pip {
+  box-shadow: none;
+  outline: 1.5px dashed var(--ov-text-3);
+  outline-offset: -1.5px;
+}
+.ov-row--child[data-state='unknown'] .ov-state {
+  color: var(--ov-text-3);
+}
+.ov-ctype,
+.ov-level {
+  color: var(--ov-text-3);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+}
+.ov-orphan {
+  position: relative;
+  top: -1px;
+  align-self: center;
+  padding: 0 6px;
+  border: 1px dashed var(--ov-text-3);
+  border-radius: 3px;
+  color: var(--ov-text-2);
+  font-family: var(--ov-mono);
+  font-size: 11px;
+}
+.ov-row--child:hover .ov-desc-text,
+.ov-row--child:focus-visible .ov-desc-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+}
+/* A transcript one is waiting for, or none: said a step quieter still than one that is there. */
+.ov-tx--pending,
+.ov-tx--unavailable {
+  font-style: italic;
+}
+.ov-wire .ov-wire-loose {
+  stroke-dasharray: 2 3;
 }
 
 /*
@@ -616,13 +717,14 @@
   stroke-width: 1.5;
   stroke-dasharray: 1;
 }
-/* The orchestrator's own stub, from its chevron down to its first freelancer (a floor's band has none). */
+/* The orchestrator's own stub, from its chevron down to its first freelancer (a floor's band has none); #24: any group's, a
+   level in. */
 .ov-row:not(.ov-row--floor)[aria-expanded='true']::after {
   content: '';
   position: absolute;
   top: 31px;
   bottom: -1px;
-  left: 39.25px;
+  left: calc(39.25px + var(--nest, 0) * var(--ov-step));
   width: 1.5px;
   background: var(--ov-wire);
   transform-origin: 50% 0;
@@ -644,7 +746,7 @@
 .ov-fold {
   position: absolute;
   top: 9px;
-  left: 30px;
+  left: calc(30px + var(--nest, 0) * var(--ov-step));
   display: grid;
   place-items: center;
   width: 22px;
@@ -666,6 +768,12 @@
 }
 .ov-row[aria-expanded] .ov-who {
   padding-left: 30px;
+}
+/* A nested row's name after its elbow, a step further in per level (#24: to any depth, the indent capped): its chevron,
+   when it has children, sits in that step, over the line down to them. */
+.ov-row--nested .ov-who,
+.ov-row--nested[aria-expanded] .ov-who {
+  padding-left: calc(30px + (var(--nest, 1) - 1) * var(--ov-step));
 }
 
 .ov-who {
@@ -1195,6 +1303,13 @@
   .ov-row > .ov-since:has(.ov-state--act) {
     width: 46vw;
   }
+  /* #24: a child's task on a line of its own here: two lines of it rather than a few words beside its transcript's. */
+  .ov-row--child .ov-desc-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+  }
   .ov-flap {
     width: 24px;
     height: 32px;
@@ -1475,6 +1590,7 @@
     background: HighlightText;
   }
   :root[data-ui-theme='ubuntu'] .ov-light,
+  :root[data-ui-theme='ubuntu'] .ov-pip,
   :root[data-ui-theme='ubuntu'] .ov-dot {
     forced-color-adjust: none;
   }

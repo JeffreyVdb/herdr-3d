@@ -1,6 +1,19 @@
 import * as THREE from 'three/webgpu';
 import type { Box3 } from '../world/layout';
-import { ageText, BLINK_MS, sinceText, visibleRows, type OverviewData, type OverviewLine, type OverviewWorkerRow, type VisibleRow } from '../world/overview';
+import {
+  ageText,
+  BLINK_MS,
+  CHILD_TRANSCRIPT_WORD,
+  childSinceText,
+  endedChildGroups,
+  sinceText,
+  visibleRows,
+  type OverviewChildRow,
+  type OverviewData,
+  type OverviewLine,
+  type OverviewWorkerRow,
+  type VisibleRow,
+} from '../world/overview';
 import { lineStatusText } from '../world/digestSettings';
 import { STATUS_CSS, STATUS_CHIP_CSS } from './palette';
 import { FONT } from './cards/atlasCards';
@@ -24,6 +37,10 @@ import { SPARKLE_D } from '../ui/dom';
  *   dark covers over those lights. Battery saver or reduced motion: steady lights, and the board jumps instead of
  *   gliding.
  * Out of view (or too small on it to read) it neither redraws nor scrolls.
+ *
+ * #24: the workers' native children nest under them as quieter lines (a diamond pip, the provider's mark, the name a
+ * size down, what each was asked, its state in words), every group open but an ended child's own children (the page's
+ * default); the indent stops at `WALL_NEST_MAX` levels. A long list rides the same scroll and pages.
  */
 
 /** The screen's resolution, per metre of it, and the board canvas's tallest side (WebGL2's safe texture size). */
@@ -37,6 +54,8 @@ const SCROLL_ROWS_PER_S = 0.6;
 const SCROLL_REST_MS = 4000;
 /** The board is drawn at most this often: a busy floor's changes wait for the next one; the page is live. */
 export const WALL_MIN_MS = 1000;
+/** #24: nesting levels the wall's indent follows (the page's NEST_MAX); deeper rows share the last one. */
+export const WALL_NEST_MAX = 4;
 
 /** The departures board's own colours: the page's (overview.css). */
 const INK = '#0b1022';
@@ -295,7 +314,7 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
       data = d;
       floor = f;
       calm = c;
-      rows = d ? visibleRows(d.tree, new Set()) : [];
+      rows = d ? visibleRows(d.tree, new Set(endedChildGroups(d.tree))) : [];
       plan = wallPlan(rows.length, winH - u * 3, fullRow, compactRow);
       // The rows one canvas holds: more than that go in pages (wallPages), never cut off.
       const cap = Math.floor((MAX_PX - u * 3) / (plan.compact ? compactRow : fullRow));
@@ -358,8 +377,9 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
 /** What a row shows on the wall (its redraw key): never the live activity, which moves all the time. */
 function face(v: VisibleRow, now: number): unknown[] {
   const r = v.row;
-  if (r.kind !== 'worker') return [r.key, r.kind, v.depth, r.kind === 'ghost' ? [r.name, r.floor] : null];
-  return [r.key, v.depth, r.name, r.display, markFor(r.harness), wallTag(r), !!r.orch?.overCap, r.runColor, metaLine(r), ticketLine(r), lineSegs(r, now), sinceText(r.display, r.since, now)];
+  if (r.kind === 'child') return [r.key, v.depth, v.more, r.name, r.type, markFor(r.provider), r.state, r.unresolved, r.description, r.transcript, childSinceText(r, now)];
+  if (r.kind !== 'worker') return [r.key, r.kind, v.depth, v.more, r.kind === 'ghost' ? [r.name, r.floor] : null];
+  return [r.key, v.depth, v.more, r.name, r.display, markFor(r.harness), wallTag(r), !!r.orch?.overCap, r.runColor, metaLine(r), ticketLine(r), lineSegs(r, now), sinceText(r.display, r.since, now)];
 }
 
 let scanlines: HTMLCanvasElement | null = null;
@@ -458,8 +478,14 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     const y = top + i * rowH;
     const mid = y + (compact ? rowH / 2 : rowH * 0.32);
     const r = v.row;
-    const indent = v.depth ? u * 3 : 0;
+    const nest = Math.min(v.depth, WALL_NEST_MAX);
+    const indent = nest * u * 3;
     const lx = pad + u * 1.6 + indent;
+    if (v.depth) wires(g, v.more, pad + u * 1.6, u, y, mid, rowH, lx - u * 1.4, r.kind === 'child' && r.unresolved);
+    if (r.kind === 'child') {
+      paintChild(g, r, { y, mid, rowH, compact, u, lx, colWho: colWho + indent, colWhat, sinceRight, now });
+      return;
+    }
     if (r.kind === 'worker') {
       if (r.display === 'working') lamps.push({ x: lx, y: mid, r: u * 1.1 });
       if (r.display === 'asleep') ring(g, lx, mid, u * 1.1, STATUS_CSS.asleep, u * 0.35);
@@ -471,15 +497,6 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
         if (r.display === 'needs_you') ring(g, lx, mid, u * 1.9, STATUS_CSS.needs_you, u * 0.3);
       }
     } else ring(g, lx, mid, u * 1.1, STATUS_CSS.idle, u * 0.35);
-    if (v.depth) {
-      g.strokeStyle = 'rgba(185,195,220,0.32)';
-      g.lineWidth = Math.max(1, u * 0.2);
-      g.beginPath();
-      g.moveTo(pad + u * 1.6, y - rowH * 0.2);
-      g.lineTo(pad + u * 1.6, mid);
-      g.lineTo(lx - u * 1.4, mid);
-      g.stroke();
-    }
     const nameSize = Math.round(compact ? u * 3.6 : u * 4.4);
     g.fillStyle = r.kind === 'worker' ? (r.display === 'asleep' ? TEXT_3 : TEXT) : TEXT_2;
     const name = r.kind === 'worker' ? r.name : r.kind === 'ghost' ? `Orchestrator ${r.name} · ${r.floor}` : 'Unlinked';
@@ -536,6 +553,147 @@ function paintBoard(g: CanvasRenderingContext2D, W: number, H: number, u: number
     }
   });
   return lamps;
+}
+
+const WIRE = 'rgba(185,195,220,0.32)';
+
+/**
+ * The tree's wires of a nested row (#24: at any depth, the page's): down each ancestor's level that runs on below it
+ * (`more`), and at its own the line from its parent's light to its elbow, on down when a sibling follows. Past
+ * WALL_NEST_MAX the deeper levels share the last column. An unresolved child's elbow is detached and dashed: under its
+ * worker, never drawn as started by it.
+ */
+function wires(g: CanvasRenderingContext2D, more: readonly boolean[], x0: number, u: number, y: number, mid: number, rowH: number, to: number, detached: boolean): void {
+  const vis = Math.min(more.length, WALL_NEST_MAX);
+  const x = (level: number) => x0 + (level - 1) * u * 3;
+  g.strokeStyle = WIRE;
+  g.lineWidth = Math.max(1, u * 0.2);
+  g.beginPath();
+  for (let l = 1; l < vis; l++) {
+    if (!more[l - 1]) continue;
+    g.moveTo(x(l), y);
+    g.lineTo(x(l), y + rowH);
+  }
+  const own = x(vis);
+  const on = more.slice(vis - 1).some(Boolean);
+  if (on || !detached) {
+    g.moveTo(own, y - rowH * 0.2);
+    g.lineTo(own, on ? y + rowH : mid);
+  }
+  if (!detached) {
+    g.moveTo(own, mid);
+    g.lineTo(to, mid);
+  }
+  g.stroke();
+  if (!detached) return;
+  g.setLineDash([u * 0.5, u * 0.6]);
+  g.beginPath();
+  g.moveTo(own + u * 0.9, mid);
+  g.lineTo(to, mid);
+  g.stroke();
+  g.setLineDash([]);
+}
+
+/** #24: a child's pip on the wall: its state's diamond (filled, ringed, half filled, or dashed for `unknown`). */
+function pip(g: CanvasRenderingContext2D, r: OverviewChildRow, x: number, y: number, s: number, u: number): void {
+  const diamond = () => {
+    g.beginPath();
+    g.moveTo(x, y - s);
+    g.lineTo(x + s, y);
+    g.lineTo(x, y + s);
+    g.lineTo(x - s, y);
+    g.closePath();
+  };
+  const fill = r.state === 'running' ? STATUS_CSS.working : r.state === 'completed' ? STATUS_CSS.done : null;
+  const ink = fill ?? (r.state === 'shut_down' ? STATUS_CSS.asleep : r.state === 'interrupted' ? STATUS_CSS.waiting : r.state === 'unknown' ? TEXT_3 : STATUS_CSS.idle);
+  diamond();
+  if (fill) {
+    g.fillStyle = fill;
+    g.fill();
+    return;
+  }
+  if (r.state === 'interrupted') {
+    g.save();
+    g.clip();
+    g.fillStyle = ink;
+    g.fillRect(x - s, y - s, s * 2, s);
+    g.restore();
+    diamond();
+  }
+  g.strokeStyle = ink;
+  g.lineWidth = u * 0.3;
+  if (r.state === 'unknown') g.setLineDash([u * 0.4, u * 0.4]);
+  g.stroke();
+  g.setLineDash([]);
+}
+
+/**
+ * #24: a native child's line on the wall: its pip, the provider's mark and its name (a size down, not in capitals), a
+ * `PARENT UNKNOWN` chip for an unresolved one, what it was asked and its transcript's availability, its state and time at
+ * the right; in full mode its type under the name.
+ */
+function paintChild(
+  g: CanvasRenderingContext2D,
+  r: OverviewChildRow,
+  o: { y: number; mid: number; rowH: number; compact: boolean; u: number; lx: number; colWho: number; colWhat: number; sinceRight: number; now: number },
+): void {
+  const { mid, compact, u, colWho, colWhat, sinceRight } = o;
+  pip(g, r, o.lx, mid, u * 0.95, u);
+  const nameSize = Math.round(compact ? u * 3 : u * 3.6);
+  const base = mid + nameSize * 0.36;
+  const mark = markFor(r.provider);
+  const nameX = colWho + (mark ? nameSize * 0.92 : 0);
+  if (mark) {
+    g.fillStyle = '#ffffff';
+    drawMark(g, mark, colWho + nameSize * 0.36, base - nameSize * 0.36, nameSize * 0.72);
+  }
+  const orphan = r.unresolved ? 'PARENT UNKNOWN' : null;
+  const chipsW = orphan ? chipW(g, orphan, u) + u * 1.2 : 0;
+  g.font = `700 ${nameSize}px ${DISPLAY}`;
+  g.fillStyle = TEXT;
+  const nameW = fitText(g, r.name, nameX, base, colWhat - nameX - Math.max(u * 6, chipsW + u));
+  if (orphan) {
+    // Dashed, like its elbow: a chip that says what is missing, not a role.
+    const cx = nameX + nameW + u * 1.2;
+    const w = chipW(g, orphan, u);
+    g.strokeStyle = TEXT_3;
+    g.lineWidth = Math.max(1, u * 0.2);
+    g.setLineDash([u * 0.5, u * 0.4]);
+    g.beginPath();
+    g.roundRect(cx, mid - u * 1.5, w, u * 3, u * 0.4);
+    g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = TEXT_2;
+    g.fillText(orphan, cx + u * 0.8, mid + u * 0.75);
+  }
+  g.font = `400 ${Math.round(u * 2.6)}px ${MONO}`;
+  g.fillStyle = r.state === 'unknown' ? TEXT_3 : TEXT_2;
+  g.textAlign = 'right';
+  const since = childSinceText(r, o.now);
+  g.fillText(since, sinceRight, base);
+  const sinceW = g.measureText(since).width;
+  g.textAlign = 'left';
+  // What it was asked, then its transcript's availability, quiet (that keeps its room; the description gives way).
+  const room = sinceRight - sinceW - u * 3 - colWhat;
+  const small = `400 ${Math.round(u * 2.4)}px ${MONO}`;
+  const tx = CHILD_TRANSCRIPT_WORD[r.transcript];
+  g.font = small;
+  const txW = g.measureText(tx).width;
+  g.font = `400 ${Math.round(u * (compact ? 2.8 : 3))}px ${FONT}`;
+  g.fillStyle = r.description ? TEXT_2 : TEXT_3;
+  const w = fitText(g, r.description ?? 'No task description', colWhat, base, room - txW - u * 2);
+  g.font = small;
+  g.fillStyle = TEXT_3;
+  fitText(g, tx, colWhat + w + u * 2, base, room - w - u * 2);
+  if (compact) return;
+  g.font = `400 ${Math.round(u * 2.4)}px ${MONO}`;
+  g.fillStyle = TEXT_3;
+  fitText(g, childMeta(r), colWho, base + u * 3.8, colWhat - colWho - u * 3);
+}
+
+/** #24: under a child's name on the wall (full mode): a provider without a mark, its type when it has a name, `subagent`. */
+export function childMeta(r: OverviewChildRow): string {
+  return [markFor(r.provider) ? null : r.provider || null, r.type, 'subagent'].filter(Boolean).join(' · ');
 }
 
 /** `#118 · Floor overview` (the wall shows the ticket in its row's first line). */

@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import '../test/fakeCanvas';
 import { SPARKLE_D } from '../ui/dom';
-import { lineMark, lineSegs, metaLine, scrollAt, segPlan, sparkleAt, wallCycle, wallPages, WALL_STATUS, wallPlan, wallTag, whatLines, type WallSeg } from './overviewScreen';
-import type { OverviewWorkerRow } from '../world/overview';
+import { buildOverviewScreen, childMeta, lineMark, lineSegs, metaLine, scrollAt, segPlan, sparkleAt, wallCycle, wallPages, WALL_STATUS, wallPlan, wallTag, whatLines, type WallSeg } from './overviewScreen';
+import { buildOverview, countItems, type OverviewChildRow, type OverviewWorkerRow } from '../world/overview';
+import { WorldStore } from '../world/store';
+import type { Child, Floor, Snapshot, Worker } from '../net/protocol';
 import { STATUS_CHIP_CSS, STATUS_CSS } from './palette';
 
 const lum = (hex: string) => {
@@ -245,5 +247,98 @@ describe('the overview’s colours (#118)', () => {
     for (const bg of [token('ov-ink'), token('ov-ink-2')]) for (const t of used) expect(contrast(t, bg), `${t} on ${bg}`).toBeGreaterThanOrEqual(4.5);
     // The ticket key uses its asleep colour.
     expect(css).toMatch(/data-display='asleep'\] \.ov-ticket-key \{\s*color: var\(--ov-key-asleep\)/);
+  });
+});
+
+describe('#24 native children on the wall', () => {
+  const NOW = 1_790_000_000_000;
+  const worker = (id: string, over: Partial<Worker> = {}): Worker => ({ id, session: 'top', workspace_id: `ws-${id}`, label: id, name: id, status: 'idle', status_since: NOW - 60_000, child_generation: 1, ...over });
+  let at = 0;
+  const child = (id: string, workerId: string, over: Partial<Child> = {}): Child => ({
+    id,
+    provider: 'claude',
+    worker_id: workerId,
+    agent_session: 's',
+    generation: 1,
+    parent: 'root',
+    state: 'running',
+    source: 'fixture',
+    transcript: 'available',
+    started_at: NOW - 60_000 + ++at,
+    ...over,
+  });
+
+  function wall(workers: Worker[], children: Child[]) {
+    const store = new WorldStore(NOW);
+    const floors: Floor[] = [{ session: 'top', state: 'running', building: 'b1', index: 0 }];
+    const snap: Snapshot = { t: 'world.snapshot', seq: 1, world: { buildings: [{ id: 'b1', name: 'Work', sort: 0, floors: ['top'] }], unassigned: [], floors, workers, children } };
+    store.applySnapshot(snap, NOW);
+    const screen = buildOverviewScreen({ min: [0, 0, 0], max: [0.1, 2, 3.5] });
+    let t = NOW;
+    let seq = 1;
+    const show = () => {
+      const fv = store.floorView('top')!;
+      screen.set({ tree: buildOverview(store, 'top'), where: 'Floor 1 of 1 · Work', counts: countItems(fv.counts, fv.asleep), asleep: false }, 'top', true, t);
+    };
+    show();
+    screen.tick(t, true);
+    return {
+      screen,
+      store,
+      /** A child event applied, then the wall set again a while later (in view): what the app's step does. */
+      upsert(c: Child) {
+        store.applyEvent({ t: 'child.upsert', seq: ++seq, child: c }, NOW);
+        t += 2000;
+        show();
+        screen.tick(t, true);
+      },
+    };
+  }
+
+  it('draws a worker’s children to any depth, an ended child’s own children folded (the page’s default)', () => {
+    const { screen } = wall(
+      [worker('w')],
+      [child('a', 'w'), child('b', 'w', { parent: 'child', parent_id: 'a' }), child('c', 'w', { parent: 'child', parent_id: 'b' }), child('done', 'w', { state: 'completed' }), child('d1', 'w', { parent: 'child', parent_id: 'done' })],
+    );
+    expect(screen.info()).toMatchObject({ lit: true, rows: 5, compact: false }); // w, a, b, c, done (d1 folded under it)
+  });
+
+  it('redraws when a child changes (its state is part of the row’s face), with no transcript open', () => {
+    const c = child('a', 'w');
+    const { screen, upsert } = wall([worker('w')], [c]);
+    const before = screen.info().draws;
+    upsert({ ...c, state: 'completed', ended_at: NOW + 1000 });
+    expect(screen.info().draws).toBe(before + 1);
+    upsert(child('b', 'w'));
+    expect(screen.info()).toMatchObject({ rows: 3, draws: before + 2 });
+  });
+
+  it('a long list of children rides the board’s one-line rows and its scroll', () => {
+    const many = Array.from({ length: 40 }, (_, i) => child(`c${i}`, 'w', { state: i % 4 ? 'completed' : 'running' }));
+    const { screen } = wall([worker('w')], many);
+    expect(screen.info()).toMatchObject({ rows: 41, compact: true, scrolling: true });
+  });
+
+  it('under a child’s name: its type beside a name, `subagent`; a provider without a mark says its name', () => {
+    const r = (over: Partial<OverviewChildRow>): OverviewChildRow => ({
+      kind: 'child',
+      key: 'child:x',
+      id: 'x',
+      workerId: 'w',
+      provider: 'codex',
+      name: 'Ada',
+      type: null,
+      description: null,
+      state: 'running',
+      unresolved: false,
+      startedAt: null,
+      endedAt: null,
+      lastActivityAt: null,
+      transcript: 'available',
+      ...over,
+    });
+    expect(childMeta(r({ type: 'explorer' }))).toBe('explorer · subagent');
+    expect(childMeta(r({}))).toBe('subagent');
+    expect(childMeta(r({ provider: 'gemini' }))).toBe('gemini · subagent');
   });
 });

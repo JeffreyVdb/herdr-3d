@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Floor, HireOptions, Snapshot, Worker } from '../net/protocol';
 import { WorldStore } from './store';
-import { aiTitle, ageText, buildOverview, countItems, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
+import { aiTitle, ageText, allNodes, buildOverview, countItems, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
 
 const NOW = 1_790_000_000_000;
 
@@ -72,9 +72,9 @@ describe('buildOverview: the tree', () => {
     const t = buildOverview(s, 'top');
     const ghost = t.nodes.find((n) => n.row.kind === 'ghost')?.row;
     expect(ghost).toMatchObject({ kind: 'ghost', id: 'far', name: 'Bramble', floor: 'Floor 1' });
-    const away = t.nodes[0]?.children.find((c) => c.id === 'away');
-    expect(away?.floor).toBe('Floor 1');
-    expect(t.nodes[0]?.children.find((c) => c.id === 'here')?.floor).toBeNull();
+    const away = t.nodes[0]?.children.map((c) => c.row).find((c) => c.kind === 'worker' && c.id === 'away');
+    expect(away).toMatchObject({ floor: 'Floor 1' });
+    expect(t.nodes[0]?.children.map((c) => c.row).find((c) => c.kind === 'worker' && c.id === 'here')).toMatchObject({ floor: null });
   });
 
   it('puts freelancers with no orchestrator (or one that is gone) in an Unlinked group, before the employees', () => {
@@ -107,7 +107,7 @@ describe('buildOverview: the tree', () => {
 describe('buildOverview: a row', () => {
   const row = (s: WorldStore, id: string): OverviewWorkerRow => {
     const t = buildOverview(s, 'top');
-    const all = t.nodes.flatMap((n) => [n.row, ...n.children]);
+    const all = allNodes(t).map((n) => n.row);
     const r = all.find((x) => x.kind === 'worker' && x.id === id);
     if (!r || r.kind !== 'worker') throw new Error(`no row ${id}`);
     return r;

@@ -340,7 +340,7 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   stamps its `child_generation` (a replaced session drops its children); sources (`Options.ChildSources`) report
   evidence keyed by that session, which becomes `child.upsert` / `child.removed`; a session bound anew is replayed by
   every source, so a restart rebuilds the graph from evidence. The game keeps them in `world/children.ts`' `ChildBook`;
-  the board shows them from #24 on. **Claude Code** (#23; `protocol.md` "Claude Code subagents", `decisions.md` "#23"):
+  the floor overview (page and wall) nests them under their workers (#24, below). **Claude Code** (#23; `protocol.md` "Claude Code subagents", `decisions.md` "#23"):
   `internal/claudechild` gets each Claude worker's session files from the usage tracker's own reads (a `usage.Children`
   listener on its `usage.Session`: the main transcript, `subagents/agent-*.jsonl` and their meta files, one reader per
   file), keeps them as facts keyed by explicit ids and derives each child after every poll; it also tails the log of the
@@ -390,7 +390,10 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   every floor (Buildings-panel order, then the lot) over its tree, each worker once (a freelancer under its
   orchestrator's floor, no ghosts, Unlinked per floor); both pages filter **Active only / All** (`f`, remembered per
   view; the all-floors page starts active only), the header's counts never filtered. Page only: the wall stays per
-  floor (`decisions.md` "#188"). #174: the feature's own reasoning effort (from the model's catalog) and completion budget (default 1,024), a bounded retry of a failed task line, per-call sanitized diagnostics (`truncated` / `empty_answer` apart from `bad_response`), and a status on the page's line while a fallback shows (`decisions.md` "#174").
+  floor (`decisions.md` "#188"). #24 (phase 3 of #20; `decisions.md` "#24"): the tree is recursive: every worker row
+  carries its native child agents (`ChildBook`, `childTree`'s order) after its freelancers, each child over its own, on
+  both pages and the wall, as quieter conversation rows (state, task, time, transcript availability; an unresolved one
+  marked, never drawn as the worker's); counts and totals stay the workers'; activating one seats at its worker until #26. #174: the feature's own reasoning effort (from the model's catalog) and completion budget (default 1,024), a bounded retry of a failed task line, per-call sanitized diagnostics (`truncated` / `empty_answer` apart from `bad_response`), and a status on the page's line while a fallback shows (`decisions.md` "#174").
 - **Departures boards** (#65, part 4 of #61; `decisions.md` "#65"): the schedules in the office, beside the overview
   screen's world. Every floor has a board standing on its board partition, readable from the desks and from the
   elevator (prop `board.departures`, `game/src/render/departuresBoard.ts`): the floor's next three schedules (time on

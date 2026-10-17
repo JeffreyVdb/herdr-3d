@@ -3,7 +3,8 @@ import { type Child, type ChildRemoved, decodeChild } from '../net/protocol';
 /**
  * #22 native child agents (docs/protocol.md "Native child agents"), the game's side: pure logic, no DOM. The bridge owns
  * them (`World.children`, `child.upsert` / `child.removed`, each worker's `child_generation`); this keeps them per worker
- * and generation (`ChildBook`) and builds a worker's tree (`childTree`). The board shows them from phase 3 of #20 on.
+ * and generation (`ChildBook`) and builds a worker's tree (`childTree`). #24 (phase 3 of #20): the floor overview nests
+ * that tree under its worker (world/overview.ts), on the page and the wall.
  */
 
 /**

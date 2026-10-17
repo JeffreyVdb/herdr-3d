@@ -3299,7 +3299,7 @@ export interface HirePresetRemoved {
 }
 
 // #22 native child agents (docs/protocol.md "Native child agents"): the subagents a worker's own Claude Code or Codex
-// session runs. The board shows them from phase 3 of #20 on; `world/children.ts` keeps them.
+// session runs. `world/children.ts` keeps them; the floor overview shows them under their workers (#24).
 
 /** Lifecycle states, kept apart: nothing turns one into another but the bridge's evidence. */
 export type ChildState = 'running' | 'completed' | 'idle' | 'shut_down' | 'interrupted' | 'unknown';
