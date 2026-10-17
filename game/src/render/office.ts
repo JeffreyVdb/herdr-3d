@@ -22,11 +22,16 @@ import type { RackInfo } from './rack';
 import type { HostDiskRate, HostStats } from '../net/protocol';
 import type { RackMode } from '../world/hostStats';
 import type { OverviewData } from '../world/overview';
+import { floorDepartures } from '../world/departures';
+import type { ScheduleBook } from '../world/schedule';
+import type { DeparturesInfo } from './departuresBoard';
 
 /** #118: the wall screen draws and pages only while it spans at least this share of the view's height (readable). */
 const OVERVIEW_READABLE = 0.3;
 /** #74: the server rack counts as seen (its LEDs, its monitor) once its box spans this share of the view's height. */
 const RACK_VISIBLE = 0.03;
+/** #65: the departures board keeps its countdowns going while it spans this share of the view's height or more. */
+const DEPARTURES_VISIBLE = 0.04;
 import { lookOf, NOON, type Look } from './daylook';
 // M7: the corkboard, the pull request board and the merge gong.
 import { BoardsView } from './boards/boards';
@@ -36,7 +41,8 @@ import { crewLookOf, type CrewLook } from './crewLook';
 export type Target =
   | { kind: 'worker'; id: string; name: string; label: string; desk: number }
   | { kind: 'desk'; id: string; desk: number; label: string }
-  | { kind: 'board' | 'prop'; id: string; label: string; milestone: string | null }
+  /** #65: `floor` on a departures board: a lobby group's floor, or null for the lobby board elsewhere (every floor). */
+  | { kind: 'board' | 'prop'; id: string; label: string; milestone: string | null; floor?: string | null }
   /** #20: your own desk in the corner office (never a worker desk slot: E sits you down). */
   | { kind: 'own-desk'; id: 'own-desk'; label: string; name: string };
 
@@ -82,7 +88,7 @@ export const SEAT_Y = 0.45;
 export const CARD_Y = 1.62;
 export const REACH = 3;
 /** #124: the props T can pick, in the order it goes through them. */
-const KEY_PROPS = ['board.issues', 'board.prs', 'whiteboard', 'radio', 'elevator', 'screen.overview', 'filing'];
+const KEY_PROPS = ['board.issues', 'board.prs', 'board.departures', 'whiteboard', 'radio', 'elevator', 'screen.overview', 'filing'];
 
 export interface OfficeOptions {
   shadows: boolean;
@@ -762,6 +768,27 @@ export class OfficeView {
   }
 
   /**
+   * #65: the departures board on the partition: looks at the floor's schedules when they changed or a countdown turns
+   * (two comparisons otherwise), and draws only what changed, only in view (`DEPARTURES_VISIBLE`); true when it drew.
+   */
+  tickDepartures(now: number, camera: THREE.Camera, book: Pick<ScheduleBook, 'version' | 'known' | 'all'>, tz: string): boolean {
+    const d = this.props.departures;
+    if (!d || !d.due(book.version, now)) return false;
+    const p = this.layout.props.find((x) => x.id === 'board.departures');
+    this.depShare = p && this.root.visible ? this.viewer.share(p.box, this.root, camera) : 0;
+    return d.tick(book.version, now, this.depShare >= DEPARTURES_VISIBLE, (at) => floorDepartures(book, this.id, at, tz));
+  }
+
+  /** #65: what the departures board shows (test hook); null without one. */
+  departuresInfo(): (DeparturesInfo & { share: number }) | null {
+    const i = this.props.departures?.info();
+    return i ? { ...i, share: +this.depShare.toFixed(3) } : null;
+  }
+
+  /** #65: the share of the view's height the departures board spans, when it last looked (test hook). */
+  depShare = 0;
+
+  /**
    * #74: whether the server rack is in view of `camera` and big enough on it for its LEDs to be seen (RACK_VISIBLE): the
    * rack's whole box is tested, not only its monitor, so a look at the LEDs from across the room watches too.
    */
@@ -886,7 +913,7 @@ export class OfficeView {
 
   /**
    * #124: what the keyboard can pick (T) without aiming: every worker and free desk in desk order, then your desk (`ownDesk`),
-   * the Issues and Pull requests boards, the whiteboard, the radio, the elevator and the lounge's overview screen (the things E, P, C, X or R do
+   * the Issues and Pull requests boards, the departures board, the whiteboard, the radio, the elevator and the lounge's overview screen (the things E, P, C, X or R do
    * something to), each with the point to turn to.
    */
   keyTargets(ownDesk: boolean): Array<{ target: Target; at: V3 }> {

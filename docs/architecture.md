@@ -367,6 +367,15 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   orchestrator's floor, no ghosts, Unlinked per floor); both pages filter **Active only / All** (`f`, remembered per
   view; the all-floors page starts active only), the header's counts never filtered. Page only: the wall stays per
   floor (`decisions.md` "#188"). #174: the feature's own reasoning effort (from the model's catalog) and completion budget (default 1,024), a bounded retry of a failed task line, per-call sanitized diagnostics (`truncated` / `empty_answer` apart from `bad_response`), and a status on the page's line while a fallback shows (`decisions.md` "#174").
+- **Departures boards** (#65, part 4 of #61; `decisions.md` "#65"): the schedules in the office, beside the overview
+  screen's world. Every floor has a board standing on its board partition, readable from the desks and from the
+  elevator (prop `board.departures`, `game/src/render/departuresBoard.ts`): the floor's next three schedules (time on
+  flaps, title, countdown or Boarding / Departing / Delayed +Xm) and a red attention line. Each building's lobby has one
+  on its north wall with a group per floor of that building (`LobbyView`). Both draw a text model built from
+  `store.schedules` (`world/departures.ts`) on one unlit canvas texture each, and redraw only when the model changes
+  (a second while a departure is under an hour away, else the minute), never out of view; an idle frame is two
+  comparisons. E at the floor's board or a lobby group opens the schedule dialog on that floor, elsewhere on the lobby's
+  board on every floor (`openSchedules`).
 - **Telegram notifications** (#11; details in `protocol.md` "Notifications"): `Hub.emit` hands `internal/notify` a look
   at the worker of every worker and floor event, from the hub's own `proto.Worker`, on the hub goroutine; `Observe`
   only appends to a bounded list, so the emit path never waits on the network. The service's loop applies the inbox

@@ -95,6 +95,8 @@ export interface LobbyLayout {
   walls: Box3[];
   /** Pick volume of the reception desk. */
   deskBox: Box3;
+  /** #65: the departures board on the north wall, facing the elevator and the front door (+z). */
+  departures: Box3;
 }
 
 export interface BuildingPlan {
@@ -204,6 +206,9 @@ export function lobbyLayout(width: number, depth: number): LobbyLayout {
     walls,
     // The counter and the air over it, where you talk to the receptionist.
     deskBox: box(desk.x0, 0, desk.z0, desk.x1, 1.9, desk.z1),
+    // #65: centred on the north wall, straight ahead out of the elevator (over the reception's feature wall's east end,
+    // which stands 7 m nearer), clear of the corner plants: 5.6 x 2.8 m, 1 to 3.8 m up, 10 cm deep.
+    departures: box(r3(width / 2 - 2.8), 1, 0, r3(width / 2 + 2.8), 3.8, 0.1),
   };
 }
 

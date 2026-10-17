@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { blocked3, BODY_H, groundAt, MAX_DROP, moveWalker, STEP_UP, type V3p, type WalkWorld } from './collide';
+import { blocked3, BODY_H, groundAt, MAX_DROP, moveWalker, pickNearest, STEP_UP, type V3p, type WalkWorld } from './collide';
 import { buildingPlan, FACE, floorY, loadedFloor, placeAt, RISE, RISERS, STOREY, walkWorld, type BuildingPlan } from './building';
-import { floorLayout, outlineOf, seatRect, type FloorLayout } from './layout';
+import { EYE_HEIGHT, floorLayout, outlineOf, seatRect, type FloorLayout } from './layout';
 import { walkOutRoute } from './route';
 
 const counts = [20, 10, 16];
@@ -190,6 +190,44 @@ describe('walking the fire escape', () => {
     expect(placeAt(inside, plan)).toEqual({ area: 'lobby', storey: null });
     const glass = walk(w, { x: L.front.x1 + 2, y: 0, z: plan.depth + 2 }, { x: L.front.x1 + 2, z: plan.depth - 2 });
     expect(glass.z).toBeGreaterThan(plan.depth);
+  });
+});
+
+describe('the lobby’s departures board (#65)', () => {
+  it('hangs centred on the north wall, facing the elevator, clear of the plants, the reception and its feature wall; walk up and aim: it is what you hit', () => {
+    for (const desks of [[0], [20, 10, 16], [96], [40, 40, 40, 40, 40, 40]]) {
+      const o = outlineOf(desks);
+      const fl = floorLayout(desks[0] ?? 0, o);
+      const p = buildingPlan(o, desks.length, fl.fireDoor);
+      const L = p.lobby;
+      const b = L.departures;
+      const at = `${p.width} x ${p.depth}`;
+      expect(b.min[2], at).toBe(0);
+      expect(b.max[2], at).toBeLessThanOrEqual(0.12);
+      expect((b.min[0] + b.max[0]) / 2, at).toBeCloseTo(p.width / 2, 3);
+      expect(b.max[0] - b.min[0], at).toBeGreaterThanOrEqual(4);
+      expect(b.max[1], at).toBeLessThan(6.5 - 2);
+      // Nothing of the lobby's stands in front of it or overlaps it: the plants, the feature wall, the desk, the elevator.
+      for (const pl of L.plants) expect(pl.x + 0.3 < b.min[0] - 0.3 || pl.x - 0.3 > b.max[0] + 0.3 || pl.z - 0.3 > 1.5, `plant ${pl.x},${pl.z}`).toBe(true);
+      for (const r of [L.backWall, L.desk]) expect(r.x1 < b.min[0] || r.z0 > 3, at).toBe(true);
+      // Straight ahead out of the elevator, whole: the lines from the spawn to its corners pass clear of the feature wall.
+      const mid: [number, number, number] = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, b.max[2]];
+      const bw = L.backWall;
+      for (const cx of [b.min[0], b.max[0]]) {
+        const k = (L.spawn.z - bw.z1) / (L.spawn.z - b.max[2]);
+        const x = L.spawn.x + (cx - L.spawn.x) * k;
+        expect(x > bw.x1 || x < bw.x0, `${at}: the line to x ${cx} at the feature wall (x ${x})`).toBe(true);
+      }
+      // Walk up to it: free to stand 1.5 m in front, and aimed at from there it is the pick, before the wall behind it.
+      const stand = walk(walkWorld(p, null), { x: L.spawn.x, y: 0, z: L.spawn.z }, { x: mid[0], z: 1.5 });
+      expect(stand.z, at).toBeCloseTo(1.5, 1);
+      const from: [number, number, number] = [stand.x, EYE_HEIGHT, stand.z];
+      const d: [number, number, number] = [mid[0] - from[0], mid[1] - from[1], mid[2] - from[2]];
+      const len = Math.hypot(...d);
+      expect(len).toBeLessThan(3);
+      const targets = [{ boxes: [b], value: 'departures' }, { boxes: [L.deskBox], value: 'reception' }, { boxes: [L.elevator], value: 'elevator' }];
+      expect(pickNearest(from, [d[0] / len, d[1] / len, d[2] / len], targets, 3, L.walls)?.value, at).toBe('departures');
+    }
   });
 });
 

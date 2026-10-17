@@ -37,6 +37,7 @@ export type Scope =
   | 'aim:radio'
   | 'aim:overview'
   | 'aim:cabinet'
+  | 'aim:departures'
   | 'dialog'
   | 'seated';
 
@@ -60,6 +61,7 @@ export const SCOPE_PARENT: Readonly<Record<Scope, Scope | null>> = {
   'aim:radio': 'floor',
   'aim:overview': 'floor',
   'aim:cabinet': 'floor',
+  'aim:departures': 'floor',
   dialog: null,
   seated: null,
 };
@@ -196,6 +198,7 @@ export const BINDINGS = [
   { id: 'reception.open', group: 'aimed', scope: 'aim:reception', keys: [code('KeyE')], label: 'Reception: the floor directory' },
   { id: 'whiteboard.open', group: 'aimed', scope: 'aim:whiteboard', keys: [code('KeyE')], label: 'Whiteboard: draw' },
   { id: 'overview.open', group: 'aimed', scope: 'aim:overview', keys: [code('KeyE')], label: 'Lounge screen: the floor overview, growing out of it' },
+  { id: 'departures.open', group: 'aimed', scope: 'aim:departures', keys: [code('KeyE')], label: 'Departures board: its floor’s scheduled agents (in a lobby: a floor’s group, that floor’s; elsewhere on the board, every floor’s)' },
   { id: 'cabinet.open', group: 'aimed', scope: 'aim:cabinet', keys: [code('KeyE')], label: 'Filing cabinet: the floor’s handoffs (search, read, copy, hire from one)' },
   { id: 'radio.genre', group: 'aimed', scope: 'aim:radio', keys: [code('KeyE')], label: 'Radio: next genre' },
   { id: 'radio.track', group: 'aimed', scope: 'aim:radio', keys: [code('KeyR')], label: 'Radio: next track' },

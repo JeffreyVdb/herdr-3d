@@ -6,6 +6,7 @@ import { OFFICE } from './palette';
 import { buildClock, type ClockMesh } from './clock';
 import { buildRadio, type RadioMesh } from './radio';
 import { buildOverviewScreen, type OverviewScreenMesh } from './overviewScreen';
+import { buildFloorDepartures, type FloorDeparturesMesh } from './departuresBoard';
 import { buildRack, type RackMesh } from './rack';
 import { buildTv, type TvMesh } from './tv';
 
@@ -156,6 +157,8 @@ export interface PropMeshes {
   tv: TvMesh | null;
   /** #118: the floor overview's wall screen (null when the layout has none). */
   overview: OverviewScreenMesh | null;
+  /** #65: the departures board on the partition (null when the layout has none). */
+  departures: FloorDeparturesMesh | null;
   /** #74: the server rack with its monitor and its disk-driven LEDs (null when the layout has none). */
   rack: RackMesh | null;
   /** M13: puts the board's render on the whiteboard (null: back to the placeholder); the one it replaces is disposed. */
@@ -229,6 +232,11 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
   const ovProp = byId.get('screen.overview');
   const overview = ovProp ? buildOverviewScreen(ovProp.box) : null;
   if (overview) group.add(overview.group);
+
+  // #65: the departures board on the partition (render/departuresBoard.ts); the app ticks it with the schedules.
+  const depProp = byId.get('board.departures');
+  const departures = depProp ? buildFloorDepartures(depProp.box) : null;
+  if (departures) group.add(departures.group);
 
   // #74: the server rack: three draws (body, LEDs, screen); the app feeds it the host's frames.
   const rackProp = byId.get('server.rack');
@@ -441,6 +449,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     },
     tv,
     overview,
+    departures,
     rack,
     setDrawers(fill) {
       const key = fill.join(',');
@@ -454,6 +463,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     dispose() {
       tv?.dispose(); // first: it lets go of the share's texture, which is not the floor's to dispose
       overview?.dispose(); // its two canvas textures
+      departures?.dispose(); // its canvas texture
       rack?.dispose(); // its screen's canvas texture and the LEDs
       wbShown?.dispose();
       group.traverse((o) => {
