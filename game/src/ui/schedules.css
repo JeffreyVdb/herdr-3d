@@ -392,3 +392,10 @@
   margin: 0;
 }
 
+
+/* ubuntu:begin */
+/* #216 Ubuntu: the form's own input types take the ring 2px outside them, as the dialogs' text inputs do (hire.css). */
+:root[data-ui-theme='ubuntu'] .desk-dlg :is(input[type='datetime-local'], input[type='number'], input[type='search'], select):focus-visible {
+  outline-offset: 2px;
+}
+/* ubuntu:end */
