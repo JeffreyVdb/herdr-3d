@@ -140,18 +140,34 @@ type Node struct {
 
 // Tree is one worker's children as a tree: the root's children and the
 // unresolved ones at the top (a client shows those under the root worker),
-// each child under its parent; siblings by start, native id, name.
+// each child under its parent; siblings by start, native id, name. A row
+// whose parent chain comes back to it (the registry makes none) is at the
+// top too, never lost with its descendants.
 // game/src/world/children.ts childTree builds the same.
 func Tree(cs []proto.Child) []Node {
 	ids := map[string]bool{}
 	for _, c := range cs {
 		ids[c.ID] = true
 	}
+	up := map[string]string{}
+	for _, c := range cs {
+		if c.Parent == proto.ParentChild && ids[c.ParentID] {
+			up[c.ID] = c.ParentID
+		}
+	}
+	cyclic := func(id string) bool {
+		for p, n := up[id], 0; p != "" && n < len(up); p, n = up[p], n+1 {
+			if p == id {
+				return true
+			}
+		}
+		return false
+	}
 	kids := map[string][]proto.Child{}
 	for _, c := range cs {
-		p := ""
-		if c.Parent == proto.ParentChild && ids[c.ParentID] {
-			p = c.ParentID
+		p := up[c.ID]
+		if cyclic(c.ID) {
+			p = ""
 		}
 		kids[p] = append(kids[p], c)
 	}

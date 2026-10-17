@@ -155,4 +155,20 @@ describe('#22 childTree', () => {
       ['ch_o', []],
     ]);
   });
+
+  it('shows a row in a cycle (a bad parent the bridge never sends) at the top, never hides it or its children', () => {
+    const t = childTree([
+      child('ch_self', { parent: 'child', parent_id: 'ch_self', started_at: 1 }),
+      child('ch_x', { parent: 'child', parent_id: 'ch_y', started_at: 2 }),
+      child('ch_y', { parent: 'child', parent_id: 'ch_x', started_at: 3 }),
+      child('ch_k', { parent: 'child', parent_id: 'ch_y', started_at: 4 }),
+      child('ch_s', { parent: 'child', parent_id: 'ch_self', started_at: 5 }),
+    ]);
+    const shape = (n: ReturnType<typeof childTree>): unknown => n.map((x) => [x.child.id, shape(x.children)]);
+    expect(shape(t)).toEqual([
+      ['ch_self', [['ch_s', []]]],
+      ['ch_x', []],
+      ['ch_y', [['ch_k', []]]],
+    ]);
+  });
 });

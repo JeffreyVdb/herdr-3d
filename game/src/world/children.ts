@@ -99,13 +99,22 @@ export interface ChildTreeNode {
 /**
  * #22: a worker's children as a tree: the root's children and the unresolved ones at the top (shown under the root worker
  * until evidence resolves them), each child under its parent; siblings by start, native id, name, row id. A parent this
- * list does not have is read as unresolved. The bridge's `childagentstest.Tree` builds the same.
+ * list does not have is read as unresolved, and so is one whose chain comes back to the child (the bridge sends no cycle;
+ * should one arrive, its rows show at the top rather than vanish with their descendants). The bridge's
+ * `childagentstest.Tree` builds the same.
  */
 export function childTree(children: readonly Child[]): ChildTreeNode[] {
   const ids = new Set(children.map((c) => c.id));
+  const up = new Map<string, string>();
+  for (const c of children) up.set(c.id, c.parent === 'child' && c.parent_id && ids.has(c.parent_id) ? c.parent_id : '');
+  const cyclic = (id: string): boolean => {
+    let p = up.get(id) ?? '';
+    for (let n = 0; p && n < up.size; n++, p = up.get(p) ?? '') if (p === id) return true;
+    return false;
+  };
   const kids = new Map<string, Child[]>();
   for (const c of children) {
-    const p = c.parent === 'child' && c.parent_id && ids.has(c.parent_id) ? c.parent_id : '';
+    const p = cyclic(c.id) ? '' : (up.get(c.id) ?? '');
     let list = kids.get(p);
     if (!list) kids.set(p, (list = []));
     list.push(c);
