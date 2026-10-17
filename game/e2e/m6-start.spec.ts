@@ -75,9 +75,9 @@ test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, 
   expect(await page.evaluate(() => window.__h3d.lookAt())).toMatchObject({ kind: 'desk', id: 'desk-5' });
   await page.keyboard.press('e');
   await expect.poll(async () => (await dialog(page))?.kind).toBe('hire');
-  // The hire dialog has two tabs; → moves to the orchestrator, which is the start-run dialog for the same desk.
+  // The hire dialog's tabs (#93: and Hire preset); → moves to the orchestrator, which is the start-run dialog for the same desk.
   const tabs = page.locator('dialog.desk-dlg--hire [role="tab"]');
-  await expect(tabs).toHaveText(['Hire worker', 'Hire orchestrator']);
+  await expect(tabs).toHaveText(['Hire worker', 'Hire orchestrator', 'Hire preset']);
   await expect(tabs.first()).toHaveAttribute('aria-selected', 'true');
   await page.keyboard.press('Shift+Tab');
   expect(await focusedKey(page)).toBe('tab:worker');
