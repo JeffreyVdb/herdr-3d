@@ -142,9 +142,15 @@ export class ScheduleFormDialog {
   private cabRows: HandoffEntry[] = [];
   private cabGen = 0;
   private cabTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The transcript reply's filing: one op for the form's life, and the path once filed (a re-save keeps it). */
-  private op = newOp();
-  private filedPath: string | null = null;
+  /**
+   * The transcript reply's filing: one op per reply (its candidate and revision), and the path once filed, kept for the
+   * page's life: a re-save, or the form opened again on the same reply after a Cancel, never files it twice.
+   */
+  private readonly filings = new Map<string, { op: string; path: string | null }>();
+  private filing: { op: string; path: string | null } | null = null;
+  private get filedPath(): string | null {
+    return this.filing?.path ?? null;
+  }
   private saving = false;
   private statusText = '';
   private statusError = false;
@@ -294,8 +300,10 @@ export class ScheduleFormDialog {
     this.picked = null;
     this.cabRows = [];
     this.cabSearch.value = '';
-    this.op = newOp();
-    this.filedPath = null;
+    const c = p.transcript?.candidate;
+    const key = c ? `${p.transcript?.worker}/${c.id}/${c.revision}` : '';
+    this.filing = c ? (this.filings.get(key) ?? { op: newOp(), path: null }) : null;
+    if (c && this.filing) this.filings.set(key, this.filing);
     this.saving = false;
     this.modelQuery = '';
     this.setStatus('');
@@ -514,18 +522,19 @@ export class ScheduleFormDialog {
     const v = gitView(g, this.host.now());
     if (!v) return;
     const on = this.f.worktree && v.usable;
-    replaceKeepingFocus(this.worktreeSlot, [
-      worktreeControl(
-        v,
-        on,
-        (x) => {
-          this.f.worktree = x;
-          this.renderWorktree();
-          this.renderActions();
-        },
-        'sf-worktree',
-      ),
-    ]);
+    const wt = worktreeControl(
+      v,
+      on,
+      (x) => {
+        this.f.worktree = x;
+        this.renderWorktree();
+        this.renderActions();
+      },
+      'sf-worktree',
+    );
+    // The hire dialog's fetch callout is not in this form: the base line says it.
+    wt.querySelector('#sf-worktree')?.setAttribute('aria-describedby', 'sf-worktree-base');
+    replaceKeepingFocus(this.worktreeSlot, [wt]);
   }
 
   private renderMiss(): void {
@@ -722,10 +731,12 @@ export class ScheduleFormDialog {
     if (this.handoffMode === 'transcript' && t) {
       if (!this.filedPath) {
         const c = t.candidate;
-        const a = await this.host.send('worker.handoff', { worker: t.worker, mode: 'literal', session: c.session, candidate: c.id, revision: c.revision, op: this.op });
+        const filing = this.filing ?? { op: newOp(), path: null };
+        const a = await this.host.send('worker.handoff', { worker: t.worker, mode: 'literal', session: c.session, candidate: c.id, revision: c.revision, op: filing.op });
         if (gen !== this.gen || !this.dialog.open) return;
         if (!a.ok) return end(`${failureText('worker.handoff', a.code, a.message, { worker: t.name })} Nothing was scheduled.`, true);
-        this.filedPath = (a.data as HandoffAck).handoff.path;
+        filing.path = (a.data as HandoffAck).handoff.path;
+        this.filing = filing;
       }
       path = this.filedPath;
       this.setStatus('Saving…');

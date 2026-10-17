@@ -2,7 +2,7 @@ import { codexNotice, type CodexNotice } from '../world/codexServer';
 import * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
 import type { CommandCatalogs } from './commandCatalog';
-import type { Ask, CommandArgs, CommandName, ConnMessage, KeyItem } from '../net/protocol';
+import type { Ask, CommandArgs, CommandName, ConnMessage, HandoffCandidate, KeyItem } from '../net/protocol';
 import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
 import { PrintMeshes } from '../render/prints';
@@ -85,6 +85,8 @@ export interface LaptopHost {
   overview?(): void;
   /** #223: the transcript's inline Handoff button: the filing dialog over the seat (none: no button). */
   handoff?(id: string): void;
+  /** #64 schedules: "Schedule follow-up…" beside it: the schedule form over the seat (none: no button). */
+  scheduleFollowup?(id: string, c: HandoffCandidate): void;
 }
 
 /** The HUD while you sit at a laptop. */
@@ -320,6 +322,7 @@ export class Laptops {
       status: (kind, text) => (this.seat?.away ? this.restStatus(this.seat) : this.host.seat.status(kind, text)),
       ...(host.packup ? { packup: host.packup } : {}),
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
+      ...(host.scheduleFollowup ? { scheduleFollowup: (id: string, c: HandoffCandidate) => host.scheduleFollowup?.(id, c) } : {}),
       repoRefs: host.store.repoRefs, // #247
       repoDiscovery: host.store.repoDiscovery, // #54
       floorName: (id: string) => host.store.floorName(id), // #58

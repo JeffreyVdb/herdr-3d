@@ -320,6 +320,23 @@ describe('ScheduleFormDialog (#64 schedules)', () => {
       expect(e.dlg.isOpen).toBe(false);
     });
 
+    it('filed, the create refused, then Cancel: the form opened again on that reply uses the filed path', async () => {
+      let n = 0;
+      const e = setup({ replies: { 'schedule.create': (a) => (++n === 1 ? { ok: false, code: 'bad_request', message: 'bad request: cwd "/home/dev/wt/pixel": no such file' } : { ok: true, data: { ...sched(), ...a, id: 'sch_new' } }) } });
+      open(e);
+      await e.flush();
+      fill(e);
+      await e.save();
+      e.q<HTMLButtonElement>('[data-key="cancel"]').click();
+      open(e);
+      await e.flush();
+      expect(e.dlg.summary().handoffPath).toBe('/home/dev/handoff/f1/filed.md');
+      fill(e);
+      await e.save();
+      expect(e.of('worker.handoff')).toHaveLength(1);
+      expect(e.of('schedule.create')[1]?.args.handoff_path).toBe('/home/dev/handoff/f1/filed.md');
+    });
+
     it('an unanswered filing is sent again with the same op (the bridge answers existing)', async () => {
       let n = 0;
       const e = setup({ replies: { 'worker.handoff': () => (++n === 1 ? { ok: false, code: 'timeout', message: 'herdr-world did not answer worker.handoff within 10 s' } : { ok: true, data: { handoff: { path: '/home/dev/handoff/f1/filed.md' }, existing: true } }) } });

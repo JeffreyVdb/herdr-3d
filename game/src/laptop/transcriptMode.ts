@@ -93,6 +93,8 @@ export interface TranscriptModeHost {
   prefs?: ViewPrefs;
   /** #223: the inline Handoff button of a worker's reply was pressed: the filing dialog (none: no button). */
   handoff?(id: string, c: HandoffCandidate): void;
+  /** #64 schedules: "Schedule follow-up…" beside it: the schedule form, prefilled from the worker (none: no button). */
+  scheduleFollowup?(id: string, c: HandoffCandidate): void;
   /** #247: the shared "Repositories from other buildings" switch, for the prompt box's `@r:` (none: as if off). */
   repoRefs?: RepoSearchHost['refs'];
   /** #54: repository discovery, for the prompt box's `@r:` (none: as if off). */
@@ -707,8 +709,10 @@ export class TranscriptMode {
   private renderHost(s: Sitting): TranscriptRenderHost {
     const live = () => this.s === s;
     const handoff = this.host.handoff;
+    const follow = this.host.scheduleFollowup;
     return {
       ...(handoff ? { onHandoff: (c: HandoffCandidate) => live() && handoff(s.id, c) } : {}),
+      ...(follow ? { onScheduleFollowup: (c: HandoffCandidate) => live() && follow(s.id, c) } : {}),
       images: this.host.feed(s.id),
       upload: this.host.upload ?? null,
       label: s.name,

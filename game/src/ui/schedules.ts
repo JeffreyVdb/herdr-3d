@@ -147,6 +147,19 @@ export class SchedulesDialog {
     } else this.dialog.querySelector<HTMLElement>('[data-key="new"]')?.focus();
   }
 
+  /** A schedule just saved from the form: its row marked and focused (its floor's, or all floors as shown now). */
+  reveal(id: string): void {
+    if (!this.dialog.open) return;
+    const s = this.host.store.schedules.get(id);
+    if (s && !this.allFloors && s.floor !== this.floor) this.floor = s.floor;
+    this.focusId = id;
+    this.seenVersion = this.host.store.schedules.version;
+    this.render();
+    const row = this.rowEl(id);
+    row?.scrollIntoView?.({ block: 'center' });
+    row?.focus();
+  }
+
   /** The world changed: an upsert or a removal re-draws the list, keeping the focus and the scroll. */
   refresh(): void {
     if (!this.dialog.open) return;

@@ -566,6 +566,32 @@ body {
   display: block;
   opacity: 0;
 }
+/* #64 schedules: a toast with an action is a control (the HUD itself takes no pointer); only while shown. */
+.toast[data-action='true']:not([hidden]) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.toast-act {
+  flex: none;
+  padding: 3px 10px;
+  border: 1px solid currentColor;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.toast-act:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.toast-act:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
 .toast[data-kind='error'] {
   background: var(--error-fill);
   color: var(--on-error);

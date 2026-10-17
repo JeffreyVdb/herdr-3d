@@ -7,7 +7,7 @@ import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
-import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffEntry, type IssueCard, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
+import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec } from './render/arrivals';
@@ -22,12 +22,16 @@ import { TimePrefs } from './ui/timePrefs';
 import { RadioLink } from './radio/link';
 import { createGameAudio, createReception, receptionContext, type GameAudio, type Reception, type ReceptionEvent } from './reception';
 import { Hud, type PlanLabel, type ToastKind } from './ui/hud';
+import { h, icon } from './ui/dom';
 import { HireDialog, type HirePrefill } from './ui/hire';
 import { HireReviewDialog } from './ui/hireReview';
 import { Panels } from './ui/panels';
 import { SendHomeDialog } from './ui/sendHome';
 import { HandoffDialog } from './ui/handoffDialog';
 import { Cabinet } from './ui/cabinet';
+import { SchedulesDialog, type SchedulesOpen } from './ui/schedules';
+import { ScheduleFormDialog } from './ui/scheduleForm';
+import { scheduleToast } from './world/schedule';
 import { agentHandoffNote, drawerFill, hireTask } from './world/handoff';
 import { fromHandoff } from './world/hireReview';
 import { needsYouText, sentHomeText, wrapUpOf } from './world/wrapup';
@@ -234,6 +238,9 @@ export class App {
   /** #223: the filing dialog and the floor's filing cabinet. */
   readonly handoffDialog: HandoffDialog;
   readonly cabinet: Cabinet;
+  /** #64 schedules: the scheduled agents dialog and its create / edit form. */
+  readonly schedules: SchedulesDialog;
+  readonly scheduleForm: ScheduleFormDialog;
   readonly arrivals: Arrivals;
   /** M6c: the reports on their way to an orchestrator's desk, and what is in its in-tray. */
   private readonly deliveries = new DeliveryBook();
@@ -730,6 +737,14 @@ export class App {
       },
     });
     this.cabinet = new Cabinet(o.host, { ...dialogHost, copy, hireFrom: (e) => this.hireFromHandoff(e) });
+    // #64 schedules: the list, and the one form for New, Edit and a transcript's follow-up (it opens over the list).
+    this.scheduleForm = new ScheduleFormDialog(o.host, { ...dialogHost, upload, modelPrefs: this.hireModelPrefs, hirePrefs: this.hirePrefs, saved: (s) => this.schedules.reveal(s.id) });
+    this.schedules = new SchedulesDialog(o.host, {
+      ...dialogHost,
+      create: (floor) => this.scheduleForm.open({ floor }),
+      edit: (s) => this.scheduleForm.open({ floor: s.floor, edit: s }),
+      goTo: (id) => void this.goToWorker(id),
+    });
     this.boardsPanel = new BoardsPanel(o.host, {
       ...dialogHost,
       floor: () => this.hereFloor(),
@@ -769,6 +784,7 @@ export class App {
         packup: (id, text, signal) => this.packupCheck(id, text, signal), // #110
         overview: () => this.openOverview(false), // #118
         handoff: (id) => this.openHandoff(id, true), // #223
+        scheduleFollowup: (id, c) => this.openFollowup(id, c), // #64 schedules
         catalogs, // #39
       },
       o.params,
@@ -833,6 +849,7 @@ export class App {
     this.hud.on('overview', () => this.openOverview(false));
     this.hud.on('overview.all', () => this.openCityOverview()); // #188
     addFloorButton(this.hud, (b) => this.openAddFloor(b)); // #58, before Presets
+    this.scheduleButtons(); // #64 schedules
     this.m6Buttons = m6StartButtons(this.hud, { run: () => this.openStartRun(), presets: (b) => this.openPresets(b), off: () => runUnsupported(hireHost) });
     this.bindInput();
     // #124: the keys' names as this keyboard labels them (Chromium's layout map), in the titles that name a key.
@@ -905,6 +922,8 @@ export class App {
     this.handoffDialog.refresh(); // #223
     this.noteAgentHandoffs(); // #224
     this.cabinet.refresh();
+    this.schedules.refresh(); // #64 schedules
+    this.scheduleForm.refresh();
     this.syncDrawers();
     this.playFilings();
     this.startRun.refresh();
@@ -1200,6 +1219,7 @@ export class App {
       if (old && (old.floor !== floorOf(e.worker) || old.desk_index !== e.worker.desk_index)) this.arrivals.cancel(e.worker.id);
     }
     this.wrapUpToasts(e); // #83
+    if (e.t === 'schedule.upsert') this.scheduleToasts(e.schedule); // #64 schedules
     const was = e.t === 'worker.upsert' ? this.store.workers.get(e.worker.id) : undefined;
     this.applyChange(this.store.applyEvent(e));
     if (e.t === 'worker.removed') {
@@ -1464,6 +1484,47 @@ export class App {
     for (const id of [...this.agentHandoffs.keys()]) if (!seen.has(id)) this.agentHandoffs.delete(id);
   }
 
+  // ---- #64 schedules: scheduled agents ------------------------------------------------
+
+  /** The Menu's Schedules: in "This floor" on a floor (its schedules), in "City" elsewhere (every floor's). No key. */
+  private scheduleButtons(): void {
+    const clock = '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>';
+    const floor = h('button', { class: 'btn', 'data-action': 'schedules', 'aria-haspopup': 'dialog', title: 'Scheduled agents on this floor: upcoming, needing attention, started' }, icon(clock), h('span', {}, 'Schedules'));
+    const all = h('button', { class: 'btn', 'data-action': 'schedules.all', 'aria-haspopup': 'dialog', title: 'Scheduled agents on every floor' }, icon(clock), h('span', {}, 'Schedules'));
+    floor.addEventListener('click', () => this.openSchedules());
+    all.addEventListener('click', () => this.openSchedules({ floor: null, allFloors: true }));
+    this.hud.addTopbarButton(floor, 'hire', (mode, area) => mode === 'floor' && area === 'floor');
+    this.hud.addTopbarButton(all, 'buildings', (mode, area) => mode !== 'floor' || area !== 'floor');
+  }
+
+  /** The scheduled agents dialog: the floor you are on unless told otherwise (outside a floor: all floors). */
+  openSchedules(o: SchedulesOpen = {}): void {
+    this.walker.release();
+    this.walker.stop();
+    this.panels.close();
+    this.schedules.open({ ...o, floor: o.floor === undefined ? this.hereFloor() : o.floor });
+  }
+
+  /** "Schedule follow-up…" on a worker's latest reply: the form over the seat, prefilled from the worker. */
+  openFollowup(id: string, c: HandoffCandidate): void {
+    const w = this.store.workers.get(id);
+    const v = this.store.workerView(id);
+    if (!w || !v) return;
+    const choice = w.harness && w.model && w.effort ? { harness: w.harness, model: w.model, effort: w.effort } : undefined;
+    this.scheduleForm.open({ floor: v.worker.floor, prefill: { ...(choice ? { choice } : {}), ...(w.cwd ? { cwd: w.cwd } : {}), transcript: { worker: id, name: v.name, candidate: c } } });
+  }
+
+  /**
+   * A schedule that moved on says so (before the store takes the upsert): started, started late, skipped, failed; a
+   * click opens the dialog on its row. Never on first sight (a snapshot, a reconnect) or in the same state (a replayed
+   * upsert); not while the dialog is open, whose row already shows it.
+   */
+  private scheduleToasts(next: Schedule): void {
+    const t = scheduleToast(this.store.schedules.get(next.id), next);
+    if (!t || this.schedules.isOpen) return;
+    this.hud.toast(t.text, t.level === 'error' ? 9000 : 7000, t.level, false, { label: 'Show', run: () => this.openSchedules({ focus: next.id }) });
+  }
+
   /** The floor's filing cabinet (null: the floor you are on); `select`: that handoff. */
   openCabinet(floor: string | null, select?: number): void {
     if (!floor) {
@@ -1558,7 +1619,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -3173,6 +3234,7 @@ export class App {
     if (command.id === 'presets') return this.openPresets();
     if (command.id === 'about') return this.hud.openAbout();
     if (command.id === 'overview.all') return this.openCityOverview(); // #188
+    if (command.id === 'schedules') return this.openSchedules(); // #64 schedules
     const b = binding(command.id);
     const chord = b.keys[0];
     this.actions[command.id as DispatchedId]({ binding: b, chord: chord ?? {}, code: chord?.code ?? '' });

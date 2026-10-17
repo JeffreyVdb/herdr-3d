@@ -6,7 +6,7 @@
 
 /* ---- the list ------------------------------------------------------------------- */
 
-.sch {
+.desk-dlg.sch {
   width: min(860px, calc(100vw - 32px));
   height: min(760px, calc(100vh - 32px));
 }
@@ -249,7 +249,7 @@
 
 /* ---- the create / edit form ----------------------------------------------------------- */
 
-.desk-dlg--sched {
+.desk-dlg.desk-dlg--sched {
   width: min(720px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
 }
