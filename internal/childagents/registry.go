@@ -68,7 +68,8 @@ func New() *Registry {
 // (""→X) keeps the generation: no child can have attached meanwhile.
 // bound reports that the worker was bound to a new non-empty session: the
 // hub then asks the sources to Replay it. A session another worker is bound
-// to is not bound twice (its evidence stays the first worker's).
+// to is not bound twice (its evidence stays the first worker's) until that
+// worker lets go of it: the next refresh binds it then.
 func (r *Registry) Worker(id, session string) (gen uint64, bound bool) {
 	rt := r.roots[id]
 	switch {
@@ -76,7 +77,10 @@ func (r *Registry) Worker(id, session string) (gen uint64, bound bool) {
 		rt = r.newRoot(id, session)
 		r.roots[id] = rt
 	case rt.session == session:
-		return rt.gen, false
+		if session == "" || r.bySession[session] == id {
+			return rt.gen, false
+		}
+		// Refused while another worker held it: bound once that one let go.
 	case rt.session != "":
 		r.unbind(rt)
 		rt = r.newRoot(id, session)

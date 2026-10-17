@@ -250,6 +250,21 @@ func TestGenerations(t *testing.T) {
 	if evs := apply(t, r, childagents.Evidence{Session: "sv", Provider: proto.ChildCodex, NativeID: "t", Source: "rollout"}); evs[0].Child.WorkerID != "v" {
 		t.Fatalf("evidence of sv went to %s", evs[0].Child.WorkerID)
 	}
+	if _, bound := r.Worker("x", "sv"); bound {
+		t.Fatal("bound on a refresh while the other still holds it")
+	}
+	// Once that worker lets go, the next refresh binds it (and asks for its replay).
+	r.Remove("v")
+	if _, bound := r.Worker("x", "sv"); !bound {
+		t.Fatal("not bound after the holder left")
+	}
+	if _, bound := r.Worker("x", "sv"); bound {
+		t.Fatal("bound twice")
+	}
+	if evs := apply(t, r, childagents.Evidence{Session: "sv", Provider: proto.ChildCodex, NativeID: "t", Source: "rollout"}); evs[0].Child.WorkerID != "x" ||
+		evs[0].Child.Generation != r.Generation("x") {
+		t.Fatalf("evidence of sv after the handover: %+v", evs[0].Child)
+	}
 }
 
 // A new child has no guessed parent, state or transcript.
