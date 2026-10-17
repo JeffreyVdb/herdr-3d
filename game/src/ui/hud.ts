@@ -682,7 +682,7 @@ export class Hud {
     } else if (t.kind === 'board' && t.id === 'board.departures') {
       // #65: a departures board opens the scheduled agents: its floor's (the floor's board says its next departure), a
       // lobby group's floor's, or anywhere else on the lobby's board every floor's.
-      const info = t.floor === undefined ? (this.propInfo.get('board.departures') ?? 'This floor’s scheduled agents') : t.floor === null ? 'Every floor’s scheduled agents, in every building' : 'This floor’s scheduled agents';
+      const info = t.floor === undefined ? (this.propInfo.get('board.departures') ?? 'This floor’s scheduled agents') : t.floor === null ? 'Every floor’s scheduled agents, in every building' : 'Its scheduled agents: upcoming, needing attention, started';
       line.append(text('prompt-name', t.label), text('prompt-task', info));
       const k = el('span', 'key');
       k.append(el('kbd', '', 'E'), document.createTextNode('Schedules'));
