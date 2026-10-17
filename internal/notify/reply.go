@@ -53,6 +53,7 @@ const (
 	ReplyBadText  = "bad_text"      // it cannot be typed
 	ReplyHandoff  = "handoff"       // /handoff: the game's
 	ReplyFailed   = "failed"        // herdr failed it, or the bridge
+	ReplyClosed   = "closed"        // #14: the ask or follow-up answered was answered, replaced or ended meanwhile
 	replySent     = "sent"
 	replyNotReply = "not_a_reply"
 	replyNoText   = "no_text"
@@ -61,6 +62,7 @@ const (
 	replyTooLong  = "too_long"
 	replyUnknown  = "unknown"
 	replyLimited  = "rate_limited"
+	replyTyped    = "typed_answer" // #14: a card's typed answer
 )
 
 // ReplyError is a refused reply's prompt: Kind is one of Reply*.
@@ -99,6 +101,7 @@ var answers = map[string]string{
 	ReplyBadText:  "Not sent: that text cannot be typed into this worker.",
 	ReplyHandoff:  "Not sent: ask for a handoff in the game.",
 	ReplyFailed:   "Not sent: the bridge could not type it into the worker.",
+	ReplyClosed:   "Not sent: the question was answered in the game, or the agent moved on.",
 }
 
 // tooLongText is the answer to a reply over MaxReplyRunes.
@@ -152,6 +155,10 @@ type replies struct {
 	ended   []done
 	kick    chan struct{}
 	dropped bool
+	// #14: the cards' work, in order (taps, sightings, answers that
+	// ended), and how many taps wait among it.
+	jobs []func(context.Context)
+	taps int
 
 	total, answers window
 	workers        map[string]*window
@@ -207,11 +214,14 @@ func (s *Service) replier(ctx context.Context) {
 		}
 		for ctx.Err() == nil {
 			s.rp.mu.Lock()
-			in, ended := s.rp.in, s.rp.ended
-			s.rp.in, s.rp.ended = nil, nil
+			in, ended, jobs := s.rp.in, s.rp.ended, s.rp.jobs
+			s.rp.in, s.rp.ended, s.rp.jobs = nil, nil, nil
 			s.rp.mu.Unlock()
-			if len(in) == 0 && len(ended) == 0 {
+			if len(in) == 0 && len(ended) == 0 && len(jobs) == 0 {
 				break
+			}
+			for _, j := range jobs {
+				j(ctx)
 			}
 			for _, d := range ended {
 				s.ended(ctx, d)
@@ -219,6 +229,8 @@ func (s *Service) replier(ctx context.Context) {
 			for _, r := range in {
 				s.reply(ctx, r)
 			}
+			// #14: the cards the batch changed, one edit each.
+			s.flush(ctx)
 		}
 	}
 }
@@ -255,6 +267,17 @@ func (s *Service) reply(ctx context.Context, r Reply) {
 		return
 	case row.TextRunes > MaxReplyRunes:
 		refuse(replyTooLong, tooLongText(row.TextRunes))
+		return
+	}
+	// #14: a reply to a card's prompt is its typed answer; one to an open
+	// card is told to tap (never typed as a prompt).
+	if a, ok := s.bt.prompts[r.To]; ok {
+		s.typed(ctx, r, a, row)
+		return
+	}
+	if a, ok := s.bt.cards[r.To]; ok {
+		row.ID = a.s.worker
+		refuse(ReplyAsk, answers[ReplyAsk])
 		return
 	}
 	var id string

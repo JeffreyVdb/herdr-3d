@@ -85,6 +85,16 @@ type AskQuestion struct {
 	HasOptions bool
 	// Secret: its answer is masked (no question text may leave the bridge).
 	Secret bool
+	// #14: what its card shows. The bridge leaves them empty for every
+	// question of an ask with a secret one: none of its text goes out.
+	Header, Question string
+	Multi, Other     bool
+	Options          []AskOption
+}
+
+// AskOption is one suggested answer of an ask's question (#14).
+type AskOption struct {
+	Label, Description, Preview string
 }
 
 // Followup is the follow-up questions of a final message.
@@ -92,12 +102,18 @@ type Followup struct {
 	TurnID    string
 	Questions []FollowupQuestion
 	At        int64 // unix ms
+	// Tail is the end of the message, a fallback's (#14: its card shows it).
+	Tail string
 }
 
 // FollowupQuestion is one follow-up question.
 type FollowupQuestion struct {
 	ID, Question, Kind string
 	Options            int
+	// #14: what its card shows: the message's label for it, a choice's
+	// options, the rest the message says of it, the agent's recommendation.
+	Label, Context, Recommendation string
+	Choices                        []string
 }
 
 // Verdict is what the rule says of a worker.

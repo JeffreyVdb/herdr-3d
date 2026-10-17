@@ -29,6 +29,30 @@ type FakeChannel struct {
 
 	confirmed []Ref
 	answered  []FakeAnswer
+	// #14: the cards (by ref, as shown now), in the order sent; the taps
+	// answered, the prompts sent, the messages whose buttons were taken.
+	cardN   int64
+	cards   []Ref
+	shown   map[Ref]Card
+	edits   int
+	tapAns  []FakeTapAnswer
+	prompts []FakePrompt
+	cleared []Ref
+}
+
+// FakeCardBase is the first message id of a FakeChannel's cards and
+// prompts (its notifications are 1, 2, …).
+const FakeCardBase = 100000
+
+// FakeTapAnswer is a tap's answer.
+type FakeTapAnswer struct {
+	ID, Text string
+}
+
+// FakePrompt is a reply prompt sent.
+type FakePrompt struct {
+	Ref, To           Ref
+	Text, Placeholder string
 }
 
 // FakeChatID is the chat of a FakeChannel's messages.
@@ -42,7 +66,8 @@ type FakeAnswer struct {
 
 // NewFakeChannel is a fake with a token and a paired recipient when ready.
 func NewFakeChannel(ready bool) *FakeChannel {
-	f := &FakeChannel{st: ChannelState{Provider: "fake"}, change: make(chan struct{}, 1), sentC: make(chan struct{}, 64)}
+	f := &FakeChannel{st: ChannelState{Provider: "fake"}, change: make(chan struct{}, 1), sentC: make(chan struct{}, 64),
+		cardN: FakeCardBase - 1, shown: map[Ref]Card{}}
 	if ready {
 		f.st.KeySet, f.st.KeyHint, f.st.Paired = true, "abcd", &Recipient{Name: "Ada", At: 1}
 	}
@@ -365,4 +390,133 @@ func (s *FakeStore) NotifyMessage(_ context.Context, msg Ref) (string, time.Time
 	defer s.mu.Unlock()
 	m, ok := s.msgs[msg]
 	return m.worker, m.at, ok, nil
+}
+
+// SendCard records c as the next card (FakeCardBase, …).
+func (f *FakeChannel) SendCard(_ context.Context, c Card) (Ref, error) {
+	f.mu.Lock()
+	f.cardN++
+	ref := Ref{FakeChatID, f.cardN}
+	f.cards = append(f.cards, ref)
+	f.shown[ref] = c
+	f.mu.Unlock()
+	f.tick()
+	return ref, nil
+}
+
+// EditCard records c as what msg shows now.
+func (f *FakeChannel) EditCard(_ context.Context, msg Ref, c Card) error {
+	f.mu.Lock()
+	f.shown[msg] = c
+	f.edits++
+	f.mu.Unlock()
+	f.tick()
+	return nil
+}
+
+func (f *FakeChannel) ClearButtons(_ context.Context, msg Ref) error {
+	f.mu.Lock()
+	f.cleared = append(f.cleared, msg)
+	if c, ok := f.shown[msg]; ok {
+		c.Buttons = nil
+		f.shown[msg] = c
+	}
+	f.mu.Unlock()
+	f.tick()
+	return nil
+}
+
+func (f *FakeChannel) AnswerTap(_ context.Context, id, text string) error {
+	f.mu.Lock()
+	f.tapAns = append(f.tapAns, FakeTapAnswer{id, text})
+	f.mu.Unlock()
+	f.tick()
+	return nil
+}
+
+// AskText records a prompt (its ref is the next card's).
+func (f *FakeChannel) AskText(_ context.Context, msg Ref, text, placeholder string) (Ref, error) {
+	f.mu.Lock()
+	f.cardN++
+	ref := Ref{FakeChatID, f.cardN}
+	f.prompts = append(f.prompts, FakePrompt{ref, msg, text, placeholder})
+	f.mu.Unlock()
+	f.tick()
+	return ref, nil
+}
+
+// Cards is every card sent, in order; Card what one shows now.
+func (f *FakeChannel) Cards() []Ref {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Ref(nil), f.cards...)
+}
+
+func (f *FakeChannel) Card(ref Ref) Card {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.shown[ref]
+}
+
+// Edits counts the cards' edits.
+func (f *FakeChannel) Edits() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.edits
+}
+
+// TapAnswers is every tap's answer; Prompts every prompt; Cleared the
+// messages whose buttons were taken away.
+func (f *FakeChannel) TapAnswers() []FakeTapAnswer {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]FakeTapAnswer(nil), f.tapAns...)
+}
+
+func (f *FakeChannel) Prompts() []FakePrompt {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]FakePrompt(nil), f.prompts...)
+}
+
+func (f *FakeChannel) Cleared() []Ref {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Ref(nil), f.cleared...)
+}
+
+// Tap hands the service a tap on msg's button with data, as the
+// recipient's, if replies are read (false: dropped, as a channel that
+// does not listen does). One the service refuses is answered without a
+// word, as the Telegram channel does.
+func (f *FakeChannel) Tap(id string, msg Ref, data string) bool {
+	if !f.Listening() {
+		return false
+	}
+	f.mu.Lock()
+	h := f.hooks.Tap
+	t := Tap{ID: id, Msg: msg, Data: data, Epoch: f.epoch}
+	f.mu.Unlock()
+	if h == nil {
+		return false
+	}
+	if !h(t) {
+		_ = f.AnswerTap(context.Background(), id, "")
+	}
+	return true
+}
+
+// WaitFor waits until ok (false: not within d), looking again on each
+// call the fake records.
+func (f *FakeChannel) WaitFor(ok func() bool, d time.Duration) bool {
+	deadline := time.After(d)
+	for !ok() {
+		select {
+		case <-f.sentC:
+		case <-deadline:
+			return ok()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	return true
 }

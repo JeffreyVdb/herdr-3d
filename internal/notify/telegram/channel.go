@@ -5,7 +5,12 @@
 // read by the same getUpdates loop, the one reader of the bot's updates
 // (two would make Telegram answer 409), polled only while a pairing waits
 // or replies are on; a reply typed into its worker gets a 👍 reaction, one
-// that is not an answer as a reply to it. No inbound port, no webhook. Only
+// that is not an answer as a reply to it. #14: the same loop reads the
+// paired person's taps on a card's buttons (callback queries) and hands
+// them to the service, which answers each; anyone else's is answered here
+// without a word. Cards are plain text with an inline keyboard, edited in
+// place; a typed answer is asked for with a force reply of its own (a
+// message with one cannot be edited). No inbound port, no webhook. Only
 // internal/app imports it
 // (TestNotifyCoreIsProviderNeutral): the hub, the store and the protocol
 // know notify's interfaces only. The token never leaves this package: not
@@ -257,6 +262,50 @@ func (c *Channel) Answer(ctx context.Context, msg notify.Ref, text string) error
 		return err
 	}
 	return c.api.answer(ctx, t, msg.Chat, msg.Message, text)
+}
+
+// SendCard delivers a card to the paired person (#14).
+func (c *Channel) SendCard(ctx context.Context, card notify.Card) (notify.Ref, error) {
+	t, uid, err := c.recipient()
+	if err != nil {
+		return notify.Ref{}, err
+	}
+	return c.api.sendCard(ctx, t, uid, card)
+}
+
+// EditCard replaces a card's text and buttons (#14).
+func (c *Channel) EditCard(ctx context.Context, msg notify.Ref, card notify.Card) error {
+	t, _, err := c.recipient()
+	if err != nil {
+		return err
+	}
+	return c.api.editCard(ctx, t, msg.Chat, msg.Message, card)
+}
+
+// ClearButtons takes a message's buttons away (#14).
+func (c *Channel) ClearButtons(ctx context.Context, msg notify.Ref) error {
+	t, _, err := c.recipient()
+	if err != nil {
+		return err
+	}
+	return c.api.clearButtons(ctx, t, msg.Chat, msg.Message)
+}
+
+// AnswerTap answers a tap (#14).
+func (c *Channel) AnswerTap(ctx context.Context, id, text string) error {
+	c.mu.Lock()
+	t := c.tokenLocked()
+	c.mu.Unlock()
+	return c.api.answerTap(ctx, t, id, text)
+}
+
+// AskText sends a reply prompt as a reply to msg (#14).
+func (c *Channel) AskText(ctx context.Context, msg notify.Ref, text, placeholder string) (notify.Ref, error) {
+	t, _, err := c.recipient()
+	if err != nil {
+		return notify.Ref{}, err
+	}
+	return c.api.askText(ctx, t, msg.Chat, msg.Message, text, placeholder)
 }
 
 // Listen switches reading replies on or off (#13).
@@ -651,6 +700,26 @@ func (l *reader) dispatch(ctx context.Context, t string, p *pairState, ups []upd
 			p = nil
 			continue
 		}
+		if q := u.CallbackQuery; q != nil {
+			// #14: a tap. The paired person's goes to the service, which
+			// answers it; any other, or one the service refuses (its queue
+			// is full), is answered here without a word (its spinner stops).
+			tp, ok := c.tapOf(q)
+			if ok && c.hooks.Tap(tp) {
+				continue
+			}
+			if !ok && p != nil {
+				l.res.Ignored++
+			}
+			if q.ID != "" {
+				actx, cancel := context.WithTimeout(ctx, callTimeout)
+				if err := c.api.answerTap(actx, t, q.ID, ""); err != nil {
+					c.opts.Log.Debug("telegram: a tap was not answered", "code", notify.CodeOf(err))
+				}
+				cancel()
+			}
+			continue
+		}
 		if r, ok := c.replyOf(m); ok {
 			c.hooks.Reply(r)
 			continue
@@ -704,6 +773,20 @@ func (c *Channel) replyOf(m *message) (notify.Reply, bool) {
 		r.To = notify.Ref{Chat: m.Chat.ID, Message: to.MessageID}
 	}
 	return r, true
+}
+
+// tapOf is q as a tap for the service (#14): only while replies are read,
+// and only the paired person's, on a message of their private chat with
+// the bot.
+func (c *Channel) tapOf(q *callbackQuery) (notify.Tap, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := q.Message
+	if !c.listen || !c.pairedLocked() || c.hooks.Tap == nil || q.ID == "" || q.From == nil || q.From.IsBot ||
+		q.From.ID != c.stored.UserID || m == nil || m.Chat.Type != "private" || m.Chat.ID != q.From.ID || m.MessageID == 0 {
+		return notify.Tap{}, false
+	}
+	return notify.Tap{ID: q.ID, Msg: notify.Ref{Chat: m.Chat.ID, Message: m.MessageID}, Data: q.Data, Epoch: c.epoch}, true
 }
 
 func (c *Channel) setPairState(p *pairState, state, msg string) {

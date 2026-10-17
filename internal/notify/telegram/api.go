@@ -109,9 +109,20 @@ type message struct {
 	ViaBot        *user     `json:"via_bot,omitempty"`
 }
 
+// callbackQuery is a tap on a button (#14). Message is the bot's message
+// the button is on (date 0: one the bot can no longer read; its chat and
+// id are still there).
+type callbackQuery struct {
+	ID      string   `json:"id"`
+	From    *user    `json:"from"`
+	Message *message `json:"message"`
+	Data    string   `json:"data"`
+}
+
 type update struct {
-	UpdateID int64    `json:"update_id"`
-	Message  *message `json:"message"`
+	UpdateID      int64          `json:"update_id"`
+	Message       *message       `json:"message"`
+	CallbackQuery *callbackQuery `json:"callback_query,omitempty"`
 }
 
 type api struct {
@@ -237,6 +248,43 @@ type sendMessage struct {
 	DisableNotification bool             `json:"disable_notification,omitempty"`
 	LinkPreview         linkPreview      `json:"link_preview_options"`
 	ReplyParameters     *replyParameters `json:"reply_parameters,omitempty"`
+	// #14: an inline keyboard, or a force reply.
+	ReplyMarkup any `json:"reply_markup,omitempty"`
+}
+
+// #14: a card's buttons, and the reply field opened for a typed answer.
+type inlineButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data"`
+}
+
+type inlineKeyboard struct {
+	InlineKeyboard [][]inlineButton `json:"inline_keyboard"`
+}
+
+type forceReply struct {
+	ForceReply  bool   `json:"force_reply"`
+	Placeholder string `json:"input_field_placeholder,omitempty"`
+}
+
+// placeholderMax is a force reply's placeholder's limit, in characters.
+const placeholderMax = 64
+
+// keyboard is a card's buttons as Telegram takes them (nil: none), their
+// labels free of the token.
+func keyboard(c notify.Card, token string) *inlineKeyboard {
+	if len(c.Buttons) == 0 {
+		return nil
+	}
+	k := &inlineKeyboard{InlineKeyboard: make([][]inlineButton, 0, len(c.Buttons))}
+	for _, row := range c.Buttons {
+		r := make([]inlineButton, 0, len(row))
+		for _, b := range row {
+			r = append(r, inlineButton{Text: Scrub(b.Text, token), CallbackData: b.Data})
+		}
+		k.InlineKeyboard = append(k.InlineKeyboard, r)
+	}
+	return k
 }
 
 // send sends plain text (no parse_mode: nothing in it is markup) and names
@@ -250,6 +298,75 @@ func (a api) answer(ctx context.Context, token string, chatID, msg int64, text s
 	_, err := a.sendMessage(ctx, token, sendMessage{ChatID: chatID, Text: text,
 		ReplyParameters: &replyParameters{MessageID: msg, AllowSendingWithoutReply: true}})
 	return err
+}
+
+// sendCard sends a card (#14): plain text and its buttons.
+func (a api) sendCard(ctx context.Context, token string, chatID int64, c notify.Card) (notify.Ref, error) {
+	m := sendMessage{ChatID: chatID, Text: c.Text, DisableNotification: c.Quiet}
+	if k := keyboard(c, token); k != nil {
+		m.ReplyMarkup = k
+	}
+	return a.sendMessage(ctx, token, m)
+}
+
+// askText sends text as a reply to message msg in chatID that opens the
+// reply field (#14).
+func (a api) askText(ctx context.Context, token string, chatID, msg int64, text, placeholder string) (notify.Ref, error) {
+	return a.sendMessage(ctx, token, sendMessage{ChatID: chatID, Text: text,
+		ReplyParameters: &replyParameters{MessageID: msg, AllowSendingWithoutReply: true},
+		ReplyMarkup:     forceReply{ForceReply: true, Placeholder: clip(Scrub(placeholder, token), placeholderMax)}})
+}
+
+type editMessageText struct {
+	ChatID      int64           `json:"chat_id"`
+	MessageID   int64           `json:"message_id"`
+	Text        string          `json:"text"`
+	LinkPreview linkPreview     `json:"link_preview_options"`
+	ReplyMarkup *inlineKeyboard `json:"reply_markup,omitempty"`
+}
+
+type editMessageReplyMarkup struct {
+	ChatID    int64 `json:"chat_id"`
+	MessageID int64 `json:"message_id"`
+}
+
+// editCard replaces a card's text and buttons (#14): a card without
+// buttons has none left.
+func (a api) editCard(ctx context.Context, token string, chatID, msg int64, c notify.Card) error {
+	text := clip(Scrub(c.Text, token), textMax)
+	if strings.TrimSpace(text) == "" {
+		text = "herdr-3d"
+	}
+	return notModified(a.call(ctx, token, "editMessageText", editMessageText{ChatID: chatID, MessageID: msg, Text: text,
+		LinkPreview: linkPreview{IsDisabled: true}, ReplyMarkup: keyboard(c, token)}, nil))
+}
+
+// clearButtons takes a message's buttons away, its text kept (#14).
+func (a api) clearButtons(ctx context.Context, token string, chatID, msg int64) error {
+	return notModified(a.call(ctx, token, "editMessageReplyMarkup", editMessageReplyMarkup{ChatID: chatID, MessageID: msg}, nil))
+}
+
+// notModified: Telegram refuses an edit that changes nothing (a 400 "message
+// is not modified"): it is what was wanted.
+func notModified(err error) error {
+	var se *notify.SendError
+	if errors.As(err, &se) && se.Code == notify.CodeBadRequest && strings.Contains(strings.ToLower(se.Msg), "message is not modified") {
+		return nil
+	}
+	return err
+}
+
+type answerCallbackQuery struct {
+	CallbackQueryID string `json:"callback_query_id"`
+	Text            string `json:"text,omitempty"`
+}
+
+// tapTextMax is answerCallbackQuery's text limit, in characters.
+const tapTextMax = 200
+
+// answerTap answers a tap (#14): its spinner stops, text shows briefly.
+func (a api) answerTap(ctx context.Context, token, id, text string) error {
+	return a.call(ctx, token, "answerCallbackQuery", answerCallbackQuery{CallbackQueryID: id, Text: clip(Scrub(text, token), tapTextMax)}, nil)
 }
 
 func (a api) sendMessage(ctx context.Context, token string, m sendMessage) (notify.Ref, error) {
@@ -289,6 +406,11 @@ func (a api) react(ctx context.Context, token string, chatID, msg int64, emoji s
 		Reaction: []reactionType{{Type: "emoji", Emoji: emoji}}}, nil)
 }
 
+// allowedUpdates is sent with every getUpdates: Telegram keeps the last
+// list given, so a list without callback_query (#14: the taps) would go on
+// dropping them.
+var allowedUpdates = []string{"message", "callback_query"}
+
 type getUpdates struct {
 	Offset         int64    `json:"offset,omitempty"`
 	Limit          int      `json:"limit"`
@@ -302,6 +424,6 @@ func (a api) updates(ctx context.Context, token string, offset int64, timeout in
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second+pollMargin)
 	defer cancel()
 	var out []update
-	err := a.call(ctx, token, "getUpdates", getUpdates{Offset: offset, Limit: 100, Timeout: timeout, AllowedUpdates: []string{"message"}}, &out)
+	err := a.call(ctx, token, "getUpdates", getUpdates{Offset: offset, Limit: 100, Timeout: timeout, AllowedUpdates: allowedUpdates}, &out)
 	return out, err
 }
