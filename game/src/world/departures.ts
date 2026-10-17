@@ -187,7 +187,11 @@ export interface LobbyPlan {
   line: number;
   /** The header's share of the board's height (the board above the groups). */
   head: number;
+  /** A page's cells: a group each, `perPage` of them. */
   cells: Cell[];
+  /** Groups a page holds, and how many pages the floors take (one while they fit at two lines): `lobbyPage`. */
+  perPage: number;
+  pages: number;
 }
 
 /** The lobby board's measures (metres): its margin, header, the gap under it and between columns, a line's height. */
@@ -205,49 +209,69 @@ const CELL_MIN = 2.2;
 
 /**
  * How `n` floors' groups fit a `w` × `h` m lobby board: three departures a floor while a line can stay `LINE_MIN` tall,
- * else two, else one; among those the plan with the biggest line (ties: fewer columns), columns no narrower than
- * `CELL_MIN`. The groups read left to right, then down. A building too tall for even one line at `LINE_MIN` gets one
- * line, as big as fits. Pure.
+ * else two; among those the plan with the biggest line (ties: fewer columns), columns no narrower than `CELL_MIN`. The
+ * groups read left to right, then down. A building too tall for one page at two lines takes **pages** of even size
+ * (9 floors: 5 + 4), as few as hold them at two lines, each planned as above (`lobbyPage` turns them). Never one line:
+ * a group shows its next two or three departures. Pure.
  */
 export function lobbyBoardPlan(n: number, w: number, h: number): LobbyPlan {
   const head = LOBBY_HEAD / h;
   const top = LOBBY_HEAD + LOBBY_GAP;
   const bodyW = w - 2 * LOBBY_MARGIN;
   const bodyH = h - top - LOBBY_MARGIN;
-  if (n <= 0) return { cols: 1, rows: 0, lines: 3, line: LINE_MAX / h, head, cells: [] };
-  const plan = (cols: number, lines: number) => {
-    const rows = Math.ceil(n / cols);
+  if (n <= 0) return { cols: 1, rows: 0, lines: 3, line: LINE_MAX / h, head, cells: [], perPage: 0, pages: 1 };
+  const plan = (k: number, cols: number, lines: number) => {
+    const rows = Math.ceil(k / cols);
     const line = Math.min(LINE_MAX, bodyH / (rows * (1 + lines) + (rows - 1) * LOBBY_ROW_GAP));
     return { cols, rows, lines, line, cellW: (bodyW - (cols - 1) * LOBBY_COL_GAP) / cols };
   };
-  let best: ReturnType<typeof plan> | null = null;
-  for (const lines of [3, 2, 1]) {
-    for (let cols = 1; cols <= n; cols++) {
-      const p = plan(cols, lines);
-      if (p.cellW < CELL_MIN) break;
-      if (p.line >= LINE_MIN && (!best || p.line > best.line + 1e-9)) best = p;
+  /** The best plan for `k` groups at `LINE_MIN` or more, or (`small`) at two lines whatever the size; null: none. */
+  const fit = (k: number, small = false) => {
+    let best: ReturnType<typeof plan> | null = null;
+    for (const lines of [3, 2]) {
+      for (let cols = 1; cols <= k; cols++) {
+        const p = plan(k, cols, lines);
+        if (p.cellW < CELL_MIN && (cols > 1 || !small)) break;
+        if ((p.line >= LINE_MIN || (small && lines === 2)) && (!best || p.line > best.line + 1e-9)) best = p;
+      }
+      if (best) break;
     }
-    if (best) break;
+    return best;
+  };
+  let per = n;
+  if (!fit(n)) {
+    let cap = 1;
+    while (cap < n && fit(cap + 1)) cap++;
+    per = Math.ceil(n / Math.ceil(n / cap));
   }
-  if (!best) {
-    // Too many floors: one line each, in as many columns as fit.
-    for (let cols = 1; cols <= n; cols++) {
-      const p = plan(cols, 1);
-      if (cols > 1 && p.cellW < CELL_MIN) break;
-      if (!best || p.line > best.line + 1e-9) best = p;
-    }
-  }
-  const p = best as ReturnType<typeof plan>;
+  // A board too small for even one group at `LINE_MIN`: two lines, as big as fit.
+  const p = (fit(per) ?? fit(per, true)) as ReturnType<typeof plan>;
   const groupH = (1 + p.lines) * p.line;
   const cells: Cell[] = [];
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < per; i++) {
     const c = i % p.cols;
     const r = Math.floor(i / p.cols);
     const x = LOBBY_MARGIN + c * (p.cellW + LOBBY_COL_GAP);
     const y = top + r * (groupH + LOBBY_ROW_GAP * p.line);
     cells.push({ u0: x / w, u1: (x + p.cellW) / w, v0: y / h, v1: (y + groupH) / h });
   }
-  return { cols: p.cols, rows: p.rows, lines: p.lines, line: p.line / h, head, cells };
+  return { cols: p.cols, rows: p.rows, lines: p.lines, line: p.line / h, head, cells, perPage: per, pages: Math.ceil(n / per) };
+}
+
+/** How long the lobby board shows a page of floors before the next, when they take more than one. */
+export const LOBBY_PAGE_MS = 10_000;
+
+/**
+ * The page of `n` floors' groups (`per` a page) the lobby board shows at `now`: the floors `start` to `end` (top floor
+ * first) and when the next page turns (`nextAt`; never with one page). A pure function of the clock, so a board that was
+ * out of view comes back on the page it would be on.
+ */
+export function lobbyPage(n: number, per: number, now: number): { page: number; pages: number; start: number; end: number; nextAt: number } {
+  const pages = per > 0 ? Math.max(1, Math.ceil(n / per)) : 1;
+  if (pages === 1) return { page: 0, pages, start: 0, end: n, nextAt: Infinity };
+  const turn = Math.floor(now / LOBBY_PAGE_MS);
+  const page = turn % pages;
+  return { page, pages, start: page * per, end: Math.min(n, (page + 1) * per), nextAt: (turn + 1) * LOBBY_PAGE_MS };
 }
 
 /** The group at a point of the board (u, v as in `Cell`), or null: the header, a margin or a gap (all floors). */

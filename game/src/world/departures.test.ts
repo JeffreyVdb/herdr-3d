@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Schedule } from '../net/protocol';
-import { boardCountdown, boardTime, cellAt, cellBoxes, departuresLine, departureState, departuresScope, floorDepartures, lobbyBoardPlan, lobbyDepartures, type LobbyFloor } from './departures';
+import { boardCountdown, boardTime, cellAt, cellBoxes, departuresLine, departureState, departuresScope, floorDepartures, LOBBY_PAGE_MS, lobbyBoardPlan, lobbyDepartures, lobbyPage, type LobbyFloor } from './departures';
 import { ScheduleBook, SCHEDULE_GRACE_MS } from './schedule';
 
 // #65 (part 4 of #61): the departures boards' text model. The board draws exactly this, so a board redraws only when
@@ -217,19 +217,38 @@ describe('the lobby board’s groups (#65)', () => {
   const W = 5.5;
   const Hm = 2.7;
 
-  it('three lines a floor while they fit, the biggest type that does; fewer lines for a tall building', () => {
-    expect(lobbyBoardPlan(1, W, Hm)).toMatchObject({ cols: 1, rows: 1, lines: 3 });
-    expect(lobbyBoardPlan(3, W, Hm)).toMatchObject({ cols: 2, rows: 2, lines: 3 });
-    expect(lobbyBoardPlan(6, W, Hm)).toMatchObject({ cols: 2, rows: 3, lines: 3 });
-    expect(lobbyBoardPlan(8, W, Hm)).toMatchObject({ cols: 2, rows: 4, lines: 2 });
-    expect(lobbyBoardPlan(12, W, Hm)).toMatchObject({ cols: 2, rows: 6, lines: 1 });
+  it('three lines a floor while they fit, the biggest type that does; two for a taller building; one page while they fit', () => {
+    expect(lobbyBoardPlan(1, W, Hm)).toMatchObject({ cols: 1, rows: 1, lines: 3, perPage: 1, pages: 1 });
+    expect(lobbyBoardPlan(3, W, Hm)).toMatchObject({ cols: 2, rows: 2, lines: 3, perPage: 3, pages: 1 });
+    expect(lobbyBoardPlan(6, W, Hm)).toMatchObject({ cols: 2, rows: 3, lines: 3, perPage: 6, pages: 1 });
+    expect(lobbyBoardPlan(8, W, Hm)).toMatchObject({ cols: 2, rows: 4, lines: 2, perPage: 8, pages: 1 });
     expect(lobbyBoardPlan(0, W, Hm).cells).toEqual([]);
   });
 
-  it('cells do not overlap, sit under the header and inside the board, one per floor in order', () => {
+  it('a building too tall for one page at two lines: pages of even size, each at the most lines that fit', () => {
+    // 9 floors: 5 + 4, not 8 + 1; 12: two pages of 6 at three lines, as a six-floor building's board.
+    expect(lobbyBoardPlan(9, W, Hm)).toMatchObject({ lines: 3, perPage: 5, pages: 2 });
+    expect(lobbyBoardPlan(12, W, Hm)).toMatchObject({ cols: 2, rows: 3, lines: 3, perPage: 6, pages: 2 });
+    expect(lobbyBoardPlan(16, W, Hm)).toMatchObject({ lines: 2, perPage: 8, pages: 2 });
+    expect(lobbyBoardPlan(17, W, Hm)).toMatchObject({ lines: 3, perPage: 6, pages: 3 });
+  });
+
+  it('never fewer than two departures a floor, nor type under 14 cm, whatever the floor count', () => {
+    for (let n = 1; n <= 60; n++) {
+      const p = lobbyBoardPlan(n, W, Hm);
+      expect(p.lines, `${n}`).toBeGreaterThanOrEqual(2);
+      expect(p.line * Hm, `${n}`).toBeGreaterThanOrEqual(0.14 - 1e-9);
+      expect(p.cells, `${n}`).toHaveLength(p.perPage);
+      expect(p.pages, `${n}`).toBe(Math.ceil(n / p.perPage));
+      // Every page has a floor on it (the last one too).
+      expect(n - (p.pages - 1) * p.perPage, `${n}`).toBeGreaterThan(0);
+    }
+  });
+
+  it('cells do not overlap, sit under the header and inside the board, one per floor of a page in order', () => {
     for (const n of [1, 2, 3, 5, 8, 12, 20]) {
       const p = lobbyBoardPlan(n, W, Hm);
-      expect(p.cells).toHaveLength(n);
+      expect(p.cells).toHaveLength(p.perPage);
       for (const [i, c] of p.cells.entries()) {
         expect(c.u0, `${n}`).toBeGreaterThan(0);
         expect(c.u1).toBeLessThan(1);
@@ -261,5 +280,22 @@ describe('the lobby board’s groups (#65)', () => {
     expect(b!.min[1]).toBeCloseTo(3.7 - c.v1 * Hm, 6);
     expect(b!.min[2]).toBe(0);
     expect(b!.max[2]).toBeCloseTo(0.11, 6);
+  });
+});
+
+describe('the lobby board’s pages (#65)', () => {
+  it('one page: every floor, nothing to turn', () => {
+    expect(lobbyPage(6, 6, T)).toEqual({ page: 0, pages: 1, start: 0, end: 6, nextAt: Infinity });
+    expect(lobbyPage(0, 0, T)).toEqual({ page: 0, pages: 1, start: 0, end: 0, nextAt: Infinity });
+  });
+
+  it('pages turn on the clock every LOBBY_PAGE_MS, the last one short, then back to the first', () => {
+    const t0 = Math.ceil(T / (6 * LOBBY_PAGE_MS)) * 6 * LOBBY_PAGE_MS; // page 0's turn, of two pages and of three
+    expect(lobbyPage(9, 5, t0)).toEqual({ page: 0, pages: 2, start: 0, end: 5, nextAt: t0 + LOBBY_PAGE_MS });
+    expect(lobbyPage(9, 5, t0 + LOBBY_PAGE_MS - 1)).toMatchObject({ page: 0, nextAt: t0 + LOBBY_PAGE_MS });
+    expect(lobbyPage(9, 5, t0 + LOBBY_PAGE_MS)).toEqual({ page: 1, pages: 2, start: 5, end: 9, nextAt: t0 + 2 * LOBBY_PAGE_MS });
+    expect(lobbyPage(9, 5, t0 + 2 * LOBBY_PAGE_MS)).toMatchObject({ page: 0, start: 0, end: 5 });
+    // A pure function of the clock: a board back in view is on the page it would have been on.
+    expect(lobbyPage(17, 6, t0 + 5 * LOBBY_PAGE_MS + 123)).toMatchObject({ page: 2, start: 12, end: 17 });
   });
 });

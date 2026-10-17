@@ -79,7 +79,11 @@ class Face<M extends Model> {
     const m = model(now);
     this.nextAt = m.nextAt;
     const k = key(m);
-    if (k === this.drawnKey) return false;
+    // The same picture: what it shows is this model (its ids too: a row replaced by one that reads the same).
+    if (k === this.drawnKey) {
+      this.shown = m;
+      return false;
+    }
     const g = this.canvas.getContext('2d');
     if (!g) return false;
     this.drawnKey = k;
@@ -169,7 +173,10 @@ export function buildFloorDepartures(box: Box3): FloorDeparturesMesh {
   };
 }
 
-const floorKey = (m: FloorBoard) => JSON.stringify([m.known, m.rows, m.attention, m.later]);
+/** What a row draws: its id is not (a row replaced by one that reads the same is no redraw). */
+const rowKey = (r: DepartureRow) => [r.time, r.title, r.state, r.status];
+
+const floorKey = (m: FloorBoard) => JSON.stringify([m.known, m.rows.map(rowKey), m.attention, m.later]);
 
 /** The lobby board's model: the building's groups as planned for its face. */
 export interface LobbyBoardModel {
@@ -179,10 +186,15 @@ export interface LobbyBoardModel {
   plan: LobbyPlan;
   /** The building's logo (null: its name alone). */
   logo: { hash: string; image: CanvasImageSource; width: number; height: number } | null;
+  /** The page of floors `groups` are (0-based) and how many there are (`lobbyPage`). */
+  page: number;
+  pages: number;
   nextAt: number;
 }
 
-const lobbyKey = (m: LobbyBoardModel) => JSON.stringify([m.known, m.building, m.groups, m.plan.lines, m.plan.cols, m.logo?.hash ?? null]);
+/** What the lobby board draws; a group's floor id too, which its pick box opens. */
+const lobbyKey = (m: LobbyBoardModel) =>
+  JSON.stringify([m.known, m.building, m.page, m.pages, m.groups.map((g) => [g.floor, g.name, g.level, g.attention, g.later, g.rows.map(rowKey)]), m.plan.lines, m.plan.cols, m.logo?.hash ?? null]);
 
 export interface LobbyDeparturesMesh {
   group: THREE.Group;
@@ -192,6 +204,8 @@ export interface LobbyDeparturesMesh {
   /** Look again on the next tick: what it shows besides the schedules changed (the floors, the logo). */
   invalidate(): void;
   tick(version: number, now: number, view: boolean, model: (now: number) => LobbyBoardModel): boolean;
+  /** The model on the board now (null before its first picture): its groups are what the pick boxes open. */
+  shown(): LobbyBoardModel | null;
   info(): { draws: number; nextAt: number; model: Omit<LobbyBoardModel, 'logo'> & { logo: string | null } | null };
   dispose(): void;
 }
@@ -218,6 +232,7 @@ export function buildLobbyDepartures(box: Box3): LobbyDeparturesMesh {
     due: (v, now) => face.due(v, now),
     invalidate: () => face.invalidate(),
     tick: (v, now, view, model) => face.tick(v, now, view, model, lobbyKey),
+    shown: () => face.shown,
     info: () => {
       const m = face.shown;
       return { draws: face.draws, nextAt: face.next, model: m ? { ...m, logo: m.logo?.hash ?? null } : null };
@@ -477,12 +492,25 @@ export function paintLobbyBoard(g: CanvasRenderingContext2D, W: number, H: numbe
     }
   }
   const base = head * 0.68;
+  // More floors than a page holds: which ones these are and the page, by the logo (`Floors 12–7 · 1/2`).
+  let pageW = 0;
+  const first = m.groups[0];
+  const last = m.groups[m.groups.length - 1];
+  if (m.pages > 1 && first && last) {
+    g.fillStyle = C.text2;
+    g.font = `600 ${Math.round(head * 0.26)}px ${FONT}`;
+    g.textAlign = 'right';
+    const text = `${first === last ? `Floor ${first.level}` : `Floors ${first.level}–${last.level}`} · ${m.page + 1}/${m.pages}`;
+    g.fillText(text, W - pad - logoW, base);
+    g.textAlign = 'left';
+    pageW = g.measureText(text).width + u * 3;
+  }
   g.fillStyle = C.accent;
   g.font = `800 ${Math.round(head * 0.5)}px ${FONT}`;
-  const w = fitText(g, 'Departures', pad, base, W - pad * 2 - logoW);
+  const w = fitText(g, 'Departures', pad, base, W - pad * 2 - logoW - pageW);
   g.fillStyle = C.text2;
   g.font = `600 ${Math.round(head * 0.26)}px ${FONT}`;
-  fitText(g, m.building, pad + w + u * 3, base, W - pad * 2 - logoW - w - u * 3);
+  fitText(g, m.building, pad + w + u * 3, base, W - pad * 2 - logoW - pageW - w - u * 3);
   g.fillStyle = C.ink3;
   g.fillRect(pad, head, W - pad * 2, Math.max(2, u * 0.35));
   if (!m.known) {

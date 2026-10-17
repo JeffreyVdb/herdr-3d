@@ -219,6 +219,20 @@ describe('the floor board’s redraws (#65)', () => {
     expect(mesh.info().model?.rows.map((r) => r.id)).toEqual(['a']);
     mesh.dispose();
   });
+
+  it('a row replaced by one that reads the same is no redraw (the id is not drawn), yet the board knows it', () => {
+    const b = new ScheduleBook();
+    b.reset([sched('a', { title: 'Same task', due_at: T + 3 * H })]);
+    const mesh = buildFloorDepartures(box);
+    const model = (now: number) => floorDepartures(b, 'herdr-3d', now, TZ);
+    expect(mesh.tick(b.version, T + 1_000, true, model)).toBe(true);
+    b.removed({ t: 'schedule.removed', seq: 2, id: 'a' });
+    b.upsert(sched('b', { title: 'Same task', due_at: T + 3 * H }));
+    expect(mesh.tick(b.version, T + 2_000, true, model)).toBe(false);
+    expect(mesh.info().draws).toBe(1);
+    expect(mesh.info().model?.rows.map((r) => r.id)).toEqual(['b']);
+    mesh.dispose();
+  });
 });
 
 describe('the lobby board’s texture (#65)', () => {
@@ -229,7 +243,7 @@ describe('the lobby board’s texture (#65)', () => {
   ];
   const lobby = (b: ScheduleBook): LobbyBoardModel => {
     const plan = lobbyBoardPlan(floors.length, 5.5, 2.7);
-    return { ...lobbyDepartures(b, floors, T, TZ, plan.lines), building: 'Work', plan, logo: null };
+    return { ...lobbyDepartures(b, floors, T, TZ, plan.lines), building: 'Work', plan, logo: null, page: 0, pages: 1 };
   };
 
   it('a group per floor: its number on a flap, its name, its departures or "No departures scheduled", its attention count', () => {
@@ -272,6 +286,43 @@ describe('the lobby board’s texture (#65)', () => {
     mesh.invalidate();
     expect(mesh.tick(b.version, T + 9_000, true, model)).toBe(false);
     expect(mesh.info().draws).toBe(2);
+    mesh.dispose();
+  });
+
+  it('a building of more floors than a page holds: a page of groups, each with two or three departures, and which page', () => {
+    const tall = Array.from({ length: 12 }, (_, i) => ({ id: `f${i + 1}`, name: `floor-${i + 1}`, level: i + 1 }));
+    const plan = lobbyBoardPlan(tall.length, 5.5, 2.7);
+    expect(plan.pages).toBe(2);
+    const b = new ScheduleBook();
+    b.reset([1, 2, 3, 4].map((k) => sched(`t${k}`, { floor: 'f12', title: `Top ${k}`, due_at: T + k * H })));
+    const top = [...tall].reverse();
+    const page = (i: number): LobbyBoardModel => {
+      const floors = top.slice(i * plan.perPage, (i + 1) * plan.perPage);
+      return { ...lobbyDepartures(b, floors, T, TZ, plan.lines), building: 'Tower', plan, logo: null, page: i, pages: plan.pages };
+    };
+    const r = recorder(1376, 736);
+    paintLobbyBoard(r.g, r.W, r.H, page(0));
+    const said = r.said();
+    expect(said).toContain('Floors 12–7 · 1/2');
+    // The top floor's next three (its fourth is "later"), not one.
+    for (const t of ['Top 1', 'Top 2', 'Top 3', '+1 later']) expect(said, t).toContain(t);
+    expect(said).not.toContain('floor-6');
+    const r2 = recorder(1376, 736);
+    paintLobbyBoard(r2.g, r2.W, r2.H, page(1));
+    expect(r2.said()).toContain('Floors 6–1 · 2/2');
+    expect(r2.said()).toContain('floor-1');
+    expect(r2.said()).not.toContain('floor-12');
+    // A page turn is a new picture; the same page is not.
+    const mesh = buildLobbyDepartures({ min: [6.2, 1, 0], max: [11.8, 3.8, 0.1] });
+    let at = 0;
+    const model = () => page(at);
+    expect(mesh.tick(b.version, T, true, model)).toBe(true);
+    mesh.invalidate();
+    expect(mesh.tick(b.version, T + 1_000, true, model)).toBe(false);
+    at = 1;
+    mesh.invalidate();
+    expect(mesh.tick(b.version, T + 2_000, true, model)).toBe(true);
+    expect(mesh.shown()?.groups.map((g) => g.floor)).toEqual(['f6', 'f5', 'f4', 'f3', 'f2', 'f1']);
     mesh.dispose();
   });
 });

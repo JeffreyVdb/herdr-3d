@@ -13,7 +13,7 @@ import type { LogoEntry } from './logos';
 import { canvasTexture, elevatorMeshes } from './props';
 import { buildLobbyDepartures, type LobbyDeparturesMesh, type LobbyBoardModel } from './departuresBoard';
 import { PropViewer } from './propView';
-import { cellBoxes, lobbyBoardPlan, lobbyDepartures, type LobbyFloor, type LobbyPlan } from '../world/departures';
+import { cellBoxes, lobbyBoardPlan, lobbyDepartures, lobbyPage, type LobbyFloor, type LobbyPlan } from '../world/departures';
 import type { ScheduleBook } from '../world/schedule';
 
 /**
@@ -53,7 +53,8 @@ export class LobbyView {
   private readonly leaves: THREE.Group[] = [];
   private readonly textures: THREE.Texture[] = [];
   private open = 0;
-  private readonly targets: Array<{ boxes: Box3[]; value: LobbyTarget }>;
+  /** What a look can pick; a number is a departures group's cell, whose floor is the page on the board (`pick`). */
+  private readonly targets: Array<{ boxes: Box3[]; value: LobbyTarget | number }>;
   private placeholder: THREE.Object3D | null = null;
   private readonly glassMat: THREE.MeshBasicNodeMaterial;
   /** M3d: the entrance sign and the reception wall, which show the logo when there is one. */
@@ -62,6 +63,8 @@ export class LobbyView {
   readonly departures: LobbyDeparturesMesh;
   readonly departuresPlan: LobbyPlan;
   private depFloors: LobbyFloor[];
+  /** #65: the groups' pick boxes, a cell each (the page on the board says which floor is in it). */
+  private readonly depCells: Box3[];
   private depLogo: LogoEntry | null = null;
   private readonly viewer = new PropViewer();
   /** #65: the share of the view's height the board spans, when it last looked (test hook). */
@@ -232,21 +235,21 @@ export class LobbyView {
     this.slot.position.set(L.receptionist.x, 0, L.receptionist.z);
     this.slot.name = 'lobby.receptionist';
     this.group.add(this.slot);
-    // #65: the departures board on the north wall; each floor's group is a pick box of its own, a centimetre proud of the
-    // board, so a look at a group picks that floor and one anywhere else on the board picks the board (every floor).
+    // #65: the departures board on the north wall; each group's cell is a pick box of its own, a centimetre proud of the
+    // board, so a look at a group picks its floor (on the page the board shows) and one anywhere else on the board picks
+    // the board (every floor).
     this.departures = buildLobbyDepartures(L.departures);
     this.group.add(this.departures.group);
     const scr = this.departures.screen;
     this.departuresPlan = lobbyBoardPlan(floors.length, scr.max[0] - scr.min[0], scr.max[1] - scr.min[1]);
     this.depFloors = floors.map((f, i) => ({ id: f.id, name: f.name, level: i + 1 }));
-    // The groups read top floor first (`lobbyDepartures`): cell i is floor n - 1 - i.
-    const cells = cellBoxes(scr, this.departuresPlan.cells);
+    this.depCells = cellBoxes(scr, this.departuresPlan.cells);
 
     this.targets = [
       { boxes: [L.deskBox, { min: [L.receptionist.x - 0.35, 0, L.receptionist.z - 0.35], max: [L.receptionist.x + 0.35, 1.7, L.receptionist.z + 0.35] }], value: 'reception' },
       { boxes: [L.elevator], value: 'elevator' },
       { boxes: [L.departures], value: 'departures' },
-      ...cells.map((b, i) => ({ boxes: [b], value: `departures:${floors[floors.length - 1 - i]?.id ?? ''}` as LobbyTarget })),
+      ...this.depCells.map((b, i) => ({ boxes: [b], value: i })),
     ];
   }
 
@@ -270,15 +273,20 @@ export class LobbyView {
 
   /** #65: what the departures board shows, how much of the view it spans, and where its groups are (test hook). */
   departuresInfo(): ReturnType<LobbyDeparturesMesh['info']> & { share: number; board: Box3; groups: Array<{ floor: string; box: Box3 }> } {
-    const groups = this.targets.flatMap((t) => (t.value.startsWith('departures:') && t.boxes[0] ? [{ floor: t.value.slice('departures:'.length), box: t.boxes[0] }] : []));
+    const groups = (this.departures.shown()?.groups ?? []).flatMap((g, i) => (this.depCells[i] ? [{ floor: g.floor, box: this.depCells[i] }] : []));
     return { ...this.departures.info(), share: +this.depShare.toFixed(3), board: this.plan.lobby.departures, groups };
   }
 
   private departuresModel(book: Pick<ScheduleBook, 'known' | 'all'>, now: number, tz: string): LobbyBoardModel {
-    const l = lobbyDepartures(book, this.depFloors, now, tz, this.departuresPlan.lines);
+    // The page of floors the clock is on (one while they fit), top floor first.
+    const plan = this.departuresPlan;
+    const top = [...this.depFloors].sort((a, b) => b.level - a.level);
+    const pg = lobbyPage(top.length, plan.perPage, now);
+    const l = lobbyDepartures(book, top.slice(pg.start, pg.end), now, tz, plan.lines);
     const e = this.depLogo;
     const image = e?.texture.image as CanvasImageSource | undefined;
-    return { ...l, building: this.name, plan: this.departuresPlan, logo: e && image ? { hash: e.hash, image, width: e.width, height: e.height } : null };
+    const logo = e && image ? { hash: e.hash, image, width: e.width, height: e.height } : null;
+    return { ...l, nextAt: Math.min(l.nextAt, pg.nextAt), page: pg.page, pages: pg.pages, building: this.name, plan, logo };
   }
 
   private tex(t: THREE.Texture): THREE.Texture {
@@ -324,7 +332,11 @@ export class LobbyView {
 
   /** What the view ray hits in the lobby (absolute coordinates), within reach. */
   pick(o: V3, dir: V3, reach: number): LobbyTarget | null {
-    return pickNearest(o, dir, this.targets, reach, this.plan.lobby.walls)?.value ?? null;
+    const v = pickNearest(o, dir, this.targets, reach, this.plan.lobby.walls)?.value ?? null;
+    if (typeof v !== 'number') return v;
+    // #65: a group's cell: the floor the board shows in it now; an empty cell (a page's last) is the board.
+    const floor = this.departures.shown()?.groups[v]?.floor;
+    return floor === undefined ? 'departures' : `departures:${floor}`;
   }
 
   /** M17: the glass front takes the sky's colour (the room behind it is lit by its own lights). */
