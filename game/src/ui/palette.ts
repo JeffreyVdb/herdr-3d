@@ -318,7 +318,8 @@ export class Palette {
       el,
       enabled: true,
       act: () => {
-        this.close(false);
+        // The keyboard goes back where it was: a review open (busy) keeps it; one that opens takes it.
+        this.close();
         this.host.held?.review(r.review.id);
       },
     };

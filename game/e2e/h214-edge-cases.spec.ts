@@ -383,6 +383,7 @@ test('refused while the next dictation’s review is open: that review is untouc
     await page.keyboard.press('Enter');
     await expect(page.locator('.toast')).toHaveText('A hire review is open: finish or close it first. The task for Desk 15 of pastry is still kept.');
     expect(await now(page)).toEqual(editing);
+    await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest('.desk-dlg--review'))).toBe(true);
 
     // Cancelled, the review is free: the row opens the refused one again, as it was reviewed.
     await reviewEl(page).locator('[data-key="cancel"]').click();
