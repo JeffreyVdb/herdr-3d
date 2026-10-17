@@ -1940,3 +1940,57 @@ Coverage:
 | A merge keeps every observed field (the later of two) and makes no cycle | `TestMergeKeepsEveryObservedField`, `TestMergeMakesNoCycle`, `merge.json`; `childTree` "shows a row in a cycle…" in `children.test.ts` |
 | Restart rebuilds from evidence, nothing persisted | `TestFreshRegistryRebuildsFromReplay`, `TestChildAgentsRebuiltAfterRestart`; evidence before its worker: `TestChildEvidenceReplayedOnBind` |
 | Wire names | `TestChildWire` (`internal/proto`) |
+
+## 2026-10-17 — #23 (phase 2 of #20): Claude Code subagents from their transcripts and the bridge's hooks
+
+The first production source of #22's model: a Claude worker's subagents, from its own session's files and, for the
+Claude workers the bridge starts, its own observational hooks, on **Claude Code 2.1.302**. Code: `internal/claudechild`
+(`Source`, `Listener`, the facts and their derivation in `book.go`, the hook settings in `hooks.go`), the
+`usage.Children` listener in `internal/usage/session.go`, `UsageConfig.ClaudeChildren` in `internal/server/usage.go`,
+the `--settings` launch shapes in `internal/herdr` and the wiring in `internal/app` (`-claude-hooks`). Research:
+`docs/research/claude-subagents.md`. Docs: `protocol.md` "Claude Code subagents (#23)".
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Who reads the files | **The usage tracker's `usage.Session`, once per file**: it already tailed the main transcript and every `subagents/agent-*.jsonl` (its usage counted them), so a `usage.Children` listener beside `Lines` and `Tap` gets the main lines, each child's lines and (new) each child's meta file when it changed (stat per poll, read whole when its identity, size or time moved: Claude renames a new one over it), `Gone` when a file goes, `Reset` when everything is read again, `Polled` at the end of a poll. The listener asks for an early listing (`WantList`) while a call's file is not seen, so a child does not wait for the 10 s `SubagentRescan`. The source owns only the hook log's tail. |
+| 2 | How evidence is made | **Facts keyed by explicit ids, derived anew after each poll.** Each reader keeps the session's facts (calls by `tool_use` id with the transcript that holds them, results, notifications, metas, files with their first, last and latest-prompt timestamps); the hooks' facts are kept apart. After a poll the children are derived from all of them and only what changed is sent (and a `Removed` for a child sent that is gone); a line read twice, a reset or a restart gives the same answer. Not per-line deltas: an end and a resume read in either order must give the same state, and the replay must send the latest word. |
+| 3 | Pairing | **By ids only**: a meta's `toolUseId`, a call's result naming its `agentId`, a notification naming both, a `PostToolUse` hook; the first pairing of an id wins (that order), a later one naming another partner is ignored. Never by launch order, mtime or `promptId` (shared by concurrent siblings). A child file whose pairing is not there yet is held up to 5 s (`HoldUnpaired`, bridge clock) while a call of the session is unpaired, so the child shows as the provisional row gaining its native id instead of a second row merged into it a poll later (#22's merge, which removes a row); after that it shows alone. |
+| 4 | Parents | **The transcript holding the call** (the root's: `root`; a child's: that child), else the meta's `parentAgentId`, else a meta's `spawnDepth: 1` (`root`), else none: `unresolved`. A depth-2 child is in the same flat `subagents/` directory; its parent is never guessed from depth or timing. |
+| 5 | Lifecycle | **The transcripts decide it; the latest end wins; a later prompt resumes.** Ends: the call's result (`completed`; `is_error`: `interrupted`), a task notification (`completed`; `killed`/`failed`: `interrupted`, phase 1 having no failed state), the meta's `finished` at the meta's write time. A user record that sets the child to work after the end (a prompt; a meta record with an `origin`: a SendMessage, `coordinator`, or its own background task, `task-notification`) makes it `running` again with `ended_at` cleared; the interruption marker `[Request interrupted …]`, a tool result or a meta record without origin does not (the interrupt case writes the marker 3 ms after the parent's rejection). Nothing times out; a root's turn, `Stop` or exit ends no child. |
+| 6 | Hooks | **Observational, optional, one shared log.** `--settings <dir>/settings.json` (one flag, merged by Claude with the user's and the project's hooks, which are never touched) installs synchronous command hooks on `PreToolUse`/`PostToolUse` (`Agent|Task`), `SubagentStart`, `SubagentStop`: `flock -w 2 LOG cat >> LOG 2>> LOG.err || true` (whole lines under concurrency; any failure ignored). One log for every worker, routed by `session_id` (a per-session file cannot be named before the session exists); rotated past 8 MiB with one older file kept and read again after a restart (lines appended to the old file in the instant of the rotation can be lost: the transcripts have them). Hook input has no timestamp, so hooks never decide a lifecycle: they add the call before its transcript line, the pairing, the nested parent (`agent_id` on a nested `PostToolUse`) and the type. A `SubagentStop` is never an end (a Stop hook can keep the child working). No `Stop` hook: `background_tasks` would add nothing the transcripts lack. |
+| 7 | Launch | Two new allowlisted shapes, `start-claude-settings` and `resume-claude-settings` (`TestControlAllowlist`), used when `Control.ClaudeSettings` is set; the file must be a plain absolute `.json` path (`validSettingsFile`), which single quotes hold in any shell for the typed resume. herdr's own resume of a woken Claude does not pass it: those sessions are read from their transcripts only. Without `flock` or a writable directory the bridge logs a warning and runs without hooks. |
+| 8 | Not children | A teammate (`team_name` on the call, `teammate_id` on its result; docs only) and an internal helper (hooks with an empty `agent_type` and no call or file: 15 of them in the smoke session) make no row; a child file whose first records name another session or agent is ignored, everything in it (a call, a result, a notification: review round 1), also what it showed before a record named the other one (retracted: review round 2), but a call it shares with another transcript stays that one's, with its result there, whichever was read first (each transcript's copy of a call is kept: review round 3). A fork is a child; the copied call at its file's start (after `fork-context-ref`) is skipped, and a call already known is never re-homed. |
+| 9 | Replay | After a restart the source knows nothing; the tracker reads every worker's files from their start, which sends everything once the hub bound the worker. `Replay(session)` sends what the session's facts give now (a session bound again while it is read: a worker that let it go to another). Two workers claiming one session: the first reader's facts are the session's, the next one's take over when it closes. |
+| 10 | Fixtures | Real 2.1.302 recordings (`internal/claudechild/testdata`, cases a–g2 of the research), rebuilt from the throwaway sessions' files in Claude's compact JSON with the parser's fields untouched, thinking, long text and attachment payloads cut, and names scrubbed. The research's first fixtures had cut long strings, notifications' `<status>` included; they were not used. |
+
+Coverage:
+
+| Bullet | Where |
+|---|---|
+| Foreground and background visible before they report back | `TestForegroundVisibleBeforeResult`, `TestBackgroundAndParentIdle`, `TestDefaultBackground`; smoke "spawn" |
+| Two concurrent children correctly identified | `TestTwoConcurrentChildren` (files before metas, held, never paired by order); smoke "concurrent spawn" |
+| Completion, resume, Stop-hook continuation, parent idle, interruption: no duplicate rows | `TestResumeAndStopHookContinuation`, `TestBackgroundAndParentIdle`, `TestInterrupted` (all check no row was removed); smoke "resume", "interrupt" |
+| Root completion does not complete children | `TestBackgroundAndParentIdle` (the root's turn ends, five quiet polls) |
+| Hooks and JSONL only | `TestHooksAndTranscriptsReconcile` (the same tree with and without hooks; hook-first rows paired later; a torn line and a helper skipped), `TestTeammateAndHelperNoRows` |
+| Nested parentage from explicit evidence, else unresolved | `TestNestedParentage`, `TestNestedWithoutEvidenceUnresolved`; smoke "nested spawn" |
+| Fork's copied call is no spawn | `TestForkCopiedCallIsNoSpawn` |
+| Replay after restart; file missing pending; file removed | `TestRestartAndReplay`, `TestFileGoneAndPending`; smoke "bridge restart" |
+| Tolerant parsing (partial line, bad line, wrong types, replaced file) | `TestTolerantReading` |
+| One reader per file: lines, metas, gone, reset, early listing | `TestChildren` (`internal/usage`) |
+| Hub end to end | `TestClaudeSubagentEndToEnd` (`internal/server`) |
+| Hook settings and command (whole lines under 16 concurrent writers, exit 0 on failure), log rotation | `TestInstallHooks`, `TestHookCommandAppendsWholeLines`, `TestHookLogRotation` |
+| Launch shapes | `TestControlAllowlist`, `TestControlRefusesBadArgumentsBeforeRunning` |
+
+**Real-terminal smoke check** (`docs/research/claude-subagents.md` §6): a private bridge and herdr session
+(`h3d-csmoke`, own socket and database, `-sessions '^h3d-csmoke$'`), one Claude worker hired by the bridge with
+`claude-haiku-5-5` (started with the bridge's `--settings`), driven by `worker.prompt`, watched with `herdr-world dump`:
+spawn, concurrent spawn, nested spawn, interrupt (a TaskStop: `killed` → `interrupted`), bridge restart (the same six
+rows, same ids, from the files alone) and a resume after it, all one row per child. It found one bug, fixed before the
+restart step: a SendMessage to a finished child is an `isMeta` record, read as no prompt, so the resume did not show
+(decision 5). The interactive model sent `run_in_background` as a string, which Claude 2.1.302 runs in the background,
+so no interactive foreground child was seen; the foreground cases are the `-p` recordings'.
+
+Unverified, and left as the evidence shows: teammates (their calls, files and hooks); whether `SubagentStart` fires for
+helpers; whether a user-level `disableAllHooks` or managed `allowManagedHooksOnly` silences `--settings` hooks (either
+way the transcripts remain); a child whose root process dies without a result stays as its files left it (#20's "a lost
+process shows as unknown" needs process evidence this phase does not read).

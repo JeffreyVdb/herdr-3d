@@ -28,7 +28,10 @@ func TestControlAllowlist(t *testing.T) {
 		"create-session": {"{systemd-run}", "--user", "--unit=herdr-s-{session}", "--collect", "-p", "KillMode=process",
 			"--working-directory={home}", "{shell}", "-l", "-c", "exec herdr --session '{session}' server"},
 		"resume-claude": {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "claude --resume {id}"},
-		"resume-codex":  {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "codex resume {id}"},
+		// #23: with the bridge's own settings file (its observational hooks).
+		"resume-claude-settings": {"{herdr}", "--session", "{session}", "pane", "run", "{pane}",
+			"claude --settings '{settings}' --resume {id}"},
+		"resume-codex": {"{herdr}", "--session", "{session}", "pane", "run", "{pane}", "codex resume {id}"},
 		"report-codex-session": {"{herdr}", "--session", "{session}", "pane", "report-agent-session", "{pane}",
 			"--source", "herdr:codex", "--agent", "codex", "--agent-session-id", "{id}"},
 		"process-info": {"{herdr}", "--session", "{session}", "pane", "process-info", "--pane", "{pane}"},
@@ -41,6 +44,10 @@ func TestControlAllowlist(t *testing.T) {
 		"start-claude": {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "claude",
 			"--pane", "{pane}", "--timeout", "30000", "--",
 			"--model", "{model}", "--effort", "{effort}", "--permission-mode", "bypassPermissions", "--name", "{label}"},
+		"start-claude-settings": {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "claude",
+			"--pane", "{pane}", "--timeout", "30000", "--",
+			"--model", "{model}", "--effort", "{effort}", "--permission-mode", "bypassPermissions", "--name", "{label}",
+			"--settings", "{settings}"},
 		"start-codex": {"{herdr}", "--session", "{session}", "agent", "start", "{agent}", "--kind", "codex",
 			"--pane", "{pane}", "--timeout", "30000", "--",
 			"-m", "{model}", "-c", "model_reasoning_effort={effort}", "--dangerously-bypass-approvals-and-sandbox"},
@@ -216,6 +223,13 @@ func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 	must(c.StartCodexRemote(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", codex, remote))
 	must(c.ResumeCodexRemote(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", id, codex, remote))
 	must(c.ResumeCodexEmbedded(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", id, codex))
+	// #23: with the bridge's Claude settings, Claude's start and resume pass
+	// it; Codex's do not.
+	c.ClaudeSettings = "/home/u/.local/state/herdr-world/claude-hooks/settings.json"
+	must(c.ResumeAgent(ctx, "h3d-it-1", "w1:p2", "claude", id))
+	must(c.ResumeAgent(ctx, "h3d-it-1", "w1:p2", "codex", id))
+	must(c.StartAgent(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", Agent{Harness: "claude", Model: "claude-opus-5-5", Effort: "xhigh", Label: "Mochi the 2nd"}))
+	must(c.StartAgent(ctx, "h3d-it-1", "w7:p1", "mochi-a58752", Agent{Harness: "codex", Model: "gpt-6-sol", Effort: "ultra", Label: "ignored"}))
 	wantArgv := [][]string{
 		{"/usr/bin/systemd-run", "--user", "--unit=herdr-s-h3d-it-1", "--collect", "-p", "KillMode=process",
 			"--working-directory=/home/u", pol.wake, "-l", "-c", "exec herdr --session 'h3d-it-1' server"},
@@ -273,6 +287,17 @@ func checkAllowlistArgv(t *testing.T, pol shellPolicy) {
 		{"/opt/herdr", "--session", "h3d-it-1", "agent", "start", "mochi-a58752", "--kind", "codex", "--pane", "w7:p1",
 			"--timeout", "30000", "--", "resume", id, "-m", "gpt-6-sol", "-c", "model_reasoning_effort=low",
 			"--dangerously-bypass-approvals-and-sandbox"},
+		// #23
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w1:p2",
+			"claude --settings '/home/u/.local/state/herdr-world/claude-hooks/settings.json' --resume " + id},
+		{"/opt/herdr", "--session", "h3d-it-1", "pane", "run", "w1:p2", "codex resume " + id},
+		{"/opt/herdr", "--session", "h3d-it-1", "agent", "start", "mochi-a58752", "--kind", "claude", "--pane", "w7:p1",
+			"--timeout", "30000", "--", "--model", "claude-opus-5-5", "--effort", "xhigh",
+			"--permission-mode", "bypassPermissions", "--name", "Mochi the 2nd",
+			"--settings", "/home/u/.local/state/herdr-world/claude-hooks/settings.json"},
+		{"/opt/herdr", "--session", "h3d-it-1", "agent", "start", "mochi-a58752", "--kind", "codex", "--pane", "w7:p1",
+			"--timeout", "30000", "--", "-m", "gpt-6-sol", "-c", "model_reasoning_effort=ultra",
+			"--dangerously-bypass-approvals-and-sandbox"},
 	}
 	if !reflect.DeepEqual(got, wantArgv) {
 		t.Fatalf("argv =\n%q\nwant\n%q", got, wantArgv)
@@ -305,6 +330,17 @@ func TestControlRefusesBadArgumentsBeforeRunning(t *testing.T) {
 		"flag id":                func() error { return c.ResumeAgent(ctx, "h3d-it-1", "w1:p1", "claude", "-p") },
 		"empty id":               func() error { return c.ReportCodexSession(ctx, "h3d-it-1", "w1:p1", "") },
 		"unknown resume harness": func() error { return c.ResumeAgent(ctx, "h3d-it-1", "w1:p1", "opencode", id) },
+		// #23: the bridge's settings file is typed into a shell in quotes.
+		"quote in settings": func() error {
+			return (&Control{Run: c.Run, ClaudeSettings: "/tmp/x'; rm -rf ~; '.json"}).ResumeAgent(ctx, "h3d-it-1", "w1:p1", "claude", id)
+		},
+		"relative settings": func() error {
+			return (&Control{Run: c.Run, ClaudeSettings: "x/settings.json"}).StartAgent(ctx, "h3d-it-1", "w7:p1", "mochi-a58752",
+				Agent{Harness: "claude", Model: "claude-opus-5-5", Effort: "xhigh", Label: "Mochi"})
+		},
+		"settings not json": func() error {
+			return (&Control{Run: c.Run, ClaudeSettings: "/tmp/hooks.sh"}).ResumeAgent(ctx, "h3d-it-1", "w1:p1", "claude", id)
+		},
 		"process-info unwatched": func() error { _, err := c.PaneProcesses(ctx, "depot-manager", "w1:p1"); return err },
 
 		"create unwatched": func() error { _, err := c.CreateWorkspace(ctx, "herdr-3d", "/tmp", "x"); return err },

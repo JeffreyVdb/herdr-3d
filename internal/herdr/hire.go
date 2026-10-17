@@ -98,6 +98,9 @@ func (c *Control) StartAgent(ctx context.Context, session, pane, name string, a 
 	vars := map[string]string{"session": session, "pane": pane, "agent": name, "model": a.Model, "effort": a.Effort}
 	if a.Harness == "claude" {
 		vars["label"] = a.Label
+		if c.ClaudeSettings != "" { // #23: the bridge's hooks
+			op, vars["settings"] = opStartClaudeSettings, c.ClaudeSettings
+		}
 	}
 	_, err := c.run(ctx, op, vars)
 	if a.Harness == "codex" {

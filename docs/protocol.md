@@ -544,9 +544,9 @@ orchestrator (Cog)"), else you ("Asked of you"). The inbox row opens the complet
 #22, phase 1 of #20. The subagents a worker's own Claude Code or Codex session runs (Claude's `agentId`, a Codex child
 thread's `thread.id`) are its **native child agents**: conversations inside the worker, not panes, freelancers or desks.
 The bridge publishes them whether or not a transcript is open: `children` in the snapshot, `child.upsert` and
-`child.removed` events, and each worker's `child_generation`. This phase is the model and the protocol only: the bridge
-has no provider source yet (Claude Code: #23; Codex rollouts: #25; the shared Codex server: #27), so it sends
-`"children": []` and no child event. The board shows them from #24 on; opening a child's own transcript is #26.
+`child.removed` events, and each worker's `child_generation`. Phase 1 is the model and the protocol; the providers are
+sources of evidence for it: Claude Code since #23 ([below](#claude-code-subagents-23)), Codex rollouts (#25) and the
+shared Codex server (#27) to come. The board shows them from #24 on; opening a child's own transcript is #26.
 
 ```json
 {"t":"child.upsert","seq":1210,"child":{"id":"ch_7f3a09c2e1d4b856","native_id":"a3f9c1e2","provider":"claude",
@@ -632,6 +632,68 @@ with): `go test ./internal/server -run TestChildFixtures` plays each through a b
 as `game/fixtures/children-<name>.jsonl` (`H3D_UPDATE_FIXTURES=1`), which Vitest feeds through the decoder and the store.
 To build against them before a provider lands, the fixture bridge plays one: `make dev`, then
 `?ws=%2Ffixture%2Fchildren-nested&floor=office` (one recorded event every 2.5 s; `%3Fplay%3Dall` at once).
+
+#### Claude Code subagents (#23)
+
+#23, phase 2 of #20. A Claude worker's children come from its own session's files, with Claude Code's native CLI and
+JSONL transcripts (no SDK), observed on **Claude Code 2.1.302** (`docs/research/claude-subagents.md`: the records, the
+identity timing, the hooks; a version with other records shows fewer children or fewer states, never wrong ones). The
+transcript root is the configured one (`-claude-projects`, default `$CLAUDE_CONFIG_DIR/projects`, else
+`~/.claude/projects`): the root's `<session>.jsonl`, and every child at any depth in `<session>/subagents/` as
+`agent-<agentId>.jsonl` with its `agent-<agentId>.meta.json`. Nothing else changes on the wire: these are `child.upsert`
+and `child.removed` as above, with `provider: "claude"`.
+
+| field | from |
+|---|---|
+| `native_id` | the child's `agentId` |
+| `name`, `type`, `description` | the Agent call's `name` (when given), `subagent_type` (else the meta's `agentType`, else a hook's `agent_type`), `description` (else the meta's) |
+| `parent` | `root` when the call is in the root's transcript; `child` when it is in a child's transcript (that child), or by the meta's `parentAgentId`; `root` for a meta's `spawnDepth: 1` with no call seen; else `unresolved` |
+| `state` | below |
+| `source` | `transcript`, or `hook` while a call is known only from the bridge's hooks |
+| `started_at`, `last_activity_at`, `ended_at` | the call's and the child's records' timestamps; `ended_at` the end's (below) |
+| `transcript` | `available` once its file is seen; `pending` while it runs without one (just started); `unavailable` when it ended without one (a call that failed) |
+
+**When a child shows.** From its call (the root's or a child's `Agent`/legacy `Task` `tool_use`, or the bridge's
+`PreToolUse` hook), before it reports back, foreground and background alike: a provisional row (no `native_id`,
+`running`, `pending`) that gets its `agentId` as soon as explicit evidence pairs them: the meta's `toolUseId` (about
+0.1–1.6 s after the call), the call's result naming its `agentId` (a background launch: at once), a task notification
+naming both, or a `PostToolUse` hook. Never by launch order, file time or `promptId`, so concurrent children keep their
+own rows. A child file no evidence pairs yet waits up to 5 s (`HoldUnpaired`) while a call of the session is unpaired,
+so it does not show as a row of its own first; then it shows alone (`parent` from its meta, else `unresolved`). The
+bridge lists `subagents/` on the next read after a call whose file it has not seen (not only every 10 s).
+
+**States.** `running` from the call on. `completed` by the call's `completed` result (foreground), a `completed` task
+notification (background) or the meta's `finished` (at the meta's write). `interrupted` by a rejected or failed call
+result (an interrupt: `is_error`) or a `killed`/`failed` notification (a TaskStop, a crash: phase 1 has no failed
+state). The latest end wins; a prompt to the child after it (its file: a resume's message, `origin.kind`
+`coordinator`, or its own background task waking it, `task-notification`) makes it `running` again, the same row, its
+`ended_at` cleared. Nothing else ends a child: not quiet logs, not the root's turn ending or its `Stop`, not a
+`SubagentStop` hook (a Stop hook may keep it working: `stop_hook_active`), not the root being interrupted unless the
+call's own result says so. A child whose root process died without a result stays as its files left it.
+
+**Not children.** An agent-team teammate (a call with `team_name`, a result with `teammate_id`; the layout is not
+verified) and an internal helper (prompt suggestion, `/btw`: hooks with an empty `agent_type`, no call, no file) make no
+row. A fork (`subagent_type: "fork"`) is a child; the copy of its spawning call at the start of its file is not a call.
+A child file whose first records name another session or agent is ignored whole: no row of its own, and no call,
+result or notification in it counts, also one read before a record named the other session or agent; a call it shares
+(its tool_use id) with another transcript is that one's, whichever was read first. Its file removed
+(Claude Code's cleanup) removes its row (`child.removed`), also a running child's whose only pairing is its meta (kept
+for that); the root's transcript gone removes them all.
+
+**The bridge's hooks.** `-claude-hooks DIR` (`$HERDR_WORLD_CLAUDE_HOOKS`, default `claude-hooks` next to the database,
+`-` for none) holds the bridge's own Claude settings file, `settings.json` (0600), and the log its hooks append to,
+`events.jsonl`. The bridge passes it as **one** `--settings` to every Claude it starts (`worker.hire`) and types it into
+the wake's fallback resume (`claude --settings '<file>' --resume <id>`); Claude merges it with the user's and the
+project's hooks, which the bridge never reads or writes. Its hooks (`PreToolUse`/`PostToolUse` matcher `Agent|Task`,
+`SubagentStart`, `SubagentStop`) are synchronous command hooks that append their input to the log under `flock`
+(`flock -w 2 LOG cat >> LOG 2>> LOG.err || true`): they never block or fail the action. The bridge reads the log every
+second (routed by `session_id`; one rotated file kept past 8 MiB, read again after a restart). They only add evidence the
+transcripts give a moment later (the call, the pairing, the nested parent, the type): hook input has no time, so the
+lifecycle is the transcripts'. Without them (a worker the bridge did not start, herdr's own resume of a session, hooks
+disabled by the user's `disableAllHooks`, no `flock`, the log gone) the same children show from the transcripts alone.
+
+**Restart.** Nothing is kept: the usage tracker reads every worker's files from their start again, and the same
+evidence makes the same rows (`TestRestartAndReplay`).
 
 ## Events
 

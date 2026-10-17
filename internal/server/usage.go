@@ -30,6 +30,16 @@ type UsageConfig struct {
 	// in and the roots their paths may be under (nil: inline images are
 	// described but cannot be fetched, no path is read).
 	Images *transcript.Images
+	// ClaudeChildren, if set, gets each Claude worker's subagents from the
+	// reads of its session's files (#23, the Claude child-agent source): a
+	// reader per session read, closed when it is no longer read.
+	ClaudeChildren func(session string) ChildReader
+}
+
+// ChildReader reads one Claude session's subagent evidence (#23).
+type ChildReader interface {
+	usage.Children
+	Close()
 }
 
 // Usage timings.
@@ -109,7 +119,9 @@ type usageTracker struct {
 	// this round's changes.
 	hoOffered map[string]handoffOffered
 	hoUps     []handoffUpdate
-	now       func() time.Time
+	// #23: the reader of each Claude worker's subagent evidence.
+	kids map[string]ChildReader
+	now  func() time.Time
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -142,7 +154,7 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 		found:    map[string]foundCodex{}, logs: map[string]*txLog{},
 		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
 		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, dgOffered: map[string]digestOffered{},
-		hoOffered: map[string]handoffOffered{}, now: time.Now}
+		hoOffered: map[string]handoffOffered{}, kids: map[string]ChildReader{}, now: time.Now}
 }
 
 // trackUsage runs the tracker until ctx is done.
@@ -151,6 +163,7 @@ func (h *Hub) trackUsage(ctx context.Context) {
 	tr := newUsageTracker(*h.opts.Usage)
 	tr.now = h.opts.Now
 	defer tr.closeLogs()
+	defer tr.closeKids()
 	timer := time.NewTimer(tr.cfg.Interval)
 	defer timer.Stop()
 	for {
@@ -173,6 +186,20 @@ func (h *Hub) trackUsage(ctx context.Context) {
 		case <-timer.C:
 		case <-h.usageKick: // a new transcript watch
 		}
+	}
+}
+
+// closeKid stops reading a worker's subagent evidence (#23).
+func (tr *usageTracker) closeKid(id string) {
+	if k := tr.kids[id]; k != nil {
+		k.Close()
+		delete(tr.kids, id)
+	}
+}
+
+func (tr *usageTracker) closeKids() {
+	for id := range tr.kids {
+		tr.closeKid(id)
 	}
 }
 
@@ -256,8 +283,14 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.sessions[w.id] = nil
 			delete(tr.asks, w.id)
 			delete(tr.lines, w.id)
+			tr.closeKid(w.id)
 			if w.session != "" {
 				tr.sessions[w.id] = usage.NewSession(w.harness, w.session, tr.cfg.Roots, tr.cfg.Pricing)
+			}
+			if s := tr.sessions[w.id]; s != nil && w.harness == usage.Claude && tr.cfg.ClaudeChildren != nil { // #23
+				k := tr.cfg.ClaudeChildren(w.session)
+				s.SetChildren(k)
+				tr.kids[w.id] = k
 			}
 			if s := tr.sessions[w.id]; s != nil { // #57: the ask, from the same lines, the file's first included
 				l := &txLines{harness: w.harness, ask: transcript.NewAskTracker(w.harness), // #83: and a wrap-up's
@@ -338,6 +371,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.actOffered, id) // #98
 			delete(tr.dgOffered, id)  // #118
 			delete(tr.hoOffered, id)  // #223
+			tr.closeKid(id)           // #23
 			tr.throttle.forget(id)
 		}
 	}
