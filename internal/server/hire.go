@@ -329,7 +329,7 @@ func (h *Hub) startHirePrepare(ctx context.Context, c *Client, cmd proto.Command
 	if err != nil {
 		return err
 	}
-	res := proto.HirePrepareResult{Cwd: cwd, Capacity: h.capacity(a.Floor)}
+	res := proto.HirePrepareResult{Cwd: cwd, Capacity: h.capacity(a.Floor), HerdrInstructions: hireInstructions(a.Floor)}
 	res.Choice, res.ChoiceSource = h.choice(a.Floor)
 	held, released := h.heldNames(a.Floor, h.opts.Now())
 	res.Label = world.PickName(uuid.NewString(), held, released)
@@ -390,16 +390,29 @@ func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error
 		return err
 	}
 	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
+	// #95: the herdr hiring instructions for the floor of the hire go after
+	// the task, as run.start's prompt has them. The whole prompt is checked
+	// (hireShape, and beginHire's), and the task alone is translated (#39):
+	// hirePromptFor falls back to a.Prompt, the lines included.
+	var compose firstPrompt
+	if a.HerdrInstructions {
+		if strings.TrimSpace(a.Prompt) == "" {
+			return bad("herdr_instructions needs a prompt")
+		}
+		task, lines := a.Prompt, "\n\n"+hireInstructions(a.Floor)
+		a.Prompt = task + lines
+		compose = func(tr func(string) string) string { return tr(task) + lines }
+	}
 	if err := h.hireShape(a); err != nil {
 		return err
 	}
 	// #58 decision 3: an asleep virtual floor's session wakes first.
 	if waking, err := h.wakeForHire(ctx, c, cmd, a.Floor, func(ctx context.Context) error {
-		return h.beginHire(ctx, c, cmd, a, nil, nil, nil)
+		return h.beginHire(ctx, c, cmd, a, nil, compose, nil)
 	}); waking || err != nil {
 		return err
 	}
-	return h.beginHire(ctx, c, cmd, a, nil, nil, nil)
+	return h.beginHire(ctx, c, cmd, a, nil, compose, nil)
 }
 
 // hireShape checks what a hire asks for that needs no floor: the desk is

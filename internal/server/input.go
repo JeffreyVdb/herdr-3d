@@ -772,6 +772,9 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 	// #211: the dictated text by its length, never its text.
 	case proto.CmdHireInterpret:
 		return auditHireInterpret(cmd)
+	// #95: the preset's prompt by its length, never its text.
+	case proto.CmdHirePresetCheck:
+		return auditHirePresetCheck(cmd)
 	// M16 transcript: the worker id only.
 	case proto.CmdTranscriptWatch, proto.CmdTranscriptUnwatch:
 		var a struct {
