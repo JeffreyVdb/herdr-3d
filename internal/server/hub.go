@@ -461,6 +461,8 @@ type Hub struct {
 	rd repoDiscState // #54 repository discovery
 	sc scheduleState // #62 scheduled agents
 	hs hostState     // #74 server rack
+
+	hirePresets map[string]store.HirePreset // #93: by id (mirrors hire_preset)
 }
 
 // sessionState is what the floors of one herdr session share (#58): its
@@ -747,6 +749,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.loadSchedules(ctx); err != nil { // #62
+		return nil, err
+	}
+	if err := h.loadHirePresets(ctx); err != nil { // #93
 		return nil, err
 	}
 	desks, err := st.Desks(ctx)
@@ -1293,6 +1298,9 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 	// M6 launch
 	case proto.CmdPresetCreate, proto.CmdPresetUpdate, proto.CmdPresetDelete:
 		data, err = h.presetCommand(ctx, cmd)
+	// #93 hire presets
+	case proto.CmdHirePresetCreate, proto.CmdHirePresetUpdate, proto.CmdHirePresetDelete:
+		data, err = h.hirePresetCommand(ctx, cmd)
 	default:
 		err = fmt.Errorf("%w: %q", errUnknownCommand, cmd.T)
 	}
@@ -2163,6 +2171,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.RepoRefs = h.repoRefsView()             // #247
 	w.RepoDiscovery = h.repoDiscoveryView()   // #54
 	w.Schedules = h.schedulesView()           // #62
+	w.HirePresets = h.hirePresetViews()       // #93
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

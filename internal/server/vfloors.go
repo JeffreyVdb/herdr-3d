@@ -241,6 +241,7 @@ func (h *Hub) floorDelete(ctx context.Context, a proto.FloorDeleteArgs) error {
 		h.dropBoard(bf)
 	}
 	delete(h.boards.stored, v.ID)
+	h.dropFloorHirePresets(v.ID) // #93: its own; the global ones stay
 	h.log.Info("virtual floor deleted", "floor", v.ID, "name", v.Name, "session", v.BaseSession, "moved", a.MoveWorkers)
 	if f != nil && len(f.order) > 0 {
 		// Its workers' floor is no longer defined: the session's last
