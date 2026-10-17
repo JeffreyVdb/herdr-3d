@@ -30,6 +30,8 @@ var gameFixtures = []struct {
 	{"codex.json", Codex, []string{"session.jsonl", "tools.jsonl", "apply_patch.jsonl", "image.jsonl", "view_image.jsonl", "generated.jsonl", "aborted.jsonl", "compacted.jsonl", "unknown.jsonl"}},
 	// #151: MCP calls that are events only, a failed one and the deduped ones.
 	{"codex-mcp.json", Codex, []string{"mcp_exec.jsonl", "mcp_failed.jsonl", "mcp_dup.jsonl"}},
+	// #56: Codex's collaboration calls and agent messages, a v2 parent's (close_agent synthetic) and an older build's spawn.
+	{"codex-collab.json", Codex, []string{"collab.jsonl", "collab_v1.jsonl"}},
 	// #21: Codex's code changes, every source and state (patch_declined, patch_interrupted and patch_running are
 	// synthetic: in Codex's source, never seen locally).
 	{"codex-changes.json", Codex, []string{"patch_exec.jsonl", "patch_exec_multi.jsonl", "patch_exec_calls.jsonl", "patch_exec_concat.jsonl",
