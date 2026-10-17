@@ -28,6 +28,12 @@ type Alert struct {
 	// Ask or Followup is what a needs-you alert asks (#14: its cards).
 	Ask      *Ask
 	Followup *Followup
+	// Since is when the episode started, unix ms (#88: a menu's card goes
+	// with the notification of its blocked spell).
+	Since int64
+	// Menu is what a menu's card asks (#88: never on an alert the tracker
+	// sends; openMenu's).
+	Menu *Menu
 }
 
 // sighting is one look at a worker for the tracker.

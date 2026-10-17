@@ -209,3 +209,168 @@ func TestCardFollowupThroughTheHub(t *testing.T) {
 	}
 	waitCardText(t, ch, q2, "✓ Answered: Wait for e2e-live")
 }
+
+// The token-like secrets of a permission menu (#88): one in the command it
+// is for, one in its question, one in a choice's quoted command.
+const (
+	menuCmdSecret = "ghp_CommandLine0123456789"
+	menuQSecret   = "ghp_QuestionLine0123456789"
+	menuLblSecret = "hunter2-in-a-label"
+)
+
+// secretPermission is Claude's permission prompt with a secret in its
+// command, its question and a choice.
+func secretPermission(t *testing.T) string {
+	s := readScreen(t, "claude-permission-bash")
+	s = strings.ReplaceAll(s, "touch h3d-perm-probe.txt", "curl -u admin:"+menuCmdSecret+" https://example.test")
+	s = strings.Replace(s, "Do you want to proceed?", "Do you want to proceed with "+menuQSecret+"?", 1)
+	return strings.Replace(s, "2. Yes, and always allow access to /tmp/h3d-m5term/claude-a2be86 from this project",
+		"2. Yes, and don't ask again for `mysql -p"+menuLblSecret+"` commands", 1)
+}
+
+// menuCardOf has worker ws blocked on screen and waits for its
+// notification and its menu's card.
+func (rb *replyBridge) menuCardOf(t *testing.T, ws, screen string) notify.Ref {
+	t.Helper()
+	n, cards := len(rb.ch.Sent()), len(rb.ch.Cards())
+	rb.term.setScreen(ws+":p1", screen)
+	rb.setStatus(ws, "blocked")
+	rb.sentFor(t, ws, n)
+	return cardOf(t, rb.ch, cards+1)
+}
+
+// #88 acceptance through the hub: a worker blocked on Claude's permission
+// prompt gets its notification, then one card: what it asks (a fixed
+// line, not its question) and its choices, scrubbed, a button each,
+// nothing of the command it is for. A tap answers
+// as worker.answer does (the choice's digit on the worker's lane); the
+// card says so. A trust menu (no digits) is answered with arrows and
+// Enter, as the game's would be. Audited by indices, without a text.
+func TestCardMenuThroughTheHub(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridge(t)
+	rb.repliesOn(t)
+	rb.term.onKeys = func(string, []string) { go rb.setStatus("w1", "working") }
+	ref := rb.menuCardOf(t, "w1", secretPermission(t))
+	c := rb.ch.Card(ref)
+	for _, want := range []string{"Permission\nIt asks for your permission.", "1. Yes", "2. Yes, and don't ask again for …\n", "3. No"} {
+		if !strings.Contains(c.Text, want) {
+			t.Fatalf("card %q lacks %q", c.Text, want)
+		}
+	}
+	shown := c.Text
+	for _, row := range c.Buttons {
+		for _, b := range row {
+			shown += "\n" + b.Text + "\n" + b.Data
+		}
+	}
+	for _, n := range rb.ch.Sent() {
+		shown += "\n" + n.Line
+	}
+	for _, secret := range []string{menuCmdSecret, menuQSecret, menuLblSecret, "curl", "example.test"} {
+		if strings.Contains(shown, secret) {
+			t.Fatalf("%q left the bridge: %q", secret, shown)
+		}
+	}
+	if len(c.Buttons) != 3 {
+		t.Fatalf("buttons %+v", c.Buttons)
+	}
+	rb.ch.Tap("t1", ref, buttonData(t, c, "1."))
+	if end := waitCardText(t, rb.ch, ref, "✓ Answered: Yes"); len(end.Buttons) != 0 {
+		t.Fatalf("buttons left %+v", end.Buttons)
+	}
+	if calls := rb.term.Calls(); !slices.Equal(calls, []string{"keys w1:p1 1"}) {
+		t.Fatalf("calls %q", calls)
+	}
+
+	// The trust dialog: no digits, so down and Enter for choice 2.
+	time.Sleep(2 * time.Millisecond) // status_since is in ms: a new one
+	ref = rb.menuCardOf(t, "w1", readScreen(t, "claude-trust"))
+	c = rb.ch.Card(ref)
+	if !strings.Contains(c.Text, "Trust folder\nIt asks whether to trust a folder.") || strings.Contains(c.Text, "Quick safety check") || len(c.Buttons) != 2 || strings.Contains(c.Text, "/tmp/h3d-m5term") {
+		t.Fatalf("trust card %+v", c)
+	}
+	rb.ch.Tap("t2", ref, buttonData(t, c, "2."))
+	waitCardText(t, rb.ch, ref, "✓ Answered: Yes, I trust this folder")
+	if calls := rb.term.Calls(); !slices.Equal(calls, []string{"keys w1:p1 1", "keys w1:p1 down enter"}) {
+		t.Fatalf("calls %q", calls)
+	}
+	if a := rb.ch.TapAnswers(); len(a) != 2 || a[0].ID != "t1" || a[1].ID != "t2" {
+		t.Fatalf("tap answers %+v", a)
+	}
+	ans := waitNotifyRows(t, rb.st, notify.AuditAnswer, 2)
+	var row struct {
+		Kind    string `json:"kind"`
+		Choices int    `json:"choices"`
+		Outcome string `json:"outcome"`
+	}
+	if err := json.Unmarshal([]byte(ans[1].Args), &row); err != nil || !ans[1].OK || row.Kind != "menu" || row.Choices != 1 || row.Outcome != "sent" {
+		t.Fatalf("audit %+v", ans[1])
+	}
+	log, err := rb.st.AuditLog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range log {
+		if e.Cmd == proto.CmdWorkerAnswer || strings.Contains(e.Args+e.Result, "trust") || strings.Contains(e.Args+e.Result, "proceed") {
+			t.Errorf("audit row %+v", e)
+		}
+	}
+
+	// An ask's dialog read off the screen (a choice, not a permission):
+	// its notification only.
+	n := len(rb.ch.Sent())
+	cards := len(rb.ch.Cards())
+	time.Sleep(2 * time.Millisecond)
+	rb.term.setScreen("w2:p1", readScreen(t, "claude-question"))
+	rb.setStatus("w2", "blocked")
+	rb.sentFor(t, "w2", n)
+	upsertFor(rb.c, rb.ids["w2"], func(w *proto.Worker) bool { return w.Question != nil })
+	time.Sleep(50 * time.Millisecond)
+	if len(rb.ch.Cards()) != cards {
+		t.Fatalf("a card for a choice menu: %+v", rb.ch.Card(rb.ch.Cards()[cards]))
+	}
+}
+
+// A tap on a menu the screen no longer shows (#88: the hub reads it again
+// before any key): no key is sent and the card says no longer open; the
+// new menu gets its own card.
+func TestCardMenuStaleThroughTheHub(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridgeWith(t, func(o *server.Options) { o.QuestionPoll = time.Hour })
+	rb.repliesOn(t)
+	first := readScreen(t, "claude-permission-bash")
+	ref := rb.menuCardOf(t, "w1", first)
+	yes := buttonData(t, rb.ch.Card(ref), "1.")
+	rb.term.setScreen("w1:p1", strings.ReplaceAll(first, "touch h3d-perm-probe.txt", "rm -rf important-project"))
+	rb.ch.Tap("t1", ref, yes)
+	if c := waitCardText(t, rb.ch, ref, notify.CardClosedText); len(c.Buttons) != 0 {
+		t.Fatalf("buttons left %+v", c.Buttons)
+	}
+	if calls := rb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("typed %q", calls)
+	}
+	if next := cardOf(t, rb.ch, 2); next == ref || !strings.Contains(rb.ch.Card(next).Text, "It asks for your permission.") {
+		t.Fatalf("new card %+v", rb.ch.Card(next))
+	}
+}
+
+// Keys sent and the worker still blocked after AnswerTimeout (#88): the
+// card says what was sent and to look in the game; audited as unresolved.
+func TestCardMenuUnresolvedThroughTheHub(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridgeWith(t, func(o *server.Options) { o.AnswerTimeout = time.Millisecond })
+	rb.repliesOn(t)
+	ref := rb.menuCardOf(t, "w1", readScreen(t, "claude-permission-bash"))
+	rb.ch.Tap("t1", ref, buttonData(t, rb.ch.Card(ref), "3."))
+	if c := waitCardText(t, rb.ch, ref, "✓ Sent: No\n"+notify.CardUnresolvedText); len(c.Buttons) != 0 {
+		t.Fatalf("buttons left %+v", c.Buttons)
+	}
+	if calls := rb.term.Calls(); !slices.Equal(calls, []string{"keys w1:p1 3"}) {
+		t.Fatalf("calls %q", calls)
+	}
+	ans := waitNotifyRows(t, rb.st, notify.AuditAnswer, 1)
+	if !ans[0].OK || !strings.Contains(ans[0].Args, `"outcome":"unresolved"`) {
+		t.Fatalf("audit %+v", ans[0])
+	}
+}

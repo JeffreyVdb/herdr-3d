@@ -26,10 +26,18 @@ type replyBridge struct {
 
 func startReplyBridge(t *testing.T) *replyBridge {
 	t.Helper()
+	return startReplyBridgeWith(t, nil)
+}
+
+func startReplyBridgeWith(t *testing.T, tweak func(*server.Options)) *replyBridge {
+	t.Helper()
 	on := true
 	rb := &replyBridge{ch: notify.NewFakeChannel(true), clock: notify.NewFakeClock(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)), msg: 500}
 	rb.askBridge = startAskBridgeWith(t, "working", func(o *server.Options) {
 		o.NotifyChannel, o.NotifyEnabled, o.NotifyClock = rb.ch, &on, rb.clock
+		if tweak != nil {
+			tweak(o)
+		}
 	})
 	rb.c = rb.connect(proto.Hello{Client: "phone-owner"})
 	snap := rb.c.snapshot()

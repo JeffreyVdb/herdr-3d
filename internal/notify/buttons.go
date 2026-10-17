@@ -19,6 +19,17 @@ package notify
 // replier goroutine's and in memory, bounded: after a restart an old
 // card's tap is answered "no longer open" and its buttons taken away. Each
 // tap and each answer is audited by indices and lengths, never a text.
+//
+// #88: a worker blocked on a permission or folder-trust menu its screen
+// shows (Worker.Menu) gets one card too, with a button per choice and no
+// Cancel (each such menu has its own No or Quit choice; Esc differs by
+// agent). The menu is read off the screen a moment after the worker turns
+// blocked, mostly after its notification went: the card opens once both
+// are there for the same blocked spell, once per menu (openMenu). A tap
+// answers through worker.answer's path with the menu's hash, so a menu no
+// longer on the screen is never answered. The card shows what the menu's kind asks, in a
+// fixed line, and its choices' labels, as the bridge scrubbed them; never
+// a line above the menu (its question, the command, the edit it is about).
 
 import (
 	"context"
@@ -26,6 +37,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +90,16 @@ const (
 	CardWaitText    = "Waiting for your other answers."
 	CardSendingText = "Sending…"
 	cardMultiText   = "Pick one or more, then tap Done."
+	// #88: a menu's.
+	CardMenuAboutText  = "What it is about (the command, the edit) is not sent here: see it in the game."
+	CardUnresolvedText = "It still waits on its menu: look at it in the game."
+)
+
+// #88: a menu card's head, and what it asks (fixed: no screen line above
+// a menu leaves the bridge, its question included).
+var (
+	menuHeads = map[string]string{"permission": "Permission", "trust": "Trust folder"}
+	menuAsks  = map[string]string{"permission": "It asks for your permission.", "trust": "It asks whether to trust a folder."}
 )
 
 // What a tap is answered (at most 200 characters).
@@ -104,6 +126,7 @@ const (
 const (
 	kindAsk      = "ask"
 	kindFollowup = "followup"
+	kindMenu     = "menu" // #88
 )
 
 // Actions of a button (its data: token ":" action).
@@ -126,6 +149,10 @@ type Answer struct {
 	// A follow-up's: its turn, and an answer for every question.
 	TurnID   string
 	Followup []FollowupAnswer
+	// A screen menu's (#88): its hash, and the choice's number on the
+	// screen.
+	Hash   string
+	Choice int
 }
 
 // AskAnswer answers one question of an ask: option numbers (1-based) and/or
@@ -142,16 +169,51 @@ type FollowupAnswer struct {
 	ID, Value string
 }
 
-// questionKey names what a worker asks now: its ask's tool_use_id or its
-// follow-up's turn ("": neither).
+// questionKey names what a worker asks now: its ask's tool_use_id, its
+// follow-up's turn or (#88) its screen menu's hash ("": none).
 func questionKey(w Worker) string {
 	switch {
 	case validAsk(w.Ask):
 		return "a|" + w.Ask.ToolUseID
 	case validFollowup(w.Followup):
 		return "f|" + w.Followup.TurnID
+	case validMenu(w):
+		return "m|" + w.Menu.Hash
 	}
 	return ""
+}
+
+// menuSeen is a worker's screen menu as the loop saw it (#88): what its
+// card shows, and the blocked spell (status_since) it is of.
+type menuSeen struct {
+	menu  *Menu
+	name  string
+	since int64
+}
+
+// menuOf is what an observation's menu card would show (nil: it asks
+// something else, or no menu).
+func menuOf(o Observation) *menuSeen {
+	w := o.Worker
+	if validAsk(w.Ask) || validFollowup(w.Followup) || !validMenu(w) {
+		return nil
+	}
+	return &menuSeen{menu: w.Menu, name: o.Name, since: w.StatusSince}
+}
+
+// maxCarded is how many menus of one blocked spell get a card: past it
+// the spell opens none (its notification went; the game answers), and no
+// hash is forgotten, so none gets a second card.
+const maxCarded = 32
+
+// spell is a worker's blocked spell whose needs-you notification went
+// (#88): its status_since, and the hashes of its menus that got a card (at
+// most maxCarded, none forgotten). A menu gets one card while the spell
+// lasts, though the session is forgotten (an unresolved answer) or the
+// screen read fails a while (the menu gone, then back with its hash).
+type spell struct {
+	since  int64
+	carded []string
 }
 
 // session is one ask's or follow-up's cards.
@@ -162,6 +224,7 @@ type session struct {
 	key          string // questionKey's
 	ask          *Ask
 	fu           *Followup
+	menu         *Menu // #88
 	secret       bool
 	qs           []*qstate
 	sending      bool
@@ -192,13 +255,18 @@ type buttons struct {
 	cards    map[Ref]at
 	prompts  map[Ref]at
 	// cur is what each worker asks now (questionKey), as the loop saw it.
-	cur        map[string]string
+	cur map[string]string
+	// #88: each worker's screen menu, as the loop saw it, and the blocked
+	// spell its last needs-you notification went for.
+	menus      map[string]*menuSeen
+	rang       map[string]*spell
 	total      window
 	workerTaps map[string]*window
 }
 
 func newButtons() buttons {
 	return buttons{cards: map[Ref]at{}, prompts: map[Ref]at{}, cur: map[string]string{},
+		menus: map[string]*menuSeen{}, rang: map[string]*spell{},
 		total: window{n: TapTotal, per: ReplyWindow}, workerTaps: map[string]*window{}}
 }
 
@@ -313,15 +381,52 @@ func (s *Service) tapped(t Tap) bool {
 
 // seen takes what worker id asks now (the loop's, on a change): the cards
 // of what it asked before are edited to answered in the game, unless their
-// answer is on its way.
-func (s *Service) seen(ctx context.Context, id, key string) {
+// answer is on its way. #88: a menu's card opens if its notification went.
+func (s *Service) seen(ctx context.Context, id, key string, menu *menuSeen) {
 	if key == "" {
 		delete(s.bt.cur, id)
 	} else {
 		s.bt.cur[id] = key
 	}
+	if menu == nil {
+		delete(s.bt.menus, id)
+	} else {
+		s.bt.menus[id] = menu
+	}
 	if ss := s.bt.of(id); ss != nil && ss.key != key && !ss.sending {
 		s.closeCards(ctx, ss, CardInGameText)
+	}
+	s.openMenu(ctx, id)
+}
+
+// rang takes a needs-you notification that went without cards of its own
+// (#88): the worker's menu of that blocked spell gets its card, now or
+// once the screen is read.
+func (s *Service) rang(ctx context.Context, a Alert) {
+	if _, ok := s.bt.rang[a.WorkerID]; !ok && len(s.bt.rang) >= 256 {
+		for id := range s.bt.rang {
+			if _, asks := s.bt.cur[id]; !asks {
+				delete(s.bt.rang, id)
+			}
+		}
+	}
+	if sp := s.bt.rang[a.WorkerID]; sp == nil || sp.since != a.Since {
+		s.bt.rang[a.WorkerID] = &spell{since: a.Since}
+	}
+	s.openMenu(ctx, a.WorkerID)
+}
+
+// openMenu opens worker id's menu card (#88) when the loop saw its menu and
+// the notification of the same blocked spell went, once a menu (openCards:
+// replies on, not open already), for the spell's first maxCarded menus.
+func (s *Service) openMenu(ctx context.Context, id string) {
+	m := s.bt.menus[id]
+	sp := s.bt.rang[id]
+	if sp == nil || m == nil || sp.since != m.since || slices.Contains(sp.carded, m.menu.Hash) || len(sp.carded) >= maxCarded {
+		return
+	}
+	if s.openCards(ctx, Alert{WorkerID: id, Name: m.name, Kind: KindNeedsYou, Since: m.since, Menu: m.menu}) {
+		sp.carded = append(sp.carded, m.menu.Hash)
 	}
 }
 
@@ -339,6 +444,8 @@ func alertKey(a Alert) string {
 		return "a|" + a.Ask.ToolUseID
 	case a.Followup != nil:
 		return "f|" + a.Followup.TurnID
+	case a.Menu != nil:
+		return "m|" + a.Menu.Hash
 	}
 	return ""
 }
@@ -352,30 +459,33 @@ func newToken() string {
 }
 
 // openCards sends an alert's cards (after its notification), while
-// replies are on and the worker still asks it.
-func (s *Service) openCards(ctx context.Context, a Alert) {
+// replies are on and the worker still asks it; true: they went.
+func (s *Service) openCards(ctx context.Context, a Alert) bool {
 	key := alertKey(a)
 	if on, _ := s.listening(); !on || key == "" || s.bt.cur[a.WorkerID] != key {
-		return
+		return false
 	}
 	if old := s.bt.of(a.WorkerID); old != nil {
 		if old.key == key {
-			return
+			return false
 		}
 		s.closeCards(ctx, old, CardInGameText)
 	}
 	ss := &session{tok: newToken(), worker: a.WorkerID, name: a.Name, key: key}
 	n := 0
-	if a.Ask != nil {
+	switch {
+	case a.Ask != nil:
 		ss.kind, ss.ask, ss.secret, n = kindAsk, a.Ask, Worker{Ask: a.Ask}.Secret(), len(a.Ask.Questions)
 		if ss.secret {
 			n = 1
 		}
-	} else {
+	case a.Menu != nil:
+		ss.kind, ss.menu, n = kindMenu, a.Menu, 1
+	default:
 		ss.kind, ss.fu, n = kindFollowup, a.Followup, len(a.Followup.Questions)
 	}
 	if n == 0 || n > MaxCards {
-		return
+		return false
 	}
 	for range n {
 		ss.qs = append(ss.qs, &qstate{picked: map[int]bool{}})
@@ -393,7 +503,7 @@ func (s *Service) openCards(ctx context.Context, a Alert) {
 			s.opts.Log.Warn("notifications: a question's card was not delivered", "worker", a.WorkerID, "code", CodeOf(err))
 			ss.qs = ss.qs[:i]
 			s.closeCards(ctx, ss, CardInGameAsk)
-			return
+			return false
 		}
 		q.card, q.shown = ref, c
 		s.bt.cards[ref] = at{ss, i}
@@ -404,6 +514,7 @@ func (s *Service) openCards(ctx context.Context, a Alert) {
 	for len(s.bt.sessions) > MaxSessions {
 		s.bt.forget(s.bt.sessions[0])
 	}
+	return true
 }
 
 // closeCards edits a session's cards to their end, status, and forgets it.
@@ -611,9 +722,12 @@ func (ss *session) shape(i int) (multi bool, options int, text, cancel bool) {
 	if ss.secret {
 		return false, 0, false, false
 	}
-	if ss.kind == kindAsk {
+	switch ss.kind {
+	case kindAsk:
 		q := ss.ask.Questions[i]
 		return q.Multi, len(q.Options), q.Other, true
+	case kindMenu:
+		return false, len(ss.menu.Choices), false, false
 	}
 	switch q := ss.fu.Questions[i]; q.Kind {
 	case "yes_no":
@@ -724,6 +838,13 @@ func oneLine(text string) bool {
 // answer is the session's answer for the hub.
 func (ss *session) answer() Answer {
 	a := Answer{WorkerID: ss.worker}
+	if ss.kind == kindMenu {
+		a.Hash = ss.menu.Hash
+		for o := range ss.qs[0].picked {
+			a.Choice = ss.menu.Choices[o].N
+		}
+		return a
+	}
 	if ss.kind == kindAsk {
 		a.ToolUseID, a.Cancel = ss.ask.ToolUseID, ss.cancel
 		if ss.cancel {
@@ -799,6 +920,9 @@ func (s *Service) finish(ctx context.Context, ss *session, err error) {
 	for _, x := range a.Ask {
 		row.Choices += len(x.Choices)
 	}
+	if a.Choice != 0 {
+		row.Choices = 1
+	}
 	for _, q := range ss.qs {
 		if q.text != nil {
 			row.TypedBytes += len(*q.text)
@@ -806,6 +930,16 @@ func (s *Service) finish(ctx context.Context, ss *session, err error) {
 		}
 	}
 	ss.sending, ss.done = false, true
+	var re *ReplyError
+	if errors.As(err, &re) && re.Kind == ReplyUnresolved {
+		// #88: the menu's keys went, and the worker still waits on it: the
+		// card says so; the rest is the game's.
+		row.Outcome = ReplyUnresolved
+		s.audit(ctx, AuditAnswer, row, nil)
+		s.opts.Log.Info("answer tapped in Telegram sent to its worker, which still waits", "worker", ss.worker, "kind", ss.kind)
+		s.closeCards(ctx, ss, "✓ Sent: "+ss.summary(0)+"\n"+CardUnresolvedText)
+		return
+	}
 	if err == nil {
 		row.Outcome = replySent
 		s.audit(ctx, AuditAnswer, row, nil)
@@ -814,7 +948,6 @@ func (s *Service) finish(ctx context.Context, ss *session, err error) {
 		return
 	}
 	kind := ReplyFailed
-	var re *ReplyError
 	if errors.As(err, &re) && answers[re.Kind] != "" {
 		kind = re.Kind
 	}
@@ -836,8 +969,11 @@ func (s *Service) render(ss *session, i int, status string) Card {
 	n := len(ss.qs)
 	q := ss.qs[i]
 	head := ss.name + " · Question"
-	if ss.kind == kindFollowup {
+	switch ss.kind {
+	case kindFollowup:
 		head = ss.name + " · Follow-up"
+	case kindMenu:
+		head = ss.name + " · " + menuHeads[ss.menu.Kind]
 	}
 	if n > 1 {
 		head += fmt.Sprintf(" %d of %d", i+1, n)
@@ -851,7 +987,16 @@ func (s *Service) render(ss *session, i int, status string) Card {
 	ended := status != "" || ss.sending || ss.done
 	var body, rest strings.Builder
 	var opts, descs, previews []string
-	if ss.kind == kindAsk {
+	switch ss.kind {
+	case kindMenu:
+		body.WriteString(menuAsks[ss.menu.Kind])
+		if !ended {
+			body.WriteString("\n\n" + CardMenuAboutText)
+		}
+		for _, c := range ss.menu.Choices {
+			opts = append(opts, c.Label)
+		}
+	case kindAsk:
 		aq := ss.ask.Questions[i]
 		if h := OneLine(aq.Header, cardLabelMax); h != "" {
 			head += " · " + h
@@ -862,7 +1007,7 @@ func (s *Service) render(ss *session, i int, status string) Card {
 			descs = append(descs, o.Description)
 			previews = append(previews, o.Preview)
 		}
-	} else {
+	default:
 		fq := ss.fu.Questions[i]
 		if fq.Label != "" {
 			body.WriteString(OneLine(fq.Label, cardLabelMax) + " ")
@@ -977,11 +1122,18 @@ func (ss *session) ending(i int, status string) string {
 func (ss *session) summary(i int) string {
 	q := ss.qs[i]
 	var parts []string
-	if ss.kind == kindFollowup {
+	switch ss.kind {
+	case kindFollowup:
 		if q.text == nil {
 			return ss.value(i, q)
 		}
-	} else {
+	case kindMenu:
+		for o, c := range ss.menu.Choices {
+			if q.picked[o] {
+				parts = append(parts, OneLine(c.Label, cardLabelMax))
+			}
+		}
+	default:
 		for o, opt := range ss.ask.Questions[i].Options {
 			if q.picked[o] {
 				parts = append(parts, OneLine(opt.Label, cardLabelMax))

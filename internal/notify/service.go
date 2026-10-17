@@ -568,9 +568,11 @@ func (s *Service) process() {
 	freelancers := s.freelancers()
 	for _, o := range obs {
 		// #14: what the worker asks now, for its cards (a change only).
+		// #88: a menu's with what its card shows.
 		id, key := o.Worker.ID, ""
+		var menu *menuSeen
 		if !o.Gone {
-			key = questionKey(o.Worker)
+			key, menu = questionKey(o.Worker), menuOf(o)
 		}
 		if s.keys[id] != key {
 			if key == "" {
@@ -578,7 +580,7 @@ func (s *Service) process() {
 			} else {
 				s.keys[id] = key
 			}
-			s.job(func(ctx context.Context) { s.seen(ctx, id, key) })
+			s.job(func(ctx context.Context) { s.seen(ctx, id, key, menu) })
 		}
 		if o.Gone {
 			s.tr.gone(o.Worker.ID)
@@ -615,7 +617,7 @@ func (s *Service) sight(o Observation, freelancers bool) sighting {
 	}
 	sg.key = episodeKey(sg.kind, latent.Since)
 	sg.eligible = v.Candidate(freelancers) && s.allowed(sg.kind)
-	sg.alert = Alert{WorkerID: o.Worker.ID, Kind: sg.kind, Reason: v.Reason, Name: o.Name, Line: o.Line}
+	sg.alert = Alert{WorkerID: o.Worker.ID, Kind: sg.kind, Reason: v.Reason, Name: o.Name, Line: o.Line, Since: latent.Since}
 	if sg.kind == KindNeedsYou {
 		switch v.Reason {
 		case ReasonQuestion:
@@ -721,8 +723,11 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 	} else {
 		s.opts.Log.Info("notification sent", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts)
 		s.remember(ctx, ref, a.WorkerID)
-		if a.Ask != nil || a.Followup != nil {
+		switch {
+		case a.Ask != nil || a.Followup != nil:
 			s.job(func(ctx context.Context) { s.openCards(ctx, a) }) // #14
+		case a.Kind == KindNeedsYou:
+			s.job(func(ctx context.Context) { s.rang(ctx, a) }) // #88
 		}
 	}
 	s.audit(ctx, AuditSend, row, aerr)
