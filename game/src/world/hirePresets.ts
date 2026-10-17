@@ -6,7 +6,7 @@
  */
 
 import type { Hire, HireOptions, HirePreset, HirePresetSpec } from '../net/protocol';
-import { HARNESS_LABEL } from './hire';
+import { HARNESS_LABEL, resolveVisibleChoice } from './hire';
 import { labelsOf, modelLabel } from './modelLabel';
 import { effortsFor } from './settings';
 
@@ -113,6 +113,18 @@ export function exactProblem(catalog: HireOptions, c: Hire): ExactProblem | null
   if (!h.models.includes(c.model)) return { field: 'model', why: `${harness} no longer offers ${model}.` };
   if (!effortsFor(catalog, c.harness, c.model).includes(c.effort)) return { field: 'effort', why: `${model} does not take effort “${c.effort}”.` };
   return null;
+}
+
+/**
+ * A pick in a form that holds a preset's exact choice (`options`: what it offers). A harness or a model picked is the
+ * usual choice from there (the player chose it, the chips show it); an effort picked only sets the effort, so it never
+ * moves a model the catalog lacks to another one.
+ */
+export function pickExact(options: HireOptions, cur: Hire, p: Partial<Hire>): Hire {
+  if (p.harness !== undefined && p.harness !== cur.harness) return resolveVisibleChoice(options, { harness: p.harness });
+  if (p.model !== undefined && p.model !== cur.model) return resolveVisibleChoice(options, { ...cur, model: p.model });
+  if (p.effort !== undefined) return { harness: cur.harness, model: cur.model, effort: p.effort };
+  return { harness: cur.harness, model: cur.model, effort: cur.effort };
 }
 
 /** "Claude Code · Sonnet 5.5 · low": the readable choice (an unknown model by its saved id). */

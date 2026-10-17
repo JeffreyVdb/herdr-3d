@@ -1,0 +1,162 @@
+/*
+ * #93 hire presets: the "Hire preset" tab of an empty desk's dialog and its editor, in the M4 desk dialogs' navy
+ * signage (hire.css) and the team presets' rows (start.css). A preset is a recipe card the office keeps: the plate is
+ * that card, folded corner and all; each row reads name, then the exact model, then how its first task starts.
+ */
+
+.desk-dlg--hire-presets {
+  width: min(640px, calc(100vw - 32px));
+}
+
+.dd-plate--preset {
+  min-width: 48px;
+  background: var(--well-deep);
+  box-shadow: inset 0 2px 7px rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 8%);
+  color: var(--accent-text);
+}
+.dd-plate--preset svg {
+  width: 26px;
+  height: 26px;
+  stroke-width: 1.8;
+}
+
+/* ---- the list: this floor's, then the global ones ---------------------------------------- */
+
+.hp-group + .hp-group {
+  margin-top: 18px;
+}
+.hp-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 10px;
+  margin: 0 0 8px;
+}
+.hp-group-head h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 800;
+  font-variation-settings: var(--fvs-casual);
+}
+.hp-group-head p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+.hp-group-empty {
+  font-size: 13px;
+}
+.hp-row .pp-row-head h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 800;
+  font-variation-settings: var(--fvs-casual);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hp-meta,
+.hp-preview {
+  grid-column: 1 / -1;
+  margin: 0;
+  min-width: 0;
+}
+.hp-choice {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+}
+.hp-preview {
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.hp-empty {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--group-bg);
+}
+.hp-empty p {
+  margin: 0;
+  max-width: 60ch;
+}
+.hp-empty p:first-child {
+  font-weight: 800;
+  font-size: 15px;
+}
+.hp-note {
+  margin: 0;
+}
+
+/* ---- the editor ----------------------------------------------------------------------- */
+
+.desk-dlg--hire-presets textarea {
+  min-height: 132px;
+  resize: vertical;
+}
+
+/* ---- the hire form, from a preset (hire.ts) --------------------------------------------- */
+
+.dd-preset {
+  display: grid;
+  gap: 4px;
+}
+.dd-preset p {
+  margin: 0;
+}
+.dd-preset-from {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.dd-preset-from b {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.dd-preset-scope {
+  color: var(--text-2);
+}
+.dd-preset code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.dd-actions .dd-save-preset {
+  margin-right: auto;
+}
+
+@media (max-width: 560px) {
+  .hp-row .pp-tools {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+}
+/* Three desk tabs on a phone: the words stay, the icons go, and each tab takes its share. */
+@media (max-width: 480px) {
+  .dd-tabs:has(> :nth-child(3)) .dd-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    padding: 0 4px;
+  }
+  .dd-tabs:has(> :nth-child(3)) .dd-tab svg {
+    display: none;
+  }
+  .dd-tabs:has(> :nth-child(3)) .dd-tab span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

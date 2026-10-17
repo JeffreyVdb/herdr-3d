@@ -11,6 +11,7 @@ import {
   HARNESS_LABEL,
   hireBlocker,
   modelsFor,
+  offeredOptions,
   resolveChoice,
   resolveVisibleChoice,
   visibleOptions,
@@ -21,6 +22,7 @@ import {
 import { labelsOf, modelEntries, modelMatches, type ModelEntry, type ModelLabels } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
 import { isComplete, levelChipText, levelProblem, preselectLevel, type TaskLevelId } from '../world/taskLevels';
+import { exactProblem, pickExact, presetChoiceText, type ExactProblem } from '../world/hirePresets';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
@@ -91,6 +93,21 @@ export interface HireHost extends DialogHost {
   holdTask?: HireCoordinatorHost['holdTask'];
   /** #39: the app's lists of commands and skills (shared with the transcript); absent: the dialog keeps its own. */
   catalogs?: CommandCatalogs;
+  /** #93: the "Hire preset" tab: the floor's and the global hire presets for this desk (absent: no such tab). */
+  presetsAt?(floor: string, desk: number): void;
+  /** #93: "Save as preset…": the preset editor over this dialog, with the form's prompt and choice (absent: no such button). */
+  savePreset?(seed: HirePresetSeed, from: HTMLElement): void;
+}
+
+/** #93: what "Save as preset…" hands the preset editor: the form's text (images are never saved), choice and floor. */
+export interface HirePresetSeed {
+  floor: string;
+  prompt: string;
+  harness: string;
+  model: string;
+  effort: string;
+  /** Images of the first task left out (a preset keeps text only). */
+  imagesLeftOut: number;
 }
 
 /** M7: what "Ask a worker…" and "Review with a worker" start the dialog with. */
@@ -105,6 +122,14 @@ export interface HirePrefill {
   level?: 'default' | TaskLevelId;
   /** #248: a worktree whenever one can be made, whatever Settings → Display says. */
   worktree?: true;
+  /**
+   * #93: the form comes from this hire preset: `choice` is its exact harness / model / effort, never resolved to another
+   * one (a hidden model stays offered; a removed one or an effort it does not take is shown and blocks Hire until the
+   * player picks). `prompt` is its prompt.
+   */
+  preset?: { id: string; name: string; scope: 'floor' | 'global' };
+  /** #93: the player chose to replace the desk's unsent first task with `prompt`: the new text is the desk's draft at once. */
+  replaceDraft?: true;
 }
 
 /**
@@ -145,6 +170,8 @@ export interface HireSummary {
   images: Array<{ n: number; name: string; status: string; path: string | null }>;
   /** #248: a hire that asks for a task level: the mode, the picked level and the set levels; absent for a plain hire. */
   level?: { mode: LevelMode; picked: TaskLevelId | null; chips: LevelChip[] };
+  /** #93: the form came from a hire preset: which, its saved choice, and what of that choice cannot be hired now (null: all of it can). */
+  preset?: { id: string; name: string; saved: { harness: string; model: string; effort: string }; problem: ExactProblem | null };
 }
 
 /** The worktree option as shown (null: hidden, the folder is no git repo). */
@@ -295,6 +322,15 @@ export function modelField(harness: string, models: string[], value: string, lab
   return modelList(models, value, query, onPick, onQuery, harness, labels, name);
 }
 
+/** #93: the prompt as a preset keeps it: the text and file mentions; images are left out (a preset holds no uploads). */
+function presetText(s: DraftSnapshot): string {
+  return s.segments
+    .map((g) => (g.kind === 'text' ? g.text : g.kind === 'image' ? '' : mentionOf(g.path)))
+    .join('')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+}
+
 /** The prompt as the form sees it: the text, each image a bare `[Image #n]` (the paths only exist once uploaded, at send time). */
 function promptText(s: DraftSnapshot): string {
   let n = 0;
@@ -441,6 +477,8 @@ export class HireDialog {
   /** #248: a hire that asks for a level: how the choice is shown (null: a plain hire), and the level picked. Never saved. */
   private levelMode: LevelMode | null = null;
   private level: TaskLevelId | null = null;
+  /** #93: the hire preset this form came from and its exact choice (null: none): no resolver ever replaces that choice. */
+  private exact: { id: string; name: string; scope: 'floor' | 'global'; saved: { harness: string; model: string; effort: string } } | null = null;
   /** #210: holds the desk, uploads, sends `worker.hire`: the same for a hire waited for here and one in the background. */
   private readonly hires: HireCoordinator;
   /** This dialog among others (a hire's key is the dialog and its generation). */
@@ -527,9 +565,16 @@ export class HireDialog {
     this.modelQuery = '';
     this.levelMode = null;
     this.level = null;
+    this.exact = prefill.preset && prefill.choice ? { ...prefill.preset, saved: { ...prefill.choice } } : null;
     this.uploadFailed = false;
     // The desk's composer draft (images too) if it is still in memory, else the text storage kept; a first task handed in starts a draft of its own.
     this.editor.show(prefill.prompt !== undefined ? this.newDoc(prefill.prompt) : this.deskDoc(this.draftKey(), draft?.text ?? ''));
+    if (prefill.replaceDraft && prefill.prompt !== undefined) {
+      // #93: the player chose to replace the desk's unsent task: the preset's text owns the desk now (its images go).
+      const old = this.docs.get(this.draftKey());
+      this.saveDraft();
+      if (old && old !== this.editor.draft) old.dispose();
+    }
     this.f = { prompt: this.editor.text, harness: '', model: '', effort: '', label: this.typedLabel ?? '', cwd: '', worktree: false };
     this.state = 'preparing';
     this.renderedKey = '';
@@ -615,7 +660,11 @@ export class HireDialog {
       if (this.typedLabel !== null) this.f.label = this.typedLabel;
       // The note ("Floor default") is about the saved choice on the whole catalog, so it is not shown for a replacement.
       this.prepared = resolveChoice(this.host.store.hireOptions, p.choice ?? null);
-      if (this.prefill.level !== undefined) {
+      if (this.exact) {
+        // #93: the preset's choice exactly as saved, whether the catalog still has it or not (`exactProblem` says).
+        Object.assign(this.f, this.exact.saved);
+        this.prepared = null;
+      } else if (this.prefill.level !== undefined) {
         // #248: a level, never a reviewer's model; no usable level leaves the floor's choice in the usual pickers.
         this.syncLevels();
       } else {
@@ -719,11 +768,20 @@ export class HireDialog {
     return this.prep ? capacityView(this.prep.capacity, this.floorName()) : null;
   }
 
-  /** The catalog as the dialog offers it: the models Settings leaves shown (the whole catalog without Settings). */
+  /**
+   * The catalog as the dialog offers it: the models Settings leaves shown (the whole catalog without Settings). #93: a
+   * preset's saved model stays offered while it is hidden (`offeredOptions`), so using the preset never swaps it.
+   */
   private options(): HireOptions {
     const cat = this.host.store.hireOptions;
     const prefs = this.host.modelPrefs;
+    if (this.exact) return offeredOptions(cat, prefs && ((harness) => prefs.hidden(harness)), [this.exact.saved]);
     return prefs ? visibleOptions(cat, (harness) => prefs.hidden(harness)) : cat;
+  }
+
+  /** #93: what of the form's choice cannot be hired now, for a form from a preset (null: all of it can, or no preset). */
+  private exactProblem(): ExactProblem | null {
+    return this.exact ? exactProblem(this.host.store.hireOptions, this.f) : null;
   }
 
   /**
@@ -731,6 +789,8 @@ export class HireDialog {
    * #248: with the levels on screen (or none usable), the levels decide instead (`syncLevels`).
    */
   private resolveForm(): void {
+    // #93: a preset's choice is never resolved to another one: valid, it stays; not, the player repairs it.
+    if (this.exact) return;
     if (this.levelMode === 'levels' || this.levelMode === 'none') {
       this.syncLevels();
       return;
@@ -806,6 +866,8 @@ export class HireDialog {
     const taken = this.takenBy();
     if (taken) return taken.why;
     if (this.host.unsupported('worker.hire')) return failureText('worker.hire', 'unknown_command', '');
+    const bad = this.exactProblem();
+    if (bad) return `${bad.why} Choose ${bad.field === 'effort' ? 'an effort' : `a ${bad.field}`} to hire with.`;
     return hireBlocker(this.f, this.options(), this.capacity());
   }
 
@@ -814,6 +876,11 @@ export class HireDialog {
   }
 
   private noteNow(): string | null {
+    // #93: "From preset" while the form holds the preset's choice.
+    if (this.exact) {
+      const c = this.exact.saved;
+      return c.harness === this.f.harness && c.model === this.f.model && c.effort === this.f.effort ? 'From preset' : null;
+    }
     const p = this.prepared;
     const same = !!p && p.harness === this.f.harness && p.model === this.f.model && p.effort === this.f.effort;
     return this.prep ? choiceNote(this.prep.choice_source, same) : null;
@@ -827,7 +894,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.floor);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null]);
+    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null, this.exact, this.host.store.hirePresets?.known]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -842,19 +909,23 @@ export class HireDialog {
       h('div', { class: 'dd-titles' }, h('h2', { id: 'hire-title' }, this.title()), h('p', { id: 'hire-sub' }, `${this.floorName()} · ${where}`)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
-    // M6 start: the orchestrator tab opens the start-run dialog for this desk.
+    // M6 start: the orchestrator tab opens the start-run dialog for this desk; #93 the preset tab the desk's hire presets.
     const orch = this.host.orchestrate;
-    this.tabs.hidden = !orch;
-    if (orch)
+    const presets = this.host.presetsAt;
+    this.tabs.hidden = !orch && !presets;
+    if (orch || presets)
       this.tabs.replaceChildren(
         deskTabs(
           'worker',
-          () => {
+          (t) => {
             if (this.state === 'hiring') return;
+            const { floor, desk } = this;
             this.close();
-            orch.open(this.floor, this.desk);
+            if (t === 'orch') orch?.open(floor, desk);
+            else if (t === 'preset') presets?.(floor, desk);
           },
-          orch.off(),
+          orch ? orch.off() : false,
+          !!presets,
         ),
       );
 
@@ -869,8 +940,11 @@ export class HireDialog {
 
     if (this.prep) {
       const note = this.noteNow();
-      const noteTape = note ? h('span', { class: 'tape tape--note', title: note === 'Floor default' ? 'The floor’s default hire (floor settings)' : 'What was hired on this floor last time' }, note) : null;
+      const noteTitle = note === 'Floor default' ? 'The floor’s default hire (floor settings)' : note === 'From preset' ? `As saved in “${this.exact?.name ?? ''}”` : 'What was hired on this floor last time';
+      const noteTape = note ? h('span', { class: 'tape tape--note', title: noteTitle }, note) : null;
       const models = modelsFor(options, this.f.harness);
+      // #93: a preset whose harness is gone shows no model list (it has none): the callout above says why.
+      const problem = this.exactProblem();
       const levels = this.levelMode ? this.levelChips() : [];
       const agent =
         this.levelMode === 'levels'
@@ -885,7 +959,7 @@ export class HireDialog {
               { class: 'dd-agent' },
               this.levelMode === 'none' && levels.length ? this.levelsOff() : null,
               chips('harness', 'Harness', Object.keys(options), this.f.harness, (v) => this.pick({ harness: v }), noteTape),
-              ...(models.length ? [this.modelField(models), chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v }))] : [this.noModels()]),
+              ...(models.length ? [this.modelField(models), chips('effort', 'Effort', effortsFor(options, this.f.harness, this.f.model), this.f.effort, (v) => this.pick({ effort: v }))] : problem?.field === 'harness' ? [] : [this.noModels()]),
               this.levelMode === 'more' && levels.some((c) => !c.problem)
                 ? h('div', { class: 'dd-level-switch' }, h('button', { type: 'button', class: 'btn btn--sm btn--quiet', 'data-key': 'levels-back', disabled: busy, onclick: () => this.switchLevels('levels') }, 'Back to task levels'))
                 : null,
@@ -925,6 +999,7 @@ export class HireDialog {
         h('div', { class: 'dd-field' }, h('label', { for: 'hire-label' }, 'Label'), label, h('p', { class: 'field-hint' }, 'Its workspace label in herdr.')),
         h('div', { class: 'dd-field' }, h('label', { for: 'hire-cwd' }, 'Folder'), cwd, h('p', { class: 'field-hint', id: 'hire-cwd-hint' }, 'Where the agent starts, on the server.')),
       );
+      if (this.exact) nodes.push(this.presetNote(problem));
       nodes.push(agent, slot, ids);
 
       const g = this.gitView(this.prep.git);
@@ -970,6 +1045,24 @@ export class HireDialog {
       // A chip group re-rendered on another pick: focus its checked chip.
       if (!back && focusKey.includes(':')) this.optionsPane.querySelector<HTMLElement>(`[data-pick="${focusKey.split(':')[0]}"] input:checked`)?.focus();
     }
+  }
+
+  /**
+   * #93: where the form came from (the preset, its scope), and, when its saved choice cannot be hired now, the saved
+   * values and why: nothing else was picked in their place, so Hire waits for the player's own pick.
+   */
+  private presetNote(problem: ExactProblem | null): HTMLElement {
+    const x = this.exact as NonNullable<HireDialog['exact']>;
+    const scope = x.scope === 'floor' ? 'This floor' : 'Global';
+    const from = h('p', { class: 'dd-preset-from' }, h('span', { class: 'tape tape--note' }, 'Preset'), ' ', h('b', {}, x.name), h('span', { class: 'dd-preset-scope' }, ` · ${scope}`));
+    if (!problem) return h('div', { class: 'dd-field dd-preset', 'data-hook': 'preset' }, from, h('p', { class: 'field-hint' }, 'Edits here are for this hire only; the preset stays as saved.'));
+    return h(
+      'div',
+      { class: 'dd-field dd-preset dd-callout dd-callout--error', 'data-hook': 'preset', 'data-problem': problem.field, role: 'alert' },
+      from,
+      h('p', {}, 'Saved with ', h('code', {}, presetChoiceText(this.host.store.hireOptions, x.saved)), `. ${problem.why}`),
+      h('p', {}, `Nothing else was picked for you: choose ${problem.field === 'effort' ? 'an effort' : `a ${problem.field}`} below to hire with. The preset stays as saved.`),
+    );
   }
 
   /** #248: one chip per set level; one that cannot be used now is shown off, with why as its tooltip. */
@@ -1077,8 +1170,42 @@ export class HireDialog {
     const had = document.activeElement === this.hireBtn;
     this.hireBtn = hire;
     const retry = this.state === 'failed' && !this.host.unsupported('hire.prepare') ? h('button', { class: 'btn', 'data-key': 'retry', onclick: () => this.retry() }, 'Try again') : null;
-    this.actions.replaceChildren(...[retry, cancel, hire].filter((x): x is HTMLButtonElement => !!x));
+    const save = this.savePresetButton();
+    const hadSave = !!save && document.activeElement?.getAttribute('data-key') === 'save-preset' && this.actions.contains(document.activeElement);
+    this.actions.replaceChildren(...[save, retry, cancel, hire].filter((x): x is HTMLButtonElement => !!x));
+    if (hadSave) save?.focus();
     if (had) hire.focus();
+  }
+
+  /** #93: "Save as preset…" while the form is ready, on a bridge that keeps hire presets (an older one: the tab says why). */
+  private savePresetButton(): HTMLButtonElement | null {
+    const save = this.host.savePreset;
+    if (!save || !this.host.store.hirePresets?.known || this.host.unsupported('hire_preset.create')) return null;
+    const ready = this.state === 'ready';
+    const b = h(
+      'button',
+      { type: 'button', class: 'btn btn--quiet dd-save-preset', 'data-key': 'save-preset', 'aria-disabled': ready ? null : 'true', title: 'Save this first task, harness, model and effort as a hire preset' },
+      'Save as preset…',
+    );
+    b.addEventListener('click', () => {
+      if (this.state !== 'ready') return;
+      const s = this.editor.draft.snapshot();
+      save({ floor: this.floor, prompt: presetText(s), harness: this.f.harness, model: this.f.model, effort: this.f.effort, imagesLeftOut: s.images.length }, b);
+    });
+    return b;
+  }
+
+  /**
+   * #93: the desk's unsent first task (its text, images and file chips, in memory or kept in storage), null when it has
+   * none: using a preset there asks before replacing it.
+   */
+  unsent(floor: string, desk: number): { text: string; images: number } | null {
+    const key = this.draftKey(floor, desk);
+    const doc = this.docs.get(key);
+    const snap = doc?.snapshot();
+    const text = snap ? snap.text : (this.drafts.get(key)?.text ?? '');
+    const images = snap ? snap.images.length : 0;
+    return text.trim() || images || (doc?.doc.chips.length ?? 0) > 0 ? { text, images } : null;
   }
 
   private retry(): void {
@@ -1089,7 +1216,10 @@ export class HireDialog {
   }
 
   private pick(p: Partial<Pick<HireForm, 'harness' | 'model' | 'effort'>>): void {
-    const next = resolveVisibleChoice(this.options(), { harness: p.harness ?? this.f.harness, model: p.model ?? this.f.model, effort: p.effort ?? this.f.effort });
+    // #93: a preset's form follows exactly what is picked: an effort picked never moves a model the catalog lacks.
+    const next = this.exact
+      ? pickExact(this.options(), this.f, p)
+      : resolveVisibleChoice(this.options(), { harness: p.harness ?? this.f.harness, model: p.model ?? this.f.model, effort: p.effort ?? this.f.effort });
     if (next.harness !== this.f.harness) this.modelQuery = '';
     this.f = { ...this.f, ...next };
     this.render();
@@ -1264,6 +1394,7 @@ export class HireDialog {
       error: this.statusError,
       images: this.editor.draft.snapshot().images.map((i) => ({ n: i.n, name: i.name, status: i.status, path: i.path })),
       ...(this.levelMode ? { level: { mode: this.levelMode, picked: this.level, chips: this.levelChips() } } : {}),
+      ...(this.exact ? { preset: { id: this.exact.id, name: this.exact.name, saved: { ...this.exact.saved }, problem: this.exactProblem() } } : {}),
     };
   }
 }
