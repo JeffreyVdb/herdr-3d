@@ -49,7 +49,8 @@
 // #247: `simrepos=<key>` sets demo-m5's floors up for `@r:` and shares the "Repositories from other buildings" switch
 // between the connections with that key (tools/fixture-repos.ts).
 // #93: `simhirepresets=<key>` shares the hire presets between the connections with that key, and keeps them across a
-// reload (tools/fixture-hirepreset.ts); `simfail=no_hire_presets` plays a bridge before them.
+// reload (tools/fixture-hirepreset.ts); `simfail=no_hire_presets` plays a bridge before them, #95
+// `simfail=no_herdr_instructions` one before "Add herdr hiring instructions".
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';

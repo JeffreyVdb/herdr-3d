@@ -110,6 +110,7 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'schedule.dismiss': 'dismiss scheduled agents',
   // #93 hire presets
   'hire_preset.create': 'keep hire presets',
+  'hire_preset.check': 'check hire presets for herdr hiring instructions',
   'hire_preset.update': 'keep hire presets',
   'hire_preset.delete': 'keep hire presets',
   // #110

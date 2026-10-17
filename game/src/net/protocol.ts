@@ -466,6 +466,11 @@ export interface World {
   schedules?: Schedule[];
   /** #93 hire presets: every floor's and the global ones, by name ignoring case (absent from a bridge before #93: unavailable; `[]` when none). */
   hire_presets?: HirePreset[];
+  /**
+   * #95: true when the bridge adds the herdr hiring instructions (`worker.hire`'s and the presets' `herdr_instructions`,
+   * `hire.prepare`'s lines). Absent from an older bridge, which refuses the field: never send it there.
+   */
+  herdr_instructions?: boolean;
 }
 
 export interface Hello {
@@ -635,6 +640,8 @@ export interface HirePrepare {
   label: string;
   git: HireGit | null;
   capacity: HireCapacity;
+  /** #95: the herdr hiring instructions for this floor, exactly as `worker.hire` with `herdr_instructions` adds them after a blank line (absent from an older bridge). */
+  herdr_instructions?: string;
 }
 
 export interface HireGit {
@@ -806,6 +813,8 @@ export interface CommandArgs {
     cwd?: string;
     worktree?: boolean;
     prompt?: string;
+    /** #95: the bridge adds the herdr hiring instructions for the floor after the prompt (only to a bridge whose snapshot says `herdr_instructions`). */
+    herdr_instructions?: boolean;
   };
   'worker.fire.prepare': { id: string };
   /** `handoff` (#223: filed through the shared filing service, see `worker.handoff`) and `stop_services` (#14) are reserved, not sent yet. */
@@ -1000,6 +1009,8 @@ export interface CommandArgs {
   /** The whole spec replaces the preset's, its scope too. */
   'hire_preset.update': { id: string } & HirePresetSpec;
   'hire_preset.delete': { id: string };
+  /** #95: whether the prompt hands work to other agents (the editor's nudge to tick "Add herdr hiring instructions"). Acks `HirePresetCheckAck`. */
+  'hire_preset.check': { prompt: string };
 }
 
 // M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
@@ -3196,6 +3207,8 @@ export interface HirePreset {
   harness: string;
   model: string;
   effort: string;
+  /** #95 "Add herdr hiring instructions" (absent: off): a hire from it gets the lines for the floor it is used on. */
+  herdr_instructions?: boolean;
   /** Unix ms. */
   created_at: number;
   /** Unix ms; an editor opened before a newer one is stale. */
@@ -3210,6 +3223,14 @@ export interface HirePresetSpec {
   harness: string;
   model: string;
   effort: string;
+  /** #95: only to a bridge whose snapshot says `herdr_instructions` (an older one refuses the field). */
+  herdr_instructions?: boolean;
+}
+
+/** #95 `hire_preset.check` ack: `delegates` false also on any failure, a timeout or a classifier not ready. */
+export interface HirePresetCheckAck {
+  delegates: boolean;
+  score: number;
 }
 
 export interface HirePresetUpsert {
