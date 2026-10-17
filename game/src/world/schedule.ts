@@ -224,3 +224,37 @@ export function scheduleSpec(f: ScheduleForm, prompt: string, handoffPath: strin
   if (source) spec.source = source;
   return spec;
 }
+
+/** What a refused `schedule.*` command says in the dialog: the bridge's reason without its code prefix, and what to do. */
+export function scheduleFailureText(t: string, code: string, message: string, title: string): string {
+  const why = message.trim().replace(/^(?:invalid state|invalid argument|bad request|busy|not found):\s*/i, '');
+  const it = title ? `“${title}”` : 'The schedule';
+  const what: Record<string, string> = {
+    'schedule.create': 'was not scheduled',
+    'schedule.update': 'was not changed',
+    'schedule.cancel': 'was not cancelled',
+    'schedule.run_now': 'did not start',
+    'schedule.retry': 'did not start again',
+    'schedule.dismiss': 'was not dismissed',
+  };
+  const did = what[t] ?? 'was not changed';
+  switch (code) {
+    case 'invalid_state':
+      return `${it} ${did}: it moved on meanwhile (${why || 'its state changed'}). The list shows where it is now.`;
+    case 'not_found':
+      return `${it} ${did}: herdr-world no longer has it.`;
+    case 'busy':
+      return `${it} ${did}: ${why || 'its folder is busy'}. Try again in a moment.`;
+    case 'bad_request':
+      return `${it} ${did}: ${why || 'herdr-world refused the spec'}.`;
+    case 'unknown_command':
+      return 'This herdr-world can’t schedule agents yet: it is older than scheduled agents.';
+    case 'offline':
+      return `${it} ${did}: not connected to herdr-world.`;
+    case 'timeout':
+    case 'disconnected':
+      return `${it}: ${why || 'no answer from herdr-world'}. It may have gone through; the list shows what herdr-world says.`;
+    default:
+      return `${it} ${did}: ${why || code}.`;
+  }
+}

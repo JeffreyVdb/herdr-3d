@@ -1,0 +1,394 @@
+/*
+ * #64 schedules: the scheduled agents dialog and its create/edit form. The desk dialogs' signage (hire.css); the
+ * object from the office is a time clock: the header's plate is its face, and each row leads with the time punched on
+ * its card (big tabular digits on the recessed well, the date under them), so the list reads down the clock column.
+ */
+
+/* ---- the list ------------------------------------------------------------------- */
+
+.sch {
+  width: min(860px, calc(100vw - 32px));
+  height: min(760px, calc(100vh - 32px));
+}
+.sch .dd-head {
+  flex-wrap: wrap;
+}
+.sch-plate {
+  min-width: 44px;
+  background: var(--well-deep);
+  box-shadow: inset 0 2px 7px rgb(0 0 0 / 60%), 0 1px 0 rgb(255 255 255 / 8%);
+  color: var(--plus);
+}
+.sch-plate svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2.2;
+  filter: drop-shadow(0 0 6px var(--plus-glow));
+}
+.sch-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 16px 18px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+.sch-sec {
+  margin-top: 14px;
+}
+.sch-sec-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 800;
+  font-variation-settings: var(--fvs-casual);
+}
+.sch-count {
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.sch-sec-empty {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--group-bg);
+  color: var(--text-2);
+  font-size: 13px;
+}
+.sch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.sch-group {
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.sch-group:first-child {
+  margin-top: 0;
+}
+
+/* A time card: the punched time, what it does, its actions. */
+.sch-row {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--raised);
+  transition: background 160ms var(--ease), border-color 160ms var(--ease);
+}
+.sch-row:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+/* Opened on this one (a toast, a board): it stands out until the dialog closes. */
+.sch-row[data-focus='true'] {
+  border-color: var(--action);
+  background: color-mix(in srgb, var(--action) 12%, var(--raised));
+}
+.sch-stamp {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 7px 4px 6px;
+  border-radius: 8px;
+  background: var(--well-deep);
+  box-shadow: inset 0 2px 6px rgb(0 0 0 / 55%);
+}
+.sch-stamp b {
+  font: 800 20px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--plus);
+}
+.sch-stamp span {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.sch-row[data-state='failed'] .sch-stamp b,
+.sch-row[data-state='skipped'] .sch-stamp b {
+  color: var(--error-text);
+}
+.sch-row[data-state='done'] .sch-stamp b {
+  color: var(--text);
+}
+.sch-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.sch-main p {
+  margin: 0;
+}
+.sch-title {
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+.sch-lead,
+.sch-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.sch-countdown {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.sch-late {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.sch-reason {
+  font-size: 12.5px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.sch-row[data-state='failed'] .sch-reason {
+  color: var(--error-text);
+}
+.sch-cwd {
+  color: var(--text-2);
+  font-size: 12px !important;
+}
+.sch-handoff {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+}
+.sch-handoff svg {
+  width: 14px;
+  height: 14px;
+}
+.tape--failed {
+  --c: var(--error-fill);
+  color: var(--on-error);
+  text-shadow: none;
+}
+.tape--skipped {
+  --c: var(--warn);
+  color: var(--on-fill);
+  text-shadow: none;
+}
+.sch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.sch-confirm {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--error-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--error-fill) 14%, transparent);
+}
+.sch-confirm .sch-actions {
+  justify-content: flex-start;
+}
+.sch-empty {
+  display: grid;
+  gap: 6px;
+  max-width: 52ch;
+  margin: 28px auto 0;
+  text-align: center;
+}
+.sch-empty p {
+  margin: 0;
+  font-weight: 700;
+}
+.sch-empty .sch-empty-hint {
+  font-weight: 400;
+  color: var(--text-2);
+}
+.sch-foot:has(.dd-status:not([hidden])) {
+  display: flex;
+}
+.sch-foot:not(:has(.dd-status:not([hidden]))) {
+  display: none;
+}
+
+@media (max-width: 620px) {
+  .sch-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .sch-row > .sch-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sch-row {
+    transition: none;
+  }
+}
+
+/* ---- the create / edit form ----------------------------------------------------------- */
+
+.desk-dlg--sched {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+}
+.desk-dlg--sched .dd-plate {
+  min-width: 44px;
+}
+/* When: the field, the picker, and what it resolves to, punched like a card. */
+.sf-when-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.desk-dlg input[type='datetime-local'],
+.desk-dlg input[type='number'],
+.desk-dlg input[type='search'],
+.desk-dlg select {
+  box-sizing: border-box;
+  height: 36px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
+  color-scheme: dark;
+}
+.desk-dlg select:focus-visible,
+.desk-dlg input[type='datetime-local']:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+.sf-resolved {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--well-deep);
+  box-shadow: inset 0 2px 6px rgb(0 0 0 / 45%);
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.sf-resolved b {
+  color: var(--plus);
+  font: 800 15px/1.2 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.sf-resolved[data-error='true'] {
+  background: var(--error-bg);
+  box-shadow: none;
+  color: var(--error-text);
+  font-weight: 700;
+}
+.sf-prompt .composer {
+  min-height: 92px;
+}
+.sf-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.sf-late {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.sf-late input {
+  width: 84px;
+}
+.sf-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.sf-handoff {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--group-bg);
+}
+.sf-cab {
+  display: grid;
+  gap: 6px;
+}
+.sf-cab-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.sf-cab-row {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--raised);
+  text-align: left;
+  cursor: pointer;
+}
+.sf-cab-row:hover {
+  background: var(--hover);
+}
+.sf-cab-row:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+.sf-cab-row[aria-pressed='true'] {
+  border-color: var(--manila);
+  background: color-mix(in srgb, var(--manila) 18%, var(--raised));
+}
+.sf-cab-row b {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.sf-cab-row span {
+  color: var(--text-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.sf-cab-row mark {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--manila) 85%, transparent);
+  color: var(--manila-ink);
+}
+.sf-gone {
+  margin: 0;
+}
+
