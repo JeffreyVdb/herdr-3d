@@ -14,7 +14,7 @@
   index file changes or it grows old; never walks the disk), `repodisc` (#54 repository discovery: the scan roots'
   boundary walk, the bounded git lookups of the candidates, the identity merge and the background catalog with its
   generations; `server` reads its snapshot for `worker.repos`), `fuzzy` (#137: the pure fzf-style path scorer and bounded
-  top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `codexapp` (#155: the bridge's side
+  top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `childagents` (#22: the native child agents of the workers' own sessions: the `Registry` the hub keeps them in, the `Source` interface the provider phases of #20 implement and the `Evidence` they report; nothing persisted; `childagents/childagentstest` is the fixture source and its scripts, test code only), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `codexapp` (#155: the bridge's side
   of a shared-server Codex worker's own app-server: the passive protocol adapter `Watcher` (initialize, `thread/resume`
   by id only, bounded reconnect, `thread/unsubscribe`, never answers a server request), the launcher (bash by default, fish by option), the
   processes it may stop (only those carrying the launch's marker token), and the checks before a launch; every Codex
