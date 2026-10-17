@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -559,4 +560,306 @@ func waitAnswered(t *testing.T, r *rig, n int) FakeAnswer {
 		t.Fatalf("%d answers, want %d", len(r.ch.Answered()), n)
 	}
 	return r.ch.Answered()[n-1]
+}
+
+// permMenu is a permission menu as the bridge lets it go (#88).
+func permMenu(hash string) *Menu {
+	return &Menu{Hash: hash, Kind: "permission", Choices: []MenuChoice{
+		{1, "Yes"}, {2, "Yes, and always allow access to /tmp/proj from this project"}, {3, "No"}}}
+}
+
+// menuOn is worker id blocked since since on menu m (nil: its screen not
+// read yet).
+func menuOn(id string, since int64, m *Menu) Observation {
+	o := blocked(id, since)
+	o.Worker.Menu = m
+	return o
+}
+
+// menuCard has worker id turn blocked, its notification go first, then its
+// screen's menu, and waits for the menu's card (#88: the menu is read off
+// the screen after the worker turns blocked).
+func (r *rig) menuCard(t *testing.T, id string, since int64, m *Menu) Ref {
+	t.Helper()
+	before, sent := len(r.ch.Cards()), len(r.ch.Sent())
+	r.svc.Observe(working(id))
+	r.svc.Observe(menuOn(id, since, nil))
+	if !r.ch.WaitSent(sent+1, 5*time.Second) {
+		t.Fatal("no notification")
+	}
+	r.svc.Observe(menuOn(id, since, m))
+	if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == before+1 }, 5*time.Second) {
+		t.Fatalf("%d cards, want 1", len(r.ch.Cards())-before)
+	}
+	return r.ch.Cards()[before]
+}
+
+// #88 acceptance: a worker blocked on a permission menu: its notification,
+// then one card with its question, its choices and a button each, no
+// Cancel; a tap answers with the menu's hash and the choice's number, and
+// the card says so. Audited by kind and index, without a text.
+func TestCardMenu(t *testing.T) {
+	a := &answerer{}
+	r := newCardRig(t, a)
+	ref := r.menuCard(t, "w1", 100, permMenu("0123456789abcdef"))
+	if n := r.ch.Sent(); len(n) != 1 || n[0].Reason != ReasonNeedsYou {
+		t.Fatalf("notification %+v", n)
+	}
+	c := r.ch.Card(ref)
+	for _, want := range []string{"Pixel · Permission\n" + menuAsks["permission"], CardMenuAboutText, "1. Yes\n", "2. Yes, and always allow access to /tmp/proj from this project", "3. No"} {
+		if !strings.Contains(c.Text, want) {
+			t.Errorf("card %q lacks %q", c.Text, want)
+		}
+	}
+	var labels []string
+	for _, row := range c.Buttons {
+		for _, b := range row {
+			labels = append(labels, b.Text)
+			if len(b.Data) > MaxButtonData || strings.Contains(b.Data, "0123") {
+				t.Fatalf("data %q", b.Data)
+			}
+		}
+	}
+	if !reflect.DeepEqual(labels, []string{"1. Yes", "2. Yes, and always allow access to /tmp/pr…", "3. No"}) {
+		t.Fatalf("buttons %q", labels)
+	}
+	id := r.tap(t, ref, button(t, c, "3.").Data)
+	if got := r.tapAnswer(t, id); got != tapSendingText {
+		t.Fatalf("tap answered %q", got)
+	}
+	if got := r.waitAnswers(t, a, 1); !reflect.DeepEqual(got[0], Answer{WorkerID: "w1", Hash: "0123456789abcdef", Choice: 3}) {
+		t.Fatalf("answer %+v", got[0])
+	}
+	if end := r.waitCard(t, ref, "✓ Answered: No"); len(end.Buttons) != 0 || strings.Contains(end.Text, CardMenuAboutText) {
+		t.Fatalf("ended card %+v", end)
+	}
+	taps, ans := rowsOf(r, AuditTap), rowsOf(r, AuditAnswer)
+	if len(taps) != 1 || len(ans) != 1 || ans[0].err != nil {
+		t.Fatalf("audit %+v %+v", taps, ans)
+	}
+	if ta := taps[0].args.(tapAudit); ta.ID != "w1" || ta.Kind != kindMenu || *ta.Question != 0 || ta.Action != "option" || ta.Option != 3 || ta.Outcome != tapOK {
+		t.Fatalf("tap row %+v", ta)
+	}
+	if aa := ans[0].args.(answerAudit); aa.ID != "w1" || aa.Kind != kindMenu || aa.Questions != 1 || aa.Choices != 1 || aa.Outcome != replySent {
+		t.Fatalf("answer row %+v", aa)
+	}
+	for _, row := range append(taps, ans...) {
+		if b, _ := json.Marshal(row.args); strings.Contains(string(b), "Yes") || strings.Contains(string(b), "No\"") || strings.Contains(string(b), "proceed") || strings.Contains(string(b), "0123") {
+			t.Fatalf("a text in the audit: %s", b)
+		}
+	}
+}
+
+// The menu read before the notification went: its card still follows it.
+// A trust menu's card says what it asks; a menu whose
+// choices are not 1-9, or with none, gets no card.
+func TestCardMenuShapes(t *testing.T) {
+	a := &answerer{}
+	r := newCardRig(t, a)
+	trust := &Menu{Hash: "fedcba9876543210", Kind: "trust", Choices: []MenuChoice{{1, "No, exit"}, {2, "Yes, I trust this folder"}}}
+	r.svc.Observe(working("w1"))
+	r.svc.Observe(menuOn("w1", 100, trust))
+	if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == 1 }, 5*time.Second) {
+		t.Fatal("no card")
+	}
+	if len(r.ch.Sent()) != 1 {
+		t.Fatal("the card went before its notification")
+	}
+	c := r.ch.Card(r.ch.Cards()[0])
+	if !strings.Contains(c.Text, "Pixel · Trust folder\n"+menuAsks["trust"]) || len(c.Buttons) != 2 || c.Buttons[1][0].Text != "2. Yes, I trust this folder" {
+		t.Fatalf("trust card %+v", c)
+	}
+	for i, m := range []*Menu{{Hash: "1111111111111111", Kind: "permission"}, {Hash: "2222222222222222", Kind: "permission", Choices: []MenuChoice{{0, "Yes"}}}} {
+		id := "wx" + strconv.Itoa(i)
+		r.svc.Observe(working(id))
+		r.svc.Observe(menuOn(id, 100, m))
+		if !r.ch.WaitSent(2+i, 5*time.Second) {
+			t.Fatal("no notification")
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	if len(r.ch.Cards()) != 1 {
+		t.Fatalf("%d cards", len(r.ch.Cards()))
+	}
+}
+
+// Stale menus (#88): the menu changes on the screen, or the worker is no
+// longer blocked: the card says it was answered in the game, its buttons
+// gone, and a tap on it answers nothing. A menu of a blocked spell whose
+// notification did not go (the episode known silently) gets no card.
+func TestCardMenuStale(t *testing.T) {
+	a := &answerer{}
+	r := newCardRig(t, a)
+	ref := r.menuCard(t, "w1", 100, permMenu("aaaaaaaaaaaaaaaa"))
+	old := r.ch.Card(ref)
+	// Another menu in the same blocked spell: its own card.
+	r.svc.Observe(menuOn("w1", 100, permMenu("bbbbbbbbbbbbbbbb")))
+	if c := r.waitCard(t, ref, CardInGameText); len(c.Buttons) != 0 {
+		t.Fatalf("buttons left %+v", c)
+	}
+	if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == 2 }, 5*time.Second) {
+		t.Fatal("no card for the new menu")
+	}
+	next := r.ch.Cards()[1]
+	nextCard := r.ch.Card(next)
+	id := r.tap(t, ref, button(t, old, "1.").Data)
+	if got := r.tapAnswer(t, id); got != tapClosedText {
+		t.Fatalf("stale tap: %q", got)
+	}
+	// No longer blocked.
+	r.svc.Observe(working("w1"))
+	r.waitCard(t, next, CardInGameText)
+	id = r.tap(t, next, button(t, nextCard, "1.").Data)
+	if got := r.tapAnswer(t, id); got != tapClosedText {
+		t.Fatalf("stale tap: %q", got)
+	}
+	if len(a.all()) != 0 {
+		t.Fatalf("sent %+v", a.all())
+	}
+	// Seen first already blocked on a menu (a restart): known silently, no
+	// notification and no card.
+	r.svc.Observe(menuOn("w2", 300, permMenu("cccccccccccccccc")))
+	r.svc.Observe(menuOn("w2", 300, permMenu("dddddddddddddddd")))
+	time.Sleep(50 * time.Millisecond)
+	if len(r.ch.Cards()) != 2 || len(r.ch.Sent()) != 1 {
+		t.Fatalf("cards %d, sent %d", len(r.ch.Cards()), len(r.ch.Sent()))
+	}
+}
+
+// Keys sent and the worker still blocked after the hub's wait (#88): the
+// card says what was sent and that the rest is the game's; audited as
+// unresolved, not as a failure. A refusal of the hub's (stale) says no
+// longer open.
+func TestCardMenuUnresolved(t *testing.T) {
+	a := &answerer{lane: &ReplyError{Kind: ReplyUnresolved}}
+	r := newCardRig(t, a)
+	ref := r.menuCard(t, "w1", 100, permMenu("aaaaaaaaaaaaaaaa"))
+	r.tap(t, ref, button(t, r.ch.Card(ref), "1.").Data)
+	if c := r.waitCard(t, ref, "✓ Sent: Yes\n"+CardUnresolvedText); len(c.Buttons) != 0 {
+		t.Fatalf("buttons left %+v", c)
+	}
+	a.mu.Lock()
+	a.lane = &ReplyError{Kind: ReplyClosed}
+	a.mu.Unlock()
+	ref = r.menuCard(t, "w2", 100, permMenu("bbbbbbbbbbbbbbbb"))
+	r.tap(t, ref, button(t, r.ch.Card(ref), "3.").Data)
+	r.waitCard(t, ref, CardClosedText)
+	ans := rowsOf(r, AuditAnswer)
+	if len(ans) != 2 || ans[0].err != nil || ans[0].args.(answerAudit).Outcome != ReplyUnresolved || ans[1].err == nil || ans[1].err.Error() != ReplyClosed {
+		t.Fatalf("audit %+v", ans)
+	}
+}
+
+// A menu gets one card while its blocked spell lasts (#88): the hub
+// publishes no menu while a screen read fails, then the same one (its
+// hash) again: no other card, whether its answer went unresolved (sending
+// it again could pick twice) or its card was open. Another menu of the
+// spell still gets its own.
+func TestCardMenuOnceAcrossReadGap(t *testing.T) {
+	a := &answerer{lane: &ReplyError{Kind: ReplyUnresolved}}
+	r := newCardRig(t, a)
+	ref := r.menuCard(t, "w1", 100, permMenu("aaaaaaaaaaaaaaaa"))
+	r.tap(t, ref, button(t, r.ch.Card(ref), "1.").Data)
+	r.waitCard(t, ref, "✓ Sent: Yes\n"+CardUnresolvedText)
+	r.svc.Observe(menuOn("w1", 100, nil))
+	r.svc.Observe(menuOn("w1", 100, permMenu("aaaaaaaaaaaaaaaa")))
+	r.menuCard(t, "w2", 100, permMenu("bbbbbbbbbbbbbbbb"))
+	r.svc.Observe(menuOn("w2", 100, nil))
+	r.svc.Observe(menuOn("w2", 100, permMenu("bbbbbbbbbbbbbbbb")))
+	r.svc.Observe(menuOn("w1", 100, permMenu("cccccccccccccccc")))
+	if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) >= 3 }, 5*time.Second) {
+		t.Fatal("no card for another menu")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(r.ch.Cards()); n != 3 {
+		t.Fatalf("%d cards, want 3", n)
+	}
+	last := r.ch.Cards()[2]
+	r.tap(t, last, button(t, r.ch.Card(last), "3.").Data)
+	if got := r.waitAnswers(t, a, 2); got[1].Hash != "cccccccccccccccc" {
+		t.Fatalf("answer %+v", got[1])
+	}
+}
+
+// #88: a menu that had a card gets no other in its blocked spell, however
+// many other menus came and went meanwhile (a spell forgets none of its
+// carded hashes; past maxCarded it opens none: TestCardMenuCap).
+func TestCardMenuOnceAcrossManyMenus(t *testing.T) {
+	a := &answerer{lane: &ReplyError{Kind: ReplyUnresolved}}
+	r := newCardRig(t, a)
+	ref := r.menuCard(t, "w1", 100, permMenu("aaaaaaaaaaaaaaaa"))
+	r.tap(t, ref, button(t, r.ch.Card(ref), "1.").Data)
+	r.waitCard(t, ref, "✓ Sent: Yes\n"+CardUnresolvedText)
+	for i := 1; i <= 8; i++ {
+		r.svc.Observe(menuOn("w1", 100, permMenu(fmt.Sprintf("%016x", i))))
+		if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == i+1 }, 5*time.Second) {
+			t.Fatalf("no card for menu %d", i)
+		}
+	}
+	r.svc.Observe(menuOn("w1", 100, nil))
+	r.svc.Observe(menuOn("w1", 100, permMenu("aaaaaaaaaaaaaaaa")))
+	time.Sleep(50 * time.Millisecond)
+	if n := len(r.ch.Cards()); n != 9 {
+		t.Fatalf("%d cards, want 9: the first menu got another", n)
+	}
+}
+
+// #88: past maxCarded menus a blocked spell opens no card (the last one's
+// closes as the menu changes), not even for a menu carded before; a new
+// spell has cards again.
+func TestCardMenuCap(t *testing.T) {
+	a := &answerer{}
+	r := newCardRig(t, a)
+	r.menuCard(t, "w1", 100, permMenu(fmt.Sprintf("%016x", 0)))
+	for i := 1; i < maxCarded; i++ {
+		r.svc.Observe(menuOn("w1", 100, permMenu(fmt.Sprintf("%016x", i))))
+		if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == i+1 }, 5*time.Second) {
+			t.Fatalf("no card for menu %d", i)
+		}
+	}
+	last := r.ch.Cards()[maxCarded-1]
+	r.svc.Observe(menuOn("w1", 100, permMenu(fmt.Sprintf("%016x", maxCarded))))
+	if c := r.waitCard(t, last, CardInGameText); len(c.Buttons) != 0 {
+		t.Fatalf("closed card's buttons %+v", c.Buttons)
+	}
+	r.svc.Observe(menuOn("w1", 100, nil))
+	r.svc.Observe(menuOn("w1", 100, permMenu(fmt.Sprintf("%016x", 3))))
+	time.Sleep(50 * time.Millisecond)
+	if n := len(r.ch.Cards()); n != maxCarded {
+		t.Fatalf("%d cards, want %d", n, maxCarded)
+	}
+	if len(a.all()) != 0 {
+		t.Fatalf("answers %+v", a.all())
+	}
+	r.menuCard(t, "w1", 200, permMenu(fmt.Sprintf("%016x", 3)))
+}
+
+// Replies off (#88): the menu's card says so and a tap read before is
+// refused; a menu seen while they are off gets no card.
+func TestCardMenuRepliesOff(t *testing.T) {
+	a := &answerer{}
+	r := newCardRig(t, a)
+	ref := r.menuCard(t, "w1", 100, permMenu("aaaaaaaaaaaaaaaa"))
+	c := r.ch.Card(ref)
+	r.ch.mu.Lock()
+	h, epoch := r.ch.hooks.Tap, r.ch.epoch
+	r.ch.mu.Unlock()
+	off := false
+	if err := r.svc.Apply(context.Background(), Update{Replies: &off}); err != nil {
+		t.Fatal(err)
+	}
+	r.waitCard(t, ref, CardOffText)
+	h(Tap{ID: "late", Msg: ref, Data: button(t, c, "1.").Data, Epoch: epoch})
+	if got := r.tapAnswer(t, "late"); got != tapOffText {
+		t.Fatalf("late tap: %q", got)
+	}
+	r.svc.Observe(working("w2"))
+	r.svc.Observe(menuOn("w2", 100, permMenu("bbbbbbbbbbbbbbbb")))
+	if !r.ch.WaitSent(2, 5*time.Second) {
+		t.Fatal("no notification")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if len(r.ch.Cards()) != 1 || len(a.all()) != 0 {
+		t.Fatalf("cards %d, answers %+v", len(r.ch.Cards()), a.all())
+	}
 }

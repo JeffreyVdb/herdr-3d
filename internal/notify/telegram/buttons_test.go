@@ -381,3 +381,98 @@ func TestCardEditRateLimited(t *testing.T) {
 	cr.clock.Advance(2 * time.Second)
 	cr.waitText(t, ids[0], notify.CardCancelText)
 }
+
+// blockedOn has worker id turn blocked, its notification go, then its
+// screen's menu m (#88: read a moment later), and waits for m's card; it
+// returns the card's message id.
+func (cr *cardRig) blockedOn(t *testing.T, id string, m *notify.Menu) int64 {
+	t.Helper()
+	before := len(cr.tg.requests("sendMessage"))
+	cr.svc.Observe(notify.Observation{Worker: notify.Worker{ID: id, Status: "working", StatusSince: 1}, Name: "Pixel"})
+	w := notify.Worker{ID: id, Status: "blocked", StatusSince: 100}
+	cr.svc.Observe(notify.Observation{Worker: w, Name: "Pixel"})
+	waitFor(t, "the notification", func() bool { return len(cr.tg.requests("sendMessage")) == before+1 })
+	w.Menu = m
+	cr.svc.Observe(notify.Observation{Worker: w, Name: "Pixel"})
+	waitFor(t, "the menu's card", func() bool { return len(cr.tg.requests("sendMessage")) == before+2 })
+	return int64(before + 2)
+}
+
+func codexMenu(hash string) *notify.Menu {
+	return &notify.Menu{Hash: hash, Kind: "permission", Choices: []notify.MenuChoice{
+		{N: 1, Label: "Yes, proceed (y)"}, {N: 2, Label: "Yes, and don't ask again for commands that start with `…` (p)"},
+		{N: 3, Label: "No, and tell Codex what to do differently (esc)"}}}
+}
+
+// #88 over HTTP: a permission menu's card after the notification, quiet,
+// a button per choice and no Cancel, its data with no hash; someone else's
+// tap is answered without a word and never handed over; the paired
+// person's is answered once and answers with the hash and the choice; the
+// card is edited to the answer, no button left.
+func TestCardMenuOverHTTP(t *testing.T) {
+	cr := newCardRig(t)
+	msg := cr.blockedOn(t, "w-a", codexMenu("0123456789abcdef"))
+	m := cr.tg.requests("sendMessage")[1].body
+	if m["disable_notification"] != true || m["parse_mode"] != nil {
+		t.Fatalf("card %+v", m)
+	}
+	text, labels := cr.tg.shownText(msg)
+	if !strings.HasPrefix(text, "Pixel · Permission\nIt asks for your permission.\n\n"+notify.CardMenuAboutText) ||
+		!strings.Contains(text, "2. Yes, and don't ask again for commands that start with `…` (p)") || len(labels) != 3 ||
+		!strings.HasPrefix(labels[2], "3. No, and tell Codex what to do different…=") {
+		t.Fatalf("card %q %q", text, labels)
+	}
+	for _, l := range labels {
+		if d := l[strings.LastIndex(l, "=")+1:]; len(d) > notify.MaxButtonData || strings.Contains(d, "0123") || strings.Contains(d, "w-a") {
+			t.Fatalf("data %q", d)
+		}
+	}
+	d := cr.data(t, msg, "1.")
+	stranger := cr.tg.pushTap(&user{ID: 7, FirstName: "Eve"}, 7, msg, d)
+	if got := cr.tapAnswered(t, stranger); got != "" {
+		t.Fatalf("stranger's tap answered %q", got)
+	}
+	tap := cr.tg.pushTap(ada(), 42, msg, d)
+	if got := cr.tapAnswered(t, tap); got != "Sending…" {
+		t.Fatalf("tap answered %q", got)
+	}
+	waitFor(t, "the answer", func() bool { return len(cr.got()) == 1 })
+	if a := cr.got()[0]; !reflect.DeepEqual(a, notify.Answer{WorkerID: "w-a", Hash: "0123456789abcdef", Choice: 1}) {
+		t.Fatalf("answer %+v", a)
+	}
+	if labels := cr.waitText(t, msg, "✓ Answered: Yes, proceed (y)"); len(labels) != 0 {
+		t.Fatalf("buttons left %q", labels)
+	}
+	if n := len(cr.tg.requests("answerCallbackQuery")); n != 2 {
+		t.Fatalf("%d tap answers", n)
+	}
+}
+
+// #88 over HTTP: the menu changes on the screen (a new hash): the card
+// says it was answered in the game, its buttons gone; the old card's tap
+// is answered "no longer open" and answers nothing. Keys that leave the
+// worker blocked: the new card says so.
+func TestCardMenuStaleOverHTTP(t *testing.T) {
+	cr := newCardRig(t)
+	cr.mu.Lock()
+	cr.lane = &notify.ReplyError{Kind: notify.ReplyUnresolved}
+	cr.mu.Unlock()
+	msg := cr.blockedOn(t, "w-a", codexMenu("aaaaaaaaaaaaaaaa"))
+	stale := cr.data(t, msg, "1.")
+	cr.svc.Observe(notify.Observation{Worker: notify.Worker{ID: "w-a", Status: "blocked", StatusSince: 100, Menu: codexMenu("bbbbbbbbbbbbbbbb")}, Name: "Pixel"})
+	if labels := cr.waitText(t, msg, notify.CardInGameText); len(labels) != 0 {
+		t.Fatalf("buttons left %q", labels)
+	}
+	waitFor(t, "the new menu's card", func() bool { return len(cr.tg.requests("sendMessage")) == 3 })
+	tap := cr.tg.pushTap(ada(), 42, msg, stale)
+	if got := cr.tapAnswered(t, tap); got != "No longer open" {
+		t.Fatalf("stale tap answered %q", got)
+	}
+	cr.tg.pushTap(ada(), 42, 3, cr.data(t, 3, "3."))
+	if labels := cr.waitText(t, 3, "✓ Sent: No, and tell Codex what to do differently (esc)\n"+notify.CardUnresolvedText); len(labels) != 0 {
+		t.Fatalf("buttons left %q", labels)
+	}
+	if a := cr.got(); len(a) != 1 || a[0].Hash != "bbbbbbbbbbbbbbbb" || a[0].Choice != 3 {
+		t.Fatalf("answers %+v", a)
+	}
+}

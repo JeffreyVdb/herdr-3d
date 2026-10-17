@@ -60,6 +60,9 @@ type Worker struct {
 	CodexShared, CodexAsyncBlocked bool
 	// ActivityKind is the activity's kind ("": none).
 	ActivityKind string
+	// Menu is the permission or folder-trust menu a blocked worker's screen
+	// shows (#88: its card; nil: none).
+	Menu *Menu
 }
 
 // Report is a freelancer's report.
@@ -114,6 +117,26 @@ type FollowupQuestion struct {
 	// options, the rest the message says of it, the agent's recommendation.
 	Label, Context, Recommendation string
 	Choices                        []string
+}
+
+// Menu is a blocked worker's screen menu (#88), as the bridge lets it go:
+// its choices' labels, scrubbed; no line above the menu (its question, the
+// command, the edit it is about) is ever here: the card says what a kind
+// asks in a fixed line.
+type Menu struct {
+	// Hash is the question's (worker.answer's): a new one for each menu and
+	// each time the worker is blocked again.
+	Hash string
+	// Kind is "permission" or "trust".
+	Kind    string
+	Choices []MenuChoice
+}
+
+// MenuChoice is one choice of a menu: its number on the screen and its
+// label.
+type MenuChoice struct {
+	N     int
+	Label string
 }
 
 // Verdict is what the rule says of a worker.
@@ -182,6 +205,21 @@ func validAsk(a *Ask) bool {
 	}
 	for _, q := range a.Questions {
 		if !q.HasOptions {
+			return false
+		}
+	}
+	return true
+}
+
+// validMenu: the worker is blocked on a menu it can be answered on, with
+// 1-9 choices (worker.answer's).
+func validMenu(w Worker) bool {
+	m := w.Menu
+	if w.Asleep || w.Status != "blocked" || m == nil || m.Hash == "" || len(m.Choices) == 0 || len(m.Choices) > 9 {
+		return false
+	}
+	for _, c := range m.Choices {
+		if c.N < 1 || c.N > 9 {
 			return false
 		}
 	}

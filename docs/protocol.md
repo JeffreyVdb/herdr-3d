@@ -4640,16 +4640,37 @@ while it is off.
   Taps count only from the paired account in your private chat with the bot, under the replies' switch and
   recipient (switched off, unpaired or paired anew: nothing read before answers a worker); anyone else's tap is
   answered without a word. At most 30 taps a minute on one worker's cards, 60 in all.
+- **Menu buttons** (#88; `replies` on): a worker `blocked` on a `permission` or `trust` menu its screen shows
+  (`worker.question` with choices; not a `choice` one) gets one card after its notification: "Permission" or "Trust
+  folder", what such a menu asks in a fixed line (not the screen's question line), a note that what it is about is not
+  sent, each choice and a button for each; no Cancel (each such menu has its own No or Quit). The question is read off
+  the screen a moment after the worker turns blocked, so the card comes once both are there for the same blocked spell
+  (`status_since`): a worker first seen blocked (a restart) rings nothing and gets no card. Of the menu only its
+  choices' labels go: one that says what not to ask about again is cut where its command would start ("Yes, and
+  don't ask again for …", a one-letter key such as "(p)" kept), any other that may name a command ("ask again",
+  "command") is "…" unless known to name none, a span in backticks elsewhere is `` `…` ``, and anything shaped
+  like a key or token is removed; never a line above the menu (its question, the command, the edit, a trust dialog's
+  folder) nor the rest of the screen. A tap answers as the game's
+  `worker.answer` does, with the card's `hash` and the choice's number, on the worker's input lane, no client: the
+  screen is read again first, and a menu no longer shown (another hash, the worker no longer blocked) sends no key and
+  the card says "No longer open"; it says "Answered in the game." once the bridge sees the menu leave first. A new
+  menu in the same blocked spell closes the old card and gets its own. Keys sent and the worker still blocked after
+  `AnswerTimeout` (3 s): the card says "✓ Sent: <choice>" and "It still waits on its menu: look at it in the game."
+  and offers nothing more for that menu. A menu gets one card while the blocked spell lasts, though its screen read
+  fails a while and it comes back or other menus come between; a spell's first 32 menus get cards, and past that it
+  opens none (the notification went; answer in the game). The gates, the taps' answers and the windows are the cards'
+  above.
 - **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`,
   `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}` and (#13)
   `notify.reply` `{"id"?, "text_bytes", "text_runes", "outcome"}` (`sent`, else the refusal: `not_a_reply`,
   `no_text`, `relayed`, `stale`, `too_long`, `unknown`, `rate_limited`, `ask`, `gone`, `invalid_state`, `busy`,
   `bad_text`, `handoff`, `failed`; #14: `typed_answer`, a card's typed answer taken). A reply's prompt writes no
-  `worker.prompt` row. #14: `notify.tap` `{"id"?, "kind"?: "ask" | "followup", "question"?, "action"?: "option" |
+  `worker.prompt` row. #14: `notify.tap` `{"id"?, "kind"?: "ask" | "followup" | "menu" (#88), "question"?, "action"?: "option" |
   "type" | "done" | "cancel", "option"?, "outcome"}` (`ok`, `off`, `unknown`, `closed`, `rate_limited`, `busy`,
   `empty`) and `notify.answer` `{"id", "kind", "questions", "choices"?, "typed_bytes"?, "typed_runes"?, "cancel"?,
-  "outcome"}` (`sent`, else the refusal of a reply's, or `closed`); a card's answer writes no `worker.answer_ask` or
-  `worker.answer_followup` row. Never a message's text, an answer, a code, a token or a Telegram id.
+  "outcome"}` (`sent`, else the refusal of a reply's, or `closed`; #88: `unresolved`, a menu's keys sent and the
+  worker still blocked, not an error); a card's answer writes no `worker.answer_ask`, `worker.answer_followup` or
+  (#88) `worker.answer` row. Never a message's text, an answer, a label, a code, a token or a Telegram id.
 
 ### Host stats
 
