@@ -28,8 +28,8 @@ package notify
 // are there for the same blocked spell (openMenu). A tap answers through
 // worker.answer's path with the menu's hash, so a menu no longer on the
 // screen is never answered. The card shows the menu's question line and
-// its choices' labels, as the bridge scrubbed them; never what the menu is
-// about (the command, the file).
+// its choices' labels, as the bridge scrubbed them; never the lines above
+// the menu (the command, the edit it is about).
 
 import (
 	"context"
@@ -90,7 +90,7 @@ const (
 	CardSendingText = "Sending…"
 	cardMultiText   = "Pick one or more, then tap Done."
 	// #88: a menu's.
-	CardMenuAboutText  = "What it is for (a command, a file, a folder) is not sent here: see it in the game."
+	CardMenuAboutText  = "What it is about (the command, the edit) is not sent here: see it in the game."
 	CardUnresolvedText = "It still waits on its menu: look at it in the game."
 )
 

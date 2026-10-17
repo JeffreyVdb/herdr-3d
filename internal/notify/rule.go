@@ -120,8 +120,8 @@ type FollowupQuestion struct {
 }
 
 // Menu is a blocked worker's screen menu (#88), as the bridge lets it go:
-// its question line and its choices' labels, scrubbed; what the menu is
-// about (the command, the file, the folder) is never here.
+// its question line and its choices' labels, scrubbed; the lines above the
+// menu (the command, the edit it is about) are never here.
 type Menu struct {
 	// Hash is the question's (worker.answer's): a new one for each menu and
 	// each time the worker is blocked again.
