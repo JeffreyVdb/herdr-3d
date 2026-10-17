@@ -271,6 +271,158 @@ describe('ScheduleFormDialog (#64 schedules)', () => {
     vi.useRealTimers();
   });
 
+  it('Edit keeps the schedule’s own instant (a fall-back overlap’s second showing, its milliseconds) until When changes', async () => {
+    const e = setup();
+    (e.dlg as unknown as { zone: string }).zone = 'Europe/Brussels';
+    // 02:30 CET, the second 02:30 of 25 Oct 2026 in Brussels; typed fresh, 02:30 is the first (CEST, an hour earlier).
+    const due = Date.parse('2026-10-25T01:30:00.250Z');
+    const s0 = sched({ due_at: due });
+    e.schedules.upsert(s0);
+    e.dlg.open({ floor: 'f1', edit: s0 });
+    await e.flush();
+    expect(e.dlg.summary()).toMatchObject({ when: '2026-10-25 02:30', due });
+    expect(e.dlg.summary().resolved).toContain('02:30 CET');
+    expect(e.dlg.summary().resolved).toContain('01:30 UTC');
+    // The picker handing back the same wall clock is not a new time either.
+    const p = e.q<HTMLInputElement>('[data-key="when-picker"]');
+    expect(p.value).toBe('2026-10-25T02:30');
+    p.dispatchEvent(new Event('change'));
+    expect(e.dlg.summary().due).toBe(due);
+    e.type('title', 'Renamed');
+    await e.save();
+    expect(e.of('schedule.update')[0]?.args.due_at).toBe(due);
+    // A time typed anew is read as any typed time: the overlap's earlier showing.
+    e.dlg.open({ floor: 'f1', edit: s0 });
+    await e.flush();
+    e.type('when', '2026-10-25 02:45');
+    expect(e.dlg.summary().due).toBe(Date.parse('2026-10-25T00:45:00Z'));
+    expect(e.dlg.summary().resolved).toContain('02:45 CEST');
+  });
+
+  it('the cabinet’s search keeps the focus and the caret when its answer redraws the list', async () => {
+    vi.useFakeTimers();
+    const e = setup();
+    e.dlg.open({ floor: 'f1' });
+    await vi.advanceTimersByTimeAsync(50);
+    e.pick('sf-handoff:cabinet');
+    await vi.advanceTimersByTimeAsync(50);
+    const box = e.q<HTMLInputElement>('[data-key="cab-search"]');
+    box.focus();
+    e.type('cab-search', 'Over');
+    box.setSelectionRange(2, 2);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(e.of('handoff.list').at(-1)?.args).toEqual({ floor: 'f1', q: 'Over' });
+    expect(document.activeElement).toBe(box);
+    expect(box.isConnected).toBe(true);
+    expect([box.selectionStart, box.selectionEnd]).toEqual([2, 2]);
+    // Esc then clears the search; the form stays.
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(box.value).toBe('');
+    expect(e.dlg.isOpen).toBe(true);
+    vi.useRealTimers();
+  });
+
+  describe('a save in flight', () => {
+    /** Holds `cmd`'s answers until released (the rest answer as `setup` does). */
+    const hold = (e: ReturnType<typeof setup>, cmd: string) => {
+      const host = (e.dlg as unknown as { host: { send: (t: string, a: Record<string, unknown>) => Promise<Reply> } }).host;
+      const send = host.send.bind(host);
+      const pending: Array<(r: Reply) => void> = [];
+      host.send = (t, a) => {
+        if (t !== cmd) return send(t, a);
+        e.sent.push({ t, args: a });
+        return new Promise<Reply>((r) => pending.push(r));
+      };
+      return { release: (r: Reply, i = 0) => pending[i]?.(r), get count() { return pending.length; } };
+    };
+    const transcript = (e: ReturnType<typeof setup>) => e.dlg.open({ floor: 'f1', prefill: { cwd: '/home/dev/wt/pixel', transcript: { worker: 'w-1', name: 'Pixel', candidate: CAND } } });
+
+    it('Cancel, then the form opened again: the prompt is editable and the old answer touches nothing', async () => {
+      const e = setup();
+      const create = hold(e, 'schedule.create');
+      e.dlg.open({ floor: 'f1' });
+      await e.flush();
+      e.type('title', 'x');
+      e.type('when', 'in 2h');
+      e.prompt('first');
+      await e.save();
+      expect(e.q('#sf-prompt').getAttribute('contenteditable')).toBe('false');
+      e.q<HTMLButtonElement>('[data-key="cancel"]').click();
+      e.dlg.open({ floor: 'f1' });
+      await e.flush();
+      expect(e.q('#sf-prompt').getAttribute('contenteditable')).toBe('true');
+      expect(e.dlg.summary().saving).toBe(false);
+      create.release({ ok: true, data: { ...sched(), id: 'sch_old' } });
+      await e.flush();
+      expect(e.dlg.isOpen).toBe(true);
+      expect(e.saved).toEqual([]);
+    });
+
+    it('Floor and Folder hold still while saving; a prepare meanwhile does not strand the save, nor change what it sends', async () => {
+      const e = setup();
+      const filing = hold(e, 'worker.handoff');
+      transcript(e);
+      await e.flush();
+      e.type('title', 'x');
+      e.type('when', 'in 2h');
+      await e.save();
+      expect(e.q<HTMLSelectElement>('[data-key="floor"]').disabled).toBe(true);
+      expect(e.q<HTMLInputElement>('[data-key="cwd"]').readOnly).toBe(true);
+      // A prepare that starts anyway (one still on its way from the open, say) is not the save's business.
+      e.type('cwd', '/home/new');
+      e.q('[data-key="cwd"]').dispatchEvent(new Event('change'));
+      await e.flush();
+      filing.release({ ok: true, data: { handoff: { path: '/h/new.md' } } });
+      await e.flush();
+      expect(e.of('schedule.create')).toHaveLength(1);
+      expect(e.of('schedule.create')[0]?.args).toMatchObject({ cwd: '/home/dev/wt/pixel', handoff_path: '/h/new.md' });
+      expect(e.dlg.isOpen).toBe(false);
+      expect(e.dlg.summary().saving).toBe(false);
+    });
+
+    it('a filing that acks after Cancel is kept: the form opened again on that reply uses its path', async () => {
+      const e = setup();
+      const filing = hold(e, 'worker.handoff');
+      transcript(e);
+      await e.flush();
+      e.type('title', 'x');
+      e.type('when', 'in 2h');
+      await e.save();
+      e.dlg.close();
+      filing.release({ ok: true, data: { handoff: { path: '/h/already-filed.md' } } });
+      await e.flush();
+      transcript(e);
+      await e.flush();
+      expect(e.dlg.summary().handoffPath).toBe('/h/already-filed.md');
+      expect(e.q('[data-hook="sf-attach"]').textContent).toContain('/h/already-filed.md');
+      expect(e.q('[data-key="save"]').textContent).toBe('Schedule');
+      e.type('title', 'x');
+      e.type('when', 'in 2h');
+      await e.save();
+      expect(filing.count).toBe(1);
+      expect(e.of('schedule.create')[0]?.args.handoff_path).toBe('/h/already-filed.md');
+    });
+
+    it('a filing that acks after the form was opened again on that reply shows there at once', async () => {
+      const e = setup();
+      const filing = hold(e, 'worker.handoff');
+      transcript(e);
+      await e.flush();
+      e.type('title', 'x');
+      e.type('when', 'in 2h');
+      await e.save();
+      e.dlg.close();
+      transcript(e);
+      await e.flush();
+      expect(e.q('[data-key="save"]').textContent).toBe('File and schedule');
+      filing.release({ ok: true, data: { handoff: { path: '/h/late.md' } } });
+      await e.flush();
+      expect(e.q('[data-hook="sf-attach"]').textContent).toContain('/h/late.md');
+      expect(e.q('[data-key="save"]').textContent).toBe('Schedule');
+      expect(e.dlg.summary()).toMatchObject({ handoffPath: '/h/late.md', saving: false });
+    });
+  });
+
   describe('from a transcript row', () => {
     const open = (e: ReturnType<typeof setup>) =>
       e.dlg.open({ floor: 'f1', prefill: { choice: { harness: 'codex', model: 'gpt-6-sol', effort: 'high' }, cwd: '/home/dev/wt/pixel', transcript: { worker: 'w-1', name: 'Pixel', candidate: CAND } } });

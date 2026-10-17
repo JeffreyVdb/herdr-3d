@@ -256,6 +256,11 @@
 .desk-dlg--sched .dd-plate {
   min-width: 44px;
 }
+/* Why Save waits takes its own line when it and the buttons don't fit one (a phone), so the buttons are never clipped. */
+.desk-dlg--sched .dd-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
 /* When: the field, the picker, and what it resolves to, punched like a card. */
 .sf-when-row {
   display: grid;
@@ -340,6 +345,14 @@
 .sf-cab {
   display: grid;
   gap: 6px;
+}
+/* The choice and the cabinet's results are slots that redraw; their children lay out as the handoff's and the cabinet's own. */
+.sf-handoff-pick,
+.sf-cab-results {
+  display: contents;
+}
+.sf-cab[hidden] {
+  display: none;
 }
 .sf-cab-list {
   list-style: none;

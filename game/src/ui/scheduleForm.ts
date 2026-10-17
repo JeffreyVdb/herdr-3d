@@ -5,7 +5,7 @@ import { formFromPrepare, resolveVisibleChoice, modelsFor, visibleOptions, workt
 import { labelsOf } from '../world/modelLabel';
 import { inboxWhere } from '../world/inbox';
 import { scheduleBlocker, scheduleFailureText, scheduleSpec, type ScheduleForm } from '../world/schedule';
-import { countdownText, parseWhen, utcHint, wallText, whenText } from '../world/scheduleTime';
+import { countdownText, parseWhen, utcHint, wallText, whenText, type When } from '../world/scheduleTime';
 import { browserZone } from '../world/daylight';
 import { effortsFor } from '../world/settings';
 import { newOp } from '../world/handoff';
@@ -120,6 +120,10 @@ export class ScheduleFormDialog {
   private readonly wakeIn = h('input', { type: 'checkbox', id: 'sf-wake', 'data-key': 'wake' }) as HTMLInputElement;
   private readonly lateIn = h('input', { type: 'number', id: 'sf-late', 'data-key': 'late-hours', min: '0', step: '0.5', inputmode: 'decimal', placeholder: 'any' }) as HTMLInputElement;
   private readonly cabSearch = h('input', { type: 'search', 'data-key': 'cab-search', autocomplete: 'off', spellcheck: 'false', placeholder: 'Search this floor’s cabinet', 'aria-label': 'Search this floor’s cabinet' }) as HTMLInputElement;
+  /** The handoff's choice and its note; the cabinet's search box stays mounted below it, so typing in it survives a redraw. */
+  private readonly handoffPick = h('div', { class: 'sf-handoff-pick' });
+  private readonly cabResults = h('div', { class: 'sf-cab-results' });
+  private readonly cabBox = h('div', { class: 'sf-cab' }, this.cabSearch, this.cabResults);
   private readonly agentSlot = h('div', { class: 'dd-agent' });
   private readonly worktreeSlot = h('div');
   private readonly missSlot = h('div', { class: 'sf-row' });
@@ -139,7 +143,12 @@ export class ScheduleFormDialog {
   /** Why `hire.prepare` did not answer (an asleep floor, a folder that is not there): the form goes on without it. */
   private prepNote: string | null = null;
   private preparing = false;
-  private gen = 0;
+  /** The form's identity: a new open or a close ends whatever the last one had in flight. */
+  private formGen = 0;
+  /** The latest `hire.prepare`: an older answer is dropped (a save is not). */
+  private prepGen = 0;
+  /** An edit's own instant and how the field shows it: while the field reads so, the instant is kept as it is (seconds, an overlap's second showing). */
+  private kept: { text: string; at: number } | null = null;
   private handoffMode: HandoffMode = 'none';
   private picked: HandoffEntry | null = null;
   private cabRows: HandoffEntry[] = [];
@@ -200,6 +209,7 @@ export class ScheduleFormDialog {
     );
     const wake = h('label', { class: 'dd-check', for: 'sf-wake' }, this.wakeIn, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, 'Wake the floor if it is asleep'));
     this.form.append(h('div', { class: 'dd-field' }, h('label', { for: 'sf-title-in' }, 'Title'), this.titleIn), whenField, promptField, this.agentSlot, place, this.worktreeSlot, wake, this.missSlot, this.handoffSlot);
+    this.handoffSlot.append(this.handoffPick, this.cabBox);
     this.dialog.append(this.head, this.form, h('footer', { class: 'dd-foot' }, this.notices, this.statusEl, this.alertEl, this.actions));
 
     this.titleIn.addEventListener('input', () => {
@@ -254,7 +264,8 @@ export class ScheduleFormDialog {
       void this.save();
     });
     this.dialog.addEventListener('close', () => {
-      this.gen++;
+      this.formGen++;
+      this.prepGen++;
       this.cabGen++;
       if (this.cabTimer) clearTimeout(this.cabTimer);
       if (this.ticker) clearInterval(this.ticker);
@@ -298,7 +309,7 @@ export class ScheduleFormDialog {
 
   /** Opens it: "+ New" (`floor` only), a prefilled create (a transcript row, Part 5), or Edit. */
   open(o: ScheduleFormOpen): void {
-    this.gen++;
+    this.formGen++;
     const e = o.edit;
     this.mode = e ? 'edit' : 'create';
     this.seated = o.seated === true;
@@ -315,7 +326,9 @@ export class ScheduleFormDialog {
     const key = c ? `${p.transcript?.worker}/${c.id}/${c.revision}` : '';
     this.filing = c ? (this.filings.get(key) ?? { op: newOp(), path: null }) : null;
     if (c && this.filing) this.filings.set(key, this.filing);
+    // A save the last open left in flight is over for this form (its answer is dropped).
     this.saving = false;
+    this.composer.setBusy(false);
     this.modelQuery = '';
     this.setStatus('');
     if (e) {
@@ -339,8 +352,10 @@ export class ScheduleFormDialog {
     }
     this.composer.setDraft(this.newDraft(this.f.prompt));
     this.titleIn.value = this.f.title;
-    // The time has no default (a follow-up's included); an edit shows its own on the zone's clock.
+    // The time has no default (a follow-up's included); an edit shows its own on the zone's clock, and keeps its instant
+    // until the field reads otherwise: the wall clock read back could be the overlap's other showing, and has no seconds.
     this.whenIn.value = e ? wallText(e.due_at, this.zone) : '';
+    this.kept = e ? { text: this.whenIn.value, at: e.due_at } : null;
     this.cwdIn.value = this.f.cwd || p.cwd || '';
     this.f.cwd = this.cwdIn.value;
     this.wakeIn.checked = this.f.wakeFloor;
@@ -373,7 +388,13 @@ export class ScheduleFormDialog {
     this.floorSel.replaceChildren(...ids.map((id) => h('option', { value: id }, inboxWhere(this.host.store, id))));
     this.floorSel.value = this.f.floor;
     // A schedule's floor cannot change once made.
-    this.floorSel.disabled = this.mode === 'edit';
+    this.lockPlace();
+  }
+
+  /** A schedule's floor cannot change once made; while saving, neither Floor nor Folder moves (each starts a prepare). */
+  private lockPlace(): void {
+    this.floorSel.disabled = this.mode === 'edit' || this.saving;
+    this.cwdIn.readOnly = this.saving;
   }
 
   /**
@@ -382,11 +403,11 @@ export class ScheduleFormDialog {
    * there): the form keeps what it has, falling back to the floor's settings, and says so.
    */
   private async prepare(cwd: string | undefined, full: boolean): Promise<void> {
-    const gen = ++this.gen;
+    const gen = ++this.prepGen;
     this.preparing = true;
     this.renderActions();
     const r = this.host.unsupported('hire.prepare') ? { ok: false as const, code: 'unknown_command', message: '' } : await this.host.send('hire.prepare', { floor: this.f.floor, ...(cwd ? { cwd } : {}) });
-    if (gen !== this.gen || !this.dialog.open) return;
+    if (gen !== this.prepGen || !this.dialog.open) return;
     this.preparing = false;
     const options = this.options();
     if (!r.ok) {
@@ -436,7 +457,8 @@ export class ScheduleFormDialog {
   private reparse(render = true): void {
     // One instant for the reading and its countdown: "in 2h" says "in 2 h", not "in 1 h 59 min" a millisecond later.
     this.parsedAt = this.host.now();
-    const r = parseWhen(this.whenIn.value, this.parsedAt, this.zone);
+    const k = this.kept;
+    const r: When = k && this.whenIn.value.trim() === k.text && k.at > this.parsedAt ? { ok: true, at: k.at, zone: this.zone, relative: false } : parseWhen(this.whenIn.value, this.parsedAt, this.zone);
     this.f.due = r.ok ? r.at : null;
     this.f.dueError = r.ok ? '' : r.error;
     if (r.ok) this.picker.value = wallText(r.at, this.zone, 'T');
@@ -602,31 +624,26 @@ export class ScheduleFormDialog {
           ...(this.filedPath ? ['Filed as ', h('code', {}, this.filedPath), '; saving again uses it.'] : [`Attach this message as a handoff: ${t.name}’s reply is filed as written (no AI call) when you save, and the agent reads it when it starts.`]),
         ),
       );
-    } else if (this.handoffMode === 'cabinet') {
+    }
+    replaceKeepingFocus(this.handoffPick, nodes);
+    this.cabBox.hidden = this.handoffMode !== 'cabinet';
+    if (this.handoffMode === 'cabinet') {
       const rows = this.cabRows.map((e) =>
         h(
           'li',
           {},
           h(
             'button',
-            { class: 'sf-cab-row', 'data-id': String(e.id), 'aria-pressed': this.picked?.id === e.id ? 'true' : 'false', onclick: () => this.pickEntry(e) },
+            { class: 'sf-cab-row', 'data-id': String(e.id), 'data-key': `cab-row:${e.id}`, 'aria-pressed': this.picked?.id === e.id ? 'true' : 'false', onclick: () => this.pickEntry(e) },
             h('b', {}, e.title),
             h('span', {}, `${e.worker_name} · ${new Date(e.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}`),
             e.snippet ? h('span', {}, ...snippetRuns(e.snippet).map((r) => (r.hit ? h('mark', {}, r.text) : document.createTextNode(r.text)))) : null,
           ),
         ),
       );
-      nodes.push(
-        h(
-          'div',
-          { class: 'sf-cab' },
-          this.cabSearch,
-          rows.length ? h('ol', { class: 'sf-cab-list', 'aria-label': 'Handoffs' }, ...rows) : h('p', { class: 'sf-note' }, this.cabSearch.value.trim() ? `Nothing matches “${this.cabSearch.value.trim()}”.` : 'The cabinet of this floor is empty.'),
-          this.picked ? h('p', { class: 'sf-note' }, 'It reads ', h('code', {}, this.picked.path), ' when it starts.') : null,
-        ),
-      );
+      const list = rows.length ? h('ol', { class: 'sf-cab-list', 'aria-label': 'Handoffs' }, ...rows) : h('p', { class: 'sf-note' }, this.cabSearch.value.trim() ? `Nothing matches “${this.cabSearch.value.trim()}”.` : 'The cabinet of this floor is empty.');
+      replaceKeepingFocus(this.cabResults, [list, ...(this.picked ? [h('p', { class: 'sf-note' }, 'It reads ', h('code', {}, this.picked.path), ' when it starts.')] : [])], undefined, { keepScroll: true });
     }
-    replaceKeepingFocus(this.handoffSlot, nodes, undefined, { keepScroll: true });
   }
 
   private editedPath(): string | null {
@@ -724,43 +741,55 @@ export class ScheduleFormDialog {
       this.renderActions();
       return;
     }
-    const gen = this.gen;
+    const gen = this.formGen;
+    // The spec as it is now: what changes while saving is for the next Save.
+    const form: ScheduleForm = { ...this.f, handoff: this.handoff() };
+    const handoffMode = this.handoffMode;
     this.saving = true;
-    this.setStatus(this.handoffMode === 'transcript' && !this.filedPath ? 'Filing the message…' : 'Saving…');
+    this.lockPlace();
+    this.setStatus(handoffMode === 'transcript' && !this.filedPath ? 'Filing the message…' : 'Saving…');
     this.composer.setBusy(true);
     this.renderActions();
     const end = (msg: string, error: boolean) => {
       this.saving = false;
+      this.lockPlace();
       this.composer.setBusy(false);
       this.setStatus(msg, error);
       this.renderHandoff();
       this.renderActions();
     };
     const text = await this.composer.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
-    if (gen !== this.gen || !this.dialog.open) return;
+    if (gen !== this.formGen || !this.dialog.open) return;
     if (!text.ok) return end(text.reason === 'upload' ? 'An image did not upload: retry it or remove it.' : text.reason === 'refused' ? text.message : 'The prompt could not be read.', true);
     let path: string | null = null;
     const t = this.prefill.transcript;
-    if (this.handoffMode === 'transcript' && t) {
+    if (handoffMode === 'transcript' && t) {
       if (!this.filedPath) {
         const c = t.candidate;
         const filing = this.filing ?? { op: newOp(), path: null };
         const a = await this.host.send('worker.handoff', { worker: t.worker, mode: 'literal', session: c.session, candidate: c.id, revision: c.revision, op: filing.op });
-        if (gen !== this.gen || !this.dialog.open) return;
+        // Filed is filed, whether or not this form is still open: the reply's record keeps the path (#64 decision 8).
+        if (a.ok) filing.path = (a.data as HandoffAck).handoff.path;
+        // The form opened again on this reply meanwhile: it says so now.
+        if (a.ok && gen !== this.formGen && this.dialog.open && this.filing === filing && !this.saving) {
+          this.renderHandoff();
+          this.renderActions();
+        }
+        if (gen !== this.formGen || !this.dialog.open) return;
         if (!a.ok) return end(`${failureText('worker.handoff', a.code, a.message, { worker: t.name })} Nothing was scheduled.`, true);
-        filing.path = (a.data as HandoffAck).handoff.path;
         this.filing = filing;
       }
       path = this.filedPath;
       this.setStatus('Saving…');
     }
-    const spec = scheduleSpec({ ...this.f, handoff: this.handoff() }, text.text, path, this.mode === 'create' ? (this.prefill.source ?? (t ? { kind: 'transcript', worker: t.worker, ...(t.candidate.message ? { message: t.candidate.message } : {}) } : undefined)) : undefined);
+    const spec = scheduleSpec(form, text.text, path, this.mode === 'create' ? (this.prefill.source ?? (t ? { kind: 'transcript', worker: t.worker, ...(t.candidate.message ? { message: t.candidate.message } : {}) } : undefined)) : undefined);
     const cmd = this.mode === 'edit' ? 'schedule.update' : 'schedule.create';
     const r = this.mode === 'edit' ? await this.host.send('schedule.update', { id: this.editId, ...spec }) : await this.host.send('schedule.create', spec);
-    if (gen !== this.gen || !this.dialog.open) return;
+    if (gen !== this.formGen || !this.dialog.open) return;
     if (!r.ok) return end(`${scheduleFailureText(cmd, r.code, r.message, spec.title)}${this.filedPath ? ' The message is filed; saving again uses it.' : ''}`, true);
     const s = r.data as Schedule;
     this.saving = false;
+    this.lockPlace();
     this.composer.setBusy(false);
     this.close();
     this.host.toast(this.mode === 'edit' ? `Saved “${s.title}”.` : `Scheduled “${s.title}” for ${whenText(s.due_at, this.zone)}.`, 'info');

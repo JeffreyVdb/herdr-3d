@@ -244,17 +244,23 @@ export class ScheduleSim {
     this.h.emit(send, { t: 'schedule.upsert', schedule: structuredClone(s) });
   }
 
-  /** A scheduled one fires by itself at its due time (on the sim's clock). */
+  /**
+   * A scheduled one fires by itself at its due time (on the sim's clock). A timer waits at most 2^31−1 ms (~24.8 days):
+   * one cut short by that arms again, as the bridge fires only once `due_at` has come.
+   */
   private arm(s: Schedule): void {
     this.disarm(s.id);
     if (s.state !== 'scheduled') return;
-    const ms = Math.min(2 ** 31 - 1, Math.max(0, s.due_at - this.h.now()));
+    const wait = Math.max(0, s.due_at - this.h.now());
+    const ms = Math.min(2 ** 31 - 1, wait);
     this.timers.set(
       s.id,
       this.h.later(() => {
         this.timers.delete(s.id);
+        if (s.state !== 'scheduled') return;
+        if (ms < wait) return this.arm(s);
         const out = this.h.out();
-        if (out && s.state === 'scheduled') this.fire(s, out, null);
+        if (out) this.fire(s, out, null);
       }, ms),
     );
   }

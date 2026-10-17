@@ -125,6 +125,23 @@ describe('fixture schedules', () => {
     expect(w?.worker).toMatchObject({ desk_index: 1, floor: 'f1' });
   });
 
+  it('one due beyond a timer’s reach (~24.8 days) waits for its time, not the timer’s', () => {
+    let now = T;
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    const r = rig({ manualClock: false, now: () => now, setTimeout: (fn, ms) => timers.push({ fn, ms }), clearTimeout: () => {} });
+    const due = T + 30 * 86_400_000;
+    const id = r.ack('schedule.create', { ...SPEC, due_at: due }).data.id;
+    const capped = timers.find((t) => t.ms === 2 ** 31 - 1)!;
+    now += capped.ms;
+    capped.fn();
+    expect(r.view()?.find((s) => s.id === id)?.state).toBe('scheduled');
+    const rest = timers.find((t) => t.ms === due - now)!;
+    expect(rest).toBeTruthy();
+    now = due;
+    rest.fn();
+    expect(r.view()?.find((s) => s.id === id)).toMatchObject({ state: 'running', fired_at: due });
+  });
+
   it('fires by itself at its due time; an asleep floor waits or fails', () => {
     const r = rig();
     const id = r.ack('schedule.create', { ...SPEC, due_at: T + 30_000 }).data.id;
