@@ -14,13 +14,16 @@ package server
 // #14: what is tapped on a Telegram card answers the worker's ask or
 // follow-up through worker.answer_ask's or worker.answer_followup's own
 // path (cardAnswer); the cards' texts are the worker's facts (notifyFacts),
-// none of a secret ask's.
+// none of a secret ask's. #88: and a blocked worker's permission or trust
+// menu through worker.answer's (queueAnswer); of the menu only its
+// question line and its choices' labels go, scrubbed (menuText).
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -212,7 +215,24 @@ func notifyFacts(w *proto.Worker, asleep bool) notify.Worker {
 	if a := w.Activity; a != nil {
 		n.ActivityKind = string(a.Kind)
 	}
+	if q := w.Question; q != nil && w.Status == statusBlocked && (q.Kind == proto.QuestionPermission || q.Kind == proto.QuestionTrust) {
+		n.Menu = &notify.Menu{Hash: q.Hash, Kind: q.Kind, Text: menuText(q.Text)}
+		for _, c := range q.Choices {
+			n.Menu.Choices = append(n.Menu.Choices, notify.MenuChoice{N: c.N, Label: menuText(c.Label)})
+		}
+	}
 	return n
+}
+
+// backtickRe is a span in backticks, or one the screen cut off: a choice's
+// command ("Yes, and don't ask again for commands that start with `…`").
+var backtickRe = regexp.MustCompile("`[^`]*(`|$)")
+
+// menuText is a screen menu's text as it may leave the bridge (#88): a
+// command quoted in it elided (what a menu is about stays on the bridge,
+// whatever it holds), the rest scrubbed of what looks like a secret.
+func menuText(s string) string {
+	return digest.Scrub(backtickRe.ReplaceAllString(s, "`…`"))
 }
 
 // workerDisplayName is the game's displayName: the name, else the label,
@@ -286,15 +306,25 @@ func (h *Hub) replyPrompt(ctx context.Context, id, text string, done func(error)
 // queueAnswerFollowup: the same checks, lane and herdr calls), with no
 // client: no command reply, and no row of those commands (the service
 // writes notify.answer, without a text). An ask or follow-up that is no
-// longer the one tapped is errStale (notify.ReplyClosed).
+// longer the one tapped is errStale (notify.ReplyClosed). #88: a menu's
+// tap is worker.answer's (queueAnswer); a worker no longer blocked is
+// closed too, and keys that left it blocked are notify.ReplyUnresolved.
 func (h *Hub) cardAnswer(ctx context.Context, a notify.Answer, done func(error)) error {
 	end := func(_ context.Context, data any, err error) {
 		if r, ok := data.(proto.AnswerAskResult); ok && err == nil && !r.Resolved {
 			h.log.Info("a Telegram card's answer was sent; the transcript has not recorded it yet", "worker", a.WorkerID)
 		}
-		done(replyError(err))
+		if r, ok := data.(proto.AnswerResult); ok && err == nil && !r.Resolved {
+			h.log.Info("a Telegram card's choice was sent; the worker is still blocked", "worker", a.WorkerID)
+			done(&notify.ReplyError{Kind: notify.ReplyUnresolved})
+			return
+		}
+		done(replyError(menuError(a, err)))
 	}
 	return h.handOff(ctx, func(hctx context.Context) error {
+		if a.Hash != "" {
+			return menuError(a, h.queueAnswer(hctx, proto.WorkerAnswerArgs{ID: a.WorkerID, Hash: a.Hash, Choice: a.Choice}, end))
+		}
 		if a.TurnID != "" {
 			args := proto.WorkerAnswerFollowupArgs{ID: a.WorkerID, TurnID: a.TurnID}
 			for _, f := range a.Followup {
@@ -308,6 +338,15 @@ func (h *Hub) cardAnswer(ctx context.Context, a notify.Answer, done func(error))
 		}
 		return h.queueAnswerAsk(hctx, args, end)
 	})
+}
+
+// menuError is a menu card's refusal (#88): a worker no longer blocked
+// (worker.answer's invalid_state) is a menu no longer open.
+func menuError(a notify.Answer, err error) error {
+	if a.Hash != "" && errors.Is(err, errInvalidState) {
+		return &notify.ReplyError{Kind: notify.ReplyClosed, Err: err}
+	}
+	return err
 }
 
 // handOff runs queue (the checks and the queueing of a reply's or a card's
@@ -329,10 +368,12 @@ func (h *Hub) handOff(ctx context.Context, queue func(hctx context.Context) erro
 	}
 }
 
-// replyError is err as the service tells it (nil stays nil).
+// replyError is err as the service tells it (nil stays nil; one told
+// already stays as it is).
 func replyError(err error) error {
-	if err == nil {
-		return nil
+	var told *notify.ReplyError
+	if err == nil || errors.As(err, &told) {
+		return err
 	}
 	var bad *badArgsError
 	kind := notify.ReplyFailed

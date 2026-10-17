@@ -483,6 +483,13 @@ func (h *Hub) startAnswer(ctx context.Context, c *Client, cmd proto.Command) err
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
+	return h.queueAnswer(ctx, a, h.endCommand(c, cmd))
+}
+
+// queueAnswer is worker.answer's checks and its queueing on the worker's
+// lane (hub goroutine), for a client's command and (#88) a Telegram card's
+// tap alike: end gets the outcome.
+func (h *Hub) queueAnswer(ctx context.Context, a proto.WorkerAnswerArgs, end inputEnd) error {
 	if !hashRe.MatchString(a.Hash) {
 		return bad("hash must be 16 hex characters")
 	}
@@ -497,9 +504,9 @@ func (h *Hub) startAnswer(ctx context.Context, c *Client, cmd proto.Command) err
 		return fmt.Errorf("%w: %s is %s, not blocked", errInvalidState, w.Name, w.Status)
 	}
 	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
-	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, session, pane string) (any, error) {
+	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		return h.answer(ctx, a, session, pane)
-	})
+	}, end)
 }
 
 func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, session, pane string) (any, error) {

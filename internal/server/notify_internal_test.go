@@ -71,3 +71,45 @@ func TestNotifyFactsCardTexts(t *testing.T) {
 		t.Fatalf("follow-up facts %+v", fu)
 	}
 }
+
+// #88: a blocked worker's permission or trust menu is in its facts with
+// its question and labels scrubbed, a quoted command elided, never its
+// excerpt; a choice menu, or one of a worker no longer blocked, is not.
+func TestNotifyFactsMenu(t *testing.T) {
+	q := &proto.Question{Kind: proto.QuestionPermission, Text: "Do you want to proceed with ghp_abcdefghij0123?", Hash: "0123456789abcdef",
+		Excerpt: []string{"curl -u admin:hunter2 https://example.test"}, Choices: []proto.Choice{{N: 1, Label: "Yes"},
+			{N: 2, Label: "Yes, and don't ask again for commands that start with `mysql -phunter2` (p)"}, {N: 3, Label: "No, and `cut off"}}}
+	got := notifyFacts(&proto.Worker{Status: statusBlocked, Question: q}, false).Menu
+	want := &notify.Menu{Hash: "0123456789abcdef", Kind: "permission", Text: "Do you want to proceed with [key]?", Choices: []notify.MenuChoice{
+		{N: 1, Label: "Yes"}, {N: 2, Label: "Yes, and don't ask again for commands that start with `…` (p)"}, {N: 3, Label: "No, and `…`"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("menu %+v, want %+v", got, want)
+	}
+	if s := fmt.Sprintf("%+v", got); strings.Contains(s, "hunter2") || strings.Contains(s, "example.test") {
+		t.Fatalf("menu facts %s", s)
+	}
+	q.Kind = proto.QuestionTrust
+	if m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: q}, false).Menu; m == nil || m.Kind != "trust" {
+		t.Fatalf("trust %+v", m)
+	}
+	if m := notifyFacts(&proto.Worker{Status: statusWorking, Question: q}, false).Menu; m != nil {
+		t.Fatalf("not blocked %+v", m)
+	}
+	q.Kind = proto.QuestionChoice
+	if m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: q}, false).Menu; m != nil {
+		t.Fatalf("choice %+v", m)
+	}
+}
+
+// #88: a menu card's tap refused because the worker is no longer blocked
+// is a menu no longer open; an ask's refusal stays as it is.
+func TestMenuErrorKinds(t *testing.T) {
+	notBlocked := fmt.Errorf("%w: Pixel is working, not blocked", errInvalidState)
+	var re *notify.ReplyError
+	if err := replyError(menuError(notify.Answer{Hash: "0123456789abcdef"}, notBlocked)); !errors.As(err, &re) || re.Kind != notify.ReplyClosed {
+		t.Fatalf("menu: %v", err)
+	}
+	if err := replyError(menuError(notify.Answer{ToolUseID: "t"}, notBlocked)); !errors.As(err, &re) || re.Kind != notify.ReplyState {
+		t.Fatalf("ask: %v", err)
+	}
+}
