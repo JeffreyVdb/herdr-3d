@@ -1,6 +1,7 @@
 package claudechild
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -69,8 +70,11 @@ func InstallHooks(dir, flock, cat string) (settings, log string, err error) {
 		}
 		hooks[h.event] = []any{entry}
 	}
-	b, err := json.MarshalIndent(map[string]any{"hooks": hooks}, "", "  ")
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false) // the command's >> as written
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(map[string]any{"hooks": hooks}); err != nil {
 		return "", "", err
 	}
 	tmp, err := os.CreateTemp(dir, ".settings-*.json")
@@ -78,7 +82,7 @@ func InstallHooks(dir, flock, cat string) (settings, log string, err error) {
 		return "", "", err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(append(b, '\n')); err != nil {
+	if _, err := tmp.Write(buf.Bytes()); err != nil {
 		tmp.Close()
 		return "", "", err
 	}

@@ -336,10 +336,14 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
 - **Native child agents** (#22, phase 1 of #20; details in `protocol.md` "Native child agents", `decisions.md` "#22"):
   the subagents a worker's own Claude Code or Codex session runs, kept by the hub in a `childagents.Registry`
   (`internal/server/children.go`), never in SQLite. Each worker refresh binds the worker to its root agent session and
-  stamps its `child_generation` (a replaced session drops its children); sources (`Options.ChildSources`, none in
-  production until #23, #25 and #27) report evidence keyed by that session, which becomes `child.upsert` /
-  `child.removed`; a session bound anew is replayed by every source, so a restart rebuilds the graph from evidence. The
-  game keeps them in `world/children.ts`' `ChildBook`; the board shows them from #24 on.
+  stamps its `child_generation` (a replaced session drops its children); sources (`Options.ChildSources`) report
+  evidence keyed by that session, which becomes `child.upsert` / `child.removed`; a session bound anew is replayed by
+  every source, so a restart rebuilds the graph from evidence. The game keeps them in `world/children.ts`' `ChildBook`;
+  the board shows them from #24 on. **Claude Code** (#23; `protocol.md` "Claude Code subagents", `decisions.md` "#23"):
+  `internal/claudechild` gets each Claude worker's session files from the usage tracker's own reads (a `usage.Children`
+  listener on its `usage.Session`: the main transcript, `subagents/agent-*.jsonl` and their meta files, one reader per
+  file), keeps them as facts keyed by explicit ids and derives each child after every poll; it also tails the log of the
+  bridge's own hooks, a `--settings` file (`-claude-hooks`) passed to the Claude workers it starts. Codex: #25, #27.
 - **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
   bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
   the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket
