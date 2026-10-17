@@ -51,6 +51,8 @@ import { DigestSim } from './fixture-digest.ts';
 import { ActivitySettingsSim } from './fixture-activity-settings.ts';
 import { CodexServerSim } from './fixture-codex-server.ts';
 import { ReposSim, seedRepos } from './fixture-repos.ts';
+// #93 hire presets (`hire_preset.*`, `simhirepresets=<key>`, `simfail=no_hire_presets`).
+import { HirePresetSim } from './fixture-hirepreset.ts';
 // #106: the inbox's dismissals (`inbox.dismiss`, `sim.status`, `simfail=no_inbox`).
 import { InboxSim } from './fixture-inbox.ts';
 // M16: the transcript view (`transcript.watch`, `sim.transcript`, `simfail=no_m16`).
@@ -126,6 +128,8 @@ export interface SimOptions {
   schedules?: number;
   /** #247: `simrepos=<key>`: demo-m5's floors set up for `@r:`, the shared switch shared by the key's connections (tools/fixture-repos.ts). */
   repos?: string;
+  /** #93: `simhirepresets=<key>`: the hire presets shared by the key's connections, as a bridge's database (tools/fixture-hirepreset.ts). */
+  hirePresets?: string;
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -354,6 +358,12 @@ export class SimWorld {
       o.repos ?? null,
       (m) => this.announce(m),
     );
+    this.hirePresets = new HirePresetSim(
+      { hasFloor: (id) => this.floors.has(id), hire: this.hire, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() },
+      o.fail !== 'no_hire_presets',
+      o.hirePresets ?? null,
+      (m) => this.announce(m),
+    ); // #93
     this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run', o.fail === 'codex_unverified'); // #155, #186
     this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
     this.host = new HostSim(
@@ -444,6 +454,7 @@ export class SimWorld {
   private readonly codexServer: CodexServerSim;
   /** #247: repositories on other floors (tools/fixture-repos.ts). */
   private readonly repos: ReposSim;
+  private readonly hirePresets: HirePresetSim; // #93
   private readonly inbox: InboxSim;
   /** M13: the screen share (tools/fixture-share.ts). */
   private readonly share = new ShareSim(
@@ -473,6 +484,7 @@ export class SimWorld {
   dispose(): void {
     this.share.dispose();
     this.repos.dispose(); // #247
+    this.hirePresets.dispose(); // #93
     this.host.dispose(); // #74
     for (const t of this.timers) this.clearT(t);
     this.timers.clear();
@@ -584,6 +596,7 @@ export class SimWorld {
     this.activitySettings.decorate(world); // #98
     this.codexServer.decorate(world); // #155
     this.repos.decorate(world); // #247
+    this.hirePresets.decorate(world); // #93
     this.kaneo.decorate(world); // #184
     this.telegram.decorate(world); // #11
     this.handoffs.decorate(world); // #223
@@ -719,6 +732,7 @@ export class SimWorld {
       if (this.activitySettings.handle(m.t, a, send, ack)) return; // #98
       if (this.codexServer.handle(m.t, a, send, ack)) return; // #155
       if (this.repos.handle(m.t, a, send, ack)) return; // #247
+      if (this.hirePresets.handle(m.t, a, send, ack)) return; // #93
       if (this.inbox.handle(m.t, a, send, ack)) return; // #106
       if (this.handoffs.handle(m.t, a, send, ack, fail)) return; // #223, #9
       if (this.schedules.handle(m.t, a, send, ack, fail)) return; // #64 schedules
@@ -976,6 +990,7 @@ export class SimWorld {
     this.goneBase.set(f.session, base);
     if (from !== null) this.floorsOf(from).forEach((s, i) => ((this.floors.get(s) as Floor).index = i));
     this.emit(send, { t: 'floor.removed', session: f.session });
+    this.hirePresets.dropFloor(f.session, send); // #93: its own presets go with it
     for (const w of ws) {
       // The real floor seats them at its lowest free desks.
       const taken = new Set(this.workers.filter((x) => x.session === base).map((x) => x.desk_index));

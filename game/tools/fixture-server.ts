@@ -48,6 +48,8 @@
 // changes; the demo one when there is none by that name; tools/fixture-transcript.ts).
 // #247: `simrepos=<key>` sets demo-m5's floors up for `@r:` and shares the "Repositories from other buildings" switch
 // between the connections with that key (tools/fixture-repos.ts).
+// #93: `simhirepresets=<key>` shares the hire presets between the connections with that key, and keeps them across a
+// reload (tools/fixture-hirepreset.ts); `simfail=no_hire_presets` plays a bridge before them.
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';
@@ -247,6 +249,8 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             ...(q.get('simhandoffllmout') ? { handoffLlmOut: q.get('simhandoffllmout') as string } : {}),
             // #247: demo-m5's floors set up for `@r:`, the shared switch shared by the key's connections (tools/fixture-repos.ts).
             ...(q.get('simrepos') ? { repos: q.get('simrepos') as string } : {}),
+            // #93: the hire presets shared by the key's connections, kept across reloads like a bridge's (tools/fixture-hirepreset.ts).
+            ...(q.get('simhirepresets') ? { hirePresets: q.get('simhirepresets') as string } : {}),
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {

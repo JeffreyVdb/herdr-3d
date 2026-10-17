@@ -160,3 +160,11 @@
     white-space: nowrap;
   }
 }
+.hp-scope .field-hint {
+  margin-left: 72px;
+}
+@media (max-width: 560px) {
+  .hp-scope .field-hint {
+    margin-left: 0;
+  }
+}

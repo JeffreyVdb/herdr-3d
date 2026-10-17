@@ -460,7 +460,7 @@ export class HirePresetsDialog {
       row.append(h('label', { class: 'dd-chip' }, input, h('span', {}, text)));
     }
     const hint = v.draft.scope === 'floor' ? `Only on ${this.floorName()}. Floors in the same session or building do not see it.` : 'On every floor of every building this herdr-world serves, beside each floor’s own presets.';
-    return h('fieldset', { class: 'dd-pick', 'data-pick': 'preset-scope' }, h('legend', {}, 'Where it shows'), row, h('p', { class: 'field-hint', id: 'hp-scope-hint' }, hint));
+    return h('div', { class: 'dd-field hp-scope' }, h('fieldset', { class: 'dd-pick', 'data-pick': 'preset-scope' }, h('legend', {}, 'Scope'), row), h('p', { class: 'field-hint', id: 'hp-scope-hint' }, hint));
   }
 
   private clearError(v: EditView, field: 'name' | 'prompt'): void {

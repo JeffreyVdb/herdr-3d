@@ -531,6 +531,48 @@ export const SURFACES: Surface[] = [
     root: 'dialog.desk-dlg--presets',
   },
   {
+    // #93: an empty desk's "Hire preset" tab with one of the floor's own presets and one global (a key of its own: the
+    // fixture server shares a key's presets between connections).
+    name: 'hire-presets',
+    fixture: 'demo-m4',
+    wsQuery: `${SIM}&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openHire(5));
+      await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
+      await page.locator('dialog.desk-dlg--hire [data-key="tab:preset"]').click();
+      const dlg = page.locator('dialog.desk-dlg--hire-presets');
+      for (const [name, global] of [
+        ['Deploy release', false],
+        ['Nightly dependency audit', true],
+      ] as const) {
+        await dlg.locator('[data-key="new"]').click();
+        await dlg.locator('#hp-name').fill(name);
+        await dlg.locator('#hp-prompt').fill(`${name}: deploy the release to staging, then production, and report each step with its logs.`);
+        if (global) await dlg.locator('label:has(> [data-key="preset-scope:global"])').click();
+        await dlg.locator('[data-key="save"]').click();
+        await expect(dlg.locator('[data-key="new"]')).toBeVisible();
+      }
+    },
+    root: 'dialog.desk-dlg--hire-presets',
+  },
+  {
+    // #93: the hire preset editor, as "New preset" opens it.
+    name: 'hire-preset-editor',
+    fixture: 'demo-m4',
+    wsQuery: `${SIM}&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}e`,
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openHire(5));
+      await expect.poll(async () => ((await dialog(page)) as { kind?: string; state?: string } | null)?.state).toBe('ready');
+      await page.locator('dialog.desk-dlg--hire [data-key="tab:preset"]').click();
+      await page.locator('dialog.desk-dlg--hire-presets [data-key="empty-new"]').click();
+      await page.locator('#hp-name').fill('Deploy release');
+      await page.locator('#hp-prompt').fill('Deploy the release to A, B and C, and report each one.');
+    },
+    root: 'dialog.desk-dlg--hire-presets',
+  },
+  {
     name: 'prompt-dialog',
     fixture: 'demo-m4',
     open: async (page) => {

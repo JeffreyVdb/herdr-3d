@@ -1054,7 +1054,7 @@ export class HireDialog {
   private presetNote(problem: ExactProblem | null): HTMLElement {
     const x = this.exact as NonNullable<HireDialog['exact']>;
     const scope = x.scope === 'floor' ? 'This floor' : 'Global';
-    const from = h('p', { class: 'dd-preset-from' }, h('span', { class: 'tape tape--note' }, 'Preset'), ' ', h('b', {}, x.name), h('span', { class: 'dd-preset-scope' }, ` · ${scope}`));
+    const from = h('p', { class: 'dd-preset-from' }, 'Preset ', h('b', {}, x.name), h('span', { class: 'dd-preset-scope' }, ` · ${scope}`));
     if (!problem) return h('div', { class: 'dd-field dd-preset', 'data-hook': 'preset' }, from, h('p', { class: 'field-hint' }, 'Edits here are for this hire only; the preset stays as saved.'));
     return h(
       'div',
