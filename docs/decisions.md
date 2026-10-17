@@ -1887,3 +1887,20 @@ Coverage:
 | A review being edited is not closed, reset or overwritten | `h214-edge-cases` "a review being edited while an earlier dictated hire completes…" and "refused while the next dictation's review is open…" |
 | Coordinator silent for a kept task, toast text | `hireCoordinator.test.ts` "a caller that keeps the task…", "backgroundOutcomeText…" |
 | Palette rows | `world/palette.test.ts`, `ui/palette.dom.test.ts` "held reviews" |
+
+## 2026-10-17 — #53: a walk-out no longer holds its old desk
+
+After a send-home, hiring at the same desk was refused ("Someone is already on the way to Desk 6.") until the outgoing
+worker had walked the whole route (packing, the fire escape, the street: ~55 s from storey 0, ~123 s from storey 6),
+while the desk already showed its "+" for most of that. `App.heldDesks`, which all the hire paths read (explicit desk
+and the top bar's Hire, the start-run desk, `nearestFreeDesk`, the dictated hire and its review), counted the desk of
+every walk under way. Code: `app.ts` (`heldDesks`, `applyReserve`, `packingDesks`, `walkAway`). Tests:
+`src/app.rehire.test.ts`, `e2e/m4.spec.ts` ("#53: a desk whose worker was sent home…").
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | What holds a desk | **A hire on its way to it (`Reservations`) or a new hire dropping in to it (a `kind: 'in'` walk)**, besides the seat itself (`resolveHireDesk`). A walk-out (`kind: 'out'`) never does: `worker.removed` with `sent_home` comes after the bridge removed the worker, the backend already lets a hire reuse that desk (`TestSendHome`), and what is left of the walk is decoration. `Arrivals.yieldDesk` (the newcomer's drop-in, `yieldTakenDesks` on its upsert) already makes such a walk give the desk up for good. |
+| 2 | A report's walk (`kind: 'deliver'`) | **Does not hold its desk either.** While its freelancer is in the store, the seat check refuses the desk. Once the bridge removed it (`leaveDelivery`), a hand-over still finishing is chained to a walk-out (`Arrivals.chain`) and the seat is free like any sent-home worker's; the office then shows the desk without a seat and not `away`, so with its "+", and a desk showing its "+" must be hireable. A newcomer's `yieldDesk` hands the chair back (`out: null`); the chained walk-out starts standing and shows its desk `free` from its first frame, so it never sets the newcomer's desk `away`. |
+| 3 | A hire on its way while the walk-out packs | Reachable now (the top bar's Hire, `nearestFreeDesk`, a dictated hire: aiming at the desk needs its "+"). The reserved look (chair in, no laptop, no "+") used to overwrite the packing every frame, so the worker mimed packing things the desk no longer showed, and the desk was rebuilt twice a frame. **The walk keeps the desk's look until its "+" would come back** (`applyReserve` skips a desk an un-yielded walk-out still shows), **then the desk shows reserved**, and a walk's `away: null` on a reserved, unseated desk is the reserved look (`walkAway`), so nothing flips between "+" and reserved each frame. The reservation does not make the walk yield: a hire can fail, and there is no newcomer yet (`yieldDesk` would then return false on the upsert, and the drop-in's figure would wait for the ack). |
+| 4 | The hire fails | The release sees the walk on the desk and leaves the look to it: the next frame shows the packing (or the "+", once due) again. After the walk is over, the release gives the desk back at once (unchanged). |
+| 5 | The new worker sits down | Unchanged: its upsert yields the walk (it gets up and goes with what it packed so far, never shows the desk again), and `applyReserve` leaves a seated desk alone. |

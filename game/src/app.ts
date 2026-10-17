@@ -10,8 +10,8 @@ import { LogoSync } from './render/logoSync';
 import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
-import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec } from './render/arrivals';
-import { memberOf, OfficeView, REACH, seatOf, type Target } from './render/office';
+import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
+import { memberOf, OfficeView, REACH, seatOf, type AwaySeat, type Target } from './render/office';
 import type { LobbyTarget, LobbyView } from './render/lobby';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
@@ -193,6 +193,8 @@ interface BuildingCtx {
 const CLIENT = 'herdr-3d-game/0.2';
 /** Gap between the gong rings of several PRs merged in one poll. */
 const GONG_GAP_MS = 450;
+/** A desk a hire is on its way to: chair in, no laptop, no "+". */
+const RESERVED: AwaySeat = { show: 'empty', display: 'idle', cue: 0xffffff };
 
 /** Everything between the renderer and the bridge: views, input, HUD, frame pacing. */
 export class App {
@@ -1429,16 +1431,42 @@ export class App {
     };
   }
 
+  /**
+   * The desks a hire is on its way to show as reserved. #53: a worker sent home that is still packing up at one keeps
+   * it as its walk shows it (its things, its laptop, its chair out) until its "+" would come back.
+   */
   private applyReserve(): void {
     const o = this.office;
     if (!o) return;
-    for (const r of this.reserved.all()) if (o.id === r.floor && !o.seat(r.desk)) o.setAway(r.desk, { show: 'empty', display: 'idle', cue: 0xffffff });
+    let packing: Set<number> | null = null;
+    for (const r of this.reserved.all()) {
+      if (o.id !== r.floor || o.seat(r.desk)) continue;
+      packing ??= this.packingDesks(o.id);
+      if (!packing.has(r.desk)) o.setAway(r.desk, RESERVED);
+    }
   }
 
-  /** Desks of a floor that are not free for another hire: a hire or a walk is on its way there. */
+  /** #53: desks of a floor a walk-out still shows as its own (packing up, or only just gone). */
+  private packingDesks(floor: string): Set<number> {
+    const out = new Set<number>();
+    if (!this.arrivals.count) return out;
+    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.kind === 'out' && a.floor === floor && !a.yielded && a.desk_show !== 'free') out.add(a.desk);
+    return out;
+  }
+
+  /** #53: what a walk's desk shows: as the walk says, and a desk it gave back that a hire is on its way to stays reserved. */
+  private walkAway(o: OfficeView, d: DeskAway): AwaySeat | null {
+    return d.away ?? (this.reserved.has(d.floor, d.desk) && !o.seat(d.desk) ? RESERVED : null);
+  }
+
+  /**
+   * Desks of a floor that are not free for another hire: a hire or a drop-in is on its way there. #53: a walk-out (or
+   * a report's walk turning into one) is not: the bridge has removed its worker, the seat is free and the walk only
+   * decoration (`Arrivals.yieldDesk` gives the desk to whoever sits there next).
+   */
   heldDesks(floor: string): Set<number> {
     const out = this.reserved.desks(floor);
-    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.floor === floor) out.add(a.desk);
+    for (const a of this.arrivals.info(performance.now() / 1000)) if (a.floor === floor && a.kind === 'in') out.add(a.desk);
     return out;
   }
 
@@ -3636,7 +3664,7 @@ export class App {
     const o = this.office;
     for (const d of this.arrivals.update(performance.now() / 1000, t)) {
       if (o?.id !== d.floor) continue;
-      o.setAway(d.desk, d.away);
+      o.setAway(d.desk, this.walkAway(o, d));
       if (d.drop !== undefined) o.setDrop(d.desk, d.drop);
       if (d.out !== undefined) o.setOut(d.desk, d.out);
     }
