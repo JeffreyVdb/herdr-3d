@@ -292,6 +292,10 @@ run](#team-presets-and-starting-a-run)); `[]` when there are none.
 presets](#hire-presets)); `[]` when there are none. A bridge from before #93 leaves the key out: a client reads that as
 "hire presets are unavailable", not as an empty list.
 
+`herdr_instructions` (#95) is `true` when the bridge adds the herdr hiring instructions (`worker.hire`'s and the hire
+presets' `herdr_instructions`, `hire.prepare`'s lines; see [Hire presets](#hire-presets)). A bridge from before #95
+leaves it out and refuses the field as unknown: a client never sends it there.
+
 `screen` (M13) is `{"sharing": false}`, or `{"sharing": true, "surface": "browser|window|monitor"}` while a connected
 game shares its screen (see [Screen share](#screen-share)); a bridge from before M13 leaves it out.
 
@@ -642,8 +646,8 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `floor.rename` | `{"floor": string, "name": string}`: a virtual floor's display name | — | `floor.upsert` |
 | `floor.delete` | `{"floor": string, "move_workers"?: bool}`: a virtual floor; refused while it has workers unless `move_workers` is `true`, which moves them to its base session's real floor first | — | `floor.removed` (with `floor_id`), `building.upsert` when it was in a building, #93 `hire_preset.removed` for each of its own hire presets; with moved workers, their `worker.upsert` on the real floor (new `floor`, `desk_index`, maybe `name`) after the `floor.removed` |
 | `floor.hide` | `{"floor": string, "hidden": bool}`: #58 decision 2, a floor's stored hidden setting (any floor; see [Virtual floors](#virtual-floors)) | — | `floor.upsert` with `hidden`, to every client; none when it was already so |
-| `hire.prepare` | `{"floor"|"session": string, "cwd"?: string}` | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity"}` (see [Hire and send home](#hire-and-send-home)) | — |
-| `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
+| `hire.prepare` | `{"floor"|"session": string, "cwd"?: string}` | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity", "herdr_instructions"}` (see [Hire and send home](#hire-and-send-home)) | — |
+| `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?, "herdr_instructions"?: bool}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
 | `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
@@ -750,9 +754,10 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `schedule.run_now` | `{"id"}`; only while `scheduled` | the schedule, as its fire left it (`running`, `waiting` or `failed`) | `schedule.upsert`, then the hire's |
 | `schedule.retry` | `{"id"}`; only while `failed` or `skipped`: the same spec, fired now | the schedule, as its fire left it | `schedule.upsert`, then the hire's |
 | `schedule.dismiss` | `{"id"}`; only while `failed` or `skipped` | the schedule, with `dismissed_at` | `schedule.removed` |
-| `hire_preset.create` | #93: `{"name", "floor"?, "prompt", "harness", "model", "effort"}`; `floor` empty or absent: global (see [Hire presets](#hire-presets)) | the preset | `hire_preset.upsert` |
-| `hire_preset.update` | `{"id", …}`: `hire_preset.create`'s args, the whole spec replaced (its scope too) | the preset | `hire_preset.upsert`; none when nothing changed |
+| `hire_preset.create` | #93: `{"name", "floor"?, "prompt", "harness", "model", "effort", "herdr_instructions"?: bool}`; `floor` empty or absent: global (see [Hire presets](#hire-presets)) | the preset | `hire_preset.upsert` |
+| `hire_preset.update` | `{"id", …}`: `hire_preset.create`'s args, the whole spec replaced (its scope and #95 `herdr_instructions` too) | the preset | `hire_preset.upsert`; none when nothing changed |
 | `hire_preset.delete` | `{"id"}` | — | `hire_preset.removed` |
+| `hire_preset.check` | #95: `{"prompt"}` (1–32 KiB, not blank) | `{"delegates": bool, "score"}`; `delegates` false also when the classifier is not ready, fails or takes over 1.2 s | — |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -1320,6 +1325,7 @@ remote-tracking refs) and is audited like any command.
 | `choice`, `choice_source` | the harness/model/effort to pre-select: the floor's `default_hire` (`"floor_default"`), else the last choice hired on this floor (`"last"`, stored per floor in SQLite, table `floor_hire_last`), else `null` (`"none"`). A remembered choice no longer in `hire_options` is skipped. |
 | `label` | the next generated worker name (a name no worker of the floor owns or holds): the default label, and the new worker's name when the hire keeps it |
 | `git` | `null` when `cwd` is not in a git work tree. Else `repo_root` (the work tree's top level), `default_branch` (from `origin/HEAD`, else `main` / `master` when `origin/<that>` exists; `""` when unknown), `base_sha` and `base_time` (unix ms, commit time) of `origin/<default_branch>` **after** `git fetch origin`, `fetched` and, when the fetch failed (no `origin`, offline, …, bounded at 20 s), `fetch_error`. A failed fetch is not an error of `hire.prepare` (the base shown is then the last fetched one), but the dialog should warn: a worktree hire now would be refused with `fetch_failed`. A plain hire is unaffected. |
+| `herdr_instructions` | #95: the herdr hiring instructions for this floor, exactly as `worker.hire` with `herdr_instructions` adds them after a blank line: `run.start`'s placement line and floor line (`h3d_floor=<this floor id>`; a client from before floor ids gets the session's). The hire form shows them before Hire. A bridge from before #95 leaves it out. |
 | `capacity` | workers on this floor (`floor.count`, hires in flight included; a repository's idle main checkout is not a worker, see "Hidden main checkouts") and on every running floor the bridge watches (`host.count`), with the configured caps (`--warn-workers-per-floor` / `--max-workers-per-floor`, `--warn-workers` / `--max-workers`). A hire that would reach above `hard` is refused (`capacity`); above `soft` the dialog should warn. `load` is the host's 1-minute load average, CPU count and memory in use (`/proc`); absent when unreadable. |
 
 **`worker.hire`** hires a worker at a free desk:
@@ -1347,6 +1353,7 @@ remote-tracking refs) and is audited like any command.
 | `cwd` | absolute, existing directory; default as in `hire.prepare` |
 | `worktree` | `true`: hire into a new linked git worktree and branch of `cwd`'s repository (below); `cwd` must be in a git work tree with a known `origin/<default>` |
 | `prompt` | optional first task, 1–32768 bytes of UTF-8 without NUL, not starting with `--` (herdr's CLI would read it as a flag). Sent once the agent is ready. For Claude it is typed (#95, step 5): no control characters but line ends (`\r\n` and `\r` go as `\n`) and tabs (four spaces each), at most 32768 bytes as typed, else `bad_request`. The game sends pasted images as `[Image #n: <absolute path>]` markers in the text, after uploading them (`POST /upload`, above). #39: it is what the dialog's composer holds (`/skill`, `@path`, plain repository paths and URLs): for Codex the bridge rewrites it once, when it sends it (see [Completion before a hire](#completion-before-a-hire)). |
+| `herdr_instructions` | #95, optional: `true` appends a blank line and the herdr hiring instructions for the hire's floor (the floor after `floor`/`session` resolves, a virtual floor its own id) to `prompt`, in `run.start`'s order: the placement line, a blank line, the floor line. It needs a `prompt` (else `bad_request`). The whole composed prompt is held to `prompt`'s rules (size, typed for Claude), so a task that fits alone and not with the lines is `bad_request`; #39's Codex rewrite touches the typed task only, never the lines. Only to a bridge whose snapshot says `herdr_instructions` (see [Hire presets](#hire-presets)). |
 | `handoff`, `stop_services` | reserved (#11, #14); refused like any unknown field |
 
 Capacity: a hire that would put the floor above `--max-workers-per-floor` or the host above `--max-workers` is
@@ -4565,6 +4572,8 @@ levels (a named choice without a prompt, kept in the browser). Nothing here hire
   for Claude (typed) no control characters other than line ends and tabs.
 - `harness`, `model`, `effort`: one of `hire_options` (the catalog's own check, an effort of the model's included); a
   harness the bridge cannot start is refused.
+- `herdr_instructions` (#95): optional bool, "Add herdr hiring instructions"; off (and left out of the preset) unless
+  sent, off for every preset made before #95.
 
 `hire_preset.update` replaces the whole spec (moving a preset between a floor and global too); one that changes nothing
 sends no event. An unknown id is `not_found`. `created_at` and `updated_at` are unix ms; an update moves `updated_at`
@@ -4576,10 +4585,36 @@ own presets in the same transaction (`hire_preset.removed` each); global ones st
 A catalog that later lacks a preset's model or effort leaves the preset as stored: the client shows the saved values
 and why they cannot be hired, and `worker.hire` would refuse them as usual.
 
-Stored in SQLite `hire_preset (id, name, name_key, floor, prompt, harness, model, effort, created_at, updated_at)`,
-`floor` NULL for a global one, with a unique index on (scope, `name_key`): the name case-folded by the bridge (x/text's
-full Unicode case folding, then `strings.ToLower`), not SQLite's ASCII-only `lower()`. It joins at least every two
-names the game's `toLowerCase` joins.
+**Herdr hiring instructions (#95).** A worker hired from a preset whose prompt starts other agents ("for each pull
+request, spawn a subagent") should give each its own herdr workspace or tab and tag it with the worker's floor, as
+`run.start`'s orchestrators are told. A preset with `herdr_instructions` makes the client's hire send `worker.hire`'s
+`herdr_instructions: true`: the bridge appends the instructions **for the floor the preset is used on** (never a floor
+stored in the preset, so a global one fits every floor). They are never part of the preset's `prompt`, and the flag
+means "the current hiring instructions", so presets pick up a later change of the text with no migration. The client
+shows the exact lines from `hire.prepare`'s `herdr_instructions`, and a hire form may untick them for one hire. Only a
+bridge whose snapshot says `herdr_instructions: true` takes the field (an older one refuses it as unknown).
+
+`hire_preset.check {"prompt"}` asks the AI integration's classifier (#92) "Does this task tell the AI coding agent to
+start, spawn, hire or hand work to other AI agents (subagents, workers, coders, reviewers) instead of doing all of it
+itself?" with state `{"prompt"}`: `delegates` is `score ≥ 0.7`. It fails open: no classifier, one not ready (no call),
+an error or 1.2 s gone by answer `{"delegates": false, "score": 0}`. The game asks it on a preset's Save with the box
+off (never on Use or Hire) and, on a "yes", asks the player whether to tick the box; it gives up after 1.5 s. The
+audit log keeps the prompt's length only (`prompt_bytes`), never its text.
+
+```json
+{"t":"hire_preset.check","req_id":"c1","args":{"prompt":"For each pull request, spawn a subagent that merges it."}}
+{"t":"ack","req_id":"c1","data":{"delegates":true,"score":0.93}}
+{"t":"worker.hire","req_id":"h2","args":{"floor":"v-43c5d831ba4c","desk_index":0,"harness":"codex","model":"gpt-6-luna",
+ "effort":"high","prompt":"For each pull request, spawn a subagent that merges it.","herdr_instructions":true}}
+```
+
+The worker's first prompt is then the task, a blank line, the placement line, a blank line and `Also tag every herdr
+workspace you create with the token h3d_floor=v-43c5d831ba4c, …`.
+
+Stored in SQLite `hire_preset (id, name, name_key, floor, prompt, harness, model, effort, created_at, updated_at,
+herdr_instructions)`, `floor` NULL for a global one, with a unique index on (scope, `name_key`): the name case-folded
+by the bridge (x/text's full Unicode case folding, then `strings.ToLower`), not SQLite's ASCII-only `lower()`. It joins
+at least every two names the game's `toLowerCase` joins. `herdr_instructions` is 0 or 1 (#95's migration adds it, 0).
 
 ### Inbox
 
