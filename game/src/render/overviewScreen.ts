@@ -145,11 +145,11 @@ function canvasTexture(c: HTMLCanvasElement): THREE.CanvasTexture {
   return t;
 }
 
-/** An unlit, not tone mapped picture material with its own program key (three r186: see render/tv.ts). */
-function pictureMaterial(map: THREE.Texture, transparent: boolean): THREE.MeshBasicMaterial {
+/** An unlit, not tone mapped picture material with its own program key (three r186: see render/tv.ts). #65: the departures boards' too. */
+export function pictureMaterial(map: THREE.Texture, transparent: boolean, program = 'h3d-overview'): THREE.MeshBasicMaterial {
   const m = new THREE.MeshBasicMaterial({ map, toneMapped: false, transparent, depthWrite: !transparent });
   const key = m.customProgramCacheKey.bind(m);
-  m.customProgramCacheKey = () => `${key()}|h3d-overview`;
+  m.customProgramCacheKey = () => `${key()}|${program}`;
   return m;
 }
 
@@ -364,8 +364,8 @@ function face(v: VisibleRow, now: number): unknown[] {
 
 let scanlines: HTMLCanvasElement | null = null;
 
-/** The glass: ink and faint scanlines, in two fills. */
-function glass(g: CanvasRenderingContext2D, W: number, H: number): void {
+/** The glass: ink and faint scanlines, in two fills. #65: the departures boards' glass too. */
+export function glass(g: CanvasRenderingContext2D, W: number, H: number): void {
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.fillStyle = INK;
   g.fillRect(0, 0, W, H);
@@ -702,8 +702,8 @@ export function sparkleAt(g: CanvasRenderingContext2D, x: number, base: number, 
   g.restore();
 }
 
-/** Draws `s` from `x`, clipped with an ellipsis to `max` px; returns the width drawn. */
-function fitText(g: CanvasRenderingContext2D, s: string, x: number, y: number, max: number): number {
+/** Draws `s` from `x`, clipped with an ellipsis to `max` px; returns the width drawn. #65: the departures boards cut with it too. */
+export function fitText(g: CanvasRenderingContext2D, s: string, x: number, y: number, max: number): number {
   if (max <= 0) return 0;
   let t = s;
   if (g.measureText(t).width > max) {
@@ -752,3 +752,6 @@ function chip(g: CanvasRenderingContext2D, text: string, x: number, mid: number,
 
 /** The status colours the wall draws with: the shared palette (exported for the contrast test). */
 export const WALL_STATUS = { light: STATUS_CSS, chip: STATUS_CHIP_CSS, ink: INK };
+
+/** #65: the wall's own colours, which the departures boards share (a flap: the header's count tiles). */
+export const WALL_COLORS = { ink: INK, ink3: INK_3, text: TEXT, text2: TEXT_2, text3: TEXT_3, accent: ACCENT, flap: '#1a2342' } as const;
