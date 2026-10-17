@@ -120,15 +120,15 @@ type FollowupQuestion struct {
 }
 
 // Menu is a blocked worker's screen menu (#88), as the bridge lets it go:
-// its question line and its choices' labels, scrubbed; the lines above the
-// menu (the command, the edit it is about) are never here.
+// its choices' labels, scrubbed; no line above the menu (its question, the
+// command, the edit it is about) is ever here: the card says what a kind
+// asks in a fixed line.
 type Menu struct {
 	// Hash is the question's (worker.answer's): a new one for each menu and
 	// each time the worker is blocked again.
 	Hash string
 	// Kind is "permission" or "trust".
 	Kind    string
-	Text    string
 	Choices []MenuChoice
 }
 

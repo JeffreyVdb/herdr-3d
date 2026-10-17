@@ -240,8 +240,9 @@ func (rb *replyBridge) menuCardOf(t *testing.T, ws, screen string) notify.Ref {
 }
 
 // #88 acceptance through the hub: a worker blocked on Claude's permission
-// prompt gets its notification, then one card: its question and choices,
-// scrubbed, a button each, nothing of the command it is for. A tap answers
+// prompt gets its notification, then one card: what it asks (a fixed
+// line, not its question) and its choices, scrubbed, a button each,
+// nothing of the command it is for. A tap answers
 // as worker.answer does (the choice's digit on the worker's lane); the
 // card says so. A trust menu (no digits) is answered with arrows and
 // Enter, as the game's would be. Audited by indices, without a text.
@@ -252,7 +253,7 @@ func TestCardMenuThroughTheHub(t *testing.T) {
 	rb.term.onKeys = func(string, []string) { go rb.setStatus("w1", "working") }
 	ref := rb.menuCardOf(t, "w1", secretPermission(t))
 	c := rb.ch.Card(ref)
-	for _, want := range []string{"Permission\nDo you want to proceed with [key]?", "1. Yes", "2. Yes, and don't ask again for `…` commands", "3. No"} {
+	for _, want := range []string{"Permission\nIt asks for your permission.", "1. Yes", "2. Yes, and don't ask again for `…` commands", "3. No"} {
 		if !strings.Contains(c.Text, want) {
 			t.Fatalf("card %q lacks %q", c.Text, want)
 		}
@@ -286,7 +287,7 @@ func TestCardMenuThroughTheHub(t *testing.T) {
 	time.Sleep(2 * time.Millisecond) // status_since is in ms: a new one
 	ref = rb.menuCardOf(t, "w1", readScreen(t, "claude-trust"))
 	c = rb.ch.Card(ref)
-	if !strings.Contains(c.Text, "Trust folder\nQuick safety check: Is this a project you created or one you trust?") || len(c.Buttons) != 2 || strings.Contains(c.Text, "/tmp/h3d-m5term") {
+	if !strings.Contains(c.Text, "Trust folder\nIt asks whether to trust a folder.") || strings.Contains(c.Text, "Quick safety check") || len(c.Buttons) != 2 || strings.Contains(c.Text, "/tmp/h3d-m5term") {
 		t.Fatalf("trust card %+v", c)
 	}
 	rb.ch.Tap("t2", ref, buttonData(t, c, "2."))
@@ -349,7 +350,7 @@ func TestCardMenuStaleThroughTheHub(t *testing.T) {
 	if calls := rb.term.Calls(); len(calls) != 0 {
 		t.Fatalf("typed %q", calls)
 	}
-	if next := cardOf(t, rb.ch, 2); next == ref || !strings.Contains(rb.ch.Card(next).Text, "Do you want to proceed?") {
+	if next := cardOf(t, rb.ch, 2); next == ref || !strings.Contains(rb.ch.Card(next).Text, "It asks for your permission.") {
 		t.Fatalf("new card %+v", rb.ch.Card(next))
 	}
 }

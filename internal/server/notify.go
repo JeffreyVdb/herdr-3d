@@ -16,7 +16,7 @@ package server
 // path (cardAnswer); the cards' texts are the worker's facts (notifyFacts),
 // none of a secret ask's. #88: and a blocked worker's permission or trust
 // menu through worker.answer's (queueAnswer); of the menu only its
-// question line and its choices' labels go, scrubbed (menuText).
+// choices' labels go, scrubbed (menuText), never its question line.
 
 import (
 	"context"
@@ -216,7 +216,9 @@ func notifyFacts(w *proto.Worker, asleep bool) notify.Worker {
 		n.ActivityKind = string(a.Kind)
 	}
 	if q := w.Question; q != nil && w.Status == statusBlocked && (q.Kind == proto.QuestionPermission || q.Kind == proto.QuestionTrust) {
-		n.Menu = &notify.Menu{Hash: q.Hash, Kind: q.Kind, Text: menuText(q.Text)}
+		// Not q.Text: questionText can pick a command line that asks
+		// ("$ curl -u user:pass 'Do you want to continue?'").
+		n.Menu = &notify.Menu{Hash: q.Hash, Kind: q.Kind}
 		for _, c := range q.Choices {
 			n.Menu.Choices = append(n.Menu.Choices, notify.MenuChoice{N: c.N, Label: menuText(c.Label)})
 		}
@@ -224,15 +226,23 @@ func notifyFacts(w *proto.Worker, asleep bool) notify.Worker {
 	return n
 }
 
-// backtickRe is a span in backticks, or one the screen cut off: a choice's
-// command ("Yes, and don't ask again for commands that start with `…`").
-var backtickRe = regexp.MustCompile("`[^`]*(`|$)")
+var (
+	// backtickRe is a span in backticks, or one the screen cut off: a
+	// choice's command (Codex's "Yes, and don't ask again for commands that
+	// start with `…`").
+	backtickRe = regexp.MustCompile("`[^`]*(`|$)")
+	// prefixRe is a command prefix a choice names unquoted (Claude Code's
+	// "Yes, and don't ask again for npm test commands in <dir>"; not among
+	// the captured screens, which name a directory).
+	prefixRe = regexp.MustCompile(`(?i)(don't ask again for )(.+?)( commands\b)`)
+)
 
-// menuText is a screen menu's text as it may leave the bridge (#88): a
-// command quoted in it elided (what a menu is about stays on the bridge,
+// menuText is a screen menu choice's label as it may leave the bridge
+// (#88): a command in it elided (what a menu is about stays on the bridge,
 // whatever it holds), the rest scrubbed of what looks like a secret.
 func menuText(s string) string {
-	return digest.Scrub(backtickRe.ReplaceAllString(s, "`…`"))
+	s = backtickRe.ReplaceAllString(s, "`…`")
+	return digest.Scrub(prefixRe.ReplaceAllString(s, "$1`…`$3"))
 }
 
 // workerDisplayName is the game's displayName: the name, else the label,

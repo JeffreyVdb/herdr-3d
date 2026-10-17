@@ -399,7 +399,7 @@ func (cr *cardRig) blockedOn(t *testing.T, id string, m *notify.Menu) int64 {
 }
 
 func codexMenu(hash string) *notify.Menu {
-	return &notify.Menu{Hash: hash, Kind: "permission", Text: "Would you like to run the following command?", Choices: []notify.MenuChoice{
+	return &notify.Menu{Hash: hash, Kind: "permission", Choices: []notify.MenuChoice{
 		{N: 1, Label: "Yes, proceed (y)"}, {N: 2, Label: "Yes, and don't ask again for commands that start with `…` (p)"},
 		{N: 3, Label: "No, and tell Codex what to do differently (esc)"}}}
 }
@@ -417,7 +417,7 @@ func TestCardMenuOverHTTP(t *testing.T) {
 		t.Fatalf("card %+v", m)
 	}
 	text, labels := cr.tg.shownText(msg)
-	if !strings.HasPrefix(text, "Pixel · Permission\nWould you like to run the following command?\n\n"+notify.CardMenuAboutText) ||
+	if !strings.HasPrefix(text, "Pixel · Permission\nIt asks for your permission.\n\n"+notify.CardMenuAboutText) ||
 		!strings.Contains(text, "2. Yes, and don't ask again for commands that start with `…` (p)") || len(labels) != 3 ||
 		!strings.HasPrefix(labels[2], "3. No, and tell Codex what to do different…=") {
 		t.Fatalf("card %q %q", text, labels)

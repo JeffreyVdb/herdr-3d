@@ -563,7 +563,7 @@ func waitAnswered(t *testing.T, r *rig, n int) FakeAnswer {
 
 // permMenu is a permission menu as the bridge lets it go (#88).
 func permMenu(hash string) *Menu {
-	return &Menu{Hash: hash, Kind: "permission", Text: "Do you want to proceed?", Choices: []MenuChoice{
+	return &Menu{Hash: hash, Kind: "permission", Choices: []MenuChoice{
 		{1, "Yes"}, {2, "Yes, and always allow access to /tmp/proj from this project"}, {3, "No"}}}
 }
 
@@ -605,7 +605,7 @@ func TestCardMenu(t *testing.T) {
 		t.Fatalf("notification %+v", n)
 	}
 	c := r.ch.Card(ref)
-	for _, want := range []string{"Pixel · Permission\nDo you want to proceed?", CardMenuAboutText, "1. Yes\n", "2. Yes, and always allow access to /tmp/proj from this project", "3. No"} {
+	for _, want := range []string{"Pixel · Permission\n" + menuAsks["permission"], CardMenuAboutText, "1. Yes\n", "2. Yes, and always allow access to /tmp/proj from this project", "3. No"} {
 		if !strings.Contains(c.Text, want) {
 			t.Errorf("card %q lacks %q", c.Text, want)
 		}
@@ -650,7 +650,7 @@ func TestCardMenu(t *testing.T) {
 }
 
 // The menu read before the notification went: its card still follows it.
-// A trust menu without a question line says what it asks; a menu whose
+// A trust menu's card says what it asks; a menu whose
 // choices are not 1-9, or with none, gets no card.
 func TestCardMenuShapes(t *testing.T) {
 	a := &answerer{}
@@ -746,6 +746,37 @@ func TestCardMenuUnresolved(t *testing.T) {
 	ans := rowsOf(r, AuditAnswer)
 	if len(ans) != 2 || ans[0].err != nil || ans[0].args.(answerAudit).Outcome != ReplyUnresolved || ans[1].err == nil || ans[1].err.Error() != ReplyClosed {
 		t.Fatalf("audit %+v", ans)
+	}
+}
+
+// A menu gets one card while its blocked spell lasts (#88): the hub
+// publishes no menu while a screen read fails, then the same one (its
+// hash) again: no other card, whether its answer went unresolved (sending
+// it again could pick twice) or its card was open. Another menu of the
+// spell still gets its own.
+func TestCardMenuOnceAcrossReadGap(t *testing.T) {
+	a := &answerer{lane: &ReplyError{Kind: ReplyUnresolved}}
+	r := newCardRig(t, a)
+	ref := r.menuCard(t, "w1", 100, permMenu("aaaaaaaaaaaaaaaa"))
+	r.tap(t, ref, button(t, r.ch.Card(ref), "1.").Data)
+	r.waitCard(t, ref, "✓ Sent: Yes\n"+CardUnresolvedText)
+	r.svc.Observe(menuOn("w1", 100, nil))
+	r.svc.Observe(menuOn("w1", 100, permMenu("aaaaaaaaaaaaaaaa")))
+	r.menuCard(t, "w2", 100, permMenu("bbbbbbbbbbbbbbbb"))
+	r.svc.Observe(menuOn("w2", 100, nil))
+	r.svc.Observe(menuOn("w2", 100, permMenu("bbbbbbbbbbbbbbbb")))
+	r.svc.Observe(menuOn("w1", 100, permMenu("cccccccccccccccc")))
+	if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) >= 3 }, 5*time.Second) {
+		t.Fatal("no card for another menu")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(r.ch.Cards()); n != 3 {
+		t.Fatalf("%d cards, want 3", n)
+	}
+	last := r.ch.Cards()[2]
+	r.tap(t, last, button(t, r.ch.Card(last), "3.").Data)
+	if got := r.waitAnswers(t, a, 2); got[1].Hash != "cccccccccccccccc" {
+		t.Fatalf("answer %+v", got[1])
 	}
 }
 

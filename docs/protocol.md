@@ -4641,20 +4641,21 @@ while it is off.
   recipient (switched off, unpaired or paired anew: nothing read before answers a worker); anyone else's tap is
   answered without a word. At most 30 taps a minute on one worker's cards, 60 in all.
 - **Menu buttons** (#88; `replies` on): a worker `blocked` on a `permission` or `trust` menu its screen shows
-  (`worker.question` with choices; not a `choice` one) gets one card after its notification: "Permission" or
-  "Trust folder", the menu's question line (else what it asks, in a fixed line), a note that what it is about is not
+  (`worker.question` with choices; not a `choice` one) gets one card after its notification: "Permission" or "Trust
+  folder", what such a menu asks in a fixed line (not the screen's question line), a note that what it is about is not
   sent, each choice and a button for each; no Cancel (each such menu has its own No or Quit). The question is read off
-  the screen a moment after the worker turns blocked, so the card comes once both are there for the same blocked
-  spell (`status_since`): a worker first seen blocked (a restart) rings nothing and gets no card. Of the menu only its
-  question line and its choices' labels go, a span in backticks (a quoted command) as `` `…` `` and the rest with
-  anything shaped like a key or token removed; never the lines above the menu (the command, the edit, a trust
-  dialog's folder) nor the rest of the screen. A tap answers as the game's `worker.answer` does, with the card's
-  `hash` and the choice's number, on the worker's input lane, no client: the screen is read again first, and a menu no
-  longer shown (another hash, the worker no longer blocked) sends no key and the card says "No longer open"; it says
-  "Answered in the game." once the bridge sees the menu leave first. A new menu in the same blocked spell closes the
-  old card and gets its own. Keys sent and the worker still blocked after `AnswerTimeout` (3 s): the card says
-  "✓ Sent: <choice>" and "It still waits on its menu: look at it in the game." and offers nothing more for that
-  menu. The gates, the taps' answers and the windows are the cards' above.
+  the screen a moment after the worker turns blocked, so the card comes once both are there for the same blocked spell
+  (`status_since`): a worker first seen blocked (a restart) rings nothing and gets no card. Of the menu only its
+  choices' labels go, a span in backticks (a quoted command) or a command prefix ("don't ask again for … commands") as
+  `` `…` `` and the rest with anything shaped like a key or token removed; never a line above the menu (its question,
+  the command, the edit, a trust dialog's folder) nor the rest of the screen. A tap answers as the game's
+  `worker.answer` does, with the card's `hash` and the choice's number, on the worker's input lane, no client: the
+  screen is read again first, and a menu no longer shown (another hash, the worker no longer blocked) sends no key and
+  the card says "No longer open"; it says "Answered in the game." once the bridge sees the menu leave first. A new
+  menu in the same blocked spell closes the old card and gets its own. Keys sent and the worker still blocked after
+  `AnswerTimeout` (3 s): the card says "✓ Sent: <choice>" and "It still waits on its menu: look at it in the game."
+  and offers nothing more for that menu. A menu gets one card while the blocked spell lasts, though its screen read
+  fails a while and it comes back. The gates, the taps' answers and the windows are the cards' above.
 - **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`,
   `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}` and (#13)
   `notify.reply` `{"id"?, "text_bytes", "text_runes", "outcome"}` (`sent`, else the refusal: `not_a_reply`,

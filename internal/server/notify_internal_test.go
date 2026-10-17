@@ -73,19 +73,22 @@ func TestNotifyFactsCardTexts(t *testing.T) {
 }
 
 // #88: a blocked worker's permission or trust menu is in its facts with
-// its question and labels scrubbed, a quoted command elided, never its
-// excerpt; a choice menu, or one of a worker no longer blocked, is not.
+// its labels scrubbed, a command in them elided, never its question line
+// or its excerpt; a choice menu, or one of a worker no longer blocked, is
+// not.
 func TestNotifyFactsMenu(t *testing.T) {
 	q := &proto.Question{Kind: proto.QuestionPermission, Text: "Do you want to proceed with ghp_abcdefghij0123?", Hash: "0123456789abcdef",
 		Excerpt: []string{"curl -u admin:hunter2 https://example.test"}, Choices: []proto.Choice{{N: 1, Label: "Yes"},
-			{N: 2, Label: "Yes, and don't ask again for commands that start with `mysql -phunter2` (p)"}, {N: 3, Label: "No, and `cut off"}}}
+			{N: 2, Label: "Yes, and don't ask again for commands that start with `mysql -phunter2` (p)"}, {N: 3, Label: "No, and `cut off"},
+			{N: 4, Label: "Yes, and don't ask again for mysql -phunter2 commands in /tmp/proj"}}}
 	got := notifyFacts(&proto.Worker{Status: statusBlocked, Question: q}, false).Menu
-	want := &notify.Menu{Hash: "0123456789abcdef", Kind: "permission", Text: "Do you want to proceed with [key]?", Choices: []notify.MenuChoice{
-		{N: 1, Label: "Yes"}, {N: 2, Label: "Yes, and don't ask again for commands that start with `…` (p)"}, {N: 3, Label: "No, and `…`"}}}
+	want := &notify.Menu{Hash: "0123456789abcdef", Kind: "permission", Choices: []notify.MenuChoice{
+		{N: 1, Label: "Yes"}, {N: 2, Label: "Yes, and don't ask again for commands that start with `…` (p)"}, {N: 3, Label: "No, and `…`"},
+		{N: 4, Label: "Yes, and don't ask again for `…` commands in /tmp/proj"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("menu %+v, want %+v", got, want)
 	}
-	if s := fmt.Sprintf("%+v", got); strings.Contains(s, "hunter2") || strings.Contains(s, "example.test") {
+	if s := fmt.Sprintf("%+v", got); strings.Contains(s, "hunter2") || strings.Contains(s, "example.test") || strings.Contains(s, "proceed") {
 		t.Fatalf("menu facts %s", s)
 	}
 	q.Kind = proto.QuestionTrust
@@ -98,6 +101,45 @@ func TestNotifyFactsMenu(t *testing.T) {
 	q.Kind = proto.QuestionChoice
 	if m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: q}, false).Menu; m != nil {
 		t.Fatalf("choice %+v", m)
+	}
+}
+
+// #88: a command line in the dialog that asks is the screen's question
+// line (questionText), and no pattern catches what it holds: nothing of it
+// is in the facts. The captured screens' labels keep what they say.
+func TestNotifyFactsMenuCommandLine(t *testing.T) {
+	sc := strings.Replace(screen(t, "codex-approval"), "$ touch h3d-codex-probe.txt",
+		"$ curl https://example.test -u alice:open-sesame 'Do you want to continue?'", 1)
+	q := parseQuestion(sc, 100).q
+	if !strings.Contains(q.Text, "open-sesame") {
+		t.Fatalf("the command line is not the question line: %q", q.Text)
+	}
+	m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &q}, false).Menu
+	if m == nil {
+		t.Fatalf("no menu: %+v", q)
+	}
+	if s := fmt.Sprintf("%+v", *m); strings.Contains(s, "open-sesame") || strings.Contains(s, "curl") || strings.Contains(s, "continue") {
+		t.Fatalf("the command line in the facts: %s", s)
+	}
+	for name, labels := range map[string][]string{
+		"codex-approval":          {"Yes, proceed (y)", "Yes, and don't ask again for commands that start with `…` (p)", "No, and tell Codex what to do differently (esc)"},
+		"claude-permission-bash":  {"Yes", "Yes, and always allow access to /tmp/h3d-m5term/claude-a2be86 from this project", "No"},
+		"claude-permission-write": {"Yes", "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", "No"},
+		"claude-trust":            {"No, exit", "Yes, I trust this folder"},
+		"codex-trust":             {"Trust and continue", "Quit"},
+	} {
+		q := parseQuestion(screen(t, name), 100).q
+		m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &q}, false).Menu
+		if m == nil {
+			t.Fatalf("%s: no menu: %+v", name, q)
+		}
+		var got []string
+		for _, c := range m.Choices {
+			got = append(got, c.Label)
+		}
+		if !reflect.DeepEqual(got, labels) {
+			t.Errorf("%s: labels %q, want %q", name, got, labels)
+		}
 	}
 }
 
