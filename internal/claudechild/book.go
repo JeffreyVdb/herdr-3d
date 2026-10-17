@@ -32,18 +32,39 @@ const (
 // id, so a line read twice changes nothing.
 type facts struct {
 	seq      int                  // observation counter
-	dispatch map[string]*dispatch // by tool_use id
+	dispatch map[string]*dispatch // by tool_use id: the call in the first transcript read holding it
 	results  map[string]ended     // by tool_use id: the call's result, in its own file
 	pairs    map[string]string    // tool_use id → agentId, from its result
-	notes    map[note]bool        // task notifications (each is in two records)
-	metas    map[string]metaFact  // by agentId
-	files    map[string]*file     // by agentId
-	gone     map[string]bool      // agentIds whose file went
+	// homes are what each transcript showed of its calls (by home), also
+	// of a call another one showed first: a foreign file reusing a call's
+	// id read before its own transcript. Retracting that file falls back
+	// to the call's other copy.
+	homes map[string]*homeFacts
+	notes map[note]bool       // task notifications (each is in two records)
+	metas map[string]metaFact // by agentId
+	files map[string]*file    // by agentId
+	gone  map[string]bool     // agentIds whose file went
 }
 
 func newFacts() *facts {
-	return &facts{dispatch: map[string]*dispatch{}, results: map[string]ended{}, pairs: map[string]string{},
+	return &facts{dispatch: map[string]*dispatch{}, results: map[string]ended{}, pairs: map[string]string{}, homes: map[string]*homeFacts{},
 		notes: map[note]bool{}, metas: map[string]metaFact{}, files: map[string]*file{}, gone: map[string]bool{}}
+}
+
+// homeFacts are one transcript's calls, their results and pairings there.
+type homeFacts struct {
+	dispatch map[string]*dispatch
+	results  map[string]ended
+	pairs    map[string]string
+}
+
+func (f *facts) home(home string) *homeFacts {
+	h := f.homes[home]
+	if h == nil {
+		h = &homeFacts{dispatch: map[string]*dispatch{}, results: map[string]ended{}, pairs: map[string]string{}}
+		f.homes[home] = h
+	}
+	return h
 }
 
 // dispatch is an Agent call: a child started (or about to).
@@ -198,13 +219,29 @@ func (f *facts) childLine(session, agent string, b []byte) {
 
 // retract forgets what a child's transcript showed: its calls, their
 // results and pairings (a result counts only in its call's transcript),
-// its notifications.
+// its notifications. A call another transcript holds too is that one's
+// then, with what it showed of it (the main one first, then by agentId).
 func (f *facts) retract(home string) {
+	delete(f.homes, home)
 	for id, d := range f.dispatch {
-		if d.home == home {
-			delete(f.dispatch, id)
-			delete(f.results, id)
-			delete(f.pairs, id)
+		if d.home != home {
+			continue
+		}
+		delete(f.dispatch, id)
+		delete(f.results, id)
+		delete(f.pairs, id)
+		for _, other := range sortedKeys(f.homes) {
+			h := f.homes[other]
+			if c := h.dispatch[id]; c != nil {
+				f.dispatch[id] = c
+				if e, ok := h.results[id]; ok {
+					f.results[id] = e
+				}
+				if a, ok := h.pairs[id]; ok {
+					f.pairs[id] = a
+				}
+				break
+			}
 		}
 	}
 	for n := range f.notes {
@@ -237,14 +274,19 @@ func (f *facts) record(home string, l *line) {
 			if b.Type != "tool_use" || !subagentTool(b.Name) || b.ID == "" {
 				continue
 			}
-			if d := f.dispatch[b.ID]; d != nil {
-				continue // seen (a fork's copy of it, or the line again): not a new call
+			h := f.home(home)
+			if h.dispatch[b.ID] != nil {
+				continue // the line again
 			}
 			var in agentInput
 			_ = json.Unmarshal(b.Input, &in)
 			f.seq++
-			f.dispatch[b.ID] = &dispatch{id: b.ID, home: home, name: in.Name, typ: in.SubagentType, desc: in.Description,
+			d := &dispatch{id: b.ID, home: home, name: in.Name, typ: in.SubagentType, desc: in.Description,
 				teammate: in.TeamName != "", ts: ts, seq: f.seq, fromLog: true}
+			h.dispatch[b.ID] = d
+			if f.dispatch[b.ID] == nil {
+				f.dispatch[b.ID] = d // else seen in another transcript first: not a new call
+			}
 		}
 	case "user":
 		if l.Message == nil {
@@ -255,10 +297,11 @@ func (f *facts) record(home string, l *line) {
 		for _, b := range blocks(l.Message.Content) {
 			switch b.Type {
 			case "tool_result":
-				d := f.dispatch[b.ToolUseID]
-				if d == nil || d.home != home {
+				h := f.homes[home]
+				if h == nil || h.dispatch[b.ToolUseID] == nil {
 					continue // not an Agent call of this transcript (a fork's copy is not)
 				}
+				own := f.dispatch[b.ToolUseID].home == home
 				if !resRead {
 					res, resRead = result(l.ToolUseResult), true // it goes with the record's first result
 				}
@@ -271,9 +314,15 @@ func (f *facts) record(home string, l *line) {
 				case res.Status == "async_launched":
 					e.launched = true
 				}
-				f.results[b.ToolUseID] = e
+				h.results[b.ToolUseID] = e
+				if own {
+					f.results[b.ToolUseID] = e
+				}
 				if res.AgentID != "" && !b.IsError {
-					f.pairs[b.ToolUseID] = res.AgentID
+					h.pairs[b.ToolUseID] = res.AgentID
+					if own {
+						f.pairs[b.ToolUseID] = res.AgentID
+					}
 				}
 			case "text":
 				f.note(home, b.Text, ts)

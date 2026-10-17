@@ -798,6 +798,61 @@ func TestForeignChildFileFoundLate(t *testing.T) {
 	})
 }
 
+// A foreign file's copy of a call of this session's (a tool_use id it
+// reuses) takes nothing from the call's own transcript, whichever is read
+// first: once the file is found foreign, the call, its result and its
+// parent are the main transcript's, and its row never went.
+func TestForeignCopyKeepsTheCall(t *testing.T) {
+	const agent = "a333"
+	r0 := newRig(t, "a")
+	call := `{"type":"assistant","sessionId":"` + r0.session + `","timestamp":"2026-10-17T20:43:35Z","message":{"content":[{"type":"tool_use","id":"toolu_shared","name":"Agent","input":{"description":"real main call"}}]}}`
+	result := `{"type":"user","sessionId":"` + r0.session + `","timestamp":"2026-10-17T20:43:40Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_shared","content":"done"}]},"toolUseResult":{"status":"completed","agentId":"` + agent + `"}}`
+	foreign := `{"type":"user","sessionId":"` + r0.session + `","agentId":"a222","message":{"content":"foreign identity"}}`
+	for name, steps := range map[string][]func(r *rig){
+		"foreign first": {
+			func(r *rig) { r.child("a111", call) },
+			func(r *rig) { r.main(call) }, // the same call: seen in a111 already
+			func(r *rig) { r.child("a111", foreign) },
+		},
+		"foreign first, result before found": {
+			func(r *rig) { r.child("a111", call) },
+			func(r *rig) { r.main(call, result) },
+			func(r *rig) { r.child("a111", foreign) },
+		},
+		"main first": {
+			func(r *rig) { r.main(call, result) },
+			func(r *rig) { r.child("a111", call) },
+			func(r *rig) { r.child("a111", foreign) },
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, "a")
+			r.main(`{"type":"user","message":{"content":"start"}}`)
+			for _, step := range steps {
+				step(r)
+				r.poll()
+			}
+			for range 6 {
+				r.poll()
+			}
+			cs := r.rows()
+			if len(cs) != 1 || cs[0].Parent != proto.ParentRoot || cs[0].Description != "real main call" {
+				t.Fatalf("rows = %+v", cs)
+			}
+			if strings.Contains(name, "result") || name == "main first" {
+				if c := r.one(agent); c.State != proto.ChildCompleted {
+					t.Fatalf("row = %+v", c)
+				}
+			}
+			for _, e := range r.evs {
+				if e.Removed && e.DispatchID == "toolu_shared" {
+					t.Fatalf("the call's row was removed: %+v", e)
+				}
+			}
+		})
+	}
+}
+
 // An agent-team teammate's spawn (team_name) is no subagent row, and
 // neither is an internal helper only a hook shows.
 func TestTeammateAndHelperNoRows(t *testing.T) {
