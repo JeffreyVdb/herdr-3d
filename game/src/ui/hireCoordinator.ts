@@ -70,6 +70,8 @@ export interface HireRequest {
   prompt: HirePrompt | null;
   /** Settings → Display "Hire in background", as it was when Hire was pressed. */
   background: boolean;
+  /** #95: bytes the bridge adds to the prompt (`args.herdr_instructions`: a blank line and the lines); they count against the limit. */
+  added?: number;
 }
 
 type NotResolved = Exclude<ResolveResult, { ok: true }>;
@@ -162,8 +164,9 @@ export class HireCoordinator {
     // The images go first: Drop Zone paths go into the text, so nothing is sent until every image is uploaded.
     // (`resolve` reads the draft as it is at this call, before its first await.)
     if (req.prompt && args.prompt) {
-      const r = await req.prompt.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
-      if (!r.ok) return { kind: 'not_sent', result: r, message: notSentText(r, req.background ? ` at Desk ${req.desk + 1}` : '') };
+      const added = req.added ?? 0;
+      const r = await req.prompt.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES - added });
+      if (!r.ok) return { kind: 'not_sent', result: r, message: notSentText(r, req.background ? ` at Desk ${req.desk + 1}` : '', added) };
       args.prompt = r.text;
       revision = r.revision;
     }
@@ -229,8 +232,11 @@ export class HireCoordinator {
 }
 
 /** Why the first task was not sent ('' when the draft says it itself: a refusal the composer holds, a draft gone). */
-function notSentText(r: NotResolved, where: string): string {
+function notSentText(r: NotResolved, where: string, added = 0): string {
   if (r.reason === 'upload') return uploadFailedText(r.failed, where);
+  // #95: the herdr hiring instructions count too: say so, and the way out.
+  if (r.reason === 'serialize' && r.error.kind === 'too_long' && added > 0)
+    return `The prompt is ${((r.error.bytes + added) / 1024).toFixed(1)} KB with the image and file paths and the herdr hiring instructions. The limit is ${Math.round(HIRE_PROMPT_MAX_BYTES / 1024)} KB: shorten the text, or untick Add herdr hiring instructions.`;
   if (r.reason === 'serialize') return serializeErrorText(r.error);
   if (r.reason === 'refused' && where) return `Nothing was hired${where}: ${r.message}`;
   return '';

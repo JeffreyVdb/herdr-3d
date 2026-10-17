@@ -299,7 +299,7 @@ export class WorldStore {
     this.kaneo.reset(s.world.kaneo); // #184
     this.handoffs.reset(s.world.handoffs); // #223
     this.schedules.reset(s.world.schedules); // #64 schedules (a bridge before #62 sends none)
-    this.hirePresets.reset(s.world.hire_presets); // #93 (a bridge before #93 sends none)
+    this.hirePresets.reset(s.world.hire_presets, s.world.herdr_instructions); // #93 (a bridge before #93 sends none), #95
     this.inboxDismissed.clear(); // #106
     for (const [id, since] of Object.entries(s.world.inbox_dismissed ?? {})) if (Number.isInteger(since)) this.inboxDismissed.set(id, since);
     this.seq = s.seq;

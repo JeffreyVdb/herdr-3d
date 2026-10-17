@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HireOptions, HirePreset } from '../net/protocol';
-import { draftBlocker, draftFrom, exactProblem, HirePresetBook, presetChoiceText, presetSpec, promptPreview, typedProblem } from './hirePresets';
+import { draftBlocker, draftFrom, exactProblem, HirePresetBook, instructionsBlocker, nudgeWanted, presetChoiceText, presetSpec, promptPreview, typedProblem } from './hirePresets';
 
 const CATALOG: HireOptions = {
   claude: { models: ['claude-opus-5-5', 'claude-sonnet-5-5'], efforts: ['low', 'medium', 'high'] },
@@ -37,6 +37,17 @@ describe('HirePresetBook', () => {
     expect(b.forFloor('v-0123456789ab').floor.map((p) => p.id)).toEqual(['c']);
     expect(b.forFloor('elsewhere')).toEqual({ floor: [], global: [b.get('d')] });
     expect(b.get('e')).toBeNull();
+  });
+
+  it('#95: reads each preset’s flag, and whether the bridge takes it (the snapshot’s herdr_instructions)', () => {
+    const b = new HirePresetBook();
+    b.reset([preset({ id: 'a', herdr_instructions: true }), preset({ id: 'b' }), { ...preset({ id: 'c' }), herdr_instructions: 'yes' }]);
+    expect(b.instructions).toBe(false);
+    expect([b.get('a')?.herdr_instructions, b.get('b')?.herdr_instructions, b.get('c')?.herdr_instructions]).toEqual([true, undefined, undefined]);
+    b.reset([], true);
+    expect(b.instructions).toBe(true);
+    b.reset([]);
+    expect(b.instructions).toBe(false);
   });
 
   it('follows upserts and removals, bumping the version', () => {
@@ -90,13 +101,33 @@ describe('the editor', () => {
   const draft = draftFrom(preset(), 'herdr-3d');
 
   it('opens a preset as it is saved, and scope "floor" for its own floor', () => {
-    expect(draft).toEqual({ name: 'Deploy', prompt: 'Deploy the release to A, B and C.', harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low', scope: 'floor' });
+    expect(draft).toEqual({ name: 'Deploy', prompt: 'Deploy the release to A, B and C.', harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low', scope: 'floor', instructions: false });
+    expect(draftFrom(preset({ herdr_instructions: true }), 'herdr-3d').instructions).toBe(true);
     expect(draftFrom(preset({ floor: undefined }), 'herdr-3d').scope).toBe('global');
   });
 
   it('sends the spec with the floor for "This floor" and none for Global', () => {
     expect(presetSpec(draft, 'herdr-3d')).toEqual({ name: 'Deploy', floor: 'herdr-3d', prompt: 'Deploy the release to A, B and C.', harness: 'claude', model: 'claude-sonnet-5-5', effort: 'low' });
     expect(presetSpec({ ...draft, name: ' x ', scope: 'global' }, 'herdr-3d')).not.toHaveProperty('floor');
+  });
+
+  it('#95: sends herdr_instructions, on or off, only to a bridge that takes it', () => {
+    expect(presetSpec({ ...draft, instructions: true }, 'herdr-3d', true)).toMatchObject({ herdr_instructions: true });
+    expect(presetSpec(draft, 'herdr-3d', true)).toMatchObject({ herdr_instructions: false });
+    expect(presetSpec({ ...draft, instructions: true }, 'herdr-3d', false)).not.toHaveProperty('herdr_instructions');
+    expect(presetSpec({ ...draft, instructions: true }, 'herdr-3d')).not.toHaveProperty('herdr_instructions');
+  });
+
+  it('#95: asks the classifier only with the box off, no h3d_floor of its own, the check there, and not for a text already answered', () => {
+    const ok = { supported: true, ready: true, dismissed: null };
+    const d = { ...draft, prompt: 'For each pull request, spawn a subagent.' };
+    expect(nudgeWanted(d, ok)).toBe(true);
+    expect(nudgeWanted({ ...d, instructions: true }, ok)).toBe(false);
+    expect(nudgeWanted({ ...d, prompt: `${d.prompt} Tag them h3d_floor=v-1.` }, ok)).toBe(false);
+    expect(nudgeWanted(d, { ...ok, supported: false })).toBe(false);
+    expect(nudgeWanted(d, { ...ok, ready: false })).toBe(false);
+    expect(nudgeWanted(d, { ...ok, dismissed: d.prompt })).toBe(false);
+    expect(nudgeWanted(d, { ...ok, dismissed: 'For each pull request, spawn a subagent' })).toBe(true);
   });
 
   it('blocks a bad name, a taken one, a missing or flag-like prompt, an oversize one and a tuple off the catalog', () => {
@@ -118,6 +149,21 @@ describe('the editor', () => {
     expect(typedProblem('claude', 'a\r\nb\tc')).toBeNull();
     expect(typedProblem('claude', 'a\u001bb')).not.toBeNull();
     expect(typedProblem('codex', 'a\u001bb')).toBeNull();
+  });
+});
+
+describe('#95 the hiring instructions in a hire', () => {
+  const lines = 'Start every agent you hire in its own herdr workspace or tab.\n\nAlso tag every herdr workspace you create with the token h3d_floor=v-1.';
+  it('counts the task, the blank line and the lines against 32 KiB', () => {
+    const room = 32 * 1024 - 2 - new TextEncoder().encode(lines).length;
+    expect(instructionsBlocker('x'.repeat(room), lines)).toBeNull();
+    const over = instructionsBlocker('x'.repeat(room + 1), lines);
+    expect(over).toContain('32 KiB');
+    expect(over).toContain('untick');
+  });
+
+  it('needs a task to add them to', () => {
+    expect(instructionsBlocker(' \n', lines)).toContain('first task');
   });
 });
 

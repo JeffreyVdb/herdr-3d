@@ -33,6 +33,7 @@ export function hirePresetOf(v: unknown): HirePreset | null {
     updated_at: typeof v.updated_at === 'number' ? v.updated_at : 0,
   };
   if (isStr(v.floor) && v.floor) out.floor = v.floor;
+  if (v.herdr_instructions === true) out.herdr_instructions = true;
   return out;
 }
 
@@ -42,13 +43,16 @@ export class HirePresetBook {
   private readonly map = new Map<string, HirePreset>();
   /** The bridge sent a `hire_presets` list: it keeps hire presets. */
   known = false;
+  /** #95: the snapshot says `herdr_instructions`: the bridge takes the presets' and `worker.hire`'s flag (never send it otherwise). */
+  instructions = false;
   /** Bumped on every change (dialogs re-render on it). */
   version = 0;
 
-  /** From a snapshot's `world.hire_presets`: undefined is an older bridge. */
-  reset(list: unknown): void {
+  /** From a snapshot's `world.hire_presets` (undefined is an older bridge) and #95 `world.herdr_instructions`. */
+  reset(list: unknown, instructions = false): void {
     this.map.clear();
     this.known = Array.isArray(list);
+    this.instructions = instructions === true;
     if (Array.isArray(list))
       for (const v of list) {
         const p = hirePresetOf(v);
@@ -141,7 +145,7 @@ export function promptPreview(prompt: string, max = 140): string {
   return `${(at > max / 2 ? cut.slice(0, at) : cut).trimEnd()}…`;
 }
 
-/** The editor's fields. `scope` 'floor' is the floor the editor is for. */
+/** The editor's fields. `scope` 'floor' is the floor the editor is for; `instructions` #95's "Add herdr hiring instructions". */
 export interface HirePresetDraft {
   name: string;
   prompt: string;
@@ -149,18 +153,46 @@ export interface HirePresetDraft {
   model: string;
   effort: string;
   scope: 'floor' | 'global';
+  instructions: boolean;
 }
 
 /** A preset as the editor opens it (its scope as seen from `floor`). */
 export function draftFrom(p: HirePreset, floor: string): HirePresetDraft {
-  return { name: p.name, prompt: p.prompt, harness: p.harness, model: p.model, effort: p.effort, scope: p.floor && p.floor === floor ? 'floor' : 'global' };
+  return { name: p.name, prompt: p.prompt, harness: p.harness, model: p.model, effort: p.effort, scope: p.floor && p.floor === floor ? 'floor' : 'global', instructions: p.herdr_instructions === true };
 }
 
-/** `hire_preset.create`'s args (and update's, with the id): the floor for "This floor", none for Global. */
-export function presetSpec(d: HirePresetDraft, floor: string): HirePresetSpec {
+/**
+ * `hire_preset.create`'s args (and update's, with the id): the floor for "This floor", none for Global. #95: the flag,
+ * on or off (an update replaces the whole spec), only when the bridge takes it (`instructions`): an older one refuses it.
+ */
+export function presetSpec(d: HirePresetDraft, floor: string, instructions = false): HirePresetSpec {
   const s: HirePresetSpec = { name: d.name.trim(), prompt: d.prompt, harness: d.harness, model: d.model, effort: d.effort };
   if (d.scope === 'floor') s.floor = floor;
+  if (instructions) s.herdr_instructions = d.instructions;
   return s;
+}
+
+/** #95: the token of the floor line: a prompt that has it already tells its agents where to go. */
+export const FLOOR_TOKEN = 'h3d_floor';
+
+/**
+ * #95: whether Save asks the classifier (`hire_preset.check`) if the prompt hands work to other agents: the box is off,
+ * the prompt has no `h3d_floor` of its own, the bridge has the check (`supported`), the classifier is ready, and the
+ * player did not already answer "Save as is" for exactly this text (`dismissed`).
+ */
+export function nudgeWanted(d: Pick<HirePresetDraft, 'prompt' | 'instructions'>, o: { supported: boolean; ready: boolean; dismissed: string | null }): boolean {
+  return o.supported && o.ready && !d.instructions && !d.prompt.includes(FLOOR_TOKEN) && d.prompt !== o.dismissed;
+}
+
+/**
+ * #95: why a hire cannot add the herdr hiring instructions (`lines`, hire.prepare's) to `prompt` (null: it can): the
+ * bridge adds them after a blank line, so the whole has to fit the first prompt's 32 KiB, and they need a task.
+ */
+export function instructionsBlocker(prompt: string, lines: string): string | null {
+  if (!prompt.trim()) return 'Write a first task: the herdr hiring instructions go after it. Or untick Add herdr hiring instructions for this hire.';
+  const over = bytes(prompt) + 2 + bytes(lines) - PRESET_PROMPT_MAX_BYTES;
+  if (over > 0) return `With the herdr hiring instructions, the first task is ${over.toLocaleString('en-US')} ${over === 1 ? 'byte' : 'bytes'} over 32 KiB. Shorten it, or untick Add herdr hiring instructions for this hire.`;
+  return null;
 }
 
 /**

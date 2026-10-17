@@ -310,3 +310,21 @@ describe('HireCoordinator: what a background hire says, once', () => {
     expect(t.beeps()).toBe(0);
   });
 });
+
+describe('HireCoordinator: #95 the herdr hiring instructions', () => {
+  it('counts the bytes the bridge adds against the limit: a task that fits alone is not sent, and says why', async () => {
+    const t = setup();
+    const added = 400;
+    const fits = 'x'.repeat(32 * 1024 - added);
+    const ok = t.hires.start(req({ args: { ...args(14, fits), herdr_instructions: true }, prompt: draft(fits), added }));
+    await tick();
+    expect(t.sends[0]).toMatchObject({ prompt: fits, herdr_instructions: true });
+    t.answer(0, { ok: true, data: { id: 'w1', prompted: true } });
+    await ok.done;
+    const over = `${fits}y`;
+    const o = await t.hires.start(req({ key: 'k2', args: { ...args(15, over), herdr_instructions: true }, prompt: draft(over), added, background: false })).done;
+    expect(o.kind).toBe('not_sent');
+    expect(o.kind === 'not_sent' && o.message).toContain('herdr hiring instructions');
+    expect(t.sends).toHaveLength(1);
+  });
+});

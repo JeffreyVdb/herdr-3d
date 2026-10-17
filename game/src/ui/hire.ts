@@ -22,7 +22,7 @@ import {
 import { labelsOf, modelEntries, modelMatches, type ModelEntry, type ModelLabels } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
 import { isComplete, levelChipText, levelProblem, preselectLevel, type TaskLevelId } from '../world/taskLevels';
-import { exactProblem, pickExact, presetChoiceText, type ExactProblem } from '../world/hirePresets';
+import { exactProblem, instructionsBlocker, pickExact, presetChoiceText, type ExactProblem } from '../world/hirePresets';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
@@ -108,6 +108,8 @@ export interface HirePresetSeed {
   effort: string;
   /** Images of the first task left out (a preset keeps text only). */
   imagesLeftOut: number;
+  /** #95: the form's "Add herdr hiring instructions" (only a form from a preset has one; absent: off). */
+  instructions?: boolean;
 }
 
 /** M7: what "Ask a worker…" and "Review with a worker" start the dialog with. */
@@ -127,7 +129,7 @@ export interface HirePrefill {
    * one (a hidden model stays offered; a removed one or an effort it does not take is shown and blocks Hire until the
    * player picks). `prompt` is its prompt.
    */
-  preset?: { id: string; name: string; scope: 'floor' | 'global' };
+  preset?: { id: string; name: string; scope: 'floor' | 'global'; instructions?: boolean };
   /** #93: the player chose to replace the desk's unsent first task with `prompt`: the new text is the desk's draft at once. */
   replaceDraft?: true;
 }
@@ -172,6 +174,11 @@ export interface HireSummary {
   level?: { mode: LevelMode; picked: TaskLevelId | null; chips: LevelChip[] };
   /** #93: the form came from a hire preset: which, its saved choice, and what of that choice cannot be hired now (null: all of it can). */
   preset?: { id: string; name: string; saved: { harness: string; model: string; effort: string }; problem: ExactProblem | null };
+  /**
+   * #95: the form's "Add herdr hiring instructions" (a form from a preset, on a bridge that adds them): ticked or not for
+   * this hire, the exact lines hire.prepare gave for this floor, and the first prompt's bytes with them while ticked.
+   */
+  instructions?: { on: boolean; lines: string; bytes: number };
 }
 
 /** The worktree option as shown (null: hidden, the folder is no git repo). */
@@ -478,7 +485,13 @@ export class HireDialog {
   private levelMode: LevelMode | null = null;
   private level: TaskLevelId | null = null;
   /** #93: the hire preset this form came from and its exact choice (null: none): no resolver ever replaces that choice. */
-  private exact: { id: string; name: string; scope: 'floor' | 'global'; saved: { harness: string; model: string; effort: string } } | null = null;
+  private exact: { id: string; name: string; scope: 'floor' | 'global'; instructions?: boolean; saved: { harness: string; model: string; effort: string } } | null = null;
+  /** #95: this hire adds the herdr hiring instructions: ticked to match the preset, unticked for this hire only. */
+  private addLines = false;
+  /** #95: the first prompt's byte count with the lines, kept current while typing (null: not shown). */
+  private bytesEl: HTMLElement | null = null;
+  /** #95: "What's added" stays open across a re-render of the options. */
+  private linesOpen = false;
   /** #210: holds the desk, uploads, sends `worker.hire`: the same for a hire waited for here and one in the background. */
   private readonly hires: HireCoordinator;
   /** This dialog among others (a hire's key is the dialog and its generation). */
@@ -566,6 +579,8 @@ export class HireDialog {
     this.levelMode = null;
     this.level = null;
     this.exact = prefill.preset && prefill.choice ? { ...prefill.preset, saved: { ...prefill.choice } } : null;
+    this.addLines = this.exact?.instructions === true;
+    this.linesOpen = false;
     this.uploadFailed = false;
     // The desk's composer draft (images too) if it is still in memory, else the text storage kept; a first task handed in starts a draft of its own.
     this.editor.show(prefill.prompt !== undefined ? this.newDoc(prefill.prompt) : this.deskDoc(this.draftKey(), draft?.text ?? ''));
@@ -868,7 +883,8 @@ export class HireDialog {
     if (this.host.unsupported('worker.hire')) return failureText('worker.hire', 'unknown_command', '');
     const bad = this.exactProblem();
     if (bad) return `${bad.why} Choose ${bad.field === 'effort' ? 'an effort' : `a ${bad.field}`} to hire with.`;
-    return hireBlocker(this.f, this.options(), this.capacity());
+    const lines = this.addLines ? this.instructionLines() : null;
+    return hireBlocker(this.f, this.options(), this.capacity()) ?? (lines !== null ? instructionsBlocker(this.f.prompt, lines) : null);
   }
 
   private gitView(g: HireGit | null): HireSummary['git'] {
@@ -894,7 +910,7 @@ export class HireDialog {
     const fv = this.host.store.floorView(this.floor);
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const taken = this.takenBy();
-    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null, this.exact, this.host.store.hirePresets?.known]);
+    const key = JSON.stringify([this.floor, this.desk, this.state, this.prep, this.f.harness, this.f.model, this.f.effort, this.f.worktree, where, taken, this.statusText, this.refetching, this.host.store.limits.version, this.host.modelPrefs?.version, labelsOf(this.host.store.hireOptions, this.f.harness), this.levelMode, this.level, this.levelMode ? this.host.taskLevels?.version : null, this.exact, this.host.store.hirePresets?.known, this.addLines, this.host.store.hirePresets?.instructions]);
     // Typing (task, label, folder) only needs the button; everything else re-renders.
     if (key === this.renderedKey) {
       this.renderActions();
@@ -1000,6 +1016,9 @@ export class HireDialog {
         h('div', { class: 'dd-field' }, h('label', { for: 'hire-cwd' }, 'Folder'), cwd, h('p', { class: 'field-hint', id: 'hire-cwd-hint' }, 'Where the agent starts, on the server.')),
       );
       if (this.exact) nodes.push(this.presetNote(problem));
+      const lines = this.instructionLines();
+      this.bytesEl = null;
+      if (lines !== null) nodes.push(this.instructionsControl(lines));
       nodes.push(agent, slot, ids);
 
       const g = this.gitView(this.prep.git);
@@ -1063,6 +1082,65 @@ export class HireDialog {
       h('p', {}, 'Saved with ', h('code', {}, presetChoiceText(this.host.store.hireOptions, x.saved)), `. ${problem.why}`),
       h('p', {}, `Nothing else was picked for you: choose ${problem.field === 'effort' ? 'an effort' : `a ${problem.field}`} below to hire with. The preset stays as saved.`),
     );
+  }
+
+  /**
+   * #95: the herdr hiring instructions this hire would add (hire.prepare's, for this floor), null when the form has no
+   * box: not from a preset, or a bridge that does not add them (nothing sends it the flag).
+   */
+  private instructionLines(): string | null {
+    const lines = this.prep?.herdr_instructions;
+    return this.exact && lines && this.host.store.hirePresets?.instructions ? lines : null;
+  }
+
+  /** #95: the first prompt's bytes as the bridge sends it with the lines: the task, a blank line, the lines. */
+  private bytesWithLines(lines: string): number {
+    const enc = new TextEncoder();
+    return enc.encode(this.f.prompt).length + 2 + enc.encode(lines).length;
+  }
+
+  private bytesText(lines: string): string {
+    return `With them, the first task is ${this.bytesWithLines(lines).toLocaleString('en-US')} of ${HIRE_PROMPT_MAX_BYTES.toLocaleString('en-US')} bytes.`;
+  }
+
+  /**
+   * #95: the per-hire "Add herdr hiring instructions" under the preset note, ticked to match the preset; while ticked,
+   * "What's added" shows the exact lines with this floor's id, and the byte count includes them.
+   */
+  private instructionsControl(lines: string): HTMLElement {
+    const box = h('input', { type: 'checkbox', id: 'hire-instructions', 'data-key': 'instructions', 'aria-describedby': 'hire-instructions-hint' });
+    box.checked = this.addLines;
+    box.addEventListener('change', () => {
+      this.addLines = box.checked;
+      this.render();
+    });
+    const saved = this.exact?.instructions === true;
+    const hint =
+      this.addLines !== saved
+        ? `${this.addLines ? 'On' : 'Off'} for this hire only; the preset has it ${saved ? 'on' : 'off'}.`
+        : this.addLines
+          ? 'Each agent this worker starts gets its own herdr workspace or tab, tagged with this floor.'
+          : 'Tick it if this task starts other agents: they get their own herdr workspace or tab on this floor.';
+    const panel = h(
+      'div',
+      { class: 'dd-field dd-instructions', 'data-hook': 'instructions', 'data-on': this.addLines ? 'true' : 'false' },
+      h('label', { class: 'dd-check', for: 'hire-instructions' }, box, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, 'Add herdr hiring instructions')),
+      h('p', { class: 'field-hint dd-base', id: 'hire-instructions-hint' }, hint),
+    );
+    if (this.addLines) {
+      this.bytesEl = h('p', { class: 'field-hint dd-instructions-bytes', 'data-hook': 'instructions-bytes' }, this.bytesText(lines));
+      const details = h(
+        'details',
+        { class: 'dd-instructions-lines', 'data-hook': 'instructions-lines', open: this.linesOpen },
+          h('summary', { 'data-key': 'instructions-lines' }, 'What’s added'),
+          h('p', { class: 'field-hint dd-instructions-intro' }, 'After the first task and a blank line, the worker gets:'),
+        h('pre', {}, lines),
+        this.bytesEl,
+      );
+      details.addEventListener('toggle', () => (this.linesOpen = details.open));
+      panel.append(details);
+    }
+    return panel;
   }
 
   /** #248: one chip per set level; one that cannot be used now is shown off, with why as its tooltip. */
@@ -1163,6 +1241,9 @@ export class HireDialog {
 
   private renderActions(): void {
     const blocker = this.blocker();
+    // #95: the byte count with the lines follows the typing (a re-render of the options never runs for it).
+    const lines = this.bytesEl && this.instructionLines();
+    if (this.bytesEl && lines) this.bytesEl.textContent = this.bytesText(lines);
     const label = this.f.label.trim() || this.prep?.label || '';
     const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, this.state === 'hiring' ? 'Close' : 'Cancel');
     const text = this.state === 'hiring' ? 'Hiring…' : label ? `Hire ${label}` : 'Hire';
@@ -1190,7 +1271,9 @@ export class HireDialog {
     b.addEventListener('click', () => {
       if (this.state !== 'ready') return;
       const s = this.editor.draft.snapshot();
-      save({ floor: this.floor, prompt: presetText(s), harness: this.f.harness, model: this.f.model, effort: this.f.effort, imagesLeftOut: s.images.length }, b);
+      // #95: the box as this form has it (off from a form that has none); never the lines themselves.
+      const instructions = this.instructionLines() !== null && this.addLines;
+      save({ floor: this.floor, prompt: presetText(s), harness: this.f.harness, model: this.f.model, effort: this.f.effort, imagesLeftOut: s.images.length, instructions }, b);
     });
     return b;
   }
@@ -1265,6 +1348,10 @@ export class HireDialog {
     const sent = this.draftNow();
     const doc = this.editor.draft;
     const args = hireArgs(floor, desk, this.f, this.prep.git);
+    // #95: the flag, never the lines: the bridge adds them for the floor it hires on. Read once, here (#93 decision 8).
+    const lines = this.addLines ? this.instructionLines() : null;
+    const added = lines !== null && args.prompt ? 2 + new TextEncoder().encode(lines).length : 0;
+    if (added) args.herdr_instructions = true;
     const who = args.label ?? this.prep.label;
     const gen = this.gen;
     const revision = doc.revision;
@@ -1277,7 +1364,7 @@ export class HireDialog {
     const waiting = args.prompt ? doc.snapshot().images.filter((i) => i.status === 'pending' || i.status === 'uploading').length : 0;
     // The desk is held from here, the images go up, then `worker.hire` (the coordinator); the draft is read now.
     const op = this.hires.start(
-      { key: `hire:${this.id}:${gen}`, floor, where: this.floorName(), desk, args, who, prompt: args.prompt ? doc : null, background },
+      { key: `hire:${this.id}:${gen}`, floor, where: this.floorName(), desk, args, who, prompt: args.prompt ? doc : null, background, ...(added ? { added } : {}) },
       {
         hiring: (sentArgs) => {
           // (The dialog may have been closed, even reopened for another desk, while the images went up: then it is not ours to touch.)
@@ -1395,6 +1482,7 @@ export class HireDialog {
       images: this.editor.draft.snapshot().images.map((i) => ({ n: i.n, name: i.name, status: i.status, path: i.path })),
       ...(this.levelMode ? { level: { mode: this.levelMode, picked: this.level, chips: this.levelChips() } } : {}),
       ...(this.exact ? { preset: { id: this.exact.id, name: this.exact.name, saved: { ...this.exact.saved }, problem: this.exactProblem() } } : {}),
+      ...(this.instructionLines() !== null ? { instructions: { on: this.addLines, lines: this.instructionLines() as string, bytes: this.bytesWithLines(this.instructionLines() as string) } } : {}),
     };
   }
 }
