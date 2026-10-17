@@ -206,9 +206,9 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   (`window.__h3d.simSchedule('sim.schedule_fire', {id, late_ms: 10800000})` plays a late fire; close the dialog first to
   see its toast).
 - #93 hire presets: `go test ./internal/store ./internal/server -run HirePreset` (persistence across a reopen and a
-  bridge restart, scoped names folding case Unicode-wide, a deleted virtual floor's own presets, every field checked against the fallback
+  bridge restart, scoped names compared with full Unicode case folding, never finer than the game's `toLowerCase`, a deleted virtual floor's own presets, every field checked against the fallback
   catalog); `game/src/world/hirePresets.test.ts`, `ui/hirePresets.dom.test.ts` (the list, Use and its replace question,
-  the editor's scope, stale and repair states, a late delete reply leaving a newer view alone, focus kept on live re-render) and `ui/hire.preset.dom.test.ts` (the hire form's exact choice: a hidden
+  the editor's scope, stale and repair states, a bridge-only `name_taken` shown on the name field, a late delete reply leaving a newer view alone, focus kept on live re-render) and `ui/hire.preset.dom.test.ts` (the hire form's exact choice: a hidden
   model kept, a removed one or a missing effort shown and blocking Hire, per-launch edits); `game/e2e/h93-hire-presets.spec.ts`
   drives the fixture bridge's presets (`tools/fixture-hirepreset.ts`: `simhirepresets=<key>` shares them between a key's
   connections and across a reload, `simfail=no_hire_presets` plays an older bridge; each test takes its own key). For a

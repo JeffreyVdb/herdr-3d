@@ -10,12 +10,14 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"golang.org/x/text/cases"
 )
 
 // migrationHirePreset creates hire_preset: floor NULL is a global preset.
 // created_at and updated_at are unix ms. A name is unique ignoring case
-// within its scope: name_key is the name folded in Go (hirePresetNameKey),
-// not by SQLite's lower(), which folds ASCII only. The index reads a global
+// within its scope: name_key is the name case-folded in Go
+// (hirePresetNameKey), not by SQLite's lower(), which folds ASCII only. The index reads a global
 // one's floor as the empty string, which no floor id is.
 const migrationHirePreset = `CREATE TABLE hire_preset (
 		id         TEXT PRIMARY KEY,
@@ -40,9 +42,16 @@ type HirePreset struct {
 	CreatedAt, UpdatedAt   int64
 }
 
-// hirePresetNameKey folds a name's case for uniqueness: strings.ToLower,
-// Unicode-wide like the game's toLowerCase (so É and é are one name).
-func hirePresetNameKey(name string) string { return strings.ToLower(name) }
+// hirePresetNameKey folds a name's case for uniqueness (full Unicode case
+// folding, a Caser per call: x/text does not let goroutines share one). It
+// must join every two names the game's toLowerCase joins (its nameTaken),
+// or the bridge stores two names the game then refuses to save: Go's
+// strings.ToLower alone differs on a final sigma (ς) and on İ. Full folding
+// covers those and joins more (STRASSE and straße), which only makes the
+// bridge stricter: it answers name_taken. ToLower after the fold because
+// x/text folds Cherokee upper to lower and lower to upper (Ꭰ and ꭰ would
+// differ).
+func hirePresetNameKey(name string) string { return strings.ToLower(cases.Fold().String(name)) }
 
 func hirePresetNameTaken(ctx context.Context, tx *sql.Tx, name, floor, exceptID string) error {
 	var n int

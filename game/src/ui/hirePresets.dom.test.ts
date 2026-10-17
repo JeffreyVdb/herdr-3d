@@ -305,4 +305,29 @@ describe('HirePresetsDialog (#93)', () => {
     await submit();
     expect(summary(dlg).editing?.error).toEqual({ field: 'name', why: 'Another preset on this floor is called “X”.' });
   });
+
+  it('shows on the name field a clash only the bridge sees (its case folding joins STRASSE and straße)', async () => {
+    const other = preset('straße', 'web');
+    const mine = preset('Notes', 'web');
+    const { dlg, sent, replies } = setup([other, mine]);
+    replies['hire_preset.update'] = (a) =>
+      a.name === 'STRASSE' ? { ok: false, code: 'name_taken', message: 'name already used: a hire preset on this floor is called "STRASSE"' } : { ok: true, data: { ...mine, ...a } };
+    dlg.open('web', 0);
+    click(`edit:${mine.id}`);
+    type('#hp-name', 'STRASSE');
+    await submit();
+    expect(sent.map((x) => x[0])).toEqual(['hire_preset.update']);
+    const s = summary(dlg);
+    expect([s.view, s.editing?.id, s.editing?.draft.name, s.editing?.saving]).toEqual(['edit', mine.id, 'STRASSE', false]);
+    const input = document.querySelector<HTMLInputElement>('#hp-name')!;
+    expect(input.value).toBe('STRASSE');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(document.querySelector('#hp-name-error')?.textContent).toBe('Another preset on this floor is called “STRASSE”.');
+    expect(document.activeElement).toBe(input);
+    // Another name saves as usual.
+    type('#hp-name', 'Strasse notes');
+    await submit();
+    expect(sent[1]).toEqual(['hire_preset.update', expect.objectContaining({ id: mine.id, name: 'Strasse notes' })]);
+    expect(summary(dlg).view).toBe('list');
+  });
 });

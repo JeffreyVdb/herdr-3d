@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -201,5 +202,42 @@ func TestHirePresetNamesFoldUnicode(t *testing.T) {
 	rename.ID, rename.Name = "hp_a", "ÉQUIPE"
 	if err := st.UpdateHirePreset(ctx, rename); err != nil {
 		t.Fatalf("rename to itself: %v", err)
+	}
+}
+
+// #93: the bridge compares names with full Unicode case folding, so it is at
+// least as strict as the game's toLowerCase: a final sigma (ος, ΟΣ), a dotted
+// capital I (İ, i plus U+0307) and accents are one name each way. Folding
+// also joins names the game keeps apart (STRASSE and straße): the bridge
+// refuses the second with ErrNameTaken, which the editor shows on the name.
+// Each pair is still free in another scope.
+func TestHirePresetNamesCaseFold(t *testing.T) {
+	ctx := context.Background()
+	st := open(t, filepath.Join(t.TempDir(), "world.db"))
+	n := 0
+	add := func(name, floor string) error {
+		n++
+		return st.CreateHirePreset(ctx, store.HirePreset{ID: fmt.Sprintf("hp_%d", n), Name: name, Floor: floor, Prompt: "p", Harness: "claude", Model: "m", Effort: "e"})
+	}
+	for _, names := range [][]string{
+		{"ΟΣ", "ος", "Ος", "οσ"},
+		{"İ", "i̇"},
+		{"Équipe", "équipe", "ÉQUIPE"},
+		{"STRASSE", "straße", "Strasse"},
+		{"Ꭰ", "ꭰ"},
+	} {
+		for _, floor := range []string{"s", "t", "v-0123456789ab", ""} {
+			if err := add(names[0], floor); err != nil {
+				t.Fatalf("%q on %q: %v", names[0], floor, err)
+			}
+			for _, other := range names[1:] {
+				if err := add(other, floor); !errors.Is(err, store.ErrNameTaken) {
+					t.Fatalf("%q on %q after %q: %v", other, floor, names[0], err)
+				}
+			}
+		}
+		if err := add(names[len(names)-1], "u"); err != nil {
+			t.Fatalf("%q on a floor without %q: %v", names[len(names)-1], names[0], err)
+		}
 	}
 }
