@@ -98,9 +98,6 @@ type RunTicket struct {
 	// names the provider ("Kaneo").
 	Item         *WorkItemRef `json:"item,omitempty"`
 	ProviderName string       `json:"provider_name,omitempty"`
-	// Body is an item's description as the provider gave it, for the
-	// prompt only (never on the wire).
-	Body string `json:"-"`
 }
 
 // RunPrepareResult is the ack data of run.prepare: what the start-run

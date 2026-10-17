@@ -274,7 +274,8 @@ func TestKaneoWiredEndToEnd(t *testing.T) {
 }
 
 // "Hand to a worker" on a Kaneo task: the run's ticket is resolved through
-// the real tracker (key, title, URL, description), its launch keeps
+// the real tracker (key, title, URL), its prompt names it by its URL (#102:
+// not its title or description), in run.prepare and run.start; its launch keeps
 // {provider: kaneo, id}, and after a restart the orchestrator is still
 // linked to the task by its launch record, never a GitHub issue.
 func TestKaneoWiredRunSurvivesRestart(t *testing.T) {
@@ -297,14 +298,17 @@ func TestKaneoWiredRunSurvivesRestart(t *testing.T) {
 		res.Ticket.Item.URL != url || res.Ticket.Repo != "" || res.Ticket.Number != 0 {
 		t.Fatalf("prepare = %+v (ticket %+v)", res, res.Ticket)
 	}
-	if !strings.Contains(res.Prompt, "Kaneo task KAN-1: Connect Kaneo (renamed)\n"+url) || !strings.Contains(res.Prompt, "Add the tracker client.") ||
-		strings.Contains(res.Prompt, "github.com") {
+	if !strings.HasPrefix(res.Prompt, "/write-code "+url+"\n\nTeam:") || strings.Contains(res.Prompt, "Connect Kaneo") ||
+		strings.Contains(res.Prompt, "Add the tracker client.") || strings.Contains(res.Prompt, "github.com") || strings.Contains(res.Prompt, statusLine) {
 		t.Fatalf("prompt = %q", res.Prompt)
 	}
 	preset := wb.connect(proto.Hello{}).snapshot().World.Presets[0].ID
 	desk := 1
 	_, m = wb.c.command(proto.CmdRunStart, "rs", proto.RunStartArgs{Session: "s", DeskIndex: &desk, WorkItem: item, Orch: &buildTeam.Orch, Preset: preset})
 	start := ackData[proto.RunStartResult](t, m)
+	if start.Prompt != res.Prompt {
+		t.Fatalf("run.start prompt = %q, the preview's %q", start.Prompt, res.Prompt)
+	}
 	if l, ok, err := wb.st.RunLaunchByWorker(t.Context(), start.ID); err != nil || !ok || l.ItemProvider != "kaneo" || l.ItemID != "task_1" ||
 		l.ItemKey != "KAN-1" || l.Repo != "" || l.IssueNumber != 0 {
 		t.Fatalf("run_launch = %+v %v %v", l, ok, err)

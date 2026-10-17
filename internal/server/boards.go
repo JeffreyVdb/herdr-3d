@@ -830,9 +830,10 @@ func (h *Hub) unwatched(session string) {
 // a floor with no polled board yet has nothing to look the card up in, so
 // the returned resolve asks the provider for it. #184: an item of a
 // provider that numbers no GitHub issues (Kaneo) is always resolved
-// through Tracker.Get, for its key, title, URL and description: never a
-// made-up repo or number. resolve, when not nil, runs off the hub goroutine
-// and gives the ticket.
+// through Tracker.Get, which checks it is the floor's and gives its key,
+// title and URL (the prompt names it by its URL, #102): never a made-up
+// repo or number. resolve, when not nil, runs off the hub goroutine and
+// gives the ticket.
 func (h *Hub) workItemTicket(session string, item *proto.WorkItemRef) (*proto.RunTicket, func(context.Context) (*proto.RunTicket, error), error) {
 	nf := func(format string, args ...any) error {
 		return fmt.Errorf("%w: %s", store.ErrNotFound, fmt.Sprintf(format, args...))
@@ -871,7 +872,7 @@ func (h *Hub) workItemTicket(session string, item *proto.WorkItemRef) (*proto.Ru
 				return nil, err
 			}
 			ref := &proto.WorkItemRef{Provider: prov, ID: id, Key: d.Card.Key, Title: d.Card.Title, URL: d.Card.URL}
-			return &proto.RunTicket{Kind: proto.TicketItem, URL: d.Card.URL, Item: ref, ProviderName: name, Body: d.Body}, nil
+			return &proto.RunTicket{Kind: proto.TicketItem, URL: d.Card.URL, Item: ref, ProviderName: name}, nil
 		}, nil
 	}
 	repo, n, url, ok := rl.RunFromItem(item.ID)

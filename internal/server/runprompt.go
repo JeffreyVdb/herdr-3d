@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
@@ -60,48 +59,25 @@ func RunPrompt(call, ticket string, isIssue bool, roles proto.PresetRoles, floor
 	return runPrompt(call, ticket, status, roles, floor, extra)
 }
 
-// maxItemBody bounds how much of an item's description goes into a prompt
-// (#184); the rest stays with the provider.
-const maxItemBody = 6000
-
-// ItemTicket is how a prompt names an item of a provider that numbers no
-// GitHub issues (#184): an agent cannot read it there (the bridge's key
-// never reaches an agent), so the ticket carries what the provider gave:
-// "<Provider> task <key>: <title>", its URL, and its description (its
-// first maxItemBody bytes).
-func ItemTicket(t *proto.RunTicket) string {
-	it := t.Item
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s task %s: %s", t.ProviderName, it.Key, strings.TrimSpace(it.Title))
-	if it.URL != "" {
-		b.WriteString("\n" + it.URL)
+// itemRef is how a prompt names an item of a provider that numbers no
+// GitHub issues (#184, #102): its canonical URL (Kaneo's names the
+// instance, workspace, project and task), which the agent reads with the
+// tools it has, as a GitHub issue's URL; "<Provider> task <key>" only
+// when the provider gave no URL, never a bare number.
+func itemRef(t *proto.RunTicket) string {
+	if t.Item.URL != "" {
+		return t.Item.URL
 	}
-	if body := strings.TrimSpace(t.Body); body != "" {
-		if len(body) > maxItemBody {
-			n := maxItemBody
-			for n > 0 && !utf8.RuneStart(body[n]) {
-				n--
-			}
-			body = strings.TrimSpace(body[:n]) + "\n\n[The description goes on in " + t.ProviderName + "; this is its first part.]"
-		}
-		b.WriteString("\n\n" + body)
-	}
-	return b.String()
-}
-
-// itemLine tells the orchestrator that the ticket is no GitHub issue
-// (#184): no gh lookups, and the status is not its to move.
-func itemLine(provider string) string {
-	return "This ticket is a " + provider + " task, not a GitHub issue: everything the bridge read of it is above. " +
-		"Don't look it up with gh, and leave its status on the " + provider + " board to people."
+	return t.ProviderName + " task " + t.Item.Key
 }
 
 // TicketPrompt is RunPrompt for a run ticket: an issue or a text as before,
-// an item (#184) with its text inlined and the item line in place of the
-// status line.
+// an item (#184) by its reference (#102: no copied title or description),
+// with no status line (a provider's board need not have the issue line's
+// QA and Done columns).
 func TicketPrompt(call string, t *proto.RunTicket, roles proto.PresetRoles, floor, extra string) string {
 	if t.Kind == proto.TicketItem && t.Item != nil {
-		return runPrompt(call, ItemTicket(t), itemLine(t.ProviderName), roles, floor, extra)
+		return runPrompt(call, itemRef(t), "", roles, floor, extra)
 	}
 	return RunPrompt(call, ticketRef(t), t.Kind == proto.TicketIssue, roles, floor, extra)
 }

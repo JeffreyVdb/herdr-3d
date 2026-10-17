@@ -471,10 +471,11 @@ func TestKaneoForbiddenCommand(t *testing.T) {
 }
 
 // "Hand to a worker" on a Kaneo task: the run's ticket is the item
-// resolved through the tracker (key, title, URL, description), its prompt
-// inlines them and sends nobody to gh, the launch record keeps
-// {provider, id} (never a repo or number), and the orchestrator and its
-// crew carry the item, not a GitHub issue.
+// resolved through the tracker (key, title, URL), its prompt names it by its
+// canonical URL (#102: nothing of its title or
+// description, whatever the description, and no status line), the launch
+// record keeps {provider, id} (never a repo or number), and the
+// orchestrator and its crew carry the item, not a GitHub issue.
 func TestKaneoRunWorkItem(t *testing.T) {
 	t.Parallel()
 	kb := startKaneoBridge(t)
@@ -483,7 +484,7 @@ func TestKaneoRunWorkItem(t *testing.T) {
 	c1 := card("t1", "HRD-12", "Kaneo boards", "to-do")
 	c1.URL = url
 	tr.board.Cards = []tracker.Card{c1}
-	tr.detail = tracker.Detail{Card: c1, Body: "Make the floor read Kaneo.\n\n" + strings.Repeat("Details. ", 1000)}
+	tr.detail = tracker.Detail{Card: c1, Body: "Make the floor read Kaneo."}
 	kb.git.repos["/home/u/lab"] = "/home/u/lab"
 	kb.saveConnection(kaneoKey)
 	kb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Tracker: proto.Some(proto.TrackerKaneo),
@@ -492,20 +493,35 @@ func TestKaneoRunWorkItem(t *testing.T) {
 	decorateRoles(kb.boardBridge)
 	item := &proto.WorkItemRef{Provider: "kaneo", ID: "t1"}
 
-	_, m := kb.c.command(proto.CmdRunPrepare, "p", proto.RunPrepareArgs{Session: "s", WorkItem: item})
-	res := ackData[proto.RunPrepareResult](t, m)
-	if res.Ticket == nil || res.Ticket.Kind != proto.TicketItem || res.Ticket.Item == nil || res.Ticket.Item.Key != "HRD-12" ||
-		res.Ticket.Item.URL != url || res.Ticket.Repo != "" || res.Ticket.Number != 0 || res.Label != "ORCH|hrd-12" {
-		t.Fatalf("prepare = %+v (ticket %+v)", res, res.Ticket)
-	}
-	for _, want := range []string{"/write-code Kaneo task HRD-12: Kaneo boards\n" + url + "\n\nMake the floor read Kaneo.",
-		"[The description goes on in Kaneo; this is its first part.]", "not a GitHub issue", "Don't look it up with gh"} {
-		if !strings.Contains(res.Prompt, want) {
-			t.Errorf("the prompt lacks %q", want)
+	// The same prompt, of the same length, for a short, a long and a
+	// multi-byte description: none of it goes in.
+	const marker = "ZQX-MARKER-102"
+	prompt := ""
+	for _, body := range []string{marker + " short.", marker + "\n\n" + strings.Repeat("Details. ", 1000) + marker,
+		"Ünïcödé — 日本語 " + marker + " " + strings.Repeat("é", 4000)} {
+		tr.set(func(f *fakeTracker) { f.detail.Body = body })
+		_, m := kb.c.command(proto.CmdRunPrepare, "p", proto.RunPrepareArgs{Session: "s", WorkItem: item, Extra: "Keep it small."})
+		res := ackData[proto.RunPrepareResult](t, m)
+		if res.Ticket == nil || res.Ticket.Kind != proto.TicketItem || res.Ticket.Item == nil || res.Ticket.Item.Key != "HRD-12" ||
+			res.Ticket.Item.URL != url || res.Ticket.Repo != "" || res.Ticket.Number != 0 || res.Label != "ORCH|hrd-12" {
+			t.Fatalf("prepare = %+v (ticket %+v)", res, res.Ticket)
 		}
-	}
-	if strings.Contains(res.Prompt, statusLine) || strings.Contains(res.Prompt, "github.com") || strings.Contains(string(m.raw), kaneoKey) {
-		t.Fatalf("prompt = %q", res.Prompt)
+		if !strings.HasPrefix(res.Prompt, "/write-code "+url+"\n\nTeam:") || !strings.HasSuffix(res.Prompt, "\n\nKeep it small.") ||
+			!strings.Contains(res.Prompt, placementLine) || !strings.Contains(res.Prompt, "h3d_floor=") {
+			t.Fatalf("prompt = %q", res.Prompt)
+		}
+		for _, not := range []string{marker, "Kaneo boards", "description", "not a GitHub issue", "with gh", "to people", statusLine, "github.com"} {
+			if strings.Contains(res.Prompt, not) {
+				t.Errorf("the prompt has %q: %q", not, res.Prompt)
+			}
+		}
+		if prompt != "" && len(res.Prompt) != len(prompt) {
+			t.Errorf("the prompt is %d bytes, was %d", len(res.Prompt), len(prompt))
+		}
+		if strings.Contains(string(m.raw), kaneoKey) || strings.Contains(string(m.raw), marker) {
+			t.Fatalf("ack = %s", m.raw)
+		}
+		prompt = res.Prompt
 	}
 	kb.c.mustError(proto.CmdRunPrepare, proto.RunPrepareArgs{Session: "s", WorkItem: &proto.WorkItemRef{Provider: "kaneo", ID: "elsewhere"}}, proto.ErrNotFound)
 	kb.c.mustError(proto.CmdRunPrepare, proto.RunPrepareArgs{Session: "s", WorkItem: &proto.WorkItemRef{Provider: "github", ID: "t1"}}, proto.ErrNotFound)
@@ -514,6 +530,9 @@ func TestKaneoRunWorkItem(t *testing.T) {
 	desk := 1
 	evs, m := kb.c.command(proto.CmdRunStart, "rs", proto.RunStartArgs{Session: "s", DeskIndex: &desk, WorkItem: item, Orch: &buildTeam.Orch, Preset: preset})
 	start := ackData[proto.RunStartResult](t, m)
+	if !strings.HasPrefix(start.Prompt, "/write-code "+url+"\n\nTeam:") || strings.Contains(start.Prompt, marker) || strings.Contains(start.Prompt, statusLine) {
+		t.Fatalf("run.start prompt = %q", start.Prompt)
+	}
 	l, ok, err := kb.st.RunLaunchByWorker(t.Context(), start.ID)
 	if err != nil || !ok || l.ItemProvider != "kaneo" || l.ItemID != "t1" || l.ItemKey != "HRD-12" || l.Repo != "" || l.IssueNumber != 0 || l.TicketText != "" {
 		t.Fatalf("run_launch = %+v %v %v", l, ok, err)
