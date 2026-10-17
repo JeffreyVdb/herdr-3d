@@ -516,7 +516,7 @@ describe('#56: Codex collaboration calls and messages', () => {
     const raw = body.querySelector('details') as HTMLDetailsElement;
     expect(raw.open).toBe(false);
     expect(raw.querySelector('summary')?.textContent).toBe('Raw request');
-    const [args, out] = [...raw.querySelectorAll('pre')].map((p) => p.textContent ?? '');
+    const [args = '', out = ''] = [...raw.querySelectorAll('pre')].map((p) => p.textContent ?? '');
     expect(JSON.parse(args)).toEqual({ task_name: 'gpu_research', message: 'gAAAAABstub0000' });
     expect(out).toBe('{"task_name":"/root/gpu_research"}');
     expect(visible(r)).not.toContain('gAAAAA');
