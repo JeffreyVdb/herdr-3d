@@ -2023,10 +2023,10 @@ class Transcript implements TranscriptView {
   private collabRaw(it: TranscriptItem, scope: string, t: NonNullable<TranscriptItem['tool']>): HTMLElement {
     const box = h('div', { class: 'tx-collab-rawbody' });
     const raw = h('details', { class: 'tx-ans-raw tx-collab-raw' }, h('summary', {}, 'Raw request'), box);
-    const draw = (tool: NonNullable<TranscriptItem['tool']>) => {
+    const draw = (tool: NonNullable<TranscriptItem['tool']>, loaded = false) => {
       box.replaceChildren();
       if (tool.input !== undefined && tool.input !== null) box.append(h('div', { class: 'tx-label' }, 'Arguments'), h('pre', {}, jsonOf(tool.input)));
-      else box.append(h('div', { class: 'tx-note' }, 'The arguments were too large to send with the list.'));
+      else box.append(h('div', { class: 'tx-note' }, loaded ? 'No arguments recorded.' : 'The arguments were too large to send with the list.'));
       if (typeof tool.output_text === 'string' && tool.output_text.length) box.append(h('div', { class: 'tx-label' }, 'Output'), h('pre', {}, stripAnsi(tool.output_text)));
       else box.append(h('div', { class: 'tx-note' }, tool.status === 'running' ? 'No output yet.' : 'No output.'));
       if (tool.output_truncated) box.append(h('div', { class: 'tx-note' }, 'Output truncated: only the start is shown.'));
@@ -2045,7 +2045,7 @@ class Transcript implements TranscriptView {
         (full) => {
           if (this.destroyed) return;
           if (!full?.tool) return this.rawFailed(box, draw, t, 'it is no longer in the transcript');
-          draw(full.tool);
+          draw(full.tool, true);
         },
         (e: unknown) => {
           if (!this.destroyed) this.rawFailed(box, draw, t, e instanceof Error ? e.message : String(e ?? 'failed'));
