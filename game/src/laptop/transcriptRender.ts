@@ -431,6 +431,15 @@ export const COLLAB_ENCRYPTED = 'Message encrypted by Codex (multi-agent v2). No
 const isCollab = (c: unknown): c is TranscriptCollab => !!c && typeof c === 'object' && typeof (c as { kind?: unknown }).kind === 'string';
 const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
+/** A tool's input as shown: a string as it is, anything else as indented JSON. */
+function jsonOf(input: unknown): string {
+  try {
+    return typeof input === 'string' ? input : (JSON.stringify(input, null, 2) ?? '');
+  } catch {
+    return String(input);
+  }
+}
+
 /** A part of a collab header: plain words, or a name (an agent, a model). */
 type CollabBit = string | { id: string };
 
@@ -959,6 +968,8 @@ class Transcript implements TranscriptView {
   private readonly diffShown = new Map<string, number>();
   /** #171: changes loaded in full (`transcript.item`) after the list cut them, by agent/id. */
   private readonly fullDiffs = new Map<string, TranscriptDiff[]>();
+  /** #56: collaboration items loaded in full (`transcript.item`) for what the list left out, by agent/id. */
+  private readonly fullCollab = new Map<string, TranscriptItem>();
   /** The subagent each nested timeline's scope shows (for `transcript.item` with `agent`). */
   private readonly scopeAgent = new Map<string, string>();
   /** While tool calls are hidden: the one running now, or the ones that failed since. */
@@ -1940,7 +1951,12 @@ class Transcript implements TranscriptView {
    * the source said, the message (or that it is encrypted), then the call as Codex recorded it behind a collapsed "Raw
    * request". A plain reply shows under its header, as the agent said it.
    */
-  private collabRow(it: TranscriptItem, scope: string, c: TranscriptCollab): HTMLElement {
+  private collabRow(listed: TranscriptItem, scope: string, listedCollab: TranscriptCollab): HTMLElement {
+    // Loaded in full before (Raw request, the whole message): drawn from that while it is the same call.
+    const full = this.fullCollab.get(this.fullKey(listed, scope));
+    const whole = full && isCollab(full.collab) && full.kind === listed.kind && full.tool?.status === listed.tool?.status;
+    const it = whole ? full : listed;
+    const c = whole && isCollab(full.collab) ? full.collab : listedCollab;
     const t = it.kind === 'tool' ? it.tool : undefined;
     const status = t ? (typeof t.status === 'string' ? t.status : 'running') : '';
     const { verb, bits } = collabHead(c, typeof t?.output_text === 'string' ? t.output_text : '');
@@ -1963,16 +1979,17 @@ class Transcript implements TranscriptView {
       const md = h('div', { class: 'tx-md' });
       setMarkdown(md, prompt);
       said.append(md);
+      if (it.truncated) said.append(this.collabCut(it, scope, md));
     }
     const body = h('div', { class: 'tx-tool-body' });
     const ex = this.expander(`${scope}/${it.id}`, (open) => {
-      if (open && !body.childNodes.length) this.fillCollab(body, c, t, !said);
+      if (open && !body.childNodes.length) this.fillCollab(body, it, scope, c, t, !said);
       body.hidden = !open;
     });
     head.setAttribute('aria-expanded', String(ex.open));
     head.addEventListener('click', () => ex.toggle(head));
     body.hidden = !ex.open;
-    if (ex.open) this.fillCollab(body, c, t, !said);
+    if (ex.open) this.fillCollab(body, it, scope, c, t, !said);
     row.append(head);
     if (said) row.append(said);
     row.append(body);
@@ -1980,7 +1997,7 @@ class Transcript implements TranscriptView {
   }
 
   /** #56: an opened collab row: its facts, its message (or the encrypted note), then the raw call, closed. */
-  private fillCollab(body: HTMLElement, c: TranscriptCollab, t: TranscriptItem['tool'] | undefined, withPrompt: boolean): void {
+  private fillCollab(body: HTMLElement, it: TranscriptItem, scope: string, c: TranscriptCollab, t: TranscriptItem['tool'] | undefined, withPrompt: boolean): void {
     const fields = collabFields(c);
     if (fields.length) body.append(h('dl', { class: 'tx-collab-fields' }, ...fields.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
     const prompt = text(c.prompt);
@@ -1988,24 +2005,103 @@ class Transcript implements TranscriptView {
       const md = h('div', { class: 'tx-md tx-collab-prompt' });
       setMarkdown(md, prompt);
       body.append(h('div', { class: 'tx-label' }, 'Message'), md);
+      if (it.truncated) body.append(this.collabCut(it, scope, md));
     } else if (!prompt && c.encrypted === true) body.append(h('div', { class: 'tx-note' }, COLLAB_ENCRYPTED));
-    if (!t) return;
-    const raw = h('details', { class: 'tx-ans-raw tx-collab-raw' }, h('summary', {}, 'Raw request'));
-    if (t.input !== undefined && t.input !== null) {
-      let json: string;
-      try {
-        json = typeof t.input === 'string' ? t.input : (JSON.stringify(t.input, null, 2) ?? '');
-      } catch {
-        json = String(t.input);
-      }
-      if (json.length > MAX_INPUT_JSON) json = `${json.slice(0, MAX_INPUT_JSON)}\n…`;
-      raw.append(h('div', { class: 'tx-label' }, 'Arguments'), h('pre', {}, json));
+    if (!t) {
+      if (!body.childNodes.length) body.append(h('div', { class: 'tx-note' }, 'Nothing more recorded.'));
+      return;
     }
-    if (typeof t.output_text === 'string' && t.output_text.length) raw.append(h('div', { class: 'tx-label' }, 'Output'), h('pre', {}, stripAnsi(t.output_text)));
-    if (t.output_truncated) raw.append(h('div', { class: 'tx-note' }, 'Output truncated: only the start is shown.'));
-    if (raw.childElementCount > 1) body.append(raw);
+    body.append(this.collabRaw(it, scope, t));
     if (t.status === 'running') body.append(h('div', { class: 'tx-note' }, 'Still running…'));
-    if (!body.childNodes.length) body.append(h('div', { class: 'tx-note' }, 'Nothing more recorded.'));
+  }
+
+  /**
+   * #56: the call as Codex recorded it, behind a collapsed "Raw request" that every call has. Arguments the list left out
+   * (above MaxInput) or an output it cut are loaded whole (`transcript.item`) the first time it opens; nothing in it is
+   * clipped (it wraps and scrolls instead).
+   */
+  private collabRaw(it: TranscriptItem, scope: string, t: NonNullable<TranscriptItem['tool']>): HTMLElement {
+    const box = h('div', { class: 'tx-collab-rawbody' });
+    const raw = h('details', { class: 'tx-ans-raw tx-collab-raw' }, h('summary', {}, 'Raw request'), box);
+    const draw = (tool: NonNullable<TranscriptItem['tool']>) => {
+      box.replaceChildren();
+      if (tool.input !== undefined && tool.input !== null) box.append(h('div', { class: 'tx-label' }, 'Arguments'), h('pre', {}, jsonOf(tool.input)));
+      else box.append(h('div', { class: 'tx-note' }, 'The arguments were too large to send with the list.'));
+      if (typeof tool.output_text === 'string' && tool.output_text.length) box.append(h('div', { class: 'tx-label' }, 'Output'), h('pre', {}, stripAnsi(tool.output_text)));
+      else box.append(h('div', { class: 'tx-note' }, tool.status === 'running' ? 'No output yet.' : 'No output.'));
+      if (tool.output_truncated) box.append(h('div', { class: 'tx-note' }, 'Output truncated: only the start is shown.'));
+    };
+    const missing = t.input === undefined || t.input === null || t.output_truncated === true;
+    if (!missing || !this.host.loadItem) {
+      draw(t);
+      return raw;
+    }
+    box.append(h('div', { class: 'tx-note' }, 'Loading…'));
+    let asked = false;
+    raw.addEventListener('toggle', () => {
+      if (!raw.open || asked) return;
+      asked = true;
+      this.loadCollab(it, scope).then(
+        (full) => {
+          if (this.destroyed) return;
+          if (!full?.tool) return this.rawFailed(box, draw, t, 'it is no longer in the transcript');
+          draw(full.tool);
+        },
+        (e: unknown) => {
+          if (!this.destroyed) this.rawFailed(box, draw, t, e instanceof Error ? e.message : String(e ?? 'failed'));
+        },
+      );
+    });
+    return raw;
+  }
+
+  /** #56: the whole request did not load: what the list has, and why the rest is not there. */
+  private rawFailed(box: HTMLElement, draw: (tool: NonNullable<TranscriptItem['tool']>) => void, t: NonNullable<TranscriptItem['tool']>, why: string): void {
+    draw(t);
+    box.prepend(h('div', { class: 'tx-note tx-err' }, `The whole request could not be loaded: ${why}`));
+  }
+
+  /** #56: a message the list cut (64 KiB): says so, with a link to the whole of it when the host can load one item. */
+  private collabCut(it: TranscriptItem, scope: string, md: HTMLElement): HTMLElement {
+    const note = h('div', { class: 'tx-note' }, 'Truncated: only the start is shown.');
+    if (!this.host.loadItem) return note;
+    const link = h('button', { class: 'tx-link' }, 'Show the whole message');
+    const slot = h('span', { class: 'tx-collab-load' }, ' ', link);
+    const fail = (why: string) => slot.replaceChildren(' ', h('span', { class: 'tx-err' }, `The whole message could not be loaded: ${why}`));
+    link.addEventListener('click', () => {
+      link.disabled = true;
+      link.textContent = 'Loading…';
+      this.loadCollab(it, scope).then(
+        (full) => {
+          if (this.destroyed) return;
+          const whole = isCollab(full?.collab) ? text(full.collab.prompt) : '';
+          if (!whole) return fail('it is no longer in the transcript');
+          setMarkdown(md, whole);
+          note.remove();
+        },
+        (e: unknown) => {
+          if (!this.destroyed) fail(e instanceof Error ? e.message : String(e ?? 'failed'));
+        },
+      );
+    });
+    note.append(slot);
+    return note;
+  }
+
+  /** #56: a collaboration item in full, kept for the row's next drawing (collabRow uses it while the call's status holds). */
+  private loadCollab(it: TranscriptItem, scope: string): Promise<TranscriptItem | null> {
+    const load = this.host.loadItem;
+    if (!load) return Promise.resolve(null);
+    let p: Promise<TranscriptItem | null>;
+    try {
+      p = Promise.resolve(load(it.id, this.scopeAgent.get(scope)));
+    } catch (e) {
+      p = Promise.reject(e);
+    }
+    return p.then((full) => {
+      if (full && isCollab(full.collab)) this.fullCollab.set(this.fullKey(it, scope), full);
+      return full;
+    });
   }
 
   private subagentRow(it: TranscriptItem, scope: string): HTMLElement {

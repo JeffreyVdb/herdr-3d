@@ -577,6 +577,105 @@ describe('#56: Codex collaboration calls and messages', () => {
     expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
   });
 
+  /** A host that answers `transcript.item` with `full` (or fails with `why`), counting the asks. */
+  const itemHost = (full: TranscriptItem | null, why?: string) => {
+    const asked: Array<[string, string | undefined]> = [];
+    const h = fakeHost();
+    h.loadItem = (id, agent) => {
+      asked.push([id, agent]);
+      return why ? Promise.reject(new Error(why)) : Promise.resolve(full);
+    };
+    return { h, asked };
+  };
+  const rawOf = (r: HTMLElement) => r.querySelector('.tx-collab-raw') as HTMLDetailsElement;
+  const openRaw = (r: HTMLElement) => {
+    const raw = rawOf(r);
+    raw.open = true;
+    raw.dispatchEvent(new Event('toggle'));
+  };
+  // Over MaxInput (4 KiB): the list sends the call without its arguments.
+  const BIG = { task_name: 'gpu_research', message: `gAAAAAB${'x'.repeat(5000)}` };
+  const bigSpawn = (input?: unknown) =>
+    ({ id: 'call_big', seq: 900, ts: T0, kind: 'tool', tool: { name: 'spawn_agent', input_summary: 'gpu_research', status: 'ok', output_text: '{"task_name":"/root/gpu_research"}', ...(input ? { input } : {}) }, collab: { kind: 'spawn', task_name: 'gpu_research', encrypted: true } }) as TranscriptItem;
+
+  it('arguments the list left out: opening Raw request loads the item once and shows them whole, unclipped', async () => {
+    const { h, asked } = itemHost(bigSpawn(BIG));
+    mount(h);
+    view.setItems([bigSpawn()]);
+    const r = row('call_big');
+    open(r);
+    expect(asked).toEqual([]);
+    expect(rawOf(r).open).toBe(false);
+    openRaw(r);
+    expect(rawOf(r).textContent).toContain('Loading…');
+    openRaw(r);
+    await flush();
+    expect(asked).toEqual([['call_big', undefined]]);
+    const [args = '', out = ''] = [...rawOf(r).querySelectorAll('pre')].map((p) => p.textContent ?? '');
+    expect(JSON.parse(args)).toEqual(BIG);
+    expect(out).toBe('{"task_name":"/root/gpu_research"}');
+    expect(rawOf(r).textContent).not.toContain('Loading…');
+    // Drawn again (an update, a resync): from the loaded item, without asking twice.
+    view.setItems([bigSpawn()]);
+    openRaw(row('call_big'));
+    await flush();
+    expect(asked.length).toBe(1);
+    expect(JSON.parse(rawOf(row('call_big')).querySelector('pre')?.textContent ?? '')).toEqual(BIG);
+  });
+
+  it('a whole request that fails to load says so; without loadItem it says the arguments were too large', async () => {
+    const { h } = itemHost(null, 'the transcript moved on');
+    mount(h);
+    view.setItems([bigSpawn()]);
+    open(row('call_big'));
+    openRaw(row('call_big'));
+    await flush();
+    const raw = rawOf(row('call_big'));
+    expect(raw.querySelector('.tx-err')?.textContent).toBe('The whole request could not be loaded: the transcript moved on');
+    expect(raw.textContent).toContain('{"task_name":"/root/gpu_research"}');
+    view.destroy();
+    container.replaceChildren();
+    mount();
+    view.setItems([bigSpawn()]);
+    open(row('call_big'));
+    expect(rawOf(row('call_big')).textContent).toContain('The arguments were too large to send with the list.');
+    expect(rawOf(row('call_big')).querySelector('.tx-err')).toBeNull();
+  });
+
+  it('a running call and an empty-output call still have their Raw request, closed', () => {
+    mount();
+    const run = item('tool', { tool: { name: 'spawn_agent', input_summary: 'a', status: 'running', input: { task_name: 'a', message: 'gAAAAABstub0000' } }, collab: { kind: 'spawn', task_name: 'a', encrypted: true } });
+    const empty = item('tool', { tool: { name: 'send_message', input_summary: '/root/a', status: 'ok', input: { target: '/root/a', message: 'gAAAAABstub0000' } }, collab: { kind: 'send', target: '/root/a', encrypted: true } });
+    view.setItems([run, empty]);
+    for (const [r, out] of [
+      [row(run.id), 'No output yet.'],
+      [row(empty.id), 'No output.'],
+    ] as const) {
+      open(r);
+      const raw = rawOf(r);
+      expect(raw.open).toBe(false);
+      expect(raw.querySelector('summary')?.textContent).toBe('Raw request');
+      expect(raw.querySelector('pre')?.textContent).toContain('gAAAAABstub0000');
+      expect(raw.textContent).toContain(out);
+    }
+    expect(row(run.id).querySelector('.tx-tool-body')?.textContent).toContain('Still running…');
+  });
+
+  it('a message the list cut says so, and its link loads the whole of it', async () => {
+    const reply = (prompt: string, truncated?: boolean) =>
+      ({ id: 'amsg_cut', seq: 901, ts: T0, kind: 'notice', notice: { text: 'x', source: 'agent_message' }, collab: { kind: 'inbound', agent_path: '/root/a', recipient: '/root', message_type: 'FINAL_ANSWER', prompt }, ...(truncated ? { truncated } : {}) }) as TranscriptItem;
+    const { h, asked } = itemHost(reply('The start. And the end of it.'));
+    mount(h);
+    view.setItems([reply('The start.', true)]);
+    const note = row('amsg_cut').querySelector('.tx-collab-said .tx-note') as HTMLElement;
+    expect(note.textContent).toBe('Truncated: only the start is shown. Show the whole message');
+    (note.querySelector('.tx-link') as HTMLButtonElement).click();
+    await flush();
+    expect(asked).toEqual([['amsg_cut', undefined]]);
+    expect(row('amsg_cut').querySelector('.tx-collab-said')?.textContent?.trim()).toBe('The start. And the end of it.');
+    expect(row('amsg_cut').querySelector('.tx-note')).toBeNull();
+  });
+
   it('calls hide with tool calls; a message from another agent stays', () => {
     mount();
     view.setItems(COLLAB);

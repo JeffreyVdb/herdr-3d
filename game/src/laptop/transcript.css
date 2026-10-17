@@ -860,6 +860,12 @@
 .tx-collab-raw .tx-label {
   margin-top: 6px;
 }
+/* The raw request is not clipped: a long argument (ciphertext) wraps and scrolls in its box, at any width. */
+.tx-collab-raw pre {
+  max-height: 16em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .tx-tool-status {
   flex: none;
   display: inline-flex;
