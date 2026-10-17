@@ -398,6 +398,10 @@ func (l *Log) index(off int64, n int, cs []contrib, version string) {
 				l.addSpan(i, sp, c)
 			}
 			l.open = l.open[:0]
+		case linkMerge:
+			if i, ok := l.byID[c.id]; ok {
+				l.addSpan(i, sp, c)
+			}
 		case linkScript:
 			for j := len(l.open) - 1; j >= 0; j-- {
 				if i := l.open[j]; l.entries[i].script {

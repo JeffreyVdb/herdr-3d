@@ -1,7 +1,7 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { Ask, CommandArgs, Followup, HandoffCandidate, TranscriptChanges, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
+import type { Ask, CommandArgs, Followup, HandoffCandidate, TranscriptChanges, TranscriptCollab, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
 import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
@@ -420,6 +420,109 @@ function toolIcon(name: string): string {
   if (/agent|task/.test(n)) return TX_ICON.agent;
   if (/todo|plan/.test(n)) return TX_ICON.list;
   return TX_ICON.tool;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// #56: Codex collaboration calls and inter-agent messages
+
+/** What the view says of a message multi-agent v2 encrypted (the session files only have ciphertext). */
+export const COLLAB_ENCRYPTED = 'Message encrypted by Codex (multi-agent v2). Not readable from the session files.';
+
+const isCollab = (c: unknown): c is TranscriptCollab => !!c && typeof c === 'object' && typeof (c as { kind?: unknown }).kind === 'string';
+const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+
+/** A tool's input as shown: a string as it is, anything else as indented JSON. */
+function jsonOf(input: unknown): string {
+  try {
+    return typeof input === 'string' ? input : (JSON.stringify(input, null, 2) ?? '');
+  } catch {
+    return String(input);
+  }
+}
+
+/** A part of a collab header: plain words, or a name (an agent, a model). */
+type CollabBit = string | { id: string };
+
+/** fork_turns as words: '' for none (a fresh thread is the default, not worth saying). */
+function forkWords(f: string): string {
+  if (!f || f === 'none') return '';
+  if (f === 'all') return 'full context';
+  if (/^\d+$/.test(f)) return f === '1' ? 'the last turn' : `the last ${f} turns`;
+  return f;
+}
+
+/** The agent a call or message is about: its path, else the name the call gave it. */
+const collabWho = (c: TranscriptCollab) => text(c.agent_path) || text(c.target) || text(c.task_name);
+
+/** An inbound message's header type ("FINAL_ANSWER") as words. */
+const messageType = (t: string) => (t ? t.charAt(0) + t.slice(1).toLowerCase().replace(/_/g, ' ') : '');
+
+/** A collab row's header: what happened (the verb) and whom it is about. */
+function collabHead(c: TranscriptCollab, output: string): { verb: string; bits: CollabBit[] } {
+  const who = collabWho(c);
+  const named = (verb: string): { verb: string; bits: CollabBit[] } => ({ verb, bits: who ? [{ id: who }] : [] });
+  switch (c.kind) {
+    case 'spawn': {
+      const nick = text(c.nickname);
+      const name = text(c.task_name) || nick || text(c.agent_type);
+      const bits: CollabBit[] = name ? [{ id: name }] : [];
+      if (nick && nick !== name) bits.push(` (${nick})`);
+      const how = [text(c.model), text(c.effort)].filter(Boolean);
+      if (how.length) bits.push(' on ', ...how.flatMap((id, i): CollabBit[] => (i ? [' ', { id }] : [{ id }])));
+      const fork = forkWords(text(c.fork_turns));
+      if (fork) bits.push(`, with ${fork}`);
+      return { verb: 'Spawn subagent', bits };
+    }
+    case 'send':
+    case 'followup':
+      return named('Message to');
+    case 'close':
+      return named('Close');
+    case 'wait': {
+      let timedOut = false;
+      try {
+        timedOut = (JSON.parse(output) as { timed_out?: unknown } | null)?.timed_out === true;
+      } catch {
+        // not JSON: nothing to add
+      }
+      return { verb: 'Wait for subagents', bits: timedOut ? ['timed out'] : [] };
+    }
+    default: {
+      const from = text(c.agent_path);
+      const to = text(c.recipient);
+      const type = text(c.message_type);
+      // A parent writes down to its child (its task, a message); a child replies up.
+      const verb = type === 'NEW_TASK' ? 'Task from' : from && to.startsWith(`${from}/`) ? 'Message from' : type === 'FINAL_ANSWER' ? 'Final reply from' : 'Reply from';
+      return { verb, bits: from ? [{ id: from }] : [] };
+    }
+  }
+}
+
+/** A collab row's labelled facts, only the ones the source said. */
+function collabFields(c: TranscriptCollab): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const add = (label: string, v: unknown) => {
+    const s = text(v);
+    if (s) out.push([label, s]);
+  };
+  if (c.kind === 'inbound') {
+    add('From', c.agent_path);
+    add('To', c.recipient);
+    add('Type', messageType(text(c.message_type)));
+    return out;
+  }
+  if (c.kind === 'wait') return out;
+  add('Agent', collabWho(c));
+  if (c.kind === 'spawn') {
+    add('Nickname', c.nickname);
+    add('Role', c.agent_type);
+    add('Model', c.model);
+    add('Effort', c.effort);
+    const f = text(c.fork_turns);
+    add('Context', f === 'none' ? 'none (a fresh thread)' : forkWords(f));
+  }
+  add('Thread', c.thread_id);
+  return out;
 }
 
 /** A tool's diffs: every file of a multi-file patch (`diffs`), else its one `diff`. */
@@ -865,6 +968,8 @@ class Transcript implements TranscriptView {
   private readonly diffShown = new Map<string, number>();
   /** #171: changes loaded in full (`transcript.item`) after the list cut them, by agent/id. */
   private readonly fullDiffs = new Map<string, TranscriptDiff[]>();
+  /** #56: collaboration items loaded in full (`transcript.item`) for what the list left out, by agent/id. */
+  private readonly fullCollab = new Map<string, TranscriptItem>();
   /** The subagent each nested timeline's scope shows (for `transcript.item` with `agent`). */
   private readonly scopeAgent = new Map<string, string>();
   /** While tool calls are hidden: the one running now, or the ones that failed since. */
@@ -1480,6 +1585,8 @@ class Transcript implements TranscriptView {
   }
 
   private build(it: TranscriptItem, scope: string): HTMLElement {
+    // #56: a Codex collaboration call (a tool) or a message from another agent (a notice), read for the view.
+    if (((it.kind === 'tool' && it.tool) || it.kind === 'notice') && isCollab(it.collab)) return this.collabRow(it, scope, it.collab);
     switch (it.kind) {
       case 'user':
         if (isAnswers(it.answers)) return this.answerRow(it, it.answers);
@@ -1629,19 +1736,7 @@ class Transcript implements TranscriptView {
     const t = it.tool as NonNullable<TranscriptItem['tool']>;
     const status = typeof t.status === 'string' ? t.status : 'running';
     const row = h('li', { class: 'tx-item tx-tool', 'data-status': status });
-    const dur = h('span', { class: 'tx-tool-dur' });
-    if (status === 'running') {
-      dur.classList.add('tx-tick');
-      dur.dataset.since = String(it.ts);
-      dur.textContent = this.elapsed(it.ts);
-      this.tick();
-    } else {
-      const end = this.finished.get(it.id);
-      if (end !== undefined && Number.isFinite(it.ts) && it.ts > 0) {
-        const ms = end - it.ts;
-        if (ms >= 0 && ms < 86_400_000) dur.textContent = duration(ms);
-      }
-    }
+    const dur = this.toolDuration(it, status);
     const diffs = this.diffsOf(it, t, scope);
     // A file recorded without lines (no_diff) counts nothing: no "+0 −0" for an overwrite whose lines are unknown.
     const counted = diffs.filter((d) => d.no_diff !== true);
@@ -1682,6 +1777,24 @@ class Transcript implements TranscriptView {
     if (changes) row.append(changes);
     row.append(body);
     return row;
+  }
+
+  /** How long a call has run (ticking), or took if it finished while shown. */
+  private toolDuration(it: TranscriptItem, status: string): HTMLElement {
+    const dur = h('span', { class: 'tx-tool-dur' });
+    if (status === 'running') {
+      dur.classList.add('tx-tick');
+      dur.dataset.since = String(it.ts);
+      dur.textContent = this.elapsed(it.ts);
+      this.tick();
+    } else {
+      const end = this.finished.get(it.id);
+      if (end !== undefined && Number.isFinite(it.ts) && it.ts > 0) {
+        const ms = end - it.ts;
+        if (ms >= 0 && ms < 86_400_000) dur.textContent = duration(ms);
+      }
+    }
+    return dur;
   }
 
   /** A tool's diffs: the full ones if they were loaded (#171), else what the list sent. */
@@ -1830,6 +1943,165 @@ class Transcript implements TranscriptView {
     if (t.status === 'running') body.append(h('div', { class: 'tx-note' }, 'Still running…'));
     const images = toolImages(t).length;
     if (images && !body.childNodes.length) body.append(h('div', { class: 'tx-note' }, images === 1 ? 'No text output: the image is above.' : 'No text output: the images are above.'));
+  }
+
+  /**
+   * #56: a Codex collaboration call or inter-agent message: a header that says what happened in words ("Spawn subagent
+   * gpu_research on gpt-6.1-sol high"), never the tool's namespaced name or the message's ciphertext. Opened: the facts
+   * the source said, the message (or that it is encrypted), then the call as Codex recorded it behind a collapsed "Raw
+   * request". A plain reply shows under its header, as the agent said it.
+   */
+  private collabRow(listed: TranscriptItem, scope: string, listedCollab: TranscriptCollab): HTMLElement {
+    // Loaded in full before (Raw request, the whole message): drawn from that while it is the same call.
+    const full = this.fullCollab.get(this.fullKey(listed, scope));
+    const whole = full && isCollab(full.collab) && full.kind === listed.kind && full.tool?.status === listed.tool?.status;
+    const it = whole ? full : listed;
+    const c = whole && isCollab(full.collab) ? full.collab : listedCollab;
+    const t = it.kind === 'tool' ? it.tool : undefined;
+    const status = t ? (typeof t.status === 'string' ? t.status : 'running') : '';
+    const { verb, bits } = collabHead(c, typeof t?.output_text === 'string' ? t.output_text : '');
+    const row = h('li', { class: t ? 'tx-item tx-tool tx-collab' : 'tx-item tx-tool tx-collab tx-collab-in', 'data-collab': c.kind, 'data-status': status || null });
+    const sum = h('span', { class: 'tx-tool-sum tx-collab-sum' }, ...bits.map((b) => (typeof b === 'string' ? b : h('span', { class: 'tx-collab-id' }, b.id))));
+    const head = h(
+      'button',
+      { class: 'tx-tool-row', 'aria-expanded': 'false' },
+      h('span', { class: 'tx-tool-icon' }, icon(TX_ICON.agent)),
+      h('span', { class: 'tx-tool-name tx-collab-verb' }, verb),
+      sum,
+      t ? h('span', { class: 'tx-tool-status' }, STATUS_TEXT[status] ?? status) : null,
+      t ? this.toolDuration(it, status) : null,
+      h('span', { class: 'tx-caret' }, icon(TX_ICON.chevron)),
+    );
+    head.title = `${verb} ${sum.textContent ?? ''}`.trim();
+    const prompt = text(c.prompt);
+    const said = !t && prompt ? h('div', { class: 'tx-said tx-collab-said' }) : null;
+    if (said) {
+      const md = h('div', { class: 'tx-md' });
+      setMarkdown(md, prompt);
+      said.append(md);
+      if (it.truncated) said.append(this.collabCut(it, scope, md));
+    }
+    const body = h('div', { class: 'tx-tool-body' });
+    const ex = this.expander(`${scope}/${it.id}`, (open) => {
+      if (open && !body.childNodes.length) this.fillCollab(body, it, scope, c, t, !said);
+      body.hidden = !open;
+    });
+    head.setAttribute('aria-expanded', String(ex.open));
+    head.addEventListener('click', () => ex.toggle(head));
+    body.hidden = !ex.open;
+    if (ex.open) this.fillCollab(body, it, scope, c, t, !said);
+    row.append(head);
+    if (said) row.append(said);
+    row.append(body);
+    return row;
+  }
+
+  /** #56: an opened collab row: its facts, its message (or the encrypted note), then the raw call, closed. */
+  private fillCollab(body: HTMLElement, it: TranscriptItem, scope: string, c: TranscriptCollab, t: TranscriptItem['tool'] | undefined, withPrompt: boolean): void {
+    const fields = collabFields(c);
+    if (fields.length) body.append(h('dl', { class: 'tx-collab-fields' }, ...fields.flatMap(([k, v]) => [h('dt', {}, k), h('dd', {}, v)])));
+    const prompt = text(c.prompt);
+    if (withPrompt && prompt) {
+      const md = h('div', { class: 'tx-md tx-collab-prompt' });
+      setMarkdown(md, prompt);
+      body.append(h('div', { class: 'tx-label' }, 'Message'), md);
+      if (it.truncated) body.append(this.collabCut(it, scope, md));
+    } else if (!prompt && c.encrypted === true) body.append(h('div', { class: 'tx-note' }, COLLAB_ENCRYPTED));
+    if (!t) {
+      if (!body.childNodes.length) body.append(h('div', { class: 'tx-note' }, 'Nothing more recorded.'));
+      return;
+    }
+    body.append(this.collabRaw(it, scope, t));
+    if (t.status === 'running') body.append(h('div', { class: 'tx-note' }, 'Still running…'));
+  }
+
+  /**
+   * #56: the call as Codex recorded it, behind a collapsed "Raw request" that every call has. Arguments the list left out
+   * (above MaxInput) or an output it cut are loaded whole (`transcript.item`) the first time it opens; nothing in it is
+   * clipped (it wraps and scrolls instead).
+   */
+  private collabRaw(it: TranscriptItem, scope: string, t: NonNullable<TranscriptItem['tool']>): HTMLElement {
+    const box = h('div', { class: 'tx-collab-rawbody' });
+    const raw = h('details', { class: 'tx-ans-raw tx-collab-raw' }, h('summary', {}, 'Raw request'), box);
+    const draw = (tool: NonNullable<TranscriptItem['tool']>, loaded = false) => {
+      box.replaceChildren();
+      if (tool.input !== undefined && tool.input !== null) box.append(h('div', { class: 'tx-label' }, 'Arguments'), h('pre', {}, jsonOf(tool.input)));
+      else box.append(h('div', { class: 'tx-note' }, loaded ? 'No arguments recorded.' : 'The arguments were too large to send with the list.'));
+      if (typeof tool.output_text === 'string' && tool.output_text.length) box.append(h('div', { class: 'tx-label' }, 'Output'), h('pre', {}, stripAnsi(tool.output_text)));
+      else box.append(h('div', { class: 'tx-note' }, tool.status === 'running' ? 'No output yet.' : 'No output.'));
+      if (tool.output_truncated) box.append(h('div', { class: 'tx-note' }, 'Output truncated: only the start is shown.'));
+    };
+    const missing = t.input === undefined || t.input === null || t.output_truncated === true;
+    if (!missing || !this.host.loadItem) {
+      draw(t);
+      return raw;
+    }
+    box.append(h('div', { class: 'tx-note' }, 'Loading…'));
+    let asked = false;
+    raw.addEventListener('toggle', () => {
+      if (!raw.open || asked) return;
+      asked = true;
+      this.loadCollab(it, scope).then(
+        (full) => {
+          if (this.destroyed) return;
+          if (!full?.tool) return this.rawFailed(box, draw, t, 'it is no longer in the transcript');
+          draw(full.tool, true);
+        },
+        (e: unknown) => {
+          if (!this.destroyed) this.rawFailed(box, draw, t, e instanceof Error ? e.message : String(e ?? 'failed'));
+        },
+      );
+    });
+    return raw;
+  }
+
+  /** #56: the whole request did not load: what the list has, and why the rest is not there. */
+  private rawFailed(box: HTMLElement, draw: (tool: NonNullable<TranscriptItem['tool']>) => void, t: NonNullable<TranscriptItem['tool']>, why: string): void {
+    draw(t);
+    box.prepend(h('div', { class: 'tx-note tx-err' }, `The whole request could not be loaded: ${why}`));
+  }
+
+  /** #56: a message the list cut (64 KiB): says so, with a link to the whole of it when the host can load one item. */
+  private collabCut(it: TranscriptItem, scope: string, md: HTMLElement): HTMLElement {
+    const note = h('div', { class: 'tx-note' }, 'Truncated: only the start is shown.');
+    if (!this.host.loadItem) return note;
+    const link = h('button', { class: 'tx-link' }, 'Show the whole message');
+    const slot = h('span', { class: 'tx-collab-load' }, ' ', link);
+    const fail = (why: string) => slot.replaceChildren(' ', h('span', { class: 'tx-err' }, `The whole message could not be loaded: ${why}`));
+    link.addEventListener('click', () => {
+      link.disabled = true;
+      link.textContent = 'Loading…';
+      this.loadCollab(it, scope).then(
+        (full) => {
+          if (this.destroyed) return;
+          const whole = isCollab(full?.collab) ? text(full.collab.prompt) : '';
+          if (!whole) return fail('it is no longer in the transcript');
+          setMarkdown(md, whole);
+          note.remove();
+        },
+        (e: unknown) => {
+          if (!this.destroyed) fail(e instanceof Error ? e.message : String(e ?? 'failed'));
+        },
+      );
+    });
+    note.append(slot);
+    return note;
+  }
+
+  /** #56: a collaboration item in full, kept for the row's next drawing (collabRow uses it while the call's status holds). */
+  private loadCollab(it: TranscriptItem, scope: string): Promise<TranscriptItem | null> {
+    const load = this.host.loadItem;
+    if (!load) return Promise.resolve(null);
+    let p: Promise<TranscriptItem | null>;
+    try {
+      p = Promise.resolve(load(it.id, this.scopeAgent.get(scope)));
+    } catch (e) {
+      p = Promise.reject(e);
+    }
+    return p.then((full) => {
+      if (full && isCollab(full.collab)) this.fullCollab.set(this.fullKey(it, scope), full);
+      return full;
+    });
   }
 
   private subagentRow(it: TranscriptItem, scope: string): HTMLElement {

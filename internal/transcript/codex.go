@@ -287,7 +287,8 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 			callID = id
 		}
 		name := it.Name
-		if it.Namespace != "" {
+		collab := collabKind(it)
+		if it.Namespace != "" && collab == "" { // #56: a collaboration call is its bare name
 			name = it.Namespace + "." + name
 		}
 		if it.Type == "local_shell_call" && name == "" {
@@ -298,6 +299,11 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 			input = callArguments(it.Arguments)
 		}
 		summary := summarize(input)
+		var co *proto.TranscriptCollab
+		if collab != "" { // #56: never the message, which is encrypted
+			c, sum := collabCall(collab, input)
+			co, summary = &c, sum
+		}
 		var diffs []proto.TranscriptDiff
 		var changes *proto.TranscriptChanges
 		script := it.Name == "exec"
@@ -350,6 +356,10 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 		return []contrib{{id: callID, kind: proto.ItemTool, ts: ts, maybeImg: viewPath != "", script: script, apply: func(b *builder) {
 			b.call(name, input, summary)
 			b.script = script
+			if co != nil {
+				c := *co
+				b.it.Collab = &c
+			}
 			if ask != nil {
 				b.ask = ask
 				b.tool().Ask = ask.card(Codex)
@@ -383,6 +393,9 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 		return []contrib{{link: linkResult, id: it.CallID, kind: proto.ItemTool, ts: ts, imgs: images,
 			apply: func(b *builder) {
 				b.result(status, text, images)
+				if b.it.Collab != nil {
+					collabOutput(b.it.Collab, text)
+				}
 				// #21: a script's own patches were only proposed: what it did is
 				// what Codex recorded (its own rows), never the script's text.
 				// A direct patch that failed verification changed nothing.
@@ -398,18 +411,16 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 					b.it.Tool.Ask = &a
 				}
 			}}}
-	case "agent_message":
-		var ss []string
-		for _, p := range it.Content.list {
-			if p.Text != "" {
-				ss = append(ss, p.Text)
-			}
+	case "agent_message": // #56: a message from another agent, a notice
+		c := collabInbound(it)
+		n := noticeItem(id, "agent_message", collabNotice(c), ts)
+		set := n.apply
+		n.apply = func(b *builder) {
+			set(b)
+			c := c
+			b.it.Collab = &c
 		}
-		text := strings.TrimSpace(strings.Join(ss, "\n"))
-		if it.Author != "" || it.Recipient != "" {
-			text = it.Author + " → " + it.Recipient + "\n" + text
-		}
-		return []contrib{noticeItem(id, "agent_message", text, ts)}
+		return []contrib{n}
 	}
 	return []contrib{unknownItem(id, "response_item/"+it.Type, ts)}
 }
@@ -523,6 +534,10 @@ func codexEventItems(ev *codexEvent, id string, ts int64, pc *parseCtx) []contri
 	case "item_completed", "patch_apply_end":
 		if cs, ok := codexPatchEvent(ev, ts); ok {
 			return cs
+		}
+		// #56: still a hidden notice of its own, and more of its call's row.
+		if c, ok := codexSubAgentEvent(ev, ts); ok {
+			return []contrib{codexEventItem(ev, id, ts, pc), c}
 		}
 	}
 	return []contrib{codexEventItem(ev, id, ts, pc)}

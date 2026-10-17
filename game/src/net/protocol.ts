@@ -1602,6 +1602,36 @@ export interface TranscriptChanges {
   computed?: number;
 }
 
+/**
+ * #56: what a Codex collaboration call (spawn_agent, send_message, followup_task, wait_agent, close_agent) or an
+ * inter-agent message says in plain text. Multi-agent v2 encrypts the message itself (`encrypted`, no `prompt`).
+ * Absent fields: the source did not say.
+ */
+export interface TranscriptCollab {
+  kind: 'spawn' | 'send' | 'followup' | 'wait' | 'close' | 'inbound';
+  /** A spawn's task name ("gpu_research"). */
+  task_name?: string;
+  /** The agent a send, followup or close is for, as the call names it. */
+  target?: string;
+  /** The agent's path ("/root/gpu_research"); inbound: the sender. */
+  agent_path?: string;
+  /** A spawn's role. */
+  agent_type?: string;
+  model?: string;
+  effort?: string;
+  /** How much of the parent's history a spawn takes: "none", "all" or a number of turns. */
+  fork_turns?: string;
+  /** The child's thread. */
+  thread_id?: string;
+  nickname?: string;
+  /** Inbound: who it is for and its header's type (NEW_TASK, MESSAGE, FINAL_ANSWER, …). */
+  recipient?: string;
+  message_type?: string;
+  encrypted?: boolean;
+  /** The message in plain text (a v1 spawn, a plain payload). */
+  prompt?: string;
+}
+
 export interface TranscriptItem {
   /** Stable across updates: Claude message.id/uuid (+block), Codex item id/call_id. */
   id: string;
@@ -1640,6 +1670,8 @@ export interface TranscriptItem {
   };
   /** `agent_id` is '' until the call's result names it (its timeline: `transcript.page` with `agent`). */
   subagent?: { agent_id: string; description: string; status: string };
+  /** #56: a Codex collaboration call (`tool`) or inter-agent message (`notice`), read for the view. */
+  collab?: TranscriptCollab;
   /** `source`: the line type it came from ("system/turn_duration", "attachment/date", …). */
   notice?: { text: string; source?: string };
   /** `unknown`: the line or block type the bridge did not know. */

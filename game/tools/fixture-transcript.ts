@@ -26,6 +26,7 @@
 //   change in full; `demo-h206` puts the diff highlighter's worst cases before it (`h206Timeline`).
 // - #21: `demo-h21` is Codex's code changes in every source and state (`h21Timeline`), half of them older than a watch's
 //   window: "Jump to message" from its screenshot pages them in.
+// - #56: `demo-h56` is Codex's collaboration calls and agent messages (`h56Timeline`).
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { createHash } from 'node:crypto';
@@ -246,6 +247,20 @@ export function h21Timeline(now: number): TranscriptItem[] {
   return all.map((it, i) => link({ ...it, seq: i + 1, ts: now - (all.length - i) * 15_000 }));
 }
 
+/**
+ * #56: Codex's collaboration calls and the messages agents send each other, as the bridge reads its trimmed real rollout
+ * (fixtures/transcript/codex-collab.json: spawns with and without a fork, a message, a followup, a wait, a close, an
+ * encrypted and a plain reply, and an older build's spawn with its message in plain text).
+ */
+export function h56Timeline(now: number): TranscriptItem[] {
+  const all: TranscriptItem[] = [
+    { id: 'h56-ask', seq: 0, ts: 0, kind: 'user', parts: [{ text: 'Research GPU use in headless Playwright with a subagent or two, then sum up.' }] },
+    ...fixture('codex-collab.json'),
+    { id: 'h56-done', seq: 0, ts: 0, kind: 'assistant', parts: [{ text: 'Both subagents reported back: the current flags already use the discrete GPU.' }] },
+  ];
+  return all.map((it, i) => ({ ...it, seq: i + 1, ts: now - (all.length - i) * 15_000 }));
+}
+
 /** #171: an Edit with 2,500 changed lines (past the view's 2,000 a page); the list's copy has the first 200 and says it was cut. */
 function cutItem(full: boolean): TranscriptItem {
   const n = full ? 1250 : 100;
@@ -315,6 +330,7 @@ const TIMELINES: Record<string, { items: (now: number) => TranscriptItem[]; full
   'demo-h171': { items: h171Timeline, full: () => [cutItem(true)] },
   'demo-h206': { items: h206Timeline, full: () => [cutItem(true)] },
   'demo-h21': { items: h21Timeline, full: () => [] },
+  'demo-h56': { items: h56Timeline, full: () => [] },
 };
 
 /** Every image ref of an item, in order. */

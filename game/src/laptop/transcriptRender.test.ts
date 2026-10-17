@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TranscriptItem, Usage } from '../net/protocol';
 import { Draft as PromptDraft } from '../ui/composer/draft';
 import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs } from '../ui/themePrefs';
 import { SendGate } from './transcriptDrafts';
-import { duration, loadHighlighter, mountTranscript, parseHunk, renderMarkdown, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
+import { COLLAB_ENCRYPTED, duration, loadHighlighter, mountTranscript, parseHunk, renderMarkdown, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 interface FakeHost extends TranscriptRenderHost {
   prompts: string[];
@@ -450,6 +452,235 @@ describe('#183: your answer to a Codex async question', () => {
     const empty = answered([{ question: 'q', answer: '' }]);
     view.setItems([empty]);
     expect(row(empty.id).querySelector('.tx-ans')).not.toBeNull();
+  });
+});
+
+describe('#56: Codex collaboration calls and messages', () => {
+  // What the bridge makes of its trimmed real rollout (internal/transcript/testdata/codex/collab*.jsonl).
+  const COLLAB = JSON.parse(readFileSync(join(import.meta.dirname, '../../fixtures/transcript/codex-collab.json'), 'utf8')) as TranscriptItem[];
+  const SPAWN = 'call_b29014c00922488d89e346e245b44af0';
+  const FORK = 'call_bb905e7596064beaae8faf916557d34b';
+  const V1 = 'call_c56v1spawn0000000000000000001';
+  const said = (r: HTMLElement) => `${r.querySelector('.tx-collab-verb')?.textContent ?? ''} ${r.querySelector('.tx-collab-sum')?.textContent ?? ''}`;
+  /** What shows without a click: the row less its closed body and the closed raw request. */
+  const visible = (el: HTMLElement) => {
+    const c = el.cloneNode(true) as HTMLElement;
+    c.querySelectorAll('details, [hidden]').forEach((d) => d.remove());
+    return c.textContent ?? '';
+  };
+  const open = (r: HTMLElement) => (r.querySelector('.tx-tool-row') as HTMLButtonElement).click();
+  const fields = (r: HTMLElement) => [...r.querySelectorAll('.tx-collab-fields dt')].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
+
+  it('every call and message reads as what happened; no namespace and no ciphertext without a click', () => {
+    mount();
+    view.setItems(COLLAB);
+    const heads = $$('.tx-collab').map((r) => said(r));
+    expect(heads).toEqual([
+      'Spawn subagent gpu_research on gpt-6.1-sol high',
+      'Message to /root/gpu_research',
+      'Reply from /root/gpu_research',
+      'Spawn subagent runtime_research on gpt-6.1-sol high, with full context',
+      'Message to /root/runtime_research',
+      'Wait for subagents ',
+      'Final reply from /root/gpu_research',
+      'Close /root/gpu_research',
+      'Spawn subagent Meitner',
+    ]);
+    for (const r of $$('.tx-collab')) {
+      expect(visible(r)).not.toContain('collaboration.');
+      expect(visible(r)).not.toContain('gAAAAA');
+    }
+    // The names are set as names; the words around them are not.
+    expect([...row(SPAWN).querySelectorAll('.tx-collab-id')].map((e) => e.textContent)).toEqual(['gpu_research', 'gpt-6.1-sol', 'high']);
+    expect(row(SPAWN).querySelector('.tx-tool-status')?.textContent).toBe('done');
+    // A plain reply shows as the agent said it; an encrypted one has nothing to show until opened.
+    expect(visible(row('amsg_01a1439f-e866-77e0-889d-fbf8faceb33d'))).toContain('Wrote the GPU notes');
+    expect(row('amsg_01a1439e-91da-79c2-a082-1052d8081541').querySelector('.tx-collab-said')).toBeNull();
+  });
+
+  it('opened: the labelled facts first, then the encrypted note, then the raw request, closed, with the untouched call', () => {
+    mount();
+    view.setItems(COLLAB);
+    const r = row(SPAWN);
+    open(r);
+    const body = r.querySelector('.tx-tool-body') as HTMLElement;
+    expect(body.hidden).toBe(false);
+    expect(fields(r)).toEqual([
+      ['Agent', '/root/gpu_research'],
+      ['Model', 'gpt-6.1-sol'],
+      ['Effort', 'high'],
+      ['Thread', '01a1439d-d782-7322-8469-ee452eaa3190'],
+    ]);
+    expect([...body.children].map((e) => e.className)).toEqual(['tx-collab-fields', 'tx-note', 'tx-ans-raw tx-collab-raw']);
+    expect(body.querySelector('.tx-note')?.textContent).toBe(COLLAB_ENCRYPTED);
+    const raw = body.querySelector('details') as HTMLDetailsElement;
+    expect(raw.open).toBe(false);
+    expect(raw.querySelector('summary')?.textContent).toBe('Raw request');
+    const [args = '', out = ''] = [...raw.querySelectorAll('pre')].map((p) => p.textContent ?? '');
+    expect(JSON.parse(args)).toEqual({ task_name: 'gpu_research', message: 'gAAAAABstub0000' });
+    expect(out).toBe('{"task_name":"/root/gpu_research"}');
+    expect(visible(r)).not.toContain('gAAAAA');
+    // The fork is said in words, in the list as in the header.
+    open(row(FORK));
+    expect(fields(row(FORK))).toContainEqual(['Context', 'full context']);
+  });
+
+  it('a v1 spawn shows its plain message in place of the note; a header degrades to what is known', () => {
+    mount();
+    view.setItems(COLLAB);
+    const r = row(V1);
+    open(r);
+    expect(r.querySelector('.tx-collab-prompt')?.textContent?.trim()).toBe('Find where the transcript parser names Codex tool rows.');
+    expect(r.querySelector('.tx-note')).toBeNull();
+    expect(fields(r)).toEqual([
+      ['Nickname', 'Meitner'],
+      ['Role', 'explorer'],
+      ['Thread', '0199a0b1-0000-7000-8000-000000000001'],
+    ]);
+    // No model or effort (an older Codex): the name alone; nothing known: the verb alone.
+    const bare = item('tool', { tool: { name: 'spawn_agent', input_summary: 'docs', status: 'running' }, collab: { kind: 'spawn', task_name: 'docs', encrypted: true } });
+    const none = item('tool', { tool: { name: 'spawn_agent', input_summary: '', status: 'ok' }, collab: { kind: 'spawn' } });
+    const effortOnly = item('tool', { tool: { name: 'spawn_agent', input_summary: 'x', status: 'ok' }, collab: { kind: 'spawn', task_name: 'x', effort: 'low', fork_turns: '3' } });
+    view.setItems([bare, none, effortOnly]);
+    expect(said(row(bare.id))).toBe('Spawn subagent docs');
+    expect(said(row(none.id))).toBe('Spawn subagent ');
+    expect(said(row(effortOnly.id))).toBe('Spawn subagent x on low, with the last 3 turns');
+    open(row(none.id));
+    expect(row(none.id).querySelector('.tx-collab-fields')).toBeNull();
+  });
+
+  it('a wait says when it timed out; a child’s task from its parent and a parent’s message down read the right way', () => {
+    mount();
+    const wait = item('tool', { tool: { name: 'wait_agent', input_summary: '', status: 'ok', output_text: '{"message":"Wait timed out.","timed_out":true}' }, collab: { kind: 'wait' } });
+    const task = item('notice', { notice: { text: '/root → /root/a', source: 'agent_message' }, collab: { kind: 'inbound', agent_path: '/root', recipient: '/root/a', message_type: 'NEW_TASK', encrypted: true } });
+    const down = item('notice', { notice: { text: '/root → /root/a', source: 'agent_message' }, collab: { kind: 'inbound', agent_path: '/root', recipient: '/root/a', message_type: 'MESSAGE', encrypted: true } });
+    view.setItems([wait, task, down]);
+    expect(said(row(wait.id))).toBe('Wait for subagents timed out');
+    expect(said(row(task.id))).toBe('Task from /root');
+    expect(said(row(down.id))).toBe('Message from /root');
+    open(row(task.id));
+    expect(fields(row(task.id))).toEqual([
+      ['From', '/root'],
+      ['To', '/root/a'],
+      ['Type', 'New task'],
+    ]);
+    expect(row(task.id).querySelector('.tx-note')?.textContent).toBe(COLLAB_ENCRYPTED);
+    // A message has no call to show raw.
+    expect(row(task.id).querySelector('details')).toBeNull();
+  });
+
+  it('text stays text: a plain message cannot inject markup', () => {
+    mount();
+    const r = item('notice', { notice: { text: 'x', source: 'agent_message' }, collab: { kind: 'inbound', agent_path: '/root/x', recipient: '/root', prompt: '<img src=x onerror="window.__pwned=1"> done' } });
+    view.setItems([r]);
+    expect(row(r.id).querySelector('img[onerror]')).toBeNull();
+    expect((window as unknown as Record<string, unknown>).__pwned).toBeUndefined();
+  });
+
+  /** A host that answers `transcript.item` with `full` (or fails with `why`), counting the asks. */
+  const itemHost = (full: TranscriptItem | null, why?: string) => {
+    const asked: Array<[string, string | undefined]> = [];
+    const h = fakeHost();
+    h.loadItem = (id, agent) => {
+      asked.push([id, agent]);
+      return why ? Promise.reject(new Error(why)) : Promise.resolve(full);
+    };
+    return { h, asked };
+  };
+  const rawOf = (r: HTMLElement) => r.querySelector('.tx-collab-raw') as HTMLDetailsElement;
+  const openRaw = (r: HTMLElement) => {
+    const raw = rawOf(r);
+    raw.open = true;
+    raw.dispatchEvent(new Event('toggle'));
+  };
+  // Over MaxInput (4 KiB): the list sends the call without its arguments.
+  const BIG = { task_name: 'gpu_research', message: `gAAAAAB${'x'.repeat(5000)}` };
+  const bigSpawn = (input?: unknown) =>
+    ({ id: 'call_big', seq: 900, ts: T0, kind: 'tool', tool: { name: 'spawn_agent', input_summary: 'gpu_research', status: 'ok', output_text: '{"task_name":"/root/gpu_research"}', ...(input ? { input } : {}) }, collab: { kind: 'spawn', task_name: 'gpu_research', encrypted: true } }) as TranscriptItem;
+
+  it('arguments the list left out: opening Raw request loads the item once and shows them whole, unclipped', async () => {
+    const { h, asked } = itemHost(bigSpawn(BIG));
+    mount(h);
+    view.setItems([bigSpawn()]);
+    const r = row('call_big');
+    open(r);
+    expect(asked).toEqual([]);
+    expect(rawOf(r).open).toBe(false);
+    openRaw(r);
+    expect(rawOf(r).textContent).toContain('Loading…');
+    openRaw(r);
+    await flush();
+    expect(asked).toEqual([['call_big', undefined]]);
+    const [args = '', out = ''] = [...rawOf(r).querySelectorAll('pre')].map((p) => p.textContent ?? '');
+    expect(JSON.parse(args)).toEqual(BIG);
+    expect(out).toBe('{"task_name":"/root/gpu_research"}');
+    expect(rawOf(r).textContent).not.toContain('Loading…');
+    // Drawn again (an update, a resync): from the loaded item, without asking twice.
+    view.setItems([bigSpawn()]);
+    openRaw(row('call_big'));
+    await flush();
+    expect(asked.length).toBe(1);
+    expect(JSON.parse(rawOf(row('call_big')).querySelector('pre')?.textContent ?? '')).toEqual(BIG);
+  });
+
+  it('a whole request that fails to load says so; without loadItem it says the arguments were too large', async () => {
+    const { h } = itemHost(null, 'the transcript moved on');
+    mount(h);
+    view.setItems([bigSpawn()]);
+    open(row('call_big'));
+    openRaw(row('call_big'));
+    await flush();
+    const raw = rawOf(row('call_big'));
+    expect(raw.querySelector('.tx-err')?.textContent).toBe('The whole request could not be loaded: the transcript moved on');
+    expect(raw.textContent).toContain('{"task_name":"/root/gpu_research"}');
+    view.destroy();
+    container.replaceChildren();
+    mount();
+    view.setItems([bigSpawn()]);
+    open(row('call_big'));
+    expect(rawOf(row('call_big')).textContent).toContain('The arguments were too large to send with the list.');
+    expect(rawOf(row('call_big')).querySelector('.tx-err')).toBeNull();
+  });
+
+  it('a running call and an empty-output call still have their Raw request, closed', () => {
+    mount();
+    const run = item('tool', { tool: { name: 'spawn_agent', input_summary: 'a', status: 'running', input: { task_name: 'a', message: 'gAAAAABstub0000' } }, collab: { kind: 'spawn', task_name: 'a', encrypted: true } });
+    const empty = item('tool', { tool: { name: 'send_message', input_summary: '/root/a', status: 'ok', input: { target: '/root/a', message: 'gAAAAABstub0000' } }, collab: { kind: 'send', target: '/root/a', encrypted: true } });
+    view.setItems([run, empty]);
+    for (const [r, out] of [
+      [row(run.id), 'No output yet.'],
+      [row(empty.id), 'No output.'],
+    ] as const) {
+      open(r);
+      const raw = rawOf(r);
+      expect(raw.open).toBe(false);
+      expect(raw.querySelector('summary')?.textContent).toBe('Raw request');
+      expect(raw.querySelector('pre')?.textContent).toContain('gAAAAABstub0000');
+      expect(raw.textContent).toContain(out);
+    }
+    expect(row(run.id).querySelector('.tx-tool-body')?.textContent).toContain('Still running…');
+  });
+
+  it('a message the list cut says so, and its link loads the whole of it', async () => {
+    const reply = (prompt: string, truncated?: boolean) =>
+      ({ id: 'amsg_cut', seq: 901, ts: T0, kind: 'notice', notice: { text: 'x', source: 'agent_message' }, collab: { kind: 'inbound', agent_path: '/root/a', recipient: '/root', message_type: 'FINAL_ANSWER', prompt }, ...(truncated ? { truncated } : {}) }) as TranscriptItem;
+    const { h, asked } = itemHost(reply('The start. And the end of it.'));
+    mount(h);
+    view.setItems([reply('The start.', true)]);
+    const note = row('amsg_cut').querySelector('.tx-collab-said .tx-note') as HTMLElement;
+    expect(note.textContent).toBe('Truncated: only the start is shown. Show the whole message');
+    (note.querySelector('.tx-link') as HTMLButtonElement).click();
+    await flush();
+    expect(asked).toEqual([['amsg_cut', undefined]]);
+    expect(row('amsg_cut').querySelector('.tx-collab-said')?.textContent?.trim()).toBe('The start. And the end of it.');
+    expect(row('amsg_cut').querySelector('.tx-note')).toBeNull();
+  });
+
+  it('calls hide with tool calls; a message from another agent stays', () => {
+    mount();
+    view.setItems(COLLAB);
+    expect(row(SPAWN).classList.contains('tx-toolrow')).toBe(true);
+    expect(row('amsg_01a1439f-e866-77e0-889d-fbf8faceb33d').classList.contains('tx-toolrow')).toBe(false);
   });
 });
 

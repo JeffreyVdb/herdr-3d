@@ -816,6 +816,56 @@
   font-variant-ligatures: none;
   font-size: var(--tx-mono-fs, 11.5px);
 }
+/* #56: a Codex collaboration row says what happened in words; only the names it is about are set as code. */
+.tx-collab-verb,
+.tx-collab-sum {
+  font-family: inherit;
+  font-size: inherit;
+}
+.tx-collab-verb {
+  font-weight: 600;
+}
+.tx-collab-id {
+  color: var(--ctl-text);
+  font-family: var(--tx-mono);
+  font-variant-ligatures: none;
+  font-size: var(--tx-mono-fs, 11.5px);
+}
+.tx-collab-said {
+  margin: 4px 0 0 12px;
+  padding-left: 10px;
+}
+.tx-collab-fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 2px 12px;
+  margin: 0 0 6px;
+  font-size: calc(11.5px * var(--tx-k, 1));
+}
+.tx-collab-fields dt {
+  color: var(--tx-text-3);
+}
+.tx-collab-fields dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--tx-text-2);
+  font-family: var(--tx-mono);
+  font-variant-ligatures: none;
+  font-size: var(--tx-mono-fs, 11.5px);
+  overflow-wrap: anywhere;
+}
+.tx-collab-raw {
+  margin-top: 6px;
+}
+.tx-collab-raw .tx-label {
+  margin-top: 6px;
+}
+/* The raw request is not clipped: a long argument (ciphertext) wraps and scrolls in its box, at any width. */
+.tx-collab-raw pre {
+  max-height: 16em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .tx-tool-status {
   flex: none;
   display: inline-flex;
