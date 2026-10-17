@@ -25,10 +25,13 @@ const preset = (name: string, floor: string | null, over: Partial<HirePreset> = 
   return floor ? { ...p, floor } : p;
 };
 
-/** `list` null: a bridge before #93 (no `hire_presets`). */
-function setup(list: HirePreset[] | null = [], unsent: { text: string; images: number } | null = null) {
+/**
+ * `list` null: a bridge before #93 (no `hire_presets`). #95 `o.instructions`: the bridge adds the herdr hiring
+ * instructions; `o.classifier`: the AI integration's classifier state (absent: none).
+ */
+function setup(list: HirePreset[] | null = [], unsent: { text: string; images: number } | null = null, o: { instructions?: boolean; classifier?: string } = {}) {
   const book = new HirePresetBook();
-  book.reset(list ?? undefined);
+  book.reset(list ?? undefined, o.instructions);
   const sent: Array<[string, unknown]> = [];
   const replies: Record<string, (args: Record<string, unknown>) => unknown> = {};
   const send = vi.fn(async (t: string, args: Record<string, unknown>) => {
@@ -53,7 +56,13 @@ function setup(list: HirePreset[] | null = [], unsent: { text: string; images: n
   });
   const toasts: string[] = [];
   const host: HirePresetsHost = {
-    store: { hirePresets: book, hireOptions: CAT, floorName: (id: string) => (id === 'web' ? 'Web' : id), floorView: () => ({}) } as unknown as HirePresetsHost['store'],
+    store: {
+      hirePresets: book,
+      hireOptions: CAT,
+      floorName: (id: string) => (id === 'web' ? 'Web' : id),
+      floorView: () => ({}),
+      ai: { state: o.classifier ? { classifier: { state: o.classifier } } : null },
+    } as unknown as HirePresetsHost['store'],
     send: send as unknown as HirePresetsHost['send'],
     unsupported: () => false,
     toast: (m) => void toasts.push(m),
@@ -329,5 +338,222 @@ describe('HirePresetsDialog (#93)', () => {
     await submit();
     expect(sent[1]).toEqual(['hire_preset.update', expect.objectContaining({ id: mine.id, name: 'Strasse notes' })]);
     expect(summary(dlg).view).toBe('list');
+  });
+});
+
+// #95: "Add herdr hiring instructions" in the editor, and the classifier's nudge on Save.
+describe('HirePresetsDialog: herdr hiring instructions (#95)', () => {
+  beforeEach(() => {
+    n = 0;
+    HTMLDialogElement.prototype.showModal = function () {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function () {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+    vi.stubGlobal('CSS', { escape: (s: string) => s });
+  });
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+
+  const DEPENDABOT = 'Merge all dependabot pull requests: for each pull request, spawn a gpt-6-luna subagent on high reasoning.';
+  const ready = { instructions: true, classifier: 'ready' };
+  const box = () => document.querySelector<HTMLInputElement>('#hp-instructions');
+  const tickBox = (on: boolean) => {
+    const b = box() as HTMLInputElement;
+    b.checked = on;
+    b.dispatchEvent(new Event('change'));
+  };
+  const cancel = () => (document.querySelector('dialog') as HTMLDialogElement).dispatchEvent(new Event('cancel', { cancelable: true }));
+  /** A new preset with `prompt`, saved. */
+  const fresh = async (dlg: HirePresetsDialog, prompt: string) => {
+    dlg.open('web', 0);
+    click('new');
+    type('#hp-name', 'Dependabot');
+    type('#hp-prompt', prompt);
+    await submit();
+  };
+  const created = (sent: Array<[string, unknown]>) => sent.filter(([t]) => t === 'hire_preset.create').map(([, a]) => a as Record<string, unknown>);
+
+  it('saves the box with the preset (off by default), opens a preset with its box, and updates it as part of the spec', async () => {
+    const p = preset('Deploy', 'web', { herdr_instructions: true });
+    const { dlg, sent } = setup([p], null, { instructions: true });
+    dlg.open('web', 0);
+    click('new');
+    expect(box()?.checked).toBe(false);
+    expect(document.querySelector('#hp-instructions-hint')?.textContent).toContain('tagged with the floor it’s used on');
+    type('#hp-name', 'Nightly');
+    type('#hp-prompt', 'Run the nightly checks.');
+    tickBox(true);
+    await submit();
+    expect(created(sent)[0]).toMatchObject({ prompt: 'Run the nightly checks.', herdr_instructions: true });
+    click(`edit:${p.id}`);
+    expect(box()?.checked).toBe(true);
+    tickBox(false);
+    await submit();
+    expect(sent.at(-1)).toEqual(['hire_preset.update', expect.objectContaining({ id: p.id, herdr_instructions: false })]);
+  });
+
+  it('asks before saving a prompt that starts other agents: Turn on and save saves it ticked', async () => {
+    const { dlg, sent, replies } = setup([], null, ready);
+    replies['hire_preset.check'] = () => ({ ok: true, data: { delegates: true, score: 0.93 } });
+    await fresh(dlg, DEPENDABOT);
+    expect(sent.map(([t]) => t)).toEqual(['hire_preset.check']);
+    expect(sent[0]?.[1]).toEqual({ prompt: DEPENDABOT });
+    expect(summary(dlg).editing?.nudge).toBe(true);
+    expect(document.querySelector('[data-hook="hp-nudge"]')?.textContent).toContain('This task starts other agents');
+    expect(document.activeElement?.getAttribute('data-key')).toBe('nudge-on');
+    expect(box()?.checked).toBe(false);
+    click('nudge-on');
+    await tick();
+    expect(created(sent)).toEqual([expect.objectContaining({ prompt: DEPENDABOT, herdr_instructions: true })]);
+    expect(sent.filter(([t]) => t === 'hire_preset.check')).toHaveLength(1);
+  });
+
+  it('Save as is saves it unticked and does not ask again for the same text; another text is asked about', async () => {
+    const { dlg, sent, replies } = setup([], null, ready);
+    replies['hire_preset.check'] = () => ({ ok: true, data: { delegates: true, score: 0.93 } });
+    replies['hire_preset.create'] = () => ({ ok: false, code: 'internal', message: 'disk full' });
+    await fresh(dlg, DEPENDABOT);
+    click('nudge-as-is');
+    await tick();
+    expect(created(sent)).toEqual([expect.objectContaining({ herdr_instructions: false })]);
+    // Refused: a Save again with the same text goes straight to the bridge.
+    await submit();
+    expect(sent.filter(([t]) => t === 'hire_preset.check')).toHaveLength(1);
+    expect(created(sent)).toHaveLength(2);
+    type('#hp-prompt', `${DEPENDABOT} Then report.`);
+    await submit();
+    expect(sent.filter(([t]) => t === 'hire_preset.check')).toHaveLength(2);
+    expect(summary(dlg).editing?.nudge).toBe(true);
+  });
+
+  it('Save as is outlives the editor: the saved preset is not asked about again for that text, an edited text is', async () => {
+    const p = preset('Dependabot', 'web', { prompt: DEPENDABOT });
+    const { dlg, sent, replies } = setup([p], null, ready);
+    replies['hire_preset.check'] = () => ({ ok: true, data: { delegates: true, score: 0.93 } });
+    const checks = () => sent.filter(([t]) => t === 'hire_preset.check').length;
+    dlg.open('web', 0);
+    click(`edit:${p.id}`);
+    await submit();
+    expect(summary(dlg).editing?.nudge).toBe(true);
+    click('nudge-as-is');
+    await tick();
+    expect(summary(dlg).view).toBe('list');
+    // Reopened, the same text saves with no question (a new name or model is no new text).
+    click(`edit:${p.id}`);
+    type('#hp-name', 'Dependabot sweep');
+    await submit();
+    expect(checks()).toBe(1);
+    expect(sent.at(-1)).toEqual(['hire_preset.update', expect.objectContaining({ id: p.id, name: 'Dependabot sweep', herdr_instructions: false })]);
+    // Also after a close and reopen of the dialog.
+    dlg.close();
+    dlg.open('web', 0);
+    click(`edit:${p.id}`);
+    await submit();
+    expect(checks()).toBe(1);
+    expect(summary(dlg).view).toBe('list');
+    // Another text is asked about.
+    click(`edit:${p.id}`);
+    type('#hp-prompt', `${DEPENDABOT} Then report.`);
+    await submit();
+    expect(checks()).toBe(2);
+    expect(summary(dlg).editing?.nudge).toBe(true);
+  });
+
+  it('Save as is on a new preset (also one saved from the hire form) carries over to the preset the bridge created', async () => {
+    for (const fromForm of [false, true]) {
+      const { dlg, sent, replies } = setup([], null, ready);
+      replies['hire_preset.check'] = () => ({ ok: true, data: { delegates: true, score: 0.93 } });
+      const checks = () => sent.filter(([t]) => t === 'hire_preset.check').length;
+      if (fromForm) {
+        dlg.create({ floor: 'web', prompt: DEPENDABOT, harness: 'codex', model: 'x-1', effort: 'low', imagesLeftOut: 0 });
+        type('#hp-name', 'Dependabot');
+        await submit();
+      } else await fresh(dlg, DEPENDABOT);
+      click('nudge-as-is');
+      await tick();
+      expect(created(sent), String(fromForm)).toEqual([expect.objectContaining({ prompt: DEPENDABOT, herdr_instructions: false })]);
+      dlg.open('web', 0);
+      const id = summary(dlg).groups.floor.find((r) => r.name === 'Dependabot')?.id as string;
+      click(`edit:${id}`);
+      await submit();
+      expect(checks(), String(fromForm)).toBe(1);
+      expect(sent.at(-1), String(fromForm)).toEqual(['hire_preset.update', expect.objectContaining({ id, prompt: DEPENDABOT })]);
+      document.body.replaceChildren();
+    }
+  });
+
+  it('Esc closes the question and goes back to the editor without saving (also over the hire form)', async () => {
+    for (const fromForm of [false, true]) {
+      const { dlg, sent, replies } = setup([], null, ready);
+      replies['hire_preset.check'] = () => ({ ok: true, data: { delegates: true, score: 0.93 } });
+      if (fromForm) {
+        dlg.create({ floor: 'web', prompt: DEPENDABOT, harness: 'codex', model: 'x-1', effort: 'low', imagesLeftOut: 0 });
+        type('#hp-name', 'Dependabot');
+        await submit();
+      } else await fresh(dlg, DEPENDABOT);
+      expect(summary(dlg).editing?.nudge).toBe(true);
+      cancel();
+      expect(dlg.isOpen).toBe(true);
+      expect(summary(dlg).view).toBe('edit');
+      expect(summary(dlg).editing?.nudge).toBe(false);
+      expect(document.querySelector('[data-hook="hp-nudge"]')).toBeNull();
+      expect(document.activeElement?.id).toBe('hp-instructions');
+      expect(created(sent)).toEqual([]);
+      document.body.replaceChildren();
+    }
+  });
+
+  it('saves with no question when the box is ticked, the prompt has h3d_floor, the classifier is not ready, says no, fails or times out', async () => {
+    const cases: Array<[string, Parameters<typeof setup>[2], (r: Record<string, (a: Record<string, unknown>) => unknown>) => void, string]> = [
+      ['no', ready, (r) => (r['hire_preset.check'] = () => ({ ok: true, data: { delegates: false, score: 0.2 } })), DEPENDABOT],
+      ['error', ready, (r) => (r['hire_preset.check'] = () => ({ ok: false, code: 'internal', message: 'boom' })), DEPENDABOT],
+      ['timeout', ready, (r) => (r['hire_preset.check'] = () => ({ ok: false, code: 'timeout', message: '' })), DEPENDABOT],
+      ['own token', ready, () => {}, `${DEPENDABOT} Tag them h3d_floor=v-1.`],
+      ['not ready', { instructions: true, classifier: 'invalid' }, () => {}, DEPENDABOT],
+      ['no classifier', { instructions: true }, () => {}, DEPENDABOT],
+    ];
+    for (const [name, o, reply, prompt] of cases) {
+      const { dlg, sent, replies } = setup([], null, o);
+      reply(replies);
+      await fresh(dlg, prompt);
+      expect(created(sent), name).toEqual([expect.objectContaining({ prompt, herdr_instructions: false })]);
+      expect(sent.filter(([t]) => t === 'hire_preset.check').length, name).toBe(['no', 'error', 'timeout'].includes(name) ? 1 : 0);
+      document.body.replaceChildren();
+    }
+    const { dlg, sent } = setup([], null, ready);
+    dlg.open('web', 0);
+    click('new');
+    type('#hp-name', 'Dependabot');
+    type('#hp-prompt', DEPENDABOT);
+    tickBox(true);
+    await submit();
+    expect(sent.map(([t]) => t)).toEqual(['hire_preset.create']);
+  });
+
+  it('“Save as preset…” seeds the box from the form it came from', () => {
+    const { dlg } = setup([], null, ready);
+    dlg.create({ floor: 'web', prompt: 'x', harness: 'codex', model: 'x-1', effort: 'low', imagesLeftOut: 0, instructions: true });
+    expect(box()?.checked).toBe(true);
+    dlg.close();
+    dlg.create({ floor: 'web', prompt: 'x', harness: 'codex', model: 'x-1', effort: 'low', imagesLeftOut: 0 });
+    expect(box()?.checked).toBe(false);
+  });
+
+  it('a bridge before #95 shows no box and no question, says to update it, and is never sent the field or the check', async () => {
+    const { dlg, sent, replies } = setup([], null, { classifier: 'ready' });
+    replies['hire_preset.check'] = () => ({ ok: true, data: { delegates: true, score: 0.99 } });
+    await fresh(dlg, DEPENDABOT);
+    expect(box()).toBeNull();
+    expect(summary(dlg).instructions).toBe(false);
+    expect(sent.map(([t]) => t)).toEqual(['hire_preset.create']);
+    expect(created(sent)[0]).not.toHaveProperty('herdr_instructions');
+    dlg.open('web', 0);
+    click('new');
+    expect(document.querySelector('[data-hook="hp-instructions-off"]')?.textContent).toBe('This herdr-world can’t add hiring instructions yet. Update the bridge to use it.');
   });
 });

@@ -274,6 +274,11 @@ type Options struct {
 	// hireintent.DefaultTimeout).
 	HireIntentRoles   hireintent.Roles
 	HireIntentTimeout time.Duration
+	// #95 hire_preset.check: HirePresetRoles the classifier (default AI;
+	// tests pass fakes), HirePresetCheckTimeout its bound (default
+	// hirePresetCheckTimeout).
+	HirePresetRoles        HirePresetRoles
+	HirePresetCheckTimeout time.Duration
 	// #98 activity: ActivityModel is the environment's "Classify unknown
 	// commands" toggle (HERDR_WORLD_ACTIVITY_MODEL; nil: not set),
 	// ActivityThrottle the least time between two worker.activity events of
@@ -1016,6 +1021,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startPackup
 		case proto.CmdHireInterpret: // #211
 			start = h.startHireInterpret
+		case proto.CmdHirePresetCheck: // #95
+			start = h.startHirePresetCheck
 		case proto.CmdCodexServerGet, proto.CmdCodexServerSet: // #155
 			start = h.startCodexServer
 		case proto.CmdWorkerAnswerAsync: // #156
@@ -2172,6 +2179,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.RepoDiscovery = h.repoDiscoveryView()   // #54
 	w.Schedules = h.schedulesView()           // #62
 	w.HirePresets = h.hirePresetViews()       // #93
+	w.HerdrInstructions = true                // #95
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

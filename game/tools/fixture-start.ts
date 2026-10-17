@@ -64,6 +64,11 @@ function roleLine(h: Hire): string {
 
 /** Added after the team for every ticket (#74): where the orchestrator starts its agents, as the bridge's `placementLine`. */
 export const PLACEMENT_LINE = "Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: a laptop shows a pane at its own size, and a fullscreen terminal is wanted.";
+/** #58: the bridge's floorLine: tag the workspaces you create with your floor (a floor id). */
+export const floorLine = (floor: string): string =>
+  `Also tag every herdr workspace you create with the token h3d_floor=${floor}, in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor.`;
+/** #95: the herdr hiring instructions for a floor (the bridge's hireInstructions): `worker.hire` adds them after a blank line. */
+export const herdrInstructions = (floor: string): string => `${PLACEMENT_LINE}\n\n${floorLine(floor)}`;
 
 /** Added for an issue ticket, after the team: how the issue's status follows the run. */
 export const ISSUE_STATUS_LINE = 'Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.';

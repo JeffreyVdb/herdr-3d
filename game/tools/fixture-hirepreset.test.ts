@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { HirePreset } from '../src/net/protocol.ts';
+import { HirePresetSim } from './fixture-hirepreset.ts';
 import { SimWorld, type SimOptions } from './fixture-sim.ts';
+import { herdrInstructions, PLACEMENT_LINE } from './fixture-start.ts';
 
 // #93: the simulator's hire presets follow the bridge's rules: the checks and their codes, scoped names, the events,
 // a key's connections sharing them, a deleted virtual floor's own presets going with it, and an older bridge.
@@ -88,5 +90,85 @@ describe('fixture hire presets (#93)', () => {
     const old = rig({ fail: 'no_hire_presets' });
     expect(old.view()).toBeUndefined();
     expect(old.err('hire_preset.create', spec())).toBe('unknown_command');
+  });
+});
+
+describe('fixture herdr hiring instructions (#95)', () => {
+  it('stores the flag (left out when off) and the snapshot says the bridge takes it', () => {
+    const r = rig();
+    expect((r.sim.snapshot().world as { herdr_instructions?: boolean }).herdr_instructions).toBe(true);
+    const on = r.ack('hire_preset.create', spec({ herdr_instructions: true })).data;
+    expect(on.herdr_instructions).toBe(true);
+    const plain = r.ack('hire_preset.create', spec({ name: 'Plain' })).data;
+    expect(plain).not.toHaveProperty('herdr_instructions');
+    const off = r.ack('hire_preset.update', { id: on.id, ...spec({ herdr_instructions: false }) });
+    expect(off.data).not.toHaveProperty('herdr_instructions');
+    expect(off.events.map((e) => e.t)).toEqual(['hire_preset.upsert']);
+    expect(r.err('hire_preset.create', spec({ name: 'x', herdr_instructions: 'yes' }))).toBe('bad_request');
+  });
+
+  it('worker.hire adds the lines for the floor it hires on, and hire.prepare shows them', () => {
+    const r = rig();
+    const v = (r.ack('floor.create', { name: 'Web', base_session: 'f1' }).data as unknown as { id: string }).id;
+    const prep = r.ack('hire.prepare', { floor: v }).data as unknown as { herdr_instructions: string };
+    expect(prep.herdr_instructions).toBe(herdrInstructions(v));
+    expect(prep.herdr_instructions.startsWith(`${PLACEMENT_LINE}\n\nAlso tag every herdr workspace you create with the token h3d_floor=${v},`)).toBe(true);
+    const hire = (floor: string, desk: number, flag?: boolean) => r.cmd('worker.hire', { floor, desk_index: desk, harness: 'codex', model: 'gpt-6-sol', effort: 'high', prompt: 'Spawn reviewers.', ...(flag === undefined ? {} : { herdr_instructions: flag }) });
+    hire(v, 0, true);
+    hire('f1', 0, true);
+    hire('f2', 0);
+    const first = r.ack('sim.first_prompts', {}).data as unknown as Array<{ floor: string; prompt: string }>;
+    expect(first.map((x) => [x.floor, x.prompt])).toEqual([
+      [v, `Spawn reviewers.\n\n${herdrInstructions(v)}`],
+      ['f1', `Spawn reviewers.\n\n${herdrInstructions('f1')}`],
+      ['f2', 'Spawn reviewers.'],
+    ]);
+    expect(r.err('worker.hire', { floor: 'f2', desk_index: 1, harness: 'codex', model: 'gpt-6-sol', effort: 'high', herdr_instructions: true })).toBe('bad_request');
+    expect(r.err('worker.hire', { floor: 'f2', desk_index: 1, harness: 'codex', model: 'gpt-6-sol', effort: 'high', prompt: 'x'.repeat(32 * 1024 - 10), herdr_instructions: true })).toBe('bad_request');
+  });
+
+  it('a #93 bridge has no marker, refuses the field and the check', () => {
+    const old = rig({ fail: 'no_herdr_instructions' });
+    expect(old.sim.snapshot().world).not.toHaveProperty('herdr_instructions');
+    expect(old.view()).toEqual([]);
+    expect(old.err('hire_preset.create', spec({ herdr_instructions: true }))).toBe('bad_request');
+    expect(old.err('hire_preset.check', { prompt: 'Spawn workers.' })).toBe('unknown_command');
+    expect(old.ack('hire.prepare', { floor: 'f1' }).data).not.toHaveProperty('herdr_instructions');
+    expect(old.err('worker.hire', { floor: 'f1', desk_index: 0, harness: 'codex', model: 'gpt-6-sol', effort: 'high', prompt: 'x', herdr_instructions: true })).toBe('bad_request');
+  });
+
+  it('hire_preset.check asks the classifier and fails open', async () => {
+    const host = (score: number | Error | null) => {
+      const asked: unknown[] = [];
+      const sim = new HirePresetSim(
+        {
+          hasFloor: () => true,
+          hire: {},
+          emit: () => {},
+          error: (code, message) => Object.assign(new Error(message), { code }),
+          now: () => 1,
+          ai: {
+            ready: () => score !== null,
+            classify: async (state, q) => {
+              asked.push([state, q]);
+              if (score instanceof Error) throw score;
+              return score ?? 0;
+            },
+          },
+        },
+        true,
+        null,
+      );
+      const check = (prompt: string) => new Promise((done) => sim.handle('hire_preset.check', { prompt }, () => {}, done));
+      return { check, asked };
+    };
+    const yes = host(0.9);
+    expect(await yes.check('For each PR, spawn a subagent.')).toEqual({ delegates: true, score: 0.9 });
+    expect(yes.asked).toEqual([[{ prompt: 'For each PR, spawn a subagent.' }, expect.stringContaining('subagents, workers')]]);
+    expect(await host(0.69).check('Deploy.')).toEqual({ delegates: false, score: 0.69 });
+    expect(await host(new Error('provider failed')).check('Deploy.')).toEqual({ delegates: false, score: 0 });
+    const unready = host(null);
+    expect(await unready.check('Spawn workers.')).toEqual({ delegates: false, score: 0 });
+    expect(unready.asked).toEqual([]);
   });
 });

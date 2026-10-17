@@ -33,6 +33,15 @@ func floorLine(floor string) string {
 		", in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor."
 }
 
+// hireInstructions are the herdr hiring instructions for floor: where an
+// agent starts the agents it hires, and the floor to tag them with. run.start
+// puts them in an orchestrator's first prompt; #95 a worker.hire with
+// herdr_instructions (a hire preset's "Add herdr hiring instructions") adds
+// them after its prompt, and hire.prepare shows them.
+func hireInstructions(floor string) string {
+	return placementLine + "\n\n" + floorLine(floor)
+}
+
 // writeCodeSkill is the skill an orchestrator's first prompt runs.
 const writeCodeSkill = "write-code"
 
@@ -124,7 +133,7 @@ func runPrompt(call, ticket, status string, roles proto.PresetRoles, floor, extr
 		}
 		fmt.Fprintf(&b, "\n- %s: %s %s, %s %s", r.what, r.hire.Harness, r.hire.Model, knob, r.hire.Effort)
 	}
-	b.WriteString("\n\n" + placementLine + "\n\n" + floorLine(floor))
+	b.WriteString("\n\n" + hireInstructions(floor))
 	if status != "" {
 		b.WriteString("\n\n" + status)
 	}

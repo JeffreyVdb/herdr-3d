@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { herdrInstructions } from '../tools/fixture-start.ts';
 import { frames, openGame, openMenu, watchErrors } from './game';
 
 // #93 hire presets on demo-m3 with the simulator (tools/fixture-hirepreset.ts): Work = herdr-3d + depot-manager,
@@ -92,7 +93,8 @@ test('a preset saved from the hire form survives a reload, shows on another clie
   await expect(presetsDlg(page)).toBeHidden();
   await expect(hireDlg(page).locator('[data-key="save-preset"]')).toBeFocused();
   expect((await sentOf(page, 'hire_preset.')).map((c) => [c.t, c.args])).toEqual([
-    ['hire_preset.create', { name: 'Deploy release', floor: 'pastry', prompt: 'Deploy the release to A, B and C.', harness: 'codex', model: 'gpt-6-luna', effort: 'low' }],
+    // #95: the box is sent, off: the plain hire form it came from has none.
+    ['hire_preset.create', { name: 'Deploy release', floor: 'pastry', prompt: 'Deploy the release to A, B and C.', harness: 'codex', model: 'gpt-6-luna', effort: 'low', herdr_instructions: false }],
   ]);
   // Nobody was hired by saving; the typed task stays the desk's draft.
   expect(await sentOf(page, 'worker.hire')).toEqual([]);
@@ -201,5 +203,82 @@ test('a global preset shows on every floor of every building; a floor’s own on
     await page.keyboard.press('Escape');
   }
   expect(await sentOf(page, 'worker.hire')).toEqual([]);
+  clean();
+});
+
+test('#95: a ticked global preset adds the herdr hiring instructions for the floor it is used on, never to its stored prompt', async ({ page }, info) => {
+  test.setTimeout(240_000);
+  const key = keyOf('instructions');
+  const clean = watchErrors(page);
+  await boot(page, key, null);
+  for (const name of ['Web', 'API']) {
+    await openMenu(page);
+    await page.getByRole('button', { name: 'Add floor' }).click();
+    const add = page.locator('dialog.desk-dlg--addfloor');
+    await add.getByRole('radio', { name: /Virtual floor on an existing session/ }).check();
+    await add.getByLabel('Floor name').fill(name);
+    await add.getByLabel('Base session').selectOption('herdr-3d');
+    await add.getByLabel('Floor name').press('Enter');
+    await expect(add).toBeHidden();
+  }
+  const floors = await page.evaluate(() => window.__h3d.world());
+  const web = floors.find((f) => f.name === 'Web')?.id as string;
+  const api = floors.find((f) => f.name === 'API')?.id as string;
+
+  // On Web: a global preset with the box ticked (the box is a visually hidden input in its label).
+  const task = 'Merge all dependabot pull requests: for each one, spawn a subagent that reviews and merges it.';
+  await goTo(page, web);
+  await openPresets(page, 0);
+  await presetsDlg(page).locator('[data-key="new"]').click();
+  await page.keyboard.type('Dependabot');
+  await presetsDlg(page).locator('#hp-prompt').fill(task);
+  await chip(page, '.desk-dlg--hire-presets', 'preset-scope:global').click();
+  await presetsDlg(page).locator('label[for="hp-instructions"]').click();
+  await expect(presetsDlg(page).locator('#hp-instructions')).toBeChecked();
+  await page.screenshot({ path: info.outputPath('editor-instructions.png') });
+  await presetsDlg(page).locator('[data-key="save"]').click();
+  await expect.poll(async () => ((await dialog(page)) as Presets | null)?.view).toBe('list');
+  expect((await sentOf(page, 'hire_preset.')).map((c) => c.args)).toEqual([
+    { name: 'Dependabot', prompt: task, harness: expect.any(String), model: expect.any(String), effort: expect.any(String), herdr_instructions: true },
+  ]);
+  const id = ((await dialog(page)) as Presets).groups.global[0]?.id as string;
+
+  // Used on Web, API (the same session) and the real floor herdr-3d: each form shows its own floor's lines.
+  for (const [floor, desk] of [
+    [web, 0],
+    [api, 0],
+    ['herdr-3d', 5],
+  ] as const) {
+    if (floor !== web) {
+      await goTo(page, floor);
+      await openPresets(page, desk);
+    }
+    await presetsDlg(page).locator(`[data-key="use:${id}"]`).click();
+    await expect.poll(async () => ((await dialog(page)) as Hire | null)?.state).toBe('ready');
+    const form = (await dialog(page)) as Hire;
+    expect(form.instructions, floor).toMatchObject({ on: true, lines: herdrInstructions(floor) });
+    await expect(hireDlg(page).locator('#hire-instructions')).toBeChecked();
+    await hireDlg(page).locator('[data-hook="instructions-lines"] summary').click();
+    await expect(hireDlg(page).locator('[data-hook="instructions-lines"] pre')).toContainText(`h3d_floor=${floor},`);
+    if (floor === web) await page.screenshot({ path: info.outputPath('hire-instructions.png') });
+    await hireDlg(page).locator('[data-key="hire"]').click();
+    await expect(hireDlg(page)).toBeHidden({ timeout: 20_000 });
+  }
+
+  // Only the flag went out; each worker's first prompt ends with its own floor's lines; the preset is as saved.
+  const hires = (await sentOf(page, 'worker.hire')).map((c) => c.args as Record<string, unknown>);
+  expect(hires.map((a) => [a.floor, a.prompt, a.herdr_instructions])).toEqual([
+    [web, task, true],
+    [api, task, true],
+    ['herdr-3d', task, true],
+  ]);
+  const first = await page.evaluate(() => window.__h3d.simFirstPrompts());
+  expect(first.map((x) => [x.floor, x.prompt])).toEqual([
+    [web, `${task}\n\n${herdrInstructions(web)}`],
+    [api, `${task}\n\n${herdrInstructions(api)}`],
+    ['herdr-3d', `${task}\n\n${herdrInstructions('herdr-3d')}`],
+  ]);
+  // The preset holds the task alone (the create above), and nothing changed it since.
+  expect((await sentOf(page, 'hire_preset.')).map((c) => c.t)).toEqual(['hire_preset.create']);
   clean();
 });

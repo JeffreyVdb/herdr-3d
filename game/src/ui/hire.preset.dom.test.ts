@@ -38,18 +38,20 @@ const fromPreset = (choice: { harness: string; model: string; effort: string }, 
   ...over,
 });
 
-function setup() {
+/** #95: `lines` are hire.prepare's herdr hiring instructions (null: a bridge before #95, which has no marker either). */
+function setup(o: { lines?: string | null } = {}) {
+  const lines = o.lines === undefined ? null : o.lines;
   const prefs = new HireModelPrefs(memory());
   const hires: unknown[] = [];
   const send = vi.fn(async (t: string, args: unknown) => {
-    if (t === 'hire.prepare') return { ok: true, data: prep };
+    if (t === 'hire.prepare') return { ok: true, data: lines === null ? prep : { ...prep, herdr_instructions: lines } };
     if (t === 'worker.hire') {
       hires.push(args);
       return { ok: true, data: { id: `w${hires.length}`, prompted: true } };
     }
     return { ok: false, code: 'unknown_command', message: '' };
   });
-  const store = { floorName: (id: string) => id, hireOptions: CAT, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null, hirePresets: { known: true } };
+  const store = { floorName: (id: string) => id, hireOptions: CAT, floorView: () => ({ seats: Array(10).fill(null) }), limits: { version: 0, list: () => [] }, workerView: () => null, hirePresets: { known: true, instructions: lines !== null } };
   const host = {
     store,
     modelPrefs: prefs,
@@ -219,6 +221,120 @@ describe('HireDialog from a hire preset (#93)', () => {
     inner.editor.draft.replace(0, 0, 'Audit the deps. ');
     inner.editor.draft.addImages([new File([new Uint8Array([1])], 'shot.png', { type: 'image/png' })]);
     (document.querySelector('[data-key="save-preset"]') as HTMLButtonElement).click();
-    expect(host.savePreset).toHaveBeenCalledWith({ floor: 'floor', prompt: 'Audit the deps.', harness: 'claude', model: 'y-1', effort: 'low', imagesLeftOut: 1 }, expect.any(HTMLElement));
+    expect(host.savePreset).toHaveBeenCalledWith({ floor: 'floor', prompt: 'Audit the deps.', harness: 'claude', model: 'y-1', effort: 'low', imagesLeftOut: 1, instructions: false }, expect.any(HTMLElement));
+  });
+});
+
+// #95: a form from a preset has its own "Add herdr hiring instructions", ticked to match the preset: the exact lines for
+// this floor (hire.prepare's) under "What's added", the byte count with them, and only the flag goes to the bridge.
+const LINES = 'Start every agent you hire in its own herdr workspace or tab.\n\nAlso tag every herdr workspace you create with the token h3d_floor=v-0123456789ab.';
+const enc = new TextEncoder();
+
+describe('HireDialog from a hire preset: herdr hiring instructions (#95)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    HTMLDialogElement.prototype.showModal = function () {
+      this.setAttribute('open', '');
+    };
+    HTMLDialogElement.prototype.close = function () {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+    vi.stubGlobal('CSS', { escape: (s: string) => s });
+  });
+  afterEach(() => {
+    document.body.replaceChildren();
+    vi.unstubAllGlobals();
+  });
+  const ticked = (over: Partial<HirePrefill> = {}) => fromPreset({ harness: 'claude', model: 'y-1', effort: 'low' }, { preset: { id: 'hp_1', name: 'Deploy', scope: 'global', instructions: true }, ...over });
+  const box = () => document.querySelector<HTMLInputElement>('#hire-instructions');
+
+  it('ticks the box to match the preset and shows the exact lines with this floor’s id, counted in the prompt’s bytes', async () => {
+    const { dlg } = setup({ lines: LINES });
+    dlg.open('v-0123456789ab', 0, ticked());
+    await tick();
+    expect(box()?.checked).toBe(true);
+    const bytes = enc.encode(PROMPT).length + 2 + enc.encode(LINES).length;
+    expect(summary(dlg).instructions).toEqual({ on: true, lines: LINES, bytes });
+    const details = document.querySelector('[data-hook="instructions-lines"]') as HTMLDetailsElement;
+    expect(details.querySelector('summary')?.textContent).toBe('What’s added');
+    expect(details.querySelector('pre')?.textContent).toBe(LINES);
+    expect(document.querySelector('[data-hook="instructions-bytes"]')?.textContent).toContain(bytes.toLocaleString('en-US'));
+  });
+
+  it('sends the flag with the typed prompt, never the lines; unticked for one hire it sends neither', async () => {
+    const { dlg, inner, hires } = setup({ lines: LINES });
+    dlg.open('v-0123456789ab', 0, ticked());
+    await tick();
+    await inner.hire();
+    expect(hires[0]).toMatchObject({ prompt: PROMPT, herdr_instructions: true });
+    dlg.open('v-0123456789ab', 1, ticked());
+    await tick();
+    const b = box() as HTMLInputElement;
+    b.checked = false;
+    b.dispatchEvent(new Event('change'));
+    expect(summary(dlg).instructions?.on).toBe(false);
+    expect(document.querySelector('[data-hook="instructions-lines"]')).toBeNull();
+    expect(document.querySelector('[data-hook="instructions"]')?.textContent).toContain('Off for this hire only');
+    await inner.hire();
+    expect(hires[1]).toMatchObject({ prompt: PROMPT });
+    expect(hires[1]).not.toHaveProperty('herdr_instructions');
+  });
+
+  it('a preset with the box off opens it unticked; ticking it is this hire’s only', async () => {
+    const { dlg, inner, hires } = setup({ lines: LINES });
+    dlg.open('floor', 0, fromPreset({ harness: 'claude', model: 'y-1', effort: 'low' }));
+    await tick();
+    expect(box()?.checked).toBe(false);
+    await inner.hire();
+    expect(hires[0]).not.toHaveProperty('herdr_instructions');
+  });
+
+  it('blocks Hire with a reason when the prompt is over the limit only with the lines, and with no task to add them to', async () => {
+    const { dlg, inner } = setup({ lines: LINES });
+    const room = 32 * 1024 - 2 - enc.encode(LINES).length;
+    dlg.open('floor', 0, ticked({ prompt: 'x'.repeat(room + 1) }));
+    await tick();
+    expect(summary(dlg).blocker).toContain('over 32 KiB');
+    expect(document.querySelector('[data-key="hire"]')?.getAttribute('aria-disabled')).toBe('true');
+    const b = box() as HTMLInputElement;
+    b.checked = false;
+    b.dispatchEvent(new Event('change'));
+    expect(summary(dlg).blocker).toBeNull();
+    dlg.open('floor', 1, ticked({ prompt: 'x'.repeat(room) }));
+    await tick();
+    expect(summary(dlg).blocker).toBeNull();
+    inner.editor.draft.replace(0, inner.editor.draft.snapshot().text.length, '');
+    expect(summary(dlg).blocker).toContain('first task');
+  });
+
+  it('“Save as preset…” seeds the box from the form, never the lines', async () => {
+    const { dlg, host } = setup({ lines: LINES });
+    dlg.open('floor', 0, ticked());
+    await tick();
+    (document.querySelector('[data-key="save-preset"]') as HTMLButtonElement).click();
+    expect(host.savePreset).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: PROMPT, instructions: true }), expect.any(HTMLElement));
+    const b = box() as HTMLInputElement;
+    b.checked = false;
+    b.dispatchEvent(new Event('change'));
+    (document.querySelector('[data-key="save-preset"]') as HTMLButtonElement).click();
+    expect(host.savePreset).toHaveBeenLastCalledWith(expect.objectContaining({ instructions: false }), expect.any(HTMLElement));
+  });
+
+  it('a plain hire and a bridge before #95 have no box, and nothing sends the flag', async () => {
+    const plain = setup({ lines: LINES });
+    plain.dlg.open('floor', 0, { prompt: PROMPT });
+    await tick();
+    expect(box()).toBeNull();
+    expect(summary(plain.dlg).instructions).toBeUndefined();
+    await plain.inner.hire();
+    expect(plain.hires[0]).not.toHaveProperty('herdr_instructions');
+    document.body.replaceChildren();
+    const old = setup();
+    old.dlg.open('floor', 0, ticked());
+    await tick();
+    expect(box()).toBeNull();
+    await old.inner.hire();
+    expect(old.hires[0]).not.toHaveProperty('herdr_instructions');
   });
 });

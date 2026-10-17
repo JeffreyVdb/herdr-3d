@@ -292,6 +292,8 @@ export interface H3DDebug {
   simAi(args: Record<string, unknown>): Promise<{ ok: boolean; code?: string }>;
   /** #90: the fixture simulator's `sim.turn {id, text}`: a worker's agent ends its turn with that message (`sim=1`). */
   simTurn(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #95: each hire's first prompt as the simulated worker got it, in order (`sim.first_prompts`; fixture server only). */
+  simFirstPrompts(): Promise<Array<{ id: string; floor: string; prompt: string }>>;
   /** #223: the fixture bridge's handoff plays: `sim.final`, `sim.prompt_turn`, `sim.handoff_fail`. */
   simHandoff(t: 'sim.final' | 'sim.prompt_turn' | 'sim.handoff_fail' | 'sim.agent_turn' | 'sim.agent_skill' | 'sim.cache' | 'sim.handoff_llm' | 'sim.llm_finish', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #90: the follow-up questions feature's state as the bridge last sent it (null: none). */
@@ -611,6 +613,11 @@ const h3d: H3DDebug = {
     if (!app) return { ok: false, code: 'not_started' };
     const r = await app.client.request(t as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simFirstPrompts: async () => {
+    if (!app) return [];
+    const r = await app.client.request('sim.first_prompts' as CommandName, {} as never);
+    return r.ok ? (r.data as Array<{ id: string; floor: string; prompt: string }>) : [];
   },
   simTurn: async (args) => {
     if (!app) return { ok: false, code: 'not_started' };

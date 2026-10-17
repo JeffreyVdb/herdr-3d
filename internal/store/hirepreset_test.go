@@ -2,10 +2,14 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -239,5 +243,66 @@ func TestHirePresetNamesCaseFold(t *testing.T) {
 		if err := add(names[len(names)-1], "u"); err != nil {
 			t.Fatalf("%q on a floor without %q: %v", names[len(names)-1], names[0], err)
 		}
+	}
+}
+
+// #95: a database from before "Add herdr hiring instructions" keeps its
+// presets with the box off; the flag is stored, survives a restart and an
+// update replaces it.
+func TestHirePresetInstructions(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := slices.IndexFunc(store.Migrations, func(q string) bool { return strings.Contains(q, "CREATE TABLE hire_preset") })
+	if created < 0 || created == len(store.Migrations)-1 {
+		t.Fatalf("hire_preset is created by migration %d of %d", created, len(store.Migrations))
+	}
+	before := created + 1
+	for _, q := range store.Migrations[:before] {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, q := range []string{
+		"PRAGMA user_version = " + strconv.Itoa(before),
+		`INSERT INTO hire_preset (id, name, name_key, floor, prompt, harness, model, effort, created_at, updated_at)
+			VALUES ('hp_old', 'Old', 'old', NULL, 'For each PR, spawn a subagent.', 'claude', 'm', 'e', 1, 1)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+
+	st := open(t, path)
+	old := store.HirePreset{ID: "hp_old", Name: "Old", Prompt: "For each PR, spawn a subagent.", Harness: "claude", Model: "m", Effort: "e", CreatedAt: 1, UpdatedAt: 1}
+	if l, err := st.HirePresets(ctx); err != nil || !reflect.DeepEqual(l, []store.HirePreset{old}) {
+		t.Fatalf("migrated = %+v, %v", l, err)
+	}
+	ticked := store.HirePreset{ID: "hp_new", Name: "New", Floor: "s", Prompt: "Hire reviewers.", Harness: "codex", Model: "m", Effort: "e",
+		HerdrInstructions: true, CreatedAt: 2, UpdatedAt: 2}
+	if err := st.CreateHirePreset(ctx, ticked); err != nil {
+		t.Fatal(err)
+	}
+	on := old
+	on.HerdrInstructions, on.UpdatedAt = true, 3
+	if err := st.UpdateHirePreset(ctx, on); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st = open(t, path)
+	if l, _ := st.HirePresets(ctx); !reflect.DeepEqual(l, []store.HirePreset{ticked, on}) {
+		t.Fatalf("after restart = %+v", l)
+	}
+	off := ticked
+	off.HerdrInstructions, off.UpdatedAt = false, 4
+	if err := st.UpdateHirePreset(ctx, off); err != nil {
+		t.Fatal(err)
+	}
+	if l, _ := st.HirePresets(ctx); !reflect.DeepEqual(l, []store.HirePreset{off, on}) {
+		t.Fatalf("after unticking = %+v", l)
 	}
 }

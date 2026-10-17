@@ -1,8 +1,8 @@
 import './hirePresets.css';
 import type { CommandResult } from '../net/client';
-import type { HireOptions, HirePreset } from '../net/protocol';
+import type { HireOptions, HirePreset, HirePresetCheckAck } from '../net/protocol';
 import { modelsFor, offeredOptions, resolveVisibleChoice } from '../world/hire';
-import { draftBlocker, draftFrom, exactProblem, pickExact, presetChoiceText, presetSpec, promptPreview, type ExactProblem, type HirePresetDraft } from '../world/hirePresets';
+import { draftBlocker, draftFrom, exactProblem, nudgeWanted, pickExact, presetChoiceText, presetSpec, promptPreview, type ExactProblem, type HirePresetDraft } from '../world/hirePresets';
 import { labelsOf } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
 import { backdropPolicy } from './dismiss';
@@ -18,7 +18,18 @@ import { failureText } from './messages';
  * choice, ready to review and Hire. New, Edit and Delete (confirmed) manage them, live with every client's changes. The
  * editor also opens on its own over the hire form ("Save as preset…"); then Back and Save return to that form. A modal
  * like the M4 dialogs; Esc in the editor goes back to the list (or to the form it came from), Esc in the list closes.
+ *
+ * #95: the editor's "Add herdr hiring instructions" box, on a bridge that adds them (an older one: a hint to update it).
+ * With the box off, Save first asks the classifier (`hire_preset.check`, never on Use or Hire) whether the prompt hands
+ * work to other agents; when it does, the editor asks in place (Turn on and save / Save as is; Esc back to the editor).
+ * The box is only ever ticked by a click, and anything but a "yes" in time saves the preset as it is.
  */
+
+/** #95: the copy of the editor's box, its hint, and what an older bridge says instead. */
+export const INSTRUCTIONS_LABEL = 'Add herdr hiring instructions';
+export const INSTRUCTIONS_HINT = 'Adds two lines when the preset is used: each agent it starts gets its own herdr workspace or tab, tagged with the floor it’s used on.';
+export const INSTRUCTIONS_OLD_BRIDGE = 'This herdr-world can’t add hiring instructions yet. Update the bridge to use it.';
+export const NUDGE_TEXT = 'This task starts other agents (workers or subagents). Add herdr hiring instructions so they get their own workspace on the floor it’s used on?';
 
 export interface HirePresetsHost extends DialogHost {
   /** Settings → Harness models: the editor offers the models it leaves shown, plus the preset's own (absent: every model). */
@@ -43,6 +54,10 @@ type EditView = {
   seen: HirePreset | null;
   /** What the editor says it left out of the form it came from ("Save as preset…": its images). */
   note: string | null;
+  /** #95: the classifier said the prompt hands work to other agents: the editor asks to tick the box before saving. */
+  nudge: boolean;
+  /** #95: the prompt "Save as is" was answered for: no asking again until the prompt changes. */
+  dismissed: string | null;
 };
 type View = { kind: 'list'; confirm: string | null; replacing: string | null } | EditView;
 
@@ -69,7 +84,9 @@ export interface HirePresetsSummary {
   groups: { floor: HirePresetRow[]; global: HirePresetRow[] };
   confirm: string | null;
   replacing: string | null;
-  editing: { id: string | null; draft: HirePresetDraft; error: EditView['error']; saving: boolean; stale: 'changed' | 'deleted' | null; problem: ExactProblem | null } | null;
+  editing: { id: string | null; draft: HirePresetDraft; error: EditView['error']; saving: boolean; stale: 'changed' | 'deleted' | null; problem: ExactProblem | null; nudge: boolean } | null;
+  /** #95: the bridge adds the herdr hiring instructions (the editor shows the box; false: the update hint). */
+  instructions: boolean;
   status: string;
   error: boolean;
 }
@@ -99,6 +116,8 @@ export class HirePresetsDialog {
   private opening = 0;
   /** The editor's model filter (a long list); a harness switch clears it. */
   private modelQuery = '';
+  /** #95: per preset id, the prompt "Save as is" was answered for and saved with: its editors don't ask again for it. */
+  private readonly declined = new Map<string, string>();
 
   constructor(
     parent: HTMLElement,
@@ -110,7 +129,13 @@ export class HirePresetsDialog {
     this.dialog.addEventListener('cancel', (e) => {
       // Esc: a pending confirmation or the editor of the list first, then the dialog.
       const v = this.view;
-      if (v.kind === 'edit' && this.desk !== null) {
+      if (v.kind === 'edit' && v.nudge) {
+        // #95: the question first, back to the editor without saving (an editor over the hire form too).
+        e.preventDefault();
+        v.nudge = false;
+        this.render();
+        this.dialog.querySelector<HTMLElement>('#hp-instructions')?.focus();
+      } else if (v.kind === 'edit' && this.desk !== null) {
         e.preventDefault();
         this.toList(v.id);
       } else if (v.kind === 'list' && (v.confirm || v.replacing)) {
@@ -174,7 +199,7 @@ export class HirePresetsDialog {
     this.opening++;
     this.busy = false;
     const note = seed.imagesLeftOut ? `The ${seed.imagesLeftOut === 1 ? 'image' : `${seed.imagesLeftOut} images`} of the first task ${seed.imagesLeftOut === 1 ? 'is' : 'are'} not saved: a preset keeps text only.` : null;
-    this.edit(null, { name: '', prompt: seed.prompt, harness: seed.harness, model: seed.model, effort: seed.effort, scope: 'floor' }, note);
+    this.edit(null, { name: '', prompt: seed.prompt, harness: seed.harness, model: seed.model, effort: seed.effort, scope: 'floor', instructions: seed.instructions === true }, note);
     if (!this.dialog.open) this.dialog.showModal();
     this.focusEditor();
   }
@@ -430,6 +455,7 @@ export class HirePresetsDialog {
         h('p', { class: 'field-hint', id: 'hp-prompt-hint' }, 'What the worker starts on, every time this preset is hired. Up to 32 KiB.'),
         h('p', { class: 'field-hint dd-field-error', id: 'hp-prompt-error', role: 'alert' }, v.error?.field === 'prompt' ? v.error.why : ''),
       ),
+      ...this.instructionsField(v),
       ...(problem
         ? [
             h(
@@ -450,6 +476,52 @@ export class HirePresetsDialog {
     const text = v.saving ? 'Saving…' : stale === 'deleted' ? 'Save as new preset' : v.id ? 'Save preset' : 'Create preset';
     const save = h('button', { class: 'btn btn--primary', type: 'submit', form: 'hp-form', 'data-key': 'save', 'aria-disabled': v.saving ? 'true' : null, 'aria-busy': v.saving ? 'true' : null }, text);
     replaceKeepingFocus(this.actions, [cancel, save]);
+  }
+
+  /**
+   * #95: "Add herdr hiring instructions" beside the prompt, and the question the classifier's "yes" asks under it. An
+   * older bridge gets the hint to update it instead (nothing sends it the flag).
+   */
+  private instructionsField(v: EditView): HTMLElement[] {
+    if (!this.host.store.hirePresets.instructions)
+      return this.off() ? [] : [h('p', { class: 'field-hint hp-instructions-off', 'data-hook': 'hp-instructions-off' }, INSTRUCTIONS_OLD_BRIDGE)];
+    const d = v.draft;
+    const box = h('input', { type: 'checkbox', id: 'hp-instructions', 'data-key': 'instructions', 'aria-describedby': 'hp-instructions-hint' });
+    box.checked = d.instructions;
+    box.disabled = v.saving;
+    box.addEventListener('change', () => {
+      d.instructions = box.checked;
+      if (d.instructions) v.nudge = false;
+      this.render();
+    });
+    const field = h(
+      'div',
+      { class: 'dd-field hp-instructions', 'data-on': d.instructions ? 'true' : 'false' },
+      h('label', { class: 'dd-check', for: 'hp-instructions' }, box, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, INSTRUCTIONS_LABEL)),
+      h('p', { class: 'field-hint dd-base', id: 'hp-instructions-hint' }, INSTRUCTIONS_HINT),
+    );
+    if (!v.nudge) return [field];
+    const ask = h(
+      'div',
+      { class: 'dd-callout pp-confirm hp-nudge', role: 'alert', 'data-hook': 'hp-nudge' },
+      h('p', {}, NUDGE_TEXT),
+      h(
+        'div',
+        { class: 'pp-confirm-actions' },
+        h('button', { type: 'button', class: 'btn btn--sm', 'data-key': 'nudge-as-is', title: 'Save it without the instructions; this text is not asked about again', onclick: () => this.answerNudge(v, false) }, 'Save as is'),
+        h('button', { type: 'button', class: 'btn btn--sm btn--primary', 'data-key': 'nudge-on', onclick: () => this.answerNudge(v, true) }, 'Turn on and save'),
+      ),
+    );
+    return [field, ask];
+  }
+
+  /** #95: the question answered: tick the box (a click on Turn on and save) or keep it off for this text, then save. */
+  private answerNudge(v: EditView, on: boolean): void {
+    if (this.view !== v || !v.nudge) return;
+    v.nudge = false;
+    if (on) v.draft.instructions = true;
+    else v.dismissed = v.draft.prompt;
+    void this.save();
   }
 
   /** This floor (the default) or Global, said plainly: what each one means for where the preset shows. */
@@ -533,8 +605,8 @@ export class HirePresetsDialog {
     const options = this.options(p);
     const draft: HirePresetDraft = p
       ? draftFrom(p, this.floor)
-      : (seed ?? { name: '', prompt: '', ...resolveVisibleChoice(options, null), scope: 'floor' });
-    this.view = { kind: 'edit', id: p?.id ?? null, draft, error: null, saving: false, seen: p ? structuredClone(p) : null, note };
+      : (seed ?? { name: '', prompt: '', ...resolveVisibleChoice(options, null), scope: 'floor', instructions: false });
+    this.view = { kind: 'edit', id: p?.id ?? null, draft, error: null, saving: false, seen: p ? structuredClone(p) : null, note, nudge: false, dismissed: p ? (this.declined.get(p.id) ?? null) : null };
     this.modelQuery = '';
     this.setStatus('');
     this.render();
@@ -548,6 +620,7 @@ export class HirePresetsDialog {
     v.draft = draftFrom(now, this.floor);
     v.seen = structuredClone(now);
     v.error = null;
+    v.nudge = false;
     this.render();
     this.focusEditor();
   }
@@ -555,6 +628,11 @@ export class HirePresetsDialog {
   private async save(): Promise<void> {
     const v = this.view;
     if (v.kind !== 'edit' || v.saving) return;
+    if (v.nudge) {
+      // The question is open: it is answered first.
+      this.dialog.querySelector<HTMLElement>('[data-key="nudge-on"]')?.focus();
+      return;
+    }
     const book = this.host.store.hirePresets;
     const off = this.off();
     if (off) {
@@ -571,14 +649,26 @@ export class HirePresetsDialog {
       this.dialog.querySelector<HTMLElement>(bad.field === 'name' ? '#hp-name' : bad.field === 'prompt' ? '#hp-prompt' : '[data-pick="preset-harness"] input')?.focus();
       return;
     }
-    const spec = presetSpec(v.draft, this.floor);
     v.saving = true;
     this.render();
+    // #95: the box off: does the prompt hand work to other agents? Only a "yes" in time stops the save, to ask.
+    if (await this.delegates(v)) {
+      if (this.view !== v) return;
+      v.saving = false;
+      v.nudge = true;
+      this.render();
+      this.dialog.querySelector<HTMLElement>('[data-key="nudge-on"]')?.focus();
+      return;
+    }
+    if (this.view !== v) return;
+    const spec = presetSpec(v.draft, this.floor, book.instructions);
     const r: CommandResult = current ? await this.host.send('hire_preset.update', { id: current.id, ...spec }) : await this.host.send('hire_preset.create', spec);
     if (this.view !== v) return;
     v.saving = false;
     if (r.ok) {
       const saved = r.data as HirePreset | undefined;
+      const id = saved?.id ?? current?.id;
+      if (id && v.dismissed !== null) this.declined.set(id, v.dismissed);
       const done = `${current ? 'Saved' : 'Created'} hire preset “${spec.name}” (${spec.floor ? 'this floor' : 'global'}).`;
       if (this.desk === null) {
         this.close();
@@ -598,6 +688,18 @@ export class HirePresetsDialog {
     } else this.setStatus(failureText(t, r.code, r.message, { floor: this.floorName() }), true);
     this.render();
     if (v.error?.field === 'name') this.dialog.querySelector<HTMLElement>('#hp-name')?.focus();
+  }
+
+  /**
+   * #95: the classifier's say on the draft's prompt, when Save should ask (`nudgeWanted`): false for anything but a "yes"
+   * (a refusal, a timeout, an older bridge's `unknown_command`).
+   */
+  private async delegates(v: EditView): Promise<boolean> {
+    const supported = this.host.store.hirePresets.instructions && !this.host.unsupported('hire_preset.check');
+    const ready = supported && this.host.store.ai.state?.classifier.state === 'ready';
+    if (!nudgeWanted(v.draft, { supported, ready, dismissed: v.dismissed })) return false;
+    const r = await this.host.send('hire_preset.check', { prompt: v.draft.prompt });
+    return r.ok && (r.data as HirePresetCheckAck | undefined)?.delegates === true;
   }
 
   private async remove(p: HirePreset): Promise<void> {
@@ -645,7 +747,8 @@ export class HirePresetsDialog {
       groups: { floor: floor.map((p) => this.row(p)), global: global.map((p) => this.row(p)) },
       confirm: v.kind === 'list' ? v.confirm : null,
       replacing: v.kind === 'list' ? v.replacing : null,
-      editing: v.kind === 'edit' ? { id: v.id, draft: { ...v.draft }, error: v.error, saving: v.saving, stale: this.stale(v), problem: exactProblem(this.host.store.hireOptions, v.draft) } : null,
+      editing: v.kind === 'edit' ? { id: v.id, draft: { ...v.draft }, error: v.error, saving: v.saving, stale: this.stale(v), problem: exactProblem(this.host.store.hireOptions, v.draft), nudge: v.nudge } : null,
+      instructions: this.host.store.hirePresets.instructions,
       status: this.statusText,
       error: this.statusError,
     };

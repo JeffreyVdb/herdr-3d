@@ -207,6 +207,8 @@ var migrations = []string{
 	migrationNotifyReplies,
 	// #93: hire presets, on a floor or global.
 	migrationHirePreset,
+	// #95: hire presets' "Add herdr hiring instructions".
+	migrationHirePresetInstructions,
 }
 
 // Fingerprint kinds.

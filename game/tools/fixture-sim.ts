@@ -28,7 +28,7 @@ type Obj = Record<string, unknown>;
 // M5: prompt, answer, changes and usage.
 import { PanelsSim, simCommands, simFiles } from './fixture-panels.ts';
 // M6 start: team presets and starting a run.
-import { StartSim } from './fixture-start.ts';
+import { herdrInstructions, StartSim } from './fixture-start.ts';
 // M6 crew: a scripted freelancer (`sim.crew`, `simcrew=<ms>`).
 import { CrewSim } from './fixture-crew.ts';
 // M7: the issues and pull request boards (`board.watch`, `sim.boards`, `simfail=no_m7`).
@@ -51,7 +51,9 @@ import { DigestSim } from './fixture-digest.ts';
 import { ActivitySettingsSim } from './fixture-activity-settings.ts';
 import { CodexServerSim } from './fixture-codex-server.ts';
 import { ReposSim, seedRepos } from './fixture-repos.ts';
-// #93 hire presets (`hire_preset.*`, `simhirepresets=<key>`, `simfail=no_hire_presets`).
+// #93 hire presets (`hire_preset.*`, `simhirepresets=<key>`, `simfail=no_hire_presets`); #95 the herdr hiring
+// instructions (`worker.hire`'s `herdr_instructions`, `hire.prepare`'s lines, `hire_preset.check`, `sim.first_prompts`,
+// `simfail=no_herdr_instructions`).
 import { HirePresetSim } from './fixture-hirepreset.ts';
 // #106: the inbox's dismissals (`inbox.dismiss`, `sim.status`, `simfail=no_inbox`).
 import { InboxSim } from './fixture-inbox.ts';
@@ -243,6 +245,8 @@ export class SimWorld {
   private readonly leaving = new Set<string>();
   /** M4: the last harness/model/effort hired per floor. */
   private readonly lastHire = new Map<string, Hire>();
+  /** #95: each hire's first prompt as the worker gets it (the herdr hiring instructions added), in order (`sim.first_prompts`). */
+  private readonly firstPrompts: Array<{ id: string; floor: string; prompt: string }> = [];
   /** M4: the branch the bridge recorded making for a worker (`hire_branch`), by worker id. */
   private readonly hireBranch = new Map<string, string>();
   /** M4 `simfail=fetch_failed`: `git fetch origin` fails in every repo. */
@@ -359,11 +363,12 @@ export class SimWorld {
       (m) => this.announce(m),
     );
     this.hirePresets = new HirePresetSim(
-      { hasFloor: (id) => this.floors.has(id), hire: this.hire, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() },
+      { hasFloor: (id) => this.floors.has(id), hire: this.hire, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now(), ai: this.ai },
       o.fail !== 'no_hire_presets',
       o.hirePresets ?? null,
       (m) => this.announce(m),
-    ); // #93
+      o.fail !== 'no_herdr_instructions',
+    ); // #93, #95
     this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run', o.fail === 'codex_unverified'); // #155, #186
     this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
     this.host = new HostSim(
@@ -741,6 +746,8 @@ export class SimWorld {
         case 'sim.advance':
           this.advance(a);
           return ack();
+        case 'sim.first_prompts': // #95: the simulator's own, not a bridge command
+          return ack(structuredClone(this.firstPrompts));
         case 'sim.swap': // #52
           return ack(this.swap(a, send, screens));
         case 'building.create':
@@ -1643,6 +1650,8 @@ export class SimWorld {
       label: this.nextName(f.session),
       git: this.git(cwd, true),
       capacity: { floor: this.floorCap(f), host: this.hostCap(), load: { load1: 2.36, cpus: 16, mem_used_pct: 41.4 } },
+      // #95: the lines a worker.hire with herdr_instructions adds here (the sim's session is the floor id).
+      ...(this.hirePresets.instructions ? { herdr_instructions: herdrInstructions(f.session) } : {}),
     };
   }
 
@@ -1662,7 +1671,7 @@ export class SimWorld {
   }
 
   private hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void {
-    onlyKeys(a, ['session', 'desk_index', 'harness', 'model', 'effort', 'label', 'cwd', 'worktree', 'prompt']);
+    onlyKeys(a, ['session', 'desk_index', 'harness', 'model', 'effort', 'label', 'cwd', 'worktree', 'prompt', ...(this.hirePresets.instructions ? ['herdr_instructions'] : [])]);
     const f = this.runningFloor(a);
     const desk = a.desk_index;
     if (typeof desk !== 'number' || !Number.isInteger(desk) || desk < 0) throw bad('desk_index must be an int >= 0');
@@ -1676,6 +1685,12 @@ export class SimWorld {
     for (const k of ['label', 'cwd', 'prompt']) if (a[k] !== undefined && typeof a[k] !== 'string') throw bad(`${k} must be a string`);
     if (typeof a.label === 'string' && (!a.label.trim() || bytes(a.label) > 64 || a.label.startsWith('-'))) throw bad('label must be 1-64 bytes, not starting with -');
     if (typeof a.prompt === 'string' && a.prompt.startsWith('--')) throw bad('prompt must not start with --');
+    if (a.herdr_instructions !== undefined && typeof a.herdr_instructions !== 'boolean') throw bad('herdr_instructions must be a bool');
+    if (a.herdr_instructions === true && !(typeof a.prompt === 'string' && a.prompt.trim())) throw bad('herdr_instructions needs a prompt');
+    // #95: the lines go after the task (the bridge checks the whole prompt).
+    const typed = typeof a.prompt === 'string' ? a.prompt : '';
+    const first = a.herdr_instructions === true ? `${typed}\n\n${herdrInstructions(f.session)}` : typed;
+    if (bytes(first) > 32 * 1024) throw bad('prompt must be 1-32768 bytes of text, not starting with "--"');
     if (a.worktree !== undefined && typeof a.worktree !== 'boolean') throw bad('worktree must be a bool');
     const cwd = (a.cwd as string | undefined) ?? this.defaultCwd(f);
     if (!cwd.startsWith('/')) throw bad('cwd must be an absolute path');
@@ -1738,7 +1753,8 @@ export class SimWorld {
     } else if (root) {
       w.worktree = { repo_root: root, repo_name: root.split('/').pop() ?? root, checkout_path: cwd, linked: false };
     }
-    const prompt = typeof a.prompt === 'string' ? a.prompt.trim() : '';
+    const prompt = first.trim();
+    if (prompt) this.firstPrompts.push({ id, floor: f.session, prompt: first });
     // #210: the worker starts but its first task never reaches it (`prompted: false`), like the bridge's partial success.
     const undelivered = !!prompt && this.fail === 'prompt_undelivered' && ((this.fail = undefined), true);
     this.lastHire.set(f.session, { harness, model, effort });

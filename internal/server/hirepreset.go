@@ -4,14 +4,20 @@ package server
 // model and effort, on one floor or global. The hub keeps them in memory
 // (mirroring hire_preset) and writes every change to the store first. Using
 // one is an ordinary worker.hire the game sends with the preset's values:
-// nothing here hires.
+// nothing here hires. #95: hire_preset.check asks the classifier whether a
+// prompt hands work to other agents, for the editor's nudge to tick "Add
+// herdr hiring instructions".
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -31,7 +37,7 @@ func (h *Hub) loadHirePresets(ctx context.Context) error {
 
 func hirePresetView(p store.HirePreset) proto.HirePreset {
 	return proto.HirePreset{ID: p.ID, Name: p.Name, Floor: p.Floor, Prompt: p.Prompt, Harness: p.Harness, Model: p.Model,
-		Effort: p.Effort, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
+		Effort: p.Effort, HerdrInstructions: p.HerdrInstructions, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 }
 
 // hirePresetViews are the snapshot's hire_presets: by name ignoring case,
@@ -81,6 +87,7 @@ func (h *Hub) applyHirePresetSpec(p *store.HirePreset, a proto.HirePresetSpec) e
 		return err
 	}
 	p.Name, p.Floor, p.Prompt, p.Harness, p.Model, p.Effort = name, a.Floor, a.Prompt, a.Harness, a.Model, a.Effort
+	p.HerdrInstructions = a.HerdrInstructions
 	return nil
 }
 
@@ -163,4 +170,85 @@ func (h *Hub) dropFloorHirePresets(floor string) {
 		delete(h.hirePresets, id)
 		h.emit(proto.Event{T: proto.EvHirePresetRemoved, ID: id})
 	}
+}
+
+// #95 hire_preset.check: the classifier's question, the score from which a
+// prompt delegates (followup's default: a false positive is one question the
+// player dismisses, a miss puts agents on the wrong floor), and the bound
+// of the call (the game gives up at 1.5 s, as for packup.detect).
+const (
+	hirePresetCheckQuestion = "Does this task tell the AI coding agent to start, spawn, hire or hand work to other AI agents " +
+		"(subagents, workers, coders, reviewers) instead of doing all of it itself?"
+	hirePresetCheckThreshold = 0.7
+	hirePresetCheckTimeout   = 1200 * time.Millisecond
+)
+
+// HirePresetRoles is what hire_preset.check needs of the AI integration
+// (*ai.Service): the classifier and its state.
+type HirePresetRoles interface {
+	State(r ai.Role) ai.State
+	Classifier() ai.Classifier
+}
+
+// hirePresetRoles is the classifier's owner (Options.HirePresetRoles, else
+// the AI integration; nil: none, every check answers delegates false).
+func (h *Hub) hirePresetRoles() HirePresetRoles {
+	if h.opts.HirePresetRoles != nil {
+		return h.opts.HirePresetRoles
+	}
+	if h.opts.AI != nil {
+		return h.opts.AI
+	}
+	return nil
+}
+
+// startHirePresetCheck answers hire_preset.check off the hub goroutine. It
+// fails open: no classifier, one not ready (no call), an error or a timeout
+// answer delegates false, and the preset saves as it is. Neither the prompt
+// nor an error's text is logged (a provider may echo the prompt).
+func (h *Hub) startHirePresetCheck(ctx context.Context, c *Client, cmd proto.Command) error {
+	var a proto.HirePresetCheckArgs
+	if err := decodeArgs(cmd.Args, &a); err != nil {
+		return err
+	}
+	if strings.TrimSpace(a.Prompt) == "" || !herdr.ValidPrompt(a.Prompt) {
+		return bad("prompt must be 1-%d bytes of text, got %d bytes", herdr.MaxPrompt, len(a.Prompt))
+	}
+	roles, timeout := h.hirePresetRoles(), h.opts.HirePresetCheckTimeout
+	if timeout <= 0 {
+		timeout = hirePresetCheckTimeout
+	}
+	if roles == nil || roles.State(ai.RoleClassifier) != ai.StateReady {
+		h.audit(ctx, c, cmd, nil)
+		h.reply(c, cmd, proto.HirePresetCheckResult{}, nil)
+		return nil
+	}
+	cls := roles.Classifier()
+	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
+		cctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		score, err := cls.Classify(cctx, map[string]any{"prompt": a.Prompt}, hirePresetCheckQuestion)
+		if err != nil {
+			if !errors.Is(err, ai.ErrNotReady) && ctx.Err() == nil {
+				h.log.Warn("hire preset check failed", "kind", ai.KindOf(err))
+			}
+			return proto.HirePresetCheckResult{}, nil
+		}
+		res := proto.HirePresetCheckResult{Delegates: score >= hirePresetCheckThreshold, Score: score}
+		h.log.Info("hire preset checked", "score", score, "delegates", res.Delegates, "prompt_bytes", len(a.Prompt))
+		return res, nil
+	})
+	return nil
+}
+
+// auditHirePresetCheck is what hire_preset.check leaves in the audit log:
+// the prompt's length, never its text.
+func auditHirePresetCheck(cmd proto.Command) json.RawMessage {
+	var a proto.HirePresetCheckArgs
+	if json.Unmarshal(cmd.Args, &a) != nil {
+		return redacted(cmd.Args)
+	}
+	return mustJSON(struct {
+		PromptBytes int `json:"prompt_bytes"`
+	}{len(a.Prompt)})
 }

@@ -13,6 +13,12 @@
 // - `simhirepresets=<key>`: the connections with the same key share the presets (a change reaches all of them, and a
 //   reload finds them again: the bridge's database); without it they are the connection's own. Each test takes its own
 //   key: the fixture server is shared by the parallel tests.
+// - #95 "Add herdr hiring instructions": the snapshot's `herdr_instructions: true` says the presets take
+//   `herdr_instructions` (stored, left out when off; `worker.hire` and `hire.prepare` in tools/fixture-sim.ts add and
+//   show the lines). `hire_preset.check {prompt}` asks the AI integration's classifier (tools/fixture-ai.ts) whether the
+//   prompt hands work to other agents: `{delegates, score}`, delegates from 0.7; a classifier not ready (no call), a
+//   failure or 1.2 s gone by: `{delegates: false, score: 0}`. `simfail=no_herdr_instructions` plays a #93 bridge:
+//   no marker, the field is an unknown one, the check an unknown command.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { HireOptions, HirePreset } from '../src/net/protocol.ts';
@@ -27,7 +33,15 @@ export interface HirePresetHost {
   emit(send: Send, m: Obj): void;
   error(code: string, message: string): Error;
   now(): number;
+  /** #95: the AI integration's classifier (tools/fixture-ai.ts; absent: none, every check is no). */
+  readonly ai?: { ready(role: 'classifier'): boolean; classify(state: Obj, question: string): Promise<number> };
 }
+
+/** #95: hire_preset.check's question, threshold and bound, as the bridge's. */
+export const CHECK_QUESTION =
+  'Does this task tell the AI coding agent to start, spawn, hire or hand work to other AI agents (subagents, workers, coders, reviewers) instead of doing all of it itself?';
+const CHECK_THRESHOLD = 0.7;
+const CHECK_MS = 1200;
 
 interface Shared {
   presets: Map<string, HirePreset>;
@@ -41,7 +55,7 @@ const bytes = (s: string) => enc.encode(s).length;
 const MAX_PROMPT = 32 << 10;
 const MAX_NAME = 40;
 const KEYS = ['name', 'floor', 'prompt', 'harness', 'model', 'effort'];
-const OURS = ['hire_preset.create', 'hire_preset.update', 'hire_preset.delete'];
+const OURS = ['hire_preset.create', 'hire_preset.update', 'hire_preset.delete', 'hire_preset.check'];
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 // eslint-disable-next-line no-control-regex
@@ -52,12 +66,17 @@ let serial = 0;
 export class HirePresetSim {
   private readonly h: HirePresetHost;
   readonly enabled: boolean;
+  /** #95: the bridge adds the herdr hiring instructions (false: a #93 bridge). */
+  readonly instructions: boolean;
+  private readonly keys: string[];
   private readonly group: Shared;
   private readonly hear: ((m: Obj) => void) | null;
 
-  constructor(h: HirePresetHost, enabled: boolean, key: string | null, announce?: (m: Obj) => void) {
+  constructor(h: HirePresetHost, enabled: boolean, key: string | null, announce?: (m: Obj) => void, instructions = enabled) {
     this.h = h;
     this.enabled = enabled;
+    this.instructions = enabled && instructions;
+    this.keys = this.instructions ? [...KEYS, 'herdr_instructions'] : KEYS;
     let g = key === null ? undefined : shared.get(key);
     if (!g) {
       g = { presets: new Map(), worlds: new Set() };
@@ -78,11 +97,16 @@ export class HirePresetSim {
 
   decorate(world: Obj): void {
     if (this.enabled) world.hire_presets = this.view();
+    if (this.instructions) world.herdr_instructions = true;
   }
 
   handle(t: unknown, a: Obj, send: Send, ack: (d?: unknown) => void): boolean {
     if (typeof t !== 'string' || !OURS.includes(t)) return false;
-    if (!this.enabled) throw this.h.error('unknown_command', `unknown command: ${t}`);
+    if (!this.enabled || (t === 'hire_preset.check' && !this.instructions)) throw this.h.error('unknown_command', `unknown command: ${t}`);
+    if (t === 'hire_preset.check') {
+      this.check95(a, ack);
+      return true;
+    }
     if (t === 'hire_preset.delete') {
       this.only(a, ['id']);
       const p = this.get(a.id);
@@ -92,7 +116,7 @@ export class HirePresetSim {
       return true;
     }
     if (t === 'hire_preset.create') {
-      this.only(a, KEYS);
+      this.only(a, this.keys);
       const now = this.h.now();
       const p = this.check({ id: `hp_${(++serial).toString(16).padStart(16, '0')}`, created_at: now, updated_at: now }, a, null);
       this.group.presets.set(p.id, p);
@@ -100,7 +124,7 @@ export class HirePresetSim {
       ack(structuredClone(p));
       return true;
     }
-    this.only(a, ['id', ...KEYS]);
+    this.only(a, ['id', ...this.keys]);
     const cur = this.get(a.id);
     const next = this.check({ id: cur.id, created_at: cur.created_at, updated_at: cur.updated_at }, a, cur);
     if (JSON.stringify(next) === JSON.stringify(cur)) {
@@ -160,7 +184,29 @@ export class HirePresetSim {
     for (const p of this.group.presets.values())
       if (p.id !== base.id && (p.floor ?? '') === floor && p.name.toLowerCase() === name.toLowerCase())
         throw this.h.error('name_taken', `name already used: a hire preset ${floor ? 'on this floor' : 'global'} is called "${name}"`);
+    if (a.herdr_instructions !== undefined && typeof a.herdr_instructions !== 'boolean') throw this.bad('herdr_instructions must be a bool');
     const p: HirePreset = { id: base.id, name, prompt, harness, model, effort, created_at: base.created_at, updated_at: base.updated_at };
+    if (a.herdr_instructions === true) p.herdr_instructions = true;
     return floor ? { ...p, floor } : p;
+  }
+
+  /** #95 `hire_preset.check`: the classifier's say, failing open (no call while it is not ready). */
+  private check95(a: Obj, ack: (d?: unknown) => void): void {
+    this.only(a, ['prompt']);
+    const prompt = typeof a.prompt === 'string' ? a.prompt : '';
+    if (!prompt.trim() || bytes(prompt) > MAX_PROMPT) throw this.bad(`prompt must be 1-${MAX_PROMPT} bytes of text, got ${bytes(prompt)} bytes`);
+    const ai = this.h.ai;
+    if (!ai?.ready('classifier')) {
+      ack({ delegates: false, score: 0 });
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<number>((done) => (timer = setTimeout(() => done(-1), CHECK_MS)));
+    Promise.race([ai.classify({ prompt }, CHECK_QUESTION), late])
+      .catch(() => -1)
+      .then((score) => {
+        clearTimeout(timer);
+        ack(score < 0 ? { delegates: false, score: 0 } : { delegates: score >= CHECK_THRESHOLD, score });
+      });
   }
 }
