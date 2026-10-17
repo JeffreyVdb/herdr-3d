@@ -35,7 +35,7 @@ function setup(over: Partial<Env> = {}, background = false) {
   const env: Env = { seats: Array(6).fill(null), asleep: false, held: new Set(), catalog: CAT, prepare: async () => ({ ok: true, data: prep() }) as CommandResult, ...over };
   const hires: Array<{ args: Record<string, unknown>; answer: (r: CommandResult) => void }> = [];
   const prepares: string[] = [];
-  const toasts: Array<{ text: string; kind: string }> = [];
+  const toasts: Array<{ text: string; kind: string; action?: { label: string; run(): void } }> = [];
   const reserved: number[] = [];
   const goTos: string[] = [];
   const prefs = new HirePrefs(null);
@@ -65,7 +65,7 @@ function setup(over: Partial<Env> = {}, background = false) {
       return () => env.held.delete(d);
     },
     held: () => env.held,
-    toast: (text: string, kind: string) => void toasts.push({ text, kind }),
+    toast: (text: string, kind: string, action?: { label: string; run(): void }) => void toasts.push({ text, kind, ...(action ? { action } : {}) }),
     goTo: (id: string) => void goTos.push(id),
     beep: () => {},
     hirePrefs: prefs,
@@ -465,6 +465,7 @@ describe('HireReviewDialog', () => {
       expect(hires).toHaveLength(1);
     });
 
+    // #33: the review's status line says it (the coordinator's toast is not shown as well: `kept`).
     it('a refused background hire restores the reviewed task and choices for an explicit retry', async () => {
       const { rv, hires, toasts, goTos } = setup({}, true);
       rv.open('floor', FULL);
@@ -478,8 +479,179 @@ describe('HireReviewDialog', () => {
       expect(rv.isOpen).toBe(true);
       expect(rv.summary()).toMatchObject({ state: 'ready', error: true, form });
       expect(hires).toHaveLength(1);
-      expect(toasts).toHaveLength(1);
+      expect(toasts).toEqual([]);
       expect(goTos).toEqual([]);
+    });
+  });
+
+  // #33: a background hire that is refused or gets no answer gives the reviewed task back: open again, or held.
+  describe('a task given back', () => {
+    /** A background review of FULL (or `interp`) whose Hire was pressed: it is closed, the hire on its way. */
+    async function hired(t: ReturnType<typeof setup>, interp: HireInterpretation = FULL, desk?: number) {
+      t.rv.open('floor', interp, desk);
+      await tick();
+      const before = t.rv.summary()!;
+      hireBtn().click();
+      await tick();
+      expect(t.rv.isOpen).toBe(false);
+      return before;
+    }
+    const other = () => document.body.appendChild(Object.assign(document.createElement('dialog'), { open: true }));
+
+    it('refused with nothing else open: the review again, as it was reviewed, ready, the keyboard on a section (never Hire)', async () => {
+      const t = setup({}, true);
+      const before = await hired(t);
+      t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'hire_failed: claude exited during startup' });
+      await tick();
+      const s = t.rv.summary()!;
+      expect(s).toMatchObject({ desk: 0, state: 'ready', error: true, form: before.form, choice: before.choice });
+      expect(s.status).toMatch(/claude exited during startup/);
+      expect(s.blocker).toBeNull();
+      expect(document.activeElement).toBe(toggle('agent'));
+      expect(t.toasts).toEqual([]);
+      expect(t.rv.heldReviews()).toEqual([]);
+      expect(t.hires).toHaveLength(1);
+      // A new press is a new hire.
+      hireBtn().click();
+      await tick();
+      expect(t.hires).toHaveLength(2);
+      expect(t.hires[1]!.args).toEqual(t.hires[0]!.args);
+    });
+
+    for (const code of ['disconnected', 'timeout'] as const) {
+      it(`no answer (${code}): the review again, its status line says it may have gone through`, async () => {
+        const t = setup({}, true);
+        await hired(t);
+        t.hires[0]!.answer({ ok: false, code, message: '' });
+        await tick();
+        expect(t.rv.summary()).toMatchObject({ state: 'ready', error: true });
+        expect(t.rv.summary()!.status).toBe(
+          `No answer about the hire at Desk 1 of floor: ${code === 'timeout' ? 'herdr-world did not answer in time' : 'the connection dropped'}. It may still have gone through: look at the desk before you hire again.`,
+        );
+        expect(t.toasts).toEqual([]);
+        expect(t.hires).toHaveLength(1);
+      });
+    }
+
+    it('no answer, then the worker sits down after all: the review open again offers no Hire onto that desk', async () => {
+      const t = setup({}, true);
+      await hired(t);
+      t.hires[0]!.answer({ ok: false, code: 'timeout', message: '' });
+      await tick();
+      expect(hireBtn().disabled).toBe(false);
+      t.env.seats[0] = { name: 'Gumdrop' };
+      t.rv.refresh();
+      expect(t.rv.summary()!.blocker).toBe('Gumdrop just sat down at Desk 1.');
+      expect(t.rv.summary()!.desk).toBe(0);
+      expect(hireBtn().disabled).toBe(true);
+      hireBtn().click();
+      await tick();
+      expect(t.hires).toHaveLength(1);
+    });
+
+    it('another dialog open: held, the toast says so with Review again; it opens once the dialog is gone, then is no longer held', async () => {
+      const t = setup({}, true);
+      const before = await hired(t);
+      const d = other();
+      t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'hire_failed: claude exited during startup' });
+      await tick();
+      expect(t.rv.isOpen).toBe(false);
+      expect(t.toasts).toHaveLength(1);
+      expect(t.toasts[0]).toMatchObject({ kind: 'error', action: { label: 'Review again' } });
+      expect(t.toasts[0]!.text).toMatch(/^Desk 1 of floor · .*claude exited during startup.* The task is kept: review it again here or from the command palette\.$/);
+      expect(t.rv.heldReviews()).toEqual([{ id: '1', desk: 0, where: 'floor', task: 'fix the login bug.', outcome: 'failed' }]);
+      // Still open: it says so and stays held.
+      t.toasts[0]!.action!.run();
+      expect(t.rv.isOpen).toBe(false);
+      expect(t.toasts.at(-1)).toMatchObject({ kind: 'info', text: 'Close the open dialog first. The task for Desk 1 of floor is still kept.' });
+      expect(t.rv.heldReviews()).toHaveLength(1);
+      d.remove();
+      t.toasts[0]!.action!.run();
+      const s = t.rv.summary()!;
+      expect(s).toMatchObject({ state: 'ready', error: true, form: before.form, choice: before.choice });
+      expect(s.status).toMatch(/claude exited during startup/);
+      expect(t.rv.heldReviews()).toEqual([]);
+      // An ordinary review now: closed, it is gone (not held again), and a second "Review again" does nothing.
+      t.rv.close();
+      expect(t.rv.heldReviews()).toEqual([]);
+      expect(t.rv.reopenHeld('1')).toBe(false);
+      expect(t.rv.isOpen).toBe(false);
+      expect(t.hires).toHaveLength(1);
+    });
+
+    it('the review open for another dictation: never touched; held, and busy while it is open', async () => {
+      const t = setup({}, true);
+      await hired(t);
+      // The next dictation's review, at the next free desk (the first is held by the hire on its way), edited.
+      t.rv.open('floor', NO_EFFORT);
+      await tick();
+      expect(t.rv.summary()!.desk).toBe(1);
+      const area = q<HTMLTextAreaElement>('#review-task')!;
+      area.value = 'sweep the floor';
+      area.dispatchEvent(new Event('input'));
+      const editing = t.rv.summary()!;
+      t.hires[0]!.answer({ ok: false, code: 'disconnected', message: '' });
+      await tick();
+      expect(t.rv.summary()).toEqual(editing);
+      expect(t.toasts).toHaveLength(1);
+      expect(t.toasts[0]).toMatchObject({ kind: 'warn', action: { label: 'Review again' } });
+      expect(t.toasts[0]!.text).toBe(
+        'No answer about the hire at Desk 1 of floor: the connection dropped. It may still have gone through: look at the desk before you hire again. The task is kept: review it again here or from the command palette.',
+      );
+      expect(t.rv.reopenHeld('1')).toBe(false);
+      expect(t.toasts.at(-1)!.text).toBe('A hire review is open: finish or close it first. The task for Desk 1 of floor is still kept.');
+      expect(t.rv.summary()).toEqual(editing);
+      t.rv.close();
+      expect(t.rv.reopenHeld('1')).toBe(true);
+      expect(t.rv.summary()).toMatchObject({ desk: 0, state: 'ready', error: true, choice: expect.objectContaining({ task: 'fix the login bug.' }) });
+      expect(t.rv.summary()!.status).toMatch(/^No answer about the hire at Desk 1 of floor: the connection dropped\./);
+      expect(t.hires).toHaveLength(1);
+    });
+
+    it('two refused while something is open: two held, each its own desk', async () => {
+      const t = setup({}, true);
+      await hired(t, FULL, 2);
+      await hired(t, FULL, 3);
+      const d = other();
+      t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'nope' });
+      t.hires[1]!.answer({ ok: false, code: 'timeout', message: '' });
+      await tick();
+      expect(t.rv.heldReviews().map((r) => [r.desk, r.outcome])).toEqual([
+        [2, 'failed'],
+        [3, 'unknown'],
+      ]);
+      d.remove();
+      expect(t.rv.reopenHeld('2')).toBe(true);
+      expect(t.rv.summary()!.desk).toBe(3);
+      expect(t.rv.heldReviews().map((r) => r.desk)).toEqual([2]);
+      expect(t.hires).toHaveLength(2);
+    });
+
+    it('a floor that went to sleep meanwhile: held, not opened; it says why', async () => {
+      const t = setup({}, true);
+      await hired(t);
+      t.env.asleep = true;
+      t.hires[0]!.answer({ ok: false, code: 'hire_failed', message: 'nope' });
+      await tick();
+      expect(t.rv.isOpen).toBe(false);
+      expect(t.rv.heldReviews()).toHaveLength(1);
+      expect(t.rv.reopenHeld('1')).toBe(false);
+      expect(t.toasts.at(-1)!.text).toBe('floor is asleep; wake it to hire. The task for Desk 1 of floor is still kept.');
+      t.env.asleep = false;
+      expect(t.rv.reopenHeld('1')).toBe(true);
+    });
+
+    it('in the foreground nothing is held: the review waits and says it, as before', async () => {
+      const t = setup();
+      t.rv.open('floor', FULL);
+      await tick();
+      hireBtn().click();
+      await tick();
+      t.hires[0]!.answer({ ok: false, code: 'disconnected', message: 'the connection dropped' });
+      await tick();
+      expect(t.rv.summary()).toMatchObject({ state: 'ready', error: true, status: 'the connection dropped Look at the desk before you hire again.' });
+      expect(t.rv.heldReviews()).toEqual([]);
+      expect(t.toasts).toEqual([]);
     });
   });
 

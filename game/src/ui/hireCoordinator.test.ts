@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { CommandArgs } from '../net/protocol';
 import { Draft } from './composer/draft';
-import { HireCoordinator, SPAWNED_NOTICE_GAP_MS, SPAWNED_TEXT, type HireRequest } from './hireCoordinator';
+import { backgroundOutcomeText, HireCoordinator, SPAWNED_NOTICE_GAP_MS, SPAWNED_TEXT, type HireRequest } from './hireCoordinator';
 
 // #210: the hire coordinator: what it sends is what was reviewed at Hire, one operation per submission, one message
 // (and one beep) per background outcome, and only its own desk held.
@@ -259,14 +259,13 @@ describe('HireCoordinator: what a background hire says, once', () => {
     });
   }
 
-  // #214: a dictated review hands over no draft, so its unknown outcome points to no hire dialog (nothing is kept there).
+  // #214: a hire with no draft points to no hire dialog (nothing is kept there). #33: a dictated review keeps its task itself (`kept`, below).
   it('an unknown outcome says the task stays in its hire dialog only when there is a draft there', async () => {
-    const dictated = setup();
-    const a = dictated.hires.start(req({ args: args(14, 'bake the rye') }));
-    dictated.answer(0, { ok: false, code: 'timeout', message: 'no answer' });
+    const plain = setup();
+    const a = plain.hires.start(req({ args: args(14, 'bake the rye') }));
+    plain.answer(0, { ok: false, code: 'timeout', message: 'no answer' });
     await a.done;
-    expect(dictated.toasts[0]!.text).toMatch(/look at the desk before you hire again\.$/);
-    expect(dictated.toasts[0]!.text).not.toContain('hire dialog');
+    expect(plain.toasts[0]!.text).toBe('No answer about the hire at Desk 15 of pastry: herdr-world did not answer in time. It may still have gone through: look at the desk before you hire again.');
 
     const typed = setup();
     const b = typed.hires.start(req({ args: args(14, 'bake the rye'), prompt: draft('bake the rye') }));
@@ -274,6 +273,34 @@ describe('HireCoordinator: what a background hire says, once', () => {
     typed.answer(0, { ok: false, code: 'disconnected', message: 'no answer' });
     await b.done;
     expect(typed.toasts[0]!.text).toMatch(/look at the desk before you hire again\. The task stays in its hire dialog\.$/);
+  });
+
+  // #33: the dictated review says where its task is (open again, or held behind "Review again"): the coordinator says nothing then.
+  it('a caller that keeps the task (`kept`): its refusal and unknown outcome are not the coordinator’s to say; a hire still is', async () => {
+    const t = setup();
+    const refused = t.hires.start(req({ kept: true }));
+    t.answer(0, { ok: false, code: 'hire_failed', message: 'hire_failed: claude exited during startup' });
+    expect(await refused.done).toMatchObject({ kind: 'failed', code: 'hire_failed' });
+    const unknown = t.hires.start(req({ key: 'k2', kept: true }));
+    t.answer(1, { ok: false, code: 'disconnected', message: '' });
+    expect(await unknown.done).toMatchObject({ kind: 'unknown', code: 'disconnected' });
+    expect(t.toasts).toEqual([]);
+    expect(t.held.get('pastry:14')).toBe(0);
+    const ok = t.hires.start(req({ key: 'k3', kept: true }));
+    t.answer(2, { ok: true, data: { id: 'w1', prompted: true } });
+    await ok.done;
+    expect(t.toasts.map((x) => x.text)).toEqual([SPAWNED_TEXT]);
+    expect(t.beeps()).toBe(1);
+    expect(t.sends).toHaveLength(3);
+  });
+
+  it('backgroundOutcomeText: the outcome as the background message says it, naming its desk once', () => {
+    const r = { desk: 14, floor: 'pastry-id', where: 'pastry' };
+    expect(backgroundOutcomeText(r, { kind: 'unknown', code: 'disconnected', message: '' })).toBe(
+      'No answer about the hire at Desk 15 of pastry: the connection dropped. It may still have gone through: look at the desk before you hire again.',
+    );
+    expect(backgroundOutcomeText(r, { kind: 'failed', code: 'hire_failed', message: 'hire_failed: claude exited during startup' })).toMatch(/^Desk 15 of pastry · .*claude exited during startup/);
+    expect(backgroundOutcomeText({ desk: 14, floor: 'pastry' }, { kind: 'unknown', code: 'timeout', message: '' })).toContain('Desk 15 of pastry: herdr-world did not answer in time');
   });
 
   it('offline: never sent, so a plain failure', async () => {

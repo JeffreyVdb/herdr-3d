@@ -79,3 +79,10 @@ choice is kept in this browser. It applies to the Hire dialog and to the dictate
   If the connection drops or herdr-world does not answer in time, the
   toast says the hire may still have gone through: look at the desk before you hire again. It is never sent twice by
   itself.
+- **A dictated hire, refused or unanswered (on):** the review opens again with what you reviewed (agent, effort, task,
+  desk and options), ready, its status line saying what happened ("… look at the desk before you hire again." when
+  there was no answer); that line is the message, there is no toast as well. If another dialog is open (the next
+  dictation's review, say), that dialog is left alone and the task is kept: the toast says so with **Review again**,
+  and the command palette lists **Review again: Desk 15 of pastry** with the task's first words until you open it.
+  Kept tasks live in this page only (a reload drops them). Opening one never hires: press Hire again, and if the worker
+  took the desk after all, the review offers another desk instead.

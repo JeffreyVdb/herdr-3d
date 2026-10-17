@@ -98,6 +98,25 @@
   color: var(--text-2);
   font-size: 12px;
 }
+/* #33: a held review: how its hire ended beside the name, the task's first words under it. */
+.pal-held-why {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.pal-held-why--failed {
+  color: var(--error-text);
+}
+.pal-held-task {
+  flex: 1 0 100%;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pal-caps {
   display: inline-flex;
   align-items: center;
