@@ -63,6 +63,10 @@ const (
 	replyUnknown  = "unknown"
 	replyLimited  = "rate_limited"
 	replyTyped    = "typed_answer" // #14: a card's typed answer
+	// ReplyUnresolved (#88): a menu card's keys went, and the worker still
+	// waits on it after the hub's AnswerTimeout (a card's outcome, not a
+	// refusal).
+	ReplyUnresolved = "unresolved"
 )
 
 // ReplyError is a refused reply's prompt: Kind is one of Reply*.
