@@ -253,7 +253,7 @@ func TestCardMenuThroughTheHub(t *testing.T) {
 	rb.term.onKeys = func(string, []string) { go rb.setStatus("w1", "working") }
 	ref := rb.menuCardOf(t, "w1", secretPermission(t))
 	c := rb.ch.Card(ref)
-	for _, want := range []string{"Permission\nIt asks for your permission.", "1. Yes", "2. Yes, and don't ask again for `…` commands", "3. No"} {
+	for _, want := range []string{"Permission\nIt asks for your permission.", "1. Yes", "2. Yes, and don't ask again for …\n", "3. No"} {
 		if !strings.Contains(c.Text, want) {
 			t.Fatalf("card %q lacks %q", c.Text, want)
 		}

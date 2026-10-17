@@ -4646,16 +4646,20 @@ while it is off.
   sent, each choice and a button for each; no Cancel (each such menu has its own No or Quit). The question is read off
   the screen a moment after the worker turns blocked, so the card comes once both are there for the same blocked spell
   (`status_since`): a worker first seen blocked (a restart) rings nothing and gets no card. Of the menu only its
-  choices' labels go, a span in backticks (a quoted command) or a command prefix ("don't ask again for … commands") as
-  `` `…` `` and the rest with anything shaped like a key or token removed; never a line above the menu (its question,
-  the command, the edit, a trust dialog's folder) nor the rest of the screen. A tap answers as the game's
+  choices' labels go: one that says what not to ask about again is cut where its command would start ("Yes, and
+  don't ask again for …", a one-letter key such as "(p)" kept), any other that may name a command ("ask again",
+  "command") is "…" unless known to name none, a span in backticks elsewhere is `` `…` ``, and anything shaped
+  like a key or token is removed; never a line above the menu (its question, the command, the edit, a trust dialog's
+  folder) nor the rest of the screen. A tap answers as the game's
   `worker.answer` does, with the card's `hash` and the choice's number, on the worker's input lane, no client: the
   screen is read again first, and a menu no longer shown (another hash, the worker no longer blocked) sends no key and
   the card says "No longer open"; it says "Answered in the game." once the bridge sees the menu leave first. A new
   menu in the same blocked spell closes the old card and gets its own. Keys sent and the worker still blocked after
   `AnswerTimeout` (3 s): the card says "✓ Sent: <choice>" and "It still waits on its menu: look at it in the game."
   and offers nothing more for that menu. A menu gets one card while the blocked spell lasts, though its screen read
-  fails a while and it comes back. The gates, the taps' answers and the windows are the cards' above.
+  fails a while and it comes back or other menus come between; a spell's first 32 menus get cards, and past that it
+  opens none (the notification went; answer in the game). The gates, the taps' answers and the windows are the cards'
+  above.
 - **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`,
   `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}` and (#13)
   `notify.reply` `{"id"?, "text_bytes", "text_runes", "outcome"}` (`sent`, else the refusal: `not_a_reply`,

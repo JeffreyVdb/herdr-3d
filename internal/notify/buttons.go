@@ -201,15 +201,16 @@ func menuOf(o Observation) *menuSeen {
 	return &menuSeen{menu: w.Menu, name: o.Name, since: w.StatusSince}
 }
 
-// maxCarded is how many menus of one blocked spell are kept as carded;
-// past it the oldest is forgotten.
-const maxCarded = 8
+// maxCarded is how many menus of one blocked spell get a card: past it
+// the spell opens none (its notification went; the game answers), and no
+// hash is forgotten, so none gets a second card.
+const maxCarded = 32
 
 // spell is a worker's blocked spell whose needs-you notification went
-// (#88): its status_since, and the hashes of its menus that got a card. A
-// menu gets one card while the spell lasts, though the session is
-// forgotten (an unresolved answer) or the screen read fails a while (the
-// menu gone, then back with its hash).
+// (#88): its status_since, and the hashes of its menus that got a card (at
+// most maxCarded, none forgotten). A menu gets one card while the spell
+// lasts, though the session is forgotten (an unresolved answer) or the
+// screen read fails a while (the menu gone, then back with its hash).
 type spell struct {
 	since  int64
 	carded []string
@@ -417,17 +418,15 @@ func (s *Service) rang(ctx context.Context, a Alert) {
 
 // openMenu opens worker id's menu card (#88) when the loop saw its menu and
 // the notification of the same blocked spell went, once a menu (openCards:
-// replies on, not open already).
+// replies on, not open already), for the spell's first maxCarded menus.
 func (s *Service) openMenu(ctx context.Context, id string) {
 	m := s.bt.menus[id]
 	sp := s.bt.rang[id]
-	if sp == nil || m == nil || sp.since != m.since || slices.Contains(sp.carded, m.menu.Hash) {
+	if sp == nil || m == nil || sp.since != m.since || slices.Contains(sp.carded, m.menu.Hash) || len(sp.carded) >= maxCarded {
 		return
 	}
 	if s.openCards(ctx, Alert{WorkerID: id, Name: m.name, Kind: KindNeedsYou, Since: m.since, Menu: m.menu}) {
-		if sp.carded = append(sp.carded, m.menu.Hash); len(sp.carded) > maxCarded {
-			sp.carded = sp.carded[1:]
-		}
+		sp.carded = append(sp.carded, m.menu.Hash)
 	}
 }
 

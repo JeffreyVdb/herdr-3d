@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -83,8 +84,8 @@ func TestNotifyFactsMenu(t *testing.T) {
 			{N: 4, Label: "Yes, and don't ask again for mysql -phunter2 commands in /tmp/proj"}}}
 	got := notifyFacts(&proto.Worker{Status: statusBlocked, Question: q}, false).Menu
 	want := &notify.Menu{Hash: "0123456789abcdef", Kind: "permission", Choices: []notify.MenuChoice{
-		{N: 1, Label: "Yes"}, {N: 2, Label: "Yes, and don't ask again for commands that start with `…` (p)"}, {N: 3, Label: "No, and `…`"},
-		{N: 4, Label: "Yes, and don't ask again for `…` commands in /tmp/proj"}}}
+		{N: 1, Label: "Yes"}, {N: 2, Label: "Yes, and don't ask again for … (p)"}, {N: 3, Label: "No, and `…`"},
+		{N: 4, Label: "Yes, and don't ask again for …"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("menu %+v, want %+v", got, want)
 	}
@@ -122,7 +123,7 @@ func TestNotifyFactsMenuCommandLine(t *testing.T) {
 		t.Fatalf("the command line in the facts: %s", s)
 	}
 	for name, labels := range map[string][]string{
-		"codex-approval":          {"Yes, proceed (y)", "Yes, and don't ask again for commands that start with `…` (p)", "No, and tell Codex what to do differently (esc)"},
+		"codex-approval":          {"Yes, proceed (y)", "Yes, and don't ask again for … (p)", "No, and tell Codex what to do differently (esc)"},
 		"claude-permission-bash":  {"Yes", "Yes, and always allow access to /tmp/h3d-m5term/claude-a2be86 from this project", "No"},
 		"claude-permission-write": {"Yes", "Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)", "No"},
 		"claude-trust":            {"No, exit", "Yes, I trust this folder"},
@@ -140,6 +141,84 @@ func TestNotifyFactsMenuCommandLine(t *testing.T) {
 		if !reflect.DeepEqual(got, labels) {
 			t.Errorf("%s: labels %q, want %q", name, got, labels)
 		}
+	}
+}
+
+// #88: a command in a choice that says what not to ask about again can
+// hold " commands" itself, so the label is cut where the command would
+// start, its end never looked for.
+func TestNotifyFactsMenuPrefixContainingCommands(t *testing.T) {
+	sc := strings.Replace(screen(t, "claude-permission-bash"),
+		"Yes, and always allow access to /tmp/h3d-m5term/claude-a2be86 from this project",
+		"Yes, and don't ask again for echo commands && mysql -popen-sesame commands in /tmp/proj", 1)
+	q := parseQuestion(sc, 100).q
+	if q.Kind != proto.QuestionPermission || len(q.Choices) != 3 || !strings.Contains(q.Choices[1].Label, "open-sesame") {
+		t.Fatalf("not the screen meant: %+v", q)
+	}
+	m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &q}, false).Menu
+	if s := fmt.Sprintf("%+v", m); strings.Contains(s, "open-sesame") || strings.Contains(s, "mysql") || strings.Contains(s, "echo") {
+		t.Fatalf("the command in the facts: %s", s)
+	}
+	if got := m.Choices[1].Label; got != "Yes, and don't ask again for …" {
+		t.Fatalf("label %q", got)
+	}
+}
+
+// #88: what menuText leaves of a label that may name a command: cut where
+// the command would start, else "…"; its key kept, nothing of the command.
+func TestMenuTextNamesCommand(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"Yes, and don't ask again for echo commands && mysql -popen-sesame commands in /tmp/proj", "Yes, and don't ask again for …"},
+		{"Yes, and don't ask again for `echo commands` && mysql -popen-sesame commands in /tmp/proj", "Yes, and don't ask again for …"},
+		{"Yes, and don't ask again for echo `x` commands mysql -popen-sesame commands", "Yes, and don't ask again for …"},
+		{"Yes, and don't ask again for for mysql -popen-sesame for commands in /tmp/proj", "Yes, and don't ask again for …"},
+		{"Yes, and don't ask again for commands that start with `mysql -popen-sesame` (p)", "Yes, and don't ask again for … (p)"},
+		{"Yes, and don't ask again for commands that start with `mysql -popen-sesame", "Yes, and don't ask again for …"},
+		{"Yes, and don't ask again for mysql -popen-sesame --host db.internal.example comm", "Yes, and don't ask again for …"},
+		{"Yes, and don’t ask again for mysql -popen-sesame commands", "Yes, and don’t ask again for …"},
+		{"YES, AND DO NOT ASK AGAIN FOR mysql -popen-sesame COMMANDS", "YES, AND DO NOT ASK AGAIN for …"},
+		{"Yes, never ask again: mysql -popen-sesame", "Yes, never ask again …"},
+		{"Yes, and don't ask again", "Yes, and don't ask again"},
+		{"No, and ask again for mysql -popen-sesame next time", "…"},
+		{"Always run mysql -popen-sesame and don't ask again (a)", "… (a)"},
+		{"Yes, allow mysql -popen-sesame commands this session", "…"},
+		{"Yes, and don't ask-again for mysql -popen-sesame", "…"},
+	} {
+		got := menuText(c.in)
+		if got != c.want {
+			t.Errorf("menuText(%q) = %q, want %q", c.in, got, c.want)
+		}
+		if strings.Contains(got, "sesame") || strings.Contains(got, "mysql") || strings.Contains(got, "echo") {
+			t.Errorf("menuText(%q) = %q: the command left", c.in, got)
+		}
+	}
+}
+
+// #88: no captured screen's menu sends a label that names a command: each
+// is one we keep as it is, or cut.
+func TestNotifyFactsMenuScreens(t *testing.T) {
+	names, err := filepath.Glob(filepath.Join("testdata", "screens", "*.txt"))
+	if err != nil || len(names) == 0 {
+		t.Fatalf("screens %v %v", names, err)
+	}
+	menus := 0
+	for _, name := range names {
+		q := parseQuestion(screen(t, strings.TrimSuffix(filepath.Base(name), ".txt")), 100).q
+		m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &q}, false).Menu
+		if m == nil {
+			continue
+		}
+		menus++
+		for _, c := range m.Choices {
+			cut := strings.Contains(c.Label, "ask again") && (strings.HasSuffix(c.Label, "ask again for …") ||
+				keyHintRe.MatchString(c.Label) && strings.HasSuffix(keyHintRe.ReplaceAllString(c.Label, ""), "ask again for …"))
+			if !cut && (namesCommandRe.MatchString(c.Label) && !menuLabelsKept[c.Label] || strings.Contains(strings.ReplaceAll(c.Label, "`…`", ""), "`")) {
+				t.Errorf("%s: label %q", name, c.Label)
+			}
+		}
+	}
+	if menus != 5 {
+		t.Fatalf("%d menus among the screens, want 5", menus)
 	}
 }
 

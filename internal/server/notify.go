@@ -228,21 +228,54 @@ func notifyFacts(w *proto.Worker, asleep bool) notify.Worker {
 
 var (
 	// backtickRe is a span in backticks, or one the screen cut off: a
-	// choice's command (Codex's "Yes, and don't ask again for commands that
-	// start with `…`").
+	// choice's quoted command.
 	backtickRe = regexp.MustCompile("`[^`]*(`|$)")
-	// prefixRe is a command prefix a choice names unquoted (Claude Code's
-	// "Yes, and don't ask again for npm test commands in <dir>"; not among
-	// the captured screens, which name a directory).
-	prefixRe = regexp.MustCompile(`(?i)(don't ask again for )(.+?)( commands\b)`)
+	// namesCommandRe is a choice that may name a command: what not to ask
+	// about again (Claude Code's "Yes, and don't ask again for npm test
+	// commands in <dir>", Codex's "Yes, and don't ask again for commands
+	// that start with `…`"), or commands at all.
+	namesCommandRe = regexp.MustCompile(`(?i)ask\PL*again|command`)
+	// askAgainRe is such a choice's lead as Claude Code and Codex write it,
+	// up to where the command would start.
+	askAgainRe = regexp.MustCompile("(?i)^(yes|no),?[\\s\\p{Z}]+(and[\\s\\p{Z}]+)?(don['‘’ʼ´` ]?t|do[\\s\\p{Z}]+not|never)[\\s\\p{Z}]+ask[\\s\\p{Z}]+again")
+	// forRe is what follows the lead when it names what it is for.
+	forRe = regexp.MustCompile(`(?i)^[\s\p{Z}]*for\b`)
+	// keyHintRe is a choice's key at its end, as Codex shows it ("(p)").
+	keyHintRe = regexp.MustCompile(`[\s\p{Z}]\([A-Za-z]\)[\s\p{Z}]*$`)
 )
 
+// menuLabelsKept are the captured screens' choices that say "command" and
+// name none (TestNotifyFactsMenuCommandLine).
+var menuLabelsKept = map[string]bool{
+	"Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)": true,
+}
+
 // menuText is a screen menu choice's label as it may leave the bridge
-// (#88): a command in it elided (what a menu is about stays on the bridge,
-// whatever it holds), the rest scrubbed of what looks like a secret.
+// (#88). A label known to name no command is kept. One that says what not
+// to ask about again is cut where the command would start ("Yes, and
+// don't ask again for …"), and any other that may name a command is "…":
+// a command's end is never looked for, so nothing of it is left. Its key
+// (Codex's "(p)", one letter) is kept. Anything else has a span in
+// backticks elided. All of it is scrubbed of what looks like a secret.
 func menuText(s string) string {
-	s = backtickRe.ReplaceAllString(s, "`…`")
-	return digest.Scrub(prefixRe.ReplaceAllString(s, "$1`…`$3"))
+	if menuLabelsKept[s] || !namesCommandRe.MatchString(s) {
+		return digest.Scrub(backtickRe.ReplaceAllString(s, "`…`"))
+	}
+	key := keyHintRe.FindString(s)
+	out := "…"
+	if lead := askAgainRe.FindString(s); lead != "" {
+		out = lead
+		switch rest := strings.TrimSuffix(s[len(lead):], key); {
+		case forRe.MatchString(rest):
+			out += " for …"
+		case strings.TrimSpace(rest) != "":
+			out += " …"
+		}
+	}
+	if key != "" {
+		out += " " + strings.TrimSpace(key)
+	}
+	return digest.Scrub(out)
 }
 
 // workerDisplayName is the game's displayName: the name, else the label,

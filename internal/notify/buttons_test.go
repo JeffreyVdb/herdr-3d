@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -778,6 +779,59 @@ func TestCardMenuOnceAcrossReadGap(t *testing.T) {
 	if got := r.waitAnswers(t, a, 2); got[1].Hash != "cccccccccccccccc" {
 		t.Fatalf("answer %+v", got[1])
 	}
+}
+
+// #88: a menu that had a card gets no other in its blocked spell, however
+// many other menus came and went meanwhile (a spell forgets none of its
+// carded hashes; past maxCarded it opens none: TestCardMenuCap).
+func TestCardMenuOnceAcrossManyMenus(t *testing.T) {
+	a := &answerer{lane: &ReplyError{Kind: ReplyUnresolved}}
+	r := newCardRig(t, a)
+	ref := r.menuCard(t, "w1", 100, permMenu("aaaaaaaaaaaaaaaa"))
+	r.tap(t, ref, button(t, r.ch.Card(ref), "1.").Data)
+	r.waitCard(t, ref, "✓ Sent: Yes\n"+CardUnresolvedText)
+	for i := 1; i <= 8; i++ {
+		r.svc.Observe(menuOn("w1", 100, permMenu(fmt.Sprintf("%016x", i))))
+		if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == i+1 }, 5*time.Second) {
+			t.Fatalf("no card for menu %d", i)
+		}
+	}
+	r.svc.Observe(menuOn("w1", 100, nil))
+	r.svc.Observe(menuOn("w1", 100, permMenu("aaaaaaaaaaaaaaaa")))
+	time.Sleep(50 * time.Millisecond)
+	if n := len(r.ch.Cards()); n != 9 {
+		t.Fatalf("%d cards, want 9: the first menu got another", n)
+	}
+}
+
+// #88: past maxCarded menus a blocked spell opens no card (the last one's
+// closes as the menu changes), not even for a menu carded before; a new
+// spell has cards again.
+func TestCardMenuCap(t *testing.T) {
+	a := &answerer{}
+	r := newCardRig(t, a)
+	r.menuCard(t, "w1", 100, permMenu(fmt.Sprintf("%016x", 0)))
+	for i := 1; i < maxCarded; i++ {
+		r.svc.Observe(menuOn("w1", 100, permMenu(fmt.Sprintf("%016x", i))))
+		if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == i+1 }, 5*time.Second) {
+			t.Fatalf("no card for menu %d", i)
+		}
+	}
+	last := r.ch.Cards()[maxCarded-1]
+	r.svc.Observe(menuOn("w1", 100, permMenu(fmt.Sprintf("%016x", maxCarded))))
+	if c := r.waitCard(t, last, CardInGameText); len(c.Buttons) != 0 {
+		t.Fatalf("closed card's buttons %+v", c.Buttons)
+	}
+	r.svc.Observe(menuOn("w1", 100, nil))
+	r.svc.Observe(menuOn("w1", 100, permMenu(fmt.Sprintf("%016x", 3))))
+	time.Sleep(50 * time.Millisecond)
+	if n := len(r.ch.Cards()); n != maxCarded {
+		t.Fatalf("%d cards, want %d", n, maxCarded)
+	}
+	if len(a.all()) != 0 {
+		t.Fatalf("answers %+v", a.all())
+	}
+	r.menuCard(t, "w1", 200, permMenu(fmt.Sprintf("%016x", 3)))
 }
 
 // Replies off (#88): the menu's card says so and a tap read before is
