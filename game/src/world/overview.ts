@@ -683,7 +683,7 @@ export const CHILD_STATE_WORD: Record<ChildState, string> = {
 
 /** #24: whether a child's transcript can be opened (#26), is expected, or none is known. */
 export const CHILD_TRANSCRIPT_WORD: Record<ChildTranscript, string> = {
-  available: 'transcript',
+  available: 'transcript available',
   pending: 'transcript pending',
   unavailable: 'no transcript',
 };

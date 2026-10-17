@@ -443,9 +443,6 @@
   height: 14px;
   margin-right: -4px;
 }
-.ov-row--child .ov-meta {
-  font-size: 11px;
-}
 .ov-row--child .ov-what {
   padding-top: 1px;
 }
@@ -505,16 +502,17 @@
   font-family: var(--ov-mono);
   font-size: 11px;
 }
-.ov-line.ov-desc {
+.ov-row--child:hover .ov-desc-text,
+.ov-row--child:focus-visible .ov-desc-text {
   display: -webkit-box;
-  overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
-  color: var(--ov-text-2);
-}
-.ov-row--child:hover .ov-desc,
-.ov-row--child:focus-visible .ov-desc {
   -webkit-line-clamp: 3;
+  white-space: normal;
+}
+/* A transcript one is waiting for, or none: said a step quieter still than one that is there. */
+.ov-tx--pending,
+.ov-tx--unavailable {
+  font-style: italic;
 }
 .ov-wire .ov-wire-loose {
   stroke-dasharray: 2 3;
@@ -1304,6 +1302,13 @@
   /* A working row's room for some of its detail too (the detail counts for nothing in the column's own size). */
   .ov-row > .ov-since:has(.ov-state--act) {
     width: 46vw;
+  }
+  /* #24: a child's task on a line of its own here: two lines of it rather than a few words beside its transcript's. */
+  .ov-row--child .ov-desc-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
   }
   .ov-flap {
     width: 24px;

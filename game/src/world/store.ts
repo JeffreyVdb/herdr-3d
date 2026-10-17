@@ -490,7 +490,8 @@ export class WorldStore {
       case 'hire_preset.removed':
         this.hirePresets.remove(e.id);
         break;
-      // #22 native child agents: no part of the scene yet (the board, phase 3 of #20, reads `children.version`).
+      // #22 native child agents: no part of the scene. Like every event they mark the overview dirty (App.applyChange), so
+      // #24's board (page and wall) reads them again with no transcript open.
       case 'child.upsert':
         this.children.upsert(e.child);
         break;

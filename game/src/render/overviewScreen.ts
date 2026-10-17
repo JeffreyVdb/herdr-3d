@@ -629,8 +629,8 @@ function pip(g: CanvasRenderingContext2D, r: OverviewChildRow, x: number, y: num
 
 /**
  * #24: a native child's line on the wall: its pip, the provider's mark and its name (a size down, not in capitals), a
- * `PARENT UNKNOWN` chip for an unresolved one, what it was asked, its state and time at the right; in full mode its type
- * and its transcript's availability under the name.
+ * `PARENT UNKNOWN` chip for an unresolved one, what it was asked and its transcript's availability, its state and time at
+ * the right; in full mode its type under the name.
  */
 function paintChild(
   g: CanvasRenderingContext2D,
@@ -673,18 +673,27 @@ function paintChild(
   g.fillText(since, sinceRight, base);
   const sinceW = g.measureText(since).width;
   g.textAlign = 'left';
+  // What it was asked, then its transcript's availability, quiet (that keeps its room; the description gives way).
+  const room = sinceRight - sinceW - u * 3 - colWhat;
+  const small = `400 ${Math.round(u * 2.4)}px ${MONO}`;
+  const tx = CHILD_TRANSCRIPT_WORD[r.transcript];
+  g.font = small;
+  const txW = g.measureText(tx).width;
   g.font = `400 ${Math.round(u * (compact ? 2.8 : 3))}px ${FONT}`;
   g.fillStyle = r.description ? TEXT_2 : TEXT_3;
-  fitText(g, r.description ?? 'No task description', colWhat, base, sinceRight - sinceW - u * 3 - colWhat);
+  const w = fitText(g, r.description ?? 'No task description', colWhat, base, room - txW - u * 2);
+  g.font = small;
+  g.fillStyle = TEXT_3;
+  fitText(g, tx, colWhat + w + u * 2, base, room - w - u * 2);
   if (compact) return;
   g.font = `400 ${Math.round(u * 2.4)}px ${MONO}`;
   g.fillStyle = TEXT_3;
   fitText(g, childMeta(r), colWho, base + u * 3.8, colWhat - colWho - u * 3);
 }
 
-/** #24: under a child's name on the wall: its type when it has a name, `subagent`, its transcript's availability. */
+/** #24: under a child's name on the wall (full mode): a provider without a mark, its type when it has a name, `subagent`. */
 export function childMeta(r: OverviewChildRow): string {
-  return [markFor(r.provider) ? null : r.provider || null, r.type, 'subagent', CHILD_TRANSCRIPT_WORD[r.transcript]].filter(Boolean).join(' · ');
+  return [markFor(r.provider) ? null : r.provider || null, r.type, 'subagent'].filter(Boolean).join(' · ');
 }
 
 /** `#118 · Floor overview` (the wall shows the ticket in its row's first line). */

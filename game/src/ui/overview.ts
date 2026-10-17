@@ -657,8 +657,9 @@ export class OverviewOverlay {
   }
 
   /**
-   * #24: a native child's row, quieter than a worker's: its state's pip, the provider's mark, its name (its type beside
-   * a name), what it was asked, its state and time, and its transcript's availability; one with no parent known says so.
+   * #24: a native child's row, quieter than a worker's and one line high: its state's pip, the provider's mark, its name
+   * (its type beside a name), what it was asked and its transcript's availability, its state and time; one with no parent
+   * known says so.
    */
   private fillChild(el: HTMLElement, r: OverviewChildRow, nest: number, wire: SVGSVGElement | null, fold: HTMLElement | null, now: number): void {
     el.dataset.state = r.state;
@@ -674,12 +675,18 @@ export class OverviewOverlay {
       r.type ? h('span', { class: 'ov-ctype' }, r.type) : null,
       r.unresolved ? h('span', { class: 'ov-orphan', title: 'No parent known yet: shown under its worker until the provider names one' }, 'parent unknown') : null,
       nest > NEST_MAX ? h('span', { class: 'ov-level', title: `Nested ${nest} levels deep` }, `level ${nest}`) : null,
-      h('span', { class: 'ov-meta' }, [mark ? null : r.provider, 'subagent', CHILD_TRANSCRIPT_WORD[r.transcript]].filter(Boolean).join(' · ')),
+      mark ? null : h('span', { class: 'ov-ctype' }, r.provider),
     );
+    // One line, so a long list stays dense: what it was asked (all of it on hover and focus), its transcript after it.
     const what = h(
       'div',
       { class: 'ov-what' },
-      r.description ? h('p', { class: 'ov-line ov-desc', title: r.description }, r.description) : h('p', { class: 'ov-line ov-quiet' }, 'No task description'),
+      h(
+        'p',
+        { class: 'ov-line ov-desc' },
+        r.description ? h('span', { class: 'ov-text ov-desc-text', title: r.description }, r.description) : h('span', { class: 'ov-text ov-quiet' }, 'No task description'),
+        h('span', { class: `ov-ai-meta ov-tx ov-tx--${r.transcript}` }, CHILD_TRANSCRIPT_WORD[r.transcript]),
+      ),
     );
     el.replaceChildren(h('span', { class: 'ov-pip', 'aria-hidden': 'true' }), wire ?? '', fold ?? '', who, what, childSinceEl(r, now));
   }

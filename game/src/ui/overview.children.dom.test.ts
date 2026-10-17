@@ -105,15 +105,16 @@ describe('#24 child rows on the page', () => {
     expect(f?.querySelector('.ov-ctype')?.textContent).toBe('worker');
     expect(f?.dataset.state).toBe('running');
     expect(f?.querySelector('.ov-since .ov-doing')?.textContent).toBe('running 4m');
-    expect(f?.querySelector('.ov-meta')?.textContent).toBe('subagent · transcript');
+    expect(f?.querySelector('.ov-tx')?.textContent).toBe('transcript available');
+    expect(f?.querySelector('.ov-meta')).toBeNull();
     expect(text(ov, 'child:ch-o')).toContain('Find the hub’s session handling');
     expect(rowEl('child:ch-o')?.querySelector('.ov-mark title')?.textContent).toBe('Claude');
     const e = rowEl('child:ch-e');
     expect(e?.querySelector('.ov-since .ov-doing')?.textContent).toBe('completed in 3m');
-    expect(e?.querySelector('.ov-meta')?.textContent).toBe('subagent · transcript pending');
-    expect(e?.querySelector('.ov-line')?.textContent).toBe('No task description');
+    expect(e?.querySelector('.ov-tx')?.textContent).toBe('transcript pending');
+    expect(e?.querySelector('.ov-line .ov-text')?.textContent).toBe('No task description');
     expect(e?.getAttribute('aria-label')).toBe('Subagent Subagent · Claude · completed in 3m · transcript pending: go to its worker');
-    expect(f?.getAttribute('aria-label')).toBe('Subagent Ada · worker · Codex · running 4m · transcript: go to its worker');
+    expect(f?.getAttribute('aria-label')).toBe('Subagent Ada · worker · Codex · running 4m · transcript available: go to its worker');
   });
 
   it('keeps the six states apart in words; unknown says so, with no time', () => {
@@ -129,7 +130,7 @@ describe('#24 child rows on the page', () => {
       ['unknown', 'state unknown'],
     ]);
     expect(rowEl('child:unknown')?.querySelector('.ov-time')?.textContent).toBe('');
-    expect(rowEl('child:unknown')?.querySelector('.ov-meta')?.textContent).toBe('subagent · no transcript');
+    expect(rowEl('child:unknown')?.querySelector('.ov-tx')?.textContent).toBe('no transcript');
   });
 
   it('unresolved parentage: under the root worker, a detached dashed elbow and “parent unknown”, never drawn as the worker’s', () => {

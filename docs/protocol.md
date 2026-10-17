@@ -546,7 +546,8 @@ thread's `thread.id`) are its **native child agents**: conversations inside the 
 The bridge publishes them whether or not a transcript is open: `children` in the snapshot, `child.upsert` and
 `child.removed` events, and each worker's `child_generation`. Phase 1 is the model and the protocol; the providers are
 sources of evidence for it: Claude Code since #23 ([below](#claude-code-subagents-23)), Codex rollouts (#25) and the
-shared Codex server (#27) to come. The board shows them from #24 on; opening a child's own transcript is #26.
+shared Codex server (#27) to come. The floor overview shows them under their workers since #24 (an `unresolved` one
+directly under its root worker, marked as having no known parent); opening a child's own transcript is #26.
 
 ```json
 {"t":"child.upsert","seq":1210,"child":{"id":"ch_7f3a09c2e1d4b856","native_id":"a3f9c1e2","provider":"claude",
