@@ -849,6 +849,8 @@ export class App {
         cityData: () => this.cityOverviewData(), // #188
         goToFloor: (floor) => void this.goToFloor(floor),
         goTo: (id) => void this.goToWorker(id, 'transcript'),
+        // #24: a native child's row seats at its worker; #26 opens the child's own transcript here.
+        goToChild: (workerId) => void this.goToWorker(workerId, 'transcript'),
         openTicket: (floor, id) => this.boardsPanel.openItem('issues', floor, id, { pin: true }),
         retrySummary: (id) =>
           void this.send('digest.retry', { id }).then((r) => {

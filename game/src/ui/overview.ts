@@ -17,13 +17,22 @@
  * floor's page): every floor of the city as a row over its workers (`buildCityOverview`), out of the centre, never the
  * wall screen. Both views have a filter, **Active only / All** (`f`, remembered per view): the rows it hides fold away
  * like a collapse and the header says what it hides (a click shows them).
+ *
+ * #24: the workers' native child agents nest under them as quieter conversation rows (a diamond pip for a lamp), to any
+ * depth: wires per level, the indent capped at `NEST_MAX` levels (deeper rows say their level), collapse and keys as for
+ * any group. Activating one goes to its worker until #26 opens the child's own transcript (`OverviewHost.goToChild`).
  */
 
 import { lineStatusText } from '../world/digestSettings';
 import {
   ageText,
   aiTitle,
+  allNodes,
   BLINK_MS,
+  CHILD_TRANSCRIPT_WORD,
+  childSince,
+  childSinceText,
+  endedChildGroups,
   filterOverview,
   hiddenText,
   sinceText,
@@ -33,6 +42,7 @@ import {
   type CityOverviewData,
   type CountItem,
   type OverviewAnyRow,
+  type OverviewChildRow,
   type OverviewData,
   type OverviewFloorRow,
   type OverviewLine,
@@ -51,6 +61,8 @@ const GROW_MS = 420;
 /** A collapsing group's rows fold away under it this long (each a little after the one below it). */
 const FOLD_MS = 300;
 const FOLD_STAGGER_MS = 22;
+/** #24: nesting levels the indent follows; a deeper row stays at this one and says its level. */
+export const NEST_MAX = 4;
 
 /** A rectangle on the viewport, in CSS pixels. */
 export interface ViewRect {
@@ -69,6 +81,11 @@ export interface OverviewHost {
   goToFloor(floor: string): void;
   /** A worker row: sit at its laptop with its conversation on screen (`App.goToWorker(id, 'transcript')`). */
   goTo(id: string): void;
+  /**
+   * #24: a native child's row. Until #26 opens the child's own transcript it seats at the worker that owns it, with that
+   * worker's conversation (`App.goToWorker(workerId, 'transcript')`).
+   */
+  goToChild(workerId: string, childId: string): void;
   /** A ticket: the in-game issue window over the page. */
   openTicket(floor: string, id: string): void;
   /** #174: ask again for a worker's summary lines that failed (`digest.retry`). */
@@ -99,7 +116,7 @@ export interface OverviewInfo {
   filter: 'active' | 'all';
   /** #188: the header's line of what the filter hides (empty: nothing). */
   hidden: string;
-  rows: Array<{ key: string; depth: number; display: string | null; text: string; expanded: boolean | null }>;
+  rows: Array<{ key: string; kind: OverviewAnyRow['kind']; depth: number; display: string | null; text: string; expanded: boolean | null }>;
   focused: string | null;
   empty: boolean;
   calm: boolean;
@@ -115,10 +132,10 @@ const retriable = (r: OverviewWorkerRow): boolean => [r.task, r.now].some((l) =>
 /** #188: an asleep floor's mark, a crescent (drawn: no glyph stands in for it). */
 const MOON = '<path d="M15.5 4.2a7.6 7.6 0 1 0 4.3 11.1 6.2 6.2 0 0 1-4.3-11.1z"/>';
 
-/** The row's own signature: it is rebuilt only when this changes. */
+/** The row's own signature: it is rebuilt only when this changes (#24: its wires, `more`, too). */
 function rowSig(v: VisibleRow): string {
   const r = v.row;
-  return JSON.stringify([r, v.depth, v.expandable, v.expanded]);
+  return JSON.stringify([r, v.depth, v.expandable, v.expanded, v.more]);
 }
 
 export class OverviewOverlay {
@@ -153,7 +170,7 @@ export class OverviewOverlay {
   private sizes = new Map<string, number>();
   /** Rows folding away (a group just collapsed, or hidden by the filter; inert, out of the tree): their own key. */
   private leaving = new Map<HTMLElement, string>();
-  /** #188: the groups collapsed by default (the asleep floors of the all-floors page). */
+  /** #188: the groups collapsed by default (the asleep floors of the all-floors page; #24: an ended child's children). */
   private defaults = new Set<string>();
   /** Every expandable group of the tree as it is, filter or not (Expand all / Collapse all). */
   private groups: string[] = [];
@@ -402,17 +419,18 @@ export class OverviewOverlay {
     this.keysEl?.querySelector<HTMLElement>('[data-k="a"]')?.toggleAttribute('hidden', city);
     this.keysEl?.querySelector<HTMLElement>('[data-k="↵"]')?.lastChild?.replaceWith(city ? 'open transcript · go to floor' : 'open transcript');
     // What the tree holds, filter or not: a row of it that is no longer shown folds away; one that left goes at once.
-    const nodes = 'floors' in full ? full.floors.flatMap((f) => f.nodes) : full.nodes;
-    const present = new Set<string>(nodes.flatMap((n) => [n.row.key, ...n.children.map((c) => c.key)]));
+    const nodes = allNodes(full);
+    const present = new Set<string>(nodes.map((n) => n.row.key));
     this.sizes = new Map(nodes.map((n) => [n.row.key, n.children.length]));
     this.groups = nodes.filter((n) => n.children.length).map((n) => n.row.key);
+    this.defaults = new Set(endedChildGroups(full));
     if ('floors' in full) {
       for (const f of full.floors) present.add(f.row.key);
       this.groups.unshift(...full.floors.filter((f) => f.nodes.length).map((f) => f.row.key));
-      this.defaults = new Set(sleepyFloors(full));
-    } else this.defaults = new Set();
+      for (const k of sleepyFloors(full)) this.defaults.add(k);
+    }
     // Nobody in the whole system: the empty state whatever the filter (the city's tree still has its floors).
-    this.visible = total === 0 ? [] : visibleRows(tree, city ? this.prefs.effective(this.defaults) : this.prefs.set);
+    this.visible = total === 0 ? [] : visibleRows(tree, this.prefs.effective(this.defaults));
     const empty = this.visible.length === 0;
     this.renderEmpty(view, total, hiddenLine);
     this.emptyEl.hidden = !empty;
@@ -424,7 +442,7 @@ export class OverviewOverlay {
     this.visible.forEach((v, i) => {
       const key = v.row.key;
       seen.add(key);
-      const sig = `${rowSig(v)}${v.depth && this.lastChild(v) ? '|last' : ''}`;
+      const sig = rowSig(v);
       let entry = this.rows.get(key);
       const display = v.row.kind === 'worker' ? v.row.display : null;
       const nowText = v.row.kind === 'worker' ? (v.row.now?.text ?? null) : null;
@@ -567,18 +585,17 @@ export class OverviewOverlay {
   private fill(el: HTMLElement, v: VisibleRow, now: number): void {
     const r = v.row;
     // #188: on the all-floors page a floor is a band over its rows, which read as on a floor's page (no indent).
-    const nest = this.view?.kind === 'city' && r.kind !== 'floor' ? v.depth - 1 : v.depth;
-    el.className = `ov-row ov-row--${r.kind}${nest ? ' ov-row--child' : ''}`;
+    const city = this.view?.kind === 'city' && r.kind !== 'floor';
+    const nest = city ? v.depth - 1 : v.depth;
+    el.className = `ov-row ov-row--${r.kind}${nest ? ' ov-row--nested' : ''}`;
     el.dataset.depth = String(v.depth);
+    // #24: the indent follows the tree down to NEST_MAX levels; a deeper row stays there (its wires drawn compressed).
+    if (nest) el.style.setProperty('--nest', String(Math.min(nest, NEST_MAX)));
+    else el.style.removeProperty('--nest');
     el.setAttribute('aria-level', String(v.depth + 1));
     if (v.expandable) el.setAttribute('aria-expanded', String(v.expanded));
     else el.removeAttribute('aria-expanded');
-    const last = nest === 1 && this.lastChild(v);
-    const wire = nest
-      ? svgEl(
-          `<svg class="ov-wire" aria-hidden="true"><line x1="10" y1="0" x2="10" y2="${last ? '22' : '100%'}" pathLength="1"/><line x1="10" y1="22" x2="24" y2="22" pathLength="1"/></svg>`,
-        )
-      : null;
+    const wire = nest ? wireEl(city ? v.more.slice(1) : v.more, r.kind === 'child' ? CHILD_ELBOW_Y : ELBOW_Y, r.kind === 'child' && r.unresolved) : null;
     const fold = v.expandable ? h('span', { class: 'ov-fold', 'aria-hidden': 'true', 'data-fold': '1', title: v.expanded ? 'Collapse (←)' : 'Expand (→)' }, icon(ICON.chevron)) : null;
     if (r.kind === 'floor') {
       this.fillFloor(el, r, fold);
@@ -612,6 +629,11 @@ export class OverviewOverlay {
       return;
     }
     delete el.dataset.display;
+    if (r.kind === 'child') {
+      this.fillChild(el, r, nest, wire, fold, now);
+      return;
+    }
+    delete el.dataset.state;
     if (r.kind === 'ghost') {
       el.setAttribute('aria-label', `Orchestrator ${r.name} · ${r.floor}: go there`);
       el.replaceChildren(
@@ -632,6 +654,34 @@ export class OverviewOverlay {
       h('div', { class: 'ov-what' }),
       sinceEl([], null),
     );
+  }
+
+  /**
+   * #24: a native child's row, quieter than a worker's: its state's pip, the provider's mark, its name (its type beside
+   * a name), what it was asked, its state and time, and its transcript's availability; one with no parent known says so.
+   */
+  private fillChild(el: HTMLElement, r: OverviewChildRow, nest: number, wire: SVGSVGElement | null, fold: HTMLElement | null, now: number): void {
+    el.dataset.state = r.state;
+    el.style.removeProperty('--run');
+    el.removeAttribute('title');
+    el.setAttribute('aria-label', childLabel(r, nest, now));
+    const mark = markSvg(r.provider, 'ov-mark');
+    const who = h(
+      'div',
+      { class: 'ov-who' },
+      mark,
+      h('span', { class: 'ov-name' }, r.name),
+      r.type ? h('span', { class: 'ov-ctype' }, r.type) : null,
+      r.unresolved ? h('span', { class: 'ov-orphan', title: 'No parent known yet: shown under its worker until the provider names one' }, 'parent unknown') : null,
+      nest > NEST_MAX ? h('span', { class: 'ov-level', title: `Nested ${nest} levels deep` }, `level ${nest}`) : null,
+      h('span', { class: 'ov-meta' }, [mark ? null : r.provider, 'subagent', CHILD_TRANSCRIPT_WORD[r.transcript]].filter(Boolean).join(' · ')),
+    );
+    const what = h(
+      'div',
+      { class: 'ov-what' },
+      r.description ? h('p', { class: 'ov-line ov-desc', title: r.description }, r.description) : h('p', { class: 'ov-line ov-quiet' }, 'No task description'),
+    );
+    el.replaceChildren(h('span', { class: 'ov-pip', 'aria-hidden': 'true' }), wire ?? '', fold ?? '', who, what, childSinceEl(r, now));
   }
 
   /** #188: a floor's band: its name and place, its counts as chips (a zero quiet), the moon when it sleeps. */
@@ -670,6 +720,14 @@ export class OverviewOverlay {
    * its sparkle's words, and its spoken label.
    */
   private since(el: HTMLElement, r: OverviewAnyRow, now: number): void {
+    if (r.kind === 'child') {
+      const t = el.querySelector('.ov-since .ov-time');
+      const time = childSince(r, now).time ?? '';
+      if (t && t.textContent !== time) t.textContent = time;
+      const label = childLabel(r, Number(el.style.getPropertyValue('--nest')) || 0, now);
+      if (el.getAttribute('aria-label') !== label) el.setAttribute('aria-label', label);
+      return;
+    }
     if (r.kind !== 'worker') return;
     const t = el.querySelector('.ov-since .ov-time');
     const span = spanText(now - r.since);
@@ -687,12 +745,6 @@ export class OverviewOverlay {
     }
     const label = rowLabel(r, now);
     if (el.getAttribute('aria-label') !== label) el.setAttribute('aria-label', label);
-  }
-
-  private lastChild(v: VisibleRow): boolean {
-    const i = this.visible.indexOf(v);
-    const next = this.visible[i + 1];
-    return !next || next.parent !== v.parent;
   }
 
   private childCount(key: string): number {
@@ -782,6 +834,7 @@ export class OverviewOverlay {
     // The go-to shuts the page itself (no shrink: you are going somewhere else), O brings it back.
     this.closeNow();
     if (r.kind === 'floor') this.host.goToFloor(r.floor);
+    else if (r.kind === 'child') this.host.goToChild(r.workerId, r.id);
     else this.host.goTo(r.id);
   }
 
@@ -867,6 +920,7 @@ export class OverviewOverlay {
       hidden: this.hiddenEl.hidden ? '' : (this.hiddenEl.dataset.text ?? ''),
       rows: this.visible.map((v) => ({
         key: v.row.key,
+        kind: v.row.kind,
         depth: v.depth,
         display: v.row.kind === 'worker' ? v.row.display : null,
         text: textOf(this.rows.get(v.row.key)?.el),
@@ -894,6 +948,57 @@ function rowLabel(r: OverviewWorkerRow, now: number): string {
   return [r.name, r.tag, harnessName(r.harness), r.model, r.activity, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${ai(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${ai(r.now, 'now')}` : null, sinceText(r.display, r.since, now)]
     .filter(Boolean)
     .join(' · ');
+}
+
+/**
+ * #24: a child row's spoken label: what it is, whose, what it was asked, its state and time, its transcript, and where
+ * activating it goes (its worker, until #26). `nest` past NEST_MAX: its level too (the indent no longer says it).
+ */
+function childLabel(r: OverviewChildRow, nest: number, now: number): string {
+  return [
+    `Subagent ${r.name}`,
+    r.type,
+    harnessName(r.provider) || null,
+    r.unresolved ? 'parent unknown' : null,
+    nest > NEST_MAX ? `level ${nest}` : null,
+    r.description ? `Task: ${r.description}` : null,
+    childSinceText(r, now),
+    CHILD_TRANSCRIPT_WORD[r.transcript],
+  ]
+    .filter(Boolean)
+    .join(' · ')
+    .concat(': go to its worker');
+}
+
+/** #24: a child row's since column: its state in words and its time where one means something (`childSince`). */
+function childSinceEl(r: OverviewChildRow, now: number): HTMLElement {
+  const s = childSince(r, now);
+  return sinceEl([h('span', { class: 'ov-state' }, s.word), h('span', { class: 'ov-sep' }, ' '), h('span', { class: 'ov-time' }, s.time ?? '')], 'Go to worker');
+}
+
+/** Where a nested row's elbow meets it (px from its top): a worker's name, a child's (its row is tighter). */
+const ELBOW_Y = 22;
+const CHILD_ELBOW_Y = 17;
+/** #24: the indent per nesting level (overview.css `--ov-step`). */
+const STEP = 20;
+
+/**
+ * #24: a nested row's wires: a line down each ancestor's level that runs on below it (`more`), and at its own level the
+ * line from its parent to its elbow (on down when a sibling follows). Past NEST_MAX the deeper levels share the last
+ * column. An unresolved child's elbow is detached and dashed: shown under the worker, never as started by it.
+ */
+function wireEl(more: readonly boolean[], y: number, detached: boolean): SVGSVGElement {
+  const n = more.length;
+  const vis = Math.min(n, NEST_MAX);
+  const x = (level: number) => 10 + (level - 1) * STEP;
+  const lines: string[] = [];
+  for (let l = 1; l < vis; l++) if (more[l - 1]) lines.push(`<line x1="${x(l)}" y1="0" x2="${x(l)}" y2="100%" pathLength="1"/>`);
+  const on = more.slice(vis - 1).some(Boolean);
+  const own = x(vis);
+  if (on) lines.push(`<line x1="${own}" y1="0" x2="${own}" y2="100%" pathLength="1"/>`);
+  else if (!detached) lines.push(`<line x1="${own}" y1="0" x2="${own}" y2="${y}" pathLength="1"/>`);
+  lines.push(detached ? `<line class="ov-wire-loose" x1="${own + 5}" y1="${y}" x2="${own + 14}" y2="${y}"/>` : `<line x1="${own}" y1="${y}" x2="${own + 14}" y2="${y}" pathLength="1"/>`);
+  return svgEl(`<svg class="ov-wire" aria-hidden="true" style="width:${24 + (vis - 1) * STEP}px">${lines.join('')}</svg>`);
 }
 
 /**

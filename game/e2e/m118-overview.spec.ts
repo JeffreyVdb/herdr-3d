@@ -139,7 +139,7 @@ test('an orchestrator and its freelancers render as a tree that collapses, by ke
   expect(all?.rows.at(-1)?.text).toMatch(/^Turnip/);
   // The ticket with its title, on the orchestrator only (the crew shares it).
   await expect(page.locator(`.ov-row[data-key="${sprout?.key}"] .ov-ticket`)).toHaveText(/#3\s*Port picker in the settings dialog/);
-  await expect(page.locator('.ov-row--child .ov-ticket')).toHaveCount(0);
+  await expect(page.locator('.ov-row--nested .ov-ticket')).toHaveCount(0);
   await expect(page.locator('.ov-row', { hasText: 'Turnip' }).locator('.ov-task')).toContainText('Tidy the README');
   const n = (await keys()).length;
   // ← on Sprout (focused first) folds it; → opens it again.
