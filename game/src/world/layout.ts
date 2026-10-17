@@ -16,6 +16,7 @@ import type { Solid, Support } from './collide';
  * The room is tall (#20): a mezzanine in the north-east corner carries your
  * corner office over the filing cabinet, with an open stair up the east wall.
  * #118: the lounge's west wall carries the floor overview's big screen.
+ * #65: the departures board stands on the board partition, over the clock.
  */
 
 export interface Rect {
@@ -61,7 +62,8 @@ export type PropKind =
   | 'elevator'
   | 'clock'
   | 'screen.overview'
-  | 'server.rack';
+  | 'server.rack'
+  | 'board.departures';
 
 export interface Prop {
   id: PropKind;
@@ -318,6 +320,28 @@ export function overviewScreenBox(depth: number): Box3 {
   return box(0, OVERVIEW_Y0, OVERVIEW_GAP, OVERVIEW_D, OVERVIEW_Y1, r3(north - FRAME_LIP - OVERVIEW_GAP));
 }
 
+/** #65: the departures board on the partition: this wide, its top this high, a little deeper than the partition. */
+const DEPARTURES_W = 3.2;
+const DEPARTURES_TOP = 3.9;
+const DEPARTURES_D = 0.22;
+/** The board partition: this tall, this thick, at most this long, BOARD_WALL_Z off the south wall. */
+const PARTITION_H = 2.5;
+const PARTITION_T = 0.2;
+const PARTITION_MAX = 12;
+
+/**
+ * #65: the departures board, standing on the board partition's top, centred over the clock, both faces readable: the
+ * desks and the corner office see it over the north face, the floor's lobby (the elevator) over the south one. On the
+ * partition, so it is clear of the windows, the whiteboard and TV (north wall), the cabinet, stair and mezzanine (the
+ * east strip), the overview screen and the lounge (west), on every outline. 2.5 to 3.9 m up (its posts, then a 1.28 m
+ * tall face), 3.2 m wide, 22 cm deep: a centimetre proud of the partition on each side.
+ */
+export function departuresBoardBox(width: number, depth: number): Box3 {
+  const bz = depth - BOARD_WALL_Z;
+  const cx = width / 2;
+  return box(cx - DEPARTURES_W / 2, PARTITION_H, r3(bz - DEPARTURES_D / 2), cx + DEPARTURES_W / 2, DEPARTURES_TOP, r3(bz + DEPARTURES_D / 2));
+}
+
 export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
   const desks = Math.max(0, Math.floor(deskCount));
   const nat = naturalSize(desks);
@@ -356,9 +380,9 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
 
   const T = WALL_T;
   const bz = depth - BOARD_WALL_Z;
-  const boardLen = Math.min(12, width - 6);
+  const boardLen = Math.min(PARTITION_MAX, width - 6);
   const bx0 = width / 2 - boardLen / 2;
-  const boardWall = box(bx0, 0, bz - 0.1, bx0 + boardLen, 2.5, bz + 0.1);
+  const boardWall = box(bx0, 0, bz - PARTITION_T / 2, bx0 + boardLen, PARTITION_H, bz + PARTITION_T / 2);
   const walls: Box3[] = [
     box(-T, 0, -T, width + T, H, 0), // north
     box(-T, 0, depth, width + T, H, depth + T), // south
@@ -396,6 +420,8 @@ export function floorLayout(deskCount: number, outline?: Outline): FloorLayout {
     { id: 'screen.overview', label: 'Floor overview', milestone: '#118', box: overviewScreenBox(depth), solid: false },
     // #74: the server rack with its monitor and keyboard on top; it only shows a line on the HUD, nothing to press.
     { id: 'server.rack', label: 'Server rack', milestone: null, box: box(...RACK_BOX), solid: true },
+    // #65: the departures board on the partition (E: the floor's scheduled agents).
+    { id: 'board.departures', label: 'Departures board', milestone: '#65', box: departuresBoardBox(width, depth), solid: false },
   ];
   // Lounge furniture beyond the sofa: coffee table and the coffee counter.
   colliders.push(...props.filter((p) => p.solid).map((p) => rectOf(p.box)));

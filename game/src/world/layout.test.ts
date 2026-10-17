@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { blocked, moveWithCollision, pickNearest, rayBox } from './collide';
 import { assignDesks, deskCountFallback, displayStatus, modelCue, modelText, taskLine } from './derive';
-import { COUNTER_RECT, COUNTER_TOP, EYE_HEIGHT, HEAD, floorLayout, openingsFor, outlineOf, overviewScreenBox, podGrid, POST_W, RACK_BOX, ROOM_HEIGHT, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
+import { COUNTER_RECT, COUNTER_TOP, departuresBoardBox, EYE_HEIGHT, HEAD, floorLayout, openingsFor, outlineOf, overviewScreenBox, podGrid, POST_W, RACK_BOX, ROOM_HEIGHT, seatRect, slotBoxes, wallPieces, type Rect } from './layout';
 
 describe('deskCountFallback', () => {
   it.each([
@@ -136,7 +136,7 @@ describe('floorLayout', () => {
   it('has every placeholder prop, labelled', () => {
     const ids = floorLayout(20).props.map((p) => p.id);
     expect(ids.sort()).toEqual(
-      ['board.issues', 'board.prs', 'board.services', 'clock', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'screen.overview', 'server.rack', 'tv', 'whiteboard'].sort(),
+      ['board.departures', 'board.issues', 'board.prs', 'board.services', 'clock', 'dropzone', 'elevator', 'filing', 'lounge', 'radio', 'screen.overview', 'server.rack', 'tv', 'whiteboard'].sort(),
     );
   });
 
@@ -242,6 +242,62 @@ describe('floorLayout', () => {
       const r = radio as NonNullable<typeof radio>;
       const rc: [number, number, number] = [(r.min[0] + r.max[0]) / 2, (r.min[1] + r.max[1]) / 2, (r.min[2] + r.max[2]) / 2];
       for (const z of [3.7, 4.1, 4.5, 4.8]) expect(pick([1.3, EYE_HEIGHT, z], rc), `from z=${z}`).toBe('radio');
+    }
+  });
+
+  it('#65: stands the departures board on the board partition, both faces readable, clear of every other prop, on every floor', () => {
+    const outlines = [undefined, { width: 18, depth: 14 }, { width: 24, depth: 17.8 }, { width: 31, depth: 23.1 }, { width: 40, depth: 28.4 }];
+    for (const n of [0, 6, 20, 62, 96]) {
+      for (const outline of outlines) {
+        const l = floorLayout(n, outline);
+        const at = `${n} desks, ${l.width} x ${l.depth}`;
+        const board = l.props.find((p) => p.id === 'board.departures');
+        expect(board, at).toMatchObject({ label: 'Departures board', milestone: '#65', solid: false });
+        const b = (board as NonNullable<typeof board>).box;
+        expect(b, at).toEqual(departuresBoardBox(l.width, l.depth));
+        // On the partition's top, within its length, a little deeper than it (both faces proud of the wall's).
+        const wall = l.walls[4] as NonNullable<(typeof l.walls)[4]>;
+        expect(b.min[1], at).toBeCloseTo(wall.max[1], 5);
+        expect(b.min[0], at).toBeGreaterThan(wall.min[0] + 1);
+        expect(b.max[0], at).toBeLessThan(wall.max[0] - 1);
+        expect(b.min[2], at).toBeLessThan(wall.min[2]);
+        expect(b.max[2], at).toBeGreaterThan(wall.max[2]);
+        expect(b.max[2] - b.min[2], at).toBeLessThan(0.3);
+        // Big enough to read across the floor, well under the ceiling and its light strips.
+        expect(b.max[0] - b.min[0], at).toBeGreaterThanOrEqual(3);
+        expect(b.max[1] - b.min[1], at).toBeGreaterThanOrEqual(1.2);
+        expect(ROOM_HEIGHT - b.max[1], at).toBeGreaterThanOrEqual(2);
+        // It overlaps no other prop (the boards and the clock on the partition, the whiteboard, the cabinet, the overview screen…).
+        for (const p of l.props) {
+          if (p.id === 'board.departures') continue;
+          const o = p.box;
+          const hit = b.min[0] < o.max[0] && b.max[0] > o.min[0] && b.min[1] < o.max[1] && b.max[1] > o.min[1] && b.min[2] < o.max[2] && b.max[2] > o.min[2];
+          expect(hit, `${p.id} at ${at}`).toBe(false);
+        }
+        // Nor the mezzanine (its slab, posts and stair) nor a window: it stands mid-room, on no outer wall.
+        const m = l.mezzanine;
+        expect(b.min[2] > m.rect.z1 || b.max[0] < m.rect.x0, at).toBe(true);
+        expect(b.min[2] > m.stair.bottom || b.max[0] < m.stair.x0 - 0.1, at).toBe(true);
+        for (const p of m.posts) expect(p.x + POST_W / 2 < b.min[0] - 0.5 || p.x - POST_W / 2 > b.max[0] + 0.5 || p.z + POST_W / 2 < b.min[2] - 0.5, `post at ${p.x},${p.z}`).toBe(true);
+        expect(b.min[0], at).toBeGreaterThan(1);
+        expect(b.max[0], at).toBeLessThan(l.width - 1);
+        expect(b.min[2], at).toBeGreaterThan(1);
+        expect(b.max[2], at).toBeLessThan(l.depth - 1);
+        // Aimed at from either side within reach, the board is what you hit, over the partition (a blocker).
+        const props = l.props.map((p) => ({ boxes: [p.box], value: p.id }));
+        const mid = (b.min[1] + b.max[1]) / 2;
+        const cx = (b.min[0] + b.max[0]) / 2;
+        for (const [z, face] of [
+          [b.min[2] - 1.6, b.min[2]],
+          [b.max[2] + 1.6, b.max[2]],
+        ] as const) {
+          const from: [number, number, number] = [cx + 0.8, EYE_HEIGHT, z];
+          const d: [number, number, number] = [cx - from[0], mid - from[1], face - from[2]];
+          const len = Math.hypot(...d);
+          expect(len, at).toBeLessThan(3);
+          expect(pickNearest(from, [d[0] / len, d[1] / len, d[2] / len], props, 3, l.walls)?.value, `${at} from z ${z}`).toBe('board.departures');
+        }
+      }
     }
   });
 
