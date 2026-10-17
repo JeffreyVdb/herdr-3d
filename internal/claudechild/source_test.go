@@ -646,6 +646,105 @@ func TestFileGoneAndPending(t *testing.T) {
 	}
 }
 
+// A running foreground child cleaned up before its result, when its meta
+// was the only pairing: its row goes (not left running under the call), and
+// its file back (found at the next listing: a call whose file went waits
+// for none) is the same one row.
+func TestForegroundGoneBeforeResult(t *testing.T) {
+	fx := load(t, "a")
+	const agent = "a8db619749ca642d6"
+	r := newRig(t, "a")
+	r.main(fx.parent[0])
+	r.child(agent, fx.child[agent][:6]...)
+	r.meta(agent, fx.meta[agent], false, when("2026-10-17T20:43:35.150Z"))
+	r.poll()
+	r.one(agent)
+	if err := os.Remove(r.path("agent-" + agent + ".jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	r.poll()
+	if cs := r.rows(); len(cs) != 0 {
+		t.Fatalf("after cleanup rows = %+v; evidence = %+v", cs, r.evs)
+	}
+	r.child(agent, fx.child[agent][:6]...)
+	for range usage.SubagentRescan / (2 * time.Second) {
+		r.poll()
+	}
+	if c := r.one(agent); c.State != proto.ChildRunning {
+		t.Fatalf("back = %+v", c)
+	}
+}
+
+// A child cleaned up whose pairing came from a hook (PostToolUse) only:
+// its row goes too.
+func TestGoneHookPaired(t *testing.T) {
+	fx := load(t, "b")
+	const agent, tool = "a4a204a6a6e12e123", "toolu_01N8bHkC24nZx7es3qSngiL4"
+	r := newRig(t, "b")
+	r.main(fx.parent[0])
+	r.hook(`{"session_id":"` + r.session + `","hook_event_name":"PostToolUse","tool_name":"Agent","tool_use_id":"` + tool +
+		`","tool_response":{"status":"async_launched","agentId":"` + agent + `"}}`)
+	r.child(agent, fx.child[agent][:6]...)
+	r.poll()
+	if c := r.one(agent); c.Transcript != proto.TranscriptAvailable {
+		t.Fatalf("row = %+v", c)
+	}
+	if err := os.Remove(r.path("agent-" + agent + ".jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	r.poll()
+	if cs := r.rows(); len(cs) != 0 {
+		t.Fatalf("after cleanup: %+v", cs)
+	}
+}
+
+// A child file whose records name another session or agent is not this
+// session's: nothing in it counts (its own row, a call in it, a result or
+// a notification in it).
+func TestForeignChildFileIgnored(t *testing.T) {
+	const call = `"message":{"content":[{"type":"tool_use","id":"toolu_foreign","name":"Agent","input":{"description":"foreign nested child","subagent_type":"general-purpose"}}]}`
+	for name, ls := range map[string][]string{
+		"session": {`{"type":"assistant","sessionId":"another-session","agentId":"a111","timestamp":"2026-10-17T20:47:38Z",` + call + `}`},
+		"agent":   {`{"type":"assistant","sessionId":"` + cases["b"] + `","agentId":"a222","timestamp":"2026-10-17T20:47:38Z",` + call + `}`},
+		// A fork's first line names its agent only; the next names the session.
+		"fork": {`{"type":"fork-context-ref","agentId":"a111"}`,
+			`{"type":"assistant","sessionId":"another-session","agentId":"a111","timestamp":"2026-10-17T20:47:38Z",` + call + `}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, "b")
+			r.main(`{"type":"permission-mode","permissionMode":"bypassPermissions"}`)
+			r.child("a111", ls...)
+			r.poll()
+			r.poll()
+			r.poll()
+			r.poll()
+			if cs := r.rows(); len(cs) != 0 {
+				t.Fatalf("rows = %+v", cs)
+			}
+		})
+	}
+	t.Run("derive", func(t *testing.T) {
+		f := newFacts()
+		f.childLine("right-session", "a111", []byte(`{"type":"assistant","sessionId":"wrong-session","agentId":"a111","timestamp":"2026-10-17T20:43:35Z",`+call+`}`))
+		if out := derive("right-session", f, newHookFacts(), time.Now()); len(out) != 0 {
+			t.Fatalf("evidence = %+v", out)
+		}
+	})
+	// Its notification of this session's running child ends nothing.
+	t.Run("notification", func(t *testing.T) {
+		fx := load(t, "b")
+		const agent = "a4a204a6a6e12e123"
+		r := newRig(t, "b")
+		r.main(fx.parent[:2]...)
+		r.child(agent, fx.child[agent][:6]...)
+		r.child("a111", strings.Replace(fx.parent[3], `"sessionId":"`+cases["b"]+`"`, `"sessionId":"another-session"`, 1))
+		r.poll()
+		if c := r.one(agent); c.State != proto.ChildRunning {
+			t.Fatalf("row = %+v", c)
+		}
+	})
+}
+
 // An agent-team teammate's spawn (team_name) is no subagent row, and
 // neither is an internal helper only a hook shows.
 func TestTeammateAndHelperNoRows(t *testing.T) {

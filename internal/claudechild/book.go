@@ -87,9 +87,12 @@ type file struct {
 	prompt  int64 // the latest prompt's (its task, a resume, a Stop hook's feedback)
 	fork    bool
 	copying int // records of a fork's copied context still to skip
-	checked bool
-	bad     bool // its records name another session or agent
-	seenAt  time.Time
+	// sessionOK and agentOK say its first record naming a session, and its
+	// first naming an agent, named this one (a fork's first line names
+	// its agent only).
+	sessionOK, agentOK bool
+	bad                bool // its records name another session or agent
+	seenAt             time.Time
 }
 
 // hookFacts are what the hook log said of a session. Hook input carries no
@@ -139,7 +142,10 @@ func (f *facts) answers(b []byte) bool {
 	return false
 }
 
-// childLine records what a line of child agent's transcript shows.
+// childLine records what a line of child agent's transcript shows. A file
+// whose first records name another session or agent shows nothing at all;
+// and nothing in a file counts before a record of it named this session
+// (every record that does, a call, a result or a notification, names it).
 func (f *facts) childLine(session, agent string, b []byte) {
 	var l line
 	if json.Unmarshal(b, &l) != nil {
@@ -148,9 +154,14 @@ func (f *facts) childLine(session, agent string, b []byte) {
 	fl := f.file(agent)
 	delete(f.gone, agent)
 	fl.lines++
-	if !fl.checked && (l.SessionID != "" || l.AgentID != "") {
-		fl.checked = true
-		fl.bad = (l.SessionID != "" && l.SessionID != session) || (l.AgentID != "" && l.AgentID != agent)
+	if !fl.bad && !fl.sessionOK && l.SessionID != "" {
+		fl.sessionOK, fl.bad = l.SessionID == session, l.SessionID != session
+	}
+	if !fl.bad && !fl.agentOK && l.AgentID != "" {
+		fl.agentOK, fl.bad = l.AgentID == agent, l.AgentID != agent
+	}
+	if fl.bad {
+		return
 	}
 	if l.Type == "fork-context-ref" {
 		// A fork's file starts with its parent's context: copies of the
@@ -174,7 +185,9 @@ func (f *facts) childLine(session, agent string, b []byte) {
 			}
 		}
 	}
-	f.record(agent, &l)
+	if fl.sessionOK {
+		f.record(agent, &l)
+	}
 }
 
 func (f *facts) file(agent string) *file {
@@ -283,10 +296,11 @@ func (f *facts) metaFile(agent string, b []byte, mtime time.Time) {
 	f.metas[agent] = metaFact{meta: m, mtime: mtime.UnixMilli()}
 }
 
-// goneFile records that a child's transcript went.
+// goneFile records that a child's transcript went. Its meta is kept: it
+// may be the only pairing of the child's call, which must go with it (and
+// its file back is the same child).
 func (f *facts) goneFile(agent string) {
 	delete(f.files, agent)
-	delete(f.metas, agent)
 	f.gone[agent] = true
 }
 
@@ -596,7 +610,7 @@ func parentOf(home string) *childagents.ParentRef {
 // ended already: a short child between two polls).
 func wantList(f *facts, h *hookFacts, now time.Time) bool {
 	for _, k := range pair(f, h) {
-		if k.tool == "" || f.files[k.agent] != nil || teammate(f, h, k) {
+		if k.tool == "" || f.files[k.agent] != nil || f.gone[k.agent] || teammate(f, h, k) {
 			continue
 		}
 		d := f.dispatch[k.tool]
