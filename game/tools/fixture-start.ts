@@ -85,8 +85,11 @@ export interface ItemRef {
 /** #102: how a prompt names an item, like the bridge's itemRef: its canonical URL, else "<Provider> task <key>". */
 export const itemRef = (provider: string, it: ItemRef): string => it.url || `${provider} task ${it.key}`;
 
-/** The run's first prompt (contract §2.2): `ticket` is the issue URL (`isIssue`), an item's reference (`itemRef`) or the free text. */
-export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRole, Hire>, extra = '', isIssue = false): string {
+/**
+ * The run's first prompt (contract §2.2), like the bridge's runPrompt: `ticket` is the issue URL (`isIssue`), an item's
+ * reference (`itemRef`) or the free text; after the team the herdr hiring instructions for `floor` (the floor id).
+ */
+export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRole, Hire>, floor: string, extra = '', isIssue = false): string {
   const lines = [
     `${orch.harness === 'codex' ? '$' : '/'}write-code ${ticket.trim()}`,
     '',
@@ -96,7 +99,7 @@ export function composePrompt(orch: Hire, ticket: string, roles: Record<PresetRo
     `- ux reviewers: ${roleLine(roles.ux)}`,
     `- researchers: ${roleLine(roles.researcher)}`,
     '',
-    PLACEMENT_LINE,
+    herdrInstructions(floor),
   ];
   if (isIssue) lines.push('', ISSUE_STATUS_LINE);
   const x = extra.trim();
@@ -127,9 +130,9 @@ type Ticket =
   | { kind: 'item'; url: string; item: ItemRef; provider_name: string };
 
 /** A ticket's prompt, like the bridge's TicketPrompt: an item (#102) by its reference, with no status line. */
-function ticketPrompt(orch: Hire, t: Ticket, roles: Record<PresetRole, Hire>, extra: string): string {
-  if (t.kind === 'item') return composePrompt(orch, itemRef(t.provider_name, t.item), roles, extra);
-  return composePrompt(orch, t.kind === 'issue' ? t.url : t.text, roles, extra, t.kind === 'issue');
+function ticketPrompt(orch: Hire, t: Ticket, roles: Record<PresetRole, Hire>, floor: string, extra: string): string {
+  if (t.kind === 'item') return composePrompt(orch, itemRef(t.provider_name, t.item), roles, floor, extra);
+  return composePrompt(orch, t.kind === 'issue' ? t.url : t.text, roles, floor, extra, t.kind === 'issue');
 }
 
 export class StartSim {
@@ -333,7 +336,7 @@ export class StartSim {
     const extra = this.extraOf(a);
     const h = this.d.prepare(f.session);
     return {
-      prompt: t && p && orch ? ticketPrompt(orch, t, p.roles, extra) : '',
+      prompt: t && p && orch ? ticketPrompt(orch, t, p.roles, f.session, extra) : '',
       label: t ? runLabel(t) : '',
       ticket: t,
       preset: p?.id ?? '',
@@ -354,8 +357,9 @@ export class StartSim {
     if (a.worktree !== undefined && typeof a.worktree !== 'boolean') throw this.bad('worktree must be a bool');
     if (a.label !== undefined && typeof a.label !== 'string') throw this.bad('label must be a string');
     if (a.prompt !== undefined && typeof a.prompt !== 'string') throw this.bad('prompt must be a string');
-    // An empty prompt is none: the bridge composes it (an edited one goes through worker.hire's rules).
-    const prompt = (a.prompt as string | undefined) || ticketPrompt(orch, t, p.roles, extra);
+    // An empty prompt is none: the bridge composes it (an edited one goes through worker.hire's rules). The hiring
+    // instructions are in it already: like the bridge's run.start, the hire carries no herdr_instructions.
+    const prompt = (a.prompt as string | undefined) || ticketPrompt(orch, t, p.roles, f.session, extra);
     const label = (a.label as string | undefined) || runLabel(t);
     const worktree = a.worktree ?? true;
     const hire: Obj = { session: f.session, desk_index: a.desk_index, harness: orch.harness, model: orch.model, effort: orch.effort, label, worktree, prompt };

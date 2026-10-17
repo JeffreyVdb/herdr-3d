@@ -3,6 +3,7 @@ import type { BoardIssues, Snapshot, WorldEvent } from '../src/net/protocol';
 import { WorldStore } from '../src/world/store';
 import { loadFixture } from './fixture-server';
 import { SimWorld, type SimOptions } from './fixture-sim';
+import { herdrInstructions } from './fixture-start';
 
 type Msg = Record<string, unknown>;
 
@@ -134,7 +135,7 @@ describe('the simulated Kaneo connection (#184)', () => {
     expect(prep.label).toBe('ORCH|hrd-4');
     const prompt = String(prep.prompt);
     expect(prompt.startsWith(`/write-code ${link}\n\nTeam:\n`)).toBe(true);
-    expect(prompt.endsWith('\n\nKeep it small.')).toBe(true);
+    expect(prompt.endsWith(`\n\n${herdrInstructions('herdr-3d')}\n\nKeep it small.`)).toBe(true);
     for (const not of ['Step 40', 'A task with a long description', 'not a GitHub issue', 'with gh', 'Move the ticket status']) expect(prompt).not.toContain(not);
     const started = r.cmd('run.start', { session: 'herdr-3d', desk_index: 12, work_item: { provider: 'kaneo', id: 'task-hrd-4' }, preset: prep.preset, orch: prep.orch, extra: 'Keep it small.' });
     r.settle();
