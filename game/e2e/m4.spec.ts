@@ -330,6 +330,53 @@ test('send home a clean worker: delete worktree + branch, it packs a box, takes 
   clean();
 });
 
+test('#53: a desk whose worker was sent home is hireable while it still walks out; the new hire drops in and the walk gives the desk up', async ({ page }) => {
+  test.setTimeout(150_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m4', '', SIM);
+  await enter(page, 'pastry');
+  // Nacho has no git checkout of its own: Enter sends it home.
+  const nacho = (await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'pastry')?.workers.find((w) => w.name === 'Nacho');
+  const id = nacho?.id as string;
+  const desk = nacho?.desk as number;
+  await page.evaluate((id) => window.__h3d.openSendHome(id), id);
+  await homeDialog(page);
+  expect(await focusedKey(page)).toBe('send');
+  await page.evaluate(() => window.__h3d.arrivalRate(3));
+  await page.keyboard.press('Enter');
+  await expect.poll(() => dialog(page)).toBeNull();
+  expect((await page.evaluate(() => window.__h3d.world())).find((f) => f.session === 'pastry')?.workers.some((w) => w.id === id)).toBe(false);
+  // Up from the desk and off with its box: the desk has its "+" back, and the walk-out (fire escape, street) is held there.
+  await walker(page, (a) => a.id === id && a.phase === 'walk' && a.desk_show === 'free', 'Nacho walks off with the box', 15_000);
+  await page.evaluate(() => window.__h3d.arrivalRate(0.02));
+  await expect.poll(async () => (await desks(page))[desk]).toEqual({ desk, worker: null, plus: true, away: null });
+
+  // E on that "+": the hire dialog, not "Someone is already on the way".
+  await faceDesk(page, 'pastry', desk);
+  expect(await page.evaluate(() => window.__h3d.lookAt())).toMatchObject({ kind: 'desk', id: `desk-${desk}` });
+  await page.keyboard.press('e');
+  await hireDialog(page);
+  await expect(page.locator('dialog.desk-dlg--hire h2')).toHaveText(`Hire a worker at Desk ${desk + 1}`);
+  expect(await page.evaluate(() => window.__h3d.toastState()?.text ?? null)).not.toMatch(/already on the way/);
+  expect((await arrivals(page)).find((a) => a.id === id)).toMatchObject({ kind: 'out', phase: 'walk', yielded: false });
+  await shot(page, 'h53-rehire-during-walk-out');
+
+  // Hired: the new worker drops in while Nacho is still on its way out, which gives the desk up for good.
+  await page.keyboard.type('Count the croissants');
+  await page.keyboard.press('Enter');
+  expect((await sent(page)).filter((c) => c.t === 'worker.hire').map((c) => c.args)).toEqual([expect.objectContaining({ floor: 'pastry', desk_index: desk })]);
+  expect((await desks(page))[desk]).toMatchObject({ plus: false, away: 'empty' });
+  await expect.poll(() => dialog(page), { timeout: 20_000 }).toBeNull();
+  const w = await arrived(page, desk);
+  expect((await arrivals(page)).find((a) => a.id === id)).toMatchObject({ kind: 'out', yielded: true });
+  await expect.poll(async () => (await desks(page))[desk]).toEqual({ desk, worker: w.id, plus: false, away: null });
+  // Nacho finishes leaving; the desk stays the new worker's.
+  await page.evaluate(() => window.__h3d.arrivalRate(20));
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.arrivalLog())).find((l) => l.id === id)?.played ?? null, { timeout: 40_000 }).toBe(true);
+  expect((await desks(page))[desk]).toEqual({ desk, worker: w.id, plus: false, away: null });
+  clean();
+});
+
 test('the top bar’s Hire opens the first free desk; a worker with no worktree has no worktree choices', async ({ page }) => {
   const clean = watchErrors(page);
   await openGame(page, 'demo-m4', '', SIM);
