@@ -589,6 +589,7 @@ export class OverviewOverlay {
     const nest = city ? v.depth - 1 : v.depth;
     el.className = `ov-row ov-row--${r.kind}${nest ? ' ov-row--nested' : ''}`;
     el.dataset.depth = String(v.depth);
+    el.dataset.nest = String(nest);
     // #24: the indent follows the tree down to NEST_MAX levels; a deeper row stays there (its wires drawn compressed).
     if (nest) el.style.setProperty('--nest', String(Math.min(nest, NEST_MAX)));
     else el.style.removeProperty('--nest');
@@ -663,8 +664,6 @@ export class OverviewOverlay {
    */
   private fillChild(el: HTMLElement, r: OverviewChildRow, nest: number, wire: SVGSVGElement | null, fold: HTMLElement | null, now: number): void {
     el.dataset.state = r.state;
-    el.style.removeProperty('--run');
-    el.removeAttribute('title');
     el.setAttribute('aria-label', childLabel(r, nest, now));
     const mark = markSvg(r.provider, 'ov-mark');
     const who = h(
@@ -731,7 +730,7 @@ export class OverviewOverlay {
       const t = el.querySelector('.ov-since .ov-time');
       const time = childSince(r, now).time ?? '';
       if (t && t.textContent !== time) t.textContent = time;
-      const label = childLabel(r, Number(el.style.getPropertyValue('--nest')) || 0, now);
+      const label = childLabel(r, Number(el.dataset.nest) || 0, now);
       if (el.getAttribute('aria-label') !== label) el.setAttribute('aria-label', label);
       return;
     }

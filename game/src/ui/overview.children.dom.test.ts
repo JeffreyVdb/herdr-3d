@@ -256,6 +256,9 @@ describe('#24 child rows on the page', () => {
     expect(rowEl('child:d7')?.style.getPropertyValue('--nest')).toBe(String(NEST_MAX));
     expect(rowEl('child:d7')?.getAttribute('aria-level')).toBe('8');
     expect(rowEl('child:d7')?.querySelector('.ov-level')?.textContent).toBe('level 7');
+    // Its spoken label says the level too, also after the times' refresh in place.
+    ov.refresh();
+    expect(rowEl('child:d7')?.getAttribute('aria-label')).toContain('level 7');
     expect(rowEl('child:d4')?.querySelector('.ov-level')).toBeNull();
   });
 
