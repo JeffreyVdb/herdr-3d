@@ -47,6 +47,7 @@ import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
 import type { Source } from './composer/complete';
 import { CommandCatalogs } from '../laptop/commandCatalog';
 import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
+import type { PromptSecretsFlow } from './secretsFlow';
 
 /**
  * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
@@ -63,6 +64,8 @@ export interface DialogHost {
   /** #33 `action`: the toast is a control (a held review's "Review again"). */
   toast(msg: string, kind: ToastKind, action?: ToastAction): void;
   now(): number;
+  /** #108: the send flow every composer's text goes through with "Review prompt secrets before sending" on (absent: as today). */
+  secrets?: PromptSecretsFlow;
 }
 
 export interface HireHost extends DialogHost {

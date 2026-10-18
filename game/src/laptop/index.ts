@@ -35,7 +35,7 @@ import { createSeatTabs, FLIP_KEY } from './seatTabs';
 import { hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
 import { Watches } from './watches';
-import type { PackupGate } from '../world/packup';
+import type { PackupCheck } from '../ui/packupSend';
 import type { Worker } from '../net/protocol';
 
 export { screensParam };
@@ -81,7 +81,7 @@ export interface LaptopHost {
   /** #98: what the desk monitors show (Activity | Terminal); none: this browser's. */
   monitors?: MonitorPrefs;
   /** #110: the pack-up check before the transcript's prompt box sends (none: it sends at once). */
-  packup?: PackupGate;
+  packup?: PackupCheck;
   /** #108: the review of a prompt's possible secrets (the transcript's prompt box, a paste to an agent; none: as today). */
   secrets?: PromptSecretsFlow;
   /** #118: O while you read the transcript: the floor overview over it (none: O is the transcript's). */

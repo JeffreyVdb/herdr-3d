@@ -24,7 +24,8 @@
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName, SecretsReview, SecretsReviews } from '../net/protocol';
 import { hideRanges, promptSecretsFailureText, scanOf, SecretReview, type PromptSecretsBook } from '../world/promptSecrets';
-import { pressesBinding, type KeyEventLike } from '../input/shortcuts';
+import { keyName, pressesBinding, type KeyEventLike } from '../input/shortcuts';
+import { h } from './dom';
 import type { SecretsReviewOutcome, SecretsReviewRequest } from './secretsReview';
 
 export interface SecretsFlowHost {
@@ -131,6 +132,38 @@ function goOf(review: SecretReview): Go {
 
 /** #108: the chord that opens the review now, from a prompt box (`dialog.secrets`, docs/shortcuts.md). */
 export const reviewKey = (e: KeyEventLike): boolean => pressesBinding(e, 'dialog.secrets');
+
+/**
+ * #108 round 4: a composer's "Review secrets" (shown only with the switch on): the review on purpose, to mark a value
+ * the scan would not find, then the composer's own action. `why`: what blocks it now (its title, and a press does
+ * nothing). The P overlay's and the prompt box's own controls are this one's model.
+ */
+export function reviewButton(flow: PromptSecretsFlow | undefined, why: string | null, run: () => void, what = 'text'): HTMLButtonElement | null {
+  if (!flow?.on) return null;
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: 'btn',
+      'data-key': 'review',
+      'aria-disabled': why ? 'true' : null,
+      title: why ?? `Look over the ${what}’s possible secrets now, and mark one the scan missed (${keyName('dialog.secrets')})`,
+      onclick: () => {
+        if (!why) run();
+      },
+    },
+    'Review secrets',
+  ) as HTMLButtonElement;
+}
+
+/** #108 round 4: Ctrl/⌘+Shift+X in `el` (a composer's form or field) runs `run` with the switch on. */
+export function onReviewKey(el: HTMLElement, flow: () => PromptSecretsFlow | undefined, run: () => void): void {
+  el.addEventListener('keydown', (e) => {
+    if (!reviewKey(e) || !flow()?.on) return;
+    e.preventDefault();
+    if (!e.repeat) run();
+  });
+}
 
 /** What a refusal of a reviewed command means: review again (`notice`), keep the draft, or an answer like any other. */
 type Refusal = { again: string } | Kept | null;

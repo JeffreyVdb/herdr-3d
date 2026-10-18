@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { PackupOutcome } from '../world/packup';
+import type { PackupCheck } from './packupSend';
 import { type PromptHost, PromptOverlay } from './prompt';
 
 // #110: the P overlay's send through the pack-up check: "checking…" with the note kept, no second send meanwhile,
 // Esc cancels it (nothing sent, the overlay stays), and each outcome does what it says.
 
-function setup(gate: ((id: string, text: string, signal: AbortSignal) => Promise<PackupOutcome> | null) | undefined) {
+function setup(gate: PackupCheck | undefined) {
   document.body.replaceChildren();
   const sent: Array<{ cmd: string; args: unknown }> = [];
   const view = (id: string) => ({ name: id, desk: 0, harness: 'claude', display: 'idle', worker: { id, session: 's', agent_kind: 'claude', status: 'idle' } });
@@ -31,10 +32,14 @@ function setup(gate: ((id: string, text: string, signal: AbortSignal) => Promise
   return { overlay, sent, flush, send: () => inner.send(), dialog: inner.dialog };
 }
 
-/** A gate that answers when told to, and records what it was asked. */
+/** A check that answers when told to, and records what it was asked (`packup.detect` answers at once; its confirm waits). */
 function heldGate() {
   const calls: Array<{ id: string; text: string; signal: AbortSignal; answer(o: PackupOutcome): void }> = [];
-  const gate = (id: string, text: string, signal: AbortSignal) => new Promise<PackupOutcome>((answer) => calls.push({ id, text, signal, answer }));
+  const gate: PackupCheck = {
+    applies: () => true,
+    detect: () => Promise.resolve({ ok: true, data: { matched: false, score: 0 } }),
+    decide: (id, text, _r, signal) => new Promise<PackupOutcome>((answer) => calls.push({ id, text, signal, answer })),
+  };
   return { gate, calls };
 }
 
@@ -125,7 +130,7 @@ describe('PromptOverlay and pack up on request (#110)', () => {
   });
 
   it('no check (the feature off): it sends at once, never "checking"', async () => {
-    const e = setup(() => null);
+    const e = setup({ applies: () => false, detect: () => Promise.reject(new Error('not asked')), decide: () => Promise.reject(new Error('not asked')) });
     void e.send();
     await e.flush();
     expect(e.sent).toEqual([{ cmd: 'worker.prompt', args: { id: 'A', text: 'Please make a PR and end your turn' } }]);

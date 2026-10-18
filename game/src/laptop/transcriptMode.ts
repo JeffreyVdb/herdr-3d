@@ -1,6 +1,6 @@
 import type { CommandResult } from '../net/client';
 import type { RepoSearchHost } from './repoSearch';
-import type { PackupGate } from '../world/packup';
+import { HANDOVER_STALE, packupAction, packupStep, type PackupCheck } from '../ui/packupSend';
 import type { AnswerAskAck, Ask, CommandArgs, Followup, FollowupMessageAck, HandoffCandidate, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
@@ -87,7 +87,7 @@ export interface TranscriptModeHost {
   /** The seat bar's note. */
   status(kind: 'ok' | 'error', text: string | null): void;
   /** #110: the pack-up check before a prompt goes (none: it goes at once). */
-  packup?: PackupGate;
+  packup?: PackupCheck;
   /** The mode changed (the seat bar's toggle, the terminal watch's fps, the monitor's frame). */
   modeChanged(mode: SeatMode): void;
   /** #59: the preset, hidden tool calls and the zoom (the view's top strip sets them). */
@@ -628,9 +628,10 @@ export class TranscriptMode {
 
   /**
    * Sends a prompt from the view: its row is in the timeline at once. Resolves the bridge's answer. #108: `go` carries the
-   * review of its secrets (`secrets`), and what the row may show of it (`shown`: no protected value).
+   * review of its secrets (`secrets`), and what the row may show of it (`shown`: no protected value); `pending` (round 4)
+   * is pack up's hand-over for `t`, the text its check read (references for the protected values).
    */
-  private sendPrompt(s: Sitting, t: string, go: Go | null = null): Promise<CommandResult> {
+  private sendPrompt(s: Sitting, t: string, go: Go | null = null, pending: string | null = null): Promise<CommandResult> {
     const live = () => this.s === s;
     // #58: its row is in the timeline at once, until its `user` item comes; a refused one before it goes.
     const p: PendingPrompt = { id: `p${++this.pid}`, text: t, ...(go?.protects ? { shown: go.shown } : {}), state: 'sending', late: false, mark: topSeq(s.items), due: null };
@@ -642,7 +643,7 @@ export class TranscriptMode {
     // Resolves whether it went: a refused prompt goes back in the box.
     // #224: an exact "/handoff [instruction]" becomes an agent handoff request: one op, so a retry asks once.
     const op = this.handoffOp(s.id, t);
-    return this.host.send('worker.prompt', { id: s.id, text: t, ...(op ? { op } : {}), ...(go?.secrets ? { secrets: go.secrets } : {}) }).then((r) => {
+    return this.host.send('worker.prompt', { id: s.id, text: t, ...(op ? { op } : {}), ...(go?.secrets ? { secrets: go.secrets } : {}), ...(pending ? { secrets_pending: pending } : {}) }).then((r) => {
       // Answered (the client never rejects; it times out): this worker takes the next one, from whichever seat.
       this.prompting.delete(s.id);
       if (op && (r.ok || !UNANSWERED.has(r.code)) && this.handoffOps.get(s.id)?.op === op) this.handoffOps.delete(s.id);
@@ -704,14 +705,15 @@ export class TranscriptMode {
   /**
    * A prompt from the view's box, in order (the box is read-only meanwhile and keeps the draft): #108 the review of its
    * possible secrets (with the switch on; `manual`: "Review secrets" asked for it), then #110 whether it also tells the
-   * worker to leave (not when the review protects anything: pack up's LLM would read the value; round 4 gives it the
-   * references), then the send, seen through the bridge's answer (a stale review is reviewed again, never sent on its
+   * worker to leave (round 4: the check reads the protected values' references, and what follows is sent with its
+   * hand-over), then the send, seen through the bridge's answer (a stale review is reviewed again, never sent on its
    * own). Resolves whether it went.
    */
   private async submit(s: Sitting, t: string, manual: boolean): Promise<boolean> {
     const live = () => this.s === s;
     const flow = this.host.secrets;
-    const req = { key: s.id, text: t, target: s.name, manual };
+    const check = this.host.packup;
+    const req = { key: s.id, text: t, target: s.name, manual, action: packupAction(check, s.id) };
     let go: Go = { kind: 'send', protects: 0, shown: t, review: null };
     const kept = (why: string, message: string) => {
       if (!live()) return false;
@@ -729,25 +731,32 @@ export class TranscriptMode {
       this.host.status('ok', null);
       go = out;
     }
-    const check = new AbortController();
-    const checked = go.protects === 0 ? (this.host.packup?.(s.id, t, check.signal) ?? null) : null;
-    if (checked) {
-      this.checking = check;
+    if (check?.applies(s.id)) {
+      const abort = new AbortController();
+      this.checking = abort;
       this.host.status('ok', 'Checking the prompt…');
-      const out = await checked;
-      if (this.checking === check) this.checking = null;
-      if (check.signal.aborted || !live()) return false;
-      if (out === 'done') {
+      const step = await packupStep(check, flow, req, go, abort.signal);
+      if (this.checking === abort) this.checking = null;
+      if (abort.signal.aborted || !live()) return false;
+      if (step.kind === 'kept') return kept(step.why, step.message);
+      if (step.kind === 'done') {
         this.host.status('ok', `Sent the task to ${s.name}: it goes home once it reports CLEAN`);
         return true;
       }
-      if (out === 'cancel') {
+      if (step.kind === 'cancel') {
         this.host.status('ok', null);
         // The confirm (or the send home) had the keyboard: back to the box, its draft still in it.
         queueMicrotask(() => live() && this.focusPrompt());
         return false;
       }
       this.host.status('ok', null);
+      if (step.kind === 'handover') {
+        // The text the check read, with its hand-over: refused as stale, nothing went (its files may be gone).
+        const r = await this.sendPrompt(s, step.text, null, step.pending);
+        if (!r.ok && (r.code === 'secrets_review_stale' || r.code === 'secrets_review_off')) return kept('failed', HANDOVER_STALE);
+        return r.ok;
+      }
+      go = step.go;
     }
     if (!flow) return (await this.sendPrompt(s, t)).ok;
     const d = await flow.deliver(req, go, (g) => this.sendPrompt(s, t, g));

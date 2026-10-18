@@ -10,8 +10,8 @@ import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft, type Uploader } from './composer/draft';
 import { failedImagesText, hasContent, heldRefusalText, markedText, notSentText, PASTE_HINT } from './composer/field';
 import { WORKER_PROMPT_MAX_BYTES } from './composer/model';
-import type { PackupGate } from '../world/packup';
-import { reviewKey, type Go, type PromptSecretsFlow } from './secretsFlow';
+import { HANDOVER_STALE, packupAction, packupStep, type PackupCheck } from './packupSend';
+import { reviewKey, type Go } from './secretsFlow';
 import { keyName } from '../input/shortcuts';
 // #39 completion
 import { CommandCatalogs } from '../laptop/commandCatalog';
@@ -21,11 +21,9 @@ import { CompletionScope, workerSources } from './dialogCompletion';
 export interface PromptHost extends DialogHost {
   upload: Uploader;
   /** #110: the pack-up check before a prompt goes (none: it goes at once). */
-  packup?: PackupGate;
+  packup?: PackupCheck;
   /** #39: the app's lists of commands and skills, shared with the transcript (absent: the overlay keeps its own). */
   catalogs?: CommandCatalogs;
-  /** #108: the review of the prompt's possible secrets before it goes (absent: it goes as today). */
-  secrets?: PromptSecretsFlow;
 }
 
 /**
@@ -427,9 +425,11 @@ export class PromptOverlay {
       this.composer.focus();
       return;
     }
-    // #108: first its possible secrets, before anything else reads the text (pack up's LLM included).
+    // #108: first its possible secrets, before anything else reads the text (pack up's LLM included: round 4 gives it
+    // the references, so its review says "Confirm and continue").
     const flow = this.host.secrets;
-    const req = { key: id, text: res.text, target: name, manual };
+    const check = this.host.packup;
+    const req = { key: id, text: res.text, target: name, manual, action: packupAction(check, id) };
     let go: Go = { kind: 'send', protects: 0, shown: res.text, review: null };
     if (flow && (flow.on || manual)) {
       if (!stillHere()) return;
@@ -447,26 +447,29 @@ export class PromptOverlay {
       this.setStatus(`Sending to ${name}…`);
       this.render();
     }
-    // #110: whether it also tells the worker to leave. #108: not when the review protects anything: pack up's LLM would
-    // read the value (round 4 gives it the text with the references).
-    const check = new AbortController();
-    const checked = stillHere() && go.protects === 0 ? (this.host.packup?.(id, res.text, check.signal) ?? null) : null;
-    if (checked) {
-      this.checking = check;
+    // #110: whether it also tells the worker to leave (with the review: the check reads the protected values' references).
+    let handover: { text: string; pending: string } | null = null;
+    if (check && stillHere() && check.applies(id)) {
+      const abort = new AbortController();
+      this.checking = abort;
       this.state = 'checking';
       this.setStatus('Checking the prompt…');
       this.render();
-      const out = await checked;
-      if (this.checking === check) this.checking = null;
-      if (check.signal.aborted || !stillHere()) return; // Esc or closed: nothing is sent
-      if (out === 'cancel') {
+      const step = await packupStep(check, flow, req, go, abort.signal);
+      if (this.checking === abort) this.checking = null;
+      if (abort.signal.aborted || !stillHere()) return; // Esc or closed: nothing is sent
+      if (step.kind === 'kept') {
+        this.kept(step.why, step.message);
+        return;
+      }
+      if (step.kind === 'cancel') {
         this.state = 'ready';
         this.setStatus('');
         this.render();
         this.composer.focus();
         return;
       }
-      if (out === 'done') {
+      if (step.kind === 'done') {
         draft.clearIf(res.revision);
         this.state = 'sent';
         this.result = { queued: false, retried: false };
@@ -476,13 +479,22 @@ export class PromptOverlay {
         this.composer.focus();
         return;
       }
+      if (step.kind === 'send') go = step.go;
+      else handover = step;
       this.state = 'sending';
       this.setStatus(`Sending to ${name}…`);
       this.render();
     }
     const send = (g: Go) => this.host.send('worker.prompt', { id, text: res.text, ...(g.secrets ? { secrets: g.secrets } : {}) });
-    // #108: a stale review is reviewed again; the switch gone off keeps the note. Never an automatic send.
-    const d = flow ? await flow.deliver(req, go, send) : ({ kind: 'answered', result: await send(go), go } as const);
+    // #108: a stale review is reviewed again; the switch gone off keeps the note. Never an automatic send. The check's
+    // hand-over goes as it is: refused as stale, nothing is sent (its files may be gone) and the note stays for a new review.
+    const d = handover
+      ? await this.host.send('worker.prompt', { id, text: handover.text, secrets_pending: handover.pending }).then((result) =>
+          !result.ok && (result.code === 'secrets_review_stale' || result.code === 'secrets_review_off') ? ({ kind: 'kept', why: 'failed', message: HANDOVER_STALE } as const) : ({ kind: 'answered', result, go } as const),
+        )
+      : flow
+        ? await flow.deliver(req, go, send)
+        : ({ kind: 'answered', result: await send(go), go } as const);
     const still = stillHere();
     if (d.kind === 'kept') {
       if (!still) this.host.toast(d.message, 'error');

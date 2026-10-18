@@ -107,7 +107,8 @@ import { packupSection } from './ui/packupSection';
 import { digestSection } from './ui/digestSection';
 import { handoffLlmSection } from './ui/handoffLlmSection';
 import { digestFailureText } from './world/digestSettings';
-import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup';
+import { packupApplies } from './world/packup';
+import { packupCheck, type PackupCheck } from './ui/packupSend';
 import { activitySection } from './ui/activitySection';
 import { codexServerSection } from './ui/codexServerSection';
 import { repoDiscoverySection } from './ui/repoDiscoverySection';
@@ -672,12 +673,17 @@ export class App {
       addFloor: (from) => this.openAddFloor(from), // #58
     });
 
+    // #108: with "Review prompt secrets before sending" on, one review dialog and one send flow for every composer (each
+    // dialog gets the flow through its host).
+    this.secretsReview = new SecretsReviewDialog(o.host, { book: this.store.promptSecrets });
+    this.secrets = new PromptSecretsFlow({ book: this.store.promptSecrets, send: (t, args) => this.send(t, args), unsupported: (t) => this.unsupported.has(t), review: (req) => this.secretsReview.open(req) });
     const dialogHost = {
       store: this.store,
       send: <T extends CommandName>(t: T, args: CommandArgs[T]) => this.send(t, args),
       unsupported: (t: CommandName) => this.unsupported.has(t),
       toast: (m: string, kind: ToastKind, action?: ToastAction) => this.hud.toast(m, kind === 'error' ? 6500 : kind === 'warn' ? 9000 : 3600, kind, false, action),
       now: () => Date.now(),
+      secrets: this.secrets,
     };
     const upload = (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal);
     // #39: one list of commands and skills per worker (and per hire context), for the transcript and every dialog's `/`.
@@ -768,9 +774,6 @@ export class App {
       },
     });
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
-    // #108: with "Review prompt secrets before sending" on, one review dialog and one send flow for every composer.
-    this.secretsReview = new SecretsReviewDialog(o.host, { book: this.store.promptSecrets });
-    this.secrets = new PromptSecretsFlow({ book: this.store.promptSecrets, send: (t, args) => this.send(t, args), unsupported: (t) => this.unsupported.has(t), review: (req) => this.secretsReview.open(req) });
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
     this.handoffDialog = new HandoffDialog(o.host, {
@@ -827,7 +830,7 @@ export class App {
         layer: this.hud.root,
         themes: this.themes,
         monitors: this.monitorPrefs,
-        packup: (id, text, signal) => this.packupCheck(id, text, signal), // #110
+        packup: this.packupCheck, // #110
         secrets: this.secrets, // #108
         overview: () => this.openOverview(false), // #118
         handoff: (id) => this.openHandoff(id, true), // #223
@@ -837,7 +840,7 @@ export class App {
       o.params,
     );
     // M5: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
-    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, catalogs, packup: (id, text, signal) => this.packupCheck(id, text, signal), secrets: this.secrets });
+    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, catalogs, packup: this.packupCheck });
     this.openPr = new OpenPrDialog(o.host, {
       ...dialogHost,
       providerName: (floor) => this.boardBook.get(floor).prs?.provider_name ?? this.boardBook.get(floor).issues?.provider_name ?? 'the provider',
@@ -1744,26 +1747,16 @@ export class App {
   /**
    * #110 pack up on request: the check before a prompt from the laptop's composer or the P overlay goes out. Only
    * while the feature is ready and for a worker it applies to; any failure or a late answer sends it as written.
-   * A match opens the confirm (the send home's pack-up mode), nothing left of the prompt the plain send home.
+   * A match opens the confirm (the send home's pack-up mode), nothing left of the prompt the plain send home. #108
+   * round 4: `packup.detect` carries the prompt's review; the models read its `sent` (references for the protected
+   * values), the confirm shows that, and what follows sends it with the check's hand-over (`ui/packupSend.ts`).
    */
-  private packupCheck(id: string, text: string, signal: AbortSignal): Promise<PackupOutcome> | null {
-    if (this.store.packup.state?.state !== 'ready' || this.unsupported.has('packup.detect') || !packupApplies(this.store.workers.get(id))) return null;
-    return this.packupRun(id, text, signal);
-  }
-
-  private async packupRun(id: string, text: string, signal: AbortSignal): Promise<PackupOutcome> {
-    const r = await this.send('packup.detect', { id, text });
-    if (signal.aborted) return 'cancel';
-    const v = r.ok ? packupVerdict(r.data, text) : ({ kind: 'send' } as const);
-    if (v.kind === 'send') return 'send';
-    if (v.kind === 'home') {
-      this.sendHome.open(id, { fromPackup: true });
-      return 'cancel';
-    }
-    const c = await this.sendHome.openPackup(id, { original: text, task: v.task, removed: v.removed });
-    if (c === 'done') return 'done';
-    return c === 'stay' && !signal.aborted ? 'send' : 'cancel';
-  }
+  private readonly packupCheck: PackupCheck = packupCheck({
+    applies: (id) => this.store.packup.state?.state === 'ready' && !this.unsupported.has('packup.detect') && packupApplies(this.store.workers.get(id)),
+    detect: (args) => this.send('packup.detect', args),
+    sendHome: (id) => this.sendHome.open(id, { fromPackup: true }),
+    confirm: (id, pk) => this.sendHome.openPackup(id, pk),
+  });
 
   // ---- M6 start: starting a run, team presets ------------------------------------------
 

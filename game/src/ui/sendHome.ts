@@ -1,3 +1,4 @@
+import type { CommandResult } from '../net/client';
 import type { FireAck, FirePrepare, FireWorktree, PackupRange, WrapUp, WrapUpAck } from '../net/protocol';
 import { fireArgs, fireBlocked, fireOptions, leftovers, scheduleHold, type FireOptions } from '../world/hire';
 import { armedText, defaultChoice, WRAPUP_AGAIN_PROMPT, WRAPUP_PROMPT, worktreeFate, wrapUpOf } from '../world/wrapup';
@@ -6,6 +7,7 @@ import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
 import { backdropPolicy } from './dismiss';
+import { onReviewKey, reviewButton, type Go } from './secretsFlow';
 
 /**
  * Send home (M4), the gentle fire: X looking at a worker. It asks the bridge
@@ -26,6 +28,11 @@ import { backdropPolicy } from './dismiss';
  * the leaving part struck out, the task left in an editable box, the worktree choice (the worktree and its branch
  * preselected when that is possible) with the same warnings. "Send and go home" is a `worker.wrapup` of the task
  * and the cleanup request; "Send as written (stay)" and Cancel hand the choice back to the composer.
+ *
+ * #108 round 4: the last prompt is reviewed for secrets like any other (with the switch on; "Review secrets" or
+ * Ctrl/⌘+Shift+X on purpose). A pack-up whose check read the protected values' references sends its task with the
+ * check's hand-over (`secrets_pending`): the task as the check answered it needs no review again, and the files become
+ * the worker's before the wrap-up arms; an edited task is reviewed as usual.
  */
 
 export type SendHomeState = 'preparing' | 'ready' | 'sending' | 'failed';
@@ -38,6 +45,8 @@ export interface PackupConfirm {
   original: string;
   task: string;
   removed: PackupRange[];
+  /** #108 round 4: the check's hand-over (`secrets_pending`): "Send and go home" sends the task with it. */
+  pending?: string;
 }
 
 /** #110: how the pack-up confirm ended: the task went and the worker goes home after it, send as written, or nothing. */
@@ -86,6 +95,11 @@ const CHOICES: Array<{ v: FireWorktree; label: string; hint: string }> = [
   { v: 'delete', label: 'Delete the worktree, keep the branch', hint: 'herdr worktree remove; the branch stays on origin.' },
   { v: 'delete_branch', label: 'Delete the worktree and the branch', hint: 'Removes both: only once the work is merged.' },
 ];
+
+/** #108: pack up's hand-over refused (expired, the setting changed): nothing went, its files may be gone. */
+const HANDOVER_GONE = 'Nothing was sent: the check of the prompt’s secrets no longer holds (it expired, or the setting changed). Cancel, then send the prompt again to review it.';
+/** #108: a bridge from before round 5 refuses the hand-over on a wrap-up (an unknown field): nothing was sent. */
+const OLD_BRIDGE = 'Nothing was sent: this herdr-world can’t hand a pack-up’s protected secrets to a wrap-up yet. Update the bridge, or send the prompt as written (stay).';
 
 /** Porcelain lines shown before "and N more". */
 const SHOW_DIRTY = 6;
@@ -168,6 +182,11 @@ export class SendHomeDialog {
       if (this.statusError) this.setStatus('');
       this.renderActions();
     });
+    // #108: the review of the last prompt's secrets, now (with the switch on).
+    onReviewKey(this.promptEl, () => this.host.secrets, () => this.reviewNow());
+    host.secrets?.onChange(() => {
+      if (this.dialog.open) this.renderActions();
+    });
     parent.append(this.dialog);
   }
 
@@ -199,7 +218,7 @@ export class SendHomeDialog {
     this.settleWith('cancel');
     if (!this.host.store.workerView(workerId)) return Promise.resolve('cancel');
     const done = new Promise<PackupChoice>((resolve) => (this.settle = resolve));
-    this.pk = { original: pk.original, task: pk.task, removed: pk.removed.map((r) => ({ ...r })) };
+    this.pk = { original: pk.original, task: pk.task, removed: pk.removed.map((r) => ({ ...r })), ...(pk.pending ? { pending: pk.pending } : {}) };
     this.fromPackup = true;
     this.start(workerId, 'packup');
     return done;
@@ -529,7 +548,8 @@ export class SendHomeDialog {
         : null;
     const back = wrapping ? h('button', { type: 'button', class: 'btn btn--quiet', 'data-key': 'back', 'aria-disabled': sending ? 'true' : null, onclick: () => this.setMode('home') }, icon(ICON.back), 'Send home now') : null;
     const send = h('button', { class: 'btn btn--danger', type: 'submit', form: 'home-form', 'data-key': 'send', 'aria-disabled': why ? 'true' : null, title: why }, text);
-    this.actions.replaceChildren(...[back, retry, cancel, toWrap, send].filter((x): x is HTMLButtonElement => !!x));
+    const review = wrapping ? reviewButton(this.host.secrets, why, () => this.reviewNow(), 'last prompt') : null;
+    this.actions.replaceChildren(...[back, retry, cancel, toWrap, review, send].filter((x): x is HTMLButtonElement => !!x));
     if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
   }
 
@@ -543,7 +563,8 @@ export class SendHomeDialog {
       'Send as written (stay)',
     );
     const send = h('button', { class: 'btn btn--danger', type: 'submit', form: 'home-form', 'data-key': 'send', 'aria-disabled': why ? 'true' : null, title: why }, sending ? 'Sending the task…' : 'Send and go home');
-    this.actions.replaceChildren(cancel, stay, send);
+    const review = reviewButton(this.host.secrets, why, () => this.reviewNow(), 'task');
+    this.actions.replaceChildren(...[cancel, stay, review, send].filter((x): x is HTMLButtonElement => !!x));
     if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
   }
 
@@ -681,21 +702,64 @@ export class SendHomeDialog {
     this.render();
   }
 
-  /** #83: the last prompt goes out; the bridge sends the worker home once it reports CLEAN. */
-  private async wrapUp(): Promise<void> {
+  /** #108: "Review secrets": the last prompt's review on purpose, then its send (as a click on the send button). */
+  private reviewNow(): void {
+    if (this.prompting() && !this.why()) void this.wrapUp(true);
+  }
+
+  /**
+   * #83: the last prompt goes out; the bridge sends the worker home once it reports CLEAN. #108: reviewed first (`manual`:
+   * on purpose); a pack-up's task as its check answered it goes with the check's hand-over instead (see the top).
+   */
+  private async wrapUp(manual = false): Promise<void> {
     const p = this.prep;
     if (this.state !== 'ready' || !p || this.why()) return;
     const choice = fireArgs(this.id, p, this.choice).worktree;
     const packing = this.mode === 'packup';
     const prompt = packing ? packupPrompt(this.promptEl.value) : this.promptEl.value;
+    const id = this.id;
     const name = this.name;
+    const gen = this.gen;
+    const pending = packing ? (this.pk?.pending ?? null) : null;
+    // The check's task, as it answered it (`packupPrompt` trims): the hand-over covers it, no review again.
+    const covered = pending !== null && this.promptEl.value.trim() === this.pk?.task.trim();
+    const flow = this.host.secrets;
+    const req = { key: id, text: prompt, target: name, manual };
+    let go: Go = { kind: 'send', protects: 0, shown: prompt, review: null };
     this.state = 'sending';
+    if (flow && (manual || (flow.on && !covered))) {
+      this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the prompt…');
+      this.render();
+      const out = await flow.review(req);
+      if (!(this.dialog.open && gen === this.gen)) return;
+      if (out.kind === 'kept') {
+        this.state = 'ready';
+        this.setStatus(out.why === 'cancel' ? 'Not sent: the prompt is still here.' : out.message, out.why === 'failed');
+        this.render();
+        this.promptEl.focus();
+        return;
+      }
+      go = out;
+    }
     this.setStatus(packing ? `Sending ${name} the task…` : `Sending ${name} its last prompt…`);
     this.render();
-    const gen = this.gen;
-    const r = await this.host.send('worker.wrapup', { id: this.id, prompt, ...(choice ? { worktree: choice } : {}) });
+    // A refused hand-over is not reviewed again here: its files may be gone, and the composer still has the draft.
+    const send = async (g: Go): Promise<CommandResult> => {
+      const r = await this.host.send('worker.wrapup', { id, prompt, ...(choice ? { worktree: choice } : {}), ...(g.secrets ? { secrets: g.secrets } : {}), ...(pending ? { secrets_pending: pending } : {}) });
+      return pending && !r.ok && r.code === 'secrets_review_stale' ? { ok: false, code: 'handover_stale', message: r.message } : r;
+    };
+    const d = flow ? await flow.deliver(req, go, send) : ({ kind: 'answered', result: await send(go), go } as const);
     const still = this.dialog.open && gen === this.gen;
     this.state = 'ready';
+    if (d.kind === 'kept') {
+      if (!still) this.host.toast(d.message, 'error');
+      else {
+        this.setStatus(d.why === 'cancel' ? 'Not sent: the prompt is still here.' : d.message, d.why === 'failed');
+        this.render();
+      }
+      return;
+    }
+    const r = d.result;
     if (r.ok) {
       const queued = (r.data as WrapUpAck | undefined)?.queued === true;
       const fate = worktreeFate(choice ?? 'keep', !!p.worktree?.linked);
@@ -709,7 +773,12 @@ export class SendHomeDialog {
       );
       return;
     }
-    const msg = failureText('worker.wrapup', r.code, r.message, { worker: name, floor: this.floorName });
+    const msg =
+      r.code === 'handover_stale'
+        ? HANDOVER_GONE
+        : pending && r.code === 'bad_request' && /secrets_pending/.test(r.message)
+          ? OLD_BRIDGE
+          : failureText('worker.wrapup', r.code, r.message, { worker: name, floor: this.floorName });
     if (!still) {
       this.host.toast(msg, 'error');
       return;
