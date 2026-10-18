@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -375,6 +376,143 @@ func TestRedactLines(t *testing.T) {
 	}
 }
 
+// #106 (the review's commands): every carrier is found in the text as it
+// is, not in what another's hiding left, so one hiding never hides the
+// next from being found: on the screen a password at a line's end hides
+// the next line's first word too (it may be a wrap), the next command's
+// name, and that command's -p still goes.
+func TestRedactLinesCarrierAfterCarrier(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		in         []string
+		soft, hard []string
+	}{
+		{[]string{`curl -u admin:firstsecret`, `sshpass -p zzsecondsecret ssh target.test`},
+			[]string{`curl -u admin:[key]`, `[key] -p [key] ssh target.test`},
+			[]string{`curl -u admin:[key]`, `sshpass -p [key] ssh target.test`}},
+		{[]string{`curl -u admin:firstsecret`, `mysql -pzzsecondsecret shop`},
+			[]string{`curl -u admin:[key]`, `[key] -p[key] shop`},
+			[]string{`curl -u admin:[key]`, `mysql -p[key] shop`}},
+		{[]string{`TOKEN=firstsecret`, `sshpass -p zzsecondsecret ssh host`},
+			[]string{`TOKEN=[key]`, `[key] -p [key] ssh host`},
+			[]string{`TOKEN=[key]`, `sshpass -p [key] ssh host`}},
+		{[]string{`TOKEN=firstsecret`, `mysql -pzzsecondsecret shop`},
+			[]string{`TOKEN=[key]`, `[key] -p[key] shop`},
+			[]string{`TOKEN=[key]`, `mysql -p[key] shop`}},
+		{[]string{`mysql -pfirstsecret`, `sshpass -p zzsecondsecret ssh host`},
+			[]string{`mysql -p[key]`, `[key] -p [key] ssh host`},
+			[]string{`mysql -p[key]`, `sshpass -p [key] ssh host`}},
+		{[]string{`sshpass -p firstsecret`, `mysql -pzzsecondsecret shop`},
+			[]string{`sshpass -p [key]`, `[key] -p[key] shop`},
+			[]string{`sshpass -p [key]`, `mysql -p[key] shop`}},
+	} {
+		if got := redactLines(tc.in, true); !slices.Equal(got, tc.soft) {
+			t.Errorf("redactLines(%q, true) = %q, want %q", tc.in, got, tc.soft)
+		}
+		if got := redactLines(tc.in, false); !slices.Equal(got, tc.hard) {
+			t.Errorf("redactLines(%q, false) = %q, want %q", tc.in, got, tc.hard)
+		}
+		if got := strings.Join(aboutLines(tc.in), "\n"); strings.Contains(got, "secret") {
+			t.Errorf("aboutLines(%q) = %q", tc.in, got)
+		}
+	}
+}
+
+// #106: only an operation's first redactMax bytes are read for its card.
+// The lines after them are [key]; the line they end in keeps its start and
+// loses the word that goes past them (a token not all there for Scrub to
+// know); a value that reaches them is hidden to them as one left open (a
+// URL's password may end at an @ past them). The lines stay as many, those
+// before are as they would be.
+func TestRedactLinesBounded(t *testing.T) {
+	t.Parallel()
+	steps := make([]string, 2000)
+	for i := range steps {
+		steps[i] = fmt.Sprintf("echo safe step %06d", i)
+	}
+	head := strings.Join(steps, "\n")[:redactMax]
+	cut, start := strings.Count(head, "\n"), head[strings.LastIndex(head, "\n")+1:] // the line it ends in
+	want := start[:strings.LastIndex(start, " ")+1] + "[key]"
+	got := redactLines(steps, false)
+	if len(got) != len(steps) || !slices.Equal(got[:cut], steps[:cut]) || got[cut] != want ||
+		slices.ContainsFunc(got[cut+1:], func(l string) bool { return l != "[key]" }) {
+		t.Errorf("%d lines; at the cut (%d, %q): %q, last: %q", len(got), cut, want, got[cut-1:cut+2], got[len(got)-1])
+	}
+	// The cut inside a word: a token too short there for Scrub to know, a
+	// URL whose password's @ may be past it (a quoted blank, the last before
+	// the cut, after the @ before it): hidden from their start.
+	for word, k := range map[string]int{
+		`ghp_zqabcdefghijklmnopqrstuvwxyz0123456789`:               len(`ghp_zqabcd`),
+		`zqabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ`:         len(`zqabcdefghijklmnopqr`),
+		`https://bob:zq1@zq2"zq3 zq4"zq5zq6zq7@example.test/r.git`: len(`https://bob:zq1@zq2"zq3 zq4"zq5`),
+	} {
+		pad := strings.Repeat("echo ", redactMax/5)[:redactMax-len("git clone ")-k-1]
+		for _, soft := range []bool{false, true} {
+			lines := []string{pad, "git clone " + word, "echo after"}
+			got := redactLines(lines, soft)
+			if strings.Contains(strings.Join(got, "\n"), "zq") || len(got) != 3 || got[0] != pad || got[2] != "[key]" {
+				t.Errorf("cut %d bytes into %q (soft %t): %q", k, word, soft, got[1:])
+			}
+		}
+	}
+	// A -u password in quotes over lines, to the cut.
+	lines := append([]string{strings.Repeat("echo ", redactMax/5)[:redactMax-200], `curl -u "admin:zq0`}, slices.Repeat([]string{"zq zq zq zq zq zq zq"}, 20)...)
+	lines = append(lines, `zq" https://example.test`)
+	for _, soft := range []bool{false, true} {
+		if got := redactLines(lines, soft); strings.Contains(strings.Join(got, "\n"), "zq") || len(got) != len(lines) {
+			t.Errorf("soft %t: %q", soft, got[1:])
+		}
+	}
+}
+
+// redactCost is what redacting lines costs at best of up to three tries,
+// the first within limit ending them: its time and the bytes it allocates.
+func redactCost(f func(), limit time.Duration) (time.Duration, uint64) {
+	best, bytes := time.Duration(1<<62), uint64(1<<63)
+	for try := 0; try < 3 && best > limit; try++ {
+		runtime.GC()
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		start := time.Now()
+		f()
+		d := time.Since(start)
+		runtime.ReadMemStats(&after)
+		best, bytes = min(best, d), min(bytes, after.TotalAlloc-before.TotalAlloc)
+	}
+	return best, bytes
+}
+
+// #106 (the review's case among them): redacting costs as much as its text
+// is long, however hostile: eight times the text costs about eight times
+// the time and bytes, not sixty-four (each command name's words read once,
+// no value read again for each carrier in it). The text is not cut here
+// (redactText): the reading itself is measured. Not parallel: it measures.
+func TestRedactTextLinear(t *testing.T) {
+	for name, text := range map[string]func(n int) ([]string, bool){
+		"command names": func(n int) ([]string, bool) { return []string{"echo " + strings.Repeat("mysql ", n)}, false },
+		"sshpass -p":    func(n int) ([]string, bool) { return []string{"echo " + strings.Repeat("sshpass -p ", n)}, false },
+		"screen lines":  func(n int) ([]string, bool) { return slices.Repeat([]string{"mysql -u root"}, n), true },
+		"open -u":       func(n int) ([]string, bool) { return []string{`echo "` + strings.Repeat(" -u a", n)}, false },
+		"open quote":    func(n int) ([]string, bool) { return []string{`echo "` + strings.Repeat(" TOKEN=a", n)}, false },
+		"headers":       func(n int) ([]string, bool) { return []string{strings.Repeat("cookie: ", n)}, false },
+		"open URLs":     func(n int) ([]string, bool) { return []string{`echo "` + strings.Repeat(" https://u:p@h", n)}, false },
+		"lines' quotes": func(n int) ([]string, bool) { return slices.Repeat([]string{`'a -u b c`}, n), true },
+	} {
+		cost := func(n int, limit time.Duration) (time.Duration, uint64) {
+			lines, soft := text(n)
+			s := strings.Join(lines, "\n")
+			return redactCost(func() { redactText(s, soft, false) }, limit)
+		}
+		small, smallBytes := cost(1000, 0)
+		big, bigBytes := cost(8000, 32*small)
+		t.Logf("%s: 1000: %v, %d bytes; 8000: %v, %d bytes", name, small, smallBytes, big, bigBytes)
+		if big > 32*small || bigBytes > 16*smallBytes {
+			t.Errorf("%s: 8 times the text costs %.1f times the time, %.1f times the bytes", name,
+				float64(big)/float64(small), float64(bigBytes)/float64(smallBytes))
+		}
+	}
+}
+
 // #106: a card's lines are bounded: each line, their number and their
 // length in all, what is left out said.
 func TestAboutLinesBounded(t *testing.T) {
@@ -612,6 +750,92 @@ func TestCardMenuPasswordShellWords(t *testing.T) {
 	}
 }
 
+// #106 (the review's commands): a password after another one goes too,
+// through the real path, from the screen and from the native call: on the
+// screen the first one's line ends in its password, so the next line's
+// first word, the next command's name, is hidden with it.
+func TestCardMenuPasswordAfterPassword(t *testing.T) {
+	t.Parallel()
+	for _, lines := range [][]string{
+		{`curl -u admin:firstsecret`, `sshpass -p zzsecondsecret ssh host`},
+		{`curl -u admin:firstsecret`, `mysql -pzzsecondsecret shop`},
+		{`TOKEN=firstsecret`, `sshpass -p zzsecondsecret ssh host`},
+		{`TOKEN=firstsecret`, `mysql -pzzsecondsecret shop`},
+		{`mysql -pfirstsecret`, `sshpass -p zzsecondsecret ssh host`},
+		{`sshpass -p firstsecret`, `mysql -pzzsecondsecret shop`},
+	} {
+		for _, native := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%q native=%t", lines, native), func(t *testing.T) {
+				t.Parallel()
+				var calls []transcript.PendingCall
+				if native {
+					calls = []transcript.PendingCall{bashCall("toolu_pw", strings.Join(lines, "\n"), "Run the commands")}
+				}
+				out := menuOut(t, claudeBash("", lines...), calls...)
+				if strings.Contains(out, "secret") {
+					t.Errorf("left: %s", out)
+				}
+				if native != strings.Contains(out, nativeIn+"/home/u/w1") {
+					t.Errorf("not from the native call (%t): %s", native, out)
+				}
+			})
+		}
+	}
+}
+
+// #106: every two carriers together, on two lines and on one (after && and
+// after ;), each with its own synthetic password: no piece of either
+// leaves, through the real path, from the screen and from the native
+// call. A carrier whose password ends its line hides, on the screen, the
+// next line's first word too: the other's command name or carrier.
+func TestCardMenuPasswordPairs(t *testing.T) {
+	t.Parallel()
+	carriers := []string{
+		"curl -u admin:%s",
+		"curl --user=admin:%s https://example.test",
+		"curl --proxy-user admin:%s",
+		"curl -U admin:%s -x http://proxy.test",
+		`curl -H "Authorization: Bearer %s"`,
+		`curl -H 'X-Api-Key: %s' https://example.test`,
+		"export DB_PASSWORD=%s",
+		"API_TOKEN=%s make deploy",
+		"gh auth login --token %s",
+		`curl -d "password=%s"`,
+		"sshpass -p %s ssh host",
+		"sshpass -p %s",
+		"mysql -u root -p%s",
+		"mysql --password=%s shop",
+		"git clone https://bob:%s@example.test/r.git",
+	}
+	for _, a := range carriers {
+		for _, b := range carriers {
+			first, second := fmt.Sprintf(a, "zqfirst"), fmt.Sprintf(b, "zqsecond")
+			for _, lines := range [][]string{
+				{first, second},
+				{first + " && " + second},
+				{first + "; " + second},
+			} {
+				for _, native := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%q native=%t", lines, native), func(t *testing.T) {
+						t.Parallel()
+						var calls []transcript.PendingCall
+						if native {
+							calls = []transcript.PendingCall{bashCall("toolu_pw", strings.Join(lines, "\n"), "Run the commands")}
+						}
+						out := menuOut(t, claudeBash("", lines...), calls...)
+						if strings.Contains(out, "zq") {
+							t.Errorf("left: %s", out)
+						}
+						if native != strings.Contains(out, nativeIn+"/home/u/w1") {
+							t.Errorf("not from the native call (%t): %s", native, out)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
 // The issue's reproduction (#106), ported: the screen of an unchanged
 // command and Yes/No choices whose only change is an elapsed counter, ten
 // reads two seconds apart, no answer: one card, still actionable, never
@@ -815,5 +1039,37 @@ func TestNativeAboutBounded(t *testing.T) {
 	menuFacts(m, partial.op, nil)
 	if partial.op.complete || len(m.About) > aboutLinesMax || m.About[0] != aboutPartial {
 		t.Fatalf("partial: %d lines: %q", len(m.About), m.About)
+	}
+}
+
+// #106 (the review's case): the hub renders a native call's card itself,
+// so a hostile command just under the native guard, 10000 command names
+// matched from the end its dialog shows, costs it little (before: 4.7 s,
+// 3.2 GB): about what one of redactMax bytes costs, all that is read of
+// it, in time and in bytes allocated. Not parallel: it measures.
+func TestNativeAboutCost(t *testing.T) {
+	about := func(cmd string) (func() []string, int) {
+		call := bashCall("toolu_cost", cmd, "Print names")
+		op := &menuOp{lines: []string{strings.TrimSpace(cmd[len(cmd)-71:])}}
+		nc := nativeOf(op, []transcript.PendingCall{call}, "default")
+		if nc == nil {
+			t.Fatal("no native call")
+		}
+		return func() []string { return nc.about(op) }, len(call.Input)
+	}
+	f, input := about("echo " + strings.Repeat("mysql ", 10000) + "target.test")
+	if input > transcript.MaxCallInput {
+		t.Fatalf("input %d bytes, over the guard", input)
+	}
+	ref, _ := about("echo " + strings.Repeat("mysql ", (redactMax-16)/6) + "target.test")
+	small, smallBytes := redactCost(func() { ref() }, 0)
+	var out []string
+	d, bytes := redactCost(func() { out = f() }, 3*small)
+	t.Logf("input %d bytes: %v, %d bytes allocated; %d bytes: %v, %d", input, d, bytes, redactMax, small, smallBytes)
+	if d > 3*small || bytes > 2*smallBytes {
+		t.Errorf("input %d bytes: %v, %d bytes allocated; %d bytes: %v, %d", input, d, bytes, redactMax, small, smallBytes)
+	}
+	if len(out) != 4 || !strings.HasPrefix(out[1], "echo mysql mysql") || !strings.HasSuffix(out[1], "…") {
+		t.Errorf("about %q", out)
 	}
 }
