@@ -1153,6 +1153,10 @@ func (s *Service) submit(ctx context.Context, ss *session, epoch uint64) {
 			s.job(func(ctx context.Context) { s.finish(ctx, ss, err) })
 		})
 	}) {
+		if ss.kind == kindMenu {
+			s.endMenu(ctx, ss, menuOff)
+			return
+		}
 		s.closeCards(ctx, ss, CardOffText)
 		return
 	}
