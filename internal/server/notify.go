@@ -15,8 +15,9 @@ package server
 // follow-up through worker.answer_ask's or worker.answer_followup's own
 // path (cardAnswer); the cards' texts are the worker's facts (notifyFacts),
 // none of a secret ask's. #88: and a blocked worker's permission or trust
-// menu through worker.answer's (queueAnswer); of the menu only its
-// choices' labels go, scrubbed (menuText), never its question line.
+// menu through worker.answer's (queueAnswer); of the menu its choices'
+// labels go, scrubbed (menuText), never its question line, and (#106) what
+// it is about, redacted and bounded (menuFacts).
 
 import (
 	"context"
@@ -161,6 +162,9 @@ func (h *Hub) notifyWorker(id string) {
 	}
 	f := h.floors[w.Floor]
 	nw := notifyFacts(w, f != nil && !f.running)
+	if qs, ok := h.questions[id]; ok && nw.Menu != nil && qs.q == w.Question { // #106
+		menuFacts(nw.Menu, qs.op)
+	}
 	o := notify.Observation{Worker: nw, Name: workerDisplayName(w)}
 	if v := notify.Judge(nw); v.Display == notify.DisplayNeedsYou || v.Display == notify.DisplayDone {
 		o.Line = h.notifyLine(w, nw.Secret())

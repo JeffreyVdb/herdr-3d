@@ -16,6 +16,9 @@ func RepoCloned(ctx context.Context, dir, repo string, stat func(string) error, 
 // FollowupPrompt is the prompt worker.answer_followup sends (#60).
 var FollowupPrompt = followupPrompt
 
+// QuestionReadGrace is questionReadGrace (#106).
+const QuestionReadGrace = questionReadGrace
+
 // CheckSchedules runs the schedule runner's look at the clock now, with
 // the hub's context (#62).
 func (h *Hub) CheckSchedules(ctx context.Context) error {

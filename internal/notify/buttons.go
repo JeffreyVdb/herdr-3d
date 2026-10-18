@@ -91,12 +91,18 @@ const (
 	CardSendingText = "Sending…"
 	cardMultiText   = "Pick one or more, then tap Done."
 	// #88: a menu's.
-	CardMenuAboutText  = "What it is about (the command, the edit) is not sent here: see it in the game."
 	CardUnresolvedText = "It still waits on its menu: look at it in the game."
+	// #106: a menu's whose operation the bridge could not read, one whose
+	// approving choices have no button, and its ends but an answer.
+	CardMenuAboutText = "What it is about could not be read here: see it in the game."
+	CardWithheldText  = "Part of it is off its screen, so approving it has no button here: approve it in the game."
+	CardReplacedText  = "Replaced: it asks about something else now."
+	CardGoneText      = "No longer waiting: it was answered elsewhere, or the agent moved on."
+	CardRetryText     = "Not sent: it changed or could not be checked as you tapped. Check it and tap again."
 )
 
-// #88: a menu card's head, and what it asks (fixed: no screen line above
-// a menu leaves the bridge, its question included).
+// #88: a menu card's head, and what it asks (fixed: never the screen's
+// question line, which can be a command's).
 var (
 	menuHeads = map[string]string{"permission": "Permission", "trust": "Trust folder"}
 	menuAsks  = map[string]string{"permission": "It asks for your permission.", "trust": "It asks whether to trust a folder."}
@@ -111,6 +117,7 @@ const (
 	tapSendingText = "Sending…"
 	tapBusyText    = "Already sent"
 	tapTypeText    = "Type your answer as a reply"
+	tapChangedText = "It changed: check the card and tap again" // #106
 )
 
 // Answers to a typed answer that is not taken (the prompt stays open).
@@ -170,7 +177,7 @@ type FollowupAnswer struct {
 }
 
 // questionKey names what a worker asks now: its ask's tool_use_id, its
-// follow-up's turn or (#88) its screen menu's hash ("": none).
+// follow-up's turn or (#88) its screen menu's operation ("": none).
 func questionKey(w Worker) string {
 	switch {
 	case validAsk(w.Ask):
@@ -178,10 +185,23 @@ func questionKey(w Worker) string {
 	case validFollowup(w.Followup):
 		return "f|" + w.Followup.TurnID
 	case validMenu(w):
-		return "m|" + w.Menu.Hash
+		return "m|" + menuID(w.Menu)
 	}
 	return ""
 }
+
+// menuID names a menu's operation through redraws (#106): its Op, else its
+// hash.
+func menuID(m *Menu) string {
+	if m.Op != "" {
+		return m.Op
+	}
+	return m.Hash
+}
+
+// cardID names what one menu card is for: its operation, and its native
+// call when known.
+func cardID(m *Menu) string { return menuID(m) + "|" + m.Native }
 
 // menuSeen is a worker's screen menu as the loop saw it (#88): what its
 // card shows, and the blocked spell (status_since) it is of.
@@ -201,19 +221,47 @@ func menuOf(o Observation) *menuSeen {
 	return &menuSeen{menu: w.Menu, name: o.Name, since: w.StatusSince}
 }
 
-// maxCarded is how many menus of one blocked spell get a card: past it
-// the spell opens none (its notification went; the game answers), and no
-// hash is forgotten, so none gets a second card.
-const maxCarded = 32
+// blockedSpell is the blocked spell an observation's worker is in (its
+// status_since; 0: not blocked, or its floor asleep).
+func blockedSpell(o Observation) int64 {
+	if w := o.Worker; !o.Gone && w.Status == "blocked" && !w.Asleep {
+		return w.StatusSince
+	}
+	return 0
+}
+
+// maxCarded is how many menu operations of one blocked spell are kept as
+// carded (the oldest forgotten): a bound on memory, not on cards (#106:
+// the send budget bounds those).
+const maxCarded = 64
 
 // spell is a worker's blocked spell whose needs-you notification went
-// (#88): its status_since, and the hashes of its menus that got a card (at
-// most maxCarded, none forgotten). A menu gets one card while the spell
-// lasts, though the session is forgotten (an unresolved answer) or the
-// screen read fails a while (the menu gone, then back with its hash).
+// (#88): its status_since, and the operations of its menus that got a card
+// (cardID). An operation gets one card while the spell lasts, though the
+// session is forgotten (an unresolved answer) or the screen read fails a
+// while (the menu gone, then back). #106: ops counts the operations its
+// menus asked about, for the diagnostics.
 type spell struct {
 	since  int64
 	carded []string
+	ops    []string
+}
+
+// card marks id as carded.
+func (sp *spell) card(id string) {
+	if !slices.Contains(sp.carded, id) {
+		sp.carded = append(sp.carded, id)
+	}
+	if len(sp.carded) > maxCarded {
+		sp.carded = sp.carded[1:]
+	}
+}
+
+// saw counts op among the spell's operations.
+func (sp *spell) saw(op string) {
+	if !slices.Contains(sp.ops, op) && len(sp.ops) < maxCarded {
+		sp.ops = append(sp.ops, op)
+	}
 }
 
 // session is one ask's or follow-up's cards.
@@ -230,6 +278,13 @@ type session struct {
 	sending      bool
 	cancel       bool // the answer sent is a Cancel
 	done         bool // the hub took the answer
+	// #106, a menu's: its blocked spell, the native call it is for (the
+	// first one known), how many times its hash changed under it, and a
+	// note its live card shows (an answer not sent).
+	since   int64
+	native  string
+	redraws int
+	note    string
 }
 
 // qstate is one question's card and its answer so far.
@@ -257,17 +312,27 @@ type buttons struct {
 	// cur is what each worker asks now (questionKey), as the loop saw it.
 	cur map[string]string
 	// #88: each worker's screen menu, as the loop saw it, and the blocked
-	// spell its last needs-you notification went for.
+	// spell its last needs-you notification went for. #106: and the
+	// blocked spell each worker is in (its status_since).
 	menus      map[string]*menuSeen
 	rang       map[string]*spell
+	blocked    map[string]int64
 	total      window
 	workerTaps map[string]*window
 }
 
 func newButtons() buttons {
 	return buttons{cards: map[Ref]at{}, prompts: map[Ref]at{}, cur: map[string]string{},
-		menus: map[string]*menuSeen{}, rang: map[string]*spell{},
+		menus: map[string]*menuSeen{}, rang: map[string]*spell{}, blocked: map[string]int64{},
 		total: window{n: TapTotal, per: ReplyWindow}, workerTaps: map[string]*window{}}
+}
+
+// live reports whether ss is still what its worker asks, as the loop saw
+// it: its key, or (#106) a menu's blocked spell going on with no menu read
+// now (a failed read, a redraw).
+func (b *buttons) live(ss *session) bool {
+	cur := b.cur[ss.worker]
+	return cur == ss.key || (ss.kind == kindMenu && cur == "" && b.blocked[ss.worker] == ss.since)
 }
 
 func (b *buttons) of(worker string) *session {
@@ -346,6 +411,7 @@ const (
 	tapLimited = "rate_limited"
 	tapBusy    = "busy"
 	tapEmpty   = "empty"
+	tapChanged = "changed" // #106: a menu card's old keyboard
 )
 
 // job runs fn on the replier goroutine, after what is queued already.
@@ -379,10 +445,14 @@ func (s *Service) tapped(t Tap) bool {
 	return true
 }
 
-// seen takes what worker id asks now (the loop's, on a change): the cards
-// of what it asked before are edited to answered in the game, unless their
-// answer is on its way. #88: a menu's card opens if its notification went.
-func (s *Service) seen(ctx context.Context, id, key string, menu *menuSeen) {
+// seen takes what worker id asks now (the loop's, on a change) and the
+// blocked spell it is in (0: none): the cards of what it asked before are
+// edited to answered in the game, unless their answer is on its way. #88:
+// a menu's card opens if its notification went. #106: a menu's card stays
+// while its worker stays blocked in its spell with no menu read, and
+// follows its operation's redraws; it ends replaced (another question in
+// the spell) or no longer waited on, never "answered in the game".
+func (s *Service) seen(ctx context.Context, id, key string, menu *menuSeen, blocked int64) {
 	if key == "" {
 		delete(s.bt.cur, id)
 	} else {
@@ -392,11 +462,109 @@ func (s *Service) seen(ctx context.Context, id, key string, menu *menuSeen) {
 		delete(s.bt.menus, id)
 	} else {
 		s.bt.menus[id] = menu
+		if sp := s.bt.rang[id]; sp != nil && sp.since == menu.since {
+			sp.saw(menuID(menu.menu))
+		}
 	}
-	if ss := s.bt.of(id); ss != nil && ss.key != key && !ss.sending {
-		s.closeCards(ctx, ss, CardInGameText)
+	if blocked == 0 {
+		delete(s.bt.blocked, id)
+	} else {
+		s.bt.blocked[id] = blocked
+	}
+	if ss := s.bt.of(id); ss != nil && !ss.sending {
+		switch {
+		case ss.key == key && ss.kind == kindMenu:
+			s.moved(ctx, ss, menu)
+		case ss.key == key, s.bt.live(ss):
+		case ss.kind == kindMenu:
+			s.endMenu(ctx, ss, "")
+		default:
+			s.closeCards(ctx, ss, CardInGameText)
+		}
 	}
 	s.openMenu(ctx, id)
+}
+
+// moved takes a menu's new look of the same operation (#106): its hash,
+// labels or what it is about redrawn. Its card follows (re-rendered in the
+// batch's flush, edited only if it reads otherwise) and a tap answers the
+// new hash; a native call other than the one it was for is another
+// operation: replaced.
+func (s *Service) moved(ctx context.Context, ss *session, m *menuSeen) {
+	if m == nil {
+		return
+	}
+	if ss.native != "" && m.menu.Native != "" && m.menu.Native != ss.native {
+		s.endMenu(ctx, ss, menuReplaced)
+		return
+	}
+	if ss.native == "" && m.menu.Native != "" {
+		ss.native = m.menu.Native
+		if sp := s.bt.rang[ss.worker]; sp != nil && sp.since == ss.since {
+			sp.card(cardID(m.menu))
+		}
+	}
+	if m.menu.Hash != ss.menu.Hash {
+		ss.redraws++
+	}
+	if !slices.Equal(m.menu.About, ss.menu.About) || !slices.Equal(m.menu.Choices, ss.menu.Choices) {
+		// What it shows changes: a new keyboard, so a tap is on the one
+		// shown with it (one on the old: tapChangedText).
+		ss.tok = newToken()
+	}
+	ss.menu, ss.name = m.menu, m.name
+	ss.qs[0].dirty = true
+}
+
+// Ends of a menu's card (#106; the notify.menu row's outcome).
+const (
+	menuAnswered   = "answered"
+	menuUnresolved = "unresolved"
+	menuReplaced   = "replaced"
+	menuGone       = "gone"
+	menuOff        = "replies_off"
+	menuFailed     = "failed"
+)
+
+// menuAudit is a notify.menu row's args (#106): which worker, where its
+// identity was from, how often its hash changed under one operation, how
+// many operations its blocked spell asked about, how its card ended; never
+// a text, a command or a hash.
+type menuAudit struct {
+	ID       string `json:"id"`
+	Source   string `json:"source,omitempty"`
+	Partial  bool   `json:"partial,omitempty"`
+	Redraws  int    `json:"redraws,omitempty"`
+	SpellOps int    `json:"spell_ops,omitempty"`
+	Outcome  string `json:"outcome"`
+}
+
+// endMenu closes a menu's card with its end (""): replaced when its worker
+// asks something else in the same blocked spell, else no longer waited on;
+// and audits it.
+func (s *Service) endMenu(ctx context.Context, ss *session, outcome string) {
+	if outcome == "" {
+		outcome = menuGone
+		if s.bt.cur[ss.worker] != "" && s.bt.blocked[ss.worker] == ss.since {
+			outcome = menuReplaced
+		}
+	}
+	status := map[string]string{menuReplaced: CardReplacedText, menuGone: CardGoneText, menuOff: CardOffText}[outcome]
+	s.auditMenu(ctx, ss, outcome)
+	s.closeCards(ctx, ss, status)
+}
+
+func (s *Service) auditMenu(ctx context.Context, ss *session, outcome string) {
+	row := menuAudit{ID: ss.worker, Source: ss.menu.Source, Partial: slices.ContainsFunc(ss.menu.Choices, func(c MenuChoice) bool { return c.Withheld }),
+		Redraws: ss.redraws, Outcome: outcome}
+	if sp := s.bt.rang[ss.worker]; sp != nil && sp.since == ss.since {
+		row.SpellOps = len(sp.ops)
+	}
+	var err error
+	if outcome == menuFailed {
+		err = errors.New(outcome)
+	}
+	s.audit(ctx, AuditMenu, row, err)
 }
 
 // rang takes a needs-you notification that went without cards of its own
@@ -417,22 +585,27 @@ func (s *Service) rang(ctx context.Context, a Alert) {
 }
 
 // openMenu opens worker id's menu card (#88) when the loop saw its menu and
-// the notification of the same blocked spell went, once a menu (openCards:
-// replies on, not open already), for the spell's first maxCarded menus.
+// the notification of the same blocked spell went, once an operation
+// (openCards: replies on, not open already).
 func (s *Service) openMenu(ctx context.Context, id string) {
 	m := s.bt.menus[id]
 	sp := s.bt.rang[id]
-	if sp == nil || m == nil || sp.since != m.since || slices.Contains(sp.carded, m.menu.Hash) || len(sp.carded) >= maxCarded {
+	if sp == nil || m == nil || sp.since != m.since || slices.Contains(sp.carded, cardID(m.menu)) {
 		return
 	}
+	sp.saw(menuID(m.menu))
 	if s.openCards(ctx, Alert{WorkerID: id, Name: m.name, Kind: KindNeedsYou, Since: m.since, Menu: m.menu}) {
-		sp.carded = append(sp.carded, m.menu.Hash)
+		sp.card(cardID(m.menu))
 	}
 }
 
 // repliesOff edits every open card to say replies are off.
 func (s *Service) repliesOff(ctx context.Context) {
 	for len(s.bt.sessions) > 0 {
+		if ss := s.bt.sessions[0]; ss.kind == kindMenu {
+			s.endMenu(ctx, ss, menuOff)
+			continue
+		}
 		s.closeCards(ctx, s.bt.sessions[0], CardOffText)
 	}
 }
@@ -445,7 +618,7 @@ func alertKey(a Alert) string {
 	case a.Followup != nil:
 		return "f|" + a.Followup.TurnID
 	case a.Menu != nil:
-		return "m|" + a.Menu.Hash
+		return "m|" + menuID(a.Menu)
 	}
 	return ""
 }
@@ -469,7 +642,11 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 		if old.key == key {
 			return false
 		}
-		s.closeCards(ctx, old, CardInGameText)
+		if old.kind == kindMenu {
+			s.endMenu(ctx, old, "")
+		} else {
+			s.closeCards(ctx, old, CardInGameText)
+		}
 	}
 	ss := &session{tok: newToken(), worker: a.WorkerID, name: a.Name, key: key}
 	n := 0
@@ -480,7 +657,7 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 			n = 1
 		}
 	case a.Menu != nil:
-		ss.kind, ss.menu, n = kindMenu, a.Menu, 1
+		ss.kind, ss.menu, ss.since, ss.native, n = kindMenu, a.Menu, a.Since, a.Menu.Native, 1
 	default:
 		ss.kind, ss.fu, n = kindFollowup, a.Followup, len(a.Followup.Questions)
 	}
@@ -502,6 +679,9 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 		if err != nil || !ref.Valid() {
 			s.opts.Log.Warn("notifications: a question's card was not delivered", "worker", a.WorkerID, "code", CodeOf(err))
 			ss.qs = ss.qs[:i]
+			if ss.kind == kindMenu {
+				s.auditMenu(ctx, ss, menuFailed)
+			}
 			s.closeCards(ctx, ss, CardInGameAsk)
 			return false
 		}
@@ -646,6 +826,13 @@ func (s *Service) tap(ctx context.Context, t Tap) {
 	}
 	tok, act, n, ok := parseData(t.Data)
 	c, known := s.bt.cards[t.Msg]
+	if ok && known && c.s.tok != tok && c.s.kind == kindMenu {
+		// #106: its old keyboard, from before it changed: the card shows
+		// the new one.
+		row.ID, row.Kind = c.s.worker, c.s.kind
+		end(tapChanged, tapChangedText)
+		return
+	}
 	if !ok || !known || c.s.tok != tok {
 		end(tapUnknown, tapClosedText)
 		// A card of before a restart, or one forgotten: no buttons left.
@@ -663,9 +850,13 @@ func (s *Service) tap(ctx context.Context, t Tap) {
 		end(tapLimited, tapLimitedText)
 		return
 	}
-	if s.bt.cur[ss.worker] != ss.key && !ss.sending {
+	if !s.bt.live(ss) && !ss.sending {
 		end(tapClosed, tapClosedText)
-		s.closeCards(ctx, ss, CardInGameText)
+		if ss.kind == kindMenu {
+			s.endMenu(ctx, ss, "")
+		} else {
+			s.closeCards(ctx, ss, CardInGameText)
+		}
 		return
 	}
 	if ss.sending {
@@ -674,6 +865,10 @@ func (s *Service) tap(ctx context.Context, t Tap) {
 	}
 	q := ss.qs[qi]
 	multi, options, text, cancel := ss.shape(qi)
+	if act == actOption && ss.kind == kindMenu && n <= options && ss.menu.Choices[n-1].Withheld {
+		options = 0 // #106: no button for it
+	}
+	ss.note = ""
 	switch {
 	case act == actCancel && cancel:
 		ss.cancel = true
@@ -937,6 +1132,9 @@ func (s *Service) finish(ctx context.Context, ss *session, err error) {
 		row.Outcome = ReplyUnresolved
 		s.audit(ctx, AuditAnswer, row, nil)
 		s.opts.Log.Info("answer tapped in Telegram sent to its worker, which still waits", "worker", ss.worker, "kind", ss.kind)
+		if ss.kind == kindMenu {
+			s.auditMenu(ctx, ss, menuUnresolved)
+		}
 		s.closeCards(ctx, ss, "✓ Sent: "+ss.summary(0)+"\n"+CardUnresolvedText)
 		return
 	}
@@ -944,6 +1142,9 @@ func (s *Service) finish(ctx context.Context, ss *session, err error) {
 		row.Outcome = replySent
 		s.audit(ctx, AuditAnswer, row, nil)
 		s.opts.Log.Info("answer tapped in Telegram sent to its worker", "worker", ss.worker, "kind", ss.kind)
+		if ss.kind == kindMenu {
+			s.auditMenu(ctx, ss, menuAnswered)
+		}
 		s.closeCards(ctx, ss, "")
 		return
 	}
@@ -955,11 +1156,32 @@ func (s *Service) finish(ctx context.Context, ss *session, err error) {
 	row.Outcome = kind
 	s.audit(ctx, AuditAnswer, row, errors.New(kind))
 	ss.done = false
+	if ss.kind == kindMenu {
+		s.unsent(ctx, ss, kind)
+		return
+	}
 	status := answers[kind]
 	if kind == ReplyClosed {
 		status = CardClosedText
 	}
 	s.closeCards(ctx, ss, status)
+}
+
+// unsent takes a menu's answer that was not sent (#106): while the loop
+// still sees its operation the card stays, its buttons back, and says why
+// (the hub found the screen redrawn, its lane full, a read or a key
+// failed: it is checked again at the next tap); else it ends as replaced
+// or no longer waited on.
+func (s *Service) unsent(ctx context.Context, ss *session, kind string) {
+	if !s.bt.live(ss) || kind == ReplyGone || kind == ReplyState {
+		s.endMenu(ctx, ss, "")
+		return
+	}
+	ss.qs[0].picked, ss.qs[0].answered, ss.qs[0].dirty = map[int]bool{}, false, true
+	ss.note = CardRetryText
+	if kind != ReplyClosed {
+		ss.note = answers[kind] + " " + CardRetryText
+	}
 }
 
 // render is question i's card: live (status ""), or ended with status
@@ -990,7 +1212,9 @@ func (s *Service) render(ss *session, i int, status string) Card {
 	switch ss.kind {
 	case kindMenu:
 		body.WriteString(menuAsks[ss.menu.Kind])
-		if !ended {
+		if len(ss.menu.About) > 0 {
+			body.WriteString("\n\n" + strings.Join(ss.menu.About, "\n"))
+		} else if !ended {
 			body.WriteString("\n\n" + CardMenuAboutText)
 		}
 		for _, c := range ss.menu.Choices {
@@ -1062,11 +1286,21 @@ func (s *Service) render(ss *session, i int, status string) Card {
 			rest.WriteString("\nTyped: " + OneLine(*q.text, cardRecMax))
 		}
 	}
+	withheld := func(o int) bool { return ss.kind == kindMenu && ss.menu.Choices[o].Withheld }
+	if ss.kind == kindMenu && slices.ContainsFunc(ss.menu.Choices, func(c MenuChoice) bool { return c.Withheld }) {
+		rest.WriteString("\n\n" + CardWithheldText)
+	}
+	if ss.note != "" {
+		rest.WriteString("\n\n" + ss.note)
+	}
 	var rows [][]Button
 	if ss.kind == kindFollowup && ss.fu.Questions[i].Kind == "yes_no" {
 		rows = append(rows, []Button{{"Yes", data(ss.tok, actOption, 1)}, {"No", data(ss.tok, actOption, 2)}})
 	} else {
 		for o := range options {
+			if withheld(o) {
+				continue
+			}
 			label := fmt.Sprintf("%d. %s", o+1, OneLine(opts[o], buttonMax))
 			if multi {
 				mark := "☐ "

@@ -51,6 +51,8 @@ const (
 	// #14: a tap on a card, and an answer of the cards handed to the hub.
 	AuditTap    = "notify.tap"
 	AuditAnswer = "notify.answer"
+	// #106: how a menu's card ended, and where its identity was from.
+	AuditMenu = "notify.menu"
 )
 
 // Settings are what the store keeps.
@@ -177,6 +179,15 @@ type passedTest struct {
 
 type job struct{ alert Alert }
 
+// look is what the loop last told the replier of a worker: what it asks
+// (questionKey), the blocked spell it is in (#106; 0: none) and its
+// menu's look ("": none).
+type look struct {
+	key     string
+	blocked int64
+	menu    string
+}
+
 // Service holds the settings and sends the notifications. Observe never
 // blocks; Run does the work. Safe for concurrent use.
 type Service struct {
@@ -199,7 +210,7 @@ type Service struct {
 	bt buttons // #14: the replier's too
 	// keys is what each worker asks now, as the loop last told the replier
 	// (the loop's).
-	keys map[string]string
+	keys map[string]look
 
 	obsMu    sync.Mutex
 	obs      []Observation
@@ -228,7 +239,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	}
 	s := &Service{opts: opts, change: make(chan struct{}, 1), kick: make(chan struct{}, 1),
 		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle), rp: newReplies(),
-		bt: newButtons(), keys: map[string]string{}}
+		bt: newButtons(), keys: map[string]look{}}
 	if opts.Store != nil {
 		st, ok, err := opts.Store.LoadNotifySettings(ctx)
 		if err != nil {
@@ -568,19 +579,25 @@ func (s *Service) process() {
 	freelancers := s.freelancers()
 	for _, o := range obs {
 		// #14: what the worker asks now, for its cards (a change only).
-		// #88: a menu's with what its card shows.
-		id, key := o.Worker.ID, ""
+		// #88: a menu's with what its card shows. #106: and the blocked
+		// spell it is in, and its menu's look (a redraw of one operation).
+		id := o.Worker.ID
+		var l look
 		var menu *menuSeen
 		if !o.Gone {
-			key, menu = questionKey(o.Worker), menuOf(o)
+			l.key, menu, l.blocked = questionKey(o.Worker), menuOf(o), blockedSpell(o)
+			if menu != nil {
+				l.menu = fmt.Sprintf("%#v", *menu.menu)
+			}
 		}
-		if s.keys[id] != key {
-			if key == "" {
+		if s.keys[id] != l {
+			if l == (look{}) {
 				delete(s.keys, id)
 			} else {
-				s.keys[id] = key
+				s.keys[id] = l
 			}
-			s.job(func(ctx context.Context) { s.seen(ctx, id, key, menu) })
+			key, blocked := l.key, l.blocked
+			s.job(func(ctx context.Context) { s.seen(ctx, id, key, menu, blocked) })
 		}
 		if o.Gone {
 			s.tr.gone(o.Worker.ID)

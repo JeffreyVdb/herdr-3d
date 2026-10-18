@@ -120,9 +120,8 @@ type FollowupQuestion struct {
 }
 
 // Menu is a blocked worker's screen menu (#88), as the bridge lets it go:
-// its choices' labels, scrubbed; no line above the menu (its question, the
-// command, the edit it is about) is ever here: the card says what a kind
-// asks in a fixed line.
+// its choices' labels, scrubbed, and (#106) what it is about, redacted and
+// bounded by the bridge; never the screen's lines as they are.
 type Menu struct {
 	// Hash is the question's (worker.answer's): a new one for each menu and
 	// each time the worker is blocked again.
@@ -130,6 +129,19 @@ type Menu struct {
 	// Kind is "permission" or "trust".
 	Kind    string
 	Choices []MenuChoice
+	// #106: Op names the operation it asks about through redraws, a rewrap
+	// and a hash that changed with them: one card while it stays the same
+	// ("": the Hash does). Native names the agent's own pending call it is
+	// for ("": not known); a menu whose Native changes from one to another
+	// is another operation, though its Op stays.
+	Op, Native string
+	// Source is where its identity is from ("native", "screen"), for the
+	// diagnostics.
+	Source string
+	// About is what it is about as its card shows it: lines the bridge
+	// redacted and bounded, what is cut or uncertain marked (none: the card
+	// says to look in the game).
+	About []string
 }
 
 // MenuChoice is one choice of a menu: its number on the screen and its
@@ -137,6 +149,9 @@ type Menu struct {
 type MenuChoice struct {
 	N     int
 	Label string
+	// Withheld: no button (#106: it would approve an operation the card
+	// cannot show whole).
+	Withheld bool
 }
 
 // Verdict is what the rule says of a worker.

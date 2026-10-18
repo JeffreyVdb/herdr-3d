@@ -89,6 +89,10 @@ type fakeTerm struct {
 	// TypePrompt's); EraseTyped's results in turn.
 	typing    func(ctx context.Context) error
 	eraseErrs []error
+	// #106: readAt, when set, is sent on as each ReadPane starts, then
+	// readGate received from: true fails the read (the test steps them).
+	readAt   chan struct{}
+	readGate chan bool
 }
 
 func newFakeTerm() *fakeTerm { return &fakeTerm{screens: map[string]string{}} }
@@ -151,11 +155,23 @@ func (f *fakeTerm) observers() int {
 	return len(f.obs)
 }
 
-func (f *fakeTerm) ReadPane(_ context.Context, session, pane string) (string, error) {
+func (f *fakeTerm) ReadPane(ctx context.Context, session, pane string) (string, error) {
+	f.mu.Lock()
+	at, gate := f.readAt, f.readGate
+	f.mu.Unlock()
+	fail := false
+	if at != nil {
+		select {
+		case at <- struct{}{}:
+			fail = <-gate
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	s, ok := f.screens[pane]
-	if !ok {
+	if !ok || fail {
 		return "", errors.New("pane not found")
 	}
 	return s, nil
