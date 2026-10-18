@@ -3968,7 +3968,9 @@ beside an edited `prompt`), is `secrets_review_required`, and the message starts
 
 The worker's routes follow `worker.prompt`'s rules: on its input lane, in order with its other input, the checks
 again on the texts with their references, a failure removes the files it made, a success keeps them for its identical
-retry (5 minutes). A wrap-up's files stay once its prompt went, and go when its arming fails. A `worker.handoff` in
+retry (5 minutes). `worker.answer_async` keeps the admission it got when it arrived, its answers' texts replaced by
+the protected ones: an answer submitted twice before the first was sent is still sent once (the second `stale`), as
+with the switch off. A wrap-up's files stay once its prompt went, and go when its arming fails. A `worker.handoff` in
 mode `agent` settles them as a `/handoff` does (until the request's prompt is being sent, a failed request or an
 `existing` answer removes them; from then on the send decides); in mode `llm` they stay once the job started (the model
 reads only the references; a handoff it writes may name the files, which live as long as that worker) and an

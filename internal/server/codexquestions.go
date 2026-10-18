@@ -271,7 +271,9 @@ func validAsyncText(s string) bool {
 // startAnswerAsync validates worker.answer_async and queues it on the
 // worker's input lane, where it is checked again just before it is sent.
 // #108 round 2: with prompt secrets reviewed, its answers go through the
-// gate on the lane first, and are admitted as they go.
+// gate on the lane first, then go as admitted now with their texts
+// replaced (review B5: admitted again on the lane, a duplicate queued
+// before the first send would become a retry).
 func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.WorkerAnswerAsyncArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
@@ -302,11 +304,19 @@ func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command
 					b.Answers[i].Answer = texts(fmt.Sprintf("answers[%d].answer", i))
 				}
 			}
-			t, err := h.admitAsync(b)
+			replies, err := asyncReplies(b)
 			if err != nil {
 				return nil, err
 			}
-			return func(ctx context.Context, _, _ string) (any, error) { return h.answerAsync(ctx, b, t) }, nil
+			sent := make([]string, len(replies))
+			for i, r := range replies {
+				sent[i] = r.Text
+			}
+			bt, err := t.WithTexts(sent)
+			if err != nil {
+				return nil, asyncError(err)
+			}
+			return func(ctx context.Context, _, _ string) (any, error) { return h.answerAsync(ctx, b, bt) }, nil
 		})
 	}
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, _, _ string) (any, error) {
@@ -317,16 +327,9 @@ func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command
 // admitAsync is worker.answer_async's checks of its answers, its worker
 // and thread (hub goroutine): the admitted answer.
 func (h *Hub) admitAsync(a proto.WorkerAnswerAsyncArgs) (codexapp.Ticket, error) {
-	replies := make([]codexapp.Reply, 0, len(a.Answers))
-	for i, x := range a.Answers {
-		if x.Index == nil {
-			return codexapp.Ticket{}, bad("answers[%d].index is required", i)
-		}
-		if len(x.Answer) > maxAsyncAnswer || !validAsyncText(x.Answer) {
-			return codexapp.Ticket{}, bad("answers[%d].answer must be at most %d bytes of UTF-8 without control characters but line ends and tabs, got %d bytes",
-				i, maxAsyncAnswer, len(x.Answer))
-		}
-		replies = append(replies, codexapp.Reply{Index: *x.Index, Text: x.Answer})
+	replies, err := asyncReplies(a)
+	if err != nil {
+		return codexapp.Ticket{}, err
 	}
 	if _, _, err := h.termWorker(a.ID); err != nil {
 		return codexapp.Ticket{}, err
@@ -343,6 +346,23 @@ func (h *Hub) admitAsync(a proto.WorkerAnswerAsyncArgs) (codexapp.Ticket, error)
 		return codexapp.Ticket{}, err
 	}
 	return t, nil
+}
+
+// asyncReplies is worker.answer_async's checks of its answers' shape (#108:
+// as typed, and again with their references): the replies.
+func asyncReplies(a proto.WorkerAnswerAsyncArgs) ([]codexapp.Reply, error) {
+	replies := make([]codexapp.Reply, 0, len(a.Answers))
+	for i, x := range a.Answers {
+		if x.Index == nil {
+			return nil, bad("answers[%d].index is required", i)
+		}
+		if len(x.Answer) > maxAsyncAnswer || !validAsyncText(x.Answer) {
+			return nil, bad("answers[%d].answer must be at most %d bytes of UTF-8 without control characters but line ends and tabs, got %d bytes",
+				i, maxAsyncAnswer, len(x.Answer))
+		}
+		replies = append(replies, codexapp.Reply{Index: *x.Index, Text: x.Answer})
+	}
+	return replies, nil
 }
 
 // asyncSend is a checked answer, ready to go (taken on the hub goroutine).

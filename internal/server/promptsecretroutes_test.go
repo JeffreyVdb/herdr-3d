@@ -1150,6 +1150,57 @@ func TestPromptSecretsAnswerAsync(t *testing.T) {
 	}
 }
 
+// Two reviewed answers for one question queued while it is pending,
+// behind other input (review B5; TestAsyncAnswerQueuedTwiceIsNotARetry
+// with the switch on): the first goes with its references and its turn
+// ends before it is delivered; the second, submitted before that, is
+// stale, not a retry. One send; a retry submitted after is sent.
+func TestPromptSecretsAnswerAsyncQueuedTwice(t *testing.T) {
+	t.Parallel()
+	sb, a := asyncWorkerWith(t, func(o *server.Options) { o.SecretsDir = secretsDirFor(t) })
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	gate := make(chan struct{})
+	sb.term.mu.Lock()
+	sb.term.textGate = gate
+	sb.term.mu.Unlock()
+	sb.host.steer = func(turn, _, _ string) (string, error) {
+		sb.emit(turnCompleted(turn))
+		sb.codexWorker(t, func(c *proto.WorkerCodex) bool { return c.Turn == "" })
+		return turn, nil
+	}
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", contextQ)))
+	sb.stateIs(t, "call_3", 0, proto.AsyncPending)
+	args := answerArgs(a.ID, "call_3", ans(0, routeText))
+	args.Secrets = proto.SecretsReviews{"answers[0].answer": routeReview(t, sb.c)}
+	sb.c.send(proto.Command{T: proto.CmdWorkerKeys, ReqID: "hold", Args: mustRaw(proto.WorkerKeysArgs{ID: a.ID,
+		Input: []proto.InputItem{text("slow hold")}})})
+	sb.c.send(proto.Command{T: proto.CmdWorkerAnswerAsync, ReqID: "one", Args: mustRaw(args)})
+	sb.c.send(proto.Command{T: proto.CmdWorkerAnswerAsync, ReqID: "two", Args: mustRaw(args)})
+	sb.c.command(proto.CmdCodexServerGet, "barrier", struct{}{}) // both answers are queued
+	close(gate)
+	if m := sb.c.reply("one"); m.env.T != proto.TAck {
+		t.Fatalf("one: %s", m.raw)
+	}
+	if m := sb.c.reply("two"); codeOf(m) != proto.ErrStale {
+		t.Fatalf("two: %s, sends %d", m.raw, len(sb.sent()))
+	}
+	sends := sb.sent()
+	if len(sends) != 1 {
+		t.Fatalf("%d sends", len(sends))
+	}
+	answers, _ := codexapp.ParseReply(sends[0].text)
+	checkRouteSent(t, answers[0].Answer)
+	if c := sb.stateIs(t, "call_3", 0, proto.AsyncSent); !batchOf(c, "call_3").Questions[0].Undelivered {
+		t.Fatalf("questions = %+v", c.Questions)
+	}
+	// A retry submitted now is the user's: it is sent.
+	_, m := sb.c.command(proto.CmdWorkerAnswerAsync, "retry", args)
+	if m.env.T != proto.TAck || len(sb.sent()) != 2 {
+		t.Fatalf("retry = %s, %d sends", m.raw, len(sb.sent()))
+	}
+	traceFree(t, sb.st, sb.db, []*client{sb.c}, routeSentinel)
+}
+
 // worker.wrapup: the cleanup prompt is protected before it is armed, and
 // sent with its references; refused without a review, nothing armed.
 func TestPromptSecretsWrapUp(t *testing.T) {
