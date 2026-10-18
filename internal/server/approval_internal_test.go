@@ -213,7 +213,7 @@ func TestRedactLine(t *testing.T) {
 	t.Parallel()
 	for in, want := range map[string]string{
 		"curl -u admin:hunter2 https://example.test":           "curl -u admin:[key] https://example.test",
-		"curl --user 'bob:s3cr3t pass' https://x.test":         "curl --user 'bob:[key] pass' https://x.test",
+		"curl --user 'bob:s3cr3t pass' https://x.test":         "curl --user 'bob:[key]' https://x.test",
 		"curl https://bob:pw123@example.test/x":                "curl https://bob:[key]@example.test/x",
 		`curl -H "Authorization: Bearer abc.def" https://x`:    `curl -H "Authorization: [key]" https://x`,
 		`curl -H 'X-Api-Key: 1234abcd' https://x`:              `curl -H 'X-Api-Key: [key]' https://x`,
@@ -230,6 +230,40 @@ func TestRedactLine(t *testing.T) {
 	} {
 		if got := redactLine(in); got != want {
 			t.Errorf("redactLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// #106: a password in shell quotes goes whole, every word of it, however
+// it is quoted; what follows it stays.
+func TestRedactLineQuoted(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		`curl -u admin:"hunter2" https://example.test`:                    `curl -u admin:[key] https://example.test`,
+		`curl -u admin:'hun ter2' https://example.test`:                   `curl -u admin:[key] https://example.test`,
+		`curl -u 'admin:hun ter2' https://example.test`:                   `curl -u 'admin:[key]' https://example.test`,
+		`curl -u 'bob:correct horse battery staple' https://example.test`: `curl -u 'bob:[key]' https://example.test`,
+		`curl --user "admin:hunter2" https://example.test`:                `curl --user "admin:[key]" https://example.test`,
+		`curl --user="admin:two words" https://example.test`:              `curl --user="admin:[key]" https://example.test`,
+		`curl -u "admin":"two words" https://example.test`:                `curl -u "admin":[key] https://example.test`,
+		`sshpass -p 'hunter2' ssh user@example.test`:                      `sshpass -p [key] ssh user@example.test`,
+		`sshpass -p"two words" ssh host`:                                  `sshpass -p[key] ssh host`,
+		`mysql -u root -p'hunter2' shop`:                                  `mysql -u root -p[key] shop`,
+		`mysql -p'hunter2' -e 'select 1'`:                                 `mysql -p[key] -e 'select 1'`,
+		`mysql -p"two words" -e 'select 1'`:                               `mysql -p[key] -e 'select 1'`,
+		`gh auth login --token 'two words' --hostname x`:                  `gh auth login --token [key] --hostname x`,
+		`DB_PASSWORD="two words" ./migrate`:                               `DB_PASSWORD=[key] ./migrate`,
+		`DB_PASSWORD=pre'two words' ./migrate`:                            `DB_PASSWORD=[key] ./migrate`,
+		`curl -H 'Authorization: Bearer' -H 'X-Other: value' https://x`:   `curl -H 'Authorization: [key]' -H 'X-Other: value' https://x`,
+	} {
+		got := redactLine(in)
+		if got != want {
+			t.Errorf("redactLine(%q) = %q, want %q", in, got, want)
+		}
+		for _, secret := range []string{"hunter2", "hun", "ter2", "horse", "staple", "two", "words"} {
+			if strings.Contains(got, secret) {
+				t.Errorf("redactLine(%q) = %q keeps %q", in, got, secret)
+			}
 		}
 	}
 }

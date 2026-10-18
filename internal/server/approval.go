@@ -180,20 +180,49 @@ const (
 	aboutCut     = "… (%d more lines not shown)"
 )
 
+// shWord is one shell word: plain characters and quoted runs ('…', "…"),
+// a quoted run whole, spaces and all.
+const shWord = `(?:[^\s'";|&]|'[^']*'|"[^"]*")+`
+
 // redactions are what a line of an operation loses before it leaves the
-// bridge, on top of digest.Scrub's tokens (TestRedactLine): a password
-// given to curl and the like, an auth header's value, a secret-looking
-// assignment or option's value, a MySQL or sshpass password.
+// bridge, on top of digest.Scrub's tokens (TestRedactLine,
+// TestRedactLineQuoted): a password given to curl and the like, an auth
+// header's value, a secret-looking assignment or option's value, a MySQL
+// or sshpass password. A value is its whole shell word, so a quoted one
+// goes whole. The last group is what goes: replaced by fn's, else by
+// [key].
 var redactions = []struct {
-	re   *regexp.Regexp
-	with string
+	re *regexp.Regexp
+	fn func(string) string
 }{
-	{regexp.MustCompile(`(?i)((?:^|[\s;|&(])(?:-u|--user|-U|--proxy-user)(?:\s+|=)?['"]?[^\s:'"]*:)[^\s'"]+`), "${1}[key]"},
-	{regexp.MustCompile(`(?i)\b((?:proxy-)?authorization|x-api-key|api-key|x-auth-token|private-token|cookie)(\s*:\s*)[^'"\n]+`), "${1}${2}[key]"},
-	{regexp.MustCompile(`(?i)\b([A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d|pwd|credentials?|auth))(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s'";|&]+)`), "${1}${2}[key]"},
-	{regexp.MustCompile(`(?i)(--[a-z0-9-]*(?:key|token|secret|passw(?:or)?d|pwd|credentials?)(?:\s+|=))("[^"]*"|'[^']*'|[^\s'";|&-][^\s'";|&]*)`), "${1}[key]"},
-	{regexp.MustCompile(`(?i)(\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^;|&\n]*?\s-p)([^\s'";|&]+)`), "${1}[key]"},
-	{regexp.MustCompile(`(?i)(\bsshpass\s+-p\s*)([^\s'";|&]+)`), "${1}[key]"},
+	{regexp.MustCompile(`(?i)(?:^|[\s;|&(])(?:-u|--user|-U|--proxy-user)(?:\s+|=)?(` + shWord + `)`), userPass},
+	{regexp.MustCompile(`(?i)\b(?:(?:proxy-)?authorization|x-api-key|api-key|x-auth-token|private-token|cookie)\s*:\s*([^'"\n]+)`), nil},
+	{regexp.MustCompile(`(?i)\b[A-Za-z0-9_.-]*(?:key|token|secret|passw(?:or)?d|pwd|credentials?|auth)\s*[=:]\s*(` + shWord + `)`), nil},
+	{regexp.MustCompile(`(?i)--[a-z0-9-]*(?:key|token|secret|passw(?:or)?d|pwd|credentials?)(?:\s+|=)((?:[^\s'";|&-]|'[^']*'|"[^"]*")` + `(?:[^\s'";|&]|'[^']*'|"[^"]*")*)`), nil},
+	{regexp.MustCompile(`(?i)\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^;|&\n]*?\s-p(` + shWord + `)`), nil},
+	{regexp.MustCompile(`(?i)\bsshpass\s+-p\s*(` + shWord + `)`), nil},
+}
+
+// userPass is a -u user:password word without its password: all after its
+// first colon, quoted or not (a quote left open is closed). A word with no
+// colon names a user only.
+func userPass(w string) string {
+	var q byte
+	for i := 0; i < len(w); i++ {
+		switch c := w[i]; {
+		case q != 0 && c == q:
+			q = 0
+		case q == 0 && (c == '\'' || c == '"'):
+			q = c
+		case c == ':':
+			out := w[:i+1] + "[key]"
+			if q != 0 {
+				out += string(q)
+			}
+			return out
+		}
+	}
+	return w
 }
 
 // redactLine is a line of an operation as it may leave the bridge: what
@@ -201,7 +230,18 @@ var redactions = []struct {
 func redactLine(s string) string {
 	s = plainLine(s)
 	for _, r := range redactions {
-		s = r.re.ReplaceAllString(s, r.with)
+		var b strings.Builder
+		last := 0
+		for _, m := range r.re.FindAllStringSubmatchIndex(s, -1) {
+			from, to := m[len(m)-2], m[len(m)-1]
+			with := "[key]"
+			if r.fn != nil {
+				with = r.fn(s[from:to])
+			}
+			b.WriteString(s[last:from] + with)
+			last = to
+		}
+		s = b.String() + s[last:]
 	}
 	return digest.Scrub(s)
 }

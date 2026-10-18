@@ -103,3 +103,14 @@ func TestCardMenuNativeCallReplaced(t *testing.T) {
 		t.Fatalf("calls %q", calls)
 	}
 }
+
+// #106: a password in shell quotes never reaches the card.
+func TestCardMenuQuotedPasswordThroughTheHub(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridge(t)
+	rb.repliesOn(t)
+	ref := rb.menuCardOf(t, "w1", bashDialog(`sshpass -p 'hunter2' ssh host && curl -u admin:"hunter2" https://x.test`, "Run command"))
+	if c := rb.ch.Card(ref); strings.Contains(c.Text, "hunter2") || !strings.Contains(c.Text, "sshpass -p [key] ssh host") {
+		t.Fatalf("card %q", c.Text)
+	}
+}
