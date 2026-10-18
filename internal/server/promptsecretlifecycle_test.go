@@ -407,7 +407,7 @@ func TestPromptSecretsKeptAcrossSleepRestartAndReboot(t *testing.T) {
 	}
 	sb.publishFloor(true)
 	sb.protect(t, sb.id1, "PASSWORD=Kept-Sentinel-1")
-	sb.publish(world.FloorGone{Session: "s"})
+	sb.publish(world.FloorGone{Session: "s", Gen: world.NextGen()})
 	kept("the herdr session gone")
 	sb.publishFloor(true) // back: the workers resume
 	filesOf(sb.bridge, counts)
@@ -650,11 +650,12 @@ func TestPromptSecretsWrapUpHandOver(t *testing.T) {
 }
 
 // A scheduled agent with a handoff_path is a successor too: its fire's
-// worker holds the files the handoff names.
+// worker holds the files the handoff names, found by the handoff's path as
+// filed, blanks and all (review L2: a directory with a blank was cut).
 func TestPromptSecretsScheduledSuccessorHoldsTheHandoffsFiles(t *testing.T) {
 	t.Parallel()
 	db := filepath.Join(t.TempDir(), "world.db")
-	svc := hoService(t, filepath.Join(t.TempDir(), "handoff"), db)
+	svc := hoService(t, filepath.Join(t.TempDir(), "handoff space"), db)
 	dir := secretsDirFor(t)
 	sb := startSchedBridgeAt(t, db, newClock(t0.UnixMilli()), func(o *server.Options) { o.SecretsDir, o.Handoffs = dir, svc })
 	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
@@ -682,4 +683,195 @@ func TestPromptSecretsScheduledSuccessorHoldsTheHandoffsFiles(t *testing.T) {
 	if l, _ := sb.st.SecretLeasesOf(ctx, done.WorkerID); len(l) != 1 || l[0].Dir != d0 || l[0].Name != n0 {
 		t.Fatalf("the scheduled worker's leases %+v", l)
 	}
+}
+
+// A worker whose workspace ended while the bridge was down (review L1):
+// the restarted bridge watches its floor run without it, so once that
+// absence outlasts the grace (one sweep) the janitor removes its files.
+// The worker stays open in the store (worker tracking is not touched);
+// not shown and holding nothing, its revoke is not_found.
+func TestPromptSecretsWorkerEndedWhileBridgeDown(t *testing.T) {
+	t.Parallel()
+	sweep := func(o *server.Options) { o.SecretsSweep = 20 * time.Millisecond }
+	sb := startSecretsBridge(t, true, sweep)
+	sb.protect(t, sb.id1, "PASSWORD=Ended-While-Down-33")
+	filesOf(sb.bridge, map[string]int{sb.id1: 1})
+	sb.stop()
+	b2 := startTermBridgeAt(t, sb.db, func(o *server.Options) { o.SecretsDir = sb.dir; sweep(o) }, agentW("w2", "codex", "idle"))
+	b2.world(func(w proto.World) bool { return len(w.Workers) == 1 && workerIn(w, sb.id1) == nil })
+	b2.publishFloor(true)
+	waitFor(t, "the ended worker's file to go", func() bool { return len(sb.files(t)) == 0 })
+	if open, err := b2.st.OpenWorkers(context.Background()); err != nil {
+		t.Fatal(err)
+	} else if _, ok := open[sb.id1]; !ok {
+		t.Fatalf("the ended worker was closed in the store: %v", open)
+	}
+	c := b2.connect(proto.Hello{})
+	c.snapshot()
+	c.mustError(proto.CmdPromptSecretsRevoke, proto.PromptSecretsRevokeArgs{Worker: sb.id1}, proto.ErrNotFound)
+}
+
+// The guard against a transient gap (review L1): a worker absent from its
+// running floor keeps its files for the grace (one sweep, by the bridge's
+// clock) however many sweeps run meanwhile, and for good once it is back.
+// Within the grace an absent worker that still holds files is revoked like
+// a shown one (not not_found); past it they go, and then it is not_found.
+func TestPromptSecretsAbsentWorkerGrace(t *testing.T) {
+	t.Parallel()
+	clk := newClock(t0.UnixMilli())
+	tweak := func(o *server.Options) { o.SecretsSweep, o.Now = 20*time.Millisecond, clk.now }
+	sb := startSecretsBridge(t, true, tweak)
+	sb.protect(t, sb.id1, "PASSWORD=Absent-Grace-1")
+	sb.protect(t, sb.id2, "PASSWORD=Absent-Grace-2")
+	filesOf(sb.bridge, map[string]int{sb.id1: 1, sb.id2: 1})
+	at := func(o *server.Options) { o.SecretsDir = sb.dir; tweak(o) }
+	kept := func(when string, n int) {
+		t.Helper()
+		time.Sleep(150 * time.Millisecond) // a few sweeps
+		if f := sb.files(t); len(f) != n {
+			t.Fatalf("%s: files %v", when, f)
+		}
+	}
+
+	// w1 missing from the restarted floor, then back: kept.
+	sb.stop()
+	b2 := startTermBridgeAt(t, sb.db, at, agentW("w2", "codex", "idle"))
+	b2.publishFloor(true)
+	kept("w1 absent within the grace", 2)
+	b2.workers = append(b2.workers, agentW("w1", "claude", "idle"))
+	b2.publishFloor(true)
+	filesOf(b2.bridge, map[string]int{sb.id1: 1, sb.id2: 1})
+	clk.advance(time.Hour)
+	kept("w1 back", 2)
+
+	// Both missing: within the grace a revoke removes w2's; past it w1's go.
+	b2.stop()
+	b3 := startTermBridgeAt(t, sb.db, at)
+	b3.publishFloor(true)
+	kept("both absent within the grace", 2)
+	c := b3.connect(proto.Hello{})
+	c.snapshot()
+	if n := mustRevoke(t, c, sb.id2); n != 1 {
+		t.Fatalf("revoked %d of an absent worker's files", n)
+	}
+	if f := sb.files(t); len(f) != 1 || !slices.Contains(slices.Collect(mapValues(f)), "Absent-Grace-1") {
+		t.Fatalf("after the revoke: files %v", f)
+	}
+	clk.advance(time.Minute)
+	waitFor(t, "the absent worker's file to go past the grace", func() bool { return len(sb.files(t)) == 0 })
+	c.mustError(proto.CmdPromptSecretsRevoke, proto.PromptSecretsRevokeArgs{Worker: sb.id1}, proto.ErrNotFound)
+	if open, _ := b3.st.OpenWorkers(context.Background()); len(open) != 2 {
+		t.Fatalf("open workers %v", open)
+	}
+}
+
+// A successor hired with the switch off holds the file its prompt names
+// (review L4); a revoke while its prompt waits for the agent removes it,
+// and the prompt is not sent (its revoked-file check does not depend on a
+// review).
+func TestPromptSecretsLeaseHireRevokedWhileSwitchOff(t *testing.T) {
+	t.Parallel()
+	hb, _ := startSecretsHireBridge(t, true, func(o *server.Options) { o.TrustTimeout = 5 * time.Second })
+	a := hireArgs(0)
+	a.Prompt = "PASSWORD=Race-Lease-Sentinel-33"
+	a.Secrets = reviewOf(t, hb.c, a.Prompt)
+	_, m := hb.c.command(proto.CmdWorkerHire, "first", a)
+	first := ackData[proto.HireResult](t, m)
+	file := refRe.FindStringSubmatch(sentPrompt(t, hb, first.WorkspaceID+":p1"))[1]
+	hb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	hb.fl.mu.Lock()
+	hb.fl.startStatus = "working"
+	hb.fl.mu.Unlock()
+	a = hireArgs(1)
+	a.Prompt = "Deploy with " + promptsecret.Reference(file) + " now."
+	hb.c.send(proto.Command{T: proto.CmdWorkerHire, ReqID: "second", Args: mustRaw(a)})
+	waitFor(t, "the successor to hold the file", func() bool {
+		l, err := hb.st.SecretLeases(context.Background())
+		return err == nil && len(l) == 1
+	})
+	if n := mustRevoke(t, hb.c, first.ID); n != 1 {
+		t.Fatalf("revoke removed %d", n)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("the revoked file: %v", err)
+	}
+	hb.fl.update("w2", func(w *world.WorkerObs) { w.Status = "idle" })
+	m = hb.c.reply("second")
+	second := ackData[proto.HireResult](t, m)
+	if second.Prompted == nil || *second.Prompted || !strings.Contains(second.PromptError, "revoked") {
+		t.Fatalf("the successor's prompt after the revoke: %s", m.raw)
+	}
+	for _, call := range hb.fl.Calls() {
+		if strings.Contains(call, "w2:p1") && strings.Contains(call, file) {
+			t.Fatalf("sent %q", call)
+		}
+	}
+}
+
+// A schedule's stored prompt has no review to go stale, but it is checked
+// for revoked files as any other send (review L4): a revoke while its fire
+// waits for the agent withholds the prompt, and the schedule fails saying
+// so.
+func TestPromptSecretsScheduledLeaseRevokedWhileWaiting(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	sb := startSchedBridge(t, func(o *server.Options) { o.SecretsDir, o.TrustTimeout = dir, 5*time.Second })
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	a := hireArgs(0)
+	a.Prompt = "PASSWORD=Scheduled-Lease-Race-Sentinel-33"
+	a.Secrets = reviewOf(t, sb.c, a.Prompt)
+	_, m := sb.c.command(proto.CmdWorkerHire, "first", a)
+	first := ackData[proto.HireResult](t, m)
+	file := refRe.FindStringSubmatch(sentPrompt(t, sb.hireBridge, first.WorkspaceID+":p1"))[1]
+	sb.fl.mu.Lock()
+	sb.fl.startStatus = "working"
+	sb.fl.mu.Unlock()
+	sp := spec(t0.Add(time.Hour))
+	sp.Harness, sp.Model, sp.Effort = "claude", "claude-opus-5-5", "medium"
+	sp.Prompt = "Deploy with " + promptsecret.Reference(file) + " now."
+	sched := sb.create(sp)
+	sb.c.mustAck(proto.CmdScheduleRunNow, proto.ScheduleArgs{ID: sched.ID})
+	waitFor(t, "the successor to hold the file", func() bool {
+		l, err := sb.st.SecretLeases(context.Background())
+		return err == nil && len(l) == 1
+	})
+	if n := mustRevoke(t, sb.c, first.ID); n != 1 {
+		t.Fatalf("revoke removed %d", n)
+	}
+	if _, err := os.Stat(file); !os.IsNotExist(err) {
+		t.Fatalf("the revoked file: %v", err)
+	}
+	sb.fl.update("w2", func(w *world.WorkerObs) { w.Status = "idle" })
+	failed := sb.schedule(sched.ID, inState(store.ScheduleFailed))
+	if !strings.Contains(failed.StateReason, "revoked") {
+		t.Fatalf("schedule %+v", failed)
+	}
+	for _, call := range sb.fl.Calls() {
+		if strings.Contains(call, "w2:p1") && strings.Contains(call, file) {
+			t.Fatalf("sent %q", call)
+		}
+	}
+}
+
+// A worker of a herdr session that is gone is not shown, but it holds its
+// files (kept for its return): a revoke removes them as for a shown worker
+// (review L1's class: a worker that holds files is revocable), and then,
+// holding none, it is not_found.
+func TestPromptSecretsRevokeGoneSessionsWorker(t *testing.T) {
+	t.Parallel()
+	sb := startSecretsBridge(t, true, nil)
+	sb.protect(t, sb.id1, "PASSWORD=Gone-Revoked-1")
+	sb.protect(t, sb.id2, "PASSWORD=Gone-Kept-2")
+	filesOf(sb.bridge, map[string]int{sb.id1: 1, sb.id2: 1})
+	sb.publish(world.FloorGone{Session: "s", Gen: world.NextGen()})
+	sb.world(func(w proto.World) bool { return len(w.Workers) == 0 })
+	if n := mustRevoke(t, sb.c, sb.id1); n != 1 {
+		t.Fatalf("revoked %d", n)
+	}
+	if f := sb.files(t); len(f) != 1 || !slices.Contains(slices.Collect(mapValues(f)), "Gone-Kept-2") {
+		t.Fatalf("files %v", f)
+	}
+	sb.c.mustError(proto.CmdPromptSecretsRevoke, proto.PromptSecretsRevokeArgs{Worker: sb.id1}, proto.ErrNotFound)
+	sb.publishFloor(true) // back: w2 still has its file, w1 none
+	filesOf(sb.bridge, map[string]int{sb.id1: 0, sb.id2: 1})
 }

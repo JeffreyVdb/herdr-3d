@@ -511,6 +511,7 @@ type sessionState struct {
 	hires     map[string]*hireOp // hires in flight, by worker id
 	fires     map[string]*fireOp // send-homes in flight, by worker id
 	last      []world.WorkerObs  // the workers last observed (a hire re-applies them)
+	looked    bool               // #108 round 5: the last observation showed the session running, workers and all
 	origins   map[string]string  // cwd → GitHub repo, from the suggester
 	askedCwds []string           // cwds of the last repo lookup
 	askedAt   time.Time
@@ -1424,6 +1425,7 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 		f.socket = u.Socket
 	}
 	var evs []proto.Event
+	f.looked = u.Running && !u.KeepWorkers
 	if !u.KeepWorkers {
 		f.last = u.Workers
 		evs = h.syncWorkers(ctx, u.Session, f, u.Workers, fresh, closing)

@@ -482,17 +482,21 @@ func (h *Hub) previewGate(forWorker, text string, review *proto.SecretsReview, t
 
 // holds checks the preview's review (review B2; any goroutine): the switch
 // changed, or the hand-over it continues no longer holds, since the command
-// came (it may wait for a scan slot, then on the model): stale. It is the
-// gate of each model call (ai.WithGate), asked once the call holds a slot.
+// came (it may wait for a scan slot, then on the model): stale. Round 5,
+// reviewed or not: or its text refers to a protected file revoked since. It
+// is the gate of each model call (ai.WithGate), asked once the call holds a
+// slot.
 func (pv *preview) holds() error {
-	if pv.rev == nil {
-		return nil
+	if pv.rev != nil {
+		err := pv.h.reviewCurrent(pv.rev)
+		if err == nil && pv.token != "" {
+			_, err = pv.h.pendingFor(pv.token, pv.rev, pv.worker, pv.worker == "")
+		}
+		if err != nil {
+			return err
+		}
 	}
-	err := pv.h.reviewCurrent(pv.rev)
-	if err == nil && pv.token != "" {
-		_, err = pv.h.pendingFor(pv.token, pv.rev, pv.worker, pv.worker == "")
-	}
-	return err
+	return pv.h.referencesHold(pv.text)
 }
 
 // current is holds before the model is asked, and again once it answered

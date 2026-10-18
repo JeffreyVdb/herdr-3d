@@ -488,7 +488,7 @@ func TestPromptSecretsLifecycle(t *testing.T) {
 		t.Fatalf("files %v", sb.files(t))
 	}
 	sb.publishFloor(false) // asleep
-	sb.publish(world.FloorGone{Session: "s"})
+	sb.publish(world.FloorGone{Session: "s", Gen: world.NextGen()})
 	sb.publishFloor(true)
 	probe := sb.connect(proto.Hello{})
 	probe.snapshot()

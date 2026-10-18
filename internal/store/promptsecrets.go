@@ -10,6 +10,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -316,21 +318,76 @@ func (s *Store) HandoffSecretsAt(ctx context.Context, path string) ([]SecretFile
 	return out, rows.Err()
 }
 
-// OpenWorkers returns the ids of the workers not closed (a worker on an
-// asleep floor, or of a herdr session that is gone, is open).
-func (s *Store) OpenWorkers(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM worker WHERE closed_at IS NULL`)
+// HandoffSecretsIn returns the protected files named by the filed handoffs
+// whose path text holds (round 5, review L2), each once, that are still
+// there. A path is matched as filed, blanks and all, and only whole: not
+// inside a longer path, nor running on into a longer name.
+func (s *Store) HandoffSecretsIn(ctx context.Context, text string) ([]SecretFile, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT h.path, r.dir, r.name FROM prompt_secret_handoff r JOIN handoff h ON h.id = r.handoff_id
+		WHERE instr(?, h.path) > 0 ORDER BY r.dir, r.name`, text)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]bool{}
+	var out []SecretFile
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var path string
+		var f SecretFile
+		if err := rows.Scan(&path, &f.Dir, &f.Name); err != nil {
 			return nil, err
 		}
-		out[id] = true
+		if pathIn(text, path) && !slices.Contains(out, f) {
+			out = append(out, f)
+		}
+	}
+	return out, rows.Err()
+}
+
+// pathIn reports whether text names path whole: the byte before it is not
+// one of a name's (nor a dot), and it ends there, or with a dot that ends a
+// sentence (x.md. but not x.md.old).
+func pathIn(text, path string) bool {
+	name := func(b byte) bool {
+		return 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z' || '0' <= b && b <= '9' || b == '_' || b == '-' || b == '/'
+	}
+	for i := 0; path != ""; {
+		j := strings.Index(text[i:], path)
+		if j < 0 {
+			return false
+		}
+		start, rest := i+j, text[i+j+len(path):]
+		before := start == 0 || !name(text[start-1]) && text[start-1] != '.'
+		if len(rest) > 0 && rest[0] == '.' {
+			rest = rest[1:]
+		}
+		if before && (rest == "" || !name(rest[0])) {
+			return true
+		}
+		i = start + 1
+	}
+	return false
+}
+
+// OpenWorker is a worker not closed: its herdr session and workspace as
+// last seen (round 5: whether its floor still shows it).
+type OpenWorker struct{ Session, WorkspaceID string }
+
+// OpenWorkers returns the workers not closed, by id (a worker on an asleep
+// floor, or of a herdr session that is gone, is open).
+func (s *Store) OpenWorkers(ctx context.Context) (map[string]OpenWorker, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, session_name, workspace_id FROM worker WHERE closed_at IS NULL`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]OpenWorker{}
+	for rows.Next() {
+		var id string
+		var w OpenWorker
+		if err := rows.Scan(&id, &w.Session, &w.WorkspaceID); err != nil {
+			return nil, err
+		}
+		out[id] = w
 	}
 	return out, rows.Err()
 }

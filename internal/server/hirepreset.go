@@ -295,11 +295,13 @@ func (h *Hub) startHirePresetCheck(ctx context.Context, c *Client, cmd proto.Com
 			}
 		}
 		cls := roles.Classifier()
-		cctx, cancel := context.WithTimeout(ai.WithGate(ctx, func() error { return h.reviewHolds(rev) }), timeout)
+		cctx, cancel := context.WithTimeout(ai.WithGate(ctx, func() error { return h.reviewHolds(rev, a.Prompt) }), timeout)
 		defer cancel()
 		score, err := cls.Classify(cctx, map[string]any{"prompt": a.Prompt}, hirePresetCheckQuestion)
-		if err := h.reviewHolds(rev); err != nil {
-			return nil, err // review B2, pass 2: the switch changed while the call waited for a model slot, or ran
+		if err := h.reviewHolds(rev, a.Prompt); err != nil {
+			// Review B2, pass 2: the switch changed while the call waited for
+			// a model slot, or ran; round 5: or a file it refers to was revoked.
+			return nil, err
 		}
 		if err != nil {
 			if !errors.Is(err, ai.ErrNotReady) && ctx.Err() == nil {

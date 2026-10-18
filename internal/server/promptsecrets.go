@@ -32,6 +32,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
 // Defaults of the feature's Options.
@@ -82,8 +83,9 @@ func promptSecretsErrorCode(err error) string {
 // goroutine; cur is the reviewer too, for any goroutine), the files (nil:
 // unavailable, err says why), the scan slots, the workers' file counts and
 // the change they were read after (hub goroutine; round 5), the changes
-// (any goroutine) and the signal to read them again, and the reviews sent
-// lately (any goroutine, under mu).
+// (any goroutine) and the signal to read them again, the open workers a
+// floor runs without (hub goroutine; round 5), and the reviews sent lately
+// (any goroutine, under mu).
 type promptSecretsState struct {
 	enabled  bool
 	rev      *promptsecret.Reviewer
@@ -95,6 +97,7 @@ type promptSecretsState struct {
 	countsAt uint64
 	changes  atomic.Uint64
 	recount  chan struct{}
+	absent   map[string]time.Time // round 5: open workers their floor runs without, since when (hub goroutine)
 
 	mu      sync.Mutex
 	reuse   map[string]secretReuse    // reuseKey → the files a sent review made
@@ -164,17 +167,17 @@ func (h *Hub) reviewCurrent(rev *promptsecret.Reviewer) error {
 	return nil
 }
 
-// reviewHolds is reviewCurrent for a text that goes with or without a
-// review (rev nil: none, nothing to check), where it goes to the terminal:
-// right before its first byte, after any wait (review B2, pass 2). Round 5:
-// and none of the texts (what is about to go) refers to a protected file
+// reviewHolds is the last check of texts that go with or without a review
+// (rev nil: none), right before their first byte, after any wait (review
+// B2, pass 2): reviewed, the switch has not changed since (reviewCurrent).
+// Round 5, reviewed or not (the switch on or off, a stored prompt, a hire's
+// successor: reviews L3-L5): none of the texts refers to a protected file
 // revoked since (a revoke that came while it waited: its files are gone).
 func (h *Hub) reviewHolds(rev *promptsecret.Reviewer, texts ...string) error {
-	if rev == nil {
-		return nil
-	}
-	if err := h.reviewCurrent(rev); err != nil {
-		return err
+	if rev != nil {
+		if err := h.reviewCurrent(rev); err != nil {
+			return err
+		}
 	}
 	return h.referencesHold(texts...)
 }
@@ -659,7 +662,8 @@ func (h *Hub) releaseSecrets(id string) {
 // a worker known to the hub or open in the store keeps its files (an asleep
 // floor's, a gone herdr session's); a closed or unknown worker's go, and
 // expired pending owners' and what has no row (round 5: but a file a live
-// worker holds by a lease stays).
+// worker holds by a lease stays, and an open worker's go once its running
+// floor has gone without it for the grace: secretsLive).
 func (h *Hub) runSecretsJanitor(ctx context.Context) {
 	defer h.wg.Done()
 	t := time.NewTicker(h.opts.SecretsSweep)
@@ -685,22 +689,77 @@ func (h *Hub) sweepSecrets(ctx context.Context) {
 }
 
 // liveWorkers reads the workers that keep their files: the hub's and those
-// open in the store. Sweep reads it with the files locked (review S2: read
-// before, a worker that started and wrote in between lost its files).
+// open in the store, but for one its floor runs without (secretsLive).
+// Sweep reads it with the files locked (review S2: read before, a worker
+// that started and wrote in between lost its files).
 func (h *Hub) liveWorkers(ctx context.Context) (func(id string) bool, error) {
-	known, err := query(ctx, h, func() map[string]bool {
-		ids := make(map[string]bool, len(h.workers))
-		for id := range h.workers {
-			ids[id] = true
-		}
-		return ids
-	})
-	if err != nil {
-		return nil, err
-	}
 	open, err := h.st.OpenWorkers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("the workers could not be read: %w", err)
 	}
-	return func(id string) bool { return known[id] || open[id] }, nil
+	live, err := query(ctx, h, func() map[string]bool { return h.secretsLive(open) })
+	if err != nil {
+		return nil, err
+	}
+	return func(id string) bool { return live[id] }, nil
+}
+
+// secretsLive are the workers that keep their files (hub goroutine): those
+// the hub shows (an asleep floor's too), and those open in the store but
+// for one its floor has run without for the grace, one sweep by the
+// bridge's clock (round 5, review L1): its workspace ended unseen, while
+// the bridge was down or its watch of herdr had a gap, so its close was
+// never recorded. Only its files go (its leases with them): it stays open
+// in the store, its name held, as worker tracking has it. The grace is for
+// a floor that shows its workspaces a little late (herdr restoring them).
+func (h *Hub) secretsLive(open map[string]store.OpenWorker) map[string]bool {
+	now := h.opts.Now()
+	live := make(map[string]bool, len(h.workers)+len(open))
+	for id := range h.workers {
+		live[id] = true
+	}
+	absent := map[string]time.Time{}
+	for id, w := range open {
+		if live[id] {
+			continue
+		}
+		if !h.absentFromFloor(id, w) {
+			live[id] = true
+			continue
+		}
+		since, ok := h.ps.absent[id]
+		if !ok {
+			since = now
+		}
+		absent[id] = since
+		live[id] = now.Sub(since) < h.opts.SecretsSweep
+	}
+	h.ps.absent = absent
+	return live
+}
+
+// absentFromFloor reports whether open worker id's floor runs without it
+// (hub goroutine): its session's floor is running and was last seen so,
+// workers and all (an asleep floor's or a gone session's workers keep
+// their files: they come back; a floor not seen since the bridge started
+// says nothing), it is not a hire or a send home in flight there, no hire
+// there is creating a workspace (new workspaces wait unseen meanwhile),
+// and its workspace is not in what herdr showed (a main checkout kept from
+// the workers is still there).
+func (h *Hub) absentFromFloor(id string, w store.OpenWorker) bool {
+	f := h.floors[w.Session]
+	if f == nil || f.session != w.Session || !f.running || !f.looked || f.hires[id] != nil || f.fires[id] != nil {
+		return false
+	}
+	for _, op := range f.hires {
+		if op.workspaceID == "" {
+			return false
+		}
+	}
+	for _, o := range f.last {
+		if o.WorkspaceID == w.WorkspaceID {
+			return false
+		}
+	}
+	return true
 }

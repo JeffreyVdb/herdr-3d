@@ -1228,6 +1228,42 @@ func TestPromptSecretsAnswerAskSwitchBeforeItsPrompt(t *testing.T) {
 	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
 }
 
+// The same with a revoke while the prompt waits (round 5): it is withheld
+// with the revoke's code (secrets_review_stale, not prompt_failed).
+func TestPromptSecretsAnswerAskRevokeBeforeItsPrompt(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAskBridgeAt(t, filepath.Join(t.TempDir(), "world.db"), "blocked", func(o *server.Options) {
+		o.SecretsDir, o.PromptReadyWait = dir, 5*time.Second
+	})
+	c := ab.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	const tu = "toolu_01UYJ8PfzgPp69vD6PS9cA2K"
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{"q": readScreen(t, "claude-ask-esc"), "gone": "  ⎿  User declined to answer questions\n"},
+		map[string]map[string]string{"q": {"esc": "gone"}}, map[string]func(){"gone": func() {
+			appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 12)+fixtureLine(t, "claude", "ask.jsonl", 13))
+		}})
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 11))
+	askOf(c, id, pendingID(tu))
+	c.send(proto.Command{T: proto.CmdWorkerAnswerAsk, ReqID: "a", Args: mustRaw(proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu,
+		Cancel: true, Prompt: routeText, Secrets: proto.SecretsReviews{"prompt": routeReview(t, c)}})})
+	askOf(c, id, noAsk) // dismissed: the prompt waits for the agent
+	if n := mustRevoke(t, c, id); n == 0 {
+		t.Fatal("nothing revoked")
+	}
+	ab.setStatus("w1", "idle")
+	if m := c.reply("a"); codeOf(m) != proto.ErrSecretsReviewStale || !strings.Contains(errorOf(m).Message, "revoked") {
+		t.Fatalf("answer: %s", m.raw)
+	}
+	for _, call := range ab.term.Calls() {
+		if strings.HasPrefix(call, "type ") {
+			t.Fatalf("typed %q", call)
+		}
+	}
+	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
+}
+
 // worker.answer_followup: each answer's value and note, and the note, are
 // reviewed on their own; the prompt they make holds the references.
 func TestPromptSecretsAnswerFollowup(t *testing.T) {
@@ -1669,6 +1705,83 @@ func TestPromptSecretsWorkerHandoffLLMSwitchWhileReading(t *testing.T) {
 		t.Fatalf("job %+v, %d LLM calls", w.LLMHandoff, len(lb.llm.llm.Calls()))
 	}
 	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
+}
+
+// An LLM handoff whose instruction's files are revoked while its
+// transcript is read (round 5, review L5) fails before the model reads
+// it: nothing sent, nothing filed.
+func TestPromptSecretsWorkerHandoffLLMRevokeWhileReading(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	var hold atomic.Bool
+	reading, gate := make(chan struct{}, 1), make(chan struct{})
+	defer close(gate)
+	lb := newLLMBridge(t, yes(), func(o *server.Options) {
+		o.SecretsDir = dir
+		next := o.HandoffReduce
+		o.HandoffReduce = func(ctx context.Context, in handoffllm.Input) (handoffllm.Payload, error) {
+			if hold.Load() {
+				reading <- struct{}{}
+				<-gate
+			}
+			return next(ctx, in)
+		}
+	})
+	c := lb.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := lb.ids["w1"]
+	lb.fl.setProcs("w1:p1", running("claude", wrapSess))
+	args := llmArgs(id, lb.candidate(t, c), "op-llm")
+	args.Instruction, args.Secrets = routeText, routeReview(t, c)
+	hold.Store(true)
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	<-reading
+	before := protectedFiles(t, dir)
+	if n := mustRevoke(t, c, id); n != 2 || len(before) != 2 || len(protectedFiles(t, dir)) != 0 {
+		t.Fatalf("revoked %d of %d files", n, len(before))
+	}
+	gate <- struct{}{}
+	w := upsertFor(c, id, llmJobState(proto.LLMHandoffFailed, proto.LLMHandoffFiled))
+	if w.LLMHandoff.State != proto.LLMHandoffFailed || w.LLMHandoff.Code != proto.ErrSecretsReviewStale ||
+		!strings.Contains(w.LLMHandoff.Message, "revoked") || len(lb.llm.llm.Calls()) != 0 {
+		t.Fatalf("job %+v, %d LLM calls", w.LLMHandoff, len(lb.llm.llm.Calls()))
+	}
+	if hs, err := lb.st.Handoffs(context.Background(), "", "", 10); err != nil || len(hs) != 0 {
+		t.Fatalf("filed %+v %v", hs, err)
+	}
+	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
+}
+
+// Switched off, an LLM handoff's instruction is checked for revoked files
+// all the same (review L5: the check does not depend on a review): one
+// that names a file revoked since fails before the model reads it.
+func TestPromptSecretsWorkerHandoffLLMRevokedWhileOff(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	lb := newLLMBridge(t, yes(), func(o *server.Options) { o.SecretsDir = dir })
+	c := lb.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := lb.ids["w1"]
+	text := "PASSWORD=LLM-Revoked-Off-5!"
+	_, m := c.command(proto.CmdWorkerPrompt, "p", proto.WorkerPromptArgs{ID: id, Text: text, Secrets: reviewOf(t, c, text)})
+	ref := refRe.FindString(ackData[proto.PromptResult](t, m).Sent)
+	if ref == "" {
+		t.Fatalf("ack %s", m.raw)
+	}
+	if n := mustRevoke(t, c, id); n != 1 {
+		t.Fatalf("revoked %d", n)
+	}
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	lb.fl.setProcs("w1:p1", running("claude", wrapSess))
+	args := llmArgs(id, lb.candidate(t, c), "op-llm")
+	args.Instruction = "Deploy with " + ref + " first."
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	w := upsertFor(c, id, llmJobState(proto.LLMHandoffFailed, proto.LLMHandoffFiled))
+	if w.LLMHandoff.State != proto.LLMHandoffFailed || w.LLMHandoff.Code != proto.ErrSecretsReviewStale || len(lb.llm.llm.Calls()) != 0 {
+		t.Fatalf("job %+v, %d LLM calls", w.LLMHandoff, len(lb.llm.llm.Calls()))
+	}
 }
 
 // fill is text padded with x to n bytes (n > len(text)).

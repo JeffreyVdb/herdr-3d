@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -61,6 +62,29 @@ func TestSecretLeases(t *testing.T) {
 	if got, err := st.HandoffSecretsAt(ctx, "/h/f/x.md"); err != nil || len(got) != 2 || got[0] != f1 || got[1] != f2 {
 		t.Fatalf("at the path: %v %v", got, err)
 	}
+	// Named in a text (review L2): by the path as filed, blanks and all,
+	// and only whole.
+	for path, files := range map[string][]store.SecretFile{"/h s/f/y.md": {f3}, "/h/f/x.md.old": {f2}} {
+		x, err := st.AddHandoff(ctx, store.Handoff{Floor: "f", Path: path, Title: "x", Source: store.HandoffLiteral}, "body")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.AddHandoffSecrets(ctx, x.ID, files); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for text, want := range map[string][]store.SecretFile{
+		"Read /h/f/x.md and continue the work.":       {f1, f2},
+		"Read /h/f/x.md.":                             {f1, f2},
+		"Read /h/f/x.md.old and continue.":            {f2},
+		"Read /h s/f/y.md, then (/h/f/x.md.old).":     {f2, f3},
+		"/h/f/x.md /h/f/x.md.old /h s/f/y.md":         {f1, f2, f3},
+		"Read /mnt/h/f/x.md or /h s/f/y.mdx or x.md.": nil,
+	} {
+		if got, err := st.HandoffSecretsIn(ctx, text); err != nil || !slices.Equal(got, want) {
+			t.Errorf("in %q: %v %v, want %v", text, got, err, want)
+		}
+	}
 
 	// A file that goes takes its leases and its handoff's row; a holder's
 	// leases go with it.
@@ -90,5 +114,25 @@ func TestSecretLeases(t *testing.T) {
 	}
 	if counts, _ := st.SecretFileCounts(ctx); counts["a"] != 1 || len(counts) != 1 {
 		t.Fatalf("counts at the end %v", counts)
+	}
+}
+
+// OpenWorkers has every worker not closed, with its session and workspace
+// (round 5: the janitor asks whether its floor still shows it).
+func TestOpenWorkers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := open(t, filepath.Join(t.TempDir(), "world.db"))
+	for _, w := range []store.Worker{{ID: "a", Session: "s", WorkspaceID: "w1"}, {ID: "b", Session: "t", WorkspaceID: "w2"}} {
+		if err := st.SaveWorker(ctx, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.CloseWorker(ctx, "b"); err != nil {
+		t.Fatal(err)
+	}
+	open, err := st.OpenWorkers(ctx)
+	if err != nil || len(open) != 1 || open["a"] != (store.OpenWorker{Session: "s", WorkspaceID: "w1"}) {
+		t.Fatalf("open %v %v", open, err)
 	}
 }

@@ -215,3 +215,127 @@ func TestPromptSecretsPromptViaServerSwitchWhileItWaits(t *testing.T) {
 		t.Fatalf("the switch changed while it waited: %v (unsent %v) %q", err, notSent(err), watch.texts)
 	}
 }
+
+// askTerm is a terminal that keeps what a dialog's driver sends it.
+type askTerm struct {
+	TermHerdr
+	sent []string
+}
+
+func (a *askTerm) SendText(_ context.Context, _, _, text string) error {
+	a.sent = append(a.sent, "text "+text)
+	return nil
+}
+
+func (a *askTerm) SendKeys(_ context.Context, _, _ string, keys ...string) error {
+	a.sent = append(a.sent, "keys "+strings.Join(keys, " "))
+	return nil
+}
+
+// askHub is a running hub with worker w asking toolu_ask in pane p, its
+// files in f, and a reviewer made current.
+func askHub(t *testing.T) (*Hub, *secretfiles.Files, *askTerm, *promptsecret.Reviewer) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	base := t.TempDir()
+	st, err := store.Open(ctx, filepath.Join(base, "world.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	f, err := secretfiles.Open(secretfiles.Options{Dir: filepath.Join(base, "secrets"), Store: st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { f.Close() })
+	term := &askTerm{}
+	h := &Hub{opts: Options{Term: term}, ops: make(chan func(context.Context)), done: make(chan struct{}),
+		workers: map[string]*proto.Worker{"w": {ID: "w", PaneID: "p", Ask: &proto.Ask{ToolUseID: "toolu_ask"}}}}
+	h.ps.files = f
+	rev := promptsecret.NewReviewer(make([]byte, 32), f.IsFilePath)
+	h.ps.cur.Store(rev)
+	go func() {
+		for {
+			select {
+			case op := <-h.ops:
+				op(ctx)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return h, f, term, rev
+}
+
+// revokedRef is a reference to a file of worker id, revoked.
+func revokedRef(t *testing.T, f *secretfiles.Files, id string) string {
+	t.Helper()
+	ctx := context.Background()
+	files, err := f.Write(ctx, secretfiles.Worker(id), time.Time{}, [][]byte{[]byte("credential")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := func(context.Context) (func(string) bool, error) { return func(string) bool { return true }, nil }
+	if _, err := f.Revoke(ctx, id, all); err != nil {
+		t.Fatal(err)
+	}
+	return promptsecret.Reference(files[0].Path)
+}
+
+// #108 round 5 (review L3): each text a worker.answer_ask types is checked
+// for revoked files right before its first byte, the answers' review or
+// not (the switch's check is the first text's only: round 2).
+func TestAskDriverChecksEveryTextForRevokedFiles(t *testing.T) {
+	ctx := context.Background()
+	h, f, term, rev := askHub(t)
+	ref := revokedRef(t, f, "v")
+	if err := h.reviewHolds(rev, ref); !errors.Is(err, errSecretsReviewStale) {
+		t.Fatalf("a first text naming a revoked file: %v", err)
+	}
+	d := &askDriver{h: h, ctx: ctx, id: "w", toolUseID: "toolu_ask", pane: "p", rev: rev}
+	if err := d.typeText("a clean first answer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.typeText("then " + ref); !errors.Is(err, errSecretsReviewStale) {
+		t.Fatalf("the second text: %v; sent %q", err, term.sent)
+	}
+	// Unreviewed (the switch off): checked all the same.
+	d = &askDriver{h: h, ctx: ctx, id: "w", toolUseID: "toolu_ask", pane: "p"}
+	if err := d.typeText(ref); !errors.Is(err, errSecretsReviewStale) {
+		t.Fatalf("unreviewed: %v; sent %q", err, term.sent)
+	}
+	if !slices.Equal(term.sent, []string{"text a clean first answer"}) {
+		t.Fatalf("sent %q", term.sent)
+	}
+}
+
+// Every text of a worker.answer_ask is checked for revoked files before
+// the dialog's first key (review L3): a revoke that came before the
+// command touches nothing of the dialog, though the text naming the file
+// is the last to be typed.
+func TestAskDriverChecksEveryTextBeforeItsFirstKey(t *testing.T) {
+	ctx := context.Background()
+	h, f, term, rev := askHub(t)
+	ref := revokedRef(t, f, "v")
+	d := &askDriver{h: h, ctx: ctx, id: "w", toolUseID: "toolu_ask", pane: "p", rev: rev, texts: []string{"first", "then " + ref}}
+	if err := d.press("2"); !errors.Is(err, errSecretsReviewStale) {
+		t.Fatalf("the first key: %v", err)
+	}
+	if err := d.typeText("first"); !errors.Is(err, errSecretsReviewStale) {
+		t.Fatalf("the first text: %v", err)
+	}
+	if len(term.sent) != 0 {
+		t.Fatalf("sent %q", term.sent)
+	}
+	d = &askDriver{h: h, ctx: ctx, id: "w", toolUseID: "toolu_ask", pane: "p", rev: rev, texts: []string{"first", "second"}}
+	if err := d.press("2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.typeText("first"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(term.sent, []string{"keys 2", "text first"}) {
+		t.Fatalf("sent %q", term.sent)
+	}
+}

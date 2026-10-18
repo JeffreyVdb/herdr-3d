@@ -125,10 +125,13 @@ type revokeReport struct {
 	Removed int `json:"removed"`
 }
 
-// startRevokeSecrets answers prompt_secrets.revoke (hub goroutine): a worker
-// the bridge shows (an asleep floor's too), with the switch on or off; the
-// files go off the hub goroutine, then the counts are published and the
-// command answered. The worker is not touched.
+// startRevokeSecrets answers prompt_secrets.revoke (hub goroutine), with
+// the switch on or off: a worker the bridge shows (an asleep floor's too),
+// or one it does not show that holds files (a gone session's, one its
+// floor runs without: review L1); not_found when it neither shows the
+// worker nor finds a file it holds. The files go off the hub goroutine,
+// then the counts are published and the command answered. The worker is
+// not touched.
 func (h *Hub) startRevokeSecrets(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.PromptSecretsRevokeArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
@@ -137,10 +140,11 @@ func (h *Hub) startRevokeSecrets(ctx context.Context, c *Client, cmd proto.Comma
 	if a.Worker == "" {
 		return bad("worker is required")
 	}
-	if h.workers[a.Worker] == nil {
+	shown := h.workers[a.Worker] != nil
+	switch {
+	case h.ps.files == nil && !shown:
 		return fmt.Errorf("%w: no worker %q", store.ErrNotFound, clip(a.Worker))
-	}
-	if h.ps.files == nil {
+	case h.ps.files == nil:
 		return fmt.Errorf("%w: %v", errSecretsUnavailable, h.ps.err)
 	}
 	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, auditArgs(cmd))
@@ -155,11 +159,14 @@ func (h *Hub) startRevokeSecrets(ctx context.Context, c *Client, cmd proto.Comma
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
 		n, err := files.Revoke(rctx, a.Worker, h.liveWorkers)
-		if err != nil {
+		switch {
+		case err != nil:
 			h.log.Warn("revoking a worker's protected files failed", "worker", a.Worker, "files", n, "err", err)
 			err = fmt.Errorf("%w: %v", errSecretsUnavailable, err)
-		} else {
-			h.log.Info("protected files revoked", "worker", a.Worker, "files", n)
+		case n == 0 && !shown:
+			err = fmt.Errorf("%w: no worker %q", store.ErrNotFound, clip(a.Worker))
+		default:
+			h.log.Info("protected files revoked", "worker", a.Worker, "files", n, "shown", shown)
 		}
 		after := h.ps.changes.Load() // the revoke's own change counted
 		counts, cerr := h.st.SecretFileCounts(rctx)
@@ -207,7 +214,8 @@ func (op *hireOp) hireText() string {
 // prompt names (off the hub goroutine, once it is seen, after its own are
 // claimed; with the switch on or off): those it refers to, and those of
 // each filed handoff whose path it holds (the cabinet's Hire from handoff,
-// a schedule's handoff_path). A file that went meanwhile is not held.
+// a schedule's handoff_path), matched as filed (review L2). A file that
+// went meanwhile is not held.
 func (h *Hub) leaseSuccessor(ctx context.Context, op *hireOp) {
 	f := h.ps.files
 	text := op.hireText()
@@ -215,18 +223,13 @@ func (h *Hub) leaseSuccessor(ctx context.Context, op *hireOp) {
 		return
 	}
 	files := h.refsIn(text)
-	if svc := h.opts.Handoffs; svc != nil {
-		for _, path := range handoffPathsIn(svc.Dir(), text) {
-			named, err := h.st.HandoffSecretsAt(ctx, path)
-			if err != nil {
-				h.log.Warn("reading a handoff's protected files failed", "worker", op.id, "err", err)
-				continue
-			}
-			for _, x := range named {
-				if file := (secretfiles.File{Dir: x.Dir, Name: x.Name, Path: f.Dir() + "/" + x.Dir + "/" + x.Name}); !slices.Contains(files, file) {
-					files = append(files, file)
-				}
-			}
+	named, err := h.st.HandoffSecretsIn(ctx, text)
+	if err != nil {
+		h.log.Warn("reading the protected files of the handoffs a prompt names failed", "worker", op.id, "err", err)
+	}
+	for _, x := range named {
+		if file := (secretfiles.File{Dir: x.Dir, Name: x.Name, Path: f.Dir() + "/" + x.Dir + "/" + x.Name}); !slices.Contains(files, file) {
+			files = append(files, file)
 		}
 	}
 	if len(files) == 0 {
@@ -238,32 +241,6 @@ func (h *Hub) leaseSuccessor(ctx context.Context, op *hireOp) {
 	}
 	if n > 0 {
 		h.log.Info("the new worker holds protected files its prompt names", "worker", op.id, "files", n)
-	}
-}
-
-// handoffPathsIn are the paths under the handoff directory dir that text
-// names, each up to the next blank (trailing punctuation off), once.
-func handoffPathsIn(dir, text string) []string {
-	if dir == "" {
-		return nil
-	}
-	var out []string
-	prefix := strings.TrimSuffix(dir, "/") + "/"
-	for rest := text; ; {
-		i := strings.Index(rest, prefix)
-		if i < 0 {
-			return out
-		}
-		rest = rest[i:]
-		end := strings.IndexFunc(rest, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' })
-		if end < 0 {
-			end = len(rest)
-		}
-		p := strings.TrimRight(rest[:end], ".,;:!?)]}\"'`")
-		if !slices.Contains(out, p) {
-			out = append(out, p)
-		}
-		rest = rest[end:]
 	}
 }
 
