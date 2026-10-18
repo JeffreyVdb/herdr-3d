@@ -27,9 +27,17 @@ package notify
 // blocked, mostly after its notification went: the card opens once both
 // are there for the same blocked spell, once per menu (openMenu). A tap
 // answers through worker.answer's path with the menu's hash, so a menu no
-// longer on the screen is never answered. The card shows what the menu's kind asks, in a
-// fixed line, and its choices' labels, as the bridge scrubbed them; never
-// a line above the menu (its question, the command, the edit it is about).
+// longer on the screen is never answered. The card shows what the menu's
+// kind asks, in a fixed line, and its choices' labels, as the bridge
+// scrubbed them; never the screen's question line.
+//
+// #106: and what the menu is about (Menu.About: the command, the file, the
+// folder, as the bridge redacted and bounded them). A card is one
+// operation's (Menu.Op, its native call Menu.Native): it follows the
+// menu's redraws and new hashes, stays while its worker stays blocked in
+// its spell with no menu read, and ends replaced or no longer waited on,
+// never "answered in the game". New cards draw on the send budget
+// (limits.go).
 
 import (
 	"context"
