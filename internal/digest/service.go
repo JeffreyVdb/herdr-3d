@@ -407,6 +407,8 @@ func effortRefusal(e string, r ai.Reasoning) string {
 	switch {
 	case r.Support == ai.SupportNo:
 		return "this model has no reasoning effort: use the provider's default"
+	case r.Listed && len(r.Efforts) == 0:
+		return "this model does not expose reasoning effort selection: use the provider's default"
 	case r.Mandatory && e == "none":
 		return "this model's reasoning cannot be turned off: choose " + strings.Join(r.Efforts, ", ") + ", or the provider's default"
 	}

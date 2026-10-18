@@ -14,8 +14,8 @@ import (
 // settings accept these when nothing narrower is known.
 var allEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 
-// genericEfforts is what is offered for a model whose catalog does not list
-// its efforts: the three every provider that has the control accepts.
+// genericEfforts is what is offered when effort selection is unknown (an
+// undescribed endpoint, or parameters without a reasoning object).
 var genericEfforts = []string{"low", "medium", "high"}
 
 // ValidEffort reports whether e is a reasoning effort the bridge can send
@@ -29,7 +29,7 @@ func ValidEffort(e string) bool {
 	return false
 }
 
-// Support is whether a model has reasoning controls.
+// Support is whether a model supports reasoning, independently of effort selection.
 type Support string
 
 const (
@@ -47,10 +47,13 @@ type Reasoning struct {
 	// Model is the model it is of ("" when it is not of any one).
 	Model string `json:"model,omitempty"`
 	// Efforts are the values to offer, lowest first: the catalog's list
-	// (Listed), else the generic set. Empty for an unsupported model.
+	// (Listed), else the generic set. Empty when reasoning or effort
+	// selection is unsupported.
 	Efforts []string `json:"efforts"`
-	// Listed: Efforts is the catalog's own allowlist, so another value is
-	// refused; false, any effort the gateway knows may be tried.
+	// Listed: Efforts is constrained by the catalog, so another value is
+	// refused. An omitted supported_efforts in a reasoning object means
+	// an empty allowlist; explicit null allows every gateway effort.
+	// When false, any effort the gateway knows may be tried.
 	Listed bool `json:"listed"`
 	// Default is the effort the provider applies when none is sent ("" when
 	// the catalog does not say).
@@ -97,6 +100,9 @@ func reasoningOf(raw json.RawMessage, params []string) Reasoning {
 		}
 		if json.Unmarshal(raw, &m) == nil {
 			r.Support, r.Mandatory = SupportYes, m.Mandatory
+			// A reasoning object without supported_efforts explicitly exposes
+			// no effort selector. Do not inherit the unknown endpoint's guesses.
+			r.Efforts, r.Listed = []string{}, true
 			if d := strings.ToLower(strings.TrimSpace(m.Default)); effortRe.MatchString(d) && !(m.Mandatory && d == "none") {
 				r.Default = d
 			}

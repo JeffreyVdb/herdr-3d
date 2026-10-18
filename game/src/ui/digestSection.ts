@@ -216,7 +216,7 @@ export function digestSection(host: DigestSectionHost): (body: HTMLElement) => S
         );
       }
       effort.value = s.reasoning_effort;
-      effort.disabled = busy || (s.reasoning.support === 'unsupported' && !s.effort_stale);
+      effort.disabled = busy || (s.reasoning.efforts.length === 0 && !s.effort_stale);
       effortHint.textContent = effortNote(s);
       effortHint.classList.toggle('settings-field-error', s.effort_stale);
       if (!tokensDirty && document.activeElement !== tokens) tokens.value = String(s.max_tokens);
