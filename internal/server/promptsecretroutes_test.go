@@ -296,10 +296,11 @@ func TestPromptSecretsHireFailureReleases(t *testing.T) {
 	if code := codeOf(hire("start", a)); code == "" {
 		t.Fatal("the failed start was acked")
 	}
-	waitFor(t, "the rolled back hire's files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
-	if rows, _ := hb.st.SecretOwners(context.Background()); len(rows) != 0 {
-		t.Fatalf("owners left %+v", rows)
-	}
+	// Its directory goes before its row (the release's last step).
+	waitFor(t, "the rolled back hire's files and owners to go", func() bool {
+		rows, _ := hb.st.SecretOwners(context.Background())
+		return len(protectedFiles(t, dir)) == 0 && len(rows) == 0
+	})
 
 	// Too long with its references (it fits as typed): bad_request, no file.
 	hb.fl.mu.Lock()
