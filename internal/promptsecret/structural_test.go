@@ -276,6 +276,13 @@ func TestScanOwnReferences(t *testing.T) {
 	if cs := promptsecret.Scan(`PASSWORD="`+r1+`"`, nil); len(cs) != 1 {
 		t.Fatalf("no own paths: %+v", cs)
 	}
+	// Review T6: only an own reference makes a value glued to it no code,
+	// never the mask's bytes typed.
+	for _, paths := range []func(string) bool{nil, own} {
+		if cs := promptsecret.Scan("const token = response.Qz7Qz7Qz7; password = getSecret(Qz7Qz7)", paths); len(cs) != 0 {
+			t.Errorf("the mask's bytes typed: %+v", cs)
+		}
+	}
 }
 
 // Review S1 (pass 4), as a matrix: a value that runs into the bridge's own
@@ -513,6 +520,8 @@ func TestScanCleanText(t *testing.T) {
 		"docker run -u 1000:1000 img && git push -u origin main",
 		`echo 'it'\''s fine' && printf '%s\n' "done"`,
 		"Install hf_transfer. Then set sk_live_mode, and run it. They said hey.",
+		// Review T6: code holding the mask's bytes, with no reference, is code.
+		"const token = response.Qz7Qz7;\nprivate_key=credentials.Qz7Qz7.load()\npassword = getSecret(Qz7Qz7)",
 	}
 	// Proposed before the tuning round too, and kept: it reads as an
 	// assignment (password: too), whose weak value the review judges (row 4).

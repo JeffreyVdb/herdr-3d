@@ -49,14 +49,14 @@ type Candidate struct {
 // its parts outside the references. The first call compiles the rules.
 func Scan(text string, own func(path string) bool) []Candidate {
 	refs := references(text, own)
-	spans := detect(text)
+	spans := detect(text, nil)
 	mtext := text
 	if len(refs) > 0 {
 		for i := range spans {
 			spans[i].borrowed = clipped(spans[i], refs)
 		}
 		mtext = masked(text, refs)
-		for _, s := range detect(mtext) {
+		for _, s := range detect(mtext, refs) {
 			s.borrowed = s.shaped && overlapsAny(s.start, s.end, refs)
 			spans = append(spans, s)
 		}
@@ -87,17 +87,18 @@ func Scan(text string, own func(path string) bool) []Candidate {
 
 // detect is every detector's spans in text: Gitleaks' rules (and its
 // provider rules again before a sentence's punctuation), then the
-// structural ones.
-func detect(text string) []span {
+// structural ones. refs are the own references masked in text (nil: as
+// typed).
+func detect(text string, refs []span) []span {
 	var spans []span
-	for _, m := range append(Gitleaks(text), punctuated(text)...) {
+	for _, m := range append(Gitleaks(text), punctuated(text, refs)...) {
 		rank := rankProvider
 		if strings.Contains(strings.ToLower(m.Rule), "generic") {
 			rank = rankGeneric
 		}
 		spans = append(spans, span{start: m.Start, end: m.End, kind: "gitleaks:" + m.Rule, rank: rank, shaped: true})
 	}
-	return append(spans, structural(text)...)
+	return append(spans, structural(text, refs)...)
 }
 
 // gitleaksBoundary ends most Gitleaks rules: after the token a blank, a
@@ -124,7 +125,7 @@ const sentencePunct = ".,:!?)"
 // before it), their keywords looked for there: each rule's keyword is in
 // its own match (a token's prefix, the name before a value). When those
 // lines are most of the text, once on the whole text.
-func punctuated(text string) []RuleMatch {
+func punctuated(text string, refs []span) []RuleMatch {
 	var b []byte
 	ends := map[int]bool{}
 	var wins [][2]int
@@ -136,7 +137,7 @@ func punctuated(text string) []RuleMatch {
 		for j < len(text) && strings.IndexByte(sentencePunct, text[j]) >= 0 {
 			j++
 		}
-		if (j == len(text) || isSpace(text[j])) && tokenBefore(text, i) {
+		if (j == len(text) || isSpace(text[j])) && tokenBefore(text, i, refs) {
 			if b == nil {
 				b = []byte(text)
 			}
@@ -200,15 +201,15 @@ const minPunctSecret = 14
 
 // tokenBefore reports a word before i that may end a provider's token: at
 // least minPunctSecret bytes with no blank, and a digit, an '_' or both
-// cases (a long plain word, "internationalization.", is none). One that a
-// masked reference ends (Scan) ends no typed token.
-func tokenBefore(text string, i int) bool {
+// cases (a long plain word, "internationalization.", is none). One that an
+// own reference ends (refs, masked) ends no typed token.
+func tokenBefore(text string, i int, refs []span) bool {
 	s := i
 	for s > 0 && !isSpace(text[s-1]) {
 		s--
 	}
 	w := text[s:i]
-	if len(w) < minPunctSecret || strings.Contains(w[len(w)-8:], referenceMask+referenceMask) {
+	if len(w) < minPunctSecret || overlapsAny(i-1, i, refs) {
 		return false
 	}
 	return hasDigit(w) || strings.Contains(w, "_") || strings.ToLower(w) != w && strings.ToUpper(w) != w

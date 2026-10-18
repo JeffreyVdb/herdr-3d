@@ -89,15 +89,18 @@ const (
 	rankRepeat
 )
 
-func structural(text string) []span {
+// structural are the structural rules' spans in text; refs are the own
+// references masked in it (Scan; nil as typed): a value that runs into one
+// is a value, never code (notASecret).
+func structural(text string, refs []span) []span {
 	lower := strings.ToLower(text)
 	var out []span
 	out = append(out, pemSpans(text)...)
-	out = append(out, headerSpans(text, lower)...)
-	out = append(out, urlSpans(text)...)
-	out = append(out, assignmentSpans(text)...)
-	out = append(out, proseSpans(text)...)
-	out = append(out, lineSpans(text, lower)...)
+	out = append(out, headerSpans(text, lower, refs)...)
+	out = append(out, urlSpans(text, refs)...)
+	out = append(out, assignmentSpans(text, refs)...)
+	out = append(out, proseSpans(text, refs)...)
+	out = append(out, lineSpans(text, lower, refs)...)
 	return out
 }
 
@@ -159,9 +162,9 @@ func credentialAt(text string, i int, line bool) int {
 
 // headerValue reports credentials that are a value: not a template inside
 // them (sk-${KEY}, $(cmd)), a placeholder in brackets ([token]), a URL, nor
-// what notASecret says.
-func headerValue(v string) bool {
-	return v != "" && !notASecret(v, false) && !strings.Contains(v, "${") && !strings.Contains(v, "$(") &&
+// what notASecret says (literal: it runs into a reference).
+func headerValue(v string, literal bool) bool {
+	return v != "" && !notASecret(v, literal) && !strings.Contains(v, "${") && !strings.Contains(v, "$(") &&
 		!strings.Contains(v, "{{") && !strings.Contains(v, "://") && !bracketed.MatchString(v)
 }
 
@@ -170,7 +173,7 @@ var bracketed = regexp.MustCompile(`^\[[\w .-]*\]$`)
 
 // headerSpans are the header credentials in text (lower: text in lower
 // case; a regexp runs only where its word is: most text has neither).
-func headerSpans(text, lower string) []span {
+func headerSpans(text, lower string, refs []span) []span {
 	var out []span
 	var headers, bearers [][]int
 	if strings.Contains(lower, "authorization") {
@@ -190,14 +193,14 @@ func headerSpans(text, lower string) []span {
 		}
 		end := credentialAt(text, m[1], atLineStart(text, m[2]))
 		v := text[m[1]:end]
-		if !headerValue(v) || (scheme == "" && !tokenish(v, 8)) {
+		if !headerValue(v, overlapsAny(m[1], end, refs)) || (scheme == "" && !tokenish(v, 8)) {
 			continue
 		}
 		out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: scheme == ""})
 	}
 	for _, m := range bearers {
 		end := credentialAt(text, m[1], false)
-		if v := text[m[1]:end]; tokenish(v, 16) && headerValue(v) {
+		if v := text[m[1]:end]; tokenish(v, 16) && headerValue(v, overlapsAny(m[1], end, refs)) {
 			out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: true})
 		}
 	}
@@ -216,7 +219,7 @@ var (
 var queryCredential = map[string]bool{"key": true, "sig": true, "signature": true, "x-amz-signature": true,
 	"x-goog-signature": true, "code_verifier": true}
 
-func urlSpans(text string) []span {
+func urlSpans(text string, refs []span) []span {
 	var out []span
 	var schemes, params [][]int // a regexp runs only where its literal is: most text has no URL
 	if strings.Contains(text, "://") {
@@ -242,7 +245,7 @@ func urlSpans(text string) []span {
 			continue
 		}
 		s, e := m[1]+colon+1, m[1]+at
-		if s < e && !notASecret(text[s:e], false) {
+		if s < e && !notASecret(text[s:e], overlapsAny(s, e, refs)) {
 			out = append(out, span{start: s, end: e, kind: KindURLPassword, rank: rankURLPassword})
 		}
 	}
@@ -256,7 +259,7 @@ func urlSpans(text string) []span {
 			end++
 		}
 		e := trimUnquoted(text, m[1], end)
-		if m[1] < e && !notASecret(text[m[1]:e], false) {
+		if m[1] < e && !notASecret(text[m[1]:e], overlapsAny(m[1], e, refs)) {
 			out = append(out, span{start: m[1], end: e, kind: KindURLQuery, rank: rankURLQuery})
 		}
 	}
@@ -284,7 +287,7 @@ var (
 	curlCommand = regexp.MustCompile(`(?:^|[\s(\x60])curl[ \t]`)
 )
 
-func assignmentSpans(text string) []span {
+func assignmentSpans(text string, refs []span) []span {
 	var out []span
 	for _, m := range assignKey.FindAllStringSubmatchIndex(text, -1) {
 		var name string
@@ -319,7 +322,7 @@ func assignmentSpans(text string) []span {
 			}
 			continue
 		}
-		if sp, ok := valueAt(text, v, KindAssignment, rankAssignment); ok {
+		if sp, ok := valueAt(text, v, KindAssignment, rankAssignment, refs); ok {
 			out = append(out, sp)
 		}
 	}
@@ -328,13 +331,13 @@ func assignmentSpans(text string) []span {
 		if !credentialKey(text[m[2]:m[3]]) || v >= len(text) || text[v] == '-' {
 			continue
 		}
-		if sp, ok := valueAt(text, v, KindAssignment, rankAssignment); ok {
+		if sp, ok := valueAt(text, v, KindAssignment, rankAssignment, refs); ok {
 			out = append(out, sp)
 		}
 	}
 	if strings.Contains(text, "curl") {
 		for _, m := range curlUser.FindAllStringIndex(text, -1) {
-			if sp, ok := curlPassword(text, m[1]); ok && inCurl(text, m[1]) {
+			if sp, ok := curlPassword(text, m[1], refs); ok && inCurl(text, m[1]) {
 				out = append(out, sp)
 			}
 		}
@@ -346,7 +349,7 @@ func assignmentSpans(text string) []span {
 // v: after its first colon, as typed (quotes and escapes kept; a word that
 // is one quoted string without its quotes). Not a placeholder: a credential
 // word (user:pass) or one in brackets.
-func curlPassword(text string, v int) (span, bool) {
+func curlPassword(text string, v int, refs []span) (span, bool) {
 	s, e := v, shellWordEnd(text, v)
 	quoted := false
 	if qs, qe, ok := quotedAt(text, v); ok && qe+1 == e {
@@ -359,7 +362,7 @@ func curlPassword(text string, v int) (span, bool) {
 		return span{}, false
 	}
 	pw := text[s+c+1 : e]
-	if notASecret(pw, quoted) || credentialKey(pw) || bracketed.MatchString(pw) {
+	if notASecret(pw, quoted || overlapsAny(s+c+1, e, refs)) || credentialKey(pw) || bracketed.MatchString(pw) {
 		return span{}, false
 	}
 	return span{start: s + c + 1, end: e, kind: KindAssignment, rank: rankAssignment}, true
@@ -460,7 +463,8 @@ func atLineStart(text string, i int) bool {
 // valueAt is the value at v: quoted (the bytes between the quotes), or
 // unquoted: to the next blank or pair, trailing punctuation off (a YAML
 // plain scalar with blanks is cut at its first: the review corrects it).
-func valueAt(text string, v int, kind string, rank int) (span, bool) {
+// refs: the own references masked in text (structural).
+func valueAt(text string, v int, kind string, rank int, refs []span) (span, bool) {
 	if v >= len(text) {
 		return span{}, false
 	}
@@ -479,7 +483,7 @@ func valueAt(text string, v int, kind string, rank int) (span, bool) {
 		end = v + loc[0]
 	}
 	end = trimUnquoted(text, v, end)
-	if end <= v || notASecret(text[v:end], false) {
+	if end <= v || notASecret(text[v:end], overlapsAny(v, end, refs)) {
 		return span{}, false
 	}
 	return span{start: v, end: end, kind: kind, rank: rank}, true
@@ -644,7 +648,7 @@ func isPasswordWord(w string) bool {
 	return !strings.Contains(w, "key") && !strings.Contains(w, "token") && w != "secret" && !strings.HasPrefix(w, "credential")
 }
 
-func proseSpans(text string) []span {
+func proseSpans(text string, refs []span) []span {
 	var words [][2]int
 	for _, m := range proseWord.FindAllStringSubmatchIndex(text, -1) {
 		words = append(words, [2]int{m[2], m[3]})
@@ -662,7 +666,7 @@ func proseSpans(text string) []span {
 			out = append(out, sp)
 			continue
 		}
-		if sp, ok := proseValue(text, w[1], word); ok {
+		if sp, ok := proseValue(text, w[1], word, refs); ok {
 			out = append(out, sp)
 		} else if sp, ok := proseQuotedAfter(text, w[1], isPasswordWord(word)); ok {
 			out = append(out, sp)
@@ -700,7 +704,7 @@ func credentialWords(text string) [][2]int {
 
 // proseValue is the value after a credential word that ends at i: joined
 // by a copula, a colon or a blank (or "for …" and a copula).
-func proseValue(text string, i int, word string) (span, bool) {
+func proseValue(text string, i int, word string, refs []span) (span, bool) {
 	pw := isPasswordWord(word)
 	l := proseFor.FindStringSubmatchIndex(text[i:])
 	if l == nil {
@@ -723,7 +727,7 @@ func proseValue(text string, i int, word string) (span, bool) {
 	}
 	e := trimUnquoted(text, v, blankAt(text, v))
 	val := text[v:e]
-	if e <= v || notASecret(val, false) {
+	if e <= v || notASecret(val, overlapsAny(v, e, refs)) {
 		return span{}, false
 	}
 	var ok bool
@@ -786,7 +790,7 @@ var lineNamed = regexp.MustCompile(`(?i)\b(?:(preceding|previous|first|above) li
 // line before the sentence's (the text's first, for "first line"), its
 // blanks off, shaped like a value (a key word's token-like, a password
 // word's with a digit or a symbol).
-func lineSpans(text, lower string) []span {
+func lineSpans(text, lower string, refs []span) []span {
 	if !strings.Contains(lower, "line ") {
 		return nil
 	}
@@ -1005,10 +1009,10 @@ var (
 // notASecret reports a value that is no secret: a template or reference,
 // code, a redaction or placeholder, a path or a public key (the bridge's
 // own file references are Scan's to leave out, by their exact bytes).
-// quoted: it was between quotes (a dotted name is then a literal). A value
-// that holds a masked reference runs into one (Scan), so it is no code
-// either (PASSWORD=[…]eyJ….eyJ….sig).
-func notASecret(v string, quoted bool) bool {
+// literal: it is no code, as it was between quotes (a dotted name is then
+// a literal) or runs into an own reference (its range overlaps one masked:
+// PASSWORD=[…]eyJ….eyJ….sig), never because of the bytes it holds.
+func notASecret(v string, literal bool) bool {
 	switch {
 	case strings.TrimSpace(v) == "":
 		return true
@@ -1021,7 +1025,7 @@ func notASecret(v string, quoted bool) bool {
 	case strings.HasPrefix(v, "process.env"), strings.HasPrefix(v, "import.meta.env"), strings.HasPrefix(v, "os.environ"):
 		return true
 	}
-	if !quoted && !strings.Contains(v, referenceMask+referenceMask) { // not beside a reference (masked, Scan): code is never there
+	if !literal {
 		if codeCall.MatchString(v) || dottedName.MatchString(v) || (pathLike.MatchString(v) && strings.Contains(v, "/")) {
 			return true
 		}
