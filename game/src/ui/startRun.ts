@@ -964,7 +964,8 @@ export class StartRunDialog {
       ...(args.extra && args.prompt === undefined ? [{ path: 'extra', text: args.extra, label: 'the extra instructions' }] : []),
       ...(args.prompt ? [{ path: 'prompt', text: args.prompt, label: 'the edited first prompt' }] : []),
     ];
-    const freq = { key: `run:${floor}:${desk}`, target: `${who} at Desk ${desk + 1}`, manual, fields };
+    // (Closed meanwhile, or opened again: nothing of it goes, no review opens.)
+    const freq = { key: `run:${floor}:${desk}`, target: `${who} at Desk ${desk + 1}`, manual, fields, live: () => opened === this.opened && this.dialog.open };
     let go: GoFields | null = null;
     if (manual && !fields.length) {
       this.setStatus('Nothing typed to review: the issue or the card is read on the bridge.', true);
@@ -995,6 +996,8 @@ export class StartRunDialog {
     const send = (g: GoFields | null) => this.host.send('run.start', g?.secrets ? { ...args, secrets: g.secrets } : args);
     const d = flow && go ? await flow.deliverFields(freq, go, send) : ({ kind: 'answered', result: await send(null) } as const);
     release();
+    // Closed while a refusal was reviewed again: nothing started, nothing to say.
+    if (d.kind === 'kept' && d.why === 'gone') return;
     // Kept by the flow (a review again cancelled, the switch changed): nothing started, its words say why.
     const r = d.kind === 'kept' ? ({ ok: false, code: 'secrets_kept', message: d.message } as const) : d.result;
     const still = this.dialog.open && gen === this.gen;

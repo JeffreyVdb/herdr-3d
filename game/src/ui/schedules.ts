@@ -92,6 +92,8 @@ export class SchedulesDialog {
   private statusText = '';
   private statusError = false;
   private seenVersion = -1;
+  /** Bumped on every close: a retry's review is the opening's that asked (#108). */
+  private gen = 0;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private readonly zone = browserZone();
 
@@ -102,6 +104,7 @@ export class SchedulesDialog {
     this.alertEl.hidden = this.statusEl.hidden = true;
     this.dialog.append(this.head, this.body, h('footer', { class: 'dd-foot sch-foot' }, this.statusEl, this.alertEl));
     this.dialog.addEventListener('close', () => {
+      this.gen++;
       if (this.ticker) clearInterval(this.ticker);
       this.ticker = null;
       this.confirming = null;
@@ -375,10 +378,12 @@ export class SchedulesDialog {
     // #108 round 4: a retry fires the stored prompt again. With the switch on it goes with a review of that prompt, every
     // match left as typed (a saved prompt keeps no protected file): the way out for a schedule the check failed (its
     // prompt was saved before the switch was on, or the rules changed), which cannot be edited any more.
+    // Closed (or closed and opened again) while it is scanned or reviewed again: nothing is retried, no review opens.
     const flow = this.host.secrets;
+    const gen = this.gen;
     const req =
       t === 'schedule.retry' && s.prompt && flow?.on
-        ? { key: `schedule:${s.id}`, text: s.prompt, target: `“${s.title}”`, stored: true, ...(unreviewed(s) ? { notice: REPAIR } : {}) }
+        ? { key: `schedule:${s.id}`, text: s.prompt, target: `“${s.title}”`, stored: true, ...(unreviewed(s) ? { notice: REPAIR } : {}), live: () => this.dialog.open && gen === this.gen }
         : null;
     let go: Go | null = null;
     if (req && flow) {
@@ -386,7 +391,8 @@ export class SchedulesDialog {
       if (out.kind === 'kept') {
         this.busy.delete(s.id);
         if (!this.dialog.open) return;
-        this.setStatus(out.why === 'cancel' ? `“${s.title}” was not retried: the review was cancelled.` : out.message, out.why === 'failed');
+        // (The list opened again meanwhile says nothing of it: its Retry is free again.)
+        if (out.why !== 'gone') this.setStatus(out.why === 'cancel' ? `“${s.title}” was not retried: the review was cancelled.` : out.message, out.why === 'failed');
         this.render();
         return;
       }
@@ -398,6 +404,10 @@ export class SchedulesDialog {
     this.busy.delete(s.id);
     if (t === 'schedule.cancel') this.confirming = null;
     if (!this.dialog.open) return;
+    if (d.kind === 'kept' && d.why === 'gone') {
+      this.render();
+      return;
+    }
     if (r.ok) this.setStatus(done);
     else this.setStatus(scheduleFailureText(t, r.code, r.message, s.title), true);
     this.render();

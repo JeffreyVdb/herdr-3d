@@ -303,3 +303,84 @@ describe('#108 round 4: the flow for every other composer', () => {
     expect(r.reviews).toHaveLength(1);
   });
 });
+
+describe('#108 round 4: a composer gone meanwhile (`live`)', () => {
+  const ok: CommandResult = { ok: true, data: {} };
+  const stale: CommandResult = { ok: false, code: 'secrets_review_stale', message: 'stale' };
+  /** `alive` read by the request's `live`; `onScan` runs as each scan is asked (before it answers). */
+  function gone(o: { review?: (req: SecretsReviewRequest) => SecretsReviewOutcome; onScan?: (n: number) => void } = {}) {
+    const state = { alive: true, scans: 0 };
+    const book = new PromptSecretsBook();
+    book.reset({ enabled: true, available: true });
+    const reviews: SecretsReviewRequest[] = [];
+    const flow = new PromptSecretsFlow({
+      book,
+      unsupported: () => false,
+      send: () => {
+        o.onScan?.(++state.scans);
+        return Promise.resolve({ ok: true, data: SCAN });
+      },
+      review: (q) => {
+        reviews.push(q);
+        return Promise.resolve(o.review ? o.review(q) : { kind: 'confirm', review: q.review });
+      },
+    });
+    return { flow, state, reviews, req: { ...req, live: () => state.alive } };
+  }
+
+  it('gone before its scan: nothing is scanned or reviewed', async () => {
+    const r = gone();
+    r.state.alive = false;
+    expect(await r.flow.review(r.req)).toMatchObject({ kind: 'kept', why: 'gone' });
+    expect(r.state.scans).toBe(0);
+  });
+
+  it('gone while its scan ran: no review opens over whatever is there now', async () => {
+    const r = gone({ onScan: () => (r.state.alive = false) });
+    expect(await r.flow.review(r.req)).toMatchObject({ kind: 'kept', why: 'gone' });
+    expect(r.reviews).toEqual([]);
+  });
+
+  it('gone while the review was open: its Confirm sends nothing', async () => {
+    const r = gone({ review: (q) => ((r.state.alive = false), { kind: 'confirm', review: q.review }) });
+    expect(await r.flow.review(r.req)).toMatchObject({ kind: 'kept', why: 'gone' });
+  });
+
+  it('deliver: gone before the send, or before the send after a review again, sends nothing', async () => {
+    const r = gone();
+    const first = (await r.flow.review(r.req)) as Go;
+    r.state.alive = false;
+    let sends = 0;
+    expect(await r.flow.deliver(r.req, first, () => (sends++, Promise.resolve(ok)))).toMatchObject({ kind: 'kept', why: 'gone' });
+    expect(sends).toBe(0);
+    // Refused as stale, and gone while it was scanned again: sent once, no second review.
+    const s = gone({ onScan: (n) => n === 2 && (s.state.alive = false) });
+    const go = (await s.flow.review(s.req)) as Go;
+    const tried: Go[] = [];
+    expect(await s.flow.deliver(s.req, go, (g) => (tried.push(g), Promise.resolve(stale)))).toMatchObject({ kind: 'kept', why: 'gone' });
+    expect(tried).toHaveLength(1);
+    expect(s.reviews).toHaveLength(1);
+  });
+
+  it('several texts: gone between them, or before a send after a review again, sends nothing', async () => {
+    const fields = [
+      { path: 'text', text: TEXT, label: 'the ticket' },
+      { path: 'extra', text: TEXT, label: 'the extra instructions' },
+    ];
+    const r = gone({ review: (q) => ((r.state.alive = false), { kind: 'confirm', review: q.review }) });
+    expect(await r.flow.reviewFields({ key: 'run', target: 'Desk 4', fields, live: r.req.live })).toMatchObject({ kind: 'kept', why: 'gone' });
+    expect(r.reviews).toHaveLength(1);
+    const s = gone({ onScan: (n) => n === 3 && (s.state.alive = false) });
+    const freq = { key: 'run', target: 'Desk 4', fields, live: s.req.live };
+    const go = await s.flow.reviewFields(freq);
+    let sends = 0;
+    expect(await s.flow.deliverFields(freq, go as never, () => (sends++, Promise.resolve(stale)))).toMatchObject({ kind: 'kept', why: 'gone' });
+    expect(sends).toBe(1);
+  });
+
+  it('live all along: as without it', async () => {
+    const r = gone();
+    const first = (await r.flow.review(r.req)) as Go;
+    expect(await r.flow.deliver(r.req, first, () => Promise.resolve(ok))).toMatchObject({ kind: 'answered', result: ok });
+  });
+});

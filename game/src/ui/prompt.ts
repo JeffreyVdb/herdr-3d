@@ -11,7 +11,7 @@ import { Draft as PromptDraft, type Uploader } from './composer/draft';
 import { failedImagesText, hasContent, heldRefusalText, markedText, notSentText, PASTE_HINT } from './composer/field';
 import { WORKER_PROMPT_MAX_BYTES } from './composer/model';
 import { HANDOVER_STALE, packupAction, packupStep, type PackupCheck } from './packupSend';
-import { reviewKey, type Go } from './secretsFlow';
+import { reviewKey, type Go, type Kept } from './secretsFlow';
 import { keyName } from '../input/shortcuts';
 // #39 completion
 import { CommandCatalogs } from '../laptop/commandCatalog';
@@ -429,7 +429,8 @@ export class PromptOverlay {
     // the references, so its review says "Confirm and continue").
     const flow = this.host.secrets;
     const check = this.host.packup;
-    const req = { key: id, text: res.text, target: name, manual, action: packupAction(check, id) };
+    // (Closed meanwhile, or opened for another worker: nothing of it goes, no review opens.)
+    const req = { key: id, text: res.text, target: name, manual, action: packupAction(check, id), live: stillHere };
     let go: Go = { kind: 'send', protects: 0, shown: res.text, review: null };
     if (flow && (flow.on || manual)) {
       if (!stillHere()) return;
@@ -497,6 +498,7 @@ export class PromptOverlay {
         : ({ kind: 'answered', result: await send(go), go } as const);
     const still = stillHere();
     if (d.kind === 'kept') {
+      if (d.why === 'gone') return;
       if (!still) this.host.toast(d.message, 'error');
       else this.kept(d.why, d.message);
       return;
@@ -539,7 +541,7 @@ export class PromptOverlay {
   }
 
   /** #108: nothing was sent (the review cancelled, the switch changed, the protection failed): the note stays, and why. */
-  private kept(why: 'cancel' | 'off' | 'changed' | 'failed', message: string): void {
+  private kept(why: Kept['why'], message: string): void {
     this.state = why === 'failed' ? 'failed' : 'ready';
     this.setStatus(why === 'cancel' ? 'Not sent: the prompt is still here.' : message, why === 'failed');
     this.render();

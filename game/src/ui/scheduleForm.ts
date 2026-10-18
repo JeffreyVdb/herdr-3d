@@ -776,7 +776,8 @@ export class ScheduleFormDialog {
     if (gen !== this.formGen || !this.dialog.open) return;
     if (!text.ok) return end(text.reason === 'upload' ? 'An image did not upload: retry it or remove it.' : text.reason === 'refused' ? text.message : 'The prompt could not be read.', true);
     const flow = this.host.secrets;
-    const sreq = { key: `schedule:${this.mode === 'edit' ? this.editId : 'new'}`, text: text.text, target: `“${form.title.trim() || 'the schedule'}”`, stored: true, manual };
+    // (Closed meanwhile, or opened again: nothing of it goes, no review opens.)
+    const sreq = { key: `schedule:${this.mode === 'edit' ? this.editId : 'new'}`, text: text.text, target: `“${form.title.trim() || 'the schedule'}”`, stored: true, manual, live: () => gen === this.formGen && this.dialog.open };
     let go: Go = { kind: 'send', protects: 0, shown: text.text, review: null };
     if (manual && !text.text) return end('Write a prompt first, then review its secrets.', true);
     if (text.text && flow && (flow.on || manual)) {

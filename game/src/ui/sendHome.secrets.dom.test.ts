@@ -155,5 +155,25 @@ describe('SendHomeDialog and prompt secrets (#108 round 4)', () => {
     expect(args!.secrets_pending).toBeUndefined();
     expect(e.b.gate(packupPrompt(task), args!.secrets, 'A')).toMatchObject({ protected: 0 });
   });
-});
 
+  // #108 round 4 fix (D1's audit): closed meanwhile, a wrap-up's review sends nothing again.
+  it('refused as stale, then closed while its prompt is scanned again: sent once, no review opens', async () => {
+    const e = setup({ wrapups: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    e.dlg.open('A');
+    await flush();
+    e.q('wrap').click();
+    type(e.q<HTMLTextAreaElement>('wrap-prompt'), `${WRAPUP_PROMPT} Then push with TOKEN=ghp_abcdefghijklmnopqrstu1.`);
+    e.q('send').click();
+    await flush();
+    const release = e.b.holdScans();
+    e.b.confirm();
+    await flush();
+    expect(e.wraps()).toHaveLength(1);
+    e.dlg.close();
+    release();
+    await flush();
+    expect(e.b.open()).toBeNull();
+    expect(e.wraps()).toHaveLength(1);
+    expect(e.toasts).toEqual([]);
+  });
+});

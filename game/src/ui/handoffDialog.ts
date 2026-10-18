@@ -850,14 +850,15 @@ export class HandoffDialog {
   /**
    * #108 round 4: the instruction's review (with the switch on, or `manual`: "Review secrets"), then `send` with it (a
    * stale review is reviewed again). A blank instruction is the default one: nothing to review. Null: kept (said here).
+   * The request is the one pressed while `live`: closed (or opened for another worker) while its instruction is scanned,
+   * nothing is sent and no review opens; `send` reads nothing of the dialog (what it sends was read at the press).
    */
-  private async reviewed(instruction: string, manual: boolean, send: (g: Go) => Promise<CommandResult>): Promise<CommandResult | null> {
+  private async reviewed(instruction: string, manual: boolean, live: () => boolean, send: (g: Go) => Promise<CommandResult>): Promise<CommandResult | null> {
     const flow = this.host.secrets;
-    const req = { key: this.id, text: instruction, target: this.name, manual };
+    const req = { key: this.id, text: instruction, target: this.name, manual, live };
     let go: Go = { kind: 'send', protects: 0, shown: instruction, review: null };
-    const gen = this.gen;
     const kept = (why: string, message: string) => {
-      if (gen !== this.gen) return null;
+      if (!live()) return null;
       this.state = 'ready';
       this.setStatus(why === 'cancel' ? 'Not sent: the instruction is still here.' : message, why === 'failed');
       this.render();
@@ -880,20 +881,24 @@ export class HandoffDialog {
     const l = this.llmPv?.llm;
     if (!c || !l?.ready || this.stale || this.state !== 'ready') return;
     const gen = this.gen;
+    // #108: what this press sends, read now (the review's scan is a wait): closed or opened again meanwhile, nothing goes.
+    const { id, op } = this;
+    const home = this.sendBox.checked;
+    const live = () => gen === this.gen && this.dialog.open && this.id === id && this.op === op;
     this.state = 'filing';
     this.setStatus(`Sending to ${l.model || 'the LLM'}…`);
     this.render();
     const instruction = this.instrEl.value.trim();
-    const r = await this.reviewed(instruction, manual, (g) =>
+    const r = await this.reviewed(instruction, manual, live, (g) =>
       this.host.send('worker.handoff', {
-        worker: this.id,
+        worker: id,
         mode: 'llm',
         session: c.session,
         candidate: c.id,
         revision: c.revision,
-        op: this.op,
+        op,
         ...(instruction ? { instruction } : {}),
-        ...(this.sendBox.checked ? { send_home: true } : {}),
+        ...(home ? { send_home: true } : {}),
         ...(g.secrets ? { secrets: g.secrets } : {}),
       }),
     );
@@ -948,12 +953,15 @@ export class HandoffDialog {
     const a = this.agentPv?.agent;
     if (!a?.can_ask || this.state !== 'ready') return;
     const gen = this.gen;
+    const { id, op } = this;
+    const home = this.sendBox.checked;
+    const live = () => gen === this.gen && this.dialog.open && this.id === id && this.op === op;
     this.state = 'filing';
     this.setStatus(`Asking ${this.name}’s agent…`);
     this.render();
     const instruction = this.instrEl.value.trim();
-    const r = await this.reviewed(instruction, manual, (g) =>
-      this.host.send('worker.handoff', { worker: this.id, mode: 'agent', op: this.op, ...(instruction ? { instruction } : {}), ...(this.sendBox.checked ? { send_home: true } : {}), ...(g.secrets ? { secrets: g.secrets } : {}) }),
+    const r = await this.reviewed(instruction, manual, live, (g) =>
+      this.host.send('worker.handoff', { worker: id, mode: 'agent', op, ...(instruction ? { instruction } : {}), ...(home ? { send_home: true } : {}), ...(g.secrets ? { secrets: g.secrets } : {}) }),
     );
     if (!r) return;
     if (gen !== this.gen) {

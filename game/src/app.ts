@@ -3286,7 +3286,8 @@ export class App {
     // #108 round 4: the sentence's secrets are reviewed before the LLM reads it ("Confirm and continue"); the answer
     // holds their references and a hand-over the review keeps for the next sentence and the hire.
     const handover = pending ? this.hireReview.pendingHandover() : null;
-    const req = { key: 'dictation', text, target: 'the hire interpreter', action: 'Confirm and continue' as const, manual };
+    // (The bar closed meanwhile: nothing of it goes, no review opens.)
+    const req = { key: 'dictation', text, target: 'the hire interpreter', action: 'Confirm and continue' as const, manual, live };
     let go: Go = { kind: 'send', protects: 0, shown: text, review: null };
     if (this.secrets.on || manual) {
       const out = await this.secrets.review(req);

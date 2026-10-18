@@ -669,8 +669,11 @@ export class HirePresetsDialog {
     }
     v.saving = true;
     this.render();
+    // #108: this editor's save while it is up (closing leaves the view as it was): closed meanwhile, nothing is checked or
+    // saved and no review opens.
+    const live = () => this.view === v && this.dialog.open;
     const flow = this.host.secrets;
-    const sreq = { key: `preset:${v.id ?? 'new'}`, text: v.draft.prompt, target: `“${v.draft.name.trim() || 'the preset'}”`, stored: true, manual };
+    const sreq = { key: `preset:${v.id ?? 'new'}`, text: v.draft.prompt, target: `“${v.draft.name.trim() || 'the preset'}”`, stored: true, manual, live };
     if (manual && !v.draft.prompt) {
       v.saving = false;
       this.setStatus('Write a prompt first, then review its secrets.', true);
@@ -681,7 +684,7 @@ export class HirePresetsDialog {
     if (!v.reviewed && v.draft.prompt && flow && (flow.on || manual)) {
       this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the prompt…');
       const out = await flow.review(sreq);
-      if (this.view !== v) return;
+      if (!live()) return;
       if (out.kind === 'kept') {
         v.saving = false;
         this.setStatus(out.why === 'cancel' ? 'Not saved: the prompt is still here.' : out.message, out.why === 'failed');
@@ -694,14 +697,14 @@ export class HirePresetsDialog {
     const go: Go = v.reviewed?.go ?? { kind: 'send', protects: 0, shown: v.draft.prompt, review: null };
     // #95: the box off: does the prompt hand work to other agents? Only a "yes" in time stops the save, to ask.
     if (await this.delegates(v, go)) {
-      if (this.view !== v) return;
+      if (!live()) return;
       v.saving = false;
       v.nudge = true;
       this.render();
       this.dialog.querySelector<HTMLElement>('[data-key="nudge-on"]')?.focus();
       return;
     }
-    if (this.view !== v) return;
+    if (!live()) return;
     const spec = presetSpec(v.draft, this.floor, book.instructions);
     const send = (g: Go): Promise<CommandResult> => {
       const s = g.secrets ? { ...spec, secrets: g.secrets } : spec;
@@ -710,6 +713,7 @@ export class HirePresetsDialog {
     const d = flow ? await flow.deliver(sreq, go, send) : ({ kind: 'answered', result: await send(go), go } as const);
     if (this.view !== v) return;
     v.saving = false;
+    if (d.kind === 'kept' && d.why === 'gone') return;
     const r: CommandResult = d.kind === 'kept' ? { ok: false, code: 'secrets_kept', message: d.message } : d.result;
     if (d.kind === 'answered' && d.go !== go) v.reviewed = { text: v.draft.prompt, go: d.go };
     if (r.ok) {

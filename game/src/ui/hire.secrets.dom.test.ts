@@ -180,6 +180,39 @@ describe('HireDialog and prompt secrets (#108 round 4)', () => {
     expect(t.dlg.isOpen).toBe(false);
   });
 
+  it('in the background, refused as stale: the hire on its way is reviewed again (its dialog closed on purpose), hired on the new Confirm', async () => {
+    const t = setup({ background: true, hires: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    await typed(t, TASK);
+    t.press('hire');
+    await flush();
+    t.b.confirm();
+    await flush();
+    expect(t.dlg.isOpen).toBe(false);
+    expect(t.hires()).toHaveLength(1);
+    expect(t.b.open()).toMatchObject({ notice: expect.stringMatching(/^This review no longer fits/) });
+    t.b.confirm();
+    await flush();
+    expect(t.hires()).toHaveLength(2);
+  });
+
+  // #108 round 4 fix (D1's audit): closed while its first task is scanned, nothing of that hire goes, nor opens.
+  it('closed (Esc) while the first task is scanned: no review opens, nobody hired, no desk held, and said so', async () => {
+    const t = setup();
+    await typed(t, TASK);
+    const release = t.b.holdScans();
+    t.press('hire');
+    await flush();
+    const dialog = (t.dlg as unknown as { dialog: HTMLDialogElement }).dialog;
+    dialog.dispatchEvent(new Event('cancel'));
+    t.dlg.close();
+    release();
+    await flush();
+    expect(t.b.open()).toBeNull();
+    expect(t.hires()).toEqual([]);
+    expect(t.holds.size).toBe(0);
+    expect(t.toasts).toEqual(['Not hired: it was closed before its first task was checked for secrets.']);
+  });
+
   it('drafts: memory only while on (no storage key holds the task at any step), written again once the switch goes off', async () => {
     const stored = () => Object.keys(localStorage).filter((k) => (localStorage.getItem(k) ?? '').includes('ghp_abcdefghijklmnopqrstu1'));
     const t = setup();

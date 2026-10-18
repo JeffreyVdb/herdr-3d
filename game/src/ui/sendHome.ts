@@ -739,7 +739,8 @@ export class SendHomeDialog {
     // The check's task, as it answered it (`packupPrompt` trims): the hand-over covers it, no review again.
     const covered = pending !== null && this.promptEl.value.trim() === this.pk?.task.trim();
     const flow = this.host.secrets;
-    const req = { key: id, text: prompt, target: name, manual };
+    // (Closed meanwhile, or opened again: nothing of it goes, no review opens.)
+    const req = { key: id, text: prompt, target: name, manual, live: () => this.dialog.open && gen === this.gen };
     let go: Go = { kind: 'send', protects: 0, shown: prompt, review: null };
     this.state = 'sending';
     if (flow && (manual || (flow.on && !covered))) {
@@ -767,6 +768,7 @@ export class SendHomeDialog {
     const still = this.dialog.open && gen === this.gen;
     this.state = 'ready';
     if (d.kind === 'kept') {
+      if (d.why === 'gone') return;
       if (!still) this.host.toast(d.message, 'error');
       else {
         this.setStatus(d.why === 'cancel' ? 'Not sent: the prompt is still here.' : d.message, d.why === 'failed');

@@ -12,9 +12,11 @@ import { STORED_REASON } from './secretsFlow';
 const CAT: HireOptions = { codex: { models: ['x-1'], efforts: ['low'] } };
 const PROMPT = 'Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1, then spawn a subagent to verify.';
 
-function setup(o: { on?: boolean; delegates?: boolean } = {}) {
+/** `create`: `hire_preset.create`'s refusals in turn (then created). */
+function setup(o: { on?: boolean; delegates?: boolean; create?: Array<{ ok: false; code: string; message: string }> } = {}) {
   document.body.replaceChildren();
   const b = secretsBridge({ on: o.on ?? true });
+  const refusals = [...(o.create ?? [])];
   const book = new HirePresetBook();
   book.reset([], true);
   const sent: Array<{ t: string; args: Record<string, unknown> }> = [];
@@ -24,6 +26,8 @@ function setup(o: { on?: boolean; delegates?: boolean } = {}) {
       sent.push({ t, args });
       if (t === 'hire_preset.check') return { ok: true, data: { delegates: o.delegates === true, score: 0.9 } };
       if (t === 'hire_preset.create') {
+        const refused = refusals.shift();
+        if (refused) return refused;
         const p = { id: 'hp_1', created_at: 5, updated_at: 5, ...args } as HirePreset;
         book.upsert(p);
         return { ok: true, data: p };
@@ -103,5 +107,32 @@ describe('HirePresetsDialog and prompt secrets (#108 round 4)', () => {
     await off.fresh(PROMPT);
     expect(off.b.scans).toEqual([]);
     expect(off.of('hire_preset.create')).toEqual([expect.not.objectContaining({ secrets: expect.anything() })]);
+  });
+
+  // #108 round 4 fix (D1's audit): closing the dialog leaves the editor's view as it was, so the save's own guard did not
+  // see it. Closed while its prompt is scanned, nothing is checked or saved and no review opens.
+  it('closed while the prompt is scanned: nothing checked, nothing saved, no review opens', async () => {
+    const e = setup();
+    const release = e.b.holdScans();
+    await e.fresh(PROMPT);
+    e.dlg.close();
+    release();
+    await flush();
+    expect(e.b.open()).toBeNull();
+    expect(e.sent).toEqual([]);
+  });
+
+  it('refused as stale, then closed while its prompt is scanned again: saved once, no review opens', async () => {
+    const e = setup({ create: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    await e.fresh(PROMPT);
+    const release = e.b.holdScans();
+    e.b.confirm();
+    await flush();
+    expect(e.of('hire_preset.create')).toHaveLength(1);
+    e.dlg.close();
+    release();
+    await flush();
+    expect(e.b.open()).toBeNull();
+    expect(e.of('hire_preset.create')).toHaveLength(1);
   });
 });

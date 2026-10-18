@@ -18,15 +18,19 @@ import { FULL } from './world/hireReviewFixtures';
 
 const SENTENCE = 'Hire a Claude agent to deploy with TOKEN=ghp_abcdefghijklmnopqrstu1';
 
-function parts(o: { on?: boolean; open?: { pending: HireInterpretation; handover: string | null }; answers?: CommandResult[] } = {}) {
+/** `goneAtScan`: the bar is closed (or closed and opened again) as that scan is asked. */
+function parts(o: { on?: boolean; open?: { pending: HireInterpretation; handover: string | null }; answers?: CommandResult[]; goneAtScan?: number } = {}) {
   const book = new PromptSecretsBook();
   book.reset({ enabled: o.on ?? true, available: true });
   const sim = new SecretsSim({ emit: () => {}, error: (code, message) => Object.assign(new Error(message), { code }), takeFailure: () => false }, { on: o.on ?? true });
   const reviews: SecretsReviewRequest[] = [];
   const sent: Array<[string, Record<string, unknown>]> = [];
   const answers = [...(o.answers ?? [])];
+  let scans = 0;
+  let alive = true;
   const send = async (t: string, args: Record<string, unknown>): Promise<CommandResult> => {
     sent.push([t, args]);
+    if (t === 'prompt_secrets.scan' && ++scans === o.goneAtScan) alive = false;
     if (t === 'prompt_secrets.scan') return new Promise((resolve) => sim.handle(t, { ...args }, () => {}, (data) => resolve({ ok: true, data })));
     return answers.shift() ?? { ok: true, data: { text: args.text, intent: 'hire', hire: FULL, secrets_pending: 'tok-1' } };
   };
@@ -47,7 +51,7 @@ function parts(o: { on?: boolean; open?: { pending: HireInterpretation; handover
     hereFloor: () => 'f1',
     openDictatedReview: async (_floor: string, hire: HireInterpretation, _live: unknown, handover: string | null) => (opened.push({ hire, handover }), { kind: 'done' }),
   };
-  const run = (text: string, manual = false) => (App.prototype as unknown as { interpretDictation(this: unknown, text: string, live: () => boolean, manual: boolean): Promise<unknown> }).interpretDictation.call(self, text, () => true, manual);
+  const run = (text: string, manual = false) => (App.prototype as unknown as { interpretDictation(this: unknown, text: string, live: () => boolean, manual: boolean): Promise<unknown> }).interpretDictation.call(self, text, () => alive, manual);
   return { run, reviews, sent, opened, applied };
 }
 
@@ -88,5 +92,12 @@ describe('App.interpretDictation and prompt secrets (#108 round 4)', () => {
     await p.run('Hire an agent with the code 4471', true);
     expect(p.reviews.map((r) => [r.manual, r.review.counts().found, r.action])).toEqual([[true, 0, 'Confirm and continue']]);
     expect(p.sent.map(([t]) => t)).toEqual(['prompt_secrets.scan', 'hire.interpret']);
+  });
+
+  it('the bar closed while a refused sentence is scanned again: asked once, no review opens', async () => {
+    const p = parts({ answers: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }], goneAtScan: 2 });
+    expect(await p.run(SENTENCE)).toEqual({ kind: 'done' });
+    expect(p.reviews).toHaveLength(1);
+    expect(p.sent.filter(([t]) => t === 'hire.interpret')).toHaveLength(1);
   });
 });

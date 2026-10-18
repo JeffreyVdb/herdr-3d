@@ -22,9 +22,22 @@ function setup(o: { on?: boolean; scans?: CommandResult[]; prompts?: CommandResu
   const prompts = [...(o.prompts ?? [])];
   const book = new PromptSecretsBook();
   book.reset({ enabled: o.on ?? true, available: true });
+  // `hold()`: scans from then on wait until its release (a scan on its way).
+  let held: Array<() => void> | null = null;
+  const hold = () => {
+    const mine: Array<() => void> = [];
+    held = mine;
+    return () => {
+      held = null;
+      for (const go of mine.splice(0)) go();
+    };
+  };
   const send = (cmd: string, args: Record<string, unknown>): Promise<CommandResult> => {
     sent.push({ cmd, args });
-    if (cmd === 'prompt_secrets.scan') return Promise.resolve(scans.shift() ?? { ok: true, data: SCAN });
+    if (cmd === 'prompt_secrets.scan') {
+      const answer = scans.shift() ?? { ok: true as const, data: SCAN };
+      return held ? new Promise((resolve) => held!.push(() => resolve(answer))) : Promise.resolve(answer);
+    }
     return Promise.resolve(prompts.shift() ?? { ok: true, data: { queued: false, retried: false } });
   };
   // The review, held until the test answers it.
@@ -41,11 +54,12 @@ function setup(o: { on?: boolean; scans?: CommandResult[]; prompts?: CommandResu
     sendHome: () => {},
     confirm: (_id, pk) => (confirms.push(pk), Promise.resolve(o.confirm ?? 'cancel')),
   });
+  const toasts: string[] = [];
   const view = (id: string) => ({ name: 'Pebble', desk: 0, harness: 'claude', display: 'idle', worker: { id, session: 's', agent_kind: 'claude', status: 'idle' } });
   const host = {
     store: { floorName: (id: string) => id, workerView: view, floorView: () => ({ asleep: false }), workers: new Map([['A', {}]]) },
     unsupported: () => false,
-    toast: () => {},
+    toast: (m: string) => void toasts.push(m),
     upload: () => Promise.resolve({ ok: true, data: { path: '/drops/image.png' } }),
     send,
     secrets: flow,
@@ -60,7 +74,7 @@ function setup(o: { on?: boolean; scans?: CommandResult[]; prompts?: CommandResu
   inner.composer.insertText(TEXT);
   const press = (key: string) => (document.querySelector(`[data-key="${key}"]`) as HTMLElement).click();
   const cmds = () => sent.map((s) => s.cmd);
-  return { overlay, book, sent, cmds, reviews, packups, detects, confirms, flush, press, form: inner.form };
+  return { overlay, book, sent, cmds, reviews, packups, detects, confirms, toasts, flush, hold, press, form: inner.form };
 }
 
 describe('PromptOverlay and prompt secrets (#108)', () => {
@@ -245,5 +259,23 @@ describe('PromptOverlay and prompt secrets (#108)', () => {
       await reviewed(e);
       expect(e.sent[1]).toEqual({ cmd: 'worker.prompt', args: { id: 'A', text: TEXT, secrets: e.detects[0]!.secrets } });
     });
+  });
+
+  // #108 round 4 fix (D1's audit): pack up's check refused as stale is reviewed again only while the overlay is open.
+  it('pack up’s check refused as stale, then closed while it is scanned again: nothing more is checked, sent or said', async () => {
+    const e = setup({ detects: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    e.press('send');
+    await e.flush();
+    const release = e.hold();
+    e.reviews[0]!.answer({ kind: 'confirm', review: e.reviews[0]!.req.review });
+    await e.flush();
+    expect(e.detects).toHaveLength(1);
+    e.overlay.close();
+    release();
+    await e.flush();
+    expect(e.reviews).toHaveLength(1);
+    expect(e.detects).toHaveLength(1);
+    expect(e.cmds()).not.toContain('worker.prompt');
+    expect(e.toasts).toEqual([]);
   });
 });

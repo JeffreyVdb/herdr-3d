@@ -76,7 +76,9 @@ export function packupAction(check: PackupCheck | undefined, id: string): Secret
 /** The check of `req.text` to worker `req.key` after its review `go` (see the top). */
 export async function packupStep(check: PackupCheck, flow: PromptSecretsFlow | undefined, req: SecretsRequest, go: Go, signal: AbortSignal): Promise<PackupStep> {
   const detect = (g: Go) => check.detect(req.key, req.text, g.secrets);
-  const d = flow ? await flow.deliver(req, go, detect) : ({ kind: 'answered', result: await detect(go), go } as const);
+  // Esc stops the check: a refused one is not reviewed again, nor checked again.
+  const live = () => !signal.aborted && (req.live?.() ?? true);
+  const d = flow ? await flow.deliver({ ...req, live }, go, detect) : ({ kind: 'answered', result: await detect(go), go } as const);
   if (d.kind === 'kept') return d;
   if (signal.aborted) return { kind: 'cancel' };
   const out = await check.decide(req.key, req.text, d.result, signal);

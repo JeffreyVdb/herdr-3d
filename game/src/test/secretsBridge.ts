@@ -34,18 +34,23 @@ export function secretsBridge(o: { on?: boolean; parent?: HTMLElement } = {}) {
   const sim = new SecretsSim({ emit: () => {}, error: (code, message) => Object.assign(new Error(message), { code }), takeFailure: () => false }, { on });
   const dlg = new SecretsReviewDialog(o.parent ?? document.body, { book });
   const scans: string[] = [];
+  let held: Array<() => void> | null = null;
   const flow = new PromptSecretsFlow({
     book,
     unsupported: () => false,
     send: (t, args) =>
       new Promise<CommandResult>((resolve) => {
         scans.push(args.text);
-        try {
-          sim.handle(t, { ...args }, () => {}, (data) => resolve({ ok: true, data }));
-        } catch (e) {
-          const err = e as { code?: string; message: string };
-          resolve({ ok: false, code: err.code ?? 'internal', message: err.message });
-        }
+        const run = () => {
+          try {
+            sim.handle(t, { ...args }, () => {}, (data) => resolve({ ok: true, data }));
+          } catch (e) {
+            const err = e as { code?: string; message: string };
+            resolve({ ok: false, code: err.code ?? 'internal', message: err.message });
+          }
+        };
+        if (held) held.push(run);
+        else run();
       }),
     review: (req) => dlg.open(req),
   });
@@ -67,6 +72,15 @@ export function secretsBridge(o: { on?: boolean; parent?: HTMLElement } = {}) {
       button('confirm')?.click();
     },
     cancel: () => button('cancel')?.click(),
+    /** Scans from now on wait (a scan on its way) until the function it returns answers them all, and the next go at once. */
+    holdScans(): () => void {
+      const mine: Array<() => void> = [];
+      held = mine;
+      return () => {
+        if (held === mine) held = null;
+        for (const run of mine.splice(0)) run();
+      };
+    },
     /**
      * The bridge's gate on one text (`SecretsSim.protect`): the text with its references and how many, or the refusal's
      * code. `stored`: a saved prompt's.

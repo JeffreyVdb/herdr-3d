@@ -28,9 +28,11 @@ function world() {
   return { floors, buildings, floorName: (id: string) => floors.get(id)?.name ?? id, city: () => [{ floors: [{ id: 'f1' }] }] };
 }
 
-function form(o: { on?: boolean } = {}) {
+/** `create`: `schedule.create`'s answers in turn (then saved). */
+function form(o: { on?: boolean; create?: Array<{ ok: false; code: string; message: string }> } = {}) {
   document.body.replaceChildren();
   const b = secretsBridge({ on: o.on ?? true });
+  const answers = [...(o.create ?? [])];
   const schedules = new ScheduleBook();
   schedules.reset([]);
   const handoffs = new HandoffBook();
@@ -51,7 +53,7 @@ function form(o: { on?: boolean } = {}) {
     send: async (t: string, args: Record<string, unknown>) => {
       sent.push({ t, args });
       if (t === 'hire.prepare') return { ok: true, data: { cwd: '/home/dev', label: 'Pixel', git: null, choice: { harness: 'claude', model: 'claude-opus-5-5', effort: 'high' }, choice_source: 'floor_default', capacity: { floor: { count: 0, soft: 9, hard: 9 }, host: { count: 0, soft: 9, hard: 9 } } } };
-      if (t === 'schedule.create') return { ok: true, data: { ...sched(), ...args, id: 'sch_new' } };
+      if (t === 'schedule.create') return answers.shift() ?? { ok: true, data: { ...sched(), ...args, id: 'sch_new' } };
       return { ok: true, data: {} };
     },
   } as unknown as ScheduleFormHost;
@@ -176,5 +178,44 @@ describe('schedules and prompt secrets (#108 round 4)', () => {
     off.retry().click();
     await flush();
     expect(off.retries()).toEqual([{ id: 'sch_1' }]);
+  });
+
+  // #108 round 4 fix (D1's audit): a schedule's review is the list's or the form's while it is open; closed meanwhile
+  // (closed and opened again too), nothing of it goes and no review opens.
+  it('the list closed (or closed and opened again) while a retry’s prompt is scanned: nothing is retried, no review opens', async () => {
+    for (const reopen of [false, true]) {
+      const e = list(sched({ state: 'failed', state_reason: UNREVIEWED }));
+      e.dlg.open({ floor: 'f1' });
+      await flush();
+      const release = e.b.holdScans();
+      e.retry().click();
+      await flush();
+      e.dlg.close();
+      if (reopen) e.dlg.open({ floor: 'f1' });
+      release();
+      await flush();
+      expect(e.b.open()).toBeNull();
+      expect(e.retries()).toEqual([]);
+      if (reopen) {
+        // The list open now says nothing of it, and its Retry is free.
+        expect(e.dlg.summary()?.status).toBe('');
+        expect(e.retry().disabled).toBe(false);
+      }
+    }
+  });
+
+  it('the form refused as stale, then closed while its prompt is scanned again: saved once, no review opens', async () => {
+    const e = form({ create: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    await e.fill(PROMPT);
+    await e.save();
+    const release = e.b.holdScans();
+    e.b.confirm();
+    await flush();
+    expect(e.of('schedule.create')).toHaveLength(1);
+    e.dlg.close();
+    release();
+    await flush();
+    expect(e.b.open()).toBeNull();
+    expect(e.of('schedule.create')).toHaveLength(1);
   });
 });

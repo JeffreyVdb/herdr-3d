@@ -722,7 +722,8 @@ export class TranscriptMode {
     const live = () => this.s === s;
     const flow = this.host.secrets;
     const check = this.host.packup;
-    const req = { key: s.id, text: t, target: s.name, manual, action: packupAction(check, s.id) };
+    // (Stood up meanwhile: nothing of it goes, no review opens.)
+    const req = { key: s.id, text: t, target: s.name, manual, action: packupAction(check, s.id), live };
     let go: Go = { kind: 'send', protects: 0, shown: t, review: null };
     const kept = (why: string, message: string) => {
       if (!live()) return false;
@@ -779,10 +780,13 @@ export class TranscriptMode {
    */
   private async answered(s: Sitting, what: string, fields: FieldText[], manual: boolean, send: (g: GoFields | null) => Promise<CommandResult>): Promise<CommandResult> {
     const flow = this.host.secrets;
-    const kept = (why: string, message: string): CommandResult => ({ ok: false, code: 'secrets_kept', message: why === 'cancel' ? 'Not sent: the review was cancelled. Your answer is still here.' : message });
+    const live = () => this.s === s;
+    // Stood up while it was scanned or reviewed again: nothing went, as an answer asked after standing up.
+    const kept = (why: string, message: string): CommandResult =>
+      why === 'gone' ? { ok: false, code: 'stale', message: 'You got up.' } : { ok: false, code: 'secrets_kept', message: why === 'cancel' ? 'Not sent: the review was cancelled. Your answer is still here.' : message };
     if (manual && !fields.length) return kept('failed', 'Nothing typed to review: pick or write an answer first.');
     if (!flow || !(flow.on || manual) || !fields.length) return send(null);
-    const req = { key: `${s.id}:${what}`, target: s.name, manual, fields };
+    const req = { key: `${s.id}:${what}`, target: s.name, manual, fields, live };
     const go = await flow.reviewFields(req);
     if (go.kind === 'kept') return kept(go.why, go.message);
     const d = await flow.deliverFields(req, go, send);

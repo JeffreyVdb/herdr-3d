@@ -15,9 +15,11 @@ const PRESET: Preset = { id: 'p_000000000001', name: 'Team', roles: { orch: role
 const TICKET = 'Rotate the deploy credential, the old one is TOKEN=ghp_abcdefghijklmnopqrstu1';
 const EXTRA = 'Use PASSWORD=hunter22 for the staging database.';
 
-function setup(o: { on?: boolean } = {}) {
+/** `starts`: `run.start`'s refusals in turn (then started). */
+function setup(o: { on?: boolean; starts?: CommandResult[] } = {}) {
   document.body.replaceChildren();
   const b = secretsBridge({ on: o.on ?? true });
+  const refusals = [...(o.starts ?? [])];
   const sent: Array<{ t: string; args: Record<string, unknown> }> = [];
   const book = new PresetBook();
   book.reset([PRESET]);
@@ -36,7 +38,7 @@ function setup(o: { on?: boolean } = {}) {
       const prep: RunPrepare = { prompt: '$write-code the ticket', label: 'ORCH|run', preset: PRESET.id, orch: PRESET.roles.orch, cwd: '/home/test', git: null, capacity: { floor: { count: 0, soft: 10, hard: 20 }, host: { count: 0, soft: 10, hard: 20 } } };
       return Promise.resolve({ ok: true, data: prep });
     }
-    if (t === 'run.start') return Promise.resolve({ ok: true, data: { id: 'w9', launch_id: 'l1', prompt: 'p', prompted: true } });
+    if (t === 'run.start') return Promise.resolve(refusals.shift() ?? { ok: true, data: { id: 'w9', launch_id: 'l1', prompt: 'p', prompted: true } });
     return Promise.resolve({ ok: true, data: {} });
   };
   const host = { store, send, unsupported: () => false, reserve: () => () => {}, held: () => new Set<number>(), toast: () => {}, now: () => Date.now(), upload: () => new Promise(() => {}), hireAt: () => {}, openPresets: () => {}, started: () => {}, secrets: b.flow } as unknown as StartRunHost;
@@ -120,5 +122,22 @@ describe('StartRunDialog and prompt secrets (#108 round 4)', () => {
     await flush();
     expect(t.b.scans).toEqual([]);
     expect(t.starts()).toEqual([expect.objectContaining({ text: TICKET })]);
+  });
+
+  // #108 round 4 fix (D1's audit): closed meanwhile, a run's review sends nothing again.
+  it('refused as stale, then closed while its texts are scanned again: started once, no review opens', async () => {
+    const t = setup({ starts: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    await opened(t, TICKET);
+    t.start();
+    await flush();
+    const release = t.b.holdScans();
+    t.b.confirm();
+    await flush();
+    expect(t.starts()).toHaveLength(1);
+    t.dlg.close();
+    release();
+    await flush();
+    expect(t.b.open()).toBeNull();
+    expect(t.starts()).toHaveLength(1);
   });
 });

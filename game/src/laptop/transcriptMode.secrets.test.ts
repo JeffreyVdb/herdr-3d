@@ -48,10 +48,24 @@ async function harness(o: { on?: boolean; scans?: CommandResult[]; detects?: Com
   const scans = [...(o.scans ?? [])];
   const scanned: string[] = [];
   const reviews: Array<{ req: SecretsReviewRequest; answer(x: SecretsReviewOutcome): void }> = [];
+  // `hold()`: scans from then on wait until its release (a scan on its way).
+  let held: Array<() => void> | null = null;
+  const hold = () => {
+    const mine: Array<() => void> = [];
+    held = mine;
+    return () => {
+      held = null;
+      for (const go of mine.splice(0)) go();
+    };
+  };
   const flow = new PromptSecretsFlow({
     book,
     unsupported: () => false,
-    send: (_t, args) => (scanned.push(args.text), Promise.resolve(scans.shift() ?? { ok: true, data: SCAN })),
+    send: (_t, args) => {
+      scanned.push(args.text);
+      const answer = scans.shift() ?? { ok: true as const, data: SCAN };
+      return held ? new Promise((resolve) => held!.push(() => resolve(answer))) : Promise.resolve(answer);
+    },
     review: (req) => new Promise((answer) => reviews.push({ req, answer })),
   });
   const prompts: Array<{ args: Record<string, unknown>; resolve(r: CommandResult): void }> = [];
@@ -63,9 +77,10 @@ async function harness(o: { on?: boolean; scans?: CommandResult[]; detects?: Com
     host = h;
     return { setItems() {}, applyUpdates() {}, setBlocked() {}, setAsk() {}, setFollowup() {}, setCodex() {}, setUsage() {}, setActivity() {}, setPending: (rows: readonly PendingPrompt[]) => pending.push(rows), attachTabs() {}, hasItem: () => false, scrollToItem: () => false, focus() {}, focusPrompt() {}, destroy() {} } as never;
   };
+  const others: Array<{ t: string; args: Record<string, unknown> }> = [];
   const tx = new TranscriptMode({
     feed: () => null,
-    send: ((t: string, args: Record<string, unknown>) => (t === 'worker.prompt' ? new Promise((resolve) => prompts.push({ args, resolve })) : Promise.resolve({ ok: true, data: {} }))) as never,
+    send: ((t: string, args: Record<string, unknown>) => (t === 'worker.prompt' ? new Promise((resolve) => prompts.push({ args, resolve })) : (others.push({ t, args }), Promise.resolve({ ok: true, data: {} })))) as never,
     renderer: () => Promise.resolve(mount),
     overlay: () => ({ hidden: false, style: {}, remove() {}, focus() {} }) as unknown as HTMLElement,
     storage: storage as unknown as Storage,
@@ -76,7 +91,7 @@ async function harness(o: { on?: boolean; scans?: CommandResult[]; detects?: Com
   });
   tx.sit('a', 'Ada', true, 'claude');
   await flush();
-  return { tx, book, storage, scanned, reviews, prompts, status, packups, detects, pending, host: () => host as unknown as TranscriptRenderHost };
+  return { tx, book, storage, scanned, reviews, prompts, others, status, packups, detects, pending, hold, host: () => host as unknown as TranscriptRenderHost };
 }
 
 describe('TranscriptMode and prompt secrets (#108)', () => {
@@ -182,5 +197,38 @@ describe('TranscriptMode and prompt secrets (#108)', () => {
     h.prompts[1]!.resolve({ ok: false, code: 'secrets_review_stale', message: 'the hand-over expired' });
     await expect(again).resolves.toBe(false);
     expect(h.status.at(-1)).toEqual(['error', HANDOVER_STALE]);
+  });
+
+  // #108 round 4 fix (D1's audit): an answer's (and a prompt's) review is the seat's: stood up meanwhile, nothing of it
+  // goes and no review opens.
+  it('an answer, stood up while it is scanned: nothing is answered, no review opens', async () => {
+    const h = await harness({ scans: [{ ok: true, data: { revision: 'r', candidates: [{ id: 'c1', start: 3, end: 10, kinds: ['assignment'] }] } }] });
+    const release = h.hold();
+    const answered = h.host().onAnswerAsk({ id: 'a', tool_use_id: 'tu1', answers: [{ question: 0, other: 'pw=hunter2' }] } as never);
+    await flush();
+    expect(h.scanned).toEqual(['pw=hunter2']);
+    h.tx.stand();
+    release();
+    await expect(answered).resolves.toMatchObject({ ok: false, code: 'stale' });
+    expect(h.reviews).toEqual([]);
+    expect(h.others.filter((x) => x.t === 'worker.answer_ask')).toEqual([]);
+  });
+
+  it('a prompt refused as stale, stood up while it is scanned again: sent once, no review opens', async () => {
+    const h = await harness();
+    const sent = h.host().onPromptSubmit(TEXT);
+    await flush();
+    const review = h.reviews[0]!.req.review;
+    h.reviews[0]!.answer({ kind: 'confirm', review });
+    await flush();
+    expect(h.prompts).toHaveLength(1);
+    const release = h.hold();
+    h.prompts[0]!.resolve({ ok: false, code: 'secrets_review_stale', message: 'stale' });
+    await flush();
+    h.tx.stand();
+    release();
+    await expect(sent).resolves.toBe(false);
+    expect(h.reviews).toHaveLength(1);
+    expect(h.prompts).toHaveLength(1);
   });
 });

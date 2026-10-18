@@ -79,7 +79,8 @@ export interface HireRequest {
   kept?: boolean;
   /**
    * #108 round 4: the first task's review (the caller reviewed `args.prompt`, resolved, before Hire went on): sent through
-   * the flow, so a stale review is reviewed again (a new Confirm) and the switch gone off sends nothing.
+   * the flow, so a stale review is reviewed again (a new Confirm) and the switch gone off sends nothing. The hire is on
+   * its way by then (a background one closed its dialog): `req` has no `live`.
    */
   secrets?: { flow: PromptSecretsFlow; req: SecretsRequest; go: Go };
 }

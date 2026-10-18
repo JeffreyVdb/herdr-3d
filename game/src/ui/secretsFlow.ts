@@ -19,6 +19,9 @@
  * text: pack up, a dictated hire); a stored prompt (a schedule's, a hire preset's) is reviewed with every match ignored
  * and nothing protectable, and saved with that review ("Confirm and save"); a command with several texts reviews each
  * alone, one after the other (`reviewFields`), and sends a review per text keyed by its path.
+ *
+ * A composer's review is its own while it is up (`SecretsRequest.live`): closed (or opened again, for another worker)
+ * while its text is scanned or reviewed again, nothing of it goes and no review opens for it (`Kept`, `gone`).
  */
 
 import type { CommandResult } from '../net/client';
@@ -64,6 +67,12 @@ export interface SecretsRequest {
   field?: string;
   /** Why it is reviewed now, above the prompt (a failed schedule's repair); a refusal's own note wins. */
   notice?: string;
+  /**
+   * #108 round 4: the composer's send is still the one that asked (its dialog open, the same opening, the same worker):
+   * read before and after each scan, after each review and before each send (a refusal's review again included). Gone:
+   * no review opens and nothing goes (`Kept`, `gone`, which the composer says nothing of). Absent: always.
+   */
+  live?: () => boolean;
 }
 
 /** Send it: with `secrets` when a review decided anything. */
@@ -97,10 +106,10 @@ export interface GoFields {
   retry?: boolean;
 }
 
-/** Nothing was sent: the draft stays, the composer says `message`. */
+/** Nothing was sent: the draft stays, the composer says `message` (`gone`: it was closed meanwhile, nothing to say). */
 export interface Kept {
   kind: 'kept';
-  why: 'cancel' | 'off' | 'changed' | 'failed';
+  why: 'cancel' | 'off' | 'changed' | 'failed' | 'gone';
   message: string;
 }
 
@@ -117,6 +126,9 @@ const AGAIN: Readonly<Record<string, string>> = {
   secrets_review_required: 'herdr-world found possible secrets this review did not cover. Look them over, then confirm.',
 };
 export const OFF_MEANWHILE = 'Review prompt secrets was switched off before this went: nothing was sent. Send it again to send it as written.';
+const GONE: Kept = { kind: 'kept', why: 'gone', message: 'Not sent: it was closed before it went.' };
+/** The composer that asked is gone (`SecretsRequest.live`). */
+const gone = (req: { live?: () => boolean }): boolean => req.live !== undefined && !req.live();
 
 const plain = (text: string): Go => ({ kind: 'send', protects: 0, shown: text, review: null });
 
@@ -223,7 +235,10 @@ export class PromptSecretsFlow {
 
   /** One text: its scan, and the dialog when it found anything (or `open`: asked for, or reviewed again). */
   private async one(req: SecretsRequest, again: { notice: string; earlier: SecretReview | null } | null, open: boolean): Promise<Reviewed> {
+    if (gone(req)) return GONE;
     const r = await this.host.send('prompt_secrets.scan', { text: req.text });
+    // Closed (or opened for another) while it was scanned: no review opens over whatever is there now.
+    if (gone(req)) return GONE;
     if (!r.ok) return { kind: 'kept', why: r.code === 'secrets_review_off' ? 'off' : 'failed', message: `Not sent: ${promptSecretsFailureText(r.code, r.message).replace(/ Nothing was sent\.$/, '')}` };
     // A review made before a change of the switch is stale: the change wins, nothing goes.
     if (!this.host.book.on) return { kind: 'kept', why: 'changed', message: OFF_MEANWHILE };
@@ -244,6 +259,7 @@ export class PromptSecretsFlow {
     });
     if (out.kind === 'cancel') return { kind: 'kept', why: 'cancel', message: req.stored ? 'Not saved: the review was cancelled.' : 'Not sent: the review was cancelled.' };
     if (out.kind === 'changed') return { kind: 'kept', why: 'changed', message: out.message };
+    if (gone(req)) return GONE;
     return goOf(out.review);
   }
 
@@ -260,6 +276,7 @@ export class PromptSecretsFlow {
   async deliver(req: SecretsRequest, first: Go, send: (go: Go) => Promise<CommandResult>): Promise<Delivered> {
     let go = first;
     for (;;) {
+      if (gone(req)) return GONE;
       const result = await send(go);
       this.remember(req.key, req.text, go, go.secrets !== undefined, result);
       const why = this.refusal(result);
@@ -276,6 +293,7 @@ export class PromptSecretsFlow {
     const texts = JSON.stringify(req.fields.filter((f) => f.text !== '').map((f) => [f.path, f.text]));
     let go = first;
     for (;;) {
+      if (gone(req)) return GONE;
       const result = await send(go);
       this.remember(req.key, texts, go, go.secrets !== undefined, result);
       const why = this.refusal(result);

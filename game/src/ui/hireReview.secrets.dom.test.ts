@@ -23,10 +23,13 @@ const REF = '[secret in file /run/user/1000/herdr-world/secrets/AAAAAAAAAAAAAAAA
 const TASK = `log in with the password in ${REF} and fix the login bug.`;
 const WITH_REF: HireInterpretation = { ...FULL, sources: [`Hire a Claude Code agent on Haiku 5.5 with high effort to ${TASK}`], task: { provenance: 'dictated', value: TASK } };
 
-function setup() {
+/** `hire`: `worker.hire`'s answers in turn (then hired). */
+function setup(o: { hire?: CommandResult[] } = {}) {
   document.body.replaceChildren();
   const b = secretsBridge();
   const hires: Array<Record<string, unknown>> = [];
+  const toasts: string[] = [];
+  const answers = [...(o.hire ?? [])];
   const host = {
     store: {
       floorName: (id: string) => id,
@@ -38,12 +41,12 @@ function setup() {
     send: (t: string, args: Record<string, unknown>): Promise<CommandResult> => {
       if (t === 'hire.prepare') return Promise.resolve({ ok: true, data: prep });
       hires.push(args);
-      return Promise.resolve({ ok: true, data: { id: 'w9', prompted: true } });
+      return Promise.resolve(answers.shift() ?? { ok: true, data: { id: 'w9', prompted: true } });
     },
     unsupported: () => false,
     reserve: () => () => {},
     held: () => new Set(),
-    toast: () => {},
+    toast: (m: string) => void toasts.push(m),
     goTo: () => {},
     beep: () => {},
     hirePrefs: new HirePrefs(null),
@@ -53,7 +56,7 @@ function setup() {
   const rv = new HireReviewDialog(document.body, host);
   const hire = () => document.querySelector<HTMLElement>('.desk-dlg [data-key="hire"]')!.click();
   const task = () => document.querySelector<HTMLTextAreaElement>('#review-task')!;
-  return { b, rv, hires, hire, task };
+  return { b, rv, hires, toasts, hire, task };
 }
 
 describe('HireReviewDialog and prompt secrets (#108 round 4)', () => {
@@ -109,5 +112,24 @@ describe('HireReviewDialog and prompt secrets (#108 round 4)', () => {
     await flush();
     expect(t.hires).toEqual([]);
     expect(t.rv.summary()).toMatchObject({ state: 'ready', status: 'Not hired: the review was cancelled. The task is still here.' });
+  });
+
+  // #108 round 4 fix (D1's audit): closed while its task is scanned, nothing of that hire goes, nor opens.
+  it('closed (Esc) while the task is scanned: no review opens, nobody is hired, and said so', async () => {
+    const t = setup();
+    t.rv.open('floor', WITH_REF, undefined, undefined, 'tok-1');
+    await flush();
+    t.task().value = `${TASK} PASSWORD=hunter22`;
+    t.task().dispatchEvent(new Event('input'));
+    const release = t.b.holdScans();
+    t.hire();
+    await flush();
+    (t.rv as unknown as { dialog: HTMLDialogElement }).dialog.dispatchEvent(new Event('cancel'));
+    t.rv.close();
+    release();
+    await flush();
+    expect(t.b.open()).toBeNull();
+    expect(t.hires).toEqual([]);
+    expect(t.toasts).toEqual(['Not hired: it was closed before its task was checked for secrets.']);
   });
 });
