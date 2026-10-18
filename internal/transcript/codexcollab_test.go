@@ -126,3 +126,30 @@ func TestCodexCollabPromptCap(t *testing.T) {
 		t.Errorf("full: %d bytes, truncated %v", len(it.Collab.Prompt), it.Truncated)
 	}
 }
+
+// #25: a legacy-history rollout's sub_agent_activity event is a hidden
+// notice, not an unknown item; with CodexHistoryStart, a subagent's
+// records before its history start are hidden, its own first line is
+// read (its cli_version), and a line with no ordinal counts as inherited.
+func TestCodexSubagentLines(t *testing.T) {
+	cs, _ := parseCodex(10, []byte(`{"timestamp":"2026-10-18T08:00:01.020Z","type":"event_msg","payload":{"type":"sub_agent_activity",`+
+		`"event_id":"call_1","occurred_at_ms":1,"agent_thread_id":"t","agent_path":"/root/lint","kind":"started"}}`))
+	if len(cs) != 1 || cs[0].kind != proto.ItemNotice || !cs[0].hidden {
+		t.Fatalf("sub_agent_activity = %+v", cs)
+	}
+	meta := `{"timestamp":"2026-10-18T08:00:00.000Z","ordinal":0,"type":"session_meta","payload":{"id":"c","cli_version":"0.163.0"}}`
+	if _, v := parseCodexFrom(9, 0, []byte(meta)); v != "0.163.0" {
+		t.Errorf("own session_meta version %q", v)
+	}
+	parent := `{"timestamp":"2026-10-18T08:00:00.000Z","ordinal":1,"type":"session_meta","payload":{"id":"p","cli_version":"0.160.1"}}`
+	user := `{"timestamp":"2026-10-18T08:00:00.000Z","ordinal":%d,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"count the lines"}]}}`
+	for _, line := range []string{parent, strings.Replace(user, "%d", "4", 1), strings.Replace(user, `"ordinal":%d,`, "", 1)} {
+		cs, v := parseCodexFrom(9, 100, []byte(line))
+		if len(cs) != 1 || !cs[0].hidden || v != "" {
+			t.Errorf("inherited %s = %+v, %q", line, cs, v)
+		}
+	}
+	if cs, _ := parseCodexFrom(9, 100, []byte(strings.Replace(user, "%d", "9", 1))); len(cs) != 1 || cs[0].hidden {
+		t.Errorf("own message = %+v", cs)
+	}
+}
