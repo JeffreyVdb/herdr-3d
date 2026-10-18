@@ -179,14 +179,18 @@ func (h *Hub) dropHireSecrets(ctx context.Context, sec *hireSecrets) {
 }
 
 // hireReviewHolds refuses a hire's review the switch made stale (review
-// B2; any goroutine): checked once its worker is seen, and again right
+// B2; any goroutine), or a prompt that refers to a protected file revoked
+// meanwhile (round 5): checked once its worker is seen, and again right
 // before its first prompt goes, after waiting for the agent and on its
-// input lane. A schedule's stored prompt has no review to go stale.
+// input lane. A schedule's stored prompt has no review to go stale; the
+// revoked files are checked for every hire, reviewed or not, stored or not
+// (review L4: a successor holds files it did not review).
 func (h *Hub) hireReviewHolds(op *hireOp) error {
+	var rev *promptsecret.Reviewer
 	if sec := op.secrets; sec != nil && sec.stored == nil {
-		return h.reviewCurrent(sec.rev)
+		rev = sec.rev
 	}
-	return nil
+	return h.reviewHolds(rev, op.delivered())
 }
 
 // claimHireSecrets gives the hire's files to its worker (off the hub
@@ -905,6 +909,8 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	claimErr := h.claimHireSecrets(ctx, op)
 	if claimErr != nil {
 		rep.step("prompt secrets: %v", claimErr)
+	} else {
+		h.leaseSuccessor(ctx, op) // round 5: and the files its prompt names (a handoff's)
 	}
 	if op.prompt != "" && claimErr != nil {
 		sent := false
@@ -923,12 +929,15 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		sent, how, perr := h.sendPrompt(ctx, op, created.PaneID)
 		res.Prompted = &sent
 		switch {
-		case errors.Is(perr, errSettingChanged):
+		case errors.Is(perr, errSecretsReviewStale):
 			// #108 review B2: the switch changed while the prompt waited for
-			// the agent or its lane: it did not go, and the files its review
+			// the agent or its lane, or (round 5) a file it refers to was
+			// revoked meanwhile: it did not go, and the files its review
 			// made go as at seen (a hand-over's stay the worker's).
-			h.unprotectAll(ctx, op.secrets.ps)
-			op.secrets.ps = nil
+			if op.secrets != nil {
+				h.unprotectAll(ctx, op.secrets.ps)
+				op.secrets.ps = nil
+			}
 			res.PromptError = perr.Error() + ": send the prompt again"
 			rep.step("prompt secrets: %v", perr)
 			rep.Prompt = "not sent: " + res.PromptError

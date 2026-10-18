@@ -80,6 +80,12 @@ func (h *Hub) startHireInterpret(ctx context.Context, c *Client, cmd proto.Comma
 		if err != nil {
 			return nil, err
 		}
+		if a.Pending != nil {
+			// Round 5 (review R5P2-1), the switch on or off: the model reads
+			// the pending sentences too, so a revoked file they refer to
+			// makes the call stale as the text's would.
+			pv.extra = a.Pending.Sources
+		}
 		if err := h.reviewedSources(ctx, rev, pv, sources); err != nil {
 			pv.undo(ctx)
 			return nil, err

@@ -296,10 +296,11 @@ func TestPromptSecretsHireFailureReleases(t *testing.T) {
 	if code := codeOf(hire("start", a)); code == "" {
 		t.Fatal("the failed start was acked")
 	}
-	waitFor(t, "the rolled back hire's files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
-	if rows, _ := hb.st.SecretOwners(context.Background()); len(rows) != 0 {
-		t.Fatalf("owners left %+v", rows)
-	}
+	// Its directory goes before its row (the release's last step).
+	waitFor(t, "the rolled back hire's files and owners to go", func() bool {
+		rows, _ := hb.st.SecretOwners(context.Background())
+		return len(protectedFiles(t, dir)) == 0 && len(rows) == 0
+	})
 
 	// Too long with its references (it fits as typed): bad_request, no file.
 	hb.fl.mu.Lock()
@@ -1228,6 +1229,42 @@ func TestPromptSecretsAnswerAskSwitchBeforeItsPrompt(t *testing.T) {
 	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
 }
 
+// The same with a revoke while the prompt waits (round 5): it is withheld
+// with the revoke's code (secrets_review_stale, not prompt_failed).
+func TestPromptSecretsAnswerAskRevokeBeforeItsPrompt(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAskBridgeAt(t, filepath.Join(t.TempDir(), "world.db"), "blocked", func(o *server.Options) {
+		o.SecretsDir, o.PromptReadyWait = dir, 5*time.Second
+	})
+	c := ab.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	const tu = "toolu_01UYJ8PfzgPp69vD6PS9cA2K"
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{"q": readScreen(t, "claude-ask-esc"), "gone": "  ⎿  User declined to answer questions\n"},
+		map[string]map[string]string{"q": {"esc": "gone"}}, map[string]func(){"gone": func() {
+			appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 12)+fixtureLine(t, "claude", "ask.jsonl", 13))
+		}})
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 11))
+	askOf(c, id, pendingID(tu))
+	c.send(proto.Command{T: proto.CmdWorkerAnswerAsk, ReqID: "a", Args: mustRaw(proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu,
+		Cancel: true, Prompt: routeText, Secrets: proto.SecretsReviews{"prompt": routeReview(t, c)}})})
+	askOf(c, id, noAsk) // dismissed: the prompt waits for the agent
+	if n := mustRevoke(t, c, id); n == 0 {
+		t.Fatal("nothing revoked")
+	}
+	ab.setStatus("w1", "idle")
+	if m := c.reply("a"); codeOf(m) != proto.ErrSecretsReviewStale || !strings.Contains(errorOf(m).Message, "revoked") {
+		t.Fatalf("answer: %s", m.raw)
+	}
+	for _, call := range ab.term.Calls() {
+		if strings.HasPrefix(call, "type ") {
+			t.Fatalf("typed %q", call)
+		}
+	}
+	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
+}
+
 // worker.answer_followup: each answer's value and note, and the note, are
 // reviewed on their own; the prompt they make holds the references.
 func TestPromptSecretsAnswerFollowup(t *testing.T) {
@@ -1421,7 +1458,7 @@ func TestPromptSecretsWorkerHandoffAgent(t *testing.T) {
 		t.Fatalf("ack %s", m.raw)
 	}
 	checkRouteSent(t, res.Request.Instruction)
-	prompt, _, _ := ab.mustRequest(t, "w2:p1")
+	prompt, reqPath, _ := ab.mustRequest(t, "w2:p1")
 	if !strings.Contains(prompt, res.Request.Instruction) {
 		t.Fatalf("request prompt %q", prompt)
 	}
@@ -1438,6 +1475,16 @@ func TestPromptSecretsWorkerHandoffAgent(t *testing.T) {
 	}
 	waitFor(t, "no new file", func() bool { return len(protectedFiles(t, dir)) == files })
 	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
+	// Round 5: the handoff the agent files records the files its
+	// instruction named, for a worker hired from it.
+	appendTo(t, ab.codex, codexRequestTurn(prompt, "Saved it."))
+	time.Sleep(150 * time.Millisecond) // the turn ended, herdr idle: the file has its grace
+	writeDoc(t, reqPath, "# Deploy notes\n\nDone.\n")
+	ev := eventWhere(c, func(ev proto.Event) bool { return ev.T == proto.EvHandoffAdded })
+	named, err := ab.st.HandoffSecretsAt(context.Background(), ev.Handoff.Path)
+	if err != nil || len(named) != 2 {
+		t.Fatalf("the handoff names %+v %v", named, err)
+	}
 }
 
 // worker.handoff (llm): the model reads the instruction with its
@@ -1475,6 +1522,15 @@ func TestPromptSecretsWorkerHandoffLLM(t *testing.T) {
 		t.Fatalf("w1 owns %+v", rows)
 	}
 	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
+	// Round 5: the filed handoff records the files its instruction named.
+	w := upsertFor(c, id, llmJobState(store.HandoffJobFiled))
+	filed, err := lb.st.HandoffByID(context.Background(), w.LLMHandoff.Handoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if named, err := lb.st.HandoffSecretsAt(context.Background(), filed.Path); err != nil || len(named) != 2 {
+		t.Fatalf("the handoff names %+v %v", named, err)
+	}
 }
 
 // A wrap-up armed with a review whose prompt then waits on the worker's
@@ -1650,6 +1706,204 @@ func TestPromptSecretsWorkerHandoffLLMSwitchWhileReading(t *testing.T) {
 		t.Fatalf("job %+v, %d LLM calls", w.LLMHandoff, len(lb.llm.llm.Calls()))
 	}
 	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
+}
+
+// An LLM handoff whose instruction's files are revoked while its
+// transcript is read (round 5, review L5) fails before the model reads
+// it: nothing sent, nothing filed.
+func TestPromptSecretsWorkerHandoffLLMRevokeWhileReading(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	var hold atomic.Bool
+	reading, gate := make(chan struct{}, 1), make(chan struct{})
+	defer close(gate)
+	lb := newLLMBridge(t, yes(), func(o *server.Options) {
+		o.SecretsDir = dir
+		next := o.HandoffReduce
+		o.HandoffReduce = func(ctx context.Context, in handoffllm.Input) (handoffllm.Payload, error) {
+			if hold.Load() {
+				reading <- struct{}{}
+				<-gate
+			}
+			return next(ctx, in)
+		}
+	})
+	c := lb.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := lb.ids["w1"]
+	lb.fl.setProcs("w1:p1", running("claude", wrapSess))
+	args := llmArgs(id, lb.candidate(t, c), "op-llm")
+	args.Instruction, args.Secrets = routeText, routeReview(t, c)
+	hold.Store(true)
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	<-reading
+	before := protectedFiles(t, dir)
+	if n := mustRevoke(t, c, id); n != 2 || len(before) != 2 || len(protectedFiles(t, dir)) != 0 {
+		t.Fatalf("revoked %d of %d files", n, len(before))
+	}
+	gate <- struct{}{}
+	w := upsertFor(c, id, llmJobState(proto.LLMHandoffFailed, proto.LLMHandoffFiled))
+	if w.LLMHandoff.State != proto.LLMHandoffFailed || w.LLMHandoff.Code != proto.ErrSecretsReviewStale ||
+		!strings.Contains(w.LLMHandoff.Message, "revoked") || len(lb.llm.llm.Calls()) != 0 {
+		t.Fatalf("job %+v, %d LLM calls", w.LLMHandoff, len(lb.llm.llm.Calls()))
+	}
+	if hs, err := lb.st.Handoffs(context.Background(), "", "", 10); err != nil || len(hs) != 0 {
+		t.Fatalf("filed %+v %v", hs, err)
+	}
+	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
+}
+
+// Switched off, an LLM handoff's instruction is checked for revoked files
+// all the same (review L5: the check does not depend on a review): one
+// that names a file revoked since fails before the model reads it.
+func TestPromptSecretsWorkerHandoffLLMRevokedWhileOff(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	lb := newLLMBridge(t, yes(), func(o *server.Options) { o.SecretsDir = dir })
+	c := lb.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := lb.ids["w1"]
+	text := "PASSWORD=LLM-Revoked-Off-5!"
+	_, m := c.command(proto.CmdWorkerPrompt, "p", proto.WorkerPromptArgs{ID: id, Text: text, Secrets: reviewOf(t, c, text)})
+	ref := refRe.FindString(ackData[proto.PromptResult](t, m).Sent)
+	if ref == "" {
+		t.Fatalf("ack %s", m.raw)
+	}
+	if n := mustRevoke(t, c, id); n != 1 {
+		t.Fatalf("revoked %d", n)
+	}
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	lb.fl.setProcs("w1:p1", running("claude", wrapSess))
+	args := llmArgs(id, lb.candidate(t, c), "op-llm")
+	args.Instruction = "Deploy with " + ref + " first."
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	w := upsertFor(c, id, llmJobState(proto.LLMHandoffFailed, proto.LLMHandoffFiled))
+	if w.LLMHandoff.State != proto.LLMHandoffFailed || w.LLMHandoff.Code != proto.ErrSecretsReviewStale || len(lb.llm.llm.Calls()) != 0 {
+		t.Fatalf("job %+v, %d LLM calls", w.LLMHandoff, len(lb.llm.llm.Calls()))
+	}
+}
+
+// sentTimes is how many messages of calls hold s.
+func sentTimes(calls []ai.Request, s string) int {
+	n := 0
+	for _, call := range calls {
+		for _, msg := range call.Messages {
+			if strings.Contains(msg.Content, s) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// A hire.interpret follow-up whose pending proposal names a file revoked
+// since its first answer (round 5, review R5P2-1) is refused before the
+// model reads it, the switch on or off: the proposal's sentences go to the
+// model with the reply, so they are checked as its text is.
+func TestPromptSecretsHireInterpretRevokedFollowup(t *testing.T) {
+	t.Parallel()
+	for _, on := range []bool{true, false} {
+		llm := hireTaskLLM()
+		sb := startSecretsBridge(t, true, func(o *server.Options) {
+			cat := hiCatalog
+			o.HireIntentRoles, o.HireOptions = &hiRoles{state: ai.StateReady, llm: llm}, &cat
+		})
+		ref := refRe.FindString(sb.protect(t, sb.id1, "PASSWORD=Pending-Followup-Review-7!"))
+		_, m := sb.c.command(proto.CmdHireInterpret, "first", proto.HireInterpretArgs{Text: "Hire a Claude Code agent on Haiku 5.5 to deploy using " + ref})
+		first := ackData[proto.HireInterpretResult](t, m)
+		if ref == "" || first.Hire == nil || !slices.ContainsFunc(first.Hire.Sources, func(s string) bool { return strings.Contains(s, ref) }) ||
+			len(llm.Calls()) != 1 {
+			t.Fatalf("first: %s", m.raw)
+		}
+		if n := mustRevoke(t, sb.c, sb.id1); n != 1 {
+			t.Fatalf("revoked %d", n)
+		}
+		if !on {
+			sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+		}
+		_, m = sb.c.command(proto.CmdHireInterpret, "next", proto.HireInterpretArgs{Text: "high", Pending: first.Hire, SecretsPending: first.SecretsPending})
+		if after := llm.Calls()[1:]; codeOf(m) != proto.ErrSecretsReviewStale || !strings.Contains(errorOf(m).Message, "revoked") || len(after) != 0 {
+			t.Fatalf("on %v: %d calls after the revoke, the reference in %d messages: %s", on, len(after), sentTimes(after, ref), m.raw)
+		}
+	}
+}
+
+// Every text a preview's model call carries is checked for revoked files,
+// the switch on or off (round 5, review R5P2-1): packup.detect's text (its
+// classifier and its extraction read it), hire_preset.check's prompt,
+// hire.interpret's text and each sentence of its pending proposal, also
+// one the model never read. Naming a file revoked since, each is refused
+// with secrets_review_stale and no model is called; the same command
+// naming no file reaches the models.
+func TestPromptSecretsPreviewTextsRevoked(t *testing.T) {
+	t.Parallel()
+	roles, llm := newPkRoles(), hireTaskLLM()
+	hb, ids, _, _ := startSecretsPkBridge(t, roles, func(o *server.Options) {
+		o.HirePresetRoles, o.HireIntentRoles = roles, &hiRoles{state: ai.StateReady, llm: llm}
+	})
+	c := hb.c
+	text := "PASSWORD=Preview-Revoked-9!"
+	_, m := c.command(proto.CmdWorkerPrompt, "p", proto.WorkerPromptArgs{ID: ids["w2"], Text: text, Secrets: reviewOf(t, c, text)})
+	ref := refRe.FindString(ackData[proto.PromptResult](t, m).Sent)
+	if ref == "" {
+		t.Fatalf("ack %s", m.raw)
+	}
+	if n := mustRevoke(t, c, ids["w2"]); n != 1 {
+		t.Fatalf("revoked %d", n)
+	}
+	pending := func(sources ...string) *hireintent.Interpretation {
+		missing := hireintent.Field{Provenance: hireintent.Missing}
+		return &hireintent.Interpretation{Sources: sources, Harness: missing, Model: missing, Effort: missing,
+			Task: hireintent.Task{Provenance: hireintent.Missing}}
+	}
+	calls := func() int {
+		cl, l := roles.calls()
+		return cl + l + len(llm.Calls())
+	}
+	for _, tc := range []struct {
+		name, cmd string
+		args      func(ref string) any
+	}{
+		{"packup.detect text", proto.CmdPackupDetect, func(ref string) any {
+			return proto.PackupDetectArgs{ID: ids["w2"], Text: "Deploy with " + ref + " and end your turn"}
+		}},
+		{"hire_preset.check prompt", proto.CmdHirePresetCheck, func(ref string) any {
+			return proto.HirePresetCheckArgs{Prompt: "Deploy with " + ref}
+		}},
+		{"hire.interpret text", proto.CmdHireInterpret, func(ref string) any {
+			return proto.HireInterpretArgs{Text: "Hire a Claude Code agent on Haiku 5.5 to deploy with " + ref}
+		}},
+		{"hire.interpret pending.sources[0]", proto.CmdHireInterpret, func(ref string) any {
+			return proto.HireInterpretArgs{Text: "high", Pending: pending("Hire an agent to deploy using " + ref)}
+		}},
+		{"hire.interpret pending.sources[1]", proto.CmdHireInterpret, func(ref string) any {
+			return proto.HireInterpretArgs{Text: "high", Pending: pending("Hire an agent to deploy", "Use "+ref+" for it")}
+		}},
+	} {
+		for _, on := range []bool{true, false} {
+			c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(on)})
+			before := calls()
+			_, m := c.command(tc.cmd, "r", tc.args(ref))
+			if codeOf(m) != proto.ErrSecretsReviewStale || calls() != before {
+				t.Fatalf("%s (on %v): %d model calls: %s", tc.name, on, calls()-before, m.raw)
+			}
+			_, m = c.command(tc.cmd, "plain", tc.args("the vault"))
+			if m.env.T != proto.TAck || calls() == before {
+				t.Fatalf("%s naming no file (on %v): %s", tc.name, on, m.raw)
+			}
+		}
+	}
+	read := sentTimes(append(roles.llm.Calls(), llm.Calls()...), ref)
+	for _, call := range roles.cls.Calls() {
+		if strings.Contains(call.State["prompt"].(string), ref) {
+			read++
+		}
+	}
+	if read != 0 {
+		t.Fatalf("the models read the revoked reference %d times", read)
+	}
 }
 
 // fill is text padded with x to n bytes (n > len(text)).

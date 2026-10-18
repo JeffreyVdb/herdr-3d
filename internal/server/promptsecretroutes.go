@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
@@ -174,6 +175,21 @@ type secretPending struct {
 // reviewed reports a text the bridge answered as reviewed, exactly.
 func (p *secretPending) reviewed(text string) bool { return p != nil && p.texts[text] }
 
+// handedOver splits a wrap-up's prompt (round 5) into a text the bridge
+// answered as reviewed and what follows it after a blank line ("": the
+// prompt is that text); the longest such text. ok false: none starts it.
+func (p *secretPending) handedOver(prompt string) (task, rest string, ok bool) {
+	if p.reviewed(prompt) {
+		return prompt, "", true
+	}
+	for t := range p.texts {
+		if r, found := strings.CutPrefix(prompt, t+"\n\n"); found && len(t) > len(task) {
+			task, rest, ok = t, r, true
+		}
+	}
+	return task, rest, ok
+}
+
 // newPending registers a new hand-over for worker ("": a hire's) under rev,
 // with a fresh pending owner: its token (random; never the owner's id,
 // which the database keeps).
@@ -305,7 +321,7 @@ func (h *Hub) releaseOwner(ctx context.Context, owner secretfiles.Owner) {
 	if h.ps.files == nil {
 		return
 	}
-	if err := h.ps.files.Release(context.WithoutCancel(ctx), owner); err != nil {
+	if err := h.ps.files.Release(context.WithoutCancel(ctx), owner, h.liveWorkers); err != nil {
 		h.log.Warn("removing a pending owner's protected files failed (the janitor removes them once they expire)", "err", err)
 	}
 }
@@ -419,6 +435,10 @@ type preview struct {
 	fresh, files bool
 	worker       string
 	rev          *promptsecret.Reviewer
+	// extra are the other texts the model call carries as given (round 5:
+	// hire.interpret's pending proposal's sources), checked for revoked
+	// files with the text.
+	extra []string
 }
 
 // previewGate readies a preview's text for the gate (#108 round 2; hub
@@ -466,17 +486,21 @@ func (h *Hub) previewGate(forWorker, text string, review *proto.SecretsReview, t
 
 // holds checks the preview's review (review B2; any goroutine): the switch
 // changed, or the hand-over it continues no longer holds, since the command
-// came (it may wait for a scan slot, then on the model): stale. It is the
-// gate of each model call (ai.WithGate), asked once the call holds a slot.
+// came (it may wait for a scan slot, then on the model): stale. Round 5,
+// reviewed or not: or its text, or one of its extra texts, refers to a
+// protected file revoked since. It is the gate of each model call
+// (ai.WithGate), asked once the call holds a slot.
 func (pv *preview) holds() error {
-	if pv.rev == nil {
-		return nil
+	if pv.rev != nil {
+		err := pv.h.reviewCurrent(pv.rev)
+		if err == nil && pv.token != "" {
+			_, err = pv.h.pendingFor(pv.token, pv.rev, pv.worker, pv.worker == "")
+		}
+		if err != nil {
+			return err
+		}
 	}
-	err := pv.h.reviewCurrent(pv.rev)
-	if err == nil && pv.token != "" {
-		_, err = pv.h.pendingFor(pv.token, pv.rev, pv.worker, pv.worker == "")
-	}
-	return err
+	return pv.h.referencesHold(append([]string{pv.text}, pv.extra...)...)
 }
 
 // current is holds before the model is asked, and again once it answered

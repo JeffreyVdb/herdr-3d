@@ -730,7 +730,7 @@ func (h *Hub) agentArmed(ctx context.Context, ah *agentHandoff, u agentUpdate) {
 			case w.Ask != nil || (w.Status != statusIdle && w.Status != statusDone):
 				return laneTarget{err: fmt.Errorf("%w: %s is %s: only an idle or done worker is asked", errInvalidState, w.Name, w.Status)}
 			}
-			if err := h.reviewHolds(ah.rev); err != nil {
+			if err := h.reviewHolds(ah.rev, text); err != nil {
 				return laneTarget{err: err}
 			}
 			ah.sending = true
@@ -780,11 +780,16 @@ func (h *Hub) adoptAgentHandoff(ctx context.Context, ah *agentHandoff, w *proto.
 	src := handoff.Source{Floor: workerFloor(w), WorkerID: w.ID, WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
 		Cwd: checkoutOf(w), Branch: w.Branch, AgentSession: ah.req.AgentSession, Kind: store.HandoffAgent, Turn: ah.req.Op,
 		Items: string(items), Op: ah.req.Op, At: ah.at}
-	svc, path := h.ho.svc, ah.req.Path
+	svc, path, instruction := h.ho.svc, ah.req.Path, ah.req.Instruction
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
 		filed, existing, err := svc.Adopt(ctx, src, path)
+		if err == nil { // #108 round 5: what it names, for its successor
+			if _, body, rerr := svc.Read(ctx, filed.ID); rerr == nil {
+				h.noteHandoffSecrets(ctx, filed.ID, body, instruction)
+			}
+		}
 		_ = h.doWait(ctx, func() {
 			if err != nil {
 				ah.state = proto.AgentHandoffPending // so it fails

@@ -511,6 +511,7 @@ type sessionState struct {
 	hires     map[string]*hireOp // hires in flight, by worker id
 	fires     map[string]*fireOp // send-homes in flight, by worker id
 	last      []world.WorkerObs  // the workers last observed (a hire re-applies them)
+	looked    bool               // #108 round 5: the last observation showed the session running, workers and all
 	origins   map[string]string  // cwd → GitHub repo, from the suggester
 	askedCwds []string           // cwds of the last repo lookup
 	askedAt   time.Time
@@ -844,8 +845,9 @@ func (h *Hub) Run(ctx context.Context) error {
 		go h.runScreenJanitor(ctx)
 	}
 	if h.ps.files != nil { // #108 prompt secrets
-		h.wg.Add(1)
+		h.wg.Add(2)
 		go h.runSecretsJanitor(ctx)
+		go h.runSecretCounts(ctx) // round 5
 	}
 	if h.opts.AI != nil { // #92 AI integration
 		h.wg.Add(1)
@@ -1015,6 +1017,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startRepoRefs
 		case proto.CmdPromptSecretsGet, proto.CmdPromptSecretsSet, proto.CmdPromptSecretsScan: // #108
 			start = h.startPromptSecrets
+		case proto.CmdPromptSecretsRevoke: // #108 round 5
+			start = h.startRevokeSecrets
 		case proto.CmdRepoDiscoveryGet, proto.CmdRepoDiscoverySet, proto.CmdRepoDiscoveryRefresh: // #54
 			start = h.startRepoDiscovery
 		// M5 term
@@ -1421,6 +1425,7 @@ func (h *Hub) applyFloor(ctx context.Context, u world.FloorObs) {
 		f.socket = u.Socket
 	}
 	var evs []proto.Event
+	f.looked = u.Running && !u.KeepWorkers
 	if !u.KeepWorkers {
 		f.last = u.Workers
 		evs = h.syncWorkers(ctx, u.Session, f, u.Workers, fresh, closing)
@@ -1770,6 +1775,7 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 		}
 		next := workerView(id, session, w, metas[i], names[i], desk, h.resume[id])
 		next.ChildGeneration = h.childSession(id, next.AgentSession) // #22: a replaced session drops its children
+		next.SecretFiles = h.ps.counts[id]                           // #108 round 5
 		h.withRun(next, w, metas[i], links[id])                      // M6 runs
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)

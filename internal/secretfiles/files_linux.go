@@ -28,8 +28,12 @@ type Files struct {
 	log   *slog.Logger
 	uid   uint32
 
-	mu   sync.Mutex // one operation at a time: writes, removals and sweeps never interleave
-	lock int        // the lock file, held while open
+	mu      sync.Mutex // one operation at a time: writes, removals and sweeps never interleave
+	lock    int        // the lock file, held while open
+	changed func()
+
+	rmu     sync.Mutex           // never held with mu waited for: Revoked is asked on the hub goroutine
+	revoked map[string]time.Time // round 5: a revoked file's path → when
 }
 
 // lockName is the lock file in the directory (not a name nameRe matches).
@@ -51,8 +55,11 @@ func Open(o Options) (*Files, error) {
 	if o.Log == nil {
 		o.Log = slog.Default()
 	}
+	if o.Changed == nil {
+		o.Changed = func() {}
+	}
 	f := &Files{dir: o.Dir, parts: strings.Split(strings.TrimPrefix(o.Dir, "/"), "/"), st: o.Store, now: o.Now, log: o.Log,
-		uid: uint32(os.Getuid()), lock: -1}
+		uid: uint32(os.Getuid()), lock: -1, changed: o.Changed, revoked: map[string]time.Time{}}
 	root, err := f.openRoot(true)
 	if err != nil {
 		return nil, err
@@ -91,6 +98,16 @@ func (f *Files) IsFilePath(path string) bool {
 	}
 	dir, name, ok := strings.Cut(rest, "/")
 	return ok && nameRe.MatchString(dir) && nameRe.MatchString(name)
+}
+
+// FileAt is the file a path of IsFilePath's shape names (false: it has
+// not that shape). It says nothing of whether the file is there.
+func (f *Files) FileAt(path string) (File, bool) {
+	if !f.IsFilePath(path) {
+		return File{}, false
+	}
+	dir, name, _ := strings.Cut(strings.TrimPrefix(path, f.dir+"/"), "/")
+	return File{Dir: dir, Name: name, Path: path}, true
 }
 
 // Close lets the lock go.
@@ -207,6 +224,7 @@ func (f *Files) verifyAbove(fd int) error {
 // expires), and returns them in order. All or nothing: on any failure the
 // files written are removed.
 func (f *Files) Write(ctx context.Context, owner Owner, expires time.Time, secrets [][]byte) ([]File, error) {
+	defer f.changed()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	root, err := f.openRoot(true)
@@ -360,6 +378,7 @@ func (f *Files) Remove(ctx context.Context, files []File) error {
 	if len(files) == 0 {
 		return nil
 	}
+	defer f.changed()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	root, err := f.openRoot(false)
@@ -431,6 +450,7 @@ func (f *Files) Exists(files []File) bool {
 // claimed already, or expired, even if the janitor has not removed them
 // yet).
 func (f *Files) Claim(ctx context.Context, token, workerID string) error {
+	defer f.changed()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n, err := f.st.ClaimSecretOwner(ctx, token, workerID, f.now())
@@ -440,71 +460,343 @@ func (f *Files) Claim(ctx context.Context, token, workerID string) error {
 	return err
 }
 
-// Release removes every file of an owner, its directories and their rows
-// (a worker that really ended).
-func (f *Files) Release(ctx context.Context, owner Owner) error {
+// Lease lets worker id hold files it does not own (round 5: a handoff's
+// successor): each lives as long as its owner or any worker holding it.
+// A file with no row (gone), or of one of the worker's own directories, is
+// left out: how many it holds now that it did not.
+func (f *Files) Lease(ctx context.Context, workerID string, files []File) (int, error) {
+	if len(files) == 0 {
+		return 0, nil
+	}
+	defer f.changed()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	rows, err := f.st.SecretOwnersOf(ctx, owner.Kind, owner.ID)
-	if err != nil || len(rows) == 0 {
-		return err
+	n := 0
+	var errs error
+	for _, x := range files {
+		if !nameRe.MatchString(x.Dir) || !nameRe.MatchString(x.Name) {
+			errs = errors.Join(errs, fmt.Errorf("not a protected file: %q", x.Path))
+			continue
+		}
+		ok, err := f.st.AddSecretLease(ctx, store.SecretFile{Dir: x.Dir, Name: x.Name}, workerID)
+		if ok {
+			n++
+		}
+		errs = errors.Join(errs, err)
 	}
-	return f.removeOwners(ctx, rows)
+	return n, errs
 }
 
-// ReleaseExpired removes the pending owners whose expiry passed.
-func (f *Files) ReleaseExpired(ctx context.Context) error {
+// Release ends an owner (a worker that really ended, a pending owner whose
+// request failed): it holds nothing from now on. Each file of its
+// directories goes with its row unless a live worker holds it by a lease
+// (the directory and its row stay for those); each file it held by a lease
+// is let go, and goes too when neither its owner nor another holder is
+// live. liveness is read with the directory locked; the owner itself is
+// never live.
+func (f *Files) Release(ctx context.Context, owner Owner, liveness Liveness) error {
+	defer f.changed()
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	live, err := liveness(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := f.st.SecretOwnersOf(ctx, owner.Kind, owner.ID)
+	if err != nil {
+		return err
+	}
+	dirs := map[string]bool{}
+	for _, r := range rows {
+		dirs[r.Dir] = true
+	}
+	if owner.Kind == OwnerWorker {
+		leases, err := f.st.SecretLeasesOf(ctx, owner.ID)
+		if err != nil {
+			return err
+		}
+		for _, l := range leases {
+			dirs[l.Dir] = true
+		}
+		if err := f.st.RemoveSecretLeasesOf(ctx, owner.ID); err != nil {
+			return err
+		}
+	}
+	if len(dirs) == 0 {
+		return nil
+	}
+	return f.reconcile(ctx, dirs, f.ending(live, owner))
+}
+
+// ReleaseExpired removes the pending owners whose expiry passed (their
+// files a live worker holds by a lease stay).
+func (f *Files) ReleaseExpired(ctx context.Context, liveness Liveness) error {
+	defer f.changed()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	live, err := liveness(ctx)
+	if err != nil {
+		return err
+	}
 	rows, err := f.st.SecretOwners(ctx)
 	if err != nil {
 		return err
 	}
 	now := f.now()
-	rows = filterOwners(rows, func(r store.SecretOwner) bool { return r.Kind == OwnerPending && expired(r, now) })
-	return f.removeOwners(ctx, rows)
+	dirs := map[string]bool{}
+	for _, r := range rows {
+		if r.Kind == OwnerPending && expired(r, now) {
+			dirs[r.Dir] = true
+		}
+	}
+	return f.reconcile(ctx, dirs, f.ending(live, Owner{}))
+}
+
+// Revoke removes every file worker id holds now (round 5): those of its
+// own directories (with the directories) and those it holds by a lease,
+// for every holder, with their rows: how many it held. The worker keeps
+// running; a text that refers to one of them refers to nothing. Each path
+// is Revoked before its file goes. A directory a lease kept for its holders
+// (its owner ended) goes once none of them holds a file in it.
+func (f *Files) Revoke(ctx context.Context, workerID string, liveness Liveness) (int, error) {
+	defer f.changed()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	live, err := liveness(ctx)
+	if err != nil {
+		return 0, err
+	}
+	own, err := f.st.SecretOwnersOf(ctx, OwnerWorker, workerID)
+	if err != nil {
+		return 0, err
+	}
+	leases, err := f.st.SecretLeasesOf(ctx, workerID)
+	if err != nil {
+		return 0, err
+	}
+	var held []store.SecretFile
+	for _, r := range own {
+		names, err := f.st.SecretFiles(ctx, r.Dir)
+		if err != nil {
+			return 0, err
+		}
+		for _, n := range names {
+			held = append(held, store.SecretFile{Dir: r.Dir, Name: n})
+		}
+	}
+	for _, l := range leases {
+		held = append(held, l.SecretFile)
+	}
+	paths := make([]string, len(held))
+	for i, x := range held {
+		paths[i] = f.dir + "/" + x.Dir + "/" + x.Name
+	}
+	f.markRevoked(paths) // before any goes: a send that checks its references now finds them
+	root, err := f.openRoot(false)
+	if errors.Is(err, unix.ENOENT) {
+		root = -1
+	} else if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if root >= 0 {
+			unix.Close(root)
+		}
+	}()
+	var errs error
+	for _, r := range own {
+		if root >= 0 {
+			if err := f.removeDir(root, r.Dir); err != nil {
+				errs = errors.Join(errs, err)
+				continue
+			}
+		}
+		errs = errors.Join(errs, f.st.RemoveSecretOwner(ctx, r.Dir))
+	}
+	dirs := map[string]bool{}
+	for _, l := range leases {
+		dirs[l.Dir] = true
+		if root < 0 {
+			errs = errors.Join(errs, f.st.RemoveSecretFile(ctx, l.Dir, l.Name))
+			continue
+		}
+		dfd, err := openAt(root, l.Dir, dirFlags, 0)
+		if errors.Is(err, unix.ENOENT) {
+			errs = errors.Join(errs, f.st.RemoveSecretFile(ctx, l.Dir, l.Name))
+			continue
+		}
+		if err != nil {
+			errs = errors.Join(errs, err)
+			continue
+		}
+		errs = errors.Join(errs, f.unlink(ctx, dfd, l.Dir, l.Name))
+		unix.Close(dfd)
+	}
+	if errs != nil {
+		return len(held), errs
+	}
+	return len(held), f.reconcile(ctx, dirs, f.ending(live, Owner{}))
+}
+
+// markRevoked remembers revoked paths (RevokedFor).
+func (f *Files) markRevoked(paths []string) {
+	f.rmu.Lock()
+	defer f.rmu.Unlock()
+	now := f.now()
+	for p, at := range f.revoked {
+		if now.Sub(at) > RevokedFor {
+			delete(f.revoked, p)
+		}
+	}
+	for _, p := range paths {
+		f.revoked[p] = now
+	}
+}
+
+// Revoked reports whether any of the paths is a file Revoke removed (in the
+// last RevokedFor): a text that refers to one is not sent (round 5). It
+// never waits for the directory's lock (the hub goroutine asks it).
+func (f *Files) Revoked(paths ...string) bool {
+	f.rmu.Lock()
+	defer f.rmu.Unlock()
+	for _, p := range paths {
+		if _, ok := f.revoked[p]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func expired(r store.SecretOwner, now time.Time) bool {
 	return !r.ExpiresAt.IsZero() && !now.Before(r.ExpiresAt)
 }
 
-func filterOwners(rows []store.SecretOwner, keep func(store.SecretOwner) bool) []store.SecretOwner {
-	var out []store.SecretOwner
-	for _, r := range rows {
-		if keep(r) {
-			out = append(out, r)
+// holder reports whether an owner keeps its directory: a live worker, a
+// pending owner not expired.
+type holder func(store.SecretOwner) bool
+
+// ending is the holder test of an operation that ends owner (Kind "":
+// none): live's workers and the pending owners not expired, never owner.
+func (f *Files) ending(live func(string) bool, owner Owner) holder {
+	now := f.now()
+	return func(r store.SecretOwner) bool {
+		if r.Kind == owner.Kind && r.OwnerID == owner.ID {
+			return false
 		}
+		switch r.Kind {
+		case OwnerWorker:
+			return live(r.OwnerID)
+		case OwnerPending:
+			return !expired(r, now)
+		}
+		return false
 	}
-	return out
 }
 
-// removeOwners removes owner directories and their rows (f.mu held).
-func (f *Files) removeOwners(ctx context.Context, rows []store.SecretOwner) error {
-	if len(rows) == 0 {
+// heldFiles are the files a live worker holds by a lease (f.mu held); the
+// leases of a worker that is not live are forgotten (stale: it ended while
+// the bridge was down, or its release failed). A nil map: the leases could
+// not be read, and nothing may be removed for want of a holder.
+func (f *Files) heldFiles(ctx context.Context, live func(string) bool) (map[store.SecretFile]bool, error) {
+	leases, err := f.st.SecretLeases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	held, stale := map[store.SecretFile]bool{}, map[string]bool{}
+	for _, l := range leases {
+		if live(l.WorkerID) {
+			held[l.SecretFile] = true
+		} else {
+			stale[l.WorkerID] = true
+		}
+	}
+	var errs error
+	for w := range stale {
+		errs = errors.Join(errs, f.st.RemoveSecretLeasesOf(ctx, w))
+	}
+	return held, errs
+}
+
+// reconcile settles owner directories whose owner may no longer hold them
+// (f.mu held): each whose owner does not (holds) keeps only the files a
+// live worker holds by a lease, and goes with its row once none is left.
+func (f *Files) reconcile(ctx context.Context, dirs map[string]bool, holds holder) error {
+	if len(dirs) == 0 {
 		return nil
 	}
-	root, err := f.openRoot(false)
-	if errors.Is(err, unix.ENOENT) { // nothing on disk: only rows to forget
-		var errs error
-		for _, r := range rows {
-			errs = errors.Join(errs, f.st.RemoveSecretOwner(ctx, r.Dir))
-		}
-		return errs
-	}
+	rows, err := f.st.SecretOwners(ctx)
 	if err != nil {
 		return err
 	}
-	defer unix.Close(root)
-	var errs error
+	var ended []store.SecretOwner
 	for _, r := range rows {
-		if err := f.removeDir(root, r.Dir); err != nil {
-			errs = errors.Join(errs, err)
-			continue
+		if dirs[r.Dir] && !holds(r) {
+			ended = append(ended, r)
 		}
-		errs = errors.Join(errs, f.st.RemoveSecretOwner(ctx, r.Dir))
 	}
-	return errs
+	if len(ended) == 0 {
+		return nil
+	}
+	live := func(id string) bool { return holds(store.SecretOwner{Kind: OwnerWorker, OwnerID: id}) }
+	held, err := f.heldFiles(ctx, live)
+	if held == nil {
+		return err
+	}
+	root, rerr := f.openRoot(false)
+	if errors.Is(rerr, unix.ENOENT) { // nothing on disk: only rows to forget
+		for _, r := range ended {
+			err = errors.Join(err, f.st.RemoveSecretOwner(ctx, r.Dir))
+		}
+		return err
+	}
+	if rerr != nil {
+		return errors.Join(err, rerr)
+	}
+	defer unix.Close(root)
+	for _, r := range ended {
+		_, cerr := f.collect(ctx, root, r.Dir, held)
+		err = errors.Join(err, cerr)
+	}
+	return err
+}
+
+// collect removes what an owner directory whose owner no longer holds it
+// keeps for nobody (f.mu held): the files no live worker holds by a lease,
+// with their rows (and what has no row), then the directory and its row
+// once nothing is left. gone: the directory went.
+func (f *Files) collect(ctx context.Context, root int, dir string, held map[store.SecretFile]bool) (gone bool, err error) {
+	keep := false
+	for x := range held {
+		if x.Dir == dir {
+			keep = true
+			break
+		}
+	}
+	if !keep {
+		if err := f.removeDir(root, dir); err != nil {
+			return false, err
+		}
+		return true, f.st.RemoveSecretOwner(ctx, dir)
+	}
+	known, err := f.st.SecretFiles(ctx, dir)
+	if err != nil {
+		return false, err
+	}
+	dfd, err := openAt(root, dir, dirFlags, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return true, f.st.RemoveSecretOwner(ctx, dir)
+	}
+	if err != nil {
+		return false, err
+	}
+	var errs error
+	for _, n := range known {
+		if !held[store.SecretFile{Dir: dir, Name: n}] {
+			errs = errors.Join(errs, f.unlink(ctx, dfd, dir, n))
+		}
+	}
+	unix.Close(dfd)
+	return false, errors.Join(errs, f.sweepFiles(ctx, root, dir))
 }
 
 // removeDir removes an owner directory: its files and symlinks (never
@@ -562,11 +854,15 @@ func list(dfd int) ([]string, error) {
 // time): it removes owner directories with no row, those of a worker that
 // is not live (closed or unknown) and expired pending owners, the files of
 // a kept directory with no row, and the rows whose directory or file is
-// gone. Names this package does not make are left alone (logged). liveness
-// reads which workers are live; it is called with the directory locked, so
-// no file is written or claimed between that read and the sweep (a worker
-// whose files are there was live before them).
-func (f *Files) Sweep(ctx context.Context, liveness func(context.Context) (live func(workerID string) bool, err error)) (removed int, err error) {
+// gone; round 5: a directory whose owner no longer holds it keeps the files
+// a live worker holds by a lease (the others go), and a worker that is not
+// live holds nothing (its leases are forgotten). Names this package does
+// not make are left alone (logged). liveness is read with the directory
+// locked, so no file is written, claimed or leased between that read and
+// the sweep (a worker whose files are there was live before them). removed
+// is how many owner directories went.
+func (f *Files) Sweep(ctx context.Context, liveness Liveness) (removed int, err error) {
+	defer f.changed()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	live, err := liveness(ctx)
@@ -597,9 +893,12 @@ func (f *Files) Sweep(ctx context.Context, liveness func(context.Context) (live 
 	if err != nil {
 		return 0, err
 	}
-	now := f.now()
+	holds := f.ending(live, Owner{})
+	held, errs := f.heldFiles(ctx, live)
+	if held == nil {
+		return 0, errs
+	}
 	onDisk := map[string]bool{}
-	var errs error
 	for _, n := range names {
 		if n == lockName {
 			continue
@@ -610,20 +909,22 @@ func (f *Files) Sweep(ctx context.Context, liveness func(context.Context) (live 
 		}
 		onDisk[n] = true
 		r, known := byDir[n]
-		gone := !known || (r.Kind == OwnerWorker && !live(r.OwnerID)) || (r.Kind == OwnerPending && expired(r, now)) ||
-			(r.Kind != OwnerWorker && r.Kind != OwnerPending)
-		if gone {
+		switch {
+		case !known:
 			if err := f.removeDir(root, n); err != nil {
 				errs = errors.Join(errs, err)
 				continue
 			}
 			removed++
-			if known {
-				errs = errors.Join(errs, f.st.RemoveSecretOwner(ctx, n))
+		case holds(r):
+			errs = errors.Join(errs, f.sweepFiles(ctx, root, n))
+		default:
+			gone, err := f.collect(ctx, root, n, held)
+			errs = errors.Join(errs, err)
+			if gone {
+				removed++
 			}
-			continue
 		}
-		errs = errors.Join(errs, f.sweepFiles(ctx, root, n))
 	}
 	for _, r := range rows {
 		if !onDisk[r.Dir] {

@@ -317,11 +317,18 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 		return err
 	}
 	var rev *promptsecret.Reviewer // #108: the prompt goes through the gate while arming
-	if h.gated(a.Secrets != nil) {
+	var tok secretPending          // round 5: packup.detect's hand-over for this worker
+	if h.gated(a.Secrets != nil || a.SecretsPending != "") {
 		if err := h.stillOn(); err != nil {
 			return err
 		}
 		rev = h.ps.rev
+		if a.SecretsPending != "" {
+			var err error
+			if tok, err = h.pendingFor(a.SecretsPending, rev, a.ID, false); err != nil {
+				return err
+			}
+		}
 	}
 	w, f, err := h.fireWorker(a.ID)
 	if err != nil {
@@ -372,16 +379,35 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 	go func() {
 		defer h.wg.Done()
 		// #108: the prompt through the gate first (its files the worker's),
-		// its limits checked again with the references.
+		// its limits checked again with the references. Round 5: a prompt
+		// that starts with a text the hand-over answered as reviewed needs
+		// no review for it (the rest is reviewed alone), and the
+		// hand-over's files become the worker's before it arms.
 		prompt, prot := a.Prompt, protected{}
 		var perr error
 		if rev != nil {
-			if prot, perr = h.protectText(ctx, rev, secretfiles.Worker(wu.id), time.Time{}, a.Prompt, a.Secrets); perr == nil {
-				prompt = prot.text
-				if perr = wrapUpPromptOK(kind, prompt); perr != nil {
-					h.unprotect(ctx, prot)
-					prot = protected{}
+			task, rest, handed := tok.handedOver(a.Prompt)
+			switch {
+			case !handed:
+				if prot, perr = h.protectText(ctx, rev, secretfiles.Worker(wu.id), time.Time{}, a.Prompt, a.Secrets); perr == nil {
+					prompt = prot.text
 				}
+			case rest == "" && a.Secrets == nil:
+				prompt = task
+			default:
+				if prot, perr = h.protectText(ctx, rev, secretfiles.Worker(wu.id), time.Time{}, rest, a.Secrets); perr == nil {
+					prompt = task + "\n\n" + prot.text
+				}
+			}
+			if perr == nil {
+				perr = wrapUpPromptOK(kind, prompt)
+			}
+			if perr == nil && a.SecretsPending != "" {
+				perr = h.claimPending(ctx, a.SecretsPending, wu.id, rev)
+			}
+			if perr != nil {
+				h.unprotect(ctx, prot)
+				prot = protected{}
 			}
 		}
 		// The first of the checks before a worktree is removed: clean and

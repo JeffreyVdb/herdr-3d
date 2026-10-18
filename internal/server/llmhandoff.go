@@ -646,10 +646,18 @@ func (h *Hub) runLLMHandoff(jctx, hctx context.Context, j *llmJob, hc *handoffCa
 		rep.SentBytes, rep.FocusBytes, rep.Redactions = p.Bytes, p.FocusBytes, p.Redactions
 		// #108 review B2: the switch changed while the transcript was read,
 		// or (pass 2: the call's gate) while the call waited for a model slot.
+		// Round 5 (review L5), the switch on or off: or a protected file the
+		// instruction refers to was revoked meanwhile. The transcript's
+		// references are not checked: they are what the worker was sent
+		// before, as its other history.
 		gate := func() error {
 			if j.rev != nil && h.reviewCurrent(j.rev) != nil {
 				return &handoffllm.Error{Code: proto.ErrSecretsReviewStale,
 					Msg: "the prompt secrets setting changed while the handoff was being prepared: review the instruction again; nothing was sent"}
+			}
+			if h.referencesHold(a.Instruction) != nil {
+				return &handoffllm.Error{Code: proto.ErrSecretsReviewStale,
+					Msg: "a protected file the instruction refers to was revoked while the handoff was being prepared: review the instruction again; nothing was sent"}
 			}
 			return nil
 		}
@@ -699,6 +707,7 @@ func (h *Hub) runLLMHandoff(jctx, hctx context.Context, j *llmJob, hc *handoffCa
 		if err != nil {
 			return fmt.Errorf("%w: %v", errHandoffFailed, err)
 		}
+		h.noteHandoffSecrets(fctx, filed.ID, res.Doc, a.Instruction) // #108 round 5: for its successor
 		rep.DocBytes = len(res.Doc)
 		return nil
 	}()

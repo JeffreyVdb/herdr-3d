@@ -32,6 +32,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
+	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
 // Defaults of the feature's Options.
@@ -80,15 +81,23 @@ func promptSecretsErrorCode(err error) string {
 
 // promptSecretsState is the hub's part: the switch and the reviewer (hub
 // goroutine; cur is the reviewer too, for any goroutine), the files (nil:
-// unavailable, err says why), the scan slots, and the reviews sent lately
+// unavailable, err says why), the scan slots, the workers' file counts and
+// the change they were read after (hub goroutine; round 5), the changes
+// (any goroutine) and the signal to read them again, the open workers a
+// floor runs without (hub goroutine; round 5), and the reviews sent lately
 // (any goroutine, under mu).
 type promptSecretsState struct {
-	enabled bool
-	rev     *promptsecret.Reviewer
-	cur     atomic.Pointer[promptsecret.Reviewer]
-	files   *secretfiles.Files
-	err     error
-	slots   chan struct{}
+	enabled  bool
+	rev      *promptsecret.Reviewer
+	cur      atomic.Pointer[promptsecret.Reviewer]
+	files    *secretfiles.Files
+	err      error
+	slots    chan struct{}
+	counts   map[string]int
+	countsAt uint64
+	changes  atomic.Uint64
+	recount  chan struct{}
+	absent   map[string]time.Time // round 5: open workers their floor runs without, since when (hub goroutine)
 
 	mu      sync.Mutex
 	reuse   map[string]secretReuse    // reuseKey → the files a sent review made
@@ -123,10 +132,11 @@ func (h *Hub) initPromptSecrets(ctx context.Context) error {
 		h.opts.SecretPendingTTL = DefaultSecretPendingTTL
 	}
 	h.ps = promptSecretsState{enabled: on, slots: make(chan struct{}, maxSecretScans), reuse: map[string]secretReuse{},
-		pending: map[string]*secretPending{}}
+		pending: map[string]*secretPending{}, recount: make(chan struct{}, 1)}
 	if h.opts.SecretsDir == "" {
 		h.ps.err = secretfiles.ErrUnavailable
-	} else if f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log}); err != nil {
+	} else if f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log,
+		Changed: h.secretsChanged}); err != nil {
 		h.log.Warn("no directory for protected prompt secrets: a review that protects one will be refused",
 			"dir", h.opts.SecretsDir, "err", err)
 		h.ps.err = err
@@ -157,14 +167,19 @@ func (h *Hub) reviewCurrent(rev *promptsecret.Reviewer) error {
 	return nil
 }
 
-// reviewHolds is reviewCurrent for a text that goes with or without a
-// review (rev nil: none, nothing to check), where it goes to the terminal:
-// right before its first byte, after any wait (review B2, pass 2).
-func (h *Hub) reviewHolds(rev *promptsecret.Reviewer) error {
-	if rev == nil {
-		return nil
+// reviewHolds is the last check of texts that go with or without a review
+// (rev nil: none), right before their first byte, after any wait (review
+// B2, pass 2): reviewed, the switch has not changed since (reviewCurrent).
+// Round 5, reviewed or not (the switch on or off, a stored prompt, a hire's
+// successor: reviews L3-L5): none of the texts refers to a protected file
+// revoked since (a revoke that came while it waited: its files are gone).
+func (h *Hub) reviewHolds(rev *promptsecret.Reviewer, texts ...string) error {
+	if rev != nil {
+		if err := h.reviewCurrent(rev); err != nil {
+			return err
+		}
 	}
-	return h.reviewCurrent(rev)
+	return h.referencesHold(texts...)
 }
 
 // newReviewer is a reviewer with a fresh random key (every review made
@@ -192,9 +207,14 @@ func (h *Hub) closePromptSecrets() {
 	}
 }
 
-// promptSecretsView is the switch for the snapshot and the acks.
+// promptSecretsView is the switch for the snapshot and the acks (round 5:
+// with the directory, while available).
 func (h *Hub) promptSecretsView() *proto.PromptSecrets {
-	return &proto.PromptSecrets{Enabled: h.ps.enabled, Available: h.ps.files != nil}
+	v := &proto.PromptSecrets{Enabled: h.ps.enabled, Available: h.ps.files != nil}
+	if h.ps.files != nil {
+		v.Dir = h.ps.files.Dir()
+	}
+	return v
 }
 
 // startPromptSecrets answers prompt_secrets.get, .set (hub goroutine: one
@@ -619,15 +639,10 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 }
 
 // releaseSecrets removes worker id's protected files (hub goroutine): the
-// worker really ended. The files go off the hub goroutine.
+// worker really ended. The files go off the hub goroutine; round 5: those a
+// live worker holds by a lease stay (secretfiles.Release).
 func (h *Hub) releaseSecrets(id string) {
-	h.ps.mu.Lock()
-	for k, r := range h.ps.reuse {
-		if r.owner == secretfiles.Worker(id) {
-			delete(h.ps.reuse, k)
-		}
-	}
-	h.ps.mu.Unlock()
+	h.dropReuse(id)
 	f := h.ps.files
 	if f == nil {
 		return
@@ -637,7 +652,7 @@ func (h *Hub) releaseSecrets(id string) {
 		defer h.wg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := f.Release(ctx, secretfiles.Worker(id)); err != nil {
+		if err := f.Release(ctx, secretfiles.Worker(id), h.liveWorkers); err != nil {
 			h.log.Warn("removing an ended worker's protected files failed (the janitor retries)", "worker", id, "err", err)
 		}
 	}()
@@ -646,7 +661,9 @@ func (h *Hub) releaseSecrets(id string) {
 // runSecretsJanitor sweeps the files at start and every SecretsSweep (Run):
 // a worker known to the hub or open in the store keeps its files (an asleep
 // floor's, a gone herdr session's); a closed or unknown worker's go, and
-// expired pending owners' and what has no row.
+// expired pending owners' and what has no row (round 5: but a file a live
+// worker holds by a lease stays, and an open worker's go once its running
+// floor has gone without it for the grace: secretsLive).
 func (h *Hub) runSecretsJanitor(ctx context.Context) {
 	defer h.wg.Done()
 	t := time.NewTicker(h.opts.SecretsSweep)
@@ -672,22 +689,77 @@ func (h *Hub) sweepSecrets(ctx context.Context) {
 }
 
 // liveWorkers reads the workers that keep their files: the hub's and those
-// open in the store. Sweep reads it with the files locked (review S2: read
-// before, a worker that started and wrote in between lost its files).
+// open in the store, but for one its floor runs without (secretsLive).
+// Sweep reads it with the files locked (review S2: read before, a worker
+// that started and wrote in between lost its files).
 func (h *Hub) liveWorkers(ctx context.Context) (func(id string) bool, error) {
-	known, err := query(ctx, h, func() map[string]bool {
-		ids := make(map[string]bool, len(h.workers))
-		for id := range h.workers {
-			ids[id] = true
-		}
-		return ids
-	})
-	if err != nil {
-		return nil, err
-	}
 	open, err := h.st.OpenWorkers(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("the workers could not be read: %w", err)
 	}
-	return func(id string) bool { return known[id] || open[id] }, nil
+	live, err := query(ctx, h, func() map[string]bool { return h.secretsLive(open) })
+	if err != nil {
+		return nil, err
+	}
+	return func(id string) bool { return live[id] }, nil
+}
+
+// secretsLive are the workers that keep their files (hub goroutine): those
+// the hub shows (an asleep floor's too), and those open in the store but
+// for one its floor has run without for the grace, one sweep by the
+// bridge's clock (round 5, review L1): its workspace ended unseen, while
+// the bridge was down or its watch of herdr had a gap, so its close was
+// never recorded. Only its files go (its leases with them): it stays open
+// in the store, its name held, as worker tracking has it. The grace is for
+// a floor that shows its workspaces a little late (herdr restoring them).
+func (h *Hub) secretsLive(open map[string]store.OpenWorker) map[string]bool {
+	now := h.opts.Now()
+	live := make(map[string]bool, len(h.workers)+len(open))
+	for id := range h.workers {
+		live[id] = true
+	}
+	absent := map[string]time.Time{}
+	for id, w := range open {
+		if live[id] {
+			continue
+		}
+		if !h.absentFromFloor(id, w) {
+			live[id] = true
+			continue
+		}
+		since, ok := h.ps.absent[id]
+		if !ok {
+			since = now
+		}
+		absent[id] = since
+		live[id] = now.Sub(since) < h.opts.SecretsSweep
+	}
+	h.ps.absent = absent
+	return live
+}
+
+// absentFromFloor reports whether open worker id's floor runs without it
+// (hub goroutine): its session's floor is running and was last seen so,
+// workers and all (an asleep floor's or a gone session's workers keep
+// their files: they come back; a floor not seen since the bridge started
+// says nothing), it is not a hire or a send home in flight there, no hire
+// there is creating a workspace (new workspaces wait unseen meanwhile),
+// and its workspace is not in what herdr showed (a main checkout kept from
+// the workers is still there).
+func (h *Hub) absentFromFloor(id string, w store.OpenWorker) bool {
+	f := h.floors[w.Session]
+	if f == nil || f.session != w.Session || !f.running || !f.looked || f.hires[id] != nil || f.fires[id] != nil {
+		return false
+	}
+	for _, op := range f.hires {
+		if op.workspaceID == "" {
+			return false
+		}
+	}
+	for _, o := range f.last {
+		if o.WorkspaceID == w.WorkspaceID {
+			return false
+		}
+	}
+	return true
 }

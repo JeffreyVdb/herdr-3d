@@ -271,8 +271,9 @@ client reads that as `{}`.
 `repo_refs` (#247) is the "Repositories from other buildings" switch, `{"all_buildings": bool}` (see
 [Repositories on other floors](#repositories-on-other-floors)); a bridge from before #247 leaves it out.
 
-`prompt_secrets` (#108) is the "Review prompt secrets before sending" switch, `{"enabled": bool, "available": bool}`
-(see [Prompt secrets](#prompt-secrets)); a bridge from before #108 leaves it out.
+`prompt_secrets` (#108) is the "Review prompt secrets before sending" switch, `{"enabled": bool, "available": bool,
+"dir"?: string}` (`dir`, round 5: the absolute directory of the protected files, while `available`; see
+[Prompt secrets](#prompt-secrets)); a bridge from before #108 leaves it out.
 
 `repo_discovery` (#54) is repository discovery's settings and status, `{"roots", "interval_minutes", "status"}` (see
 [Repository discovery](#repository-discovery)); a bridge from before #54, or one that cannot run git, leaves it out.
@@ -394,6 +395,7 @@ floor with no workers and an `error`).
 | `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
 | `report` | object, optional | freelancers: their write-code report (see [Runs and freelancers](#runs-and-freelancers)) |
 | `child_generation` | int ≥ 1 | #22: the generation of its native child agents: it rises when its root agent session is replaced, and its children of an older one are gone (see [Native child agents](#native-child-agents-22)); absent from a bridge before #22 |
+| `secret_files` | int, optional | #108 round 5: how many protected prompt-secret files it holds now, its own and those it holds by a lease (a handoff's successor); absent when none. A new `worker.upsert` follows every change (written, claimed, leased, released, revoked, swept; see [Prompt secrets](#prompt-secrets)) |
 | `codex` | object, optional | #155: how a Codex worker the bridge hired was launched, `{"mode": "shared" \| "legacy", "server"?: "starting" \| "running" \| "down" \| "stopped", "note"?, "attached"?, "thread"?, "turn"?, "questions"?, "async_blocked"?}` (see [Shared Codex server](#shared-codex-server); #156: `thread`, `turn` and `questions` in [Codex async questions](#codex-async-questions); #157: `async_blocked` there too); absent for other workers, and for Codex hires made with the switch off |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
@@ -788,7 +790,7 @@ and remember the last `seq` applied.
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
 | `codex_server.update` | `enabled`, `available`, `allow_unverified` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
 | `repo_refs.update` | `all_buildings` | #247: the "Repositories from other buildings" switch changed (flat in the event, see [Repositories on other floors](#repositories-on-other-floors)) |
-| `prompt_secrets.update` | `enabled`, `available` | #108: the "Review prompt secrets before sending" switch changed (flat in the event: decode it by its `t`, see [Prompt secrets](#prompt-secrets)) |
+| `prompt_secrets.update` | `enabled`, `available`, `dir`? | #108: the "Review prompt secrets before sending" switch changed (flat in the event: decode it by its `t`, see [Prompt secrets](#prompt-secrets)) |
 | `repo_discovery.update` | `roots`, `interval_minutes`, `status` | #54: repository discovery's settings or a scan's status changed (a scan started, progressed, ended); flat in the event. `status.revision` moves only when the discovered repositories did (see [Repository discovery](#repository-discovery)) |
 | `handoff.added` | `floor_id`, `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (#58: `floor_id` is its floor, `session` that floor's session; before #58 `session` was the floor, which it still is for a real floor; `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
 | `handoff.removed` | `floor_id`, `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
@@ -875,7 +877,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?, "herdr_instructions"?: bool, "secrets"?: SecretsReview, "secrets_pending"?: string}` (#108: see [Prompt secrets](#prompt-secrets)) | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?, "protected"?: int}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
-| `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch", "secrets"?: SecretsReview}` (default `keep`) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
+| `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch", "secrets"?: SecretsReview, "secrets_pending"?: string}` (default `keep`; #108 round 5 `secrets_pending`: packup.detect's hand-over, see [Prompt secrets](#prompt-secrets)) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
 | `worker.wrapup.cancel` | `{"id": string}` | — | the worker's upsert without `wrapup` |
 | `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
 | `worker.commands` | `{"id": string}` | #136: the slash commands and skills of the worker's harness in its checkout, `{"commands": [{"name", "description", "argument_hint", "kind"}…], "partial": bool}` (see [Commands and skills](#commands-and-skills)) | — |
@@ -937,9 +939,10 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `codex_server.set` | `{"enabled"?: bool, "allow_unverified"?: bool}` | the switch; switching on without `available` is `unsupported` | `codex_server.update` (before the ack) when it changes |
 | `repo_refs.get` | `{}` | `{"all_buildings"}`, the "Repositories from other buildings" switch (see [Repositories on other floors](#repositories-on-other-floors)) | — |
 | `repo_refs.set` | `{"all_buildings": bool}` | the switch | `repo_refs.update` (before the ack) when it changes |
-| `prompt_secrets.get` | `{}` | `{"enabled", "available"}`, the "Review prompt secrets before sending" switch (see [Prompt secrets](#prompt-secrets)) | — |
+| `prompt_secrets.get` | `{}` | `{"enabled", "available", "dir"?}`, the "Review prompt secrets before sending" switch (see [Prompt secrets](#prompt-secrets)) | — |
 | `prompt_secrets.set` | `{"enabled": bool}` | the switch; a change makes every review made before it stale | `prompt_secrets.update` (before the ack) when it changes |
 | `prompt_secrets.scan` | `{"text": string}` (at most 32 KiB) | `{"revision", "candidates": [{"id", "start", "end", "kinds", "encoded"?}…]}`; `secrets_review_off` while the switch is off | — |
+| `prompt_secrets.revoke` | `{"worker": string}` (round 5) | `{"removed": int}`: every protected file the worker held (its own and those it held by a lease) is gone, for every holder; the worker keeps running; with the switch on or off; `not_found` (a worker the bridge does not show and that holds no file: one it does not show that holds files is revoked the same way), `secrets_unavailable` (no private runtime directory) | the worker's `worker.upsert` without `secret_files` (before the ack), and of every other holder that lost a file |
 | `repo_discovery.get` | `{}` | `{"roots", "interval_minutes", "status"}` (see [Repository discovery](#repository-discovery)) | — |
 | `repo_discovery.set` | `{"roots"?: [absolute path…], "interval_minutes"?: 1–1440}` (at least one) | the state; a change of roots scans at once | `repo_discovery.update` (before the ack) when it changes |
 | `repo_discovery.refresh` | `{}` | the state; a scan starts (after the one in flight) | `repo_discovery.update` (before the ack) |
@@ -3939,8 +3942,10 @@ from a secret), created exclusively without following a symlink. The database ke
 directory, worker, created; a pending owner's expiry) and the file names, never a byte of a secret. A worker's
 files go when it **really ends** (closed in herdr while its floor runs, or sent home), not when its floor sleeps or
 its herdr session goes (it resumes); a janitor at start and every 5 minutes removes a closed or unknown worker's
-files, expired pending owners' and what has no owner. Unlinking is not a secure erasure (tmpfs pages can be
-swapped).
+files, expired pending owners' and what has no owner (round 5: a file another live worker holds by a lease stays, a
+worker its running floor no longer shows loses its files after a sweep's grace, and `prompt_secrets.revoke` removes a
+worker's files at once; see [Round 5](#round-5-revoke-leases-and-the-lifecycle)).
+Unlinking is not a secure erasure (tmpfs pages can be swapped).
 
 #### Round 2: every other route
 
@@ -3976,7 +3981,7 @@ beside an edited `prompt`), is `secrets_review_required`, and the message starts
 | `worker.answer_ask` | `{"prompt", "answers[N].other"}` | the worker | — |
 | `worker.answer_followup` | `{"note", "answers[N].value", "answers[N].note"}` | the worker | `worker.prompt`'s |
 | `worker.answer_async` | `{"answers[N].answer"}` | the worker | — |
-| `worker.wrapup` | `prompt` (before its footer) | the worker | — |
+| `worker.wrapup` | `prompt` (before its footer); round 5: `secrets_pending`: `packup.detect`'s | the worker | — |
 | `worker.handoff` (`agent`, `llm`) | `instruction` (blank: the default one, nothing to review) | the worker | `agent`: `protected` |
 | `worker.prompt` | round 1's `text`; `secrets_pending`: `packup.detect`'s | the worker | round 1's |
 
@@ -3987,7 +3992,7 @@ the protected ones: an answer submitted twice before the first was sent is still
 with the switch off. A wrap-up's files stay once its prompt went, and go when its arming fails. A `worker.handoff` in
 mode `agent` settles them as a `/handoff` does (until the request's prompt is being sent, a failed request or an
 `existing` answer removes them; from then on the send decides); in mode `llm` they stay once the job started (the model
-reads only the references; a handoff it writes may name the files, which live as long as that worker) and an
+reads only the references; a handoff it writes may name the files, which live as long as that worker or a worker hired from that handoff, see [Round 5](#round-5-revoke-leases-and-the-lifecycle)) and an
 `existing` answer removes them. Telegram replies and card answers have no review: candidates refuse them (round 1).
 
 **A change of the switch** makes every review made before it stale, also one whose command is already under way: each
@@ -4007,9 +4012,10 @@ went, nothing is checked again (Enter pressed again, a model request retried).
   has been read (then nothing is hired).
 - The worker's routes (`worker.prompt`, `worker.answer_ask`, `worker.answer_followup`, `worker.answer_async`, a
   wrap-up, `worker.handoff` in mode `agent`, a `/handoff`) check it when their turn comes on the worker's input lane and
-  again right before their text goes: once the agent is ready to be typed into, before a Codex prompt is submitted or
-  queued, before the first Other answer is typed into a dialog (a dialog whose text was typed is answered whole), before
-  a dismissal's prompt, as an async answer is marked sending, before a handoff request's prompt. The command is
+  again right before their text goes: once the agent is ready to be typed into, before a Codex prompt is submitted,
+  queued or steered through its app-server (a shared worker blocked by an async question), before the first Other
+  answer is typed into a dialog (a dialog whose text was typed is answered whole), before a dismissal's prompt, as an
+  async answer is marked sending, before a handoff request's prompt. The command is
   `secrets_review_stale`, nothing of its text is sent, and the files it made are removed (a wrap-up's arm fails so; an
   agent handoff's request fails).
 - An LLM handoff checks it just before the model is called, and as the call takes its slot: the job fails with code
@@ -4085,10 +4091,112 @@ meanwhile, `secrets_review_stale`), its record is kept on the schedule, and then
 with the switch on or off. Every command's review is kept as `"secrets": {"protect", "ignore"}`, the decisions'
 counts.
 
-**What this does not protect** (docs/decisions.md, 2026-10-18): the agent can still read the file (`cat`, a Read
-tool) and print it; other processes of the same user can read it; text typed straight into the terminal, prompts
-sent before the switch was on and transcripts that already hold a secret are not touched; a candidate the scan
-does not find is sent as typed unless marked by hand.
+#### Round 5: revoke, leases and the lifecycle
+
+**The directory.** `World.prompt_secrets.dir` (also in `prompt_secrets.get`'s and `.set`'s ack and in
+`prompt_secrets.update`) is the absolute directory of the files, present while `available`: a reference is the
+bridge's own exactly when it is `[secret in file <dir>/<owner>/<file>]`, both names 26–64 characters of `A-Z2-7` (what
+the scan leaves alone; a client can tell them from a look-alike with it).
+
+**`Worker.secret_files`** is how many files the worker holds now: those of its own directories and those it holds by a
+lease (below); absent at 0. A `worker.upsert` follows each change: a review's files written, a pending owner's claimed
+(a hire's, a hand-over's), a lease taken, a holder's end, a revoke, a failed command's files removed, the janitor's
+sweep. A pending owner's files count for nobody until they are claimed.
+
+**Revoke.** `prompt_secrets.revoke {"worker"}` removes every protected file the worker holds now, its own and those it
+holds by a lease, with their rows, **for every holder** (a file a handoff's successor holds goes for its first owner
+too, and the other way round), and answers `{"removed": n}`. The worker keeps running; the prompts it was sent keep
+their references, which then point at nothing. It works with the switch on or off. A worker the bridge does not show (of
+a herdr session that is gone, one its floor runs without: below) is revoked the same way while it holds files: the
+lifecycle keeps a gone session's files for its return, an explicit revoke removes them. `not_found` is a worker the
+bridge neither shows nor finds a file of (unknown, or holding nothing); without a private runtime directory it is
+`secrets_unavailable`. The files go off the hub goroutine, with the files locked and the workers' liveness read inside
+that lock; every holder's `worker.upsert` comes before the ack. The audit row keeps the worker's id and `{"removed":
+n}`, never a path or a byte. A hand-over not claimed yet (`packup.detect`'s for that worker) is not the worker's: a
+revoke leaves it, and what it claims later is new. The identical submission sent again after a revoke writes new files
+(its retry is forgotten).
+
+**A revoke racing a send.** Every text the bridge sends to an agent or a model is checked last, right before its first
+byte goes, where a change of the switch is checked (above), **reviewed or not**: with the switch on or off, a schedule's
+stored prompt, a hire's successor (which holds files it never reviewed), an answer, a wrap-up, a handoff's request. A
+text that refers to a file revoked before that check is not sent (`secrets_review_stale`, "a protected file it refers to
+was revoked: review it again"; a hire keeps its worker and withholds its prompt with `prompt_error`, and a schedule's
+fire then fails saying so), and the files that command made are removed, as for any failure before its send.
+`worker.answer_ask` checks every text it will type (each Other answer, a dismissal's prompt) before the dialog's first
+key, and each again right before it is typed: a revoke that lands between two texts of one dialog stops it there (the
+first typed, nothing submitted, `secrets_review_stale`), where a switch change after the first text does not (a dialog
+it began is answered whole: a switch change leaves its references good, a revoke does not). An LLM handoff checks its
+instruction before the model is called and again once the call holds a model slot; the transcript it reads is not
+checked (references the worker was sent before, as its other history: checking them would refuse every handoff of a
+worker for 24 hours after its revoke). Every other text a model call carries is checked before the call, as its
+model-slot gate and once it answered: a preview's text (`packup.detect`'s, which its classifier and its extraction
+read; `hire.interpret`'s), each of `hire.interpret`'s `pending.sources` (the model reads them with the reply, also one
+it never read before) and `hire_preset.check`'s prompt. A send whose last check came first went with its references, and
+the revoke then removes the files (the agent has the reference, the file is gone). Files a command writes after the
+revoke are new and its worker's: they go with its failure or stay with its success, never without an owner. A revoked
+path is remembered for 24 hours (in memory, never stored): a text that refers to one in that time is refused the same
+way, reviewed or not; sent again as typed, it is protected anew.
+
+**Leases (delegation).** A handoff (#223 literal, #224 agent, #9 LLM) records, when it is filed, which protected files
+its text names: its document's references, and those of the instruction it was written from (a `/handoff <instruction>`,
+`worker.handoff`'s `instruction`); only the bridge's own references, to files still there. A worker **hired**
+(`worker.hire`, `run.start`, a schedule's fire) whose first prompt names that handoff's path (the cabinet's Hire from
+handoff, `Read <path> and continue the work. …`; a schedule's `handoff_path`: the path as filed, blanks and all, and
+whole, not inside a longer path), or names files by their own references, **holds** those files too, once herdr shows it
+(when a hire's own files are claimed; with the switch on or off). A lease is a holder, not a copy: one file, one path,
+its owner and its holders. A file lives while its owner or any holder lives, and goes when the last of them ends: the
+owner's end keeps the files a live worker holds (their owner directory stays for them) and removes the rest; a holder's
+end removes a file nobody else holds. The janitor honours leases: a lease of a worker that is not live is forgotten, and
+an owner directory whose owner ended keeps only the files a live worker holds. A revoke on any holder removes the file
+for all. Nothing is held of a file that went before the successor was seen: a worker sent home before its successor is
+hired (a handoff with "send home" sends it at once) takes its files with it, and the handoff then names files that are
+gone. A `worker.prompt` to a worker that exists already holds nothing new: only a hire is a successor.
+
+**Native child agents** (#22) are conversations inside their worker's own session: they share its files and its
+lifetime. A child's rows, its removal and a replaced session's generation never release or sweep a file; only the
+worker's end does.
+
+**The wrap-up's hand-over.** `worker.wrapup` takes `secrets_pending`, `packup.detect`'s hand-over for the same worker,
+as `worker.prompt` does. A `prompt` that is exactly a text that hand-over answered as reviewed (its `task`, or `sent`),
+or that text, a blank line (`"\n\n"`) and more (the cleanup sentence), needs no review for that text. The rest is
+scanned alone: with candidates it needs `secrets`, the review of **the rest alone** (scan exactly the text after the
+blank line; its ranges index it), e.g. `{"id", "prompt": "<task>\n\nThen tidy up.", "secrets_pending": "…"}`. Any
+other prompt is reviewed whole through `secrets`, as before. The hand-over's files become the worker's before the
+wrap-up arms, the hand-over checked again then as `worker.prompt`'s is: expired, the switch changed, another worker's
+or one from before a restart is `secrets_review_stale`, and nothing is armed or claimed. An arming that fails after the
+claim leaves them with the worker. Without the field, as before.
+
+**The lifecycle, in short.** Kept: while the worker's floor sleeps and wakes, while its herdr session is gone and when
+it resumes, over a bridge restart (the worker is open in the store and its floor shows it, so the janitor counts it
+live), and through a host reboot that herdr restores the workers from **if the directory survived it** (a
+`--secrets-dir` on disk). The default directory (`$XDG_RUNTIME_DIR`, a tmpfs) does not survive a reboot: nothing is ever
+written to disk, so the janitor forgets the rows at start and the references point at nothing. Removed: when the worker
+really ends (closed in herdr while its floor runs, sent home), unless a live worker holds them; by a revoke; a pending
+owner's at its expiry (30 minutes) unless claimed or held; a failed command's at once; and by the janitor (at start and
+every 5 minutes): the files of a worker the store has closed (a close seen whose release did not finish: a crash) or
+does not know, leases of workers that are not live, expired pending owners, rows without files and files without rows;
+and the files of a worker **its floor runs without**: open in the store, but missing from what herdr shows of its
+running floor for the grace (one sweep, 5 minutes, by the bridge's clock), as after the bridge was down while its
+workspace closed. It was never seen to close, so it stays open in the store, its name held, as worker tracking has it;
+only its files go (its leases with them), at the first sweep past the grace (5 to 15 minutes after the floor's first
+running observation). Not while the floor sleeps or its session is gone (it comes back), not before the bridge has seen
+the floor run, not while a hire on that floor creates a workspace (new workspaces wait unseen meanwhile), nor while its
+workspace is still in herdr's raw observation (a main checkout kept from the workers); a worker back within the grace
+keeps them. Until they go, a revoke removes them (above).
+
+**What this does not protect** (docs/decisions.md, 2026-10-18 and round 5):
+
+- **No model, no runtime, no network.** Candidates come from Gitleaks v8.30.1's default rules, generated into the bridge
+  at build time (MIT; `internal/promptsecret/LICENSE-gitleaks.txt` beside them), and the bridge's own structural rules.
+  Nothing is downloaded, loaded or called: the scan works offline by design and never checks a token with a provider.
+  Updating the rules is `make secret-rules` (with `make secret-rules-parity`) and a new build of the bridge.
+- **Consuming a file returns its bytes.** The agent can still `cat` a file or read it with a Read tool and print it into
+  its transcript; a later tool's output is not protected. Other processes of the same Unix user can read every file
+  (0600 keeps out other users only; a lease or an owner is the bridge's bookkeeping, not an access control). A route
+  that injects a credential without returning it to the model is a follow-up ticket.
+- Text typed straight into the terminal, prompts sent before the switch was on and transcripts that already hold a
+  secret are not touched; a candidate the scan does not find is sent as typed unless marked by hand; unlinking is not
+  a secure erasure.
 
 
 ### Hire interpretation

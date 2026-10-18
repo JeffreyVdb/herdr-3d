@@ -445,6 +445,10 @@ type Worker struct {
 	// From one bridge-wide counter, so it only rises for a worker; compare
 	// it per worker only. 0 (left out) from a bridge before #22.
 	ChildGeneration uint64 `json:"child_generation,omitempty"`
+	// #108 round 5: SecretFiles is how many protected prompt-secret files
+	// the worker holds now (its own and those it holds by a lease; 0 left
+	// out).
+	SecretFiles int `json:"secret_files,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
 	// Round is the h3d_round token, else the label's trailing |r<N>.

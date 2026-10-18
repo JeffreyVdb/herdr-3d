@@ -249,7 +249,9 @@ func (h *Hub) planAnswerAsk(a proto.WorkerAnswerAskArgs) ([]askAnswer, error) {
 
 // askDriver presses keys into one worker's dialog, reading its screen
 // between steps. rev (#108) is the answers' review, checked right before
-// the first of their texts is typed (nil: none, or typed already).
+// the first of their texts is typed (nil: none, or typed already). texts
+// (round 5) are every text the command types, checked for revoked files
+// right before its first key or text (begun once that went).
 type askDriver struct {
 	h             *Hub
 	ctx           context.Context
@@ -257,6 +259,22 @@ type askDriver struct {
 	session, pane string
 	sent          []string
 	rev           *promptsecret.Reviewer
+	texts         []string
+	begun         bool
+}
+
+// begin is the check before the command's first byte (#108 round 5, review
+// L3): none of its texts refers to a revoked protected file, so a revoke
+// that came before it touches nothing of the dialog.
+func (d *askDriver) begin() error {
+	if d.begun {
+		return nil
+	}
+	if err := d.h.referencesHold(d.texts...); err != nil {
+		return err
+	}
+	d.begun = true
+	return nil
 }
 
 // current is the worker's ask now, if it is still the one being answered.
@@ -276,6 +294,9 @@ func (d *askDriver) press(keys ...string) error {
 	if !still {
 		return fmt.Errorf("%w: the question was answered or replaced meanwhile (no more keys pressed)", errStale)
 	}
+	if err := d.begin(); err != nil {
+		return err
+	}
 	if err := d.h.opts.Term.SendKeys(d.ctx, d.session, d.pane, keys...); err != nil {
 		return fmt.Errorf("%w: %v", errInputFailed, err)
 	}
@@ -291,8 +312,15 @@ func (d *askDriver) typeText(text string) error {
 	if !still {
 		return fmt.Errorf("%w: the question was answered or replaced meanwhile (no more keys pressed)", errStale)
 	}
-	if err := d.h.reviewHolds(d.rev); err != nil {
-		return err // review B2: the switch changed while the dialog was driven (no more keys pressed)
+	if err := d.begin(); err != nil {
+		return err
+	}
+	// Review B2: the switch changed while the dialog was driven, checked
+	// before the first text only (a dialog it began is answered whole).
+	// Round 5: each text refers to no file revoked meanwhile, or it and the
+	// rest are not typed (a revoke between two texts stops the dialog there).
+	if err := d.h.reviewHolds(d.rev, text); err != nil {
+		return err
 	}
 	d.rev = nil
 	if err := d.h.opts.Term.SendText(d.ctx, d.session, d.pane, text); err != nil {
@@ -354,7 +382,9 @@ func labelIs(label, text string) bool {
 // answerAsk answers the ask on the worker's lane: the ask checked again,
 // the dialog driven, then the transcript watched for the call's result.
 // #108: rev is the review of its texts (nil: none), checked again right
-// before the first Other answer or the prompt goes.
+// before the first Other answer or the prompt goes. Round 5: every text is
+// checked for revoked files before the dialog's first key, and each again
+// right before it goes.
 func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answers []askAnswer, session, pane string,
 	rev *promptsecret.Reviewer) (any, error) {
 	ask, err := query(ctx, h, func() *proto.Ask {
@@ -380,6 +410,14 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 		}
 	}
 	d := &askDriver{h: h, ctx: ctx, id: a.ID, toolUseID: a.ToolUseID, session: session, pane: pane, rev: rev}
+	if prompt != "" {
+		d.texts = append(d.texts, prompt)
+	}
+	for _, x := range answers {
+		if x.other != nil {
+			d.texts = append(d.texts, *x.other)
+		}
+	}
 	switch {
 	case ask.Agent == proto.AskCodex && a.Cancel:
 		err = d.codexCancel(ask)
@@ -399,7 +437,7 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 	}
 	if a.Prompt != "" && res.Resolved {
 		if ask.Agent == proto.AskClaude { // #95: typed, once the dismissed dialog is gone
-			if _, err := h.typePrompt(ctx, a.ID, session, pane, prompt, true, rev); errors.Is(err, errSettingChanged) {
+			if _, err := h.typePrompt(ctx, a.ID, session, pane, prompt, true, rev); errors.Is(err, errSecretsReviewStale) {
 				return nil, fmt.Errorf("dismissed, but the prompt was not sent: %w", err)
 			} else if err != nil {
 				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
@@ -423,7 +461,7 @@ func (h *Hub) submitAfterAsk(ctx context.Context, id, session, pane, kind, promp
 	if err != nil {
 		return err
 	}
-	if err := h.reviewHolds(rev); err != nil {
+	if err := h.reviewHolds(rev, prompt); err != nil {
 		return fmt.Errorf("dismissed, but the prompt was not sent: %w", err)
 	}
 	err = h.opts.Term.SubmitPrompt(ctx, session, pane, prompt)

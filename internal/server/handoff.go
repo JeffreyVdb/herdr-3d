@@ -445,6 +445,9 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 			if err != nil && !errors.Is(err, handoff.ErrOpReused) {
 				err = fmt.Errorf("%w: %v", errHandoffFailed, err)
 			}
+			if err == nil {
+				h.noteHandoffSecrets(ctx, filed.ID, body) // #108 round 5: for its successor
+			}
 			rep.Bytes = len(body)
 		}
 		derr := h.doWait(ctx, func() {
