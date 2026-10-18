@@ -38,7 +38,7 @@ export function promptSecretsSection(host: PromptSecretsSectionHost): (body: HTM
     toggle.append(box, el('span', '', 'Review prompt secrets before sending'));
     const hint = el('p', 'settings-field-hint', 'Off: prompts are sent as typed, nothing is scanned.');
     hint.id = `${id}-hint`;
-    const away = el('p', 'settings-field-hint settings-field-error', 'This bridge host has no private runtime directory for the files: a prompt that protects anything is refused (nothing is sent) until it has one.');
+    const away = el('p', 'settings-field-hint settings-ps-away', 'This bridge host has no private runtime directory for the files: a prompt that protects anything is refused (nothing is sent) until it has one.');
     away.id = `${id}-away`;
     box.setAttribute('aria-describedby', `${hint.id} ${away.id}`);
     const limit = el('p', 'settings-act-privacy', SECRETS_LIMIT);
@@ -62,6 +62,8 @@ export function promptSecretsSection(host: PromptSecretsSectionHost): (body: HTM
       box.disabled = busy;
       hint.textContent = on ? 'On: every prompt you send a worker is scanned first; a review opens when it holds a possible secret.' : 'Off: prompts are sent as typed, nothing is scanned.';
       away.hidden = s.available;
+      // Off, it is only a fact about the bridge host; on, it refuses every prompt that protects anything.
+      away.classList.toggle('settings-field-error', on);
       status.textContent = note?.text ?? '';
       status.classList.toggle('settings-field-error', !!note?.error);
       status.hidden = !note;
@@ -86,7 +88,11 @@ export function promptSecretsSection(host: PromptSecretsSectionHost): (body: HTM
       });
     });
 
-    const off = host.book.onChange(sync);
+    // Another client changed it: what this one last said of its own change no longer holds.
+    const off = host.book.onChange(() => {
+      if (!busy) note = null;
+      sync();
+    });
     sync();
     return {
       open() {

@@ -51,6 +51,9 @@ import { DigestSim } from './fixture-digest.ts';
 import { ActivitySettingsSim } from './fixture-activity-settings.ts';
 import { CodexServerSim } from './fixture-codex-server.ts';
 import { ReposSim, seedRepos } from './fixture-repos.ts';
+// #108: prompt secrets (`prompt_secrets.*`, the `worker.prompt` gate, `sim.secret_files`, `simsecrets=<key>`,
+// `simsecretson=1`, `simsecretsdir=none`, `simfail=no_secrets|secrets_*`).
+import { SecretsSim } from './fixture-secrets.ts';
 // #93 hire presets (`hire_preset.*`, `simhirepresets=<key>`, `simfail=no_hire_presets`); #95 the herdr hiring
 // instructions (`worker.hire`'s `herdr_instructions`, `hire.prepare`'s lines, `hire_preset.check`, `sim.first_prompts`,
 // `simfail=no_herdr_instructions`).
@@ -134,6 +137,10 @@ export interface SimOptions {
   repos?: string;
   /** #93: `simhirepresets=<key>`: the hire presets shared by the key's connections, as a bridge's database (tools/fixture-hirepreset.ts). */
   hirePresets?: string;
+  /** #108: `simsecrets=<key>` shares the prompt-secrets switch, `simsecretson=1` starts it on, `simsecretsdir=none` has no private directory (tools/fixture-secrets.ts). */
+  secrets?: string;
+  secretsOn?: boolean;
+  secretsDir?: 'none';
   now?: () => number;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
@@ -364,6 +371,10 @@ export class SimWorld {
       o.repos ?? null,
       (m) => this.announce(m),
     );
+    this.secrets = new SecretsSim(
+      { emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), takeFailure: (code) => this.takeFailure(code) },
+      { key: o.secrets ?? null, on: o.secretsOn === true, available: o.secretsDir !== 'none', supported: o.fail !== 'no_secrets', announce: (m) => this.announce(m) },
+    ); // #108
     this.hirePresets = new HirePresetSim(
       { hasFloor: (id) => this.floors.has(id), hire: this.hire, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now(), ai: this.ai },
       o.fail !== 'no_hire_presets',
@@ -462,6 +473,8 @@ export class SimWorld {
   private readonly codexServer: CodexServerSim;
   /** #247: repositories on other floors (tools/fixture-repos.ts). */
   private readonly repos: ReposSim;
+  /** #108: prompt secrets (tools/fixture-secrets.ts). */
+  private readonly secrets: SecretsSim;
   private readonly hirePresets: HirePresetSim; // #93
   private readonly inbox: InboxSim;
   /** M13: the screen share (tools/fixture-share.ts). */
@@ -492,6 +505,7 @@ export class SimWorld {
   dispose(): void {
     this.share.dispose();
     this.repos.dispose(); // #247
+    this.secrets.dispose(); // #108
     this.hirePresets.dispose(); // #93
     this.host.dispose(); // #74
     for (const t of this.timers) this.clearT(t);
@@ -604,6 +618,7 @@ export class SimWorld {
     this.activitySettings.decorate(world); // #98
     this.codexServer.decorate(world); // #155
     this.repos.decorate(world); // #247
+    this.secrets.decorate(world); // #108
     this.hirePresets.decorate(world); // #93
     this.kaneo.decorate(world); // #184
     this.telegram.decorate(world); // #11
@@ -679,8 +694,8 @@ export class SimWorld {
       send({ t: 'error', code: 'bad_request', message: 'missing req_id' });
       return;
     }
-    const ack = (data?: unknown) => send(data === undefined ? { t: 'ack', req_id: reqId } : { t: 'ack', req_id: reqId, data });
-    const fail = (e: unknown) => {
+    let ack = (data?: unknown) => send(data === undefined ? { t: 'ack', req_id: reqId } : { t: 'ack', req_id: reqId, data });
+    let fail = (e: unknown) => {
       const err = e instanceof CmdError ? e : new CmdError('internal', String(e));
       send({ t: 'error', req_id: reqId, code: err.code, message: err.message });
     };
@@ -719,6 +734,21 @@ export class SimWorld {
         plain(x);
         this.transcripts.onEvent(x);
       };
+      // #108: prompt secrets' commands; a prompt passes their gate first, and is from here on the text with its references.
+      if (this.secrets.handle(m.t, a, send, ack)) return;
+      if (m.t === 'worker.prompt') {
+        const g = this.secrets.prompt(a, typeof a.id === 'string' ? a.id : '', send);
+        if (g) {
+          for (const k of Object.keys(a)) delete a[k];
+          Object.assign(a, g.args);
+          const [plainAck, plainFail] = [ack, fail];
+          ack = (data?: unknown) => plainAck(isObj(data) ? { ...data, ...g.extra } : data);
+          fail = (e: unknown) => {
+            g.rollback();
+            plainFail(e);
+          };
+        }
+      }
       // #90: a prompt or keys make a worker's follow-up questions moot.
       if (m.t === 'worker.prompt' || m.t === 'worker.keys') this.followups.clear(a.id, send);
       if (this.followups.handle(m.t, a, send, ack, fail)) return;

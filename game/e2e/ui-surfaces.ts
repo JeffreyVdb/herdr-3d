@@ -584,6 +584,22 @@ export const SURFACES: Surface[] = [
     root: 'dialog.desk-dlg--prompt',
   },
   {
+    // #108: the review of a prompt's possible secrets, over the P overlay ("Review prompt secrets" on from the start).
+    name: 'secrets-review',
+    fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await onFloor(page);
+      const id = await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'herdr-3d')!.workers[0]!.id);
+      await page.evaluate((w) => window.__h3d.openPrompt(w), id);
+      await expect(page.locator('dialog.desk-dlg--prompt')).toBeVisible();
+      await page.keyboard.type('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD="hunter2x"; the password is s3cr3t!x');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('dialog.desk-dlg--secrets')).toBeVisible();
+    },
+    root: 'dialog.desk-dlg--secrets',
+  },
+  {
     name: 'send-home',
     fixture: 'demo-m4',
     open: async (page) => {

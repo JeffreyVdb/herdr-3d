@@ -51,6 +51,10 @@
 // #93: `simhirepresets=<key>` shares the hire presets between the connections with that key, and keeps them across a
 // reload (tools/fixture-hirepreset.ts); `simfail=no_hire_presets` plays a bridge before them, #95
 // `simfail=no_herdr_instructions` one before "Add herdr hiring instructions".
+// #108: `simsecrets=<key>` shares the "Review prompt secrets before sending" switch between the connections with that key,
+// `simsecretson=1` starts it on, `simsecretsdir=none` plays a bridge host without a private runtime directory;
+// `simfail=no_secrets` a bridge before it, `simfail=secrets_review_stale|secrets_review_required|secrets_unavailable|
+// secrets_review_off` refuses the next reviewed prompt so; `sim.secret_files` lists the files (tools/fixture-secrets.ts).
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';
@@ -254,6 +258,10 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             ...(q.get('simrepos') ? { repos: q.get('simrepos') as string } : {}),
             // #93: the hire presets shared by the key's connections, kept across reloads like a bridge's (tools/fixture-hirepreset.ts).
             ...(q.get('simhirepresets') ? { hirePresets: q.get('simhirepresets') as string } : {}),
+            // #108: prompt secrets: the switch shared by the key's connections, on at the start, no private directory (tools/fixture-secrets.ts).
+            ...(q.get('simsecrets') ? { secrets: q.get('simsecrets') as string } : {}),
+            ...(q.get('simsecretson') === '1' ? { secretsOn: true } : {}),
+            ...(q.get('simsecretsdir') === 'none' ? { secretsDir: 'none' as const } : {}),
           }
         : null;
     wss.handleUpgrade(req, socket, head, (ws) => {

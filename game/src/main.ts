@@ -264,6 +264,8 @@ export interface H3DDebug {
   toastState(): { shown: boolean; text: string; kind: string; action: string | null } | null;
   /** #64 schedules: the fixture bridge's schedule plays (`sim=1`, tools/fixture-schedule.ts). */
   simSchedule(t: 'sim.schedule_fire' | 'sim.schedule_fail', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #108: the files the fixture bridge wrote for protected prompt secrets (`sim.secret_files`; the simulator's own). */
+  simSecretFiles(): Promise<Array<{ path: string; owner: string; text: string }>>;
   /** M4: plays walks `k` times as fast (tests). */
   arrivalRate(k: number): void;
   /** M4: the desks of the floor with an interior: who sits there, whether its "+" shows, what a walk holds it as. */
@@ -583,6 +585,10 @@ const h3d: H3DDebug = {
     if (!app) return { ok: false, code: 'not_started' };
     const r = await app.client.request(t as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simSecretFiles: async () => {
+    const r = await app?.client.request('sim.secret_files' as CommandName, {} as never);
+    return r?.ok ? ((r.data as { files?: Array<{ path: string; owner: string; text: string }> }).files ?? []) : [];
   },
   mezzDoor: () => app?.office?.mezzDoor01 ?? 0,
   desks: () => app?.deskStates() ?? [],

@@ -42,7 +42,7 @@ describe('the “Review prompt secrets before sending” switch (#108)', () => {
     expect(m.text('.settings-act-privacy')).toMatch(/the agent can still read a protected file/);
     expect(m.text('.settings-field-hint')).toBe('Off: prompts are sent as typed, nothing is scanned.');
     // No private directory note while there is one.
-    expect(m.root.querySelector<HTMLElement>('.settings-field-error.settings-field-hint')!.hidden).toBe(true);
+    expect(m.root.querySelector<HTMLElement>('.settings-ps-away')!.hidden).toBe(true);
   });
 
   it('switches on and off through prompt_secrets.set and says what changes', async () => {
@@ -60,15 +60,22 @@ describe('the “Review prompt secrets before sending” switch (#108)', () => {
     await m.flush();
     expect(m.box().checked).toBe(false);
     expect(m.text('.settings-status')).toBe('Off. Prompts are sent as typed.');
+    // Another client switches it on: this one's last word on its own change goes.
+    m.book.upsert({ enabled: true, available: true });
+    expect(m.box().checked).toBe(true);
+    expect(m.root.querySelector<HTMLElement>('.settings-status')!.hidden).toBe(true);
   });
 
   it('follows another client’s change; says when the bridge has no private directory; a failure says why', async () => {
     const m = mount({ enabled: false, available: true }, () => ({ ok: false, code: 'unknown_command', message: 'unknown command' }));
-    m.book.upsert({ enabled: true, available: false });
-    expect(m.box().checked).toBe(true);
-    const away = m.root.querySelector<HTMLElement>('.settings-field-hint.settings-field-error')!;
+    m.book.upsert({ enabled: false, available: false });
+    const away = m.root.querySelector<HTMLElement>('.settings-ps-away')!;
     expect(away.hidden).toBe(false);
     expect(away.textContent).toMatch(/no private runtime directory/);
+    expect(away.classList.contains('settings-field-error')).toBe(false); // off: a fact, not an error
+    m.book.upsert({ enabled: true, available: false });
+    expect(m.box().checked).toBe(true);
+    expect(away.classList.contains('settings-field-error')).toBe(true); // on: it refuses what protects anything
     expect(m.box().getAttribute('aria-describedby')).toContain(away.id);
     m.box().click();
     await m.flush();
