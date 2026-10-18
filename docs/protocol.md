@@ -942,7 +942,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `prompt_secrets.get` | `{}` | `{"enabled", "available", "dir"?}`, the "Review prompt secrets before sending" switch (see [Prompt secrets](#prompt-secrets)) | — |
 | `prompt_secrets.set` | `{"enabled": bool}` | the switch; a change makes every review made before it stale | `prompt_secrets.update` (before the ack) when it changes |
 | `prompt_secrets.scan` | `{"text": string}` (at most 32 KiB) | `{"revision", "candidates": [{"id", "start", "end", "kinds", "encoded"?}…]}`; `secrets_review_off` while the switch is off | — |
-| `prompt_secrets.revoke` | `{"worker": string}` (round 5) | `{"removed": int}`: every protected file the worker held (its own and those it held by a lease) is gone, for every holder; the worker keeps running; with the switch on or off; `not_found` (a worker the bridge does not show), `secrets_unavailable` (no private runtime directory) | the worker's `worker.upsert` without `secret_files` (before the ack), and of every other holder that lost a file |
+| `prompt_secrets.revoke` | `{"worker": string}` (round 5) | `{"removed": int}`: every protected file the worker held (its own and those it held by a lease) is gone, for every holder; the worker keeps running; with the switch on or off; `not_found` (a worker the bridge does not show and that holds no file: one it does not show that holds files is revoked the same way), `secrets_unavailable` (no private runtime directory) | the worker's `worker.upsert` without `secret_files` (before the ack), and of every other holder that lost a file |
 | `repo_discovery.get` | `{}` | `{"roots", "interval_minutes", "status"}` (see [Repository discovery](#repository-discovery)) | — |
 | `repo_discovery.set` | `{"roots"?: [absolute path…], "interval_minutes"?: 1–1440}` (at least one) | the state; a change of roots scans at once | `repo_discovery.update` (before the ack) when it changes |
 | `repo_discovery.refresh` | `{}` | the state; a scan starts (after the one in flight) | `repo_discovery.update` (before the ack) |
@@ -3929,8 +3929,9 @@ from a secret), created exclusively without following a symlink. The database ke
 directory, worker, created; a pending owner's expiry) and the file names, never a byte of a secret. A worker's
 files go when it **really ends** (closed in herdr while its floor runs, or sent home), not when its floor sleeps or
 its herdr session goes (it resumes); a janitor at start and every 5 minutes removes a closed or unknown worker's
-files, expired pending owners' and what has no owner (round 5: a file another live worker holds by a lease stays, and
-`prompt_secrets.revoke` removes a worker's files at once; see [Round 5](#round-5-revoke-leases-and-the-lifecycle)).
+files, expired pending owners' and what has no owner (round 5: a file another live worker holds by a lease stays, a
+worker its running floor no longer shows loses its files after a sweep's grace, and `prompt_secrets.revoke` removes a
+worker's files at once; see [Round 5](#round-5-revoke-leases-and-the-lifecycle)).
 Unlinking is not a secure erasure (tmpfs pages can be swapped).
 
 #### Round 2: every other route
@@ -4092,37 +4093,49 @@ sweep. A pending owner's files count for nobody until they are claimed.
 **Revoke.** `prompt_secrets.revoke {"worker"}` removes every protected file the worker holds now, its own and those it
 holds by a lease, with their rows, **for every holder** (a file a handoff's successor holds goes for its first owner
 too, and the other way round), and answers `{"removed": n}`. The worker keeps running; the prompts it was sent keep
-their references, which then point at nothing. It works with the switch on or off. A worker the bridge does not show
-(unknown, or of a herdr session that is gone) is `not_found`; without a private runtime directory it is
+their references, which then point at nothing. It works with the switch on or off. A worker the bridge does not show (of
+a herdr session that is gone, one its floor runs without: below) is revoked the same way while it holds files: the
+lifecycle keeps a gone session's files for its return, an explicit revoke removes them. `not_found` is a worker the
+bridge neither shows nor finds a file of (unknown, or holding nothing); without a private runtime directory it is
 `secrets_unavailable`. The files go off the hub goroutine, with the files locked and the workers' liveness read inside
-that lock; every holder's `worker.upsert` comes before the ack. The audit row keeps the worker's id and
-`{"removed": n}`, never a path or a byte. A hand-over not claimed yet (`packup.detect`'s for that worker) is not the
-worker's: a revoke leaves it, and what it claims later is new. The identical submission sent again after a revoke
-writes new files (its retry is forgotten).
+that lock; every holder's `worker.upsert` comes before the ack. The audit row keeps the worker's id and `{"removed":
+n}`, never a path or a byte. A hand-over not claimed yet (`packup.detect`'s for that worker) is not the worker's: a
+revoke leaves it, and what it claims later is new. The identical submission sent again after a revoke writes new files
+(its retry is forgotten).
 
-**A revoke racing a send.** Each reviewed text is checked last, right before its first byte goes, where a change of the
-switch is checked (above): a text that refers to a file revoked before that check is not sent (`secrets_review_stale`,
-"a protected file it refers to was revoked: review it again"; a hire keeps its worker and withholds its prompt with
-`prompt_error`), and the files that command made are removed, as for any failure before its send. A send whose last
-check came first went with its references, and the revoke then removes the files (the agent has the reference, the
-file is gone). Files a command writes after the revoke are new and its worker's: they go with its failure or stay with
-its success, never without an owner. A revoked path is remembered for 24 hours (in memory, never stored): a reviewed
-text that refers to one in that time is refused the same way; sent again as typed, it is protected anew.
+**A revoke racing a send.** Every text the bridge sends to an agent or a model is checked last, right before its first
+byte goes, where a change of the switch is checked (above), **reviewed or not**: with the switch on or off, a schedule's
+stored prompt, a hire's successor (which holds files it never reviewed), an answer, a wrap-up, a handoff's request. A
+text that refers to a file revoked before that check is not sent (`secrets_review_stale`, "a protected file it refers to
+was revoked: review it again"; a hire keeps its worker and withholds its prompt with `prompt_error`, and a schedule's
+fire then fails saying so), and the files that command made are removed, as for any failure before its send.
+`worker.answer_ask` checks every text it will type (each Other answer, a dismissal's prompt) before the dialog's first
+key, and each again right before it is typed: a revoke that lands between two texts of one dialog stops it there (the
+first typed, nothing submitted, `secrets_review_stale`), where a switch change after the first text does not (a dialog
+it began is answered whole: a switch change leaves its references good, a revoke does not). An LLM handoff checks its
+instruction before the model is called and again once the call holds a model slot; the transcript it reads is not
+checked (references the worker was sent before, as its other history: checking them would refuse every handoff of a
+worker for 24 hours after its revoke). A preview's text (`packup.detect`, `hire.interpret`) and `hire_preset.check`'s
+prompt are checked as their model calls' gate. A send whose last check came first went with its references, and the
+revoke then removes the files (the agent has the reference, the file is gone). Files a command writes after the revoke
+are new and its worker's: they go with its failure or stay with its success, never without an owner. A revoked path is
+remembered for 24 hours (in memory, never stored): a text that refers to one in that time is refused the same way,
+reviewed or not; sent again as typed, it is protected anew.
 
 **Leases (delegation).** A handoff (#223 literal, #224 agent, #9 LLM) records, when it is filed, which protected files
-its text names: its document's references, and those of the instruction it was written from (a `/handoff
-<instruction>`, `worker.handoff`'s `instruction`); only the bridge's own references, to files still there. A worker
-**hired** (`worker.hire`, `run.start`, a schedule's fire) whose first prompt names that handoff's path (the cabinet's
-Hire from handoff, `Read <path> and continue the work. …`; a schedule's `handoff_path`), or names files by their own
-references, **holds** those files too, once herdr shows it (when a hire's own files are claimed; with the switch on or
-off). A lease is a holder, not a copy: one file, one path, its owner and its holders. A file lives while its owner or
-any holder lives, and goes when the last of them ends: the owner's end keeps the files a live worker holds (their
-owner directory stays for them) and removes the rest; a holder's end removes a file nobody else holds. The janitor
-honours leases: a lease of a worker that is not live is forgotten, and an owner directory whose owner ended keeps only
-the files a live worker holds. A revoke on any holder removes the file for all. Nothing is held of a file that went
-before the successor was seen: a worker sent home before its successor is hired (a handoff with "send home" sends it
-at once) takes its files with it, and the handoff then names files that are gone. A `worker.prompt` to a worker that
-exists already holds nothing new: only a hire is a successor.
+its text names: its document's references, and those of the instruction it was written from (a `/handoff <instruction>`,
+`worker.handoff`'s `instruction`); only the bridge's own references, to files still there. A worker **hired**
+(`worker.hire`, `run.start`, a schedule's fire) whose first prompt names that handoff's path (the cabinet's Hire from
+handoff, `Read <path> and continue the work. …`; a schedule's `handoff_path`: the path as filed, blanks and all, and
+whole, not inside a longer path), or names files by their own references, **holds** those files too, once herdr shows it
+(when a hire's own files are claimed; with the switch on or off). A lease is a holder, not a copy: one file, one path,
+its owner and its holders. A file lives while its owner or any holder lives, and goes when the last of them ends: the
+owner's end keeps the files a live worker holds (their owner directory stays for them) and removes the rest; a holder's
+end removes a file nobody else holds. The janitor honours leases: a lease of a worker that is not live is forgotten, and
+an owner directory whose owner ended keeps only the files a live worker holds. A revoke on any holder removes the file
+for all. Nothing is held of a file that went before the successor was seen: a worker sent home before its successor is
+hired (a handoff with "send home" sends it at once) takes its files with it, and the handoff then names files that are
+gone. A `worker.prompt` to a worker that exists already holds nothing new: only a hire is a successor.
 
 **Native child agents** (#22) are conversations inside their worker's own session: they share its files and its
 lifetime. A child's rows, its removal and a replaced session's generation never release or sweep a file; only the
@@ -4139,16 +4152,22 @@ or one from before a restart is `secrets_review_stale`, and nothing is armed or 
 claim leaves them with the worker. Without the field, as before.
 
 **The lifecycle, in short.** Kept: while the worker's floor sleeps and wakes, while its herdr session is gone and when
-it resumes, over a bridge restart (the worker is open in the store, and the janitor counts it live), and through a host
-reboot that herdr restores the workers from **if the directory survived it** (a `--secrets-dir` on disk). The default
-directory (`$XDG_RUNTIME_DIR`, a tmpfs) does not survive a reboot: nothing is ever written to disk, so the janitor
-forgets the rows at start and the references point at nothing. Removed: when the worker really ends (closed in herdr
-while its floor runs, sent home), unless a live worker holds them; by a revoke; a pending owner's at its expiry (30
-minutes) unless claimed or held; a failed command's at once; and by the janitor (at start and every 5 minutes): the
-files of a worker the store has closed (a close seen whose release did not finish: a crash) or does not know, leases of
-workers that are not live, expired pending owners, rows without files and files without rows. A worker whose workspace
-closed while the bridge was down was never seen to close: it stays open in the store, and its files stay until the
-runtime directory is emptied (a reboot).
+it resumes, over a bridge restart (the worker is open in the store and its floor shows it, so the janitor counts it
+live), and through a host reboot that herdr restores the workers from **if the directory survived it** (a
+`--secrets-dir` on disk). The default directory (`$XDG_RUNTIME_DIR`, a tmpfs) does not survive a reboot: nothing is ever
+written to disk, so the janitor forgets the rows at start and the references point at nothing. Removed: when the worker
+really ends (closed in herdr while its floor runs, sent home), unless a live worker holds them; by a revoke; a pending
+owner's at its expiry (30 minutes) unless claimed or held; a failed command's at once; and by the janitor (at start and
+every 5 minutes): the files of a worker the store has closed (a close seen whose release did not finish: a crash) or
+does not know, leases of workers that are not live, expired pending owners, rows without files and files without rows;
+and the files of a worker **its floor runs without**: open in the store, but missing from what herdr shows of its
+running floor for the grace (one sweep, 5 minutes, by the bridge's clock), as after the bridge was down while its
+workspace closed. It was never seen to close, so it stays open in the store, its name held, as worker tracking has it;
+only its files go (its leases with them), at the first sweep past the grace (5 to 15 minutes after the floor's first
+running observation). Not while the floor sleeps or its session is gone (it comes back), not before the bridge has seen
+the floor run, not while a hire on that floor creates a workspace (new workspaces wait unseen meanwhile), nor while its
+workspace is still in herdr's raw observation (a main checkout kept from the workers); a worker back within the grace
+keeps them. Until they go, a revoke removes them (above).
 
 **What this does not protect** (docs/decisions.md, 2026-10-18 and round 5):
 
