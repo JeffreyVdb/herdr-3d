@@ -765,10 +765,13 @@ export class SendHomeDialog {
       return pending && !r.ok && r.code === 'secrets_review_stale' ? { ok: false, code: 'handover_stale', message: r.message } : r;
     };
     const d = flow ? await flow.deliver(req, go, send) : ({ kind: 'answered', result: await send(go), go } as const);
+    // Closed while a refusal was scanned again: nothing went, nothing is said.
+    if (d.kind === 'kept' && d.why === 'gone') return;
+    // Closed (or opened again) meanwhile: only a toast says how it ended; the dialog open now (its state, its pack-up) is
+    // another's, so a second click there is not a second worker.wrapup.
     const still = this.dialog.open && gen === this.gen;
-    this.state = 'ready';
+    if (still) this.state = 'ready';
     if (d.kind === 'kept') {
-      if (d.why === 'gone') return;
       if (!still) this.host.toast(d.message, 'error');
       else {
         this.setStatus(d.why === 'cancel' ? 'Not sent: the prompt is still here.' : d.message, d.why === 'failed');
@@ -780,8 +783,10 @@ export class SendHomeDialog {
     if (r.ok) {
       const queued = (r.data as WrapUpAck | undefined)?.queued === true;
       const fate = worktreeFate(choice ?? 'keep', !!p.worktree?.linked);
-      if (packing) this.settleWith('done');
-      this.close();
+      if (still) {
+        if (packing) this.settleWith('done');
+        this.close();
+      }
       this.host.toast(
         packing
           ? `Sent ${name} the task${queued ? ' for its next turn' : ''}. Once it reports CLEAN it goes home.${fate ? ` ${fate}` : ''}`

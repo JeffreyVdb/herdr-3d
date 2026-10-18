@@ -14,7 +14,8 @@ import { SendHomeDialog } from './sendHome';
 const PREP: FirePrepare = { name: 'Pixel', label: 'pixel', branch: 'h3d/pixel', worktree: { path: '/w/pixel', linked: true }, dirty: [], unpushed: 0, can_delete: true, can_delete_branch: true };
 const REF = '[secret in file /run/user/1000/herdr-world/secrets/AAAAAAAAAAAAAAAAAAAAAAAAAA/BBBBBBBBBBBBBBBBBBBBBBBBBB]';
 
-function setup(o: { on?: boolean; wrapups?: CommandResult[] } = {}) {
+/** `wrapups`: `worker.wrapup`'s answers in turn (then queued: false); a promise is an answer still on its way. */
+function setup(o: { on?: boolean; wrapups?: Array<CommandResult | Promise<CommandResult>> } = {}) {
   document.body.replaceChildren();
   const b = secretsBridge({ on: o.on ?? true });
   const sent: Array<{ cmd: string; args: Record<string, unknown> }> = [];
@@ -175,5 +176,90 @@ describe('SendHomeDialog and prompt secrets (#108 round 4)', () => {
     expect(e.b.open()).toBeNull();
     expect(e.wraps()).toHaveLength(1);
     expect(e.toasts).toEqual([]);
+  });
+
+  // #108 round 4 fix 2 (R4P2-1): an earlier opening's wrap-up that ends (gone, or answered) touches nothing of a newer one:
+  // its state stays `sending`, so a second click is not a second worker.wrapup.
+  it('closed and opened again during a refusal’s scan again: the old gone outcome leaves the newer send busy; one wrap-up', async () => {
+    const e = setup({ wrapups: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    e.dlg.open('A');
+    await flush();
+    e.q('wrap').click();
+    type(e.q<HTMLTextAreaElement>('wrap-prompt'), 'Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1.');
+    e.q('send').click();
+    await flush();
+    const releaseOld = e.b.holdScans();
+    e.b.confirm();
+    await flush();
+    expect(e.wraps()).toHaveLength(1);
+    e.dlg.close();
+    e.dlg.open('A');
+    await flush();
+    e.q('wrap').click();
+    type(e.q<HTMLTextAreaElement>('wrap-prompt'), 'Finish the new task.');
+    const releaseNew = e.b.holdScans();
+    e.q('send').click();
+    await flush();
+    expect(e.dlg.summary()).toMatchObject({ state: 'sending' });
+    releaseOld();
+    await flush();
+    expect(e.b.open()).toBeNull();
+    expect(e.dlg.summary()).toMatchObject({ state: 'sending' });
+    e.q('send').click();
+    await flush();
+    releaseNew();
+    await flush();
+    expect(e.wraps().filter((a) => a.prompt === 'Finish the new task.')).toHaveLength(1);
+    expect(e.toasts).toEqual([expect.stringMatching(/^Pixel is wrapping up/)]);
+  });
+
+  it('closed and opened again while its wrap-up is at the bridge: the old answer only toasts; the newer send stays busy and open', async () => {
+    let answer!: (r: CommandResult) => void;
+    const e = setup({ wrapups: [new Promise<CommandResult>((r) => (answer = r))] });
+    e.dlg.open('A');
+    await flush();
+    e.q('wrap').click();
+    e.q('send').click();
+    await flush();
+    expect(e.wraps()).toHaveLength(1);
+    e.dlg.close();
+    e.dlg.open('A');
+    await flush();
+    e.q('wrap').click();
+    type(e.q<HTMLTextAreaElement>('wrap-prompt'), 'Finish the new task.');
+    const releaseNew = e.b.holdScans();
+    e.q('send').click();
+    await flush();
+    answer({ ok: true, data: { queued: false } });
+    await flush();
+    expect(e.toasts).toEqual([expect.stringMatching(/^Pixel is wrapping up/)]);
+    expect(e.dlg.summary()).toMatchObject({ state: 'sending' });
+    e.q('send').click();
+    await flush();
+    releaseNew();
+    await flush();
+    expect(e.wraps().filter((a) => a.prompt === 'Finish the new task.')).toHaveLength(1);
+  });
+
+  it('a pack-up closed and opened again while its task is at the bridge: the old answer settles nothing of the newer one', async () => {
+    const task = `Deploy with the token in ${REF}`;
+    const pk = { original: `${task} and then go home`, task, removed: [{ start: task.length, end: task.length + 17 }], pending: 'tok-1' };
+    let answer!: (r: CommandResult) => void;
+    const e = setup({ wrapups: [new Promise<CommandResult>((r) => (answer = r))] });
+    const first = e.dlg.openPackup('A', pk);
+    await flush();
+    e.q('send').click();
+    await flush();
+    expect(e.wraps()).toHaveLength(1);
+    e.dlg.close();
+    await expect(first).resolves.toBe('cancel');
+    let second: string | null = null;
+    void e.dlg.openPackup('A', pk).then((c) => (second = c));
+    await flush();
+    answer({ ok: true, data: { queued: false } });
+    await flush();
+    expect(e.toasts).toEqual([expect.stringMatching(/^Sent Pixel the task/)]);
+    expect(second).toBeNull();
+    expect(e.dlg.summary()).toMatchObject({ state: 'ready' });
   });
 });
