@@ -13,7 +13,9 @@
 // removes, moves over, truncates, escalates, rewrites history or runs
 // what it downloads or builds (riskyRe; the critical-path rm Claude Code
 // itself keeps for a person among them). The model is asked once per
-// operation (its id), within a timeout and an hourly budget; its answer
+// operation (its id), within a timeout and an hourly budget: a second
+// caller waits for the first's verdict, and a verdict is never forgotten
+// (past maxDone operations a new one is ask-human, unasked); its answer
 // must be exactly {"decision", "reason"}, anything else is ask-human, and
 // no answer is asked again. An allow may only ever pick the choice whose
 // label is exactly "Yes" (Choice): never one that also changes the
@@ -57,7 +59,9 @@ const (
 	// one is a person's.
 	MaxCommand = 8 << 10
 	maxReason  = 300
-	maxDone    = 256
+	// maxDone bounds the operations whose verdicts are kept (and asked
+	// about): past it a new one is a person's (unwired: a large bound).
+	maxDone = 4096
 )
 
 // Operation is a pending native operation, whole: what a verdict is for.
@@ -97,10 +101,12 @@ type Assessor struct {
 	policy Policy
 	now    func() time.Time
 
-	mu    sync.Mutex
-	done  map[string]Verdict
-	order []string
-	calls []time.Time
+	mu   sync.Mutex
+	done map[string]Verdict
+	// asking are the operations the model is asked about now: closed once
+	// their verdict is in done.
+	asking map[string]chan struct{}
+	calls  []time.Time
 }
 
 // New is an assessor of llm under p.
@@ -111,7 +117,7 @@ func New(llm ai.LLM, p Policy) *Assessor {
 	if p.MaxPerHour <= 0 {
 		p.MaxPerHour = DefaultMaxPerHour
 	}
-	return &Assessor{llm: llm, policy: p, now: time.Now, done: map[string]Verdict{}}
+	return &Assessor{llm: llm, policy: p, now: time.Now, done: map[string]Verdict{}, asking: map[string]chan struct{}{}}
 }
 
 // riskyRe are the commands a rule keeps for a person: a removal (rm, rmdir,
@@ -144,16 +150,34 @@ func (a *Assessor) rule(op Operation) string {
 }
 
 // Assess is op's verdict: a rule's, a verdict given before for the same
-// operation, or the model's once; ask-human whenever unsure.
+// operation (or being given: it waits for it), or the model's once;
+// ask-human whenever unsure.
 func (a *Assessor) Assess(ctx context.Context, op Operation) Verdict {
 	if r := a.rule(op); r != "" {
 		return Verdict{Decision: AskHuman, Reason: r}
 	}
 	a.mu.Lock()
-	if v, ok := a.done[op.ID]; ok {
+	for {
+		if v, ok := a.done[op.ID]; ok {
+			a.mu.Unlock()
+			v.Asked = false
+			return v
+		}
+		wait, ok := a.asking[op.ID]
+		if !ok {
+			break
+		}
 		a.mu.Unlock()
-		v.Asked = false
-		return v
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return Verdict{Decision: AskHuman, Reason: "the assessment was not waited for"}
+		}
+		a.mu.Lock()
+	}
+	if len(a.done)+len(a.asking) >= maxDone {
+		a.mu.Unlock()
+		return Verdict{Decision: AskHuman, Reason: "too many operations were assessed already"}
 	}
 	now := a.now()
 	keep := a.calls[:0]
@@ -168,18 +192,15 @@ func (a *Assessor) Assess(ctx context.Context, op Operation) Verdict {
 		return Verdict{Decision: AskHuman, Reason: "the hourly budget of assessments is spent"}
 	}
 	a.calls = append(a.calls, now)
+	asked := make(chan struct{})
+	a.asking[op.ID] = asked
 	a.mu.Unlock()
 	v := a.ask(ctx, op)
 	v.Asked = true
 	a.mu.Lock()
-	if _, ok := a.done[op.ID]; !ok {
-		a.done[op.ID] = v
-		a.order = append(a.order, op.ID)
-		if len(a.order) > maxDone {
-			delete(a.done, a.order[0])
-			a.order = a.order[1:]
-		}
-	}
+	a.done[op.ID] = v
+	delete(a.asking, op.ID)
+	close(asked)
 	a.mu.Unlock()
 	return v
 }

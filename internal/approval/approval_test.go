@@ -3,8 +3,10 @@ package approval
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
@@ -76,6 +78,58 @@ func TestOneAssessmentPerOperation(t *testing.T) {
 	a.Assess(context.Background(), bash("toolu_b", "go vet ./..."))
 	if len(llm.Calls()) != 2 {
 		t.Fatalf("%d calls", len(llm.Calls()))
+	}
+}
+
+// #106: one operation assessed by two callers at once is one model call:
+// the second waits for the first's verdict.
+func TestOneAssessmentWhileAsked(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		llm := &ai.FakeLLM{Func: func(context.Context, ai.Request) (string, error) {
+			<-release
+			return `{"decision":"allow","reason":"It only reads."}`, nil
+		}}
+		a := New(llm, on)
+		op := bash("toolu_same", "cat file.txt")
+		results := make(chan Verdict, 2)
+		go func() { results <- a.Assess(context.Background(), op) }()
+		synctest.Wait()
+		go func() { results <- a.Assess(context.Background(), op) }()
+		synctest.Wait()
+		if n := len(llm.Calls()); n != 1 {
+			close(release)
+			t.Fatalf("%d model calls for one operation", n)
+		}
+		close(release)
+		first, second := <-results, <-results
+		if first.Decision != Allow || second.Decision != Allow || first.Asked == second.Asked {
+			t.Fatalf("verdicts %+v, %+v", first, second)
+		}
+	})
+}
+
+// #106: an operation is never assessed twice, however many came after it;
+// past the bound of operations kept, a new one is a person's, unasked.
+func TestOneAssessmentEver(t *testing.T) {
+	llm := &ai.FakeLLM{Text: `{"decision":"allow","reason":"It only reads."}`}
+	a := New(llm, Policy{Enabled: true, MaxPerHour: 1 << 20})
+	a.Assess(context.Background(), bash("original", "cat file.txt"))
+	for i := range 300 {
+		a.Assess(context.Background(), bash(fmt.Sprint("other", i), "cat file.txt"))
+	}
+	if v := a.Assess(context.Background(), bash("original", "cat file.txt")); v.Asked || v.Decision != Allow || len(llm.Calls()) != 301 {
+		t.Fatalf("%+v, %d calls", v, len(llm.Calls()))
+	}
+	for i := 300; len(a.done) < maxDone; i++ {
+		a.Assess(context.Background(), bash(fmt.Sprint("other", i), "cat file.txt"))
+	}
+	calls := len(llm.Calls())
+	if v := a.Assess(context.Background(), bash("one too many", "cat file.txt")); v.Decision != AskHuman || v.Asked || len(llm.Calls()) != calls {
+		t.Fatalf("past the bound: %+v", v)
+	}
+	if v := a.Assess(context.Background(), bash("original", "cat file.txt")); v.Decision != Allow || len(llm.Calls()) != calls {
+		t.Fatalf("the first, past the bound: %+v", v)
 	}
 }
 
