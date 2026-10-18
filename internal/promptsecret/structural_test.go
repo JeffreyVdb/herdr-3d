@@ -672,13 +672,39 @@ func TestScanShellWords(t *testing.T) {
 		{"an operator in a substitution", "curl -u u:abc$(id;echo x) https://x.test", nil},
 		{"a quoted ) in a substitution", `curl -u u:abc$(echo ")")x https://x.test`, nil},
 		{"a substitution left open", "curl -u u:abc$(id", nil},
-		{"a backquote left open", "Run `curl -u u:Zx81mQp27Lw9`", nil},
+		{"a backquote left open", "curl -u u:Zx81mQp27Lw9`", nil},
+		// Backquotes hold a command, as $(…) does: Markdown's inline code,
+		// a Go raw string, closed at their next unescaped backquote.
+		{"inline code", "Run `curl -u u:Zx81mQp27Lw9` once", []string{"Zx81mQp27Lw9"}},
+		{"raw strings", "{`curl -u admin:Zx81!mQp27Lw9`, `b https://x.test`}", []string{"Zx81!mQp27Lw9"}},
+		{"a quote left open in backquotes", "Run `curl -u 'u:Zx81!mQp27Lw9` once", nil},
+		{"a quote in backquotes holds none", "x=`curl -u \"u:Zx81!mQp27Lw9`\"", nil},
+		// A word of one $'…' string is the bytes inside it, as '…' is.
+		{"one $'…' string", "curl -u $'admin:Zx81!mQp27Lw9' https://x.test", []string{"Zx81!mQp27Lw9"}},
+		{"one $'…' placeholder", "curl -u $'admin:[key]' https://x.test", nil},
 		// An unquoted operator ends the word.
 		{"after ;", "curl -u u:Zx81mQp27Lw9;echo ok", []string{"Zx81mQp27Lw9"}},
 		{"after |", "curl -u u:Zx81mQp27Lw9|cat", []string{"Zx81mQp27Lw9"}},
 		{"after &&", "curl -u u:Zx81mQp27Lw9&&echo ok", []string{"Zx81mQp27Lw9"}},
 		{"after )", "(curl -u u:Zx81mQp27Lw9)", []string{"Zx81mQp27Lw9"}},
 		{"after >", "curl -u u:Zx81mQp27Lw9>out", []string{"Zx81mQp27Lw9"}},
+		// The user before the colon may be computed; a colon inside what
+		// the shell computes may be the password's start.
+		{"a name before the colon", "curl -u $USER:Zx81!mQp27Lw9 https://x.test", []string{"Zx81!mQp27Lw9"}},
+		{"a substitution before the colon", "curl -u $(whoami):Zx81!mQp27Lw9 https://x.test", []string{"Zx81!mQp27Lw9"}},
+		{"backquotes before the colon", "curl -u `whoami`:Zx81!mQp27Lw9 https://x.test", []string{"Zx81!mQp27Lw9"}},
+		{"nested quotes before the colon", `curl -u $(printf '%s' "$(printf ')')"):Zx81!mQp27Lw9 https://x.test`,
+			[]string{"Zx81!mQp27Lw9"}},
+		{"a colon in what the shell computes", "curl -u ${C:-u:Zx81!mQp27Lw9} https://x.test", nil},
+		// The option is read where the shell reads it: in a curl command
+		// of its own, a $(…)'s too, over continued lines; never in a quote,
+		// and never inside a password word read already (its bytes).
+		{"curl in a substitution", "TOKEN=$(curl -s -u u:Zx81!mQp27Lw9 https://x.test)", []string{"Zx81!mQp27Lw9"}},
+		{"a continued line", "curl https://x.test \\\n  -u u:Zx81!mQp27Lw9 \\\n  -o out", []string{"Zx81!mQp27Lw9"}},
+		{"in a quoted command", `bash -c "curl -u u:Zx81!mQp27Lw9 https://x.test"`, nil},
+		{"after an apostrophe", "Don't run curl -u u:Zx81!mQp27Lw9 here", nil},
+		{"inside a password word", "curl -u u:$(curl -u u:Zx81!mQp27Lw9 https://x.test) https://x.test", nil},
+		{"not curl's", "wget -u u:Zx81!mQp27Lw9 https://x.test; curl -o out https://x.test", nil},
 		// A header's argument opens at the quote before its name, or at the
 		// -H before it; a JSON key's quote closes before its value's opens.
 		{"glued -H", "curl -H'Authorization: Bearer Zx81mQp27$HOMELw9' https://x.test", []string{"Zx81mQp27$HOMELw9"}},
@@ -693,6 +719,64 @@ func TestScanShellWords(t *testing.T) {
 		// (decisions row 4): its argument's start is not known.
 		{"a header inside a sentence in quotes", "echo 'see Authorization: Bearer Zx81mQp27LwRt5$HOME'", nil},
 	})
+}
+
+// A header's credential is judged by the quotes of the word that holds it
+// in a curl command, read from the word's start (review T3P-1); out of one
+// (prose, a pasted request, JSON, inline code) by the quote before its
+// name or the argument of a -H before it (headerArg). Each context holds a
+// literal value (proposed whole) and one with $$ (proposed whole where the
+// shell keeps it, not at all where it computes it).
+func TestScanHeaderQuoting(t *testing.T) {
+	t.Parallel()
+	const plain, dollars = "Zx81mQp27LwRt5Yv9", "P@$$w0rdZx81mQp27"
+	contexts := []struct {
+		name, form string
+		dollars    bool // the $$ one is proposed
+	}{
+		{"single quotes", "curl -H 'Authorization: Bearer %s' https://x.test", true},
+		{"double quotes", `curl -H "Authorization: Bearer %s" https://x.test`, false},
+		{"empty double quotes, then single", `curl -H ""Authorization:'Bearer %s ' https://x.test`, true},
+		{"empty single quotes, then double", `curl -H ''Authorization:"Bearer %s'x" https://x.test`, false},
+		{"a double quote inside single", `curl -H 'X-"Authorization: Bearer %s ' https://x.test`, true},
+		{"an apostrophe inside double", `curl -H "X-'Authorization: Bearer %s" https://x.test`, false},
+		{"a long name in single quotes", "curl -H 'X-" + strings.Repeat("n", 256) + ": Bearer %s ' https://x.test", true},
+		{"a -H inside single quotes", "curl -H 'X-Token: -H Bearer %s ' https://x.test", true},
+		{"a -H inside double quotes", `curl -H "X-Token: -H Bearer %s" https://x.test`, false},
+		{"a JSON body in single quotes", `curl -d '{"Authorization": "Bearer %s"}' https://x.test`, true},
+		{"a JSON body in double quotes", `curl -d "{\"Authorization\": \"Bearer %s\"}" https://x.test`, false},
+		{"$'…'", "curl -H $'Authorization: Bearer %s' https://x.test", true},
+		{"after a quoted apostrophe", `echo "it's"; curl -H 'Authorization: Bearer %s' https://x.test`, true},
+		{"curl in a substitution", "TOKEN=$(curl -H 'Authorization: Bearer %s' https://x.test)", true},
+		{"curl in a substitution, double", `TOKEN=$(curl -H "Authorization: Bearer %s" https://x.test)`, false},
+		{"echo's output in a substitution", `curl -H "$(echo 'Authorization: Bearer %s')" https://x.test`, true},
+		{"a continued line, single", "curl https://x.test \\\n  -H 'Authorization: Bearer %s'", true},
+		{"a continued line, double", "curl https://x.test \\\n  -H \"Authorization: Bearer %s\"", false},
+		{"a quote left open", `curl -H "Authorization: Bearer %s`, false},
+		{"inline code", "Run `curl -H 'Authorization: Bearer %s' https://x.test` once", true},
+		{"inline code, double", "Run `curl -H \"Authorization: Bearer %s\" https://x.test` once", false},
+		// No curl command holds them.
+		{"a request line", "Authorization: Bearer %s\nHost: x.test", false},
+		{"JSON", `{"Authorization": "Bearer %s"}`, false},
+		{"JSON, single-quoted value", `"Authorization": 'Bearer %s'`, true},
+		{"prose's -H", "Don't send -H 'Authorization: Bearer %s' anywhere", true},
+		{"an apostrophe after curl", `With curl it's -H "Authorization: Bearer %s" here`, false},
+	}
+	for _, c := range contexts {
+		for _, v := range []string{plain, dollars} {
+			text := strings.Replace(c.form, "%s", v, 1)
+			s := strings.Index(text, v)
+			want := v == plain || c.dollars
+			found, touched := false, false
+			for _, cand := range promptsecret.Scan(text, own) {
+				found = found || cand.Start == s && cand.End == s+len(v)
+				touched = touched || cand.Start < s+len(v) && s < cand.End
+			}
+			if found != want || !want && touched {
+				t.Errorf("%s: %q: %+v, want the value proposed: %t", c.name, text, promptsecret.Scan(text, own), want)
+			}
+		}
+	}
 }
 
 // Clean text (#108): what is no secret stays unproposed, whatever the
