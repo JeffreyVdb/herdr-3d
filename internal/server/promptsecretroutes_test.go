@@ -22,10 +22,12 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
+	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 )
 
 // routeText is a sentinel prompt: c1 (DB_PASSWORD's value) and c2 (TOKEN's)
@@ -212,6 +214,13 @@ func TestPromptSecretsHire(t *testing.T) {
 		t.Fatalf("owners %+v", rows)
 	}
 	traceFree(t, hb.st, hb.db, []*client{hb.c}, routeSentinel)
+	// The identical hire again (its ack lost): the desk is the first one's,
+	// so it is refused as today, and no file is left beside the first's.
+	_, m = hb.c.command(proto.CmdWorkerHire, "h1", a)
+	if code := codeOf(m); code != proto.ErrDeskTaken {
+		t.Fatalf("retry: %s", m.raw)
+	}
+	waitFor(t, "only the first hire's files", func() bool { return len(protectedFiles(t, dir)) == 2 })
 
 	// The herdr hiring instructions go after the protected task.
 	a.DeskIndex, a.HerdrInstructions, a.Secrets = ptr(1), true, routeReview(t, hb.c)
@@ -294,7 +303,11 @@ func TestPromptSecretsHireFailureReleases(t *testing.T) {
 	hb.fl.startErr = nil
 	hb.fl.mu.Unlock()
 	long := routeText + "\n" + strings.Repeat("x", 32<<10-len(routeText)-2)
-	a.Prompt, a.Secrets = long, reviewOf(t, hb.c, long, "c3")
+	a.Prompt, a.Secrets = long, nil
+	if code := codeOf(hire("long0", a)); code != proto.ErrSecretsReviewRequired { // it fits as typed
+		t.Fatal("the long prompt did not fit as typed")
+	}
+	a.Secrets = reviewOf(t, hb.c, long, "c3")
 	if code := codeOf(hire("long", a)); code != proto.ErrBadRequest {
 		t.Fatal("over the limit with references was not refused")
 	}
@@ -565,6 +578,17 @@ func TestPromptSecretsRunStart(t *testing.T) {
 		t.Fatalf("sent %q, ack %s", got, m.raw)
 	}
 	traceFree(t, hb.st, hb.db, []*client{c}, ticketSentinel, routeSentinel)
+
+	// Off: the composed prompt goes as typed, the ticket as typed, no file.
+	files := len(protectedFiles(t, dir))
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	_, m = c.command(proto.CmdRunStart, "r5", proto.RunStartArgs{Session: "s", DeskIndex: ptr(5), Text: "Rotate it", Extra: routeText,
+		Orch: &orch, Preset: seed, Worktree: ptr(false)})
+	res = ackData[proto.RunStartResult](t, m)
+	if !strings.HasSuffix(res.Prompt, "\n\n"+routeText) || res.Protected != 0 || len(protectedFiles(t, dir)) != files {
+		t.Fatalf("off: %s", m.raw)
+	}
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
 
 	// run.prepare sends nothing anywhere: not reviewed, audited by lengths.
 	_, m = c.command(proto.CmdRunPrepare, "rp", proto.RunPrepareArgs{Session: "s", Text: ticket, Extra: routeText})
@@ -913,6 +937,21 @@ func TestPromptSecretsAnswerAsync(t *testing.T) {
 	}
 	checkRouteSent(t, answers[0].Answer)
 	traceFree(t, sb.st, sb.db, []*client{sb.c}, routeSentinel)
+
+	// Off: another batch's answer full of secrets goes as typed, no file.
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	files := len(protectedFiles(t, dir))
+	sb.emit(turnStarted("t2"), itemDone("t2", asyncItem("call_4", contextQ)), turnCompleted("t2"))
+	sb.codexWorker(t, func(c *proto.WorkerCodex) bool { return batchOf(*c, "call_4") != nil && c.Turn == "" })
+	_, m = sb.c.command(proto.CmdWorkerAnswerAsync, "a2", answerArgs(a.ID, "call_4", ans(0, routeText)))
+	if m.env.T != proto.TAck {
+		t.Fatalf("off: %s", m.raw)
+	}
+	sends = sb.sent()
+	if answers, _ = codexapp.ParseReply(sends[len(sends)-1].text); len(answers) != 1 || answers[0].Answer != routeText ||
+		len(protectedFiles(t, dir)) != files {
+		t.Fatalf("off sends %+v", sends)
+	}
 }
 
 // worker.wrapup: the cleanup prompt is protected before it is armed, and
@@ -1025,4 +1064,124 @@ func TestPromptSecretsWorkerHandoffLLM(t *testing.T) {
 		t.Fatalf("w1 owns %+v", rows)
 	}
 	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
+}
+
+// fill is text padded with x to n bytes (n > len(text)).
+func fill(text string, n int) string { return text + " " + strings.Repeat("x", n-len(text)-1) }
+
+// Limits apply to a preview's text with its references (the 8 KiB of a
+// dictated sentence, a prompt's 16 KiB): over them, refused, no model
+// called, the files gone. Off, a text full of secrets is read as typed,
+// nothing scanned or written.
+func TestPromptSecretsPreviewLimitsAndOff(t *testing.T) {
+	t.Parallel()
+	roles := newPkRoles()
+	hb, ids, _, dir := startSecretsPkBridge(t, roles, nil)
+	c := hb.c
+	long := fill(previewText+" and end your turn", herdr.MaxMessage-8)
+	_, m := c.command(proto.CmdPackupDetect, "d0", proto.PackupDetectArgs{ID: ids["w2"], Text: long})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired { // it fits as typed
+		t.Fatalf("as typed: %s", m.raw)
+	}
+	_, m = c.command(proto.CmdPackupDetect, "d", proto.PackupDetectArgs{ID: ids["w2"], Text: long, Secrets: reviewOf(t, c, long, "c3", "c4")})
+	if code := codeOf(m); code != proto.ErrBadRequest {
+		t.Fatalf("over the limit: %s", m.raw)
+	}
+	if cl, l := roles.calls(); cl+l != 0 {
+		t.Fatalf("models called %d, %d", cl, l)
+	}
+	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
+
+	llm := &ai.FakeLLM{Text: `{"intent":"unclear","harness":null,"model":null,"effort":null,"task":null,"multiple":false,"selection_unclear":false}`}
+	dir2 := secretsDirFor(t)
+	hi := startHireBridge(t, func(o *server.Options) {
+		cat := hiCatalog
+		o.HireOptions, o.HireIntentRoles, o.SecretsDir = &cat, &hiRoles{state: ai.StateReady, llm: llm}, dir2
+	})
+	hi.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	long = fill("Hire a Claude Code agent to "+previewText, hireintent.MaxTextBytes-8)
+	_, m = hi.c.command(proto.CmdHireInterpret, "i0", proto.HireInterpretArgs{Text: long})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired { // it fits as typed
+		t.Fatalf("as typed: %s", m.raw)
+	}
+	_, m = hi.c.command(proto.CmdHireInterpret, "i", proto.HireInterpretArgs{Text: long, Secrets: reviewOf(t, hi.c, long, "c3", "c4")})
+	if code := codeOf(m); code != proto.ErrBadRequest || len(llm.Calls()) != 0 {
+		t.Fatalf("over 8 KiB: %s", m.raw)
+	}
+	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir2)) == 0 })
+
+	// Off: as typed, no token, no file.
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	res := detect(t, c, ids["w2"], previewText+" and end your turn")
+	if res.Sent != "" || res.SecretsPending != "" || res.Protected != 0 || !strings.Contains(roles.cls.Calls()[0].State["prompt"].(string), routeSentinel) {
+		t.Fatalf("off: %+v", res)
+	}
+	hi.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	r := interpretCmd(t, hi.c, "i2", proto.HireInterpretArgs{Text: "Hire a Claude Code agent to " + previewText})
+	if r.SecretsPending != "" || !strings.Contains(llm.Calls()[0].Messages[1].Content, jsonEscaped(routeSentinel)) {
+		t.Fatalf("off: %+v", r)
+	}
+	if len(protectedFiles(t, dir))+len(protectedFiles(t, dir2)) != 0 {
+		t.Fatal("files while off")
+	}
+}
+
+// Limits apply to the worker-owned routes' texts with their references
+// (a dismissal's prompt, a wrap-up's room, a handoff's instruction): over
+// them, refused, nothing sent, the files gone. Off, as today.
+func TestPromptSecretsWorkerRoutesLimitsAndOff(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.SecretsDir = dir })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	long := fill(routeText, proto.MaxHandoffInstruction-8)
+	ho := proto.WorkerHandoffArgs{Worker: ab.ids["w2"], Mode: proto.HandoffModeAgent, Instruction: long, Op: "op-long"}
+	_, m := c.command(proto.CmdWorkerHandoff, "h0", ho)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired { // it fits as typed
+		t.Fatalf("as typed: %s", m.raw)
+	}
+	ho.Secrets = reviewOf(t, c, long, "c3")
+	_, m = c.command(proto.CmdWorkerHandoff, "h", ho)
+	if code := codeOf(m); code != proto.ErrBadRequest {
+		t.Fatalf("a long instruction: %s", m.raw)
+	}
+	room := herdr.MaxMessage - len(transcript.WrapUpFooter(strings.Repeat("0", 16))) - 2
+	long = fill(routeText, room-8)
+	wu := proto.WorkerWrapUpArgs{ID: ab.ids["w1"], Prompt: long, Worktree: proto.FireKeep}
+	_, m = c.command(proto.CmdWorkerWrapUp, "w0", wu)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired { // it fits as typed
+		t.Fatalf("as typed: %s", m.raw)
+	}
+	wu.Secrets = reviewOf(t, c, long, "c3")
+	_, m = c.command(proto.CmdWorkerWrapUp, "w", wu)
+	if code := codeOf(m); code != proto.ErrBadRequest {
+		t.Fatalf("a long wrap-up: %s", m.raw)
+	}
+	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	if _, _, _, n := ab.requested("w2:p1"); n != 0 {
+		t.Fatal("a request was sent")
+	}
+	if got, _ := ab.st.WrapUps(context.Background()); len(got) != 0 {
+		t.Fatalf("armed %+v", got)
+	}
+
+	// Off: a wrap-up and a handoff full of secrets go as typed, no file.
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	_, m = c.command(proto.CmdWorkerHandoff, "h2", proto.WorkerHandoffArgs{Worker: ab.ids["w2"], Mode: proto.HandoffModeAgent,
+		Instruction: routeText, Op: "op-off"})
+	if res := ackData[proto.WorkerHandoffRequestResult](t, m); res.Request.Instruction != routeText || res.Protected != 0 {
+		t.Fatalf("off handoff %s", m.raw)
+	}
+	_, m = c.command(proto.CmdWorkerWrapUp, "w2", proto.WorkerWrapUpArgs{ID: ab.ids["w1"], Prompt: routeText, Worktree: proto.FireKeep})
+	if m.env.T != proto.TAck {
+		t.Fatalf("off wrap-up %s", m.raw)
+	}
+	if text, _ := ab.prompted(t, "w1:p1"); !strings.HasPrefix(text, routeText+"\n\n") {
+		t.Fatalf("off wrap-up sent %q", text)
+	}
+	if f := protectedFiles(t, dir); len(f) != 0 {
+		t.Fatalf("files while off: %v", f)
+	}
 }
