@@ -258,8 +258,8 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   decisions it sends), `ui/secretsFlow.test.ts` (scan, review, stale and required reviewed again, off and unavailable
   kept, the identical retry after a lost answer), `ui/secretsReview.dom.test.ts` (the dialog by keyboard and pointer, DOM
   positions to UTF-16 offsets, a 16 KiB prompt), `ui/prompt.secrets.dom.test.ts` and `laptop/transcriptMode.secrets.test.ts`
-  (the P overlay and the laptop's prompt box through the flow: nothing sent before Confirm, pack up skipped for a
-  protected prompt, the masked pending row, memory-only drafts), `ui/promptSecretsSection.dom.test.ts`,
+  (the P overlay and the laptop's prompt box through the flow: nothing sent before Confirm, pack up given the review
+  (round 4), the masked pending row, memory-only drafts), `ui/promptSecretsSection.dom.test.ts`,
   `net/redact.test.ts` (the command log) and `tools/fixture-secrets.test.ts`. `game/e2e/h108-prompt-secrets.spec.ts`
   drives the fixture bridge (`tools/fixture-secrets.ts`, its own small deterministic detector: `simsecrets=<key>`,
   `simsecretson=1`, `simsecretsdir=none`, `simfail=no_secrets|secrets_review_stale|secrets_review_required|
@@ -270,6 +270,19 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   that does not scroll. For a UX look: `make
   dev`, then `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simsecretson%3D1&floor=herdr-3d`, P on
   Pebble, and a prompt such as `deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD="hunter2x"`.
+- #108 round 4 (every other composer): `ui/secretsFlow.test.ts` (the action word, stored prompts, a review per text),
+  each composer's `*.secrets.dom.test.ts` through the real flow and dialog over the fixture's gate
+  (`src/test/secretsBridge.ts`: `hire`, `hireReview`, `startRun`, `schedules` (the form and a failed schedule's repair),
+  `hirePresets`, `handoffDialog`, `sendHome` (the wrap-up and pack up's hand-over), `laptop/transcriptMode.answers`),
+  `ui/prompt.secrets.dom.test.ts` and `laptop/transcriptMode.secrets.test.ts` (pack up with the review and its
+  hand-over), `net/redact.test.ts` (every route), `ui/drafts.test.ts`, `laptop/asyncDrafts.test.ts`,
+  `laptop/followupDrafts.test.ts` and `ui/hire.secrets.dom.test.ts` (memory-only drafts per store),
+  `world/promptSecrets.test.ts` (A1: the take-over's fixpoint, also checked in the random walk) and
+  `tools/fixture-secrets.test.ts` (every route of the fixture). The e2e's round-4 cases (`GREP='round 4'`): a hire with
+  a protected value, pack up's "Send as written (stay)" and "Send and go home" with the hand-over (the fake AI servers of
+  `e2e/packupFakes.ts`, shared with `m110-packup.spec.ts`), a schedule saved with every match ignored and Protect
+  refused. For a UX look of pack up: as round 3's, with `simjev=<a fake Jev>`, or the schedule form (Menu → Scheduled
+  agents → New) with the same prompt.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
@@ -1007,7 +1020,9 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   secrets (`secretsReview.ts`, `secretsReview.css`: the whole prompt in an edit-refusing `contenteditable`, a highlight
   per match, the strip of the match in hand), the send flow every composer goes through (`secretsFlow.ts`: scan, review,
   `worker.prompt` with `secrets`, a stale review reviewed again; the P overlay, the laptop's prompt box and a paste into
-  its terminal use it; round 4 plugs the other composers in) and Settings → Workers → Prompt secrets
+  its terminal use it; round 4: every other composer, with the action word, stored prompts and a review per text, its
+  "Review secrets" control and chord shared; pack up's check with the review is `packupSend.ts`) and Settings → Workers
+  → Prompt secrets
   (`promptSecretsSection.ts`); the switch and the review's model are `world/promptSecrets.ts`. Hidden, named hooks
   wait for later tickets:
   `renderPlanLimits(harness)` (#12), `renderHandoff` (M9) and `renderServices` (#14), each returning null for now.
