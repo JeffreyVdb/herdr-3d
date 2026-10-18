@@ -211,7 +211,7 @@ describe('the dictation bar (#213)', () => {
     t.pickFloor.mockResolvedValueOnce({ kind: 'say', text: 'a-two is asleep. Wake it from the elevator (L) to hire.', error: true });
     t.press('Enter');
     await t.flush();
-    expect(t.pickFloor).toHaveBeenCalledWith('a-two', hire, expect.any(Function));
+    expect(t.pickFloor).toHaveBeenCalledWith('a-two', hire, expect.any(Function), null);
     expect(t.bar.summary()).toMatchObject({ state: 'floor', status: 'a-two is asleep. Wake it from the elevator (L) to hire.', error: true });
     expect(t.submit).toHaveBeenCalledTimes(1);
     // A changed text is a new command.
@@ -244,11 +244,23 @@ describe('the dictation bar (#213)', () => {
     await t.flush();
     (t.dlg.querySelector('[data-floor="a-one"]') as HTMLElement).click();
     await t.flush();
-    expect(t.pickFloor).toHaveBeenCalledWith('a-one', hire, expect.any(Function));
+    expect(t.pickFloor).toHaveBeenCalledWith('a-one', hire, expect.any(Function), null);
     const live = t.pickFloor.mock.calls[0]![2];
     expect(live()).toBe(true);
     t.bar.close();
     expect(live()).toBe(false);
+  });
+
+  it('#108 round 4: the interpreter’s hand-over for the hire goes with the floor picked (to the review it opens)', async () => {
+    const t = setup();
+    t.bar.open(t.opener);
+    t.type('Hire an agent.');
+    t.press('Enter');
+    t.replies[0]!.done({ kind: 'floor', hire, handover: 'tok-1' });
+    await t.flush();
+    (t.dlg.querySelector('[data-floor="a-one"]') as HTMLElement).click();
+    await t.flush();
+    expect(t.pickFloor).toHaveBeenCalledWith('a-one', hire, expect.any(Function), 'tok-1');
   });
 
   it('Esc while it asks which floor closes the bar, as everywhere else, and gives the keyboard back', async () => {

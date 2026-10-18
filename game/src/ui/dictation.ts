@@ -26,7 +26,8 @@ import './dictation.css';
  * the game is told so before it acts on it (`live`: a closed bar's request opens nothing, applies nothing, closes nothing).
  */
 
-export type DictationReply = { kind: 'done' } | { kind: 'say'; text: string; error: boolean } | { kind: 'floor'; hire: HireInterpretation };
+/** `handover` (#108 round 4): the interpreter's `secrets_pending` for `hire`, handed to the review with it. */
+export type DictationReply = { kind: 'done' } | { kind: 'say'; text: string; error: boolean } | { kind: 'floor'; hire: HireInterpretation; handover?: string };
 
 /** The request is still the bar's: it was not closed (Esc, the chord, the backdrop) or reopened since it went. */
 export type DictationLive = () => boolean;
@@ -38,7 +39,7 @@ export interface DictationHost {
    */
   submit(text: string, live: DictationLive): Promise<DictationReply>;
   /** The floor picked for a hire that had none: the game checks it can take the hire, then opens the review there. */
-  pickFloor(floor: string, hire: HireInterpretation, live: DictationLive): Promise<DictationReply>;
+  pickFloor(floor: string, hire: HireInterpretation, live: DictationLive, handover: string | null): Promise<DictationReply>;
   store: FloorSource;
   /** The floor id of the office floor you are on, else null. */
   here(): string | null;
@@ -86,6 +87,8 @@ export class DictationBar {
   private statusError = false;
   /** The hire the floor list is for (until a floor is picked, the text is edited, or the bar closes). */
   private hire: HireInterpretation | null = null;
+  /** #108 round 4: the interpreter's hand-over for `hire` (null: none). */
+  private handover: string | null = null;
   private floors: FloorItem[] = [];
   private rows: Row[] = [];
   private active = '';
@@ -147,6 +150,7 @@ export class DictationBar {
     this.field.value = '';
     this.state = 'editing';
     this.hire = null;
+    this.handover = null;
     this.say('', false);
     this.drawFloors();
     this.dialog.showModal();
@@ -201,6 +205,8 @@ export class DictationBar {
     if (this.state === 'floor') {
       this.state = 'editing';
       this.hire = null;
+      this.handover = null;
+    this.handover = null;
       this.drawFloors();
       this.say('', false);
     }
@@ -248,6 +254,7 @@ export class DictationBar {
     const gen = this.gen;
     this.state = 'pending';
     this.hire = null;
+    this.handover = null;
     this.drawFloors();
     this.say('Reading the command…', false);
     const live = this.liveFor(gen);
@@ -260,7 +267,7 @@ export class DictationBar {
     const hire = this.hire;
     if (this.state !== 'floor' || !hire || !floor) return;
     const live = this.liveFor(this.gen);
-    const reply = await this.host.pickFloor(floor, hire, live);
+    const reply = await this.host.pickFloor(floor, hire, live, this.handover);
     if (!live()) return;
     // A floor that cannot take the hire: the list stays up to pick another, with the reason.
     if (reply.kind === 'say') return this.say(reply.text, reply.error);
@@ -280,6 +287,7 @@ export class DictationBar {
     if (reply.kind === 'floor') {
       this.state = 'floor';
       this.hire = reply.hire;
+      this.handover = reply.handover ?? null;
       this.floors = floorList(this.host.store, '');
       this.active = '';
       this.drawFloors();
@@ -364,6 +372,7 @@ export class DictationBar {
     this.opener = null;
     this.state = 'editing';
     this.hire = null;
+    this.handover = null;
     this.drawFloors();
     // Back to where the keyboard was (the seat's input, the review, the canvas); gone: the page.
     const now = document.activeElement;

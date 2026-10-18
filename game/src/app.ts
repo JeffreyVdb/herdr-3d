@@ -7,7 +7,7 @@ import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
-import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
+import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation, type HireInterpretAck } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
@@ -44,7 +44,7 @@ import { typingIn } from './input/typing';
 import { ShortcutsDialog } from './ui/shortcutsDialog';
 import { Palette } from './ui/palette';
 import { DictationBar, type DictationLive, type DictationReply } from './ui/dictation';
-import { followupLost, interpretOutcome, outcomeText } from './ui/dictationModel';
+import { followupLost, interpretOutcome, outcomeText, PENDING_UNREVIEWED } from './ui/dictationModel';
 import { paletteCommands, type PaletteCommand } from './world/palette';
 import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
@@ -116,7 +116,7 @@ import { floorsSection } from './ui/floorsSection';
 import { repoRefsSection } from './ui/repoRefsSection';
 import { promptSecretsSection } from './ui/promptSecretsSection';
 import { SecretsReviewDialog } from './ui/secretsReview';
-import { PromptSecretsFlow } from './ui/secretsFlow';
+import { PromptSecretsFlow, type Go } from './ui/secretsFlow';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
@@ -437,7 +437,7 @@ export class App {
     });
     this.dictation = new DictationBar(o.host, {
       submit: (text, live) => this.interpretDictation(text, live),
-      pickFloor: (floor, hire, live) => this.openDictatedReview(floor, hire, live),
+      pickFloor: (floor, hire, live, handover) => this.openDictatedReview(floor, hire, live, handover),
       store: this.store,
       here: () => this.hereFloor(),
       online: () => this.conn.phase === 'live',
@@ -1504,13 +1504,14 @@ export class App {
    * #212: the review dialog for a dictated hire on the floor you are on, at `desk` or the first free one. Nothing is sent:
    * the hire happens when the human presses Hire in it. False when the floor or desk cannot take a hire (a toast says why).
    */
-  openHireReview(interp: HireInterpretation, desk?: number, floor: string | null = this.hereFloor()): boolean {
+  /** #108 round 4 `handover`: the interpreter's `secrets_pending` for `interp`. */
+  openHireReview(interp: HireInterpretation, desk?: number, floor: string | null = this.hereFloor(), handover: string | null = null): boolean {
     const d = this.hireSeat(desk, floor);
     if (d === null) return false;
     this.walker.release();
     this.walker.stop();
     this.panels.close();
-    return this.hireReview.open(floor as string, interp, d);
+    return this.hireReview.open(floor as string, interp, d, undefined, handover);
   }
 
   /** The desk a hire opens for on a floor (the one you are on unless `s` says), or null with a toast saying why not. */
@@ -3263,12 +3264,33 @@ export class App {
   private async interpretDictation(text: string, live: DictationLive): Promise<DictationReply> {
     const ticket = this.hireReview.begin();
     const pending = this.hireReview.pendingInterpretation();
-    const r = await this.send('hire.interpret', pending ? { text, pending } : { text });
+    // #108 round 4: the sentence's secrets are reviewed before the LLM reads it ("Confirm and continue"); the answer
+    // holds their references and a hand-over the review keeps for the next sentence and the hire.
+    const handover = pending ? this.hireReview.pendingHandover() : null;
+    const req = { key: 'dictation', text, target: 'the hire interpreter', action: 'Confirm and continue' as const };
+    let go: Go = { kind: 'send', protects: 0, shown: text, review: null };
+    if (this.secrets.on) {
+      const out = await this.secrets.review(req);
+      if (!live()) return { kind: 'done' };
+      if (out.kind === 'kept') return { kind: 'say', text: out.why === 'cancel' ? 'Not sent: the review was cancelled. Your words are still here.' : out.message, error: out.why === 'failed' };
+      go = out;
+    }
+    const send = async (g: Go): Promise<CommandResult> => {
+      const r = await this.send('hire.interpret', { text, ...(pending ? { pending } : {}), ...(g.secrets ? { secrets: g.secrets } : {}), ...(handover ? { secrets_pending: handover } : {}) });
+      // The open review's own sentences were never reviewed (it came before the switch, or its hand-over was lost): a new
+      // review of this sentence would not change that, so this is the bar's line, never a review again.
+      return !r.ok && r.code === 'secrets_review_required' && /^pending\.sources/.test(r.message) ? { ok: false, code: 'secrets_kept', message: PENDING_UNREVIEWED } : r;
+    };
+    const d = await this.secrets.deliver(req, go, send);
     if (!live()) return { kind: 'done' };
+    if (d.kind === 'kept') return { kind: 'say', text: d.why === 'cancel' ? 'Not sent: the review was cancelled. Your words are still here.' : d.message, error: d.why === 'failed' };
+    const r = d.result;
     const o = interpretOutcome(r);
     if (o.kind !== 'hire') return { kind: 'say', text: outcomeText(o), error: o.kind === 'error' };
+    const answered = r.ok ? (r.data as Partial<HireInterpretAck> | undefined)?.secrets_pending : undefined;
+    const next = typeof answered === 'string' && answered ? answered : null;
     if (ticket) {
-      if (this.hireReview.apply(o.hire, ticket)) {
+      if (this.hireReview.apply(o.hire, ticket, next)) {
         // The review has the keyboard back (it opened the bar), with the answer in it.
         this.dictation.close();
         return { kind: 'done' };
@@ -3279,8 +3301,8 @@ export class App {
     // (The bar is modal: a review cannot open under it meanwhile. Never a second one over it, silently.)
     if (this.hireReview.isOpen) return { kind: 'say', text: 'A hire review is open already. Press Enter again to change it.', error: true };
     const here = this.hereFloor();
-    if (!here) return { kind: 'floor', hire: o.hire };
-    return this.openDictatedReview(here, o.hire, live);
+    if (!here) return { kind: 'floor', hire: o.hire, ...(next ? { handover: next } : {}) };
+    return this.openDictatedReview(here, o.hire, live, next);
   }
 
   /**
@@ -3289,7 +3311,7 @@ export class App {
    * back, the modals go and you stand up, as for a palette command, the elevator takes you there when it is another floor,
    * and the review opens at its first free desk.
    */
-  private async openDictatedReview(floor: string, hire: HireInterpretation, live: DictationLive): Promise<DictationReply> {
+  private async openDictatedReview(floor: string, hire: HireInterpretation, live: DictationLive, handover: string | null = null): Promise<DictationReply> {
     if (!live()) return { kind: 'done' };
     const seat = resolveHireDesk(floor, this.store.floorView(floor), this.heldDesks(floor));
     if (!seat.ok) return { kind: 'say', text: seat.msg, error: true };
@@ -3301,7 +3323,7 @@ export class App {
       await this.enterFloor(floor);
       if (this.hereFloor() !== floor) return { kind: 'done' }; // the floor went meanwhile
     }
-    this.openHireReview(hire, undefined, floor);
+    this.openHireReview(hire, undefined, floor, handover);
     return { kind: 'done' };
   }
 

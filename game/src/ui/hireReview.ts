@@ -31,6 +31,7 @@ import { capacityBlock, chips, gitView, modelField, worktreeControl, type HireHo
 import { backgroundOutcomeText, HireCoordinator, notPromptedText, type HireOutcome } from './hireCoordinator';
 import { hiredToast } from './hiredToast';
 import { failureText } from './messages';
+import { onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './secretsFlow';
 
 /**
  * #212: the review of a dictated hire. One accordion dialog over a pending hire: the interpreter's proposal (#211) → review
@@ -92,6 +93,8 @@ interface Reviewed {
   changed: { label: boolean; cwd: boolean; worktree: boolean };
   prep: HirePrepare;
   pending: HireInterpretation | null;
+  /** #108: the interpreter's hand-over for `pending` (null: none). */
+  handover: string | null;
   keep: Array<{ harness: string; model: string }>;
   openSet: Set<ReviewSection>;
   defaultCwd: string;
@@ -136,6 +139,11 @@ export class HireReviewDialog {
   private changed = { label: false, cwd: false, worktree: false };
   /** The interpretation as it came (a follow-up goes back to the interpreter with it). */
   private pending: HireInterpretation | null = null;
+  /**
+   * #108 round 4: the interpreter's hand-over (`secrets_pending`) for `pending`, with prompt secrets reviewed: the next
+   * dictated sentence goes back with it, and Hire sends it with the task (the task as answered needs no review again).
+   */
+  private handover: string | null = null;
   /** The choices to keep offered when Settings hides their model (the dictated one stays on the list). */
   private keep: Array<{ harness: string; model: string }> = [];
   private statusText = '';
@@ -213,7 +221,8 @@ export class HireReviewDialog {
    * `hire.prepare` (the folder, the name, the caps).
    */
   /** #223 `seed`: "Hire from handoff": the starting choice (`fromHandoff`) and the folder, instead of the proposal's. */
-  open(floor: string, interp: HireInterpretation, desk?: number, seed?: { choice?: ReviewChoice; cwd?: string }): boolean {
+  /** #108 round 4 `handover`: the interpreter's `secrets_pending` for `interp`. */
+  open(floor: string, interp: HireInterpretation, desk?: number, seed?: { choice?: ReviewChoice; cwd?: string }, handover: string | null = null): boolean {
     const seat = resolveHireDesk(floor, this.host.store.floorView(floor), this.host.held(floor), desk);
     if (!seat.ok) {
       this.host.toast(seat.msg, 'info');
@@ -225,6 +234,7 @@ export class HireReviewDialog {
     this.desk = seat.desk;
     this.prep = null;
     this.pending = interp;
+    this.handover = handover;
     this.choice = seed?.choice ?? fromInterpretation(interp, this.host.store.hireOptions);
     this.keep = [{ harness: this.choice.harness, model: this.choice.model }];
     this.openSet = needsAttention(this.choice, this.host.store.hireOptions, this.taskIssue());
@@ -255,6 +265,11 @@ export class HireReviewDialog {
     return this.dialog.open ? this.pending : null;
   }
 
+  /** #108 round 4: the hand-over of `pendingInterpretation()`, for the follow-up to send back (null: none). */
+  pendingHandover(): string | null {
+    return this.dialog.open ? this.handover : null;
+  }
+
   /** The state of the review now, for a request to the interpreter: its answer goes to `apply` with this ticket. */
   begin(): ReviewTicket | null {
     return this.dialog.open ? { epoch: this.epoch, rev: this.choice.rev } : null;
@@ -265,9 +280,11 @@ export class HireReviewDialog {
    * or changes only what the human did not edit since, never launches, and opens a section that needs a choice. False:
    * the review it was for is gone.
    */
-  apply(interp: HireInterpretation, ticket: ReviewTicket): boolean {
+  apply(interp: HireInterpretation, ticket: ReviewTicket, handover: string | null = null): boolean {
     if (!this.dialog.open || ticket.epoch !== this.epoch || this.state === 'hiring') return false;
     this.pending = interp;
+    // #108: a follow-up keeps the hand-over (the bridge answers the same one); one first given now is taken.
+    if (handover) this.handover = handover;
     this.keep.push({ harness: interp.harness.value ?? '', model: interp.model.value ?? '' });
     this.choice = applyInterpretation(this.choice, interp, this.host.store.hireOptions, ticket.rev);
     // The editor shows the task as it is; one the human is typing in is theirs and was not replaced (`edited`).
@@ -536,6 +553,11 @@ export class HireReviewDialog {
 
   private buildTask(): void {
     const panel = this.sections.get('task')!.panel;
+    // #108: the task's review on purpose, Ctrl/⌘+Shift+X (with the switch on); the switch shows or hides its button.
+    onReviewKey(this.taskEl, () => this.host.secrets, () => void this.hire(true));
+    this.host.secrets?.onChange(() => {
+      if (this.dialog.open) this.renderActions();
+    });
     this.taskEl.addEventListener('input', () => {
       this.choice = editTask(this.choice, this.taskEl.value);
       this.syncSections();
@@ -787,8 +809,12 @@ export class HireReviewDialog {
     const busy = this.state === 'hiring';
     const hire = h('button', { class: 'btn btn--primary', 'data-key': 'hire', disabled: !!blocker && !busy, 'aria-disabled': blocker ? 'true' : null, 'aria-busy': busy ? 'true' : null, title: blocker, onclick: () => void this.hire() }, text);
     const had = document.activeElement === this.actions.querySelector('[data-key="hire"]');
-    this.actions.replaceChildren(cancel, hire);
+    // #108: the task's review on purpose (with the switch on), then the hire.
+    const review = reviewButton(this.host.secrets, busy ? 'The hire is on its way.' : blocker, () => void this.hire(true), 'task');
+    const hadReview = document.activeElement === this.actions.querySelector('[data-key="review"]');
+    this.actions.replaceChildren(...[cancel, review, hire].filter((x): x is HTMLButtonElement => !!x));
     if (had && (!blocker || busy)) hire.focus();
+    if (hadReview) review?.focus();
     // Why Hire is off, said where the button is (a title is not enough): the model's or effort's own section says the rest.
     if (!this.statusError && !this.statusText) {
       this.statusEl.hidden = !blocker || this.state !== 'ready';
@@ -828,7 +854,7 @@ export class HireReviewDialog {
    * The explicit confirmation, the only way `worker.hire` is sent from here. What was reviewed is read now and handed to
    * the coordinator, which holds the desk and sends it once (the same hire's second press is the operation on its way).
    */
-  private async hire(): Promise<void> {
+  private async hire(manual = false): Promise<void> {
     if (this.state !== 'ready' || !this.prep) return;
     const blocker = this.blocker();
     if (blocker) {
@@ -839,6 +865,33 @@ export class HireReviewDialog {
     const floor = this.floor;
     const desk = this.desk;
     const args = hireArgs(floor, desk, this.form(), this.prep.git);
+    // #108 round 4: the task, reviewed before anything of it goes, unless it is the interpreter's as it answered it (the
+    // hand-over covers that: what you left as typed is not proposed twice). The hand-over goes with any task (its files
+    // are the new worker's).
+    const flow = this.host.secrets;
+    const handover = args.prompt ? this.handover : null;
+    const covered = handover !== null && args.prompt === this.pending?.task.value;
+    let secrets: { flow: PromptSecretsFlow; req: { key: string; text: string; target: string; manual: boolean }; go: Go } | undefined;
+    if (args.prompt && flow && (manual || (flow.on && !covered))) {
+      const epoch0 = this.epoch;
+      const req = { key: `review:${floor}:${desk}`, text: args.prompt, target: `${args.label ?? this.prep.label} at Desk ${desk + 1}`, manual };
+      this.state = 'hiring';
+      this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the task…');
+      this.render();
+      const out = await flow.review(req);
+      if (!this.dialog.open || epoch0 !== this.epoch) return;
+      this.state = 'ready';
+      if (out.kind === 'kept') {
+        this.setStatus(out.why === 'cancel' ? 'Not hired: the review was cancelled. The task is still here.' : out.message, out.why === 'failed');
+        this.render();
+        return;
+      }
+      secrets = { flow, req, go: out };
+    } else if (manual && !args.prompt) {
+      this.setStatus('Write the task first, then review its secrets.', true);
+      return;
+    }
+    if (handover) args.secrets_pending = handover;
     const who = args.label ?? this.prep.label;
     const epoch = this.epoch;
     // Read once, here: a change in Settings while the hire is on its way does not change how it ends.
@@ -850,7 +903,7 @@ export class HireReviewDialog {
     this.hiringText = null;
     this.setStatus('');
     const op = this.hires.start(
-      { key: `review:${this.id}:${epoch}`, floor, where: this.floorName(), desk, args, who, prompt: null, background, kept: true },
+      { key: `review:${this.id}:${epoch}`, floor, where: this.floorName(), desk, args, who, prompt: null, background, kept: true, ...(secrets ? { secrets } : {}) },
       {
         hiring: (sent) => {
           if (background || !this.dialog.open || epoch !== this.epoch) return;
@@ -915,6 +968,7 @@ export class HireReviewDialog {
       changed: { ...this.changed },
       prep: this.prep as HirePrepare,
       pending: this.pending,
+      handover: this.handover,
       keep: [...this.keep],
       openSet: new Set(this.openSet),
       defaultCwd: this.defaultCwd,
@@ -977,6 +1031,7 @@ export class HireReviewDialog {
     this.desk = r.desk;
     this.prep = r.prep;
     this.pending = r.pending;
+    this.handover = r.handover;
     this.choice = r.choice;
     this.keep = [...r.keep];
     this.openSet = new Set(r.openSet);
