@@ -160,19 +160,24 @@ func credentialAt(text string, i int, line bool) int {
 	return j // a quote or a backslash closes it: its bytes are the value's
 }
 
-// headerValue reports the credentials [s, e) that are a value: not a
-// template inside them (templated), what the shell computes there (read
-// from a, the header's argument: headerArg; review T4 (p2), T3P-1:
-// -H "Authorization: Bearer abc$TOKEN", $$, never '$HOME' nor 'P@$$w0rd '),
-// a placeholder in brackets ([token]), a URL, nor what notASecret says
-// (literal: it runs into a reference).
-func headerValue(text string, a, s, e int, refs []span) bool {
+// headerValue reports the credentials [s, e) of the header named at name
+// that are a value: not a template inside them (templated), what the shell
+// computes there (read from the header's argument, headerArg; review T4
+// (p2), T3P-1: -H "Authorization: Bearer abc$TOKEN", $$, never '$HOME' nor
+// 'P@$$w0rd '), a placeholder in brackets ([token]), a URL, nor what
+// notASecret says (literal: it runs into a reference).
+func headerValue(text string, name, s, e int, refs []span) bool {
 	v := text[s:e]
 	if v == "" || notASecret(v, overlapsAny(s, e, refs)) || templated(v) || strings.Contains(v, "://") ||
 		bracketed.MatchString(v) {
 		return false
 	}
-	_, computed := shellRead(text, a, e, false)
+	// The argument starts headerReach bytes before the name at most: with
+	// no '$' or backquote from there on, the shell computes nothing.
+	if w := text[max(0, name-headerReach):e]; strings.IndexByte(w, '$') < 0 && strings.IndexByte(w, '`') < 0 {
+		return true
+	}
+	_, computed := shellRead(text, headerArg(text, name), e, false)
 	return !overlapsAny(s, e, computed)
 }
 
@@ -237,7 +242,7 @@ func headerSpans(text, lower string, refs []span) []span {
 		}
 		end := credentialAt(text, m[1], atLineStart(text, m[2]))
 		v := text[m[1]:end]
-		if !headerValue(text, headerArg(text, m[2]), m[1], end, refs) || (scheme == "" && !tokenish(v, 8)) {
+		if !headerValue(text, m[2], m[1], end, refs) || (scheme == "" && !tokenish(v, 8)) {
 			continue
 		}
 		out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: scheme == ""})
@@ -248,7 +253,7 @@ func headerSpans(text, lower string, refs []span) []span {
 		for text[name-1] == ' ' || text[name-1] == '\t' {
 			name--
 		}
-		if tokenish(text[m[1]:end], 16) && headerValue(text, headerArg(text, name-len("bearer")), m[1], end, refs) {
+		if tokenish(text[m[1]:end], 16) && headerValue(text, name-len("bearer"), m[1], end, refs) {
 			out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: true})
 		}
 	}
