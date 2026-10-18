@@ -79,8 +79,8 @@ assessment of a permission prompt; the standard library and `ai`'s LLM interface
 `gitleaks_rules.go` by `tools/secretrules` (its own module, which downloads Gitleaks; `make secret-rules`, and `make
 secret-rules-parity` checks them against Gitleaks itself) and run with the standard library, its MIT licence in
 `LICENSE-gitleaks.txt`; the structural rules; candidates at exact byte ranges, never overlapping; UTF-16 offsets; the
-HMAC revision, the decisions checked against a fresh scan, the file references; the standard library only,
-`TestPromptSecretIsALeaf`) and `secretfiles` (the protected files: a private runtime directory, owner directories
+HMAC revision, the decisions checked against a fresh scan, the file references, a stored prompt's plain record; the
+standard library only, `TestPromptSecretIsALeaf`) and `secretfiles` (the protected files: a private runtime directory, owner directories
 0700 and files 0600 by random names, fd-relative with no symlink followed, worker and pending owners, release, claim,
 sweep; their owners and names in `store`, never a byte of a secret; Linux, a stub elsewhere);
 M7 boards:
