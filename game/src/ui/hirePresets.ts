@@ -11,6 +11,7 @@ import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { chips, modelField, type DialogHost, type HirePresetSeed } from './hire';
 import type { HireModelPrefs } from './hireModelPrefs';
 import { failureText } from './messages';
+import { onReviewKey, reviewButton, type Go } from './secretsFlow';
 
 /**
  * #93 hire presets: the "Hire preset" tab of an empty desk's dialog. It lists the floor's own presets and the global
@@ -58,6 +59,8 @@ type EditView = {
   nudge: boolean;
   /** #95: the prompt "Save as is" was answered for: no asking again until the prompt changes. */
   dismissed: string | null;
+  /** #108 round 4: the stored review of the prompt this Save is for (the check and the save both carry it). */
+  reviewed?: { text: string; go: Go } | undefined;
 };
 type View = { kind: 'list'; confirm: string | null; replacing: string | null } | EditView;
 
@@ -156,6 +159,13 @@ export class HirePresetsDialog {
     this.body.addEventListener('submit', (e) => {
       e.preventDefault();
       if (this.view.kind === 'edit') void this.save();
+    });
+    // #108: the prompt's review on purpose (Ctrl/⌘+Shift+X, with the switch on); the switch shows or hides its button.
+    onReviewKey(this.body, () => this.host.secrets, () => {
+      if (this.view.kind === 'edit') void this.save(true);
+    });
+    this.host.secrets?.onChange(() => {
+      if (this.dialog.open) this.render();
     });
     this.host.modelPrefs?.onChange(() => {
       if (this.dialog.open) this.render();
@@ -475,7 +485,9 @@ export class HirePresetsDialog {
     const cancel = h('button', { type: 'button', class: 'btn', 'data-key': 'cancel', onclick: () => (this.desk !== null ? this.toList(v.id) : this.close()) }, this.desk !== null ? 'Back' : 'Cancel');
     const text = v.saving ? 'Saving…' : stale === 'deleted' ? 'Save as new preset' : v.id ? 'Save preset' : 'Create preset';
     const save = h('button', { class: 'btn btn--primary', type: 'submit', form: 'hp-form', 'data-key': 'save', 'aria-disabled': v.saving ? 'true' : null, 'aria-busy': v.saving ? 'true' : null }, text);
-    replaceKeepingFocus(this.actions, [cancel, save]);
+    // #108: the stored prompt's review on purpose (with the switch on), then the save.
+    const review = reviewButton(this.host.secrets, v.saving ? 'Saving…' : null, () => void this.save(true), 'prompt');
+    replaceKeepingFocus(this.actions, review ? [cancel, review, save] : [cancel, save]);
   }
 
   /**
@@ -625,7 +637,13 @@ export class HirePresetsDialog {
     this.focusEditor();
   }
 
-  private async save(): Promise<void> {
+  /**
+   * Save. #108 round 4: with the switch on (or `manual`: "Review secrets"), the prompt is reviewed first: a preset's
+   * prompt is stored, so every match stays as typed (it is protected when a hire uses it) and Protect says why. The
+   * classifier's check and the save carry that review; it is kept while the prompt is unchanged (the check's question,
+   * a refused save), so it opens once per text.
+   */
+  private async save(manual = false): Promise<void> {
     const v = this.view;
     if (v.kind !== 'edit' || v.saving) return;
     if (v.nudge) {
@@ -651,8 +669,31 @@ export class HirePresetsDialog {
     }
     v.saving = true;
     this.render();
+    const flow = this.host.secrets;
+    const sreq = { key: `preset:${v.id ?? 'new'}`, text: v.draft.prompt, target: `“${v.draft.name.trim() || 'the preset'}”`, stored: true, manual };
+    if (manual && !v.draft.prompt) {
+      v.saving = false;
+      this.setStatus('Write a prompt first, then review its secrets.', true);
+      this.render();
+      return;
+    }
+    if (v.reviewed?.text !== v.draft.prompt || manual) v.reviewed = undefined;
+    if (!v.reviewed && v.draft.prompt && flow && (flow.on || manual)) {
+      this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the prompt…');
+      const out = await flow.review(sreq);
+      if (this.view !== v) return;
+      if (out.kind === 'kept') {
+        v.saving = false;
+        this.setStatus(out.why === 'cancel' ? 'Not saved: the prompt is still here.' : out.message, out.why === 'failed');
+        this.render();
+        return;
+      }
+      this.setStatus('');
+      v.reviewed = { text: v.draft.prompt, go: out };
+    }
+    const go: Go = v.reviewed?.go ?? { kind: 'send', protects: 0, shown: v.draft.prompt, review: null };
     // #95: the box off: does the prompt hand work to other agents? Only a "yes" in time stops the save, to ask.
-    if (await this.delegates(v)) {
+    if (await this.delegates(v, go)) {
       if (this.view !== v) return;
       v.saving = false;
       v.nudge = true;
@@ -662,9 +703,15 @@ export class HirePresetsDialog {
     }
     if (this.view !== v) return;
     const spec = presetSpec(v.draft, this.floor, book.instructions);
-    const r: CommandResult = current ? await this.host.send('hire_preset.update', { id: current.id, ...spec }) : await this.host.send('hire_preset.create', spec);
+    const send = (g: Go): Promise<CommandResult> => {
+      const s = g.secrets ? { ...spec, secrets: g.secrets } : spec;
+      return current ? this.host.send('hire_preset.update', { id: current.id, ...s }) : this.host.send('hire_preset.create', s);
+    };
+    const d = flow ? await flow.deliver(sreq, go, send) : ({ kind: 'answered', result: await send(go), go } as const);
     if (this.view !== v) return;
     v.saving = false;
+    const r: CommandResult = d.kind === 'kept' ? { ok: false, code: 'secrets_kept', message: d.message } : d.result;
+    if (d.kind === 'answered' && d.go !== go) v.reviewed = { text: v.draft.prompt, go: d.go };
     if (r.ok) {
       const saved = r.data as HirePreset | undefined;
       const id = saved?.id ?? current?.id;
@@ -694,11 +741,12 @@ export class HirePresetsDialog {
    * #95: the classifier's say on the draft's prompt, when Save should ask (`nudgeWanted`): false for anything but a "yes"
    * (a refusal, a timeout, an older bridge's `unknown_command`).
    */
-  private async delegates(v: EditView): Promise<boolean> {
+  private async delegates(v: EditView, go: Go): Promise<boolean> {
     const supported = this.host.store.hirePresets.instructions && !this.host.unsupported('hire_preset.check');
     const ready = supported && this.host.store.ai.state?.classifier.state === 'ready';
     if (!nudgeWanted(v.draft, { supported, ready, dismissed: v.dismissed })) return false;
-    const r = await this.host.send('hire_preset.check', { prompt: v.draft.prompt });
+    // #108: with the review (the classifier reads the prompt as typed, every match left so).
+    const r = await this.host.send('hire_preset.check', { prompt: v.draft.prompt, ...(go.secrets ? { secrets: go.secrets } : {}) });
     return r.ok && (r.data as HirePresetCheckAck | undefined)?.delegates === true;
   }
 
