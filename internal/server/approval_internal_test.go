@@ -223,6 +223,24 @@ func TestMenuOpPartial(t *testing.T) {
 	}
 }
 
+// #106: a dialog whose top is off the screen hashes all it shows of
+// itself, not the 12 lines above its menu: a change far up the screen is
+// another hash.
+func TestMenuOpPartialHashesAllShown(t *testing.T) {
+	t.Parallel()
+	lines := []string{"D=/tmp/safe"}
+	for range 15 {
+		lines = append(lines, "echo step")
+	}
+	full := claudeBash("", append(lines, "rm -f $D/*")...)
+	cut := full[strings.Index(full, "   D="):]
+	a := parseQuestionOf("claude", cut, 1)
+	b := parseQuestionOf("claude", strings.Replace(cut, "D=/tmp/safe", "D=/tmp/important", 1), 1)
+	if a.op.complete || a.q.Hash == b.q.Hash || !slices.Contains(a.op.lines, "D=/tmp/safe") {
+		t.Fatalf("hash %s / %s, op %+v", a.q.Hash, b.q.Hash, a.op)
+	}
+}
+
 // #106: what a line of an operation keeps when it leaves the bridge.
 func TestRedactLine(t *testing.T) {
 	t.Parallel()

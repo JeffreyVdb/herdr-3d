@@ -108,7 +108,7 @@ func isLeftRule(l string) bool {
 // Claude dialog's top is its rule at the left edge, a Codex dialog's its
 // first line (opHeadRe); a harness not known takes whichever comes first
 // going up. Looked for up to the screen's top: not found, the operation is
-// the questionReach lines above the menu, and not complete.
+// all the screen shows above the menu, and not complete.
 func opOf(harness string, q proto.Question, lines []string, first, qline int, since int64) *menuOp {
 	top, head := -1, false
 	for i := first - 1; i >= 0 && first-i <= maxOpLines; i-- {
@@ -125,7 +125,7 @@ func opOf(harness string, q proto.Question, lines []string, first, qline int, si
 	op := &menuOp{complete: top >= 0}
 	from, to := top+1, first
 	if top < 0 {
-		from = max(0, first-questionReach)
+		from = max(0, first-maxOpLines)
 	}
 	switch {
 	case head:
@@ -320,7 +320,8 @@ func approves(label string) bool {
 // nativeCall is the agent's own pending call a menu is for (#106): read
 // from its transcript (transcript.CallTracker), with its whole input.
 type nativeCall struct {
-	// id names it: 16 hex over its tool_use id and its input's sum.
+	// id names it: 16 hex over its tool_use id, its input's sum and its
+	// directory.
 	id   string
 	call transcript.PendingCall
 	// in is its input's fields a card shows; mode the session's permission
@@ -374,7 +375,7 @@ func nativeOf(op *menuOp, calls []transcript.PendingCall, mode string) *nativeCa
 	}
 	if found != nil {
 		found.mode = mode
-		h := sha256.Sum256([]byte(found.call.ID + "\x00" + found.call.Sum))
+		h := sha256.Sum256([]byte(found.call.ID + "\x00" + found.call.Sum + "\x00" + found.call.Cwd))
 		found.id = hex.EncodeToString(h[:])[:16]
 	}
 	return found
@@ -549,15 +550,26 @@ func (tr *usageTracker) offerCalls(w usageWorker) {
 	tr.callUps = append(tr.callUps, callsUpdate{id: w.id, workerCalls: wc})
 }
 
-// setCalls keeps a worker's pending calls (hub goroutine); a worker blocked
-// on a menu is looked at again, so its card learns its call.
+// setCalls keeps a worker's pending calls (hub goroutine). A worker blocked
+// on a menu is looked at again: its question's hash follows the call its
+// menu is for (bindNative: a worker.upsert when it changed), and its card
+// learns the call.
 func (h *Hub) setCalls(u callsUpdate) {
 	if len(u.calls) == 0 && u.mode == "" {
 		delete(h.calls, u.id)
 	} else {
 		h.calls[u.id] = u.workerCalls
 	}
-	if qs, ok := h.questions[u.id]; ok && qs.op != nil && h.nt.svc != nil {
+	qs, ok := h.questions[u.id]
+	if !ok || qs.op == nil || qs.sq == nil {
+		return
+	}
+	next := *qs.sq
+	if h.bindNative(u.id, &next); next.q.Hash != qs.q.Hash {
+		h.setQuestion(u.id, qs.pane, &next) // its emit looks at the worker again
+		return
+	}
+	if h.nt.svc != nil {
 		h.notifyWorker(u.id)
 	}
 }
@@ -570,4 +582,41 @@ func (h *Hub) nativeFor(id string, op *menuOp) *nativeCall {
 		return nil
 	}
 	return nativeOf(op, wc.calls, wc.mode)
+}
+
+// bindNative folds into sq's hash the pending call of worker id's
+// transcript its menu is for (hub goroutine; #106): an answer, the game's
+// as a tap's, is then for that call only, and a call replaced (another
+// tool_use, input or directory) is another hash. It returns the call (nil:
+// none known).
+func (h *Hub) bindNative(id string, sq *screenQuestion) *nativeCall {
+	var nc *nativeCall
+	if sq.op != nil {
+		nc = h.nativeFor(id, sq.op)
+	}
+	sq.bind(nc)
+	return nc
+}
+
+// bind sets sq's hash (questionHash): what its screen asks and (#106) the
+// native call nc its menu is for (nil: none known).
+func (sq *screenQuestion) bind(nc *nativeCall) {
+	about := sq.about
+	if nc != nil {
+		about = append(slices.Clip(about), "\x02native "+nc.id)
+	}
+	sq.q.Hash = questionHash(sq.q, about, sq.since)
+}
+
+// partialApproval reports whether answering sq with choice approves a
+// permission whose dialog's top is off the screen and whose call (nc) is
+// not known: the screen shows only its end, so what it would approve is
+// not known whole (#106: refused, for the game as for a tap; its No and a
+// cancel are not).
+func partialApproval(sq screenQuestion, nc *nativeCall, choice int) bool {
+	if sq.op == nil || sq.op.complete || nc != nil || sq.q.Kind != proto.QuestionPermission {
+		return false
+	}
+	i := slices.IndexFunc(sq.q.Choices, func(c proto.Choice) bool { return c.N == choice })
+	return i >= 0 && approves(sq.q.Choices[i].Label)
 }

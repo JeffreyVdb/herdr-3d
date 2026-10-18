@@ -64,6 +64,10 @@ type screenQuestion struct {
 	// op is what a permission or trust menu is about (#106; nil: another
 	// kind).
 	op *menuOp
+	// about and since are what its hash folds in of the screen (bind adds
+	// its native call's).
+	about []string
+	since int64
 }
 
 // parseQuestion is parseQuestionOf a harness not known.
@@ -124,7 +128,8 @@ func parseQuestionOf(harness, screen string, since int64) screenQuestion {
 		sq.op = opOf(harness, sq.q, lines, first, qline, since)
 		about = sq.op.hashLines()
 	}
-	sq.q.Hash = questionHash(sq.q, about, since)
+	sq.about, sq.since = about, since
+	sq.bind(nil)
 	return sq
 }
 
@@ -360,11 +365,12 @@ func clip(s string) string {
 }
 
 // questionHash identifies a question for worker.answer: 16 hex over its
-// kind, text and choices, what its menu is about (menuContext) and when the
-// worker turned blocked (not the cursor, not the rest of the excerpt). So
-// an answer is for this operation in this blocked spell only: approving
-// "touch a" never approves the "rm -rf b" asked next, even when the
-// question and its choices read the same.
+// kind, text and choices, what its menu is about (menuContext; #106: a
+// permission or trust menu's operation, and its native call when known)
+// and when the worker turned blocked (not the cursor, not the rest of the
+// excerpt). So an answer is for this operation in this blocked spell only:
+// approving "touch a" never approves the "rm -rf b" asked next, even when
+// the question and its choices read the same.
 func questionHash(q proto.Question, about []string, since int64) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%d\x00", q.Kind, q.Text, since)
@@ -399,11 +405,13 @@ func (sq screenQuestion) answerKeys(n int) []string {
 }
 
 // questionState is a blocked worker's question, read from its pane, and
-// (#106) what its menu is about.
+// (#106) what its menu is about, and all it was read as (sq: its hash is
+// bound again when the worker's calls change).
 type questionState struct {
 	pane string
 	q    *proto.Question
 	op   *menuOp
+	sq   *screenQuestion
 }
 
 // withQuestion puts a worker's question on its view while it is blocked,
@@ -474,6 +482,7 @@ func (h *Hub) questionLoop(ctx context.Context, id, session, pane string) {
 				return true
 			case readErr == nil && !async:
 				p := parseQuestionOf(harnessOf(w), screen, w.StatusSince)
+				h.bindNative(id, &p)
 				sq = &p
 			}
 			h.setQuestion(id, pane, sq)
@@ -504,7 +513,7 @@ func (h *Hub) setQuestion(id, pane string, sq *screenQuestion) {
 	next.Question = q
 	h.workers[id] = &next
 	if q != nil {
-		h.questions[id] = questionState{pane: pane, q: q, op: sq.op}
+		h.questions[id] = questionState{pane: pane, q: q, op: sq.op, sq: sq}
 	} else {
 		delete(h.questions, id)
 	}
@@ -528,7 +537,9 @@ func (h *Hub) startAnswer(ctx context.Context, c *Client, cmd proto.Command) err
 // lane (hub goroutine), for a client's command and (#88) a Telegram card's
 // tap alike: end gets the outcome. #106: native, when not "", is the
 // native call the tap was for (nativeCall.id): the menu must still be for
-// it.
+// it. For both, the hash binds the native call when one is known
+// (bindNative), and a permission whose dialog's top is off the screen is
+// approved only with its call known (partialApproval).
 func (h *Hub) queueAnswer(ctx context.Context, a proto.WorkerAnswerArgs, native string, end inputEnd) error {
 	if !hashRe.MatchString(a.Hash) {
 		return bad("hash must be 16 hex characters")
@@ -562,10 +573,8 @@ func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, native, sess
 			return false
 		}
 		sq = parseQuestionOf(harnessOf(w), screen, w.StatusSince)
+		nc = h.bindNative(a.ID, &sq)
 		h.setQuestion(a.ID, pane, &sq) // what it asks now
-		if native != "" {
-			nc = h.nativeFor(a.ID, sq.op)
-		}
 		return true
 	})
 	switch {
@@ -577,6 +586,8 @@ func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, native, sess
 		return nil, fmt.Errorf("%w: the screen asks %q now (hash %s)", errStale, sq.q.Text, sq.q.Hash)
 	case native != "" && (nc == nil || nc.id != native):
 		return nil, fmt.Errorf("%w: the menu is not for the call tapped any more", errStale)
+	case !a.Cancel && partialApproval(sq, nc, a.Choice):
+		return nil, fmt.Errorf("%w: part of what it asks about is off its screen, so it is not approved from here: approve it in its terminal", errInvalidState)
 	}
 	var keys []string
 	if a.Cancel {

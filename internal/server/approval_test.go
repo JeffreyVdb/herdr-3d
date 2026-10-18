@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 )
 
@@ -133,6 +134,18 @@ func newKeyboard(t *testing.T, ch *notify.FakeChannel, ref notify.Ref, prefix, o
 	}
 }
 
+// questionOf is worker id's question as a new client's snapshot has it.
+func (rb *replyBridge) questionOf(t *testing.T, ws string) *proto.Question {
+	t.Helper()
+	for _, w := range rb.connect(proto.Hello{}).snapshot().World.Workers {
+		if w.ID == rb.ids[ws] {
+			return w.Question
+		}
+	}
+	t.Fatalf("no %s", ws)
+	return nil
+}
+
 // #106: a command line that reads like a status line ("esc to interrupt")
 // is the operation's: the card shows it, and a tap on its Yes once the
 // screen asks about another command sends nothing; the new one gets its
@@ -192,6 +205,35 @@ func TestCardMenuQuotedPasswordThroughTheHub(t *testing.T) {
 	}
 }
 
+// #106: a permission dialog whose top is off the screen and whose call is
+// not known is not approved from the game either (the screen shows only
+// its end): its No is sent; a change anywhere it shows makes an answer
+// stale.
+func TestAnswerPartialDialog(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridgeWith(t, func(o *server.Options) { o.QuestionPoll = time.Hour; o.AnswerTimeout = time.Millisecond })
+	lines := []string{"D=/tmp/safe"}
+	for range 15 {
+		lines = append(lines, "echo step")
+	}
+	full := bashDialog(strings.Join(append(lines, "rm -f $D/*"), "\n   "), "Clean directory")
+	cut := full[strings.Index(full, "   D="):]
+	rb.term.setScreen("w1:p1", cut)
+	rb.setStatus("w1", "blocked")
+	q := upsertFor(rb.c, rb.ids["w1"], func(w *proto.Worker) bool { return w.Question != nil }).Question
+	rb.c.mustError(proto.CmdWorkerAnswer, proto.WorkerAnswerArgs{ID: rb.ids["w1"], Hash: q.Hash, Choice: 1}, proto.ErrInvalidState)
+	rb.term.setScreen("w1:p1", strings.Replace(cut, "D=/tmp/safe", "D=/tmp/important", 1))
+	rb.c.mustError(proto.CmdWorkerAnswer, proto.WorkerAnswerArgs{ID: rb.ids["w1"], Hash: q.Hash, Choice: 3}, proto.ErrStale)
+	if calls := rb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("typed %q", calls)
+	}
+	now := rb.questionOf(t, "w1")
+	rb.c.mustAck(proto.CmdWorkerAnswer, proto.WorkerAnswerArgs{ID: rb.ids["w1"], Hash: now.Hash, Choice: 3})
+	if calls := rb.term.Calls(); !slices.Equal(calls, []string{"keys w1:p1 3"}) {
+		t.Fatalf("calls %q", calls)
+	}
+}
+
 // #106: a card that knew its call (A) and whose screen now shows a command
 // that differs from it only in its spaces is not A's any more: it shows
 // what the screen asks, with a new keyboard; a tap on the old one sends
@@ -211,5 +253,28 @@ func TestCardMenuNativeWordsThroughTheHub(t *testing.T) {
 	tapAnswered(t, rb.ch, 1, tapChangedText)
 	if calls := rb.term.Calls(); len(calls) != 0 {
 		t.Fatalf("typed %q", calls)
+	}
+}
+
+// #106: the game's answer is bound to the call its question was read with:
+// once the transcript replaces it (the same command, in another directory)
+// an answer with the old hash sends nothing.
+func TestAnswerBoundToNativeCall(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridgeWith(t, func(o *server.Options) { o.AnswerTimeout = time.Millisecond })
+	rb.repliesOn(t)
+	appendLine(t, rb.claude, bashCallLine("toolu_one", "touch target", "Run command"))
+	ref := rb.menuCardOf(t, "w1", bashDialog("touch target", "Run command"))
+	waitCardText(t, rb.ch, ref, "In: /home/u/w1")
+	old := rb.questionOf(t, "w1").Hash
+	appendLine(t, rb.claude, resultLine("toolu_one")+strings.Replace(bashCallLine("toolu_two", "touch target", "Run command"),
+		`"cwd":"/home/u/w1"`, `"cwd":"/home/u/important"`, 1))
+	waitCardText(t, rb.ch, ref, notify.CardReplacedText)
+	rb.c.mustError(proto.CmdWorkerAnswer, proto.WorkerAnswerArgs{ID: rb.ids["w1"], Hash: old, Choice: 1}, proto.ErrStale)
+	if calls := rb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("typed %q", calls)
+	}
+	if next := waitCardText(t, rb.ch, cardOf(t, rb.ch, 2), "In: /home/u/important"); len(next.Buttons) != 3 {
+		t.Fatalf("new card %+v", next)
 	}
 }
