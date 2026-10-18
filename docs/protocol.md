@@ -2613,17 +2613,18 @@ words for 10 minutes, never the text.
 
 When a worker turns `blocked`, the bridge reads its screen (`herdr pane read --source visible`), and again every 2 s
 while it stays blocked; a new question is a `worker.upsert`. `question` is on the worker in snapshots and upserts only
-while it is `blocked` and its screen could be read; the upsert of the worker leaving `blocked` has none. Detection is
+while it is `blocked` and its screen could be read; the upsert of the worker leaving `blocked` has none. #106: a read
+that fails keeps the last `question`, up to five reads in a row; then it goes. Detection is
 heuristic, tested on screens captured from Claude Code 2.1 and Codex 0.158 (`internal/server/testdata/screens`):
 
 | field | |
 |---|---|
 | `kind` | `trust` (the agent's trust-this-folder dialog), `permission` (a menu whose first choice starts with "Yes" and one with "No": a tool or command approval), `choice` (any other menu, e.g. Claude's AskUserQuestion), `other` (blocked, no menu recognised) |
 | `text` | the line above the menu that asks ("Do you want to proceed?", "Would you like to run the following command?"), cut after its first `?`; `""` if none |
-| `excerpt` | the screen's last ≤ 8 non-empty lines, trimmed, each ≤ 200 characters |
+| `excerpt` | the screen's last ≤ 8 non-empty lines, trimmed, each ≤ 200 characters; #106: not a line that only says how long something has run (Claude Code's "Background task running 12s", a spinner's "✻ Thinking… (12s · esc to interrupt)", an elapsed time or a countdown on its own), so a ticking counter is no `worker.upsert` every read |
 | `choices` | the menu, top to bottom, `n` from 1: the digits shown (`❯ 1. Yes  2. …  3. No`), or for a menu without digits (Claude's trust dialog) the cursor line and the lines aligned with it; `[]` without a menu |
 | `selected` | the choice the cursor (`❯` / `›`) is on, when seen |
-| `hash` | 16 hex over `kind`, `text`, `choices`, the lines above the menu (what it is about: up to the dialog's top rule, at most 12 lines, e.g. `Bash command` / `touch notes.txt`) and the worker's `status_since` (when it turned `blocked`); not the cursor, not the rest of the excerpt. It is which question an answer is for: an approval never approves another command, file or folder asked with the same words, nor anything asked after the worker was blocked again, even on the same screen. |
+| `hash` | 16 hex over `kind`, `text`, `choices`, the lines above the menu (what it is about) and the worker's `status_since` (when it turned `blocked`); not the cursor, not the rest of the excerpt. It is which question an answer is for: an approval never approves another command, file or folder asked with the same words, nor anything asked after the worker was blocked again, even on the same screen. #106: for a `permission` or `trust` menu, what it is about is its dialog's own lines, whole (not cut at 12 lines or 200 characters), from its top (Claude Code's rule at the screen's left edge, Codex's first line, "Would you like to …" or "Folder access") down to its question (Claude) or its choices (Codex), without the lines the excerpt leaves out, and whether that top was on the screen; so a change anywhere in a tall command or past a long line's 200th character is another hash, and a ticking counter is none. A rewrap (a resize) is another hash. Any other menu: up to the dialog's top rule, at most 12 lines, e.g. `Bash command` / `touch notes.txt`. |
 
 What herdr 0.9.0 reports, and what picks a choice (checked live):
 
@@ -4914,24 +4915,42 @@ while it is off.
   answered without a word. At most 30 taps a minute on one worker's cards, 60 in all.
 - **Menu buttons** (#88; `replies` on): a worker `blocked` on a `permission` or `trust` menu its screen shows
   (`worker.question` with choices; not a `choice` one) gets one card after its notification: "Permission" or "Trust
-  folder", what such a menu asks in a fixed line (not the screen's question line), a note that what it is about is not
-  sent, each choice and a button for each; no Cancel (each such menu has its own No or Quit). The question is read off
-  the screen a moment after the worker turns blocked, so the card comes once both are there for the same blocked spell
-  (`status_since`): a worker first seen blocked (a restart) rings nothing and gets no card. Of the menu only its
-  choices' labels go: one that says what not to ask about again is cut where its command would start ("Yes, and
-  don't ask again for …", a one-letter key such as "(p)" kept), any other that may name a command ("ask again",
-  "command") is "…" unless known to name none, a span in backticks elsewhere is `` `…` ``, and anything shaped
-  like a key or token is removed; never a line above the menu (its question, the command, the edit, a trust dialog's
-  folder) nor the rest of the screen. A tap answers as the game's
-  `worker.answer` does, with the card's `hash` and the choice's number, on the worker's input lane, no client: the
-  screen is read again first, and a menu no longer shown (another hash, the worker no longer blocked) sends no key and
-  the card says "No longer open"; it says "Answered in the game." once the bridge sees the menu leave first. A new
-  menu in the same blocked spell closes the old card and gets its own. Keys sent and the worker still blocked after
+  folder", what such a menu asks in a fixed line (not the screen's question line), what it is about, each choice and a
+  button for each; no Cancel (each such menu has its own No or Quit). The question is read off the screen a moment
+  after the worker turns blocked, so the card comes once both are there for the same blocked spell (`status_since`): a
+  worker first seen blocked (a restart) rings nothing and gets no card. Of the labels: one that says what not to ask
+  about again is cut where its command would start ("Yes, and don't ask again for …", a one-letter key such as "(p)"
+  kept), any other that may name a command ("ask again", "command") is "…" unless known to name none, a span in
+  backticks elsewhere is `` `…` ``, and anything shaped like a key or token is removed. #106: **what it is about** is
+  the dialog's own lines from its top (Claude Code's rule at the left edge, Codex's first line) down to its question
+  (Claude) or its choices (Codex), never the conversation above nor the rest of the screen; for a Claude worker whose
+  transcript has the pending call the dialog shows (its command whole, or its file's path), that call instead: its
+  whole command, its description, its directory ("In: …"), the dialog's other lines ("It also says: …") and, in
+  bypass mode, that Claude Code denies a removal unanswered after about two minutes. Each line is redacted (a
+  password after `-u user:`, an auth header's value, a secret-looking assignment or option's value, a MySQL or
+  sshpass password, a URL's password, key-shaped tokens) and cut at 300 characters, at most 24 lines and 1800
+  characters in all, the rest counted. A dialog whose top is off the screen says so and, without its call, has no
+  button for a choice that approves (a Yes): approve it in the game. A tap answers as the game's `worker.answer` does,
+  with the card's `hash` and the choice's number, on the worker's input lane, no client: the screen is read again
+  first, and a menu no longer shown (another hash, the worker no longer blocked, another call) sends no key. The card
+  follows its operation through redraws (an elapsed counter, a rewrap: one card, edited when it reads otherwise, with
+  a new keyboard; a tap on the old one says "It changed: check the card and tap again") and through failed screen
+  reads (the bridge keeps the question for five reads in a row; the card stays while the blocked spell lasts). It
+  ends "Replaced: it asks about something else now." (another operation in the spell; its card follows, at once or
+  "within a minute" under the send budget) or "No longer waiting: it was answered elsewhere, or the agent moved
+  on.", never "Answered in the game.": the bridge cannot know. Keys sent and the worker still blocked after
   `AnswerTimeout` (3 s): the card says "✓ Sent: <choice>" and "It still waits on its menu: look at it in the game."
-  and offers nothing more for that menu. A menu gets one card while the blocked spell lasts, though its screen read
-  fails a while and it comes back or other menus come between; a spell's first 32 menus get cards, and past that it
-  opens none (the notification went; answer in the game). The gates, the taps' answers and the windows are the cards'
-  above.
+  and offers nothing more for that menu. An answer the bridge could not send while the menu is still there (it read
+  the screen redrawn, its lane full, a read failed) keeps the card and its buttons, saying why. An operation gets one
+  card while the blocked spell lasts, though its screen read fails a while and it comes back or other menus come
+  between. The gates, the taps' answers and the windows are the cards' above.
+- **Send budget** (#106), per destination (the paired chat): every call to Telegram but a tap's answer and the test
+  message takes a token of a bucket of 5 refilled one a second, and a rate limit's `retry_after` pauses them all; at
+  most 10 alerts and new cards a rolling minute, one alert per worker a minute (needs you or done) and 3 new card sets
+  per worker a minute. What does not fit waits, one alert and one card set per worker, the latest replacing the
+  earlier; it goes when it fits if the worker is still at it (the same episode, the same question), else it is
+  dropped. A needs-you alert held by its worker's minute still lets its card go. Silent messages count. A restart
+  starts no burst: workers first seen are known silently and nothing waiting survives it.
 - **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`,
   `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}` and (#13)
   `notify.reply` `{"id"?, "text_bytes", "text_runes", "outcome"}` (`sent`, else the refusal: `not_a_reply`,
@@ -4942,7 +4961,14 @@ while it is off.
   `empty`) and `notify.answer` `{"id", "kind", "questions", "choices"?, "typed_bytes"?, "typed_runes"?, "cancel"?,
   "outcome"}` (`sent`, else the refusal of a reply's, or `closed`; #88: `unresolved`, a menu's keys sent and the
   worker still blocked, not an error); a card's answer writes no `worker.answer_ask`, `worker.answer_followup` or
-  (#88) `worker.answer` row. Never a message's text, an answer, a label, a code, a token or a Telegram id.
+  (#88) `worker.answer` row. #106: `notify.tap`'s outcome `changed` (a menu card's old keyboard); `notify.menu`
+  `{"id", "source"?: "native" | "screen", "partial"?, "redraws"?, "spell_ops"?, "outcome"}` when a menu's card ends
+  (`answered`, `unresolved`, `replaced`, `gone`, `replies_off`; `failed`, an error: not delivered): where its identity
+  was from, whether its approving choices were withheld, how often its hash changed under one operation, how many
+  operations its blocked spell asked about; `notify.limit` `{"id", "kind": "alert" | "cards", "cause": "cooldown" |
+  "budget" | "worker_cards", "coalesced"?, "outcome": "sent" | "dropped"}` when something the send budget held goes
+  or is dropped, with how many later states it stood for. Never a message's text, an answer, a label, a command, a
+  hash, a code, a token or a Telegram id.
 
 ### Host stats
 
