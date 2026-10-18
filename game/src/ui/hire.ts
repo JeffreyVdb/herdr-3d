@@ -484,8 +484,8 @@ export class HireDialog {
   private readonly docs = new Map<string, PromptDraft>();
   /** The last hire attempt stopped on a failed upload: the message stays until every image is uploaded or gone. */
   private uploadFailed = false;
-  /** #108: Hire's first task is resolved and reviewed now: nobody is being hired yet, so closing hires nobody. */
-  private reviewing = false;
+  /** #108: the opening (`gen`) whose Hire resolves and reviews its first task now: nobody is hired yet, so closing hires nobody. */
+  private reviewing = -1;
   /** The label the user typed (the prepared name is only a default), restored over the prepared one. */
   private typedLabel: string | null = null;
   /** The model filter of a long list; a harness switch clears it. */
@@ -542,7 +542,7 @@ export class HireDialog {
     this.dialog.addEventListener('cancel', () => {
       // Esc while the hire is on its way: the hire still happens; the dialog just goes. (#108: not before its first task
       // was reviewed: then nobody is hired.)
-      if (this.state === 'hiring') this.host.toast(this.reviewing ? 'Not hired: it was closed before its first task was checked for secrets.' : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
+      if (this.state === 'hiring') this.host.toast(this.reviewing === this.gen ? 'Not hired: it was closed before its first task was checked for secrets.' : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
     });
     // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
@@ -1399,11 +1399,11 @@ export class HireDialog {
       this.setStatus(waiting ? `Uploading ${waiting === 1 ? 'the image' : `${waiting} images`}, then looking for secrets in the first task…` : manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the first task…');
       this.render();
       const still = () => this.dialog.open && gen === this.gen;
-      this.reviewing = true;
+      this.reviewing = gen;
       const res = await doc.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES - added });
       if (!still()) return;
       if (!res.ok) {
-        this.reviewing = false;
+        this.reviewing = -1;
         this.state = 'ready';
         this.resolveForm();
         this.uploadFailed = res.reason === 'upload';
@@ -1413,7 +1413,8 @@ export class HireDialog {
       }
       const req = { key: `hire:${floor}:${desk}`, text: res.text, target: `${who} at Desk ${desk + 1}`, manual };
       // (Closed meanwhile: no review opens for it. The coordinator's copy has no `live`: a background hire closes this.)
-      const out = await flow.review({ ...req, live: still }).finally(() => (this.reviewing = false));
+      const out = await flow.review({ ...req, live: still });
+      if (this.reviewing === gen) this.reviewing = -1;
       if (!still()) return;
       if (out.kind === 'kept') {
         this.state = 'ready';

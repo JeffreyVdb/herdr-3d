@@ -131,8 +131,8 @@ export class HireReviewDialog {
   private floor = '';
   /** What `worker.hire` is doing, once it is sent (null: not yet): the status line under "Waking floor…" (#58). */
   private hiringText: string | null = null;
-  /** #108: Hire's task is reviewed now: nobody is being hired yet, so closing hires nobody. */
-  private reviewing = false;
+  /** #108: the review (`epoch`) whose Hire reviews its task now: nobody is hired yet, so closing hires nobody. */
+  private reviewing = -1;
   private desk = 0;
   private state: ReviewState = 'preparing';
   private prep: HirePrepare | null = null;
@@ -203,7 +203,7 @@ export class HireReviewDialog {
     this.dialog.addEventListener('cancel', () => {
       // Esc while the hire is on its way: the hire still happens; the dialog just goes. (#108: not before its task was
       // reviewed: then nobody is hired.)
-      if (this.state === 'hiring') this.host.toast(this.reviewing ? 'Not hired: it was closed before its task was checked for secrets.' : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
+      if (this.state === 'hiring') this.host.toast(this.reviewing === this.epoch ? 'Not hired: it was closed before its task was checked for secrets.' : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
     });
     // Typed text and consequential choices in here: only the close button, Cancel and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
@@ -895,8 +895,9 @@ export class HireReviewDialog {
       this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the task…');
       this.render();
       // (Closed meanwhile: no review opens for it. The coordinator's copy has no `live`: the hire is on its way then.)
-      this.reviewing = true;
-      const out = await flow.review({ ...req, live: () => this.dialog.open && epoch0 === this.epoch }).finally(() => (this.reviewing = false));
+      this.reviewing = epoch0;
+      const out = await flow.review({ ...req, live: () => this.dialog.open && epoch0 === this.epoch });
+      if (this.reviewing === epoch0) this.reviewing = -1;
       if (!this.dialog.open || epoch0 !== this.epoch) return;
       this.state = 'ready';
       if (out.kind === 'kept') {

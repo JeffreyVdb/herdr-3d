@@ -237,6 +237,27 @@ describe('HireDialog and prompt secrets (#108 round 4)', () => {
     expect(t.toasts).toEqual(['Not hired: it was closed before its first task was checked for secrets.']);
   });
 
+  it('closed while its images upload (before the review): later openings’ Esc still says a handed-over hire is on its way', async () => {
+    const t = setup();
+    await typed(t, TASK);
+    t.inner.editor.draft.addImages([new File([new Uint8Array([1, 2])], 'screenshot.png', { type: 'image/png' })]);
+    await flush();
+    t.press('hire');
+    await flush();
+    const dialog = (t.dlg as unknown as { dialog: HTMLDialogElement }).dialog;
+    dialog.dispatchEvent(new Event('cancel'));
+    t.dlg.close();
+    expect(t.toasts).toEqual(['Not hired: it was closed before its first task was checked for secrets.']);
+    // Another desk, no first task: nothing to review, the hire goes to the coordinator at once.
+    t.dlg.open('floor', 1);
+    await flush();
+    t.press('hire');
+    dialog.dispatchEvent(new Event('cancel'));
+    expect(t.toasts.at(-1)).toBe('The hire is still on its way; the worker shows up at the desk when it is done.');
+    await flush();
+    expect(t.hires()).toEqual([expect.objectContaining({ desk_index: 1 })]);
+  });
+
   it('drafts: memory only while on (no storage key holds the task at any step), written again once the switch goes off', async () => {
     const stored = () => Object.keys(localStorage).filter((k) => (localStorage.getItem(k) ?? '').includes('ghp_abcdefghijklmnopqrstu1'));
     const t = setup();
