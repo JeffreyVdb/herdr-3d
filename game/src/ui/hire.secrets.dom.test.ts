@@ -195,6 +195,30 @@ describe('HireDialog and prompt secrets (#108 round 4)', () => {
     expect(t.hires()).toHaveLength(2);
   });
 
+  // #108 round 4 fix (V1): the first task's chord, as every other composer's (docs/shortcuts.md).
+  it('Ctrl/⌘+Shift+X in the first task: the review on purpose, as its button; an empty task says to write one', async () => {
+    const chord = () => document.getElementById('hire-task')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', code: 'KeyX', ctrlKey: true, shiftKey: true, bubbles: true }));
+    const t = setup();
+    t.dlg.open('floor', 0);
+    await flush();
+    chord();
+    await flush();
+    expect(t.dlg.summary()).toMatchObject({ state: 'ready', status: 'Write the first task first, then review its secrets.', error: true });
+    t.inner.editor.draft.replace(0, 0, 'use the code 4471 to get in');
+    await flush();
+    chord();
+    await flush();
+    expect(t.b.open()).toMatchObject({ manual: true, counts: { found: 0 }, target: 'default at Desk 1' });
+    expect(t.hires()).toEqual([]);
+    // Off: the chord does nothing.
+    const off = setup({ on: false });
+    await typed(off, 'use the code 4471 to get in');
+    document.getElementById('hire-task')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', code: 'KeyX', ctrlKey: true, shiftKey: true, bubbles: true }));
+    await flush();
+    expect(off.b.open()).toBeNull();
+    expect(off.hires()).toEqual([]);
+  });
+
   // #108 round 4 fix (D1's audit): closed while its first task is scanned, nothing of that hire goes, nor opens.
   it('closed (Esc) while the first task is scanned: no review opens, nobody hired, no desk held, and said so', async () => {
     const t = setup();

@@ -557,6 +557,8 @@ export class HireDialog {
       }
       void this.hire();
     });
+    // #108: the first task's review on purpose (Ctrl/⌘+Shift+X, with the switch on), as its "Review secrets".
+    onReviewKey(this.form, () => this.host.secrets, () => void this.hire(true));
     parent.append(this.dialog);
   }
 
