@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 )
 
 // RulesVersion names the rule set: it is part of every revision, so a
@@ -42,18 +43,20 @@ type Candidate struct {
 // for its value's shape (a token format, a length, a digit) that runs into a
 // reference may owe that shape to the mask's bytes, and one found as typed
 // that a reference's own bytes cut short (clipped) has a false edge. Such a
-// span is borrowed: it ranks after every other (resolve), so it never takes
-// another's typed bytes, and is a candidate only where nothing else is.
-// Overlaps are resolved on the whole ranges; then each candidate keeps its
-// parts outside the references. The first call compiles the rules.
+// span is borrowed: it ranks after every other (resolve), and a span it wins
+// over keeps the bytes no winner has, so it never takes another's typed
+// bytes. Overlaps are resolved on the whole ranges; then each candidate keeps
+// its parts outside the references. The first call compiles the rules.
 func Scan(text string, own func(path string) bool) []Candidate {
 	refs := references(text, own)
 	spans := detect(text)
+	mtext := text
 	if len(refs) > 0 {
 		for i := range spans {
 			spans[i].borrowed = clipped(spans[i], refs)
 		}
-		for _, s := range detect(masked(text, refs)) {
+		mtext = masked(text, refs)
+		for _, s := range detect(mtext) {
 			s.borrowed = s.shaped && overlapsAny(s.start, s.end, refs)
 			spans = append(spans, s)
 		}
@@ -62,9 +65,9 @@ func Scan(text string, own func(path string) bool) []Candidate {
 	byRange := kindsBySpan(spans)
 	kinds := map[[2]int]spanKinds{}
 	var won []span
-	for _, w := range resolve(spans) {
+	for _, w := range resolve(text, mtext, spans, refs) {
 		for _, p := range outside(text, []span{w}, refs) {
-			kinds[[2]int{p.start, p.end}] = byRange[[2]int{w.start, w.end}]
+			kinds[[2]int{p.start, p.end}] = byRange[w.found()]
 			won = append(won, p)
 		}
 	}
@@ -82,11 +85,12 @@ func Scan(text string, own func(path string) bool) []Candidate {
 	return out
 }
 
-// detect is every detector's spans in text: Gitleaks' rules, then the
+// detect is every detector's spans in text: Gitleaks' rules (and its
+// provider rules again before a sentence's punctuation), then the
 // structural ones.
 func detect(text string) []span {
 	var spans []span
-	for _, m := range Gitleaks(text) {
+	for _, m := range append(Gitleaks(text), punctuated(text)...) {
 		rank := rankProvider
 		if strings.Contains(strings.ToLower(m.Rule), "generic") {
 			rank = rankGeneric
@@ -94,6 +98,120 @@ func detect(text string) []span {
 		spans = append(spans, span{start: m.Start, end: m.End, kind: "gitleaks:" + m.Rule, rank: rank, shaped: true})
 	}
 	return append(spans, structural(text)...)
+}
+
+// gitleaksBoundary ends most Gitleaks rules: after the token a blank, a
+// quote, a ';', an escaped newline or the end.
+const gitleaksBoundary = `(?:[\x60'"\s;]|\\[nr]|$)`
+
+var (
+	punctOnce  sync.Once
+	punctRules []*compiledRule
+)
+
+// sentencePunct may end a sentence right after a token (not ']': a
+// reference ends in one).
+const sentencePunct = ".,:!?)"
+
+// punctuated are the findings of the provider rules that ask for
+// gitleaksBoundary after their token where a sentence's punctuation stands
+// instead: a run of sentencePunct right after a token-like word (tokenBefore),
+// before a blank or the end ("Use sk_live_….", "(hf_…)."). Those rules run
+// again over a copy of text with each such run blanked (the same length, so
+// the ranges hold), and a finding counts when its token ends at one.
+// Gitleaks itself, and its parity, are untouched (decisions.md, #108 row 1).
+// They run on the lines that hold such a run (at most punctWindow bytes
+// before it), their keywords looked for there: each rule's keyword is in
+// its own match (a token's prefix, the name before a value). When those
+// lines are most of the text, once on the whole text.
+func punctuated(text string) []RuleMatch {
+	var b []byte
+	ends := map[int]bool{}
+	var wins [][2]int
+	for i := 1; i < len(text); i++ {
+		if !wordAt(text, i-1) || strings.IndexByte(sentencePunct, text[i]) < 0 {
+			continue
+		}
+		j := i
+		for j < len(text) && strings.IndexByte(sentencePunct, text[j]) >= 0 {
+			j++
+		}
+		if (j == len(text) || isSpace(text[j])) && tokenBefore(text, i) {
+			if b == nil {
+				b = []byte(text)
+			}
+			ends[i] = true
+			for k := i; k < j; k++ {
+				b[k] = ' '
+			}
+			ws := max(strings.LastIndexByte(text[:i], '\n')+1, i-punctWindow)
+			if n := len(wins); n > 0 && ws <= wins[n-1][1] {
+				wins[n-1][1] = j
+			} else {
+				wins = append(wins, [2]int{ws, j})
+			}
+		}
+		i = j
+	}
+	if len(ends) == 0 {
+		return nil
+	}
+	total := 0
+	for _, w := range wins {
+		total += w[1] - w[0]
+	}
+	if total > len(text)/2 {
+		wins = [][2]int{{0, len(text)}}
+	}
+	loadRules()
+	punctOnce.Do(func() {
+		for i := range compiledRules {
+			r := &compiledRules[i]
+			if strings.HasSuffix(r.Regex, gitleaksBoundary) && !strings.Contains(strings.ToLower(r.ID), "generic") {
+				punctRules = append(punctRules, r)
+			}
+		}
+	})
+	blanked := string(b)
+	var out []RuleMatch
+	for _, w := range wins {
+		part := blanked[w[0]:w[1]]
+		lower, nl := strings.ToLower(part), newlines(part)
+		var fs []glFinding
+		for _, r := range punctRules {
+			if len(r.Keywords) == 0 || anyContains(lower, r.Keywords) {
+				fs = r.detect(part, nl, fs)
+			}
+		}
+		for _, f := range fs {
+			if m := (RuleMatch{Rule: f.Rule, Start: f.Start + w[0], End: f.End + w[0]}); f.secret != "" && ends[m.End] {
+				out = append(out, m)
+			}
+		}
+	}
+	return out
+}
+
+// punctWindow bounds how far before a punctuated run its rules look.
+const punctWindow = 1 << 10
+
+// minPunctSecret is the shortest secret a rule punctuated runs can find.
+const minPunctSecret = 14
+
+// tokenBefore reports a word before i that may end a provider's token: at
+// least minPunctSecret bytes with no blank, and a digit, an '_' or both
+// cases (a long plain word, "internationalization.", is none). One that a
+// masked reference ends (Scan) ends no typed token.
+func tokenBefore(text string, i int) bool {
+	s := i
+	for s > 0 && !isSpace(text[s-1]) {
+		s--
+	}
+	w := text[s:i]
+	if len(w) < minPunctSecret || strings.Contains(w[len(w)-8:], referenceMask+referenceMask) {
+		return false
+	}
+	return hasDigit(w) || strings.Contains(w, "_") || strings.ToLower(w) != w && strings.ToUpper(w) != w
 }
 
 type spanKinds struct {
@@ -126,8 +244,9 @@ func kindsBySpan(lists ...[]span) map[[2]int]spanKinds {
 // is not borrowed wins (Scan), then the lower rank (a provider's exact
 // format, then the structural families in rank order, which take a value's
 // own boundary over Gitleaks' generic rules), then the earlier start, then
-// the longer range.
-func resolve(spans []span) []span {
+// the longer range. A span that loses keeps the parts kept says (mtext:
+// text with refs masked).
+func resolve(text, mtext string, spans, refs []span) []span {
 	sorted := slices.Clone(spans)
 	slices.SortFunc(sorted, func(a, b span) int {
 		switch {
@@ -146,18 +265,96 @@ func resolve(spans []span) []span {
 	})
 	var won []span
 	for _, s := range sorted {
+		var over []span
 		dup := false
 		for _, w := range won {
 			if s.start == w.start && s.end == w.end {
 				dup = true
 				break
 			}
+			if s.start < w.end && w.start < s.end {
+				over = append(over, w)
+			}
 		}
-		if !dup && !overlapsAny(s.start, s.end, won) {
+		switch {
+		case dup:
+		case len(over) == 0:
 			won = append(won, s)
+		default:
+			won = append(won, kept(text, mtext, s, over, refs)...)
 		}
 	}
 	return won
+}
+
+// valueKinds are the structural families whose span is a whole value
+// (decisions.md, #108 row 3): a provider's format inside one is a part of it.
+var valueKinds = map[string]bool{KindAuthHeader: true, KindAssignment: true, KindProse: true}
+
+// kept are the parts of s, which lost to the winners over, that stay
+// proposed (review S1, pass 4; the tuning round's class 2), each a part of
+// s with its kinds:
+//
+//   - when every winner over it is borrowed, every part no winner has: a
+//     match a reference helped never takes the value's other typed bytes;
+//   - when each is borrowed or a provider's format strictly inside s, a
+//     value (valueKinds), only the bytes glued after such a format (in
+//     mtext, text with refs masked: through a reference too): the value's
+//     rest it cut short (to a blank or an escape's backslash), never a
+//     list's next item, a URL's query or path (one led by , ; & / ? #), nor
+//     a sentence's punctuation.
+//
+// Any other winner (a value's own boundary: url-query over prose
+// "[…]&x=1"; a provider beside s) takes s's bytes, as rank says. A part is
+// never only blanks; nor a wrapper or punctuation, unless s runs into a
+// reference: then whatever it holds is proposed (outside drops a wrapper
+// beside one).
+func kept(text, mtext string, s span, over, refs []span) []span {
+	all := true
+	for _, w := range over {
+		switch {
+		case w.borrowed:
+		case w.rank == rankProvider && valueKinds[s.kind] && s.start <= w.start && w.end <= s.end:
+			all = false
+		default:
+			return nil
+		}
+	}
+	beside := overlapsAny(s.start, s.end, refs)
+	var out []span
+	at := s.start
+	for _, g := range append(slices.SortedFunc(slices.Values(over), func(a, b span) int { return a.start - b.start }),
+		span{start: s.end, end: s.end}) {
+		start, end := at, min(g.start, s.end)
+		at = max(at, g.end)
+		if start >= end {
+			continue
+		}
+		cutStart, cutEnd := start != s.start, end != s.end
+		if !all {
+			if !cutStart || strings.IndexByte(",;&/?#\\", mtext[start]) >= 0 || isSpace(mtext[start]) {
+				continue
+			}
+			end, cutEnd = min(end, blankAt(mtext, start)), false
+			if k := strings.IndexByte(mtext[start:end], '\\'); k >= 0 {
+				end = start + k
+			}
+		}
+		for cutStart && start < end && isSpace(mtext[start]) {
+			start++
+		}
+		for cutEnd && end > start && isSpace(mtext[end-1]) {
+			end--
+		}
+		if strings.TrimSpace(text[start:end]) == "" || !beside &&
+			(wrapper(text[start:end]) || !all && wrapper(strings.Trim(text[start:end], ".,;:"))) {
+			continue
+		}
+		p := s
+		p.start, p.end, p.whole = start, end, s.found()
+		out = append(out, p)
+	}
+	return out
 }
 
 var escapes = regexp.MustCompile(`\\[\\"'/bfnrtu$` + "`" + `\n]|%[0-9A-Fa-f]{2}`)

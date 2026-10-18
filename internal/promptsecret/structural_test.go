@@ -185,6 +185,9 @@ func TestScanOwnReferences(t *testing.T) {
 		{"flags", "run --password " + r1 + " --token=" + r2, nil},
 		{"adjacent and punctuated", "api_key=" + r1 + r2 + " PASSWORD=" + r1 + "; secret=(" + r2 + ")", nil},
 		{"the issue's wording", "Use the API credential in this file: " + r1, nil},
+		{"the tuning round's syntaxes", "The literal password used by the job is «" + r1 + "». curl -u admin:" + r1 + " https://x.test\n" +
+			r2 + "\nThe preceding line is the actual deployment password. The API credential is " + r1 + ". " +
+			"PASSWORD='" + r2 + "' Authorization: Bearer " + r1 + ". the token is (" + r2 + ").", nil},
 		{"a value around one", `PASSWORD="Value-77! ` + r1 + `" password=hunter2` + r2, []string{"Value-77!", "hunter2"}},
 		{"a path not of the bridge", `PASSWORD="Value-77! [secret in file /x]"`, []string{"Value-77! [secret in file /x]"}},
 		{"forged", "Use [secret in file /token=" + gh + "] and [secret in file " + ownDir + "/ZAHZG3XWLNNJXZCMAIQUEMHIF7/" + gh + "]",
@@ -237,6 +240,29 @@ func TestScanOwnReferences(t *testing.T) {
 		{"a query reference in a value", `PASSWORD="https://h/x?token=` + r1 + `&x=1"`, nil},
 		{"a template's sign", "PASSWORD=$" + r1, []string{"$"}},
 		{"a token's head alone", ghHead + r1, []string{ghHead}},
+		// Review S1 (pass 4): a match the reference helped (the mask's
+		// bytes, or an edge its '[' made) that wins never takes the typed
+		// bytes of the value around it, even when the value's own span
+		// was itself shaped (prose, a bare Bearer, a header without a
+		// scheme) and so borrowed too.
+		{"prose, a token the mask completes", "the password is " + ghHead + r1 + "Tail-Sentinel-77!", []string{ghHead, "Tail-Sentinel-77!"}},
+		{"key prose, a token the mask completes", "the token is " + ghHead + r1 + "Tail-Sentinel-77!", []string{ghHead, "Tail-Sentinel-77!"}},
+		{"a bare header, a token the mask completes", "Bearer " + ghHead + r1 + "Tail-Sentinel-77!", []string{ghHead, "Tail-Sentinel-77!"}},
+		{"a header without a scheme, a token the mask completes", "Authorization: " + ghHead + r1 + "Tail-Sentinel-77!",
+			[]string{ghHead, "Tail-Sentinel-77!"}},
+		{"prose, two references", "the password is " + ghHead + r1 + "Tail77" + r2 + "End88", []string{ghHead, "Tail77", "End88"}},
+		{"prose, a fine-grained token", "the token is github_pat_11ABCDEFG0abcdefghijk" + r1 + "Tail77",
+			[]string{"github_pat_11ABCDEFG0abcdefghijk", "Tail77"}},
+		{"a bare header, a Slack token", "Bearer xoxb-1234567890-k3Jd9" + r1 + "Tail77", []string{"xoxb-1234567890-k3Jd9", "Tail77"}},
+		// A dotted value glued to one is a value, not code: what a
+		// reference is beside is never a dotted name.
+		{"a JWT's rest after one", "PASSWORD=" + r1 + jwtHead + jwtTail, []string{jwtHead + jwtTail}},
+		{"a bare header, a JWT before one", "Bearer " + jwtHead + jwtTail + r1, []string{jwtHead + jwtTail}},
+		// The tuning round's detectors through one.
+		{"quoted words through one", `the password used by the job is "ab` + r1 + `cd"`, []string{"ab", "cd"}},
+		{"curl through one", "curl -u admin:ab" + r1 + "cd https://x.test", []string{"ab", "cd"}},
+		{"a named line through one", "ab" + r1 + "cd\nThe preceding line is the actual password.", []string{"ab", "cd"}},
+		{"credential phrase through one", "The API credential is AKIAH3JW" + r1 + "!Q6RM3UVZ7XK", []string{"AKIAH3JW", "!Q6RM3UVZ7XK"}},
 	})
 	// A part keeps the detectors of the range it was cut from.
 	for _, text := range []string{`PASSWORD="!@#%&+=?_- ` + r1 + `"`, `PASSWORD=` + r1 + `!@#%&+=?_-`} {
@@ -250,6 +276,262 @@ func TestScanOwnReferences(t *testing.T) {
 	if cs := promptsecret.Scan(`PASSWORD="`+r1+`"`, nil); len(cs) != 1 {
 		t.Fatalf("no own paths: %+v", cs)
 	}
+}
+
+// Review S1 (pass 4), as a matrix: a value that runs into the bridge's own
+// references, in each syntax, on either side of one, between two, keeps
+// every typed byte outside them proposed, whatever wins inside it (a token
+// the mask completes, one a reference's '[' cuts short, a complete one).
+// Only the references' bytes, a lone wrapper beside one, and an unquoted
+// value's closing bracket (a sentence's) are left out.
+func TestScanReferenceMatrix(t *testing.T) {
+	t.Parallel()
+	r1, r2 := ownRef("GXWCYAQQ2YUJGSWNCUK2JAZZ57"), ownRef("LEI5ZMIW4XSUXWUGR2R2IAUNOA")
+	const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+	tokens := []struct{ name, head, rest string }{ // the middle layout puts a reference between head and rest
+		{"github", "ghp_GT2MQVTdhGOubkn5tfdOv4eY", "nhJvEkcAI167"},
+		{"github prefix", "ghp_GT2MQVTdhGOubkn5tfdOv4eY", "Tail77"}, // the mask completes it
+		{"fine-grained prefix", "github_pat_11ABCDEFG0abcdefghijk", "Tail77"},
+		{"slack", "xoxb-1234567890-k3Jd9", "fLq0ZrMv8Xw2PbN"},
+		{"slack prefix", "xoxb-1234567890-k3Jd9", "Tail77"},
+		{"aws", "AKIAJ5CW2G4N", "7Q6RM3UV"},
+		{"stripe", "sk_live_k3Jd", "9fLq0ZrMv8"},
+		{"openai prefix", "sk-k3Jd9fLq0ZrMv8Xw2PbNT3BlbkFJ", "Tail77"},
+		{"huggingface", "hf_iTfQyUrymftnlmTum", "hmfJBgIuQynOSNPdV"},
+		{"jwt", jwt[:46], jwt[46:]},
+		{"jwt split", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIi", ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"},
+		{"password", "k3Jd9fLq0ZrMv8", "Tail77"},
+	}
+	syntaxes := []struct {
+		name, pre, post string
+		quoted          bool
+	}{
+		{"assignment quoted", `PASSWORD="`, `"`, true},
+		{"assignment unquoted", "PASSWORD=", "", false},
+		{"json", `{"api_key": "`, `"}`, true},
+		{"prose quoted", `the password is "`, `"`, true},
+		{"prose unquoted", "the password is ", "", false},
+		{"key prose quoted", `the token is "`, `"`, true},
+		{"key prose unquoted", "the token is ", "", false},
+		{"bare bearer", "Bearer ", "", false},
+		{"header without a scheme", "Authorization: ", "", false},
+		{"header", "Authorization: Bearer ", "", false},
+	}
+	trailing := []string{"", "TailSentinel", "!@#%&+=?_-", ")"}
+	n := 0
+	for _, tok := range tokens {
+		layouts := []struct{ name, value string }{
+			{"before", r1 + tok.head + tok.rest},
+			{"after", tok.head + tok.rest + r1},
+			{"middle", tok.head + r1 + tok.rest},
+			{"two", tok.head + r1 + tok.rest + r2 + "End88"},
+		}
+		for _, l := range layouts {
+			for _, tail := range trailing {
+				for _, syn := range syntaxes {
+					n++
+					checkReferenceCoverage(t, tok.name+"/"+l.name+"/"+syn.name+"/"+tail, syn.pre, l.value+tail, syn.post, syn.quoted)
+				}
+			}
+		}
+	}
+	t.Logf("%d cases", n)
+}
+
+// checkReferenceCoverage scans pre+value+post and checks that every byte of
+// value outside own references is in a candidate (but a part that is only a
+// wrapper, and an unquoted value's unbalanced closing bracket), that no
+// candidate holds a reference's byte, and that candidates never overlap.
+func checkReferenceCoverage(t *testing.T, name, pre, value, post string, quoted bool) {
+	t.Helper()
+	text := pre + value + post
+	cs := promptsecret.Scan(text, own)
+	covered := make([]bool, len(text))
+	for i, c := range cs {
+		if i > 0 && c.Start < cs[i-1].End {
+			t.Errorf("%s: candidates overlap: %+v", name, cs)
+		}
+		for j := c.Start; j < c.End; j++ {
+			covered[j] = true
+		}
+		if strings.Contains(text[c.Start:c.End], "[secret in file "+ownDir) {
+			t.Errorf("%s: a candidate holds a reference: %q", name, text[c.Start:c.End])
+		}
+	}
+	refs := ownRefRe.FindAllStringIndex(value, -1)
+	at := 0
+	var missing []string
+	for k := 0; k <= len(refs); k++ {
+		end := len(value)
+		if k < len(refs) {
+			end = refs[k][0]
+		}
+		part := value[at:end]
+		if k == len(refs) && !quoted && strings.HasSuffix(part, ")") && strings.Count(part, ")") > strings.Count(part, "(") {
+			part = part[:len(part)-1]
+		}
+		if part != "" && !isWrapper(part) {
+			for j := range len(part) {
+				if !covered[len(pre)+at+j] {
+					missing = append(missing, part)
+					break
+				}
+			}
+		}
+		if k < len(refs) {
+			at = refs[k][1]
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("%s: %q: %q not proposed; got %q", name, text, missing, values(text))
+	}
+}
+
+var ownRefRe = regexp.MustCompile(regexp.QuoteMeta("[secret in file "+ownDir+"/") + `[^\]]+\]`)
+
+// isWrapper is a part a scan may leave out beside a reference: blanks and
+// at most one quote, bracket or comma (docs/decisions.md, #108 row 6).
+func isWrapper(v string) bool {
+	return len(strings.TrimSpace(v)) <= 1 && strings.Trim(v, " \"'`()[]{},") == ""
+}
+
+// Recall (#108, the detector-tuning round): each class a held-out
+// evaluation found missing or cut short, with a clean look-alike beside
+// it (these cases are this repository's own).
+func TestScanRecall(t *testing.T) {
+	t.Parallel()
+	const hf = "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"
+	const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+	const gh = "ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"
+	checkScans(t, []scanCase{
+		// 1. A provider's token before a sentence's punctuation: its rule
+		// asks for a blank, a quote or the end after it.
+		{"token ends a sentence", "Here is the credential: " + hf + ".", []string{hf}},
+		{"token in parentheses", "If it fails, retry with token (" + hf + ".", []string{hf}},
+		{"token closes parentheses", "the Hugging Face one (" + hf + "). Then", []string{hf}},
+		{"stripe before a period", "Use sk_live_k3Jd9fLq0ZrMv8. Then deploy.", []string{"sk_live_k3Jd9fLq0ZrMv8"}},
+		{"jwt before a comma", "the session cookie holds " + jwt + ", which expires", []string{jwt}},
+		{"token before an exclamation", "Finally got it: " + hf + "!", []string{hf}},
+		{"a word with a token's prefix", "Install hf_transfer. Then set sk_live_mode, and run it.", nil},
+		{"a short prefix", "Read the hf_hub docs (see sk_test).", nil},
+		// 2. A header's credential runs to its end: a blank or a quote (a
+		// sentence's punctuation off when a blank follows), symbols kept.
+		{"header with a symbol", "Authorization: Bearer AKIAH3JW!Q6RM3UVZ7XK\r\nAccept: x", []string{"AKIAH3JW!Q6RM3UVZ7XK"}},
+		{"header line keeps its punctuation", "Authorization: Bearer UK0CcwZUvP8p!.:\r\nHost: x\r\n", []string{"UK0CcwZUvP8p!.:"}},
+		{"header at the end", "Authorization: Basic dXNlcjpwYXNzd29yZA==!", []string{"dXNlcjpwYXNzd29yZA==!"}},
+		{"bare header with a symbol", "send Bearer Zx81mQp27LwRt5!Yv9Nc, then wait", []string{"Zx81mQp27LwRt5!Yv9Nc"}},
+		{"header in quotes", `curl -H 'Authorization: Bearer abc!DEF-123' https://x.test`, []string{"abc!DEF-123"}},
+		{"header in a sentence", "send Authorization: Bearer Zx81mQp27LwRt5Yv9Nc. Then wait", []string{"Zx81mQp27LwRt5Yv9Nc"}},
+		{"credential phrase", "The actual API credential is AKIAH3JW!Q6RM3UVZ7XK and nothing else.", []string{"AKIAH3JW!Q6RM3UVZ7XK"}},
+		{"credentials colon", "credentials: Zx81-mQp27-LwRt5", []string{"Zx81-mQp27-LwRt5"}},
+		{"header templates", "Authorization: Bearer ${TOKEN}\nAuthorization: Bearer sk-proj-${OPENAI_API_KEY}\n" +
+			`-H "Authorization: Bearer $(gcloud auth print-access-token)"`, nil},
+		{"bearer url", "use Bearer https://auth.example.test/oauth2/token123456 there", nil},
+		{"header placeholder", "curl -H 'Authorization: Bearer [key]' https://api.example.test", nil},
+		{"credential words without values", "The credential is stored in the vault. Credentials: see the docs. Rotate API credentials yearly.", nil},
+		// A provider's format inside a wider value: the value's rest glued
+		// after it is proposed too; a list's next item, a URL's query or
+		// path is not the value's rest.
+		{"provider prefix in a header", "Authorization: Bearer " + gh + "!tail9", []string{gh, "!tail9"}},
+		{"provider prefix in an assignment", `PASSWORD="AKIAJ5CW2G4N7Q6RM3UV!x9 more"`, []string{"AKIAJ5CW2G4N7Q6RM3UV", "!x9"}},
+		{"provider prefix in prose", "the API key is " + gh + "-old2 now", []string{gh, "-old2"}},
+		{"provider then a list", "token=" + gh + ",extra", []string{gh}},
+		{"provider then a query", "the token is https://api.example.test/?access_token=" + gh + "&x=1", []string{gh}},
+		{"provider then a path", "the token is " + gh + "/settings", []string{gh}},
+		{"provider then a period in quotes", `the token is "` + gh + `."`, []string{gh}},
+		{"provider then an escape", `"Github_Token: ` + gh + `\r\nUse it."`, []string{gh}},
+		// 3. A shell word's '\'' keeps the value whole.
+		{"shell escape", `PASSWORD='abc'\''def9'`, []string{`abc'\''def9`}},
+		{"shell escape flag", `run --password 'abc'\''def' now`, []string{`abc'\''def`}},
+		{"shell escape export", `export DB_PASSWORD='it'\''s-Secret9'`, []string{`it'\''s-Secret9`}},
+		{"shell escape without a credential", `echo 'it'\''s fine'`, nil},
+		// 4. curl's -u user:password: the password, escapes as typed.
+		{"curl user", `curl -u "user:pa\"ss\$HOME\` + "`id\\`" + `\\end" https://x.test`, []string{`pa\"ss\$HOME\` + "`id\\`" + `\\end`}},
+		{"curl user unquoted", "curl --user admin:s3cret! https://x.test", []string{"s3cret!"}},
+		{"curl user glued", "curl -sSf -uadmin:hunt3r! https://x.test", []string{"hunt3r!"}},
+		{"curl's own rule", "curl -u admin:hunter22 https://x.test", []string{"admin:hunter22"}},               // Gitleaks' format wins
+		{"curl user quoted mid-word", "curl -u admin:'hun ter2' https://x.test", []string{"admin:'hun ter2'"}}, // Gitleaks' format
+		{"curl user templates", `curl -u "$USER:$PASS" https://x.test; curl -u user: https://x.test; curl -u ${CREDS} https://x.test`, nil},
+		{"curl user placeholders", "Use `curl -u user:pass https://x.test` or curl -u user:password, curl --user admin:[key] there.", nil},
+		{"not curl", "docker run -u 1000:1000 img && git push -u origin main && ps -u root:root", nil},
+		{"not curl's flag", "see curl docs; docker run -u 1000:1000 img", nil},
+		// 5. A quoted value after a credential word and a few words more.
+		{"quoted after words", `the password enclosed in these quotes, including the last character: "Kx81-mQp27LwRt5."`, []string{"Kx81-mQp27LwRt5."}},
+		{"quoted after words, colon", `the password enclosed in these quotes, including the last character: "Kx81-mQp27LwRt5:"`, []string{"Kx81-mQp27LwRt5:"}},
+		{"guillemets after words", "The literal password used by the deploy job is «clé-Ab12xYz🔐é.終».", []string{"clé-Ab12xYz🔐é.終"}},
+		{"quoted token after words", `The API token we rotated yesterday is "Zx81mQp27LwRt5Yv9Nc".`, []string{"Zx81mQp27LwRt5Yv9Nc"}},
+		{"a copula before the quote", `return "the saved key is only ever sent to "+st.Instance.APIBase+"."`, nil},
+		{"quoted words about a password", `The password field is "required". The password validation message is "Password too short". ` +
+			`Passwords must include one of these symbols: "!@#$%^&*". The password policy setting is "min_length=12". ` +
+			`The token endpoint is "/oauth/token". The secret name in the vault is "db-password".`, nil},
+		// 6. What prose says a password was set to is the value assigned.
+		{"was set to", "Note: the password was set to `example` on the staging box.", []string{"example"}},
+		{"is set to", "the password is set to `hunter2`", []string{"hunter2"}},
+		{"has been changed to", `The admin password has been changed to "Spring-2026".`, []string{"Spring-2026"}},
+		{"set to a template", "the password was set to ${DB_PASSWORD}; the token was set to <your-token>; the secret was set to `****`; " +
+			`the API key was set to os.getenv("KEY"); the password was set to {{ .Values.pw }}; the password was set to REDACTED.`, nil},
+		{"set to words", "The password was set to the default. The token is set to expire.", nil},
+		// 7. A line of one value a later sentence names.
+		{"preceding line", "Kx81mQp27LwRt-Yvq9\nThe preceding line is the actual deployment password.", []string{"Kx81mQp27LwRt-Yvq9"}},
+		{"line above, blank between", "Notes:\n  Zx81mQp27LwRt5Yv9Nc  \n\nThe line above is our API token.", []string{"Zx81mQp27LwRt5Yv9Nc"}},
+		{"line above, its own line", "Zx81mQp27LwRt5Yv9Nc\nLine above is the API token.", []string{"Zx81mQp27LwRt5Yv9Nc"}},
+		{"first line", "Kx81mQp27LwRt-Yvq9\nPlease rotate it.\nThe first line is the password.", []string{"Kx81mQp27LwRt-Yvq9"}},
+		{"lines named, no value", "if err != nil {\n}\nThe previous line is the key to this bug.\nreturn x.y\nThe preceding line is the token check.", nil},
+	})
+	for _, text := range []string{`PASSWORD='abc'\''def9'`, `curl -u "user:pa\"ss" https://x.test`} {
+		if cs := promptsecret.Scan(text, own); len(cs) != 1 || !cs[0].Encoded {
+			t.Errorf("%q: %+v, want one encoded candidate", text, cs)
+		}
+	}
+}
+
+// Clean text (#108): what is no secret stays unproposed, whatever the
+// detectors learn: hashes, ids, blobs, fixtures, URLs, names, redactions,
+// templates, prose about secrets and code.
+func TestScanCleanText(t *testing.T) {
+	t.Parallel()
+	clean := []string{
+		"Revert 9fceb02d0ae598e95dc970b74767f19372d61af8 and cherry-pick 4b825dc642cb6eb9a060e54bf8d69288fbee4904. Fixed in a1b2c3d.",
+		"Request 3f2504e0-4f89-41d3-9a0c-0305e82c3301 failed; retry 550e8400-e29b-41d4-a716-446655440000.",
+		"traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01\nX-Request-Id: req_8f3k2j1h0g9f8d7s6a5",
+		"The PNG header is iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==.",
+		`"integrity": "sha512-3ZKbN0Fq7XhVb5uL0j7m4u0ZsG4J8e5v8Q7xQf9R2l1KkFzWw0C0c3V1d7Y6a8u9Ek5q1Zt0o2x3p4s5r6w7y8A=="`,
+		"golang.org/x/text v0.14.0 h1:ScX5w1eTa3QqT8oi6+ziP7dTV1S2+ALU0bI+0zXKWiQ=\nsha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		`const fixture = "Zm9vYmFyYmF6cXV4"; expected := "a3f5c9e1b7d2c8f4"; seed = 0x5DEECE66D`,
+		"See https://github.com/org/repo/pull/108?tab=files#diff-abc and https://example.test/api/v1/users?page=2&limit=50.",
+		"Set GITHUB_TOKEN, AWS_SECRET_ACCESS_KEY and DB_PASSWORD in the CI settings; the API_KEY variable is read at start.",
+		"password=******** token: [REDACTED] api_key=xxxx-xxxx-xxxx secret: <redacted> Authorization: Bearer <token>",
+		"password: ${{ secrets.DB_PASSWORD }}\n" + `token = os.environ["GITHUB_TOKEN"]` + "\n" + `const apiKey = getSecret("stripe");`,
+		"Authorization: Bearer ${TOKEN}\nBearer $(gcloud auth print-access-token)\n" + `curl -u "$USER:$PASS" https://x.test`,
+		"the secret is 42 lines long. The token count is 4096. The key is to keep it simple. The password is required.",
+		"This change improves internationalization. Please review the documentation (especially the troubleshooting). Avoid overengineering!",
+		"Keep the abstraction; it pays off: maintainability, testability, observability.",
+		`fmt.Println("hello, world")` + "\n" + `if password == "" { return errEmpty }` + "\n" + `log.Printf("token refreshed for %s", user)`,
+		`// the token "kind" field and the API_KEY one`,
+		`The password field is "required". Passwords must include one of these symbols: "!@#$%^&*".`,
+		"The credential is stored in the vault. Credentials: see the docs.",
+		"docker run -u 1000:1000 img && git push -u origin main",
+		`echo 'it'\''s fine' && printf '%s\n' "done"`,
+		"Install hf_transfer. Then set sk_live_mode, and run it. They said hey.",
+	}
+	// Proposed before the tuning round too, and kept: it reads as an
+	// assignment (password: too), whose weak value the review judges (row 4).
+	known := map[string][]string{`return errors.New("invalid password: too short")`: {"too"}}
+	n := 0
+	for _, text := range clean {
+		if got := values(text); len(got) > 0 {
+			n += len(got)
+			t.Errorf("%q: proposed %q", text, got)
+		}
+	}
+	for text, want := range known {
+		got := values(text)
+		n += len(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("%q: proposed %q, want %q", text, got, want)
+		}
+	}
+	t.Logf("%d clean texts, %d candidates", len(clean)+len(known), n)
 }
 
 func TestScanBoundaries(t *testing.T) {

@@ -209,3 +209,17 @@ func BenchmarkScan16KiB(b *testing.B) {
 		promptsecret.Scan(text, own)
 	}
 }
+
+// A sent prompt's text edited and scanned again: the bridge's references in
+// several syntaxes (the masked pass runs too).
+func BenchmarkScan16KiBReferences(b *testing.B) {
+	r := ownRef("GXWCYAQQ2YUJGSWNCUK2JAZZ57")
+	part := "Deploy with PASSWORD=" + r + " and Authorization: Bearer " + r + ". The token is " + r + ", see https://h.test/x?token=" +
+		r + "&x=1 (" + r + "). Review the module, keep its behavior.\n"
+	text := strings.Repeat(part, (16<<10)/len(part)+1)[:16<<10]
+	promptsecret.Scan(text, own)
+	b.ResetTimer()
+	for b.Loop() {
+		promptsecret.Scan(text, own)
+	}
+}

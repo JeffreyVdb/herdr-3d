@@ -7,17 +7,21 @@ package promptsecret
 //   - pem: a PEM private key block, BEGIN to END line, newlines kept;
 //   - auth-header: an Authorization (or Proxy-Authorization) header's
 //     credentials after its scheme (Bearer, Basic as typed, Token, …), and a
-//     bare long "Bearer <token>";
+//     bare long "Bearer <token>": to the next blank or quote, symbols kept;
 //   - url-password: the password of a URL's userinfo, percent-encoding kept;
 //   - url-query: the value of a credential-named query (or form) parameter;
 //   - assignment: env, shell (export), YAML, JSON, TOML, INI, CLI flags and
 //     code: a credential-like name (password, passwd, pwd, secret, token,
 //     api_key, access_key, private_key, client_secret, auth, …) and its
-//     value: the bytes inside the quotes, or an unquoted value;
+//     value: the bytes inside the quotes, or an unquoted value; and curl's
+//     -u user:password: the password;
 //   - yaml-block: a YAML block scalar (| or >) under such a name;
 //   - prose: "the password is X", "API key: X", "the secret X", in a few
-//     languages; and fenced: a code fence of one value after a line that
-//     names a credential and ends in a colon;
+//     languages, a quoted value a few words after the word ("the password
+//     used by the job is «X»"), and a line of one value a later sentence
+//     names ("The preceding line is the actual password."); and fenced: a
+//     code fence of one value after a line that names a credential and ends
+//     in a colon;
 //   - repeat: another exact occurrence of a value found above (one with a
 //     digit, a symbol or 16 bytes), each its own candidate.
 //
@@ -55,9 +59,18 @@ type span struct {
 	start, end int
 	kind       string
 	rank       int
-	encoded    bool // stored as typed: a YAML block's indented lines
-	shaped     bool // found for its value's shape (a token format, a length, a digit), not only its place
-	borrowed   bool // owes its match to a reference: ranks after every other (Scan)
+	encoded    bool   // stored as typed: a YAML block's indented lines
+	shaped     bool   // found for its value's shape (a token format, a length, a digit), not only its place
+	borrowed   bool   // owes its match to a reference: ranks after every other (Scan)
+	whole      [2]int // a part resolve kept of a losing span: the range that span was found at
+}
+
+// found is the range a detector found s at (a part's whole's).
+func (s span) found() [2]int {
+	if s.whole != [2]int{} {
+		return s.whole
+	}
+	return [2]int{s.start, s.end}
 }
 
 // Ranks: a provider's exact format, then the structural families in this
@@ -77,12 +90,14 @@ const (
 )
 
 func structural(text string) []span {
+	lower := strings.ToLower(text)
 	var out []span
 	out = append(out, pemSpans(text)...)
-	out = append(out, headerSpans(text)...)
+	out = append(out, headerSpans(text, lower)...)
 	out = append(out, urlSpans(text)...)
 	out = append(out, assignmentSpans(text)...)
 	out = append(out, proseSpans(text)...)
+	out = append(out, lineSpans(text, lower)...)
 	return out
 }
 
@@ -111,54 +126,78 @@ func pemSpans(text string) []span {
 // auth-header
 
 var (
-	authHeader = regexp.MustCompile(`(?i)(?:^|[^\w-])(?:proxy-)?authorization["']?[ \t]*[:=][ \t]*["']?` +
+	authHeader = regexp.MustCompile(`(?i)(?:^|[^\w-])((?:proxy-)?authorization)["']?[ \t]*[:=][ \t]*["']?` +
 		`(?:(bearer|basic|token|apikey|api-key|key|negotiate|ntlm|digest|aws4-hmac-sha256|hoba|mutual)[ \t]+)?`)
 	bareBearer = regexp.MustCompile(`(?i)(?:^|[^\w-])bearer[ \t]+`)
 )
 
-// isToken68 reports a byte of an HTTP token68 credential (RFC 7235), '='
-// only as its padding.
-func isToken68(c byte) bool {
-	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
-		c == '-' || c == '.' || c == '_' || c == '~' || c == '+' || c == '/'
-}
-
-// token68At is the token68 credential at i: its end.
-func token68At(text string, i int) int {
+// credentialAt is the end of a header's credentials at i: the next blank,
+// quote or backslash (a token with a symbol in it is whole), less a
+// sentence's punctuation when the sentence goes on (a blank follows) or
+// ends there, unless the header is its line's own (line): then its line's
+// bytes are the value's (Authorization: Bearer abc!.:\r\n).
+func credentialAt(text string, i int, line bool) int {
 	j := i
-	for j < len(text) && isToken68(text[j]) {
-		j++
+	for j < len(text) {
+		r, n := utf8.DecodeRuneInString(text[j:])
+		if unicode.IsSpace(r) || strings.ContainsRune("\"'`\\", r) {
+			break
+		}
+		j += n
 	}
-	if j == i {
-		return i
+	switch r, _ := utf8.DecodeRuneInString(text[j:]); {
+	case j == len(text) || r == '\r' || r == '\n':
+		if line {
+			return j
+		}
+		return trimUnquoted(text, i, j)
+	case unicode.IsSpace(r):
+		return trimUnquoted(text, i, j)
 	}
-	for j < len(text) && text[j] == '=' {
-		j++
-	}
-	return j
+	return j // a quote or a backslash closes it: its bytes are the value's
 }
 
-func headerSpans(text string) []span {
+// headerValue reports credentials that are a value: not a template inside
+// them (sk-${KEY}, $(cmd)), a placeholder in brackets ([token]), a URL, nor
+// what notASecret says.
+func headerValue(v string) bool {
+	return v != "" && !notASecret(v, false) && !strings.Contains(v, "${") && !strings.Contains(v, "$(") &&
+		!strings.Contains(v, "{{") && !strings.Contains(v, "://") && !bracketed.MatchString(v)
+}
+
+// bracketed is a placeholder in square brackets: [token], [your key].
+var bracketed = regexp.MustCompile(`^\[[\w .-]*\]$`)
+
+// headerSpans are the header credentials in text (lower: text in lower
+// case; a regexp runs only where its word is: most text has neither).
+func headerSpans(text, lower string) []span {
 	var out []span
-	for _, m := range authHeader.FindAllStringSubmatchIndex(text, -1) {
+	var headers, bearers [][]int
+	if strings.Contains(lower, "authorization") {
+		headers = authHeader.FindAllStringSubmatchIndex(text, -1)
+	}
+	if strings.Contains(lower, "bearer") {
+		bearers = bareBearer.FindAllStringIndex(text, -1)
+	}
+	for _, m := range headers {
 		scheme := ""
-		if m[2] >= 0 {
-			scheme = strings.ToLower(text[m[2]:m[3]])
+		if m[4] >= 0 {
+			scheme = strings.ToLower(text[m[4]:m[5]])
 		}
 		switch scheme {
 		case "digest", "aws4-hmac-sha256", "hoba", "mutual":
 			continue // parameters, not one credential: a manual mark
 		}
-		end := token68At(text, m[1])
+		end := credentialAt(text, m[1], atLineStart(text, m[2]))
 		v := text[m[1]:end]
-		if v == "" || notASecret(v, false) || (scheme == "" && !tokenish(v, 8)) {
+		if !headerValue(v) || (scheme == "" && !tokenish(v, 8)) {
 			continue
 		}
 		out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: scheme == ""})
 	}
-	for _, m := range bareBearer.FindAllStringIndex(text, -1) {
-		end := token68At(text, m[1])
-		if v := text[m[1]:end]; tokenish(v, 16) && !notASecret(v, false) {
+	for _, m := range bearers {
+		end := credentialAt(text, m[1], false)
+		if v := text[m[1]:end]; tokenish(v, 16) && headerValue(v) {
 			out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: true})
 		}
 	}
@@ -179,7 +218,14 @@ var queryCredential = map[string]bool{"key": true, "sig": true, "signature": tru
 
 func urlSpans(text string) []span {
 	var out []span
-	for _, m := range urlScheme.FindAllStringIndex(text, -1) {
+	var schemes, params [][]int // a regexp runs only where its literal is: most text has no URL
+	if strings.Contains(text, "://") {
+		schemes = urlScheme.FindAllStringIndex(text, -1)
+	}
+	if strings.IndexByte(text, '=') >= 0 {
+		params = queryParam.FindAllStringSubmatchIndex(text, -1)
+	}
+	for _, m := range schemes {
 		// The authority runs to the first / ? # or a blank; its userinfo to
 		// its last @ (a raw @ in a password), the password after the first :.
 		end := m[1]
@@ -200,7 +246,7 @@ func urlSpans(text string) []span {
 			out = append(out, span{start: s, end: e, kind: KindURLPassword, rank: rankURLPassword})
 		}
 	}
-	for _, m := range queryParam.FindAllStringSubmatchIndex(text, -1) {
+	for _, m := range params {
 		name := text[m[2]:m[3]]
 		if !credentialKey(name) && !queryCredential[strings.ToLower(name)] {
 			continue
@@ -232,6 +278,10 @@ var (
 	// Where an unquoted value ends early: the next name=value of a list
 	// (a connection string's ;Password=, a form's &user=).
 	nextPair = regexp.MustCompile(`[;&,][A-Za-z_][\w.\-]{0,63}=`)
+	// curl's user and password: -u user:password, --user user:password;
+	// and the curl command before it.
+	curlUser    = regexp.MustCompile(`(?:^|[ \t])(?:-u[ \t]*|--user(?:[ \t]+|=))`)
+	curlCommand = regexp.MustCompile(`(?:^|[\s(\x60])curl[ \t]`)
 )
 
 func assignmentSpans(text string) []span {
@@ -282,7 +332,98 @@ func assignmentSpans(text string) []span {
 			out = append(out, sp)
 		}
 	}
+	if strings.Contains(text, "curl") {
+		for _, m := range curlUser.FindAllStringIndex(text, -1) {
+			if sp, ok := curlPassword(text, m[1]); ok && inCurl(text, m[1]) {
+				out = append(out, sp)
+			}
+		}
+	}
 	return out
+}
+
+// curlPassword is the password in curl's user:password, the shell word at
+// v: after its first colon, as typed (quotes and escapes kept; a word that
+// is one quoted string without its quotes). Not a placeholder: a credential
+// word (user:pass) or one in brackets.
+func curlPassword(text string, v int) (span, bool) {
+	s, e := v, shellWordEnd(text, v)
+	quoted := false
+	if qs, qe, ok := quotedAt(text, v); ok && qe+1 == e {
+		s, e, quoted = qs, qe, true
+	} else if !strings.ContainsAny(text[s:e], "\"'\\") {
+		e = trimUnquoted(text, s, e)
+	}
+	c := strings.IndexByte(text[s:e], ':')
+	if c < 0 || s+c+1 >= e {
+		return span{}, false
+	}
+	pw := text[s+c+1 : e]
+	if notASecret(pw, quoted) || credentialKey(pw) || bracketed.MatchString(pw) {
+		return span{}, false
+	}
+	return span{start: s + c + 1, end: e, kind: KindAssignment, rank: rankAssignment}, true
+}
+
+// shellWordEnd is the end of the shell word at v, on its line: quoted parts
+// ('…' as is, "…" with backslash escapes) and escapes outside them, to an
+// unquoted blank or ; | & < > ( ). An unterminated quote ends it.
+func shellWordEnd(text string, v int) int {
+	le := strings.IndexByte(text[v:], '\n')
+	if le < 0 {
+		le = len(text)
+	} else {
+		le += v
+	}
+	i := v
+	for i < le {
+		switch c := text[i]; {
+		case c == '\'':
+			j := strings.IndexByte(text[i+1:le], '\'')
+			if j < 0 {
+				return i
+			}
+			i += j + 2
+		case c == '"':
+			j := i + 1
+			for j < le && text[j] != '"' {
+				if text[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			if j >= le {
+				return i
+			}
+			i = j + 1
+		case c == '\\' && i+1 < le:
+			i += 2
+		case isSpace(c) || strings.IndexByte(";|&<>()", c) >= 0:
+			return i
+		default:
+			i++
+		}
+	}
+	return min(i, le)
+}
+
+// inCurl reports a curl command before i, in its own part of the line (no
+// | ; && between) or of the lines a trailing backslash continues.
+func inCurl(text string, i int) bool {
+	start := i
+	for {
+		ls := strings.LastIndexByte(text[:start], '\n') + 1
+		if ls == 0 || !strings.HasSuffix(strings.TrimRight(text[:ls-1], " \t\r"), "\\") {
+			start = ls
+			break
+		}
+		start = ls - 1
+	}
+	cmd := text[start:i]
+	if k := strings.LastIndexAny(cmd, "|;&"); k >= 0 {
+		cmd = cmd[k+1:]
+	}
+	return curlCommand.MatchString(cmd)
 }
 
 // skipBlanks is the first byte at or after i that is not a space or tab.
@@ -361,7 +502,8 @@ var quotePairs = map[rune]rune{'"': '"', '\'': '\'', '`': '`', '“': '”', '�
 
 // quotedAt reads a quoted value at v, on one line: the range between the
 // quotes. In "…" a backslash escapes the next byte; in '…' a doubled ”
-// is YAML's escaped quote.
+// is YAML's escaped quote, and a quote, a backslash and two quotes are a
+// shell's (the word goes on).
 func quotedAt(text string, v int) (start, end int, ok bool) {
 	open, n := utf8.DecodeRuneInString(text[v:])
 	closing, ok := quotePairs[open]
@@ -380,6 +522,10 @@ func quotedAt(text string, v int) (start, end int, ok bool) {
 		case r == closing:
 			if open == '\'' && i+1 < len(text) && text[i+1] == '\'' {
 				i += 2
+				continue
+			}
+			if open == '\'' && strings.HasPrefix(text[i:], `'\''`) {
+				i += 4
 				continue
 			}
 			return v + n, i, true
@@ -463,77 +609,235 @@ func yamlBlock(text string, keyStart, v int) (span, bool) {
 
 var (
 	// A credential word: a password word (any value with a digit or a
-	// symbol) or a key word (a token-like value).
+	// symbol) or a key word (a token-like value); and "credential"
+	// (credentialWords: one more alternative here costs every byte).
 	proseWord = regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])(password|passphrase|passwd|pwd|pass ?code|wachtwoord|passwort|kennwort|` +
 		`contraseña|contrasena|senha|mot de passe|lösenord|losenord|salasana|hasło|haslo|пароль|` +
 		`(?:api|access|secret|private|auth|bot|app|client|deploy|personal access|github|gitlab|npm|hf|openai)[ _-]?(?:key|token)|` +
 		`key|token|secret)`)
-	// What joins the word and its value: a copula, a colon or a blank; or
-	// "for the database" and then a copula or a colon.
-	proseCopula = `(?:[ \t]+(is|was|will be|is set to|=|->|→|to|ist|est|es|er|är|on|je):?[ \t]+|[ \t]*[:=][ \t]*)`
-	proseLink   = regexp.MustCompile(`(?i)^(?:` + proseCopula + `|[ \t]+)`)
-	proseFor    = regexp.MustCompile(`(?i)^[ \t]+(?:for|of|voor|für|pour|para)(?:[ \t]+[^\s.,;:!?"'` + "`" + `]{1,40}){1,4}?` + proseCopula)
-	fence       = regexp.MustCompile("^```[\\w.+-]*[ \t]*\r?\n")
+	// What joins the word and its value: a copula ("is", "was set to",
+	// "has been changed to", "is now"), a colon or a blank; or "for the
+	// database" and then a copula or a colon.
+	proseCopula = `(?:[ \t]+((?:is|was|has been|had been|will be)(?: (?:set|changed|reset|updated) to| now)?|` +
+		`=|->|→|to|ist|est|es|er|är|on|je):?[ \t]+|[ \t]*[:=][ \t]*)`
+	proseLink = regexp.MustCompile(`(?i)^(?:` + proseCopula + `|[ \t]+)`)
+	proseFor  = regexp.MustCompile(`(?i)^[ \t]+(?:for|of|voor|für|pour|para)(?:[ \t]+[^\s.,;:!?"'` + "`" + `]{1,40}){1,4}?` + proseCopula)
+	// A few words more, then a copula or a colon and a quote.
+	proseGap = regexp.MustCompile(`(?i)^((?:[ \t]+[^\s.!?:="'` + "`" + `“‘«„]{1,40}){1,10}?)` + proseCopula + "[\"'`“‘«„]")
+	fence    = regexp.MustCompile("^```[\\w.+-]*[ \t]*\r?\n")
 )
+
+// gapNouns name what a password has rather than what it is ("the password
+// field is "required"" names no password); a copula in the gap says
+// something else of it ("the key is only ever sent to "…"").
+var gapNouns = map[string]bool{"is": true, "was": true, "are": true, "were": true,
+	"field": true, "policy": true, "rule": true, "rules": true, "requirement": true,
+	"requirements": true, "validation": true, "message": true, "error": true, "label": true, "hint": true,
+	"placeholder": true, "prompt": true, "column": true, "parameter": true, "param": true, "variable": true, "name": true,
+	"hash": true, "length": true, "format": true, "pattern": true, "regex": true, "setting": true, "settings": true,
+	"option": true, "flag": true, "attribute": true, "type": true, "input": true, "reset": true, "expiry": true,
+	"expiration": true, "strength": true, "complexity": true, "file": true, "path": true, "env": true, "header": true,
+	"endpoint": true, "url": true, "scope": true, "prefix": true, "suffix": true, "example": true, "template": true}
 
 func isPasswordWord(w string) bool {
 	w = strings.ToLower(w)
-	return !strings.Contains(w, "key") && !strings.Contains(w, "token") && w != "secret"
+	return !strings.Contains(w, "key") && !strings.Contains(w, "token") && w != "secret" && !strings.HasPrefix(w, "credential")
 }
 
 func proseSpans(text string) []span {
-	var out []span
+	var words [][2]int
 	for _, m := range proseWord.FindAllStringSubmatchIndex(text, -1) {
-		word := text[m[2]:m[3]]
-		if r, _ := utf8.DecodeRuneInString(text[m[3]:]); m[3] < len(text) && isWordRune(r) {
+		words = append(words, [2]int{m[2], m[3]})
+	}
+	var out []span
+	for _, w := range append(words, credentialWords(text)...) {
+		word := text[w[0]:w[1]]
+		if r, _ := utf8.DecodeRuneInString(text[w[1]:]); w[1] < len(text) && isWordRune(r) {
 			continue // a longer word
 		}
-		if publicKeyBefore(text, m[2]) {
+		if publicKeyBefore(text, w[0]) {
 			continue
 		}
-		pw := isPasswordWord(word)
-		if sp, ok := fencedAfter(text, m[3]); ok {
+		if sp, ok := fencedAfter(text, w[1]); ok {
 			out = append(out, sp)
 			continue
 		}
-		l := proseFor.FindStringSubmatchIndex(text[m[3]:])
-		if l == nil {
-			if l = proseLink.FindStringSubmatchIndex(text[m[3]:]); l == nil {
-				continue
-			}
-		}
-		copula := l[2] >= 0 || strings.ContainsAny(text[m[3]:m[3]+l[1]], ":=")
-		v := m[3] + l[1]
-		if v >= len(text) {
-			continue
-		}
-		if s, e, ok := quotedAt(text, v); ok {
-			if val := text[s:e]; s < e && !notASecret(val, true) && (pw || len(val) >= 8) {
-				out = append(out, span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: !pw})
-			}
-			continue
-		}
-		e := trimUnquoted(text, v, blankAt(text, v))
-		val := text[v:e]
-		if e <= v || notASecret(val, false) {
-			continue
-		}
-		var ok bool
-		switch {
-		case pw && copula:
-			ok = len(val) >= 4 && hasDigitOrSymbol(val)
-		case pw:
-			ok = len(val) >= 6 && hasDigitOrSymbol(val)
-		case copula:
-			ok = tokenish(val, 8)
-		default:
-			ok = len(val) >= 16 && hasLetter(val) && hasDigit(val)
-		}
-		if ok {
-			out = append(out, span{start: v, end: e, kind: KindProse, rank: rankProse, shaped: true})
+		if sp, ok := proseValue(text, w[1], word); ok {
+			out = append(out, sp)
+		} else if sp, ok := proseQuotedAfter(text, w[1], isPasswordWord(word)); ok {
+			out = append(out, sp)
 		}
 	}
 	return out
+}
+
+// credentialWords are the words credential and credentials (Credential,
+// CREDENTIALS), a key word: found apart from proseWord, by their bytes.
+func credentialWords(text string) [][2]int {
+	var out [][2]int
+	for _, tail := range []string{"redential", "REDENTIAL"} {
+		for i := 0; ; {
+			j := strings.Index(text[i:], tail)
+			if j < 0 {
+				break
+			}
+			s, e := i+j-1, i+j+len(tail)
+			i = e
+			if s < 0 || text[s] != 'c' && text[s] != 'C' {
+				continue
+			}
+			if r, _ := utf8.DecodeLastRuneInString(text[:s]); s > 0 && isWordRune(r) {
+				continue
+			}
+			if e < len(text) && (text[e] == 's' || text[e] == 'S') {
+				e++
+			}
+			out = append(out, [2]int{s, e})
+		}
+	}
+	return out
+}
+
+// proseValue is the value after a credential word that ends at i: joined
+// by a copula, a colon or a blank (or "for …" and a copula).
+func proseValue(text string, i int, word string) (span, bool) {
+	pw := isPasswordWord(word)
+	l := proseFor.FindStringSubmatchIndex(text[i:])
+	if l == nil {
+		if l = proseLink.FindStringSubmatchIndex(text[i:]); l == nil {
+			return span{}, false
+		}
+	}
+	copula := l[2] >= 0 || strings.ContainsAny(text[i:i+l[1]], ":=")
+	v := i + l[1]
+	if v >= len(text) {
+		return span{}, false
+	}
+	if s, e, ok := quotedAt(text, v); ok {
+		val := text[s:e]
+		if s == e || notASecret(val, true) || !pw && len(val) < 8 ||
+			strings.HasPrefix(strings.ToLower(word), "credential") && !tokenish(val, 8) {
+			return span{}, false
+		}
+		return span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: !pw}, true
+	}
+	e := trimUnquoted(text, v, blankAt(text, v))
+	val := text[v:e]
+	if e <= v || notASecret(val, false) {
+		return span{}, false
+	}
+	var ok bool
+	switch {
+	case pw && copula:
+		ok = len(val) >= 4 && hasDigitOrSymbol(val)
+	case pw:
+		ok = len(val) >= 6 && hasDigitOrSymbol(val)
+	case copula:
+		ok = tokenish(val, 8)
+	default:
+		ok = len(val) >= 16 && hasLetter(val) && hasDigit(val)
+	}
+	if !ok {
+		return span{}, false
+	}
+	return span{start: v, end: e, kind: KindProse, rank: rankProse, shaped: true}, true
+}
+
+// proseQuotedAfter is a quoted value a few words after a credential word
+// that ends at i, then a copula or a colon ("the password used by the job
+// is «X»", "the password in these quotes, including the last character:
+// "X""): the bytes between the quotes, shaped like one (no blank; a letter
+// and a digit or a symbol; a key word's token-like), never after words
+// that name what a password has (gapNouns).
+func proseQuotedAfter(text string, i int, pw bool) (span, bool) {
+	if !quoteAhead(text, i) {
+		return span{}, false
+	}
+	l := proseGap.FindStringSubmatchIndex(text[i:min(len(text), i+proseReach)])
+	if l == nil {
+		return span{}, false
+	}
+	for _, w := range strings.Fields(text[i+l[2] : i+l[3]]) {
+		if gapNouns[strings.ToLower(strings.Trim(w, ",;()"))] {
+			return span{}, false
+		}
+	}
+	_, n := utf8.DecodeLastRuneInString(text[:i+l[1]])
+	s, e, ok := quotedAt(text, i+l[1]-n)
+	if !ok {
+		return span{}, false
+	}
+	val := text[s:e]
+	if notASecret(val, true) || strings.ContainsAny(val, " \t") || pathLike.MatchString(val) || strings.Contains(val, "://") {
+		return span{}, false
+	}
+	if pw && !(len(val) >= 6 && hasLetter(val) && hasDigitOrSymbol(val)) || !pw && !tokenish(val, 8) {
+		return span{}, false
+	}
+	return span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: true}, true
+}
+
+// lineNamed is a sentence that names a line as a credential: "The
+// preceding line is the actual deployment password."
+var lineNamed = regexp.MustCompile(`(?i)\b(?:(preceding|previous|first|above) line|line above) (?:is|was|holds|contains) (?:the |my |our |an? )?` +
+	`(?:actual |real |exact )?(?:[a-z-]+ ){0,2}?(password|passphrase|passwd|token|secret|key|credential)\b`)
+
+// lineSpans are the lines of one value a sentence names (lineNamed): the
+// line before the sentence's (the text's first, for "first line"), its
+// blanks off, shaped like a value (a key word's token-like, a password
+// word's with a digit or a symbol).
+func lineSpans(text, lower string) []span {
+	if !strings.Contains(lower, "line ") {
+		return nil
+	}
+	var out []span
+	for _, m := range lineNamed.FindAllStringSubmatchIndex(text, -1) {
+		end := strings.LastIndexByte(text[:m[0]], '\n') // the line before the sentence's ends here
+		if m[2] >= 0 && strings.EqualFold(text[m[2]:m[3]], "first") {
+			end = strings.IndexByte(text, '\n')
+		}
+		for end > 0 && strings.TrimSpace(text[strings.LastIndexByte(text[:end], '\n')+1:end]) == "" {
+			end = strings.LastIndexByte(text[:end], '\n') // blank lines between
+		}
+		if end <= 0 {
+			continue
+		}
+		s, e := strings.LastIndexByte(text[:end], '\n')+1, end
+		for s < e && isSpace(text[s]) {
+			s++
+		}
+		for e > s && isSpace(text[e-1]) {
+			e--
+		}
+		v := text[s:e]
+		if s >= e || strings.ContainsAny(v, " \t") || notASecret(v, true) || len(v) < 6 {
+			continue
+		}
+		if pw := isPasswordWord(text[m[4]:m[5]]); pw && !hasDigitOrSymbol(v) || !pw && !tokenish(v, 8) {
+			continue
+		}
+		out = append(out, span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: true})
+	}
+	return out
+}
+
+// proseReach bounds what proseGap reads after a word: ten words and a
+// copula.
+const proseReach = 512
+
+// quoteAhead reports an opening quote proseGap may reach from i on its line,
+// so that it runs only then.
+func quoteAhead(text string, i int) bool {
+	ahead := text[i:min(len(text), i+proseReach)]
+	if n := strings.IndexByte(ahead, '\n'); n >= 0 {
+		ahead = ahead[:n]
+	}
+	for _, c := range []byte{'"', '\'', '`', 0xC2, 0xE2} { // « is C2 AB; “ ‘ „ are E2 80 …
+		if strings.IndexByte(ahead, c) >= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
@@ -701,7 +1005,9 @@ var (
 // notASecret reports a value that is no secret: a template or reference,
 // code, a redaction or placeholder, a path or a public key (the bridge's
 // own file references are Scan's to leave out, by their exact bytes).
-// quoted: it was between quotes (a dotted name is then a literal).
+// quoted: it was between quotes (a dotted name is then a literal). A value
+// that holds a masked reference runs into one (Scan), so it is no code
+// either (PASSWORD=[…]eyJ….eyJ….sig).
 func notASecret(v string, quoted bool) bool {
 	switch {
 	case strings.TrimSpace(v) == "":
@@ -715,7 +1021,7 @@ func notASecret(v string, quoted bool) bool {
 	case strings.HasPrefix(v, "process.env"), strings.HasPrefix(v, "import.meta.env"), strings.HasPrefix(v, "os.environ"):
 		return true
 	}
-	if !quoted {
+	if !quoted && !strings.Contains(v, referenceMask+referenceMask) { // not beside a reference (masked, Scan): code is never there
 		if codeCall.MatchString(v) || dottedName.MatchString(v) || (pathLike.MatchString(v) && strings.Contains(v, "/")) {
 			return true
 		}

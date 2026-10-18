@@ -3848,18 +3848,22 @@ stale. Turning it off never deletes a file: the files already written keep their
 
 On, the bridge finds **possible secrets** in a prompt locally (no network, no model, no provider check): Gitleaks
 v8.30.1's default rules, generated into the bridge and checked against Gitleaks itself (`make secret-rules-parity`),
-and its own structural rules (PEM private keys, `Authorization` credentials and long bare `Bearer` tokens, URL
-passwords and credential-named query or form parameters, assignments to credential-like names in env, shell, YAML,
-JSON, TOML, INI, CLI flags and code, YAML block scalars under them, "the password is X" prose, a code fence of one
-value after a line naming a credential, and other exact occurrences of a value found). Templates and references
-(`${X}`, `$X`, `{{ … }}`, `<your-token>`, `os.getenv(…)`, `process.env.X`), redactions (`****`, `REDACTED`,
-`xxxx`), names without values and the bridge's own file references are never candidates: exactly
-`[secret in file <path>]` with a path of the shape of its directory's files. Only those bytes are left out: a value
-that runs into one, on either side, is a candidate for its bytes outside it, whatever they hold (symbols only, one
-character), unless all that is left beside it is blanks and one quote, bracket or comma; text that only looks like one
-is scanned as any other. A reference stands for a value's place, not its content: a match whose shape it may complete
-(a provider's token format, a length or a digit a detector asks for) or whose edge its own bytes made never keeps the
-bytes of another value around it from being proposed (`PASSWORD="ghp_… […] tail"` proposes `ghp_…` and `tail`). A
+its provider rules again before a sentence's punctuation (`Use sk_live_….`), and its own structural rules (PEM private
+keys, `Authorization` credentials and long bare `Bearer` tokens, URL passwords and credential-named query or form
+parameters, assignments to credential-like names in env, shell, YAML, JSON, TOML, INI, CLI flags (and curl's
+`-u user:password`) and code, YAML block scalars under them, "the password is X" prose, a quoted value a few words
+after such a word, a line a later sentence names as one, a code fence of one value after a line naming a credential,
+and other exact occurrences of a value found). A provider's token format inside a longer value proposes the value's
+rest glued after it too (`Bearer ghp_…!tail` proposes `ghp_…` and `!tail`), but not a list's next item, a URL's
+query or path. Templates and references (`${X}`, `$X`, `{{ … }}`, `<your-token>`, `os.getenv(…)`, `process.env.X`),
+redactions (`****`, `REDACTED`, `xxxx`), names without values and the bridge's own file references are never
+candidates: exactly `[secret in file <path>]` with a path of the shape of its directory's files. Only those bytes are
+left out: a value that runs into one, on either side, is a candidate for its bytes outside it, whatever they hold
+(symbols only, one character), unless all that is left beside it is blanks and one quote, bracket or comma; text that
+only looks like one is scanned as any other. A reference stands for a value's place, not its content: a match whose
+shape it may complete (a provider's token format, a length or a digit a detector asks for) or whose edge its own bytes
+made never keeps the bytes of another value around it from being proposed, whichever wins: the bytes it does not cover
+stay candidates (`PASSWORD="ghp_… […] tail"` and `the password is ghp_…[…]tail` propose `ghp_…` and `tail`). A
 candidate is only a proposal: the user decides every one.
 
 **`prompt_secrets.scan {text}`** (at most 32 KiB of UTF-8: longer is `bad_request` stating the limit, never cut)
