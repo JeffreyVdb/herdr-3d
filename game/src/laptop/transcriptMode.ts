@@ -781,9 +781,10 @@ export class TranscriptMode {
   private async answered(s: Sitting, what: string, fields: FieldText[], manual: boolean, send: (g: GoFields | null) => Promise<CommandResult>): Promise<CommandResult> {
     const flow = this.host.secrets;
     const live = () => this.s === s;
-    // Stood up while it was scanned or reviewed again: nothing went, as an answer asked after standing up.
+    // Stood up while it was scanned or reviewed again: nothing went, and nothing changes. (Not `stale`: that is the bridge's
+    // "the question moved on", for which a follow-up card drops its draft, which the next seat would miss.)
     const kept = (why: string, message: string): CommandResult =>
-      why === 'gone' ? { ok: false, code: 'stale', message: 'You got up.' } : { ok: false, code: 'secrets_kept', message: why === 'cancel' ? 'Not sent: the review was cancelled. Your answer is still here.' : message };
+      why === 'gone' ? { ok: false, code: 'gone', message: 'You got up.' } : { ok: false, code: 'secrets_kept', message: why === 'cancel' ? 'Not sent: the review was cancelled. Your answer is still here.' : message };
     if (manual && !fields.length) return kept('failed', 'Nothing typed to review: pick or write an answer first.');
     if (!flow || !(flow.on || manual) || !fields.length) return send(null);
     const req = { key: `${s.id}:${what}`, target: s.name, manual, fields, live };

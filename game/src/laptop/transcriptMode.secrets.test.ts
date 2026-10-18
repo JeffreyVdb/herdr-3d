@@ -1,9 +1,12 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import { PromptSecretsBook } from '../world/promptSecrets';
 import { HANDOVER_STALE, packupCheck, type PackupCheck } from '../ui/packupSend';
 import { PromptSecretsFlow } from '../ui/secretsFlow';
 import type { SecretsReviewOutcome, SecretsReviewRequest } from '../ui/secretsReview';
+import type { Followup } from '../net/protocol';
+import { FollowupCard } from './followupCard';
 import { TranscriptMode, type MountTranscript, type TranscriptRenderHost } from './transcriptMode';
 import type { PendingPrompt } from './transcriptActivity';
 
@@ -209,9 +212,41 @@ describe('TranscriptMode and prompt secrets (#108)', () => {
     expect(h.scanned).toEqual(['pw=hunter2']);
     h.tx.stand();
     release();
-    await expect(answered).resolves.toMatchObject({ ok: false, code: 'stale' });
+    // Not `stale` (the bridge's "the question moved on", which a card treats as answered): nothing happened to it.
+    await expect(answered).resolves.toMatchObject({ ok: false, code: 'gone' });
     expect(h.reviews).toEqual([]);
     expect(h.others.filter((x) => x.t === 'worker.answer_ask')).toEqual([]);
+  });
+
+  // #108 round 4 fix 2 (R4P2-1's audit): a gone answer touches nothing the next seat has, the follow-up's draft included.
+  it('a follow-up answer, stood up while it is scanned: nothing is answered, and its draft is the next seat’s again', async () => {
+    const fu: Followup = { turn_id: 't1', score: 0.9, source: 'model', at: 0, questions: [{ id: 'q1', question: 'Which password?', kind: 'open' }] };
+    const h = await harness({ scans: [{ ok: true, data: { revision: 'r', candidates: [{ id: 'c1', start: 3, end: 10, kinds: ['assignment'] }] } }] });
+    // The card as the view makes it (transcriptRender.ts), over this seat's host.
+    const card = (host: TranscriptRenderHost) =>
+      new FollowupCard({ answer: (args, o) => host.onAnswerFollowup!(args, o), dismiss: (t) => host.onDismissFollowup!(t), secrets: host.secrets ?? null, drafts: host.followupDrafts!, focusTimeline() {}, resized() {} });
+    const first = card(h.host());
+    document.body.append(first.el);
+    first.set(fu);
+    const box = first.el.querySelector<HTMLTextAreaElement>('textarea.tx-fu-text')!;
+    box.value = 'pw=hunter2';
+    box.dispatchEvent(new Event('input'));
+    const release = h.hold();
+    first.el.querySelector<HTMLButtonElement>('.tx-ask-send')!.click();
+    await flush();
+    expect(h.scanned).toEqual(['pw=hunter2']);
+    h.tx.stand();
+    first.destroy();
+    release();
+    await flush();
+    expect(h.reviews).toEqual([]);
+    expect(h.others.filter((x) => x.t === 'worker.answer_followup')).toEqual([]);
+    h.tx.sit('a', 'Ada', true, 'claude');
+    await flush();
+    const next = card(h.host());
+    next.set(fu);
+    expect(next.el.querySelector<HTMLTextAreaElement>('textarea.tx-fu-text')!.value).toBe('pw=hunter2');
+    next.destroy();
   });
 
   it('a prompt refused as stale, stood up while it is scanned again: sent once, no review opens', async () => {
