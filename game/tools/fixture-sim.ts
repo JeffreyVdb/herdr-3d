@@ -51,8 +51,8 @@ import { DigestSim } from './fixture-digest.ts';
 import { ActivitySettingsSim } from './fixture-activity-settings.ts';
 import { CodexServerSim } from './fixture-codex-server.ts';
 import { ReposSim, seedRepos } from './fixture-repos.ts';
-// #108: prompt secrets (`prompt_secrets.*`, the `worker.prompt` gate, `sim.secret_files`, `simsecrets=<key>`,
-// `simsecretson=1`, `simsecretsdir=none`, `simfail=no_secrets|secrets_*`).
+// #108: prompt secrets (`prompt_secrets.*`, every route's gate, `sim.secret_files`, `simsecrets=<key>`,
+// `simsecretson=1`, `simsecretsdir=none`, `simfail=no_secrets|secrets_*|no_revoke|old_wrapup`).
 import { SecretsSim } from './fixture-secrets.ts';
 // #93 hire presets (`hire_preset.*`, `simhirepresets=<key>`, `simfail=no_hire_presets`); #95 the herdr hiring
 // instructions (`worker.hire`'s `herdr_instructions`, `hire.prepare`'s lines, `hire_preset.check`, `sim.first_prompts`,
@@ -372,8 +372,21 @@ export class SimWorld {
       (m) => this.announce(m),
     );
     this.secrets = new SecretsSim(
-      { emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), takeFailure: (code) => this.takeFailure(code) },
-      { key: o.secrets ?? null, on: o.secretsOn === true, available: o.secretsDir !== 'none', supported: o.fail !== 'no_secrets', announce: (m) => this.announce(m) },
+      {
+        emit: (send, m) => this.emit(send, m),
+        error: (code, message) => new CmdError(code, message),
+        takeFailure: (code) => this.takeFailure(code),
+        hasWorker: (id) => this.workers.some((w) => w.id === id),
+      },
+      {
+        key: o.secrets ?? null,
+        on: o.secretsOn === true,
+        available: o.secretsDir !== 'none',
+        supported: o.fail !== 'no_secrets',
+        announce: (m) => this.announce(m),
+        revoke: o.fail !== 'no_revoke',
+        wrapupHandover: o.fail !== 'old_wrapup',
+      },
     ); // #108
     this.hirePresets = new HirePresetSim(
       { hasFloor: (id) => this.floors.has(id), hire: this.hire, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now(), ai: this.ai },
@@ -734,20 +747,22 @@ export class SimWorld {
         plain(x);
         this.transcripts.onEvent(x);
       };
-      // #108: prompt secrets' commands; a prompt passes their gate first, and is from here on the text with its references.
-      if (this.secrets.handle(m.t, a, send, ack)) return;
-      if (m.t === 'worker.prompt') {
-        const g = this.secrets.prompt(a, typeof a.id === 'string' ? a.id : '', send);
-        if (g) {
-          for (const k of Object.keys(a)) delete a[k];
-          Object.assign(a, g.args);
-          const [plainAck, plainFail] = [ack, fail];
-          ack = (data?: unknown) => plainAck(isObj(data) ? { ...data, ...g.extra } : data);
-          fail = (e: unknown) => {
-            g.rollback();
-            plainFail(e);
-          };
-        }
+      // #108: prompt secrets' commands (a revoke changes a worker's `secret_files`); every route that carries typed
+      // text passes their gate first, and is from here on its texts with their references (round 2).
+      if (this.secrets.handle(m.t, a, send, (d) => (this.syncSecretFiles(send), ack(d)))) return;
+      const g = this.secrets.gate(m.t, a, send, { packupLooks: (id) => this.packup.looksAt(id), schedulePrompt: (id) => this.schedules.promptOf(id) });
+      if (g) {
+        const [plainAck, plainFail] = [ack, fail];
+        ack = (data?: unknown) => {
+          const d = g.ack(data);
+          this.syncSecretFiles(send);
+          plainAck(d);
+        };
+        fail = (e: unknown) => {
+          g.fail();
+          this.syncSecretFiles(send);
+          plainFail(e);
+        };
       }
       // #90: a prompt or keys make a worker's follow-up questions moot.
       if (m.t === 'worker.prompt' || m.t === 'worker.keys') this.followups.clear(a.id, send);
@@ -1167,6 +1182,21 @@ export class SimWorld {
   }
 
   /**
+   * #108 round 5: each worker's `secret_files` (how many protected files it holds; left out at 0) as the files are
+   * now, a `worker.upsert` for each that changed (written, claimed, revoked). Not on a bridge before round 5.
+   */
+  private syncSecretFiles(send: Send): void {
+    if (!this.secrets.revocable) return;
+    for (const w of this.workers) {
+      const n = this.secrets.held(w.id);
+      if ((w.secret_files ?? 0) === n) continue;
+      if (n) w.secret_files = n;
+      else delete w.secret_files;
+      this.upsertWorker(send, w);
+    }
+  }
+
+  /**
    * #58 `session.create`, with herdr-world's rule (`herdr.CheckNewSessionName`; this host's sun_path cap is 56) and its
    * taken checks: a floor, or a herdr session the bridge does not show (SIM_HERDR_ONLY). The floor comes up in the lot a
    * step later, then the ack.
@@ -1377,6 +1407,7 @@ export class SimWorld {
           return null;
         },
         hireWorker: (a, send, ack, fail) => this.hireWorker(a, send, ack, fail),
+        stored: (s) => this.secrets.storedFire(s.id, s.prompt), // #108
       },
       this.scheduleMode !== 'off',
       this.scheduleSeed,
@@ -1953,6 +1984,7 @@ export class SimWorld {
         if (i < 0) return;
         this.workers.splice(i, 1);
         this.hireBranch.delete(w.id);
+        this.secrets.release(w.id); // #108: a worker that really ends takes its files with it
         this.emit(send, { t: 'worker.removed', id: w.id, session: w.session, workspace_id: w.workspace_id, reason: 'sent_home' });
         if (f) this.resize(send, f);
       },
@@ -1989,6 +2021,7 @@ export class SimWorld {
         if (i < 0) return fail(new CmdError('unknown_worker', `unknown worker: "${w.id}"`));
         this.workers.splice(i, 1);
         this.hireBranch.delete(w.id);
+        this.secrets.release(w.id); // #108
         this.emit(send, { t: 'worker.removed', id: w.id, session: w.session, workspace_id: w.workspace_id, reason: 'sent_home' });
         if (f) this.resize(send, f);
         ack({ worktree: choice === 'keep' ? 'kept' : choice === 'delete' ? 'deleted' : 'deleted_branch', released: true });
