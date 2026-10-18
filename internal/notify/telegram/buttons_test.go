@@ -33,7 +33,7 @@ func newCardRig(t *testing.T) *cardRig {
 		t.Fatal(err)
 	}
 	cr := &cardRig{rig: r}
-	svc, err := notify.New(context.Background(), notify.Options{Store: st, Channel: r.ch, Clock: r.clock,
+	svc, err := notify.New(context.Background(), notify.Options{Store: st, Channel: r.ch, Clock: r.clock, Limits: notify.NoLimits(),
 		Prompt: func(context.Context, string, string, func(error)) error { t.Error("typed as a prompt"); return nil },
 		Answer: func(_ context.Context, a notify.Answer, done func(error)) error {
 			cr.mu.Lock()

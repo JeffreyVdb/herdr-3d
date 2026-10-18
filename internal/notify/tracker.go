@@ -67,14 +67,25 @@ type tracker struct {
 	settle  time.Duration
 	known   map[string]string // worker id → the last episode known
 	pending map[string]pendingDone
+	// cur is each worker's episode at its last sighting (#106: a parked
+	// alert goes only if its episode is still on).
+	cur map[string]string
 }
 
 func newTracker(settle time.Duration) *tracker {
-	return &tracker{settle: settle, known: map[string]string{}, pending: map[string]pendingDone{}}
+	return &tracker{settle: settle, known: map[string]string{}, pending: map[string]pendingDone{}, cur: map[string]string{}}
 }
+
+// current is worker id's episode at its last sighting ("": none).
+func (t *tracker) current(id string) string { return t.cur[id] }
 
 // observe takes a sighting; it returns the alert to send now, if any.
 func (t *tracker) observe(s sighting, now time.Time) *Alert {
+	if s.key == "" {
+		delete(t.cur, s.id)
+	} else {
+		t.cur[s.id] = s.key
+	}
 	known, seen := t.known[s.id]
 	if !seen {
 		t.known[s.id] = s.key
@@ -109,6 +120,7 @@ func (t *tracker) observe(s sighting, now time.Time) *Alert {
 func (t *tracker) gone(id string) {
 	delete(t.known, id)
 	delete(t.pending, id)
+	delete(t.cur, id)
 }
 
 // due returns the done episodes that settled by now, known from here on.

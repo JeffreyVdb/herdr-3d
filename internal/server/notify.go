@@ -67,9 +67,13 @@ func (h *Hub) initNotify(ctx context.Context) error {
 	if h.opts.NotifyChannel == nil {
 		return nil
 	}
+	var limits notify.Limits
+	if l := h.opts.NotifyLimits; l != nil {
+		limits = *l
+	}
 	svc, err := notify.New(ctx, notify.Options{Store: notifyStore{h.st}, Channel: h.opts.NotifyChannel,
 		EnvEnabled: h.opts.NotifyEnabled, Clock: h.opts.NotifyClock, Settle: h.opts.NotifySettle,
-		Audit: h.auditNotify, Prompt: h.replyPrompt, Answer: h.cardAnswer, Log: h.log})
+		Audit: h.auditNotify, Prompt: h.replyPrompt, Answer: h.cardAnswer, Limits: limits, Log: h.log})
 	if err != nil {
 		return fmt.Errorf("notifications: %w", err)
 	}

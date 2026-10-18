@@ -14,6 +14,13 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
+// noLimits switches the notifications' send budget off (#106: the tests of
+// everything else run on a clock that does not move).
+func noLimits() *notify.Limits {
+	l := notify.NoLimits()
+	return &l
+}
+
 func notifyRows(t *testing.T, st *store.Store, cmd string) []store.AuditEntry {
 	t.Helper()
 	rows, err := st.AuditLog(context.Background())
@@ -53,7 +60,7 @@ func TestNotifyFromWorkerEvents(t *testing.T) {
 	on := true
 	ch := notify.NewFakeChannel(true)
 	clock := notify.NewFakeClock(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC))
-	b := startBridge(t, "", server.Options{NotifyChannel: ch, NotifyEnabled: &on, NotifyClock: clock})
+	b := startBridge(t, "", server.Options{NotifyChannel: ch, NotifyEnabled: &on, NotifyClock: clock, NotifyLimits: noLimits()})
 	c := b.connect(proto.Hello{})
 	if s := c.snapshot(); s.World.Notify == nil || s.World.Notify.State != proto.NotifyReady {
 		t.Fatalf("snapshot notify %+v", s.World.Notify)
@@ -105,7 +112,7 @@ func TestNotifyOffSendsNothing(t *testing.T) {
 	t.Parallel()
 	ch := notify.NewFakeChannel(true)
 	clock := notify.NewFakeClock(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC))
-	b := startBridge(t, "", server.Options{NotifyChannel: ch, NotifyClock: clock})
+	b := startBridge(t, "", server.Options{NotifyChannel: ch, NotifyClock: clock, NotifyLimits: noLimits()})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
 	b.floor("s", true, worker("w1", "x", "", "working"))
@@ -127,7 +134,7 @@ func TestNotifyEmitNeverBlocks(t *testing.T) {
 		<-ctx.Done() // hangs until shutdown (or the send timeout)
 		return ctx.Err()
 	}
-	b := startBridge(t, "", server.Options{NotifyChannel: ch, NotifyEnabled: &on, NotifySettle: time.Millisecond})
+	b := startBridge(t, "", server.Options{NotifyChannel: ch, NotifyEnabled: &on, NotifySettle: time.Millisecond, NotifyLimits: noLimits()})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
 	b.floor("s", true, worker("w1", "x", "", "working"))
@@ -159,7 +166,7 @@ func TestNotifyEmitNeverBlocks(t *testing.T) {
 func TestNotifyCommands(t *testing.T) {
 	t.Parallel()
 	ch := notify.NewFakeChannel(false)
-	b := startBridge(t, "", server.Options{NotifyChannel: ch})
+	b := startBridge(t, "", server.Options{NotifyChannel: ch, NotifyLimits: noLimits()})
 	c := b.connect(proto.Hello{})
 	c.snapshot()
 	state := func(m msg) proto.NotifyState {

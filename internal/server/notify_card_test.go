@@ -183,7 +183,7 @@ func TestCardFollowupThroughTheHub(t *testing.T) {
 	clock := notify.NewFakeClock(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC))
 	enabled := true
 	fb := startFuBridgeWith(t, "", "", newFuRoles(), on(), "", func(o *server.Options) {
-		o.NotifyChannel, o.NotifyEnabled, o.NotifyClock = ch, &enabled, clock
+		o.NotifyChannel, o.NotifyEnabled, o.NotifyClock, o.NotifyLimits = ch, &enabled, clock, noLimits()
 	})
 	c := fb.connect(proto.Hello{})
 	c.snapshot()

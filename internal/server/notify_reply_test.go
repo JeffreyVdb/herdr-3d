@@ -34,7 +34,7 @@ func startReplyBridgeWith(t *testing.T, tweak func(*server.Options)) *replyBridg
 	on := true
 	rb := &replyBridge{ch: notify.NewFakeChannel(true), clock: notify.NewFakeClock(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)), msg: 500}
 	rb.askBridge = startAskBridgeWith(t, "working", func(o *server.Options) {
-		o.NotifyChannel, o.NotifyEnabled, o.NotifyClock = rb.ch, &on, rb.clock
+		o.NotifyChannel, o.NotifyEnabled, o.NotifyClock, o.NotifyLimits = rb.ch, &on, rb.clock, noLimits()
 		if tweak != nil {
 			tweak(o)
 		}

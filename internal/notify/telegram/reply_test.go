@@ -308,7 +308,7 @@ func TestReplyRoundTripOverHTTP(t *testing.T) {
 	var mu sync.Mutex
 	var typed []string
 	var refuse error
-	svc, err := notify.New(context.Background(), notify.Options{Store: st, Channel: r.ch, Clock: r.clock,
+	svc, err := notify.New(context.Background(), notify.Options{Store: st, Channel: r.ch, Clock: r.clock, Limits: notify.NoLimits(),
 		Prompt: func(_ context.Context, id, text string, done func(error)) error {
 			mu.Lock()
 			defer mu.Unlock()

@@ -321,6 +321,8 @@ type Options struct {
 	NotifyEnabled *bool
 	NotifySettle  time.Duration
 	NotifyClock   notify.Clock
+	// NotifyLimits is the outbound budget (#106; nil: notify's defaults).
+	NotifyLimits *notify.Limits
 
 	// #155 shared Codex server: CodexRun is the private directory of the
 	// shared launches' launchers and sockets ("" or no CodexHost: the switch

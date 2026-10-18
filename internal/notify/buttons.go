@@ -99,6 +99,7 @@ const (
 	CardReplacedText  = "Replaced: it asks about something else now."
 	CardGoneText      = "No longer waiting: it was answered elsewhere, or the agent moved on."
 	CardRetryText     = "Not sent: it changed or could not be checked as you tapped. Check it and tap again."
+	CardNextText      = "Its next card follows within a minute (too many messages lately)."
 )
 
 // #88: a menu card's head, and what it asks (fixed: never the screen's
@@ -320,12 +321,14 @@ type buttons struct {
 	blocked    map[string]int64
 	total      window
 	workerTaps map[string]*window
+	// #106: each worker's card set the send budget parked.
+	parked map[string]*parked
 }
 
 func newButtons() buttons {
 	return buttons{cards: map[Ref]at{}, prompts: map[Ref]at{}, cur: map[string]string{},
 		menus: map[string]*menuSeen{}, rang: map[string]*spell{}, blocked: map[string]int64{},
-		total: window{n: TapTotal, per: ReplyWindow}, workerTaps: map[string]*window{}}
+		total: window{n: TapTotal, per: ReplyWindow}, workerTaps: map[string]*window{}, parked: map[string]*parked{}}
 }
 
 // live reports whether ss is still what its worker asks, as the loop saw
@@ -478,7 +481,13 @@ func (s *Service) seen(ctx context.Context, id, key string, menu *menuSeen, bloc
 			s.moved(ctx, ss, menu)
 		case ss.key == key, s.bt.live(ss):
 		case ss.kind == kindMenu:
-			s.endMenu(ctx, ss, "")
+			// What it asks now opens its own card first (ending this one as
+			// replaced), unless it gets none now: then this one ends.
+			s.openMenu(ctx, id)
+			if s.bt.of(id) == ss {
+				s.endMenu(ctx, ss, "")
+			}
+			return
 		default:
 			s.closeCards(ctx, ss, CardInGameText)
 		}
@@ -551,8 +560,39 @@ func (s *Service) endMenu(ctx context.Context, ss *session, outcome string) {
 		}
 	}
 	status := map[string]string{menuReplaced: CardReplacedText, menuGone: CardGoneText, menuOff: CardOffText}[outcome]
+	if outcome == menuReplaced && s.bt.parked[ss.worker] != nil {
+		status += "\n" + CardNextText
+	}
 	s.auditMenu(ctx, ss, outcome)
 	s.closeCards(ctx, ss, status)
+}
+
+// releaseCards opens the parked card sets whose slot came (#106): a menu's
+// as its worker's menu is now, any other's if it still asks it; else they
+// are dropped.
+func (s *Service) releaseCards(ctx context.Context) {
+	now := s.now()
+	for id, p := range s.bt.parked {
+		if p.at.After(now) {
+			continue
+		}
+		delete(s.bt.parked, id)
+		var sent bool
+		if p.alert.Menu != nil {
+			sent = s.openMenu(ctx, id)
+		} else {
+			sent = s.openCards(ctx, p.alert)
+		}
+		if again := s.bt.parked[id]; again != nil {
+			again.coalesced += p.coalesced // parked again: still the same wait
+			continue
+		}
+		row := limitAudit{ID: id, Kind: "cards", Cause: p.cause, Coalesced: p.coalesced, Outcome: "dropped"}
+		if sent {
+			row.Outcome = "sent"
+		}
+		s.audit(ctx, AuditLimit, row, nil)
+	}
 }
 
 func (s *Service) auditMenu(ctx context.Context, ss *session, outcome string) {
@@ -588,16 +628,18 @@ func (s *Service) rang(ctx context.Context, a Alert) {
 // openMenu opens worker id's menu card (#88) when the loop saw its menu and
 // the notification of the same blocked spell went, once an operation
 // (openCards: replies on, not open already).
-func (s *Service) openMenu(ctx context.Context, id string) {
+func (s *Service) openMenu(ctx context.Context, id string) bool {
 	m := s.bt.menus[id]
 	sp := s.bt.rang[id]
 	if sp == nil || m == nil || sp.since != m.since || slices.Contains(sp.carded, cardID(m.menu)) {
-		return
+		return false
 	}
 	sp.saw(menuID(m.menu))
-	if s.openCards(ctx, Alert{WorkerID: id, Name: m.name, Kind: KindNeedsYou, Since: m.since, Menu: m.menu}) {
-		sp.card(cardID(m.menu))
+	if !s.openCards(ctx, Alert{WorkerID: id, Name: m.name, Kind: KindNeedsYou, Since: m.since, Menu: m.menu}) {
+		return false
 	}
+	sp.card(cardID(m.menu))
+	return true
 }
 
 // repliesOff edits every open card to say replies are off.
@@ -639,15 +681,9 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 	if on, _ := s.listening(); !on || key == "" || s.bt.cur[a.WorkerID] != key {
 		return false
 	}
-	if old := s.bt.of(a.WorkerID); old != nil {
-		if old.key == key {
-			return false
-		}
-		if old.kind == kindMenu {
-			s.endMenu(ctx, old, "")
-		} else {
-			s.closeCards(ctx, old, CardInGameText)
-		}
+	old := s.bt.of(a.WorkerID)
+	if old != nil && old.key == key {
+		return false
 	}
 	ss := &session{tok: newToken(), worker: a.WorkerID, name: a.Name, key: key}
 	n := 0
@@ -664,6 +700,20 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 	}
 	if n == 0 || n > MaxCards {
 		return false
+	}
+	// #106: the set goes whole within the budget, or waits whole (parked,
+	// the latest of the worker's wins); the old one ends only when it goes.
+	if ok, at, cause := s.lim.admitCards(a.WorkerID, n); !ok {
+		park(s.bt.parked, a, at, cause)
+		s.opts.Log.Debug("notifications: a worker's cards wait for their budget", "worker", a.WorkerID, "cause", cause)
+		return false
+	}
+	if old != nil {
+		if old.kind == kindMenu {
+			s.endMenu(ctx, old, "")
+		} else {
+			s.closeCards(ctx, old, CardInGameText)
+		}
 	}
 	for range n {
 		ss.qs = append(ss.qs, &qstate{picked: map[int]bool{}})
@@ -750,13 +800,18 @@ func cardEqual(a, b Card) bool {
 	return true
 }
 
-// call is one call to the channel, bounded; a rate limit's wait (up to
-// callRetryMax) is waited once.
+// call is one call to the channel, bounded and (#106) paced; a rate
+// limit's wait (up to callRetryMax) is waited once, and pauses every
+// paced call meanwhile.
 func (s *Service) call(ctx context.Context, fn func(context.Context) error) error {
 	for try := 0; ; try++ {
+		if err := s.lim.wait(ctx); err != nil {
+			return err
+		}
 		cctx, cancel := context.WithTimeout(ctx, SendTimeout)
 		err := fn(cctx)
 		cancel()
+		s.lim.pause(retryAfter(err))
 		var se *SendError
 		if err == nil || try > 0 || !errors.As(err, &se) || se.Code != CodeRateLimited || se.RetryAfter > callRetryMax {
 			return err
@@ -1010,11 +1065,9 @@ func (s *Service) typed(ctx context.Context, r Reply, a at, row replyAudit) {
 	q.dirty = true
 	row.Outcome = replyTyped
 	s.audit(ctx, AuditReply, row, nil)
-	cctx, cancel := context.WithTimeout(ctx, SendTimeout)
-	if err := s.opts.Channel.Confirm(cctx, r.Ref); err != nil {
+	if err := s.call(ctx, func(ctx context.Context) error { return s.opts.Channel.Confirm(ctx, r.Ref) }); err != nil {
 		s.opts.Log.Warn("notifications: a typed answer's confirmation was not delivered", "code", CodeOf(err))
 	}
-	cancel()
 	if ss.complete() {
 		s.submit(ctx, ss, r.Epoch)
 	}

@@ -51,8 +51,10 @@ const (
 	// #14: a tap on a card, and an answer of the cards handed to the hub.
 	AuditTap    = "notify.tap"
 	AuditAnswer = "notify.answer"
-	// #106: how a menu's card ended, and where its identity was from.
-	AuditMenu = "notify.menu"
+	// #106: how a menu's card ended, and where its identity was from; an
+	// alert or card set the send budget parked, and how it ended.
+	AuditMenu  = "notify.menu"
+	AuditLimit = "notify.limit"
 )
 
 // Settings are what the store keeps.
@@ -112,6 +114,8 @@ type Options struct {
 	// A *ReplyError says why (ReplyClosed: no longer the worker's). Nil: the
 	// cards' answers are refused.
 	Answer func(ctx context.Context, a Answer, done func(error)) error
+	// Limits is the outbound budget (#106; zero fields: DefaultLimits').
+	Limits Limits
 	Log    *slog.Logger
 }
 
@@ -218,6 +222,10 @@ type Service struct {
 	tr       *tracker // the loop's
 	running  atomic.Bool
 	warnOnce sync.Once
+
+	// #106: the send budget, and the alerts it parked (the loop's).
+	lim    *limiter
+	parked map[string]*parked
 }
 
 // New loads the settings.
@@ -239,7 +247,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	}
 	s := &Service{opts: opts, change: make(chan struct{}, 1), kick: make(chan struct{}, 1),
 		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle), rp: newReplies(),
-		bt: newButtons(), keys: map[string]look{}}
+		bt: newButtons(), keys: map[string]look{}, lim: newLimiter(opts.Limits.withDefaults(), opts.Clock), parked: map[string]*parked{}}
 	if opts.Store != nil {
 		st, ok, err := opts.Store.LoadNotifySettings(ctx)
 		if err != nil {
@@ -554,7 +562,11 @@ func (s *Service) Run(ctx context.Context) {
 			timer = nil
 		}
 		var wake <-chan time.Time
-		if at, ok := s.tr.next(); ok {
+		at, ok := s.tr.next()
+		if p, parked := due(s.parked); parked && (!ok || p.Before(at)) {
+			at, ok = p, true
+		}
+		if ok {
 			timer = s.opts.Clock.NewTimer(at.Sub(s.now()))
 			wake = timer.C()
 		}
@@ -604,13 +616,66 @@ func (s *Service) process() {
 			continue
 		}
 		if a := s.tr.observe(s.sight(o, freelancers), now); a != nil {
-			s.enqueue(*a)
+			s.alert(*a)
 		}
 	}
 	for _, a := range s.tr.due(now) {
 		if s.allowed(a.Kind) {
-			s.enqueue(a)
+			s.alert(a)
 		}
+	}
+	s.release(now)
+}
+
+// alert sends a, or parks it while its worker's cooldown or the
+// destination's budget is spent (#106: the latest of a worker's wins). A
+// needs-you alert parked by the cooldown still opens its cards: they draw
+// on the budget, not on the alert's cooldown.
+func (s *Service) alert(a Alert) {
+	ok, at, cause := s.lim.admitAlert(a.WorkerID)
+	if ok {
+		s.enqueue(a)
+		return
+	}
+	park(s.parked, a, at, cause)
+	s.opts.Log.Debug("notifications: an alert waits for its budget", "worker", a.WorkerID, "kind", a.Kind, "cause", cause)
+	if cause == causeCooldown && a.Kind == KindNeedsYou {
+		s.cardsOf(a)
+	}
+}
+
+// cardsOf has the replier open what an alert that went (or would have)
+// comes with: an ask's or follow-up's cards, a menu's once its screen is
+// read (#88).
+func (s *Service) cardsOf(a Alert) {
+	switch {
+	case a.Ask != nil || a.Followup != nil:
+		s.job(func(ctx context.Context) { s.openCards(ctx, a) }) // #14
+	case a.Kind == KindNeedsYou:
+		s.job(func(ctx context.Context) { s.rang(ctx, a) }) // #88
+	}
+}
+
+// release sends the parked alerts whose slot came, if the worker is still
+// in their episode (and its event on); else drops them (#106).
+func (s *Service) release(now time.Time) {
+	for id, p := range s.parked {
+		if p.at.After(now) {
+			continue
+		}
+		row := limitAudit{ID: id, Kind: "alert", Cause: p.cause, Coalesced: p.coalesced, Outcome: "dropped"}
+		a := p.alert
+		if s.tr.current(id) == episodeKey(a.Kind, a.Since) && s.allowed(a.Kind) {
+			ok, at, cause := s.lim.admitAlert(id)
+			if !ok {
+				p.at, p.cause = at, cause
+				continue
+			}
+			s.enqueue(a)
+			row.Outcome = "sent"
+		}
+		delete(s.parked, id)
+		s.audit(context.Background(), AuditLimit, row, nil)
 	}
 }
 
@@ -677,6 +742,15 @@ type sendAudit struct {
 	Code     string `json:"code,omitempty"`
 }
 
+// retryAfter is a rate limit's wait in err (0: none).
+func retryAfter(err error) time.Duration {
+	var se *SendError
+	if errors.As(err, &se) && se.Code == CodeRateLimited {
+		return se.RetryAfter
+	}
+	return 0
+}
+
 // Backoff is the wait after the n-th failed delivery (n from 1): 1 s,
 // doubling, at most 30 s.
 func Backoff(n int) time.Duration {
@@ -699,6 +773,9 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 		if !s.allowed(a.Kind) {
 			return
 		}
+		if err = s.lim.wait(ctx); err != nil { // #106: the destination's pacing
+			break
+		}
 		row.Attempts++
 		sctx, cancel := context.WithTimeout(ctx, SendTimeout)
 		ref, err = s.opts.Channel.Send(sctx, n)
@@ -708,10 +785,12 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 		}
 		var se *SendError
 		if !errors.As(err, &se) || !se.Retryable() || row.Attempts >= MaxAttempts {
+			s.lim.pause(retryAfter(err))
 			break
 		}
 		wait := Backoff(row.Attempts)
 		if se.RetryAfter > 0 {
+			s.lim.pause(se.RetryAfter)
 			if se.RetryAfter > maxRetryAfter {
 				break
 			}
@@ -740,12 +819,7 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 	} else {
 		s.opts.Log.Info("notification sent", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts)
 		s.remember(ctx, ref, a.WorkerID)
-		switch {
-		case a.Ask != nil || a.Followup != nil:
-			s.job(func(ctx context.Context) { s.openCards(ctx, a) }) // #14
-		case a.Kind == KindNeedsYou:
-			s.job(func(ctx context.Context) { s.rang(ctx, a) }) // #88
-		}
+		s.cardsOf(a)
 	}
 	s.audit(ctx, AuditSend, row, aerr)
 }
