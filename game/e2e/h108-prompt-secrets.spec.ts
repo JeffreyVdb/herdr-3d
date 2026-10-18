@@ -495,8 +495,17 @@ test('round 4: a hire’s first task with a protected value: reviewed before the
   await noSecretStored(page, 'typed in the hire dialog');
   const hire = page.locator('dialog.desk-dlg--hire');
   await expect(hire.locator('[data-key="review"]')).toHaveText('Review secrets');
-  await hire.locator('[data-key="hire"]').click();
   const dlg = page.locator('dialog.desk-dlg--secrets');
+  // Ctrl+Shift+X in the first task: the review on purpose, as its button; Cancel gives the task back, nothing hired.
+  await expect(page.locator('#hire-task')).toBeFocused();
+  await page.keyboard.press('Control+Shift+X');
+  await expect(dlg).toBeVisible();
+  expect(await review(page)).toMatchObject({ manual: true, counts: { found: 1 } });
+  await dlg.locator('[data-key="cancel"]').click();
+  await expect(dlg).toBeHidden();
+  await expect.poll(async () => ((await page.evaluate(() => window.__h3d.dialog())) as { state?: string } | null)?.state).toBe('ready');
+  expect(await sent(page, 'worker.hire')).toEqual([]);
+  await hire.locator('[data-key="hire"]').click();
   await expect(dlg).toBeVisible();
   expect(await review(page)).toMatchObject({ target: expect.stringMatching(/ at Desk 6$/), action: 'Confirm and send', counts: { found: 1, protect: 1 } });
   expect(await sent(page, 'worker.hire')).toEqual([]);
