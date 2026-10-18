@@ -65,8 +65,10 @@ func (h *Hub) referencesHold(texts ...string) error {
 
 // secretsChanged is the files' Options.Changed: which files a worker holds
 // may have changed, so the counts are read again (any goroutine; never
-// blocks: one recount covers every change before it).
+// blocks: one recount covers every change before it). Each change is
+// numbered after it is made: counts read after change n hold it.
 func (h *Hub) secretsChanged() {
+	h.ps.changes.Add(1)
 	select {
 	case h.ps.recount <- struct{}{}:
 	default:
@@ -84,6 +86,7 @@ func (h *Hub) runSecretCounts(ctx context.Context) {
 			return
 		case <-h.ps.recount:
 		}
+		after := h.ps.changes.Load()
 		counts, err := h.st.SecretFileCounts(ctx)
 		if err != nil {
 			if ctx.Err() == nil {
@@ -91,16 +94,21 @@ func (h *Hub) runSecretCounts(ctx context.Context) {
 			}
 			continue
 		}
-		if err := h.doWait(ctx, func() { h.setSecretCounts(counts) }); err != nil {
+		if err := h.doWait(ctx, func() { h.setSecretCounts(after, counts) }); err != nil {
 			return
 		}
 	}
 }
 
-// setSecretCounts takes the workers' file counts (hub goroutine): each
-// worker whose count changed is published.
-func (h *Hub) setSecretCounts(counts map[string]int) {
-	h.ps.counts = counts
+// setSecretCounts takes the workers' file counts read after change after
+// (hub goroutine): each worker whose count changed is published. Counts
+// read before those published already are dropped (a recount that read
+// before a revoke and lands after its ack would publish files gone).
+func (h *Hub) setSecretCounts(after uint64, counts map[string]int) {
+	if after < h.ps.countsAt {
+		return
+	}
+	h.ps.counts, h.ps.countsAt = counts, after
 	for id, w := range h.workers {
 		if n := counts[id]; n != w.SecretFiles {
 			next := *w
@@ -153,10 +161,11 @@ func (h *Hub) startRevokeSecrets(ctx context.Context, c *Client, cmd proto.Comma
 		} else {
 			h.log.Info("protected files revoked", "worker", a.Worker, "files", n)
 		}
+		after := h.ps.changes.Load() // the revoke's own change counted
 		counts, cerr := h.st.SecretFileCounts(rctx)
 		if derr := h.doWait(ctx, func() {
 			if cerr == nil {
-				h.setSecretCounts(counts) // before the ack
+				h.setSecretCounts(after, counts) // before the ack
 			}
 			if aerr := h.st.AuditEnd(ctx, auditID, err, revokeReport{Removed: n}); aerr != nil {
 				h.log.Error("audit log write failed", "err", aerr)

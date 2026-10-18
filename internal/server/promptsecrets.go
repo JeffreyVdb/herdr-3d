@@ -80,18 +80,21 @@ func promptSecretsErrorCode(err error) string {
 
 // promptSecretsState is the hub's part: the switch and the reviewer (hub
 // goroutine; cur is the reviewer too, for any goroutine), the files (nil:
-// unavailable, err says why), the scan slots, the workers' file counts
-// (hub goroutine; round 5) and the signal to read them again, and the
-// reviews sent lately (any goroutine, under mu).
+// unavailable, err says why), the scan slots, the workers' file counts and
+// the change they were read after (hub goroutine; round 5), the changes
+// (any goroutine) and the signal to read them again, and the reviews sent
+// lately (any goroutine, under mu).
 type promptSecretsState struct {
-	enabled bool
-	rev     *promptsecret.Reviewer
-	cur     atomic.Pointer[promptsecret.Reviewer]
-	files   *secretfiles.Files
-	err     error
-	slots   chan struct{}
-	counts  map[string]int
-	recount chan struct{}
+	enabled  bool
+	rev      *promptsecret.Reviewer
+	cur      atomic.Pointer[promptsecret.Reviewer]
+	files    *secretfiles.Files
+	err      error
+	slots    chan struct{}
+	counts   map[string]int
+	countsAt uint64
+	changes  atomic.Uint64
+	recount  chan struct{}
 
 	mu      sync.Mutex
 	reuse   map[string]secretReuse    // reuseKey → the files a sent review made

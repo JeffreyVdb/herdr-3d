@@ -398,6 +398,15 @@ func TestPromptSecretsKeptAcrossSleepRestartAndReboot(t *testing.T) {
 	kept("asleep")
 	sb.publishFloor(true) // awake
 	filesOf(sb.bridge, counts)
+	// An asleep floor's worker is shown: its files can be revoked.
+	sb.protect(t, sb.id1, "PASSWORD=Asleep-Revoked-4")
+	filesOf(sb.bridge, map[string]int{sb.id1: 2})
+	sb.publishFloor(false)
+	if n := mustRevoke(t, sb.c, sb.id1); n != 2 {
+		t.Fatalf("revoked %d while asleep", n)
+	}
+	sb.publishFloor(true)
+	sb.protect(t, sb.id1, "PASSWORD=Kept-Sentinel-1")
 	sb.publish(world.FloorGone{Session: "s"})
 	kept("the herdr session gone")
 	sb.publishFloor(true) // back: the workers resume
@@ -638,4 +647,39 @@ func TestPromptSecretsWrapUpHandOver(t *testing.T) {
 	c.mustError(proto.CmdWorkerWrapUp, proto.WorkerWrapUpArgs{ID: w2, Prompt: "tidy up", Worktree: proto.FireKeep,
 		SecretsPending: pk2.SecretsPending}, proto.ErrSecretsReviewStale)
 	traceFree(t, wb.st, wb.db, []*client{c}, routeSentinel, "Cleanup-Sentinel-8", "Expiring-Sentinel-5")
+}
+
+// A scheduled agent with a handoff_path is a successor too: its fire's
+// worker holds the files the handoff names.
+func TestPromptSecretsScheduledSuccessorHoldsTheHandoffsFiles(t *testing.T) {
+	t.Parallel()
+	db := filepath.Join(t.TempDir(), "world.db")
+	svc := hoService(t, filepath.Join(t.TempDir(), "handoff"), db)
+	dir := secretsDirFor(t)
+	sb := startSchedBridgeAt(t, db, newClock(t0.UnixMilli()), func(o *server.Options) { o.SecretsDir, o.Handoffs = dir, svc })
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	ctx := context.Background()
+	a := hireArgs(0)
+	a.Prompt, a.Secrets = routeText, routeReview(t, sb.c)
+	_, m := sb.c.command(proto.CmdWorkerHire, "h", a)
+	ra := ackData[proto.HireResult](t, m)
+	p0 := refRe.FindStringSubmatch(sentPrompt(t, sb.hireBridge, ra.WorkspaceID+":p1"))[1]
+	filed, _, err := svc.File(ctx, handoff.Source{Floor: "s", WorkerID: ra.ID, Kind: store.HandoffLiteral, Op: "op-sched"},
+		"# Rotate\n\nThe key is in "+promptsecret.Reference(p0)+".\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d0, n0, _ := strings.Cut(strings.TrimPrefix(p0, dir+"/"), "/")
+	if _, err := sb.st.AddHandoffSecrets(ctx, filed.ID, []store.SecretFile{{Dir: d0, Name: n0}}); err != nil {
+		t.Fatal(err)
+	}
+	sp := spec(t0.Add(time.Hour))
+	sp.Prompt, sp.HandoffPath = "Carry on.", filed.Path
+	s := sb.create(sp)
+	sb.c.mustAck(proto.CmdScheduleRunNow, proto.ScheduleArgs{ID: s.ID})
+	done := sb.schedule(s.ID, inState(store.ScheduleDone))
+	sb.world(func(w proto.World) bool { x := workerIn(w, done.WorkerID); return x != nil && x.SecretFiles == 1 })
+	if l, _ := sb.st.SecretLeasesOf(ctx, done.WorkerID); len(l) != 1 || l[0].Dir != d0 || l[0].Name != n0 {
+		t.Fatalf("the scheduled worker's leases %+v", l)
+	}
 }

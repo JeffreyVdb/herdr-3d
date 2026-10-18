@@ -82,7 +82,8 @@ secret-rules-parity` checks them against Gitleaks itself) and run with the stand
 HMAC revision, the decisions checked against a fresh scan, the file references, a stored prompt's plain record; the
 standard library only, `TestPromptSecretIsALeaf`) and `secretfiles` (the protected files: a private runtime directory, owner directories
 0700 and files 0600 by random names, fd-relative with no symlink followed, worker and pending owners, release, claim,
-sweep; their owners and names in `store`, never a byte of a secret; Linux, a stub elsewhere);
+sweep, round 5's leases and revoke; their owners, holders and names in `store`, never a byte of a secret; Linux, a stub
+elsewhere);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
