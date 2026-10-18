@@ -35,7 +35,7 @@ E2E_RUN = @( $(E2E_LOCKED); set -x; $(E2E_ENV) $(PORTLEASE) --name preview --ser
 EMBED_DIR := internal/webdist/game
 RELEASE_DIR := bin/release
 
-.PHONY: build go-build game-build test go-test game-test integration codex-shared-tui codex-shared-bridge lint go-lint game-lint \
+.PHONY: build go-build game-build test go-test game-test integration codex-shared-tui codex-shared-bridge secret-rules secret-rules-parity lint go-lint game-lint \
 	sh-test embed-game helper-darwin release-assets dev shot e2e e2e-prebuilt e2e-extended e2e-visual e2e-perf e2e-component e2e-list setup toolchain browsers browser-check deps clean
 
 ## build: Go binaries (bin/) + game bundle (game/dist/)
@@ -77,6 +77,15 @@ codex-shared-tui:
 ## drives it, against the same fixture; EVIDENCE=<dir> as above
 codex-shared-bridge:
 	H3D_CODEXSHARE_EVIDENCE="$(EVIDENCE)" go test -tags integration -count=1 -timeout 20m -run CodexShareBridge -v ./internal/codexshare/
+
+## secret-rules: #108 regenerate internal/promptsecret/gitleaks_rules.go from Gitleaks v8.30.1's default rules
+## (tools/secretrules, its own module: the first run downloads Gitleaks; not part of make test)
+secret-rules:
+	cd tools/secretrules && go run . -o ../../internal/promptsecret/gitleaks_rules.go
+
+## secret-rules-parity: #108 the generated rules against Gitleaks itself (and the generated file is current)
+secret-rules-parity:
+	cd tools/secretrules && go vet ./... && go test -count=1 -v ./...
 
 ## lint: go vet, gofmt, tsc --noEmit
 lint: go-lint game-lint

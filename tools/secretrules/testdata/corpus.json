@@ -1,0 +1,502 @@
+[
+  {
+    "id": "github-assignment",
+    "group": "provider",
+    "text": "GITHUB_TOKEN=\"ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167\"\nUse it to query the repository.",
+    "expected": [
+      [
+        14,
+        54
+      ]
+    ]
+  },
+  {
+    "id": "github-prose",
+    "group": "provider",
+    "text": "Use ghp_EWs8a1VzZVnUIn4twLIEEXio1l5i9ZqBwiiU to access my GitHub account.",
+    "expected": [
+      [
+        4,
+        44
+      ]
+    ]
+  },
+  {
+    "id": "github-fine",
+    "group": "provider",
+    "text": "My GitHub token is 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.",
+    "expected": [
+      [
+        19,
+        112
+      ]
+    ]
+  },
+  {
+    "id": "aws-pair",
+    "group": "provider",
+    "text": "AWS_ACCESS_KEY_ID=AKIAGY7F4GRVJ5QTMECC\nAWS_SECRET_ACCESS_KEY=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\nList my buckets.",
+    "expected": [
+      [
+        18,
+        38
+      ],
+      [
+        61,
+        101
+      ]
+    ]
+  },
+  {
+    "id": "openai",
+    "group": "provider",
+    "text": "OPENAI_API_KEY=sk-proj-G1SzPdlSJ0nHG3Yt8HvzzonReafq2fZzoProJBGy4kJ8Nx8g9MWm9CH94fPFrPCX4spnAnjnvAPbIVZBb2F5cbYrXPcE5RKjedMaqMgbrzhziG5ahQSyGFxM\nUse this key.",
+    "expected": [
+      [
+        15,
+        143
+      ]
+    ]
+  },
+  {
+    "id": "stripe",
+    "group": "provider",
+    "text": "Use STRIPE_SECRET_KEY=sk_live_y3dWfT5BwajV93emDaShaZ0L for the billing API.",
+    "expected": [
+      [
+        22,
+        54
+      ]
+    ]
+  },
+  {
+    "id": "slack",
+    "group": "provider",
+    "text": "Use my bot token xoxb-482014450619-811727468847-Ocp5vBMgLQkSnS5RTLBI9loZ to read the channel.",
+    "expected": [
+      [
+        17,
+        72
+      ]
+    ]
+  },
+  {
+    "id": "gitlab",
+    "group": "provider",
+    "text": "GitLab access token: glpat-AZfe9b44TP0hzSQUJY9t",
+    "expected": [
+      [
+        21,
+        47
+      ]
+    ]
+  },
+  {
+    "id": "npm",
+    "group": "provider",
+    "text": "Publish with NPM_TOKEN=npm_lWsSP79YhkjdTWnAPwr1A0mOAqoFbW7bjpO9",
+    "expected": [
+      [
+        23,
+        63
+      ]
+    ]
+  },
+  {
+    "id": "hf",
+    "group": "provider",
+    "text": "HF_TOKEN=hf_aqjV5NV1E9Lt3Ts9JRN9HYsteE7X47hJs2\nDownload the weights.",
+    "expected": [
+      [
+        9,
+        46
+      ]
+    ]
+  },
+  {
+    "id": "generic-prose",
+    "group": "context",
+    "text": "Use the secret 77dT8gUKD27tyrO2jkyp7I3zh9yaqVrUKceZ to authenticate with our internal service.",
+    "expected": [
+      [
+        15,
+        51
+      ]
+    ]
+  },
+  {
+    "id": "generic-assignment",
+    "group": "context",
+    "text": "INTERNAL_API_KEY=\"tn4UAZwxrXndIta2u8MNDYyKcbCwwdEfDJCxRQyA\"\nCall the internal API.",
+    "expected": [
+      [
+        18,
+        58
+      ]
+    ]
+  },
+  {
+    "id": "bearer",
+    "group": "context",
+    "text": "curl -H \"Authorization: Bearer FNcpOyK6G6GbIGT9XinqjlKNJtQn228rSgNgfySvzw\" https://service.example.test/status",
+    "expected": [
+      [
+        31,
+        73
+      ]
+    ]
+  },
+  {
+    "id": "password-prose",
+    "group": "context",
+    "text": "The database password is Moonlight7!. Please connect.",
+    "expected": [
+      [
+        25,
+        36
+      ]
+    ]
+  },
+  {
+    "id": "passphrase",
+    "group": "context",
+    "text": "The password is \"lilac otter river cinnamon\". Use it to log in.",
+    "expected": [
+      [
+        17,
+        43
+      ]
+    ]
+  },
+  {
+    "id": "short-password",
+    "group": "context",
+    "text": "Login password: fawn7",
+    "expected": [
+      [
+        16,
+        21
+      ]
+    ]
+  },
+  {
+    "id": "punctuation",
+    "group": "context",
+    "text": "Set the password to `a!B@c#D$e%F^g&H*i(J)k=L+M` and test the login.",
+    "expected": [
+      [
+        21,
+        46
+      ]
+    ]
+  },
+  {
+    "id": "json",
+    "group": "context",
+    "text": "Use this configuration: {\"client_secret\":\"JDNMg9cFqLpebglvWEc3lZ5Sg7JWu6kW\",\"region\":\"eu\"}",
+    "expected": [
+      [
+        42,
+        74
+      ]
+    ]
+  },
+  {
+    "id": "env",
+    "group": "context",
+    "text": "Use this .env:\n```env\nDB_PASSWORD=Tidepool8!\nAPI_TOKEN=GJdxZtlg2H9DnplQivHUtaKy5OaJY2LT\n```",
+    "expected": [
+      [
+        34,
+        44
+      ],
+      [
+        55,
+        87
+      ]
+    ]
+  },
+  {
+    "id": "url",
+    "group": "context",
+    "text": "Connect to postgres://app:Crane7%21Willow@db.example.test:5432/app",
+    "expected": [
+      [
+        26,
+        41
+      ]
+    ]
+  },
+  {
+    "id": "query-token",
+    "group": "context",
+    "text": "Call https://api.example.test/v1?access_token=poHWDEJlJLVJ4i0WAmVfoIa7Vx9u1mZU&limit=10",
+    "expected": [
+      [
+        46,
+        78
+      ]
+    ]
+  },
+  {
+    "id": "jwt",
+    "group": "context",
+    "text": "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJzeW50aGV0aWMiLCJzY29wZSI6InJlYWQifQ.c3ludGhldGljLXNpZ25hdHVyZS1uZXZlci12YWxpZA",
+    "expected": [
+      [
+        22,
+        148
+      ]
+    ]
+  },
+  {
+    "id": "pem",
+    "group": "multiline",
+    "text": "Use this private key:\n-----BEGIN PRIVATE KEY-----\nH86vfxfLdSpZ2DxeN8Q1jRFVbHr7nA/DDMVjtTG04QFfTz6IJuMS3sJPBHBKXIjWsRhkBOnWxKnHsG7QzbINMNbR3bDsvhIj8tfeW6sXnr1XuACFCctypy/hLPHlyNwc9mDoAfRqCkv+I6q6Kl5DZKw63DRJ3fZKfnDIKP1hiG91w+dxjhhOBDermc0oTR1aYMwLg61Rcqij5WfU40j7yOH48oduszT3Ke+vkKIIG/4IQcIGjGEZMzT/2OWdXJwaRjO9IJscPE56ure+1Yk7JTxyJg9Y4uzeTv5tZ6vrx87DGte0pqLggwwdLQW0+2Hk\n-----END PRIVATE KEY-----\nConnect to the server.",
+    "expected": [
+      [
+        22,
+        396
+      ]
+    ]
+  },
+  {
+    "id": "multiline-token",
+    "group": "multiline",
+    "text": "API token (preserve the newline):\n```\nSzAU3xRphJP6RYzVXAAcPpW0Tnnk\nbps8NmUAlM8hHWMmAf60vGE5FWFu\n```",
+    "expected": [
+      [
+        38,
+        95
+      ]
+    ]
+  },
+  {
+    "id": "repeat",
+    "group": "context",
+    "text": "API key is fU0YROStoYrbet2IRPC2syDIJY4tQw8a. If the request fails, retry with fU0YROStoYrbet2IRPC2syDIJY4tQw8a.",
+    "expected": [
+      [
+        11,
+        43
+      ],
+      [
+        78,
+        110
+      ]
+    ]
+  },
+  {
+    "id": "two-secrets",
+    "group": "context",
+    "text": "The password is Willow6! and the API key is K7gsuHixrwyE1VJFpqZ3HGet1XO3ZULnNssC.",
+    "expected": [
+      [
+        16,
+        24
+      ],
+      [
+        44,
+        80
+      ]
+    ]
+  },
+  {
+    "id": "unicode-context",
+    "group": "context",
+    "text": "🔒 Mijn wachtwoord is Lente9!Fiets. Gebruik dit voor de database.",
+    "expected": [
+      [
+        21,
+        33
+      ]
+    ]
+  },
+  {
+    "id": "unicode-secret",
+    "group": "context",
+    "text": "My password is \"wólk🌧️Zeven9!\". Log in.",
+    "expected": [
+      [
+        16,
+        29
+      ]
+    ]
+  },
+  {
+    "id": "bare-token",
+    "group": "unlabeled",
+    "text": "Use g3Q7Fv2kqt2gxQS1xB9Tv5syl2QxFZnUWFhRBlBI",
+    "expected": [
+      [
+        4,
+        44
+      ]
+    ]
+  },
+  {
+    "id": "bare-password",
+    "group": "unlabeled",
+    "text": "Use Saffron8!",
+    "expected": [
+      [
+        4,
+        13
+      ]
+    ]
+  },
+  {
+    "id": "long-8k",
+    "group": "long",
+    "text": "Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. \nThe password is LongTail8!Secret.",
+    "expected": [
+      [
+        8627,
+        8643
+      ]
+    ]
+  },
+  {
+    "id": "long-16k",
+    "group": "long",
+    "text": "Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. Review the module and keep its behavior. \nAPI_KEY=C4ePZxIWz93RLnvISeHK7LXOVEkAPco15vUi6tM5",
+    "expected": [
+      [
+        17024,
+        17064
+      ]
+    ]
+  },
+  {
+    "id": "negative-01",
+    "group": "negative",
+    "text": "Explain how API tokens should be stored.",
+    "expected": []
+  },
+  {
+    "id": "negative-02",
+    "group": "negative",
+    "text": "Read the secret from /run/user/1000/herdr/secrets/credential-1.",
+    "expected": []
+  },
+  {
+    "id": "negative-03",
+    "group": "negative",
+    "text": "Use the existing GITHUB_TOKEN environment variable.",
+    "expected": []
+  },
+  {
+    "id": "negative-04",
+    "group": "negative",
+    "text": "The example says API_KEY=\"YOUR_API_KEY_HERE\". Explain it.",
+    "expected": []
+  },
+  {
+    "id": "negative-05",
+    "group": "negative",
+    "text": "Set password=\"<password>\" in the documentation example.",
+    "expected": []
+  },
+  {
+    "id": "negative-06",
+    "group": "negative",
+    "text": "This is an intentionally fake placeholder: api_key=\"example\".",
+    "expected": []
+  },
+  {
+    "id": "negative-07",
+    "group": "negative",
+    "text": "The SHA-256 checksum is b45541cec7f20ed644b262c45c9a9fecf289658f22db87a2b3cfd9e175e0b5f0",
+    "expected": []
+  },
+  {
+    "id": "negative-08",
+    "group": "negative",
+    "text": "Check commit 8746627fd802163f2d83c395732b7bd47f43fd9e for the regression.",
+    "expected": []
+  },
+  {
+    "id": "negative-09",
+    "group": "negative",
+    "text": "The request ID is 0f69d9e1-a62a-4d80-b0f0-0de83bcf4139.",
+    "expected": []
+  },
+  {
+    "id": "negative-10",
+    "group": "negative",
+    "text": "Look at src/auth/token.ts and update parseToken().",
+    "expected": []
+  },
+  {
+    "id": "negative-11",
+    "group": "negative",
+    "text": "Please email Alex at alex@example.test.",
+    "expected": []
+  },
+  {
+    "id": "negative-12",
+    "group": "negative",
+    "text": "Connect to db.example.test on port 5432 as user app.",
+    "expected": []
+  },
+  {
+    "id": "negative-13",
+    "group": "negative",
+    "text": "Here is a public SSH key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAgWD66nRU0LZ2wy0jfJsE8OictxoB7potFTy6HKwoGO",
+    "expected": []
+  },
+  {
+    "id": "negative-14",
+    "group": "negative",
+    "text": "Use AWS_ACCESS_KEY_ID from the credentials file; don't print it.",
+    "expected": []
+  },
+  {
+    "id": "negative-15",
+    "group": "negative",
+    "text": "const token = response.access_token; return token;",
+    "expected": []
+  },
+  {
+    "id": "negative-16",
+    "group": "negative",
+    "text": "assert(password.length >= 12); // ensure a strong password",
+    "expected": []
+  },
+  {
+    "id": "negative-17",
+    "group": "negative",
+    "text": "The variable name client_secret must remain unchanged.",
+    "expected": []
+  },
+  {
+    "id": "negative-18",
+    "group": "negative",
+    "text": "Use /tmp/secret.txt and delete it afterward.",
+    "expected": []
+  },
+  {
+    "id": "negative-19",
+    "group": "negative",
+    "text": "The ticket number is 1831 and the release version is 8.30.1.",
+    "expected": []
+  },
+  {
+    "id": "negative-20",
+    "group": "negative",
+    "text": "My user ID is 897123 and the feature flag is on.",
+    "expected": []
+  },
+  {
+    "id": "negative-21",
+    "group": "negative",
+    "text": "Do not expose secrets. Use the secure file we already created.",
+    "expected": []
+  },
+  {
+    "id": "negative-22",
+    "group": "negative",
+    "text": "The build artifact is named I98vykCjRvQmEbxoEhTTksChBmpKayE66aBq.tar.gz.",
+    "expected": []
+  }
+]
