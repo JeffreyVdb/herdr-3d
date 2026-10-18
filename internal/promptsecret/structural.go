@@ -680,8 +680,9 @@ var (
 		`=|->|→|to|ist|est|es|er|är|on|je):?[ \t]+|[ \t]*[:=][ \t]*)`
 	proseLink = regexp.MustCompile(`(?i)^(?:` + proseCopula + `|[ \t]+)`)
 	proseFor  = regexp.MustCompile(`(?i)^[ \t]+(?:for|of|voor|für|pour|para)(?:[ \t]+[^\s.,;:!?"'` + "`" + `]{1,40}){1,4}?` + proseCopula)
-	// A few words more, then a copula or a colon and a quote.
-	proseGap = regexp.MustCompile(`(?i)^((?:[ \t]+[^\s.!?:="'` + "`" + `“‘«„]{1,40}){1,10}?)` + proseCopula + "[\"'`“‘«„]")
+	// A few words more (after a comma too), then a copula or a colon and a
+	// quote.
+	proseGap = regexp.MustCompile(`(?i)^(,?(?:[ \t]+[^\s.!?:="'` + "`" + `“‘«„]{1,40}){1,10}?)` + proseCopula + "[\"'`“‘«„]")
 	fence    = regexp.MustCompile("^```[\\w.+-]*[ \t]*\r?\n")
 )
 
@@ -695,7 +696,62 @@ var gapNouns = map[string]bool{"is": true, "was": true, "are": true, "were": tru
 	"hash": true, "length": true, "format": true, "pattern": true, "regex": true, "setting": true, "settings": true,
 	"option": true, "flag": true, "attribute": true, "type": true, "input": true, "reset": true, "expiry": true,
 	"expiration": true, "strength": true, "complexity": true, "file": true, "path": true, "env": true, "header": true,
-	"endpoint": true, "url": true, "scope": true, "prefix": true, "suffix": true, "example": true, "template": true}
+	"endpoint": true, "url": true, "scope": true, "prefix": true, "suffix": true, "example": true, "template": true,
+	"result": true, "check": true, "status": true, "state": true, "mode": true, "comparison": true, "identifier": true,
+	"id": true, "algorithm": true, "encoding": true, "count": true, "score": true, "rating": true, "level": true}
+
+// gapLeads may follow a credential word that is its sentence's subject, as
+// does a participle (…ed) or a comma: a preposition, a determiner, a
+// pronoun or an adverb ("the password in these quotes", "the password the
+// job uses", "the token we rotated", "the password now"). Any other word
+// makes the credential word a modifier of another noun ("the password
+// comparison result is", "the password check is"): what is quoted after it
+// is that noun's (review T2).
+var gapLeads = map[string]bool{"for": true, "of": true, "in": true, "on": true, "at": true, "by": true, "to": true,
+	"from": true, "with": true, "within": true, "inside": true, "into": true, "as": true, "via": true, "under": true,
+	"after": true, "before": true, "behind": true, "between": true, "through": true, "per": true, "voor": true,
+	"für": true, "pour": true, "para": true, "de": true, "van": true, "von": true, "du": true, "del": true,
+	"the": true, "a": true, "an": true, "this": true, "that": true, "these": true, "those": true, "my": true, "our": true,
+	"your": true, "their": true, "his": true, "her": true, "its": true, "i": true, "we": true, "you": true, "they": true,
+	"he": true, "she": true, "it": true, "which": true, "who": true, "whose": true, "someone": true,
+	"now": true, "currently": true, "here": true, "there": true, "again": true, "also": true, "still": true,
+	"actually": true, "really": true, "originally": true, "previously": true, "today": true, "then": true,
+	"finally": true, "just": true, "including": true, "containing": true, "ending": true, "starting": true,
+	"beginning": true, "using": true, "following": true, "given": true, "chosen": true, "written": true,
+	"taken": true, "hidden": true, "shown": true, "known": true, "sent": true, "set": true, "kept": true, "put": true,
+	"got": true, "gotten": true, "stolen": true, "made": true, "built": true, "found": true, "held": true, "read": true}
+
+// subjectLead reports a gap's first word (or a comma) after which the
+// credential word is the subject (gapLeads).
+func subjectLead(gap string) bool {
+	if strings.HasPrefix(gap, ",") {
+		return true
+	}
+	f := strings.Fields(gap)
+	if len(f) == 0 {
+		return false
+	}
+	w := strings.ToLower(strings.TrimRight(f[0], ",;"))
+	return gapLeads[w] || len(w) >= 4 && strings.HasSuffix(w, "ed") && !strings.HasSuffix(w, "eed")
+}
+
+// named reports a value that names something rather than being one:
+// letters of one case, in words joined by - _ or . (invalid-password,
+// not-found, DB_PASSWORD, api.example.test).
+func named(v string) bool {
+	lower, upper := false, false
+	for _, r := range v {
+		switch {
+		case unicode.IsLower(r):
+			lower = true
+		case unicode.IsUpper(r):
+			upper = true
+		case !strings.ContainsRune("-_.", r):
+			return false
+		}
+	}
+	return lower != upper
+}
 
 func isPasswordWord(w string) bool {
 	w = strings.ToLower(w)
@@ -804,15 +860,17 @@ func proseValue(text string, i int, word string, refs []span) (span, bool) {
 // proseQuotedAfter is a quoted value a few words after a credential word
 // that ends at i, then a copula or a colon ("the password used by the job
 // is «X»", "the password in these quotes, including the last character:
-// "X""): the bytes between the quotes, shaped like one (no blank; a letter
-// and a digit or a symbol; a key word's token-like), never after words
-// that name what a password has (gapNouns).
+// "X"", "the literal password, including its punctuation, is «X»"): the
+// bytes between the quotes, shaped like one (no blank; a letter and a digit
+// or a symbol; a key word's token-like; no name: named, credentialKey),
+// only when the credential word is the subject (subjectLead), never after
+// words that name what a password has (gapNouns).
 func proseQuotedAfter(text string, i int, pw bool) (span, bool) {
 	if !quoteAhead(text, i) {
 		return span{}, false
 	}
 	l := proseGap.FindStringSubmatchIndex(text[i:min(len(text), i+proseReach)])
-	if l == nil {
+	if l == nil || !subjectLead(text[i+l[2]:i+l[3]]) {
 		return span{}, false
 	}
 	for _, w := range strings.Fields(text[i+l[2] : i+l[3]]) {
@@ -829,7 +887,7 @@ func proseQuotedAfter(text string, i int, pw bool) (span, bool) {
 	if notASecret(val, true) || templated(val) || strings.ContainsAny(val, " \t") || pathLike.MatchString(val) || strings.Contains(val, "://") {
 		return span{}, false
 	}
-	if pw && !(len(val) >= 6 && hasLetter(val) && hasDigitOrSymbol(val)) || !pw && !tokenish(val, 8) {
+	if pw && !(len(val) >= 6 && hasLetter(val) && hasDigitOrSymbol(val)) || !pw && !tokenish(val, 8) || named(val) || credentialKey(val) {
 		return span{}, false
 	}
 	return span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: true}, true

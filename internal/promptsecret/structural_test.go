@@ -516,6 +516,9 @@ func TestScanRecall(t *testing.T) {
 		{"quoted after words", `the password enclosed in these quotes, including the last character: "Kx81-mQp27LwRt5."`, []string{"Kx81-mQp27LwRt5."}},
 		{"quoted after words, colon", `the password enclosed in these quotes, including the last character: "Kx81-mQp27LwRt5:"`, []string{"Kx81-mQp27LwRt5:"}},
 		{"guillemets after words", "The literal password used by the deploy job is «clé-Ab12xYz🔐é.終».", []string{"clé-Ab12xYz🔐é.終"}},
+		{"a phrase with commas", "The literal password, including its punctuation, is «Qx7-mR2!pL9.».", []string{"Qx7-mR2!pL9."}}, // E1
+		{"quoted after a relative clause", `The password that the nightly job reads is "Kx81-mQp27LwRt5".`, []string{"Kx81-mQp27LwRt5"}},
+		{"quoted after a preposition", `The token for the staging cluster we deploy to is "Zx81mQp27LwRt5Yv9Nc".`, []string{"Zx81mQp27LwRt5Yv9Nc"}},
 		{"quoted token after words", `The API token we rotated yesterday is "Zx81mQp27LwRt5Yv9Nc".`, []string{"Zx81mQp27LwRt5Yv9Nc"}},
 		{"a copula before the quote", `return "the saved key is only ever sent to "+st.Instance.APIBase+"."`, nil},
 		{"quoted words about a password", `The password field is "required". The password validation message is "Password too short". ` +
@@ -570,6 +573,15 @@ func TestScanCleanText(t *testing.T) {
 		"docker run -u 1000:1000 img && git push -u origin main",
 		`echo 'it'\''s fine' && printf '%s\n' "done"`,
 		"Install hf_transfer. Then set sk_live_mode, and run it. They said hey.",
+		// Review T2: what prose says of a password (its check's result, its
+		// status, its name) is no password; the credential word is no subject
+		// there, or the value names something.
+		`The password comparison result is "invalid-password". The password check is "not-found".`,
+		`The secret identifier is "request-12345". The password hashing algorithm is "argon2id".`,
+		`The password used by the job is "DB_PASSWORD". The password we got back is "invalid-password".`,
+		`The password reset status is "expired". The password strength rating is "too-weak". The token type is "bearer-v2".`,
+		`The secret store backend is "vault-1". The password manager entry is "github-work-2". The API key mode is "live-77".`,
+		`The password, as noted, is "required". The password policy name is "min-length-12".`,
 		// Review T6: code holding the mask's bytes, with no reference, is code.
 		"const token = response.Qz7Qz7;\nprivate_key=credentials.Qz7Qz7.load()\npassword = getSecret(Qz7Qz7)",
 	}
