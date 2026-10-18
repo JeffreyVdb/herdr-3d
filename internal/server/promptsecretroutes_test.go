@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
+	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
@@ -769,4 +770,259 @@ func TestPromptSecretsHireInterpret(t *testing.T) {
 		t.Fatalf("a second hire with it: %s", m.raw)
 	}
 	traceFree(t, hb.st, hb.db, []*client{c}, routeSentinel, "Forged-Source-3!")
+}
+
+// worker.answer_ask: a dismissal's prompt and an Other answer go through
+// the gate on the worker's lane; refused without a review, nothing pressed
+// or typed; an Other the dialog then fails to take removes its files.
+func TestPromptSecretsAnswerAsk(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAskBridgeAt(t, filepath.Join(t.TempDir(), "world.db"), "blocked", func(o *server.Options) { o.SecretsDir = dir })
+	c := ab.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	const tu = "toolu_01UYJ8PfzgPp69vD6PS9cA2K"
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{"q": readScreen(t, "claude-ask-esc"), "gone": "  ⎿  User declined to answer questions\n"},
+		map[string]map[string]string{"q": {"esc": "gone"}}, map[string]func(){"gone": func() {
+			appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 12)+fixtureLine(t, "claude", "ask.jsonl", 13))
+			go func() { time.Sleep(100 * time.Millisecond); ab.setStatus("w1", "idle") }()
+		}})
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 11))
+	askOf(c, id, pendingID(tu))
+	args := proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu, Cancel: true, Prompt: routeText}
+	_, m := c.command(proto.CmdWorkerAnswerAsk, "a0", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || !strings.HasPrefix(errorOf(m).Message, "prompt: ") || len(ab.term.Calls()) != 0 {
+		t.Fatalf("no review: %s %q", m.raw, ab.term.Calls())
+	}
+	args.Secrets = proto.SecretsReviews{"prompt": routeReview(t, c)}
+	r := answerAsk(t, c, args)
+	if !r.Resolved || !r.Prompted {
+		t.Fatalf("result %+v", r)
+	}
+	calls := ab.term.Calls()
+	typed, ok := strings.CutPrefix(calls[len(calls)-1], "type w1:p1 ")
+	var sent string
+	if !ok || json.Unmarshal([]byte(typed), &sent) != nil {
+		t.Fatalf("calls %q", calls)
+	}
+	checkRouteSent(t, sent)
+	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
+
+	// An Other answer: protected as typed into the dialog; the fixture's
+	// dialog never shows that text, so the answer fails and its files go.
+	const single = "toolu_012vhFKJwCHqKoQ1THGwjkLk"
+	ab.setStatus("w1", "blocked")
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{
+		"q": withCursor(readScreen(t, "claude-ask-other-selected"), "❯", 1), "type": readScreen(t, "claude-ask-other-selected"),
+	}, map[string]map[string]string{"q": {"3": "type"}}, nil)
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 7))
+	askOf(c, id, pendingID(single))
+	other := "use PASSWORD=" + routeSentinel
+	before := len(ab.term.Calls())
+	_, m = c.command(proto.CmdWorkerAnswerAsk, "a1", proto.WorkerAnswerAskArgs{ID: id, ToolUseID: single,
+		Answers: []proto.AskAnswerArg{{Question: 0, Other: &other}}})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || !strings.HasPrefix(errorOf(m).Message, "answers[0].other: ") {
+		t.Fatalf("no review of the other: %s", m.raw)
+	}
+	files := len(protectedFiles(t, dir))
+	_, m = c.command(proto.CmdWorkerAnswerAsk, "a2", proto.WorkerAnswerAskArgs{ID: id, ToolUseID: single,
+		Answers: []proto.AskAnswerArg{{Question: 0, Other: &other}}, Secrets: proto.SecretsReviews{"answers[0].other": reviewOf(t, c, other)}})
+	if code := codeOf(m); code != proto.ErrInputFailed {
+		t.Fatalf("other: %s", m.raw)
+	}
+	var texts []string
+	for _, call := range ab.term.Calls()[before:] {
+		if rest, ok := strings.CutPrefix(call, "text w1:p1 "); ok {
+			texts = append(texts, rest)
+		}
+	}
+	if len(texts) != 1 || !strings.Contains(texts[0], "use PASSWORD=[secret in file ") {
+		t.Fatalf("typed %q", texts)
+	}
+	waitFor(t, "the failed answer's file to go", func() bool { return len(protectedFiles(t, dir)) == files })
+	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
+}
+
+// worker.answer_followup: each answer's value and note, and the note, are
+// reviewed on their own; the prompt they make holds the references.
+func TestPromptSecretsAnswerFollowup(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	fb := startFuBridgeWith(t, "", "", newFuRoles(), on(), "", func(o *server.Options) { o.SecretsDir = dir })
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := fb.ids["w1"]
+	fb.turn(t, "claude", "followup_questions.jsonl")
+	f := followupOf(c, id).Followup
+	note := "PASSWORD=Note-Sentinel-6!"
+	args := proto.WorkerAnswerFollowupArgs{ID: id, TurnID: f.TurnID,
+		Answers: []proto.FollowupAnswer{{ID: "q1", Value: "No"}, {ID: "q2", Value: routeText, Note: note}}}
+	_, m := c.command(proto.CmdWorkerAnswerFollowup, "f0", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || !strings.HasPrefix(errorOf(m).Message, "answers[1].value: ") {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	args.Secrets = proto.SecretsReviews{"answers[1].value": routeReview(t, c), "answers[1].note": reviewOf(t, c, note)}
+	_, m = c.command(proto.CmdWorkerAnswerFollowup, "f1", args)
+	if m.env.T != proto.TAck {
+		t.Fatalf("answer: %s", m.raw)
+	}
+	var typed []string
+	for _, call := range fb.term.Calls() {
+		if rest, ok := strings.CutPrefix(call, "type w1:p1 "); ok {
+			var s string
+			_ = json.Unmarshal([]byte(rest), &s)
+			typed = append(typed, s)
+		}
+	}
+	if len(typed) != 1 || !strings.Contains(typed[0], "→ No\n") || strings.Contains(typed[0], "Note-Sentinel-6!") {
+		t.Fatalf("typed %q", typed)
+	}
+	_, answer, _ := strings.Cut(typed[0], "→ Deploy it.")
+	checkRouteSent(t, "Deploy it."+answer[:strings.Index(answer, " PASSWORD=")])
+	if rows := ownersOf(t, fb.st, "worker", id); len(rows) != 1 || len(protectedFiles(t, dir)) != 3 {
+		t.Fatalf("w1 owns %+v", rows)
+	}
+	traceFree(t, fb.st, fb.db, []*client{c}, routeSentinel, "Note-Sentinel-6!")
+}
+
+// worker.answer_async: each answer reviewed on its own, admitted and sent
+// to the Codex thread with its references.
+func TestPromptSecretsAnswerAsync(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	sb, a := asyncWorkerWith(t, func(o *server.Options) { o.SecretsDir = dir })
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	sb.emit(turnStarted("t1"), itemDone("t1", asyncItem("call_3", colorQ, contextQ)), turnCompleted("t1"))
+	sb.codexWorker(t, func(c *proto.WorkerCodex) bool { return len(c.Questions) == 1 && c.Turn == "" })
+	args := answerArgs(a.ID, "call_3", ans(1, routeText), ans(0, "Blue"))
+	_, m := sb.c.command(proto.CmdWorkerAnswerAsync, "a0", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || len(sb.sent()) != 0 {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	args.Secrets = proto.SecretsReviews{"answers[0].answer": routeReview(t, sb.c)}
+	_, m = sb.c.command(proto.CmdWorkerAnswerAsync, "a1", args)
+	if res := ackData[proto.AsyncAnswerResult](t, m); res.Via != "turn/start" {
+		t.Fatalf("ack %s", m.raw)
+	}
+	sends := sb.sent()
+	answers, ok := codexapp.ParseReply(sends[0].text)
+	if len(sends) != 1 || !ok || len(answers) != 2 || answers[1].Answer != "Blue" {
+		t.Fatalf("sends %+v", sends)
+	}
+	checkRouteSent(t, answers[0].Answer)
+	traceFree(t, sb.st, sb.db, []*client{sb.c}, routeSentinel)
+}
+
+// worker.wrapup: the cleanup prompt is protected before it is armed, and
+// sent with its references; refused without a review, nothing armed.
+func TestPromptSecretsWrapUp(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	wb := startWrapBridge(t, "", "", func(o *server.Options) { o.SecretsDir = dir })
+	c := wb.connect(proto.Hello{Client: "wrap-test"})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	args := proto.WorkerWrapUpArgs{ID: wb.ids["w1"], Prompt: routeText, Worktree: proto.FireKeep}
+	_, m := c.command(proto.CmdWorkerWrapUp, "w0", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	if got, _ := wb.st.WrapUps(context.Background()); len(got) != 0 {
+		t.Fatalf("armed %+v", got)
+	}
+	args.Secrets = routeReview(t, c)
+	_, m = c.command(proto.CmdWorkerWrapUp, "w1", args)
+	if m.env.T != proto.TAck {
+		t.Fatalf("wrap-up: %s", m.raw)
+	}
+	text, _ := wb.prompted(t, "w1:p1")
+	task, _, _ := strings.Cut(text, "\n\nWhen you are done")
+	checkRouteSent(t, task)
+	if rows := ownersOf(t, wb.st, "worker", wb.ids["w1"]); len(rows) != 1 {
+		t.Fatalf("w1 owns %+v", rows)
+	}
+	traceFree(t, wb.st, wb.db, []*client{c}, routeSentinel)
+}
+
+// worker.handoff (agent): the instruction is protected before the request
+// is stored or sent; an existing op's answer uses none of it.
+func TestPromptSecretsWorkerHandoffAgent(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.SecretsDir = dir })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := ab.ids["w2"]
+	args := proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeAgent, Instruction: routeText, Op: "op-h"}
+	_, m := c.command(proto.CmdWorkerHandoff, "h0", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	if _, err := ab.st.HandoffRequestByOp(context.Background(), "op-h"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("stored: %v", err)
+	}
+	args.Secrets = routeReview(t, c)
+	_, m = c.command(proto.CmdWorkerHandoff, "h1", args)
+	res := ackData[proto.WorkerHandoffRequestResult](t, m)
+	if res.Protected != 2 || res.Existing {
+		t.Fatalf("ack %s", m.raw)
+	}
+	checkRouteSent(t, res.Request.Instruction)
+	prompt, _, _ := ab.mustRequest(t, "w2:p1")
+	if !strings.Contains(prompt, res.Request.Instruction) {
+		t.Fatalf("request prompt %q", prompt)
+	}
+	req, err := ab.st.HandoffRequestByOp(context.Background(), "op-h")
+	if err != nil || req.Instruction != res.Request.Instruction {
+		t.Fatalf("stored %+v %v", req, err)
+	}
+	// The same op again: answered, its files the ones written.
+	files := len(protectedFiles(t, dir))
+	args.Secrets = routeReview(t, c)
+	_, m = c.command(proto.CmdWorkerHandoff, "h2", args)
+	if res := ackData[proto.WorkerHandoffRequestResult](t, m); !res.Existing || res.Protected != 0 {
+		t.Fatalf("again %s", m.raw)
+	}
+	waitFor(t, "no new file", func() bool { return len(protectedFiles(t, dir)) == files })
+	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
+}
+
+// worker.handoff (llm): the model reads the instruction with its
+// references; the files stay the worker's once the job started.
+func TestPromptSecretsWorkerHandoffLLM(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	lb := newLLMBridge(t, yes(), func(o *server.Options) { o.SecretsDir = dir })
+	c := lb.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := lb.ids["w1"]
+	lb.fl.setProcs("w1:p1", running("claude", wrapSess))
+	cand := lb.candidate(t, c)
+	args := llmArgs(id, cand, "op-llm")
+	args.Instruction = routeText
+	_, m := c.command(proto.CmdWorkerHandoff, "h0", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || len(lb.llm.llm.Calls()) != 0 {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	args.Secrets = routeReview(t, c)
+	_, m = c.command(proto.CmdWorkerHandoff, "h1", args)
+	if res := ackData[proto.WorkerHandoffJobResult](t, m); res.Existing {
+		t.Fatalf("ack %s", m.raw)
+	}
+	waitFor(t, "the LLM call", func() bool { return len(lb.llm.llm.Calls()) == 1 })
+	var read string
+	for _, msg := range lb.llm.llm.Calls()[0].Messages {
+		read += msg.Content
+	}
+	if strings.Contains(read, routeSentinel) || !strings.Contains(read, "[secret in file "+dir) {
+		t.Fatalf("the LLM read %q", read)
+	}
+	if rows := ownersOf(t, lb.st, "worker", id); len(rows) != 1 || len(protectedFiles(t, dir)) != 2 {
+		t.Fatalf("w1 owns %+v", rows)
+	}
+	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
 }

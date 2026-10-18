@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -269,6 +270,8 @@ func validAsyncText(s string) bool {
 
 // startAnswerAsync validates worker.answer_async and queues it on the
 // worker's input lane, where it is checked again just before it is sent.
+// #108 round 2: with prompt secrets reviewed, its answers go through the
+// gate on the lane first, and are admitted as they go.
 func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.WorkerAnswerAsyncArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
@@ -280,34 +283,66 @@ func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command
 	if len(a.Answers) == 0 || len(a.Answers) > maxAsyncAnswers {
 		return bad("answers must have 1-%d items, got %d", maxAsyncAnswers, len(a.Answers))
 	}
+	t, err := h.admitAsync(a)
+	if err != nil {
+		return err
+	}
+	if h.gated(a.Secrets != nil) {
+		var fields []secretField
+		for i, x := range a.Answers {
+			if x.Answer != "" {
+				fields = append(fields, secretField{path: fmt.Sprintf("answers[%d].answer", i), text: x.Answer})
+			}
+		}
+		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, h.endCommand(c, cmd), func(ctx context.Context, texts func(string) string) (inputWork, error) {
+			b := a
+			b.Secrets, b.Answers = nil, slices.Clone(a.Answers)
+			for i := range b.Answers {
+				if b.Answers[i].Answer != "" {
+					b.Answers[i].Answer = texts(fmt.Sprintf("answers[%d].answer", i))
+				}
+			}
+			t, err := h.admitAsync(b)
+			if err != nil {
+				return nil, err
+			}
+			return func(ctx context.Context, _, _ string) (any, error) { return h.answerAsync(ctx, b, t) }, nil
+		})
+	}
+	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, _, _ string) (any, error) {
+		return h.answerAsync(ctx, a, t)
+	})
+}
+
+// admitAsync is worker.answer_async's checks of its answers, its worker
+// and thread (hub goroutine): the admitted answer.
+func (h *Hub) admitAsync(a proto.WorkerAnswerAsyncArgs) (codexapp.Ticket, error) {
 	replies := make([]codexapp.Reply, 0, len(a.Answers))
 	for i, x := range a.Answers {
 		if x.Index == nil {
-			return bad("answers[%d].index is required", i)
+			return codexapp.Ticket{}, bad("answers[%d].index is required", i)
 		}
 		if len(x.Answer) > maxAsyncAnswer || !validAsyncText(x.Answer) {
-			return bad("answers[%d].answer must be at most %d bytes of UTF-8 without control characters but line ends and tabs, got %d bytes",
+			return codexapp.Ticket{}, bad("answers[%d].answer must be at most %d bytes of UTF-8 without control characters but line ends and tabs, got %d bytes",
 				i, maxAsyncAnswer, len(x.Answer))
 		}
 		replies = append(replies, codexapp.Reply{Index: *x.Index, Text: x.Answer})
 	}
 	if _, _, err := h.termWorker(a.ID); err != nil {
-		return err
+		return codexapp.Ticket{}, err
 	}
 	q, err := h.asyncThread(a.ID, a.Thread)
 	if err != nil {
-		return err
+		return codexapp.Ticket{}, err
 	}
 	t, err := q.Admit(a.Batch, replies)
 	if err != nil {
-		return asyncError(err)
+		return codexapp.Ticket{}, asyncError(err)
 	}
 	if _, err := h.attachedWatch(a.ID, a.Thread); err != nil {
-		return err
+		return codexapp.Ticket{}, err
 	}
-	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, _, _ string) (any, error) {
-		return h.answerAsync(ctx, a, t)
-	})
+	return t, nil
 }
 
 // asyncSend is a checked answer, ready to go (taken on the hub goroutine).

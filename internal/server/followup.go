@@ -580,35 +580,82 @@ func (h *Hub) startAnswerFollowup(ctx context.Context, c *Client, cmd proto.Comm
 
 // queueAnswerFollowup is worker.answer_followup's checks and its queueing
 // on the worker's lane (hub goroutine), for a client's command and (#14) a
-// Telegram card's answer alike: end gets the outcome.
+// Telegram card's answer alike: end gets the outcome. #108 round 2: with
+// prompt secrets reviewed, its texts (the answers' values and notes, the
+// note) go through the gate on the lane first, and the prompt they make is
+// checked again.
 func (h *Hub) queueAnswerFollowup(ctx context.Context, a proto.WorkerAnswerFollowupArgs, end inputEnd) error {
-	s, err := h.followupOf(a.ID, a.TurnID)
+	text, err := h.planAnswerFollowup(a)
 	if err != nil {
 		return err
 	}
-	text, err := followupPrompt(s.f, a.Answers, a.Note)
-	if err != nil {
-		return err
-	}
-	if !herdr.ValidMessage(text) {
-		return bad("the answers make a prompt of %d bytes (at most %d, without NUL)", len(text), herdr.MaxMessage)
-	}
-	w, _, err := h.termWorker(a.ID)
-	if err != nil {
-		return err
-	}
-	if w.AgentKind == "" {
-		return fmt.Errorf("%w: %s runs no agent", errInvalidState, w.Name)
-	}
-	if err := checkTyped(w.AgentKind, text, herdr.MaxMessage, "the answers"); err != nil {
-		return err
-	}
-	if w.Ask != nil { // #57: its dialog would take the text
-		return fmt.Errorf("%w: %s %w: answer it first (worker.answer_ask)", errInvalidState, w.Name, errAskWaiting)
+	if h.gated(a.Secrets != nil) {
+		var fields []secretField
+		if a.Note != "" {
+			fields = append(fields, secretField{path: "note", text: a.Note})
+		}
+		for i, x := range a.Answers {
+			for _, f := range []secretField{{path: fmt.Sprintf("answers[%d].value", i), text: x.Value}, {path: fmt.Sprintf("answers[%d].note", i), text: x.Note}} {
+				if f.text != "" {
+					fields = append(fields, f)
+				}
+			}
+		}
+		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, end, func(ctx context.Context, texts func(string) string) (inputWork, error) {
+			b := a
+			b.Note, b.Secrets, b.Answers = texts("note"), nil, slices.Clone(a.Answers)
+			for i := range b.Answers {
+				b.Answers[i].Value, b.Answers[i].Note = texts(fmt.Sprintf("answers[%d].value", i)), texts(fmt.Sprintf("answers[%d].note", i))
+			}
+			text, err := h.planAnswerFollowup(b)
+			if err != nil {
+				return nil, err
+			}
+			h.tookOver(ctx, a.ID)
+			h.agentTookOver(ctx, a.ID)
+			return h.sendFollowupAnswers(a, text), nil
+		})
 	}
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
-	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
+	return h.queueInput(ctx, a.ID, h.sendFollowupAnswers(a, text), end)
+}
+
+// planAnswerFollowup is worker.answer_followup's checks (hub goroutine):
+// the prompt its answers make.
+func (h *Hub) planAnswerFollowup(a proto.WorkerAnswerFollowupArgs) (string, error) {
+	s, err := h.followupOf(a.ID, a.TurnID)
+	if err != nil {
+		return "", err
+	}
+	text, err := followupPrompt(s.f, a.Answers, a.Note)
+	if err != nil {
+		return "", err
+	}
+	if !herdr.ValidMessage(text) {
+		return "", bad("the answers make a prompt of %d bytes (at most %d, without NUL)", len(text), herdr.MaxMessage)
+	}
+	w, _, err := h.termWorker(a.ID)
+	if err != nil {
+		return "", err
+	}
+	if w.AgentKind == "" {
+		return "", fmt.Errorf("%w: %s runs no agent", errInvalidState, w.Name)
+	}
+	if err := checkTyped(w.AgentKind, text, herdr.MaxMessage, "the answers"); err != nil {
+		return "", err
+	}
+	if w.Ask != nil { // #57: its dialog would take the text
+		return "", fmt.Errorf("%w: %s %w: answer it first (worker.answer_ask)", errInvalidState, w.Name, errAskWaiting)
+	}
+	return text, nil
+}
+
+// sendFollowupAnswers is the work that sends a follow-up's answers (text)
+// on the worker's lane: the follow-up checked again first, cleared once
+// the prompt went.
+func (h *Hub) sendFollowupAnswers(a proto.WorkerAnswerFollowupArgs, text string) inputWork {
+	return func(ctx context.Context, session, pane string) (any, error) {
 		stale, err := query(ctx, h, func() error { _, err := h.followupOf(a.ID, a.TurnID); return err })
 		if err != nil {
 			return nil, err
@@ -627,7 +674,7 @@ func (h *Hub) queueAnswerFollowup(ctx context.Context, a proto.WorkerAnswerFollo
 			}
 		})
 		return res, nil
-	}, end)
+	}
 }
 
 // startRetryFollowup answers worker.retry_followup (#60): a fallback's

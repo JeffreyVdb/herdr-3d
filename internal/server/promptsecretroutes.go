@@ -487,3 +487,73 @@ func (pv *preview) result() proto.PackupDetectResult {
 	}
 	return out
 }
+
+// queueReviewed queues a worker's command whose texts go through the gate
+// (#108 round 2: worker.answer_ask, worker.answer_followup,
+// worker.answer_async; hub goroutine): the reviews paired with its texts
+// now, then on the worker's input lane, in order with its other input, the
+// gate (the files the worker's), then on the hub goroutine plan builds the
+// work from the texts as they go (texts: a text after the gate by its path,
+// "" for one the command does not carry) with the command's checks, again,
+// and side effects, then the work runs in the same lane job. A failure
+// removes the files it made; a success keeps them for its identical retry.
+func (h *Hub) queueReviewed(ctx context.Context, id string, reviews proto.SecretsReviews, fields []secretField, end inputEnd,
+	plan func(ctx context.Context, texts func(path string) string) (inputWork, error)) error {
+	if err := h.stillOn(); err != nil {
+		return err
+	}
+	for _, f := range fields {
+		if err := scannable(f.text, f.path); err != nil {
+			return err
+		}
+	}
+	fields, err := reviewFields(reviews, fields)
+	if err != nil {
+		return err
+	}
+	if err := h.laneRoom(id); err != nil {
+		return err
+	}
+	rev, owner := h.ps.rev, secretfiles.Worker(id)
+	h.queueLane(ctx, id, func(ctx context.Context) {
+		ps, err := h.protectFields(ctx, rev, owner, time.Time{}, fields)
+		if err != nil {
+			end(ctx, nil, err)
+			return
+		}
+		texts := func(path string) string { return fieldsText(fields, ps, path) }
+		type planned struct {
+			work inputWork
+			t    laneTarget
+			err  error
+		}
+		pl, err := query(ctx, h, func() planned {
+			if h.ps.rev != rev { // the switch changed meanwhile
+				return planned{err: fmt.Errorf("%w: the setting changed: review again", errSecretsReviewStale)}
+			}
+			work, err := plan(ctx, texts)
+			if err != nil {
+				return planned{err: err}
+			}
+			w, _, err := h.termWorker(id)
+			if err != nil {
+				return planned{err: err}
+			}
+			return planned{work: work, t: laneTarget{session: w.Session, pane: w.PaneID}}
+		})
+		if err == nil {
+			err = pl.err
+		}
+		var data any
+		if err == nil {
+			data, err = pl.work(ctx, pl.t.session, pl.t.pane)
+		}
+		if err != nil {
+			h.unprotectAll(ctx, ps)
+		} else {
+			h.sentAll(ps, owner)
+		}
+		end(ctx, data, err)
+	})
+	return nil
+}

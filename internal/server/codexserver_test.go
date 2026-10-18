@@ -199,12 +199,23 @@ func startSharedBridgeAt(t *testing.T, db string, host *fakeCodexHost, on bool, 
 // policy (#68; "": the default, bash).
 func startSharedBridgeShell(t *testing.T, db string, host *fakeCodexHost, on bool, kind shellpolicy.Kind, workers ...world.WorkerObs) *sharedBridge {
 	t.Helper()
+	return startSharedBridgeWith(t, db, host, on, kind, nil, workers...)
+}
+
+// startSharedBridgeWith is startSharedBridgeShell with a tweak of the
+// options (after the shared ones).
+func startSharedBridgeWith(t *testing.T, db string, host *fakeCodexHost, on bool, kind shellpolicy.Kind, tweak func(*server.Options),
+	workers ...world.WorkerObs) *sharedBridge {
+	t.Helper()
 	term := newFakeTerm()
 	sessions := t.TempDir()
 	hb := startHireBridgeAt(t, db, func(o *server.Options) {
 		o.CodexRun, o.CodexHost, o.CodexPoll, o.CodexShell = codexRun, host, 20*time.Millisecond, kind
 		o.Term, o.CodexRejoin = term, 150*time.Millisecond
 		o.Usage = &server.UsageConfig{Roots: usage.Roots{CodexSessions: sessions}, Interval: 20 * time.Millisecond}
+		if tweak != nil {
+			tweak(o)
+		}
 	}, workers...)
 	if on {
 		hb.c.mustAck(proto.CmdCodexServerSet, proto.CodexServerSetArgs{Enabled: ptr(true)})

@@ -476,8 +476,10 @@ type llmReport struct {
 
 // startLLMHandoff answers worker.handoff in mode "llm": checked, the job
 // stored and audited, answered at once; the work runs off the hub goroutine
-// and the job is followed on Worker.LLMHandoff.
-func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs) error {
+// and the job is followed on Worker.LLMHandoff. started (#108; nil: none)
+// is told when the job starts (not for an existing op's answer, nor when
+// it could not be stored).
+func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs, started func()) error {
 	svc := h.llm.svc
 	switch {
 	case svc == nil:
@@ -536,6 +538,9 @@ func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command,
 	jctx, cancel := context.WithCancel(ctx)
 	j.cancel = cancel
 	h.llm.running = j
+	if started != nil {
+		started()
+	}
 	h.llm.byWorker[w.ID] = j
 	h.publishLLMHandoff(w.ID)
 	h.reply(c, cmd, proto.WorkerHandoffJobResult{Job: j.view()}, nil)

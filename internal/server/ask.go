@@ -160,53 +160,90 @@ func (h *Hub) startAnswerAsk(ctx context.Context, c *Client, cmd proto.Command) 
 
 // queueAnswerAsk is worker.answer_ask's checks and its queueing on the
 // worker's lane (hub goroutine), for a client's command and (#14) a
-// Telegram card's answer alike: end gets the outcome.
+// Telegram card's answer alike: end gets the outcome. #108 round 2: with
+// prompt secrets reviewed, its texts (the prompt, the Other answers) go
+// through the gate on the lane first, and are checked again as they go.
 func (h *Hub) queueAnswerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, end inputEnd) error {
-	if !toolUseIDRe.MatchString(a.ToolUseID) {
-		return bad("tool_use_id must be the ask's tool_use_id")
-	}
-	switch {
-	case a.Cancel && len(a.Answers) > 0:
-		return bad("want answers or cancel: true, not both")
-	case !a.Cancel && len(a.Answers) == 0:
-		return bad("want answers (one per question) or cancel: true")
-	case a.Prompt != "" && !a.Cancel:
-		return bad("a prompt goes only with cancel")
-	case a.Prompt != "" && !h.promptSourceOK(a.Prompt):
-		// The limit is on the translated text (answerAsk checks it, #138).
-		return badPromptText("prompt", len(a.Prompt))
-	}
-	w, _, err := h.termWorker(a.ID)
+	answers, err := h.planAnswerAsk(a)
 	if err != nil {
 		return err
 	}
-	switch {
-	case w.Ask == nil:
-		return fmt.Errorf("%w: %s is not asking anything now", errStale, w.Name)
-	case w.Ask.ToolUseID != a.ToolUseID:
-		return fmt.Errorf("%w: %s asks another question now (tool_use_id %s)", errStale, w.Name, w.Ask.ToolUseID)
-	}
-	if a.Prompt != "" && !h.rewrites(w.AgentKind) {
-		// Not translated: its limit and typing rules apply to it as it is.
-		if !herdr.ValidMessage(a.Prompt) {
-			return badPromptText("prompt", len(a.Prompt))
+	if h.gated(a.Secrets != nil) {
+		var fields []secretField
+		if a.Prompt != "" {
+			fields = append(fields, secretField{path: "prompt", text: a.Prompt})
 		}
-		if w.Ask.Agent == proto.AskClaude {
-			if err := checkTyped(proto.AskClaude, a.Prompt, herdr.MaxMessage, "prompt"); err != nil {
-				return err
+		for i, x := range a.Answers {
+			if x.Other != nil && *x.Other != "" {
+				fields = append(fields, secretField{path: fmt.Sprintf("answers[%d].other", i), text: *x.Other})
 			}
 		}
-	}
-	var answers []askAnswer
-	if !a.Cancel {
-		if answers, err = checkAnswers(w.Ask, a.Answers); err != nil {
-			return err
-		}
+		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, end, func(ctx context.Context, texts func(string) string) (inputWork, error) {
+			b := a
+			b.Prompt, b.Secrets, b.Answers = texts("prompt"), nil, slices.Clone(a.Answers)
+			for i, x := range b.Answers {
+				if x.Other != nil && *x.Other != "" {
+					other := texts(fmt.Sprintf("answers[%d].other", i))
+					b.Answers[i].Other = &other
+				}
+			}
+			answers, err := h.planAnswerAsk(b)
+			if err != nil {
+				return nil, err
+			}
+			h.agentTookOver(ctx, a.ID)
+			return func(ctx context.Context, session, pane string) (any, error) {
+				return h.answerAsk(ctx, b, answers, session, pane)
+			}, nil
+		})
 	}
 	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
 	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
 		return h.answerAsk(ctx, a, answers, session, pane)
 	}, end)
+}
+
+// planAnswerAsk is worker.answer_ask's checks (hub goroutine): its answers.
+func (h *Hub) planAnswerAsk(a proto.WorkerAnswerAskArgs) ([]askAnswer, error) {
+	if !toolUseIDRe.MatchString(a.ToolUseID) {
+		return nil, bad("tool_use_id must be the ask's tool_use_id")
+	}
+	switch {
+	case a.Cancel && len(a.Answers) > 0:
+		return nil, bad("want answers or cancel: true, not both")
+	case !a.Cancel && len(a.Answers) == 0:
+		return nil, bad("want answers (one per question) or cancel: true")
+	case a.Prompt != "" && !a.Cancel:
+		return nil, bad("a prompt goes only with cancel")
+	case a.Prompt != "" && !h.promptSourceOK(a.Prompt):
+		// The limit is on the translated text (answerAsk checks it, #138).
+		return nil, badPromptText("prompt", len(a.Prompt))
+	}
+	w, _, err := h.termWorker(a.ID)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case w.Ask == nil:
+		return nil, fmt.Errorf("%w: %s is not asking anything now", errStale, w.Name)
+	case w.Ask.ToolUseID != a.ToolUseID:
+		return nil, fmt.Errorf("%w: %s asks another question now (tool_use_id %s)", errStale, w.Name, w.Ask.ToolUseID)
+	}
+	if a.Prompt != "" && !h.rewrites(w.AgentKind) {
+		// Not translated: its limit and typing rules apply to it as it is.
+		if !herdr.ValidMessage(a.Prompt) {
+			return nil, badPromptText("prompt", len(a.Prompt))
+		}
+		if w.Ask.Agent == proto.AskClaude {
+			if err := checkTyped(proto.AskClaude, a.Prompt, herdr.MaxMessage, "prompt"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if a.Cancel {
+		return nil, nil
+	}
+	return checkAnswers(w.Ask, a.Answers)
 }
 
 // askDriver presses keys into one worker's dialog, reading its screen

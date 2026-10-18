@@ -27,6 +27,7 @@ const (
 type askBridge struct {
 	*termBridge
 	claude, codex string // their transcript files
+	db            string // the database ("": a new one the test does not read)
 }
 
 func startAskBridge(t *testing.T, status string) *askBridge {
@@ -37,16 +38,22 @@ func startAskBridge(t *testing.T, status string) *askBridge {
 // startAskBridgeWith is startAskBridge with a tweak of the options.
 func startAskBridgeWith(t *testing.T, status string, tweak func(*server.Options)) *askBridge {
 	t.Helper()
+	return startAskBridgeAt(t, "", status, tweak)
+}
+
+// startAskBridgeAt is startAskBridgeWith on the database at db.
+func startAskBridgeAt(t *testing.T, db, status string, tweak func(*server.Options)) *askBridge {
+	t.Helper()
 	dir := t.TempDir()
 	w1 := agentW("w1", "claude", status)
 	w1.AgentSession, w1.Harness = askSess, world.HarnessClaude
 	w2 := agentW("w2", "codex", status)
 	w2.AgentSession, w2.Harness = codexSess, world.HarnessCodex
-	ab := &askBridge{claude: filepath.Join(dir, "claude", "-home-u-w1", askSess+".jsonl"),
+	ab := &askBridge{db: db, claude: filepath.Join(dir, "claude", "-home-u-w1", askSess+".jsonl"),
 		codex: filepath.Join(dir, "codex", "2026", "09", "30", "rollout-2026-09-30T12-40-31-"+codexSess+".jsonl")}
 	writeTranscript(t, ab.claude, "")
 	writeTranscript(t, ab.codex, `{"timestamp":"2026-09-30T10:40:31.000Z","type":"session_meta","payload":{"id":"`+codexSess+`","cwd":"/home/u/w2","cli_version":"0.159.2"}}`+"\n")
-	ab.termBridge = startTermBridge(t, func(o *server.Options) {
+	ab.termBridge = startTermBridgeAt(t, db, func(o *server.Options) {
 		o.Usage = &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: filepath.Join(dir, "claude"), CodexSessions: filepath.Join(dir, "codex")},
 			Interval: 20 * time.Millisecond}
 		o.AskStepTimeout, o.AskResolveTimeout = 400*time.Millisecond, 2*time.Second

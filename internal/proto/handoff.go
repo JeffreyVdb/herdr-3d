@@ -265,6 +265,9 @@ type WorkerHandoffRequestResult struct {
 	Request  AgentHandoff  `json:"request"`
 	Handoff  *HandoffEntry `json:"handoff,omitempty"`
 	Existing bool          `json:"existing,omitempty"`
+	// Protected (#108 round 2): how many ranges of the instruction went to
+	// private files (absent: none, or Existing).
+	Protected int `json:"protected,omitempty"`
 }
 
 // WorkerHandoffCancelArgs are the args of worker.handoff_cancel (#224).
