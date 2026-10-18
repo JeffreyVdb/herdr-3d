@@ -225,11 +225,13 @@ func scannable(text, what string) error {
 
 // scanSecrets scans text with rev, off the hub goroutine: at most
 // maxSecretScans at once, within SecretScanTimeout (a scan past it goes on
-// in its slot, and the caller fails).
+// in its slot, and the caller fails: what it still writes is never read).
 func (h *Hub) scanSecrets(ctx context.Context, rev *promptsecret.Reviewer, text string) (promptsecret.Review, error) {
 	var out promptsecret.Review
-	err := h.withSecretSlot(ctx, func() { out = rev.Scan(text) })
-	return out, err
+	if err := h.withSecretSlot(ctx, func() { out = rev.Scan(text) }); err != nil {
+		return promptsecret.Review{}, err
+	}
+	return out, nil
 }
 
 // withSecretSlot runs work in a scan slot within SecretScanTimeout.
