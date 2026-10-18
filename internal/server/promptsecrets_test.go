@@ -889,6 +889,41 @@ func TestPromptSecretsSymbolsBesideOwnReference(t *testing.T) {
 	}
 }
 
+// A token format that a reference's place completes takes no bytes from the
+// value around it (review S1, pass 3: the masked reference completed a
+// GitHub token's 40 bytes, that match beat the password's own, and the
+// password's rest was sent raw once every candidate was protected).
+func TestPromptSecretsTokenBesideOwnReference(t *testing.T) {
+	t.Parallel()
+	sb := startSecretsBridge(t, true, nil)
+	seed := "PASSWORD=Seed-Sentinel-73x"
+	s := sb.scan(t, seed)
+	_, m := sb.c.command(proto.CmdWorkerPrompt, "seed", proto.WorkerPromptArgs{ID: sb.id2, Text: seed, Secrets: &proto.SecretsReview{
+		Revision: s.Revision, Decisions: []proto.SecretDecision{{Candidate: "c1", Action: proto.SecretProtect}}}})
+	ref := refRe.FindString(ackData[proto.PromptResult](t, m).Sent)
+	if ref == "" {
+		t.Fatal("no reference")
+	}
+	const head, tail = "ghp_GT2MQVTdhGOubkn5tfdOv4eY", "Tail-Sentinel-77!"
+	text := `PASSWORD="` + head + ref + ` ` + tail + `"`
+	s = sb.scan(t, text)
+	if len(s.Candidates) != 2 || s.Candidates[0].Start != u16(text, head) || s.Candidates[0].End != u16(text, head)+len(head) ||
+		s.Candidates[1].Start != u16(text, tail) || s.Candidates[1].End != u16(text, tail)+len(tail) {
+		t.Fatalf("%q: %+v", text, s)
+	}
+	var protect []proto.SecretDecision
+	for _, c := range s.Candidates {
+		protect = append(protect, proto.SecretDecision{Candidate: c.ID, Action: proto.SecretProtect})
+	}
+	_, m = sb.c.command(proto.CmdWorkerPrompt, "p", proto.WorkerPromptArgs{ID: sb.id2, Text: text, Secrets: &proto.SecretsReview{
+		Revision: s.Revision, Decisions: protect}})
+	pr := ackData[proto.PromptResult](t, m)
+	calls := sb.term.Calls()
+	if pr.Protected != 2 || strings.Contains(pr.Sent, head) || strings.Contains(pr.Sent, tail) || strings.Contains(calls[len(calls)-1], tail) {
+		t.Fatalf("sent %q (ack %s)", calls[len(calls)-1], m.raw)
+	}
+}
+
 // Once the lane has begun to send a reviewed /handoff's request, the send's
 // result settles its files, whatever ended the request meanwhile (review
 // P2-1): a cancel or a person taking over while the prompt is submitted,

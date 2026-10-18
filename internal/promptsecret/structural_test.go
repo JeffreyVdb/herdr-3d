@@ -165,11 +165,15 @@ func TestScanExclusions(t *testing.T) {
 // The bridge's own references (a follow-up of a sent prompt) are never
 // proposed, in any syntax, nor is a bracket next to one; only the exact
 // reference to one of its files is left out: what runs into one keeps its
-// bytes outside it, and text that only looks like one is scanned.
+// bytes outside it, a match that owes its shape or its edge to one takes no
+// other value's bytes, and text that only looks like one is scanned.
 func TestScanOwnReferences(t *testing.T) {
 	t.Parallel()
 	r1, r2 := ownRef("GXWCYAQQ2YUJGSWNCUK2JAZZ57"), ownRef("LEI5ZMIW4XSUXWUGR2R2IAUNOA")
 	const gh = "ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"
+	const ghHead = "ghp_GT2MQVTdhGOubkn5tfdOv4eY" // 28 of a GitHub token's 40 bytes: a reference holds the rest
+	const jwtHead, jwtTail = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIi", ".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+	const tfTail = ".atlasv1.k3Jd9fLq0ZrMv8Xw2PbN7cHt4YsG6uRe1WqA5oTz8iKl3mVy0nBx9Cj2FhD7gSaE4" // a reference holds its head
 	checkScans(t, []scanCase{
 		{"quoted", `PASSWORD="` + r1 + `" export TOKEN='` + r2 + `'`, nil},
 		{"json", `{"api_key": "` + r1 + `", "password": "` + r2 + `"}`, nil},
@@ -202,6 +206,37 @@ func TestScanOwnReferences(t *testing.T) {
 		{"short", `PASSWORD=a` + r1 + ` api_key="` + r1 + `x1"`, []string{"a", "x1"}},
 		{"both sides", `PASSWORD="ab ` + r1 + ` #9" password=Z` + r1 + `9`, []string{"ab", "#9", "Z", "9"}},
 		{"lone wrappers", "secret=(" + r1 + ") token=[" + r2 + "] password=\"" + r1 + ",\"", nil},
+		// Review S1 (pass 3): a reference stands for a value's place, not
+		// its content. A match whose shape the masked reference completes
+		// (a token format, a header's length), before, around or after it,
+		// never takes the bytes of the value around it.
+		{"a token the mask completes", `PASSWORD="` + ghHead + r1 + ` Tail-Sentinel-77!"`, []string{ghHead, "Tail-Sentinel-77!"}},
+		{"a token the mask completes, symbols", `PASSWORD="` + ghHead + r1 + `!@#%&+=?_-"`, []string{ghHead, "!@#%&+=?_-"}},
+		{"a token the mask completes, unquoted", `PASSWORD=` + ghHead + r1 + `Tail-Sentinel-77!`, []string{ghHead, "Tail-Sentinel-77!"}},
+		{"a token the mask completes, two references", `PASSWORD="` + ghHead + r1 + ` mid-77 ` + r2 + ` Tail-77!"`,
+			[]string{ghHead, "mid-77", "Tail-77!"}},
+		{"a fine-grained token", `TOKEN="github_pat_11ABCDEFG0abcdefghijk` + r1 + ` and-tail"`,
+			[]string{"github_pat_11ABCDEFG0abcdefghijk", "and-tail"}},
+		{"a JWT around one", `TOKEN="` + jwtHead + r1 + jwtTail + ` and-tail"`, []string{jwtHead, jwtTail + " and-tail"}},
+		{"a JWT around one, unquoted", `TOKEN=` + jwtHead + r1 + jwtTail + `;more`, []string{jwtHead, jwtTail + ";more"}},
+		{"a token from inside one", `TOKEN="` + r1 + tfTail + ` and-tail"`, []string{tfTail + " and-tail"}},
+		{"a header the mask lengthens", `PASSWORD="Bearer abc` + r1 + ` tail-77"`, []string{"Bearer abc", "tail-77"}},
+		// Chosen: a header credential protected out of a quoted value
+		// proposes the value's other words again, as a token's does
+		// (PASSWORD="[…] tail"): the mask cannot vouch for the header.
+		{"a header in a value", `PASSWORD="Bearer ` + r1 + ` tail"`, []string{"Bearer", "tail"}},
+		// A match the reference's '[' cut short takes no bytes either.
+		{"a token typed up to one", `TOKEN="xoxb-1234567890-1234567890abc` + r1 + ` and-tail"`,
+			[]string{"xoxb-1234567890-1234567890abc", "and-tail"}},
+		{"a header typed up to one", `PASSWORD="Bearer abcdefghij123456` + r1 + `def"`, []string{"Bearer abcdefghij123456", "def"}},
+		// What only runs through a reference keeps its boundary and rank.
+		{"a header through one", "Authorization: Bearer abc" + r1 + "def", []string{"abc", "def"}},
+		{"a bare header through one", "Bearer abcdefghij123456" + r1 + "def", []string{"abcdefghij123456", "def"}},
+		{"prose through one", "the password is ab" + r1 + "cd", []string{"ab", "cd"}},
+		{"a query value in a value", `PASSWORD="https://h/x?token=abc` + r1 + `&x=1"`, []string{"abc"}},
+		{"a query reference in a value", `PASSWORD="https://h/x?token=` + r1 + `&x=1"`, nil},
+		{"a template's sign", "PASSWORD=$" + r1, []string{"$"}},
+		{"a token's head alone", ghHead + r1, []string{ghHead}},
 	})
 	// A part keeps the detectors of the range it was cut from.
 	for _, text := range []string{`PASSWORD="!@#%&+=?_- ` + r1 + `"`, `PASSWORD=` + r1 + `!@#%&+=?_-`} {

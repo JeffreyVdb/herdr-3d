@@ -56,6 +56,8 @@ type span struct {
 	kind       string
 	rank       int
 	encoded    bool // stored as typed: a YAML block's indented lines
+	shaped     bool // found for its value's shape (a token format, a length, a digit), not only its place
+	borrowed   bool // owes its match to a reference: ranks after every other (Scan)
 }
 
 // Ranks: a provider's exact format, then the structural families in this
@@ -152,12 +154,12 @@ func headerSpans(text string) []span {
 		if v == "" || notASecret(v, false) || (scheme == "" && !tokenish(v, 8)) {
 			continue
 		}
-		out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader})
+		out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: scheme == ""})
 	}
 	for _, m := range bareBearer.FindAllStringIndex(text, -1) {
 		end := token68At(text, m[1])
 		if v := text[m[1]:end]; tokenish(v, 16) && !notASecret(v, false) {
-			out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader})
+			out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: true})
 		}
 	}
 	return out
@@ -507,7 +509,7 @@ func proseSpans(text string) []span {
 		}
 		if s, e, ok := quotedAt(text, v); ok {
 			if val := text[s:e]; s < e && !notASecret(val, true) && (pw || len(val) >= 8) {
-				out = append(out, span{start: s, end: e, kind: KindProse, rank: rankProse})
+				out = append(out, span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: !pw})
 			}
 			continue
 		}
@@ -528,7 +530,7 @@ func proseSpans(text string) []span {
 			ok = len(val) >= 16 && hasLetter(val) && hasDigit(val)
 		}
 		if ok {
-			out = append(out, span{start: v, end: e, kind: KindProse, rank: rankProse})
+			out = append(out, span{start: v, end: e, kind: KindProse, rank: rankProse, shaped: true})
 		}
 	}
 	return out

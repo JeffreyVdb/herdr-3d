@@ -37,14 +37,26 @@ type Candidate struct {
 // part of a candidate, and only its bytes are left out (outside). The
 // detectors read the text as typed and, when it holds one, again with each
 // reference masked as one word, so a value that runs into a reference, on
-// either side of it, is found as if a value stood in its place. Overlaps are
-// resolved on the whole ranges; then each candidate keeps its parts outside
-// the references. The first call compiles the rules.
+// either side of it, is found as if a value stood in its place. The mask
+// stands for a value's place, not its content: a span the masked text gave
+// for its value's shape (a token format, a length, a digit) that runs into a
+// reference may owe that shape to the mask's bytes, and one found as typed
+// that a reference's own bytes cut short (clipped) has a false edge. Such a
+// span is borrowed: it ranks after every other (resolve), so it never takes
+// another's typed bytes, and is a candidate only where nothing else is.
+// Overlaps are resolved on the whole ranges; then each candidate keeps its
+// parts outside the references. The first call compiles the rules.
 func Scan(text string, own func(path string) bool) []Candidate {
 	refs := references(text, own)
 	spans := detect(text)
 	if len(refs) > 0 {
-		spans = append(spans, detect(masked(text, refs))...)
+		for i := range spans {
+			spans[i].borrowed = clipped(spans[i], refs)
+		}
+		for _, s := range detect(masked(text, refs)) {
+			s.borrowed = s.shaped && overlapsAny(s.start, s.end, refs)
+			spans = append(spans, s)
+		}
 	}
 	spans = slices.DeleteFunc(spans, func(s span) bool { return s.start >= s.end || insideOne(s, refs) })
 	byRange := kindsBySpan(spans)
@@ -79,7 +91,7 @@ func detect(text string) []span {
 		if strings.Contains(strings.ToLower(m.Rule), "generic") {
 			rank = rankGeneric
 		}
-		spans = append(spans, span{start: m.Start, end: m.End, kind: "gitleaks:" + m.Rule, rank: rank})
+		spans = append(spans, span{start: m.Start, end: m.End, kind: "gitleaks:" + m.Rule, rank: rank, shaped: true})
 	}
 	return append(spans, structural(text)...)
 }
@@ -110,14 +122,20 @@ func kindsBySpan(lists ...[]span) map[[2]int]spanKinds {
 }
 
 // resolve keeps candidates that never overlap (docs/decisions.md, #108): the
-// same range found twice is one candidate; of overlapping ones, the lower
-// rank wins (a provider's exact format, then the structural families in
-// rank order, which take a value's own boundary over Gitleaks' generic
-// rules), then the earlier start, then the longer range.
+// same range found twice is one candidate; of overlapping ones, a span that
+// is not borrowed wins (Scan), then the lower rank (a provider's exact
+// format, then the structural families in rank order, which take a value's
+// own boundary over Gitleaks' generic rules), then the earlier start, then
+// the longer range.
 func resolve(spans []span) []span {
 	sorted := slices.Clone(spans)
 	slices.SortFunc(sorted, func(a, b span) int {
 		switch {
+		case a.borrowed != b.borrowed:
+			if a.borrowed {
+				return 1
+			}
+			return -1
 		case a.rank != b.rank:
 			return a.rank - b.rank
 		case a.start != b.start:
@@ -180,7 +198,9 @@ func references(text string, own func(path string) bool) []span {
 const referenceMask = "Qz7"
 
 // masked is text with each of refs as one word of the same length, so the
-// detectors' byte ranges hold for text.
+// detectors' byte ranges hold for text. Its bytes may complete a shape (a
+// token's length, a digit) the typed bytes lack: a shaped span that runs
+// into one is borrowed (Scan).
 func masked(text string, refs []span) string {
 	b := []byte(text)
 	for _, r := range refs {
@@ -198,6 +218,18 @@ func insideOne(s span, refs []span) bool {
 	for _, r := range refs {
 		if r.start <= s.start && s.end <= r.end {
 			return s.start != r.start || s.end != r.end
+		}
+	}
+	return false
+}
+
+// clipped reports a span found as typed that a reference's own bytes cut
+// short: an edge inside one, or its end at one's start (the '[' ended a
+// value that runs on into the reference).
+func clipped(s span, refs []span) bool {
+	for _, r := range refs {
+		if r.start < s.start && s.start < r.end || r.start <= s.end && s.end < r.end {
+			return true
 		}
 	}
 	return false
