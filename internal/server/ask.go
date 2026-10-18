@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -160,63 +161,120 @@ func (h *Hub) startAnswerAsk(ctx context.Context, c *Client, cmd proto.Command) 
 
 // queueAnswerAsk is worker.answer_ask's checks and its queueing on the
 // worker's lane (hub goroutine), for a client's command and (#14) a
-// Telegram card's answer alike: end gets the outcome.
+// Telegram card's answer alike: end gets the outcome. #108 round 2: with
+// prompt secrets reviewed, its texts (the prompt, the Other answers) go
+// through the gate on the lane first, and are checked again as they go.
 func (h *Hub) queueAnswerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, end inputEnd) error {
-	if !toolUseIDRe.MatchString(a.ToolUseID) {
-		return bad("tool_use_id must be the ask's tool_use_id")
-	}
-	switch {
-	case a.Cancel && len(a.Answers) > 0:
-		return bad("want answers or cancel: true, not both")
-	case !a.Cancel && len(a.Answers) == 0:
-		return bad("want answers (one per question) or cancel: true")
-	case a.Prompt != "" && !a.Cancel:
-		return bad("a prompt goes only with cancel")
-	case a.Prompt != "" && !h.promptSourceOK(a.Prompt):
-		// The limit is on the translated text (answerAsk checks it, #138).
-		return badPromptText("prompt", len(a.Prompt))
-	}
-	w, _, err := h.termWorker(a.ID)
+	answers, err := h.planAnswerAsk(a)
 	if err != nil {
 		return err
 	}
+	if h.gated(a.Secrets != nil) {
+		var fields []secretField
+		if a.Prompt != "" {
+			fields = append(fields, secretField{path: "prompt", text: a.Prompt})
+		}
+		for i, x := range a.Answers {
+			if x.Other != nil && *x.Other != "" {
+				fields = append(fields, secretField{path: fmt.Sprintf("answers[%d].other", i), text: *x.Other})
+			}
+		}
+		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, end, func(ctx context.Context, texts func(string) string, rev *promptsecret.Reviewer) (inputWork, error) {
+			b := a
+			b.Prompt, b.Secrets, b.Answers = texts("prompt"), nil, slices.Clone(a.Answers)
+			for i, x := range b.Answers {
+				if x.Other != nil && *x.Other != "" {
+					other := texts(fmt.Sprintf("answers[%d].other", i))
+					b.Answers[i].Other = &other
+				}
+			}
+			answers, err := h.planAnswerAsk(b)
+			if err != nil {
+				return nil, err
+			}
+			h.agentTookOver(ctx, a.ID)
+			return func(ctx context.Context, session, pane string) (any, error) {
+				return h.answerAsk(ctx, b, answers, session, pane, rev)
+			}, nil
+		})
+	}
+	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
+	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
+		return h.answerAsk(ctx, a, answers, session, pane, nil)
+	}, end)
+}
+
+// planAnswerAsk is worker.answer_ask's checks (hub goroutine): its answers.
+func (h *Hub) planAnswerAsk(a proto.WorkerAnswerAskArgs) ([]askAnswer, error) {
+	if !toolUseIDRe.MatchString(a.ToolUseID) {
+		return nil, bad("tool_use_id must be the ask's tool_use_id")
+	}
+	switch {
+	case a.Cancel && len(a.Answers) > 0:
+		return nil, bad("want answers or cancel: true, not both")
+	case !a.Cancel && len(a.Answers) == 0:
+		return nil, bad("want answers (one per question) or cancel: true")
+	case a.Prompt != "" && !a.Cancel:
+		return nil, bad("a prompt goes only with cancel")
+	case a.Prompt != "" && !h.promptSourceOK(a.Prompt):
+		// The limit is on the translated text (answerAsk checks it, #138).
+		return nil, badPromptText("prompt", len(a.Prompt))
+	}
+	w, _, err := h.termWorker(a.ID)
+	if err != nil {
+		return nil, err
+	}
 	switch {
 	case w.Ask == nil:
-		return fmt.Errorf("%w: %s is not asking anything now", errStale, w.Name)
+		return nil, fmt.Errorf("%w: %s is not asking anything now", errStale, w.Name)
 	case w.Ask.ToolUseID != a.ToolUseID:
-		return fmt.Errorf("%w: %s asks another question now (tool_use_id %s)", errStale, w.Name, w.Ask.ToolUseID)
+		return nil, fmt.Errorf("%w: %s asks another question now (tool_use_id %s)", errStale, w.Name, w.Ask.ToolUseID)
 	}
 	if a.Prompt != "" && !h.rewrites(w.AgentKind) {
 		// Not translated: its limit and typing rules apply to it as it is.
 		if !herdr.ValidMessage(a.Prompt) {
-			return badPromptText("prompt", len(a.Prompt))
+			return nil, badPromptText("prompt", len(a.Prompt))
 		}
 		if w.Ask.Agent == proto.AskClaude {
 			if err := checkTyped(proto.AskClaude, a.Prompt, herdr.MaxMessage, "prompt"); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
-	var answers []askAnswer
-	if !a.Cancel {
-		if answers, err = checkAnswers(w.Ask, a.Answers); err != nil {
-			return err
-		}
+	if a.Cancel {
+		return nil, nil
 	}
-	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
-	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
-		return h.answerAsk(ctx, a, answers, session, pane)
-	}, end)
+	return checkAnswers(w.Ask, a.Answers)
 }
 
 // askDriver presses keys into one worker's dialog, reading its screen
-// between steps.
+// between steps. rev (#108) is the answers' review, checked right before
+// the first of their texts is typed (nil: none, or typed already). texts
+// (round 5) are every text the command types, checked for revoked files
+// right before its first key or text (begun once that went).
 type askDriver struct {
 	h             *Hub
 	ctx           context.Context
 	id, toolUseID string
 	session, pane string
 	sent          []string
+	rev           *promptsecret.Reviewer
+	texts         []string
+	begun         bool
+}
+
+// begin is the check before the command's first byte (#108 round 5, review
+// L3): none of its texts refers to a revoked protected file, so a revoke
+// that came before it touches nothing of the dialog.
+func (d *askDriver) begin() error {
+	if d.begun {
+		return nil
+	}
+	if err := d.h.referencesHold(d.texts...); err != nil {
+		return err
+	}
+	d.begun = true
+	return nil
 }
 
 // current is the worker's ask now, if it is still the one being answered.
@@ -236,6 +294,9 @@ func (d *askDriver) press(keys ...string) error {
 	if !still {
 		return fmt.Errorf("%w: the question was answered or replaced meanwhile (no more keys pressed)", errStale)
 	}
+	if err := d.begin(); err != nil {
+		return err
+	}
 	if err := d.h.opts.Term.SendKeys(d.ctx, d.session, d.pane, keys...); err != nil {
 		return fmt.Errorf("%w: %v", errInputFailed, err)
 	}
@@ -251,6 +312,17 @@ func (d *askDriver) typeText(text string) error {
 	if !still {
 		return fmt.Errorf("%w: the question was answered or replaced meanwhile (no more keys pressed)", errStale)
 	}
+	if err := d.begin(); err != nil {
+		return err
+	}
+	// Review B2: the switch changed while the dialog was driven, checked
+	// before the first text only (a dialog it began is answered whole).
+	// Round 5: each text refers to no file revoked meanwhile, or it and the
+	// rest are not typed (a revoke between two texts stops the dialog there).
+	if err := d.h.reviewHolds(d.rev, text); err != nil {
+		return err
+	}
+	d.rev = nil
 	if err := d.h.opts.Term.SendText(d.ctx, d.session, d.pane, text); err != nil {
 		return fmt.Errorf("%w: %v", errInputFailed, err)
 	}
@@ -309,7 +381,12 @@ func labelIs(label, text string) bool {
 
 // answerAsk answers the ask on the worker's lane: the ask checked again,
 // the dialog driven, then the transcript watched for the call's result.
-func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answers []askAnswer, session, pane string) (any, error) {
+// #108: rev is the review of its texts (nil: none), checked again right
+// before the first Other answer or the prompt goes. Round 5: every text is
+// checked for revoked files before the dialog's first key, and each again
+// right before it goes.
+func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answers []askAnswer, session, pane string,
+	rev *promptsecret.Reviewer) (any, error) {
 	ask, err := query(ctx, h, func() *proto.Ask {
 		if w := h.workers[a.ID]; w != nil && w.PaneID == pane {
 			return w.Ask
@@ -332,7 +409,15 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 			return nil, err
 		}
 	}
-	d := &askDriver{h: h, ctx: ctx, id: a.ID, toolUseID: a.ToolUseID, session: session, pane: pane}
+	d := &askDriver{h: h, ctx: ctx, id: a.ID, toolUseID: a.ToolUseID, session: session, pane: pane, rev: rev}
+	if prompt != "" {
+		d.texts = append(d.texts, prompt)
+	}
+	for _, x := range answers {
+		if x.other != nil {
+			d.texts = append(d.texts, *x.other)
+		}
+	}
 	switch {
 	case ask.Agent == proto.AskCodex && a.Cancel:
 		err = d.codexCancel(ask)
@@ -352,10 +437,12 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 	}
 	if a.Prompt != "" && res.Resolved {
 		if ask.Agent == proto.AskClaude { // #95: typed, once the dismissed dialog is gone
-			if _, err := h.typePrompt(ctx, a.ID, session, pane, prompt, true); err != nil {
+			if _, err := h.typePrompt(ctx, a.ID, session, pane, prompt, true, rev); errors.Is(err, errSecretsReviewStale) {
+				return nil, fmt.Errorf("dismissed, but the prompt was not sent: %w", err)
+			} else if err != nil {
 				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
 			}
-		} else if err := h.submitAfterAsk(ctx, a.ID, session, pane, ask.Agent, prompt); err != nil {
+		} else if err := h.submitAfterAsk(ctx, a.ID, session, pane, ask.Agent, prompt, rev); err != nil {
 			return nil, err
 		}
 		res.Prompted = true
@@ -368,11 +455,14 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 // than a lone Enter (a popup the text left open took the Enter: close it,
 // submit), unless the worker started meanwhile (promptState.started, since
 // its start counter before the submit): the prompt was only slow, and an Esc
-// would abort its turn (#138).
-func (h *Hub) submitAfterAsk(ctx context.Context, id, session, pane, kind, prompt string) error {
+// would abort its turn (#138). #108: rev as for prompt.
+func (h *Hub) submitAfterAsk(ctx context.Context, id, session, pane, kind, prompt string, rev *promptsecret.Reviewer) error {
 	before, err := query(ctx, h, func() promptState { return h.promptState(id) })
 	if err != nil {
 		return err
+	}
+	if err := h.reviewHolds(rev, prompt); err != nil {
+		return fmt.Errorf("dismissed, but the prompt was not sent: %w", err)
 	}
 	err = h.opts.Term.SubmitPrompt(ctx, session, pane, prompt)
 	if err == nil {

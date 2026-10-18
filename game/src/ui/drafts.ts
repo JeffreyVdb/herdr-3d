@@ -7,6 +7,9 @@
  * not a list are dropped, a part that is not one (a path no chip may hold) is left out. All storage access is
  * try/catch'ed: blocked, full or corrupt storage leaves the in-memory copy, and typing, closing and hiring never
  * notice.
+ *
+ * #108: `persist` says whether storage may have them now: no ("Review prompt secrets before sending" on, the writing
+ * may hold a secret), the drafts stay in memory only, and one kept in storage from before is removed once it is read.
  */
 
 import { readSavedParts, type SavedPart } from './composer/model';
@@ -63,6 +66,7 @@ export class Drafts {
   constructor(
     private readonly ns: string,
     private readonly storage: DraftStorage | null = defaultStorage(),
+    private readonly persist: () => boolean = () => true,
   ) {}
 
   private k(key: string): string {
@@ -81,6 +85,8 @@ export class Drafts {
     }
     const d = parse(raw);
     if (d) this.mem.set(key, d);
+    // #108: in memory now, it leaves storage while drafts may not be kept there.
+    if (raw !== null && !this.persist()) this.forget(key);
     return d;
   }
 
@@ -91,10 +97,35 @@ export class Drafts {
       return;
     }
     this.mem.set(key, d);
+    if (!this.persist()) {
+      this.forget(key);
+      return;
+    }
     try {
       this.storage?.setItem(this.k(key), JSON.stringify({ v: 1, ...d } satisfies Stored));
     } catch {
       /* full or blocked: the in-memory copy stays */
+    }
+  }
+
+  /**
+   * #108 round 4: `persist` changed: every draft in memory leaves storage now (the switch went on: memory only), or is
+   * written to it again (off).
+   */
+  persistChanged(): void {
+    const keep = this.persist();
+    for (const [key, d] of this.mem) {
+      if (keep) this.set(key, d);
+      else this.forget(key);
+    }
+  }
+
+  /** #108: removes what storage has for `key`; the copy in memory stays. */
+  forget(key: string): void {
+    try {
+      this.storage?.removeItem(this.k(key));
+    } catch {
+      /* nothing to do */
     }
   }
 

@@ -220,6 +220,9 @@ type World struct {
 	CodexServer *CodexServer `json:"codex_server,omitempty"`
 	// #247: the "Repositories from other buildings" switch. Always present.
 	RepoRefs *RepoRefs `json:"repo_refs,omitempty"`
+	// #108: "Review prompt secrets before sending" and whether protected
+	// files can be kept. Always present.
+	PromptSecrets *PromptSecrets `json:"prompt_secrets,omitempty"`
 	// #54: repository discovery's settings and status. nil (left out) when
 	// the bridge does not scan for repositories.
 	RepoDiscovery *RepoDiscovery `json:"repo_discovery,omitempty"`
@@ -442,6 +445,10 @@ type Worker struct {
 	// From one bridge-wide counter, so it only rises for a worker; compare
 	// it per worker only. 0 (left out) from a bridge before #22.
 	ChildGeneration uint64 `json:"child_generation,omitempty"`
+	// #108 round 5: SecretFiles is how many protected prompt-secret files
+	// the worker holds now (its own and those it holds by a lease; 0 left
+	// out).
+	SecretFiles int `json:"secret_files,omitempty"`
 
 	// M6 runs: the worker's place in a write-code run.
 	// Round is the h3d_round token, else the label's trailing |r<N>.
@@ -813,6 +820,12 @@ type WorkerHireArgs struct {
 	// #95: add the herdr hiring instructions for the floor (hire.prepare's
 	// herdr_instructions) to Prompt, after a blank line. It needs a prompt.
 	HerdrInstructions bool `json:"herdr_instructions,omitempty"`
+	// #108 round 2 (optional): the review of Prompt's possible secrets (as
+	// sent, before the herdr instructions), and hire.interpret's
+	// secrets_pending when Prompt is its task (docs/protocol.md "Prompt
+	// secrets").
+	Secrets        *SecretsReview `json:"secrets,omitempty"`
+	SecretsPending string         `json:"secrets_pending,omitempty"`
 }
 
 // HireResult is the ack data of worker.hire.
@@ -831,6 +844,9 @@ type HireResult struct {
 	// #155: Codex is how a Codex hire was launched (absent otherwise):
 	// shared or legacy, and why a hire asked for shared runs legacy.
 	Codex *WorkerCodex `json:"codex,omitempty"`
+	// Protected (#108 round 2): how many ranges of the prompt went to
+	// private files (absent: none).
+	Protected int `json:"protected,omitempty"`
 }
 
 // WorkerArgs are the args of worker.fire.prepare.

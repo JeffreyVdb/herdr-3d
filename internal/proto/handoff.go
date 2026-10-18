@@ -221,6 +221,9 @@ type WorkerHandoffArgs struct {
 	Instruction string `json:"instruction,omitempty"`
 	SendHome    bool   `json:"send_home,omitempty"`
 	Op          string `json:"op"`
+	// Secrets (#108 round 2, optional; modes agent and llm): the review of
+	// Instruction's possible secrets.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // Agent handoff request states (AgentHandoff.State).
@@ -262,6 +265,9 @@ type WorkerHandoffRequestResult struct {
 	Request  AgentHandoff  `json:"request"`
 	Handoff  *HandoffEntry `json:"handoff,omitempty"`
 	Existing bool          `json:"existing,omitempty"`
+	// Protected (#108 round 2): how many ranges of the instruction went to
+	// private files (absent: none, or Existing).
+	Protected int `json:"protected,omitempty"`
 }
 
 // WorkerHandoffCancelArgs are the args of worker.handoff_cancel (#224).

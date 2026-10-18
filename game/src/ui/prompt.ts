@@ -10,7 +10,9 @@ import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft, type Uploader } from './composer/draft';
 import { failedImagesText, hasContent, heldRefusalText, markedText, notSentText, PASTE_HINT } from './composer/field';
 import { WORKER_PROMPT_MAX_BYTES } from './composer/model';
-import type { PackupGate } from '../world/packup';
+import { HANDOVER_STALE, packupAction, packupStep, type PackupCheck } from './packupSend';
+import { reviewKey, type Go, type Kept } from './secretsFlow';
+import { keyName } from '../input/shortcuts';
 // #39 completion
 import { CommandCatalogs } from '../laptop/commandCatalog';
 import { CompletionScope, workerSources } from './dialogCompletion';
@@ -19,7 +21,7 @@ import { CompletionScope, workerSources } from './dialogCompletion';
 export interface PromptHost extends DialogHost {
   upload: Uploader;
   /** #110: the pack-up check before a prompt goes (none: it goes at once). */
-  packup?: PackupGate;
+  packup?: PackupCheck;
   /** #39: the app's lists of commands and skills, shared with the transcript (absent: the overlay keeps its own). */
   catalogs?: CommandCatalogs;
 }
@@ -37,9 +39,14 @@ export interface PromptHost extends DialogHost {
  *
  * #110: with pack up on request on, Send first asks whether the prompt also tells the worker to leave ("checking…",
  * the note kept and read-only, Esc cancels the send); a match opens its confirm over this overlay.
+ *
+ * #108: with "Review prompt secrets before sending" on, Send first scans the prompt for possible secrets
+ * (`secretsFlow.ts`), before pack up's check; anything found opens the review over this overlay, and nothing goes
+ * before its Confirm. "Review secrets" (Ctrl/⌘+Shift+X) opens it on purpose, to mark a value the scan missed. A prompt
+ * that protects anything skips pack up's check in round 3 (its LLM would read the value). The note stays in memory.
  */
 
-export type PromptState = 'ready' | 'checking' | 'sending' | 'sent' | 'failed';
+export type PromptState = 'ready' | 'checking' | 'reviewing' | 'sending' | 'sent' | 'failed';
 
 export interface PromptResult {
   queued: boolean;
@@ -159,6 +166,15 @@ export class PromptOverlay {
     this.form.addEventListener('submit', (e) => {
       e.preventDefault();
       void this.send();
+    });
+    // #108: the review of the prompt's secrets, now (with the switch on).
+    this.form.addEventListener('keydown', (e) => {
+      if (!reviewKey(e) || !this.host.secrets?.on) return;
+      e.preventDefault();
+      if (!e.repeat) void this.send(true);
+    });
+    host.secrets?.onChange(() => {
+      if (this.dialog.open) this.renderActions();
     });
     this.dialog.append(this.head, this.form, h('footer', { class: 'dd-foot' }, this.chip, this.statusEl, this.alertEl, this.actions));
     // Closing makes a send still on its way answer in a toast (and keep a newer draft). Esc and close() count at
@@ -326,26 +342,48 @@ export class PromptOverlay {
     );
     if (blocker) this.setStatus(blocker, true);
     else if (this.statusError && this.state !== 'failed') this.setStatus('');
-    this.composer.setBusy(this.state === 'sending' || this.state === 'checking');
+    this.composer.setBusy(this.busy);
     this.renderActions();
+  }
+
+  /** A send is on its way, checked or reviewed: the note is read-only, Send does nothing. */
+  private get busy(): boolean {
+    return this.state === 'sending' || this.state === 'checking' || this.state === 'reviewing';
   }
 
   private renderActions(): void {
     const blocker = this.blocker();
-    const why = this.state === 'sending' ? 'On its way…' : this.state === 'checking' ? 'Checking the prompt…' : blocker;
+    const why = this.state === 'sending' ? 'On its way…' : this.state === 'checking' ? 'Checking the prompt…' : this.state === 'reviewing' ? 'Reviewing its secrets…' : blocker;
     const had = document.activeElement instanceof HTMLElement && this.actions.contains(document.activeElement) ? document.activeElement.dataset.key : null;
     const close = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Close');
+    // #108: with the switch on, the review on purpose: to mark a value the scan would not find.
+    const review = this.host.secrets?.on
+      ? h(
+          'button',
+          {
+            class: 'btn',
+            'data-key': 'review',
+            'aria-disabled': why ? 'true' : null,
+            title: why ?? `Look over the prompt’s possible secrets now, and mark one the scan missed (${keyName('dialog.secrets')})`,
+            onclick: () => {
+              if (!this.busy && !this.blocker()) void this.send(true);
+            },
+          },
+          'Review secrets',
+        )
+      : null;
     const send = h(
       'button',
-      { class: 'btn btn--primary', type: 'submit', form: 'prompt-form', 'data-key': 'send', 'aria-disabled': why ? 'true' : null, 'aria-busy': this.state === 'sending' || this.state === 'checking' ? 'true' : null, title: why },
-      this.state === 'sending' ? 'Sending…' : this.state === 'checking' ? 'Checking…' : `Send to ${this.name}`,
+      { class: 'btn btn--primary', type: 'submit', form: 'prompt-form', 'data-key': 'send', 'aria-disabled': why ? 'true' : null, 'aria-busy': this.busy ? 'true' : null, title: why },
+      this.state === 'sending' ? 'Sending…' : this.state === 'checking' ? 'Checking…' : this.state === 'reviewing' ? 'Reviewing…' : `Send to ${this.name}`,
     );
-    this.actions.replaceChildren(close, send);
+    this.actions.replaceChildren(close, ...(review ? [review] : []), send);
     if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
   }
 
-  private async send(): Promise<void> {
-    if (this.state === 'sending' || this.state === 'checking') return;
+  /** `manual` (#108): "Review secrets": the review opens even when the scan finds nothing. */
+  private async send(manual = false): Promise<void> {
+    if (this.busy) return;
     const blocker = this.blocker();
     if (blocker) {
       this.setStatus(blocker, true);
@@ -387,25 +425,52 @@ export class PromptOverlay {
       this.composer.focus();
       return;
     }
-    // #110: first whether it also tells the worker to leave.
-    const check = new AbortController();
-    const checked = stillHere() ? (this.host.packup?.(id, res.text, check.signal) ?? null) : null;
-    if (checked) {
-      this.checking = check;
+    // #108: first its possible secrets, before anything else reads the text (pack up's LLM included: round 4 gives it
+    // the references, so its review says "Confirm and continue").
+    const flow = this.host.secrets;
+    const check = this.host.packup;
+    // (Closed meanwhile, or opened for another worker: nothing of it goes, no review opens.)
+    const req = { key: id, text: res.text, target: name, manual, action: packupAction(check, id), live: stillHere };
+    let go: Go = { kind: 'send', protects: 0, shown: res.text, review: null };
+    if (flow && (flow.on || manual)) {
+      if (!stillHere()) return;
+      this.state = 'reviewing';
+      this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the prompt…');
+      this.render();
+      const out = await flow.review(req);
+      if (!stillHere()) return; // closed meanwhile (the worker left): nothing is sent
+      if (out.kind === 'kept') {
+        this.kept(out.why, out.message);
+        return;
+      }
+      go = out;
+      this.state = 'sending';
+      this.setStatus(`Sending to ${name}…`);
+      this.render();
+    }
+    // #110: whether it also tells the worker to leave (with the review: the check reads the protected values' references).
+    let handover: { text: string; pending: string } | null = null;
+    if (check && stillHere() && check.applies(id)) {
+      const abort = new AbortController();
+      this.checking = abort;
       this.state = 'checking';
       this.setStatus('Checking the prompt…');
       this.render();
-      const out = await checked;
-      if (this.checking === check) this.checking = null;
-      if (check.signal.aborted || !stillHere()) return; // Esc or closed: nothing is sent
-      if (out === 'cancel') {
+      const step = await packupStep(check, flow, req, go, abort.signal);
+      if (this.checking === abort) this.checking = null;
+      if (abort.signal.aborted || !stillHere()) return; // Esc or closed: nothing is sent
+      if (step.kind === 'kept') {
+        this.kept(step.why, step.message);
+        return;
+      }
+      if (step.kind === 'cancel') {
         this.state = 'ready';
         this.setStatus('');
         this.render();
         this.composer.focus();
         return;
       }
-      if (out === 'done') {
+      if (step.kind === 'done') {
         draft.clearIf(res.revision);
         this.state = 'sent';
         this.result = { queued: false, retried: false };
@@ -415,12 +480,30 @@ export class PromptOverlay {
         this.composer.focus();
         return;
       }
+      if (step.kind === 'send') go = step.go;
+      else handover = step;
       this.state = 'sending';
       this.setStatus(`Sending to ${name}…`);
       this.render();
     }
-    const r = await this.host.send('worker.prompt', { id, text: res.text });
+    const send = (g: Go) => this.host.send('worker.prompt', { id, text: res.text, ...(g.secrets ? { secrets: g.secrets } : {}) });
+    // #108: a stale review is reviewed again; the switch gone off keeps the note. Never an automatic send. The check's
+    // hand-over goes as it is: refused as stale, nothing is sent (its files may be gone) and the note stays for a new review.
+    const d = handover
+      ? await this.host.send('worker.prompt', { id, text: handover.text, secrets_pending: handover.pending }).then((result) =>
+          !result.ok && (result.code === 'secrets_review_stale' || result.code === 'secrets_review_off') ? ({ kind: 'kept', why: 'failed', message: HANDOVER_STALE } as const) : ({ kind: 'answered', result, go } as const),
+        )
+      : flow
+        ? await flow.deliver(req, go, send)
+        : ({ kind: 'answered', result: await send(go), go } as const);
     const still = stillHere();
+    if (d.kind === 'kept') {
+      if (d.why === 'gone') return;
+      if (!still) this.host.toast(d.message, 'error');
+      else this.kept(d.why, d.message);
+      return;
+    }
+    const r = d.result;
     if (r.ok) {
       const ack = (r.data ?? {}) as Partial<PromptAck>;
       const result = { queued: ack.queued === true, retried: ack.retried === true };
@@ -453,6 +536,14 @@ export class PromptOverlay {
     }
     this.state = 'failed';
     this.setStatus(msg, true);
+    this.render();
+    this.composer.focus();
+  }
+
+  /** #108: nothing was sent (the review cancelled, the switch changed, the protection failed): the note stays, and why. */
+  private kept(why: Kept['why'], message: string): void {
+    this.state = why === 'failed' ? 'failed' : 'ready';
+    this.setStatus(why === 'cancel' ? 'Not sent: the prompt is still here.' : message, why === 'failed');
     this.render();
     this.composer.focus();
   }

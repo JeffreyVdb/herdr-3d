@@ -2,6 +2,7 @@
 
 import type { CommandName } from '../net/protocol';
 import { kaneoFailureText } from '../world/kaneo';
+import { promptSecretsFailureText } from '../world/promptSecrets';
 import { scheduleHold } from '../world/hire';
 
 /** The logo requests are HTTP, not commands, but fail with the same codes. */
@@ -134,6 +135,10 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'codex_server.set': 'give Codex workers their own server',
   'repo_refs.get': 'list repositories from other buildings', // #247
   'repo_refs.set': 'list repositories from other buildings',
+  'prompt_secrets.get': 'review prompt secrets', // #108
+  'prompt_secrets.set': 'review prompt secrets',
+  'prompt_secrets.scan': 'look for secrets in prompts',
+  'prompt_secrets.revoke': 'remove a worker’s protected files', // #108 round 5
   'repo_discovery.get': 'scan for repositories', // #54
   'repo_discovery.set': 'scan for repositories',
   'repo_discovery.refresh': 'scan for repositories',
@@ -277,6 +282,8 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
     case 'name_taken':
       return `Another building is already called “${ctx.name ?? ''}”. Pick another name.`;
     case 'not_found':
+      // #108 round 4: the worker is gone, and its protected files went with it.
+      if (t === 'prompt_secrets.revoke') return `${ctx.worker ?? 'That worker'} is no longer here: its protected files went with it.`;
       if (isBoardCommand(t)) return `${ctx.item ?? 'That item'} is not on the board any more. The board shows what is there now.`;
       if (t === 'logo.set' || t === 'logo.clear') return `${ctx.name ?? 'That building'} no longer exists, so its logo was not ${t === 'logo.set' ? 'saved' : 'cleared'}.`;
       return 'That building no longer exists.';
@@ -314,6 +321,16 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
       return `The worktree was kept: ${why || 'it has uncommitted changes or unpushed commits'}.`;
     case 'fire_failed':
       return `${ctx.worker ?? 'The worker'} could not be sent home: ${why || 'herdr-world gave no reason'}.`;
+    // #108: prompt secrets: nothing was sent, stored or written on any of these, and the message never quotes the text.
+    case 'secrets_review_required':
+    case 'secrets_review_stale':
+    case 'secrets_review_off':
+    case 'secrets_unavailable':
+    case 'secrets_review_stored':
+      return promptSecretsFailureText(code, why);
+    // #108 round 4: the game's own: the send flow kept the text (a review cancelled, the switch changed): its words.
+    case 'secrets_kept':
+      return why;
     // M5
     case 'prompt_failed':
       return `The prompt did not reach ${ctx.worker ?? 'the worker'}: ${why.replace(/^prompt_failed:\s*/, '') || 'the agent did not start'}. Your text is still here: try again, or sit at its laptop (E).`;

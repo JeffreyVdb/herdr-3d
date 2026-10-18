@@ -125,6 +125,21 @@ func TestTranslateNilResolveAndNoSkills(t *testing.T) {
 	}
 }
 
+// #108: a protected secret's file reference passes through as typed, even
+// when a part of its path is a skill's name and every path resolves.
+func TestTranslateKeepsSecretReferences(t *testing.T) {
+	cmds := append(slices.Clone(translateCmds), proto.CommandEntry{Name: "run", Kind: proto.CommandKindSkill})
+	resolve := func(string) bool { return true }
+	for _, in := range []string{
+		"PASSWORD=[secret in file /run/user/1000/herdr-world/secrets/K7XQ2ABCDEFGHIJKLMNOPQRSTU/Q2ABCDEFGHIJKLMNOPQRSTUVW] go",
+		"the key is [secret in file /grill/AB/CD].",
+	} {
+		if got := Translate("codex", in, cmds, resolve); got != in {
+			t.Errorf("Translate(%q) = %q", in, got)
+		}
+	}
+}
+
 func TestRewrites(t *testing.T) {
 	if !Rewrites("codex") || Rewrites("claude") || Rewrites("") {
 		t.Error("Rewrites: only codex has rules")

@@ -161,6 +161,8 @@ export const COMMAND_TIMEOUT_MS: Partial<Record<CommandName, number>> = {
   'worker.wrapup': 30_000,
   // M5: a prompt waits up to 8 s for the agent to start, then 5 s after one more Enter; changes run git (10 s).
   'worker.prompt': 20_000,
+  // #108: the bridge bounds a scan at 10 s (past it `secrets_unavailable`): its answer has 5 s to get here.
+  'prompt_secrets.scan': 15_000,
   'worker.changes': 15_000,
   // #136: a first ask waits for the harness probe (10 s); later ones answer from the cache.
   'worker.commands': 15_000,

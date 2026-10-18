@@ -20,6 +20,30 @@ export const SEND_KEY = typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/
 /** Ctrl/⌘+Enter: send from anywhere on the card. */
 export const isSendKey = (e: KeyboardEvent): boolean => e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !e.isComposing;
 
+/** #108 round 4: how a card's answer goes: `review` ("Review secrets", Ctrl/⌘+Shift+X), its texts reviewed on purpose. */
+export interface AnswerOptions {
+  review?: boolean;
+}
+
+/** #108 round 4: the "Review prompt secrets before sending" switch, for a card's "Review secrets" (absent: no such control). */
+export interface CardSecrets {
+  readonly on: boolean;
+  onChange(fn: () => void): () => void;
+}
+
+/**
+ * #108 round 4: a card's "Review secrets" (null with the switch off): the texts of its answer reviewed now, also when the
+ * scan finds nothing (to mark a value it missed), then sent. Ctrl/⌘+Shift+X on the card does the same (`reviewKey`).
+ */
+export function reviewLink(secrets: CardSecrets | null | undefined, disabled: boolean, run: () => void): HTMLButtonElement | null {
+  if (!secrets?.on) return null;
+  return h(
+    'button',
+    { class: 'tx-link tx-card-review', 'data-key': 'review', disabled, title: 'Look over the answer’s possible secrets now, and mark one the scan missed (Ctrl/⌘+Shift+X)', onclick: run },
+    'Review secrets',
+  ) as HTMLButtonElement;
+}
+
 export interface StackLine {
   header: string;
   question: string;

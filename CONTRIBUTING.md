@@ -75,6 +75,15 @@ one card per operation, kept through redraws and failed reads, ended replaced or
 `transcript`'s `CallTracker` (the calls a Claude transcript waits on), `approval` (the unwired, off-by-default model
 assessment of a permission prompt; the standard library and `ai`'s LLM interface only,
 `TestApprovalUsesOnlyAIInterfaces`, `TestApprovalIsNotWired`);
+#108: `promptsecret` (possible secrets in a prompt, for the user's review: Gitleaks v8.30.1's default rules generated into
+`gitleaks_rules.go` by `tools/secretrules` (its own module, which downloads Gitleaks; `make secret-rules`, and `make
+secret-rules-parity` checks them against Gitleaks itself) and run with the standard library, its MIT licence in
+`LICENSE-gitleaks.txt`; the structural rules; candidates at exact byte ranges, never overlapping; UTF-16 offsets; the
+HMAC revision, the decisions checked against a fresh scan, the file references, a stored prompt's plain record; the
+standard library only, `TestPromptSecretIsALeaf`) and `secretfiles` (the protected files: a private runtime directory, owner directories
+0700 and files 0600 by random names, fd-relative with no symlink followed, worker and pending owners, release, claim,
+sweep, round 5's leases and revoke; their owners, holders and names in `store`, never a byte of a secret; Linux, a stub
+elsewhere);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
@@ -122,6 +131,8 @@ make codex-shared-tui  # #154/#155: real Codex TUI (codex-cli 0.160.1, 0.161.0, 
                        # (H3D_CODEXSHARE_REAL=1 adds #155's and #158's real-model smokes on ~/.codex: costs inference)
 make codex-shared-bridge  # #158 only: herdr-world itself (app.Serve) driven over its WebSocket against that fixture
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
+make secret-rules      # #108: regenerate internal/promptsecret/gitleaks_rules.go (tools/secretrules, its own module: downloads Gitleaks)
+make secret-rules-parity  # #108: the generated rules against Gitleaks itself, and the generated file current (not in make test)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
 make e2e               # build, then the smoke suite: the 30 essential journeys tagged @smoke (H3D_WORKERS parallel, one run per host)
@@ -243,6 +254,48 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   `go test ./internal/server -run TestNotifyInboxVectors -update-notify-vectors` and checked by
   `game/src/world/notifyVectors.test.ts`; `game/e2e/h11-telegram.spec.ts` drives the fixture bridge's Telegram
   (`tools/fixture-telegram.ts`: `simtelegram=off|token|paired|on|env|old`, `simtelegrampair=<ms>`, `sim.telegram`).
+- #108 round 3 (the game's review of prompt secrets): `game/src/world/promptSecrets.test.ts` (the switch, a scan read
+  strictly, code point steps across astral characters and CRLF, the review's ignore, edges, manual marks and the
+  decisions it sends), `ui/secretsFlow.test.ts` (scan, review, stale and required reviewed again, off and unavailable
+  kept, the identical retry after a lost answer), `ui/secretsReview.dom.test.ts` (the dialog by keyboard and pointer, DOM
+  positions to UTF-16 offsets, a 16 KiB prompt), `ui/prompt.secrets.dom.test.ts` and `laptop/transcriptMode.secrets.test.ts`
+  (the P overlay and the laptop's prompt box through the flow: nothing sent before Confirm, pack up given the review
+  (round 4), the masked pending row, memory-only drafts), `ui/promptSecretsSection.dom.test.ts`,
+  `net/redact.test.ts` (the command log) and `tools/fixture-secrets.test.ts`. `game/e2e/h108-prompt-secrets.spec.ts`
+  drives the fixture bridge (`tools/fixture-secrets.ts`, its own small deterministic detector: `simsecrets=<key>`,
+  `simsecretson=1`, `simsecretsdir=none`, `simfail=no_secrets|secrets_review_stale|secrets_review_required|
+  secrets_unavailable|secrets_review_off`, `sim.secret_files` through `window.__h3d.simSecretFiles()`): the review from
+  the P overlay, the laptop's prompt box and a paste into its terminal, cancel, a stale review, the switch going off
+  mid-review, localStorage and `window.__h3d.sent()` checked free of every protected value, and every control of the
+  review reached by pointer and keyboard at 1280x720, 640x360 (200% zoom) and 390x844 (touch), none cut off by a box
+  that does not scroll. For a UX look: `make
+  dev`, then `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simsecretson%3D1&floor=herdr-3d`, P on
+  Pebble, and a prompt such as `deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD="hunter2x"`.
+- #108 round 4 (every other composer): `ui/secretsFlow.test.ts` (the action word, stored prompts, a review per text),
+  each composer's `*.secrets.dom.test.ts` through the real flow and dialog over the fixture's gate
+  (`src/test/secretsBridge.ts`: `hire`, `hireReview`, `startRun`, `schedules` (the form and a failed schedule's repair),
+  `hirePresets`, `handoffDialog`, `sendHome` (the wrap-up and pack up's hand-over), `laptop/transcriptMode.answers`),
+  `ui/prompt.secrets.dom.test.ts` and `laptop/transcriptMode.secrets.test.ts` (pack up with the review and its
+  hand-over), `net/redact.test.ts` (every route), `ui/drafts.test.ts`, `laptop/asyncDrafts.test.ts`,
+  `laptop/followupDrafts.test.ts` and `ui/hire.secrets.dom.test.ts` (memory-only drafts per store),
+  `world/promptSecrets.test.ts` (A1: the take-over's fixpoint, also checked in the random walk) and
+  `tools/fixture-secrets.test.ts` (every route of the fixture). A composer closed, opened again or stood up from while
+  its text is scanned sends nothing and opens no review (`SecretsRequest.live`): the tests hold the scan with
+  `secretsBridge().holdScans()`, press Esc as the dialog's `cancel` event then `close()` with the toasts recorded, and
+  hold the command itself with a pending answer for "still on its way" and for a newer opening; a stale hand-over ends its submission (`src/app.dictation.test.ts`,
+  `ui/hireReview.secrets.dom.test.ts`). The e2e's round-4 cases (`GREP='round 4'`): a hire with
+  a protected value, pack up's "Send as written (stay)" and "Send and go home" with the hand-over (the fake AI servers of
+  `e2e/packupFakes.ts`, shared with `m110-packup.spec.ts`), a schedule saved with every match ignored and Protect
+  refused, a reference as a masked chip in the conversation (its popover and a copy across it), revoke from the seat
+  bar's chip and its absence on a bridge before round 5 (`simfail=no_revoke`). The chips are `world/secretRefs.ts` (the
+  exact references, with `World.prompt_secrets.dir` or the shape alone) and `ui/secretChips.ts`, the revoke control
+  `ui/revokeSecrets.ts` (its texts `world/revokeSecrets.ts`) and the seat bar's chip; their tests
+  `world/secretRefs.test.ts`, `ui/secretChips.dom.test.ts`, `ui/secretChipPlaces.dom.test.ts`,
+  `laptop/transcriptSecretChips.dom.test.ts`, `world/revokeSecrets.test.ts`, `ui/revokeSecrets.dom.test.ts`; the theme
+  audits `secrets-review-stored`, `secret-chips`, `seat-secrets`, `revoke-secrets`, `send-home-wrapup` (and the
+  composers' surfaces with the switch on). For a UX look of pack up: as round 3's, with `simjev=<a fake Jev>`, or the
+  schedule form (Menu → Scheduled agents → New) with the same prompt; of the chips and revoke: send the prompt from
+  Pebble's laptop box (E, then the conversation), then the seat bar's "protected file" chip.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
@@ -507,6 +560,7 @@ that directory.
 | `--runs-dir` | `H3D_RUNS_DIR` | `$XDG_STATE_HOME/write-code/runs`, else `~/.local/state/write-code/runs`: write-code's run directories, for the freelancers' reports (M6, [`docs/protocol.md` "Runs and freelancers"](docs/protocol.md#runs-and-freelancers)); read only |
 | `--dropzone-url` | `HERDR_WORLD_DROPZONE_URL` | `http://127.0.0.1:8080`: Drop Zone, where pasted images are uploaded (#51, [`docs/protocol.md` "Image upload"](docs/protocol.md#image-upload)); the bridge's only client of it |
 | `--screen-dir` | `HERDR_WORLD_SCREEN_DIR` | `$XDG_RUNTIME_DIR/herdr-world/screen` (else `/run/user/<uid>/…` when it exists): where `screen.grab` stores frames, 0700, 10 min each (M13, [`docs/protocol.md` "Screen share"](docs/protocol.md#screen-share)) |
+| `--secrets-dir` | `HERDR_WORLD_SECRETS_DIR` | `$XDG_RUNTIME_DIR/herdr-world/secrets` (else `/run/user/<uid>/…` when it is ours): where protected prompt secrets are kept, 0700 directories and 0600 files, refused (never repaired) when unsafe; none usable: a review that protects anything is `secrets_unavailable` (#108, [`docs/protocol.md` "Prompt secrets"](docs/protocol.md#prompt-secrets)) |
 | `--whiteboards` | `HERDR_WORLD_WHITEBOARDS` | `$XDG_DATA_HOME/herdr-3d/whiteboards`, else `~/.local/share/herdr-3d/whiteboards`: the floors' whiteboards (M13, [`docs/protocol.md` "Whiteboard"](docs/protocol.md#whiteboard)); `-` for none |
 | `--ai-file` | `HERDR_WORLD_AI_FILE` | `ai.json` next to the database: the AI integration's settings and keys, 0600, never in the database (#92, [`docs/protocol.md` "AI integration"](docs/protocol.md#ai-integration)) |
 | `--kaneo-file` | `HERDR_WORLD_KANEO_FILE` | `kaneo.json` next to the database: the Kaneo connection's settings and key, 0600, never in the database and apart from `ai.json` (#184, [`docs/protocol.md` "Kaneo"](docs/protocol.md#kaneo)) |
@@ -975,7 +1029,14 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   focus?})` in `app.ts` is every entry point's) and its create / edit form (`scheduleForm.ts`, shared by "New", Edit and the
   transcript's "Schedule follow-up…"), styled in `schedules.css`; `Hud.toast`'s optional action (a click opens what it is about); the
   desktop notification of a new entry with the game in the background (`desktopNotify.ts`; when one pings,
-  `world/inboxPings.ts`: settle delay, snapshot silence, burst cap). Hidden, named hooks
+  `world/inboxPings.ts`: settle delay, snapshot silence, burst cap); #108 round 3: the review of a prompt's possible
+  secrets (`secretsReview.ts`, `secretsReview.css`: the whole prompt in an edit-refusing `contenteditable`, a highlight
+  per match, the strip of the match in hand), the send flow every composer goes through (`secretsFlow.ts`: scan, review,
+  `worker.prompt` with `secrets`, a stale review reviewed again; the P overlay, the laptop's prompt box and a paste into
+  its terminal use it; round 4: every other composer, with the action word, stored prompts and a review per text, its
+  "Review secrets" control and chord shared; pack up's check with the review is `packupSend.ts`) and Settings → Workers
+  → Prompt secrets
+  (`promptSecretsSection.ts`); the switch and the review's model are `world/promptSecrets.ts`. Hidden, named hooks
   wait for later tickets:
   `renderPlanLimits(harness)` (#12), `renderHandoff` (M9) and `renderServices` (#14), each returning null for now.
   `src/input` — first-person walking.
@@ -1041,7 +1102,7 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; #51: `simmodels=<n>` adds n Claude models to the hire options (a long model list); M6: `simcrew=<ms>` walks a scripted freelancer in and out; M3d (`tools/fixture-logo.ts`, `tools/logo-art.ts` draws the made-up test logo; no third-party logo ships): `simlogo=<key>` lets `/logo/<building>?simlogo=<key>` reach this connection's world, `simlogos=1` starts every building with a made-up logo, `simfail=logo_missing` makes the images 404, `simfail=logo_busy` fails the next upload) |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; #51: `simmodels=<n>` adds n Claude models to the hire options (a long model list); M6: `simcrew=<ms>` walks a scripted freelancer in and out; M3d (`tools/fixture-logo.ts`, `tools/logo-art.ts` draws the made-up test logo; no third-party logo ships): `simlogo=<key>` lets `/logo/<building>?simlogo=<key>` reach this connection's world, `simlogos=1` starts every building with a made-up logo, `simfail=logo_missing` makes the images 404, `simfail=logo_busy` fails the next upload; #108 (`tools/fixture-secrets.ts`): `simsecrets=<key>` shares the "Review prompt secrets before sending" switch between a key's connections, `simsecretson=1` starts it on, `simsecretsdir=none` plays a bridge host without a private runtime directory, `simfail=no_secrets` a bridge before it, `simfail=secrets_review_stale\|secrets_review_required\|secrets_unavailable\|secrets_review_off` refuses the next command that carries a review that way (any route: round 2 gates them all, the files' paths have the bridge's shape and `prompt_secrets` its `dir`), `simfail=secrets_pending_stale` the next one that carries a `secrets_pending` (an expired hand-over), `simfail=no_revoke` plays a bridge before round 5 (no `prompt_secrets.revoke`, no `Worker.secret_files`), `simfail=old_wrapup` one whose `worker.wrapup` refuses `secrets_pending` as an unknown field) |
 | `backend=webgl2` | force WebGL2 |
 | `screens=<n>` | M5: how many laptops around you are live (default 4, at most 5; `0` watches none: only the laptop you sit at is watched) |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |

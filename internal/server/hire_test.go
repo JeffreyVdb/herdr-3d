@@ -39,6 +39,7 @@ type fakeFloor struct {
 	createErr    error // #62: CreateWorkspace fails with it (nothing made)
 	markErr      error
 	promptErrs   []error
+	promptGate   chan struct{} // #108: Prompt waits for it, once recorded, before it returns
 	typeErrs     []error       // #95: TypePrompt's results in turn
 	typeDrops    int           // #95: typed prompts whose Enter the agent drops (it starts on the next one)
 	startStatus  string        // #95: the status a started agent has (default idle)
@@ -217,6 +218,12 @@ func (f *fakeFloor) SendKey(_ context.Context, session, pane string, key herdr.K
 
 func (f *fakeFloor) Prompt(_ context.Context, session, pane, text string) error {
 	f.record("prompt %s %q", pane, text)
+	f.mu.Lock()
+	gate := f.promptGate
+	f.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(f.promptErrs) > 0 {

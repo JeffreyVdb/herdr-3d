@@ -115,6 +115,9 @@ type WorkerAnswerAskArgs struct {
 	Answers   []AskAnswerArg `json:"answers,omitempty"`
 	Cancel    bool           `json:"cancel,omitempty"`
 	Prompt    string         `json:"prompt,omitempty"`
+	// Secrets (#108 round 2, optional): a review per text field ("prompt",
+	// "answers[N].other") with possible secrets.
+	Secrets SecretsReviews `json:"secrets,omitempty"`
 }
 
 // AskAnswerArg answers one question: option numbers (1-based; several only

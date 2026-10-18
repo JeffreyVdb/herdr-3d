@@ -47,6 +47,8 @@ export interface ScheduleHost {
   freeDesk(floor: string): number | null;
   /** The simulator's worker.hire (its args with `session` the floor id). */
   hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void;
+  /** #108: why a fire with the switch on refuses the stored prompt (its candidates not reviewed), or null: it goes. */
+  stored?(s: Schedule): string | null;
 }
 
 const enc = new TextEncoder();
@@ -187,6 +189,11 @@ export class ScheduleSim {
     return true;
   }
 
+  /** #108: a schedule's stored prompt (undefined: no such schedule), for the review of its retry. */
+  promptOf(id: unknown): string | undefined {
+    return typeof id === 'string' ? this.all.get(id)?.prompt : undefined;
+  }
+
   private get(id: unknown): Schedule {
     const s = typeof id === 'string' ? this.all.get(id) : undefined;
     if (!s) throw this.h.error('not_found', `not found: schedule ${JSON.stringify(id)}`);
@@ -310,6 +317,9 @@ export class ScheduleSim {
     s.fired_at = firedAt ?? now;
     delete s.worker_id;
     end('running');
+    // #108: with the switch on, a stored prompt goes only as a review left it: else the fire fails, nothing hired.
+    const unreviewed = this.h.stored?.(s) ?? null;
+    if (unreviewed) return end('failed', unreviewed);
     try {
       this.h.hireWorker(
         { session: s.floor, desk_index: desk, harness: s.harness, model: s.model, effort: s.effort, cwd: s.cwd, worktree: s.worktree, prompt: parts.join('\n\n') },

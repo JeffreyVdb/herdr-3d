@@ -36,6 +36,7 @@ import { HandoffLLMBook } from './handoffLlm';
 import { CodexServerBook } from './codexServer';
 import { RepoDiscoveryBook } from './repoDiscovery';
 import { RepoRefsBook } from './repoRefs';
+import { PromptSecretsBook } from './promptSecrets';
 import { KaneoBook } from './kaneo';
 import { NotifyBook } from './notifySettings';
 import { HandoffBook } from './handoff';
@@ -241,6 +242,7 @@ export class WorldStore {
   readonly handoffLlm = new HandoffLLMBook();
   readonly codexServer = new CodexServerBook(); // #155
   readonly repoRefs = new RepoRefsBook(); // #247
+  readonly promptSecrets = new PromptSecretsBook(); // #108
   readonly repoDiscovery = new RepoDiscoveryBook(); // #54
   readonly kaneo = new KaneoBook(); // #184
   readonly notifySettings = new NotifyBook(); // #11
@@ -298,6 +300,7 @@ export class WorldStore {
     this.handoffLlm.reset(s.world.handoff_llm); // #9
     this.codexServer.reset(s.world.codex_server); // #155
     this.repoRefs.reset(s.world.repo_refs); // #247
+    this.promptSecrets.reset(s.world.prompt_secrets); // #108
     this.repoDiscovery.reset(s.world.repo_discovery); // #54
     this.kaneo.reset(s.world.kaneo); // #184
     this.handoffs.reset(s.world.handoffs); // #223
@@ -460,6 +463,9 @@ export class WorldStore {
         break;
       case 'repo_refs.update': // #247 the "Repositories from other buildings" switch
         this.repoRefs.upsert(e);
+        break;
+      case 'prompt_secrets.update': // #108 the "Review prompt secrets before sending" switch
+        this.promptSecrets.upsert(e);
         break;
       case 'repo_discovery.update': // #54 repository discovery
         this.repoDiscovery.upsert(e);

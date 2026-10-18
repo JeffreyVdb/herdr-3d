@@ -8,6 +8,7 @@ import { browserZone, civilAt } from '../world/daylight';
 import { backdropPolicy } from './dismiss';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import type { DialogHost } from './hire';
+import type { Go } from './secretsFlow';
 
 /**
  * #64 schedules (part 3 of #61): the scheduled agents dialog. Three sections of the bridge's schedules (#62): Upcoming
@@ -91,6 +92,8 @@ export class SchedulesDialog {
   private statusText = '';
   private statusError = false;
   private seenVersion = -1;
+  /** Bumped on every close: a retry's review is the opening's that asked (#108). */
+  private gen = 0;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private readonly zone = browserZone();
 
@@ -101,6 +104,7 @@ export class SchedulesDialog {
     this.alertEl.hidden = this.statusEl.hidden = true;
     this.dialog.append(this.head, this.body, h('footer', { class: 'dd-foot sch-foot' }, this.statusEl, this.alertEl));
     this.dialog.addEventListener('close', () => {
+      this.gen++;
       if (this.ticker) clearInterval(this.ticker);
       this.ticker = null;
       this.confirming = null;
@@ -306,7 +310,8 @@ export class SchedulesDialog {
     }
     if (sec === 'upcoming' && this.cancellable(s)) actions.push(act('cancel', 'Cancel', () => this.confirmCancel(s.id), 'btn btn--sm btn--danger-quiet'));
     if (sec === 'attention') {
-      actions.push(act('retry', 'Retry', () => void this.command('schedule.retry', s, `“${s.title}” is starting again.`)));
+      // #108: a schedule its prompt-secrets check failed is retried with a review of its prompt (`command`).
+      actions.push(act('retry', unreviewed(s) && this.host.secrets?.on ? 'Review and retry' : 'Retry', () => void this.command('schedule.retry', s, `“${s.title}” is starting again.`)));
       actions.push(act('dismiss', 'Dismiss', () => void this.command('schedule.dismiss', s, `Dismissed “${s.title}”.`)));
     }
     if (sec === 'done' && s.worker_id && this.host.store.workers.has(s.worker_id)) {
@@ -370,10 +375,39 @@ export class SchedulesDialog {
     if (this.busy.has(s.id)) return;
     this.busy.add(s.id);
     this.render();
-    const r = await this.host.send(t, { id: s.id } as never);
+    // #108 round 4: a retry fires the stored prompt again. With the switch on it goes with a review of that prompt, every
+    // match left as typed (a saved prompt keeps no protected file): the way out for a schedule the check failed (its
+    // prompt was saved before the switch was on, or the rules changed), which cannot be edited any more.
+    // Closed (or closed and opened again) while it is scanned or reviewed again: nothing is retried, no review opens.
+    const flow = this.host.secrets;
+    const gen = this.gen;
+    const req =
+      t === 'schedule.retry' && s.prompt && flow?.on
+        ? { key: `schedule:${s.id}`, text: s.prompt, target: `“${s.title}”`, stored: true, ...(unreviewed(s) ? { notice: REPAIR } : {}), live: () => this.dialog.open && gen === this.gen }
+        : null;
+    let go: Go | null = null;
+    if (req && flow) {
+      const out = await flow.review(req);
+      if (out.kind === 'kept') {
+        this.busy.delete(s.id);
+        if (!this.dialog.open) return;
+        // (The list opened again meanwhile says nothing of it: its Retry is free again.)
+        if (out.why !== 'gone') this.setStatus(out.why === 'cancel' ? `“${s.title}” was not retried: the review was cancelled.` : out.message, out.why === 'failed');
+        this.render();
+        return;
+      }
+      go = out;
+    }
+    const send = (g: Go | null) => this.host.send(t, { id: s.id, ...(g?.secrets ? { secrets: g.secrets } : {}) } as never);
+    const d = req && flow && go ? await flow.deliver(req, go, send) : ({ kind: 'answered', result: await send(null) } as const);
+    const r = d.kind === 'kept' ? ({ ok: false, code: 'secrets_kept', message: d.message } as const) : d.result;
     this.busy.delete(s.id);
     if (t === 'schedule.cancel') this.confirming = null;
     if (!this.dialog.open) return;
+    if (d.kind === 'kept' && d.why === 'gone') {
+      this.render();
+      return;
+    }
     if (r.ok) this.setStatus(done);
     else this.setStatus(scheduleFailureText(t, r.code, r.message, s.title), true);
     this.render();
@@ -429,3 +463,12 @@ export class SchedulesDialog {
     };
   }
 }
+
+/** #108: a schedule failed by the prompt-secrets check (the bridge's `state_reason`, docs/protocol.md "A schedule's fire"). */
+function unreviewed(s: Schedule): boolean {
+  return s.state === 'failed' && /not reviewed for secrets/.test(s.state_reason ?? '');
+}
+
+/** #108: why a failed schedule's retry opens the review of its prompt. */
+const REPAIR =
+  'Its prompt was not reviewed for secrets. A saved prompt keeps every match as typed: confirm to retry it as it is. To keep a value out, dismiss this schedule and schedule it again without the value.';

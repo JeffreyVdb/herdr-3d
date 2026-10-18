@@ -225,7 +225,8 @@ export function takeBatch(queue: KeyItem[]): KeyItem[] {
   return out;
 }
 
-type Op = { kind: 'keys'; items: KeyItem[] } | { kind: 'prompt'; text: string };
+/** A prompt op: its text through the sender's `prompt`, or (#108, a paste reviewed for secrets) its own `send`. */
+type Op = { kind: 'keys'; items: KeyItem[] } | { kind: 'prompt'; text: string; send?: () => Promise<CommandResult> };
 
 export interface InputSender {
   keys(items: KeyItem[]): Promise<CommandResult>;
@@ -283,6 +284,15 @@ export class InputQueue {
     return true;
   }
 
+  /**
+   * #108: a paste whose possible secrets were reviewed: `send` sends it (the review's flow, which may ask for the review
+   * again before it goes), in order with what was typed before it. Only an agent's paste is reviewed.
+   */
+  pasteReviewed(send: () => Promise<CommandResult>): void {
+    this.ops.push({ kind: 'prompt', text: '', send });
+    this.pump();
+  }
+
   /** Drops what has not been sent (you stood up). */
   clear(): void {
     this.ops.length = 0;
@@ -303,7 +313,7 @@ export class InputQueue {
     } else {
       kind = 'prompt';
       this.ops.shift();
-      p = this.out.prompt(op.text);
+      p = op.send ? op.send() : this.out.prompt(op.text);
     }
     this.sent++;
     void p.then((r) => {

@@ -271,6 +271,10 @@ client reads that as `{}`.
 `repo_refs` (#247) is the "Repositories from other buildings" switch, `{"all_buildings": bool}` (see
 [Repositories on other floors](#repositories-on-other-floors)); a bridge from before #247 leaves it out.
 
+`prompt_secrets` (#108) is the "Review prompt secrets before sending" switch, `{"enabled": bool, "available": bool,
+"dir"?: string}` (`dir`, round 5: the absolute directory of the protected files, while `available`; see
+[Prompt secrets](#prompt-secrets)); a bridge from before #108 leaves it out.
+
 `repo_discovery` (#54) is repository discovery's settings and status, `{"roots", "interval_minutes", "status"}` (see
 [Repository discovery](#repository-discovery)); a bridge from before #54, or one that cannot run git, leaves it out.
 
@@ -391,6 +395,7 @@ floor with no workers and an `error`).
 | `over_cap` | bool, optional | orchestrators: `true` past write-code's review-pass cap (`pass > 3`, or `pass == 3` and `phase == "waiting_user"`); absent when false |
 | `report` | object, optional | freelancers: their write-code report (see [Runs and freelancers](#runs-and-freelancers)) |
 | `child_generation` | int ≥ 1 | #22: the generation of its native child agents: it rises when its root agent session is replaced, and its children of an older one are gone (see [Native child agents](#native-child-agents-22)); absent from a bridge before #22 |
+| `secret_files` | int, optional | #108 round 5: how many protected prompt-secret files it holds now, its own and those it holds by a lease (a handoff's successor); absent when none. A new `worker.upsert` follows every change (written, claimed, leased, released, revoked, swept; see [Prompt secrets](#prompt-secrets)) |
 | `codex` | object, optional | #155: how a Codex worker the bridge hired was launched, `{"mode": "shared" \| "legacy", "server"?: "starting" \| "running" \| "down" \| "stopped", "note"?, "attached"?, "thread"?, "turn"?, "questions"?, "async_blocked"?}` (see [Shared Codex server](#shared-codex-server); #156: `thread`, `turn` and `questions` in [Codex async questions](#codex-async-questions); #157: `async_blocked` there too); absent for other workers, and for Codex hires made with the switch off |
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
@@ -785,6 +790,7 @@ and remember the last `seq` applied.
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
 | `codex_server.update` | `enabled`, `available`, `allow_unverified` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
 | `repo_refs.update` | `all_buildings` | #247: the "Repositories from other buildings" switch changed (flat in the event, see [Repositories on other floors](#repositories-on-other-floors)) |
+| `prompt_secrets.update` | `enabled`, `available`, `dir`? | #108: the "Review prompt secrets before sending" switch changed (flat in the event: decode it by its `t`, see [Prompt secrets](#prompt-secrets)) |
 | `repo_discovery.update` | `roots`, `interval_minutes`, `status` | #54: repository discovery's settings or a scan's status changed (a scan started, progressed, ended); flat in the event. `status.revision` moves only when the discovered repositories did (see [Repository discovery](#repository-discovery)) |
 | `handoff.added` | `floor_id`, `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (#58: `floor_id` is its floor, `session` that floor's session; before #58 `session` was the floor, which it still is for a real floor; `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
 | `handoff.removed` | `floor_id`, `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
@@ -868,10 +874,10 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `floor.delete` | `{"floor": string, "move_workers"?: bool}`: a virtual floor; refused while it has workers unless `move_workers` is `true`, which moves them to its base session's real floor first | — | `floor.removed` (with `floor_id`), `building.upsert` when it was in a building, #93 `hire_preset.removed` for each of its own hire presets; with moved workers, their `worker.upsert` on the real floor (new `floor`, `desk_index`, maybe `name`) after the `floor.removed` |
 | `floor.hide` | `{"floor": string, "hidden": bool}`: #58 decision 2, a floor's stored hidden setting (any floor; see [Virtual floors](#virtual-floors)) | — | `floor.upsert` with `hidden`, to every client; none when it was already so |
 | `hire.prepare` | `{"floor"|"session": string, "cwd"?: string}` | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity", "herdr_instructions"}` (see [Hire and send home](#hire-and-send-home)) | — |
-| `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?, "herdr_instructions"?: bool}` | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
+| `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?, "herdr_instructions"?: bool, "secrets"?: SecretsReview, "secrets_pending"?: string}` (#108: see [Prompt secrets](#prompt-secrets)) | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?, "protected"?: int}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
-| `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
+| `worker.wrapup` | `{"id": string, "prompt": string, "worktree"?: "keep" \| "delete" \| "delete_branch", "secrets"?: SecretsReview, "secrets_pending"?: string}` (default `keep`; #108 round 5 `secrets_pending`: packup.detect's hand-over, see [Prompt secrets](#prompt-secrets)) | `{"queued"?: true}` | the worker's upsert with `wrapup` `armed` (before the ack); later, on CLEAN, `worker.removed` with `reason: "sent_home"` (see [Wrap up](#wrap-up)) |
 | `worker.wrapup.cancel` | `{"id": string}` | — | the worker's upsert without `wrapup` |
 | `worker.changes` | `{"id": string}` | the worker's git changes, `{"cwd", "branch", "head", "upstream", "ahead", "behind", "base", "files", "stat", "diff", "diff_bytes", "truncated", "omitted"}` (see [Changes](#changes)) | — |
 | `worker.commands` | `{"id": string}` | #136: the slash commands and skills of the worker's harness in its checkout, `{"commands": [{"name", "description", "argument_hint", "kind"}…], "partial": bool}` (see [Commands and skills](#commands-and-skills)) | — |
@@ -884,9 +890,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
-| `worker.prompt` | `{"id": string, "text": string, "op"?: string}` | `{"queued": bool, "retried": bool, "sent"?: string, "terminal"?: true, "handoff"?: AgentHandoff, "existing"?: true}` | the worker's statuses |
+| `worker.prompt` | `{"id": string, "text": string, "op"?: string, "secrets"?: SecretsReview, "secrets_pending"?: string}` | `{"queued": bool, "retried": bool, "sent"?: string, "protected"?: int, "terminal"?: true, "handoff"?: AgentHandoff, "existing"?: true}` (#108: with prompt secrets reviewed, see [Prompt secrets](#prompt-secrets)) | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
-| `worker.answer_ask` | `{"id": string, "tool_use_id": string, "answers"?: [{"question": int, "choices"?: [int…], "other"?: string}…], "cancel"?: true, "prompt"?: string}` | `{"sent": [string…], "resolved": bool, "prompted"?: bool}` | the worker's upsert without its `ask` once the transcript has the answer (before the ack) (see [Laptops: asks](#laptops-asks)) |
+| `worker.answer_ask` | `{"id": string, "tool_use_id": string, "answers"?: [{"question": int, "choices"?: [int…], "other"?: string}…], "cancel"?: true, "prompt"?: string, "secrets"?: {"prompt"?, "answers[N].other"?: SecretsReview}}` | `{"sent": [string…], "resolved": bool, "prompted"?: bool}` | the worker's upsert without its `ask` once the transcript has the answer (before the ack) (see [Laptops: asks](#laptops-asks)) |
 | `transcript.watch` | `{"id": string, "limit"?: 1–500}` | `{"harness", "session", "version", "cursor", "has_more", "pending", "items"}` | `transcript.items` to this connection only (see [Laptops: transcript](#laptops-transcript)) |
 | `transcript.unwatch` | `{"id": string}` | — | — |
 | `transcript.page` | `{"id": string, "before"?: cursor, "limit"?: 1–500, "agent"?: string}` | `{"items", "cursor", "has_more"}` | — |
@@ -895,7 +901,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
 | `run.prepare` | `{"floor"|"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
-| `run.start` | `{"floor"|"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
+| `run.start` | `{"floor"|"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?, "secrets"?: {"text"?, "extra"?, "prompt"?: SecretsReview}}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
 | `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers when queued (see [Plan limits](#plan-limits)) |
 | `ai.get` | `{}` | the AI state (see [AI integration](#ai-integration)) | — |
 | `ai.models` | `{"role", "key"?, "base_url"?}` | `{"models": [{"id", "description"?}], "base_url"?}` | — |
@@ -914,15 +920,15 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `packup.get` | `{}` | pack up on request's state (see [Pack up on request](#pack-up-on-request)) | — |
 | `packup.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | its state | `packup.update` (before the ack) |
 | `packup.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"text", "expect", "core"?, "score", "matched", "task"?, "want_task"?, "right", "error"?}], "right", "total", "latency_ms"}` | `packup.update` when it changes `tested` |
-| `packup.detect` | `{"id", "text"}` | `{"matched", "task"?, "removed"?: [{"start", "end"}], "score"}`; `matched` false: send `text` as written | — |
-| `hire.interpret` | `{"text", "pending"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?}`: a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
-| `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…], "note"?}` | `worker.prompt`'s | the worker's upsert without its `followup` |
+| `packup.detect` | `{"id", "text", "secrets"?: SecretsReview}` | `{"matched", "task"?, "removed"?: [{"start", "end"}], "score", "sent"?, "protected"?, "secrets_pending"?}`; `matched` false: send `text` as written (#108: `sent` when there is one, with `secrets_pending`) | — |
+| `hire.interpret` | `{"text", "pending"?, "secrets"?: SecretsReview, "secrets_pending"?}` | `{"text", "intent"?, "reason"?, "hire"?, "error"?, "protected"?, "secrets_pending"?}` (#108: `text` is what the LLM read): a hire proposal for review, `unsupported` or `unclear`, or an operational `error` (see [Hire interpretation](#hire-interpretation)); never hires | — |
+| `worker.answer_followup` | `{"id", "turn_id", "answers": [{"id", "value", "note"?}…], "note"?, "secrets"?: {"note"?, "answers[N].value"?, "answers[N].note"?: SecretsReview}}` | `worker.prompt`'s | the worker's upsert without its `followup` |
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
 | `worker.retry_followup` (#60) | `{"id", "turn_id"}` | `{"source", "error"?}` once the extraction ran again | the worker's upsert with the new `followup` (before the ack) |
 | `worker.followup_message` (#60) | `{"id", "turn_id"}` | `{"text", "cut"?}`: the message the follow-up is of | — |
 | `worker.handoff_preview` | `{"worker", "candidate"}` (#224 `mode: "agent"`, #9 `mode: "llm"`: see [Ask the agent](#ask-the-agent), [LLM handoffs](#llm-handoffs)) | `{"candidate", "text", "truncated"?, "title", "provenance", "can_send_home", "send_home_blocked"?}` (see [Handoffs](#handoffs)) | — |
 | `worker.handoff` | `{"worker", "mode": "literal", "session", "candidate", "revision", "send_home"?, "op"}` | `{"handoff", "existing"?, "send_home"?: "started" \| "skipped", "send_home_reason"?}` | `handoff.added` (before the ack) when filed; `worker.removed` later when sent home |
-| `worker.handoff` (#9) | `{"worker", "mode": "llm", "session", "candidate", "revision", "instruction"?, "send_home"?, "op"}` | `{"job", "existing"?}` at once; the job follows on `Worker.llm_handoff` (see [LLM handoffs](#llm-handoffs)) | `worker.upsert` (the job), `handoff.added` when filed, `worker.removed` later when sent home |
+| `worker.handoff` (#9) | `{"worker", "mode": "llm", "session", "candidate", "revision", "instruction"?, "send_home"?, "op", "secrets"?: SecretsReview}` | `{"job", "existing"?}` at once; the job follows on `Worker.llm_handoff` (see [LLM handoffs](#llm-handoffs)) | `worker.upsert` (the job), `handoff.added` when filed, `worker.removed` later when sent home |
 | `handoff.list` | `{"floor", "q"?, "limit"?: 1–500}` | `{"floor", "handoffs": [HandoffEntry…]}` | — |
 | `handoff.get` | `{"id"}` | `{"handoff", "body", "llm"?}` (#9: an LLM handoff's provenance) | — |
 | `handoff.delete` | `{"id", "confirm": true}` | `{"handoff"}`; the file goes to the trash | `handoff.removed` (before the ack) |
@@ -933,6 +939,10 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `codex_server.set` | `{"enabled"?: bool, "allow_unverified"?: bool}` | the switch; switching on without `available` is `unsupported` | `codex_server.update` (before the ack) when it changes |
 | `repo_refs.get` | `{}` | `{"all_buildings"}`, the "Repositories from other buildings" switch (see [Repositories on other floors](#repositories-on-other-floors)) | — |
 | `repo_refs.set` | `{"all_buildings": bool}` | the switch | `repo_refs.update` (before the ack) when it changes |
+| `prompt_secrets.get` | `{}` | `{"enabled", "available", "dir"?}`, the "Review prompt secrets before sending" switch (see [Prompt secrets](#prompt-secrets)) | — |
+| `prompt_secrets.set` | `{"enabled": bool}` | the switch; a change makes every review made before it stale | `prompt_secrets.update` (before the ack) when it changes |
+| `prompt_secrets.scan` | `{"text": string}` (at most 32 KiB) | `{"revision", "candidates": [{"id", "start", "end", "kinds", "encoded"?}…]}`; `secrets_review_off` while the switch is off | — |
+| `prompt_secrets.revoke` | `{"worker": string}` (round 5) | `{"removed": int}`: every protected file the worker held (its own and those it held by a lease) is gone, for every holder; the worker keeps running; with the switch on or off; `not_found` (a worker the bridge does not show and that holds no file: one it does not show that holds files is revoked the same way), `secrets_unavailable` (no private runtime directory) | the worker's `worker.upsert` without `secret_files` (before the ack), and of every other holder that lost a file |
 | `repo_discovery.get` | `{}` | `{"roots", "interval_minutes", "status"}` (see [Repository discovery](#repository-discovery)) | — |
 | `repo_discovery.set` | `{"roots"?: [absolute path…], "interval_minutes"?: 1–1440}` (at least one) | the state; a change of roots scans at once | `repo_discovery.update` (before the ack) when it changes |
 | `repo_discovery.refresh` | `{}` | the state; a scan starts (after the one in flight) | `repo_discovery.update` (before the ack) |
@@ -969,16 +979,16 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `pr.merge` | `{"floor"|"session", "id", "method", "confirm": true, "override"?, "confirm_override"?}` | `{"merged": true}` | boards after the refresh |
 | `worker.open_pr.prepare` | `{"id"}` (worker id) | `{"can_open", "reason"?, "branch", "base", "ahead", "dirty", "existing"?, "title", "body"}` | — |
 | `worker.open_pr` | `{"id", "title", "body", "confirm": true}` | `{"pr": {"id", "key", "url"}, "pushed", "existed"}` | boards after the refresh |
-| `schedule.create` | #62: `{"floor", "title", "prompt", "due_at", "on_miss"?, "max_lateness_ms"?, "harness", "model", "effort", "cwd", "worktree"?, "wake_floor"?, "handoff_path"?, "source"?}` (see [Scheduled agents](#scheduled-agents)) | the schedule | `schedule.upsert` |
+| `schedule.create` | #62: `{"floor", "title", "prompt", "due_at", "on_miss"?, "max_lateness_ms"?, "harness", "model", "effort", "cwd", "worktree"?, "wake_floor"?, "handoff_path"?, "source"?, "secrets"?: SecretsReview}` (see [Scheduled agents](#scheduled-agents); #108 `secrets`: [Prompt secrets](#prompt-secrets)) | the schedule | `schedule.upsert` |
 | `schedule.update` | `{"id", …}`: `schedule.create`'s args without `source`, the whole spec replaced; only while `scheduled`. `schedule.create`, `schedule.update` and `schedule.retry` answer `busy` while a send home removes the worktree `cwd` is in (#63, see "Worktree hold") | the schedule | `schedule.upsert` |
 | `schedule.cancel` | `{"id"}`; only while `scheduled` or `waiting` | the schedule, `cancelled` | `schedule.removed` |
-| `schedule.run_now` | `{"id"}`; only while `scheduled` | the schedule, as its fire left it (`running`, `waiting` or `failed`) | `schedule.upsert`, then the hire's |
-| `schedule.retry` | `{"id"}`; only while `failed` or `skipped`: the same spec, fired now | the schedule, as its fire left it | `schedule.upsert`, then the hire's |
+| `schedule.run_now` | `{"id", "secrets"?: SecretsReview}`; only while `scheduled` (#108: `secrets` reviews the stored prompt, see [Prompt secrets](#prompt-secrets)) | the schedule, as its fire left it (`running`, `waiting` or `failed`) | `schedule.upsert`, then the hire's |
+| `schedule.retry` | `{"id", "secrets"?: SecretsReview}`; only while `failed` or `skipped`: the same spec, fired now (#108: `secrets` as `run_now`'s) | the schedule, as its fire left it | `schedule.upsert`, then the hire's |
 | `schedule.dismiss` | `{"id"}`; only while `failed` or `skipped` | the schedule, with `dismissed_at` | `schedule.removed` |
-| `hire_preset.create` | #93: `{"name", "floor"?, "prompt", "harness", "model", "effort", "herdr_instructions"?: bool}`; `floor` empty or absent: global (see [Hire presets](#hire-presets)) | the preset | `hire_preset.upsert` |
+| `hire_preset.create` | #93: `{"name", "floor"?, "prompt", "harness", "model", "effort", "herdr_instructions"?: bool, "secrets"?: SecretsReview}`; `floor` empty or absent: global (see [Hire presets](#hire-presets)) | the preset | `hire_preset.upsert` |
 | `hire_preset.update` | `{"id", …}`: `hire_preset.create`'s args, the whole spec replaced (its scope and #95 `herdr_instructions` too) | the preset | `hire_preset.upsert`; none when nothing changed |
 | `hire_preset.delete` | `{"id"}` | — | `hire_preset.removed` |
-| `hire_preset.check` | #95: `{"prompt"}` (1–32 KiB, not blank) | `{"delegates": bool, "score"}`; `delegates` false also when the classifier is not ready, fails or takes over 1.2 s | — |
+| `hire_preset.check` | #95: `{"prompt", "secrets"?: SecretsReview}` (1–32 KiB, not blank) | `{"delegates": bool, "score"}`; `delegates` false also when the classifier is not ready, fails or takes over 1.2 s | — |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -3802,7 +3812,9 @@ and bounded at **1.2 s** (so its answer has 0.3 s to reach the game):
    They are cut out of the text; at each join the spaces go, a separator (`, ; : – —`) left dangling before the end or
    before punctuation goes, and the pieces meet with one space or the line break one of them has. The task's own words
    never change. `removed` is the cut parts, `[start, end)` in **UTF-16 code units** of `text` (JavaScript's string
-   indexes). Nothing left of the text: `matched: true` without `task` (the game opens the send-home dialog).
+   indexes; #108: of `sent` when the ack has one, the text with its protected secrets as file references, see
+   [Prompt secrets](#prompt-secrets)). Nothing left of the text: `matched: true` without `task` (the game opens the
+   send-home dialog).
 4. **Fail open**: bad JSON, no span, a span not in the text or out of order, a classifier or LLM failure, the 1.2 s
    gone: `matched: false`, and the game sends the prompt as written. **A failure never eats a prompt.**
 
@@ -3829,9 +3841,369 @@ classifier), and to the LLM endpoint when the classifier says yes, before it is 
 why it is opt-in on its own toggle, and the game's Settings say so above it.
 
 
+### Prompt secrets
+
+#108 round 1. **"Review prompt secrets before sending"** is a bridge-wide switch, **off by default**, persisted like
+`repo_refs`: `prompt_secrets.get`, `prompt_secrets.set {enabled}`, the flat `prompt_secrets.update` event and
+`World.prompt_secrets` (`{"enabled", "available"}`; `available`: the bridge has a private runtime directory for the
+files, else a review that protects anything is refused with `secrets_unavailable`). **Off, nothing here runs**: no
+scan, no file, every route as before; a command that carries a review anyway (a tab from before the switch went off)
+is refused with `secrets_review_stale` and never forwarded. A change of the switch makes every review made before it
+stale. Turning it off never deletes a file: the files already written keep their lifecycle.
+
+On, the bridge finds **possible secrets** in a prompt locally (no network, no model, no provider check): Gitleaks
+v8.30.1's default rules, generated into the bridge and checked against Gitleaks itself (`make secret-rules-parity`),
+its provider rules again before a sentence's punctuation (`Use sk_live_….`, `(hf_…:`), and its own structural rules
+(PEM private keys, `Authorization` credentials and long bare `Bearer` tokens (never what the shell expands there: in a curl command, read in the quotes of the word that holds them), URL
+passwords and credential-named query or form parameters, assignments to credential-like names in env, shell, YAML,
+JSON, TOML, INI, CLI flags (and curl's
+`-u user:password`, never what the shell computes there: its word read as bash reads its line, substitutions and backquoted commands nested, each line once, so the work grows linearly with the prompt) and code, YAML block scalars under them, "the password is X"
+prose, a quoted value a few words after such a word when it is the sentence's subject (not "the password check is
+"…""), a line a later sentence names as one (ending on the credential word, never code), a code fence of one value
+after a line naming a credential, and other exact occurrences of a value found). A provider's token format inside a longer value proposes the value's
+rest glued after it too (`Bearer ghp_…!tail` proposes `ghp_…` and `!tail`), but not a list's next item, a URL's
+query or path. Templates and references (`${X}`, `$X`, `{{ … }}`, `<your-token>`, `os.getenv(…)`, `process.env.X`),
+redactions (`****`, `REDACTED`, `xxxx`), names without values and the bridge's own file references are never
+candidates: exactly `[secret in file <path>]` with a path of the shape of its directory's files. Only those bytes are
+left out: a value that runs into one, on either side, is a candidate for its bytes outside it, whatever they hold
+(symbols only, one character), unless all that is left beside it is blanks and one quote, bracket or comma; text that
+only looks like one is scanned as any other. A reference stands for a value's place, not its content: a match whose
+shape it may complete (a provider's token format, a length or a digit a detector asks for) or whose edge its own bytes
+made never keeps the bytes of another value around it from being proposed, whichever wins: the bytes it does not cover
+stay candidates (`PASSWORD="ghp_… […] tail"` and `the password is ghp_…[…]tail` propose `ghp_…` and `tail`). Nor
+does a match typed whole inside a value that runs into one, its own range clear of every reference (a complete token,
+a header's credential: `PASSWORD="Prefix-ghp_…![…]tail"` proposes `Prefix-`, `ghp_…`, `!` and `tail`), while a value
+boundary through a reference keeps the bytes it beats (`?token=[…]&x=1` stays clean). Whether a value runs into one
+is read from the references themselves, never from the bytes it holds. A candidate is only a proposal: the user
+decides every one.
+
+**`prompt_secrets.scan {text}`** (at most 32 KiB of UTF-8: longer is `bad_request` stating the limit, never cut)
+answers `{"revision", "candidates"}`. `candidates` (never null) are in text order and **never overlap**: `id`
+(`c1`, `c2`, … stable for that revision), `start`, `end` (**`[start, end)` in UTF-16 code units** of `text`, as
+pack up's `removed`: JavaScript's string indexes), `kinds` (what found it: `gitleaks:<rule id>`, `pem`,
+`auth-header`, `url-password`, `url-query`, `assignment`, `yaml-block`, `prose`, `fenced`, `repeat`) and `encoded`
+(its bytes hold a JSON or shell backslash escape, percent-encoding or a YAML block's indentation: the file keeps
+them **as typed**, which the review should say). `revision` is opaque: an HMAC, keyed by a random key the bridge
+process keeps in memory, over the text, the rule set and the candidates. It is never a plain hash of the text.
+`secrets_review_off` while the switch is off.
+
+**A text-carrying command's `secrets`** (round 1: `worker.prompt`; later routes take the same field):
+
+```json
+{"secrets": {"revision": "…", "decisions": [
+  {"candidate": "c1", "action": "protect"},
+  {"candidate": "c2", "action": "ignore"},
+  {"candidate": "c3", "action": "protect", "start": 40, "end": 52},
+  {"action": "protect", "start": 80, "end": 94}
+]}}
+```
+
+A decision is a candidate protected or ignored, a protected candidate with a **corrected** range, or a **manual
+mark** (no candidate, `protect`, a range). The bridge **scans the submitted text itself** and requires: the revision
+is that scan's (else `secrets_review_stale`); every candidate has exactly one decision; every range is non-empty,
+inside the text and on code point boundaries (never between the halves of a surrogate pair); protected ranges and
+ignored candidates never overlap one another (a mark over an ignored candidate is refused: the ignored occurrence
+stays exactly as typed). Anything else is `secrets_review_required`. The client's own list is never trusted. A
+review with only manual marks carries the revision of a scan without candidates.
+
+With the switch on, **`worker.prompt`** is scanned on its worker's input lane (in order with its other input,
+never on the hub goroutine, at most 4 scans at once, 10 s each: past it, `secrets_unavailable`, never a raw send):
+
+- **No `secrets` and candidates found**: `secrets_review_required` ("N possible secrets: review them"), and
+  **nothing** is sent, stored, audited with its text or written to disk. No candidates: the prompt goes as before.
+- **A review**: checked as above; then, before anything else sees the text (its translation for the harness, the
+  `/handoff` check, what is stored or audited, the send), each protected range goes to **its own file**, exactly
+  the bytes of that range as typed (no unescaping, decoding, trimming or added newline), and is replaced by
+  **`[secret in file <absolute path>]`**. An ignored candidate stays plain text and gets no file; the same value
+  protected in one place and ignored in another is honoured separately. Everything ignored: the prompt goes as
+  typed. The path is plain text, never an `@` mention (an agent would read the file into its context).
+- **Limits after the references**: the text with its references must still fit (16 KiB, Claude's typing rules;
+  for a harness that rewrites prompts, the translated text). Otherwise the usual `bad_request`, and the files it made
+  are removed. With the switch on, a prompt over 32 KiB (a rewriting harness's source may be longer) is `bad_request`.
+- **The ack**: `sent` is the text sent (references in place) when it is not what was typed, `protected` how many
+  ranges went to files. A `/handoff <instruction>` is a handoff request with the protected instruction (stored so);
+  its ack, once the request is sent, has `sent` (the composer's text with its references) and `protected` too. An
+  `existing` answer used none of the text: neither.
+- **Retry**: the identical submission (same worker, revision and decisions) within 5 minutes of a sent one uses
+  the same files. A send that fails removes the files it made, never those it reused. A `/handoff`'s files follow
+  its request's prompt: until the bridge begins to send it, a request that fails, at once or later (no handoff skill,
+  the request over the limits with its references, a person taking over, the worker gone, a cancel), and an
+  `existing` answer remove the files it made, never those it reused. Once the prompt is being sent, the send decides,
+  whatever ended the request meanwhile: sent, or failed without knowing whether the agent got any of it, the files
+  stay the worker's and serve the retry; refused before any of it reached the agent, they go.
+- **Telegram replies** have no review: a reply with candidates is refused with a fixed sentence (see
+  [Notifications](#notifications)).
+
+The files: `$XDG_RUNTIME_DIR/herdr-world/secrets/<owner>/<file>` by default (`--secrets-dir`,
+`HERDR_WORLD_SECRETS_DIR`; without the variable a validated `/run/user/<uid>`; with no usable private runtime
+directory the protection is unavailable, never a disk-backed fallback). The directory is 0700 and must be ours
+(an unsafe one is refused, never repaired), each owner's directory 0700, each file 0600, all named at random (never
+from a secret), created exclusively without following a symlink. The database keeps only the owners (opaque
+directory, worker, created; a pending owner's expiry) and the file names, never a byte of a secret. A worker's
+files go when it **really ends** (closed in herdr while its floor runs, or sent home), not when its floor sleeps or
+its herdr session goes (it resumes); a janitor at start and every 5 minutes removes a closed or unknown worker's
+files, expired pending owners' and what has no owner (round 5: a file another live worker holds by a lease stays, a
+worker its running floor no longer shows loses its files after a sweep's grace, and `prompt_secrets.revoke` removes a
+worker's files at once; see [Round 5](#round-5-revoke-leases-and-the-lifecycle)).
+Unlinking is not a secure erasure (tmpfs pages can be swapped).
+
+#### Round 2: every other route
+
+With the switch on, every other command that takes typed text to an agent, a language model or storage goes through
+the same gate as `worker.prompt`. Without a review and with candidates it is `secrets_review_required`, and nothing is
+sent, stored, audited with its text or written. A review is checked against the bridge's own scan of the text **as the
+command carries it**, and its protected ranges go to files **before** anything else sees the text: a language model, a
+translation, the database, the audit log, an event, an ack, herdr. Off, every route is as before, and a `secrets` or
+`secrets_pending` is `secrets_review_stale`. Scans and writes run off the hub goroutine, in the same 4 slots of 10 s.
+A text is checked as typed before anything is scanned, and every limit applies again to the text with its references
+(16 KiB, 32 KiB, a dictated sentence's 8 KiB, a handoff's 4 KiB instruction, a wrap-up's room before its footer, an
+async answer's 4 KiB, Claude's typing rules; a prompt herdr would read as a flag is refused as typed): one that fits
+as typed but not with them is the route's usual `bad_request`, and the files it made are removed.
+
+**One text, or a review per text.** A command with one text takes `secrets: SecretsReview` (round 1's shape, its ranges
+in that text). A command with several (`run.start`, `worker.answer_ask`, `worker.answer_followup`,
+`worker.answer_async`) takes `secrets` as an object of reviews keyed by each text's path in the args: `"text"`,
+`"extra"`, `"prompt"`, `"note"`, `"answers[N].other"`, `"answers[N].value"`, `"answers[N].note"`,
+`"answers[N].answer"` (`N` is the answer's position in the args' `answers`, from 0). Each review is of that text alone,
+exactly as sent (scan it alone with `prompt_secrets.scan`), never of a prompt the bridge composes from it. A text with
+candidates and no review, or a review keyed by a text the command does not send (a field absent or empty, `extra`
+beside an edited `prompt`), is `secrets_review_required`, and the message starts with the text's path
+(`answers[1].value: 2 possible secrets: …`). The files of one command go to one owner.
+
+| command | reviewed (`secrets`) | the files' owner | ack (#108) |
+|---|---|---|---|
+| `worker.hire` | `prompt`, as sent (the herdr hiring instructions the bridge adds go after the protected task); `secrets_pending`: `hire.interpret`'s | a pending owner the new worker claims once herdr shows it, before its first prompt | `protected` |
+| `run.start` | `{"text", "extra", "prompt"}`: the ticket's text (the launch keeps it with its references, and the run's label takes its words from it), the extra (in the composed prompt; not sent beside an edited `prompt`), the edited prompt | as `worker.hire` | `protected`; its `prompt` (as sent) holds the references |
+| `schedule.create`, `schedule.update`, `hire_preset.create`, `hire_preset.update`, `hire_preset.check` | `prompt`: every decision **ignore** (a stored prompt, below) | none | — |
+| `schedule.retry`, `schedule.run_now` | optional: the schedule's stored `prompt`, every decision **ignore** (a schedule's fire, below) | none | — |
+| `packup.detect` | `text` | a pending owner, for the worker's next `worker.prompt` | `sent`, `protected`, `secrets_pending` |
+| `hire.interpret` | `text`; `secrets_pending`: the answer before's; `pending.sources` (below) | a pending owner, for the hire of its task | `protected`, `secrets_pending`; `text`, `hire.sources` and `hire.task` hold the references |
+| `worker.answer_ask` | `{"prompt", "answers[N].other"}` | the worker | — |
+| `worker.answer_followup` | `{"note", "answers[N].value", "answers[N].note"}` | the worker | `worker.prompt`'s |
+| `worker.answer_async` | `{"answers[N].answer"}` | the worker | — |
+| `worker.wrapup` | `prompt` (before its footer); round 5: `secrets_pending`: `packup.detect`'s | the worker | — |
+| `worker.handoff` (`agent`, `llm`) | `instruction` (blank: the default one, nothing to review) | the worker | `agent`: `protected` |
+| `worker.prompt` | round 1's `text`; `secrets_pending`: `packup.detect`'s | the worker | round 1's |
+
+The worker's routes follow `worker.prompt`'s rules: on its input lane, in order with its other input, the checks
+again on the texts with their references, a failure removes the files it made, a success keeps them for its identical
+retry (5 minutes). `worker.answer_async` keeps the admission it got when it arrived, its answers' texts replaced by
+the protected ones: an answer submitted twice before the first was sent is still sent once (the second `stale`), as
+with the switch off. A wrap-up's files stay once its prompt went, and go when its arming fails. A `worker.handoff` in
+mode `agent` settles them as a `/handoff` does (until the request's prompt is being sent, a failed request or an
+`existing` answer removes them; from then on the send decides); in mode `llm` they stay once the job started (the model
+reads only the references; a handoff it writes may name the files, which live as long as that worker or a worker hired from that handoff, see [Round 5](#round-5-revoke-leases-and-the-lifecycle)) and an
+`existing` answer removes them. Telegram replies and card answers have no review: candidates refuse them (round 1).
+
+**A change of the switch** makes every review made before it stale, also one whose command is already under way: each
+route checks it last, after any wait (a scan slot, the worker's input lane, herdr creating a hire's workspace, the agent
+getting ready for a prompt, a dialog being answered, a work item or a handoff's transcript being read, a model's slot),
+right before its text goes on: before its first byte is typed or sent, before each model call. Once the first byte
+went, nothing is checked again (Enter pressed again, a model request retried).
+
+- `packup.detect`, `hire.interpret` and `hire_preset.check` check it just before their model reads the text, and each
+  model call again once it holds one of the model's slots (a call waits for one while others run): the command is
+  `secrets_review_stale`, no model (or no further one) is called, and the files its review made are removed. One whose
+  review went stale by the time its model answered is `secrets_review_stale` too (its hand-over could not be used).
+- A hire (`worker.hire`, `run.start`) checks it once its worker is seen, and again just before its first prompt is
+  typed or sent, after waiting for the agent and on the worker's input lane (Codex: before each try while herdr says the
+  agent is not ready): the worker stays, its prompt does not go (`prompt_error`), and the files its review made are
+  removed (a hand-over's, once its worker claimed it, stay the worker's). `run.start` also checks it when its work item
+  has been read (then nothing is hired).
+- The worker's routes (`worker.prompt`, `worker.answer_ask`, `worker.answer_followup`, `worker.answer_async`, a
+  wrap-up, `worker.handoff` in mode `agent`, a `/handoff`) check it when their turn comes on the worker's input lane and
+  again right before their text goes: once the agent is ready to be typed into, before a Codex prompt is submitted,
+  queued or steered through its app-server (a shared worker blocked by an async question), before the first Other
+  answer is typed into a dialog (a dialog whose text was typed is answered whole), before a dismissal's prompt, as an
+  async answer is marked sending, before a handoff request's prompt. The command is
+  `secrets_review_stale`, nothing of its text is sent, and the files it made are removed (a wrap-up's arm fails so; an
+  agent handoff's request fails).
+- An LLM handoff checks it just before the model is called, and as the call takes its slot: the job fails with code
+  `secrets_review_stale`.
+- A schedule's fire has no review to go stale: its record is of the text and the rules.
+
+**Not reviewed.** `worker.keys` (typing straight into a terminal, as in any terminal); `run.prepare` (it sends the text
+nowhere and keeps none of it: its preview comes back to its sender only, its audit row keeps lengths; the `run.start`
+that follows is reviewed); `worker.handoff` in mode `literal` (no typed text); names, labels and titles (a hire's
+`label`, a schedule's `title`, a preset's `name`: short names shown as typed, never sent as a prompt); a
+`packup.detect` the bridge does not look at (the feature not ready, a freelancer: nothing reaches a model, and the
+`worker.prompt` that follows is reviewed).
+
+**Pending owners.** A command with no worker yet writes its files to a **pending owner** that expires after 30
+minutes. A hire's (`worker.hire`, `run.start`) is claimed by the new worker once herdr shows it, before its first
+prompt goes; a hire that fails (refused after its review, herdr failing, rolled back, not seen in time) removes them at
+once; one the bridge stopped during expires, and the janitor removes it. A hire that succeeds keeps its files with the
+worker also when its first prompt could not go (Codex's hooks review, a failed send): a resend refers to them; a prompt
+withheld because the switch changed removes them (above). A hire whose files expired before its worker was seen sends no
+prompt (`prompt_error`). Each hire writes its own files: the identical hire sent again is refused as today (its desk is
+taken) and leaves none.
+
+**The hand-over (`secrets_pending`).** A preview, whose text a language model reads before another command sends it,
+answers an opaque `secrets_pending` when it had a review (or continued one): random, never the owner's directory name,
+kept in memory only. It stands for its pending owner and the texts the bridge answered as reviewed. Sent back exactly,
+such a text needs no review again (what the user left as typed is not proposed twice); any other text is reviewed as
+usual (its references scan clean).
+
+- `packup.detect` for worker W: the models read `sent` (references in place; absent: as typed), and `removed` indexes
+  `sent`, not what was typed. `worker.prompt {"id": W, "text", "secrets_pending"}` with `text` exactly `sent` (or the
+  text as typed, when there is no `sent`) or `task` needs no review. The hand-over is checked again when the prompt's
+  turn comes on W's input lane (it may wait there behind W's other input): expired, or the switch changed, meanwhile is
+  `secrets_review_stale` and nothing is sent. Else its files become W's then, before anything is sent, and stay W's
+  whatever the send does (its retry, to W, uses them).
+- `hire.interpret`: the LLM reads `text` (the sentence with its references) and the pending proposal's sentences. A
+  follow-up `{"text", "pending", "secrets_pending"}` needs no review for the sentences that hand-over answered; any
+  other `pending.sources[N]` must have no candidate (else `secrets_review_required`, `pending.sources[N]: …`), with or
+  without a hand-over. A new sentence's files join the same owner, and the answer keeps the same `secrets_pending`.
+  `worker.hire {"prompt": <hire.task.value>, "secrets_pending"}` needs no review for that exact task (an edited task is
+  reviewed as usual) and its worker claims the files once herdr shows it, the hand-over checked again then: expired (or
+  the switch changed) by then, the worker stays and its prompt does not go (`prompt_error`). A hire that fails leaves
+  them for another attempt.
+- Refused with `secrets_review_stale`: an unknown or expired hand-over, one from before a restart or a change of the
+  switch, one for another worker (packup's is its worker's only, never a hire's), one whose files another worker
+  claimed (one hire takes `hire.interpret`'s); `busy` while another hire is using it. Each is checked when the command
+  arrives and again just before its text goes on (above), as a command may wait. A preview never followed up leaves
+  nothing once it expired.
+
+**Stored prompts** (schedules, hire presets) keep **no** protected file: their files would outlive every agent. With
+the switch on, every `schedule.create`/`update` and `hire_preset.create`/`update` scans the prompt (an update that
+only moves the due time too): candidates need a review whose decisions all **ignore** (the prompt is stored as
+typed), and a review that protects anything is `secrets_review_stored` ("remove those values from it, or protect them
+when you hire with it"), nothing stored. The row keeps the record of that review: a SHA-256 of the rule set, the text
+and its candidates (the prompt is stored in plain beside it, so the record tells nothing more), never the review's
+revision. `hire_preset.check` takes the same review before its classifier reads the prompt, as typed. A preset's
+prompt reaches an agent only through the game's `worker.hire`, which is reviewed as any hire (protect values then).
+
+**A schedule's fire** (due, late, `schedule.retry`, `schedule.run_now`) with the switch on scans the stored prompt
+before anything reaches herdr: no candidates, or exactly those its record says a review left as typed, and it fires as
+before. Otherwise (saved before the switch was on, edited while it was off, the rules changed) the fire **fails**,
+nothing hired or sent: `state` `failed` with the `state_reason` "its prompt was not reviewed for secrets: it has N
+possible secrets … open the schedule, review them and retry it; nothing was sent". That `schedule.upsert`, to every
+client, is the notice (schedules have no other). **The way out**, with the switch on: scan the schedule's `prompt`
+(`prompt_secrets.scan`), review it, and send `schedule.retry {"id", "secrets"}` (`schedule.run_now` takes the same while
+it is `scheduled`; `schedule.update` stays refused on a failed schedule, as before). The review is checked as a save's
+(without one, `secrets_review_required`; one that protects anything, `secrets_review_stored`; the prompt changed
+meanwhile, `secrets_review_stale`), its record is kept on the schedule, and then it fires: the prompt goes as typed.
+`secrets` on `schedule.cancel` or `schedule.dismiss` is `bad_request`. Off, fires are as before, and a `secrets` is
+`secrets_review_stale`.
+
+**Audit.** `worker.hire` (a schedule's fire's too), `run.prepare`, `run.start`, `schedule.create`/`update` and
+`hire_preset.create`/`update` keep their texts' lengths (`prompt_bytes`, `text_bytes`, `extra_bytes`), never a text,
+with the switch on or off. Every command's review is kept as `"secrets": {"protect", "ignore"}`, the decisions'
+counts.
+
+#### Round 5: revoke, leases and the lifecycle
+
+**The directory.** `World.prompt_secrets.dir` (also in `prompt_secrets.get`'s and `.set`'s ack and in
+`prompt_secrets.update`) is the absolute directory of the files, present while `available`: a reference is the
+bridge's own exactly when it is `[secret in file <dir>/<owner>/<file>]`, both names 26–64 characters of `A-Z2-7` (what
+the scan leaves alone; a client can tell them from a look-alike with it).
+
+**`Worker.secret_files`** is how many files the worker holds now: those of its own directories and those it holds by a
+lease (below); absent at 0. A `worker.upsert` follows each change: a review's files written, a pending owner's claimed
+(a hire's, a hand-over's), a lease taken, a holder's end, a revoke, a failed command's files removed, the janitor's
+sweep. A pending owner's files count for nobody until they are claimed.
+
+**Revoke.** `prompt_secrets.revoke {"worker"}` removes every protected file the worker holds now, its own and those it
+holds by a lease, with their rows, **for every holder** (a file a handoff's successor holds goes for its first owner
+too, and the other way round), and answers `{"removed": n}`. The worker keeps running; the prompts it was sent keep
+their references, which then point at nothing. It works with the switch on or off. A worker the bridge does not show (of
+a herdr session that is gone, one its floor runs without: below) is revoked the same way while it holds files: the
+lifecycle keeps a gone session's files for its return, an explicit revoke removes them. `not_found` is a worker the
+bridge neither shows nor finds a file of (unknown, or holding nothing); without a private runtime directory it is
+`secrets_unavailable`. The files go off the hub goroutine, with the files locked and the workers' liveness read inside
+that lock; every holder's `worker.upsert` comes before the ack. The audit row keeps the worker's id and `{"removed":
+n}`, never a path or a byte. A hand-over not claimed yet (`packup.detect`'s for that worker) is not the worker's: a
+revoke leaves it, and what it claims later is new. The identical submission sent again after a revoke writes new files
+(its retry is forgotten).
+
+**A revoke racing a send.** Every text the bridge sends to an agent or a model is checked last, right before its first
+byte goes, where a change of the switch is checked (above), **reviewed or not**: with the switch on or off, a schedule's
+stored prompt, a hire's successor (which holds files it never reviewed), an answer, a wrap-up, a handoff's request. A
+text that refers to a file revoked before that check is not sent (`secrets_review_stale`, "a protected file it refers to
+was revoked: review it again"; a hire keeps its worker and withholds its prompt with `prompt_error`, and a schedule's
+fire then fails saying so), and the files that command made are removed, as for any failure before its send.
+`worker.answer_ask` checks every text it will type (each Other answer, a dismissal's prompt) before the dialog's first
+key, and each again right before it is typed: a revoke that lands between two texts of one dialog stops it there (the
+first typed, nothing submitted, `secrets_review_stale`), where a switch change after the first text does not (a dialog
+it began is answered whole: a switch change leaves its references good, a revoke does not). An LLM handoff checks its
+instruction before the model is called and again once the call holds a model slot; the transcript it reads is not
+checked (references the worker was sent before, as its other history: checking them would refuse every handoff of a
+worker for 24 hours after its revoke). Every other text a model call carries is checked before the call, as its
+model-slot gate and once it answered: a preview's text (`packup.detect`'s, which its classifier and its extraction
+read; `hire.interpret`'s), each of `hire.interpret`'s `pending.sources` (the model reads them with the reply, also one
+it never read before) and `hire_preset.check`'s prompt. A send whose last check came first went with its references, and
+the revoke then removes the files (the agent has the reference, the file is gone). Files a command writes after the
+revoke are new and its worker's: they go with its failure or stay with its success, never without an owner. A revoked
+path is remembered for 24 hours (in memory, never stored): a text that refers to one in that time is refused the same
+way, reviewed or not; sent again as typed, it is protected anew.
+
+**Leases (delegation).** A handoff (#223 literal, #224 agent, #9 LLM) records, when it is filed, which protected files
+its text names: its document's references, and those of the instruction it was written from (a `/handoff <instruction>`,
+`worker.handoff`'s `instruction`); only the bridge's own references, to files still there. A worker **hired**
+(`worker.hire`, `run.start`, a schedule's fire) whose first prompt names that handoff's path (the cabinet's Hire from
+handoff, `Read <path> and continue the work. …`; a schedule's `handoff_path`: the path as filed, blanks and all, and
+whole, not inside a longer path), or names files by their own references, **holds** those files too, once herdr shows it
+(when a hire's own files are claimed; with the switch on or off). A lease is a holder, not a copy: one file, one path,
+its owner and its holders. A file lives while its owner or any holder lives, and goes when the last of them ends: the
+owner's end keeps the files a live worker holds (their owner directory stays for them) and removes the rest; a holder's
+end removes a file nobody else holds. The janitor honours leases: a lease of a worker that is not live is forgotten, and
+an owner directory whose owner ended keeps only the files a live worker holds. A revoke on any holder removes the file
+for all. Nothing is held of a file that went before the successor was seen: a worker sent home before its successor is
+hired (a handoff with "send home" sends it at once) takes its files with it, and the handoff then names files that are
+gone. A `worker.prompt` to a worker that exists already holds nothing new: only a hire is a successor.
+
+**Native child agents** (#22) are conversations inside their worker's own session: they share its files and its
+lifetime. A child's rows, its removal and a replaced session's generation never release or sweep a file; only the
+worker's end does.
+
+**The wrap-up's hand-over.** `worker.wrapup` takes `secrets_pending`, `packup.detect`'s hand-over for the same worker,
+as `worker.prompt` does. A `prompt` that is exactly a text that hand-over answered as reviewed (its `task`, or `sent`),
+or that text, a blank line (`"\n\n"`) and more (the cleanup sentence), needs no review for that text. The rest is
+scanned alone: with candidates it needs `secrets`, the review of **the rest alone** (scan exactly the text after the
+blank line; its ranges index it), e.g. `{"id", "prompt": "<task>\n\nThen tidy up.", "secrets_pending": "…"}`. Any
+other prompt is reviewed whole through `secrets`, as before. The hand-over's files become the worker's before the
+wrap-up arms, the hand-over checked again then as `worker.prompt`'s is: expired, the switch changed, another worker's
+or one from before a restart is `secrets_review_stale`, and nothing is armed or claimed. An arming that fails after the
+claim leaves them with the worker. Without the field, as before.
+
+**The lifecycle, in short.** Kept: while the worker's floor sleeps and wakes, while its herdr session is gone and when
+it resumes, over a bridge restart (the worker is open in the store and its floor shows it, so the janitor counts it
+live), and through a host reboot that herdr restores the workers from **if the directory survived it** (a
+`--secrets-dir` on disk). The default directory (`$XDG_RUNTIME_DIR`, a tmpfs) does not survive a reboot: nothing is ever
+written to disk, so the janitor forgets the rows at start and the references point at nothing. Removed: when the worker
+really ends (closed in herdr while its floor runs, sent home), unless a live worker holds them; by a revoke; a pending
+owner's at its expiry (30 minutes) unless claimed or held; a failed command's at once; and by the janitor (at start and
+every 5 minutes): the files of a worker the store has closed (a close seen whose release did not finish: a crash) or
+does not know, leases of workers that are not live, expired pending owners, rows without files and files without rows;
+and the files of a worker **its floor runs without**: open in the store, but missing from what herdr shows of its
+running floor for the grace (one sweep, 5 minutes, by the bridge's clock), as after the bridge was down while its
+workspace closed. It was never seen to close, so it stays open in the store, its name held, as worker tracking has it;
+only its files go (its leases with them), at the first sweep past the grace (5 to 15 minutes after the floor's first
+running observation). Not while the floor sleeps or its session is gone (it comes back), not before the bridge has seen
+the floor run, not while a hire on that floor creates a workspace (new workspaces wait unseen meanwhile), nor while its
+workspace is still in herdr's raw observation (a main checkout kept from the workers); a worker back within the grace
+keeps them. Until they go, a revoke removes them (above).
+
+**What this does not protect** (docs/decisions.md, 2026-10-18 and round 5):
+
+- **No model, no runtime, no network.** Candidates come from Gitleaks v8.30.1's default rules, generated into the bridge
+  at build time (MIT; `internal/promptsecret/LICENSE-gitleaks.txt` beside them), and the bridge's own structural rules.
+  Nothing is downloaded, loaded or called: the scan works offline by design and never checks a token with a provider.
+  Updating the rules is `make secret-rules` (with `make secret-rules-parity`) and a new build of the bridge.
+- **Consuming a file returns its bytes.** The agent can still `cat` a file or read it with a Read tool and print it into
+  its transcript; a later tool's output is not protected. Other processes of the same Unix user can read every file
+  (0600 keeps out other users only; a lease or an owner is the bridge's bookkeeping, not an access control). A route
+  that injects a credential without returning it to the model is a follow-up ticket.
+- Text typed straight into the terminal, prompts sent before the switch was on and transcripts that already hold a
+  secret are not touched; a candidate the scan does not find is sent as typed unless marked by hand; unlinking is not
+  a secure erasure.
+
+
 ### Hire interpretation
 
-#211 (phase 2 of #209: dictated hiring). **`hire.interpret {text, pending?}`** reads one dictated sentence ("Hire a
+#211 (phase 2 of #209: dictated hiring; #108: with prompt secrets reviewed, the LLM reads the sentence and the pending
+proposal's only with their protected secrets as file references, see [Prompt secrets](#prompt-secrets), "The
+hand-over"). **`hire.interpret {text, pending?}`** reads one dictated sentence ("Hire a
 Claude Code agent on Haiku 5.5 with high effort. Task: fix the login bug.") with the [AI integration](#ai-integration)'s
 LLM and answers a **hire proposal for review**, or that the sentence is not a hire. It never hires: it sends no
 `worker.hire`, calls no herdr and keeps nothing on the bridge. A complete, valid proposal is only `ready_for_review`;
@@ -4361,7 +4733,8 @@ the bridge no longer shows cannot be answered from the bridge (`stale`, unknown 
 store failed to write is logged and lasts only until the bridge stops: a restart before that answer is delivered
 admits a retry, and the model can see the answer twice (the one window left).
 
-**`worker.answer_async`** `{id, thread, batch, answers: [{index, answer}]}` answers one or more questions of one batch
+**`worker.answer_async`** `{id, thread, batch, answers: [{index, answer}], secrets?}` (#108: `secrets` keyed
+`"answers[N].answer"`, see [Prompt secrets](#prompt-secrets)) answers one or more questions of one batch
 in one envelope (the native format, which the terminal shows as an answer, not as raw text, and the transcript as the
 user's input). Each `index` once; a question with `options` takes one of them exactly, one without any text that is not
 blank (1–4096 bytes of UTF-8 without control characters but line ends and tabs). Refused before anything is queued:
@@ -4528,7 +4901,8 @@ on a bridge with a cabinet and its transcripts, can be asked.
 ```
 
 1. **Check.** `op` as for a literal handoff; `instruction` at most 4 KiB (blank: `summarize the conversation`, the
-   default; a custom one replaces it). An `op` known answers its request (`existing: true`) and sends nothing; a
+   default; a custom one replaces it; #108: with prompt secrets reviewed, its `secrets` and the 4 KiB with its
+   references, see [Prompt secrets](#prompt-secrets)). An `op` known answers its request (`existing: true`) and sends nothing; a
    worker with a request running, or a wrap-up armed, is `busy`; not idle or done, or with an `ask`, `invalid_state`.
    The worker's command catalog (`worker.commands`') must list a skill `handoff` no built-in shadows:
    `handoff_skill_missing` otherwise (a partial catalog: its skills could not be listed). Nothing is sent then.
@@ -4664,7 +5038,9 @@ code, the redaction counts, the coverage numbers and the call's sanitized diagno
 
 #62 (part 1 of the epic #61). A schedule is a one-shot hire at a wall-clock time: when it is due the bridge hires a
 fresh worker on its floor with its prompt, with no client connected. The original worker is never prompted, and no
-schedule path ever sends a worker home or deletes a worktree, a branch or a workspace.
+schedule path ever sends a worker home or deletes a worktree, a branch or a workspace. #108: with "Review prompt
+secrets before sending" on, a schedule's prompt is saved only reviewed with every possible secret left as typed, and a
+fire sends it only as that review left it (see [Prompt secrets](#prompt-secrets), "Stored prompts").
 
 ```json
 {"t":"schedule.create","req_id":"s1","args":{"floor":"herdr-3d","title":"After the soak","due_at":1792061100000,
@@ -4703,7 +5079,7 @@ is written to SQLite first (`updated_at`), so a restart resumes them.
 | `schedule.update` | `scheduled` | the new spec |
 | `schedule.cancel` | `scheduled`, `waiting` | `cancelled` |
 | `schedule.run_now` | `scheduled` | fires now, without the grace check |
-| `schedule.retry` | `failed`, `skipped` | fires the same spec now, without the grace check |
+| `schedule.retry` | `failed`, `skipped` | fires the same spec now, without the grace check (#108: with a review of its prompt, the way out of a fire the prompt secrets check failed) |
 | `schedule.dismiss` | `failed`, `skipped` | out of view |
 
 Any other transition answers `invalid_state` (also a command on a cancelled or dismissed schedule); an unknown id is
@@ -4782,7 +5158,9 @@ A floor keeps its last 50 `done` schedules, by `fired_at`; older ones are delete
 
 ### Hire presets
 
-#93. A hire preset is a named first prompt with the harness, model and effort to hire it with: a job that comes back
+#93 (#108: with "Review prompt secrets before sending" on, its prompt is saved only reviewed with every possible secret
+left as typed, see [Prompt secrets](#prompt-secrets)). A hire preset is a named first prompt with the harness, model
+and effort to hire it with: a job that comes back
 ("Deploy a release to A, B and C") saved once and hired again whenever it is needed. It has one of two scopes: **one
 floor** (`floor`, a floor id: a session's real floor or a virtual floor, never a building or a base session) or
 **global** (no `floor`: every floor of every building this bridge serves; there is no building scope, and nothing is
@@ -4946,7 +5324,10 @@ while it is off.
   this was, reply to a newer notification"), the worker's ask (#57: "This worker has a question, tap an answer or
   answer in the game"), over 4096 characters ("too long (N characters)"), more than 6 replies to one worker or 20 in
   all within a minute, the worker gone, asleep or without an agent, its input lane full (32 waiting), herdr failing
-  it, a `/handoff` (ask for it in the game). The bot's answers are bounded too (10 a minute; more are not sent).
+  it, a `/handoff` (ask for it in the game), #108: with prompt secrets reviewed, a reply in which the scan finds a
+  possible secret ("it may hold a password or another secret. Send it from the game, where you can review what is
+  protected": the chat has no review, so nothing is typed). The bot's answers are bounded too (10 a minute; more
+  are not sent).
   Switched on, nothing sent while replies were off is typed (the first poll forgets the backlog, and only a message
   dated after the second of the switch is typed: Telegram's dates are whole seconds, so one sent in that very second
   is dropped too); switched off, unpaired or paired anew, nothing read before is typed, a poll or a reply already
@@ -5128,6 +5509,8 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `input_failed` | #156 `worker.answer_async`: the worker's app-server refused the answer (nothing delivered; the question is `pending` again with its `error`); `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
+| `secrets_review_stored` | #108 round 2 (see [Prompt secrets](#prompt-secrets)): the review of a prompt that is stored (`schedule.create`/`update`, `hire_preset.create`/`update`/`check`; `schedule.retry`/`run_now` of a schedule's stored prompt) protects something: a stored prompt keeps no protected file. Remove the values from it, or protect them when you hire with it. Nothing was stored |
+| `secrets_review_required`, `secrets_review_stale`, `secrets_review_off`, `secrets_unavailable` | #108 (see [Prompt secrets](#prompt-secrets)): the text has possible secrets and the command carries no review of them, or its decisions do not fit the scan (a candidate without exactly one decision; a range empty, outside the text, splitting a surrogate pair or overlapping another); the review's `revision` is not the text's under the current rules, key and switch (the text changed, the bridge restarted, the switch changed), or a review came while the switch is off (round 2: and a `secrets_pending` unknown, expired, from before a restart or a change of the switch, another worker's, or whose files another worker took, also when that happened while the command waited; a switch change while a reviewed command waited, before its text went on, or while a preview's or a preset check's model read it; a schedule's prompt changed while its retry's review was checked); round 2: a text of a command with several has no review, or a review names no text the command sends (the message starts with the text's path); `prompt_secrets.scan` while the switch is off; the protection could not run (no private runtime directory, a file could not be written, the scan failed or took over 10 s). Nothing was sent, stored or written on any of them (but that model's read, of the text with its references), and the message never quotes the text |
 | `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` (#60: `worker.retry_followup` / `worker.followup_message`) for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |

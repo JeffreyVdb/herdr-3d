@@ -149,6 +149,13 @@ type WorkerPromptArgs struct {
 	// prompt (1–64 of [A-Za-z0-9_-]), which becomes an agent handoff
 	// request: a repeated submit with it answers the first.
 	Op string `json:"op,omitempty"`
+	// Secrets (#108, optional): the review of Text's possible secrets
+	// (docs/protocol.md "Prompt secrets").
+	Secrets *SecretsReview `json:"secrets,omitempty"`
+	// SecretsPending (#108 round 2, optional): packup.detect's
+	// secrets_pending for this text: its reviewed text needs no review
+	// again, and its files become the worker's once the prompt is sent.
+	SecretsPending string `json:"secrets_pending,omitempty"`
 }
 
 // PromptResult is the ack data of worker.prompt.
@@ -158,9 +165,13 @@ type PromptResult struct {
 	// Retried: the first Enter was dropped and pressed again.
 	Retried bool `json:"retried"`
 	// Sent is the text the bridge sent, when it rewrote the typed one for the
-	// worker's harness (#138); absent when it sent the text as typed. The
-	// agent's transcript shows this text.
+	// worker's harness (#138) or (#108) put file references in place of the
+	// protected secrets; absent when it sent the text as typed. The agent's
+	// transcript shows this text. A /handoff's (#108): the composer's text
+	// with its references, once the request is sent (not when Existing).
 	Sent string `json:"sent,omitempty"`
+	// Protected (#108): how many ranges went to private files (absent: none).
+	Protected int `json:"protected,omitempty"`
 	// Terminal (#140): the prompt is a built-in whose output or dialog shows
 	// only in the worker's terminal (harness.TerminalOnly); absent otherwise.
 	Terminal bool `json:"terminal,omitempty"`

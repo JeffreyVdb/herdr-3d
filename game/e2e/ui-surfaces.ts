@@ -68,6 +68,23 @@ export async function sitAtTofu(page: Page, mode: 'transcript' | 'terminal' = 't
   return id;
 }
 
+/**
+ * #108 round 4: sits at Pebble (demo-m5, "Review prompt secrets" on) and sends a prompt with a token from the
+ * conversation's box, all of it protected (Confirm): the bridge sends it with a reference to its file.
+ */
+async function sendProtected(page: Page): Promise<void> {
+  await sitAtTofu(page, 'transcript', 'Pebble', 0);
+  await page.locator('.seat-transcript .tx .tx-input').click();
+  await page.keyboard.insertText('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 now');
+  await page.keyboard.press('Enter');
+  const dlg = page.locator('dialog.desk-dlg--secrets');
+  await expect(dlg).toBeVisible();
+  await dlg.getByRole('button', { name: 'Confirm and send' }).click();
+  await expect(dlg).toBeHidden();
+  // (The fixture answers the prompt after its simulated delay; under a loaded run that takes a while.)
+  await expect(page.locator('.seat-transcript .secret-chip').first()).toBeVisible({ timeout: 30_000 });
+}
+
 export interface Surface {
   name: string;
   fixture: string;
@@ -361,8 +378,10 @@ export const SURFACES: Surface[] = [
     root: '.toast',
   },
   {
+    // #108 round 4: with "Review prompt secrets" on, its footer has "Review secrets" too (here and in the dialogs below).
     name: 'hire',
     fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openHire(5));
@@ -443,6 +462,7 @@ export const SURFACES: Surface[] = [
     // Everything given: every header collapsed with its value, Location opened (label, folder, worktree), Hire on.
     name: 'hire-review-ready',
     fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
     open: async (page) => {
       await openReview(
         page,
@@ -487,6 +507,7 @@ export const SURFACES: Surface[] = [
   {
     name: 'start-run',
     fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
@@ -560,7 +581,7 @@ export const SURFACES: Surface[] = [
     // #93: the hire preset editor, as "New preset" opens it.
     name: 'hire-preset-editor',
     fixture: 'demo-m4',
-    wsQuery: `${SIM}&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}e`,
+    wsQuery: `${SIM}&simsecretson=1&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}e`,
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openHire(5));
@@ -584,6 +605,81 @@ export const SURFACES: Surface[] = [
     root: 'dialog.desk-dlg--prompt',
   },
   {
+    // #108: the review of a prompt's possible secrets, over the P overlay ("Review prompt secrets" on from the start).
+    name: 'secrets-review',
+    fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await onFloor(page);
+      const id = await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'herdr-3d')!.workers[0]!.id);
+      await page.evaluate((w) => window.__h3d.openPrompt(w), id);
+      await expect(page.locator('dialog.desk-dlg--prompt')).toBeVisible();
+      await page.keyboard.type('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD="hunter2x"; the password is s3cr3t!x');
+      await page.keyboard.press('Enter');
+      await expect(page.locator('dialog.desk-dlg--secrets')).toBeVisible();
+    },
+    root: 'dialog.desk-dlg--secrets',
+  },
+  {
+    // #108 round 4: the same review for a stored prompt (a schedule's): every match ignored, Protect refused with why.
+    name: 'secrets-review-stored',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openSchedules());
+      await page.getByRole('dialog', { name: 'Scheduled agents' }).locator('[data-key="new"]').click();
+      const form = page.getByRole('dialog', { name: 'Schedule an agent' });
+      await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.harness)).not.toBe('');
+      await form.locator('#sf-title-in').fill('Nightly deploy');
+      await form.locator('#sf-when').fill('in 2h');
+      await form.locator('#sf-prompt').click();
+      await page.keyboard.insertText('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD="hunter2x" tonight');
+      await form.locator('[data-key="save"]').click();
+      await expect(page.locator('dialog.desk-dlg--secrets .sr-stored')).toBeVisible();
+      // The refusal said, as a tap on Protect says it.
+      await page.locator('dialog.desk-dlg--secrets .sr-strip [data-key="protect"]').click({ force: true });
+    },
+    root: 'dialog.desk-dlg--secrets',
+  },
+  {
+    // #108 round 4: a prompt sent from the laptop's box with its secrets protected: in the conversation its references
+    // are masked chips (the pending row, then the prompt as the transcript has it).
+    name: 'secret-chips',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simsecretson=1&simecho=600`,
+    open: async (page) => {
+      await sendProtected(page);
+      await expect(page.locator('.seat-transcript .tx-item.tx-user:not(.tx-pending) .secret-chip').first()).toBeVisible({ timeout: 30_000 });
+    },
+    root: '.seat-transcript .tx',
+  },
+  {
+    // #108 round 4: the seat bar with the seated worker's "protected files" chip (at a phone's width: the count alone).
+    name: 'seat-secrets',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await sendProtected(page);
+      await expect(page.locator('.seat .seat-secrets')).toBeVisible({ timeout: 30_000 });
+    },
+    root: '.seat',
+  },
+  {
+    // #108 round 4: the confirmation the seat bar's chip opens, that removes the worker's protected files now.
+    name: 'revoke-secrets',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await sendProtected(page);
+      const chip = page.locator('.seat .seat-secrets');
+      await expect(chip).toBeVisible({ timeout: 30_000 });
+      await chip.click();
+      await expect(page.locator('dialog.desk-dlg--revoke')).toBeVisible();
+    },
+    root: 'dialog.desk-dlg--revoke',
+  },
+  {
     name: 'send-home',
     fixture: 'demo-m4',
     open: async (page) => {
@@ -591,6 +687,20 @@ export const SURFACES: Surface[] = [
       const id = await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'herdr-3d')!.workers[0]!.id);
       await page.evaluate((w) => window.__h3d.openSendHome(w), id);
       await expect(page.locator('dialog.desk-dlg--home')).toBeVisible();
+    },
+    root: 'dialog.desk-dlg--home',
+  },
+  {
+    // #108 round 4: the send home's wrap-up, its last prompt with "Review secrets" beside the send (the switch on).
+    name: 'send-home-wrapup',
+    fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await onFloor(page);
+      const id = await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'herdr-3d')!.workers[0]!.id);
+      await page.evaluate((w) => window.__h3d.openSendHome(w), id);
+      await page.locator('dialog.desk-dlg--home [data-key="wrap"]').click();
+      await expect(page.locator('dialog.desk-dlg--home [data-key="review"]')).toBeVisible();
     },
     root: 'dialog.desk-dlg--home',
   },
@@ -634,7 +744,7 @@ export const SURFACES: Surface[] = [
   {
     name: 'schedule-form',
     fixture: 'demo-m5',
-    wsQuery: `${SIM}&simschedules=8`,
+    wsQuery: `${SIM}&simschedules=8&simsecretson=1`,
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openSchedules({ floor: 'herdr-3d' }));
@@ -791,8 +901,10 @@ export const SURFACES: Surface[] = [
   },
   {
     // #213: the dictation bar on a floor, a dictated command (two lines) in its box.
+    // #108 round 4: with "Review prompt secrets" on, "Review secrets" sits beside Send.
     name: 'dictation',
     fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
     open: async (page) => {
       await onFloor(page);
       await page.keyboard.press('Control+Shift+Space');

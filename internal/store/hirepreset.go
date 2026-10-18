@@ -46,7 +46,11 @@ type HirePreset struct {
 	Prompt                 string
 	Harness, Model, Effort string
 	HerdrInstructions      bool
-	CreatedAt, UpdatedAt   int64
+	// SecretsReview (#108): the record that Prompt was reviewed for
+	// possible secrets with every one left as typed ("": never reviewed;
+	// see migrationPromptSecretsReviewed).
+	SecretsReview        string
+	CreatedAt, UpdatedAt int64
 }
 
 // hirePresetNameKey folds a name's case for uniqueness (full Unicode case
@@ -79,8 +83,8 @@ func hirePresetNameTaken(ctx context.Context, tx *sql.Tx, name, floor, exceptID 
 
 // HirePresets returns every hire preset, by name ignoring case.
 func (s *Store) HirePresets(ctx context.Context) ([]HirePreset, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(floor, ''), prompt, harness, model, effort, herdr_instructions, created_at, updated_at
-		FROM hire_preset ORDER BY name_key, id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, COALESCE(floor, ''), prompt, harness, model, effort, herdr_instructions, secrets_review,
+		created_at, updated_at FROM hire_preset ORDER BY name_key, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +92,8 @@ func (s *Store) HirePresets(ctx context.Context) ([]HirePreset, error) {
 	var out []HirePreset
 	for rows.Next() {
 		var p HirePreset
-		if err := rows.Scan(&p.ID, &p.Name, &p.Floor, &p.Prompt, &p.Harness, &p.Model, &p.Effort, &p.HerdrInstructions, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Floor, &p.Prompt, &p.Harness, &p.Model, &p.Effort, &p.HerdrInstructions, &p.SecretsReview, &p.CreatedAt,
+			&p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -107,15 +112,16 @@ func (s *Store) CreateHirePreset(ctx context.Context, p HirePreset) error {
 		if err := hirePresetNameTaken(ctx, tx, name, p.Floor, ""); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO hire_preset (id, name, name_key, floor, prompt, harness, model, effort, herdr_instructions, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.ID, name, hirePresetNameKey(name), null(p.Floor), p.Prompt, p.Harness, p.Model, p.Effort,
-			p.HerdrInstructions, p.CreatedAt, p.UpdatedAt)
+		_, err := tx.ExecContext(ctx, `INSERT INTO hire_preset (id, name, name_key, floor, prompt, harness, model, effort, herdr_instructions, secrets_review,
+			created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.ID, name, hirePresetNameKey(name), null(p.Floor), p.Prompt,
+			p.Harness, p.Model, p.Effort, p.HerdrInstructions, p.SecretsReview, p.CreatedAt, p.UpdatedAt)
 		return err
 	})
 }
 
 // UpdateHirePreset replaces a hire preset's name (cleaned), scope, prompt,
-// tuple, hiring instructions flag and updated_at; its created_at stays.
+// tuple, hiring instructions flag, secrets review (#108) and updated_at;
+// its created_at stays.
 func (s *Store) UpdateHirePreset(ctx context.Context, p HirePreset) error {
 	name, err := CleanPresetName(p.Name)
 	if err != nil {
@@ -126,8 +132,8 @@ func (s *Store) UpdateHirePreset(ctx context.Context, p HirePreset) error {
 			return err
 		}
 		res, err := tx.ExecContext(ctx, `UPDATE hire_preset SET name = ?, name_key = ?, floor = ?, prompt = ?, harness = ?, model = ?, effort = ?,
-			herdr_instructions = ?, updated_at = ? WHERE id = ?`, name, hirePresetNameKey(name), null(p.Floor), p.Prompt, p.Harness, p.Model, p.Effort,
-			p.HerdrInstructions, p.UpdatedAt, p.ID)
+			herdr_instructions = ?, secrets_review = ?, updated_at = ? WHERE id = ?`, name, hirePresetNameKey(name), null(p.Floor), p.Prompt,
+			p.Harness, p.Model, p.Effort, p.HerdrInstructions, p.SecretsReview, p.UpdatedAt, p.ID)
 		if err != nil {
 			return err
 		}

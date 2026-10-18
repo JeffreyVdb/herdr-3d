@@ -7,7 +7,8 @@ import (
 
 // FakeClassifier is a Classifier for the tests of features: it answers from
 // Score (default 0.5) or Func (ClassifyMany: ManyFunc, else every question
-// as Classify answers it), and records its calls. No network.
+// as Classify answers it), and records its calls: those ctx's gate
+// (WithGate) lets go, as the Service sends them. No network.
 type FakeClassifier struct {
 	Score    float64
 	Err      error
@@ -28,6 +29,9 @@ type ClassifyCall struct {
 
 // Classify implements Classifier.
 func (f *FakeClassifier) Classify(ctx context.Context, state map[string]any, question string) (float64, error) {
+	if err := passGate(ctx); err != nil {
+		return 0, err
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, ClassifyCall{State: state, Question: question})
 	fn, score, err := f.Func, f.Score, f.Err
@@ -41,6 +45,9 @@ func (f *FakeClassifier) Classify(ctx context.Context, state map[string]any, que
 // ClassifyMany implements Classifier: one call recorded, its answers from
 // ManyFunc, else each question's from Func or Score.
 func (f *FakeClassifier) ClassifyMany(ctx context.Context, state map[string]any, questions map[string]string) (map[string]float64, error) {
+	if err := passGate(ctx); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, ClassifyCall{State: state, Questions: questions})
 	many, fn, score, err := f.ManyFunc, f.Func, f.Score, f.Err
@@ -73,7 +80,7 @@ func (f *FakeClassifier) Calls() []ClassifyCall {
 }
 
 // FakeLLM is an LLM for the tests of features: it answers Text or Func, and
-// records its requests. No network.
+// records its requests: those ctx's gate (WithGate) lets go. No network.
 type FakeLLM struct {
 	Text string
 	Err  error
@@ -85,6 +92,9 @@ type FakeLLM struct {
 
 // Complete implements LLM.
 func (f *FakeLLM) Complete(ctx context.Context, req Request) (string, error) {
+	if err := passGate(ctx); err != nil {
+		return "", err
+	}
 	f.mu.Lock()
 	f.calls = append(f.calls, req)
 	fn, text, err := f.Func, f.Text, f.Err

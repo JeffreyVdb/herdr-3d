@@ -160,24 +160,50 @@ func (h *Hub) startPackup(ctx context.Context, c *Client, cmd proto.Command) err
 			return nil
 		}
 		id := a.ID
+		gate, err := h.previewGate(a.ID, a.Text, a.Secrets, "")
+		if err != nil {
+			return err
+		}
 		work = func(ctx context.Context) (any, error) {
-			res, err := svc.Detect(ctx, a.Text)
+			// #108: the model reads the text only as the review made it.
+			pv, err := gate(ctx)
+			if err != nil {
+				return nil, err
+			}
+			text := pv.text
+			if !herdr.ValidMessage(text) {
+				pv.undo(ctx)
+				return nil, bad("text with its file references must be at most %d bytes, got %d", herdr.MaxMessage, len(text))
+			}
+			if err := pv.current(ctx); err != nil {
+				return nil, err // never the fail-open path: the prompt has no review now
+			}
+			out := pv.result()
+			// Review B2, pass 2: each model call asks again once it holds a
+			// model slot, and a review the switch made stale meanwhile
+			// answers nothing.
+			res, err := svc.Detect(ai.WithGate(ctx, pv.holds), text)
+			if err := pv.current(ctx); err != nil {
+				return nil, err
+			}
 			if err != nil {
 				// Fail open: the prompt goes as written. Only the kind is
 				// logged: a provider's words in err can echo the prompt.
 				if !errors.Is(err, ai.ErrNotReady) && ctx.Err() == nil {
 					h.log.Warn("pack-up detection failed", "worker", id, "kind", ai.KindOf(err))
 				}
-				return proto.PackupDetectResult{}, nil
+				pv.answered()
+				return out, nil
 			}
 			if res.ExtractCode != "" {
 				h.log.Info("pack-up extraction was no match", "worker", id, "score", res.Score, "why", res.ExtractCode)
 			}
 			h.log.Info("pack-up looked at", "worker", id, "score", res.Score, "matched", res.Matched, "task_runes", utf8.RuneCountInString(res.Task))
-			out := proto.PackupDetectResult{Matched: res.Matched, Score: res.Score}
+			out.Matched, out.Score = res.Matched, res.Score
 			if res.Matched {
 				out.Task, out.Removed = res.Task, res.Removed
 			}
+			pv.answered(out.Task)
 			return out, nil
 		}
 	}
@@ -193,9 +219,10 @@ func auditPackupDetect(cmd proto.Command) json.RawMessage {
 		return redacted(cmd.Args)
 	}
 	return mustJSON(struct {
-		ID        string `json:"id"`
-		TextBytes int    `json:"text_bytes"`
-	}{clip(a.ID), len(a.Text)})
+		ID        string        `json:"id"`
+		TextBytes int           `json:"text_bytes"`
+		Secrets   *secretsAudit `json:"secrets,omitempty"` // #108 round 2: the decisions' counts
+	}{clip(a.ID), len(a.Text), auditReviews(a.Secrets)})
 }
 
 // packupErrorCode maps an error of internal/packup to its protocol code; ""

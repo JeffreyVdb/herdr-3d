@@ -5,7 +5,7 @@ import type { Ask, CommandArgs, Followup, HandoffCandidate, TranscriptChanges, T
 import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
-import { isSendKey, reveal } from './askStack';
+import { isSendKey, reveal, type AnswerOptions } from './askStack';
 import { diffColours } from './diffHighlight';
 import { FollowupCard, type FollowupMessage, type FollowupResult } from './followupCard';
 import type { FollowupDraft } from './followupDrafts';
@@ -29,8 +29,11 @@ import type { Source } from '../ui/composer/complete';
 import { SendGate } from './transcriptDrafts';
 import { zoomKey } from './keys';
 import { fileRefPath } from './fileRef';
-import { clipboardCopy, FileRefPopover, markFileRefs } from './fileRefPopover';
+import { clipboardCopy, FILE_REF, FileRefPopover, markFileRefs } from './fileRefPopover';
+import { chipSecretRefs } from '../ui/secretChips';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
+import { reviewKey } from '../ui/secretsFlow';
+import { keyName } from '../input/shortcuts';
 
 /**
  * M16: a worker's conversation as DOM, drawn over the laptop screen while you sit there (the seated view's
@@ -48,17 +51,24 @@ import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 export interface TranscriptRenderHost {
   /** M16 phase 2: this worker's images (null: none can be fetched, every image is a "not available" card). */
   images: ImageFeed | null;
-  /** A prompt to send (images already uploaded, as `[Image #n: <path>]` markers); resolving false (not sent) leaves it in the prompt box. */
-  onPromptSubmit(text: string): void | Promise<boolean>;
+  /**
+   * A prompt to send (images already uploaded, as `[Image #n: <path>]` markers); resolving false (not sent) leaves it in
+   * the prompt box. #108: `review`: "Review secrets" (Ctrl/⌘+Shift+X) asked for the review of its possible secrets.
+   */
+  onPromptSubmit(text: string, o?: { review: boolean }): void | Promise<boolean>;
+  /** #108: the "Review prompt secrets before sending" switch, for the prompt box's "Review secrets" (none: no such control). */
+  secrets?: { readonly on: boolean; onChange(fn: () => void): () => void } | null;
+  /** #108 round 4: the bridge's directory of protected files (null: unknown, the references' shape alone makes a chip). */
+  secretsDir?(): string | null;
   /** #64: one image to Drop Zone (null: none can be uploaded here, a pasted image says so). */
   upload?: Uploader | null;
   /** #64: the worker's name, for the upload's file name. */
   label?: string;
   onAnswer(hash: string, choice: number | null, cancel?: boolean): void;
   /** #57: answers (or dismisses) the worker's ask; `id` is filled in by the host. */
-  onAnswerAsk(args: CommandArgs['worker.answer_ask']): Promise<AskResult>;
+  onAnswerAsk(args: CommandArgs['worker.answer_ask'], o?: AnswerOptions): Promise<AskResult>;
   /** #90: answers the worker's follow-up questions; `id` is filled in by the host (none: the card cannot send). */
-  onAnswerFollowup?(args: CommandArgs['worker.answer_followup']): Promise<FollowupResult>;
+  onAnswerFollowup?(args: CommandArgs['worker.answer_followup'], o?: AnswerOptions): Promise<FollowupResult>;
   /** #90: dismisses them. */
   onDismissFollowup?(turnId: string): Promise<FollowupResult>;
   /** #60: reads a fallback's questions again (none: no Retry). */
@@ -72,7 +82,7 @@ export interface TranscriptRenderHost {
   /** #64 schedules: "Schedule follow-up…" beside it, on the same reply (none: no button). */
   onScheduleFollowup?(c: HandoffCandidate): void;
   /** #157: answers a Codex worker's async questions (none: the card cannot send). */
-  onAnswerAsync?(args: CommandArgs['worker.answer_async']): Promise<AsyncResult>;
+  onAnswerAsync?(args: CommandArgs['worker.answer_async'], o?: AnswerOptions): Promise<AsyncResult>;
   /** #157: hides them in the bridge. */
   onDismissAsync?(args: CommandArgs['worker.dismiss_async']): Promise<AsyncResult>;
   /** #157: what you wrote for them, kept by the host across views (none: this view's own, which goes with it). */
@@ -992,6 +1002,9 @@ class Transcript implements TranscriptView {
   private readonly input: HTMLElement;
   private readonly composer: Composer;
   private readonly sendBtn: HTMLButtonElement;
+  /** #108: "Review secrets", shown while the switch is on. */
+  private readonly reviewBtn: HTMLButtonElement;
+  private readonly offSecrets: () => void;
   /** The box cannot take a prompt now (the worker waits on a question). */
   private promptOff = false;
   /** A prompt is on its way (uploading, then sent): the box is read-only until it is answered (#141: in any view of it). */
@@ -1085,9 +1098,20 @@ class Transcript implements TranscriptView {
     this.offSending = this.sending.subscribe(() => this.composer.setBusy(this.sending.busy));
     if (this.sending.busy) this.composer.setBusy(true);
     this.sendBtn = h('button', { class: 'tx-send', title: 'Send', onclick: () => this.submit() }, 'Send');
-    this.form = h('div', { class: 'tx-prompt' }, this.composer.element, this.sendBtn);
+    // #108: with "Review prompt secrets before sending" on, the review on purpose (to mark a value the scan would miss).
+    this.reviewBtn = h(
+      'button',
+      { class: 'tx-review', 'aria-label': 'Review secrets', title: `Review secrets: look over the prompt’s possible secrets now, and mark one the scan missed (${keyName('dialog.secrets')})`, onclick: () => this.submit(true) },
+      icon(ICON.lock),
+    );
+    this.form = h('div', { class: 'tx-prompt' }, this.composer.element, this.reviewBtn, this.sendBtn);
+    const secrets = host.secrets ?? null;
+    const showReview = () => (this.reviewBtn.hidden = !secrets?.on);
+    showReview();
+    this.offSecrets = secrets ? secrets.onChange(showReview) : () => {};
     this.ask = new AskCard({
-      answer: (args) => host.onAnswerAsk(args),
+      answer: (args, o) => host.onAnswerAsk(args, o),
+      secrets: host.secrets ?? null,
       toTerminal: () => host.onSwitchToTerminal(),
       focusTimeline: () => this.focus(),
       resized: () => {
@@ -1101,7 +1125,8 @@ class Transcript implements TranscriptView {
     });
     const noFollowup = (): Promise<FollowupResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
     this.followup = new FollowupCard({
-      answer: (args) => (host.onAnswerFollowup ? host.onAnswerFollowup(args) : noFollowup()),
+      answer: (args, o) => (host.onAnswerFollowup ? host.onAnswerFollowup(args, o) : noFollowup()),
+      secrets: host.secrets ?? null,
       dismiss: (turnId) => (host.onDismissFollowup ? host.onDismissFollowup(turnId) : noFollowup()),
       ...(host.onRetryFollowup ? { retry: (turnId: string) => host.onRetryFollowup!(turnId) } : {}),
       ...(host.loadFollowupMessage ? { message: (turnId: string) => host.loadFollowupMessage!(turnId) } : {}),
@@ -1116,7 +1141,8 @@ class Transcript implements TranscriptView {
     });
     const noAsync = (): Promise<AsyncResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
     this.asyncq = new AsyncCard({
-      answer: (args) => (host.onAnswerAsync ? host.onAnswerAsync(args) : noAsync()),
+      answer: (args, o) => (host.onAnswerAsync ? host.onAnswerAsync(args, o) : noAsync()),
+      secrets: host.secrets ?? null,
       dismiss: (args) => (host.onDismissAsync ? host.onDismissAsync(args) : noAsync()),
       toTerminal: () => host.onSwitchToTerminal(),
       focusTimeline: () => this.focus(),
@@ -1482,7 +1508,7 @@ class Transcript implements TranscriptView {
     const els: HTMLElement[] = [];
     let say = '';
     for (const p of this.pendingRows) {
-      const key = `${p.state}\u0000${p.late}\u0000${p.reason ?? ''}\u0000${p.due === null}`;
+      const key = `${p.state}\u0000${p.late}\u0000${p.reason ?? ''}\u0000${p.due === null}\u0000${p.shown ?? ''}`;
       let at = this.pendingEls.get(p.id);
       if (!at || at.key !== key) {
         at = { key, el: this.pendingRow(p) };
@@ -1551,6 +1577,7 @@ class Transcript implements TranscriptView {
     // The composer's own draft goes with the view: its uploads are cancelled, its object URLs revoked. The host's
     // (#141) stays for the next view of this worker.
     this.offSending();
+    this.offSecrets(); // #108
     this.composer.dispose();
     if (!this.host.draft) this.composer.getDraft().dispose();
     this.root.remove();
@@ -1596,7 +1623,7 @@ class Transcript implements TranscriptView {
       case 'thinking':
         return this.thinkingRow(it);
       case 'tool':
-        if (it.tool?.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions)) return askItem(it, it.tool.ask);
+        if (it.tool?.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions)) return this.withSecretChips(askItem(it, it.tool.ask));
         return it.tool ? this.toolRow(it, scope) : this.unknownRow(it, 'tool call without details');
       case 'subagent':
         return it.subagent ? this.subagentRow(it, scope) : this.unknownRow(it, 'subagent without details');
@@ -1620,7 +1647,17 @@ class Transcript implements TranscriptView {
     const bubble = h('div', { class: 'tx-bubble tx-ans' }, h('div', { class: 'tx-ans-label' }, 'Your answer'), ...pairs);
     if (raw) bubble.append(h('details', { class: 'tx-ans-raw' }, h('summary', {}, 'Raw reply'), h('pre', {}, raw)));
     if (it.truncated) bubble.append(h('div', { class: 'tx-note' }, 'Truncated: only the start is shown.'));
+    for (const a of bubble.querySelectorAll<HTMLElement>('.tx-ans-pair')) this.withSecretChips(a);
     return h('li', { class: 'tx-item tx-user tx-answer' }, bubble);
+  }
+
+  /**
+   * #108 round 4: the bridge's references to protected files under `el` as masked chips (ui/secretChips.ts), each opening
+   * the file popover (#31) with its path and "Copy file path".
+   */
+  private withSecretChips<T extends HTMLElement>(el: T): T {
+    chipSecretRefs(el, { dir: this.host.secretsDir?.() ?? null, action: { kind: 'popover', cls: FILE_REF } });
+    return el;
   }
 
   private unknownRow(it: TranscriptItem, why: string | null): HTMLElement {
@@ -1643,7 +1680,7 @@ class Transcript implements TranscriptView {
         flush();
         const md = h('div', { class: 'tx-md' });
         setMarkdown(md, p.text);
-        box.append(md);
+        box.append(this.withSecretChips(md));
       }
     }
     flush();
@@ -1691,8 +1728,11 @@ class Transcript implements TranscriptView {
   /** #58: a prompt on its way, where its message will be: your bubble, dimmed, and what became of it. */
   private pendingRow(p: PendingPrompt): HTMLElement {
     const md = h('div', { class: 'tx-md' });
-    // Its images show once the agent has them: until then the marker reads as the number it will have.
-    setMarkdown(md, p.text.replace(/\[Image #(\d+): [^\]\n]+\]/g, '[Image #$1]'));
+    // Its images show once the agent has them: until then the marker reads as the number it will have. #108: protected
+    // values never show (`shown`).
+    setMarkdown(md, (p.shown ?? p.text).replace(/\[Image #(\d+): [^\]\n]+\]/g, '[Image #$1]'));
+    // #108 round 4: once the bridge said what it sent, its references to protected files are chips.
+    this.withSecretChips(md);
     const meta = h('div', { class: 'tx-pending-meta' }, h('span', { class: 'tx-pending-state' }, this.pendingText(p)));
     if (p.state === 'refused') {
       const why = 'The prompt is still in the box below: change it or send it again.';
@@ -2617,6 +2657,12 @@ class Transcript implements TranscriptView {
     // terminal), and the text zoom (#59) works from here too; every other key typed here is the prompt's.
     if (e.key === 'Escape' || zoomKey(e)) return;
     e.stopPropagation();
+    // #108: the review of the prompt's secrets, now.
+    if (reviewKey(e) && this.host.secrets?.on) {
+      e.preventDefault();
+      if (!e.repeat) this.submit(true);
+      return;
+    }
     // Enter sends and Shift+Enter adds a line: the composer's own key handling (submitPolicy 'enter').
   }
 
@@ -2627,7 +2673,8 @@ class Transcript implements TranscriptView {
     return [(host.repos ? atSource(files, repoSource(host.repos.id, host.repos.search)) : files) as Source];
   }
 
-  private submit(): void {
+  /** `review` (#108): "Review secrets": the host reviews the prompt's possible secrets even when the scan finds none. */
+  private submit(review = false): void {
     if (this.promptOff || this.sending.busy) return;
     const draft = this.composer.getDraft();
     // A file the box refused stays held until dismissed: the prompt does not go without the picture meant for it.
@@ -2640,14 +2687,14 @@ class Transcript implements TranscriptView {
     this.sending.set(true);
     // #58: your own send brings you to the bottom, where its row goes, and follows from there.
     this.toBottom();
-    void this.send(draft);
+    void this.send(draft, review);
   }
 
   /**
    * The images first (waited for, the box read-only meanwhile; one that did not upload stops it, its chip has the
    * Retry), then the prompt. Not sent (refused, too long, an image failed): the box keeps what was written.
    */
-  private async send(draft: PromptDraft): Promise<void> {
+  private async send(draft: PromptDraft, review: boolean): Promise<void> {
     try {
       const r = await draft.resolve({ maxBytes: WORKER_PROMPT_MAX_BYTES });
       if (this.destroyed) return;
@@ -2657,7 +2704,7 @@ class Transcript implements TranscriptView {
         return;
       }
       this.composer.clearNotice();
-      const sent = await Promise.resolve(this.host.onPromptSubmit(r.text)).catch(() => false);
+      const sent = await Promise.resolve(review ? this.host.onPromptSubmit(r.text, { review }) : this.host.onPromptSubmit(r.text)).catch(() => false);
       // Sent: the box is empty again (an edit made meanwhile is impossible while it is read-only, but a draft swap is
       // not). #141: also when the view went meanwhile: the host keeps the worker's draft for its next view.
       if (sent !== false) draft.clearIf(r.revision);
@@ -2691,6 +2738,7 @@ class Transcript implements TranscriptView {
         : PROMPT_HINT,
     );
     this.sendBtn.disabled = waiting;
+    this.reviewBtn.disabled = waiting;
     if (!q) {
       this.banner.hidden = true;
       this.banner.replaceChildren();

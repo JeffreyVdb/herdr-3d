@@ -44,6 +44,15 @@ type WorkerWrapUpArgs struct {
 	ID       string `json:"id"`
 	Prompt   string `json:"prompt"`
 	Worktree string `json:"worktree,omitempty"`
+	// Secrets (#108 round 2, optional): the review of Prompt's possible
+	// secrets (round 5: with SecretsPending and a prompt of the hand-over's
+	// task, a blank line and more, of the part after the blank line alone).
+	Secrets *SecretsReview `json:"secrets,omitempty"`
+	// SecretsPending (#108 round 5, optional): packup.detect's hand-over for
+	// this worker: a prompt that is exactly a text it answered as reviewed,
+	// or that text, a blank line ("\n\n") and more, needs no review for
+	// that text; its files become the worker's before the wrap-up arms.
+	SecretsPending string `json:"secrets_pending,omitempty"`
 }
 
 // WrapUpResult is the ack data of worker.wrapup: the prompt went out, now

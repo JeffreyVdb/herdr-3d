@@ -209,6 +209,14 @@ var migrations = []string{
 	migrationHirePreset,
 	// #95: hire presets' "Add herdr hiring instructions".
 	migrationHirePresetInstructions,
+	// #108: "Review prompt secrets before sending" and the protected files'
+	// owners (never a secret).
+	migrationPromptSecrets,
+	// #108 round 2: a stored prompt's review (schedules, hire presets).
+	migrationPromptSecretsReviewed,
+	// #108 round 5: the protected files a worker holds by a lease, and the
+	// files a filed handoff names.
+	migrationPromptSecretsLeases,
 }
 
 // Fingerprint kinds.

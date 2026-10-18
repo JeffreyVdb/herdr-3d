@@ -18,11 +18,13 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
@@ -269,6 +271,10 @@ func validAsyncText(s string) bool {
 
 // startAnswerAsync validates worker.answer_async and queues it on the
 // worker's input lane, where it is checked again just before it is sent.
+// #108 round 2: with prompt secrets reviewed, its answers go through the
+// gate on the lane first, then go with the admission they got now, their
+// texts replaced (review B5: admitted anew on the lane, a duplicate queued
+// before the first send became a retry).
 func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.WorkerAnswerAsyncArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
@@ -280,34 +286,84 @@ func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command
 	if len(a.Answers) == 0 || len(a.Answers) > maxAsyncAnswers {
 		return bad("answers must have 1-%d items, got %d", maxAsyncAnswers, len(a.Answers))
 	}
+	t, err := h.admitAsync(a)
+	if err != nil {
+		return err
+	}
+	if h.gated(a.Secrets != nil) {
+		var fields []secretField
+		for i, x := range a.Answers {
+			if x.Answer != "" {
+				fields = append(fields, secretField{path: fmt.Sprintf("answers[%d].answer", i), text: x.Answer})
+			}
+		}
+		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, h.endCommand(c, cmd), func(ctx context.Context, texts func(string) string, rev *promptsecret.Reviewer) (inputWork, error) {
+			b := a
+			b.Secrets, b.Answers = nil, slices.Clone(a.Answers)
+			for i := range b.Answers {
+				if b.Answers[i].Answer != "" {
+					b.Answers[i].Answer = texts(fmt.Sprintf("answers[%d].answer", i))
+				}
+			}
+			replies, err := asyncReplies(b)
+			if err != nil {
+				return nil, err
+			}
+			sent := make([]string, len(replies))
+			for i, r := range replies {
+				sent[i] = r.Text
+			}
+			bt, err := t.WithTexts(sent)
+			if err != nil {
+				return nil, asyncError(err)
+			}
+			return func(ctx context.Context, _, _ string) (any, error) { return h.answerAsync(ctx, b, bt, rev) }, nil
+		})
+	}
+	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, _, _ string) (any, error) {
+		return h.answerAsync(ctx, a, t, nil)
+	})
+}
+
+// admitAsync is worker.answer_async's checks of its answers, its worker
+// and thread (hub goroutine): the admitted answer.
+func (h *Hub) admitAsync(a proto.WorkerAnswerAsyncArgs) (codexapp.Ticket, error) {
+	replies, err := asyncReplies(a)
+	if err != nil {
+		return codexapp.Ticket{}, err
+	}
+	if _, _, err := h.termWorker(a.ID); err != nil {
+		return codexapp.Ticket{}, err
+	}
+	q, err := h.asyncThread(a.ID, a.Thread)
+	if err != nil {
+		return codexapp.Ticket{}, err
+	}
+	t, err := q.Admit(a.Batch, replies)
+	if err != nil {
+		return codexapp.Ticket{}, asyncError(err)
+	}
+	if _, err := h.attachedWatch(a.ID, a.Thread); err != nil {
+		return codexapp.Ticket{}, err
+	}
+	return t, nil
+}
+
+// asyncReplies is worker.answer_async's checks of its answers' shape (#108:
+// as typed, and again with their references): the replies.
+func asyncReplies(a proto.WorkerAnswerAsyncArgs) ([]codexapp.Reply, error) {
 	replies := make([]codexapp.Reply, 0, len(a.Answers))
 	for i, x := range a.Answers {
 		if x.Index == nil {
-			return bad("answers[%d].index is required", i)
+			return nil, bad("answers[%d].index is required", i)
 		}
 		if len(x.Answer) > maxAsyncAnswer || !validAsyncText(x.Answer) {
-			return bad("answers[%d].answer must be at most %d bytes of UTF-8 without control characters but line ends and tabs, got %d bytes",
+			return nil, bad("answers[%d].answer must be at most %d bytes of UTF-8 without control characters but line ends and tabs, got %d bytes",
 				i, maxAsyncAnswer, len(x.Answer))
 		}
 		replies = append(replies, codexapp.Reply{Index: *x.Index, Text: x.Answer})
 	}
-	if _, _, err := h.termWorker(a.ID); err != nil {
-		return err
-	}
-	q, err := h.asyncThread(a.ID, a.Thread)
-	if err != nil {
-		return err
-	}
-	t, err := q.Admit(a.Batch, replies)
-	if err != nil {
-		return asyncError(err)
-	}
-	if _, err := h.attachedWatch(a.ID, a.Thread); err != nil {
-		return err
-	}
-	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, _, _ string) (any, error) {
-		return h.answerAsync(ctx, a, t)
-	})
+	return replies, nil
 }
 
 // asyncSend is a checked answer, ready to go (taken on the hub goroutine).
@@ -327,9 +383,17 @@ type asyncSend struct {
 // one turn/steer into the running turn, or turn/start when none runs. A steer
 // the server refuses delivered nothing (the turn ended meanwhile): a turn
 // is started instead, once. An answer is never sent twice: a send with no
-// response is sent, unconfirmed, and a refused one is pending again.
-func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, t codexapp.Ticket) (any, error) {
+// response is sent, unconfirmed, and a refused one is pending again. #108:
+// a reviewed answer's review (rev; nil: none) is checked in the same step.
+func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, t codexapp.Ticket, rev *promptsecret.Reviewer) (any, error) {
+	texts := make([]string, len(a.Answers))
+	for i, x := range a.Answers {
+		texts[i] = x.Answer
+	}
 	s, err := query(ctx, h, func() asyncSend {
+		if err := h.reviewHolds(rev, texts...); err != nil {
+			return asyncSend{err: err}
+		}
 		q, err := h.asyncThread(a.ID, a.Thread)
 		if err != nil {
 			return asyncSend{err: err}
@@ -457,25 +521,34 @@ type asyncPrompt struct {
 	w    CodexWatch
 	turn string
 	ok   bool
+	err  error
 }
 
 // promptViaServer sends a prompt to a shared worker herdr shows as blocked
 // by an async question (input lane): steered into the running turn, as
 // Codex's own composer queues it ("Messages to be submitted after next
 // tool call"), so it is delivered with the turn's next model request. ok is
-// false when the worker is not blocked that way.
-func (h *Hub) promptViaServer(ctx context.Context, id, text string) (any, bool, error) {
+// false when the worker is not blocked that way. #108: a reviewed prompt's
+// review (rev; nil: none) is checked again in the step that finds the
+// block, after its wait, first as in prompt (review R2P3-1; stale: unsent,
+// whatever blocks the worker).
+func (h *Hub) promptViaServer(ctx context.Context, id, text string, rev *promptsecret.Reviewer) (any, bool, error) {
 	p, err := query(ctx, h, func() asyncPrompt {
+		if err := h.reviewHolds(rev, text); err != nil {
+			return asyncPrompt{err: err}
+		}
 		cw, ok := h.asyncBlocked(id)
 		if !ok {
 			return asyncPrompt{}
 		}
 		return asyncPrompt{w: cw.w, turn: cw.turn, ok: true}
 	})
-	if err != nil {
-		return nil, true, err
-	}
-	if !p.ok {
+	switch {
+	case err != nil:
+		return nil, true, unsent(err)
+	case p.err != nil:
+		return nil, true, unsent(p.err)
+	case !p.ok:
 		return nil, false, nil
 	}
 	via, _, _, err := h.sendToThread(ctx, id, p.w, p.turn, text, codexapp.NewClientID())

@@ -39,6 +39,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
@@ -77,12 +78,18 @@ type agentHandoff struct {
 	// checking: the starting checks (catalog, reservation) run.
 	checking bool
 	// Starting: the command, its client and audit row, the text to
-	// prompt and how to answer it.
+	// prompt, how to answer it, (agentAsk.settle) whom to tell and
+	// (agentAsk.rev) its review.
 	client  *Client
 	cmd     proto.Command
 	auditID int64
 	text    string
 	answer  func(r proto.AgentHandoff, existing bool, queued bool) any
+	settle  func(err error, existing bool)
+	rev     *promptsecret.Reviewer
+	// sending: the lane is sending the request's prompt, so the send's
+	// result settles, not the request's end (settleAgentStart).
+	sending bool
 	by      string
 	// The tracker's last look at the ended turn: its line count, since
 	// when; and since when the turn ended with herdr idle.
@@ -249,6 +256,18 @@ type agentAsk struct {
 	// is answered, not refused).
 	prompt bool
 	answer func(r proto.AgentHandoff, existing bool, queued bool) any
+	// settle (#108, nil: none) is told once (hub goroutine) how the
+	// request's prompt ended: existing when another request answered the
+	// command; else, until the lane begins to send the prompt, with the
+	// request's end (the error of one that failed once started) as the
+	// command is answered, and from then on with the send's result
+	// whatever ended the request meanwhile: nil when the prompt may have
+	// reached the terminal (sent, or failed without knowing), the error
+	// when none of it did. Never for a refusal startAgentHandoff returns.
+	settle func(err error, existing bool)
+	// rev (#108, nil: none) is the instruction's review, checked again
+	// right before the request's prompt goes (review B2, pass 2).
+	rev *promptsecret.Reviewer
 }
 
 // agentInstruction is an instruction as sent: trimmed, the default when
@@ -316,7 +335,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 		if ah.req.WorkerID != a.worker {
 			return bad("op %q is another worker's handoff", a.op)
 		}
-		h.answerKnown(ctx, c, cmd, ah.view(), a.answer)
+		h.answerKnown(ctx, c, cmd, ah.view(), a)
 		return nil
 	}
 	if h.ho.svc != nil {
@@ -325,7 +344,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 				return bad("op %q is another worker's handoff", a.op)
 			}
 			ah := &agentHandoff{req: r, state: r.State}
-			h.answerKnown(ctx, c, cmd, ah.view(), a.answer)
+			h.answerKnown(ctx, c, cmd, ah.view(), a)
 			return nil
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
@@ -339,7 +358,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 		return err
 	}
 	if ah := h.ah.byWorker[w.ID]; a.prompt && ah != nil && ah.pending() {
-		h.answerKnown(ctx, c, cmd, ah.view(), a.answer)
+		h.answerKnown(ctx, c, cmd, ah.view(), a)
 		return nil
 	}
 	if _, err := h.agentCannotAsk(w); err != nil {
@@ -353,7 +372,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 	ah := &agentHandoff{req: store.HandoffRequest{Op: a.op, WorkerID: w.ID, Floor: workerFloor(w), Harness: w.AgentKind,
 		AgentSession: w.AgentSession, Offset: -1, Nonce: randHex(8), Instruction: instruction, SendHome: a.sendHome,
 		State: store.HandoffRequestPending, CreatedAt: now.UnixMilli()}, at: now, state: proto.AgentHandoffStarting,
-		checking: true, client: c, cmd: cmd, auditID: auditID, answer: a.answer, by: c.name, lines: -1}
+		checking: true, client: c, cmd: cmd, auditID: auditID, answer: a.answer, settle: a.settle, rev: a.rev, by: c.name, lines: -1}
 	h.ah.byOp[a.op] = ah
 	h.ah.byWorker[w.ID] = ah
 	h.publishAgentHandoff(w.ID)
@@ -494,17 +513,31 @@ func (h *Hub) agentHandoffPrompt(ah *agentHandoff, call string) error {
 	return nil
 }
 
-// answerKnown answers a command with a request it names (its op, or the
+// answerKnown answers a's command with a request it names (its op, or the
 // worker's pending one): nothing is sent again.
-func (h *Hub) answerKnown(ctx context.Context, c *Client, cmd proto.Command, v proto.AgentHandoff,
-	answer func(r proto.AgentHandoff, existing bool, queued bool) any) {
+func (h *Hub) answerKnown(ctx context.Context, c *Client, cmd proto.Command, v proto.AgentHandoff, a agentAsk) {
+	if a.settle != nil {
+		a.settle(nil, true)
+	}
 	h.audit(ctx, c, cmd, nil)
-	h.reply(c, cmd, answer(v, true, false), nil)
+	h.reply(c, cmd, a.answer(v, true, false), nil)
 }
 
-// endAgentStart writes a starting request's audit row and replies to its
-// command (once).
+// settleAgentStart tells a request's settle how its prompt ended, once.
+func (h *Hub) settleAgentStart(ah *agentHandoff, err error) {
+	if settle := ah.settle; settle != nil {
+		ah.settle = nil
+		settle(err, false)
+	}
+}
+
+// endAgentStart tells a starting request's settle how it ended unless its
+// prompt is being sent (the send settles), then writes its audit row and
+// replies to its command (once).
 func (h *Hub) endAgentStart(ctx context.Context, ah *agentHandoff, err error, queued ...bool) {
+	if !ah.sending {
+		h.settleAgentStart(ah, err)
+	}
 	if ah.client == nil {
 		return
 	}
@@ -668,7 +701,9 @@ func (h *Hub) agentSeen(ctx context.Context, u agentUpdate) {
 }
 
 // agentArmed records the offset the tracker took and prompts the agent on
-// its input lane, once more checked to be idle or done.
+// its input lane, once more checked to be idle or done, and (#108 review
+// B2) its instruction's review checked again: the switch changed while the
+// request started or waited, nothing is sent.
 func (h *Hub) agentArmed(ctx context.Context, ah *agentHandoff, u agentUpdate) {
 	if (!u.found || u.offset < 0) && h.opts.Now().Sub(ah.at) < agentHandoffFind {
 		return // not found yet: looked for again soon
@@ -695,18 +730,32 @@ func (h *Hub) agentArmed(ctx context.Context, ah *agentHandoff, u agentUpdate) {
 			case w.Ask != nil || (w.Status != statusIdle && w.Status != statusDone):
 				return laneTarget{err: fmt.Errorf("%w: %s is %s: only an idle or done worker is asked", errInvalidState, w.Name, w.Status)}
 			}
+			if err := h.reviewHolds(ah.rev, text); err != nil {
+				return laneTarget{err: err}
+			}
+			ah.sending = true
 			return laneTarget{session: w.Session, pane: w.PaneID}
 		})
 		var res any
+		began := false
 		if err == nil {
 			if err = t.err; err == nil {
-				res, err = h.prompt(ctx, proto.WorkerPromptArgs{ID: id, Text: text}, t.session, t.pane)
+				began = true
+				res, err = h.prompt(ctx, proto.WorkerPromptArgs{ID: id, Text: text}, t.session, t.pane, ah.rev)
 			}
 		}
 		if err == nil {
 			h.kickUsage()
 		}
 		_ = h.doWait(ctx, func() {
+			if ah.sending { // #108: the send settles, whatever ended the request meanwhile
+				ah.sending = false
+				if err != nil && (!began || notSent(err)) {
+					h.settleAgentStart(ah, err)
+				} else {
+					h.settleAgentStart(ah, nil)
+				}
+			}
 			if err != nil && h.ah.byOp[ah.req.Op] == ah {
 				h.failAgentHandoff(ctx, ah, "its prompt failed: "+err.Error())
 			}
@@ -731,11 +780,16 @@ func (h *Hub) adoptAgentHandoff(ctx context.Context, ah *agentHandoff, w *proto.
 	src := handoff.Source{Floor: workerFloor(w), WorkerID: w.ID, WorkerName: w.Name, Label: w.Label, Harness: harnessOf(w), Model: w.Model,
 		Cwd: checkoutOf(w), Branch: w.Branch, AgentSession: ah.req.AgentSession, Kind: store.HandoffAgent, Turn: ah.req.Op,
 		Items: string(items), Op: ah.req.Op, At: ah.at}
-	svc, path := h.ho.svc, ah.req.Path
+	svc, path, instruction := h.ho.svc, ah.req.Path, ah.req.Instruction
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
 		filed, existing, err := svc.Adopt(ctx, src, path)
+		if err == nil { // #108 round 5: what it names, for its successor
+			if _, body, rerr := svc.Read(ctx, filed.ID); rerr == nil {
+				h.noteHandoffSecrets(ctx, filed.ID, body, instruction)
+			}
+		}
 		_ = h.doWait(ctx, func() {
 			if err != nil {
 				ah.state = proto.AgentHandoffPending // so it fails

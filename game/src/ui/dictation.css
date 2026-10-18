@@ -78,6 +78,17 @@
   flex: none;
   margin-left: auto;
 }
+/* #108 round 4: the sentence's review on purpose, beside Send while "Review prompt secrets" is on. */
+.dict-review {
+  flex: none;
+  margin-left: auto;
+}
+.dict-review[hidden] {
+  display: none;
+}
+.dict-review:not([hidden]) + .dict-send {
+  margin-left: 0;
+}
 .dict-send[aria-disabled='true'] {
   opacity: 0.6;
   cursor: progress;

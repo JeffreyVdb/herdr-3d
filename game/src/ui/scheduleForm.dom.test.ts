@@ -403,6 +403,41 @@ describe('ScheduleFormDialog (#64 schedules)', () => {
       expect(e.of('schedule.create')[0]?.args.handoff_path).toBe('/h/already-filed.md');
     });
 
+    // #108 round 4 fix 2 (UX D1's audit): Esc says "still being saved" only while the schedule.create is at the bridge.
+    it('Esc while the message is filed: nothing is scheduled and nothing is said; Esc while the create is on its way: still being saved', async () => {
+      const esc = () => {
+        e.q<HTMLDialogElement>('dialog.desk-dlg--sched').dispatchEvent(new Event('cancel'));
+        e.dlg.close();
+      };
+      let e = setup();
+      const filing = hold(e, 'worker.handoff');
+      transcript(e);
+      await e.flush();
+      e.type('title', 'x');
+      e.type('when', 'in 2h');
+      await e.save();
+      expect(e.dlg.summary().saving).toBe(true);
+      esc();
+      filing.release({ ok: true, data: { handoff: { path: '/h/filed.md' } } });
+      await e.flush();
+      expect(e.of('schedule.create')).toEqual([]);
+      expect(e.toasts).toEqual([]);
+
+      e = setup();
+      const create = hold(e, 'schedule.create');
+      transcript(e);
+      await e.flush();
+      e.type('title', 'x');
+      e.type('when', 'in 2h');
+      await e.save();
+      expect(e.of('schedule.create')).toHaveLength(1);
+      esc();
+      expect(e.toasts).toEqual(['The schedule is still being saved; the list shows it once herdr-world answers.']);
+      create.release({ ok: true, data: { ...sched(), id: 'sch_new' } });
+      await e.flush();
+      expect(e.toasts).toHaveLength(1);
+    });
+
     it('a filing that acks after the form was opened again on that reply shows there at once', async () => {
       const e = setup();
       const filing = hold(e, 'worker.handoff');

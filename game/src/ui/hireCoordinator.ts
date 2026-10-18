@@ -3,9 +3,11 @@ import type { CommandArgs, HireAck } from '../net/protocol';
 import { codexNotice } from '../world/codexServer';
 import type { FailedImage, ResolveResult } from './composer/draft';
 import { HIRE_PROMPT_MAX_BYTES, serializeErrorText } from './composer/model';
+import { HANDOVER_EXPIRED } from './dictationModel';
 import { hiredToast } from './hiredToast';
 import type { ToastKind } from './hud';
 import { failureText } from './messages';
+import type { Go, PromptSecretsFlow, SecretsRequest } from './secretsFlow';
 
 /**
  * #210: one hire from Hire to its outcome, shared by the hire dialog (and later the dictation flow): upload the first
@@ -76,6 +78,12 @@ export interface HireRequest {
   added?: number;
   /** #33: the caller keeps the task of a background hire that is refused or gets no answer, and says so itself (not the coordinator). */
   kept?: boolean;
+  /**
+   * #108 round 4: the first task's review (the caller reviewed `args.prompt`, resolved, before Hire went on): sent through
+   * the flow, so a stale review is reviewed again (a new Confirm) and the switch gone off sends nothing. The hire is on
+   * its way by then (a background one closed its dialog): `req` has no `live`.
+   */
+  secrets?: { flow: PromptSecretsFlow; req: SecretsRequest; go: Go };
 }
 
 type NotResolved = Exclude<ResolveResult, { ok: true }>;
@@ -192,7 +200,17 @@ export class HireCoordinator {
     op.release ??= this.host.reserve(req.floor, req.desk);
     op.phase = 'hiring';
     on.hiring?.(args);
-    const r = await this.host.send('worker.hire', args);
+    // #108: the interpreter's hand-over (a dictated hire's `secrets_pending`) refused as stale is not renewed by a review
+    // of the task again: nobody is hired, and the words say to dictate the hire again.
+    const send = async (g: Go | null): Promise<CommandResult> => {
+      const r = await this.host.send('worker.hire', g?.secrets ? { ...args, secrets: g.secrets } : args);
+      return args.secrets_pending !== undefined && !r.ok && r.code === 'secrets_review_stale' ? { ok: false, code: 'secrets_kept', message: HANDOVER_EXPIRED } : r;
+    };
+    const sec = req.secrets;
+    const d = sec ? await sec.flow.deliver(sec.req, sec.go, send) : ({ kind: 'answered', result: await send(null) } as const);
+    // Nothing was sent (the review cancelled, the switch changed): nobody was hired, and the flow says why.
+    if (d.kind === 'kept') return { kind: 'failed', code: 'secrets_kept', message: d.message };
+    const r = d.result;
     if (r.ok) {
       const ack = r.data as HireAck | undefined;
       return ack?.prompted === false ? { kind: 'not_prompted', ack, revision, ...(args.prompt ? { prompt: args.prompt } : {}) } : { kind: 'hired', ack, revision };
@@ -247,7 +265,7 @@ export class HireCoordinator {
 }
 
 /** Why the first task was not sent ('' when the draft says it itself: a refusal the composer holds, a draft gone). */
-function notSentText(r: NotResolved, where: string, added = 0): string {
+export function notSentText(r: NotResolved, where: string, added = 0): string {
   if (r.reason === 'upload') return uploadFailedText(r.failed, where);
   // #95: the herdr hiring instructions count too: say so, and the way out.
   if (r.reason === 'serialize' && r.error.kind === 'too_long' && added > 0)

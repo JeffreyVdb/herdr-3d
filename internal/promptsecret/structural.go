@@ -1,0 +1,1753 @@
+package promptsecret
+
+// The structural rules (#108): candidates the Gitleaks rules miss, each at
+// its value's exact bytes as typed (docs/decisions.md, the byte contract per
+// syntax). They are this repository's own, not the research probe's:
+//
+//   - pem: a PEM private key block, BEGIN to END line, newlines kept;
+//   - auth-header: an Authorization (or Proxy-Authorization) header's
+//     credentials after its scheme (Bearer, Basic as typed, Token, …), and a
+//     bare long "Bearer <token>": to the next blank or quote, symbols kept;
+//   - url-password: the password of a URL's userinfo, percent-encoding kept;
+//   - url-query: the value of a credential-named query (or form) parameter;
+//   - assignment: env, shell (export), YAML, JSON, TOML, INI, CLI flags and
+//     code: a credential-like name (password, passwd, pwd, secret, token,
+//     api_key, access_key, private_key, client_secret, auth, …) and its
+//     value: the bytes inside the quotes, or an unquoted value; and curl's
+//     -u user:password: the password, never what the shell computes;
+//   - yaml-block: a YAML block scalar (| or >) under such a name;
+//   - prose: "the password is X", "API key: X", "the secret X", in a few
+//     languages, a quoted value a few words after the word, its subject
+//     ("the password used by the job is «X»"), and a line of one value a
+//     later sentence names ("The preceding line is the actual password.");
+//     and fenced: a code fence of one value after a line that names a
+//     credential and ends in a colon;
+//   - repeat: another exact occurrence of a value found above (one with a
+//     digit, a symbol or 16 bytes), each its own candidate.
+//
+// Never a candidate: a template or reference (${X}, $X, {{ … }}, <your-token>,
+// %X%, os.getenv("X"), process.env.X, a dotted name in code), a redaction
+// (****, REDACTED, xxxx), a name without a value, a path, the bridge's own
+// file reference (exactly: Scan). An unquoted value loses trailing sentence punctuation
+// (. , ; : and an unbalanced closing bracket or quote); a quoted one keeps
+// every byte between its quotes. A weak password is a candidate when it is
+// plainly the value assigned (password=example).
+
+import (
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
+// Kinds of the structural candidates.
+const (
+	KindPEM         = "pem"
+	KindAuthHeader  = "auth-header"
+	KindURLPassword = "url-password"
+	KindURLQuery    = "url-query"
+	KindAssignment  = "assignment"
+	KindYAMLBlock   = "yaml-block"
+	KindProse       = "prose"
+	KindFenced      = "fenced"
+	KindRepeat      = "repeat"
+)
+
+// span is one detector's candidate, before overlaps are resolved: lower
+// rank wins an overlap (resolve).
+type span struct {
+	start, end int
+	kind       string
+	rank       int
+	encoded    bool   // stored as typed: a YAML block's indented lines
+	shaped     bool   // found for its value's shape (a token format, a length, a digit), not only its place
+	borrowed   bool   // owes its match to a reference: ranks after every other (Scan)
+	whole      [2]int // a part resolve kept of a losing span: the range that span was found at
+}
+
+// found is the range a detector found s at (a part's whole's).
+func (s span) found() [2]int {
+	if s.whole != [2]int{} {
+		return s.whole
+	}
+	return [2]int{s.start, s.end}
+}
+
+// Ranks: a provider's exact format, then the structural families in this
+// order, then Gitleaks' generic rules, then repeats.
+const (
+	rankProvider = iota
+	rankPEM
+	rankAuthHeader
+	rankURLPassword
+	rankURLQuery
+	rankAssignment
+	rankYAMLBlock
+	rankProse
+	rankFenced
+	rankGeneric
+	rankRepeat
+)
+
+// structural are the structural rules' spans in text; refs are the own
+// references masked in it (Scan; nil as typed): a value that runs into one
+// is a value, never code (notASecret).
+func structural(text string, refs []span) []span {
+	lower := strings.ToLower(text)
+	var out []span
+	out = append(out, pemSpans(text)...)
+	out = append(out, headerSpans(text, lower, refs)...)
+	out = append(out, urlSpans(text, refs)...)
+	out = append(out, assignmentSpans(text, refs)...)
+	out = append(out, proseSpans(text, refs)...)
+	out = append(out, lineSpans(text, lower, refs)...)
+	return out
+}
+
+// pem
+
+var pemBegin = regexp.MustCompile(`-----BEGIN ((?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?)-----`)
+
+func pemSpans(text string) []span {
+	var out []span
+	next := 0
+	for _, m := range pemBegin.FindAllStringSubmatchIndex(text, -1) {
+		if m[0] < next {
+			continue
+		}
+		end := "-----END " + text[m[2]:m[3]] + "-----"
+		i := strings.Index(text[m[1]:], end)
+		if i < 0 {
+			continue
+		}
+		next = m[1] + i + len(end)
+		out = append(out, span{start: m[0], end: next, kind: KindPEM, rank: rankPEM})
+	}
+	return out
+}
+
+// auth-header
+
+var (
+	authHeader = regexp.MustCompile(`(?i)(?:^|[^\w-])((?:proxy-)?authorization)["']?[ \t]*[:=][ \t]*["']?` +
+		`(?:(bearer|basic|token|apikey|api-key|key|negotiate|ntlm|digest|aws4-hmac-sha256|hoba|mutual)[ \t]+)?`)
+	bareBearer = regexp.MustCompile(`(?i)(?:^|[^\w-])bearer[ \t]+`)
+)
+
+// credentialAt is the end of a header's credentials at i: the next blank,
+// quote or backslash (a token with a symbol in it is whole), less a
+// sentence's punctuation when the sentence goes on (a blank follows) or
+// ends there, unless the header is its line's own (line): then its line's
+// bytes are the value's (Authorization: Bearer abc!.:\r\n).
+func credentialAt(text string, i int, line bool) int {
+	j := i
+	for j < len(text) {
+		r, n := utf8.DecodeRuneInString(text[j:])
+		if unicode.IsSpace(r) || strings.ContainsRune("\"'`\\", r) {
+			break
+		}
+		j += n
+	}
+	switch r, _ := utf8.DecodeRuneInString(text[j:]); {
+	case j == len(text) || r == '\r' || r == '\n':
+		if line {
+			return j
+		}
+		return trimUnquoted(text, i, j)
+	case unicode.IsSpace(r):
+		return trimUnquoted(text, i, j)
+	}
+	return j // a quote or a backslash closes it: its bytes are the value's
+}
+
+// headerValue reports the credentials [s, e) of the header named at name
+// that are a value: not a template inside them (templated), what the shell
+// computes there (sh: review T4 (p2), T3P-1: -H "Authorization: Bearer
+// abc$TOKEN", $$, never '$HOME' nor 'P@$$w0rd '), a placeholder in
+// brackets ([token]), a URL, nor what notASecret says (literal: it runs
+// into a reference).
+func headerValue(text string, name, s, e int, refs []span, sh *headerShell) bool {
+	v := text[s:e]
+	if v == "" || notASecret(v, overlapsAny(s, e, refs)) || templated(v) || strings.Contains(v, "://") ||
+		bracketed.MatchString(v) {
+		return false
+	}
+	return !sh.computed(name, s, e)
+}
+
+// headerShell is how the shell reads a text's headers (T3P-1): the lines
+// of its curl commands, read once (readShell) when a header's credential
+// is asked about and the text has a '$' or a backquote (else the shell
+// computes nothing anywhere); names are the headers' names, in order.
+type headerShell struct {
+	text  string
+	names []int
+	read  bool
+	sh    shell
+}
+
+// computed reports whether the shell computes a byte of the credentials
+// [s, e) of the header named at name: as it reads the word of a curl
+// command the name is in, from the word's start (-H ""Authorization:'…',
+// -H 'X-Token: -H Bearer …', -d '{"Authorization": …}'); else (prose, a
+// pasted request, JSON, a word in backquotes, a quote left open before the
+// name: curl it's …) from the argument headerArg finds.
+func (h *headerShell) computed(name, s, e int) bool {
+	text := h.text
+	if !h.read {
+		h.read = true
+		if strings.ContainsAny(text, "$`") && strings.Contains(text, "curl") {
+			h.sh = readShell(text, 0, len(text), h.names)
+		}
+	}
+	if k, ok := slices.BinarySearch(h.names, name); ok && h.sh.at != nil {
+		if a := h.sh.at[k]; a.word >= 0 {
+			if w := h.sh.words[a.word]; name < w.end && w.curl {
+				return computedIn(h.sh.lists[w.list].computed, s, e)
+			}
+		}
+	}
+	// headerArg's start is headerReach bytes before the name at most: with
+	// no '$' or backquote from there on, the shell computes nothing.
+	if w := text[max(0, name-headerReach):e]; strings.IndexByte(w, '$') < 0 && strings.IndexByte(w, '`') < 0 {
+		return false
+	}
+	_, computed := shellRead(text, headerArg(text, name), e, false)
+	return overlapsAny(s, e, computed)
+}
+
+// headerFlag is curl's header option, before its argument; headerReach is
+// how far before a header's name it is looked for.
+var headerFlag = regexp.MustCompile(`(?:^|[ \t])(?:-H[ \t]*|--header(?:[ \t]+|=))`)
+
+const headerReach = 256
+
+// headerArg is where the shell argument holding the header name at i
+// starts, for a header in no curl command (headerShell): the quote right
+// before the name ($'…' from its '$': "Authorization": "…"); else the
+// argument of the last -H or --header before it on its line (prose's -H
+// 'X-Token: Bearer …'); else the name. So a header further into another
+// argument there reads as unquoted (echo 'Authorization: …'), never as the
+// byte after its credential says.
+func headerArg(text string, i int) int {
+	if i > 0 && (text[i-1] == '\'' || text[i-1] == '"') {
+		i--
+		if text[i] == '\'' && i > 0 && text[i-1] == '$' {
+			i--
+		}
+		return i
+	}
+	w := max(0, i-headerReach)
+	if nl := strings.LastIndexByte(text[w:i], '\n'); nl >= 0 {
+		w += nl + 1
+	}
+	if m := headerFlag.FindAllStringIndex(text[w:i], -1); m != nil {
+		return w + m[len(m)-1][1]
+	}
+	return i
+}
+
+// templated reports a template or a command anywhere in a value, not only
+// at its start (notASecret's): sk-${KEY}, abc$(cmd), pw-{{ .X }}.
+func templated(v string) bool {
+	return strings.Contains(v, "${") || strings.Contains(v, "$(") || strings.Contains(v, "{{")
+}
+
+// bracketed is a placeholder in square brackets: [token], [your key].
+var bracketed = regexp.MustCompile(`^\[[\w .-]*\]$`)
+
+// headerSpans are the header credentials in text (lower: text in lower
+// case; a regexp runs only where its word is: most text has neither).
+func headerSpans(text, lower string, refs []span) []span {
+	var out []span
+	var headers, bearers [][]int
+	if strings.Contains(lower, "authorization") {
+		headers = authHeader.FindAllStringSubmatchIndex(text, -1)
+	}
+	if strings.Contains(lower, "bearer") {
+		bearers = bareBearer.FindAllStringIndex(text, -1)
+	}
+	sh := &headerShell{text: text}
+	for _, m := range headers {
+		sh.names = append(sh.names, m[2])
+	}
+	for _, m := range bearers {
+		sh.names = append(sh.names, bearerName(text, m))
+	}
+	slices.Sort(sh.names)
+	sh.names = slices.Compact(sh.names)
+	next := 0 // where the last header's credentials end: credentials that start before it are their rest (each read once)
+	for _, m := range headers {
+		if m[1] < next {
+			continue
+		}
+		scheme := ""
+		if m[4] >= 0 {
+			scheme = strings.ToLower(text[m[4]:m[5]])
+		}
+		switch scheme {
+		case "digest", "aws4-hmac-sha256", "hoba", "mutual":
+			continue // parameters, not one credential: a manual mark
+		}
+		end := credentialAt(text, m[1], atLineStart(text, m[2]))
+		next = end
+		v := text[m[1]:end]
+		if !headerValue(text, m[2], m[1], end, refs, sh) || (scheme == "" && !tokenish(v, 8)) {
+			continue
+		}
+		out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: scheme == ""})
+	}
+	for _, m := range bearers {
+		end := credentialAt(text, m[1], false)
+		if tokenish(text[m[1]:end], 16) && headerValue(text, bearerName(text, m), m[1], end, refs, sh) {
+			out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: true})
+		}
+	}
+	return out
+}
+
+// bearerName is where the word Bearer of a bare Bearer match m starts.
+func bearerName(text string, m []int) int {
+	name := m[1]
+	for text[name-1] == ' ' || text[name-1] == '\t' {
+		name--
+	}
+	return name - len("bearer")
+}
+
+// url-password, url-query
+
+var (
+	urlScheme  = regexp.MustCompile(`\b[A-Za-z][A-Za-z0-9+.\-]{0,30}://`)
+	queryParam = regexp.MustCompile(`[?&]([A-Za-z0-9_.\-\[\]]{1,64})=`)
+)
+
+// queryCredential are parameter names that carry a credential in a URL even
+// though they are not credential-like names elsewhere.
+var queryCredential = map[string]bool{"key": true, "sig": true, "signature": true, "x-amz-signature": true,
+	"x-goog-signature": true, "code_verifier": true}
+
+func urlSpans(text string, refs []span) []span {
+	var out []span
+	var schemes, params [][]int // a regexp runs only where its literal is: most text has no URL
+	if strings.Contains(text, "://") {
+		schemes = urlScheme.FindAllStringIndex(text, -1)
+	}
+	if strings.IndexByte(text, '=') >= 0 {
+		params = queryParam.FindAllStringSubmatchIndex(text, -1)
+	}
+	for _, m := range schemes {
+		// The authority runs to the first / ? # or a blank; its userinfo to
+		// its last @ (a raw @ in a password), the password after the first :.
+		end := m[1]
+		for end < len(text) && !strings.ContainsRune("/?#\"'<>`", rune(text[end])) && !isSpace(text[end]) {
+			end++
+		}
+		auth := text[m[1]:end]
+		at := strings.LastIndexByte(auth, '@')
+		if at < 0 {
+			continue
+		}
+		colon := strings.IndexByte(auth[:at], ':')
+		if colon < 0 {
+			continue
+		}
+		s, e := m[1]+colon+1, m[1]+at
+		if s < e && !notASecret(text[s:e], overlapsAny(s, e, refs)) {
+			out = append(out, span{start: s, end: e, kind: KindURLPassword, rank: rankURLPassword})
+		}
+	}
+	for _, m := range params {
+		name := text[m[2]:m[3]]
+		if !credentialKey(name) && !queryCredential[strings.ToLower(name)] {
+			continue
+		}
+		end := m[1]
+		for end < len(text) && !strings.ContainsRune("&#\"'<>`", rune(text[end])) && !isSpace(text[end]) {
+			end++
+		}
+		e := trimUnquoted(text, m[1], end)
+		if m[1] < e && !notASecret(text[m[1]:e], overlapsAny(m[1], e, refs)) {
+			out = append(out, span{start: m[1], end: e, kind: KindURLQuery, rank: rankURLQuery})
+		}
+	}
+	return out
+}
+
+// assignment, yaml-block
+
+var (
+	// A name (bare, "quoted" or 'quoted'; a CLI flag's -- included) and its
+	// separator: = : := => ?=.
+	assignKey = regexp.MustCompile(`(?:^|[^\w\-/\\@])(--)?(?:"([A-Za-z_][\w.\-]{0,63})"|'([A-Za-z_][\w.\-]{0,63})'|` +
+		`([A-Za-z_][\w.\-]{0,63}))[ \t]*(=>|:=|\?=|=|:)`)
+	// A CLI flag with its value after a blank: --password hunter2.
+	flagKey = regexp.MustCompile(`(?:^|[ \t])--([A-Za-z][\w\-]{0,63})[ \t]`)
+	// A YAML block scalar's header after the key: | or >, indicators, a
+	// comment.
+	blockHeader = regexp.MustCompile(`^[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*(?:#[^\n]*)?\r?(?:\n|$)`)
+	// Where an unquoted value ends early: the next name=value of a list
+	// (a connection string's ;Password=, a form's &user=).
+	nextPair = regexp.MustCompile(`[;&,][A-Za-z_][\w.\-]{0,63}=`)
+	// curl's user and password: -u user:password, --user user:password.
+	curlUser = regexp.MustCompile(`(?:^|[ \t])(?:-u[ \t]*|--user(?:[ \t]+|=))`)
+)
+
+func assignmentSpans(text string, refs []span) []span {
+	var out []span
+	for _, m := range assignKey.FindAllStringSubmatchIndex(text, -1) {
+		var name string
+		quotedKey := false
+		switch {
+		case m[4] >= 0:
+			name, quotedKey = text[m[4]:m[5]], true
+		case m[6] >= 0:
+			name, quotedKey = text[m[6]:m[7]], true
+		default:
+			name = text[m[8]:m[9]]
+		}
+		if !credentialKey(name) {
+			continue
+		}
+		sep := text[m[10]:m[11]]
+		switch {
+		case sep == "=" && strings.HasPrefix(text[m[11]:], "="): // ==
+			continue
+		case sep == ":" && strings.HasPrefix(text[m[11]:], "//"), sep == ":" && strings.HasPrefix(text[m[11]:], ":"):
+			continue
+		}
+		v := skipBlanks(text, m[11])
+		keyStart := m[8]
+		if quotedKey {
+			keyStart = min(nonNeg(m[4]), nonNeg(m[6])) - 1
+		}
+		lineStart := sep == ":" && atLineStart(text, keyStart)
+		if sep == ":" && lineStart && v < len(text) && (text[v] == '|' || text[v] == '>') {
+			if sp, ok := yamlBlock(text, keyStart, v); ok {
+				out = append(out, sp)
+			}
+			continue
+		}
+		if sp, ok := valueAt(text, v, KindAssignment, rankAssignment, refs); ok {
+			out = append(out, sp)
+		}
+	}
+	for _, m := range flagKey.FindAllStringSubmatchIndex(text, -1) {
+		v := skipBlanks(text, m[1])
+		if !credentialKey(text[m[2]:m[3]]) || v >= len(text) || text[v] == '-' {
+			continue
+		}
+		if sp, ok := valueAt(text, v, KindAssignment, rankAssignment, refs); ok {
+			out = append(out, sp)
+		}
+	}
+	if strings.Contains(text, "curl") {
+		out = append(out, curlSpans(text, refs)...)
+	}
+	return out
+}
+
+// curlSpans are curl's -u (--user) passwords in text: each option is read
+// where the shell reads it (readShell), a word of its own after a curl
+// word of its command (no unquoted | ; & between: a quoted URL's & is an
+// argument's, review T1), never inside a quote, ${…} or $[…];
+// its password is the next word, or the rest of its own (-uuser:pw,
+// --user=user:pw). An option inside a password word already read is that
+// word's bytes, not an option (curl -u u:$(curl -u …)): so no byte is read
+// twice (review T4P-1).
+func curlSpans(text string, refs []span) []span {
+	ms := curlUser.FindAllStringIndex(text, -1)
+	if ms == nil {
+		return nil
+	}
+	at := make([]int, 0, 2*len(ms)) // each option's start, and its password word's
+	for _, m := range ms {
+		o := m[0]
+		if text[o] == ' ' || text[o] == '\t' {
+			o++
+		}
+		at = append(at, o, m[1])
+	}
+	sh := readShell(text, 0, len(text), at)
+	var out []span
+	read := 0
+	for k := range ms {
+		o, v, ao, av := at[2*k], at[2*k+1], sh.at[2*k], sh.at[2*k+1]
+		if o < read || ao.word < 0 || ao.quoted || av.word < 0 {
+			continue
+		}
+		opt, w := sh.words[ao.word], sh.words[av.word]
+		if opt.start != o || av.word != ao.word && w.start != v || !opt.curl {
+			continue
+		}
+		read = w.end
+		if sp, ok := curlPassword(text, v, w.end, sh.lists[w.list].computed, refs); ok {
+			out = append(out, sp)
+		}
+	}
+	return out
+}
+
+// curlPassword is the password in curl's user:password, the shell word [v,
+// word): after its first colon, as typed (quotes and escapes kept; a word
+// that is one quoted string, $'…' too, without its quotes). Not what the
+// shell computes in it (computed, its list's: a byte of the password or of
+// the rest of its word, review T4), looked at first; nor a placeholder: a
+// credential word (user:pass) or one in brackets.
+func curlPassword(text string, v, word int, computed, refs []span) (span, bool) {
+	s, e := v, word
+	quoted := false
+	q := v
+	if strings.HasPrefix(text[v:word], "$'") {
+		q++
+	}
+	if qs, qe, ok := quotedAt(text[:word], q); ok && qe+1 == e {
+		s, e, quoted = qs, qe, true
+	}
+	c := strings.IndexByte(text[s:e], ':')
+	if c < 0 || computedIn(computed, s+c+1, word) {
+		return span{}, false
+	}
+	if !quoted && !strings.ContainsAny(text[s:e], "\"'\\") {
+		e = trimUnquoted(text, s, e)
+	}
+	if s+c+1 >= e {
+		return span{}, false
+	}
+	pw := text[s+c+1 : e]
+	if notASecret(pw, quoted || overlapsAny(s+c+1, e, refs)) || credentialKey(pw) || bracketed.MatchString(pw) {
+		return span{}, false
+	}
+	return span{start: s + c + 1, end: e, kind: KindAssignment, rank: rankAssignment}, true
+}
+
+// The shell reader (review T4 (p2), T3P-1, T4P-1). curl's password and a
+// header's credential are read as bash reads their line, in one pass over
+// the text: '…' as is; "…" with backslash escapes; $'…' too, whose escapes
+// the shell rewrites; a backslash outside them escaping the next byte. An
+// expansion (expands: $NAME, a digit, a special parameter, ${…}, $(…) and
+// $((…)), $[…], an unquoted $"…") or a backquote is read to its close, its
+// own quotes, escapes and brackets nested on a stack, so a blank or an
+// operator inside it is its own; backquotes close at their next unescaped
+// backquote, whatever quotes come between (bash's). What $(…) and
+// backquotes hold is a command list of their own (TOKEN=$(curl -u …),
+// Markdown's `curl -u …`, a Go raw string's); what ${…} and $[…] hold is
+// none. A command ends at an unquoted ; | & ( ), a word at a blank or < >
+// too, a line at a newline no backslash continues; a newline inside a quote
+// or an expansion ends its line, the construct left open (a quote never
+// spans lines). Each byte is read once, whatever the nesting (backquotes'
+// twice: their close first).
+
+// shellList is a command list the reader read (a line, what a $(…) holds):
+// the ranges whose bytes the shell computes in its words, in order and
+// apart (an expansion or a backquote in a word or its "…", a $'…' escape;
+// to the line's end when it has no close). Never "\$HOME", '$HOME', "ab$'c"
+// nor a '$' before nothing it expands ("abc$", "a$%b"), which it keeps.
+type shellList struct{ computed []span }
+
+// shellWord is a word of a command list: [start, end) (a quote left open
+// ends it, at the quote: curl -u u:it's gives u:it), its list, and whether
+// a word curl comes before it in its command (curl, sudo curl, (curl, a
+// $(…)'s curl; never "curl" in quotes).
+type shellWord struct {
+	start, end, list int
+	curl             bool
+}
+
+// shellAt is where a position asked about is in what the reader read: its
+// word (-1: between words, or inside ${…}, $[…] or $"…", or an expansion's
+// name), and whether a quote of that word holds it.
+type shellAt struct {
+	word   int
+	quoted bool
+}
+
+// shell is a text as readShell read it.
+type shell struct {
+	lists []shellList
+	words []shellWord // those holding a position asked about
+	at    []shellAt   // where each position asked about is, in their order
+}
+
+// shellFrame is what the reader is inside, by kind: a command list ('l' a
+// line; '(' a $(…) and '`' backquotes, their range computed in their
+// owner's list), a quote (a '…' or "…" by its quote, 'A' a $'…') or
+// another expansion ('L' a $"…", '{' a ${…}, '[' a $[…]).
+type shellFrame struct {
+	kind  byte
+	start int  // its first byte
+	owner int  // the list whose word holds it, or -1 (inside another construct: that one's bytes)
+	depth int  // its own brackets open in it: ( in $(…), { in ${…}, [ in $[…]
+	list  int  // a command list's index in lists
+	curl  bool // a command list's current command has had a word curl
+	word  int  // a command list's current word's start, -1 between words
+	ix    int  // that word's index in words, -1 until a position asked about is in it
+}
+
+type shellReader struct {
+	shell
+	text    string
+	stack   []shellFrame
+	limit   int // where the backquotes on the stack close (-1: none, or open to the line's end)
+	queries []int
+	qi      int
+}
+
+// readShell reads text[from:to] as the shell reads it (the reader above),
+// and where each position of queries (ascending) is in it.
+func readShell(text string, from, to int, queries []int) shell {
+	r := &shellReader{text: text, limit: -1, queries: queries}
+	r.at = make([]shellAt, len(queries))
+	for k := range r.at {
+		r.at[k].word = -1
+	}
+	r.line(from)
+	for i := from; i < to; {
+		if i == r.limit {
+			i = r.closeBackquotes(i)
+			continue
+		}
+		if text[i] != '\n' {
+			end := to
+			if r.limit >= 0 {
+				end = r.limit
+			}
+			i = r.step(i, end)
+			continue
+		}
+		if len(r.stack) == 1 && continued(text, from, i) {
+			r.endWord(i) // the command goes on: the newline is a blank
+		} else {
+			r.endLine(i)
+			r.line(i + 1)
+		}
+		r.mark(i, i+1, false)
+		i++
+	}
+	r.endLine(to)
+	return r.shell
+}
+
+// shellRead reads text from i, to end at most, as the shell reads it from
+// outside any quote (readShell): word: the word at i, to its end; else all
+// of [i, end) on i's line, a quote left open quoting the rest. Its stop,
+// and the ranges whose bytes the shell computes there.
+func shellRead(text string, i, end int, word bool) (int, []span) {
+	sh := readShell(text, i, end, []int{i})
+	computed := sh.lists[0].computed
+	if !word {
+		return end, computed
+	}
+	if sh.at[0].word < 0 {
+		return i, nil
+	}
+	stop := sh.words[sh.at[0].word].end
+	return stop, computed[:sort.Search(len(computed), func(k int) bool { return computed[k].start >= stop })]
+}
+
+// continued reports a newline at i that a backslash before it continues
+// (blanks and a CR between, as typed).
+func continued(text string, from, i int) bool {
+	for i > from && (text[i-1] == ' ' || text[i-1] == '\t' || text[i-1] == '\r') {
+		i--
+	}
+	return i > from && text[i-1] == '\\'
+}
+
+// step reads what is at i in the construct on top, to to at most: where it
+// goes on.
+func (r *shellReader) step(i, to int) int {
+	switch r.stack[len(r.stack)-1].kind {
+	case 'l', '(', '`':
+		return r.inList(i, to)
+	case '\'':
+		return r.inSingle(i, to)
+	case '"', 'L':
+		return r.inDouble(i, to)
+	case 'A':
+		return r.inANSI(i, to)
+	}
+	return r.inBraces(i, to)
+}
+
+// inList reads a command list's byte: a blank or an operator, or a word's,
+// which may open a quote or an expansion.
+func (r *shellReader) inList(i, to int) int {
+	text, f := r.text, &r.stack[len(r.stack)-1]
+	c := text[i]
+	if isSpace(c) || strings.IndexByte(";|&()<>", c) >= 0 {
+		r.endWord(i)
+		r.mark(i, i+1, false)
+		switch {
+		case c == ')' && f.kind == '(' && f.depth == 0:
+			r.close(i + 1)
+			return i + 1
+		case c == ')' && f.depth > 0:
+			f.depth--
+		case c == '(':
+			f.depth++
+		}
+		if strings.IndexByte(";|&()", c) >= 0 {
+			f.curl = false // a command starts
+		}
+		return i + 1
+	}
+	if f.word < 0 {
+		f.word, f.ix = i, -1
+	}
+	switch {
+	case c == '\\':
+		return r.escape(i, to, false)
+	case c == '\'':
+		return r.open('\'', i, 1)
+	case c == '"':
+		return r.open('"', i, 1)
+	case c == '$' && i+1 < to && text[i+1] == '\'':
+		return r.open('A', i, 2)
+	case c == '`' || c == '$' && i+1 < to && expands(text[i+1], false):
+		return r.expansion(i, to)
+	}
+	r.mark(i, i+1, false)
+	return i + 1
+}
+
+// inSingle reads a '…' to its close.
+func (r *shellReader) inSingle(i, to int) int {
+	k := strings.IndexAny(r.text[i:to], "'\n")
+	switch {
+	case k < 0:
+		r.mark(i, to, false)
+		return to
+	case r.text[i+k] == '\n':
+		r.mark(i, i+k, false)
+		return i + k
+	}
+	r.mark(i, i+k+1, false)
+	r.close(i + k + 1)
+	return i + k + 1
+}
+
+// inDouble reads a "…" (or $"…") to its next escape, expansion or close.
+func (r *shellReader) inDouble(i, to int) int {
+	text := r.text
+	k := strings.IndexAny(text[i:to], "\"\\$`\n")
+	if k < 0 {
+		r.mark(i, to, false)
+		return to
+	}
+	j := i + k
+	r.mark(i, j, false)
+	switch c := text[j]; {
+	case c == '\n':
+		return j
+	case c == '\\':
+		return r.escape(j, to, false)
+	case c == '"':
+		r.mark(j, j+1, false)
+		r.close(j + 1)
+		return j + 1
+	case c == '`' || c == '$' && j+1 < to && expands(text[j+1], true):
+		return r.expansion(j, to)
+	}
+	r.mark(j, j+1, false) // a '$' before nothing it expands
+	return j + 1
+}
+
+// inANSI reads a $'…' to its next escape (computed in its word's list) or
+// its close.
+func (r *shellReader) inANSI(i, to int) int {
+	text, owner := r.text, r.stack[len(r.stack)-1].owner
+	k := strings.IndexAny(text[i:to], "'\\\n")
+	if k < 0 {
+		r.mark(i, to, false)
+		return to
+	}
+	j := i + k
+	r.mark(i, j, false)
+	switch text[j] {
+	case '\n':
+		return j
+	case '\\':
+		e := r.escape(j, to, false)
+		r.compute(owner, j, e)
+		return e
+	}
+	r.mark(j, j+1, false)
+	r.close(j + 1)
+	return j + 1
+}
+
+// braceStops are what a ${…} or a $[…] is read to next.
+var braceStops = map[byte]string{'{': "{}\\'\"`$\n", '[': "[]\\'\"`$\n"}
+
+// inBraces reads a ${…} or $[…] to its next quote, expansion, own bracket
+// or close.
+func (r *shellReader) inBraces(i, to int) int {
+	text, f := r.text, &r.stack[len(r.stack)-1]
+	closer := byte('}')
+	if f.kind == '[' {
+		closer = ']'
+	}
+	k := strings.IndexAny(text[i:to], braceStops[f.kind])
+	if k < 0 {
+		r.mark(i, to, true)
+		return to
+	}
+	j := i + k
+	r.mark(i, j, true)
+	switch c := text[j]; {
+	case c == '\n':
+		return j
+	case c == '\\':
+		return r.escape(j, to, true)
+	case c == closer && f.depth == 0:
+		r.mark(j, j+1, true)
+		r.close(j + 1)
+		return j + 1
+	case c == closer:
+		f.depth--
+	case c == f.kind:
+		f.depth++
+	case c == '\'' || c == '"':
+		return r.open(c, j, 1)
+	case c == '`' || c == '$' && j+1 < to && expands(text[j+1], false):
+		return r.expansion(j, to)
+	}
+	r.mark(j, j+1, true)
+	return j + 1
+}
+
+// escape reads the backslash at i and the byte it escapes, unless that is
+// a newline (the line's).
+func (r *shellReader) escape(i, to int, opaque bool) int {
+	e := min(i+2, to)
+	if e == i+2 && r.text[i+1] == '\n' {
+		e = i + 1
+	}
+	r.mark(i, e, opaque)
+	return e
+}
+
+// open pushes the quote kind whose first n bytes are at i.
+func (r *shellReader) open(kind byte, i, n int) int {
+	r.stack = append(r.stack, shellFrame{kind: kind, start: i, owner: r.owner()})
+	r.mark(i, i+n, false)
+	return i + n
+}
+
+// expansion reads the expansion or backquote at i: a name whole, else its
+// construct pushed, read to its close next.
+func (r *shellReader) expansion(i, to int) int {
+	text, owner := r.text, r.owner()
+	kind, n := byte('`'), 1
+	if text[i] == '$' {
+		kind, n = text[i+1], 2
+	}
+	if kind == '\'' {
+		return r.open('A', i, 2) // a quote in ${…} or $[…]
+	}
+	r.mark(i, i+1, false) // its first byte is its word's: curl -u $USER:pw
+	switch kind {
+	case '`', '(', '{', '[', '"':
+		f := shellFrame{kind: kind, start: i, owner: owner}
+		switch kind {
+		case '"':
+			f.kind = 'L'
+		case '`':
+			r.limit = backquoteEnd(text, i+1, to)
+			fallthrough
+		case '(':
+			r.lists = append(r.lists, shellList{})
+			f.list, f.word, f.ix = len(r.lists)-1, -1, -1
+		}
+		r.stack = append(r.stack, f)
+		r.mark(i+1, i+n, true)
+		return i + n
+	}
+	j := i + 2
+	if isASCIILetter(kind) || kind == '_' {
+		for j < to && (isASCIILetter(text[j]) || text[j] == '_' || text[j] >= '0' && text[j] <= '9') {
+			j++
+		}
+	}
+	r.compute(owner, i, j)
+	r.mark(i+1, j, true)
+	return j
+}
+
+// expands reports a '$' before c that the shell expands, in double quotes
+// or none: a name, a digit, a special parameter (@ * # ? - $ !), ${…},
+// $(…) or $[…]; outside double quotes also $"…" (and $'…', a quote).
+func expands(c byte, double bool) bool {
+	return isASCIILetter(c) || c >= '0' && c <= '9' || strings.IndexByte("_{([@*#?-$!", c) >= 0 || !double && (c == '\'' || c == '"')
+}
+
+// backquoteEnd is where the backquotes opened before j close: at their
+// next unescaped backquote, whatever comes between; -1 when the line or to
+// comes first.
+func backquoteEnd(text string, j, to int) int {
+	for j < to {
+		k := strings.IndexAny(text[j:to], "`\\\n")
+		if k < 0 {
+			return -1
+		}
+		j += k
+		if text[j] == '`' {
+			return j
+		}
+		if text[j] == '\n' || j+1 < to && text[j+1] == '\n' {
+			return -1
+		}
+		j += 2
+	}
+	return -1
+}
+
+// closeBackquotes closes the backquotes on the stack at i, their close:
+// what is open inside them ends there.
+func (r *shellReader) closeBackquotes(i int) int {
+	k := len(r.stack) - 1
+	for r.stack[k].kind != '`' {
+		k--
+	}
+	r.unwind(k+1, i)
+	r.endWord(i)
+	r.mark(i, i+1, false)
+	r.close(i + 1)
+	r.limit = -1
+	return i + 1
+}
+
+// owner is the list a construct opened now belongs to: the command list on
+// top, or the one whose word holds the "…" on top; else -1.
+func (r *shellReader) owner() int {
+	switch f := r.stack[len(r.stack)-1]; f.kind {
+	case 'l', '(', '`':
+		return f.list
+	case '"':
+		return f.owner
+	}
+	return -1
+}
+
+// close pops the construct on top, closed before end: an expansion's range
+// is computed in its owner's list.
+func (r *shellReader) close(end int) {
+	f := r.stack[len(r.stack)-1]
+	r.stack = r.stack[:len(r.stack)-1]
+	if strings.IndexByte("(`{[L", f.kind) >= 0 {
+		r.compute(f.owner, f.start, end)
+	}
+}
+
+func (r *shellReader) compute(list, s, e int) {
+	if list >= 0 {
+		r.lists[list].computed = append(r.lists[list].computed, span{start: s, end: e})
+	}
+}
+
+// line starts a line at i.
+func (r *shellReader) line(i int) {
+	r.lists = append(r.lists, shellList{})
+	r.stack = append(r.stack[:0], shellFrame{kind: 'l', start: i, owner: -1, list: len(r.lists) - 1, word: -1, ix: -1})
+}
+
+// endLine ends the line at eol with what is open in it.
+func (r *shellReader) endLine(eol int) {
+	r.unwind(0, eol)
+	r.limit = -1
+}
+
+// unwind ends what is open from stack index k up at at: a quote ends its
+// word where it opens, an expansion is computed to at.
+func (r *shellReader) unwind(k, at int) {
+	for j := len(r.stack) - 1; j >= k; j-- {
+		f := r.stack[j]
+		switch f.kind {
+		case 'l', '(', '`':
+			if f.ix >= 0 && r.words[f.ix].end < 0 {
+				r.words[f.ix].end = at
+			}
+		case '\'', '"', 'A':
+			if f.owner >= 0 && r.stack[j-1].ix >= 0 {
+				r.words[r.stack[j-1].ix].end = f.start
+			}
+		}
+		if strings.IndexByte("(`{[L", f.kind) >= 0 {
+			r.compute(f.owner, f.start, at)
+		}
+	}
+	r.stack = r.stack[:k]
+}
+
+// endWord ends the word of the command list on top at i (unless a quote
+// left open ended it: unwind).
+func (r *shellReader) endWord(i int) {
+	f := &r.stack[len(r.stack)-1]
+	if f.ix >= 0 && r.words[f.ix].end < 0 {
+		r.words[f.ix].end = i
+	}
+	if f.word >= 0 && r.text[f.word:i] == "curl" {
+		f.curl = true
+	}
+	f.word, f.ix = -1, -1
+}
+
+// mark records where the positions asked about in [i, j) are: in the word
+// of the command list that holds what is read now (opaque: none, an
+// expansion's name or opening).
+func (r *shellReader) mark(i, j int, opaque bool) {
+	for ; r.qi < len(r.queries) && r.queries[r.qi] < j; r.qi++ {
+		if r.queries[r.qi] < i || opaque {
+			continue
+		}
+		if k, quoted := r.place(); k >= 0 {
+			r.at[r.qi] = shellAt{word: r.wordIx(k), quoted: quoted}
+		}
+	}
+}
+
+// place is the stack index of the command list whose word holds what is
+// read now (-1: none), and whether a quote of the word holds it.
+func (r *shellReader) place() (int, bool) {
+	k := len(r.stack) - 1
+	switch f := r.stack[k]; f.kind {
+	case 'l', '(', '`':
+		return k, false
+	case '\'', '"', 'A':
+		if f.owner >= 0 {
+			return k - 1, true // a quote with an owner is in a command list's word
+		}
+	}
+	return -1, false
+}
+
+// wordIx is the index in words of the current word of the command list at
+// stack index k (-1: between words), recorded the first time.
+func (r *shellReader) wordIx(k int) int {
+	f := &r.stack[k]
+	if f.word < 0 {
+		return -1
+	}
+	if f.ix < 0 {
+		r.words = append(r.words, shellWord{start: f.word, end: -1, list: f.list, curl: f.curl})
+		f.ix = len(r.words) - 1
+	}
+	return f.ix
+}
+
+// computedIn reports a range of computed (a list's: in order, apart) that
+// overlaps [s, e).
+func computedIn(computed []span, s, e int) bool {
+	k := sort.Search(len(computed), func(k int) bool { return computed[k].end > s })
+	return k < len(computed) && computed[k].start < e
+}
+
+func isASCIILetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
+
+// skipBlanks is the first byte at or after i that is not a space or tab.
+func skipBlanks(text string, i int) int {
+	for i < len(text) && (text[i] == ' ' || text[i] == '\t') {
+		i++
+	}
+	return i
+}
+
+func nonNeg(i int) int {
+	if i < 0 {
+		return 1 << 30
+	}
+	return i
+}
+
+// atLineStart reports whether only blanks (and a YAML list's "- ") come
+// before i on its line.
+func atLineStart(text string, i int) bool {
+	j := i
+	for j > 0 && (text[j-1] == ' ' || text[j-1] == '\t') {
+		j--
+	}
+	if j > 0 && text[j-1] == '-' {
+		j--
+		for j > 0 && (text[j-1] == ' ' || text[j-1] == '\t') {
+			j--
+		}
+	}
+	return j == 0 || text[j-1] == '\n'
+}
+
+// valueAt is the value at v: quoted (the bytes between the quotes), or
+// unquoted: to the next blank or pair, trailing punctuation off (a YAML
+// plain scalar with blanks is cut at its first: the review corrects it).
+// refs: the own references masked in text (structural).
+func valueAt(text string, v int, kind string, rank int, refs []span) (span, bool) {
+	if v >= len(text) {
+		return span{}, false
+	}
+	if s, e, ok := quotedAt(text, v); ok {
+		if s == e || notASecret(text[s:e], true) {
+			return span{}, false
+		}
+		return span{start: s, end: e, kind: kind, rank: rank}, true
+	}
+	switch text[v] {
+	case '"', '\'', '`', '[', '{', '\r', '\n', '|', '>':
+		return span{}, false // unterminated, a flow collection, nothing
+	}
+	end := blankAt(text, v)
+	if loc := nextPair.FindStringIndex(text[v:end]); loc != nil {
+		end = v + loc[0]
+	}
+	end = trimUnquoted(text, v, end)
+	if end <= v || notASecret(text[v:end], overlapsAny(v, end, refs)) {
+		return span{}, false
+	}
+	return span{start: v, end: end, kind: kind, rank: rank}, true
+}
+
+// blankAt is the end of the run of non-blank text at i.
+func blankAt(text string, i int) int {
+	for i < len(text) {
+		r, n := utf8.DecodeRuneInString(text[i:])
+		if unicode.IsSpace(r) {
+			break
+		}
+		i += n
+	}
+	return i
+}
+
+// quotePairs are the quotes a value may be in, opening to closing.
+var quotePairs = map[rune]rune{'"': '"', '\'': '\'', '`': '`', '“': '”', '‘': '’', '«': '»'}
+
+// quotedAt reads a quoted value at v, on one line: the range between the
+// quotes. In "…" a backslash escapes the next byte; in '…' a doubled ”
+// is YAML's escaped quote, and a quote, a backslash and two quotes are a
+// shell's (the word goes on).
+func quotedAt(text string, v int) (start, end int, ok bool) {
+	open, n := utf8.DecodeRuneInString(text[v:])
+	closing, ok := quotePairs[open]
+	if !ok {
+		return 0, 0, false
+	}
+	i := v + n
+	for i < len(text) {
+		r, w := utf8.DecodeRuneInString(text[i:])
+		switch {
+		case r == '\n' || r == '\r':
+			return 0, 0, false
+		case open == '"' && r == '\\' && i+1 < len(text):
+			i += 2
+			continue
+		case r == closing:
+			if open == '\'' && i+1 < len(text) && text[i+1] == '\'' {
+				i += 2
+				continue
+			}
+			if open == '\'' && strings.HasPrefix(text[i:], `'\''`) {
+				i += 4
+				continue
+			}
+			return v + n, i, true
+		}
+		i += w
+	}
+	return 0, 0, false
+}
+
+// trimUnquoted drops an unquoted value's trailing sentence punctuation and
+// an unbalanced closing bracket or quote: its new end. The value's
+// brackets and quotes are counted once (n, by their index in trimmed).
+func trimUnquoted(text string, s, e int) int {
+	const trimmed = "()[]{}\"'`"
+	var n [len(trimmed)]int
+	counted := false
+	for e > s {
+		c := text[e-1]
+		if c == '.' || c == ',' || c == ';' || c == ':' {
+			e--
+			continue
+		}
+		k := strings.IndexByte(trimmed, c)
+		if k < 0 || k < 6 && k%2 == 0 { // not a closing bracket or a quote
+			break
+		}
+		if !counted {
+			for i := s; i < e; i++ {
+				if j := strings.IndexByte(trimmed, text[i]); j >= 0 {
+					n[j]++
+				}
+			}
+			counted = true
+		}
+		if k < 6 && n[k] <= n[k-1] || k >= 6 && n[k]%2 == 0 { // balanced
+			break
+		}
+		n[k]--
+		e--
+	}
+	return e
+}
+
+// yamlBlock is the block scalar whose header is at v, under the key at
+// keyStart: its content lines, from the first one's first character to the
+// end of the last non-blank one. Continuation lines keep their indentation
+// (encoded: stored as typed).
+func yamlBlock(text string, keyStart, v int) (span, bool) {
+	hdr := blockHeader.FindStringIndex(text[v:])
+	if hdr == nil {
+		return span{}, false
+	}
+	indent := 0
+	for j := keyStart; j > 0 && text[j-1] != '\n'; j-- {
+		indent++
+	}
+	i := v + hdr[1]
+	start, end, lines := -1, -1, 0
+	for i < len(text) {
+		le := strings.IndexByte(text[i:], '\n')
+		lineEnd := len(text)
+		if le >= 0 {
+			lineEnd = i + le
+		}
+		line := strings.TrimRight(text[i:lineEnd], "\r")
+		if strings.TrimSpace(line) != "" {
+			ind := len(line) - len(strings.TrimLeft(line, " "))
+			if ind <= indent {
+				break
+			}
+			if start < 0 {
+				start = i + ind
+			}
+			end = i + len(line)
+			lines++
+		}
+		if le < 0 {
+			break
+		}
+		i = lineEnd + 1
+	}
+	if start < 0 || notASecret(strings.TrimSpace(text[start:end]), true) {
+		return span{}, false
+	}
+	return span{start: start, end: end, kind: KindYAMLBlock, rank: rankYAMLBlock, encoded: lines > 1}, true
+}
+
+// prose, fenced
+
+var (
+	// A credential word: a password word (any value with a digit or a
+	// symbol) or a key word (a token-like value); and "credential"
+	// (credentialWords: one more alternative here costs every byte).
+	proseWord = regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])(password|passphrase|passwd|pwd|pass ?code|wachtwoord|passwort|kennwort|` +
+		`contraseña|contrasena|senha|mot de passe|lösenord|losenord|salasana|hasło|haslo|пароль|` +
+		`(?:api|access|secret|private|auth|bot|app|client|deploy|personal access|github|gitlab|npm|hf|openai)[ _-]?(?:key|token)|` +
+		`key|token|secret)`)
+	// What joins the word and its value: a copula ("is", "was set to",
+	// "has been changed to", "is now"), a colon or a blank; or "for the
+	// database" and then a copula or a colon.
+	proseCopula = `(?:[ \t]+((?:is|was|has been|had been|will be)(?: (?:set|changed|reset|updated) to| now)?|` +
+		`=|->|→|to|ist|est|es|er|är|on|je):?[ \t]+|[ \t]*[:=][ \t]*)`
+	proseLink = regexp.MustCompile(`(?i)^(?:` + proseCopula + `|[ \t]+)`)
+	proseFor  = regexp.MustCompile(`(?i)^[ \t]+(?:for|of|voor|für|pour|para)(?:[ \t]+[^\s.,;:!?"'` + "`" + `]{1,40}){1,4}?` + proseCopula)
+	// A few words more (after a comma too), then a copula or a colon and a
+	// quote.
+	proseGap = regexp.MustCompile(`(?i)^(,?(?:[ \t]+[^\s.!?:="'` + "`" + `“‘«„]{1,40}){1,10}?)` + proseCopula + "[\"'`“‘«„]")
+	fence    = regexp.MustCompile("^```[\\w.+-]*[ \t]*\r?\n")
+)
+
+// gapNouns name what a password has rather than what it is ("the password
+// field is "required"" names no password); a copula in the gap says
+// something else of it ("the key is only ever sent to "…"").
+var gapNouns = map[string]bool{"is": true, "was": true, "are": true, "were": true,
+	"field": true, "policy": true, "rule": true, "rules": true, "requirement": true,
+	"requirements": true, "validation": true, "message": true, "error": true, "label": true, "hint": true,
+	"placeholder": true, "prompt": true, "column": true, "parameter": true, "param": true, "variable": true, "name": true,
+	"hash": true, "length": true, "format": true, "pattern": true, "regex": true, "setting": true, "settings": true,
+	"option": true, "flag": true, "attribute": true, "type": true, "input": true, "reset": true, "expiry": true,
+	"expiration": true, "strength": true, "complexity": true, "file": true, "path": true, "env": true, "header": true,
+	"endpoint": true, "url": true, "scope": true, "prefix": true, "suffix": true, "example": true, "template": true,
+	"result": true, "check": true, "status": true, "state": true, "mode": true, "comparison": true, "identifier": true,
+	"id": true, "algorithm": true, "encoding": true, "count": true, "score": true, "rating": true, "level": true}
+
+// gapLeads may follow a credential word that is its sentence's subject, as
+// does a participle (…ed) or a comma: a preposition, a determiner, a
+// pronoun or an adverb ("the password in these quotes", "the password the
+// job uses", "the token we rotated", "the password now"). Any other word
+// makes the credential word a modifier of another noun ("the password
+// comparison result is", "the password check is"): what is quoted after it
+// is that noun's (review T2).
+var gapLeads = map[string]bool{"for": true, "of": true, "in": true, "on": true, "at": true, "by": true, "to": true,
+	"from": true, "with": true, "within": true, "inside": true, "into": true, "as": true, "via": true, "under": true,
+	"after": true, "before": true, "behind": true, "between": true, "through": true, "per": true, "voor": true,
+	"für": true, "pour": true, "para": true, "de": true, "van": true, "von": true, "du": true, "del": true,
+	"the": true, "a": true, "an": true, "this": true, "that": true, "these": true, "those": true, "my": true, "our": true,
+	"your": true, "their": true, "his": true, "her": true, "its": true, "i": true, "we": true, "you": true, "they": true,
+	"he": true, "she": true, "it": true, "which": true, "who": true, "whose": true, "someone": true,
+	"now": true, "currently": true, "here": true, "there": true, "again": true, "also": true, "still": true,
+	"actually": true, "really": true, "originally": true, "previously": true, "today": true, "then": true,
+	"finally": true, "just": true, "including": true, "containing": true, "ending": true, "starting": true,
+	"beginning": true, "using": true, "following": true, "given": true, "chosen": true, "written": true,
+	"taken": true, "hidden": true, "shown": true, "known": true, "sent": true, "set": true, "kept": true, "put": true,
+	"got": true, "gotten": true, "stolen": true, "made": true, "built": true, "found": true, "held": true, "read": true}
+
+// subjectLead reports a gap's first word (or a comma) after which the
+// credential word is the subject (gapLeads).
+func subjectLead(gap string) bool {
+	if strings.HasPrefix(gap, ",") {
+		return true
+	}
+	f := strings.Fields(gap)
+	if len(f) == 0 {
+		return false
+	}
+	w := strings.ToLower(strings.TrimRight(f[0], ",;"))
+	return gapLeads[w] || len(w) >= 4 && strings.HasSuffix(w, "ed") && !strings.HasSuffix(w, "eed")
+}
+
+// named reports a value that names something rather than being one:
+// letters of one case, in words joined by - _ or . (invalid-password,
+// not-found, DB_PASSWORD, api.example.test).
+func named(v string) bool {
+	lower, upper := false, false
+	for _, r := range v {
+		switch {
+		case unicode.IsLower(r):
+			lower = true
+		case unicode.IsUpper(r):
+			upper = true
+		case !strings.ContainsRune("-_.", r):
+			return false
+		}
+	}
+	return lower != upper
+}
+
+func isPasswordWord(w string) bool {
+	w = strings.ToLower(w)
+	return !strings.Contains(w, "key") && !strings.Contains(w, "token") && w != "secret" && !strings.HasPrefix(w, "credential")
+}
+
+func proseSpans(text string, refs []span) []span {
+	var words [][2]int
+	for _, m := range proseWord.FindAllStringSubmatchIndex(text, -1) {
+		words = append(words, [2]int{m[2], m[3]})
+	}
+	var out []span
+	for _, w := range append(words, credentialWords(text)...) {
+		word := text[w[0]:w[1]]
+		if r, _ := utf8.DecodeRuneInString(text[w[1]:]); w[1] < len(text) && isWordRune(r) {
+			continue // a longer word
+		}
+		if publicKeyBefore(text, w[0]) {
+			continue
+		}
+		if sp, ok := fencedAfter(text, w[1]); ok {
+			out = append(out, sp)
+			continue
+		}
+		if sp, ok := proseValue(text, w[1], word, refs); ok {
+			out = append(out, sp)
+		} else if sp, ok := proseQuotedAfter(text, w[1], isPasswordWord(word)); ok {
+			out = append(out, sp)
+		}
+	}
+	return out
+}
+
+// credentialWords are the words credential and credentials (Credential,
+// CREDENTIALS), a key word: found apart from proseWord, by their bytes.
+func credentialWords(text string) [][2]int {
+	var out [][2]int
+	for _, tail := range []string{"redential", "REDENTIAL"} {
+		for i := 0; ; {
+			j := strings.Index(text[i:], tail)
+			if j < 0 {
+				break
+			}
+			s, e := i+j-1, i+j+len(tail)
+			i = e
+			if s < 0 || text[s] != 'c' && text[s] != 'C' {
+				continue
+			}
+			if r, _ := utf8.DecodeLastRuneInString(text[:s]); s > 0 && isWordRune(r) {
+				continue
+			}
+			if e < len(text) && (text[e] == 's' || text[e] == 'S') {
+				e++
+			}
+			out = append(out, [2]int{s, e})
+		}
+	}
+	return out
+}
+
+// proseValue is the value after a credential word that ends at i: joined
+// by a copula, a colon or a blank (or "for …" and a copula).
+func proseValue(text string, i int, word string, refs []span) (span, bool) {
+	pw := isPasswordWord(word)
+	l := proseFor.FindStringSubmatchIndex(text[i:])
+	if l == nil {
+		if l = proseLink.FindStringSubmatchIndex(text[i:]); l == nil {
+			return span{}, false
+		}
+	}
+	copula := l[2] >= 0 || strings.ContainsAny(text[i:i+l[1]], ":=")
+	v := i + l[1]
+	if v >= len(text) {
+		return span{}, false
+	}
+	if s, e, ok := quotedAt(text, v); ok {
+		val := text[s:e]
+		if s == e || notASecret(val, true) || !pw && len(val) < 8 ||
+			strings.HasPrefix(strings.ToLower(word), "credential") && !tokenish(val, 8) {
+			return span{}, false
+		}
+		return span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: !pw}, true
+	}
+	e := trimUnquoted(text, v, blankAt(text, v))
+	val := text[v:e]
+	if e <= v || notASecret(val, overlapsAny(v, e, refs)) {
+		return span{}, false
+	}
+	var ok bool
+	switch {
+	case pw && copula:
+		ok = len(val) >= 4 && hasDigitOrSymbol(val)
+	case pw:
+		ok = len(val) >= 6 && hasDigitOrSymbol(val)
+	case copula:
+		ok = tokenish(val, 8)
+	default:
+		ok = len(val) >= 16 && hasLetter(val) && hasDigit(val)
+	}
+	if !ok {
+		return span{}, false
+	}
+	return span{start: v, end: e, kind: KindProse, rank: rankProse, shaped: true}, true
+}
+
+// proseQuotedAfter is a quoted value a few words after a credential word
+// that ends at i, then a copula or a colon ("the password used by the job
+// is «X»", "the password in these quotes, including the last character:
+// "X"", "the literal password, including its punctuation, is «X»"): the
+// bytes between the quotes, shaped like one (no blank; a letter and a digit
+// or a symbol; a key word's token-like; no name: named, credentialKey),
+// only when the credential word is the subject (subjectLead), never after
+// words that name what a password has (gapNouns).
+func proseQuotedAfter(text string, i int, pw bool) (span, bool) {
+	if !quoteAhead(text, i) {
+		return span{}, false
+	}
+	l := proseGap.FindStringSubmatchIndex(text[i:min(len(text), i+proseReach)])
+	if l == nil || !subjectLead(text[i+l[2]:i+l[3]]) {
+		return span{}, false
+	}
+	for _, w := range strings.Fields(text[i+l[2] : i+l[3]]) {
+		if gapNouns[strings.ToLower(strings.Trim(w, ",;()"))] {
+			return span{}, false
+		}
+	}
+	_, n := utf8.DecodeLastRuneInString(text[:i+l[1]])
+	s, e, ok := quotedAt(text, i+l[1]-n)
+	if !ok {
+		return span{}, false
+	}
+	val := text[s:e]
+	if notASecret(val, true) || templated(val) || strings.ContainsAny(val, " \t") || pathLike.MatchString(val) || strings.Contains(val, "://") {
+		return span{}, false
+	}
+	if pw && !(len(val) >= 6 && hasLetter(val) && hasDigitOrSymbol(val)) || !pw && !tokenish(val, 8) || named(val) || credentialKey(val) {
+		return span{}, false
+	}
+	return span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: true}, true
+}
+
+// lineNamed is a sentence that names a line as a credential: "The
+// preceding line is the actual deployment password." The credential word
+// ends the phrase (never "the key to this bug", "the token check").
+var lineNamed = regexp.MustCompile(`(?i)\b(?:(preceding|previous|first|above) line|line above) (?:is|was|holds|contains) (?:the |my |our |an? )?` +
+	`((?:actual |real |exact )?(?:[a-z-]+ ){0,2}?)(password|passphrase|passwd|token|secret|key|credential)s?[ \t]*(?:[.!;:,]|\r?\n|$)`)
+
+// lineSpans are the lines of one value a sentence names (lineNamed): the
+// line before the sentence's (the text's first, for "first line"), its
+// blanks off, shaped like a value (a key word's token-like, a password
+// word's with a digit or a symbol) and no code (review T3). A key, token,
+// secret or credential word needs a word before it ("the actual token",
+// "our API key", never bare "the key").
+func lineSpans(text, lower string, refs []span) []span {
+	if !strings.Contains(lower, "line ") {
+		return nil
+	}
+	var out []span
+	for _, m := range lineNamed.FindAllStringSubmatchIndex(text, -1) {
+		end := strings.LastIndexByte(text[:m[0]], '\n') // the line before the sentence's ends here
+		if m[2] >= 0 && strings.EqualFold(text[m[2]:m[3]], "first") {
+			end = strings.IndexByte(text, '\n')
+		}
+		for end > 0 && strings.TrimSpace(text[strings.LastIndexByte(text[:end], '\n')+1:end]) == "" {
+			end = strings.LastIndexByte(text[:end], '\n') // blank lines between
+		}
+		if end <= 0 {
+			continue
+		}
+		s, e := strings.LastIndexByte(text[:end], '\n')+1, end
+		for s < e && isSpace(text[s]) {
+			s++
+		}
+		for e > s && isSpace(text[e-1]) {
+			e--
+		}
+		v := text[s:e]
+		if s >= e || strings.ContainsAny(v, " \t") || notASecret(v, overlapsAny(s, e, refs)) || templated(v) || len(v) < 6 {
+			continue
+		}
+		if pw := isPasswordWord(text[m[6]:m[7]]); pw && !hasDigitOrSymbol(v) || !pw && (m[4] == m[5] || !tokenish(v, 8)) {
+			continue
+		}
+		out = append(out, span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: true})
+	}
+	return out
+}
+
+// proseReach bounds what proseGap reads after a word: ten words and a
+// copula.
+const proseReach = 512
+
+// quoteAhead reports an opening quote proseGap may reach from i on its line,
+// so that it runs only then.
+func quoteAhead(text string, i int) bool {
+	ahead := text[i:min(len(text), i+proseReach)]
+	if n := strings.IndexByte(ahead, '\n'); n >= 0 {
+		ahead = ahead[:n]
+	}
+	for _, c := range []byte{'"', '\'', '`', 0xC2, 0xE2} { // « is C2 AB; “ ‘ „ are E2 80 …
+		if strings.IndexByte(ahead, c) >= 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' }
+
+// publicKeyBefore reports "public" just before the word at i (a public key
+// is not a secret).
+func publicKeyBefore(text string, i int) bool {
+	before := strings.ToLower(text[max(0, i-24):i])
+	return strings.Contains(before, "public")
+}
+
+// fencedAfter is a code fence of one value right after a credential word's
+// line that ends in a colon ("API token:\n```\nvalue\n```"): its content,
+// lines kept, when it holds no blank and at most 8 lines.
+func fencedAfter(text string, i int) (span, bool) {
+	le := strings.IndexByte(text[i:], '\n')
+	if le < 0 {
+		return span{}, false
+	}
+	if !strings.HasSuffix(strings.TrimRight(text[i:i+le], " \t\r"), ":") {
+		return span{}, false
+	}
+	j := i + le + 1
+	f := fence.FindStringIndex(text[j:])
+	if f == nil {
+		return span{}, false
+	}
+	s := j + f[1]
+	c := strings.Index(text[s:], "```")
+	if c < 0 {
+		return span{}, false
+	}
+	e := s + c
+	for e > s && (text[e-1] == '\n' || text[e-1] == '\r') {
+		e--
+	}
+	body := text[s:e]
+	if body == "" || strings.ContainsAny(body, " \t") || strings.Count(body, "\n") >= 8 || notASecret(body, true) {
+		return span{}, false
+	}
+	return span{start: s, end: e, kind: KindFenced, rank: rankFenced}, true
+}
+
+// repeats are the other exact occurrences of the found values that have a
+// digit, a symbol or 16 bytes, each on a word boundary and outside every
+// span already found.
+func repeats(text string, found []span) []span {
+	var out []span
+	seen := map[string]bool{}
+	for _, f := range found {
+		v := text[f.start:f.end]
+		if seen[v] || len(v) < 6 || !(hasDigitOrSymbol(v) || len(v) >= 16) || isDigits(v) {
+			continue
+		}
+		seen[v] = true
+		for i := 0; ; {
+			j := strings.Index(text[i:], v)
+			if j < 0 {
+				break
+			}
+			s, e := i+j, i+j+len(v)
+			i = s + 1
+			if wordAt(text, s-1) && wordAt(text, s) || wordAt(text, e-1) && wordAt(text, e) {
+				continue
+			}
+			if !overlapsAny(s, e, found) && !overlapsAny(s, e, out) {
+				out = append(out, span{start: s, end: e, kind: KindRepeat, rank: rankRepeat})
+			}
+		}
+	}
+	return out
+}
+
+func wordAt(text string, i int) bool {
+	if i < 0 || i >= len(text) {
+		return false
+	}
+	c := text[i]
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+func overlapsAny(s, e int, ss []span) bool {
+	for _, x := range ss {
+		if s < x.end && x.start < e {
+			return true
+		}
+	}
+	return false
+}
+
+// credentialKey reports a credential-like name: its last part (split at
+// separators and camelCase) is a password, secret, token or auth word, or
+// a key with a qualifying part before it (api_key, accessKey, …), or ends in
+// password, passwd, passphrase, token or secret (PGPASSWORD, authtoken).
+func credentialKey(name string) bool {
+	parts := nameParts(name)
+	if len(parts) == 0 {
+		return false
+	}
+	last := parts[len(parts)-1]
+	switch last {
+	case "password", "passwd", "pwd", "pass", "passphrase", "pw", "secret", "token", "auth", "apikey", "accesskey",
+		"secretkey", "privatekey", "authkey":
+		return true
+	case "key":
+		if len(parts) > 1 && keyQualifier[parts[len(parts)-2]] {
+			return true
+		}
+	}
+	for _, suf := range []string{"password", "passwd", "passphrase", "token", "secret"} {
+		if strings.HasSuffix(last, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+var keyQualifier = map[string]bool{"api": true, "access": true, "secret": true, "private": true, "client": true, "auth": true,
+	"encryption": true, "signing": true, "master": true, "app": true, "account": true, "service": true, "license": true,
+	"sas": true, "storage": true, "subscription": true, "admin": true, "session": true, "shared": true, "consumer": true,
+	"webhook": true, "deploy": true, "ssh": true, "pgp": true, "gpg": true, "jwt": true, "hmac": true}
+
+// nameParts splits a name into lowercase parts at non-alphanumerics and
+// camelCase (APIKey: api, key).
+func nameParts(name string) []string {
+	var parts []string
+	var cur []rune
+	rs := []rune(name)
+	flush := func() {
+		if len(cur) > 0 {
+			parts = append(parts, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	for i, r := range rs {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			flush()
+			continue
+		}
+		if i > 0 && unicode.IsUpper(r) && len(cur) > 0 {
+			prev := rs[i-1]
+			if unicode.IsLower(prev) || unicode.IsDigit(prev) ||
+				(unicode.IsUpper(prev) && i+1 < len(rs) && unicode.IsLower(rs[i+1])) {
+				flush()
+			}
+		}
+		cur = append(cur, r)
+	}
+	flush()
+	return parts
+}
+
+// Value classes.
+
+var (
+	templateRef = regexp.MustCompile(`^\$(?:[A-Za-z_{(]|\d)|\{\{.*\}\}|^%\(?[A-Za-z_]\w*\)?[%s]?$|^<[^<>\n]*>$|^\{[A-Za-z_]\w*\}$`)
+	codeCall    = regexp.MustCompile(`^[A-Za-z_][\w.]*(?:\([^()]*\)|\[[^\[\]]*\])$`)
+	dottedName  = regexp.MustCompile(`^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+(?:\(\))?$`)
+	pathLike    = regexp.MustCompile(`^(?:~|\.{1,2})?/[\w.\-/@]*$`)
+	xMask       = regexp.MustCompile(`^[xX]{3,}(?:[-_.: ][xX]{3,})*$`)
+	placeholder = regexp.MustCompile(`(?i)^your[-_ ]|[-_ ]here$|^(?:replace|insert|enter)[-_ ]|^(?:todo|tbd|fixme|redacted|\[redacted\]|hidden|masked|none|null|nil|undefined|true|false|yes|no|on|off|n/a)$`)
+	sshPublic   = regexp.MustCompile(`^(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-|sk-ssh-|sk-ecdsa-)`)
+)
+
+// notASecret reports a value that is no secret: a template or reference,
+// code, a redaction or placeholder, a path or a public key (the bridge's
+// own file references are Scan's to leave out, by their exact bytes).
+// literal: it is no code, as it was between quotes (a dotted name is then
+// a literal) or runs into an own reference (its range overlaps one masked:
+// PASSWORD=[…]eyJ….eyJ….sig), never because of the bytes it holds.
+func notASecret(v string, literal bool) bool {
+	switch {
+	case strings.TrimSpace(v) == "":
+		return true
+	case templateRef.MatchString(v), placeholder.MatchString(v), xMask.MatchString(v), sshPublic.MatchString(v):
+		return true
+	case strings.Contains(v, "***"), strings.Contains(v, "•••"), strings.Contains(v, "…"), strings.Trim(v, ".") == "":
+		return true
+	case strings.Contains(strings.ToLower(v), "redacted"):
+		return true
+	case strings.HasPrefix(v, "process.env"), strings.HasPrefix(v, "import.meta.env"), strings.HasPrefix(v, "os.environ"):
+		return true
+	}
+	if !literal {
+		if codeCall.MatchString(v) || dottedName.MatchString(v) || (pathLike.MatchString(v) && strings.Contains(v, "/")) {
+			return true
+		}
+	}
+	return false
+}
+
+// tokenish reports a token-like value: at least n bytes, no blank, a
+// letter, and a digit (or both cases over 20 bytes: not a CamelCase name).
+func tokenish(v string, n int) bool {
+	if len(v) < n || !hasLetter(v) || strings.ContainsAny(v, " \t\r\n") {
+		return false
+	}
+	if hasDigit(v) {
+		return true
+	}
+	upper, lower := false, false
+	for _, r := range v {
+		upper = upper || unicode.IsUpper(r)
+		lower = lower || unicode.IsLower(r)
+	}
+	return upper && lower && len(v) >= 20
+}
+
+func hasLetter(v string) bool { return strings.IndexFunc(v, unicode.IsLetter) >= 0 }
+func hasDigit(v string) bool  { return strings.IndexFunc(v, unicode.IsDigit) >= 0 }
+
+func hasDigitOrSymbol(v string) bool {
+	return strings.IndexFunc(v, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsSpace(r) }) >= 0
+}
+
+func isDigits(v string) bool {
+	return strings.IndexFunc(v, func(r rune) bool { return r < '0' || r > '9' }) < 0
+}
+
+func isSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'
+}

@@ -341,6 +341,12 @@ func (h *Hub) fireSchedule(ctx context.Context, s store.Schedule, now time.Time)
 		proto.WorkerHireArgs
 	}{s.ID, a})}
 	sid := s.ID
+	// #108 round 2: with prompt secrets reviewed, the stored prompt goes
+	// only as its review left it (runHire checks it before anything else).
+	var sec *hireSecrets
+	if h.ps.enabled && s.Prompt != "" {
+		sec = &hireSecrets{rev: h.ps.rev, stored: &storedPrompt{text: s.Prompt, record: s.SecretsReview}}
+	}
 	err := h.beginHire(ctx, h.sc.client, cmd, a, nil, nil, &hireWatch{
 		begun: func(ctx context.Context, id string) error {
 			s.State, s.StateReason, s.FiredAt, s.WorkerID = store.ScheduleRunning, "", now.UnixMilli(), id
@@ -350,7 +356,7 @@ func (h *Hub) fireSchedule(ctx context.Context, s store.Schedule, now time.Time)
 		settled: func(ctx context.Context, id string, res *proto.HireResult, err error) {
 			h.scheduleSettled(ctx, sid, id, res, err)
 		},
-	})
+	}, sec)
 	if err != nil {
 		fail(err.Error()) // s as begun left it, if it ran
 	}
@@ -435,18 +441,92 @@ func (h *Hub) schedulePrompt(s store.Schedule, now time.Time) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// startSchedule runs the schedule.* commands (hub goroutine).
+// startSchedule runs the schedule.* commands (hub goroutine). #108 round
+// 2: with prompt secrets reviewed, a create's or an update's prompt is
+// scanned first (off the hub goroutine): stored only when nothing was
+// found or its review leaves every candidate as typed, with that record.
+// A retry or a run now may carry such a review of the stored prompt (review
+// B4: the way out of a fire its check failed): its record is kept, then it
+// fires.
 func (h *Hub) startSchedule(ctx context.Context, c *Client, cmd proto.Command) error {
-	s, err := h.scheduleCommand(ctx, cmd)
-	if err != nil {
+	end := func(ctx context.Context, record *string) error {
+		s, err := h.scheduleCommand(ctx, cmd, record)
+		if err != nil {
+			return err
+		}
+		h.audit(ctx, c, cmd, nil)
+		h.reply(c, cmd, scheduleView(s), nil)
+		return nil
+	}
+	var spec proto.ScheduleSpec
+	switch cmd.T {
+	case proto.CmdScheduleCreate:
+		if err := decodeArgs(cmd.Args, &spec); err != nil {
+			return err
+		}
+	case proto.CmdScheduleUpdate:
+		var a proto.ScheduleUpdateArgs
+		if err := decodeArgs(cmd.Args, &a); err != nil {
+			return err
+		}
+		spec = a.ScheduleSpec
+	default:
+		var a proto.ScheduleArgs
+		if err := decodeArgs(cmd.Args, &a); err != nil {
+			return err
+		}
+		s, ok := h.sc.all[a.ID]
+		switch {
+		case a.Secrets != nil && cmd.T != proto.CmdScheduleRetry && cmd.T != proto.CmdScheduleRunNow:
+			return bad("secrets is for %s and %s only", proto.CmdScheduleRetry, proto.CmdScheduleRunNow)
+		case a.Secrets == nil || !ok: // the command says why it cannot act
+			return end(ctx, nil)
+		}
+		return h.storedGate(ctx, c, cmd, s.Prompt, a.Secrets, func(ctx context.Context, record *string) error {
+			if cur, ok := h.sc.all[a.ID]; ok && cur.Prompt != s.Prompt {
+				return fmt.Errorf("%w: the schedule's prompt changed while it was reviewed: review it again", errSecretsReviewStale)
+			}
+			return end(ctx, record)
+		})
+	}
+	if !h.gated(spec.Secrets != nil) {
+		return end(ctx, nil)
+	}
+	return h.storedGate(ctx, c, cmd, spec.Prompt, spec.Secrets, end)
+}
+
+// storedGate is a stored prompt through the gate (#108 round 2; hub
+// goroutine): checked off the hub goroutine (storedReview), then end
+// stores it with its record. An empty prompt has nothing to review.
+func (h *Hub) storedGate(ctx context.Context, c *Client, cmd proto.Command, prompt string, review *proto.SecretsReview,
+	end func(ctx context.Context, record *string) error) error {
+	if err := h.stillOn(); err != nil {
 		return err
 	}
-	h.audit(ctx, c, cmd, nil)
-	h.reply(c, cmd, scheduleView(s), nil)
+	if prompt == "" {
+		if review != nil {
+			return fmt.Errorf("%w: a review needs the prompt it is of", errSecretsReviewRequired)
+		}
+		return end(ctx, nil)
+	}
+	if err := scannable(prompt, "prompt"); err != nil {
+		return err
+	}
+	rev := h.ps.rev
+	startGated(h, ctx, c, cmd, rev, func(ctx context.Context) (string, error) {
+		return h.storedReview(ctx, rev, prompt, review)
+	}, func(context.Context, string) {}, func(ctx context.Context, record string) error {
+		return end(ctx, &record)
+	})
 	return nil
 }
 
-func (h *Hub) scheduleCommand(ctx context.Context, cmd proto.Command) (store.Schedule, error) {
+// scheduleCommand runs a schedule.* command (hub goroutine). record (#108)
+// is the record of the review of a create's or an update's prompt, or of a
+// retry's or a run now's stored prompt (nil: none made, as the switch is
+// off or no review came: the schedule keeps the one it had, which matches
+// only the text it was made of).
+func (h *Hub) scheduleCommand(ctx context.Context, cmd proto.Command, record *string) (store.Schedule, error) {
 	now := h.opts.Now()
 	if cmd.T == proto.CmdScheduleCreate {
 		var a proto.ScheduleCreateArgs
@@ -479,6 +559,9 @@ func (h *Hub) scheduleCommand(ctx context.Context, cmd proto.Command) (store.Sch
 		}
 		if err := h.removingRefusal(s.Cwd); err != nil {
 			return store.Schedule{}, err
+		}
+		if record != nil {
+			s.SecretsReview = *record
 		}
 		if err := h.st.AddSchedule(ctx, s); err != nil {
 			return store.Schedule{}, fmt.Errorf("saving the schedule: %w", err)
@@ -548,6 +631,9 @@ func (h *Hub) scheduleCommand(ctx context.Context, cmd proto.Command) (store.Sch
 		if err := h.removingRefusal(s.Cwd); err != nil {
 			return store.Schedule{}, err
 		}
+		if record != nil {
+			s.SecretsReview = *record
+		}
 	case proto.CmdScheduleCancel:
 		s.State, s.StateReason = store.ScheduleCancelled, ""
 	case proto.CmdScheduleDismiss:
@@ -556,6 +642,14 @@ func (h *Hub) scheduleCommand(ctx context.Context, cmd proto.Command) (store.Sch
 		// #63: a retry that waits would hold its worktree again.
 		if cmd.T == proto.CmdScheduleRetry {
 			if err := h.removingRefusal(s.Cwd); err != nil {
+				return store.Schedule{}, err
+			}
+		}
+		// #108 review B4: the review of its stored prompt is kept before it
+		// fires (this fire's check and any later one read it).
+		if record != nil {
+			s.SecretsReview = *record
+			if err := h.saveSchedule(ctx, s); err != nil {
 				return store.Schedule{}, err
 			}
 		}

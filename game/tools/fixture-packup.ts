@@ -239,6 +239,14 @@ export class PackupSim {
     return { score, matched: true, ...cut };
   }
 
+  /** Whether `packup.detect` looks at a prompt to this worker (#108: one it skips reads nothing, so it is not reviewed). */
+  looksAt(id: unknown): boolean {
+    const w = this.h.workers.find((x) => x.id === id);
+    if (!w || !this.h.ai.present) return false;
+    const kind = w.agent_kind ?? '';
+    return this.enabled !== false && this.missing().length === 0 && !FREELANCERS.includes(w.role ?? '') && (kind === 'claude' || kind === 'codex');
+  }
+
   handle(t: unknown, a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): boolean {
     if (t === 'sim.packup_lag') {
       if (typeof a.ms !== 'number' || !(a.ms >= 0)) throw this.h.error('bad_request', 'sim.packup_lag needs ms >= 0');
@@ -294,14 +302,12 @@ export class PackupSim {
         return true;
       }
       default: {
-        // packup.detect
+        // packup.detect (#108: `looksAt` says the same as the skip below)
         const text = typeof a.text === 'string' ? a.text : '';
         if (!text.trim()) throw this.h.error('bad_request', 'bad args: text must be 1-16384 bytes of UTF-8 without NUL');
         const w = this.h.workers.find((x) => x.id === a.id);
         if (!w) throw this.h.error('unknown_worker', `unknown worker: "${String(a.id)}"`);
-        const kind = w.agent_kind ?? '';
-        const skip = this.enabled === false || this.missing().length > 0 || FREELANCERS.includes(w.role ?? '') || (kind !== 'claude' && kind !== 'codex');
-        if (skip) {
+        if (!this.looksAt(w.id)) {
           ack({ matched: false, score: 0 });
           return true;
         }

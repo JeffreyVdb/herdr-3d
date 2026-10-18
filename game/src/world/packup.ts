@@ -83,9 +83,9 @@ export function packupFailureText(code: string, message: string): string {
   return followupFailureText(code, message);
 }
 
-/** How a send through the pack-up check ended: send as written now, done (the task went, the worker goes home after it), or nothing sent. */
-export type PackupOutcome = 'send' | 'done' | 'cancel';
-
-/** The check before a prompt goes out: `signal` aborts it (Esc, the composer closed): nothing is sent then. Null: no
- * check for this prompt (the feature off, a worker it does not apply to): send it at once. */
-export type PackupGate = (id: string, text: string, signal: AbortSignal) => Promise<PackupOutcome> | null;
+/**
+ * How a send through the pack-up check ended: send as written now, done (the task went, the worker goes home after it),
+ * or nothing sent. #108 round 4: or send as written the text the check read (`text`: its protected secrets as
+ * references) with the check's hand-over (`secrets_pending`), which needs no review again (`ui/packupSend.ts`).
+ */
+export type PackupOutcome = 'send' | 'done' | 'cancel' | { handover: string; text: string };

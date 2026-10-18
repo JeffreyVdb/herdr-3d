@@ -27,7 +27,7 @@ import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
 import { hiredToast } from './hiredToast';
-import { HireCoordinator, notPromptedText, type HireCoordinatorHost, type HireOutcome } from './hireCoordinator';
+import { HireCoordinator, notPromptedText, notSentText, type HireCoordinatorHost, type HireOutcome } from './hireCoordinator';
 import type { HireModelPrefs } from './hireModelPrefs';
 import type { HirePrefs } from './hirePrefs';
 import type { TaskLevels } from './taskLevels';
@@ -47,6 +47,7 @@ import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
 import type { Source } from './composer/complete';
 import { CommandCatalogs } from '../laptop/commandCatalog';
 import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
+import { onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './secretsFlow';
 
 /**
  * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
@@ -63,6 +64,8 @@ export interface DialogHost {
   /** #33 `action`: the toast is a control (a held review's "Review again"). */
   toast(msg: string, kind: ToastKind, action?: ToastAction): void;
   now(): number;
+  /** #108: the send flow every composer's text goes through with "Review prompt secrets before sending" on (absent: as today). */
+  secrets?: PromptSecretsFlow;
 }
 
 export interface HireHost extends DialogHost {
@@ -469,8 +472,11 @@ export class HireDialog {
   private hireBtn: HTMLButtonElement | null = null;
   private renderedKey = '';
   private refetching = false;
-  /** #51: what was typed and not hired yet, per desk of a floor (memory, and localStorage where allowed): the text and label. */
-  private readonly drafts = new Drafts('hire');
+  /**
+   * #51: what was typed and not hired yet, per desk of a floor (memory, and localStorage where allowed): the text and
+   * label. #108 round 4: memory only while "Review prompt secrets before sending" is on (it may hold a secret).
+   */
+  private readonly drafts = new Drafts('hire', undefined, () => !this.host.secrets?.on);
   /**
    * The first task's composer draft per desk (text, images, their uploads): kept in memory while the page lives; images do not survive a reload.
    * The entry is also the owner of the desk's stored draft: whoever saves it (a task or label edit, the desk's own draft on open, a move) is registered here.
@@ -478,6 +484,8 @@ export class HireDialog {
   private readonly docs = new Map<string, PromptDraft>();
   /** The last hire attempt stopped on a failed upload: the message stays until every image is uploaded or gone. */
   private uploadFailed = false;
+  /** #108: the opening (`gen`) whose Hire resolves and reviews its first task now: nobody is hired yet, so closing hires nobody. */
+  private reviewing = -1;
   /** The label the user typed (the prepared name is only a default), restored over the prepared one. */
   private typedLabel: string | null = null;
   /** The model filter of a long list; a harness switch clears it. */
@@ -513,6 +521,8 @@ export class HireDialog {
         workerView: (id) => host.store.workerView(id),
         holdTask: (id, text, from) => host.holdTask?.(id, text, from) ?? false,
       });
+    // #108: the switch changed: the drafts leave storage (on), or are written again (off).
+    host.secrets?.onChange(() => this.drafts.persistChanged());
     // Settings changed which models show: an open form follows it (a hire on its way keeps what it sent).
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());
     // #248: so does a change of the task levels, for a hire that asks for one (a plain hire never looks at them).
@@ -530,8 +540,9 @@ export class HireDialog {
       this.editor.closePreview();
     });
     this.dialog.addEventListener('cancel', () => {
-      // Esc while the hire is on its way: the hire still happens; the dialog just goes.
-      if (this.state === 'hiring') this.host.toast('The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
+      // Esc while the hire is on its way: the hire still happens; the dialog just goes. (#108: not before its first task
+      // was reviewed: then nobody is hired.)
+      if (this.state === 'hiring') this.host.toast(this.reviewing === this.gen ? 'Not hired: it was closed before its first task was checked for secrets.' : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
     });
     // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
@@ -546,6 +557,8 @@ export class HireDialog {
       }
       void this.hire();
     });
+    // #108: the first task's review on purpose (Ctrl/⌘+Shift+X, with the switch on), as its "Review secrets".
+    onReviewKey(this.form, () => this.host.secrets, () => void this.hire(true));
     parent.append(this.dialog);
   }
 
@@ -1254,7 +1267,11 @@ export class HireDialog {
     const retry = this.state === 'failed' && !this.host.unsupported('hire.prepare') ? h('button', { class: 'btn', 'data-key': 'retry', onclick: () => this.retry() }, 'Try again') : null;
     const save = this.savePresetButton();
     const hadSave = !!save && document.activeElement?.getAttribute('data-key') === 'save-preset' && this.actions.contains(document.activeElement);
-    this.actions.replaceChildren(...[save, retry, cancel, hire].filter((x): x is HTMLButtonElement => !!x));
+    // #108: the first task's review on purpose (with the switch on), then the hire.
+    const review = reviewButton(this.host.secrets, this.state === 'preparing' ? 'Checking the floor first…' : this.state !== 'ready' ? 'The hire is on its way.' : blocker, () => void this.hire(true), 'first task');
+    const hadReview = document.activeElement?.getAttribute('data-key') === 'review' && this.actions.contains(document.activeElement);
+    this.actions.replaceChildren(...[save, retry, cancel, review, hire].filter((x): x is HTMLButtonElement => !!x));
+    if (hadReview) review?.focus();
     if (hadSave) save?.focus();
     if (had) hire.focus();
   }
@@ -1334,7 +1351,13 @@ export class HireDialog {
     this.editor.focus();
   }
 
-  private async hire(): Promise<void> {
+  /**
+   * Hire: what the form holds goes to the coordinator. #108 round 4: with the switch on (or `manual`, "Review secrets"),
+   * the first task is resolved first (its images uploaded: their paths are in the text `worker.hire` carries) and
+   * reviewed, before the desk is held and before a background hire closes the dialog; the coordinator then sends that
+   * text with its review. Cancel keeps the form as it was.
+   */
+  private async hire(manual = false): Promise<void> {
     if (this.state !== 'ready' || !this.prep) return;
     const blocker = this.blocker();
     if (blocker) {
@@ -1363,9 +1386,71 @@ export class HireDialog {
     this.hiringText = null;
     this.uploadFailed = false;
     const waiting = args.prompt ? doc.snapshot().images.filter((i) => i.status === 'pending' || i.status === 'uploading').length : 0;
+    const flow = this.host.secrets;
+    let reviewed: { text: string; revision: number; secrets: { flow: PromptSecretsFlow; req: { key: string; text: string; target: string }; go: Go } } | null = null;
+    if (manual && !args.prompt) {
+      this.state = 'ready';
+      this.setStatus('Write the first task first, then review its secrets.', true);
+      this.render();
+      return;
+    }
+    // No first task: nothing to review, hired as today.
+    if (flow && (flow.on || manual) && args.prompt) {
+      this.setStatus(waiting ? `Uploading ${waiting === 1 ? 'the image' : `${waiting} images`}, then looking for secrets in the first task…` : manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the first task…');
+      this.render();
+      const still = () => this.dialog.open && gen === this.gen;
+      this.reviewing = gen;
+      const res = await doc.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES - added });
+      if (!still()) return;
+      if (!res.ok) {
+        this.reviewing = -1;
+        this.state = 'ready';
+        this.resolveForm();
+        this.uploadFailed = res.reason === 'upload';
+        this.setStatus(notSentText(res, '', added), true);
+        this.render();
+        return;
+      }
+      const req = { key: `hire:${floor}:${desk}`, text: res.text, target: `${who} at Desk ${desk + 1}`, manual };
+      // (Closed meanwhile: no review opens for it. The coordinator's copy has no `live`: a background hire closes this.)
+      const out = await flow.review({ ...req, live: still });
+      if (this.reviewing === gen) this.reviewing = -1;
+      if (!still()) return;
+      if (out.kind === 'kept') {
+        this.state = 'ready';
+        this.resolveForm();
+        this.setStatus(out.why === 'cancel' ? 'Not hired: the first task is still here.' : out.message, out.why === 'failed');
+        this.render();
+        this.editor.focus();
+        return;
+      }
+      reviewed = { text: res.text, revision: res.revision, secrets: { flow, req, go: out } };
+    }
+    return this.hireNow(floor, desk, args, who, gen, revision, opening, background, sent, doc, added, waiting, reviewed);
+  }
+
+  /** The hire, once its first task was reviewed (`reviewed`: its resolved text and review; null: as the form has it). */
+  private async hireNow(
+    floor: string,
+    desk: number,
+    args: CommandArgs['worker.hire'],
+    who: string,
+    gen: number,
+    revision: number,
+    opening: number,
+    background: boolean,
+    sent: { text: string; fields?: Record<string, string> },
+    doc: PromptDraft,
+    added: number,
+    waiting: number,
+    reviewed: { text: string; revision: number; secrets: { flow: PromptSecretsFlow; req: { key: string; text: string; target: string }; go: Go } } | null,
+  ): Promise<void> {
+    if (reviewed) revision = reviewed.revision;
     // The desk is held from here, the images go up, then `worker.hire` (the coordinator); the draft is read now.
     const op = this.hires.start(
-      { key: `hire:${this.id}:${gen}`, floor, where: this.floorName(), desk, args, who, prompt: args.prompt ? doc : null, background, ...(added ? { added } : {}) },
+      reviewed
+        ? { key: `hire:${this.id}:${gen}`, floor, where: this.floorName(), desk, args: { ...args, prompt: reviewed.text }, who, prompt: null, background, secrets: reviewed.secrets, ...(added ? { added } : {}) }
+        : { key: `hire:${this.id}:${gen}`, floor, where: this.floorName(), desk, args, who, prompt: args.prompt ? doc : null, background, ...(added ? { added } : {}) },
       {
         hiring: (sentArgs) => {
           // (The dialog may have been closed, even reopened for another desk, while the images went up: then it is not ours to touch.)
@@ -1394,7 +1479,7 @@ export class HireDialog {
       }
       return;
     }
-    if (op.phase === 'uploading') {
+    if (op.phase === 'uploading' && !reviewed) {
       this.setStatus(waiting ? `Uploading ${waiting === 1 ? 'the image' : `${waiting} images`} for ${who}…` : `Preparing ${who}’s first task…`);
       this.render();
     }

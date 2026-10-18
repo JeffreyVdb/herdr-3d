@@ -1,0 +1,224 @@
+[
+  {
+    "id": "env-quoted-1",
+    "family": "env-quoted",
+    "group": "challenge",
+    "text": "SERVICE_PASSWORD=\"Ph9PCqNM2kpkq!\"\nRun the importer.",
+    "expected": [
+      [
+        18,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "clean-01-1-no-identifier",
+    "family": "clean-01",
+    "group": "negative",
+    "text": "The password is correct. Explain the authentication flow.",
+    "expected": []
+  },
+  {
+    "id": "clean-02-1-no-identifier",
+    "family": "clean-02",
+    "group": "negative",
+    "text": "The password is at least 12 characters long.",
+    "expected": []
+  },
+  {
+    "id": "clean-03-1-no-identifier",
+    "family": "clean-03",
+    "group": "negative",
+    "text": "The API key is rotated every 30 days.",
+    "expected": []
+  },
+  {
+    "id": "clean-04-1-no-identifier",
+    "family": "clean-04",
+    "group": "negative",
+    "text": "The password is stored in a 0600 file.",
+    "expected": []
+  },
+  {
+    "id": "clean-05-1-no-identifier",
+    "family": "clean-05",
+    "group": "negative",
+    "text": "Set password=\"<REDACTED>\" in the example.",
+    "expected": []
+  },
+  {
+    "id": "clean-06-1-no-identifier",
+    "family": "clean-06",
+    "group": "negative",
+    "text": "password: ${DATABASE_PASSWORD}",
+    "expected": []
+  },
+  {
+    "id": "clean-07-1-no-identifier",
+    "family": "clean-07",
+    "group": "negative",
+    "text": "password: \"${DATABASE_PASSWORD}\"",
+    "expected": []
+  },
+  {
+    "id": "clean-08-1-no-identifier",
+    "family": "clean-08",
+    "group": "negative",
+    "text": "password: \"{{ vault.database_password }}\"",
+    "expected": []
+  },
+  {
+    "id": "clean-09-1-no-identifier",
+    "family": "clean-09",
+    "group": "negative",
+    "text": "password: \"[REDACTED]\"",
+    "expected": []
+  },
+  {
+    "id": "clean-10-1-no-identifier",
+    "family": "clean-10",
+    "group": "negative",
+    "text": "password: \"********\"",
+    "expected": []
+  },
+  {
+    "id": "clean-11-1-no-identifier",
+    "family": "clean-11",
+    "group": "negative",
+    "text": "password: \"REPLACE_ME\"",
+    "expected": []
+  },
+  {
+    "id": "clean-12-1-no-identifier",
+    "family": "clean-12",
+    "group": "negative",
+    "text": "password: \"your-password-here\"",
+    "expected": []
+  },
+  {
+    "id": "clean-13-1-no-identifier",
+    "family": "clean-13",
+    "group": "negative",
+    "text": "password: \"changeme\" # documentation placeholder",
+    "expected": []
+  },
+  {
+    "id": "clean-14-1-no-identifier",
+    "family": "clean-14",
+    "group": "negative",
+    "text": "The example API key is \"YOUR_API_KEY\".",
+    "expected": []
+  },
+  {
+    "id": "clean-15-1-no-identifier",
+    "family": "clean-15",
+    "group": "negative",
+    "text": "api_key=\"example-token-do-not-use\" in the docs.",
+    "expected": []
+  },
+  {
+    "id": "clean-16-1-no-identifier",
+    "family": "clean-16",
+    "group": "negative",
+    "text": "api_key: process.env.SERVICE_API_KEY",
+    "expected": []
+  },
+  {
+    "id": "clean-17-1-no-identifier",
+    "family": "clean-17",
+    "group": "negative",
+    "text": "api_key: os.environ[\"SERVICE_API_KEY\"]",
+    "expected": []
+  },
+  {
+    "id": "clean-18-1-no-identifier",
+    "family": "clean-18",
+    "group": "negative",
+    "text": "PASSWORD_FILE=/run/user/1000/credential-file",
+    "expected": []
+  },
+  {
+    "id": "clean-19-1-no-identifier",
+    "family": "clean-19",
+    "group": "negative",
+    "text": "The password is in /run/user/1000/credential-file.",
+    "expected": []
+  },
+  {
+    "id": "clean-20-1-no-identifier",
+    "family": "clean-20",
+    "group": "negative",
+    "text": "Use https://service.example.test?access_token=YOUR_TOKEN",
+    "expected": []
+  },
+  {
+    "id": "clean-21-1-no-identifier",
+    "family": "clean-21",
+    "group": "negative",
+    "text": "The access token is response.access_token.",
+    "expected": []
+  },
+  {
+    "id": "clean-22-1-no-identifier",
+    "family": "clean-22",
+    "group": "negative",
+    "text": "The secret is 42 lines long, according to the old documentation.",
+    "expected": []
+  },
+  {
+    "id": "clean-23-1-no-identifier",
+    "family": "clean-23",
+    "group": "negative",
+    "text": "The password is a 16-character random string.",
+    "expected": []
+  },
+  {
+    "id": "clean-24-1-no-identifier",
+    "family": "clean-24",
+    "group": "negative",
+    "text": "The API key is not provided. Ask the operator.",
+    "expected": []
+  },
+  {
+    "id": "clean-25-1-no-identifier",
+    "family": "clean-25",
+    "group": "negative",
+    "text": "password = getPassword()",
+    "expected": []
+  },
+  {
+    "id": "clean-26-1-no-identifier",
+    "family": "clean-26",
+    "group": "negative",
+    "text": "const client_secret = settings.clientSecret;",
+    "expected": []
+  },
+  {
+    "id": "clean-27-1-no-identifier",
+    "family": "clean-27",
+    "group": "negative",
+    "text": "Do not rename client_secret or api_key in the schema.",
+    "expected": []
+  },
+  {
+    "id": "clean-28-1-no-identifier",
+    "family": "clean-28",
+    "group": "negative",
+    "text": "Use the public SSH key from the authorized_keys file.",
+    "expected": []
+  },
+  {
+    "id": "clean-29-1-no-identifier",
+    "family": "clean-29",
+    "group": "negative",
+    "text": "Authorization: Bearer ${ACCESS_TOKEN}",
+    "expected": []
+  },
+  {
+    "id": "clean-30-1-no-identifier",
+    "family": "clean-30",
+    "group": "negative",
+    "text": "Use postgres://user:password@localhost only as a documentation template.",
+    "expected": []
+  }
+]

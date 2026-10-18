@@ -1,0 +1,10314 @@
+{
+  "meta": {
+    "model": "knowledgator/gliner-pii-edge-v1.0",
+    "revision": "9b7f39b0a2da971a5beea78d35f1539d4009c891",
+    "artifact": "onnx/model.onnx",
+    "artifact_sha256": "4ca588722e6d79447ad4c9c230eeba3d9d472c672a9598184a34e9f77fc35836",
+    "corpus_sha256": "34a5db426c13c6030ca6b3813c729fc05f73385458d62e42f1bc16cfe582afd4",
+    "labels": [
+      "password",
+      "api key",
+      "access token",
+      "private key",
+      "client secret"
+    ],
+    "threads": 4,
+    "inter_op_threads": 1,
+    "chunk_size": 160,
+    "chunk_overlap": 32,
+    "repeats": 3,
+    "probe_sha256": "b5e774ccda42dd5f56b6e13dfe6c2e730493d1f1b74329473741a64fcbcc41d3",
+    "versions": {
+      "gliner": "0.2.29",
+      "onnxruntime": "1.31.0",
+      "torch": "2.14.1+cpu",
+      "transformers": "5.16.1"
+    }
+  },
+  "load_seconds": 5.185296499024844,
+  "proc_peak_rss_mib": 834.55078125,
+  "raw": {
+    "env-quoted-1": [
+      {
+        "start": 18,
+        "end": 31,
+        "text": "Ph9PCqNM2kpkq",
+        "label": "client secret",
+        "score": 0.669198751449585
+      },
+      {
+        "start": 31,
+        "end": 32,
+        "text": "!",
+        "label": "password",
+        "score": 0.37779223918914795
+      }
+    ],
+    "env-quoted-2": [
+      {
+        "start": 0,
+        "end": 16,
+        "text": "SERVICE_PASSWORD",
+        "label": "password",
+        "score": 0.3247900605201721
+      },
+      {
+        "start": 18,
+        "end": 31,
+        "text": "x79L9jzoga0We",
+        "label": "client secret",
+        "score": 0.6823807954788208
+      },
+      {
+        "start": 31,
+        "end": 32,
+        "text": "!",
+        "label": "client secret",
+        "score": 0.5091853737831116
+      }
+    ],
+    "env-quoted-3": [
+      {
+        "start": 18,
+        "end": 31,
+        "text": "lNQzk39mPFYiq",
+        "label": "client secret",
+        "score": 0.6983309388160706
+      },
+      {
+        "start": 31,
+        "end": 32,
+        "text": "!",
+        "label": "password",
+        "score": 0.4035862386226654
+      }
+    ],
+    "env-unquoted-1": [
+      {
+        "start": 25,
+        "end": 56,
+        "text": "SRlyEUBuqC6juuNOVRLDEwMLDmNO22i",
+        "label": "password",
+        "score": 0.6002788543701172
+      }
+    ],
+    "env-unquoted-2": [
+      {
+        "start": 25,
+        "end": 56,
+        "text": "MJon6D4MA9eW1B9TfKrhmApBqexlC9Z",
+        "label": "password",
+        "score": 0.6904560923576355
+      }
+    ],
+    "env-unquoted-3": [
+      {
+        "start": 25,
+        "end": 56,
+        "text": "Rhpzcf9D8DsdWbrdfQqSlvfH7AamGIU",
+        "label": "password",
+        "score": 0.6124187707901001
+      }
+    ],
+    "json-1": [
+      {
+        "start": 25,
+        "end": 37,
+        "text": "qFYY59kiYH5#",
+        "label": "password",
+        "score": 0.7456941604614258
+      },
+      {
+        "start": 46,
+        "end": 47,
+        "text": "4",
+        "label": "private key",
+        "score": 0.4464535713195801
+      }
+    ],
+    "json-2": [
+      {
+        "start": 25,
+        "end": 37,
+        "text": "gbXPKvOsMta#",
+        "label": "password",
+        "score": 0.7382259964942932
+      },
+      {
+        "start": 46,
+        "end": 47,
+        "text": "4",
+        "label": "private key",
+        "score": 0.4389258027076721
+      }
+    ],
+    "json-3": [
+      {
+        "start": 25,
+        "end": 37,
+        "text": "IzYVY9IE4cM#",
+        "label": "password",
+        "score": 0.7623268365859985
+      },
+      {
+        "start": 46,
+        "end": 47,
+        "text": "4",
+        "label": "private key",
+        "score": 0.4382369816303253
+      }
+    ],
+    "yaml-1": [
+      {
+        "start": 26,
+        "end": 36,
+        "text": "bUYStq5tB!",
+        "label": "client secret",
+        "score": 0.5491250157356262
+      },
+      {
+        "start": 46,
+        "end": 48,
+        "text": "db",
+        "label": "private key",
+        "score": 0.3605296015739441
+      }
+    ],
+    "yaml-2": [
+      {
+        "start": 26,
+        "end": 35,
+        "text": "TcxcEx41i",
+        "label": "client secret",
+        "score": 0.5831643342971802
+      },
+      {
+        "start": 46,
+        "end": 48,
+        "text": "db",
+        "label": "private key",
+        "score": 0.35920217633247375
+      },
+      {
+        "start": 49,
+        "end": 57,
+        "text": "internal",
+        "label": "private key",
+        "score": 0.30098628997802734
+      }
+    ],
+    "yaml-3": [
+      {
+        "start": 26,
+        "end": 36,
+        "text": "caNVz9UTY!",
+        "label": "password",
+        "score": 0.5715199708938599
+      },
+      {
+        "start": 46,
+        "end": 48,
+        "text": "db",
+        "label": "private key",
+        "score": 0.37488386034965515
+      }
+    ],
+    "prose-1": [
+      {
+        "start": 27,
+        "end": 41,
+        "text": "hvV8ti8OK31JDS",
+        "label": "client secret",
+        "score": 0.5785084962844849
+      },
+      {
+        "start": 41,
+        "end": 42,
+        "text": "!",
+        "label": "password",
+        "score": 0.3132458031177521
+      }
+    ],
+    "prose-2": [
+      {
+        "start": 27,
+        "end": 42,
+        "text": "m0KB2ds1VMoPeb!",
+        "label": "password",
+        "score": 0.5660405158996582
+      }
+    ],
+    "prose-3": [
+      {
+        "start": 27,
+        "end": 41,
+        "text": "dFmevV0749u0nr",
+        "label": "password",
+        "score": 0.6794816255569458
+      },
+      {
+        "start": 41,
+        "end": 42,
+        "text": "!",
+        "label": "password",
+        "score": 0.5083916783332825
+      }
+    ],
+    "quoted-prose-1": [
+      {
+        "start": 14,
+        "end": 32,
+        "text": "quiet birch FwplCp",
+        "label": "client secret",
+        "score": 0.5591161847114563
+      }
+    ],
+    "quoted-prose-2": [
+      {
+        "start": 14,
+        "end": 32,
+        "text": "quiet birch vBBWaS",
+        "label": "client secret",
+        "score": 0.49194392561912537
+      }
+    ],
+    "quoted-prose-3": [
+      {
+        "start": 14,
+        "end": 32,
+        "text": "quiet birch co6yEg",
+        "label": "client secret",
+        "score": 0.5219447016716003
+      }
+    ],
+    "backticks-1": [
+      {
+        "start": 24,
+        "end": 39,
+        "text": "@O7npgLrPPET#$%",
+        "label": "password",
+        "score": 0.5183039903640747
+      }
+    ],
+    "backticks-2": [
+      {
+        "start": 24,
+        "end": 36,
+        "text": "@TppeWLsfikW",
+        "label": "client secret",
+        "score": 0.53041011095047
+      },
+      {
+        "start": 38,
+        "end": 39,
+        "text": "%",
+        "label": "password",
+        "score": 0.3031556010246277
+      }
+    ],
+    "backticks-3": [
+      {
+        "start": 24,
+        "end": 36,
+        "text": "@ubMwhrzhgRX",
+        "label": "password",
+        "score": 0.5140453577041626
+      },
+      {
+        "start": 36,
+        "end": 37,
+        "text": "#",
+        "label": "password",
+        "score": 0.31269949674606323
+      },
+      {
+        "start": 38,
+        "end": 39,
+        "text": "%",
+        "label": "password",
+        "score": 0.3698091208934784
+      }
+    ],
+    "bearer-1": [
+      {
+        "start": 22,
+        "end": 59,
+        "text": "vtyTmvmnpkh99rWC3D4Gp8zcqyOlv7Ojo0Dtf",
+        "label": "password",
+        "score": 0.7672786116600037
+      }
+    ],
+    "bearer-2": [
+      {
+        "start": 22,
+        "end": 59,
+        "text": "I15Zl5WKeTMu9HROXcHZHu3nuzHFnVt9wNkPZ",
+        "label": "password",
+        "score": 0.8044909238815308
+      }
+    ],
+    "bearer-3": [
+      {
+        "start": 22,
+        "end": 59,
+        "text": "flRe6mGFvKgP6sO83RLfztOCnJ5u98XpSZzDh",
+        "label": "password",
+        "score": 0.8208804726600647
+      }
+    ],
+    "url-1": [
+      {
+        "start": 19,
+        "end": 37,
+        "text": "iLnUmFo%40vk8wfDg@",
+        "label": "password",
+        "score": 0.5517312288284302
+      },
+      {
+        "start": 59,
+        "end": 63,
+        "text": "3306",
+        "label": "api key",
+        "score": 0.46141359210014343
+      }
+    ],
+    "url-2": [
+      {
+        "start": 19,
+        "end": 26,
+        "text": "Ki3wfXg",
+        "label": "client secret",
+        "score": 0.47449958324432373
+      },
+      {
+        "start": 26,
+        "end": 27,
+        "text": "%",
+        "label": "password",
+        "score": 0.35460570454597473
+      },
+      {
+        "start": 27,
+        "end": 37,
+        "text": "40fx4s901@",
+        "label": "password",
+        "score": 0.3405711352825165
+      },
+      {
+        "start": 37,
+        "end": 45,
+        "text": "database",
+        "label": "private key",
+        "score": 0.30610933899879456
+      },
+      {
+        "start": 59,
+        "end": 63,
+        "text": "3306",
+        "label": "private key",
+        "score": 0.4368297755718231
+      }
+    ],
+    "url-3": [
+      {
+        "start": 19,
+        "end": 36,
+        "text": "bqQoSWD%40kYEWHCt",
+        "label": "password",
+        "score": 0.548985481262207
+      },
+      {
+        "start": 59,
+        "end": 63,
+        "text": "3306",
+        "label": "private key",
+        "score": 0.45673108100891113
+      }
+    ],
+    "query-1": [
+      {
+        "start": 37,
+        "end": 68,
+        "text": "weNqpombj3TlnsZOXNII8G3BTYfPWDJ",
+        "label": "password",
+        "score": 0.7134879231452942
+      }
+    ],
+    "query-2": [
+      {
+        "start": 37,
+        "end": 68,
+        "text": "omAlvZAtAeViBVyjlKe7zPRyxgj2MKi",
+        "label": "password",
+        "score": 0.7133960127830505
+      }
+    ],
+    "query-3": [
+      {
+        "start": 37,
+        "end": 68,
+        "text": "qDx8Rkrwhe3DmXGfvEVkkTvRBRL0sTW",
+        "label": "password",
+        "score": 0.6810402870178223
+      }
+    ],
+    "fenced-1": [
+      {
+        "start": 34,
+        "end": 73,
+        "text": "2Jo0PSQYDkWXzyBfHBs\nDtpWjWJHQUemy2IhQ7f",
+        "label": "password",
+        "score": 0.6521736979484558
+      }
+    ],
+    "fenced-2": [
+      {
+        "start": 29,
+        "end": 33,
+        "text": "text",
+        "label": "password",
+        "score": 0.4562680125236511
+      },
+      {
+        "start": 34,
+        "end": 73,
+        "text": "79EgFiIBb4LMR0N6pUk\nXaQ8fY85nMyJARzau5j",
+        "label": "password",
+        "score": 0.6566391587257385
+      }
+    ],
+    "fenced-3": [
+      {
+        "start": 34,
+        "end": 73,
+        "text": "RZgvQKwAOqZ2AdffeUW\nyL7f2A1SGiE6pB7iU1m",
+        "label": "password",
+        "score": 0.70509934425354
+      }
+    ],
+    "unicode-1": [
+      {
+        "start": 17,
+        "end": 28,
+        "text": "é🌻xeeOkVJ!?",
+        "label": "password",
+        "score": 0.7687162160873413
+      }
+    ],
+    "unicode-2": [
+      {
+        "start": 17,
+        "end": 28,
+        "text": "é🌻XoM5or3!?",
+        "label": "password",
+        "score": 0.7463687658309937
+      }
+    ],
+    "unicode-3": [
+      {
+        "start": 17,
+        "end": 28,
+        "text": "é🌻6kQqoND!?",
+        "label": "password",
+        "score": 0.7704641819000244
+      }
+    ],
+    "dutch-1": [
+      {
+        "start": 18,
+        "end": 29,
+        "text": "cg1ALdQPBl!",
+        "label": "password",
+        "score": 0.6222224235534668
+      }
+    ],
+    "dutch-2": [
+      {
+        "start": 18,
+        "end": 28,
+        "text": "mgeWwG1ZXt",
+        "label": "password",
+        "score": 0.5970485806465149
+      },
+      {
+        "start": 28,
+        "end": 29,
+        "text": "!",
+        "label": "private key",
+        "score": 0.31167688965797424
+      }
+    ],
+    "dutch-3": [
+      {
+        "start": 18,
+        "end": 29,
+        "text": "4EEGp2e1Xm!",
+        "label": "password",
+        "score": 0.6772806644439697
+      }
+    ],
+    "github-valid-1": [
+      {
+        "start": 19,
+        "end": 59,
+        "text": "ghp_R11kPBblkqMdqsOi2g6pNJ0ORicAdQVl0qWf",
+        "label": "password",
+        "score": 0.7544472813606262
+      },
+      {
+        "start": 63,
+        "end": 69,
+        "text": "GitHub",
+        "label": "private key",
+        "score": 0.3721153438091278
+      }
+    ],
+    "github-valid-2": [
+      {
+        "start": 19,
+        "end": 59,
+        "text": "ghp_UIqSNaUSKsCLU6eTG3mwrcx0x8gda8OBxiTL",
+        "label": "password",
+        "score": 0.6476790308952332
+      },
+      {
+        "start": 63,
+        "end": 69,
+        "text": "GitHub",
+        "label": "private key",
+        "score": 0.3787902891635895
+      }
+    ],
+    "github-valid-3": [
+      {
+        "start": 19,
+        "end": 59,
+        "text": "ghp_fjIFTOa3YFdH6r72mAyRSG8ry2kjzrCVhNZU",
+        "label": "password",
+        "score": 0.6859654188156128
+      },
+      {
+        "start": 63,
+        "end": 69,
+        "text": "GitHub",
+        "label": "private key",
+        "score": 0.3625916838645935
+      }
+    ],
+    "hf-valid-1": [
+      {
+        "start": 14,
+        "end": 51,
+        "text": "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",
+        "label": "password",
+        "score": 0.7388578653335571
+      }
+    ],
+    "hf-valid-2": [
+      {
+        "start": 14,
+        "end": 51,
+        "text": "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",
+        "label": "password",
+        "score": 0.7143663167953491
+      }
+    ],
+    "hf-valid-3": [
+      {
+        "start": 14,
+        "end": 51,
+        "text": "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",
+        "label": "password",
+        "score": 0.700706422328949
+      }
+    ],
+    "bare-1": [
+      {
+        "start": 4,
+        "end": 35,
+        "text": "eONtB37WR0BanKlFYCZYPqffrZMFHbe",
+        "label": "password",
+        "score": 0.583920419216156
+      }
+    ],
+    "bare-2": [
+      {
+        "start": 4,
+        "end": 35,
+        "text": "JYhTRH6NfnLCrQlTVSWtXJuTv2htZUr",
+        "label": "password",
+        "score": 0.6005078554153442
+      }
+    ],
+    "bare-3": [
+      {
+        "start": 4,
+        "end": 35,
+        "text": "rAQccFzYFNgnO4Warn6XZH4owSGjo3E",
+        "label": "password",
+        "score": 0.6637647151947021
+      }
+    ],
+    "french-1": [
+      {
+        "start": 21,
+        "end": 31,
+        "text": "BlgsL3CFSE",
+        "label": "password",
+        "score": 0.7302520275115967
+      },
+      {
+        "start": 31,
+        "end": 32,
+        "text": "!",
+        "label": "password",
+        "score": 0.30439427495002747
+      },
+      {
+        "start": 35,
+        "end": 47,
+        "text": "Connecte-toi",
+        "label": "client secret",
+        "score": 0.5756281614303589
+      }
+    ],
+    "french-2": [
+      {
+        "start": 21,
+        "end": 32,
+        "text": "WjLtIUQ20p!",
+        "label": "password",
+        "score": 0.716906726360321
+      },
+      {
+        "start": 35,
+        "end": 47,
+        "text": "Connecte-toi",
+        "label": "client secret",
+        "score": 0.6293264627456665
+      }
+    ],
+    "french-3": [
+      {
+        "start": 21,
+        "end": 31,
+        "text": "gLVCERkMky",
+        "label": "password",
+        "score": 0.8047690391540527
+      },
+      {
+        "start": 35,
+        "end": 47,
+        "text": "Connecte-toi",
+        "label": "client secret",
+        "score": 0.6224573254585266
+      }
+    ],
+    "spanish-1": [
+      {
+        "start": 17,
+        "end": 27,
+        "text": "4hkOHVhV65",
+        "label": "password",
+        "score": 0.7763063311576843
+      },
+      {
+        "start": 27,
+        "end": 28,
+        "text": "!",
+        "label": "password",
+        "score": 0.45043811202049255
+      }
+    ],
+    "spanish-2": [
+      {
+        "start": 17,
+        "end": 27,
+        "text": "HJU7d3kxVO",
+        "label": "password",
+        "score": 0.6780889630317688
+      },
+      {
+        "start": 27,
+        "end": 28,
+        "text": "!",
+        "label": "password",
+        "score": 0.40912318229675293
+      }
+    ],
+    "spanish-3": [
+      {
+        "start": 17,
+        "end": 27,
+        "text": "wywPTALEuX",
+        "label": "password",
+        "score": 0.7130035161972046
+      },
+      {
+        "start": 27,
+        "end": 28,
+        "text": "!",
+        "label": "private key",
+        "score": 0.3237364590167999
+      }
+    ],
+    "two-values-1": [
+      {
+        "start": 14,
+        "end": 27,
+        "text": "LjFvcSI9Vm7q!",
+        "label": "password",
+        "score": 0.5780598521232605
+      },
+      {
+        "start": 42,
+        "end": 71,
+        "text": "nqqDfKAX43aahE4PA7TFgejTJJG4U",
+        "label": "api key",
+        "score": 0.6553929448127747
+      }
+    ],
+    "repeat-1": [
+      {
+        "start": 21,
+        "end": 33,
+        "text": "Tv8SJHAfXukh",
+        "label": "client secret",
+        "score": 0.5428380370140076
+      },
+      {
+        "start": 48,
+        "end": 60,
+        "text": "Tv8SJHAfXukh",
+        "label": "client secret",
+        "score": 0.5734304189682007
+      }
+    ],
+    "two-values-2": [
+      {
+        "start": 14,
+        "end": 27,
+        "text": "kWDhzQDiKzCM!",
+        "label": "password",
+        "score": 0.6098233461380005
+      },
+      {
+        "start": 42,
+        "end": 71,
+        "text": "gXYc6IBzMOYak0MkpnZjEV76Asi4A",
+        "label": "password",
+        "score": 0.6472636461257935
+      }
+    ],
+    "repeat-2": [
+      {
+        "start": 21,
+        "end": 33,
+        "text": "ZOdxx2WqXoQn",
+        "label": "password",
+        "score": 0.575020968914032
+      },
+      {
+        "start": 48,
+        "end": 60,
+        "text": "ZOdxx2WqXoQn",
+        "label": "password",
+        "score": 0.5273951888084412
+      }
+    ],
+    "two-values-3": [
+      {
+        "start": 14,
+        "end": 27,
+        "text": "sHlRY60Lx0au!",
+        "label": "password",
+        "score": 0.5984582304954529
+      },
+      {
+        "start": 42,
+        "end": 71,
+        "text": "kxv0IUvMOOrxN9eINzFCeg4OViNWC",
+        "label": "api key",
+        "score": 0.6604307889938354
+      }
+    ],
+    "repeat-3": [
+      {
+        "start": 21,
+        "end": 33,
+        "text": "n2WqEcDYlx60",
+        "label": "password",
+        "score": 0.510008692741394
+      },
+      {
+        "start": 48,
+        "end": 60,
+        "text": "n2WqEcDYlx60",
+        "label": "password",
+        "score": 0.45339593291282654
+      }
+    ],
+    "trailing-dot-1": [
+      {
+        "start": 0,
+        "end": 18,
+        "text": "PASSWORD=Literal9!",
+        "label": "password",
+        "score": 0.5082347393035889
+      }
+    ],
+    "sentence-dot-1": [
+      {
+        "start": 16,
+        "end": 24,
+        "text": "Literal9",
+        "label": "password",
+        "score": 0.7233952283859253
+      }
+    ],
+    "space-unquoted-1": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.32494550943374634
+      }
+    ],
+    "escaped-quote-1": [
+      {
+        "start": 17,
+        "end": 21,
+        "text": "Road",
+        "label": "client secret",
+        "score": 0.5074054002761841
+      },
+      {
+        "start": 23,
+        "end": 28,
+        "text": "Map9!",
+        "label": "client secret",
+        "score": 0.5597561597824097
+      }
+    ],
+    "json-escaped-newline-1": [
+      {
+        "start": 17,
+        "end": 22,
+        "text": "Road9",
+        "label": "client secret",
+        "score": 0.6055616140365601
+      },
+      {
+        "start": 22,
+        "end": 23,
+        "text": "!",
+        "label": "client secret",
+        "score": 0.34027978777885437
+      },
+      {
+        "start": 24,
+        "end": 30,
+        "text": "nMap8#",
+        "label": "client secret",
+        "score": 0.5514559745788574
+      }
+    ],
+    "weak-real-1": [
+      {
+        "start": 24,
+        "end": 31,
+        "text": "example",
+        "label": "password",
+        "score": 0.8241957426071167
+      },
+      {
+        "start": 34,
+        "end": 46,
+        "text": "Authenticate",
+        "label": "password",
+        "score": 0.520942211151123
+      }
+    ],
+    "weak-real-2": [
+      {
+        "start": 24,
+        "end": 32,
+        "text": "password",
+        "label": "password",
+        "score": 0.8302885890007019
+      },
+      {
+        "start": 35,
+        "end": 47,
+        "text": "Authenticate",
+        "label": "password",
+        "score": 0.4516889452934265
+      }
+    ],
+    "digits-real-1": [
+      {
+        "start": 0,
+        "end": 8,
+        "text": "PASSWORD",
+        "label": "password",
+        "score": 0.37218478322029114
+      },
+      {
+        "start": 9,
+        "end": 15,
+        "text": "123456",
+        "label": "password",
+        "score": 0.5528188347816467
+      }
+    ],
+    "uppercase-real-1": [
+      {
+        "start": 0,
+        "end": 8,
+        "text": "PASSWORD",
+        "label": "password",
+        "score": 0.350247859954834
+      },
+      {
+        "start": 9,
+        "end": 26,
+        "text": "NOT_A_PLACEHOLDER",
+        "label": "client secret",
+        "score": 0.5319058299064636
+      }
+    ],
+    "dollar-real-1": [
+      {
+        "start": 0,
+        "end": 8,
+        "text": "PASSWORD",
+        "label": "password",
+        "score": 0.36386942863464355
+      },
+      {
+        "start": 11,
+        "end": 19,
+        "text": "Actual9!",
+        "label": "password",
+        "score": 0.5535847544670105
+      }
+    ],
+    "leading-space-1": [
+      {
+        "start": 0,
+        "end": 8,
+        "text": "PASSWORD",
+        "label": "password",
+        "score": 0.4089507758617401
+      },
+      {
+        "start": 12,
+        "end": 19,
+        "text": "Actual9",
+        "label": "client secret",
+        "score": 0.5902031660079956
+      }
+    ],
+    "crlf-1": [
+      {
+        "start": 20,
+        "end": 56,
+        "text": "dcY43IYhOrGvFbgel\r\nc1udDKUSmI8OYXha9",
+        "label": "password",
+        "score": 0.6997336149215698
+      }
+    ],
+    "yaml-block-1": [
+      {
+        "start": 10,
+        "end": 37,
+        "text": "|\n  sWVe7V5Sbz\n  RZzRmyj1Jp",
+        "label": "password",
+        "score": 0.5799615383148193
+      },
+      {
+        "start": 38,
+        "end": 42,
+        "text": "host",
+        "label": "private key",
+        "score": 0.3224096894264221
+      }
+    ],
+    "basic-1": [
+      {
+        "start": 21,
+        "end": 53,
+        "text": "c3ludGhldGljOk5ldmVySXNzdWVkOSE=",
+        "label": "password",
+        "score": 0.6484752297401428
+      }
+    ],
+    "recovery-1": [
+      {
+        "start": 30,
+        "end": 44,
+        "text": "1792-4638-5021",
+        "label": "password",
+        "score": 0.5315636396408081
+      }
+    ],
+    "long-boundary-1": [
+      {
+        "start": 3007,
+        "end": 3022,
+        "text": "\"rxfCO3K6oJK9A!",
+        "label": "password",
+        "score": 0.4647183120250702
+      },
+      {
+        "start": 3023,
+        "end": 3024,
+        "text": ".",
+        "label": "password",
+        "score": 0.40091294050216675
+      }
+    ],
+    "long-boundary-2": [
+      {
+        "start": 3254,
+        "end": 3269,
+        "text": "\"uWLYYkYHwan1X!",
+        "label": "password",
+        "score": 0.5189570188522339
+      },
+      {
+        "start": 3270,
+        "end": 3271,
+        "text": ".",
+        "label": "password",
+        "score": 0.48220372200012207
+      }
+    ],
+    "long-boundary-3": [
+      {
+        "start": 3502,
+        "end": 3516,
+        "text": "svYgM3w21OL72!",
+        "label": "password",
+        "score": 0.5796564221382141
+      },
+      {
+        "start": 3502,
+        "end": 3516,
+        "text": "svYgM3w21OL72!",
+        "label": "password",
+        "score": 0.653835654258728
+      },
+      {
+        "start": 3517,
+        "end": 3518,
+        "text": ".",
+        "label": "password",
+        "score": 0.3016216456890106
+      }
+    ],
+    "clean-01-1": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.4166969656944275
+      },
+      {
+        "start": 74,
+        "end": 83,
+        "text": "KMql31k2F",
+        "label": "client secret",
+        "score": 0.7017359733581543
+      },
+      {
+        "start": 91,
+        "end": 92,
+        "text": "1",
+        "label": "private key",
+        "score": 0.457475483417511
+      }
+    ],
+    "clean-01-2": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.4512518644332886
+      },
+      {
+        "start": 74,
+        "end": 83,
+        "text": "hRCrQ7eyC",
+        "label": "client secret",
+        "score": 0.6514261364936829
+      },
+      {
+        "start": 91,
+        "end": 92,
+        "text": "2",
+        "label": "private key",
+        "score": 0.4046933352947235
+      }
+    ],
+    "clean-02-1": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.34078967571258545
+      },
+      {
+        "start": 61,
+        "end": 70,
+        "text": "KFqSHGJnQ",
+        "label": "client secret",
+        "score": 0.7153854370117188
+      },
+      {
+        "start": 78,
+        "end": 79,
+        "text": "1",
+        "label": "private key",
+        "score": 0.48596683144569397
+      }
+    ],
+    "clean-02-2": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.35141506791114807
+      },
+      {
+        "start": 61,
+        "end": 70,
+        "text": "pkDAETBJP",
+        "label": "client secret",
+        "score": 0.6535223722457886
+      },
+      {
+        "start": 78,
+        "end": 79,
+        "text": "2",
+        "label": "client secret",
+        "score": 0.4460000991821289
+      }
+    ],
+    "clean-03-1": [
+      {
+        "start": 54,
+        "end": 63,
+        "text": "y3Vfk0MbD",
+        "label": "api key",
+        "score": 0.7455970644950867
+      },
+      {
+        "start": 71,
+        "end": 72,
+        "text": "1",
+        "label": "private key",
+        "score": 0.38544827699661255
+      }
+    ],
+    "clean-03-2": [
+      {
+        "start": 54,
+        "end": 63,
+        "text": "GAm3C9PrK",
+        "label": "client secret",
+        "score": 0.6502048969268799
+      },
+      {
+        "start": 71,
+        "end": 72,
+        "text": "2",
+        "label": "private key",
+        "score": 0.41691580414772034
+      }
+    ],
+    "clean-04-1": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.3963034749031067
+      },
+      {
+        "start": 28,
+        "end": 32,
+        "text": "0600",
+        "label": "private key",
+        "score": 0.42084982991218567
+      },
+      {
+        "start": 55,
+        "end": 64,
+        "text": "7rN2rVU1x",
+        "label": "client secret",
+        "score": 0.6083665490150452
+      },
+      {
+        "start": 72,
+        "end": 73,
+        "text": "1",
+        "label": "client secret",
+        "score": 0.4655117392539978
+      }
+    ],
+    "clean-04-2": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.3751271963119507
+      },
+      {
+        "start": 28,
+        "end": 32,
+        "text": "0600",
+        "label": "private key",
+        "score": 0.4477260708808899
+      },
+      {
+        "start": 55,
+        "end": 64,
+        "text": "csbUDb3As",
+        "label": "password",
+        "score": 0.578506350517273
+      },
+      {
+        "start": 72,
+        "end": 73,
+        "text": "2",
+        "label": "client secret",
+        "score": 0.39319491386413574
+      }
+    ],
+    "clean-05-1": [
+      {
+        "start": 14,
+        "end": 24,
+        "text": "<REDACTED>",
+        "label": "password",
+        "score": 0.4881500005722046
+      },
+      {
+        "start": 58,
+        "end": 67,
+        "text": "7fzA0FUTW",
+        "label": "client secret",
+        "score": 0.6573542356491089
+      },
+      {
+        "start": 75,
+        "end": 76,
+        "text": "1",
+        "label": "private key",
+        "score": 0.48617538809776306
+      }
+    ],
+    "clean-05-2": [
+      {
+        "start": 14,
+        "end": 24,
+        "text": "<REDACTED>",
+        "label": "password",
+        "score": 0.4592120349407196
+      },
+      {
+        "start": 58,
+        "end": 67,
+        "text": "6jdS85ZuM",
+        "label": "client secret",
+        "score": 0.7055120468139648
+      },
+      {
+        "start": 75,
+        "end": 76,
+        "text": "2",
+        "label": "api key",
+        "score": 0.42507749795913696
+      }
+    ],
+    "clean-06-1": [
+      {
+        "start": 10,
+        "end": 11,
+        "text": "$",
+        "label": "password",
+        "score": 0.5120844841003418
+      },
+      {
+        "start": 12,
+        "end": 29,
+        "text": "DATABASE_PASSWORD",
+        "label": "password",
+        "score": 0.3866637647151947
+      },
+      {
+        "start": 47,
+        "end": 56,
+        "text": "AFy7VdJ43",
+        "label": "client secret",
+        "score": 0.6902511119842529
+      },
+      {
+        "start": 64,
+        "end": 65,
+        "text": "1",
+        "label": "private key",
+        "score": 0.451710045337677
+      }
+    ],
+    "clean-06-2": [
+      {
+        "start": 10,
+        "end": 11,
+        "text": "$",
+        "label": "password",
+        "score": 0.5335131287574768
+      },
+      {
+        "start": 12,
+        "end": 29,
+        "text": "DATABASE_PASSWORD",
+        "label": "password",
+        "score": 0.4577527344226837
+      },
+      {
+        "start": 47,
+        "end": 56,
+        "text": "9DMv3hu2u",
+        "label": "client secret",
+        "score": 0.7187782526016235
+      },
+      {
+        "start": 64,
+        "end": 65,
+        "text": "2",
+        "label": "client secret",
+        "score": 0.49484309554100037
+      }
+    ],
+    "clean-07-1": [
+      {
+        "start": 11,
+        "end": 12,
+        "text": "$",
+        "label": "password",
+        "score": 0.38083723187446594
+      },
+      {
+        "start": 13,
+        "end": 30,
+        "text": "DATABASE_PASSWORD",
+        "label": "private key",
+        "score": 0.35164570808410645
+      },
+      {
+        "start": 49,
+        "end": 58,
+        "text": "GRP7SBf1E",
+        "label": "client secret",
+        "score": 0.69123375415802
+      },
+      {
+        "start": 66,
+        "end": 67,
+        "text": "1",
+        "label": "private key",
+        "score": 0.4681214392185211
+      }
+    ],
+    "clean-07-2": [
+      {
+        "start": 11,
+        "end": 12,
+        "text": "$",
+        "label": "password",
+        "score": 0.467991441488266
+      },
+      {
+        "start": 13,
+        "end": 30,
+        "text": "DATABASE_PASSWORD",
+        "label": "password",
+        "score": 0.41215747594833374
+      },
+      {
+        "start": 49,
+        "end": 58,
+        "text": "5KSUXEpP1",
+        "label": "client secret",
+        "score": 0.684840202331543
+      },
+      {
+        "start": 66,
+        "end": 67,
+        "text": "2",
+        "label": "private key",
+        "score": 0.43152910470962524
+      }
+    ],
+    "clean-08-1": [
+      {
+        "start": 14,
+        "end": 19,
+        "text": "vault",
+        "label": "private key",
+        "score": 0.3861147463321686
+      },
+      {
+        "start": 20,
+        "end": 37,
+        "text": "database_password",
+        "label": "password",
+        "score": 0.3376604914665222
+      },
+      {
+        "start": 58,
+        "end": 67,
+        "text": "YU8t4MaA7",
+        "label": "client secret",
+        "score": 0.6976502537727356
+      },
+      {
+        "start": 75,
+        "end": 76,
+        "text": "1",
+        "label": "private key",
+        "score": 0.5181242823600769
+      }
+    ],
+    "clean-08-2": [
+      {
+        "start": 14,
+        "end": 19,
+        "text": "vault",
+        "label": "private key",
+        "score": 0.4058416187763214
+      },
+      {
+        "start": 20,
+        "end": 37,
+        "text": "database_password",
+        "label": "password",
+        "score": 0.37711483240127563
+      },
+      {
+        "start": 58,
+        "end": 67,
+        "text": "Nq8rkRwon",
+        "label": "client secret",
+        "score": 0.7388651967048645
+      },
+      {
+        "start": 75,
+        "end": 76,
+        "text": "2",
+        "label": "private key",
+        "score": 0.49222177267074585
+      }
+    ],
+    "clean-09-1": [
+      {
+        "start": 39,
+        "end": 48,
+        "text": "nP2NLlpbt",
+        "label": "client secret",
+        "score": 0.6680077910423279
+      },
+      {
+        "start": 56,
+        "end": 57,
+        "text": "1",
+        "label": "api key",
+        "score": 0.437743216753006
+      }
+    ],
+    "clean-09-2": [
+      {
+        "start": 39,
+        "end": 48,
+        "text": "t1RzzQ9bl",
+        "label": "client secret",
+        "score": 0.6199448704719543
+      },
+      {
+        "start": 56,
+        "end": 57,
+        "text": "2",
+        "label": "api key",
+        "score": 0.44334787130355835
+      }
+    ],
+    "clean-10-1": [
+      {
+        "start": 37,
+        "end": 46,
+        "text": "oyHOEvGZO",
+        "label": "client secret",
+        "score": 0.691891610622406
+      },
+      {
+        "start": 54,
+        "end": 55,
+        "text": "1",
+        "label": "client secret",
+        "score": 0.44660502672195435
+      }
+    ],
+    "clean-10-2": [
+      {
+        "start": 37,
+        "end": 46,
+        "text": "YqMxnNm4z",
+        "label": "client secret",
+        "score": 0.7381097078323364
+      },
+      {
+        "start": 54,
+        "end": 55,
+        "text": "2",
+        "label": "private key",
+        "score": 0.4650052785873413
+      }
+    ],
+    "clean-11-1": [
+      {
+        "start": 11,
+        "end": 21,
+        "text": "REPLACE_ME",
+        "label": "password",
+        "score": 0.40075114369392395
+      },
+      {
+        "start": 39,
+        "end": 48,
+        "text": "tEpnRD7z6",
+        "label": "client secret",
+        "score": 0.6126384139060974
+      },
+      {
+        "start": 56,
+        "end": 57,
+        "text": "1",
+        "label": "private key",
+        "score": 0.4302602708339691
+      }
+    ],
+    "clean-11-2": [
+      {
+        "start": 11,
+        "end": 21,
+        "text": "REPLACE_ME",
+        "label": "password",
+        "score": 0.4619348645210266
+      },
+      {
+        "start": 39,
+        "end": 48,
+        "text": "4GilyugP5",
+        "label": "client secret",
+        "score": 0.7092982530593872
+      },
+      {
+        "start": 56,
+        "end": 57,
+        "text": "2",
+        "label": "api key",
+        "score": 0.4421042501926422
+      }
+    ],
+    "clean-12-1": [
+      {
+        "start": 11,
+        "end": 29,
+        "text": "your-password-here",
+        "label": "password",
+        "score": 0.6790273785591125
+      },
+      {
+        "start": 47,
+        "end": 56,
+        "text": "rw711MNmo",
+        "label": "client secret",
+        "score": 0.5748844146728516
+      },
+      {
+        "start": 64,
+        "end": 65,
+        "text": "1",
+        "label": "api key",
+        "score": 0.46956995129585266
+      }
+    ],
+    "clean-12-2": [
+      {
+        "start": 11,
+        "end": 29,
+        "text": "your-password-here",
+        "label": "password",
+        "score": 0.6712575554847717
+      },
+      {
+        "start": 47,
+        "end": 56,
+        "text": "FKNlNpMQS",
+        "label": "client secret",
+        "score": 0.6581745147705078
+      },
+      {
+        "start": 64,
+        "end": 65,
+        "text": "2",
+        "label": "private key",
+        "score": 0.4404727518558502
+      }
+    ],
+    "clean-13-1": [
+      {
+        "start": 11,
+        "end": 19,
+        "text": "changeme",
+        "label": "client secret",
+        "score": 0.45783308148384094
+      },
+      {
+        "start": 65,
+        "end": 74,
+        "text": "xaV6G2z7P",
+        "label": "client secret",
+        "score": 0.5552862882614136
+      },
+      {
+        "start": 82,
+        "end": 83,
+        "text": "1",
+        "label": "api key",
+        "score": 0.4005395174026489
+      }
+    ],
+    "clean-13-2": [
+      {
+        "start": 11,
+        "end": 19,
+        "text": "changeme",
+        "label": "password",
+        "score": 0.4940660893917084
+      },
+      {
+        "start": 65,
+        "end": 74,
+        "text": "ApLNjqIdy",
+        "label": "client secret",
+        "score": 0.6218410134315491
+      },
+      {
+        "start": 82,
+        "end": 83,
+        "text": "2",
+        "label": "api key",
+        "score": 0.35010236501693726
+      }
+    ],
+    "clean-14-1": [
+      {
+        "start": 24,
+        "end": 36,
+        "text": "YOUR_API_KEY",
+        "label": "password",
+        "score": 0.5325393080711365
+      },
+      {
+        "start": 55,
+        "end": 64,
+        "text": "dsX6cBwy7",
+        "label": "client secret",
+        "score": 0.5765230655670166
+      },
+      {
+        "start": 72,
+        "end": 73,
+        "text": "1",
+        "label": "client secret",
+        "score": 0.43513187766075134
+      }
+    ],
+    "clean-14-2": [
+      {
+        "start": 24,
+        "end": 36,
+        "text": "YOUR_API_KEY",
+        "label": "api key",
+        "score": 0.536534309387207
+      },
+      {
+        "start": 55,
+        "end": 64,
+        "text": "9Ke7IezQi",
+        "label": "client secret",
+        "score": 0.6694912910461426
+      },
+      {
+        "start": 72,
+        "end": 73,
+        "text": "2",
+        "label": "client secret",
+        "score": 0.42323610186576843
+      }
+    ],
+    "clean-15-1": [
+      {
+        "start": 9,
+        "end": 33,
+        "text": "example-token-do-not-use",
+        "label": "password",
+        "score": 0.7016755938529968
+      },
+      {
+        "start": 64,
+        "end": 73,
+        "text": "14ekdq20q",
+        "label": "client secret",
+        "score": 0.6172441244125366
+      },
+      {
+        "start": 81,
+        "end": 82,
+        "text": "1",
+        "label": "password",
+        "score": 0.5517237186431885
+      }
+    ],
+    "clean-15-2": [
+      {
+        "start": 9,
+        "end": 33,
+        "text": "example-token-do-not-use",
+        "label": "password",
+        "score": 0.6962220668792725
+      },
+      {
+        "start": 64,
+        "end": 73,
+        "text": "71Kuw3T3V",
+        "label": "client secret",
+        "score": 0.7216546535491943
+      },
+      {
+        "start": 81,
+        "end": 82,
+        "text": "2",
+        "label": "password",
+        "score": 0.3985292911529541
+      }
+    ],
+    "clean-16-1": [
+      {
+        "start": 9,
+        "end": 16,
+        "text": "process",
+        "label": "password",
+        "score": 0.4401302635669708
+      },
+      {
+        "start": 21,
+        "end": 36,
+        "text": "SERVICE_API_KEY",
+        "label": "private key",
+        "score": 0.34779608249664307
+      },
+      {
+        "start": 53,
+        "end": 62,
+        "text": "8lv4yMU1c",
+        "label": "client secret",
+        "score": 0.6529972553253174
+      },
+      {
+        "start": 70,
+        "end": 71,
+        "text": "1",
+        "label": "password",
+        "score": 0.4259818196296692
+      }
+    ],
+    "clean-16-2": [
+      {
+        "start": 9,
+        "end": 16,
+        "text": "process",
+        "label": "password",
+        "score": 0.4418370723724365
+      },
+      {
+        "start": 21,
+        "end": 36,
+        "text": "SERVICE_API_KEY",
+        "label": "private key",
+        "score": 0.38655391335487366
+      },
+      {
+        "start": 53,
+        "end": 62,
+        "text": "UUgFRwHFH",
+        "label": "client secret",
+        "score": 0.6949188113212585
+      },
+      {
+        "start": 70,
+        "end": 71,
+        "text": "2",
+        "label": "private key",
+        "score": 0.40928375720977783
+      }
+    ],
+    "clean-17-1": [
+      {
+        "start": 9,
+        "end": 11,
+        "text": "os",
+        "label": "private key",
+        "score": 0.41587668657302856
+      },
+      {
+        "start": 21,
+        "end": 36,
+        "text": "SERVICE_API_KEY",
+        "label": "private key",
+        "score": 0.39978405833244324
+      },
+      {
+        "start": 55,
+        "end": 64,
+        "text": "sxe6MQHRC",
+        "label": "api key",
+        "score": 0.6224194765090942
+      },
+      {
+        "start": 72,
+        "end": 73,
+        "text": "1",
+        "label": "password",
+        "score": 0.421954870223999
+      }
+    ],
+    "clean-17-2": [
+      {
+        "start": 9,
+        "end": 11,
+        "text": "os",
+        "label": "private key",
+        "score": 0.42831844091415405
+      },
+      {
+        "start": 21,
+        "end": 36,
+        "text": "SERVICE_API_KEY",
+        "label": "password",
+        "score": 0.44929182529449463
+      },
+      {
+        "start": 55,
+        "end": 64,
+        "text": "SAVy8IBMO",
+        "label": "client secret",
+        "score": 0.6964584589004517
+      },
+      {
+        "start": 72,
+        "end": 73,
+        "text": "2",
+        "label": "password",
+        "score": 0.3767542541027069
+      }
+    ],
+    "clean-18-1": [
+      {
+        "start": 61,
+        "end": 70,
+        "text": "s7cmxAUFW",
+        "label": "client secret",
+        "score": 0.7285772562026978
+      },
+      {
+        "start": 78,
+        "end": 79,
+        "text": "1",
+        "label": "password",
+        "score": 0.3829764723777771
+      }
+    ],
+    "clean-18-2": [
+      {
+        "start": 61,
+        "end": 70,
+        "text": "cG35IjQut",
+        "label": "client secret",
+        "score": 0.7293422818183899
+      },
+      {
+        "start": 78,
+        "end": 79,
+        "text": "2",
+        "label": "private key",
+        "score": 0.3337844908237457
+      }
+    ],
+    "clean-19-1": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.4021740257740021
+      },
+      {
+        "start": 29,
+        "end": 33,
+        "text": "1000",
+        "label": "private key",
+        "score": 0.3654364347457886
+      },
+      {
+        "start": 67,
+        "end": 76,
+        "text": "PnDjDmoYz",
+        "label": "client secret",
+        "score": 0.6243466734886169
+      },
+      {
+        "start": 84,
+        "end": 85,
+        "text": "1",
+        "label": "private key",
+        "score": 0.4460712969303131
+      }
+    ],
+    "clean-19-2": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.37951764464378357
+      },
+      {
+        "start": 29,
+        "end": 33,
+        "text": "1000",
+        "label": "private key",
+        "score": 0.33743247389793396
+      },
+      {
+        "start": 67,
+        "end": 76,
+        "text": "wcC7R30st",
+        "label": "client secret",
+        "score": 0.6283469796180725
+      },
+      {
+        "start": 84,
+        "end": 85,
+        "text": "2",
+        "label": "api key",
+        "score": 0.39111214876174927
+      }
+    ],
+    "clean-20-1": [
+      {
+        "start": 73,
+        "end": 82,
+        "text": "8qdA8IQap",
+        "label": "client secret",
+        "score": 0.6578432321548462
+      },
+      {
+        "start": 90,
+        "end": 91,
+        "text": "1",
+        "label": "password",
+        "score": 0.4628717005252838
+      }
+    ],
+    "clean-20-2": [
+      {
+        "start": 73,
+        "end": 82,
+        "text": "HQ7cal7pn",
+        "label": "password",
+        "score": 0.7015019655227661
+      },
+      {
+        "start": 90,
+        "end": 91,
+        "text": "2",
+        "label": "private key",
+        "score": 0.39138686656951904
+      }
+    ],
+    "clean-21-1": [
+      {
+        "start": 20,
+        "end": 28,
+        "text": "response",
+        "label": "password",
+        "score": 0.4668661057949066
+      },
+      {
+        "start": 29,
+        "end": 41,
+        "text": "access_token",
+        "label": "password",
+        "score": 0.47462382912635803
+      },
+      {
+        "start": 59,
+        "end": 68,
+        "text": "Mtu7IGbHM",
+        "label": "client secret",
+        "score": 0.6624575853347778
+      },
+      {
+        "start": 76,
+        "end": 77,
+        "text": "1",
+        "label": "password",
+        "score": 0.4671752452850342
+      }
+    ],
+    "clean-21-2": [
+      {
+        "start": 20,
+        "end": 28,
+        "text": "response",
+        "label": "password",
+        "score": 0.5470035076141357
+      },
+      {
+        "start": 29,
+        "end": 41,
+        "text": "access_token",
+        "label": "password",
+        "score": 0.49369972944259644
+      },
+      {
+        "start": 59,
+        "end": 68,
+        "text": "iqVrOkOSD",
+        "label": "client secret",
+        "score": 0.629047155380249
+      },
+      {
+        "start": 76,
+        "end": 77,
+        "text": "2",
+        "label": "private key",
+        "score": 0.3587261736392975
+      }
+    ],
+    "clean-22-1": [
+      {
+        "start": 4,
+        "end": 10,
+        "text": "secret",
+        "label": "private key",
+        "score": 0.3026108741760254
+      },
+      {
+        "start": 14,
+        "end": 16,
+        "text": "42",
+        "label": "private key",
+        "score": 0.33577069640159607
+      },
+      {
+        "start": 81,
+        "end": 90,
+        "text": "wvkVbojMp",
+        "label": "password",
+        "score": 0.6303005218505859
+      },
+      {
+        "start": 98,
+        "end": 99,
+        "text": "1",
+        "label": "api key",
+        "score": 0.5023853182792664
+      }
+    ],
+    "clean-22-2": [
+      {
+        "start": 14,
+        "end": 16,
+        "text": "42",
+        "label": "private key",
+        "score": 0.3148028254508972
+      },
+      {
+        "start": 81,
+        "end": 90,
+        "text": "AyxlUIAQa",
+        "label": "client secret",
+        "score": 0.6974431872367859
+      },
+      {
+        "start": 98,
+        "end": 99,
+        "text": "2",
+        "label": "api key",
+        "score": 0.5494862794876099
+      }
+    ],
+    "clean-23-1": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.48337000608444214
+      },
+      {
+        "start": 18,
+        "end": 30,
+        "text": "16-character",
+        "label": "password",
+        "score": 0.30505555868148804
+      },
+      {
+        "start": 62,
+        "end": 71,
+        "text": "nkNzbhxKt",
+        "label": "client secret",
+        "score": 0.6651026010513306
+      },
+      {
+        "start": 79,
+        "end": 80,
+        "text": "1",
+        "label": "private key",
+        "score": 0.4907638132572174
+      }
+    ],
+    "clean-23-2": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "password",
+        "label": "password",
+        "score": 0.5041573643684387
+      },
+      {
+        "start": 18,
+        "end": 30,
+        "text": "16-character",
+        "label": "password",
+        "score": 0.34265637397766113
+      },
+      {
+        "start": 62,
+        "end": 71,
+        "text": "XRUiycLBg",
+        "label": "client secret",
+        "score": 0.6147400140762329
+      },
+      {
+        "start": 79,
+        "end": 80,
+        "text": "2",
+        "label": "client secret",
+        "score": 0.3839709162712097
+      }
+    ],
+    "clean-24-1": [
+      {
+        "start": 63,
+        "end": 72,
+        "text": "LdDhnOFk6",
+        "label": "client secret",
+        "score": 0.6102648377418518
+      },
+      {
+        "start": 80,
+        "end": 81,
+        "text": "1",
+        "label": "password",
+        "score": 0.463409960269928
+      }
+    ],
+    "clean-24-2": [
+      {
+        "start": 63,
+        "end": 72,
+        "text": "TfZJpAOhs",
+        "label": "client secret",
+        "score": 0.5749926567077637
+      },
+      {
+        "start": 80,
+        "end": 81,
+        "text": "2",
+        "label": "client secret",
+        "score": 0.4721079170703888
+      }
+    ],
+    "clean-25-1": [
+      {
+        "start": 11,
+        "end": 22,
+        "text": "getPassword",
+        "label": "password",
+        "score": 0.4192523956298828
+      },
+      {
+        "start": 41,
+        "end": 50,
+        "text": "CQmCNOEzw",
+        "label": "client secret",
+        "score": 0.6818712949752808
+      },
+      {
+        "start": 58,
+        "end": 59,
+        "text": "1",
+        "label": "api key",
+        "score": 0.4616393744945526
+      }
+    ],
+    "clean-25-2": [
+      {
+        "start": 11,
+        "end": 22,
+        "text": "getPassword",
+        "label": "password",
+        "score": 0.4081600308418274
+      },
+      {
+        "start": 41,
+        "end": 50,
+        "text": "P6p6zwpGu",
+        "label": "client secret",
+        "score": 0.7082510590553284
+      },
+      {
+        "start": 58,
+        "end": 59,
+        "text": "2",
+        "label": "client secret",
+        "score": 0.42137250304222107
+      }
+    ],
+    "clean-26-1": [
+      {
+        "start": 6,
+        "end": 19,
+        "text": "client_secret",
+        "label": "password",
+        "score": 0.3146916925907135
+      },
+      {
+        "start": 22,
+        "end": 30,
+        "text": "settings",
+        "label": "private key",
+        "score": 0.405172735452652
+      },
+      {
+        "start": 31,
+        "end": 43,
+        "text": "clientSecret",
+        "label": "password",
+        "score": 0.4933738112449646
+      },
+      {
+        "start": 61,
+        "end": 70,
+        "text": "rBGvLyCTy",
+        "label": "client secret",
+        "score": 0.6380059719085693
+      },
+      {
+        "start": 78,
+        "end": 79,
+        "text": "1",
+        "label": "api key",
+        "score": 0.4720838963985443
+      }
+    ],
+    "clean-26-2": [
+      {
+        "start": 22,
+        "end": 30,
+        "text": "settings",
+        "label": "private key",
+        "score": 0.36634498834609985
+      },
+      {
+        "start": 31,
+        "end": 43,
+        "text": "clientSecret",
+        "label": "password",
+        "score": 0.45185142755508423
+      },
+      {
+        "start": 61,
+        "end": 70,
+        "text": "N5dx7dvt1",
+        "label": "client secret",
+        "score": 0.6527973413467407
+      },
+      {
+        "start": 78,
+        "end": 79,
+        "text": "2",
+        "label": "private key",
+        "score": 0.4083608388900757
+      }
+    ],
+    "clean-27-1": [
+      {
+        "start": 14,
+        "end": 27,
+        "text": "client_secret",
+        "label": "client secret",
+        "score": 0.5484350919723511
+      },
+      {
+        "start": 31,
+        "end": 38,
+        "text": "api_key",
+        "label": "password",
+        "score": 0.5700374841690063
+      },
+      {
+        "start": 70,
+        "end": 79,
+        "text": "b4dCQcYNr",
+        "label": "client secret",
+        "score": 0.5517048239707947
+      },
+      {
+        "start": 87,
+        "end": 88,
+        "text": "1",
+        "label": "password",
+        "score": 0.5053160786628723
+      }
+    ],
+    "clean-27-2": [
+      {
+        "start": 14,
+        "end": 27,
+        "text": "client_secret",
+        "label": "client secret",
+        "score": 0.6113080382347107
+      },
+      {
+        "start": 31,
+        "end": 38,
+        "text": "api_key",
+        "label": "password",
+        "score": 0.5610586404800415
+      },
+      {
+        "start": 70,
+        "end": 79,
+        "text": "aFwdOViqU",
+        "label": "password",
+        "score": 0.5825848579406738
+      },
+      {
+        "start": 87,
+        "end": 88,
+        "text": "2",
+        "label": "password",
+        "score": 0.438812792301178
+      }
+    ],
+    "clean-28-1": [
+      {
+        "start": 15,
+        "end": 18,
+        "text": "SSH",
+        "label": "private key",
+        "score": 0.395634263753891
+      },
+      {
+        "start": 32,
+        "end": 47,
+        "text": "authorized_keys",
+        "label": "private key",
+        "score": 0.3259482681751251
+      },
+      {
+        "start": 70,
+        "end": 79,
+        "text": "fZvLcMk2q",
+        "label": "private key",
+        "score": 0.6113342046737671
+      },
+      {
+        "start": 87,
+        "end": 88,
+        "text": "1",
+        "label": "password",
+        "score": 0.4750945568084717
+      }
+    ],
+    "clean-28-2": [
+      {
+        "start": 15,
+        "end": 18,
+        "text": "SSH",
+        "label": "private key",
+        "score": 0.4090349078178406
+      },
+      {
+        "start": 32,
+        "end": 47,
+        "text": "authorized_keys",
+        "label": "private key",
+        "score": 0.3250913619995117
+      },
+      {
+        "start": 70,
+        "end": 79,
+        "text": "ubEPrvXpS",
+        "label": "password",
+        "score": 0.6281787157058716
+      },
+      {
+        "start": 87,
+        "end": 88,
+        "text": "2",
+        "label": "password",
+        "score": 0.3861812949180603
+      }
+    ],
+    "clean-29-1": [
+      {
+        "start": 22,
+        "end": 23,
+        "text": "$",
+        "label": "password",
+        "score": 0.404831200838089
+      },
+      {
+        "start": 54,
+        "end": 63,
+        "text": "5RrE3nSZN",
+        "label": "client secret",
+        "score": 0.6681405901908875
+      },
+      {
+        "start": 71,
+        "end": 72,
+        "text": "1",
+        "label": "client secret",
+        "score": 0.49103131890296936
+      }
+    ],
+    "clean-29-2": [
+      {
+        "start": 22,
+        "end": 23,
+        "text": "$",
+        "label": "password",
+        "score": 0.46473428606987
+      },
+      {
+        "start": 54,
+        "end": 63,
+        "text": "GoN7vq73d",
+        "label": "client secret",
+        "score": 0.678503692150116
+      },
+      {
+        "start": 71,
+        "end": 72,
+        "text": "2",
+        "label": "client secret",
+        "score": 0.49023184180259705
+      }
+    ],
+    "clean-30-1": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "postgres",
+        "label": "private key",
+        "score": 0.44985252618789673
+      },
+      {
+        "start": 20,
+        "end": 28,
+        "text": "password",
+        "label": "password",
+        "score": 0.503783106803894
+      },
+      {
+        "start": 29,
+        "end": 38,
+        "text": "localhost",
+        "label": "api key",
+        "score": 0.6055273413658142
+      },
+      {
+        "start": 89,
+        "end": 98,
+        "text": "rnX04hPTt",
+        "label": "client secret",
+        "score": 0.6344513893127441
+      },
+      {
+        "start": 106,
+        "end": 107,
+        "text": "1",
+        "label": "api key",
+        "score": 0.3930476903915405
+      }
+    ],
+    "clean-30-2": [
+      {
+        "start": 4,
+        "end": 12,
+        "text": "postgres",
+        "label": "private key",
+        "score": 0.4539158344268799
+      },
+      {
+        "start": 20,
+        "end": 28,
+        "text": "password",
+        "label": "password",
+        "score": 0.4958997368812561
+      },
+      {
+        "start": 29,
+        "end": 38,
+        "text": "localhost",
+        "label": "api key",
+        "score": 0.5987262725830078
+      },
+      {
+        "start": 89,
+        "end": 98,
+        "text": "fwLHLKNMd",
+        "label": "client secret",
+        "score": 0.6367548108100891
+      },
+      {
+        "start": 106,
+        "end": 107,
+        "text": "2",
+        "label": "api key",
+        "score": 0.3934968411922455
+      }
+    ]
+  },
+  "timings_ms": {
+    "env-quoted-1": [
+      14.540436997776851,
+      14.77398897986859,
+      14.252438995754346
+    ],
+    "env-quoted-2": [
+      14.274629997089505,
+      14.16138099739328,
+      14.268085011281073
+    ],
+    "env-quoted-3": [
+      14.608282974222675,
+      14.68097700853832,
+      14.488474000245333
+    ],
+    "env-unquoted-1": [
+      15.829532989300787,
+      15.473456005565822,
+      15.243189001921564
+    ],
+    "env-unquoted-2": [
+      15.844191977521405,
+      15.862422995269299,
+      15.816389990504831
+    ],
+    "env-unquoted-3": [
+      15.588473994284868,
+      15.35004802281037,
+      15.600129001541063
+    ],
+    "json-1": [
+      17.361055011861026,
+      17.573688994161785,
+      17.251748009584844
+    ],
+    "json-2": [
+      17.564006993779913,
+      17.756125977030024,
+      17.54247600911185
+    ],
+    "json-3": [
+      17.44804802001454,
+      17.719592025969177,
+      17.406661994755268
+    ],
+    "yaml-1": [
+      15.9704529796727,
+      15.750043996376917,
+      16.183518018806353
+    ],
+    "yaml-2": [
+      16.21321600396186,
+      15.730070997960865,
+      15.542611974524334
+    ],
+    "yaml-3": [
+      15.825321024749428,
+      15.496724983677268,
+      15.906757005723193
+    ],
+    "prose-1": [
+      13.58388998778537,
+      13.189552002586424,
+      13.539634994231164
+    ],
+    "prose-2": [
+      14.28821898298338,
+      13.787439005682245,
+      13.687949016457424
+    ],
+    "prose-3": [
+      13.567162997787818,
+      14.041818008990958,
+      14.14329098770395
+    ],
+    "quoted-prose-1": [
+      14.315836015157402,
+      13.899385987315327,
+      14.02613299433142
+    ],
+    "quoted-prose-2": [
+      13.841174979461357,
+      13.747294986387715,
+      13.979399023810402
+    ],
+    "quoted-prose-3": [
+      13.847982976585627,
+      14.42252699052915,
+      13.947255996754393
+    ],
+    "backticks-1": [
+      15.311335009755567,
+      15.34638600423932,
+      15.428246988449246
+    ],
+    "backticks-2": [
+      15.432943997438997,
+      15.294072014512494,
+      15.305134002119303
+    ],
+    "backticks-3": [
+      15.518157015321776,
+      15.291435003746301,
+      15.397999988636002
+    ],
+    "bearer-1": [
+      15.43514701188542,
+      15.5209910008125,
+      15.351505018770695
+    ],
+    "bearer-2": [
+      15.878360980423167,
+      16.046636999817565,
+      15.87930298410356
+    ],
+    "bearer-3": [
+      15.528902993537486,
+      15.575057012028992,
+      15.505218005273491
+    ],
+    "url-1": [
+      19.141026015859097,
+      18.576242990093306,
+      18.589785002404824
+    ],
+    "url-2": [
+      18.98311500553973,
+      18.48698200774379,
+      18.417779996525496
+    ],
+    "url-3": [
+      18.429346004268155,
+      18.392598984064534,
+      18.424918001983315
+    ],
+    "query-1": [
+      19.45985699421726,
+      19.658869976410642,
+      19.43258399842307
+    ],
+    "query-2": [
+      19.785673008300364,
+      19.140541000524536,
+      19.31204498396255
+    ],
+    "query-3": [
+      19.44269399973564,
+      19.410617998801172,
+      19.423681980697438
+    ],
+    "fenced-1": [
+      21.234287996776402,
+      21.199593000346795,
+      21.052147989394143
+    ],
+    "fenced-2": [
+      21.52169801411219,
+      20.72956899064593,
+      20.715889986604452
+    ],
+    "fenced-3": [
+      22.197801008587703,
+      21.987341984640807,
+      22.004414990078658
+    ],
+    "unicode-1": [
+      15.272952005034313,
+      15.227919997414574,
+      15.392058005090803
+    ],
+    "unicode-2": [
+      15.643927006749436,
+      15.418576018419117,
+      15.55462900432758
+    ],
+    "unicode-3": [
+      15.355903015006334,
+      15.53286999114789,
+      16.627335018711165
+    ],
+    "dutch-1": [
+      14.244855003198609,
+      13.624268001876771,
+      13.643397978739813
+    ],
+    "dutch-2": [
+      13.959507981780916,
+      13.644507998833433,
+      13.886160013498738
+    ],
+    "dutch-3": [
+      13.769174984190613,
+      13.81947597838007,
+      13.97236401680857
+    ],
+    "github-valid-1": [
+      15.252104989485815,
+      15.544855006737635,
+      15.24024800164625
+    ],
+    "github-valid-2": [
+      14.652554993517697,
+      14.380310982232913,
+      14.357634005136788
+    ],
+    "github-valid-3": [
+      14.82261301134713,
+      14.782114012632519,
+      15.108272986253724
+    ],
+    "hf-valid-1": [
+      13.352954993024468,
+      13.531050004530698,
+      13.454570987960324
+    ],
+    "hf-valid-2": [
+      13.7357120111119,
+      13.320297992322594,
+      13.099208008497953
+    ],
+    "hf-valid-3": [
+      13.673642999492586,
+      13.416233996395022,
+      13.38454699725844
+    ],
+    "bare-1": [
+      11.78152798092924,
+      11.506767012178898,
+      11.546016001375392
+    ],
+    "bare-2": [
+      12.68641499336809,
+      11.793148994911462,
+      11.822259984910488
+    ],
+    "bare-3": [
+      11.851706018205732,
+      11.58600699272938,
+      11.647723993519321
+    ],
+    "french-1": [
+      14.815014001214877,
+      14.744011976290494,
+      14.921883994247764
+    ],
+    "french-2": [
+      14.971669996157289,
+      15.147886995691806,
+      14.965184993343428
+    ],
+    "french-3": [
+      15.205713018076494,
+      14.835456997388974,
+      14.80655002524145
+    ],
+    "spanish-1": [
+      13.240111991763115,
+      12.871093989815563,
+      13.375037000514567
+    ],
+    "spanish-2": [
+      13.393517991062254,
+      13.393009983701631,
+      13.62767000682652
+    ],
+    "spanish-3": [
+      13.408654980594292,
+      13.049578992649913,
+      12.719199003186077
+    ],
+    "two-values-1": [
+      18.69588697445579,
+      19.0395750105381,
+      19.185881013981998
+    ],
+    "repeat-1": [
+      16.716188983991742,
+      16.753069998230785,
+      17.42193099926226
+    ],
+    "two-values-2": [
+      19.31730000069365,
+      18.879309005569667,
+      18.83088902104646
+    ],
+    "repeat-2": [
+      16.716201993403956,
+      16.710027994122356,
+      16.657125990604982
+    ],
+    "two-values-3": [
+      18.747683003311977,
+      18.800725985784084,
+      19.935443007852882
+    ],
+    "repeat-3": [
+      15.963610989274457,
+      16.05552399996668,
+      17.345386993838474
+    ],
+    "trailing-dot-1": [
+      10.81313198665157,
+      10.897736996412277,
+      10.724081977969036
+    ],
+    "sentence-dot-1": [
+      11.356307979440317,
+      11.679018003633246,
+      11.710869002854452
+    ],
+    "space-unquoted-1": [
+      12.989954993827268,
+      12.969160015927628,
+      13.438240013783798
+    ],
+    "escaped-quote-1": [
+      15.18408500123769,
+      16.080565023003146,
+      15.31385097769089
+    ],
+    "json-escaped-newline-1": [
+      15.72452299296856,
+      15.584782988298684,
+      15.112452005269006
+    ],
+    "weak-real-1": [
+      12.980856001377106,
+      12.673894001636654,
+      12.74319100775756
+    ],
+    "weak-real-2": [
+      12.79150802292861,
+      12.588633981067687,
+      13.002157997107133
+    ],
+    "digits-real-1": [
+      10.33181301318109,
+      9.64558299165219,
+      9.582786005921662
+    ],
+    "uppercase-real-1": [
+      10.713288997067139,
+      10.606084018945694,
+      10.495445021660998
+    ],
+    "dollar-real-1": [
+      11.794585007010028,
+      11.440274014603347,
+      11.446352989878505
+    ],
+    "leading-space-1": [
+      11.23267799266614,
+      11.051652021706104,
+      10.974737000651658
+    ],
+    "crlf-1": [
+      16.42476097913459,
+      16.21048798551783,
+      16.4098120003473
+    ],
+    "yaml-block-1": [
+      15.503937000175938,
+      15.753891988424584,
+      15.557784005068243
+    ],
+    "basic-1": [
+      14.190844987751916,
+      12.921206012833863,
+      12.82661102595739
+    ],
+    "recovery-1": [
+      12.492657988332212,
+      12.537275993963704,
+      12.313869985518977
+    ],
+    "long-boundary-1": [
+      629.9428890051786,
+      640.7275839883368,
+      624.7868399950676
+    ],
+    "long-boundary-2": [
+      664.4589010102209,
+      671.1934180057142,
+      661.0344709770288
+    ],
+    "long-boundary-3": [
+      840.3223710192833,
+      758.6978549952619,
+      732.2846919996664
+    ],
+    "clean-01-1": [
+      17.04235700890422,
+      16.953147016465664,
+      17.12535001570359
+    ],
+    "clean-01-2": [
+      17.061716003809124,
+      16.96465301210992,
+      16.93040897953324
+    ],
+    "clean-02-1": [
+      16.54083200264722,
+      19.84173900564201,
+      18.840817007003352
+    ],
+    "clean-02-2": [
+      16.389821015764028,
+      16.388744028517976,
+      16.53758398606442
+    ],
+    "clean-03-1": [
+      16.43907598918304,
+      16.838995012221858,
+      16.909100027987733
+    ],
+    "clean-03-2": [
+      16.414991987403482,
+      16.335720021743327,
+      16.393670986872166
+    ],
+    "clean-04-1": [
+      16.72109100036323,
+      16.858497983776033,
+      16.779953002696857
+    ],
+    "clean-04-2": [
+      16.44261198816821,
+      16.375086008338258,
+      16.421111999079585
+    ],
+    "clean-05-1": [
+      18.107952986611053,
+      17.99430398386903,
+      18.236364994663745
+    ],
+    "clean-05-2": [
+      18.18246699986048,
+      17.984998994506896,
+      18.176262004999444
+    ],
+    "clean-06-1": [
+      15.744831005576998,
+      15.6824610021431,
+      15.708012011600658
+    ],
+    "clean-06-2": [
+      15.947608015267178,
+      15.757109998958185,
+      15.810962009709328
+    ],
+    "clean-07-1": [
+      16.715814999770373,
+      16.929343983065337,
+      17.01915799640119
+    ],
+    "clean-07-2": [
+      16.807621985208243,
+      16.898568021133542,
+      16.978466999717057
+    ],
+    "clean-08-1": [
+      17.899685015436262,
+      17.726329009747133,
+      17.813837999710813
+    ],
+    "clean-08-2": [
+      17.483486997662112,
+      17.332957999315113,
+      17.36067299498245
+    ],
+    "clean-09-1": [
+      15.529255993897095,
+      15.490292978938669,
+      15.590369002893567
+    ],
+    "clean-09-2": [
+      15.714867011411116,
+      15.655071008950472,
+      15.641108009731397
+    ],
+    "clean-10-1": [
+      17.56007000221871,
+      17.455866996897385,
+      17.402846977347508
+    ],
+    "clean-10-2": [
+      19.216504006180912,
+      18.161246000090614,
+      18.093607999617234
+    ],
+    "clean-11-1": [
+      15.034294017823413,
+      14.813403016887605,
+      15.158438996877521
+    ],
+    "clean-11-2": [
+      14.560654002707452,
+      14.896119973855093,
+      14.702051994390786
+    ],
+    "clean-12-1": [
+      14.701951993629336,
+      15.096407005330548,
+      14.886281976941973
+    ],
+    "clean-12-2": [
+      14.842264994513243,
+      14.938579988665879,
+      14.90050699794665
+    ],
+    "clean-13-1": [
+      16.263714991509914,
+      16.291186009766534,
+      16.224897000938654
+    ],
+    "clean-13-2": [
+      15.812878002179787,
+      15.711083979113027,
+      15.778720990056172
+    ],
+    "clean-14-1": [
+      18.709977011894807,
+      17.2725300071761,
+      17.05706401844509
+    ],
+    "clean-14-2": [
+      16.651306999847293,
+      16.722737986128777,
+      16.85604199883528
+    ],
+    "clean-15-1": [
+      17.721892014378682,
+      17.64556299895048,
+      17.467876023147255
+    ],
+    "clean-15-2": [
+      17.978150019189343,
+      18.016621994320303,
+      17.941982980119064
+    ],
+    "clean-16-1": [
+      16.50447299471125,
+      16.438065009424463,
+      16.44835199113004
+    ],
+    "clean-16-2": [
+      16.58611898892559,
+      16.48091000970453,
+      16.448414011392742
+    ],
+    "clean-17-1": [
+      17.86690400331281,
+      17.849730007583275,
+      17.86904499749653
+    ],
+    "clean-17-2": [
+      17.62536700698547,
+      17.876640980830416,
+      17.901567014632747
+    ],
+    "clean-18-1": [
+      17.60285097407177,
+      17.809938988648355,
+      18.83851198363118
+    ],
+    "clean-18-2": [
+      17.693138011964038,
+      18.3210399991367,
+      17.771087994333357
+    ],
+    "clean-19-1": [
+      19.04892298625782,
+      18.805191008141264,
+      19.116857001790777
+    ],
+    "clean-19-2": [
+      18.749296985333785,
+      18.519086006563157,
+      19.042558997171
+    ],
+    "clean-20-1": [
+      19.565397989936173,
+      19.77635099319741,
+      20.215873984852806
+    ],
+    "clean-20-2": [
+      19.53201400465332,
+      19.23497300595045,
+      19.215934997191653
+    ],
+    "clean-21-1": [
+      16.625896998448297,
+      15.93495300039649,
+      15.955837996443734
+    ],
+    "clean-21-2": [
+      16.312649007886648,
+      16.07322398922406,
+      16.951982979662716
+    ],
+    "clean-22-1": [
+      18.228836997877806,
+      19.19028500560671,
+      18.67068198043853
+    ],
+    "clean-22-2": [
+      17.99454799038358,
+      18.40633898973465,
+      18.405765993520617
+    ],
+    "clean-23-1": [
+      16.488723980728537,
+      16.309762984747067,
+      16.726099012885243
+    ],
+    "clean-23-2": [
+      15.75718299136497,
+      16.360457986593246,
+      15.962523000780493
+    ],
+    "clean-24-1": [
+      17.42927500163205,
+      17.14947199798189,
+      17.582005995791405
+    ],
+    "clean-24-2": [
+      17.334233009023592,
+      17.77487699291669,
+      17.34155000303872
+    ],
+    "clean-25-1": [
+      14.867182995658368,
+      14.364254981046543,
+      14.29827802348882
+    ],
+    "clean-25-2": [
+      14.819417003309354,
+      14.435725985094905,
+      14.741645980393514
+    ],
+    "clean-26-1": [
+      15.641461010091007,
+      16.389708005590364,
+      15.69861700409092
+    ],
+    "clean-26-2": [
+      16.094277991214767,
+      16.19046801351942,
+      15.734098997199908
+    ],
+    "clean-27-1": [
+      18.083575007040054,
+      18.02628702716902,
+      17.605155997443944
+    ],
+    "clean-27-2": [
+      17.91220999439247,
+      17.47014999273233,
+      17.7995259873569
+    ],
+    "clean-28-1": [
+      17.463209020206705,
+      17.90559699293226,
+      17.751387000316754
+    ],
+    "clean-28-2": [
+      17.47838599840179,
+      17.03095101402141,
+      17.416746995877475
+    ],
+    "clean-29-1": [
+      16.405811009462923,
+      16.62170997587964,
+      16.396451013861224
+    ],
+    "clean-29-2": [
+      16.636896005365998,
+      16.212790011195466,
+      16.79263199912384
+    ],
+    "clean-30-1": [
+      19.938010023906827,
+      20.384347008075565,
+      20.028192026074976
+    ],
+    "clean-30-2": [
+      20.214743010001257,
+      20.40457198745571,
+      19.859038991853595
+    ]
+  },
+  "short_latency_ms": {
+    "p50": 15.963610989274457,
+    "p95": 19.658869976410642
+  },
+  "results": {
+    "raw@0.3": {
+      "metrics": {
+        "exact_tp": 52,
+        "exact_fp": 277,
+        "exact_fn": 32,
+        "exact_precision": 0.1580547112462006,
+        "exact_recall": 0.6190476190476191,
+        "fully_covered": 56,
+        "secrets": 84,
+        "partial_only": 27,
+        "negative_prompts_flagged": 60,
+        "negative_prompts": 60,
+        "groups": {
+          "challenge": {
+            "secrets": 81,
+            "exact": 51,
+            "covered": 53
+          },
+          "long": {
+            "secrets": 3,
+            "exact": 1,
+            "covered": 3
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            31
+          ],
+          [
+            31,
+            32
+          ]
+        ],
+        "env-quoted-2": [
+          [
+            0,
+            16
+          ],
+          [
+            18,
+            31
+          ],
+          [
+            31,
+            32
+          ]
+        ],
+        "env-quoted-3": [
+          [
+            18,
+            31
+          ],
+          [
+            31,
+            32
+          ]
+        ],
+        "env-unquoted-1": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-2": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-3": [
+          [
+            25,
+            56
+          ]
+        ],
+        "json-1": [
+          [
+            25,
+            37
+          ],
+          [
+            46,
+            47
+          ]
+        ],
+        "json-2": [
+          [
+            25,
+            37
+          ],
+          [
+            46,
+            47
+          ]
+        ],
+        "json-3": [
+          [
+            25,
+            37
+          ],
+          [
+            46,
+            47
+          ]
+        ],
+        "yaml-1": [
+          [
+            26,
+            36
+          ],
+          [
+            46,
+            48
+          ]
+        ],
+        "yaml-2": [
+          [
+            26,
+            35
+          ],
+          [
+            46,
+            48
+          ],
+          [
+            49,
+            57
+          ]
+        ],
+        "yaml-3": [
+          [
+            26,
+            36
+          ],
+          [
+            46,
+            48
+          ]
+        ],
+        "prose-1": [
+          [
+            27,
+            41
+          ],
+          [
+            41,
+            42
+          ]
+        ],
+        "prose-2": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-3": [
+          [
+            27,
+            41
+          ],
+          [
+            41,
+            42
+          ]
+        ],
+        "quoted-prose-1": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-2": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-3": [
+          [
+            14,
+            32
+          ]
+        ],
+        "backticks-1": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-2": [
+          [
+            24,
+            36
+          ],
+          [
+            38,
+            39
+          ]
+        ],
+        "backticks-3": [
+          [
+            24,
+            36
+          ],
+          [
+            36,
+            37
+          ],
+          [
+            38,
+            39
+          ]
+        ],
+        "bearer-1": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-2": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-3": [
+          [
+            22,
+            59
+          ]
+        ],
+        "url-1": [
+          [
+            19,
+            37
+          ],
+          [
+            59,
+            63
+          ]
+        ],
+        "url-2": [
+          [
+            19,
+            26
+          ],
+          [
+            26,
+            27
+          ],
+          [
+            27,
+            37
+          ],
+          [
+            37,
+            45
+          ],
+          [
+            59,
+            63
+          ]
+        ],
+        "url-3": [
+          [
+            19,
+            36
+          ],
+          [
+            59,
+            63
+          ]
+        ],
+        "query-1": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-2": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-3": [
+          [
+            37,
+            68
+          ]
+        ],
+        "fenced-1": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-2": [
+          [
+            29,
+            33
+          ],
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-3": [
+          [
+            34,
+            73
+          ]
+        ],
+        "unicode-1": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-2": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-3": [
+          [
+            17,
+            28
+          ]
+        ],
+        "dutch-1": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-2": [
+          [
+            18,
+            28
+          ],
+          [
+            28,
+            29
+          ]
+        ],
+        "dutch-3": [
+          [
+            18,
+            29
+          ]
+        ],
+        "github-valid-1": [
+          [
+            19,
+            59
+          ],
+          [
+            63,
+            69
+          ]
+        ],
+        "github-valid-2": [
+          [
+            19,
+            59
+          ],
+          [
+            63,
+            69
+          ]
+        ],
+        "github-valid-3": [
+          [
+            19,
+            59
+          ],
+          [
+            63,
+            69
+          ]
+        ],
+        "hf-valid-1": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-2": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-3": [
+          [
+            14,
+            51
+          ]
+        ],
+        "bare-1": [
+          [
+            4,
+            35
+          ]
+        ],
+        "bare-2": [
+          [
+            4,
+            35
+          ]
+        ],
+        "bare-3": [
+          [
+            4,
+            35
+          ]
+        ],
+        "french-1": [
+          [
+            21,
+            31
+          ],
+          [
+            31,
+            32
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "french-2": [
+          [
+            21,
+            32
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "french-3": [
+          [
+            21,
+            31
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "spanish-1": [
+          [
+            17,
+            27
+          ],
+          [
+            27,
+            28
+          ]
+        ],
+        "spanish-2": [
+          [
+            17,
+            27
+          ],
+          [
+            27,
+            28
+          ]
+        ],
+        "spanish-3": [
+          [
+            17,
+            27
+          ],
+          [
+            27,
+            28
+          ]
+        ],
+        "two-values-1": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-1": [
+          [
+            21,
+            33
+          ],
+          [
+            48,
+            60
+          ]
+        ],
+        "two-values-2": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-2": [
+          [
+            21,
+            33
+          ],
+          [
+            48,
+            60
+          ]
+        ],
+        "two-values-3": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-3": [
+          [
+            21,
+            33
+          ],
+          [
+            48,
+            60
+          ]
+        ],
+        "trailing-dot-1": [
+          [
+            0,
+            18
+          ]
+        ],
+        "sentence-dot-1": [
+          [
+            16,
+            24
+          ]
+        ],
+        "space-unquoted-1": [
+          [
+            4,
+            12
+          ]
+        ],
+        "escaped-quote-1": [
+          [
+            17,
+            21
+          ],
+          [
+            23,
+            28
+          ]
+        ],
+        "json-escaped-newline-1": [
+          [
+            17,
+            22
+          ],
+          [
+            22,
+            23
+          ],
+          [
+            24,
+            30
+          ]
+        ],
+        "weak-real-1": [
+          [
+            24,
+            31
+          ],
+          [
+            34,
+            46
+          ]
+        ],
+        "weak-real-2": [
+          [
+            24,
+            32
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "digits-real-1": [
+          [
+            0,
+            8
+          ],
+          [
+            9,
+            15
+          ]
+        ],
+        "uppercase-real-1": [
+          [
+            0,
+            8
+          ],
+          [
+            9,
+            26
+          ]
+        ],
+        "dollar-real-1": [
+          [
+            0,
+            8
+          ],
+          [
+            11,
+            19
+          ]
+        ],
+        "leading-space-1": [
+          [
+            0,
+            8
+          ],
+          [
+            12,
+            19
+          ]
+        ],
+        "crlf-1": [
+          [
+            20,
+            56
+          ]
+        ],
+        "yaml-block-1": [
+          [
+            10,
+            37
+          ],
+          [
+            38,
+            42
+          ]
+        ],
+        "basic-1": [
+          [
+            21,
+            53
+          ]
+        ],
+        "recovery-1": [
+          [
+            30,
+            44
+          ]
+        ],
+        "long-boundary-1": [
+          [
+            3007,
+            3022
+          ],
+          [
+            3023,
+            3024
+          ]
+        ],
+        "long-boundary-2": [
+          [
+            3254,
+            3269
+          ],
+          [
+            3270,
+            3271
+          ]
+        ],
+        "long-boundary-3": [
+          [
+            3502,
+            3516
+          ],
+          [
+            3517,
+            3518
+          ]
+        ],
+        "clean-01-1": [
+          [
+            4,
+            12
+          ],
+          [
+            74,
+            83
+          ],
+          [
+            91,
+            92
+          ]
+        ],
+        "clean-01-2": [
+          [
+            4,
+            12
+          ],
+          [
+            74,
+            83
+          ],
+          [
+            91,
+            92
+          ]
+        ],
+        "clean-02-1": [
+          [
+            4,
+            12
+          ],
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-02-2": [
+          [
+            4,
+            12
+          ],
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-03-1": [
+          [
+            54,
+            63
+          ],
+          [
+            71,
+            72
+          ]
+        ],
+        "clean-03-2": [
+          [
+            54,
+            63
+          ],
+          [
+            71,
+            72
+          ]
+        ],
+        "clean-04-1": [
+          [
+            4,
+            12
+          ],
+          [
+            28,
+            32
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-04-2": [
+          [
+            4,
+            12
+          ],
+          [
+            28,
+            32
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-05-1": [
+          [
+            14,
+            24
+          ],
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-05-2": [
+          [
+            14,
+            24
+          ],
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-06-1": [
+          [
+            10,
+            11
+          ],
+          [
+            12,
+            29
+          ],
+          [
+            47,
+            56
+          ],
+          [
+            64,
+            65
+          ]
+        ],
+        "clean-06-2": [
+          [
+            10,
+            11
+          ],
+          [
+            12,
+            29
+          ],
+          [
+            47,
+            56
+          ],
+          [
+            64,
+            65
+          ]
+        ],
+        "clean-07-1": [
+          [
+            11,
+            12
+          ],
+          [
+            13,
+            30
+          ],
+          [
+            49,
+            58
+          ],
+          [
+            66,
+            67
+          ]
+        ],
+        "clean-07-2": [
+          [
+            11,
+            12
+          ],
+          [
+            13,
+            30
+          ],
+          [
+            49,
+            58
+          ],
+          [
+            66,
+            67
+          ]
+        ],
+        "clean-08-1": [
+          [
+            14,
+            19
+          ],
+          [
+            20,
+            37
+          ],
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-08-2": [
+          [
+            14,
+            19
+          ],
+          [
+            20,
+            37
+          ],
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-09-1": [
+          [
+            39,
+            48
+          ],
+          [
+            56,
+            57
+          ]
+        ],
+        "clean-09-2": [
+          [
+            39,
+            48
+          ],
+          [
+            56,
+            57
+          ]
+        ],
+        "clean-10-1": [
+          [
+            37,
+            46
+          ],
+          [
+            54,
+            55
+          ]
+        ],
+        "clean-10-2": [
+          [
+            37,
+            46
+          ],
+          [
+            54,
+            55
+          ]
+        ],
+        "clean-11-1": [
+          [
+            11,
+            21
+          ],
+          [
+            39,
+            48
+          ],
+          [
+            56,
+            57
+          ]
+        ],
+        "clean-11-2": [
+          [
+            11,
+            21
+          ],
+          [
+            39,
+            48
+          ],
+          [
+            56,
+            57
+          ]
+        ],
+        "clean-12-1": [
+          [
+            11,
+            29
+          ],
+          [
+            47,
+            56
+          ],
+          [
+            64,
+            65
+          ]
+        ],
+        "clean-12-2": [
+          [
+            11,
+            29
+          ],
+          [
+            47,
+            56
+          ],
+          [
+            64,
+            65
+          ]
+        ],
+        "clean-13-1": [
+          [
+            11,
+            19
+          ],
+          [
+            65,
+            74
+          ],
+          [
+            82,
+            83
+          ]
+        ],
+        "clean-13-2": [
+          [
+            11,
+            19
+          ],
+          [
+            65,
+            74
+          ],
+          [
+            82,
+            83
+          ]
+        ],
+        "clean-14-1": [
+          [
+            24,
+            36
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-14-2": [
+          [
+            24,
+            36
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-15-1": [
+          [
+            9,
+            33
+          ],
+          [
+            64,
+            73
+          ],
+          [
+            81,
+            82
+          ]
+        ],
+        "clean-15-2": [
+          [
+            9,
+            33
+          ],
+          [
+            64,
+            73
+          ],
+          [
+            81,
+            82
+          ]
+        ],
+        "clean-16-1": [
+          [
+            9,
+            16
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            53,
+            62
+          ],
+          [
+            70,
+            71
+          ]
+        ],
+        "clean-16-2": [
+          [
+            9,
+            16
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            53,
+            62
+          ],
+          [
+            70,
+            71
+          ]
+        ],
+        "clean-17-1": [
+          [
+            9,
+            11
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-17-2": [
+          [
+            9,
+            11
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-18-1": [
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-18-2": [
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-19-1": [
+          [
+            4,
+            12
+          ],
+          [
+            29,
+            33
+          ],
+          [
+            67,
+            76
+          ],
+          [
+            84,
+            85
+          ]
+        ],
+        "clean-19-2": [
+          [
+            4,
+            12
+          ],
+          [
+            29,
+            33
+          ],
+          [
+            67,
+            76
+          ],
+          [
+            84,
+            85
+          ]
+        ],
+        "clean-20-1": [
+          [
+            73,
+            82
+          ],
+          [
+            90,
+            91
+          ]
+        ],
+        "clean-20-2": [
+          [
+            73,
+            82
+          ],
+          [
+            90,
+            91
+          ]
+        ],
+        "clean-21-1": [
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            41
+          ],
+          [
+            59,
+            68
+          ],
+          [
+            76,
+            77
+          ]
+        ],
+        "clean-21-2": [
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            41
+          ],
+          [
+            59,
+            68
+          ],
+          [
+            76,
+            77
+          ]
+        ],
+        "clean-22-1": [
+          [
+            4,
+            10
+          ],
+          [
+            14,
+            16
+          ],
+          [
+            81,
+            90
+          ],
+          [
+            98,
+            99
+          ]
+        ],
+        "clean-22-2": [
+          [
+            14,
+            16
+          ],
+          [
+            81,
+            90
+          ],
+          [
+            98,
+            99
+          ]
+        ],
+        "clean-23-1": [
+          [
+            4,
+            12
+          ],
+          [
+            18,
+            30
+          ],
+          [
+            62,
+            71
+          ],
+          [
+            79,
+            80
+          ]
+        ],
+        "clean-23-2": [
+          [
+            4,
+            12
+          ],
+          [
+            18,
+            30
+          ],
+          [
+            62,
+            71
+          ],
+          [
+            79,
+            80
+          ]
+        ],
+        "clean-24-1": [
+          [
+            63,
+            72
+          ],
+          [
+            80,
+            81
+          ]
+        ],
+        "clean-24-2": [
+          [
+            63,
+            72
+          ],
+          [
+            80,
+            81
+          ]
+        ],
+        "clean-25-1": [
+          [
+            11,
+            22
+          ],
+          [
+            41,
+            50
+          ],
+          [
+            58,
+            59
+          ]
+        ],
+        "clean-25-2": [
+          [
+            11,
+            22
+          ],
+          [
+            41,
+            50
+          ],
+          [
+            58,
+            59
+          ]
+        ],
+        "clean-26-1": [
+          [
+            6,
+            19
+          ],
+          [
+            22,
+            30
+          ],
+          [
+            31,
+            43
+          ],
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-26-2": [
+          [
+            22,
+            30
+          ],
+          [
+            31,
+            43
+          ],
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-27-1": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-27-2": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-28-1": [
+          [
+            15,
+            18
+          ],
+          [
+            32,
+            47
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-28-2": [
+          [
+            15,
+            18
+          ],
+          [
+            32,
+            47
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-29-1": [
+          [
+            22,
+            23
+          ],
+          [
+            54,
+            63
+          ],
+          [
+            71,
+            72
+          ]
+        ],
+        "clean-29-2": [
+          [
+            22,
+            23
+          ],
+          [
+            54,
+            63
+          ],
+          [
+            71,
+            72
+          ]
+        ],
+        "clean-30-1": [
+          [
+            4,
+            12
+          ],
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            38
+          ],
+          [
+            89,
+            98
+          ],
+          [
+            106,
+            107
+          ]
+        ],
+        "clean-30-2": [
+          [
+            4,
+            12
+          ],
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            38
+          ],
+          [
+            89,
+            98
+          ],
+          [
+            106,
+            107
+          ]
+        ]
+      }
+    },
+    "combined@0.3": {
+      "metrics": {
+        "exact_tp": 74,
+        "exact_fp": 242,
+        "exact_fn": 10,
+        "exact_precision": 0.23417721518987342,
+        "exact_recall": 0.8809523809523809,
+        "fully_covered": 74,
+        "secrets": 84,
+        "partial_only": 8,
+        "negative_prompts_flagged": 60,
+        "negative_prompts": 60,
+        "groups": {
+          "challenge": {
+            "secrets": 81,
+            "exact": 71,
+            "covered": 71
+          },
+          "long": {
+            "secrets": 3,
+            "exact": 3,
+            "covered": 3
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-quoted-2": [
+          [
+            0,
+            16
+          ],
+          [
+            18,
+            32
+          ]
+        ],
+        "env-quoted-3": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-unquoted-1": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-2": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-3": [
+          [
+            25,
+            56
+          ]
+        ],
+        "json-1": [
+          [
+            25,
+            37
+          ],
+          [
+            46,
+            47
+          ]
+        ],
+        "json-2": [
+          [
+            25,
+            37
+          ],
+          [
+            46,
+            47
+          ]
+        ],
+        "json-3": [
+          [
+            25,
+            37
+          ],
+          [
+            46,
+            47
+          ]
+        ],
+        "yaml-1": [
+          [
+            26,
+            36
+          ],
+          [
+            46,
+            48
+          ]
+        ],
+        "yaml-2": [
+          [
+            26,
+            36
+          ],
+          [
+            46,
+            48
+          ],
+          [
+            49,
+            57
+          ]
+        ],
+        "yaml-3": [
+          [
+            26,
+            36
+          ],
+          [
+            46,
+            48
+          ]
+        ],
+        "prose-1": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-2": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-3": [
+          [
+            27,
+            42
+          ]
+        ],
+        "quoted-prose-1": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-2": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-3": [
+          [
+            14,
+            32
+          ]
+        ],
+        "backticks-1": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-2": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-3": [
+          [
+            24,
+            39
+          ]
+        ],
+        "bearer-1": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-2": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-3": [
+          [
+            22,
+            59
+          ]
+        ],
+        "url-1": [
+          [
+            19,
+            36
+          ],
+          [
+            59,
+            63
+          ]
+        ],
+        "url-2": [
+          [
+            19,
+            36
+          ],
+          [
+            37,
+            45
+          ],
+          [
+            59,
+            63
+          ]
+        ],
+        "url-3": [
+          [
+            19,
+            36
+          ],
+          [
+            59,
+            63
+          ]
+        ],
+        "query-1": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-2": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-3": [
+          [
+            37,
+            68
+          ]
+        ],
+        "fenced-1": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-2": [
+          [
+            29,
+            33
+          ],
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-3": [
+          [
+            34,
+            73
+          ]
+        ],
+        "unicode-1": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-2": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-3": [
+          [
+            17,
+            28
+          ]
+        ],
+        "dutch-1": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-2": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-3": [
+          [
+            18,
+            29
+          ]
+        ],
+        "github-valid-1": [
+          [
+            19,
+            59
+          ],
+          [
+            63,
+            69
+          ]
+        ],
+        "github-valid-2": [
+          [
+            19,
+            59
+          ],
+          [
+            63,
+            69
+          ]
+        ],
+        "github-valid-3": [
+          [
+            19,
+            59
+          ],
+          [
+            63,
+            69
+          ]
+        ],
+        "hf-valid-1": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-2": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-3": [
+          [
+            14,
+            51
+          ]
+        ],
+        "bare-1": [
+          [
+            4,
+            35
+          ]
+        ],
+        "bare-2": [
+          [
+            4,
+            35
+          ]
+        ],
+        "bare-3": [
+          [
+            4,
+            35
+          ]
+        ],
+        "french-1": [
+          [
+            21,
+            31
+          ],
+          [
+            31,
+            32
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "french-2": [
+          [
+            21,
+            32
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "french-3": [
+          [
+            21,
+            31
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "spanish-1": [
+          [
+            17,
+            27
+          ],
+          [
+            27,
+            28
+          ]
+        ],
+        "spanish-2": [
+          [
+            17,
+            27
+          ],
+          [
+            27,
+            28
+          ]
+        ],
+        "spanish-3": [
+          [
+            17,
+            27
+          ],
+          [
+            27,
+            28
+          ]
+        ],
+        "two-values-1": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-1": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "two-values-2": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-2": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "two-values-3": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-3": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "trailing-dot-1": [
+          [
+            9,
+            18
+          ]
+        ],
+        "sentence-dot-1": [
+          [
+            16,
+            26
+          ]
+        ],
+        "space-unquoted-1": [
+          [
+            4,
+            12
+          ]
+        ],
+        "escaped-quote-1": [
+          [
+            17,
+            22
+          ],
+          [
+            23,
+            28
+          ]
+        ],
+        "json-escaped-newline-1": [
+          [
+            17,
+            30
+          ]
+        ],
+        "weak-real-1": [
+          [
+            24,
+            31
+          ],
+          [
+            34,
+            46
+          ]
+        ],
+        "weak-real-2": [
+          [
+            24,
+            32
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "digits-real-1": [
+          [
+            0,
+            8
+          ],
+          [
+            9,
+            15
+          ]
+        ],
+        "uppercase-real-1": [
+          [
+            0,
+            8
+          ],
+          [
+            9,
+            26
+          ]
+        ],
+        "dollar-real-1": [
+          [
+            0,
+            8
+          ],
+          [
+            11,
+            19
+          ]
+        ],
+        "leading-space-1": [
+          [
+            0,
+            8
+          ],
+          [
+            10,
+            21
+          ]
+        ],
+        "crlf-1": [
+          [
+            20,
+            56
+          ]
+        ],
+        "yaml-block-1": [
+          [
+            10,
+            11
+          ],
+          [
+            38,
+            42
+          ]
+        ],
+        "basic-1": [
+          [
+            21,
+            53
+          ]
+        ],
+        "recovery-1": [
+          [
+            30,
+            44
+          ]
+        ],
+        "long-boundary-1": [
+          [
+            3008,
+            3022
+          ],
+          [
+            3023,
+            3024
+          ]
+        ],
+        "long-boundary-2": [
+          [
+            3255,
+            3269
+          ],
+          [
+            3270,
+            3271
+          ]
+        ],
+        "long-boundary-3": [
+          [
+            3502,
+            3516
+          ],
+          [
+            3517,
+            3518
+          ]
+        ],
+        "clean-01-1": [
+          [
+            4,
+            12
+          ],
+          [
+            74,
+            83
+          ],
+          [
+            91,
+            92
+          ]
+        ],
+        "clean-01-2": [
+          [
+            4,
+            12
+          ],
+          [
+            74,
+            83
+          ],
+          [
+            91,
+            92
+          ]
+        ],
+        "clean-02-1": [
+          [
+            4,
+            12
+          ],
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-02-2": [
+          [
+            4,
+            12
+          ],
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-03-1": [
+          [
+            54,
+            63
+          ],
+          [
+            71,
+            72
+          ]
+        ],
+        "clean-03-2": [
+          [
+            54,
+            63
+          ],
+          [
+            71,
+            72
+          ]
+        ],
+        "clean-04-1": [
+          [
+            4,
+            12
+          ],
+          [
+            28,
+            32
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-04-2": [
+          [
+            4,
+            12
+          ],
+          [
+            28,
+            32
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-05-1": [
+          [
+            14,
+            24
+          ],
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-05-2": [
+          [
+            14,
+            24
+          ],
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-06-1": [
+          [
+            10,
+            11
+          ],
+          [
+            12,
+            29
+          ],
+          [
+            47,
+            56
+          ],
+          [
+            64,
+            65
+          ]
+        ],
+        "clean-06-2": [
+          [
+            10,
+            11
+          ],
+          [
+            12,
+            29
+          ],
+          [
+            47,
+            56
+          ],
+          [
+            64,
+            65
+          ]
+        ],
+        "clean-07-1": [
+          [
+            11,
+            12
+          ],
+          [
+            13,
+            30
+          ],
+          [
+            49,
+            58
+          ],
+          [
+            66,
+            67
+          ]
+        ],
+        "clean-07-2": [
+          [
+            11,
+            12
+          ],
+          [
+            13,
+            30
+          ],
+          [
+            49,
+            58
+          ],
+          [
+            66,
+            67
+          ]
+        ],
+        "clean-08-1": [
+          [
+            11,
+            40
+          ],
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-08-2": [
+          [
+            11,
+            40
+          ],
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-09-1": [
+          [
+            11,
+            21
+          ],
+          [
+            39,
+            48
+          ],
+          [
+            56,
+            57
+          ]
+        ],
+        "clean-09-2": [
+          [
+            11,
+            21
+          ],
+          [
+            39,
+            48
+          ],
+          [
+            56,
+            57
+          ]
+        ],
+        "clean-10-1": [
+          [
+            11,
+            19
+          ],
+          [
+            37,
+            46
+          ],
+          [
+            54,
+            55
+          ]
+        ],
+        "clean-10-2": [
+          [
+            11,
+            19
+          ],
+          [
+            37,
+            46
+          ],
+          [
+            54,
+            55
+          ]
+        ],
+        "clean-11-1": [
+          [
+            11,
+            21
+          ],
+          [
+            39,
+            48
+          ],
+          [
+            56,
+            57
+          ]
+        ],
+        "clean-11-2": [
+          [
+            11,
+            21
+          ],
+          [
+            39,
+            48
+          ],
+          [
+            56,
+            57
+          ]
+        ],
+        "clean-12-1": [
+          [
+            11,
+            29
+          ],
+          [
+            47,
+            56
+          ],
+          [
+            64,
+            65
+          ]
+        ],
+        "clean-12-2": [
+          [
+            11,
+            29
+          ],
+          [
+            47,
+            56
+          ],
+          [
+            64,
+            65
+          ]
+        ],
+        "clean-13-1": [
+          [
+            11,
+            19
+          ],
+          [
+            65,
+            74
+          ],
+          [
+            82,
+            83
+          ]
+        ],
+        "clean-13-2": [
+          [
+            11,
+            19
+          ],
+          [
+            65,
+            74
+          ],
+          [
+            82,
+            83
+          ]
+        ],
+        "clean-14-1": [
+          [
+            24,
+            36
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-14-2": [
+          [
+            24,
+            36
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-15-1": [
+          [
+            9,
+            33
+          ],
+          [
+            64,
+            73
+          ],
+          [
+            81,
+            82
+          ]
+        ],
+        "clean-15-2": [
+          [
+            9,
+            33
+          ],
+          [
+            64,
+            73
+          ],
+          [
+            81,
+            82
+          ]
+        ],
+        "clean-16-1": [
+          [
+            9,
+            16
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            53,
+            62
+          ],
+          [
+            70,
+            71
+          ]
+        ],
+        "clean-16-2": [
+          [
+            9,
+            16
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            53,
+            62
+          ],
+          [
+            70,
+            71
+          ]
+        ],
+        "clean-17-1": [
+          [
+            9,
+            11
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-17-2": [
+          [
+            9,
+            11
+          ],
+          [
+            21,
+            36
+          ],
+          [
+            55,
+            64
+          ],
+          [
+            72,
+            73
+          ]
+        ],
+        "clean-18-1": [
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-18-2": [
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-19-1": [
+          [
+            4,
+            12
+          ],
+          [
+            29,
+            33
+          ],
+          [
+            67,
+            76
+          ],
+          [
+            84,
+            85
+          ]
+        ],
+        "clean-19-2": [
+          [
+            4,
+            12
+          ],
+          [
+            29,
+            33
+          ],
+          [
+            67,
+            76
+          ],
+          [
+            84,
+            85
+          ]
+        ],
+        "clean-20-1": [
+          [
+            73,
+            82
+          ],
+          [
+            90,
+            91
+          ]
+        ],
+        "clean-20-2": [
+          [
+            73,
+            82
+          ],
+          [
+            90,
+            91
+          ]
+        ],
+        "clean-21-1": [
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            41
+          ],
+          [
+            59,
+            68
+          ],
+          [
+            76,
+            77
+          ]
+        ],
+        "clean-21-2": [
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            41
+          ],
+          [
+            59,
+            68
+          ],
+          [
+            76,
+            77
+          ]
+        ],
+        "clean-22-1": [
+          [
+            4,
+            10
+          ],
+          [
+            14,
+            16
+          ],
+          [
+            81,
+            90
+          ],
+          [
+            98,
+            99
+          ]
+        ],
+        "clean-22-2": [
+          [
+            14,
+            16
+          ],
+          [
+            81,
+            90
+          ],
+          [
+            98,
+            99
+          ]
+        ],
+        "clean-23-1": [
+          [
+            4,
+            12
+          ],
+          [
+            18,
+            30
+          ],
+          [
+            62,
+            71
+          ],
+          [
+            79,
+            80
+          ]
+        ],
+        "clean-23-2": [
+          [
+            4,
+            12
+          ],
+          [
+            18,
+            30
+          ],
+          [
+            62,
+            71
+          ],
+          [
+            79,
+            80
+          ]
+        ],
+        "clean-24-1": [
+          [
+            63,
+            72
+          ],
+          [
+            80,
+            81
+          ]
+        ],
+        "clean-24-2": [
+          [
+            63,
+            72
+          ],
+          [
+            80,
+            81
+          ]
+        ],
+        "clean-25-1": [
+          [
+            11,
+            24
+          ],
+          [
+            41,
+            50
+          ],
+          [
+            58,
+            59
+          ]
+        ],
+        "clean-25-2": [
+          [
+            11,
+            24
+          ],
+          [
+            41,
+            50
+          ],
+          [
+            58,
+            59
+          ]
+        ],
+        "clean-26-1": [
+          [
+            6,
+            19
+          ],
+          [
+            22,
+            43
+          ],
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-26-2": [
+          [
+            22,
+            43
+          ],
+          [
+            61,
+            70
+          ],
+          [
+            78,
+            79
+          ]
+        ],
+        "clean-27-1": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-27-2": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-28-1": [
+          [
+            15,
+            18
+          ],
+          [
+            32,
+            47
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-28-2": [
+          [
+            15,
+            18
+          ],
+          [
+            32,
+            47
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-29-1": [
+          [
+            22,
+            23
+          ],
+          [
+            54,
+            63
+          ],
+          [
+            71,
+            72
+          ]
+        ],
+        "clean-29-2": [
+          [
+            22,
+            23
+          ],
+          [
+            54,
+            63
+          ],
+          [
+            71,
+            72
+          ]
+        ],
+        "clean-30-1": [
+          [
+            4,
+            12
+          ],
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            38
+          ],
+          [
+            89,
+            98
+          ],
+          [
+            106,
+            107
+          ]
+        ],
+        "clean-30-2": [
+          [
+            4,
+            12
+          ],
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            38
+          ],
+          [
+            89,
+            98
+          ],
+          [
+            106,
+            107
+          ]
+        ]
+      }
+    },
+    "raw@0.5": {
+      "metrics": {
+        "exact_tp": 51,
+        "exact_fp": 118,
+        "exact_fn": 33,
+        "exact_precision": 0.30177514792899407,
+        "exact_recall": 0.6071428571428571,
+        "fully_covered": 54,
+        "secrets": 84,
+        "partial_only": 25,
+        "negative_prompts_flagged": 60,
+        "negative_prompts": 60,
+        "groups": {
+          "challenge": {
+            "secrets": 81,
+            "exact": 50,
+            "covered": 52
+          },
+          "long": {
+            "secrets": 3,
+            "exact": 1,
+            "covered": 2
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            31
+          ]
+        ],
+        "env-quoted-2": [
+          [
+            18,
+            31
+          ],
+          [
+            31,
+            32
+          ]
+        ],
+        "env-quoted-3": [
+          [
+            18,
+            31
+          ]
+        ],
+        "env-unquoted-1": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-2": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-3": [
+          [
+            25,
+            56
+          ]
+        ],
+        "json-1": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-2": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-3": [
+          [
+            25,
+            37
+          ]
+        ],
+        "yaml-1": [
+          [
+            26,
+            36
+          ]
+        ],
+        "yaml-2": [
+          [
+            26,
+            35
+          ]
+        ],
+        "yaml-3": [
+          [
+            26,
+            36
+          ]
+        ],
+        "prose-1": [
+          [
+            27,
+            41
+          ]
+        ],
+        "prose-2": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-3": [
+          [
+            27,
+            41
+          ],
+          [
+            41,
+            42
+          ]
+        ],
+        "quoted-prose-1": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-2": [],
+        "quoted-prose-3": [
+          [
+            14,
+            32
+          ]
+        ],
+        "backticks-1": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-2": [
+          [
+            24,
+            36
+          ]
+        ],
+        "backticks-3": [
+          [
+            24,
+            36
+          ]
+        ],
+        "bearer-1": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-2": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-3": [
+          [
+            22,
+            59
+          ]
+        ],
+        "url-1": [
+          [
+            19,
+            37
+          ]
+        ],
+        "url-2": [],
+        "url-3": [
+          [
+            19,
+            36
+          ]
+        ],
+        "query-1": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-2": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-3": [
+          [
+            37,
+            68
+          ]
+        ],
+        "fenced-1": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-2": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-3": [
+          [
+            34,
+            73
+          ]
+        ],
+        "unicode-1": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-2": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-3": [
+          [
+            17,
+            28
+          ]
+        ],
+        "dutch-1": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-2": [
+          [
+            18,
+            28
+          ]
+        ],
+        "dutch-3": [
+          [
+            18,
+            29
+          ]
+        ],
+        "github-valid-1": [
+          [
+            19,
+            59
+          ]
+        ],
+        "github-valid-2": [
+          [
+            19,
+            59
+          ]
+        ],
+        "github-valid-3": [
+          [
+            19,
+            59
+          ]
+        ],
+        "hf-valid-1": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-2": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-3": [
+          [
+            14,
+            51
+          ]
+        ],
+        "bare-1": [
+          [
+            4,
+            35
+          ]
+        ],
+        "bare-2": [
+          [
+            4,
+            35
+          ]
+        ],
+        "bare-3": [
+          [
+            4,
+            35
+          ]
+        ],
+        "french-1": [
+          [
+            21,
+            31
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "french-2": [
+          [
+            21,
+            32
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "french-3": [
+          [
+            21,
+            31
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "spanish-1": [
+          [
+            17,
+            27
+          ]
+        ],
+        "spanish-2": [
+          [
+            17,
+            27
+          ]
+        ],
+        "spanish-3": [
+          [
+            17,
+            27
+          ]
+        ],
+        "two-values-1": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-1": [
+          [
+            21,
+            33
+          ],
+          [
+            48,
+            60
+          ]
+        ],
+        "two-values-2": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-2": [
+          [
+            21,
+            33
+          ],
+          [
+            48,
+            60
+          ]
+        ],
+        "two-values-3": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-3": [
+          [
+            21,
+            33
+          ]
+        ],
+        "trailing-dot-1": [
+          [
+            0,
+            18
+          ]
+        ],
+        "sentence-dot-1": [
+          [
+            16,
+            24
+          ]
+        ],
+        "space-unquoted-1": [],
+        "escaped-quote-1": [
+          [
+            17,
+            21
+          ],
+          [
+            23,
+            28
+          ]
+        ],
+        "json-escaped-newline-1": [
+          [
+            17,
+            22
+          ],
+          [
+            24,
+            30
+          ]
+        ],
+        "weak-real-1": [
+          [
+            24,
+            31
+          ],
+          [
+            34,
+            46
+          ]
+        ],
+        "weak-real-2": [
+          [
+            24,
+            32
+          ]
+        ],
+        "digits-real-1": [
+          [
+            9,
+            15
+          ]
+        ],
+        "uppercase-real-1": [
+          [
+            9,
+            26
+          ]
+        ],
+        "dollar-real-1": [
+          [
+            11,
+            19
+          ]
+        ],
+        "leading-space-1": [
+          [
+            12,
+            19
+          ]
+        ],
+        "crlf-1": [
+          [
+            20,
+            56
+          ]
+        ],
+        "yaml-block-1": [
+          [
+            10,
+            37
+          ]
+        ],
+        "basic-1": [
+          [
+            21,
+            53
+          ]
+        ],
+        "recovery-1": [
+          [
+            30,
+            44
+          ]
+        ],
+        "long-boundary-1": [],
+        "long-boundary-2": [
+          [
+            3254,
+            3269
+          ]
+        ],
+        "long-boundary-3": [
+          [
+            3502,
+            3516
+          ]
+        ],
+        "clean-01-1": [
+          [
+            74,
+            83
+          ]
+        ],
+        "clean-01-2": [
+          [
+            74,
+            83
+          ]
+        ],
+        "clean-02-1": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-02-2": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-03-1": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-03-2": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-04-1": [
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-04-2": [
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-05-1": [
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-05-2": [
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-06-1": [
+          [
+            10,
+            11
+          ],
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-06-2": [
+          [
+            10,
+            11
+          ],
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-07-1": [
+          [
+            49,
+            58
+          ]
+        ],
+        "clean-07-2": [
+          [
+            49,
+            58
+          ]
+        ],
+        "clean-08-1": [
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-08-2": [
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-09-1": [
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-09-2": [
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-10-1": [
+          [
+            37,
+            46
+          ]
+        ],
+        "clean-10-2": [
+          [
+            37,
+            46
+          ]
+        ],
+        "clean-11-1": [
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-11-2": [
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-12-1": [
+          [
+            11,
+            29
+          ],
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-12-2": [
+          [
+            11,
+            29
+          ],
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-13-1": [
+          [
+            65,
+            74
+          ]
+        ],
+        "clean-13-2": [
+          [
+            65,
+            74
+          ]
+        ],
+        "clean-14-1": [
+          [
+            24,
+            36
+          ],
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-14-2": [
+          [
+            24,
+            36
+          ],
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-15-1": [
+          [
+            9,
+            33
+          ],
+          [
+            64,
+            73
+          ],
+          [
+            81,
+            82
+          ]
+        ],
+        "clean-15-2": [
+          [
+            9,
+            33
+          ],
+          [
+            64,
+            73
+          ]
+        ],
+        "clean-16-1": [
+          [
+            53,
+            62
+          ]
+        ],
+        "clean-16-2": [
+          [
+            53,
+            62
+          ]
+        ],
+        "clean-17-1": [
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-17-2": [
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-18-1": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-18-2": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-19-1": [
+          [
+            67,
+            76
+          ]
+        ],
+        "clean-19-2": [
+          [
+            67,
+            76
+          ]
+        ],
+        "clean-20-1": [
+          [
+            73,
+            82
+          ]
+        ],
+        "clean-20-2": [
+          [
+            73,
+            82
+          ]
+        ],
+        "clean-21-1": [
+          [
+            59,
+            68
+          ]
+        ],
+        "clean-21-2": [
+          [
+            20,
+            28
+          ],
+          [
+            59,
+            68
+          ]
+        ],
+        "clean-22-1": [
+          [
+            81,
+            90
+          ],
+          [
+            98,
+            99
+          ]
+        ],
+        "clean-22-2": [
+          [
+            81,
+            90
+          ],
+          [
+            98,
+            99
+          ]
+        ],
+        "clean-23-1": [
+          [
+            62,
+            71
+          ]
+        ],
+        "clean-23-2": [
+          [
+            4,
+            12
+          ],
+          [
+            62,
+            71
+          ]
+        ],
+        "clean-24-1": [
+          [
+            63,
+            72
+          ]
+        ],
+        "clean-24-2": [
+          [
+            63,
+            72
+          ]
+        ],
+        "clean-25-1": [
+          [
+            41,
+            50
+          ]
+        ],
+        "clean-25-2": [
+          [
+            41,
+            50
+          ]
+        ],
+        "clean-26-1": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-26-2": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-27-1": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-27-2": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ],
+          [
+            70,
+            79
+          ]
+        ],
+        "clean-28-1": [
+          [
+            70,
+            79
+          ]
+        ],
+        "clean-28-2": [
+          [
+            70,
+            79
+          ]
+        ],
+        "clean-29-1": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-29-2": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-30-1": [
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            38
+          ],
+          [
+            89,
+            98
+          ]
+        ],
+        "clean-30-2": [
+          [
+            29,
+            38
+          ],
+          [
+            89,
+            98
+          ]
+        ]
+      }
+    },
+    "combined@0.5": {
+      "metrics": {
+        "exact_tp": 74,
+        "exact_fp": 108,
+        "exact_fn": 10,
+        "exact_precision": 0.4065934065934066,
+        "exact_recall": 0.8809523809523809,
+        "fully_covered": 74,
+        "secrets": 84,
+        "partial_only": 8,
+        "negative_prompts_flagged": 60,
+        "negative_prompts": 60,
+        "groups": {
+          "challenge": {
+            "secrets": 81,
+            "exact": 71,
+            "covered": 71
+          },
+          "long": {
+            "secrets": 3,
+            "exact": 3,
+            "covered": 3
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-quoted-2": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-quoted-3": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-unquoted-1": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-2": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-3": [
+          [
+            25,
+            56
+          ]
+        ],
+        "json-1": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-2": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-3": [
+          [
+            25,
+            37
+          ]
+        ],
+        "yaml-1": [
+          [
+            26,
+            36
+          ]
+        ],
+        "yaml-2": [
+          [
+            26,
+            36
+          ]
+        ],
+        "yaml-3": [
+          [
+            26,
+            36
+          ]
+        ],
+        "prose-1": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-2": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-3": [
+          [
+            27,
+            42
+          ]
+        ],
+        "quoted-prose-1": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-2": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-3": [
+          [
+            14,
+            32
+          ]
+        ],
+        "backticks-1": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-2": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-3": [
+          [
+            24,
+            39
+          ]
+        ],
+        "bearer-1": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-2": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-3": [
+          [
+            22,
+            59
+          ]
+        ],
+        "url-1": [
+          [
+            19,
+            36
+          ]
+        ],
+        "url-2": [
+          [
+            19,
+            36
+          ]
+        ],
+        "url-3": [
+          [
+            19,
+            36
+          ]
+        ],
+        "query-1": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-2": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-3": [
+          [
+            37,
+            68
+          ]
+        ],
+        "fenced-1": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-2": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-3": [
+          [
+            34,
+            73
+          ]
+        ],
+        "unicode-1": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-2": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-3": [
+          [
+            17,
+            28
+          ]
+        ],
+        "dutch-1": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-2": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-3": [
+          [
+            18,
+            29
+          ]
+        ],
+        "github-valid-1": [
+          [
+            19,
+            59
+          ]
+        ],
+        "github-valid-2": [
+          [
+            19,
+            59
+          ]
+        ],
+        "github-valid-3": [
+          [
+            19,
+            59
+          ]
+        ],
+        "hf-valid-1": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-2": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-3": [
+          [
+            14,
+            51
+          ]
+        ],
+        "bare-1": [
+          [
+            4,
+            35
+          ]
+        ],
+        "bare-2": [
+          [
+            4,
+            35
+          ]
+        ],
+        "bare-3": [
+          [
+            4,
+            35
+          ]
+        ],
+        "french-1": [
+          [
+            21,
+            31
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "french-2": [
+          [
+            21,
+            32
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "french-3": [
+          [
+            21,
+            31
+          ],
+          [
+            35,
+            47
+          ]
+        ],
+        "spanish-1": [
+          [
+            17,
+            27
+          ]
+        ],
+        "spanish-2": [
+          [
+            17,
+            27
+          ]
+        ],
+        "spanish-3": [
+          [
+            17,
+            27
+          ]
+        ],
+        "two-values-1": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-1": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "two-values-2": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-2": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "two-values-3": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-3": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "trailing-dot-1": [
+          [
+            9,
+            18
+          ]
+        ],
+        "sentence-dot-1": [
+          [
+            16,
+            26
+          ]
+        ],
+        "space-unquoted-1": [],
+        "escaped-quote-1": [
+          [
+            17,
+            22
+          ],
+          [
+            23,
+            28
+          ]
+        ],
+        "json-escaped-newline-1": [
+          [
+            17,
+            30
+          ]
+        ],
+        "weak-real-1": [
+          [
+            24,
+            31
+          ],
+          [
+            34,
+            46
+          ]
+        ],
+        "weak-real-2": [
+          [
+            24,
+            32
+          ]
+        ],
+        "digits-real-1": [
+          [
+            9,
+            15
+          ]
+        ],
+        "uppercase-real-1": [
+          [
+            9,
+            26
+          ]
+        ],
+        "dollar-real-1": [
+          [
+            11,
+            19
+          ]
+        ],
+        "leading-space-1": [
+          [
+            10,
+            21
+          ]
+        ],
+        "crlf-1": [
+          [
+            20,
+            56
+          ]
+        ],
+        "yaml-block-1": [
+          [
+            10,
+            11
+          ]
+        ],
+        "basic-1": [
+          [
+            21,
+            53
+          ]
+        ],
+        "recovery-1": [
+          [
+            30,
+            44
+          ]
+        ],
+        "long-boundary-1": [
+          [
+            3008,
+            3022
+          ]
+        ],
+        "long-boundary-2": [
+          [
+            3255,
+            3269
+          ]
+        ],
+        "long-boundary-3": [
+          [
+            3502,
+            3516
+          ]
+        ],
+        "clean-01-1": [
+          [
+            74,
+            83
+          ]
+        ],
+        "clean-01-2": [
+          [
+            74,
+            83
+          ]
+        ],
+        "clean-02-1": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-02-2": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-03-1": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-03-2": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-04-1": [
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-04-2": [
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-05-1": [
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-05-2": [
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-06-1": [
+          [
+            10,
+            11
+          ],
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-06-2": [
+          [
+            10,
+            11
+          ],
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-07-1": [
+          [
+            49,
+            58
+          ]
+        ],
+        "clean-07-2": [
+          [
+            49,
+            58
+          ]
+        ],
+        "clean-08-1": [
+          [
+            11,
+            40
+          ],
+          [
+            58,
+            67
+          ],
+          [
+            75,
+            76
+          ]
+        ],
+        "clean-08-2": [
+          [
+            11,
+            40
+          ],
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-09-1": [
+          [
+            11,
+            21
+          ],
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-09-2": [
+          [
+            11,
+            21
+          ],
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-10-1": [
+          [
+            11,
+            19
+          ],
+          [
+            37,
+            46
+          ]
+        ],
+        "clean-10-2": [
+          [
+            11,
+            19
+          ],
+          [
+            37,
+            46
+          ]
+        ],
+        "clean-11-1": [
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-11-2": [
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-12-1": [
+          [
+            11,
+            29
+          ],
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-12-2": [
+          [
+            11,
+            29
+          ],
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-13-1": [
+          [
+            65,
+            74
+          ]
+        ],
+        "clean-13-2": [
+          [
+            65,
+            74
+          ]
+        ],
+        "clean-14-1": [
+          [
+            24,
+            36
+          ],
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-14-2": [
+          [
+            24,
+            36
+          ],
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-15-1": [
+          [
+            9,
+            33
+          ],
+          [
+            64,
+            73
+          ],
+          [
+            81,
+            82
+          ]
+        ],
+        "clean-15-2": [
+          [
+            9,
+            33
+          ],
+          [
+            64,
+            73
+          ]
+        ],
+        "clean-16-1": [
+          [
+            53,
+            62
+          ]
+        ],
+        "clean-16-2": [
+          [
+            53,
+            62
+          ]
+        ],
+        "clean-17-1": [
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-17-2": [
+          [
+            55,
+            64
+          ]
+        ],
+        "clean-18-1": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-18-2": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-19-1": [
+          [
+            67,
+            76
+          ]
+        ],
+        "clean-19-2": [
+          [
+            67,
+            76
+          ]
+        ],
+        "clean-20-1": [
+          [
+            73,
+            82
+          ]
+        ],
+        "clean-20-2": [
+          [
+            73,
+            82
+          ]
+        ],
+        "clean-21-1": [
+          [
+            59,
+            68
+          ]
+        ],
+        "clean-21-2": [
+          [
+            20,
+            28
+          ],
+          [
+            59,
+            68
+          ]
+        ],
+        "clean-22-1": [
+          [
+            14,
+            16
+          ],
+          [
+            81,
+            90
+          ],
+          [
+            98,
+            99
+          ]
+        ],
+        "clean-22-2": [
+          [
+            14,
+            16
+          ],
+          [
+            81,
+            90
+          ],
+          [
+            98,
+            99
+          ]
+        ],
+        "clean-23-1": [
+          [
+            62,
+            71
+          ]
+        ],
+        "clean-23-2": [
+          [
+            4,
+            12
+          ],
+          [
+            62,
+            71
+          ]
+        ],
+        "clean-24-1": [
+          [
+            63,
+            72
+          ]
+        ],
+        "clean-24-2": [
+          [
+            63,
+            72
+          ]
+        ],
+        "clean-25-1": [
+          [
+            11,
+            24
+          ],
+          [
+            41,
+            50
+          ]
+        ],
+        "clean-25-2": [
+          [
+            11,
+            24
+          ],
+          [
+            41,
+            50
+          ]
+        ],
+        "clean-26-1": [
+          [
+            22,
+            43
+          ],
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-26-2": [
+          [
+            22,
+            43
+          ],
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-27-1": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ],
+          [
+            70,
+            79
+          ],
+          [
+            87,
+            88
+          ]
+        ],
+        "clean-27-2": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ],
+          [
+            70,
+            79
+          ]
+        ],
+        "clean-28-1": [
+          [
+            70,
+            79
+          ]
+        ],
+        "clean-28-2": [
+          [
+            70,
+            79
+          ]
+        ],
+        "clean-29-1": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-29-2": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-30-1": [
+          [
+            20,
+            28
+          ],
+          [
+            29,
+            38
+          ],
+          [
+            89,
+            98
+          ]
+        ],
+        "clean-30-2": [
+          [
+            29,
+            38
+          ],
+          [
+            89,
+            98
+          ]
+        ]
+      }
+    },
+    "raw@0.7": {
+      "metrics": {
+        "exact_tp": 19,
+        "exact_fp": 19,
+        "exact_fn": 65,
+        "exact_precision": 0.5,
+        "exact_recall": 0.2261904761904762,
+        "fully_covered": 19,
+        "secrets": 84,
+        "partial_only": 5,
+        "negative_prompts_flagged": 14,
+        "negative_prompts": 60,
+        "groups": {
+          "challenge": {
+            "secrets": 81,
+            "exact": 19,
+            "covered": 19
+          },
+          "long": {
+            "secrets": 3,
+            "exact": 0,
+            "covered": 0
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [],
+        "env-quoted-2": [],
+        "env-quoted-3": [],
+        "env-unquoted-1": [],
+        "env-unquoted-2": [],
+        "env-unquoted-3": [],
+        "json-1": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-2": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-3": [
+          [
+            25,
+            37
+          ]
+        ],
+        "yaml-1": [],
+        "yaml-2": [],
+        "yaml-3": [],
+        "prose-1": [],
+        "prose-2": [],
+        "prose-3": [],
+        "quoted-prose-1": [],
+        "quoted-prose-2": [],
+        "quoted-prose-3": [],
+        "backticks-1": [],
+        "backticks-2": [],
+        "backticks-3": [],
+        "bearer-1": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-2": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-3": [
+          [
+            22,
+            59
+          ]
+        ],
+        "url-1": [],
+        "url-2": [],
+        "url-3": [],
+        "query-1": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-2": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-3": [],
+        "fenced-1": [],
+        "fenced-2": [],
+        "fenced-3": [
+          [
+            34,
+            73
+          ]
+        ],
+        "unicode-1": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-2": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-3": [
+          [
+            17,
+            28
+          ]
+        ],
+        "dutch-1": [],
+        "dutch-2": [],
+        "dutch-3": [],
+        "github-valid-1": [
+          [
+            19,
+            59
+          ]
+        ],
+        "github-valid-2": [],
+        "github-valid-3": [],
+        "hf-valid-1": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-2": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-3": [
+          [
+            14,
+            51
+          ]
+        ],
+        "bare-1": [],
+        "bare-2": [],
+        "bare-3": [],
+        "french-1": [
+          [
+            21,
+            31
+          ]
+        ],
+        "french-2": [
+          [
+            21,
+            32
+          ]
+        ],
+        "french-3": [
+          [
+            21,
+            31
+          ]
+        ],
+        "spanish-1": [
+          [
+            17,
+            27
+          ]
+        ],
+        "spanish-2": [],
+        "spanish-3": [
+          [
+            17,
+            27
+          ]
+        ],
+        "two-values-1": [],
+        "repeat-1": [],
+        "two-values-2": [],
+        "repeat-2": [],
+        "two-values-3": [],
+        "repeat-3": [],
+        "trailing-dot-1": [],
+        "sentence-dot-1": [
+          [
+            16,
+            24
+          ]
+        ],
+        "space-unquoted-1": [],
+        "escaped-quote-1": [],
+        "json-escaped-newline-1": [],
+        "weak-real-1": [
+          [
+            24,
+            31
+          ]
+        ],
+        "weak-real-2": [
+          [
+            24,
+            32
+          ]
+        ],
+        "digits-real-1": [],
+        "uppercase-real-1": [],
+        "dollar-real-1": [],
+        "leading-space-1": [],
+        "crlf-1": [],
+        "yaml-block-1": [],
+        "basic-1": [],
+        "recovery-1": [],
+        "long-boundary-1": [],
+        "long-boundary-2": [],
+        "long-boundary-3": [],
+        "clean-01-1": [
+          [
+            74,
+            83
+          ]
+        ],
+        "clean-01-2": [],
+        "clean-02-1": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-02-2": [],
+        "clean-03-1": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-03-2": [],
+        "clean-04-1": [],
+        "clean-04-2": [],
+        "clean-05-1": [],
+        "clean-05-2": [
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-06-1": [],
+        "clean-06-2": [
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-07-1": [],
+        "clean-07-2": [],
+        "clean-08-1": [],
+        "clean-08-2": [
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-09-1": [],
+        "clean-09-2": [],
+        "clean-10-1": [],
+        "clean-10-2": [
+          [
+            37,
+            46
+          ]
+        ],
+        "clean-11-1": [],
+        "clean-11-2": [
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-12-1": [],
+        "clean-12-2": [],
+        "clean-13-1": [],
+        "clean-13-2": [],
+        "clean-14-1": [],
+        "clean-14-2": [],
+        "clean-15-1": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-15-2": [
+          [
+            64,
+            73
+          ]
+        ],
+        "clean-16-1": [],
+        "clean-16-2": [],
+        "clean-17-1": [],
+        "clean-17-2": [],
+        "clean-18-1": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-18-2": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-19-1": [],
+        "clean-19-2": [],
+        "clean-20-1": [],
+        "clean-20-2": [
+          [
+            73,
+            82
+          ]
+        ],
+        "clean-21-1": [],
+        "clean-21-2": [],
+        "clean-22-1": [],
+        "clean-22-2": [],
+        "clean-23-1": [],
+        "clean-23-2": [],
+        "clean-24-1": [],
+        "clean-24-2": [],
+        "clean-25-1": [],
+        "clean-25-2": [
+          [
+            41,
+            50
+          ]
+        ],
+        "clean-26-1": [],
+        "clean-26-2": [],
+        "clean-27-1": [],
+        "clean-27-2": [],
+        "clean-28-1": [],
+        "clean-28-2": [],
+        "clean-29-1": [],
+        "clean-29-2": [],
+        "clean-30-1": [],
+        "clean-30-2": []
+      }
+    },
+    "combined@0.7": {
+      "metrics": {
+        "exact_tp": 68,
+        "exact_fp": 36,
+        "exact_fn": 16,
+        "exact_precision": 0.6538461538461539,
+        "exact_recall": 0.8095238095238095,
+        "fully_covered": 68,
+        "secrets": 84,
+        "partial_only": 6,
+        "negative_prompts_flagged": 25,
+        "negative_prompts": 60,
+        "groups": {
+          "challenge": {
+            "secrets": 81,
+            "exact": 65,
+            "covered": 65
+          },
+          "long": {
+            "secrets": 3,
+            "exact": 3,
+            "covered": 3
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-quoted-2": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-quoted-3": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-unquoted-1": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-2": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-3": [
+          [
+            25,
+            56
+          ]
+        ],
+        "json-1": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-2": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-3": [
+          [
+            25,
+            37
+          ]
+        ],
+        "yaml-1": [
+          [
+            26,
+            36
+          ]
+        ],
+        "yaml-2": [
+          [
+            26,
+            36
+          ]
+        ],
+        "yaml-3": [
+          [
+            26,
+            36
+          ]
+        ],
+        "prose-1": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-2": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-3": [
+          [
+            27,
+            42
+          ]
+        ],
+        "quoted-prose-1": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-2": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-3": [
+          [
+            14,
+            32
+          ]
+        ],
+        "backticks-1": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-2": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-3": [
+          [
+            24,
+            39
+          ]
+        ],
+        "bearer-1": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-2": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-3": [
+          [
+            22,
+            59
+          ]
+        ],
+        "url-1": [
+          [
+            19,
+            36
+          ]
+        ],
+        "url-2": [
+          [
+            19,
+            36
+          ]
+        ],
+        "url-3": [
+          [
+            19,
+            36
+          ]
+        ],
+        "query-1": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-2": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-3": [
+          [
+            37,
+            68
+          ]
+        ],
+        "fenced-1": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-2": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-3": [
+          [
+            34,
+            73
+          ]
+        ],
+        "unicode-1": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-2": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-3": [
+          [
+            17,
+            28
+          ]
+        ],
+        "dutch-1": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-2": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-3": [
+          [
+            18,
+            29
+          ]
+        ],
+        "github-valid-1": [
+          [
+            19,
+            59
+          ]
+        ],
+        "github-valid-2": [
+          [
+            19,
+            59
+          ]
+        ],
+        "github-valid-3": [
+          [
+            19,
+            59
+          ]
+        ],
+        "hf-valid-1": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-2": [
+          [
+            14,
+            51
+          ]
+        ],
+        "hf-valid-3": [
+          [
+            14,
+            51
+          ]
+        ],
+        "bare-1": [],
+        "bare-2": [],
+        "bare-3": [],
+        "french-1": [
+          [
+            21,
+            31
+          ]
+        ],
+        "french-2": [
+          [
+            21,
+            32
+          ]
+        ],
+        "french-3": [
+          [
+            21,
+            31
+          ]
+        ],
+        "spanish-1": [
+          [
+            17,
+            27
+          ]
+        ],
+        "spanish-2": [],
+        "spanish-3": [
+          [
+            17,
+            27
+          ]
+        ],
+        "two-values-1": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-1": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "two-values-2": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-2": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "two-values-3": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-3": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "trailing-dot-1": [
+          [
+            9,
+            18
+          ]
+        ],
+        "sentence-dot-1": [
+          [
+            16,
+            26
+          ]
+        ],
+        "space-unquoted-1": [],
+        "escaped-quote-1": [
+          [
+            17,
+            22
+          ]
+        ],
+        "json-escaped-newline-1": [
+          [
+            17,
+            30
+          ]
+        ],
+        "weak-real-1": [
+          [
+            24,
+            31
+          ]
+        ],
+        "weak-real-2": [
+          [
+            24,
+            32
+          ]
+        ],
+        "digits-real-1": [
+          [
+            9,
+            15
+          ]
+        ],
+        "uppercase-real-1": [],
+        "dollar-real-1": [],
+        "leading-space-1": [
+          [
+            10,
+            21
+          ]
+        ],
+        "crlf-1": [
+          [
+            20,
+            56
+          ]
+        ],
+        "yaml-block-1": [
+          [
+            10,
+            11
+          ]
+        ],
+        "basic-1": [],
+        "recovery-1": [],
+        "long-boundary-1": [
+          [
+            3008,
+            3022
+          ]
+        ],
+        "long-boundary-2": [
+          [
+            3255,
+            3269
+          ]
+        ],
+        "long-boundary-3": [
+          [
+            3502,
+            3516
+          ]
+        ],
+        "clean-01-1": [
+          [
+            74,
+            83
+          ]
+        ],
+        "clean-01-2": [],
+        "clean-02-1": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-02-2": [],
+        "clean-03-1": [
+          [
+            54,
+            63
+          ]
+        ],
+        "clean-03-2": [],
+        "clean-04-1": [],
+        "clean-04-2": [],
+        "clean-05-1": [],
+        "clean-05-2": [
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-06-1": [],
+        "clean-06-2": [
+          [
+            47,
+            56
+          ]
+        ],
+        "clean-07-1": [],
+        "clean-07-2": [],
+        "clean-08-1": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-08-2": [
+          [
+            11,
+            40
+          ],
+          [
+            58,
+            67
+          ]
+        ],
+        "clean-09-1": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-09-2": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-10-2": [
+          [
+            11,
+            19
+          ],
+          [
+            37,
+            46
+          ]
+        ],
+        "clean-11-1": [],
+        "clean-11-2": [
+          [
+            39,
+            48
+          ]
+        ],
+        "clean-12-1": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-12-2": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1": [],
+        "clean-13-2": [],
+        "clean-14-1": [],
+        "clean-14-2": [],
+        "clean-15-1": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-15-2": [
+          [
+            9,
+            33
+          ],
+          [
+            64,
+            73
+          ]
+        ],
+        "clean-16-1": [],
+        "clean-16-2": [],
+        "clean-17-1": [],
+        "clean-17-2": [],
+        "clean-18-1": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-18-2": [
+          [
+            61,
+            70
+          ]
+        ],
+        "clean-19-1": [],
+        "clean-19-2": [],
+        "clean-20-1": [],
+        "clean-20-2": [
+          [
+            73,
+            82
+          ]
+        ],
+        "clean-21-1": [],
+        "clean-21-2": [],
+        "clean-22-1": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-22-2": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1": [],
+        "clean-23-2": [],
+        "clean-24-1": [],
+        "clean-24-2": [],
+        "clean-25-1": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-25-2": [
+          [
+            11,
+            24
+          ],
+          [
+            41,
+            50
+          ]
+        ],
+        "clean-26-1": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-26-2": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1": [],
+        "clean-27-2": [],
+        "clean-28-1": [],
+        "clean-28-2": [],
+        "clean-29-1": [],
+        "clean-29-2": [],
+        "clean-30-1": [],
+        "clean-30-2": []
+      }
+    },
+    "raw@0.9": {
+      "metrics": {
+        "exact_tp": 0,
+        "exact_fp": 0,
+        "exact_fn": 84,
+        "exact_precision": 0,
+        "exact_recall": 0.0,
+        "fully_covered": 0,
+        "secrets": 84,
+        "partial_only": 0,
+        "negative_prompts_flagged": 0,
+        "negative_prompts": 60,
+        "groups": {
+          "challenge": {
+            "secrets": 81,
+            "exact": 0,
+            "covered": 0
+          },
+          "long": {
+            "secrets": 3,
+            "exact": 0,
+            "covered": 0
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [],
+        "env-quoted-2": [],
+        "env-quoted-3": [],
+        "env-unquoted-1": [],
+        "env-unquoted-2": [],
+        "env-unquoted-3": [],
+        "json-1": [],
+        "json-2": [],
+        "json-3": [],
+        "yaml-1": [],
+        "yaml-2": [],
+        "yaml-3": [],
+        "prose-1": [],
+        "prose-2": [],
+        "prose-3": [],
+        "quoted-prose-1": [],
+        "quoted-prose-2": [],
+        "quoted-prose-3": [],
+        "backticks-1": [],
+        "backticks-2": [],
+        "backticks-3": [],
+        "bearer-1": [],
+        "bearer-2": [],
+        "bearer-3": [],
+        "url-1": [],
+        "url-2": [],
+        "url-3": [],
+        "query-1": [],
+        "query-2": [],
+        "query-3": [],
+        "fenced-1": [],
+        "fenced-2": [],
+        "fenced-3": [],
+        "unicode-1": [],
+        "unicode-2": [],
+        "unicode-3": [],
+        "dutch-1": [],
+        "dutch-2": [],
+        "dutch-3": [],
+        "github-valid-1": [],
+        "github-valid-2": [],
+        "github-valid-3": [],
+        "hf-valid-1": [],
+        "hf-valid-2": [],
+        "hf-valid-3": [],
+        "bare-1": [],
+        "bare-2": [],
+        "bare-3": [],
+        "french-1": [],
+        "french-2": [],
+        "french-3": [],
+        "spanish-1": [],
+        "spanish-2": [],
+        "spanish-3": [],
+        "two-values-1": [],
+        "repeat-1": [],
+        "two-values-2": [],
+        "repeat-2": [],
+        "two-values-3": [],
+        "repeat-3": [],
+        "trailing-dot-1": [],
+        "sentence-dot-1": [],
+        "space-unquoted-1": [],
+        "escaped-quote-1": [],
+        "json-escaped-newline-1": [],
+        "weak-real-1": [],
+        "weak-real-2": [],
+        "digits-real-1": [],
+        "uppercase-real-1": [],
+        "dollar-real-1": [],
+        "leading-space-1": [],
+        "crlf-1": [],
+        "yaml-block-1": [],
+        "basic-1": [],
+        "recovery-1": [],
+        "long-boundary-1": [],
+        "long-boundary-2": [],
+        "long-boundary-3": [],
+        "clean-01-1": [],
+        "clean-01-2": [],
+        "clean-02-1": [],
+        "clean-02-2": [],
+        "clean-03-1": [],
+        "clean-03-2": [],
+        "clean-04-1": [],
+        "clean-04-2": [],
+        "clean-05-1": [],
+        "clean-05-2": [],
+        "clean-06-1": [],
+        "clean-06-2": [],
+        "clean-07-1": [],
+        "clean-07-2": [],
+        "clean-08-1": [],
+        "clean-08-2": [],
+        "clean-09-1": [],
+        "clean-09-2": [],
+        "clean-10-1": [],
+        "clean-10-2": [],
+        "clean-11-1": [],
+        "clean-11-2": [],
+        "clean-12-1": [],
+        "clean-12-2": [],
+        "clean-13-1": [],
+        "clean-13-2": [],
+        "clean-14-1": [],
+        "clean-14-2": [],
+        "clean-15-1": [],
+        "clean-15-2": [],
+        "clean-16-1": [],
+        "clean-16-2": [],
+        "clean-17-1": [],
+        "clean-17-2": [],
+        "clean-18-1": [],
+        "clean-18-2": [],
+        "clean-19-1": [],
+        "clean-19-2": [],
+        "clean-20-1": [],
+        "clean-20-2": [],
+        "clean-21-1": [],
+        "clean-21-2": [],
+        "clean-22-1": [],
+        "clean-22-2": [],
+        "clean-23-1": [],
+        "clean-23-2": [],
+        "clean-24-1": [],
+        "clean-24-2": [],
+        "clean-25-1": [],
+        "clean-25-2": [],
+        "clean-26-1": [],
+        "clean-26-2": [],
+        "clean-27-1": [],
+        "clean-27-2": [],
+        "clean-28-1": [],
+        "clean-28-2": [],
+        "clean-29-1": [],
+        "clean-29-2": [],
+        "clean-30-1": [],
+        "clean-30-2": []
+      }
+    },
+    "combined@0.9": {
+      "metrics": {
+        "exact_tp": 62,
+        "exact_fp": 19,
+        "exact_fn": 22,
+        "exact_precision": 0.7654320987654321,
+        "exact_recall": 0.7380952380952381,
+        "fully_covered": 62,
+        "secrets": 84,
+        "partial_only": 2,
+        "negative_prompts_flagged": 16,
+        "negative_prompts": 60,
+        "groups": {
+          "challenge": {
+            "secrets": 81,
+            "exact": 59,
+            "covered": 59
+          },
+          "long": {
+            "secrets": 3,
+            "exact": 3,
+            "covered": 3
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-quoted-2": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-quoted-3": [
+          [
+            18,
+            32
+          ]
+        ],
+        "env-unquoted-1": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-2": [
+          [
+            25,
+            56
+          ]
+        ],
+        "env-unquoted-3": [
+          [
+            25,
+            56
+          ]
+        ],
+        "json-1": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-2": [
+          [
+            25,
+            37
+          ]
+        ],
+        "json-3": [
+          [
+            25,
+            37
+          ]
+        ],
+        "yaml-1": [
+          [
+            26,
+            36
+          ]
+        ],
+        "yaml-2": [
+          [
+            26,
+            36
+          ]
+        ],
+        "yaml-3": [
+          [
+            26,
+            36
+          ]
+        ],
+        "prose-1": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-2": [
+          [
+            27,
+            42
+          ]
+        ],
+        "prose-3": [
+          [
+            27,
+            42
+          ]
+        ],
+        "quoted-prose-1": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-2": [
+          [
+            14,
+            32
+          ]
+        ],
+        "quoted-prose-3": [
+          [
+            14,
+            32
+          ]
+        ],
+        "backticks-1": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-2": [
+          [
+            24,
+            39
+          ]
+        ],
+        "backticks-3": [
+          [
+            24,
+            39
+          ]
+        ],
+        "bearer-1": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-2": [
+          [
+            22,
+            59
+          ]
+        ],
+        "bearer-3": [
+          [
+            22,
+            59
+          ]
+        ],
+        "url-1": [
+          [
+            19,
+            36
+          ]
+        ],
+        "url-2": [
+          [
+            19,
+            36
+          ]
+        ],
+        "url-3": [
+          [
+            19,
+            36
+          ]
+        ],
+        "query-1": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-2": [
+          [
+            37,
+            68
+          ]
+        ],
+        "query-3": [
+          [
+            37,
+            68
+          ]
+        ],
+        "fenced-1": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-2": [
+          [
+            34,
+            73
+          ]
+        ],
+        "fenced-3": [
+          [
+            34,
+            73
+          ]
+        ],
+        "unicode-1": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-2": [
+          [
+            17,
+            28
+          ]
+        ],
+        "unicode-3": [
+          [
+            17,
+            28
+          ]
+        ],
+        "dutch-1": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-2": [
+          [
+            18,
+            29
+          ]
+        ],
+        "dutch-3": [
+          [
+            18,
+            29
+          ]
+        ],
+        "github-valid-1": [
+          [
+            19,
+            59
+          ]
+        ],
+        "github-valid-2": [
+          [
+            19,
+            59
+          ]
+        ],
+        "github-valid-3": [
+          [
+            19,
+            59
+          ]
+        ],
+        "hf-valid-1": [],
+        "hf-valid-2": [],
+        "hf-valid-3": [],
+        "bare-1": [],
+        "bare-2": [],
+        "bare-3": [],
+        "french-1": [],
+        "french-2": [],
+        "french-3": [],
+        "spanish-1": [],
+        "spanish-2": [],
+        "spanish-3": [],
+        "two-values-1": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-1": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "two-values-2": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-2": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "two-values-3": [
+          [
+            14,
+            27
+          ],
+          [
+            42,
+            71
+          ]
+        ],
+        "repeat-3": [
+          [
+            21,
+            34
+          ],
+          [
+            48,
+            61
+          ]
+        ],
+        "trailing-dot-1": [
+          [
+            9,
+            18
+          ]
+        ],
+        "sentence-dot-1": [
+          [
+            16,
+            26
+          ]
+        ],
+        "space-unquoted-1": [],
+        "escaped-quote-1": [
+          [
+            17,
+            22
+          ]
+        ],
+        "json-escaped-newline-1": [
+          [
+            17,
+            30
+          ]
+        ],
+        "weak-real-1": [],
+        "weak-real-2": [],
+        "digits-real-1": [
+          [
+            9,
+            15
+          ]
+        ],
+        "uppercase-real-1": [],
+        "dollar-real-1": [],
+        "leading-space-1": [
+          [
+            10,
+            21
+          ]
+        ],
+        "crlf-1": [
+          [
+            20,
+            56
+          ]
+        ],
+        "yaml-block-1": [
+          [
+            10,
+            11
+          ]
+        ],
+        "basic-1": [],
+        "recovery-1": [],
+        "long-boundary-1": [
+          [
+            3008,
+            3022
+          ]
+        ],
+        "long-boundary-2": [
+          [
+            3255,
+            3269
+          ]
+        ],
+        "long-boundary-3": [
+          [
+            3502,
+            3516
+          ]
+        ],
+        "clean-01-1": [],
+        "clean-01-2": [],
+        "clean-02-1": [],
+        "clean-02-2": [],
+        "clean-03-1": [],
+        "clean-03-2": [],
+        "clean-04-1": [],
+        "clean-04-2": [],
+        "clean-05-1": [],
+        "clean-05-2": [],
+        "clean-06-1": [],
+        "clean-06-2": [],
+        "clean-07-1": [],
+        "clean-07-2": [],
+        "clean-08-1": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-08-2": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-09-2": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-10-2": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1": [],
+        "clean-11-2": [],
+        "clean-12-1": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-12-2": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1": [],
+        "clean-13-2": [],
+        "clean-14-1": [],
+        "clean-14-2": [],
+        "clean-15-1": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-15-2": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1": [],
+        "clean-16-2": [],
+        "clean-17-1": [],
+        "clean-17-2": [],
+        "clean-18-1": [],
+        "clean-18-2": [],
+        "clean-19-1": [],
+        "clean-19-2": [],
+        "clean-20-1": [],
+        "clean-20-2": [],
+        "clean-21-1": [],
+        "clean-21-2": [],
+        "clean-22-1": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-22-2": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1": [],
+        "clean-23-2": [],
+        "clean-24-1": [],
+        "clean-24-2": [],
+        "clean-25-1": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-25-2": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-26-2": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1": [],
+        "clean-27-2": [],
+        "clean-28-1": [],
+        "clean-28-2": [],
+        "clean-29-1": [],
+        "clean-29-2": [],
+        "clean-30-1": [],
+        "clean-30-2": []
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import type { CommandResult } from '../net/client';
 import type { RepoSearchHost } from './repoSearch';
-import type { PackupGate } from '../world/packup';
+import { HANDOVER_STALE, packupAction, packupStep, type PackupCheck } from '../ui/packupSend';
 import type { AnswerAskAck, Ask, CommandArgs, Followup, FollowupMessageAck, HandoffCandidate, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
@@ -16,6 +16,8 @@ import { FollowupDrafts } from './followupDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 import { handoffCommand, newOp } from '../world/handoff';
+import type { FieldText, Go, GoFields, PromptSecretsFlow } from '../ui/secretsFlow';
+import { askFields, asyncFields, followupFields } from '../world/promptSecrets';
 import { bridgeKey } from '../net/bridgeScope';
 
 export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost, TranscriptView };
@@ -86,7 +88,7 @@ export interface TranscriptModeHost {
   /** The seat bar's note. */
   status(kind: 'ok' | 'error', text: string | null): void;
   /** #110: the pack-up check before a prompt goes (none: it goes at once). */
-  packup?: PackupGate;
+  packup?: PackupCheck;
   /** The mode changed (the seat bar's toggle, the terminal watch's fps, the monitor's frame). */
   modeChanged(mode: SeatMode): void;
   /** #59: the preset, hidden tool calls and the zoom (the view's top strip sets them). */
@@ -107,6 +109,10 @@ export interface TranscriptModeHost {
   catalogs?: CommandCatalogs;
   /** #58: the clock of the pending prompts' "not seen yet" hint (default Date.now; tests pass their own). */
   now?(): number;
+  /** #108: the review of a prompt's possible secrets before it goes (none: it goes as today). */
+  secrets?: PromptSecretsFlow;
+  /** #108 round 4: the bridge's directory of protected files (`World.prompt_secrets.dir`; null: not known). */
+  secretsDir?(): string | null;
 }
 
 /** Remembered per worker: the ones last left in terminal mode (#98: the conversation is the default), newest last. */
@@ -250,6 +256,8 @@ export class TranscriptMode {
   private escBusy = false;
   /** #110: the pack-up check of the prompt being sent (aborted: Esc, standing up). */
   private checking: AbortController | null = null;
+  /** #108: a prompt's secrets are being scanned or reviewed (no second send meanwhile). */
+  private reviewing = false;
   /** #140: each worker's slash commands and skills, kept across seats (the popup shows the last list at once). */
   private readonly catalogs: CommandCatalogs;
   /** #141: each worker's unsent prompt, kept across seats (and its text and file chips across a reload). */
@@ -271,9 +279,17 @@ export class TranscriptMode {
 
   constructor(private readonly host: TranscriptModeHost) {
     this.catalogs = host.catalogs ?? new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
-    this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage });
-    this.asyncDrafts = new AsyncDrafts(host.storage);
-    this.followupDrafts = new FollowupDrafts(host.storage);
+    // #108: with prompt secrets reviewed, the drafts stay in memory (they may hold one), and follow the switch (round 4:
+    // the answers' drafts too).
+    const persist = () => !host.secrets?.on;
+    this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage, persist });
+    this.asyncDrafts = new AsyncDrafts(host.storage, persist);
+    this.followupDrafts = new FollowupDrafts(host.storage, persist);
+    host.secrets?.onChange(() => {
+      this.drafts.persistChanged();
+      this.asyncDrafts.persistChanged();
+      this.followupDrafts.persistChanged();
+    });
   }
 
   private now(): number {
@@ -619,11 +635,15 @@ export class TranscriptMode {
     if (s.reveal) void this.revealNow(s);
   }
 
-  /** Sends a prompt from the view: its row is in the timeline at once. Resolves whether it went. */
-  private sendPrompt(s: Sitting, t: string): Promise<boolean> {
+  /**
+   * Sends a prompt from the view: its row is in the timeline at once. Resolves the bridge's answer. #108: `go` carries the
+   * review of its secrets (`secrets`), and what the row may show of it (`shown`: no protected value); `pending` (round 4)
+   * is pack up's hand-over for `t`, the text its check read (references for the protected values).
+   */
+  private sendPrompt(s: Sitting, t: string, go: Go | null = null, pending: string | null = null): Promise<CommandResult> {
     const live = () => this.s === s;
     // #58: its row is in the timeline at once, until its `user` item comes; a refused one before it goes.
-    const p: PendingPrompt = { id: `p${++this.pid}`, text: t, state: 'sending', late: false, mark: topSeq(s.items), due: null };
+    const p: PendingPrompt = { id: `p${++this.pid}`, text: t, ...(go?.protects ? { shown: go.shown } : {}), state: 'sending', late: false, mark: topSeq(s.items), due: null };
     s.pending = [...s.pending.filter((x) => x.state !== 'refused'), p];
     // To a worker not at work it starts a turn: that turn's items come after this.
     if (s.status !== 'working') s.sendMark = p.mark;
@@ -632,11 +652,11 @@ export class TranscriptMode {
     // Resolves whether it went: a refused prompt goes back in the box.
     // #224: an exact "/handoff [instruction]" becomes an agent handoff request: one op, so a retry asks once.
     const op = this.handoffOp(s.id, t);
-    return this.host.send('worker.prompt', { id: s.id, text: t, ...(op ? { op } : {}) }).then((r) => {
+    return this.host.send('worker.prompt', { id: s.id, text: t, ...(op ? { op } : {}), ...(go?.secrets ? { secrets: go.secrets } : {}), ...(pending ? { secrets_pending: pending } : {}) }).then((r) => {
       // Answered (the client never rejects; it times out): this worker takes the next one, from whichever seat.
       this.prompting.delete(s.id);
       if (op && (r.ok || !UNANSWERED.has(r.code)) && this.handoffOps.get(s.id)?.op === op) this.handoffOps.delete(s.id);
-      if (!live()) return r.ok;
+      if (!live()) return r;
       const ack = (r.ok ? (r.data ?? {}) : {}) as Partial<PromptAck>;
       if (r.ok && ack.terminal === true) {
         // #140: a built-in whose output or dialog shows only in the terminal (/usage, a bare /model): its transcript
@@ -646,7 +666,7 @@ export class TranscriptMode {
         this.pendingChanged(s);
         this.host.status('ok', `Sent to ${s.name}: it shows in the terminal`);
         if (s.mode !== 'terminal') this.setMode('terminal', false);
-        return true;
+        return r;
       }
       if (r.ok && ack.handoff) {
         // #224: the bridge sent its own request (the skill, where to save, the marker), which the transcript shows;
@@ -664,7 +684,7 @@ export class TranscriptMode {
                 ? `${s.name} is already writing a handoff: nothing was sent again`
                 : `Asked ${s.name}’s agent for a handoff: it is filed once its turn ends with the file written`,
         );
-        return true;
+        return r;
       }
       if (r.ok) this.host.status('ok', `Sent to ${s.name}`);
       else this.host.status('error', failureText('worker.prompt', r.code, r.message, { worker: s.name }));
@@ -673,12 +693,13 @@ export class TranscriptMode {
       const sent = typeof ack.sent === 'string' && ack.sent !== '' && ack.sent !== t ? ack.sent : undefined;
       const now = this.now();
       // Already shown by its item (it can come before the ack): nothing to change.
-      if (!s.pending.some((x) => x.id === p.id)) return r.ok;
+      if (!s.pending.some((x) => x.id === p.id)) return r;
       s.pending = s.pending.map((x): PendingPrompt => {
         if (x.id !== p.id) return x;
         if (!r.ok) return { ...x, state: 'refused', reason: failureText('worker.prompt', r.code, r.message, { worker: s.name }), due: null };
-        // A queued prompt may wait for the whole turn: the hint only once the agent stopped working.
-        return { ...x, ...(sent !== undefined ? { sent } : {}), state: queued ? 'queued' : 'sent', due: queued && s.status === 'working' ? null : now + SENT_TIMEOUT_MS };
+        // A queued prompt may wait for the whole turn: the hint only once the agent stopped working. #108: a row that
+        // hides protected values shows what was sent now (their references).
+        return { ...x, ...(sent !== undefined ? { sent, ...(x.shown !== undefined ? { shown: sent } : {}) } : {}), state: queued ? 'queued' : 'sent', due: queued && s.status === 'working' ? null : now + SENT_TIMEOUT_MS };
       });
       // Its item may have come before the ack, under the rewritten text: it takes the row now.
       if (sent !== undefined) {
@@ -686,8 +707,91 @@ export class TranscriptMode {
         if (left !== s.pending) s.pending = left;
       }
       this.pendingChanged(s);
-      return r.ok;
+      return r;
     });
+  }
+
+  /**
+   * A prompt from the view's box, in order (the box is read-only meanwhile and keeps the draft): #108 the review of its
+   * possible secrets (with the switch on; `manual`: "Review secrets" asked for it), then #110 whether it also tells the
+   * worker to leave (round 4: the check reads the protected values' references, and what follows is sent with its
+   * hand-over), then the send, seen through the bridge's answer (a stale review is reviewed again, never sent on its
+   * own). Resolves whether it went.
+   */
+  private async submit(s: Sitting, t: string, manual: boolean): Promise<boolean> {
+    const live = () => this.s === s;
+    const flow = this.host.secrets;
+    const check = this.host.packup;
+    // (Stood up meanwhile: nothing of it goes, no review opens.)
+    const req = { key: s.id, text: t, target: s.name, manual, action: packupAction(check, s.id), live };
+    let go: Go = { kind: 'send', protects: 0, shown: t, review: null };
+    const kept = (why: string, message: string) => {
+      if (!live()) return false;
+      this.host.status(why === 'failed' ? 'error' : 'ok', why === 'cancel' ? 'Not sent: the prompt is still in the box.' : message);
+      // The review had the keyboard: back to the box, its draft still in it.
+      queueMicrotask(() => live() && this.focusPrompt());
+      return false;
+    };
+    if (flow && (flow.on || manual)) {
+      this.reviewing = true;
+      this.host.status('ok', manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the prompt…');
+      const out = await flow.review(req).finally(() => (this.reviewing = false));
+      if (!live()) return false;
+      if (out.kind === 'kept') return kept(out.why, out.message);
+      this.host.status('ok', null);
+      go = out;
+    }
+    if (check?.applies(s.id)) {
+      const abort = new AbortController();
+      this.checking = abort;
+      this.host.status('ok', 'Checking the prompt…');
+      const step = await packupStep(check, flow, req, go, abort.signal);
+      if (this.checking === abort) this.checking = null;
+      if (abort.signal.aborted || !live()) return false;
+      if (step.kind === 'kept') return kept(step.why, step.message);
+      if (step.kind === 'done') {
+        this.host.status('ok', `Sent the task to ${s.name}: it goes home once it reports CLEAN`);
+        return true;
+      }
+      if (step.kind === 'cancel') {
+        this.host.status('ok', null);
+        // The confirm (or the send home) had the keyboard: back to the box, its draft still in it.
+        queueMicrotask(() => live() && this.focusPrompt());
+        return false;
+      }
+      this.host.status('ok', null);
+      if (step.kind === 'handover') {
+        // The text the check read, with its hand-over: refused as stale, nothing went (its files may be gone).
+        const r = await this.sendPrompt(s, step.text, null, step.pending);
+        if (!r.ok && (r.code === 'secrets_review_stale' || r.code === 'secrets_review_off')) return kept('failed', HANDOVER_STALE);
+        return r.ok;
+      }
+      go = step.go;
+    }
+    if (!flow) return (await this.sendPrompt(s, t)).ok;
+    const d = await flow.deliver(req, go, (g) => this.sendPrompt(s, t, g));
+    return d.kind === 'kept' ? kept(d.why, d.message) : d.result.ok;
+  }
+
+  /**
+   * #108 round 4: an answer's texts reviewed before it goes (with the switch on, or `manual`: the card's "Review
+   * secrets"), each alone, and sent with a review per text (`send`); a stale review is reviewed again. Kept (the review
+   * cancelled, the switch changed): nothing went, and the card keeps the answer and says why (`secrets_kept`).
+   */
+  private async answered(s: Sitting, what: string, fields: FieldText[], manual: boolean, send: (g: GoFields | null) => Promise<CommandResult>): Promise<CommandResult> {
+    const flow = this.host.secrets;
+    const live = () => this.s === s;
+    // Stood up while it was scanned or reviewed again: nothing went, and nothing changes. (Not `stale`: that is the bridge's
+    // "the question moved on", for which a follow-up card drops its draft, which the next seat would miss.)
+    const kept = (why: string, message: string): CommandResult =>
+      why === 'gone' ? { ok: false, code: 'gone', message: 'You got up.' } : { ok: false, code: 'secrets_kept', message: why === 'cancel' ? 'Not sent: the review was cancelled. Your answer is still here.' : message };
+    if (manual && !fields.length) return kept('failed', 'Nothing typed to review: pick or write an answer first.');
+    if (!flow || !(flow.on || manual) || !fields.length) return send(null);
+    const req = { key: `${s.id}:${what}`, target: s.name, manual, fields, live };
+    const go = await flow.reviewFields(req);
+    if (go.kind === 'kept') return kept(go.why, go.message);
+    const d = await flow.deliverFields(req, go, send);
+    return d.kind === 'kept' ? kept(d.why, d.message) : d.result;
   }
 
   /**
@@ -728,7 +832,11 @@ export class TranscriptMode {
       repos: { id: s.id, search: { send: (t, args) => this.host.send(t, args), refs: this.host.repoRefs ?? null, discovery: this.host.repoDiscovery ?? null, ...(this.host.floorName ? { floorName: (id: string) => this.host.floorName?.(id) ?? id } : {}) } },
       // #31: read when a file reference opens (the checkout may come or change while you sit).
       cwd: () => this.host.cwd?.(s.id) ?? null,
-      onPromptSubmit: (text) => {
+      // #108: the switch, for the box's "Review secrets".
+      secrets: this.host.secrets ?? null,
+      // #108 round 4: read as a row is drawn (the snapshot can bring it after the seat).
+      secretsDir: () => this.host.secretsDir?.() ?? null,
+      onPromptSubmit: (text, o) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');
         if (!t.trim()) return Promise.resolve(false);
@@ -737,30 +845,9 @@ export class TranscriptMode {
           return Promise.resolve(false);
         }
         // #58: one on its way at a time (a second Enter while it is sending sends nothing). #110: nor while one is checked.
-        // #141: nor while one from an earlier seat at this worker is.
-        if (s.pending.some((p) => p.state === 'sending') || this.prompting.has(s.id) || this.checking) return Promise.resolve(false);
-        // #110: first whether it also tells the worker to leave. Meanwhile the box is read-only and keeps the draft.
-        const check = new AbortController();
-        const checked = this.host.packup?.(s.id, t, check.signal) ?? null;
-        if (!checked) return this.sendPrompt(s, t);
-        this.checking = check;
-        this.host.status('ok', 'Checking the prompt…');
-        return checked.then((out) => {
-          if (this.checking === check) this.checking = null;
-          if (check.signal.aborted || !live()) return false;
-          if (out === 'done') {
-            this.host.status('ok', `Sent the task to ${s.name}: it goes home once it reports CLEAN`);
-            return true;
-          }
-          if (out === 'cancel') {
-            this.host.status('ok', null);
-            // The confirm (or the send home) had the keyboard: back to the box, its draft still in it.
-            queueMicrotask(() => live() && this.focusPrompt());
-            return false;
-          }
-          this.host.status('ok', null);
-          return this.sendPrompt(s, t);
-        });
+        // #141: nor while one from an earlier seat at this worker is. #108: nor while one is reviewed.
+        if (s.pending.some((p) => p.state === 'sending') || this.prompting.has(s.id) || this.checking || this.reviewing) return Promise.resolve(false);
+        return this.submit(s, t, o?.review === true);
       },
       onDismissPending: (id) => {
         if (!live()) return;
@@ -792,9 +879,9 @@ export class TranscriptMode {
           this.host.status('error', failureText('worker.answer', r.code, r.message, { worker: s.name }));
         });
       },
-      onAnswerAsk: async (args) => {
+      onAnswerAsk: async (args, o) => {
         if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
-        const r = await this.host.send('worker.answer_ask', { ...args, id: s.id });
+        const r = await this.answered(s, `ask:${args.tool_use_id}`, askFields(args), o?.review === true, (g) => this.host.send('worker.answer_ask', { ...args, id: s.id, ...(g?.secrets ? { secrets: g.secrets } : {}) }));
         if (r.ok) {
           const ack = (r.data ?? {}) as Partial<AnswerAskAck>;
           if (live() && ack.resolved) this.host.status('ok', args.cancel ? `Dismissed ${s.name}’s question` : `Answered ${s.name}`);
@@ -804,9 +891,9 @@ export class TranscriptMode {
         if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
-      onAnswerFollowup: async (args) => {
+      onAnswerFollowup: async (args, o) => {
         if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
-        const r = await this.host.send('worker.answer_followup', { ...args, id: s.id });
+        const r = await this.answered(s, `followup:${args.turn_id}`, followupFields(args), o?.review === true, (g) => this.host.send('worker.answer_followup', { ...args, id: s.id, ...(g?.secrets ? { secrets: g.secrets } : {}) }));
         if (r.ok) {
           if (live()) this.host.status('ok', `Answered ${s.name}`);
           return { ok: true };
@@ -844,9 +931,9 @@ export class TranscriptMode {
       },
       // #157: a Codex worker's async questions. Refused, the card keeps the answer and says why (the seat bar too, but
       // not for `stale`: the question had moved on already, which the card says calmly).
-      onAnswerAsync: async (args) => {
+      onAnswerAsync: async (args, o) => {
         if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
-        const r = await this.host.send('worker.answer_async', { ...args, id: s.id });
+        const r = await this.answered(s, `async:${args.thread}:${args.batch}`, asyncFields(args), o?.review === true, (g) => this.host.send('worker.answer_async', { ...args, id: s.id, ...(g?.secrets ? { secrets: g.secrets } : {}) }));
         if (r.ok) {
           if (live()) this.host.status('ok', `Sent your answer to ${s.name}`);
           return { ok: true };

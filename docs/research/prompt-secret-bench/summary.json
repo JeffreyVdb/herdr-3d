@@ -1,0 +1,929 @@
+{
+  "corpus_sha256": "1c54a29181fed2f2bf79c81507b7016fd363fc0ff885bf34f965b623386e0ebf",
+  "results": {
+    "gitleaks@0.5": {
+      "exact_tp": 18,
+      "exact_fp": 0,
+      "exact_fn": 18,
+      "exact_precision": 1.0,
+      "exact_recall": 0.5,
+      "fully_covered": 18,
+      "secrets": 36,
+      "partial_only": 0,
+      "negative_prompts_flagged": 0,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 5,
+          "covered": 5
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks-service@0.5": {
+      "exact_tp": 18,
+      "exact_fp": 0,
+      "exact_fn": 18,
+      "exact_precision": 1.0,
+      "exact_recall": 0.5,
+      "fully_covered": 18,
+      "secrets": 36,
+      "partial_only": 0,
+      "negative_prompts_flagged": 0,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 5,
+          "covered": 5
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "detect-secrets@0.5": {
+      "exact_tp": 14,
+      "exact_fp": 18,
+      "exact_fn": 22,
+      "exact_precision": 0.4375,
+      "exact_recall": 0.3888888888888889,
+      "fully_covered": 22,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 6,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 5,
+          "covered": 10
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 8,
+          "covered": 10
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gliner-pii-small-v1.0@0.3": {
+      "exact_tp": 25,
+      "exact_fp": 59,
+      "exact_fn": 11,
+      "exact_precision": 0.2976190476190476,
+      "exact_recall": 0.6944444444444444,
+      "fully_covered": 26,
+      "secrets": 36,
+      "partial_only": 9,
+      "negative_prompts_flagged": 19,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 12,
+          "covered": 12
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gliner-pii-small-v1.0@0.5": {
+      "exact_tp": 24,
+      "exact_fp": 33,
+      "exact_fn": 12,
+      "exact_precision": 0.42105263157894735,
+      "exact_recall": 0.6666666666666666,
+      "fully_covered": 25,
+      "secrets": 36,
+      "partial_only": 8,
+      "negative_prompts_flagged": 16,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 11,
+          "covered": 11
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gliner-pii-small-v1.0@0.7": {
+      "exact_tp": 18,
+      "exact_fp": 11,
+      "exact_fn": 18,
+      "exact_precision": 0.6206896551724138,
+      "exact_recall": 0.5,
+      "fully_covered": 19,
+      "secrets": 36,
+      "partial_only": 1,
+      "negative_prompts_flagged": 9,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 6,
+          "covered": 7
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 10,
+          "covered": 10
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gliner2-privacy-filter-PII-multi@0.3": {
+      "exact_tp": 27,
+      "exact_fp": 48,
+      "exact_fn": 9,
+      "exact_precision": 0.36,
+      "exact_recall": 0.75,
+      "fully_covered": 30,
+      "secrets": 36,
+      "partial_only": 4,
+      "negative_prompts_flagged": 15,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gliner2-privacy-filter-PII-multi@0.5": {
+      "exact_tp": 27,
+      "exact_fp": 36,
+      "exact_fn": 9,
+      "exact_precision": 0.42857142857142855,
+      "exact_recall": 0.75,
+      "fully_covered": 30,
+      "secrets": 36,
+      "partial_only": 4,
+      "negative_prompts_flagged": 13,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gliner2-privacy-filter-PII-multi@0.7": {
+      "exact_tp": 27,
+      "exact_fp": 20,
+      "exact_fn": 9,
+      "exact_precision": 0.574468085106383,
+      "exact_recall": 0.75,
+      "fully_covered": 28,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 8,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 10
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 14,
+          "covered": 15
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gliner2-privacy-filter-PII-multi-chunked@0.3": {
+      "exact_tp": 27,
+      "exact_fp": 48,
+      "exact_fn": 9,
+      "exact_precision": 0.36,
+      "exact_recall": 0.75,
+      "fully_covered": 30,
+      "secrets": 36,
+      "partial_only": 4,
+      "negative_prompts_flagged": 15,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gliner2-privacy-filter-PII-multi-chunked@0.5": {
+      "exact_tp": 26,
+      "exact_fp": 37,
+      "exact_fn": 10,
+      "exact_precision": 0.4126984126984127,
+      "exact_recall": 0.7222222222222222,
+      "fully_covered": 29,
+      "secrets": 36,
+      "partial_only": 5,
+      "negative_prompts_flagged": 13,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gliner2-privacy-filter-PII-multi-chunked@0.7": {
+      "exact_tp": 26,
+      "exact_fp": 21,
+      "exact_fn": 10,
+      "exact_precision": 0.5531914893617021,
+      "exact_recall": 0.7222222222222222,
+      "fully_covered": 27,
+      "secrets": 36,
+      "partial_only": 4,
+      "negative_prompts_flagged": 8,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 10
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 14,
+          "covered": 15
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks+gliner-pii-small-v1.0@0.3": {
+      "exact_tp": 28,
+      "exact_fp": 50,
+      "exact_fn": 8,
+      "exact_precision": 0.358974358974359,
+      "exact_recall": 0.7777777777777778,
+      "fully_covered": 29,
+      "secrets": 36,
+      "partial_only": 7,
+      "negative_prompts_flagged": 19,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 13
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks+gliner-pii-small-v1.0@0.5": {
+      "exact_tp": 27,
+      "exact_fp": 27,
+      "exact_fn": 9,
+      "exact_precision": 0.5,
+      "exact_recall": 0.75,
+      "fully_covered": 28,
+      "secrets": 36,
+      "partial_only": 6,
+      "negative_prompts_flagged": 16,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 12,
+          "covered": 12
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks+gliner-pii-small-v1.0@0.7": {
+      "exact_tp": 25,
+      "exact_fp": 11,
+      "exact_fn": 11,
+      "exact_precision": 0.6944444444444444,
+      "exact_recall": 0.6944444444444444,
+      "fully_covered": 26,
+      "secrets": 36,
+      "partial_only": 1,
+      "negative_prompts_flagged": 9,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 11,
+          "covered": 11
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks+gliner2-privacy-filter-PII-multi@0.3": {
+      "exact_tp": 28,
+      "exact_fp": 38,
+      "exact_fn": 8,
+      "exact_precision": 0.42424242424242425,
+      "exact_recall": 0.7777777777777778,
+      "fully_covered": 31,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 15,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks+gliner2-privacy-filter-PII-multi@0.5": {
+      "exact_tp": 28,
+      "exact_fp": 27,
+      "exact_fn": 8,
+      "exact_precision": 0.509090909090909,
+      "exact_recall": 0.7777777777777778,
+      "fully_covered": 31,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 13,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks+gliner2-privacy-filter-PII-multi@0.7": {
+      "exact_tp": 30,
+      "exact_fp": 14,
+      "exact_fn": 6,
+      "exact_precision": 0.6818181818181818,
+      "exact_recall": 0.8333333333333334,
+      "fully_covered": 31,
+      "secrets": 36,
+      "partial_only": 2,
+      "negative_prompts_flagged": 8,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 15,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks+gliner2-privacy-filter-PII-multi-chunked@0.3": {
+      "exact_tp": 28,
+      "exact_fp": 38,
+      "exact_fn": 8,
+      "exact_precision": 0.42424242424242425,
+      "exact_recall": 0.7777777777777778,
+      "fully_covered": 31,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 15,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks+gliner2-privacy-filter-PII-multi-chunked@0.5": {
+      "exact_tp": 27,
+      "exact_fp": 28,
+      "exact_fn": 9,
+      "exact_precision": 0.4909090909090909,
+      "exact_recall": 0.75,
+      "fully_covered": 30,
+      "secrets": 36,
+      "partial_only": 4,
+      "negative_prompts_flagged": 13,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "gitleaks+gliner2-privacy-filter-PII-multi-chunked@0.7": {
+      "exact_tp": 29,
+      "exact_fp": 15,
+      "exact_fn": 7,
+      "exact_precision": 0.6590909090909091,
+      "exact_recall": 0.8055555555555556,
+      "fully_covered": 30,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 8,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 15,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    }
+  }
+}

@@ -129,6 +129,9 @@ type RunStartArgs struct {
 	Worktree  *bool           `json:"worktree,omitempty"`
 	Label     string          `json:"label,omitempty"`
 	Prompt    string          `json:"prompt,omitempty"`
+	// Secrets (#108 round 2, optional): a review per text field ("text",
+	// "extra", "prompt") with possible secrets.
+	Secrets SecretsReviews `json:"secrets,omitempty"`
 }
 
 // RunStartResult is the ack data of run.start: worker.hire's, plus the

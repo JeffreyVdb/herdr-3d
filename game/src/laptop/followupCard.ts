@@ -19,7 +19,8 @@ import {
   type FollowupPick,
 } from '../world/followup';
 import { h } from '../ui/dom';
-import { focusQuestion, foldedRow, isSendKey, mark, moveIn, openQuestion, reveal, SEND_KEY, type StackLine } from './askStack';
+import { focusQuestion, foldedRow, isSendKey, mark, moveIn, openQuestion, reveal, reviewLink, SEND_KEY, type AnswerOptions, type CardSecrets, type StackLine } from './askStack';
+import { reviewKey } from '../ui/secretsFlow';
 import type { FollowupDraft } from './followupDrafts';
 import { zoomKey } from './keys';
 import { renderMarkdown } from '../ui/boards/markdown';
@@ -30,8 +31,10 @@ export type FollowupResult = { ok: true } | { ok: false; code: string; message: 
 export type FollowupMessage = { ok: true; text: string; cut: boolean } | { ok: false; code: string; message: string };
 
 export interface FollowupCardHost {
-  /** Sends `worker.answer_followup` (`id` is filled in by the host). */
-  answer(args: CommandArgs['worker.answer_followup']): Promise<FollowupResult>;
+  /** Sends `worker.answer_followup` (`id` is filled in by the host; #108 `o.review`: its texts reviewed on purpose first). */
+  answer(args: CommandArgs['worker.answer_followup'], o?: AnswerOptions): Promise<FollowupResult>;
+  /** #108 round 4: the switch, for "Review secrets" (absent: no such control). */
+  secrets?: CardSecrets | null;
   /** Sends `worker.dismiss_followup`. */
   dismiss(turnId: string): Promise<FollowupResult>;
   /** #60: sends `worker.retry_followup` (none: no Retry). */
@@ -97,6 +100,10 @@ export class FollowupCard {
 
   constructor(private readonly host: FollowupCardHost) {
     this.el = h('section', { class: 'tx-fu', hidden: true, 'aria-label': 'Open questions' });
+    // #108: the switch shows or hides "Review secrets".
+    host.secrets?.onChange(() => {
+      if (this.shownFollowup) this.render();
+    });
   }
 
   private get shownFollowup(): Followup | null {
@@ -228,6 +235,11 @@ export class FollowupCard {
     if (!f) return false;
     if (isSendKey(e)) {
       if (!this.sent) this.trySend();
+      return true;
+    }
+    // #108: the answers' review on purpose, then their send.
+    if (reviewKey(e) && this.host.secrets?.on) {
+      if (!this.sent && !e.repeat) this.trySend(true);
       return true;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -367,7 +379,8 @@ export class FollowupCard {
   }
 
   /** Send (its click, Ctrl/⌘+Enter): what is answered goes; with nothing answered, the open question says so. */
-  private trySend(): void {
+  /** `review` (#108): "Review secrets": the answers' texts reviewed on purpose before they go. */
+  private trySend(review = false): void {
     const f = this.shownFollowup;
     if (!f || this.sent) return;
     if (!followupAnswers(f, this.picks).length && !this.roundNote.trim()) {
@@ -378,15 +391,15 @@ export class FollowupCard {
       this.render();
       return;
     }
-    void this.submit();
+    void this.submit(review);
   }
 
-  private async submit(): Promise<void> {
+  private async submit(review = false): Promise<void> {
     const f = this.shownFollowup;
     if (!f || this.sent) return;
     const args = answerFollowupArgs('', f, this.picks, this.roundNote);
     if (!args) return;
-    const r = await this.send(f, () => this.host.answer(args));
+    const r = await this.send(f, () => this.host.answer(args, review ? { review: true } : undefined));
     if (r && !r.ok) this.note = { text: r.message, error: true };
     this.render();
   }
@@ -478,6 +491,9 @@ export class FollowupCard {
     if (isSendKey(e)) {
       e.preventDefault();
       this.trySend();
+    } else if (reviewKey(e) && this.host.secrets?.on) {
+      e.preventDefault();
+      if (!e.repeat) this.trySend(true);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       this.host.focusTimeline();
@@ -577,6 +593,7 @@ export class FollowupCard {
         { class: 'tx-ask-foot' },
         h('span', { class: 'tx-ask-hint' }, h('span', { class: 'tx-ask-hint-text' }, this.hint()), h('span', { class: 'tx-ask-keys' }, this.keys(f))),
         h('button', { class: 'tx-link tx-ask-dismiss', 'data-key': 'dismiss', disabled: !!this.sent, title: 'Drop these questions: nothing is sent to the agent', onclick: () => void this.dismiss() }, 'Dismiss'),
+        reviewLink(this.host.secrets, !!this.sent, () => this.trySend(true)),
         send,
       ),
     ];

@@ -25,6 +25,7 @@ import './start.css';
 import { deskTabs } from './deskTabs';
 import { chips, type HireHost } from './hire';
 import { failureText } from './messages';
+import { onReviewKey, reviewButton, type FieldText, type GoFields } from './secretsFlow';
 import { hiredToast } from './hiredToast';
 // M10 limits
 import { planLimits } from './limits';
@@ -152,6 +153,8 @@ export class StartRunDialog {
   private resolving = false;
   /** Bumped by every open: an answer for an older one is dropped. */
   private opened = 0;
+  /** #108: the opening (`opened`) whose `run.start` is at the bridge now: Esc then leaves a run that still starts. */
+  private sending = -1;
   /**
    * The two composer fields are built once and stay in the form across re-renders (`keepChildren`): a composer that is
    * detached loses its caret, its selection (a drag in progress) and its focus, which a textarea could be given back.
@@ -185,6 +188,11 @@ export class StartRunDialog {
   ) {
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
+    // #108: the run's texts reviewed on purpose (Ctrl/⌘+Shift+X, with the switch on); the switch shows or hides the button.
+    onReviewKey(this.dialog, () => this.host.secrets, () => void this.start(true));
+    host.secrets?.onChange(() => {
+      if (this.dialog.open) this.renderActions();
+    });
     // Settings → Harness models changed what the orchestrator chips offer.
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());
     this.extraDraft = this.newDraft('run-extra', EXTRA_MAX);
@@ -247,7 +255,9 @@ export class StartRunDialog {
       if (back?.isConnected && !this.dialog.contains(back)) back.focus();
     });
     this.dialog.addEventListener('cancel', () => {
-      if (this.state === 'starting') this.host.toast('The run is still starting; its orchestrator shows up at the desk when it is hired.', 'info');
+      // Esc while the run.start is on its way: the run still starts; the dialog just goes. (#108: not while its texts are
+      // scanned, or scanned again after a refusal: then nothing starts, and nothing is said.)
+      if (this.sending === this.opened) this.host.toast('The run is still starting; its orchestrator shows up at the desk when it is hired.', 'info');
     });
     // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
@@ -849,7 +859,9 @@ export class StartRunDialog {
     const had = document.activeElement === this.startBtn;
     this.startBtn = start;
     const retry = this.state === 'failed' && !runUnsupported(this.host) ? h('button', { class: 'btn', 'data-key': 'retry', onclick: () => this.retry() }, 'Try again') : null;
-    this.actions.replaceChildren(...[retry, cancel, start].filter((x): x is HTMLButtonElement => !!x));
+    // #108: the run's texts reviewed on purpose (with the switch on), then the start.
+    const review = reviewButton(this.host.secrets, this.state !== 'ready' || this.resolving ? 'The run is on its way.' : blocker, () => void this.start(true), 'run');
+    this.actions.replaceChildren(...[retry, cancel, review, start].filter((x): x is HTMLButtonElement => !!x));
     if (had) start.focus();
   }
 
@@ -903,7 +915,12 @@ export class StartRunDialog {
     this.renderActions();
   }
 
-  private async start(): Promise<void> {
+  /**
+   * Start run. #108 round 4: with the switch on (or `manual`: "Review secrets"), the texts `run.start` carries are each
+   * reviewed before anything of them goes (the ticket's text; the extra instructions, beside no edited prompt; the edited
+   * prompt), and go as a review per text keyed by its path; Cancel starts nothing.
+   */
+  private async start(manual = false): Promise<void> {
     if (this.state !== 'ready' || !this.prep || this.resolving) return;
     const blocker = this.blocker();
     if (blocker) {
@@ -944,6 +961,35 @@ export class StartRunDialog {
     const preview: Preview = prompt ? { ...this.preview, text: prompt.text } : this.preview;
     const args: CommandArgs['run.start'] = startArgs(floor, form, t, preview, this.prep, worktreeUsable(this.prep.git));
     const who = args.label ?? this.prep.label;
+    // #108: the texts the bridge reads (`extra` is in the composed prompt only, so not beside an edited one).
+    const flow = this.host.secrets;
+    const fields: FieldText[] = [
+      ...(args.text ? [{ path: 'text', text: args.text, label: 'the ticket' }] : []),
+      ...(args.extra && args.prompt === undefined ? [{ path: 'extra', text: args.extra, label: 'the extra instructions' }] : []),
+      ...(args.prompt ? [{ path: 'prompt', text: args.prompt, label: 'the edited first prompt' }] : []),
+    ];
+    // (Closed meanwhile, or opened again: nothing of it goes, no review opens.)
+    const freq = { key: `run:${floor}:${desk}`, target: `${who} at Desk ${desk + 1}`, manual, fields, live: () => opened === this.opened && this.dialog.open };
+    let go: GoFields | null = null;
+    if (manual && !fields.length) {
+      this.setStatus('Nothing typed to review: the issue or the card is read on the bridge.', true);
+      return;
+    }
+    if (flow && (flow.on || manual) && fields.length) {
+      this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the run’s texts…');
+      // Busy meanwhile: a second Start is not another review.
+      this.resolving = true;
+      const out = await flow.reviewFields(freq);
+      if (opened !== this.opened || !this.dialog.open) return;
+      this.resolving = false;
+      if (out.kind === 'kept') {
+        this.setStatus(out.why === 'cancel' ? 'Not started: the review was cancelled. Everything is still here.' : out.message, out.why === 'failed');
+        this.renderActions();
+        return;
+      }
+      this.setStatus('');
+      go = out;
+    }
     this.state = 'starting';
     const release = this.host.reserve(floor, desk);
     const steps = [args.worktree ? 'creating the worktree' : null, `starting ${args.orch.harness}`, 'handing over the prompt'].filter(Boolean);
@@ -951,8 +997,18 @@ export class StartRunDialog {
     this.startingStatus();
     this.render();
     const gen = this.gen;
-    const r = await this.host.send('run.start', args);
+    const send = (g: GoFields | null) => {
+      this.sending = opened;
+      return this.host.send('run.start', g?.secrets ? { ...args, secrets: g.secrets } : args).finally(() => {
+        if (this.sending === opened) this.sending = -1;
+      });
+    };
+    const d = flow && go ? await flow.deliverFields(freq, go, send) : ({ kind: 'answered', result: await send(null) } as const);
     release();
+    // Closed while a refusal was reviewed again: nothing started, nothing to say.
+    if (d.kind === 'kept' && d.why === 'gone') return;
+    // Kept by the flow (a review again cancelled, the switch changed): nothing started, its words say why.
+    const r = d.kind === 'kept' ? ({ ok: false, code: 'secrets_kept', message: d.message } as const) : d.result;
     const still = this.dialog.open && gen === this.gen;
     if (still) this.state = 'ready';
     if (r.ok) {

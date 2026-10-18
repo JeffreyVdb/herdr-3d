@@ -7,7 +7,7 @@ import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
-import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation } from './net/protocol';
+import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation, type HireInterpretAck } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
@@ -44,7 +44,7 @@ import { typingIn } from './input/typing';
 import { ShortcutsDialog } from './ui/shortcutsDialog';
 import { Palette } from './ui/palette';
 import { DictationBar, type DictationLive, type DictationReply } from './ui/dictation';
-import { followupLost, interpretOutcome, outcomeText } from './ui/dictationModel';
+import { followupLost, HANDOVER_EXPIRED, interpretOutcome, outcomeText, PENDING_UNREVIEWED } from './ui/dictationModel';
 import { paletteCommands, type PaletteCommand } from './world/palette';
 import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
@@ -107,12 +107,17 @@ import { packupSection } from './ui/packupSection';
 import { digestSection } from './ui/digestSection';
 import { handoffLlmSection } from './ui/handoffLlmSection';
 import { digestFailureText } from './world/digestSettings';
-import { packupApplies, packupVerdict, type PackupOutcome } from './world/packup';
+import { packupApplies } from './world/packup';
+import { packupCheck, type PackupCheck } from './ui/packupSend';
 import { activitySection } from './ui/activitySection';
 import { codexServerSection } from './ui/codexServerSection';
 import { repoDiscoverySection } from './ui/repoDiscoverySection';
 import { floorsSection } from './ui/floorsSection';
 import { repoRefsSection } from './ui/repoRefsSection';
+import { promptSecretsSection } from './ui/promptSecretsSection';
+import { SecretsReviewDialog } from './ui/secretsReview';
+import { PromptSecretsFlow, type Go } from './ui/secretsFlow';
+import { RevokeSecretsDialog } from './ui/revokeSecrets';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
@@ -240,6 +245,11 @@ export class App {
   /** #210: every hire on its way, from Hire to its outcome. */
   readonly hires: HireCoordinator;
   readonly sendHome: SendHomeDialog;
+  /** #108: the review of a prompt's possible secrets, and the send flow every composer goes through. */
+  readonly secretsReview: SecretsReviewDialog;
+  readonly secrets: PromptSecretsFlow;
+  /** #108 round 4: the confirmation before a worker's protected files are removed (the seat bar's chip opens it). */
+  readonly revokeSecrets: RevokeSecretsDialog;
   /** #223: the filing dialog and the floor's filing cabinet. */
   readonly handoffDialog: HandoffDialog;
   readonly cabinet: Cabinet;
@@ -428,9 +438,12 @@ export class App {
       bridges: { book: this.bridges, switchTo: (b) => void this.switchBridge(b), openSettings: () => this.openSettingsAt('bridges') },
       held: { list: () => this.hireReview.heldReviews(), review: (id) => void this.reviewHeld(id) },
     });
+    const flowOn = () => (this.secrets as PromptSecretsFlow | undefined)?.on === true;
     this.dictation = new DictationBar(o.host, {
-      submit: (text, live) => this.interpretDictation(text, live),
-      pickFloor: (floor, hire, live) => this.openDictatedReview(floor, hire, live),
+      submit: (text, live, o) => this.interpretDictation(text, live, o?.review === true),
+      // #108: the flow is made further down (after the bar): its switch is read when asked, its changes heard from the book.
+      secrets: { get on() { return flowOn(); }, onChange: (fn: () => void) => this.store.promptSecrets.onChange(fn) },
+      pickFloor: (floor, hire, live, handover) => this.openDictatedReview(floor, hire, live, handover),
       store: this.store,
       here: () => this.hereFloor(),
       online: () => this.conn.phase === 'live',
@@ -503,6 +516,8 @@ export class App {
     );
     // #155: whether new Codex workers get a Codex server of their own (the bridge's switch, off by default).
     settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'workers' });
+    // #108: whether a prompt is scanned for passwords and tokens, and reviewed, before it goes (the bridge's switch, off by default).
+    settings.addSection('prompt-secrets', 'Prompt secrets', promptSecretsSection({ book: this.store.promptSecrets, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'workers' });
     // #247: whether a conversation's `@r:` lists every building's floors (the bridge's switch, off by default).
     settings.addSection('repos', 'Repositories', repoRefsSection({ book: this.store.repoRefs, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'integrations' });
     // #54: the folders on the bridge host scanned for Git checkouts, which `@r:` lists too (absent without discovery).
@@ -664,12 +679,17 @@ export class App {
       addFloor: (from) => this.openAddFloor(from), // #58
     });
 
+    // #108: with "Review prompt secrets before sending" on, one review dialog and one send flow for every composer (each
+    // dialog gets the flow through its host).
+    this.secretsReview = new SecretsReviewDialog(o.host, { book: this.store.promptSecrets });
+    this.secrets = new PromptSecretsFlow({ book: this.store.promptSecrets, send: (t, args) => this.send(t, args), unsupported: (t) => this.unsupported.has(t), review: (req) => this.secretsReview.open(req) });
     const dialogHost = {
       store: this.store,
       send: <T extends CommandName>(t: T, args: CommandArgs[T]) => this.send(t, args),
       unsupported: (t: CommandName) => this.unsupported.has(t),
       toast: (m: string, kind: ToastKind, action?: ToastAction) => this.hud.toast(m, kind === 'error' ? 6500 : kind === 'warn' ? 9000 : 3600, kind, false, action),
       now: () => Date.now(),
+      secrets: this.secrets,
     };
     const upload = (f: Blob, hint: { label?: string; n?: number }, signal?: AbortSignal) => postUpload(this.url, f, hint, signal);
     // #39: one list of commands and skills per worker (and per hire context), for the transcript and every dialog's `/`.
@@ -760,6 +780,12 @@ export class App {
       },
     });
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
+    // #108 round 5: the removal of a worker's protected files, from the seat bar's chip.
+    this.revokeSecrets = new RevokeSecretsDialog(o.host, {
+      ...dialogHost,
+      // An older bridge's `unknown_command` hides the seat bar's chip at once (`send` marked the command unsupported).
+      send: (t, args) => this.send(t, args).finally(() => this.laptops.syncSecretFiles()),
+    });
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
     this.handoffDialog = new HandoffDialog(o.host, {
@@ -802,6 +828,11 @@ export class App {
       stand: () => this.laptops.stand(),
       toggle: () => this.laptops.toggleTranscript(),
       fullscreen: (a) => this.laptops.fullscreen(a),
+      // #108 round 4: the seated worker's "protected files" chip: the confirmation that removes them.
+      revoke: (from) => {
+        const id = this.laptops.seated;
+        if (id) this.revokeSecrets.open(id, from);
+      },
     }, this.themes.prefs);
     this.laptops = new Laptops(
       {
@@ -816,7 +847,8 @@ export class App {
         layer: this.hud.root,
         themes: this.themes,
         monitors: this.monitorPrefs,
-        packup: (id, text, signal) => this.packupCheck(id, text, signal), // #110
+        packup: this.packupCheck, // #110
+        secrets: this.secrets, // #108
         overview: () => this.openOverview(false), // #118
         handoff: (id) => this.openHandoff(id, true), // #223
         scheduleFollowup: (id, c) => this.openFollowup(id, c), // #64 schedules
@@ -825,7 +857,7 @@ export class App {
       o.params,
     );
     // M5: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
-    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, catalogs, packup: (id, text, signal) => this.packupCheck(id, text, signal) });
+    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, catalogs, packup: this.packupCheck });
     this.openPr = new OpenPrDialog(o.host, {
       ...dialogHost,
       providerName: (floor) => this.boardBook.get(floor).prs?.provider_name ?? this.boardBook.get(floor).issues?.provider_name ?? 'the provider',
@@ -956,6 +988,8 @@ export class App {
     this.hire.refresh();
     this.hireReview.refresh();
     this.sendHome.refresh();
+    this.revokeSecrets.refresh(); // #108 round 4
+    this.laptops.syncSecretFiles();
     this.handoffDialog.refresh(); // #223
     this.noteAgentHandoffs(); // #224
     this.cabinet.refresh();
@@ -1489,13 +1523,14 @@ export class App {
    * #212: the review dialog for a dictated hire on the floor you are on, at `desk` or the first free one. Nothing is sent:
    * the hire happens when the human presses Hire in it. False when the floor or desk cannot take a hire (a toast says why).
    */
-  openHireReview(interp: HireInterpretation, desk?: number, floor: string | null = this.hereFloor()): boolean {
+  /** #108 round 4 `handover`: the interpreter's `secrets_pending` for `interp`. */
+  openHireReview(interp: HireInterpretation, desk?: number, floor: string | null = this.hereFloor(), handover: string | null = null): boolean {
     const d = this.hireSeat(desk, floor);
     if (d === null) return false;
     this.walker.release();
     this.walker.stop();
     this.panels.close();
-    return this.hireReview.open(floor as string, interp, d);
+    return this.hireReview.open(floor as string, interp, d, undefined, handover);
   }
 
   /** The desk a hire opens for on a floor (the one you are on unless `s` says), or null with a toast saying why not. */
@@ -1683,7 +1718,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -1732,26 +1767,16 @@ export class App {
   /**
    * #110 pack up on request: the check before a prompt from the laptop's composer or the P overlay goes out. Only
    * while the feature is ready and for a worker it applies to; any failure or a late answer sends it as written.
-   * A match opens the confirm (the send home's pack-up mode), nothing left of the prompt the plain send home.
+   * A match opens the confirm (the send home's pack-up mode), nothing left of the prompt the plain send home. #108
+   * round 4: `packup.detect` carries the prompt's review; the models read its `sent` (references for the protected
+   * values), the confirm shows that, and what follows sends it with the check's hand-over (`ui/packupSend.ts`).
    */
-  private packupCheck(id: string, text: string, signal: AbortSignal): Promise<PackupOutcome> | null {
-    if (this.store.packup.state?.state !== 'ready' || this.unsupported.has('packup.detect') || !packupApplies(this.store.workers.get(id))) return null;
-    return this.packupRun(id, text, signal);
-  }
-
-  private async packupRun(id: string, text: string, signal: AbortSignal): Promise<PackupOutcome> {
-    const r = await this.send('packup.detect', { id, text });
-    if (signal.aborted) return 'cancel';
-    const v = r.ok ? packupVerdict(r.data, text) : ({ kind: 'send' } as const);
-    if (v.kind === 'send') return 'send';
-    if (v.kind === 'home') {
-      this.sendHome.open(id, { fromPackup: true });
-      return 'cancel';
-    }
-    const c = await this.sendHome.openPackup(id, { original: text, task: v.task, removed: v.removed });
-    if (c === 'done') return 'done';
-    return c === 'stay' && !signal.aborted ? 'send' : 'cancel';
-  }
+  private readonly packupCheck: PackupCheck = packupCheck({
+    applies: (id) => this.store.packup.state?.state === 'ready' && !this.unsupported.has('packup.detect') && packupApplies(this.store.workers.get(id)),
+    detect: (args) => this.send('packup.detect', args),
+    sendHome: (id) => this.sendHome.open(id, { fromPackup: true }),
+    confirm: (id, pk) => this.sendHome.openPackup(id, pk),
+  });
 
   // ---- M6 start: starting a run, team presets ------------------------------------------
 
@@ -3255,15 +3280,39 @@ export class App {
    * bar asked which. Everything else is the bar's line, with the text kept. Nothing here sends `worker.hire`. An answer
    * for a bar that was closed (or closed and opened again) since it asked is no one's: nothing is done with it (`live`).
    */
-  private async interpretDictation(text: string, live: DictationLive): Promise<DictationReply> {
+  private async interpretDictation(text: string, live: DictationLive, manual = false): Promise<DictationReply> {
     const ticket = this.hireReview.begin();
     const pending = this.hireReview.pendingInterpretation();
-    const r = await this.send('hire.interpret', pending ? { text, pending } : { text });
+    // #108 round 4: the sentence's secrets are reviewed before the LLM reads it ("Confirm and continue"); the answer
+    // holds their references and a hand-over the review keeps for the next sentence and the hire.
+    const handover = pending ? this.hireReview.pendingHandover() : null;
+    // (The bar closed meanwhile: nothing of it goes, no review opens.)
+    const req = { key: 'dictation', text, target: 'the hire interpreter', action: 'Confirm and continue' as const, manual, live };
+    let go: Go = { kind: 'send', protects: 0, shown: text, review: null };
+    if (this.secrets.on || manual) {
+      const out = await this.secrets.review(req);
+      if (!live()) return { kind: 'done' };
+      if (out.kind === 'kept') return { kind: 'say', text: out.why === 'cancel' ? 'Not sent: the review was cancelled. Your words are still here.' : out.message, error: out.why === 'failed' };
+      go = out;
+    }
+    const send = async (g: Go): Promise<CommandResult> => {
+      const r = await this.send('hire.interpret', { text, ...(pending ? { pending } : {}), ...(g.secrets ? { secrets: g.secrets } : {}), ...(handover ? { secrets_pending: handover } : {}) });
+      // The open review's own sentences were never reviewed (it came before the switch, or its hand-over was lost), or its
+      // hand-over is stale (expired, a restart, the switch): a new review of this sentence would not change that, so this
+      // is the bar's line, never a review again.
+      if (!r.ok && r.code === 'secrets_review_required' && /^pending\.sources/.test(r.message)) return { ok: false, code: 'secrets_kept', message: PENDING_UNREVIEWED };
+      return handover && !r.ok && r.code === 'secrets_review_stale' ? { ok: false, code: 'secrets_kept', message: HANDOVER_EXPIRED } : r;
+    };
+    const d = await this.secrets.deliver(req, go, send);
     if (!live()) return { kind: 'done' };
+    if (d.kind === 'kept') return { kind: 'say', text: d.why === 'cancel' ? 'Not sent: the review was cancelled. Your words are still here.' : d.message, error: d.why === 'failed' };
+    const r = d.result;
     const o = interpretOutcome(r);
     if (o.kind !== 'hire') return { kind: 'say', text: outcomeText(o), error: o.kind === 'error' };
+    const answered = r.ok ? (r.data as Partial<HireInterpretAck> | undefined)?.secrets_pending : undefined;
+    const next = typeof answered === 'string' && answered ? answered : null;
     if (ticket) {
-      if (this.hireReview.apply(o.hire, ticket)) {
+      if (this.hireReview.apply(o.hire, ticket, next)) {
         // The review has the keyboard back (it opened the bar), with the answer in it.
         this.dictation.close();
         return { kind: 'done' };
@@ -3274,8 +3323,8 @@ export class App {
     // (The bar is modal: a review cannot open under it meanwhile. Never a second one over it, silently.)
     if (this.hireReview.isOpen) return { kind: 'say', text: 'A hire review is open already. Press Enter again to change it.', error: true };
     const here = this.hereFloor();
-    if (!here) return { kind: 'floor', hire: o.hire };
-    return this.openDictatedReview(here, o.hire, live);
+    if (!here) return { kind: 'floor', hire: o.hire, ...(next ? { handover: next } : {}) };
+    return this.openDictatedReview(here, o.hire, live, next);
   }
 
   /**
@@ -3284,7 +3333,7 @@ export class App {
    * back, the modals go and you stand up, as for a palette command, the elevator takes you there when it is another floor,
    * and the review opens at its first free desk.
    */
-  private async openDictatedReview(floor: string, hire: HireInterpretation, live: DictationLive): Promise<DictationReply> {
+  private async openDictatedReview(floor: string, hire: HireInterpretation, live: DictationLive, handover: string | null = null): Promise<DictationReply> {
     if (!live()) return { kind: 'done' };
     const seat = resolveHireDesk(floor, this.store.floorView(floor), this.heldDesks(floor));
     if (!seat.ok) return { kind: 'say', text: seat.msg, error: true };
@@ -3296,7 +3345,7 @@ export class App {
       await this.enterFloor(floor);
       if (this.hereFloor() !== floor) return { kind: 'done' }; // the floor went meanwhile
     }
-    this.openHireReview(hire, undefined, floor);
+    this.openHireReview(hire, undefined, floor, handover);
     return { kind: 'done' };
   }
 
@@ -3648,7 +3697,9 @@ export class App {
     const onFloor = this.mode === 'floor' && (this.place.area === 'floor' || this.place.area === 'fire-escape');
     // #110: a pack-up check's dialog keeps you seated (the prompt box and its draft stay); it still owns the keys.
     // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
-    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen) || this.hud.sheetOpen || this.transitioning;
+    // #108: so does the review of a prompt's secrets (from the prompt box or a paste): Confirm sends from the seat.
+    // Round 4: and the confirmation that removes the seated worker's protected files (the seat bar's chip opens it).
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen && !this.revokeSecrets.keepsSeat) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.orphaned && !this.laptops.seated) {
       this.orphaned = false;

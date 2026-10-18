@@ -1,0 +1,1382 @@
+[
+  {
+    "id": "env-quoted-1",
+    "family": "env-quoted",
+    "group": "challenge",
+    "text": "SERVICE_PASSWORD=\"Ph9PCqNM2kpkq!\"\nRun the importer.",
+    "expected": [
+      [
+        18,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "env-quoted-2",
+    "family": "env-quoted",
+    "group": "challenge",
+    "text": "SERVICE_PASSWORD=\"x79L9jzoga0We!\"\nRun the importer.",
+    "expected": [
+      [
+        18,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "env-quoted-3",
+    "family": "env-quoted",
+    "group": "challenge",
+    "text": "SERVICE_PASSWORD=\"lNQzk39mPFYiq!\"\nRun the importer.",
+    "expected": [
+      [
+        18,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "env-unquoted-1",
+    "family": "env-unquoted",
+    "group": "challenge",
+    "text": "export SERVICE_API_TOKEN=SRlyEUBuqC6juuNOVRLDEwMLDmNO22i\nRun the importer.",
+    "expected": [
+      [
+        25,
+        56
+      ]
+    ]
+  },
+  {
+    "id": "env-unquoted-2",
+    "family": "env-unquoted",
+    "group": "challenge",
+    "text": "export SERVICE_API_TOKEN=MJon6D4MA9eW1B9TfKrhmApBqexlC9Z\nRun the importer.",
+    "expected": [
+      [
+        25,
+        56
+      ]
+    ]
+  },
+  {
+    "id": "env-unquoted-3",
+    "family": "env-unquoted",
+    "group": "challenge",
+    "text": "export SERVICE_API_TOKEN=Rhpzcf9D8DsdWbrdfQqSlvfH7AamGIU\nRun the importer.",
+    "expected": [
+      [
+        25,
+        56
+      ]
+    ]
+  },
+  {
+    "id": "json-1",
+    "family": "json",
+    "group": "challenge",
+    "text": "Deploy with {\"password\":\"qFYY59kiYH5#\",\"pool\":4}",
+    "expected": [
+      [
+        25,
+        37
+      ]
+    ]
+  },
+  {
+    "id": "json-2",
+    "family": "json",
+    "group": "challenge",
+    "text": "Deploy with {\"password\":\"gbXPKvOsMta#\",\"pool\":4}",
+    "expected": [
+      [
+        25,
+        37
+      ]
+    ]
+  },
+  {
+    "id": "json-3",
+    "family": "json",
+    "group": "challenge",
+    "text": "Deploy with {\"password\":\"IzYVY9IE4cM#\",\"pool\":4}",
+    "expected": [
+      [
+        25,
+        37
+      ]
+    ]
+  },
+  {
+    "id": "yaml-1",
+    "family": "yaml",
+    "group": "challenge",
+    "text": "credentials:\n  password: \"bUYStq5tB!\"\n  host: db.internal.test",
+    "expected": [
+      [
+        26,
+        36
+      ]
+    ]
+  },
+  {
+    "id": "yaml-2",
+    "family": "yaml",
+    "group": "challenge",
+    "text": "credentials:\n  password: \"TcxcEx41i!\"\n  host: db.internal.test",
+    "expected": [
+      [
+        26,
+        36
+      ]
+    ]
+  },
+  {
+    "id": "yaml-3",
+    "family": "yaml",
+    "group": "challenge",
+    "text": "credentials:\n  password: \"caNVz9UTY!\"\n  host: db.internal.test",
+    "expected": [
+      [
+        26,
+        36
+      ]
+    ]
+  },
+  {
+    "id": "prose-1",
+    "family": "prose",
+    "group": "challenge",
+    "text": "The deployment password is hvV8ti8OK31JDS!. Authenticate.",
+    "expected": [
+      [
+        27,
+        42
+      ]
+    ]
+  },
+  {
+    "id": "prose-2",
+    "family": "prose",
+    "group": "challenge",
+    "text": "The deployment password is m0KB2ds1VMoPeb!. Authenticate.",
+    "expected": [
+      [
+        27,
+        42
+      ]
+    ]
+  },
+  {
+    "id": "prose-3",
+    "family": "prose",
+    "group": "challenge",
+    "text": "The deployment password is dFmevV0749u0nr!. Authenticate.",
+    "expected": [
+      [
+        27,
+        42
+      ]
+    ]
+  },
+  {
+    "id": "quoted-prose-1",
+    "family": "quoted-prose",
+    "group": "challenge",
+    "text": "Use password \"quiet birch FwplCp\" for the staging login.",
+    "expected": [
+      [
+        14,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "quoted-prose-2",
+    "family": "quoted-prose",
+    "group": "challenge",
+    "text": "Use password \"quiet birch vBBWaS\" for the staging login.",
+    "expected": [
+      [
+        14,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "quoted-prose-3",
+    "family": "quoted-prose",
+    "group": "challenge",
+    "text": "Use password \"quiet birch co6yEg\" for the staging login.",
+    "expected": [
+      [
+        14,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "backticks-1",
+    "family": "backticks",
+    "group": "challenge",
+    "text": "Change the password to `@O7npgLrPPET#$%` before proceeding.",
+    "expected": [
+      [
+        24,
+        39
+      ]
+    ]
+  },
+  {
+    "id": "backticks-2",
+    "family": "backticks",
+    "group": "challenge",
+    "text": "Change the password to `@TppeWLsfikW#$%` before proceeding.",
+    "expected": [
+      [
+        24,
+        39
+      ]
+    ]
+  },
+  {
+    "id": "backticks-3",
+    "family": "backticks",
+    "group": "challenge",
+    "text": "Change the password to `@ubMwhrzhgRX#$%` before proceeding.",
+    "expected": [
+      [
+        24,
+        39
+      ]
+    ]
+  },
+  {
+    "id": "bearer-1",
+    "family": "bearer",
+    "group": "challenge",
+    "text": "Authorization: Bearer vtyTmvmnpkh99rWC3D4Gp8zcqyOlv7Ojo0Dtf\nGet the status.",
+    "expected": [
+      [
+        22,
+        59
+      ]
+    ]
+  },
+  {
+    "id": "bearer-2",
+    "family": "bearer",
+    "group": "challenge",
+    "text": "Authorization: Bearer I15Zl5WKeTMu9HROXcHZHu3nuzHFnVt9wNkPZ\nGet the status.",
+    "expected": [
+      [
+        22,
+        59
+      ]
+    ]
+  },
+  {
+    "id": "bearer-3",
+    "family": "bearer",
+    "group": "challenge",
+    "text": "Authorization: Bearer flRe6mGFvKgP6sO83RLfztOCnJ5u98XpSZzDh\nGet the status.",
+    "expected": [
+      [
+        22,
+        59
+      ]
+    ]
+  },
+  {
+    "id": "url-1",
+    "family": "url",
+    "group": "challenge",
+    "text": "Use mysql://reader:iLnUmFo%40vk8wfDg@database.example.test:3306/db",
+    "expected": [
+      [
+        19,
+        36
+      ]
+    ]
+  },
+  {
+    "id": "url-2",
+    "family": "url",
+    "group": "challenge",
+    "text": "Use mysql://reader:Ki3wfXg%40fx4s901@database.example.test:3306/db",
+    "expected": [
+      [
+        19,
+        36
+      ]
+    ]
+  },
+  {
+    "id": "url-3",
+    "family": "url",
+    "group": "challenge",
+    "text": "Use mysql://reader:bqQoSWD%40kYEWHCt@database.example.test:3306/db",
+    "expected": [
+      [
+        19,
+        36
+      ]
+    ]
+  },
+  {
+    "id": "query-1",
+    "family": "query",
+    "group": "challenge",
+    "text": "GET https://svc.example.test?api_key=weNqpombj3TlnsZOXNII8G3BTYfPWDJ&page=2",
+    "expected": [
+      [
+        37,
+        68
+      ]
+    ]
+  },
+  {
+    "id": "query-2",
+    "family": "query",
+    "group": "challenge",
+    "text": "GET https://svc.example.test?api_key=omAlvZAtAeViBVyjlKe7zPRyxgj2MKi&page=2",
+    "expected": [
+      [
+        37,
+        68
+      ]
+    ]
+  },
+  {
+    "id": "query-3",
+    "family": "query",
+    "group": "challenge",
+    "text": "GET https://svc.example.test?api_key=qDx8Rkrwhe3DmXGfvEVkkTvRBRL0sTW&page=2",
+    "expected": [
+      [
+        37,
+        68
+      ]
+    ]
+  },
+  {
+    "id": "fenced-1",
+    "family": "fenced",
+    "group": "challenge",
+    "text": "Access token (two lines):\n```text\n2Jo0PSQYDkWXzyBfHBs\nDtpWjWJHQUemy2IhQ7f\n```\nKeep both lines.",
+    "expected": [
+      [
+        34,
+        73
+      ]
+    ]
+  },
+  {
+    "id": "fenced-2",
+    "family": "fenced",
+    "group": "challenge",
+    "text": "Access token (two lines):\n```text\n79EgFiIBb4LMR0N6pUk\nXaQ8fY85nMyJARzau5j\n```\nKeep both lines.",
+    "expected": [
+      [
+        34,
+        73
+      ]
+    ]
+  },
+  {
+    "id": "fenced-3",
+    "family": "fenced",
+    "group": "challenge",
+    "text": "Access token (two lines):\n```text\nRZgvQKwAOqZ2AdffeUW\nyL7f2A1SGiE6pB7iU1m\n```\nKeep both lines.",
+    "expected": [
+      [
+        34,
+        73
+      ]
+    ]
+  },
+  {
+    "id": "unicode-1",
+    "family": "unicode",
+    "group": "challenge",
+    "text": "The password is \"é🌻xeeOkVJ!?\". Use it.",
+    "expected": [
+      [
+        17,
+        28
+      ]
+    ]
+  },
+  {
+    "id": "unicode-2",
+    "family": "unicode",
+    "group": "challenge",
+    "text": "The password is \"é🌻XoM5or3!?\". Use it.",
+    "expected": [
+      [
+        17,
+        28
+      ]
+    ]
+  },
+  {
+    "id": "unicode-3",
+    "family": "unicode",
+    "group": "challenge",
+    "text": "The password is \"é🌻6kQqoND!?\". Use it.",
+    "expected": [
+      [
+        17,
+        28
+      ]
+    ]
+  },
+  {
+    "id": "dutch-1",
+    "family": "dutch",
+    "group": "challenge",
+    "text": "Het wachtwoord is cg1ALdQPBl!. Maak verbinding.",
+    "expected": [
+      [
+        18,
+        29
+      ]
+    ]
+  },
+  {
+    "id": "dutch-2",
+    "family": "dutch",
+    "group": "challenge",
+    "text": "Het wachtwoord is mgeWwG1ZXt!. Maak verbinding.",
+    "expected": [
+      [
+        18,
+        29
+      ]
+    ]
+  },
+  {
+    "id": "dutch-3",
+    "family": "dutch",
+    "group": "challenge",
+    "text": "Het wachtwoord is 4EEGp2e1Xm!. Maak verbinding.",
+    "expected": [
+      [
+        18,
+        29
+      ]
+    ]
+  },
+  {
+    "id": "github-valid-1",
+    "family": "github-valid",
+    "group": "challenge",
+    "text": "Authenticate using ghp_R11kPBblkqMdqsOi2g6pNJ0ORicAdQVl0qWf on GitHub.",
+    "expected": [
+      [
+        19,
+        59
+      ]
+    ]
+  },
+  {
+    "id": "github-valid-2",
+    "family": "github-valid",
+    "group": "challenge",
+    "text": "Authenticate using ghp_UIqSNaUSKsCLU6eTG3mwrcx0x8gda8OBxiTL on GitHub.",
+    "expected": [
+      [
+        19,
+        59
+      ]
+    ]
+  },
+  {
+    "id": "github-valid-3",
+    "family": "github-valid",
+    "group": "challenge",
+    "text": "Authenticate using ghp_fjIFTOa3YFdH6r72mAyRSG8ry2kjzrCVhNZU on GitHub.",
+    "expected": [
+      [
+        19,
+        59
+      ]
+    ]
+  },
+  {
+    "id": "hf-valid-1",
+    "family": "hf-valid",
+    "group": "challenge",
+    "text": "Download with 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.",
+    "expected": [
+      [
+        14,
+        51
+      ]
+    ]
+  },
+  {
+    "id": "hf-valid-2",
+    "family": "hf-valid",
+    "group": "challenge",
+    "text": "Download with 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.",
+    "expected": [
+      [
+        14,
+        51
+      ]
+    ]
+  },
+  {
+    "id": "hf-valid-3",
+    "family": "hf-valid",
+    "group": "challenge",
+    "text": "Download with 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.",
+    "expected": [
+      [
+        14,
+        51
+      ]
+    ]
+  },
+  {
+    "id": "bare-1",
+    "family": "bare",
+    "group": "challenge",
+    "text": "Use eONtB37WR0BanKlFYCZYPqffrZMFHbe",
+    "expected": [
+      [
+        4,
+        35
+      ]
+    ]
+  },
+  {
+    "id": "bare-2",
+    "family": "bare",
+    "group": "challenge",
+    "text": "Use JYhTRH6NfnLCrQlTVSWtXJuTv2htZUr",
+    "expected": [
+      [
+        4,
+        35
+      ]
+    ]
+  },
+  {
+    "id": "bare-3",
+    "family": "bare",
+    "group": "challenge",
+    "text": "Use rAQccFzYFNgnO4Warn6XZH4owSGjo3E",
+    "expected": [
+      [
+        4,
+        35
+      ]
+    ]
+  },
+  {
+    "id": "french-1",
+    "family": "french",
+    "group": "challenge",
+    "text": "Le mot de passe est «BlgsL3CFSE!». Connecte-toi.",
+    "expected": [
+      [
+        21,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "french-2",
+    "family": "french",
+    "group": "challenge",
+    "text": "Le mot de passe est «WjLtIUQ20p!». Connecte-toi.",
+    "expected": [
+      [
+        21,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "french-3",
+    "family": "french",
+    "group": "challenge",
+    "text": "Le mot de passe est «gLVCERkMky!». Connecte-toi.",
+    "expected": [
+      [
+        21,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "spanish-1",
+    "family": "spanish",
+    "group": "challenge",
+    "text": "La contraseña es 4hkOHVhV65!. Conéctate.",
+    "expected": [
+      [
+        17,
+        28
+      ]
+    ]
+  },
+  {
+    "id": "spanish-2",
+    "family": "spanish",
+    "group": "challenge",
+    "text": "La contraseña es HJU7d3kxVO!. Conéctate.",
+    "expected": [
+      [
+        17,
+        28
+      ]
+    ]
+  },
+  {
+    "id": "spanish-3",
+    "family": "spanish",
+    "group": "challenge",
+    "text": "La contraseña es wywPTALEuX!. Conéctate.",
+    "expected": [
+      [
+        17,
+        28
+      ]
+    ]
+  },
+  {
+    "id": "two-values-1",
+    "family": "two-values",
+    "group": "challenge",
+    "text": "Use password=\"LjFvcSI9Vm7q!\" and api_key=\"nqqDfKAX43aahE4PA7TFgejTJJG4U\".",
+    "expected": [
+      [
+        14,
+        27
+      ],
+      [
+        42,
+        71
+      ]
+    ]
+  },
+  {
+    "id": "repeat-1",
+    "family": "repeat",
+    "group": "challenge",
+    "text": "Service password is \"Tv8SJHAfXukh!\". Retry with Tv8SJHAfXukh!.",
+    "expected": [
+      [
+        21,
+        34
+      ],
+      [
+        48,
+        61
+      ]
+    ]
+  },
+  {
+    "id": "two-values-2",
+    "family": "two-values",
+    "group": "challenge",
+    "text": "Use password=\"kWDhzQDiKzCM!\" and api_key=\"gXYc6IBzMOYak0MkpnZjEV76Asi4A\".",
+    "expected": [
+      [
+        14,
+        27
+      ],
+      [
+        42,
+        71
+      ]
+    ]
+  },
+  {
+    "id": "repeat-2",
+    "family": "repeat",
+    "group": "challenge",
+    "text": "Service password is \"ZOdxx2WqXoQn!\". Retry with ZOdxx2WqXoQn!.",
+    "expected": [
+      [
+        21,
+        34
+      ],
+      [
+        48,
+        61
+      ]
+    ]
+  },
+  {
+    "id": "two-values-3",
+    "family": "two-values",
+    "group": "challenge",
+    "text": "Use password=\"sHlRY60Lx0au!\" and api_key=\"kxv0IUvMOOrxN9eINzFCeg4OViNWC\".",
+    "expected": [
+      [
+        14,
+        27
+      ],
+      [
+        42,
+        71
+      ]
+    ]
+  },
+  {
+    "id": "repeat-3",
+    "family": "repeat",
+    "group": "challenge",
+    "text": "Service password is \"n2WqEcDYlx60!\". Retry with n2WqEcDYlx60!.",
+    "expected": [
+      [
+        21,
+        34
+      ],
+      [
+        48,
+        61
+      ]
+    ]
+  },
+  {
+    "id": "trailing-dot-1",
+    "family": "trailing-dot",
+    "group": "challenge",
+    "text": "PASSWORD=Literal9!.",
+    "expected": [
+      [
+        9,
+        19
+      ]
+    ]
+  },
+  {
+    "id": "sentence-dot-1",
+    "family": "sentence-dot",
+    "group": "challenge",
+    "text": "The password is Literal9!..",
+    "expected": [
+      [
+        16,
+        26
+      ]
+    ]
+  },
+  {
+    "id": "space-unquoted-1",
+    "family": "space-unquoted",
+    "group": "challenge",
+    "text": "The password is birch river meadow. Connect now.",
+    "expected": [
+      [
+        16,
+        34
+      ]
+    ]
+  },
+  {
+    "id": "escaped-quote-1",
+    "family": "escaped-quote",
+    "group": "challenge",
+    "text": "Use {\"password\":\"Road\\\"Map9!\"}.",
+    "expected": [
+      [
+        17,
+        28
+      ]
+    ]
+  },
+  {
+    "id": "json-escaped-newline-1",
+    "family": "json-escaped-newline",
+    "group": "challenge",
+    "text": "Use {\"password\":\"Road9!\\nMap8#\"}.",
+    "expected": [
+      [
+        17,
+        30
+      ]
+    ]
+  },
+  {
+    "id": "weak-real-1",
+    "family": "weak-real",
+    "group": "challenge",
+    "text": "The actual password is \"example\". Authenticate.",
+    "expected": [
+      [
+        24,
+        31
+      ]
+    ]
+  },
+  {
+    "id": "weak-real-2",
+    "family": "weak-real",
+    "group": "challenge",
+    "text": "The actual password is \"password\". Authenticate.",
+    "expected": [
+      [
+        24,
+        32
+      ]
+    ]
+  },
+  {
+    "id": "digits-real-1",
+    "family": "digits-real",
+    "group": "challenge",
+    "text": "PASSWORD=123456",
+    "expected": [
+      [
+        9,
+        15
+      ]
+    ]
+  },
+  {
+    "id": "uppercase-real-1",
+    "family": "uppercase-real",
+    "group": "challenge",
+    "text": "PASSWORD=NOT_A_PLACEHOLDER",
+    "expected": [
+      [
+        9,
+        26
+      ]
+    ]
+  },
+  {
+    "id": "dollar-real-1",
+    "family": "dollar-real",
+    "group": "challenge",
+    "text": "PASSWORD=\"$Actual9!\"",
+    "expected": [
+      [
+        10,
+        19
+      ]
+    ]
+  },
+  {
+    "id": "leading-space-1",
+    "family": "leading-space",
+    "group": "challenge",
+    "text": "PASSWORD=\"  Actual9! \"",
+    "expected": [
+      [
+        10,
+        21
+      ]
+    ]
+  },
+  {
+    "id": "crlf-1",
+    "family": "crlf",
+    "group": "challenge",
+    "text": "Access token:\r\n```\r\ndcY43IYhOrGvFbgel\r\nc1udDKUSmI8OYXha9\r\n```",
+    "expected": [
+      [
+        20,
+        56
+      ]
+    ]
+  },
+  {
+    "id": "yaml-block-1",
+    "family": "yaml-block",
+    "group": "challenge",
+    "text": "password: |\n  sWVe7V5Sbz\n  RZzRmyj1Jp\nhost: db.example.test",
+    "expected": [
+      [
+        12,
+        37
+      ]
+    ]
+  },
+  {
+    "id": "basic-1",
+    "family": "basic",
+    "group": "challenge",
+    "text": "Authorization: Basic c3ludGhldGljOk5ldmVySXNzdWVkOSE=",
+    "expected": [
+      [
+        21,
+        53
+      ]
+    ]
+  },
+  {
+    "id": "recovery-1",
+    "family": "recovery",
+    "group": "challenge",
+    "text": "The one-time recovery code is 1792-4638-5021.",
+    "expected": [
+      [
+        30,
+        44
+      ]
+    ]
+  },
+  {
+    "id": "long-boundary-1",
+    "family": "long-boundary",
+    "group": "long",
+    "text": "module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes \nThe password is \"rxfCO3K6oJK9A!\".\nmodule notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes ",
+    "expected": [
+      [
+        3008,
+        3022
+      ]
+    ]
+  },
+  {
+    "id": "long-boundary-2",
+    "family": "long-boundary",
+    "group": "long",
+    "text": "module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes \nThe password is \"uWLYYkYHwan1X!\".\nmodule notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes ",
+    "expected": [
+      [
+        3255,
+        3269
+      ]
+    ]
+  },
+  {
+    "id": "long-boundary-3",
+    "family": "long-boundary",
+    "group": "long",
+    "text": "module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes \nThe password is \"svYgM3w21OL72!\".\nmodule notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes module notes ",
+    "expected": [
+      [
+        3502,
+        3516
+      ]
+    ]
+  },
+  {
+    "id": "clean-01-1",
+    "family": "clean-01",
+    "group": "negative",
+    "text": "The password is correct. Explain the authentication flow.\nContext request KMql31k2F; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-01-2",
+    "family": "clean-01",
+    "group": "negative",
+    "text": "The password is correct. Explain the authentication flow.\nContext request hRCrQ7eyC; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-02-1",
+    "family": "clean-02",
+    "group": "negative",
+    "text": "The password is at least 12 characters long.\nContext request KFqSHGJnQ; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-02-2",
+    "family": "clean-02",
+    "group": "negative",
+    "text": "The password is at least 12 characters long.\nContext request pkDAETBJP; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-03-1",
+    "family": "clean-03",
+    "group": "negative",
+    "text": "The API key is rotated every 30 days.\nContext request y3Vfk0MbD; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-03-2",
+    "family": "clean-03",
+    "group": "negative",
+    "text": "The API key is rotated every 30 days.\nContext request GAm3C9PrK; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-04-1",
+    "family": "clean-04",
+    "group": "negative",
+    "text": "The password is stored in a 0600 file.\nContext request 7rN2rVU1x; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-04-2",
+    "family": "clean-04",
+    "group": "negative",
+    "text": "The password is stored in a 0600 file.\nContext request csbUDb3As; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-05-1",
+    "family": "clean-05",
+    "group": "negative",
+    "text": "Set password=\"<REDACTED>\" in the example.\nContext request 7fzA0FUTW; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-05-2",
+    "family": "clean-05",
+    "group": "negative",
+    "text": "Set password=\"<REDACTED>\" in the example.\nContext request 6jdS85ZuM; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-06-1",
+    "family": "clean-06",
+    "group": "negative",
+    "text": "password: ${DATABASE_PASSWORD}\nContext request AFy7VdJ43; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-06-2",
+    "family": "clean-06",
+    "group": "negative",
+    "text": "password: ${DATABASE_PASSWORD}\nContext request 9DMv3hu2u; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-07-1",
+    "family": "clean-07",
+    "group": "negative",
+    "text": "password: \"${DATABASE_PASSWORD}\"\nContext request GRP7SBf1E; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-07-2",
+    "family": "clean-07",
+    "group": "negative",
+    "text": "password: \"${DATABASE_PASSWORD}\"\nContext request 5KSUXEpP1; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-08-1",
+    "family": "clean-08",
+    "group": "negative",
+    "text": "password: \"{{ vault.database_password }}\"\nContext request YU8t4MaA7; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-08-2",
+    "family": "clean-08",
+    "group": "negative",
+    "text": "password: \"{{ vault.database_password }}\"\nContext request Nq8rkRwon; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-09-1",
+    "family": "clean-09",
+    "group": "negative",
+    "text": "password: \"[REDACTED]\"\nContext request nP2NLlpbt; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-09-2",
+    "family": "clean-09",
+    "group": "negative",
+    "text": "password: \"[REDACTED]\"\nContext request t1RzzQ9bl; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-10-1",
+    "family": "clean-10",
+    "group": "negative",
+    "text": "password: \"********\"\nContext request oyHOEvGZO; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-10-2",
+    "family": "clean-10",
+    "group": "negative",
+    "text": "password: \"********\"\nContext request YqMxnNm4z; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-11-1",
+    "family": "clean-11",
+    "group": "negative",
+    "text": "password: \"REPLACE_ME\"\nContext request tEpnRD7z6; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-11-2",
+    "family": "clean-11",
+    "group": "negative",
+    "text": "password: \"REPLACE_ME\"\nContext request 4GilyugP5; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-12-1",
+    "family": "clean-12",
+    "group": "negative",
+    "text": "password: \"your-password-here\"\nContext request rw711MNmo; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-12-2",
+    "family": "clean-12",
+    "group": "negative",
+    "text": "password: \"your-password-here\"\nContext request FKNlNpMQS; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-13-1",
+    "family": "clean-13",
+    "group": "negative",
+    "text": "password: \"changeme\" # documentation placeholder\nContext request xaV6G2z7P; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-13-2",
+    "family": "clean-13",
+    "group": "negative",
+    "text": "password: \"changeme\" # documentation placeholder\nContext request ApLNjqIdy; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-14-1",
+    "family": "clean-14",
+    "group": "negative",
+    "text": "The example API key is \"YOUR_API_KEY\".\nContext request dsX6cBwy7; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-14-2",
+    "family": "clean-14",
+    "group": "negative",
+    "text": "The example API key is \"YOUR_API_KEY\".\nContext request 9Ke7IezQi; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-15-1",
+    "family": "clean-15",
+    "group": "negative",
+    "text": "api_key=\"example-token-do-not-use\" in the docs.\nContext request 14ekdq20q; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-15-2",
+    "family": "clean-15",
+    "group": "negative",
+    "text": "api_key=\"example-token-do-not-use\" in the docs.\nContext request 71Kuw3T3V; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-16-1",
+    "family": "clean-16",
+    "group": "negative",
+    "text": "api_key: process.env.SERVICE_API_KEY\nContext request 8lv4yMU1c; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-16-2",
+    "family": "clean-16",
+    "group": "negative",
+    "text": "api_key: process.env.SERVICE_API_KEY\nContext request UUgFRwHFH; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-17-1",
+    "family": "clean-17",
+    "group": "negative",
+    "text": "api_key: os.environ[\"SERVICE_API_KEY\"]\nContext request sxe6MQHRC; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-17-2",
+    "family": "clean-17",
+    "group": "negative",
+    "text": "api_key: os.environ[\"SERVICE_API_KEY\"]\nContext request SAVy8IBMO; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-18-1",
+    "family": "clean-18",
+    "group": "negative",
+    "text": "PASSWORD_FILE=/run/user/1000/credential-file\nContext request s7cmxAUFW; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-18-2",
+    "family": "clean-18",
+    "group": "negative",
+    "text": "PASSWORD_FILE=/run/user/1000/credential-file\nContext request cG35IjQut; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-19-1",
+    "family": "clean-19",
+    "group": "negative",
+    "text": "The password is in /run/user/1000/credential-file.\nContext request PnDjDmoYz; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-19-2",
+    "family": "clean-19",
+    "group": "negative",
+    "text": "The password is in /run/user/1000/credential-file.\nContext request wcC7R30st; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-20-1",
+    "family": "clean-20",
+    "group": "negative",
+    "text": "Use https://service.example.test?access_token=YOUR_TOKEN\nContext request 8qdA8IQap; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-20-2",
+    "family": "clean-20",
+    "group": "negative",
+    "text": "Use https://service.example.test?access_token=YOUR_TOKEN\nContext request HQ7cal7pn; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-21-1",
+    "family": "clean-21",
+    "group": "negative",
+    "text": "The access token is response.access_token.\nContext request Mtu7IGbHM; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-21-2",
+    "family": "clean-21",
+    "group": "negative",
+    "text": "The access token is response.access_token.\nContext request iqVrOkOSD; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-22-1",
+    "family": "clean-22",
+    "group": "negative",
+    "text": "The secret is 42 lines long, according to the old documentation.\nContext request wvkVbojMp; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-22-2",
+    "family": "clean-22",
+    "group": "negative",
+    "text": "The secret is 42 lines long, according to the old documentation.\nContext request AyxlUIAQa; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-23-1",
+    "family": "clean-23",
+    "group": "negative",
+    "text": "The password is a 16-character random string.\nContext request nkNzbhxKt; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-23-2",
+    "family": "clean-23",
+    "group": "negative",
+    "text": "The password is a 16-character random string.\nContext request XRUiycLBg; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-24-1",
+    "family": "clean-24",
+    "group": "negative",
+    "text": "The API key is not provided. Ask the operator.\nContext request LdDhnOFk6; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-24-2",
+    "family": "clean-24",
+    "group": "negative",
+    "text": "The API key is not provided. Ask the operator.\nContext request TfZJpAOhs; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-25-1",
+    "family": "clean-25",
+    "group": "negative",
+    "text": "password = getPassword()\nContext request CQmCNOEzw; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-25-2",
+    "family": "clean-25",
+    "group": "negative",
+    "text": "password = getPassword()\nContext request P6p6zwpGu; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-26-1",
+    "family": "clean-26",
+    "group": "negative",
+    "text": "const client_secret = settings.clientSecret;\nContext request rBGvLyCTy; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-26-2",
+    "family": "clean-26",
+    "group": "negative",
+    "text": "const client_secret = settings.clientSecret;\nContext request N5dx7dvt1; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-27-1",
+    "family": "clean-27",
+    "group": "negative",
+    "text": "Do not rename client_secret or api_key in the schema.\nContext request b4dCQcYNr; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-27-2",
+    "family": "clean-27",
+    "group": "negative",
+    "text": "Do not rename client_secret or api_key in the schema.\nContext request aFwdOViqU; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-28-1",
+    "family": "clean-28",
+    "group": "negative",
+    "text": "Use the public SSH key from the authorized_keys file.\nContext request fZvLcMk2q; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-28-2",
+    "family": "clean-28",
+    "group": "negative",
+    "text": "Use the public SSH key from the authorized_keys file.\nContext request ubEPrvXpS; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-29-1",
+    "family": "clean-29",
+    "group": "negative",
+    "text": "Authorization: Bearer ${ACCESS_TOKEN}\nContext request 5RrE3nSZN; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-29-2",
+    "family": "clean-29",
+    "group": "negative",
+    "text": "Authorization: Bearer ${ACCESS_TOKEN}\nContext request GoN7vq73d; build 2.",
+    "expected": []
+  },
+  {
+    "id": "clean-30-1",
+    "family": "clean-30",
+    "group": "negative",
+    "text": "Use postgres://user:password@localhost only as a documentation template.\nContext request rnX04hPTt; build 1.",
+    "expected": []
+  },
+  {
+    "id": "clean-30-2",
+    "family": "clean-30",
+    "group": "negative",
+    "text": "Use postgres://user:password@localhost only as a documentation template.\nContext request fwLHLKNMd; build 2.",
+    "expected": []
+  }
+]

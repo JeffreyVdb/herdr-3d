@@ -85,6 +85,20 @@ export function followupLost(why: 'closed' | 'hiring'): string {
     : 'The review this answered was closed meanwhile, so nothing changed and nothing was hired. Press Enter to start a new one.';
 }
 
+/**
+ * #108 round 4: the open review's own sentences have possible secrets that were never reviewed (it came before "Review
+ * prompt secrets" was on, or its hand-over is gone): the interpreter cannot read them, and a review of the new sentence
+ * would not change that.
+ */
+export const PENDING_UNREVIEWED = 'The hire under review has possible secrets that were never reviewed (it came before “Review prompt secrets” was on): close it, then dictate the hire again.';
+
+/**
+ * #108 round 4: the interpreter's hand-over refused as stale (it expired, the bridge restarted, the switch changed): the
+ * proposal's protected values cannot be used any more, and a review of the new sentence (or of the task) would not renew
+ * them. Said by the bar (a follow-up) and by the hire review (its Hire); what was typed stays.
+ */
+export const HANDOVER_EXPIRED = 'Nothing was sent: the dictated hire’s protected secrets can no longer be used (they expired, herdr-world restarted, or the setting changed). Close the hire review, then dictate the hire again.';
+
 /** The question the floor list asks when no floor is in context. */
 export const FLOOR_QUESTION = 'Hire on which floor?';
 

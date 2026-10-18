@@ -31,6 +31,9 @@ func TestReplyErrorKinds(t *testing.T) {
 		// #14: the ask or follow-up tapped is no longer the worker's.
 		{fmt.Errorf("%w: Pixel asks another question now (tool_use_id t)", errStale), notify.ReplyClosed},
 		{fmt.Errorf("%w: the worker has no open follow-up of turn %q", errStale, "t"), notify.ReplyClosed},
+		// #108: possible secrets, which only the game can review.
+		{fmt.Errorf("%w: 2 possible secrets", errSecretsReviewRequired), notify.ReplySecrets},
+		{fmt.Errorf("%w: prompt secrets are no longer reviewed", errSecretsReviewStale), notify.ReplySecrets},
 	} {
 		var re *notify.ReplyError
 		if err := replyError(c.err); !errors.As(err, &re) || re.Kind != c.kind {

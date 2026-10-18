@@ -91,12 +91,17 @@ Open dialogs and their fields own the keyboard.
 | `Ctrl/⌘` + `Shift` + `Space` | The dictation bar: say, type or paste a command, Enter reads it (from every view, a text field, a dialog and a laptop too; again closes it) |
 | `Ctrl/⌘` + `/` | The shortcut list, from inside a text field |
 | `Esc` | Close the dialog |
-| `Ctrl/⌘` + `Enter` | Submit: hire, Start Run, open a pull request, a board comment |
+| `Ctrl/⌘` + `Enter` | Submit: hire, Start Run, open a pull request, a board comment, confirm a secrets review |
 | `Enter` | Send, in the conversation’s prompt box |
 | `F` | On the overview page: active workers only, or everyone |
 | `A` | On a floor’s overview page: every floor’s |
 | `Shift` + `Enter` | A new line, in the hire task and the prompt boxes |
 | `↑ ↓` or `Tab` | In a prompt box’s suggestion list (after / or @): ↑ ↓ choose, Tab or Enter picks, Esc closes only the list |
+| `Ctrl/⌘` + `Shift` + `X` | In a prompt box, or any text that goes to an agent, a model or a saved prompt (a hire’s task, a run, a schedule, an answer, a handoff instruction): review its possible secrets now, to mark one the scan missed (with “Review prompt secrets” on) |
+| `N` or `Shift` + `N` | In the secrets review: the next or the previous match |
+| `Space` | In the secrets review, on a match: protect it as a file, or ignore it (Enter too) |
+| `← →` or `Shift` + `← →` | In the secrets review, on a match: move its end, or (with Shift) its start, by one character |
+| `M` or `Delete` | In the secrets review: mark the text selected in the prompt as a secret; Delete takes a mark you made away |
 
 ## At a laptop
 

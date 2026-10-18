@@ -211,7 +211,7 @@ describe('the dictation bar (#213)', () => {
     t.pickFloor.mockResolvedValueOnce({ kind: 'say', text: 'a-two is asleep. Wake it from the elevator (L) to hire.', error: true });
     t.press('Enter');
     await t.flush();
-    expect(t.pickFloor).toHaveBeenCalledWith('a-two', hire, expect.any(Function));
+    expect(t.pickFloor).toHaveBeenCalledWith('a-two', hire, expect.any(Function), null);
     expect(t.bar.summary()).toMatchObject({ state: 'floor', status: 'a-two is asleep. Wake it from the elevator (L) to hire.', error: true });
     expect(t.submit).toHaveBeenCalledTimes(1);
     // A changed text is a new command.
@@ -244,11 +244,23 @@ describe('the dictation bar (#213)', () => {
     await t.flush();
     (t.dlg.querySelector('[data-floor="a-one"]') as HTMLElement).click();
     await t.flush();
-    expect(t.pickFloor).toHaveBeenCalledWith('a-one', hire, expect.any(Function));
+    expect(t.pickFloor).toHaveBeenCalledWith('a-one', hire, expect.any(Function), null);
     const live = t.pickFloor.mock.calls[0]![2];
     expect(live()).toBe(true);
     t.bar.close();
     expect(live()).toBe(false);
+  });
+
+  it('#108 round 4: the interpreter’s hand-over for the hire goes with the floor picked (to the review it opens)', async () => {
+    const t = setup();
+    t.bar.open(t.opener);
+    t.type('Hire an agent.');
+    t.press('Enter');
+    t.replies[0]!.done({ kind: 'floor', hire, handover: 'tok-1' });
+    await t.flush();
+    (t.dlg.querySelector('[data-floor="a-one"]') as HTMLElement).click();
+    await t.flush();
+    expect(t.pickFloor).toHaveBeenCalledWith('a-one', hire, expect.any(Function), 'tok-1');
   });
 
   it('Esc while it asks which floor closes the bar, as everywhere else, and gives the keyboard back', async () => {
@@ -267,5 +279,40 @@ describe('the dictation bar (#213)', () => {
     // Opened again, it starts empty, as after any Esc.
     t.bar.open(t.opener);
     expect(t.bar.summary()).toMatchObject({ state: 'editing', text: '', floors: [] });
+  });
+
+  it('#108 round 4: with “Review prompt secrets” on, “Review secrets” and Ctrl+Shift+X send the sentence with its review asked for; off, no such control', async () => {
+    const t = setup();
+    let on = true;
+    const fns = new Set<() => void>();
+    const calls: Array<unknown> = [];
+    document.body.replaceChildren();
+    const bar = new DictationBar(document.body, {
+      submit: (_text, _live, o) => (calls.push(o), Promise.resolve({ kind: 'done' as const })),
+      pickFloor: t.pickFloor,
+      store: { floorName: (id: string) => id, city: () => [] } as never,
+      here: () => null,
+      online: () => true,
+      secrets: { get on() { return on; }, onChange: (fn: () => void) => (fns.add(fn), () => void fns.delete(fn)) },
+    });
+    bar.open(null);
+    const field = document.querySelector<HTMLTextAreaElement>('#dict-field')!;
+    field.value = 'Hire an agent with the code 4471.';
+    field.dispatchEvent(new Event('input'));
+    const review = document.querySelector<HTMLButtonElement>('.dict-review')!;
+    expect(review.hidden).toBe(false);
+    expect(review.textContent).toBe('Review secrets');
+    review.click();
+    await t.flush();
+    expect(calls).toEqual([{ review: true }]);
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', code: 'KeyX', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await t.flush();
+    expect(calls).toEqual([{ review: true }, { review: true }]);
+    on = false;
+    for (const fn of fns) fn();
+    expect(review.hidden).toBe(true);
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', code: 'KeyX', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await t.flush();
+    expect(calls).toHaveLength(2);
   });
 });

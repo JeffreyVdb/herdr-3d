@@ -1386,6 +1386,38 @@
   color: var(--on-ctl-accent);
   font-weight: 700;
 }
+/* #108: "Review secrets" beside Send: a quiet key with the padlock, square at Send's height. */
+.tx .tx-review {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: calc(32px * var(--tx-k, 1));
+  height: calc(32px * var(--tx-k, 1));
+  padding: 0;
+  border: 1px solid var(--ctl-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ctl-text);
+  cursor: pointer;
+}
+.tx .tx-review[hidden] {
+  display: none;
+}
+.tx .tx-review svg {
+  width: 58%;
+  height: 58%;
+}
+.tx .tx-review:hover:not(:disabled) {
+  background: var(--ctl-hover);
+}
+.tx .tx-review:focus-visible {
+  outline: 2px solid var(--ctl-focus);
+  outline-offset: 2px;
+}
+.tx .tx-review:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 /* Highlighted code (highlight.js classes). #206: diff rows take the same colours as highlights (::highlight(tx-hl-*)
    above, diffTokens.HL_COLOURS): a colour or class changed here changes there. */
@@ -2702,6 +2734,10 @@
   --cmp-min-height: 1.6em;
 }
 .tx[data-tight] .tx-send {
+  height: calc(24px * var(--tx-k, 1));
+}
+.tx[data-tight] .tx-review {
+  width: calc(24px * var(--tx-k, 1));
   height: calc(24px * var(--tx-k, 1));
 }
 

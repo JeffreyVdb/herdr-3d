@@ -1,0 +1,4 @@
+-r requirements.txt
+flatbuffers==25.12.19
+onnxruntime==1.31.0
+protobuf==7.36.2
