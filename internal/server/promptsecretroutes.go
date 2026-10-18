@@ -435,6 +435,10 @@ type preview struct {
 	fresh, files bool
 	worker       string
 	rev          *promptsecret.Reviewer
+	// extra are the other texts the model call carries as given (round 5:
+	// hire.interpret's pending proposal's sources), checked for revoked
+	// files with the text.
+	extra []string
 }
 
 // previewGate readies a preview's text for the gate (#108 round 2; hub
@@ -483,9 +487,9 @@ func (h *Hub) previewGate(forWorker, text string, review *proto.SecretsReview, t
 // holds checks the preview's review (review B2; any goroutine): the switch
 // changed, or the hand-over it continues no longer holds, since the command
 // came (it may wait for a scan slot, then on the model): stale. Round 5,
-// reviewed or not: or its text refers to a protected file revoked since. It
-// is the gate of each model call (ai.WithGate), asked once the call holds a
-// slot.
+// reviewed or not: or its text, or one of its extra texts, refers to a
+// protected file revoked since. It is the gate of each model call
+// (ai.WithGate), asked once the call holds a slot.
 func (pv *preview) holds() error {
 	if pv.rev != nil {
 		err := pv.h.reviewCurrent(pv.rev)
@@ -496,7 +500,7 @@ func (pv *preview) holds() error {
 			return err
 		}
 	}
-	return pv.h.referencesHold(pv.text)
+	return pv.h.referencesHold(append([]string{pv.text}, pv.extra...)...)
 }
 
 // current is holds before the model is asked, and again once it answered

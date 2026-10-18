@@ -1785,6 +1785,127 @@ func TestPromptSecretsWorkerHandoffLLMRevokedWhileOff(t *testing.T) {
 	}
 }
 
+// sentTimes is how many messages of calls hold s.
+func sentTimes(calls []ai.Request, s string) int {
+	n := 0
+	for _, call := range calls {
+		for _, msg := range call.Messages {
+			if strings.Contains(msg.Content, s) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// A hire.interpret follow-up whose pending proposal names a file revoked
+// since its first answer (round 5, review R5P2-1) is refused before the
+// model reads it, the switch on or off: the proposal's sentences go to the
+// model with the reply, so they are checked as its text is.
+func TestPromptSecretsHireInterpretRevokedFollowup(t *testing.T) {
+	t.Parallel()
+	for _, on := range []bool{true, false} {
+		llm := hireTaskLLM()
+		sb := startSecretsBridge(t, true, func(o *server.Options) {
+			cat := hiCatalog
+			o.HireIntentRoles, o.HireOptions = &hiRoles{state: ai.StateReady, llm: llm}, &cat
+		})
+		ref := refRe.FindString(sb.protect(t, sb.id1, "PASSWORD=Pending-Followup-Review-7!"))
+		_, m := sb.c.command(proto.CmdHireInterpret, "first", proto.HireInterpretArgs{Text: "Hire a Claude Code agent on Haiku 5.5 to deploy using " + ref})
+		first := ackData[proto.HireInterpretResult](t, m)
+		if ref == "" || first.Hire == nil || !slices.ContainsFunc(first.Hire.Sources, func(s string) bool { return strings.Contains(s, ref) }) ||
+			len(llm.Calls()) != 1 {
+			t.Fatalf("first: %s", m.raw)
+		}
+		if n := mustRevoke(t, sb.c, sb.id1); n != 1 {
+			t.Fatalf("revoked %d", n)
+		}
+		if !on {
+			sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+		}
+		_, m = sb.c.command(proto.CmdHireInterpret, "next", proto.HireInterpretArgs{Text: "high", Pending: first.Hire, SecretsPending: first.SecretsPending})
+		if after := llm.Calls()[1:]; codeOf(m) != proto.ErrSecretsReviewStale || !strings.Contains(errorOf(m).Message, "revoked") || len(after) != 0 {
+			t.Fatalf("on %v: %d calls after the revoke, the reference in %d messages: %s", on, len(after), sentTimes(after, ref), m.raw)
+		}
+	}
+}
+
+// Every text a preview's model call carries is checked for revoked files,
+// the switch on or off (round 5, review R5P2-1): packup.detect's text (its
+// classifier and its extraction read it), hire_preset.check's prompt,
+// hire.interpret's text and each sentence of its pending proposal, also
+// one the model never read. Naming a file revoked since, each is refused
+// with secrets_review_stale and no model is called; the same command
+// naming no file reaches the models.
+func TestPromptSecretsPreviewTextsRevoked(t *testing.T) {
+	t.Parallel()
+	roles, llm := newPkRoles(), hireTaskLLM()
+	hb, ids, _, _ := startSecretsPkBridge(t, roles, func(o *server.Options) {
+		o.HirePresetRoles, o.HireIntentRoles = roles, &hiRoles{state: ai.StateReady, llm: llm}
+	})
+	c := hb.c
+	text := "PASSWORD=Preview-Revoked-9!"
+	_, m := c.command(proto.CmdWorkerPrompt, "p", proto.WorkerPromptArgs{ID: ids["w2"], Text: text, Secrets: reviewOf(t, c, text)})
+	ref := refRe.FindString(ackData[proto.PromptResult](t, m).Sent)
+	if ref == "" {
+		t.Fatalf("ack %s", m.raw)
+	}
+	if n := mustRevoke(t, c, ids["w2"]); n != 1 {
+		t.Fatalf("revoked %d", n)
+	}
+	pending := func(sources ...string) *hireintent.Interpretation {
+		missing := hireintent.Field{Provenance: hireintent.Missing}
+		return &hireintent.Interpretation{Sources: sources, Harness: missing, Model: missing, Effort: missing,
+			Task: hireintent.Task{Provenance: hireintent.Missing}}
+	}
+	calls := func() int {
+		cl, l := roles.calls()
+		return cl + l + len(llm.Calls())
+	}
+	for _, tc := range []struct {
+		name, cmd string
+		args      func(ref string) any
+	}{
+		{"packup.detect text", proto.CmdPackupDetect, func(ref string) any {
+			return proto.PackupDetectArgs{ID: ids["w2"], Text: "Deploy with " + ref + " and end your turn"}
+		}},
+		{"hire_preset.check prompt", proto.CmdHirePresetCheck, func(ref string) any {
+			return proto.HirePresetCheckArgs{Prompt: "Deploy with " + ref}
+		}},
+		{"hire.interpret text", proto.CmdHireInterpret, func(ref string) any {
+			return proto.HireInterpretArgs{Text: "Hire a Claude Code agent on Haiku 5.5 to deploy with " + ref}
+		}},
+		{"hire.interpret pending.sources[0]", proto.CmdHireInterpret, func(ref string) any {
+			return proto.HireInterpretArgs{Text: "high", Pending: pending("Hire an agent to deploy using " + ref)}
+		}},
+		{"hire.interpret pending.sources[1]", proto.CmdHireInterpret, func(ref string) any {
+			return proto.HireInterpretArgs{Text: "high", Pending: pending("Hire an agent to deploy", "Use "+ref+" for it")}
+		}},
+	} {
+		for _, on := range []bool{true, false} {
+			c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(on)})
+			before := calls()
+			_, m := c.command(tc.cmd, "r", tc.args(ref))
+			if codeOf(m) != proto.ErrSecretsReviewStale || calls() != before {
+				t.Fatalf("%s (on %v): %d model calls: %s", tc.name, on, calls()-before, m.raw)
+			}
+			_, m = c.command(tc.cmd, "plain", tc.args("the vault"))
+			if m.env.T != proto.TAck || calls() == before {
+				t.Fatalf("%s naming no file (on %v): %s", tc.name, on, m.raw)
+			}
+		}
+	}
+	read := sentTimes(append(roles.llm.Calls(), llm.Calls()...), ref)
+	for _, call := range roles.cls.Calls() {
+		if strings.Contains(call.State["prompt"].(string), ref) {
+			read++
+		}
+	}
+	if read != 0 {
+		t.Fatalf("the models read the revoked reference %d times", read)
+	}
+}
+
 // fill is text padded with x to n bytes (n > len(text)).
 func fill(text string, n int) string { return text + " " + strings.Repeat("x", n-len(text)-1) }
 

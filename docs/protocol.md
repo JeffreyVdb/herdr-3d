@@ -4115,12 +4115,14 @@ first typed, nothing submitted, `secrets_review_stale`), where a switch change a
 it began is answered whole: a switch change leaves its references good, a revoke does not). An LLM handoff checks its
 instruction before the model is called and again once the call holds a model slot; the transcript it reads is not
 checked (references the worker was sent before, as its other history: checking them would refuse every handoff of a
-worker for 24 hours after its revoke). A preview's text (`packup.detect`, `hire.interpret`) and `hire_preset.check`'s
-prompt are checked as their model calls' gate. A send whose last check came first went with its references, and the
-revoke then removes the files (the agent has the reference, the file is gone). Files a command writes after the revoke
-are new and its worker's: they go with its failure or stay with its success, never without an owner. A revoked path is
-remembered for 24 hours (in memory, never stored): a text that refers to one in that time is refused the same way,
-reviewed or not; sent again as typed, it is protected anew.
+worker for 24 hours after its revoke). Every other text a model call carries is checked before the call, as its
+model-slot gate and once it answered: a preview's text (`packup.detect`'s, which its classifier and its extraction
+read; `hire.interpret`'s), each of `hire.interpret`'s `pending.sources` (the model reads them with the reply, also one
+it never read before) and `hire_preset.check`'s prompt. A send whose last check came first went with its references, and
+the revoke then removes the files (the agent has the reference, the file is gone). Files a command writes after the
+revoke are new and its worker's: they go with its failure or stay with its success, never without an owner. A revoked
+path is remembered for 24 hours (in memory, never stored): a text that refers to one in that time is refused the same
+way, reviewed or not; sent again as typed, it is protected anew.
 
 **Leases (delegation).** A handoff (#223 literal, #224 agent, #9 LLM) records, when it is filed, which protected files
 its text names: its document's references, and those of the instruction it was written from (a `/handoff <instruction>`,
