@@ -67,43 +67,58 @@ func TestLimiterPacing(t *testing.T) {
 
 // #106: one alert of a worker per Cooldown; Unsolicited messages within
 // Window, a set of cards whole; WorkerCards card sets of a worker within
-// Window; each refusal says when to try again and why.
+// Window; each refusal says when to try again and why. Each message here
+// is sent as soon as it is let in.
 func TestLimiterWindows(t *testing.T) {
 	clock := NewFakeClock(t0)
 	lm := newLimiter(DefaultLimits(), clock)
-	if ok, _, _ := lm.admitAlert("w1"); !ok {
+	alert := func(w string) (bool, time.Time, string) {
+		ok, at, cause := lm.admitAlert(w)
+		if ok {
+			lm.sentAlert(w)
+		}
+		return ok, at, cause
+	}
+	cards := func(w string, n int) (bool, time.Time, string) {
+		ok, at, cause := lm.admitCards(w, n)
+		if ok {
+			lm.sentCards(w, n)
+		}
+		return ok, at, cause
+	}
+	if ok, _, _ := alert("w1"); !ok {
 		t.Fatal("first alert refused")
 	}
-	if ok, at, cause := lm.admitAlert("w1"); ok || cause != causeCooldown || !at.Equal(t0.Add(time.Minute)) {
+	if ok, at, cause := alert("w1"); ok || cause != causeCooldown || !at.Equal(t0.Add(time.Minute)) {
 		t.Fatalf("second alert: %v %v %s", ok, at, cause)
 	}
 	for i := range 3 {
-		if ok, _, _ := lm.admitCards("w1", 1); !ok {
+		if ok, _, _ := cards("w1", 1); !ok {
 			t.Fatalf("card set %d refused", i)
 		}
 		clock.Advance(time.Second)
 	}
-	if ok, at, cause := lm.admitCards("w1", 1); ok || cause != causeWorkerCards || !at.Equal(t0.Add(time.Minute)) {
+	if ok, at, cause := cards("w1", 1); ok || cause != causeWorkerCards || !at.Equal(t0.Add(time.Minute)) {
 		t.Fatalf("fourth card set: %v %v %s", ok, at, cause)
 	}
 	// 4 sent; w2's alert and an ask's 4 cards: 9; 2 more do not fit.
-	if ok, _, _ := lm.admitAlert("w2"); !ok {
+	if ok, _, _ := alert("w2"); !ok {
 		t.Fatal("w2's alert refused")
 	}
-	if ok, _, _ := lm.admitCards("w2", 4); !ok {
+	if ok, _, _ := cards("w2", 4); !ok {
 		t.Fatal("w2's four cards refused")
 	}
-	if ok, at, cause := lm.admitCards("w3", 2); ok || cause != causeBudget || !at.Equal(t0.Add(time.Minute)) {
+	if ok, at, cause := cards("w3", 2); ok || cause != causeBudget || !at.Equal(t0.Add(time.Minute)) {
 		t.Fatalf("w3's two cards: %v %v %s", ok, at, cause)
 	}
-	if ok, _, _ := lm.admitAlert("w3"); !ok {
+	if ok, _, _ := alert("w3"); !ok {
 		t.Fatal("the tenth message refused")
 	}
-	if ok, _, cause := lm.admitAlert("w4"); ok || cause != causeBudget {
+	if ok, _, cause := alert("w4"); ok || cause != causeBudget {
 		t.Fatalf("the eleventh: %v %s", ok, cause)
 	}
 	clock.Advance(time.Minute)
-	if ok, _, _ := lm.admitCards("w3", 2); !ok {
+	if ok, _, _ := cards("w3", 2); !ok {
 		t.Fatal("w3's two cards refused a minute on")
 	}
 	// A set larger than the whole budget goes alone.
@@ -111,8 +126,62 @@ func TestLimiterWindows(t *testing.T) {
 	if ok, _, _ := big.admitCards("w1", 4); !ok {
 		t.Fatal("a set larger than the budget refused when alone")
 	}
+	big.sentCards("w1", 4)
 	if ok, _, _ := big.admitAlert("w2"); ok {
 		t.Fatal("an alert after it fits")
+	}
+}
+
+// #106: a message let in and not sent yet holds its slot for as long as it
+// waits (a minute's pause does not free it), counts from when it is sent,
+// and gives it back if it never is; a worker's alert waiting to go holds
+// its cooldown, its card set waiting holds its place among its sets.
+func TestLimiterCountsSends(t *testing.T) {
+	clock := NewFakeClock(t0)
+	lm := newLimiter(DefaultLimits(), clock)
+	for i := range 10 {
+		if ok, _, _ := lm.admitAlert(fmt.Sprint("w", i)); !ok {
+			t.Fatalf("alert %d refused", i)
+		}
+	}
+	clock.Advance(2 * time.Minute)
+	if ok, at, cause := lm.admitAlert("late"); ok || cause != causeBudget || !at.Equal(clock.Now().Add(recheck)) {
+		t.Fatalf("over ten held: %v %v %s", ok, at, cause)
+	}
+	if ok, _, cause := lm.admitAlert("w0"); ok || cause != causeCooldown {
+		t.Fatalf("w0 again while its alert waits: %v %s", ok, cause)
+	}
+	for i := range 9 {
+		lm.sentAlert(fmt.Sprint("w", i))
+	}
+	lm.dropAlert("w9")
+	sent := clock.Now()
+	if ok, _, _ := lm.admitAlert("late"); !ok {
+		t.Fatal("a dropped alert's slot not given back")
+	}
+	lm.sentAlert("late")
+	if ok, at, cause := lm.admitAlert("later"); ok || cause != causeBudget || !at.Equal(sent.Add(time.Minute)) {
+		t.Fatalf("over ten sent: %v %v %s", ok, at, cause)
+	}
+	if ok, at, cause := lm.admitAlert("w0"); ok || cause != causeCooldown || !at.Equal(sent.Add(time.Minute)) {
+		t.Fatalf("w0 after its alert went: %v %v %s", ok, at, cause)
+	}
+	clock.Advance(time.Minute)
+	solo := newLimiter(DefaultLimits(), clock)
+	for i := range 3 {
+		if ok, _, _ := solo.admitCards("w", 1); !ok {
+			t.Fatalf("card set %d refused", i)
+		}
+		if i < 2 {
+			solo.sentCards("w", 1)
+		}
+	}
+	if ok, at, cause := solo.admitCards("w", 1); ok || cause != causeWorkerCards || !at.Equal(clock.Now().Add(time.Minute)) {
+		t.Fatalf("a fourth set, the third waiting: %v %v %s", ok, at, cause)
+	}
+	solo.dropCards("w", 1)
+	if ok, _, _ := solo.admitCards("w", 1); !ok {
+		t.Fatal("a dropped set's place not given back")
 	}
 }
 
@@ -445,5 +514,77 @@ func TestBudgetRestartReplaysNothing(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if len(r.ch.Sent()) != sent || len(r.ch.Cards()) != cards || len(svc.parked) != 0 {
 		t.Fatalf("%d sends, %d cards after the restart", len(r.ch.Sent())-sent, len(r.ch.Cards())-cards)
+	}
+}
+
+// #106: an alert waiting in the queue or between attempts is sent only
+// while its episode is on: one whose worker went back to work during a
+// rate limit's pause is dropped (counted, without a text), not delivered
+// late.
+func TestBudgetObsoleteRetryDropped(t *testing.T) {
+	r := newRigWith(t, true, func(o *Options, st *Settings) { o.Limits = DefaultLimits() })
+	r.ch.mu.Lock()
+	r.ch.SendErr = func(_ context.Context, n int) error {
+		if n == 0 {
+			return &SendError{Code: CodeRateLimited, Status: 429, RetryAfter: time.Minute}
+		}
+		return nil
+	}
+	r.ch.mu.Unlock()
+	r.svc.Observe(working("w"))
+	r.svc.Observe(blocked("w", 100))
+	if !r.ch.WaitSent(1, time.Second) {
+		t.Fatal("no first attempt")
+	}
+	r.settle(t)
+	r.svc.Observe(working("w"))
+	r.settle(t)
+	r.pass(t, time.Minute+time.Second)
+	if sent := r.ch.Sent(); len(sent) != 1 {
+		t.Fatalf("the resolved episode's alert went: %+v", sent)
+	}
+	rows := rowsOf(r, AuditSend)
+	if len(rows) != 1 || rows[0].err == nil || rows[0].err.Error() != CodeObsolete || rows[0].args.(sendAudit).Attempts != 1 {
+		t.Fatalf("send rows %+v", rows)
+	}
+}
+
+// #106: the rolling minute counts messages as they are sent, not as they
+// are let in: ten alerts held a minute by a rate limit, then sent, keep
+// ten new ones out for the minute after they went.
+func TestBudgetCountsSends(t *testing.T) {
+	r := newRigWith(t, true, func(o *Options, st *Settings) { o.Limits = DefaultLimits() })
+	r.ch.mu.Lock()
+	r.ch.SendErr = func(_ context.Context, n int) error {
+		if n == 0 {
+			return &SendError{Code: CodeRateLimited, Status: 429, RetryAfter: time.Minute}
+		}
+		return nil
+	}
+	r.ch.mu.Unlock()
+	for i := range 10 {
+		id := fmt.Sprint("old", i)
+		r.svc.Observe(working(id))
+		r.svc.Observe(blocked(id, 100))
+	}
+	if !r.ch.WaitSent(1, time.Second) {
+		t.Fatal("no first attempt")
+	}
+	r.settle(t)
+	r.clock.Advance(time.Minute)
+	r.settle(t)
+	for i := range 10 {
+		id := fmt.Sprint("new", i)
+		r.svc.Observe(working(id))
+		r.svc.Observe(blocked(id, 200))
+	}
+	r.settle(t)
+	r.pass(t, 50*time.Second)
+	if n := len(r.ch.Sent()) - 1; n != 10 {
+		t.Fatalf("%d messages within the minute after the pause, want 10", n)
+	}
+	r.pass(t, 30*time.Second)
+	if n := len(r.ch.Sent()) - 1; n != 20 {
+		t.Fatalf("%d messages after two minutes, want 20", n)
 	}
 }

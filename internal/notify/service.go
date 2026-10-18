@@ -226,6 +226,10 @@ type Service struct {
 	// #106: the send budget, and the alerts it parked (the loop's).
 	lim    *limiter
 	parked map[string]*parked
+	// episodes is each worker's episode as the loop last saw it (#106: an
+	// alert in the queue or between attempts goes only while it is on).
+	epMu     sync.Mutex
+	episodes map[string]string
 }
 
 // New loads the settings.
@@ -247,7 +251,8 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	}
 	s := &Service{opts: opts, change: make(chan struct{}, 1), kick: make(chan struct{}, 1),
 		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle), rp: newReplies(),
-		bt: newButtons(), keys: map[string]look{}, lim: newLimiter(opts.Limits.withDefaults(), opts.Clock), parked: map[string]*parked{}}
+		bt: newButtons(), keys: map[string]look{}, lim: newLimiter(opts.Limits.withDefaults(), opts.Clock), parked: map[string]*parked{},
+		episodes: map[string]string{}}
 	if opts.Store != nil {
 		st, ok, err := opts.Store.LoadNotifySettings(ctx)
 		if err != nil {
@@ -613,9 +618,12 @@ func (s *Service) process() {
 		}
 		if o.Gone {
 			s.tr.gone(o.Worker.ID)
+			s.publish(id)
 			continue
 		}
-		if a := s.tr.observe(s.sight(o, freelancers), now); a != nil {
+		a := s.tr.observe(s.sight(o, freelancers), now)
+		s.publish(id)
+		if a != nil {
 			s.alert(*a)
 		}
 	}
@@ -625,6 +633,27 @@ func (s *Service) process() {
 		}
 	}
 	s.release(now)
+}
+
+// publish shares worker id's episode, as the tracker has it now, with the
+// sender (#106).
+func (s *Service) publish(id string) {
+	cur := s.tr.current(id)
+	s.epMu.Lock()
+	if cur == "" {
+		delete(s.episodes, id)
+	} else {
+		s.episodes[id] = cur
+	}
+	s.epMu.Unlock()
+}
+
+// current reports whether a's episode is its worker's, as the loop last
+// saw it (#106).
+func (s *Service) current(a Alert) bool {
+	s.epMu.Lock()
+	defer s.epMu.Unlock()
+	return s.episodes[a.WorkerID] == episodeKey(a.Kind, a.Since)
 }
 
 // alert sends a, or parks it while its worker's cooldown or the
@@ -711,10 +740,12 @@ func (s *Service) sight(o Observation, freelancers bool) sighting {
 	return sg
 }
 
+// enqueue hands the sender an alert the budget let in.
 func (s *Service) enqueue(a Alert) {
 	select {
 	case s.queue <- job{alert: a}:
 	default:
+		s.lim.dropAlert(a.WorkerID)
 		s.dropped.Add(1)
 		s.signal()
 		s.audit(context.Background(), AuditSend, sendAudit{ID: a.WorkerID, Kind: string(a.Kind)}, errors.New(CodeDropped))
@@ -763,10 +794,20 @@ func Backoff(n int) time.Duration {
 
 // deliver sends one alert: a few attempts, a rate limit's wait honoured,
 // backoff after a network failure or a 5xx; then audited. Switched off
-// meanwhile, it is dropped unsent.
+// meanwhile, it is dropped unsent; (#106) its episode over before an
+// attempt (it waited in the queue, for its pace or a rate limit), it is
+// dropped too, and audited obsolete. Its budget slot counts from its last
+// attempt, or is given back when there was none.
 func (s *Service) deliver(ctx context.Context, a Alert) {
 	n := Notification{WorkerID: a.WorkerID, Name: a.Name, Reason: a.Reason, Line: a.Line, Quiet: s.quiet()}
 	row := sendAudit{ID: a.WorkerID, Kind: string(a.Kind)}
+	defer func() {
+		if row.Attempts > 0 {
+			s.lim.sentAlert(a.WorkerID)
+		} else {
+			s.lim.dropAlert(a.WorkerID)
+		}
+	}()
 	var err error
 	var ref Ref
 	for row.Attempts < MaxAttempts {
@@ -775,6 +816,12 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 		}
 		if err = s.lim.wait(ctx); err != nil { // #106: the destination's pacing
 			break
+		}
+		if !s.current(a) {
+			s.opts.Log.Info("notification dropped: its episode ended before it went", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts)
+			row.Code = CodeObsolete
+			s.audit(ctx, AuditSend, row, errors.New(CodeObsolete))
+			return
 		}
 		row.Attempts++
 		sctx, cancel := context.WithTimeout(ctx, SendTimeout)

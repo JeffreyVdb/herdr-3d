@@ -11,8 +11,11 @@ package notify
 // within Cooldown and WorkerCards of its new card sets within Window. What
 // does not fit is parked, one alert and one card set per worker, the
 // latest wins (coalesced), and sent once it fits if it is still what the
-// worker is at; else dropped (never a backlog of old states). A send that
-// fails keeps its slot.
+// worker is at; else dropped (never a backlog of old states). A slot
+// counts from when its message is sent, not let in: let in and not sent
+// yet (queued, paced, paused by a rate limit), it is taken for as long,
+// and given back if the message never goes; a send that fails keeps its
+// slot, from when it failed.
 
 import (
 	"context"
@@ -70,6 +73,10 @@ func (l Limits) withDefaults() Limits {
 	return l
 }
 
+// recheck is when to try again a message that waits on slots taken by
+// messages not sent yet (when they go is not known).
+const recheck = time.Second
+
 // Why something was parked (a notify.limit row's cause).
 const (
 	causeCooldown    = "cooldown"
@@ -86,15 +93,22 @@ type limiter struct {
 	tokens float64
 	filled time.Time // when tokens was last refilled
 	paused time.Time // a rate limit's retry_after, until then
-	sent   []time.Time
-	// alerted is each worker's last alert; cards its card sets' times.
+	// sent are the unsolicited messages' send times; held how many more
+	// were let in and are not sent yet (they take a slot each).
+	sent []time.Time
+	held int
+	// alerted is each worker's last alert's send time, alerts its alerts
+	// let in and not sent yet; cards its card sets' times (their first
+	// card's), sets its sets let in with no card sent yet.
 	alerted map[string]time.Time
+	alerts  map[string]int
 	cards   map[string][]time.Time
+	sets    map[string]int
 }
 
 func newLimiter(l Limits, clock Clock) *limiter {
 	return &limiter{l: l, clock: clock, tokens: float64(l.Burst), filled: clock.Now(), alerted: map[string]time.Time{},
-		cards: map[string][]time.Time{}}
+		alerts: map[string]int{}, cards: map[string][]time.Time{}, sets: map[string]int{}}
 }
 
 // wait takes a token of the destination's bucket, waiting for one (or a
@@ -155,16 +169,26 @@ func (lm *limiter) room(n int, now time.Time) time.Time {
 		return now
 	}
 	lm.sent = lm.recent(lm.sent, now)
-	if len(lm.sent) == 0 || len(lm.sent)+n <= lm.l.Unsolicited {
+	used := len(lm.sent) + lm.held
+	if used == 0 || used+n <= lm.l.Unsolicited {
 		return now // a set larger than the budget goes alone
 	}
-	k := min(len(lm.sent)+n-lm.l.Unsolicited, len(lm.sent)) - 1
-	return lm.sent[k].Add(lm.l.Window)
+	k := used + n - lm.l.Unsolicited // the sends that must leave the window
+	switch {
+	case k > len(lm.sent) && lm.held > 0:
+		return now.Add(recheck)
+	case k > len(lm.sent):
+		k = len(lm.sent)
+	}
+	return lm.sent[k-1].Add(lm.l.Window)
 }
 
-func (lm *limiter) take(n int, now time.Time) {
-	for range n {
-		lm.sent = append(lm.sent, now)
+// give is m[id] less one (forgotten at none).
+func give(m map[string]int, id string) {
+	if m[id] > 1 {
+		m[id]--
+	} else {
+		delete(m, id)
 	}
 }
 
@@ -172,7 +196,7 @@ func (lm *limiter) take(n int, now time.Time) {
 func (lm *limiter) prune(now time.Time) {
 	if len(lm.alerted) > 256 {
 		for id, t := range lm.alerted {
-			if now.Sub(t) >= lm.l.Cooldown {
+			if now.Sub(t) >= lm.l.Cooldown && lm.alerts[id] == 0 {
 				delete(lm.alerted, id)
 			}
 		}
@@ -186,25 +210,51 @@ func (lm *limiter) prune(now time.Time) {
 	}
 }
 
-// admitAlert takes an alert of worker's slot: ok, or when it may be tried
+// admitAlert lets an alert of worker's in, its slots held until it is
+// sent (sentAlert) or never is (dropAlert): ok, or when it may be tried
 // again and why not now.
 func (lm *limiter) admitAlert(worker string) (bool, time.Time, string) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
 	now := lm.clock.Now()
 	lm.prune(now)
-	if last, ok := lm.alerted[worker]; ok && lm.l.Cooldown > 0 && now.Sub(last) < lm.l.Cooldown {
-		return false, last.Add(lm.l.Cooldown), causeCooldown
+	if lm.l.Cooldown > 0 {
+		if lm.alerts[worker] > 0 {
+			return false, now.Add(recheck), causeCooldown
+		}
+		if last, ok := lm.alerted[worker]; ok && now.Sub(last) < lm.l.Cooldown {
+			return false, last.Add(lm.l.Cooldown), causeCooldown
+		}
 	}
 	if at := lm.room(1, now); at.After(now) {
 		return false, at, causeBudget
 	}
-	lm.alerted[worker] = now
-	lm.take(1, now)
+	lm.alerts[worker]++
+	lm.held++
 	return true, now, ""
 }
 
-// admitCards takes the slots of a card set of worker's (n cards): ok, or
+// sentAlert takes an alert of worker's as sent now (or failed: tried);
+// dropAlert gives its slots back (never tried).
+func (lm *limiter) sentAlert(worker string) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	now := lm.clock.Now()
+	give(lm.alerts, worker)
+	lm.alerted[worker] = now
+	lm.held = max(lm.held-1, 0)
+	lm.sent = append(lm.sent, now)
+}
+
+func (lm *limiter) dropAlert(worker string) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	give(lm.alerts, worker)
+	lm.held = max(lm.held-1, 0)
+}
+
+// admitCards lets a card set of worker's in (n cards), its slots held
+// until its cards are sent (sentCards) or never are (dropCards): ok, or
 // when it may be tried again and why not now.
 func (lm *limiter) admitCards(worker string, n int) (bool, time.Time, string) {
 	lm.mu.Lock()
@@ -214,18 +264,45 @@ func (lm *limiter) admitCards(worker string, n int) (bool, time.Time, string) {
 	if lm.l.WorkerCards > 0 && lm.l.Window > 0 {
 		ts := lm.recent(lm.cards[worker], now)
 		lm.cards[worker] = ts
-		if len(ts) >= lm.l.WorkerCards {
-			return false, ts[len(ts)-lm.l.WorkerCards].Add(lm.l.Window), causeWorkerCards
+		if used := len(ts) + lm.sets[worker]; used >= lm.l.WorkerCards {
+			if k := used - lm.l.WorkerCards + 1; k <= len(ts) {
+				return false, ts[k-1].Add(lm.l.Window), causeWorkerCards
+			}
+			return false, now.Add(recheck), causeWorkerCards
 		}
 	}
 	if at := lm.room(n, now); at.After(now) {
 		return false, at, causeBudget
 	}
 	if lm.l.WorkerCards > 0 {
+		lm.sets[worker]++
+	}
+	lm.held += n
+	return true, now, ""
+}
+
+// sentCards takes n cards of worker's set as sent now (or failed: tried),
+// the set with its first; dropCards gives n cards' slots back (never
+// tried), the set's too if none went.
+func (lm *limiter) sentCards(worker string, n int) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	now := lm.clock.Now()
+	if lm.sets[worker] > 0 {
+		give(lm.sets, worker)
 		lm.cards[worker] = append(lm.cards[worker], now)
 	}
-	lm.take(n, now)
-	return true, now, ""
+	lm.held = max(lm.held-n, 0)
+	for range n {
+		lm.sent = append(lm.sent, now)
+	}
+}
+
+func (lm *limiter) dropCards(worker string, n int) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	give(lm.sets, worker)
+	lm.held = max(lm.held-n, 0)
 }
 
 // limitAudit is a notify.limit row's args (#106): a worker's alert or card

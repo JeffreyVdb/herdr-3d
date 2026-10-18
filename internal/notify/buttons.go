@@ -736,7 +736,9 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 			ref, err = s.opts.Channel.SendCard(ctx, c)
 			return err
 		})
+		s.lim.sentCards(a.WorkerID, 1) // #106: its slot counts from now, sent or failed
 		if err != nil || !ref.Valid() {
+			s.lim.dropCards(a.WorkerID, n-i-1)
 			s.opts.Log.Warn("notifications: a question's card was not delivered", "worker", a.WorkerID, "code", CodeOf(err))
 			ss.qs = ss.qs[:i]
 			if ss.kind == kindMenu {
