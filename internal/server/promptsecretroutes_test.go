@@ -1192,6 +1192,42 @@ func TestPromptSecretsAnswerAsk(t *testing.T) {
 	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
 }
 
+// A dismissal's prompt is typed once the dialog is gone and the agent is
+// ready: its review is checked again then (review B2, pass 2), so a switch
+// change while it waits withholds it, and its files go.
+func TestPromptSecretsAnswerAskSwitchBeforeItsPrompt(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAskBridgeAt(t, filepath.Join(t.TempDir(), "world.db"), "blocked", func(o *server.Options) {
+		o.SecretsDir, o.PromptReadyWait = dir, 5*time.Second
+	})
+	c := ab.connect(proto.Hello{})
+	id := idOf(t, c.snapshot(), "w1")
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	const tu = "toolu_01UYJ8PfzgPp69vD6PS9cA2K"
+	playDialog(ab.termBridge, "w1:p1", "q", map[string]string{"q": readScreen(t, "claude-ask-esc"), "gone": "  ⎿  User declined to answer questions\n"},
+		map[string]map[string]string{"q": {"esc": "gone"}}, map[string]func(){"gone": func() {
+			appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 12)+fixtureLine(t, "claude", "ask.jsonl", 13))
+		}})
+	appendLine(t, ab.claude, fixtureLine(t, "claude", "ask.jsonl", 11))
+	askOf(c, id, pendingID(tu))
+	c.send(proto.Command{T: proto.CmdWorkerAnswerAsk, ReqID: "a", Args: mustRaw(proto.WorkerAnswerAskArgs{ID: id, ToolUseID: tu,
+		Cancel: true, Prompt: routeText, Secrets: proto.SecretsReviews{"prompt": routeReview(t, c)}})})
+	askOf(c, id, noAsk) // dismissed: the prompt waits for the agent
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	ab.setStatus("w1", "idle")
+	if m := c.reply("a"); codeOf(m) != proto.ErrSecretsReviewStale || !strings.Contains(errorOf(m).Message, "dismissed") {
+		t.Fatalf("answer: %s", m.raw)
+	}
+	for _, call := range ab.term.Calls() {
+		if strings.HasPrefix(call, "type ") {
+			t.Fatalf("typed %q", call)
+		}
+	}
+	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
+}
+
 // worker.answer_followup: each answer's value and note, and the note, are
 // reviewed on their own; the prompt they make holds the references.
 func TestPromptSecretsAnswerFollowup(t *testing.T) {
@@ -1475,6 +1511,70 @@ func TestPromptSecretsWrapUpSwitchWhileQueued(t *testing.T) {
 	}
 	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
 	traceFree(t, wb.st, wb.db, []*client{c}, routeSentinel)
+}
+
+// A reviewed worker.prompt to a Claude agent that is not ready yet waits
+// for it after its lane job checked the review; the review is checked
+// again once the agent is ready, right before anything is typed (review
+// B2, pass 2: the wait every typed prompt of a worker's route shares).
+func TestPromptSecretsPromptSwitchWhileAgentNotReady(t *testing.T) {
+	t.Parallel()
+	sb := startSecretsBridge(t, true, func(o *server.Options) { o.PromptReadyWait = 5 * time.Second })
+	sb.setStatus("w1", "unknown")
+	sb.c.send(proto.Command{T: proto.CmdWorkerPrompt, ReqID: "p", Args: mustRaw(proto.WorkerPromptArgs{ID: sb.id1, Text: routeText,
+		Secrets: routeReview(t, sb.c)})})
+	waitFor(t, "the files", func() bool { return len(sb.files(t)) == 2 })
+	time.Sleep(100 * time.Millisecond) // the lane job checked the review, and waits for the agent
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	sb.setStatus("w1", "idle")
+	if m := sb.c.reply("p"); codeOf(m) != proto.ErrSecretsReviewStale {
+		t.Fatalf("prompt: %s", m.raw)
+	}
+	if calls := sb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("sent %q", calls)
+	}
+	waitFor(t, "the files to go", func() bool { return len(sb.files(t)) == 0 })
+	sb.noTrace(t, routeSentinel)
+}
+
+// An agent handoff whose request waits on the worker's input lane is not
+// sent when its turn comes if the switch changed meanwhile (review B2,
+// pass 2): the command is stale, the request failed, its files gone.
+func TestPromptSecretsWorkerHandoffAgentSwitchWhileQueued(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.SecretsDir = dir })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := ab.ids["w2"]
+	gate, started := make(chan struct{}), make(chan struct{}, 1)
+	defer close(gate)
+	ab.term.mu.Lock()
+	ab.term.textGate, ab.term.textStarted = gate, started
+	ab.term.mu.Unlock()
+	c.send(proto.Command{T: proto.CmdWorkerKeys, ReqID: "hold", Args: mustRaw(proto.WorkerKeysArgs{ID: id,
+		Input: []proto.InputItem{text("slow hold")}})})
+	<-started
+	args := proto.WorkerHandoffArgs{Worker: id, Mode: proto.HandoffModeAgent, Instruction: routeText, Op: "op-h", Secrets: routeReview(t, c)}
+	c.send(proto.Command{T: proto.CmdWorkerHandoff, ReqID: "h", Args: mustRaw(args)})
+	waitFor(t, "the request to wait on the lane", func() bool {
+		r, err := ab.st.HandoffRequestByOp(context.Background(), "op-h")
+		return err == nil && r.Offset >= 0
+	})
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	gate <- struct{}{}
+	if m := c.reply("h"); codeOf(m) != proto.ErrSecretsReviewStale {
+		t.Fatalf("handoff: %s", m.raw)
+	}
+	if _, _, _, n := ab.requested("w2:p1"); n != 0 {
+		t.Fatalf("the request was sent: %q", ab.term.Calls())
+	}
+	if r, err := ab.st.HandoffRequestByOp(context.Background(), "op-h"); err != nil || r.State != store.HandoffRequestFailed {
+		t.Fatalf("request %+v %v", r, err)
+	}
+	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
 }
 
 // An LLM handoff whose instruction's review the switch made stale while

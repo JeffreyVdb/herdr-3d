@@ -525,10 +525,12 @@ func (pv *preview) result() proto.PackupDetectResult {
 // gate (the files the worker's), then on the hub goroutine plan builds the
 // work from the texts as they go (texts: a text after the gate by its path,
 // "" for one the command does not carry) with the command's checks, again,
-// and side effects, then the work runs in the same lane job. A failure
-// removes the files it made; a success keeps them for its identical retry.
+// and side effects, then the work runs in the same lane job; plan gets the
+// reviewer for the work to check again right before its texts go (review
+// B2, pass 2: the work may wait). A failure removes the files it made; a
+// success keeps them for its identical retry.
 func (h *Hub) queueReviewed(ctx context.Context, id string, reviews proto.SecretsReviews, fields []secretField, end inputEnd,
-	plan func(ctx context.Context, texts func(path string) string) (inputWork, error)) error {
+	plan func(ctx context.Context, texts func(path string) string, rev *promptsecret.Reviewer) (inputWork, error)) error {
 	if err := h.stillOn(); err != nil {
 		return err
 	}
@@ -561,7 +563,7 @@ func (h *Hub) queueReviewed(ctx context.Context, id string, reviews proto.Secret
 			if h.ps.rev != rev { // the switch changed meanwhile
 				return planned{err: errSettingChanged}
 			}
-			work, err := plan(ctx, texts)
+			work, err := plan(ctx, texts, rev)
 			if err != nil {
 				return planned{err: err}
 			}

@@ -32,6 +32,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/followup"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
@@ -601,7 +602,7 @@ func (h *Hub) queueAnswerFollowup(ctx context.Context, a proto.WorkerAnswerFollo
 				}
 			}
 		}
-		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, end, func(ctx context.Context, texts func(string) string) (inputWork, error) {
+		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, end, func(ctx context.Context, texts func(string) string, rev *promptsecret.Reviewer) (inputWork, error) {
 			b := a
 			b.Note, b.Secrets, b.Answers = texts("note"), nil, slices.Clone(a.Answers)
 			for i := range b.Answers {
@@ -613,12 +614,12 @@ func (h *Hub) queueAnswerFollowup(ctx context.Context, a proto.WorkerAnswerFollo
 			}
 			h.tookOver(ctx, a.ID)
 			h.agentTookOver(ctx, a.ID)
-			return h.sendFollowupAnswers(a, text), nil
+			return h.sendFollowupAnswers(a, text, rev), nil
 		})
 	}
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
-	return h.queueInput(ctx, a.ID, h.sendFollowupAnswers(a, text), end)
+	return h.queueInput(ctx, a.ID, h.sendFollowupAnswers(a, text, nil), end)
 }
 
 // planAnswerFollowup is worker.answer_followup's checks (hub goroutine):
@@ -653,8 +654,9 @@ func (h *Hub) planAnswerFollowup(a proto.WorkerAnswerFollowupArgs) (string, erro
 
 // sendFollowupAnswers is the work that sends a follow-up's answers (text)
 // on the worker's lane: the follow-up checked again first, cleared once
-// the prompt went.
-func (h *Hub) sendFollowupAnswers(a proto.WorkerAnswerFollowupArgs, text string) inputWork {
+// the prompt went. #108: rev is its review's (nil: none), checked again as
+// the prompt goes.
+func (h *Hub) sendFollowupAnswers(a proto.WorkerAnswerFollowupArgs, text string, rev *promptsecret.Reviewer) inputWork {
 	return func(ctx context.Context, session, pane string) (any, error) {
 		stale, err := query(ctx, h, func() error { _, err := h.followupOf(a.ID, a.TurnID); return err })
 		if err != nil {
@@ -663,7 +665,7 @@ func (h *Hub) sendFollowupAnswers(a proto.WorkerAnswerFollowupArgs, text string)
 		if stale != nil {
 			return nil, stale
 		}
-		res, err := h.prompt(ctx, proto.WorkerPromptArgs{ID: a.ID, Text: text}, session, pane)
+		res, err := h.prompt(ctx, proto.WorkerPromptArgs{ID: a.ID, Text: text}, session, pane, rev)
 		if err != nil {
 			return nil, err
 		}

@@ -301,7 +301,7 @@ func (h *Hub) reviewedHandoff(ctx context.Context, c *Client, cmd proto.Command,
 		b := a
 		b.Instruction, b.Secrets = p.text, nil
 		if a.Mode == proto.HandoffModeAgent {
-			ask := agentAsk{worker: b.Worker, op: b.Op, instruction: b.Instruction, sendHome: b.SendHome,
+			ask := agentAsk{worker: b.Worker, op: b.Op, instruction: b.Instruction, sendHome: b.SendHome, rev: rev,
 				answer: func(r proto.AgentHandoff, existing, _ bool) any {
 					res := proto.WorkerHandoffRequestResult{Request: r, Existing: existing}
 					if !existing {

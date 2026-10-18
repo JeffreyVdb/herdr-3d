@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -317,7 +318,7 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 			op = "prompt-" + randHex(8)
 		}
 		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.ID, op: op, instruction: ho.instruction, prompt: true,
-			settle: ho.settle, answer: func(r proto.AgentHandoff, existing, queued bool) any {
+			settle: ho.settle, rev: ho.rev, answer: func(r proto.AgentHandoff, existing, queued bool) any {
 				res := proto.PromptResult{Queued: queued, Handoff: &r, Existing: existing}
 				if !existing { // #108: what this text became (an existing request used none of it)
 					res.Sent, res.Protected = ho.sent, ho.protected
@@ -331,22 +332,25 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 // promptHandoff is a prompt that is a /handoff (#224), for its handoff
 // callback: the instruction and (#108) what the review made of the prompt:
 // the text sent in place of the typed one ("": as typed), how many ranges
-// went to files, and settle (nil: none), told how the request's command
-// ends (agentAsk.settle).
+// went to files, settle (nil: none), told how the request's command ends
+// (agentAsk.settle), and the reviewer (agentAsk.rev).
 type promptHandoff struct {
 	instruction string
 	sent        string
 	protected   int
 	settle      func(err error, existing bool)
+	rev         *promptsecret.Reviewer
 }
 
 // promptReview is what the review made of a prompt (#108) for planPrompt:
 // the text as typed (the prompt's own text is the one sent), how many
-// ranges went to files, and, for a /handoff, its settle.
+// ranges went to files, for a /handoff its settle, and the reviewer it was
+// made under (nil: none), checked again right before the text goes.
 type promptReview struct {
 	typed     string
 	protected int
 	settle    func(err error, existing bool)
+	rev       *promptsecret.Reviewer
 }
 
 // errHandoffInGame refuses a /handoff that does not come from the game
@@ -405,7 +409,7 @@ func (h *Hub) planPrompt(ctx context.Context, a proto.WorkerPromptArgs, r prompt
 		if handoff == nil {
 			return nil, errHandoffInGame
 		}
-		ho := promptHandoff{instruction: instruction, protected: r.protected, settle: r.settle}
+		ho := promptHandoff{instruction: instruction, protected: r.protected, settle: r.settle, rev: r.rev}
 		if a.Text != r.typed {
 			ho.sent = a.Text
 		}
@@ -429,7 +433,7 @@ func (h *Hub) planPrompt(ctx context.Context, a proto.WorkerPromptArgs, r prompt
 		if terminal {
 			send = h.terminalPrompt
 		}
-		res, err := send(ctx, a, session, pane)
+		res, err := send(ctx, a, session, pane, r.rev)
 		if err == nil {
 			// #58: its user line is read now, not on the tracker's next tick
 			// (a watched transcript's is a second away).
@@ -503,14 +507,18 @@ func (p promptState) started(since uint64) bool {
 // turn; otherwise herdr waits for it to start working, and when the agent
 // took the text but dropped the Enter (agent_prompt_stalled) Enter is
 // pressed once more and the worker watched for PromptRetryWait. A prompt
-// to Claude is typed (typePrompt).
-func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pane string) (any, error) {
+// to Claude is typed (typePrompt). #108: a reviewed text's review (rev;
+// nil: none) is checked last, right before any of it goes (stale: unsent).
+func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pane string, rev *promptsecret.Reviewer) (any, error) {
 	cur, err := query(ctx, h, func() promptState { return h.promptState(a.ID) })
 	if err != nil {
 		return nil, unsent(err)
 	}
 	if typesPrompts(cur.kind) {
-		return h.typePrompt(ctx, a.ID, session, pane, a.Text, false)
+		return h.typePrompt(ctx, a.ID, session, pane, a.Text, false, rev)
+	}
+	if err := h.reviewHolds(rev); err != nil {
+		return nil, unsent(err)
 	}
 	t := h.opts.Term
 	switch cur.status {
@@ -561,13 +569,13 @@ func notSent(err error) bool { return errors.As(err, new(notSentError)) }
 // turn, and Enter is never pressed again, as it would act on the dialog. To
 // a working agent it goes as any prompt does (queued): the CLI runs it, or
 // refuses it, in its terminal.
-func (h *Hub) terminalPrompt(ctx context.Context, a proto.WorkerPromptArgs, session, pane string) (any, error) {
+func (h *Hub) terminalPrompt(ctx context.Context, a proto.WorkerPromptArgs, session, pane string, rev *promptsecret.Reviewer) (any, error) {
 	cur, err := query(ctx, h, func() promptState { return h.promptState(a.ID) })
 	if err != nil {
 		return nil, err
 	}
 	if typesPrompts(cur.kind) {
-		if cur, err = h.typeIn(ctx, a.ID, session, pane, a.Text, false); err != nil {
+		if cur, err = h.typeIn(ctx, a.ID, session, pane, a.Text, false, rev); err != nil {
 			return nil, err
 		}
 		return proto.PromptResult{Queued: cur.status == statusWorking}, nil
@@ -577,6 +585,9 @@ func (h *Hub) terminalPrompt(ctx context.Context, a proto.WorkerPromptArgs, sess
 		return nil, fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting)
 	case statusBlocked:
 		return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
+	}
+	if err := h.reviewHolds(rev); err != nil {
+		return nil, unsent(err)
 	}
 	if err := h.opts.Term.QueuePrompt(ctx, session, pane, a.Text); err != nil {
 		return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
@@ -637,8 +648,8 @@ func (h *Hub) awaitStarted(ctx context.Context, id string, since uint64, wait ti
 // working, then it is typed for Claude to queue, without waiting. A
 // blocked worker, or one with an ask, is refused, unless settling: then
 // (a dialog just answered) it is waited out like any other state.
-func (h *Hub) typePrompt(ctx context.Context, id, session, pane, text string, settling bool) (any, error) {
-	cur, err := h.typeIn(ctx, id, session, pane, text, settling)
+func (h *Hub) typePrompt(ctx context.Context, id, session, pane, text string, settling bool, rev *promptsecret.Reviewer) (any, error) {
+	cur, err := h.typeIn(ctx, id, session, pane, text, settling, rev)
 	if err != nil {
 		return nil, err
 	}
@@ -657,7 +668,9 @@ func (h *Hub) typePrompt(ctx context.Context, id, session, pane, text string, se
 
 // typeIn is typePrompt up to its Enter: it waits for the agent to be ready
 // and types text, and returns the worker's state from before it typed.
-func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settling bool) (promptState, error) {
+// #108 review B2: a reviewed text's review (rev; nil: none) is checked
+// once the agent is ready, right before the text is typed.
+func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settling bool, rev *promptsecret.Reviewer) (promptState, error) {
 	var cur promptState
 	for end := time.Now().Add(h.opts.PromptReadyWait); ; {
 		var err error
@@ -683,8 +696,16 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 	if err := h.eraseDirty(ctx, id, session, pane, t.EraseTyped); err != nil {
 		return cur, unsent(err) // an earlier prompt's leftovers: none of this one is typed
 	}
-	if err := h.doWait(ctx, func() { h.noteTyped(id, text) }); err != nil {
+	var stale error
+	if err := h.doWait(ctx, func() {
+		if stale = h.reviewHolds(rev); stale == nil {
+			h.noteTyped(id, text)
+		}
+	}); err != nil {
 		return cur, unsent(err)
+	}
+	if stale != nil {
+		return cur, unsent(stale)
 	}
 	if err := t.TypePrompt(ctx, session, pane, text); err != nil {
 		h.erasePartlyTyped(ctx, id, session, pane, err, t.EraseTyped)

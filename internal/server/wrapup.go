@@ -582,7 +582,7 @@ func (h *Hub) armed(ctx context.Context, wu *wrapUp, u wrapUpdate) {
 		var res any
 		if err == nil {
 			if err = t.err; err == nil {
-				res, err = h.prompt(ctx, proto.WorkerPromptArgs{ID: id, Text: text}, t.session, t.pane)
+				res, err = h.prompt(ctx, proto.WorkerPromptArgs{ID: id, Text: text}, t.session, t.pane, wu.rev)
 			}
 		}
 		if err == nil {

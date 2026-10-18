@@ -157,6 +157,16 @@ func (h *Hub) reviewCurrent(rev *promptsecret.Reviewer) error {
 	return nil
 }
 
+// reviewHolds is reviewCurrent for a text that goes with or without a
+// review (rev nil: none, nothing to check), where it goes to the terminal:
+// right before its first byte, after any wait (review B2, pass 2).
+func (h *Hub) reviewHolds(rev *promptsecret.Reviewer) error {
+	if rev == nil {
+		return nil
+	}
+	return h.reviewCurrent(rev)
+}
+
 // newReviewer is a reviewer with a fresh random key (every review made
 // before it is stale) that leaves the references to the bridge's own files
 // alone: only those, exactly (a text that only looks like one is scanned).
@@ -565,7 +575,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 		}
 		sent := a
 		sent.Text, sent.Secrets, sent.SecretsPending = p.text, nil, ""
-		r := promptReview{typed: typed, protected: len(p.files)}
+		r := promptReview{typed: typed, protected: len(p.files), rev: rev}
 		if len(p.files) > 0 {
 			r.settle = h.settleHandoff(p, owner)
 		}

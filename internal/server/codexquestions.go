@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
@@ -296,7 +297,7 @@ func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command
 				fields = append(fields, secretField{path: fmt.Sprintf("answers[%d].answer", i), text: x.Answer})
 			}
 		}
-		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, h.endCommand(c, cmd), func(ctx context.Context, texts func(string) string) (inputWork, error) {
+		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, h.endCommand(c, cmd), func(ctx context.Context, texts func(string) string, rev *promptsecret.Reviewer) (inputWork, error) {
 			b := a
 			b.Secrets, b.Answers = nil, slices.Clone(a.Answers)
 			for i := range b.Answers {
@@ -316,11 +317,11 @@ func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command
 			if err != nil {
 				return nil, asyncError(err)
 			}
-			return func(ctx context.Context, _, _ string) (any, error) { return h.answerAsync(ctx, b, bt) }, nil
+			return func(ctx context.Context, _, _ string) (any, error) { return h.answerAsync(ctx, b, bt, rev) }, nil
 		})
 	}
 	return h.startInput(ctx, c, cmd, a.ID, func(ctx context.Context, _, _ string) (any, error) {
-		return h.answerAsync(ctx, a, t)
+		return h.answerAsync(ctx, a, t, nil)
 	})
 }
 
@@ -382,9 +383,13 @@ type asyncSend struct {
 // one turn/steer into the running turn, or turn/start when none runs. A steer
 // the server refuses delivered nothing (the turn ended meanwhile): a turn
 // is started instead, once. An answer is never sent twice: a send with no
-// response is sent, unconfirmed, and a refused one is pending again.
-func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, t codexapp.Ticket) (any, error) {
+// response is sent, unconfirmed, and a refused one is pending again. #108:
+// a reviewed answer's review (rev; nil: none) is checked in the same step.
+func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, t codexapp.Ticket, rev *promptsecret.Reviewer) (any, error) {
 	s, err := query(ctx, h, func() asyncSend {
+		if err := h.reviewHolds(rev); err != nil {
+			return asyncSend{err: err}
+		}
 		q, err := h.asyncThread(a.ID, a.Thread)
 		if err != nil {
 			return asyncSend{err: err}

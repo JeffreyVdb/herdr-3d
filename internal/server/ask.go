@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -178,7 +179,7 @@ func (h *Hub) queueAnswerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, e
 				fields = append(fields, secretField{path: fmt.Sprintf("answers[%d].other", i), text: *x.Other})
 			}
 		}
-		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, end, func(ctx context.Context, texts func(string) string) (inputWork, error) {
+		return h.queueReviewed(ctx, a.ID, a.Secrets, fields, end, func(ctx context.Context, texts func(string) string, rev *promptsecret.Reviewer) (inputWork, error) {
 			b := a
 			b.Prompt, b.Secrets, b.Answers = texts("prompt"), nil, slices.Clone(a.Answers)
 			for i, x := range b.Answers {
@@ -193,13 +194,13 @@ func (h *Hub) queueAnswerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, e
 			}
 			h.agentTookOver(ctx, a.ID)
 			return func(ctx context.Context, session, pane string) (any, error) {
-				return h.answerAsk(ctx, b, answers, session, pane)
+				return h.answerAsk(ctx, b, answers, session, pane, rev)
 			}, nil
 		})
 	}
 	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
 	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
-		return h.answerAsk(ctx, a, answers, session, pane)
+		return h.answerAsk(ctx, a, answers, session, pane, nil)
 	}, end)
 }
 
@@ -247,13 +248,15 @@ func (h *Hub) planAnswerAsk(a proto.WorkerAnswerAskArgs) ([]askAnswer, error) {
 }
 
 // askDriver presses keys into one worker's dialog, reading its screen
-// between steps.
+// between steps. rev (#108) is the answers' review, checked right before
+// the first of their texts is typed (nil: none, or typed already).
 type askDriver struct {
 	h             *Hub
 	ctx           context.Context
 	id, toolUseID string
 	session, pane string
 	sent          []string
+	rev           *promptsecret.Reviewer
 }
 
 // current is the worker's ask now, if it is still the one being answered.
@@ -288,6 +291,10 @@ func (d *askDriver) typeText(text string) error {
 	if !still {
 		return fmt.Errorf("%w: the question was answered or replaced meanwhile (no more keys pressed)", errStale)
 	}
+	if err := d.h.reviewHolds(d.rev); err != nil {
+		return err // review B2: the switch changed while the dialog was driven (no more keys pressed)
+	}
+	d.rev = nil
 	if err := d.h.opts.Term.SendText(d.ctx, d.session, d.pane, text); err != nil {
 		return fmt.Errorf("%w: %v", errInputFailed, err)
 	}
@@ -346,7 +353,10 @@ func labelIs(label, text string) bool {
 
 // answerAsk answers the ask on the worker's lane: the ask checked again,
 // the dialog driven, then the transcript watched for the call's result.
-func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answers []askAnswer, session, pane string) (any, error) {
+// #108: rev is the review of its texts (nil: none), checked again right
+// before the first Other answer or the prompt goes.
+func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answers []askAnswer, session, pane string,
+	rev *promptsecret.Reviewer) (any, error) {
 	ask, err := query(ctx, h, func() *proto.Ask {
 		if w := h.workers[a.ID]; w != nil && w.PaneID == pane {
 			return w.Ask
@@ -369,7 +379,7 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 			return nil, err
 		}
 	}
-	d := &askDriver{h: h, ctx: ctx, id: a.ID, toolUseID: a.ToolUseID, session: session, pane: pane}
+	d := &askDriver{h: h, ctx: ctx, id: a.ID, toolUseID: a.ToolUseID, session: session, pane: pane, rev: rev}
 	switch {
 	case ask.Agent == proto.AskCodex && a.Cancel:
 		err = d.codexCancel(ask)
@@ -389,10 +399,12 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 	}
 	if a.Prompt != "" && res.Resolved {
 		if ask.Agent == proto.AskClaude { // #95: typed, once the dismissed dialog is gone
-			if _, err := h.typePrompt(ctx, a.ID, session, pane, prompt, true); err != nil {
+			if _, err := h.typePrompt(ctx, a.ID, session, pane, prompt, true, rev); errors.Is(err, errSettingChanged) {
+				return nil, fmt.Errorf("dismissed, but the prompt was not sent: %w", err)
+			} else if err != nil {
 				return nil, fmt.Errorf("%w: dismissed, but the prompt was not sent: %v", errPromptFailed, err)
 			}
-		} else if err := h.submitAfterAsk(ctx, a.ID, session, pane, ask.Agent, prompt); err != nil {
+		} else if err := h.submitAfterAsk(ctx, a.ID, session, pane, ask.Agent, prompt, rev); err != nil {
 			return nil, err
 		}
 		res.Prompted = true
@@ -405,11 +417,14 @@ func (h *Hub) answerAsk(ctx context.Context, a proto.WorkerAnswerAskArgs, answer
 // than a lone Enter (a popup the text left open took the Enter: close it,
 // submit), unless the worker started meanwhile (promptState.started, since
 // its start counter before the submit): the prompt was only slow, and an Esc
-// would abort its turn (#138).
-func (h *Hub) submitAfterAsk(ctx context.Context, id, session, pane, kind, prompt string) error {
+// would abort its turn (#138). #108: rev as for prompt.
+func (h *Hub) submitAfterAsk(ctx context.Context, id, session, pane, kind, prompt string, rev *promptsecret.Reviewer) error {
 	before, err := query(ctx, h, func() promptState { return h.promptState(id) })
 	if err != nil {
 		return err
+	}
+	if err := h.reviewHolds(rev); err != nil {
+		return fmt.Errorf("dismissed, but the prompt was not sent: %w", err)
 	}
 	err = h.opts.Term.SubmitPrompt(ctx, session, pane, prompt)
 	if err == nil {
