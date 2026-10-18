@@ -48,6 +48,23 @@
     0 1px 2px rgb(0 0 0 / 30%);
   white-space: nowrap;
 }
+/* #108 round 4: the seated worker's protected files, at the line's end (ui/secretChips.css's tape): a press asks to
+   remove them. A control of the bar, not a word in a sentence: it keeps the bar's chips' height (#74's fullscreen
+   chip) and, in Ubuntu, their 32px hit area. */
+.seat .seat-secrets {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  height: 20px;
+  margin-left: auto;
+  font-size: 14px;
+  /* The bar lets the scene have the pointer; each of its controls takes it back. */
+  pointer-events: auto;
+}
+.seat .seat-secrets[hidden] {
+  display: none;
+}
 .seat-note {
   min-width: 0;
   overflow: hidden;
@@ -500,6 +517,11 @@
   .seat-fs {
     max-width: 170px;
   }
+  /* #108 round 4: the protected-files chip keeps its count (its name says the rest): beside the tape it would run into
+     Stand up. */
+  .seat .seat-secrets-word {
+    display: none;
+  }
 }
 
 /* ubuntu:begin */
@@ -605,13 +627,23 @@
   box-shadow: none;
 }
 
+/* #108 round 4: the protected-files chip reaches 32px the same way. */
+:root[data-ui-theme='ubuntu'] .seat .seat-secrets::after {
+  content: '';
+  position: absolute;
+  inset: -6px 0;
+}
 @media (pointer: coarse) {
   :root[data-ui-theme='ubuntu'] .seat-stand,
   :root[data-ui-theme='ubuntu'] .seat-mode,
   :root[data-ui-theme='ubuntu'] .seat-theme,
   :root[data-ui-theme='ubuntu'] .seat-zoom-btn,
-  :root[data-ui-theme='ubuntu'] .seat-fs {
+  :root[data-ui-theme='ubuntu'] .seat-fs,
+  :root[data-ui-theme='ubuntu'] .seat .seat-secrets {
     min-height: 44px;
+  }
+  :root[data-ui-theme='ubuntu'] .seat .seat-secrets::after {
+    content: none;
   }
   :root[data-ui-theme='ubuntu'] .seat-theme,
   :root[data-ui-theme='ubuntu'] .seat-zoom-btn,

@@ -117,6 +117,7 @@ import { repoRefsSection } from './ui/repoRefsSection';
 import { promptSecretsSection } from './ui/promptSecretsSection';
 import { SecretsReviewDialog } from './ui/secretsReview';
 import { PromptSecretsFlow, type Go } from './ui/secretsFlow';
+import { RevokeSecretsDialog } from './ui/revokeSecrets';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
@@ -247,6 +248,8 @@ export class App {
   /** #108: the review of a prompt's possible secrets, and the send flow every composer goes through. */
   readonly secretsReview: SecretsReviewDialog;
   readonly secrets: PromptSecretsFlow;
+  /** #108 round 4: the confirmation before a worker's protected files are removed (the seat bar's chip opens it). */
+  readonly revokeSecrets: RevokeSecretsDialog;
   /** #223: the filing dialog and the floor's filing cabinet. */
   readonly handoffDialog: HandoffDialog;
   readonly cabinet: Cabinet;
@@ -774,6 +777,12 @@ export class App {
       },
     });
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
+    // #108 round 5: the removal of a worker's protected files, from the seat bar's chip.
+    this.revokeSecrets = new RevokeSecretsDialog(o.host, {
+      ...dialogHost,
+      // An older bridge's `unknown_command` hides the seat bar's chip at once (`send` marked the command unsupported).
+      send: (t, args) => this.send(t, args).finally(() => this.laptops.syncSecretFiles()),
+    });
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
     this.handoffDialog = new HandoffDialog(o.host, {
@@ -816,6 +825,11 @@ export class App {
       stand: () => this.laptops.stand(),
       toggle: () => this.laptops.toggleTranscript(),
       fullscreen: (a) => this.laptops.fullscreen(a),
+      // #108 round 4: the seated worker's "protected files" chip: the confirmation that removes them.
+      revoke: (from) => {
+        const id = this.laptops.seated;
+        if (id) this.revokeSecrets.open(id, from);
+      },
     }, this.themes.prefs);
     this.laptops = new Laptops(
       {
@@ -971,6 +985,8 @@ export class App {
     this.hire.refresh();
     this.hireReview.refresh();
     this.sendHome.refresh();
+    this.revokeSecrets.refresh(); // #108 round 4
+    this.laptops.syncSecretFiles();
     this.handoffDialog.refresh(); // #223
     this.noteAgentHandoffs(); // #224
     this.cabinet.refresh();
@@ -1699,7 +1715,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.revokeSecrets.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -3676,7 +3692,8 @@ export class App {
     // #110: a pack-up check's dialog keeps you seated (the prompt box and its draft stay); it still owns the keys.
     // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
     // #108: so does the review of a prompt's secrets (from the prompt box or a paste): Confirm sends from the seat.
-    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen) || this.hud.sheetOpen || this.transitioning;
+    // Round 4: and the confirmation that removes the seated worker's protected files (the seat bar's chip opens it).
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen && !this.revokeSecrets.keepsSeat) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.orphaned && !this.laptops.seated) {
       this.orphaned = false;

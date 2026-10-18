@@ -68,6 +68,23 @@ export async function sitAtTofu(page: Page, mode: 'transcript' | 'terminal' = 't
   return id;
 }
 
+/**
+ * #108 round 4: sits at Pebble (demo-m5, "Review prompt secrets" on) and sends a prompt with a token from the
+ * conversation's box, all of it protected (Confirm): the bridge sends it with a reference to its file.
+ */
+async function sendProtected(page: Page): Promise<void> {
+  await sitAtTofu(page, 'transcript', 'Pebble', 0);
+  await page.locator('.seat-transcript .tx .tx-input').click();
+  await page.keyboard.insertText('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 now');
+  await page.keyboard.press('Enter');
+  const dlg = page.locator('dialog.desk-dlg--secrets');
+  await expect(dlg).toBeVisible();
+  await dlg.getByRole('button', { name: 'Confirm and send' }).click();
+  await expect(dlg).toBeHidden();
+  // (The fixture answers the prompt after its simulated delay; under a loaded run that takes a while.)
+  await expect(page.locator('.seat-transcript .secret-chip').first()).toBeVisible({ timeout: 30_000 });
+}
+
 export interface Surface {
   name: string;
   fixture: string;
@@ -624,6 +641,43 @@ export const SURFACES: Surface[] = [
       await page.locator('dialog.desk-dlg--secrets .sr-strip [data-key="protect"]').click({ force: true });
     },
     root: 'dialog.desk-dlg--secrets',
+  },
+  {
+    // #108 round 4: a prompt sent from the laptop's box with its secrets protected: in the conversation its references
+    // are masked chips (the pending row, then the prompt as the transcript has it).
+    name: 'secret-chips',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simsecretson=1&simecho=600`,
+    open: async (page) => {
+      await sendProtected(page);
+      await expect(page.locator('.seat-transcript .tx-item.tx-user:not(.tx-pending) .secret-chip').first()).toBeVisible({ timeout: 30_000 });
+    },
+    root: '.seat-transcript .tx',
+  },
+  {
+    // #108 round 4: the seat bar with the seated worker's "protected files" chip (at a phone's width: the count alone).
+    name: 'seat-secrets',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await sendProtected(page);
+      await expect(page.locator('.seat .seat-secrets')).toBeVisible({ timeout: 30_000 });
+    },
+    root: '.seat',
+  },
+  {
+    // #108 round 4: the confirmation the seat bar's chip opens, that removes the worker's protected files now.
+    name: 'revoke-secrets',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await sendProtected(page);
+      const chip = page.locator('.seat .seat-secrets');
+      await expect(chip).toBeVisible({ timeout: 30_000 });
+      await chip.click();
+      await expect(page.locator('dialog.desk-dlg--revoke')).toBeVisible();
+    },
+    root: 'dialog.desk-dlg--revoke',
   },
   {
     name: 'send-home',

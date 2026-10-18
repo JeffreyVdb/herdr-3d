@@ -282,6 +282,8 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
     case 'name_taken':
       return `Another building is already called “${ctx.name ?? ''}”. Pick another name.`;
     case 'not_found':
+      // #108 round 4: the worker is gone, and its protected files went with it.
+      if (t === 'prompt_secrets.revoke') return `${ctx.worker ?? 'That worker'} is no longer here: its protected files went with it.`;
       if (isBoardCommand(t)) return `${ctx.item ?? 'That item'} is not on the board any more. The board shows what is there now.`;
       if (t === 'logo.set' || t === 'logo.clear') return `${ctx.name ?? 'That building'} no longer exists, so its logo was not ${t === 'logo.set' ? 'saved' : 'cleared'}.`;
       return 'That building no longer exists.';

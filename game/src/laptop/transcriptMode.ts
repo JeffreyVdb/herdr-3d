@@ -111,6 +111,8 @@ export interface TranscriptModeHost {
   now?(): number;
   /** #108: the review of a prompt's possible secrets before it goes (none: it goes as today). */
   secrets?: PromptSecretsFlow;
+  /** #108 round 4: the bridge's directory of protected files (`World.prompt_secrets.dir`; null: not known). */
+  secretsDir?(): string | null;
 }
 
 /** Remembered per worker: the ones last left in terminal mode (#98: the conversation is the default), newest last. */
@@ -827,6 +829,8 @@ export class TranscriptMode {
       cwd: () => this.host.cwd?.(s.id) ?? null,
       // #108: the switch, for the box's "Review secrets".
       secrets: this.host.secrets ?? null,
+      // #108 round 4: read as a row is drawn (the snapshot can bring it after the seat).
+      secretsDir: () => this.host.secretsDir?.() ?? null,
       onPromptSubmit: (text, o) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');

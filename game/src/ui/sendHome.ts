@@ -8,6 +8,7 @@ import type { DialogHost } from './hire';
 import { failureText } from './messages';
 import { backdropPolicy } from './dismiss';
 import { onReviewKey, reviewButton, type Go } from './secretsFlow';
+import { dialogChips, secretRefLine, secretsDirOf, secretTextNodes, type SecretChipOptions } from './secretChips';
 
 /**
  * Send home (M4), the gentle fire: X looking at a worker. It asks the bridge
@@ -121,7 +122,7 @@ export class SendHomeDialog {
     'data-key': 'wrap-prompt',
     rows: 4,
     spellcheck: true,
-    'aria-describedby': 'home-wrap-hint',
+    'aria-describedby': 'home-pk-refs home-wrap-hint',
   }) as HTMLTextAreaElement;
   private id = '';
   private name = '';
@@ -137,6 +138,8 @@ export class SendHomeDialog {
   private shownWrap = '';
   /** #110: the pack-up confirm's prompt, and who waits for how it ends. */
   private pk: PackupConfirm | null = null;
+  /** #108 round 4: under the task, the protected files its references point at (the box keeps them as written). */
+  private readonly refLine = secretRefLine('home-pk-refs', () => this.chips());
   /** #110: opened by a pack-up check (its confirm, or the send home for a prompt with nothing left): you stay seated. */
   private fromPackup = false;
   private settle: ((c: PackupChoice) => void) | null = null;
@@ -180,6 +183,7 @@ export class SendHomeDialog {
     });
     this.promptEl.addEventListener('input', () => {
       if (this.statusError) this.setStatus('');
+      if (this.mode === 'packup') this.refLine.update(this.promptEl.value);
       this.renderActions();
     });
     // #108: the review of the last prompt's secrets, now (with the switch on).
@@ -441,9 +445,14 @@ export class SendHomeDialog {
   private packupNodes(pk: PackupConfirm): Node[] {
     this.promptEl.disabled = this.state === 'sending';
     const original = h('p', { class: 'dd-pk-original', id: 'home-pk-original', 'data-key': 'pk-original' });
+    // #108 round 4: the prompt as the models read it (`sent`): its references to protected files are chips.
+    const chips = this.chips();
     for (const part of struckParts(pk.original, pk.removed)) {
-      original.append(part.struck ? h('del', { title: 'Cut: not sent' }, part.text) : document.createTextNode(part.text));
+      const nodes = secretTextNodes(part.text, chips);
+      if (part.struck) original.append(h('del', { title: 'Cut: not sent' }, ...nodes));
+      else original.append(...nodes);
     }
+    this.refLine.update(this.promptEl.value);
     return [
       h('div', { class: 'dd-field dd-pk' }, h('p', { class: 'dd-pk-label', id: 'home-pk-label' }, 'Your prompt'), original, h('p', { class: 'field-hint' }, 'The struck part asks ', h('b', {}, this.name), ' to leave: it is not sent. herdr-world sends it home instead.')),
       h(
@@ -451,9 +460,15 @@ export class SendHomeDialog {
         { class: 'dd-field dd-wrap-prompt' },
         h('label', { for: 'home-wrap-prompt' }, `What ${this.name} gets`),
         this.promptEl,
+        this.refLine.el,
         h('p', { class: 'field-hint', id: 'home-wrap-hint' }, 'Then a request to stop what it started, and the line herdr-world reads the result from. On CLEAN it sends ', h('b', {}, this.name), ' home; if the task did not complete, it stays and needs you.'),
       ),
     ];
+  }
+
+  /** #108 round 4: chips for the bridge's references here; a press copies the path, the status line says how it went. */
+  private chips(): SecretChipOptions {
+    return dialogChips(secretsDirOf(this.host.store), (m, e) => this.setStatus(m, e));
   }
 
   /** #83: the worker's wrap-up on top of the form: what it waits for, or why it needs you. */

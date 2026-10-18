@@ -25,6 +25,7 @@ import {
 import { labelsOf, modelLabel } from '../world/modelLabel';
 import type { HeldReview } from '../world/palette';
 import { backdropPolicy } from './dismiss';
+import { dialogChips, secretPreviewNodes, secretRefLine, secretsDirOf } from './secretChips';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
 import { capacityBlock, chips, gitView, modelField, worktreeControl, type HireHost, type HireSummary } from './hire';
@@ -122,7 +123,9 @@ export class HireReviewDialog {
   private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.statusEl, this.alertEl, this.actions);
   private readonly sections = new Map<ReviewSection, { root: HTMLElement; toggle: HTMLButtonElement; panel: HTMLElement; sum: HTMLElement; tape: HTMLElement }>();
   /** The task: one editor for the whole review, never rebuilt (its caret and scroll stay while the rest redraws). */
-  private readonly taskEl = h('textarea', { id: 'review-task', class: 'rv-task', 'data-key': 'task', rows: 6, spellcheck: 'true', 'aria-describedby': 'review-task-hint', 'aria-label': 'Task, the complete text' });
+  private readonly taskEl = h('textarea', { id: 'review-task', class: 'rv-task', 'data-key': 'task', rows: 6, spellcheck: 'true', 'aria-describedby': 'review-task-refs review-task-hint', 'aria-label': 'Task, the complete text' });
+  /** #108 round 4: under the task, the protected files its references point at (the box keeps them as written). */
+  private readonly refLine = secretRefLine('review-task-refs', () => dialogChips(this.secretsDir(), (m, e) => this.setStatus(m, e)));
   private readonly panelKeys = new Map<string, string>();
 
   private floor = '';
@@ -457,6 +460,11 @@ export class HireReviewDialog {
     return this.prep ? capacityView(this.prep.capacity, this.floorName()) : null;
   }
 
+  /** #108 round 4: the bridge's directory of protected files (null: not known, the references' shape alone). */
+  private secretsDir(): string | null {
+    return secretsDirOf(this.host.store);
+  }
+
   private setStatus(msg: string, error = false): void {
     this.statusText = msg;
     this.statusError = error;
@@ -564,7 +572,7 @@ export class HireReviewDialog {
       this.renderActions();
     });
     panel.append(
-      h('div', { class: 'dd-field' }, h('label', { for: 'review-task' }, 'The complete task'), this.taskEl, h('p', { class: 'field-hint', id: 'review-task-hint' }, 'Sent to the agent as its first task, exactly as written here. ', h('kbd', {}, 'Enter'), ' adds a line.')),
+      h('div', { class: 'dd-field' }, h('label', { for: 'review-task' }, 'The complete task'), this.taskEl, this.refLine.el, h('p', { class: 'field-hint', id: 'review-task-hint' }, 'Sent to the agent as its first task, exactly as written here. ', h('kbd', {}, 'Enter'), ' adds a line.')),
       h('p', { class: 'rv-prov', 'data-hook': 'task-origin' }),
     );
   }
@@ -617,7 +625,10 @@ export class HireReviewDialog {
       const s = this.sections.get(id)!;
       const t = this.sectionText(id);
       const open = this.openSet.has(id);
-      s.sum.textContent = t.sum;
+      // #108 round 4: a dictated task with protected secrets holds their references: chips, never half a path.
+      const dir = this.secretsDir();
+      if (id === 'task' && this.choice.task.includes('[secret in file ')) s.sum.replaceChildren(...secretPreviewNodes(this.choice.task, dir, taskPreview));
+      else s.sum.textContent = t.sum;
       s.sum.title = t.sum;
       s.tape.textContent = this.originText(id, t.origins);
       const bad = t.origins.some((o) => o === 'missing' || o === 'invalid') || (id === 'where' && issue);
@@ -627,6 +638,8 @@ export class HireReviewDialog {
       s.root.dataset.open = String(open);
       s.root.dataset.attention = String(need.has(id));
     }
+    // The task box keeps its references as written; the line under it names their files (cheap: redrawn on a change only).
+    this.refLine.update(this.choice.task);
     const prov = this.sections.get('task')!.panel.querySelector<HTMLElement>('[data-hook="task-origin"]');
     if (prov) prov.replaceChildren(this.originTape(this.choice.origin.task), ' ', this.choice.origin.task === 'dictated' ? 'Cut from what you said, word for word.' : this.choice.origin.task === 'handoff' ? 'Reads the handoff file, then goes on with the work.' : '');
   }

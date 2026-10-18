@@ -1,5 +1,8 @@
 import type { CodexNotice } from '../world/codexServer';
 import './seat.css';
+import './secretChips.css';
+import { secretFilesText } from '../world/revokeSecrets';
+import { icon, ICON } from './dom';
 import type { SeatView } from '../laptop';
 import { LOOK_KEY } from '../laptop/keys';
 import type { FullscreenChip } from '../laptop/fullscreen';
@@ -55,6 +58,11 @@ export class SeatBar implements SeatView {
   private readonly fsBtn = el('button', 'seat-fs');
   private readonly fsText = el('span', 'seat-fs-text');
   private fsAction: FullscreenChip['action'] = null;
+  /** #108 round 4: the seated worker's protected files (hidden while it holds none): a press asks to remove them. */
+  private readonly secretsBtn = el('button', 'secret-chip seat-secrets');
+  private readonly secretsCount = el('span', 'seat-secrets-n');
+  /** The count's words: a phone's bar keeps the count alone (its name says the rest). */
+  private readonly secretsText = el('span', 'secret-chip-word seat-secrets-word');
   private readonly zoomBtns: { out: HTMLButtonElement; level: HTMLButtonElement; in: HTMLButtonElement } | null = null;
   private name = '';
   private mac = false;
@@ -62,7 +70,7 @@ export class SeatBar implements SeatView {
 
   constructor(
     private readonly hud: HTMLElement,
-    handlers: { text(t: string): void; paste(t: string, files?: File[]): void; stand(): void; toggle(): void; fullscreen?(action: 'zoom' | 'unzoom'): void },
+    handlers: { text(t: string): void; paste(t: string, files?: File[]): void; stand(): void; toggle(): void; fullscreen?(action: 'zoom' | 'unzoom'): void; revoke?(from: HTMLElement): void },
     private readonly prefs: ViewPrefs | null = null,
   ) {
     this.el = el('div', 'seat');
@@ -73,6 +81,20 @@ export class SeatBar implements SeatView {
     this.note.setAttribute('aria-live', 'polite');
     const line = el('div', 'seat-line');
     line.append(this.tape, this.note);
+    if (handlers.revoke) {
+      const revoke = handlers.revoke;
+      this.secretsBtn.type = 'button';
+      this.secretsBtn.hidden = true;
+      this.secretsBtn.setAttribute('aria-haspopup', 'dialog');
+      const ic = el('span', 'secret-chip-ic');
+      ic.setAttribute('aria-hidden', 'true');
+      ic.append(icon(ICON.lock));
+      const tape = el('span', 'secret-chip-tape');
+      tape.append(ic, this.secretsCount, this.secretsText);
+      this.secretsBtn.append(tape);
+      this.secretsBtn.addEventListener('click', () => revoke(this.secretsBtn));
+      line.append(this.secretsBtn);
+    }
     this.standBtn.type = 'button';
     this.standBtn.append(el('kbd', '', 'Esc'), document.createTextNode('Stand up'));
     this.standBtn.addEventListener('click', () => handlers.stand());
@@ -212,6 +234,21 @@ export class SeatBar implements SeatView {
     z.in.disabled = level >= ZOOM.max;
   }
 
+  /**
+   * #108 round 4: how many protected files the seated worker holds (0: hide the chip; also on a bridge without
+   * `prompt_secrets.revoke`). A press opens the confirmation that removes them.
+   */
+  secretFiles(n: number): void {
+    const on = n > 0 && !!this.secretsBtn.parentElement;
+    this.secretsBtn.hidden = !on;
+    if (!on) return;
+    const what = secretFilesText(n);
+    this.secretsCount.textContent = String(n);
+    this.secretsText.textContent = what.slice(String(n).length);
+    this.secretsBtn.setAttribute('aria-label', `${what}: remove them now…`);
+    this.secretsBtn.title = `${this.name || 'This worker'} holds ${what} on the bridge host. Remove them now…`;
+  }
+
   /** #74: the fullscreen chip's state (null: hide it, there is nothing to say about this pane). */
   setFullscreen(chip: FullscreenChip | null): void {
     this.fsAction = chip?.action ?? null;
@@ -338,9 +375,10 @@ export class SeatBar implements SeatView {
   }
 
   /** What the bar says (test hook). */
-  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode; ask: string | null; terminalZoom: string | null; fullscreen: { label: string; pressed: boolean; unavailable: boolean } | null } {
+  summary(): { shown: boolean; tape: string; note: string; state: string; mode: SeatMode; ask: string | null; terminalZoom: string | null; fullscreen: { label: string; pressed: boolean; unavailable: boolean } | null; secretFiles: string | null } {
     return {
       fullscreen: this.fsBtn.hidden ? null : { label: this.fsText.textContent ?? '', pressed: this.fsBtn.getAttribute('aria-pressed') === 'true', unavailable: this.fsBtn.hasAttribute('data-unavailable') },
+      secretFiles: this.secretsBtn.hidden ? null : `${this.secretsCount.textContent ?? ''}${this.secretsText.textContent ?? ''}`,
       terminalZoom: this.zoomBtns?.level.textContent ?? null,
       shown: !this.el.hidden,
       tape: this.tape.textContent ?? '',
