@@ -9,7 +9,7 @@
  * pair (docs/protocol.md "Prompt secrets": the bridge checks the same and trusts nothing of this).
  */
 
-import type { PromptSecretsScan, PromptSecretsState, SecretCandidate, SecretDecision, SecretsReview } from '../net/protocol';
+import type { CommandArgs, PromptSecretsScan, PromptSecretsState, SecretCandidate, SecretDecision, SecretsReview } from '../net/protocol';
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
@@ -404,4 +404,41 @@ const KINDS: Record<string, string> = {
 export function kindsText(kinds: readonly string[]): string {
   if (!kinds.length) return 'marked by you';
   return kinds.map((k) => (k.startsWith('gitleaks:') ? `Gitleaks’ ${k.slice(9)} rule` : (KINDS[k] ?? k))).join('; ');
+}
+
+// ---- the texts of a command with several -------------------------------------------------------------------------
+
+/** One text of a command with several (`run.start`, the answers): its path in the args, its text, and its name. */
+export interface FieldText {
+  /** `"text"`, `"answers[1].value"`, … (docs/protocol.md "One text, or a review per text"). */
+  path: string;
+  text: string;
+  /** In the review's title: which text it is ("the ticket", "your answer to question 2"). */
+  label: string;
+}
+
+const nonEmpty = (fs: FieldText[]) => fs.filter((f) => f.text !== '');
+
+/** #108 round 4: `worker.answer_ask`'s reviewed texts: the prompt sent after a dismissal, each Other answer. */
+export function askFields(a: CommandArgs['worker.answer_ask']): FieldText[] {
+  return nonEmpty([
+    ...(a.answers ?? []).map((x, i) => ({ path: `answers[${i}].other`, text: x.other ?? '', label: `your answer to question ${x.question + 1}` })),
+    { path: 'prompt', text: a.prompt ?? '', label: 'the prompt after it' },
+  ]);
+}
+
+/** #108 round 4: `worker.answer_followup`'s: each answer's value and note, then the round's note. */
+export function followupFields(a: CommandArgs['worker.answer_followup']): FieldText[] {
+  return nonEmpty([
+    ...a.answers.flatMap((x, i) => [
+      { path: `answers[${i}].value`, text: x.value, label: `your answer to question ${i + 1}` },
+      { path: `answers[${i}].note`, text: x.note ?? '', label: `your note on question ${i + 1}` },
+    ]),
+    { path: 'note', text: a.note ?? '', label: 'your note' },
+  ]);
+}
+
+/** #108 round 4: `worker.answer_async`'s: each answer. */
+export function asyncFields(a: CommandArgs['worker.answer_async']): FieldText[] {
+  return nonEmpty(a.answers.map((x, i) => ({ path: `answers[${i}].answer`, text: x.answer, label: `your answer to question ${x.index + 1}` })));
 }

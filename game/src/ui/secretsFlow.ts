@@ -23,7 +23,9 @@
 
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName, SecretsReview, SecretsReviews } from '../net/protocol';
-import { hideRanges, promptSecretsFailureText, scanOf, SecretReview, type PromptSecretsBook } from '../world/promptSecrets';
+import { hideRanges, promptSecretsFailureText, scanOf, SecretReview, type FieldText, type PromptSecretsBook } from '../world/promptSecrets';
+
+export type { FieldText };
 import { keyName, pressesBinding, type KeyEventLike } from '../input/shortcuts';
 import { h } from './dom';
 import type { SecretsReviewOutcome, SecretsReviewRequest } from './secretsReview';
@@ -78,14 +80,6 @@ export interface Go {
   retry?: boolean;
 }
 
-/** One text of a command with several (`run.start`, the answers): its path in the args, its text, and its name. */
-export interface FieldText {
-  /** `"text"`, `"answers[1].value"`, … (docs/protocol.md "One text, or a review per text"). */
-  path: string;
-  text: string;
-  /** In the review's title: which text it is ("the ticket", "your answer to question 2"). */
-  label: string;
-}
 
 export interface FieldsRequest extends Omit<SecretsRequest, 'text' | 'field'> {
   /** The texts the command sends (an empty one is left out: there is nothing to review). */

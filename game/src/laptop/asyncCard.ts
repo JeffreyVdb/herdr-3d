@@ -1,15 +1,18 @@
 import type { CodexQuestion, CommandArgs, WorkerCodex } from '../net/protocol';
 import { h } from '../ui/dom';
 import { answerAsyncArgs, answerProblem, asyncBatches, cutOptions, phaseAnnouncement, phaseText, questionWord, replyPhase, wantsAnswer, type AsyncCardBatch, type ReplyPhase } from '../world/codexQuestions';
-import { focusQuestion, isSendKey, mark, moveIn, openQuestion, reveal, SEND_KEY } from './askStack';
+import { focusQuestion, isSendKey, mark, moveIn, openQuestion, reveal, reviewLink, SEND_KEY, type AnswerOptions, type CardSecrets } from './askStack';
+import { reviewKey } from '../ui/secretsFlow';
 import type { AsyncDrafts } from './asyncDrafts';
 import { zoomKey } from './keys';
 
 export type AsyncResult = { ok: true } | { ok: false; code: string; message: string };
 
 export interface AsyncCardHost {
-  /** Sends `worker.answer_async` (the args are whole: the card knows the worker). */
-  answer(args: CommandArgs['worker.answer_async']): Promise<AsyncResult>;
+  /** Sends `worker.answer_async` (the args are whole: the card knows the worker; #108 `o.review`: reviewed on purpose first). */
+  answer(args: CommandArgs['worker.answer_async'], o?: AnswerOptions): Promise<AsyncResult>;
+  /** #108 round 4: the switch, for "Review secrets" (absent: no such control). */
+  secrets?: CardSecrets | null;
   /** Sends `worker.dismiss_async`. */
   dismiss(args: CommandArgs['worker.dismiss_async']): Promise<AsyncResult>;
   /** The terminal (where a question the card cannot answer is answered). */
@@ -90,6 +93,10 @@ export class AsyncCard {
   constructor(private readonly host: AsyncCardHost) {
     this.el = h('section', { class: 'tx-aq', hidden: true, role: 'region', 'aria-label': 'Codex’s questions' });
     this.live = h('div', { class: 'tx-aq-live', role: 'status', 'aria-live': 'polite' });
+    // #108: the switch shows or hides "Review secrets".
+    host.secrets?.onChange(() => {
+      if (this.shown) this.render();
+    });
   }
 
   private get drafts(): AsyncDrafts {
@@ -252,8 +259,8 @@ export class AsyncCard {
 
   // --- actions -------------------------------------------------------------------------------------------------
 
-  /** Send (its click, Ctrl/⌘+Enter): what is answered in the open batch goes, once. */
-  private trySend(): void {
+  /** Send (its click, Ctrl/⌘+Enter): what is answered in the open batch goes, once. `review` (#108): reviewed on purpose. */
+  private trySend(review = false): void {
     const b = this.open();
     const w = this.worker;
     if (!b || !w || b.readOnly || this.busy.has(b.key)) return;
@@ -281,7 +288,7 @@ export class AsyncCard {
       this.render();
       return;
     }
-    void this.run(b, new Set(answers.map((a) => a.index)), () => this.host.answer(answerAsyncArgs(w, b, answers)));
+    void this.run(b, new Set(answers.map((a) => a.index)), () => this.host.answer(answerAsyncArgs(w, b, answers), review ? { review: true } : undefined));
   }
 
   /** Hide: the open batch's questions that can be put away, in the bridge only. */
@@ -428,6 +435,11 @@ export class AsyncCard {
       this.trySend();
       return true;
     }
+    // #108: the answers' review on purpose, then their send.
+    if (reviewKey(e) && this.host.secrets?.on) {
+      if (!e.repeat) this.trySend(true);
+      return true;
+    }
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
     if (inCard && e.key === 'Escape' && !e.shiftKey) {
       this.host.focusTimeline();
@@ -466,6 +478,9 @@ export class AsyncCard {
     if (isSendKey(e)) {
       e.preventDefault();
       this.trySend();
+    } else if (reviewKey(e) && this.host.secrets?.on) {
+      e.preventDefault();
+      if (!e.repeat) this.trySend(true);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       this.host.focusTimeline();
@@ -742,6 +757,7 @@ export class AsyncCard {
       const hideable = qs.some((x) => (x.state === 'pending' || x.state === 'sent') && !this.inFlight(b, x));
       actions.push(
         h('button', { class: 'tx-link tx-ask-dismiss tx-aq-hide', 'data-key': 'hide', disabled: sending || !hideable, title: 'Hide these questions on this card. Codex still has them: nothing is sent to it.', onclick: () => this.hide() }, 'Hide'),
+        ...(termOnly ? [] : [reviewLink(this.host.secrets, sending || !answerableN, () => this.trySend(true))].filter((x): x is HTMLButtonElement => !!x)),
         termOnly
           ? h('button', { class: 'tx-ask-send tx-aq-act', 'data-key': 'term', onclick: () => this.host.toTerminal() }, 'Answer in the terminal')
           : h(

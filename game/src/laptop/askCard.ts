@@ -15,7 +15,8 @@ import {
   type AskPick,
 } from '../world/ask';
 import { h } from '../ui/dom';
-import { focusQuestion, foldedRow, isSendKey, mark, moveIn, openQuestion, reveal, SEND_KEY, type StackLine } from './askStack';
+import { focusQuestion, foldedRow, isSendKey, mark, moveIn, openQuestion, reveal, reviewLink, SEND_KEY, type AnswerOptions, type CardSecrets, type StackLine } from './askStack';
+import { reviewKey } from '../ui/secretsFlow';
 import { zoomKey } from './keys';
 
 /** An option's key cap: its digit, or a tick when a multi-select one is picked. */
@@ -36,8 +37,10 @@ const keyCap = (n: number, ticked: boolean): Node => mark(n, ticked);
 export type AskResult = { ok: true; resolved: boolean } | { ok: false; code: string; message: string };
 
 export interface AskCardHost {
-  /** Sends `worker.answer_ask`. */
-  answer(args: CommandArgs['worker.answer_ask']): Promise<AskResult>;
+  /** Sends `worker.answer_ask` (#108 `o.review`: its texts reviewed on purpose first). */
+  answer(args: CommandArgs['worker.answer_ask'], o?: AnswerOptions): Promise<AskResult>;
+  /** #108 round 4: the switch, for "Review secrets" (absent: no such control). */
+  secrets?: CardSecrets | null;
   toTerminal(): void;
   /** The keyboard back to the timeline (Esc in the card). */
   focusTimeline(): void;
@@ -143,6 +146,10 @@ export class AskCard {
 
   constructor(private readonly host: AskCardHost) {
     this.el = h('section', { class: 'tx-ask', hidden: true, 'aria-label': 'Question' });
+    // #108: the switch shows or hides "Review secrets".
+    host.secrets?.onChange(() => {
+      if (this.shownAsk) this.render();
+    });
   }
 
   /**
@@ -218,6 +225,11 @@ export class AskCard {
     if (!a) return false;
     if (isSendKey(e)) {
       if (!this.sent) this.trySend();
+      return true;
+    }
+    // #108: the answer's review on purpose, then its send.
+    if (reviewKey(e) && this.host.secrets?.on) {
+      if (!this.sent && !e.repeat) this.trySend(true);
       return true;
     }
     if (e.ctrlKey || e.metaKey || e.altKey) return false;
@@ -321,7 +333,8 @@ export class AskCard {
   }
 
   /** Send (its click, Ctrl/⌘+Enter): sent once every question has an answer, else to the first one without. */
-  private trySend(): void {
+  /** `review` (#108): "Review secrets": the answer's texts reviewed on purpose before it goes. */
+  private trySend(review = false): void {
     const a = this.shownAsk;
     if (!a || this.sent) return;
     const gap = firstUnanswered(a, this.picks);
@@ -334,15 +347,15 @@ export class AskCard {
       this.render();
       return;
     }
-    void this.submit();
+    void this.submit(review);
   }
 
-  private async submit(): Promise<void> {
+  private async submit(review = false): Promise<void> {
     const a = this.shownAsk;
     if (!a || this.sent) return;
     const args = answerAskArgs('', a, this.picks);
     if (!args) return;
-    const r = await this.send(a, args);
+    const r = await this.send(a, args, review);
     if (!r) return;
     if (r.ok) this.note = { text: `Sent. ${askAgent(a)} has not recorded it yet: look at the terminal if this stays.`, error: false };
     else if (r.code === 'stale') this.note = { text: 'That question was answered or changed meanwhile.', error: true };
@@ -355,13 +368,13 @@ export class AskCard {
    * changed meanwhile (its upserts are applied as they come), and then the card shows what it has now. The result, for
    * the caller to say, when a is still the one shown and the bridge did not resolve it; null otherwise.
    */
-  private async send(a: Ask, args: CommandArgs['worker.answer_ask']): Promise<AskResult | null> {
+  private async send(a: Ask, args: CommandArgs['worker.answer_ask'], review = false): Promise<AskResult | null> {
     this.sent = a;
     this.note = null;
     this.render();
     let r: AskResult;
     try {
-      r = await this.host.answer(args);
+      r = await this.host.answer(args, review ? { review: true } : undefined);
     } catch (e) {
       r = { ok: false, code: 'internal', message: e instanceof Error ? e.message : String(e) };
     }
@@ -394,6 +407,9 @@ export class AskCard {
     if (isSendKey(e)) {
       e.preventDefault();
       this.trySend();
+    } else if (reviewKey(e) && this.host.secrets?.on) {
+      e.preventDefault();
+      if (!e.repeat) this.trySend(true);
     } else if (e.key === 'Escape') {
       e.preventDefault();
       if (!input.value.trim()) {
@@ -488,6 +504,7 @@ export class AskCard {
       { class: 'tx-ask-foot' },
       h('span', { class: 'tx-ask-hint' }, h('span', { class: 'tx-ask-hint-text' }, this.hint()), h('span', { class: 'tx-ask-keys' }, keys)),
       h('button', { class: 'tx-link tx-ask-dismiss', 'data-key': 'dismiss', disabled: busy, title: 'Esc on its dialog: the agent is told you declined', onclick: () => void this.dismiss() }, 'Dismiss'),
+      reviewLink(this.host.secrets, busy, () => this.trySend(true)),
       send,
     );
     const parts: HTMLElement[] = [top, body, foot];

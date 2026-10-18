@@ -407,4 +407,31 @@ describe('FollowupCard, a grill round (#60)', () => {
     expect(c.el.querySelector('.tx-fu-progress')?.textContent).toBe('0 of 10 answered');
     expect(c.el.querySelector('[data-key="message"]')).not.toBeNull();
   });
+
+  it('#108 round 4: with “Review prompt secrets” on, “Review secrets” (and Ctrl+Shift+X) sends with a review asked for; off, no such control', async () => {
+    const t = host();
+    const sent: Array<{ args: CommandArgs['worker.answer_followup']; o: unknown }> = [];
+    let on = true;
+    const fns = new Set<() => void>();
+    const secrets = { get on() { return on; }, onChange: (fn: () => void) => (fns.add(fn), () => void fns.delete(fn)) };
+    const c = (card = new FollowupCard({ ...t.h, secrets, answer: (args, o) => (sent.push({ args, o }), Promise.resolve({ ok: true })) }));
+    document.body.append(c.el);
+    c.set(followup());
+    press(c, '1');
+    const link = c.el.querySelector<HTMLButtonElement>('[data-key="review"]')!;
+    expect(link.textContent).toBe('Review secrets');
+    link.click();
+    await flush();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.o).toEqual({ review: true });
+    c.set(followup('t2'));
+    press(c, '1');
+    expect(press(c, 'X', { code: 'KeyX', ctrlKey: true, shiftKey: true })).toBe(true);
+    await flush();
+    expect(sent.at(-1)?.o).toEqual({ review: true });
+    on = false;
+    for (const fn of fns) fn();
+    c.set(followup('t3'));
+    expect(c.el.querySelector('[data-key="review"]')).toBeNull();
+  });
 });

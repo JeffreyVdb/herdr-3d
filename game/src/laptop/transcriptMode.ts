@@ -16,7 +16,8 @@ import { FollowupDrafts } from './followupDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 import { handoffCommand, newOp } from '../world/handoff';
-import type { Go, PromptSecretsFlow } from '../ui/secretsFlow';
+import type { FieldText, Go, GoFields, PromptSecretsFlow } from '../ui/secretsFlow';
+import { askFields, asyncFields, followupFields } from '../world/promptSecrets';
 import { bridgeKey } from '../net/bridgeScope';
 
 export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost, TranscriptView };
@@ -770,6 +771,23 @@ export class TranscriptMode {
   }
 
   /**
+   * #108 round 4: an answer's texts reviewed before it goes (with the switch on, or `manual`: the card's "Review
+   * secrets"), each alone, and sent with a review per text (`send`); a stale review is reviewed again. Kept (the review
+   * cancelled, the switch changed): nothing went, and the card keeps the answer and says why (`secrets_kept`).
+   */
+  private async answered(s: Sitting, what: string, fields: FieldText[], manual: boolean, send: (g: GoFields | null) => Promise<CommandResult>): Promise<CommandResult> {
+    const flow = this.host.secrets;
+    const kept = (why: string, message: string): CommandResult => ({ ok: false, code: 'secrets_kept', message: why === 'cancel' ? 'Not sent: the review was cancelled. Your answer is still here.' : message });
+    if (manual && !fields.length) return kept('failed', 'Nothing typed to review: pick or write an answer first.');
+    if (!flow || !(flow.on || manual) || !fields.length) return send(null);
+    const req = { key: `${s.id}:${what}`, target: s.name, manual, fields };
+    const go = await flow.reviewFields(req);
+    if (go.kind === 'kept') return kept(go.why, go.message);
+    const d = await flow.deliverFields(req, go, send);
+    return d.kind === 'kept' ? kept(d.why, d.message) : d.result;
+  }
+
+  /**
    * #224: the op of a composer prompt to worker id that is "/handoff [instruction]": the unanswered one's for the same
    * text, else a new one. Any other prompt has none, and the unanswered one is dropped (the person moved on).
    */
@@ -852,9 +870,9 @@ export class TranscriptMode {
           this.host.status('error', failureText('worker.answer', r.code, r.message, { worker: s.name }));
         });
       },
-      onAnswerAsk: async (args) => {
+      onAnswerAsk: async (args, o) => {
         if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
-        const r = await this.host.send('worker.answer_ask', { ...args, id: s.id });
+        const r = await this.answered(s, `ask:${args.tool_use_id}`, askFields(args), o?.review === true, (g) => this.host.send('worker.answer_ask', { ...args, id: s.id, ...(g?.secrets ? { secrets: g.secrets } : {}) }));
         if (r.ok) {
           const ack = (r.data ?? {}) as Partial<AnswerAskAck>;
           if (live() && ack.resolved) this.host.status('ok', args.cancel ? `Dismissed ${s.name}’s question` : `Answered ${s.name}`);
@@ -864,9 +882,9 @@ export class TranscriptMode {
         if (live() && r.code !== 'stale') this.host.status('error', message);
         return { ok: false, code: r.code, message };
       },
-      onAnswerFollowup: async (args) => {
+      onAnswerFollowup: async (args, o) => {
         if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
-        const r = await this.host.send('worker.answer_followup', { ...args, id: s.id });
+        const r = await this.answered(s, `followup:${args.turn_id}`, followupFields(args), o?.review === true, (g) => this.host.send('worker.answer_followup', { ...args, id: s.id, ...(g?.secrets ? { secrets: g.secrets } : {}) }));
         if (r.ok) {
           if (live()) this.host.status('ok', `Answered ${s.name}`);
           return { ok: true };
@@ -904,9 +922,9 @@ export class TranscriptMode {
       },
       // #157: a Codex worker's async questions. Refused, the card keeps the answer and says why (the seat bar too, but
       // not for `stale`: the question had moved on already, which the card says calmly).
-      onAnswerAsync: async (args) => {
+      onAnswerAsync: async (args, o) => {
         if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
-        const r = await this.host.send('worker.answer_async', { ...args, id: s.id });
+        const r = await this.answered(s, `async:${args.thread}:${args.batch}`, asyncFields(args), o?.review === true, (g) => this.host.send('worker.answer_async', { ...args, id: s.id, ...(g?.secrets ? { secrets: g.secrets } : {}) }));
         if (r.ok) {
           if (live()) this.host.status('ok', `Sent your answer to ${s.name}`);
           return { ok: true };

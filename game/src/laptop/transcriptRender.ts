@@ -5,7 +5,7 @@ import type { Ask, CommandArgs, Followup, HandoffCandidate, TranscriptChanges, T
 import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
-import { isSendKey, reveal } from './askStack';
+import { isSendKey, reveal, type AnswerOptions } from './askStack';
 import { diffColours } from './diffHighlight';
 import { FollowupCard, type FollowupMessage, type FollowupResult } from './followupCard';
 import type { FollowupDraft } from './followupDrafts';
@@ -63,9 +63,9 @@ export interface TranscriptRenderHost {
   label?: string;
   onAnswer(hash: string, choice: number | null, cancel?: boolean): void;
   /** #57: answers (or dismisses) the worker's ask; `id` is filled in by the host. */
-  onAnswerAsk(args: CommandArgs['worker.answer_ask']): Promise<AskResult>;
+  onAnswerAsk(args: CommandArgs['worker.answer_ask'], o?: AnswerOptions): Promise<AskResult>;
   /** #90: answers the worker's follow-up questions; `id` is filled in by the host (none: the card cannot send). */
-  onAnswerFollowup?(args: CommandArgs['worker.answer_followup']): Promise<FollowupResult>;
+  onAnswerFollowup?(args: CommandArgs['worker.answer_followup'], o?: AnswerOptions): Promise<FollowupResult>;
   /** #90: dismisses them. */
   onDismissFollowup?(turnId: string): Promise<FollowupResult>;
   /** #60: reads a fallback's questions again (none: no Retry). */
@@ -79,7 +79,7 @@ export interface TranscriptRenderHost {
   /** #64 schedules: "Schedule follow-up…" beside it, on the same reply (none: no button). */
   onScheduleFollowup?(c: HandoffCandidate): void;
   /** #157: answers a Codex worker's async questions (none: the card cannot send). */
-  onAnswerAsync?(args: CommandArgs['worker.answer_async']): Promise<AsyncResult>;
+  onAnswerAsync?(args: CommandArgs['worker.answer_async'], o?: AnswerOptions): Promise<AsyncResult>;
   /** #157: hides them in the bridge. */
   onDismissAsync?(args: CommandArgs['worker.dismiss_async']): Promise<AsyncResult>;
   /** #157: what you wrote for them, kept by the host across views (none: this view's own, which goes with it). */
@@ -1107,7 +1107,8 @@ class Transcript implements TranscriptView {
     showReview();
     this.offSecrets = secrets ? secrets.onChange(showReview) : () => {};
     this.ask = new AskCard({
-      answer: (args) => host.onAnswerAsk(args),
+      answer: (args, o) => host.onAnswerAsk(args, o),
+      secrets: host.secrets ?? null,
       toTerminal: () => host.onSwitchToTerminal(),
       focusTimeline: () => this.focus(),
       resized: () => {
@@ -1121,7 +1122,8 @@ class Transcript implements TranscriptView {
     });
     const noFollowup = (): Promise<FollowupResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
     this.followup = new FollowupCard({
-      answer: (args) => (host.onAnswerFollowup ? host.onAnswerFollowup(args) : noFollowup()),
+      answer: (args, o) => (host.onAnswerFollowup ? host.onAnswerFollowup(args, o) : noFollowup()),
+      secrets: host.secrets ?? null,
       dismiss: (turnId) => (host.onDismissFollowup ? host.onDismissFollowup(turnId) : noFollowup()),
       ...(host.onRetryFollowup ? { retry: (turnId: string) => host.onRetryFollowup!(turnId) } : {}),
       ...(host.loadFollowupMessage ? { message: (turnId: string) => host.loadFollowupMessage!(turnId) } : {}),
@@ -1136,7 +1138,8 @@ class Transcript implements TranscriptView {
     });
     const noAsync = (): Promise<AsyncResult> => Promise.resolve({ ok: false, code: 'unsupported', message: 'Not available here.' });
     this.asyncq = new AsyncCard({
-      answer: (args) => (host.onAnswerAsync ? host.onAnswerAsync(args) : noAsync()),
+      answer: (args, o) => (host.onAnswerAsync ? host.onAnswerAsync(args, o) : noAsync()),
+      secrets: host.secrets ?? null,
       dismiss: (args) => (host.onDismissAsync ? host.onDismissAsync(args) : noAsync()),
       toTerminal: () => host.onSwitchToTerminal(),
       focusTimeline: () => this.focus(),
