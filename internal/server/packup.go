@@ -160,24 +160,41 @@ func (h *Hub) startPackup(ctx context.Context, c *Client, cmd proto.Command) err
 			return nil
 		}
 		id := a.ID
+		gate, err := h.previewGate(a.ID, a.Text, a.Secrets, "")
+		if err != nil {
+			return err
+		}
 		work = func(ctx context.Context) (any, error) {
-			res, err := svc.Detect(ctx, a.Text)
+			// #108: the model reads the text only as the review made it.
+			pv, err := gate(ctx)
+			if err != nil {
+				return nil, err
+			}
+			text := pv.text
+			if !herdr.ValidMessage(text) {
+				pv.undo(ctx)
+				return nil, bad("text with its file references must be at most %d bytes, got %d", herdr.MaxMessage, len(text))
+			}
+			out := pv.result()
+			res, err := svc.Detect(ctx, text)
 			if err != nil {
 				// Fail open: the prompt goes as written. Only the kind is
 				// logged: a provider's words in err can echo the prompt.
 				if !errors.Is(err, ai.ErrNotReady) && ctx.Err() == nil {
 					h.log.Warn("pack-up detection failed", "worker", id, "kind", ai.KindOf(err))
 				}
-				return proto.PackupDetectResult{}, nil
+				pv.answered()
+				return out, nil
 			}
 			if res.ExtractCode != "" {
 				h.log.Info("pack-up extraction was no match", "worker", id, "score", res.Score, "why", res.ExtractCode)
 			}
 			h.log.Info("pack-up looked at", "worker", id, "score", res.Score, "matched", res.Matched, "task_runes", utf8.RuneCountInString(res.Task))
-			out := proto.PackupDetectResult{Matched: res.Matched, Score: res.Score}
+			out.Matched, out.Score = res.Matched, res.Score
 			if res.Matched {
 				out.Task, out.Removed = res.Task, res.Removed
 			}
+			pv.answered(out.Task)
 			return out, nil
 		}
 	}

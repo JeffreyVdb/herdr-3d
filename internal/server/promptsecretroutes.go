@@ -396,3 +396,94 @@ func slicesOf(rs proto.SecretsReviews) []*proto.SecretsReview {
 	}
 	return out
 }
+
+// preview is what the gate made of a preview's text (packup.detect,
+// hire.interpret) for the language model and the command that follows: the
+// text as typed and as the model reads it (references in place), what the
+// gate wrote, and the hand-over (token: "" when nothing was reviewed;
+// fresh: made for this preview).
+type preview struct {
+	h            *Hub
+	typed, text  string
+	ps           []protected
+	token        string
+	fresh, files bool
+}
+
+// previewGate readies a preview's text for the gate (#108 round 2; hub
+// goroutine): the gate it returns runs off the hub goroutine. With the
+// switch off and no review, it passes the text as typed. A review (or
+// token, a previous preview's hand-over, which the text then adds to)
+// makes a hand-over for the command that follows: forWorker's
+// (packup.detect's worker; "" a hire's).
+func (h *Hub) previewGate(forWorker, text string, review *proto.SecretsReview, token string) (func(context.Context) (*preview, error), error) {
+	if !h.gated(review != nil || token != "") {
+		return func(context.Context) (*preview, error) { return &preview{h: h, typed: text, text: text}, nil }, nil
+	}
+	if err := h.stillOn(); err != nil {
+		return nil, err
+	}
+	if err := scannable(text, "text"); err != nil {
+		return nil, err
+	}
+	rev := h.ps.rev
+	var tok secretPending
+	if token != "" {
+		var err error
+		if tok, err = h.pendingFor(token, rev, forWorker, forWorker == ""); err != nil {
+			return nil, err
+		}
+	}
+	return func(ctx context.Context) (*preview, error) {
+		pv := &preview{h: h, typed: text, token: token, files: tok.files}
+		owner, expires := tok.owner, tok.expires
+		if pv.token == "" && review != nil {
+			var p secretPending
+			pv.token, p = h.newPending(rev, forWorker)
+			pv.fresh, owner, expires = true, p.owner, p.expires
+		}
+		ps, err := h.protectFields(ctx, rev, owner, expires, []secretField{{text: text, review: review}})
+		if err != nil {
+			pv.dropToken()
+			return nil, err
+		}
+		pv.ps, pv.text = ps, ps[0].text
+		pv.files = pv.files || protectedCount(ps) > 0
+		return pv, nil
+	}, nil
+}
+
+// dropToken forgets a hand-over this preview made, before it was answered.
+func (pv *preview) dropToken() {
+	if !pv.fresh {
+		return
+	}
+	pv.h.ps.mu.Lock()
+	delete(pv.h.ps.pending, pv.token)
+	pv.h.ps.mu.Unlock()
+}
+
+// undo removes what the gate made: the preview failed before its answer.
+func (pv *preview) undo(ctx context.Context) {
+	pv.h.unprotectAll(ctx, pv.ps)
+	pv.dropToken()
+}
+
+// answered records the preview's answer on its hand-over: the text the
+// model read and the texts the answer gives (a task), as reviewed.
+func (pv *preview) answered(texts ...string) {
+	if pv.token != "" {
+		pv.h.pendingAdd(pv.token, pv.files, append([]string{pv.text}, texts...)...)
+	}
+}
+
+// result is packup.detect's ack with what the gate made: the text the
+// model read when it is not as typed, how many ranges went to files, the
+// hand-over.
+func (pv *preview) result() proto.PackupDetectResult {
+	out := proto.PackupDetectResult{Protected: protectedCount(pv.ps), SecretsPending: pv.token}
+	if pv.text != pv.typed {
+		out.Sent = pv.text
+	}
+	return out
+}

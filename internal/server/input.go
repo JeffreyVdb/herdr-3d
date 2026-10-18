@@ -359,7 +359,7 @@ var errHandoffInGame = fmt.Errorf("%w: ask for a handoff in the game", errInvali
 // #108: with prompt secrets reviewed (or a review given), the prompt goes
 // through the gate first (queueReviewedPrompt).
 func (h *Hub) queuePrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(promptHandoff) error, end inputEnd) error {
-	if h.ps.enabled || a.Secrets != nil {
+	if h.gated(a.Secrets != nil || a.SecretsPending != "") {
 		return h.queueReviewedPrompt(ctx, a, handoff, end)
 	}
 	work, err := h.planPrompt(ctx, a, promptReview{typed: a.Text}, handoff)

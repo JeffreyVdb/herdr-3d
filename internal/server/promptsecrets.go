@@ -493,10 +493,19 @@ func (h *Hub) settleHandoff(p protected, owner secretfiles.Owner) func(err error
 // (hub goroutine): the cheap refusals now, then on the worker's lane, in
 // order with its other input, the gate, then (back on the hub goroutine)
 // the prompt's own checks and side effects on the protected text, then the
-// send.
+// send. Round 2: a text packup.detect answered as reviewed for this worker
+// (secrets_pending) needs no review again, and that hand-over's files
+// become the worker's once the prompt is sent.
 func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(promptHandoff) error, end inputEnd) error {
 	if !h.ps.enabled { // a tab from before the switch went off
 		return fmt.Errorf("%w: prompt secrets are no longer reviewed: send the prompt again", errSecretsReviewStale)
+	}
+	var tok secretPending
+	if a.SecretsPending != "" {
+		var err error
+		if tok, err = h.pendingFor(a.SecretsPending, h.ps.rev, a.ID, false); err != nil {
+			return err
+		}
 	}
 	if err := scannable(a.Text, "text"); err != nil {
 		return err
@@ -516,13 +525,17 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 	}
 	rev, typed, owner := h.ps.rev, a.Text, secretfiles.Worker(a.ID)
 	h.queueLane(ctx, a.ID, func(ctx context.Context) {
-		p, err := h.protectText(ctx, rev, owner, time.Time{}, a.Text, a.Secrets)
+		p := protected{text: a.Text}
+		var err error
+		if a.Secrets != nil || !tok.reviewed(a.Text) {
+			p, err = h.protectText(ctx, rev, owner, time.Time{}, a.Text, a.Secrets)
+		}
 		if err != nil {
 			end(ctx, nil, err)
 			return
 		}
 		sent := a
-		sent.Text, sent.Secrets = p.text, nil
+		sent.Text, sent.Secrets, sent.SecretsPending = p.text, nil, ""
 		r := promptReview{typed: typed, protected: len(p.files)}
 		if len(p.files) > 0 {
 			r.settle = h.settleHandoff(p, owner)
@@ -560,6 +573,11 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 			h.unprotect(ctx, p)
 		} else {
 			h.sentReview(p, owner)
+			if a.SecretsPending != "" { // the preview's files are the worker's now
+				if cerr := h.claimPending(ctx, a.SecretsPending, a.ID); cerr != nil {
+					h.log.Warn("a preview's protected files were not kept for the worker", "worker", a.ID, "err", cerr)
+				}
+			}
 		}
 		end(ctx, data, err)
 	})

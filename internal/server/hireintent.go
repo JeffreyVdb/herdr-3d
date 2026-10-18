@@ -11,9 +11,14 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"maps"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
 )
 
 // hireCatalog is the hire options as internal/hireintent reads them.
@@ -36,7 +41,12 @@ func (h *Hub) hireIntentRoles() hireintent.Roles {
 	return nil
 }
 
-// startHireInterpret answers hire.interpret.
+// startHireInterpret answers hire.interpret. #108 round 2: with prompt
+// secrets reviewed, the language model reads the sentence only as its
+// review made it (references in place of what it protects, to a pending
+// owner the hire of its task claims), and the pending proposal's sentences
+// only as an earlier answer gave them (secrets_pending) or with nothing to
+// review in them; the ack's text and proposal hold the references.
 func (h *Hub) startHireInterpret(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.HireInterpretArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
@@ -45,12 +55,39 @@ func (h *Hub) startHireInterpret(ctx context.Context, c *Client, cmd proto.Comma
 	if !hireintent.ValidText(a.Text) {
 		return bad("text must be at most %d bytes of UTF-8 without NUL, got %d bytes", hireintent.MaxTextBytes, len(a.Text))
 	}
+	gate, err := h.previewGate("", a.Text, a.Secrets, a.SecretsPending)
+	if err != nil {
+		return err
+	}
+	var sources []string
+	if a.Pending != nil && h.gated(a.Secrets != nil || a.SecretsPending != "") {
+		sources = a.Pending.Sources
+		for i, s := range sources {
+			if !hireintent.ValidText(s) {
+				return bad("pending.sources[%d] must be at most %d bytes of UTF-8 without NUL", i, hireintent.MaxTextBytes)
+			}
+		}
+	}
+	rev := h.ps.rev
 	req := hireintent.Request{Text: a.Text, Pending: a.Pending, Catalog: hireCatalog(h.hireOptions())}
 	roles, timeout := h.hireIntentRoles(), h.opts.HireIntentTimeout
 	if timeout <= 0 {
 		timeout = hireintent.DefaultTimeout
 	}
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
+		pv, err := gate(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := h.reviewedSources(ctx, rev, pv, sources); err != nil {
+			pv.undo(ctx)
+			return nil, err
+		}
+		if !hireintent.ValidText(pv.text) {
+			pv.undo(ctx)
+			return nil, bad("text with its file references must be at most %d bytes, got %d", hireintent.MaxTextBytes, len(pv.text))
+		}
+		req.Text = pv.text
 		res := hireintent.Run(ctx, roles, timeout, req)
 		if res.Error != nil {
 			h.log.Warn("hire interpretation failed", "code", res.Error.Code, "pending", req.Pending != nil)
@@ -62,8 +99,39 @@ func (h *Hub) startHireInterpret(ctx context.Context, c *Client, cmd proto.Comma
 			h.log.Info("hire interpreted", "intent", res.Intent, "reason", res.Reason, "ready_for_review", ready,
 				"questions", asks, "pending", req.Pending != nil)
 		}
-		return res, nil
+		var given []string
+		if res.Hire != nil {
+			given = append(given, res.Hire.Sources...)
+			given = append(given, res.Hire.Task.Value)
+		}
+		pv.answered(given...)
+		return proto.HireInterpretResult{Result: res, Protected: protectedCount(pv.ps), SecretsPending: pv.token}, nil
 	})
+	return nil
+}
+
+// reviewedSources checks a pending proposal's sentences before the model
+// reads them again (#108 round 2; off the hub goroutine): each one as the
+// hand-over's earlier answer gave it, or with nothing to review in it (a
+// sentence from before the switch, or a client's own: never one with a
+// possible secret the review has not seen).
+func (h *Hub) reviewedSources(ctx context.Context, rev *promptsecret.Reviewer, pv *preview, sources []string) error {
+	var tok secretPending
+	if pv.token != "" && !pv.fresh {
+		h.ps.mu.Lock()
+		if p := h.ps.pending[pv.token]; p != nil {
+			tok.texts = maps.Clone(p.texts)
+		}
+		h.ps.mu.Unlock()
+	}
+	for i, s := range sources {
+		if tok.reviewed(s) {
+			continue
+		}
+		if _, err := h.protectText(ctx, rev, secretfiles.Owner{}, time.Time{}, s, nil); err != nil {
+			return fmt.Errorf("pending.sources[%d]: %w", i, err)
+		}
+	}
 	return nil
 }
 

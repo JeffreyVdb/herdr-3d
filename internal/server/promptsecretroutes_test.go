@@ -10,6 +10,7 @@ package server_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"context"
 	"errors"
 	"os"
@@ -19,6 +20,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/ai"
+	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -31,6 +34,11 @@ const (
 	routeSentinel = "Route-Sentinel-41!"
 	twinValue     = "Twin-Value-77#"
 	routeText     = "Deploy it.\nDB_PASSWORD=" + routeSentinel + "\nexport TOKEN='" + twinValue + "' then TOKEN2='" + twinValue + "'"
+	// previewText is routeText and c4, a value left as typed that the scan
+	// still finds once the others are references (a follow-up without the
+	// hand-over needs its review again).
+	keptValue   = "Ignored-Kept-55"
+	previewText = routeText + "\nAPI_KEY=" + keptValue
 )
 
 // secretsDirFor is a protected secrets directory for a test bridge, in a
@@ -568,4 +576,197 @@ func TestPromptSecretsRunStart(t *testing.T) {
 			t.Fatalf("audited %s %s", e.Cmd, e.Args)
 		}
 	}
+}
+
+// startSecretsPkBridge is the pack-up bridge (w1 Claude, w2 Codex) with a
+// protected secrets directory, the switch on, and its terminal.
+func startSecretsPkBridge(t *testing.T, roles *pkRoles, tweak func(*server.Options)) (*hireBridge, map[string]string, *fakeTerm, string) {
+	t.Helper()
+	dir, term := secretsDirFor(t), newFakeTerm()
+	hb, ids := startPkBridge(t, roles, on(), "", func(o *server.Options) {
+		o.SecretsDir, o.Term = dir, term
+		if tweak != nil {
+			tweak(o)
+		}
+	})
+	hb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	return hb, ids, term, dir
+}
+
+// packup.detect: the models read the text only with its references; the
+// ack says what they read and hands it to the worker.prompt that follows,
+// which needs no review again and gives the files to the worker. Another
+// worker's prompt cannot use the hand-over.
+func TestPromptSecretsPackup(t *testing.T) {
+	t.Parallel()
+	roles := newPkRoles()
+	hb, ids, term, dir := startSecretsPkBridge(t, roles, nil)
+	c := hb.c
+	text := previewText + " and end your turn"
+	_, m := c.command(proto.CmdPackupDetect, "d0", proto.PackupDetectArgs{ID: ids["w2"], Text: text})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	if cl, l := roles.calls(); cl+l != 0 {
+		t.Fatalf("models called %d, %d", cl, l)
+	}
+	traceFree(t, hb.st, hb.db, []*client{c}, routeSentinel, twinValue)
+
+	_, m = c.command(proto.CmdPackupDetect, "d1", proto.PackupDetectArgs{ID: ids["w2"], Text: text, Secrets: reviewOf(t, c, text, "c3", "c4")})
+	res := ackData[proto.PackupDetectResult](t, m)
+	if !res.Matched || res.Protected != 2 || res.SecretsPending == "" || !strings.HasSuffix(res.Sent, " and end your turn") ||
+		res.Task != strings.TrimSuffix(res.Sent, " and end your turn") {
+		t.Fatalf("ack %s", m.raw)
+	}
+	checkRouteSent(t, res.Sent)
+	if calls := roles.cls.Calls(); len(calls) != 1 || calls[0].State["prompt"] != res.Sent {
+		t.Fatalf("the classifier read %+v", calls)
+	}
+	for _, call := range roles.llm.Calls() {
+		for _, msg := range call.Messages {
+			if strings.Contains(msg.Content, routeSentinel) {
+				t.Fatalf("the LLM read the secret: %q", msg.Content)
+			}
+		}
+	}
+	if len(ownersOf(t, hb.st, "worker", ids["w2"])) != 0 || len(protectedFiles(t, dir)) != 2 {
+		t.Fatal("the preview's files are not pending")
+	}
+	traceFree(t, hb.st, hb.db, []*client{c}, routeSentinel)
+
+	// Another worker's prompt with the hand-over: stale, nothing sent.
+	_, m = c.command(proto.CmdWorkerPrompt, "p0", proto.WorkerPromptArgs{ID: ids["w1"], Text: res.Task, SecretsPending: res.SecretsPending})
+	if code := codeOf(m); code != proto.ErrSecretsReviewStale || len(term.Calls()) != 0 {
+		t.Fatalf("another worker: %s %q", m.raw, term.Calls())
+	}
+	// Without the hand-over the ignored copy needs its review again.
+	_, m = c.command(proto.CmdWorkerPrompt, "p1", proto.WorkerPromptArgs{ID: ids["w2"], Text: res.Task})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("no hand-over: %s", m.raw)
+	}
+	// The follow-up: sent as the preview answered it, its files the worker's.
+	_, m = c.command(proto.CmdWorkerPrompt, "p2", proto.WorkerPromptArgs{ID: ids["w2"], Text: res.Task, SecretsPending: res.SecretsPending})
+	pr := ackData[proto.PromptResult](t, m)
+	if calls := term.Calls(); len(calls) != 1 || !strings.Contains(calls[0], refRe.FindString(res.Task)) || pr.Protected != 0 {
+		t.Fatalf("follow-up: %s %q", m.raw, calls)
+	}
+	if rows := ownersOf(t, hb.st, "worker", ids["w2"]); len(rows) != 1 {
+		t.Fatalf("w2 owns %+v", rows)
+	}
+	// Its retry to the same worker is fine; the files stay one set.
+	_, m = c.command(proto.CmdWorkerPrompt, "p3", proto.WorkerPromptArgs{ID: ids["w2"], Text: res.Task, SecretsPending: res.SecretsPending})
+	if m.env.T != proto.TAck || len(protectedFiles(t, dir)) != 2 {
+		t.Fatalf("retry: %s", m.raw)
+	}
+	traceFree(t, hb.st, hb.db, []*client{c}, routeSentinel)
+}
+
+// A preview never followed up leaves nothing once its hand-over expired,
+// and the hand-over is refused after.
+func TestPromptSecretsPreviewExpires(t *testing.T) {
+	t.Parallel()
+	roles := newPkRoles()
+	hb, ids, term, dir := startSecretsPkBridge(t, roles, func(o *server.Options) {
+		o.SecretPendingTTL, o.SecretsSweep = 300*time.Millisecond, 20*time.Millisecond
+	})
+	text := previewText + " and end your turn"
+	res := ackData[proto.PackupDetectResult](t, func() msg {
+		_, m := hb.c.command(proto.CmdPackupDetect, "d", proto.PackupDetectArgs{ID: ids["w1"], Text: text, Secrets: reviewOf(t, hb.c, text, "c3", "c4")})
+		return m
+	}())
+	if res.SecretsPending == "" || res.Protected != 2 {
+		t.Fatalf("ack %+v", res)
+	}
+	waitFor(t, "the unclaimed files to expire", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	if rows, _ := hb.st.SecretOwners(context.Background()); len(rows) != 0 {
+		t.Fatalf("owners %+v", rows)
+	}
+	_, m := hb.c.command(proto.CmdWorkerPrompt, "p", proto.WorkerPromptArgs{ID: ids["w1"], Text: res.Task, SecretsPending: res.SecretsPending})
+	if code := codeOf(m); code != proto.ErrSecretsReviewStale || len(term.Calls()) != 0 {
+		t.Fatalf("expired hand-over: %s", m.raw)
+	}
+}
+
+// hire.interpret: the LLM reads the sentence with its references; the
+// proposal's sources and task hold them; the follow-up sentence and the
+// hire of the task need no review again; the hire's worker claims the
+// files. A pending sentence nobody reviewed is refused.
+func TestPromptSecretsHireInterpret(t *testing.T) {
+	t.Parallel()
+	llm := &ai.FakeLLM{Func: func(_ context.Context, req ai.Request) (string, error) {
+		var p struct {
+			Command string `json:"command"`
+		}
+		_ = json.Unmarshal([]byte(req.Messages[1].Content), &p)
+		if _, task, ok := strings.Cut(p.Command, " to "); ok {
+			b, _ := json.Marshal(task)
+			return `{"intent":"hire","harness":"claude","model":"claude-haiku-5-5","effort":null,"task":` + string(b) +
+				`,"multiple":false,"selection_unclear":false}`, nil
+		}
+		return `{"intent":"hire","harness":null,"model":null,"effort":"high","task":null,"multiple":false,"selection_unclear":false}`, nil
+	}}
+	dir := secretsDirFor(t)
+	hb := startHireBridge(t, func(o *server.Options) {
+		cat := hiCatalog
+		o.HireOptions, o.HireIntentRoles, o.SecretsDir = &cat, &hiRoles{state: ai.StateReady, llm: llm}, dir
+	})
+	c := hb.c
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	text := "Hire a Claude Code agent on Haiku 5.5 to " + previewText
+	_, m := c.command(proto.CmdHireInterpret, "i0", proto.HireInterpretArgs{Text: text})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || len(llm.Calls()) != 0 {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	res := interpretCmd(t, c, "i1", proto.HireInterpretArgs{Text: text, Secrets: reviewOf(t, c, text, "c3", "c4")})
+	if res.Hire == nil || res.Protected != 2 || res.SecretsPending == "" {
+		t.Fatalf("first: %+v", res)
+	}
+	checkRouteSent(t, res.Text)
+	task := res.Hire.Task.Value
+	if res.Hire.Sources[0] != res.Text || !strings.HasPrefix(task, "Deploy it.") || !strings.Contains(task, "[secret in file ") {
+		t.Fatalf("proposal %+v", res.Hire)
+	}
+	for _, call := range llm.Calls() {
+		if strings.Contains(call.Messages[1].Content, routeSentinel) {
+			t.Fatal("the LLM read the secret")
+		}
+	}
+
+	// The follow-up: its sources need no review again with the hand-over;
+	// without it the ignored copy is a possible secret nobody reviewed, and
+	// so is a sentence the client made up.
+	_, m = c.command(proto.CmdHireInterpret, "i2", proto.HireInterpretArgs{Text: "high", Pending: res.Hire})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || !strings.HasPrefix(errorOf(m).Message, "pending.sources[0]: ") {
+		t.Fatalf("follow-up without the hand-over: %s", m.raw)
+	}
+	forged := *res.Hire
+	forged.Sources = []string{"Hire a Claude Code agent on Haiku 5.5 to deploy with PASSWORD=Forged-Source-3!"}
+	forged.Task = hireintent.Task{Provenance: hireintent.Missing}
+	_, m = c.command(proto.CmdHireInterpret, "i3", proto.HireInterpretArgs{Text: "high", Pending: &forged, SecretsPending: res.SecretsPending})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("a forged source: %s", m.raw)
+	}
+	next := interpretCmd(t, c, "i4", proto.HireInterpretArgs{Text: "high", Pending: res.Hire, SecretsPending: res.SecretsPending})
+	if next.Hire == nil || !next.Hire.ReadyForReview || next.Hire.Task.Value != task || next.SecretsPending != res.SecretsPending {
+		t.Fatalf("follow-up: %+v", next)
+	}
+
+	// The hire of its task: no review again, the files the new worker's.
+	a := hireArgs(0)
+	a.Harness, a.Model, a.Effort, a.Prompt, a.SecretsPending = "claude", "claude-haiku-5-5", "high", task, res.SecretsPending
+	_, m = c.command(proto.CmdWorkerHire, "h1", a)
+	hired := ackData[proto.HireResult](t, m)
+	if got := sentPrompt(t, hb, hired.WorkspaceID+":p1"); got != task || hired.Protected != 0 {
+		t.Fatalf("sent %q, ack %s", got, m.raw)
+	}
+	if rows := ownersOf(t, hb.st, "worker", hired.ID); len(rows) != 1 || len(protectedFiles(t, dir)) != 2 {
+		t.Fatalf("the worker owns %+v", rows)
+	}
+	// The hand-over went with that worker: another hire cannot take it.
+	a.DeskIndex = ptr(1)
+	_, m = c.command(proto.CmdWorkerHire, "h2", a)
+	if code := codeOf(m); code != proto.ErrSecretsReviewStale {
+		t.Fatalf("a second hire with it: %s", m.raw)
+	}
+	traceFree(t, hb.st, hb.db, []*client{c}, routeSentinel, "Forged-Source-3!")
 }
