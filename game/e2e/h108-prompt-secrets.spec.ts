@@ -15,6 +15,9 @@ const sent = (page: Page, t: string) => page.evaluate((x) => window.__h3d.sent()
 type Review = Extract<NonNullable<ReturnType<Window['__h3d']['dialog']>>, { kind: 'secrets-review' }>;
 const review = (page: Page) => page.evaluate(() => window.__h3d.dialog()) as Promise<Review | null>;
 
+/** The file paths of the `[secret in file …]` references in a sent text (the fixture's file list is the whole host's). */
+const refsOf = (sent: string | undefined) => new Set([...(sent ?? '').matchAll(/\[secret in file ([^\]]+)\]/g)].map((m) => m[1]));
+
 /** Every value localStorage holds now, joined: a protected value must never be in it. */
 const storage = (page: Page) => page.evaluate(() => Object.keys(localStorage).map((k) => `${k}=${localStorage.getItem(k) ?? ''}`).join('\n'));
 async function noSecretStored(page: Page, at: string): Promise<void> {
@@ -167,7 +170,8 @@ test('the P overlay: found → the whole prompt reviewed (ignore one, correct on
   const ack = (await sent(page, 'worker.prompt'))[0]!.result as { ok: boolean; data?: { sent?: string; protected?: number } };
   expect(ack.data?.protected).toBe(4);
   expect(ack.data?.sent).toMatch(/^Deploy with TOKEN=\[secret in file \/run\/user\/1000\/herdr-world\/secrets\/[^\]]+\] and PASSWORD=\[secret in file [^\]]+\]; the password is s3cr3t!x\. Note: \[secret in file [^\]]+\] again, the db user is \[secret in file [^\]]+\]$/);
-  const files = (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => ack.data?.sent?.includes(f.path));
+  const refs = refsOf(ack.data?.sent);
+  const files = (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => refs.has(f.path));
   expect(files.map((f) => f.text)).toEqual(['ghp_abcdefghijklmnopqrstu1', '"hunt😀r2"', 'hunt😀r2', 'admin42']);
   await noSecretStored(page, 'sent');
   clean();
@@ -246,7 +250,8 @@ test('a paste into an agent’s terminal is reviewed first: exact UTF-16 ranges 
   // The files hold exactly those bytes (the fixture's files are the whole simulated host's: this paste's by their paths).
   const ack = (await sent(page, 'worker.prompt'))[0]!.result as { ok: boolean; data?: { sent?: string } };
   expect(ack.data?.sent).toMatch(/^line one\r\nPASSWORD=\[secret in file [^\]]+\]\r\nAPI_KEY="\[secret in file [^\]]+\]"\r\nend$/);
-  const files = (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => ack.data?.sent?.includes(f.path));
+  const refs = refsOf(ack.data?.sent);
+  const files = (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => refs.has(f.path));
   expect(files.map((f) => [f.owner, f.text])).toEqual([
     [id, 'p😀ss-w0rd'],
     [id, 'k3y😀value'],
