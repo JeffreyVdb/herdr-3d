@@ -2621,10 +2621,10 @@ heuristic, tested on screens captured from Claude Code 2.1 and Codex 0.158 (`int
 |---|---|
 | `kind` | `trust` (the agent's trust-this-folder dialog), `permission` (a menu whose first choice starts with "Yes" and one with "No": a tool or command approval), `choice` (any other menu, e.g. Claude's AskUserQuestion), `other` (blocked, no menu recognised) |
 | `text` | the line above the menu that asks ("Do you want to proceed?", "Would you like to run the following command?"), cut after its first `?`; `""` if none |
-| `excerpt` | the screen's last ≤ 8 non-empty lines, trimmed, each ≤ 200 characters; #106: not a line that only says how long something has run (Claude Code's "Background task running 12s", a spinner's "✻ Thinking… (12s · esc to interrupt)", an elapsed time or a countdown on its own), so a ticking counter is no `worker.upsert` every read |
+| `excerpt` | the screen's last ≤ 8 non-empty lines, trimmed, each ≤ 200 characters; #106: not a line that only says how long something has run (Claude Code's "Background task running 12s", a spinner's "✻ Thinking… (12s · esc to interrupt)", "esc to interrupt", an elapsed time or a countdown, each a whole line with no path, quote, `$`, `=` or shell operator in it), so a ticking counter is no `worker.upsert` every read |
 | `choices` | the menu, top to bottom, `n` from 1: the digits shown (`❯ 1. Yes  2. …  3. No`), or for a menu without digits (Claude's trust dialog) the cursor line and the lines aligned with it; `[]` without a menu |
 | `selected` | the choice the cursor (`❯` / `›`) is on, when seen |
-| `hash` | 16 hex over `kind`, `text`, `choices`, the lines above the menu (what it is about) and the worker's `status_since` (when it turned `blocked`); not the cursor, not the rest of the excerpt. It is which question an answer is for: an approval never approves another command, file or folder asked with the same words, nor anything asked after the worker was blocked again, even on the same screen. #106: for a `permission` or `trust` menu, what it is about is its dialog's own lines, whole (not cut at 12 lines or 200 characters), from its top (Claude Code's rule at the screen's left edge, Codex's first line, "Would you like to …" or "Folder access") down to its question (Claude) or its choices (Codex), without the lines the excerpt leaves out, and whether that top was on the screen; so a change anywhere in a tall command or past a long line's 200th character is another hash, and a ticking counter is none. A rewrap (a resize) is another hash. Any other menu: up to the dialog's top rule, at most 12 lines, e.g. `Bash command` / `touch notes.txt`. |
+| `hash` | 16 hex over `kind`, `text`, `choices`, the lines above the menu (what it is about) and the worker's `status_since` (when it turned `blocked`); not the cursor, not the rest of the excerpt. It is which question an answer is for: an approval never approves another command, file or folder asked with the same words, nor anything asked after the worker was blocked again, even on the same screen. #106: for a `permission` or `trust` menu, what it is about is its dialog's own lines, whole (not cut at 12 lines or 200 characters), from its top (Claude Code's rule at the screen's left edge, Codex's first line, "Would you like to …" or "Folder access") down to its question (Claude) or its choices (Codex), without the lines the excerpt leaves out, and whether that top was on the screen (not on it: all the screen shows above the menu); so a change anywhere in a tall command or past a long line's 200th character is another hash, and a ticking counter is none. A rewrap (a resize) is another hash. For a Claude worker whose transcript has the pending call the dialog draws word for word, that call too (its `tool_use` id, input and directory): the hash changes once when the bridge learns the call, about one transcript read (2 s) after the dialog opens, and again if another call replaces it. Any other menu: up to the dialog's top rule, at most 12 lines, e.g. `Bash command` / `touch notes.txt`. |
 
 What herdr 0.9.0 reports, and what picks a choice (checked live):
 
@@ -2646,7 +2646,10 @@ gets a `question`; its `ask` (read from the transcript, [Laptops: asks](#laptops
 **`worker.answer`** answers the question: exactly one of `choice` (1–9, one of the question's `choices`) or `cancel:
 true` (Esc: deny / dismiss). The worker must be `blocked` (else `invalid_state`). When its turn on the worker's input
 lane comes, the bridge reads the screen again: if the worker is no longer blocked or the question there has another
-`hash`, it is `stale` (and the question the screen shows now goes out as a `worker.upsert`). Otherwise it presses the
+`hash`, it is `stale` (and the question the screen shows now goes out as a `worker.upsert`). #106: a choice that
+approves (its label starts with "Yes") on a `permission` menu whose dialog's top is off the screen, and whose pending
+call the bridge does not know, is `invalid_state` ("approve it in its terminal": the screen shows only its end); its No
+and `cancel` go. Otherwise it presses the
 keys that pick the choice on that kind of menu (above), returned in `sent`, and waits up to 3 s for the worker to leave
 `blocked`: `resolved`. A screen that cannot be read, or herdr refusing the keys, is `input_failed`.
 
@@ -4924,17 +4927,19 @@ while it is off.
   backticks elsewhere is `` `…` ``, and anything shaped like a key or token is removed. #106: **what it is about** is
   the dialog's own lines from its top (Claude Code's rule at the left edge, Codex's first line) down to its question
   (Claude) or its choices (Codex), never the conversation above nor the rest of the screen; for a Claude worker whose
-  transcript has the pending call the dialog shows (its command whole, or its file's path), that call instead: its
+  transcript has the pending call the dialog shows (its command word for word, a line break one of its spaces or a
+  word the wrap cut; or its file's path), that call instead: its
   whole command, its description, its directory ("In: …"), the dialog's other lines ("It also says: …") and, in
   bypass mode, that Claude Code denies a removal unanswered after about two minutes. Each line is redacted (a
   password after `-u user:`, an auth header's value, a secret-looking assignment or option's value, a MySQL or
-  sshpass password, a URL's password, key-shaped tokens) and cut at 300 characters, at most 24 lines and 1800
-  characters in all, the rest counted. A dialog whose top is off the screen says so and, without its call, has no
-  button for a choice that approves (a Yes): approve it in the game. A tap answers as the game's `worker.answer` does,
+  sshpass password, each its whole shell word, quoted or not; a URL's password, key-shaped tokens) and cut at 300
+  characters, at most 24 lines (what says the rest among them) and 1800 characters in all, the rest counted. A dialog whose top is off the screen says so and, without its call, has no
+  button for a choice that approves (a Yes): approve it in its terminal in the game. A tap answers as the game's `worker.answer` does,
   with the card's `hash` and the choice's number, on the worker's input lane, no client: the screen is read again
   first, and a menu no longer shown (another hash, the worker no longer blocked, another call) sends no key. The card
-  follows its operation through redraws (an elapsed counter, a rewrap: one card, edited when it reads otherwise, with
-  a new keyboard; a tap on the old one says "It changed: check the card and tap again") and through failed screen
+  follows its operation through redraws (an elapsed counter, a rewrap: one card, edited when it reads otherwise) with
+  a new keyboard whenever its hash or its call changes, even when it reads the same (a change past what it shows): a
+  tap on an old keyboard says "It changed: check the card and tap again" and sends nothing; and through failed screen
   reads (the bridge keeps the question for five reads in a row; the card stays while the blocked spell lasts). It
   ends "Replaced: it asks about something else now." (another operation in the spell; its card follows, at once or
   "within a minute" under the send budget) or "No longer waiting: it was answered elsewhere, or the agent moved
@@ -4947,11 +4952,16 @@ while it is off.
 - **Send budget** (#106), per destination (the paired chat): every call to Telegram but a tap's answer and the test
   message takes a token of a bucket of 5 refilled one a second, and a rate limit's `retry_after` pauses them all; at
   most 10 alerts and new cards a rolling minute, one alert per worker a minute (needs you or done) and 3 new card sets
-  per worker a minute. What does not fit waits, one alert and one card set per worker, the latest replacing the
+  per worker a minute. A message counts from when it is sent (a failed send too), not when it is let in: one let in
+  and waiting (its pace, a rate limit's pause, a retry) holds its place until it goes, and gives it back if it never
+  does. What does not fit waits, one alert and one card set per worker, the latest replacing the
   earlier; it goes when it fits if the worker is still at it (the same episode, the same question), else it is
-  dropped. A needs-you alert held by its worker's minute still lets its card go. Silent messages count. A restart
-  starts no burst: workers first seen are known silently and nothing waiting survives it.
-- **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`,
+  dropped. An alert let in is checked again before each attempt: its episode over (the worker back at work, gone), it
+  is dropped (`notify.send` code `obsolete`). A needs-you alert held by its worker's minute still lets its card go.
+  Silent messages count. A restart starts no burst: workers first seen are known silently and nothing waiting
+  survives it.
+- **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`
+  (#106: `code` `obsolete`, an alert dropped unsent as its episode ended),
   `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}` and (#13)
   `notify.reply` `{"id"?, "text_bytes", "text_runes", "outcome"}` (`sent`, else the refusal: `not_a_reply`,
   `no_text`, `relayed`, `stale`, `too_long`, `unknown`, `rate_limited`, `ask`, `gone`, `invalid_state`, `busy`,
@@ -5038,7 +5048,7 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
 | `unknown_session` | a floor command for a session the bridge does not know or does not watch (`--sessions`) |
 | `unknown_worker` | `worker.fire.prepare` / `worker.fire` / the laptop commands for a worker id the bridge does not know (or on an unwatched floor) |
 | `busy` | `transcript.image` with 16 reads already in flight for that watch; a floor command while that floor's wake or sleep is in progress; `floor.wake` / `floor.sleep` while a hire or send-home on it is in progress; `worker.fire*` for a worker that is still being hired or already being sent home; #83: `worker.wrapup` for a worker already armed, `worker.wrapup.cancel` once its CLEAN's send home started; #224: an agent handoff for a worker with a request running or a wrap-up armed, a wrap-up while a request runs, `worker.handoff_cancel` while it is being filed; #58: `session.create` of a name already being created; #60: `worker.retry_followup` while a retry of that follow-up runs; #63: `schedule.create` / `schedule.update` / `schedule.retry` whose `cwd` is in a worktree a send home is removing now |
-| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked; `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read; #60 `worker.retry_followup` after 3 retries of that follow-up, or while follow-up questions are not `ready`; #62 a `schedule.*` command in a state it does not allow (see [Scheduled agents](#scheduled-agents)), or on a cancelled or dismissed schedule; #63 `worker.fire` with `delete` / `delete_branch` or `worker.wrapup` with a delete of a worktree a schedule holds (the message ends in `used by scheduled agent '<title>' at <due>`, see "Worktree hold") |
+| `invalid_state` | `worker.open_pr` for a worker that is not a plain worker in the branch the bridge made, or whose tree is dirty or has nothing to open; `floor.wake` on a running floor, `floor.sleep` on an asleep one, hire or send home on an asleep floor; a laptop command for a worker on an asleep floor or without a pane, `worker.prompt` to a plain shell, a blocked worker (but one blocked only by a Codex async question) or one with an `ask`, #156 `worker.answer_async` / `worker.dismiss_async` for a worker that is not a shared Codex worker, a `conflict` batch, or (answer) a batch under a legacy `item-N` id or a thread the bridge is not attached to, `worker.commands` for a worker running no Claude or Codex agent, `worker.answer` to a worker not blocked (#106: or approving a permission whose dialog's top is off the screen and whose call is not known); `transcript.page` / `transcript.item` / `transcript.image` / `transcript.images` for a worker this connection does not watch or whose transcript is pending, or whose transcript changed while it was read; #60 `worker.retry_followup` after 3 retries of that follow-up, or while follow-up questions are not `ready`; #62 a `schedule.*` command in a state it does not allow (see [Scheduled agents](#scheduled-agents)), or on a cancelled or dismissed schedule; #63 `worker.fire` with `delete` / `delete_branch` or `worker.wrapup` with a delete of a worktree a schedule holds (the message ends in `used by scheduled agent '<title>' at <due>`, see "Worktree hold") |
 | `desk_taken` | `worker.hire` at a desk someone holds or a hire in flight reserved, or outside `0 … desks-1` |
 | `whiteboard_conflict` | M13: a save whose `base` is not the board's current version (HTTP `409`, with the current `version`) |
 | `whiteboard_invalid`, `whiteboard_too_large`, `whiteboard_unsupported`, `whiteboard_hash_mismatch`, `whiteboard_missing_file` | M13: a scene, file, render or pin the bridge refuses (see [Whiteboard](#whiteboard)) |

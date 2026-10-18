@@ -82,9 +82,16 @@ has `PermissionRequest` hooks without a call id [D]. Codex prompts stay screen-o
   0.1 s after the dialog opens; the bridge reads transcripts every 2 s, so the card may start from the screen and learn
   the call a read later. The `PermissionRequest` hook would add nothing for workers the bridge does not start and would
   need pairing to `PreToolUse` (every tool call logged) for its id.
+- That 2 s lag is why the call must be **bound, not trusted**: the dialog is matched to a call word for word (a line
+  break one of the command's spaces, or none where the wrap cut a word), the call's id (with its directory) goes into
+  the hash every answer is checked against, the game's as a tap's, and a card's keyboard is renewed whenever that hash
+  changes. A screen that draws two commands alike (a word cut by the wrap exactly where the other has a space) is
+  told apart only by the call and the blocked spell; the screen alone cannot.
 - Cards say "replaced" or "no longer waiting", never "answered in the game": nothing tells the bridge how it ended.
 - In bypass mode the card says a removal is denied after about two minutes unanswered ([D] only).
-- The send budget paces every provider call (about one a second, a burst of five) and counts silent cards.
+- The send budget paces every provider call (about one a second, a burst of five) and counts silent cards. Since a
+  429's `retry_after` has no documented maximum, a message counts from when it is sent, not when it was let in: a
+  long pause must not let a second minute's worth in over the first.
 - An AI pre-approval would be a deciding `PermissionRequest` hook (bridge-started workers only, a new trust) or the
   answer lane a tap takes; neither may approve a critical-path removal. #106 ships neither (`internal/approval` is
   unwired).

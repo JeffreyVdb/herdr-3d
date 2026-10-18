@@ -34,10 +34,10 @@ package notify
 // #106: and what the menu is about (Menu.About: the command, the file, the
 // folder, as the bridge redacted and bounded them). A card is one
 // operation's (Menu.Op, its native call Menu.Native): it follows the
-// menu's redraws and new hashes, stays while its worker stays blocked in
-// its spell with no menu read, and ends replaced or no longer waited on,
-// never "answered in the game". New cards draw on the send budget
-// (limits.go).
+// menu's redraws and new hashes, a new keyboard with each new hash, stays
+// while its worker stays blocked in its spell with no menu read, and ends
+// replaced or no longer waited on, never "answered in the game". New cards
+// draw on the send budget (limits.go).
 
 import (
 	"context"
@@ -103,7 +103,7 @@ const (
 	// #106: a menu's whose operation the bridge could not read, one whose
 	// approving choices have no button, and its ends but an answer.
 	CardMenuAboutText = "What it is about could not be read here: see it in the game."
-	CardWithheldText  = "Part of it is off its screen, so approving it has no button here: approve it in the game."
+	CardWithheldText  = "Part of it is off its screen, so approving it has no button here: approve it in its terminal in the game."
 	CardReplacedText  = "Replaced: it asks about something else now."
 	CardGoneText      = "No longer waiting: it was answered elsewhere, or the agent moved on."
 	CardRetryText     = "Not sent: it changed or could not be checked as you tapped. Check it and tap again."
