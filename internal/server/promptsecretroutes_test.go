@@ -10,8 +10,8 @@ package server_test
 
 import (
 	"bytes"
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
