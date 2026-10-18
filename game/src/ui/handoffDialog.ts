@@ -6,6 +6,8 @@ import { backdropPolicy } from './dismiss';
 import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
+import type { CommandResult } from '../net/client';
+import { onReviewKey, reviewButton, type Go } from './secretsFlow';
 
 /**
  * #223: the filing dialog. A literal handoff files the worker's latest completed reply exactly as written: the preview
@@ -131,6 +133,11 @@ export class HandoffDialog {
     // A consequential choice in here (the send home): only Esc and the buttons close it.
     backdropPolicy(this.dialog, 'none');
     this.sendBox.addEventListener('change', () => this.renderActions());
+    // #108: the instruction's review on purpose (Ctrl/⌘+Shift+X, with the switch on), then the request.
+    onReviewKey(this.instrEl, () => this.host.secrets, () => void (this.mode === 'llm' ? this.writeLlm(true) : this.mode === 'agent' ? this.ask(true) : null));
+    host.secrets?.onChange(() => {
+      if (this.dialog.open) this.renderActions();
+    });
     parent.append(this.dialog);
   }
 
@@ -798,7 +805,8 @@ export class HandoffDialog {
     const why = this.state === 'loading' ? 'Looking up its handoff skill…' : !a ? 'The agent can’t be asked' : !a.can_ask ? (a.cannot_ask ?? 'It can’t be asked now') : '';
     const label = this.state === 'filing' ? 'Asking…' : this.sendBox.checked ? 'Ask, then send home' : 'Ask the agent';
     const ask = h('button', { class: 'btn btn--primary', 'data-key': 'file', 'aria-disabled': why || this.state === 'filing' ? 'true' : null, title: why || null, onclick: () => void this.ask() }, icon(ICON.folder), label);
-    this.actions.replaceChildren(cancel, ask);
+    const review = reviewButton(this.host.secrets, why || (this.state === 'filing' ? 'Asking…' : null), () => void this.ask(true), 'instruction');
+    this.actions.replaceChildren(...[cancel, review, ask].filter((x): x is HTMLButtonElement => !!x));
   }
 
   /** #9: Write (then send home); a running job can be cancelled, a failed one tried again (a new request). */
@@ -833,10 +841,39 @@ export class HandoffDialog {
               : '';
     const label = this.state === 'filing' ? 'Sending…' : this.sendBox.checked ? 'Write, then send home' : 'Write with the LLM';
     const write = h('button', { class: 'btn btn--primary', 'data-key': 'file', 'aria-disabled': why || this.state === 'filing' ? 'true' : null, title: why || null, onclick: () => void this.writeLlm() }, icon(ICON.folder), label);
-    this.actions.replaceChildren(cancel, write);
+    const review = reviewButton(this.host.secrets, why || (this.state === 'filing' ? 'Sending…' : null), () => void this.writeLlm(true), 'instruction');
+    this.actions.replaceChildren(...[cancel, review, write].filter((x): x is HTMLButtonElement => !!x));
   }
 
-  private async writeLlm(): Promise<void> {
+  /**
+   * #108 round 4: the instruction's review (with the switch on, or `manual`: "Review secrets"), then `send` with it (a
+   * stale review is reviewed again). A blank instruction is the default one: nothing to review. Null: kept (said here).
+   */
+  private async reviewed(instruction: string, manual: boolean, send: (g: Go) => Promise<CommandResult>): Promise<CommandResult | null> {
+    const flow = this.host.secrets;
+    const req = { key: this.id, text: instruction, target: this.name, manual };
+    let go: Go = { kind: 'send', protects: 0, shown: instruction, review: null };
+    const gen = this.gen;
+    const kept = (why: string, message: string) => {
+      if (gen !== this.gen) return null;
+      this.state = 'ready';
+      this.setStatus(why === 'cancel' ? 'Not sent: the instruction is still here.' : message, why === 'failed');
+      this.render();
+      this.instrEl.focus();
+      return null;
+    };
+    if (manual && !instruction) return kept('failed', 'Write an instruction first, then review its secrets.');
+    if (instruction && flow && (flow.on || manual)) {
+      const out = await flow.review(req);
+      if (out.kind === 'kept') return kept(out.why, out.message);
+      go = out;
+    }
+    if (!flow || !instruction) return send(go);
+    const d = await flow.deliver(req, go, send);
+    return d.kind === 'kept' ? kept(d.why, d.message) : d.result;
+  }
+
+  private async writeLlm(manual = false): Promise<void> {
     const c = this.cand;
     const l = this.llmPv?.llm;
     if (!c || !l?.ready || this.stale || this.state !== 'ready') return;
@@ -845,16 +882,20 @@ export class HandoffDialog {
     this.setStatus(`Sending to ${l.model || 'the LLM'}…`);
     this.render();
     const instruction = this.instrEl.value.trim();
-    const r = await this.host.send('worker.handoff', {
-      worker: this.id,
-      mode: 'llm',
-      session: c.session,
-      candidate: c.id,
-      revision: c.revision,
-      op: this.op,
-      ...(instruction ? { instruction } : {}),
-      ...(this.sendBox.checked ? { send_home: true } : {}),
-    });
+    const r = await this.reviewed(instruction, manual, (g) =>
+      this.host.send('worker.handoff', {
+        worker: this.id,
+        mode: 'llm',
+        session: c.session,
+        candidate: c.id,
+        revision: c.revision,
+        op: this.op,
+        ...(instruction ? { instruction } : {}),
+        ...(this.sendBox.checked ? { send_home: true } : {}),
+        ...(g.secrets ? { secrets: g.secrets } : {}),
+      }),
+    );
+    if (!r) return;
     if (gen !== this.gen) {
       if (!r.ok) this.host.toast(failureText('worker.handoff', r.code, r.message, { worker: this.name }), 'error');
       return;
@@ -901,7 +942,7 @@ export class HandoffDialog {
     this.followJob(this.host.store.workers.get(this.id)?.llm_handoff);
   }
 
-  private async ask(): Promise<void> {
+  private async ask(manual = false): Promise<void> {
     const a = this.agentPv?.agent;
     if (!a?.can_ask || this.state !== 'ready') return;
     const gen = this.gen;
@@ -909,7 +950,10 @@ export class HandoffDialog {
     this.setStatus(`Asking ${this.name}’s agent…`);
     this.render();
     const instruction = this.instrEl.value.trim();
-    const r = await this.host.send('worker.handoff', { worker: this.id, mode: 'agent', op: this.op, ...(instruction ? { instruction } : {}), ...(this.sendBox.checked ? { send_home: true } : {}) });
+    const r = await this.reviewed(instruction, manual, (g) =>
+      this.host.send('worker.handoff', { worker: this.id, mode: 'agent', op: this.op, ...(instruction ? { instruction } : {}), ...(this.sendBox.checked ? { send_home: true } : {}), ...(g.secrets ? { secrets: g.secrets } : {}) }),
+    );
+    if (!r) return;
     if (gen !== this.gen) {
       if (!r.ok) this.host.toast(failureText('worker.handoff', r.code, r.message, { worker: this.name }), 'error');
       return;
