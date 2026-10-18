@@ -19,8 +19,14 @@ export interface FollowupDraft {
 export class FollowupDrafts {
   private readonly store: Drafts;
 
-  constructor(storage?: DraftStorage | null) {
-    this.store = storage !== undefined ? new Drafts('followup', storage) : new Drafts('followup');
+  /** #108 round 4: `persist` says whether storage may have them now (no: "Review prompt secrets" is on, memory only). */
+  constructor(storage?: DraftStorage | null, persist?: () => boolean) {
+    this.store = storage !== undefined ? new Drafts('followup', storage, persist) : new Drafts('followup', undefined, persist);
+  }
+
+  /** #108 round 4: `persist` changed (`Drafts.persistChanged`). */
+  persistChanged(): void {
+    this.store.persistChanged();
   }
 
   /** The draft of worker's follow-up of turn (null: none, or another turn's). */

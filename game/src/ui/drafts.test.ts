@@ -44,6 +44,26 @@ describe('Drafts', () => {
     expect(d.get('c')).toEqual({ text: 'c' });
   });
 
+  it('#108 round 4: `persistChanged`: on, every draft in memory leaves storage at once; off, they are written again', () => {
+    const s = fake();
+    let persist = true;
+    const d = new Drafts('hire', s, () => persist);
+    d.set('f:1', { text: 'pw=hunter2', fields: { label: 'Gum' } });
+    d.set('f:2', { text: 'token=x' });
+    expect(s.data.size).toBe(2);
+    persist = false;
+    d.persistChanged();
+    expect(s.data.size).toBe(0);
+    expect(d.get('f:1')).toEqual({ text: 'pw=hunter2', fields: { label: 'Gum' } });
+    // Typed while on: memory only, at every step.
+    d.set('f:1', { text: 'pw=hunter22', fields: { label: 'Gum' } });
+    expect(s.data.size).toBe(0);
+    persist = true;
+    d.persistChanged();
+    expect(JSON.parse(s.data.get('h3d.draft.hire.f:1') as string)).toEqual({ v: 1, text: 'pw=hunter22', fields: { label: 'Gum' } });
+    expect(s.data.has('h3d.draft.hire.f:2')).toBe(true);
+  });
+
   it('keeps a draft per key, in memory and in storage', () => {
     const s = fake();
     const d = new Drafts('hire', s);

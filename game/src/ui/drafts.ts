@@ -108,6 +108,18 @@ export class Drafts {
     }
   }
 
+  /**
+   * #108 round 4: `persist` changed: every draft in memory leaves storage now (the switch went on: memory only), or is
+   * written to it again (off).
+   */
+  persistChanged(): void {
+    const keep = this.persist();
+    for (const [key, d] of this.mem) {
+      if (keep) this.set(key, d);
+      else this.forget(key);
+    }
+  }
+
   /** #108: removes what storage has for `key`; the copy in memory stays. */
   forget(key: string): void {
     try {

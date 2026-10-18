@@ -276,11 +276,17 @@ export class TranscriptMode {
 
   constructor(private readonly host: TranscriptModeHost) {
     this.catalogs = host.catalogs ?? new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
-    // #108: with prompt secrets reviewed, the drafts stay in memory (they may hold one), and follow the switch.
-    this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage, persist: () => !host.secrets?.on });
-    host.secrets?.onChange(() => this.drafts.persistChanged());
-    this.asyncDrafts = new AsyncDrafts(host.storage);
-    this.followupDrafts = new FollowupDrafts(host.storage);
+    // #108: with prompt secrets reviewed, the drafts stay in memory (they may hold one), and follow the switch (round 4:
+    // the answers' drafts too).
+    const persist = () => !host.secrets?.on;
+    this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage, persist });
+    this.asyncDrafts = new AsyncDrafts(host.storage, persist);
+    this.followupDrafts = new FollowupDrafts(host.storage, persist);
+    host.secrets?.onChange(() => {
+      this.drafts.persistChanged();
+      this.asyncDrafts.persistChanged();
+      this.followupDrafts.persistChanged();
+    });
   }
 
   private now(): number {

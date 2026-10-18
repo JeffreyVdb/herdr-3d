@@ -21,8 +21,14 @@ export class AsyncDrafts {
   private readonly cleared = new Set<string>();
   private readonly showHidden = new Set<string>();
 
-  constructor(storage?: DraftStorage | null) {
-    this.store = storage !== undefined ? new Drafts('codex-async', storage) : new Drafts('codex-async');
+  /** #108 round 4: `persist` says whether storage may have them now (no: "Review prompt secrets" is on, memory only). */
+  constructor(storage?: DraftStorage | null, persist?: () => boolean) {
+    this.store = storage !== undefined ? new Drafts('codex-async', storage, persist) : new Drafts('codex-async', undefined, persist);
+  }
+
+  /** #108 round 4: `persist` changed (`Drafts.persistChanged`). */
+  persistChanged(): void {
+    this.store.persistChanged();
   }
 
   private key(worker: string, thread: string, batch: string, index: number): string {

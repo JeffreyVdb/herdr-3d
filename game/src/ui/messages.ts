@@ -326,6 +326,9 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
     case 'secrets_unavailable':
     case 'secrets_review_stored':
       return promptSecretsFailureText(code, why);
+    // #108 round 4: the game's own: the send flow kept the text (a review cancelled, the switch changed): its words.
+    case 'secrets_kept':
+      return why;
     // M5
     case 'prompt_failed':
       return `The prompt did not reach ${ctx.worker ?? 'the worker'}: ${why.replace(/^prompt_failed:\s*/, '') || 'the agent did not start'}. Your text is still here: try again, or sit at its laptop (E).`;
