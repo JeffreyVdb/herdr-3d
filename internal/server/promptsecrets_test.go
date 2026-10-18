@@ -435,7 +435,7 @@ func TestPromptSecretsRetryAndRollback(t *testing.T) {
 }
 
 // A worker's files go when it really ends (closed in herdr), not when its
-// floor sleeps or its herdr session goes.
+// floor sleeps or its herdr session goes, nor when the switch goes off.
 func TestPromptSecretsLifecycle(t *testing.T) {
 	t.Parallel()
 	sb := startSecretsBridge(t, true, nil)
@@ -458,6 +458,11 @@ func TestPromptSecretsLifecycle(t *testing.T) {
 	probe.snapshot()
 	if len(sb.files(t)) != 2 {
 		t.Fatal("sleep or a gone session took files")
+	}
+	// Switched off: the files stay, and their lifecycle goes on.
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	if len(sb.files(t)) != 2 {
+		t.Fatal("switching off took files")
 	}
 	// w2's workspace closes while its floor runs: its files go.
 	sb.workers = sb.workers[:1]

@@ -86,9 +86,9 @@ type promptSecretsState struct {
 
 // secretReuse is a sent review's files, for its identical retry.
 type secretReuse struct {
-	worker string
-	files  []secretfiles.File
-	at     time.Time
+	owner secretfiles.Owner
+	files []secretfiles.File
+	at    time.Time
 }
 
 // initPromptSecrets loads the switch and opens the files' directory
@@ -242,7 +242,9 @@ func (h *Hub) withSecretSlot(ctx context.Context, work func()) error {
 		return fmt.Errorf("%w: the bridge is busy scanning other prompts", errSecretsUnavailable)
 	}
 	done := make(chan struct{})
+	h.wg.Add(1) // a scan or write past the timeout still ends before the hub does
 	go func() {
+		defer h.wg.Done()
 		defer func() { <-h.ps.slots }()
 		defer close(done)
 		work()
@@ -292,12 +294,14 @@ type protected struct {
 	key     string
 }
 
-// protectPrompt is the gate (on worker id's lane, off the hub goroutine):
-// the text scanned with rev; with no review, the text as typed when there is
-// nothing to review, else secrets_review_required; with a review, checked
-// and each protected range written to a file of the worker and replaced by
-// its reference. Its errors never quote the text.
-func (h *Hub) protectPrompt(ctx context.Context, rev *promptsecret.Reviewer, id, text string, review *proto.SecretsReview) (protected, error) {
+// protectText is the gate of a text-carrying command (off the hub
+// goroutine; worker.prompt's on its worker's lane): the text scanned with
+// rev; with no review, the text as typed when there is nothing to review,
+// else secrets_review_required; with a review, checked and each protected
+// range written to a file of owner (a worker, or a pending owner that
+// expires) and replaced by its reference. Its errors never quote the text.
+func (h *Hub) protectText(ctx context.Context, rev *promptsecret.Reviewer, owner secretfiles.Owner, expires time.Time, text string,
+	review *proto.SecretsReview) (protected, error) {
 	scan, err := h.scanSecrets(ctx, rev, text)
 	if err != nil {
 		return protected{}, err
@@ -326,14 +330,14 @@ func (h *Hub) protectPrompt(ctx context.Context, rev *promptsecret.Reviewer, id,
 	if h.ps.files == nil {
 		return protected{}, fmt.Errorf("%w: %v", errSecretsUnavailable, h.ps.err)
 	}
-	key := reuseKey(id, plan.Key)
+	key := reuseKey(owner, plan.Key)
 	p := protected{key: key}
-	if p.files = h.reusable(key, id); p.files == nil {
+	if p.files = h.reusable(key, owner); p.files == nil {
 		secrets := make([][]byte, len(plan.Protect))
 		for i, r := range plan.Protect {
 			secrets[i] = []byte(text[r.Start:r.End])
 		}
-		created, err := h.writeSecrets(ctx, id, secrets)
+		created, err := h.writeSecrets(ctx, owner, expires, secrets)
 		if err != nil {
 			return protected{}, err
 		}
@@ -347,10 +351,10 @@ func (h *Hub) protectPrompt(ctx context.Context, rev *promptsecret.Reviewer, id,
 	return p, nil
 }
 
-// writeSecrets writes a review's secrets to files of worker id, in a scan
-// slot within SecretScanTimeout. A write that ends after the caller gave up
+// writeSecrets writes a review's secrets to files of owner, in a scan slot
+// within SecretScanTimeout. A write that ends after the caller gave up
 // removes its files itself.
-func (h *Hub) writeSecrets(ctx context.Context, id string, secrets [][]byte) ([]secretfiles.File, error) {
+func (h *Hub) writeSecrets(ctx context.Context, owner secretfiles.Owner, expires time.Time, secrets [][]byte) ([]secretfiles.File, error) {
 	var (
 		mu        sync.Mutex
 		abandoned bool
@@ -359,7 +363,7 @@ func (h *Hub) writeSecrets(ctx context.Context, id string, secrets [][]byte) ([]
 	)
 	bg := context.WithoutCancel(ctx)
 	err := h.withSecretSlot(ctx, func() {
-		files, err := h.ps.files.Write(bg, secretfiles.Worker(id), time.Time{}, secrets)
+		files, err := h.ps.files.Write(bg, owner, expires, secrets)
 		mu.Lock()
 		defer mu.Unlock()
 		if abandoned {
@@ -384,27 +388,27 @@ func (h *Hub) writeSecrets(ctx context.Context, id string, secrets [][]byte) ([]
 	return created, nil
 }
 
-// reuseKey is a sent review's identity: the worker and the plan's key (the
+// reuseKey is a sent review's identity: its owner and the plan's key (the
 // revision and the decisions).
-func reuseKey(worker, planKey string) string {
-	s := sha256.Sum256([]byte(worker + "\x00" + planKey))
+func reuseKey(owner secretfiles.Owner, planKey string) string {
+	s := sha256.Sum256([]byte(owner.Kind + "\x00" + owner.ID + "\x00" + planKey))
 	return hex.EncodeToString(s[:])
 }
 
-// reusable is the files of the identical review sent lately to the worker,
+// reusable is the files of the identical review sent lately for owner,
 // when they are all still there (nil: none).
-func (h *Hub) reusable(key, worker string) []secretfiles.File {
+func (h *Hub) reusable(key string, owner secretfiles.Owner) []secretfiles.File {
 	h.ps.mu.Lock()
 	r, ok := h.ps.reuse[key]
 	h.ps.mu.Unlock()
-	if !ok || r.worker != worker || h.opts.Now().Sub(r.at) > h.opts.SecretReuseTTL || !h.ps.files.Exists(r.files) {
+	if !ok || r.owner != owner || h.opts.Now().Sub(r.at) > h.opts.SecretReuseTTL || !h.ps.files.Exists(r.files) {
 		return nil
 	}
 	return r.files
 }
 
 // sentReview remembers a sent review's files for its retry.
-func (h *Hub) sentReview(p protected, worker string) {
+func (h *Hub) sentReview(p protected, owner secretfiles.Owner) {
 	if p.key == "" {
 		return
 	}
@@ -416,7 +420,7 @@ func (h *Hub) sentReview(p protected, worker string) {
 			delete(h.ps.reuse, k)
 		}
 	}
-	h.ps.reuse[p.key] = secretReuse{worker: worker, files: p.files, at: now}
+	h.ps.reuse[p.key] = secretReuse{owner: owner, files: p.files, at: now}
 }
 
 // unprotect removes the files a failed submission made (never those it
@@ -453,7 +457,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 	}
 	rev, typed := h.ps.rev, a.Text
 	h.queueLane(ctx, a.ID, func(ctx context.Context) {
-		p, err := h.protectPrompt(ctx, rev, a.ID, a.Text, a.Secrets)
+		p, err := h.protectText(ctx, rev, secretfiles.Worker(a.ID), time.Time{}, a.Text, a.Secrets)
 		if err != nil {
 			end(ctx, nil, err)
 			return
@@ -492,7 +496,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 		if err != nil {
 			h.unprotect(ctx, p)
 		} else {
-			h.sentReview(p, a.ID)
+			h.sentReview(p, secretfiles.Worker(a.ID))
 		}
 		end(ctx, data, err)
 	})
@@ -504,7 +508,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 func (h *Hub) releaseSecrets(id string) {
 	h.ps.mu.Lock()
 	for k, r := range h.ps.reuse {
-		if r.worker == id {
+		if r.owner == secretfiles.Worker(id) {
 			delete(h.ps.reuse, k)
 		}
 	}
