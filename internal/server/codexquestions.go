@@ -517,25 +517,33 @@ type asyncPrompt struct {
 	w    CodexWatch
 	turn string
 	ok   bool
+	err  error
 }
 
 // promptViaServer sends a prompt to a shared worker herdr shows as blocked
 // by an async question (input lane): steered into the running turn, as
 // Codex's own composer queues it ("Messages to be submitted after next
 // tool call"), so it is delivered with the turn's next model request. ok is
-// false when the worker is not blocked that way.
-func (h *Hub) promptViaServer(ctx context.Context, id, text string) (any, bool, error) {
+// false when the worker is not blocked that way. #108: a reviewed prompt's
+// review (rev; nil: none) is checked again in the step that finds the
+// block, after its wait (review R2P3-1; stale: unsent).
+func (h *Hub) promptViaServer(ctx context.Context, id, text string, rev *promptsecret.Reviewer) (any, bool, error) {
 	p, err := query(ctx, h, func() asyncPrompt {
+		if err := h.reviewHolds(rev); err != nil {
+			return asyncPrompt{err: err}
+		}
 		cw, ok := h.asyncBlocked(id)
 		if !ok {
 			return asyncPrompt{}
 		}
 		return asyncPrompt{w: cw.w, turn: cw.turn, ok: true}
 	})
-	if err != nil {
-		return nil, true, err
-	}
-	if !p.ok {
+	switch {
+	case err != nil:
+		return nil, true, unsent(err)
+	case p.err != nil:
+		return nil, true, unsent(p.err)
+	case !p.ok:
 		return nil, false, nil
 	}
 	via, _, _, err := h.sendToThread(ctx, id, p.w, p.turn, text, codexapp.NewClientID())

@@ -3994,9 +3994,10 @@ went, nothing is checked again (Enter pressed again, a model request retried).
   has been read (then nothing is hired).
 - The worker's routes (`worker.prompt`, `worker.answer_ask`, `worker.answer_followup`, `worker.answer_async`, a
   wrap-up, `worker.handoff` in mode `agent`, a `/handoff`) check it when their turn comes on the worker's input lane and
-  again right before their text goes: once the agent is ready to be typed into, before a Codex prompt is submitted or
-  queued, before the first Other answer is typed into a dialog (a dialog whose text was typed is answered whole), before
-  a dismissal's prompt, as an async answer is marked sending, before a handoff request's prompt. The command is
+  again right before their text goes: once the agent is ready to be typed into, before a Codex prompt is submitted,
+  queued or steered through its app-server (a shared worker blocked by an async question), before the first Other
+  answer is typed into a dialog (a dialog whose text was typed is answered whole), before a dismissal's prompt, as an
+  async answer is marked sending, before a handoff request's prompt. The command is
   `secrets_review_stale`, nothing of its text is sent, and the files it made are removed (a wrap-up's arm fails so; an
   agent handoff's request fails).
 - An LLM handoff checks it just before the model is called, and as the call takes its slot: the job fails with code

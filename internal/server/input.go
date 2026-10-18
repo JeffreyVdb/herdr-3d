@@ -527,7 +527,7 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	case statusBlocked:
 		// #156: blocked only by a shared Codex worker's async question:
 		// through its app-server (herdr would refuse it).
-		if res, ok, err := h.promptViaServer(ctx, a.ID, a.Text); ok {
+		if res, ok, err := h.promptViaServer(ctx, a.ID, a.Text, rev); ok {
 			return res, err
 		}
 		return nil, unsent(fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState))
