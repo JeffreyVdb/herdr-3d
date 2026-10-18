@@ -386,8 +386,12 @@ type asyncSend struct {
 // response is sent, unconfirmed, and a refused one is pending again. #108:
 // a reviewed answer's review (rev; nil: none) is checked in the same step.
 func (h *Hub) answerAsync(ctx context.Context, a proto.WorkerAnswerAsyncArgs, t codexapp.Ticket, rev *promptsecret.Reviewer) (any, error) {
+	texts := make([]string, len(a.Answers))
+	for i, x := range a.Answers {
+		texts[i] = x.Answer
+	}
 	s, err := query(ctx, h, func() asyncSend {
-		if err := h.reviewHolds(rev); err != nil {
+		if err := h.reviewHolds(rev, texts...); err != nil {
 			return asyncSend{err: err}
 		}
 		q, err := h.asyncThread(a.ID, a.Thread)
@@ -530,7 +534,7 @@ type asyncPrompt struct {
 // whatever blocks the worker).
 func (h *Hub) promptViaServer(ctx context.Context, id, text string, rev *promptsecret.Reviewer) (any, bool, error) {
 	p, err := query(ctx, h, func() asyncPrompt {
-		if err := h.reviewHolds(rev); err != nil {
+		if err := h.reviewHolds(rev, text); err != nil {
 			return asyncPrompt{err: err}
 		}
 		cw, ok := h.asyncBlocked(id)

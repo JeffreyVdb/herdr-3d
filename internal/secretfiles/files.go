@@ -12,8 +12,12 @@
 //
 // An owner is a worker (its files live until the worker really ends) or a
 // pending owner (a token with an expiry, for a request that has no worker
-// yet; Claim gives its files to the worker it became). The store keeps only
-// the opaque names, the owners and the expiries: never a secret byte.
+// yet; Claim gives its files to the worker it became). Round 5: another
+// worker may hold a file by a lease (Lease: a handoff's successor); a file
+// lives while its owner or any of its holders does, and Revoke removes
+// every file a worker holds, for every holder. The store keeps only the
+// opaque names, the owners, the holders and the expiries: never a secret
+// byte.
 // Unlinking a file is not a secure erasure of its bytes (tmpfs pages can be
 // swapped). One bridge at a time holds a directory (a lock file in it).
 //
@@ -21,6 +25,7 @@
 package secretfiles
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"log/slog"
@@ -40,7 +45,15 @@ type Options struct {
 	Store *store.Store // the owners and names
 	Now   func() time.Time
 	Log   *slog.Logger
+	// Changed (optional) is called after an operation that may have changed
+	// which files a worker holds (any goroutine; it must not block).
+	Changed func()
 }
+
+// Liveness reads which workers are live: Sweep, Release, ReleaseExpired and
+// Revoke call it with the directory locked, so no file is written, claimed
+// or leased between that read and what they remove (review S2).
+type Liveness func(context.Context) (live func(workerID string) bool, err error)
 
 // Kinds of Owner.
 const (
@@ -60,6 +73,10 @@ func NewPending() Owner { return Owner{Kind: OwnerPending, ID: rand.Text()} }
 // File is one protected file: its owner directory's and its own opaque
 // names, and its absolute path (what a prompt references).
 type File struct{ Dir, Name, Path string }
+
+// RevokedFor is how long Revoked remembers a revoked file: longer than any
+// send waits between writing its text and sending it.
+const RevokedFor = 24 * time.Hour
 
 var (
 	// ErrUnavailable: no private runtime directory to keep files in

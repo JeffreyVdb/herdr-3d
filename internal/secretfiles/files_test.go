@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,11 +21,12 @@ import (
 var ctx = context.Background()
 
 type fixture struct {
-	f   *secretfiles.Files
-	st  *store.Store
-	dir string
-	db  string
-	now *time.Time
+	f       *secretfiles.Files
+	st      *store.Store
+	dir     string
+	db      string
+	now     *time.Time
+	changes atomic.Int32 // Options.Changed calls
 }
 
 func open(t *testing.T) *fixture {
@@ -41,7 +43,8 @@ func open(t *testing.T) *fixture {
 	if err := os.Mkdir(filepath.Join(base, "run"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	fx.f, err = secretfiles.Open(secretfiles.Options{Dir: fx.dir, Store: st, Now: func() time.Time { return *fx.now }, Log: nil})
+	fx.f, err = secretfiles.Open(secretfiles.Options{Dir: fx.dir, Store: st, Now: func() time.Time { return *fx.now }, Log: nil,
+		Changed: func() { fx.changes.Add(1) }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +161,7 @@ func TestReleaseAndPendingOwners(t *testing.T) {
 	fx := open(t)
 	w1, _ := fx.f.Write(ctx, secretfiles.Worker("w-1"), time.Time{}, [][]byte{[]byte("one")})
 	w2, _ := fx.f.Write(ctx, secretfiles.Worker("w-2"), time.Time{}, [][]byte{[]byte("two")})
-	if err := fx.f.Release(ctx, secretfiles.Worker("w-1")); err != nil {
+	if err := fx.f.Release(ctx, secretfiles.Worker("w-1"), liveSet()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(fx.dir, w1[0].Dir)); !errors.Is(err, os.ErrNotExist) {
@@ -167,7 +170,7 @@ func TestReleaseAndPendingOwners(t *testing.T) {
 	if !fx.f.Exists(w2) {
 		t.Fatal("w-2's file went too")
 	}
-	if err := fx.f.Release(ctx, secretfiles.Worker("w-1")); err != nil { // again: nothing
+	if err := fx.f.Release(ctx, secretfiles.Worker("w-1"), liveSet()); err != nil { // again: nothing
 		t.Fatal(err)
 	}
 
@@ -197,14 +200,14 @@ func TestReleaseAndPendingOwners(t *testing.T) {
 	if err := fx.f.Claim(ctx, secretfiles.NewPending().ID, "w-4"); !errors.Is(err, secretfiles.ErrNotPending) {
 		t.Fatalf("a token with no files: %v", err)
 	}
-	if err := fx.f.ReleaseExpired(ctx); err != nil || !fx.f.Exists(f1) || !fx.f.Exists(f2) {
+	if err := fx.f.ReleaseExpired(ctx, liveSet()); err != nil || !fx.f.Exists(f1) || !fx.f.Exists(f2) {
 		t.Fatalf("before the expiry: %v", err)
 	}
 	*fx.now = exp
 	if err := fx.f.Claim(ctx, p2.ID, "w-4"); !errors.Is(err, secretfiles.ErrNotPending) {
 		t.Fatalf("an expired owner (not swept yet): %v", err)
 	}
-	if err := fx.f.ReleaseExpired(ctx); err != nil {
+	if err := fx.f.ReleaseExpired(ctx, liveSet()); err != nil {
 		t.Fatal(err)
 	}
 	if !fx.f.Exists(f1) || fx.f.Exists(f2) {
@@ -213,7 +216,7 @@ func TestReleaseAndPendingOwners(t *testing.T) {
 	if rows, _ := fx.st.SecretOwnersOf(ctx, "worker", "w-3"); len(rows) != 1 || !rows[0].ExpiresAt.IsZero() {
 		t.Fatalf("claimed rows %+v", rows)
 	}
-	if err := fx.f.Release(ctx, secretfiles.Worker("w-3")); err != nil || fx.f.Exists(f1) {
+	if err := fx.f.Release(ctx, secretfiles.Worker("w-3"), liveSet()); err != nil || fx.f.Exists(f1) {
 		t.Fatalf("release of the claimed: %v", err)
 	}
 }
@@ -274,10 +277,174 @@ func TestSweep(t *testing.T) {
 	}
 }
 
-// liveSet is a Sweep's liveness: these workers are live.
-func liveSet(ids ...string) func(context.Context) (func(string) bool, error) {
+// liveSet is a Sweep's (a Release's, a Revoke's) liveness: these workers
+// are live.
+func liveSet(ids ...string) secretfiles.Liveness {
 	return func(context.Context) (func(string) bool, error) {
 		return func(id string) bool { return slices.Contains(ids, id) }, nil
+	}
+}
+
+// #108 round 5: a file another worker holds by a lease lives while its
+// owner or any holder does: a release keeps it for a live holder (with its
+// owner directory), an expiry too, and the janitor removes it once no
+// holder is live, forgetting the leases of a worker that is not.
+func TestLeases(t *testing.T) {
+	t.Parallel()
+	fx := open(t)
+	a, _ := fx.f.Write(ctx, secretfiles.Worker("a"), time.Time{}, [][]byte{[]byte("a1"), []byte("a2")})
+	b, _ := fx.f.Write(ctx, secretfiles.Worker("b"), time.Time{}, [][]byte{[]byte("b1")})
+	lease := func(worker string, files []secretfiles.File, want int) {
+		t.Helper()
+		before := fx.changes.Load()
+		if n, err := fx.f.Lease(ctx, worker, files); err != nil || n != want {
+			t.Fatalf("lease to %s: %d %v, want %d", worker, n, err, want)
+		}
+		if fx.changes.Load() == before {
+			t.Fatal("a lease told no one")
+		}
+	}
+	gone := secretfiles.File{Dir: a[0].Dir, Name: "GONEGONEGONEGONEGONEGONE22", Path: a[0].Path + "X"}
+	lease("b", []secretfiles.File{a[0], gone}, 1) // a file with no row is left out
+	lease("c", a[:1], 1)
+	lease("b", b, 0)     // its own
+	lease("b", a[:1], 0) // held already
+	if got, ok := fx.f.FileAt(a[0].Path); !ok || got != a[0] {
+		t.Fatalf("FileAt %+v %v", got, ok)
+	}
+	if _, ok := fx.f.FileAt(fx.dir + "/x/" + a[0].Name); ok {
+		t.Fatal("FileAt took a name the package does not make")
+	}
+	counts, _ := fx.st.SecretFileCounts(ctx)
+	if counts["a"] != 2 || counts["b"] != 2 || counts["c"] != 1 {
+		t.Fatalf("counts %v", counts)
+	}
+
+	// a ends: a1 stays for b and c, a2 goes; its directory stays for them.
+	if err := fx.f.Release(ctx, secretfiles.Worker("a"), liveSet("a", "b", "c")); err != nil {
+		t.Fatal(err)
+	}
+	if !fx.f.Exists(a[:1]) || fx.f.Exists(a[1:]) {
+		t.Fatal("a's end: its leased file went, or the other stayed")
+	}
+	if rows, _ := fx.st.SecretOwnersOf(ctx, "worker", "a"); len(rows) != 1 {
+		t.Fatalf("a's directory row %+v", rows)
+	}
+	// b ends: a1 stays for c; b's own file goes.
+	if err := fx.f.Release(ctx, secretfiles.Worker("b"), liveSet("c")); err != nil {
+		t.Fatal(err)
+	}
+	if !fx.f.Exists(a[:1]) || fx.f.Exists(b) {
+		t.Fatal("b's end")
+	}
+	// The janitor, c gone too (it ended while the bridge was down): a1 and
+	// a's directory go, and c's lease is forgotten.
+	if n, err := fx.f.Sweep(ctx, liveSet()); err != nil || n != 1 {
+		t.Fatalf("sweep: %d %v", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(fx.dir, a[0].Dir)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a's directory: %v", err)
+	}
+	if l, _ := fx.st.SecretLeases(ctx); len(l) != 0 {
+		t.Fatalf("leases %+v", l)
+	}
+
+	// A pending owner's file a worker holds outlives its expiry while the
+	// worker lives; the sweep keeps it then, and the worker's end takes it.
+	p := secretfiles.NewPending()
+	pf, _ := fx.f.Write(ctx, p, fx.now.Add(time.Minute), [][]byte{[]byte("p1"), []byte("p2")})
+	lease("d", pf[:1], 1)
+	*fx.now = fx.now.Add(time.Minute)
+	if err := fx.f.ReleaseExpired(ctx, liveSet("d")); err != nil {
+		t.Fatal(err)
+	}
+	if !fx.f.Exists(pf[:1]) || fx.f.Exists(pf[1:]) {
+		t.Fatal("expiry: the held file went, or the other stayed")
+	}
+	if _, err := fx.f.Sweep(ctx, liveSet("d")); err != nil || !fx.f.Exists(pf[:1]) {
+		t.Fatalf("sweep with its holder live: %v", err)
+	}
+	if err := fx.f.Release(ctx, secretfiles.Worker("d"), liveSet()); err != nil {
+		t.Fatal(err)
+	}
+	if fx.f.Exists(pf[:1]) {
+		t.Fatal("the holder's end kept it")
+	}
+	if rows, _ := fx.st.SecretOwners(ctx); len(rows) != 0 {
+		t.Fatalf("rows %+v", rows)
+	}
+}
+
+// #108 round 5: Revoke removes every file a worker holds, its own and those
+// it holds by a lease, for every holder, and nothing else; each path is
+// Revoked before its file goes.
+func TestRevoke(t *testing.T) {
+	t.Parallel()
+	fx := open(t)
+	w, _ := fx.f.Write(ctx, secretfiles.Worker("w"), time.Time{}, [][]byte{[]byte("w1"), []byte("w2")})
+	x, _ := fx.f.Write(ctx, secretfiles.Worker("x"), time.Time{}, [][]byte{[]byte("x1"), []byte("x2")})
+	z, _ := fx.f.Write(ctx, secretfiles.Worker("z"), time.Time{}, [][]byte{[]byte("z1")})
+	e, _ := fx.f.Write(ctx, secretfiles.Worker("ended"), time.Time{}, [][]byte{[]byte("e1")})
+	must2 := func(n int, err error) {
+		t.Helper()
+		if err != nil || n != 1 {
+			t.Fatalf("lease: %d %v", n, err)
+		}
+	}
+	must2(fx.f.Lease(ctx, "w", x[:1]))
+	must2(fx.f.Lease(ctx, "y", w[:1]))
+	must2(fx.f.Lease(ctx, "w", e))
+	must(t, fx.f.Release(ctx, secretfiles.Worker("ended"), liveSet("w", "x", "y", "z"))) // e1 stays for w
+	if fx.f.Revoked(w[0].Path) {
+		t.Fatal("revoked before Revoke")
+	}
+	before := fx.changes.Load()
+	n, err := fx.f.Revoke(ctx, "w", liveSet("w", "x", "y", "z"))
+	if err != nil || n != 4 {
+		t.Fatalf("revoke: %d %v", n, err)
+	}
+	if fx.changes.Load() == before {
+		t.Fatal("a revoke told no one")
+	}
+	for _, f := range []secretfiles.File{w[0], w[1], x[0], e[0]} {
+		if fx.f.Exists([]secretfiles.File{f}) || !fx.f.Revoked(f.Path) {
+			t.Errorf("%s: still there, or not revoked", f.Path)
+		}
+	}
+	if !fx.f.Exists(x[1:]) || !fx.f.Exists(z) || fx.f.Revoked(x[1].Path, z[0].Path) {
+		t.Fatal("another worker's file it does not hold was revoked")
+	}
+	for _, d := range []string{w[0].Dir, e[0].Dir} { // its own, and the ended owner's it kept a file in
+		if _, err := os.Stat(filepath.Join(fx.dir, d)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("directory %s: %v", d, err)
+		}
+	}
+	if l, _ := fx.st.SecretLeases(ctx); len(l) != 0 {
+		t.Fatalf("leases %+v", l)
+	}
+	if counts, _ := fx.st.SecretFileCounts(ctx); counts["w"] != 0 || counts["y"] != 0 || counts["x"] != 1 || counts["z"] != 1 {
+		t.Fatalf("counts %v", counts)
+	}
+	// Nothing held: 0. Written again, its files are new.
+	if n, err := fx.f.Revoke(ctx, "w", liveSet("w")); err != nil || n != 0 {
+		t.Fatalf("again: %d %v", n, err)
+	}
+	again, err := fx.f.Write(ctx, secretfiles.Worker("w"), time.Time{}, [][]byte{[]byte("w3")})
+	if err != nil || fx.f.Revoked(again[0].Path) {
+		t.Fatalf("written after: %v", err)
+	}
+	// A revoked path is remembered for RevokedFor, then forgotten (on the
+	// next revoke).
+	*fx.now = fx.now.Add(secretfiles.RevokedFor + time.Second)
+	if _, err := fx.f.Revoke(ctx, "z", liveSet("z")); err != nil {
+		t.Fatal(err)
+	}
+	if fx.f.Revoked(w[0].Path) || !fx.f.Revoked(z[0].Path) {
+		t.Fatal("RevokedFor")
+	}
+	if _, err := fx.f.Revoke(ctx, "x", func(context.Context) (func(string) bool, error) { return nil, errors.New("no workers") }); err == nil ||
+		!fx.f.Exists(x[1:]) {
+		t.Fatalf("an unreadable liveness revoked: %v", err)
 	}
 }
 
@@ -417,7 +584,7 @@ func TestOwnerDirectoryTampering(t *testing.T) {
 	target := filepath.Join(elsewhere, "keep")
 	must(t, os.WriteFile(target, []byte("k"), 0o600))
 	must(t, os.Symlink(target, filepath.Join(owner, "LINKLINKLINKLINKLINKLINK22")))
-	if err := fx.f.Release(ctx, secretfiles.Worker("w")); err != nil {
+	if err := fx.f.Release(ctx, secretfiles.Worker("w"), liveSet()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(target); err != nil {

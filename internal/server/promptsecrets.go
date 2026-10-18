@@ -80,8 +80,9 @@ func promptSecretsErrorCode(err error) string {
 
 // promptSecretsState is the hub's part: the switch and the reviewer (hub
 // goroutine; cur is the reviewer too, for any goroutine), the files (nil:
-// unavailable, err says why), the scan slots, and the reviews sent lately
-// (any goroutine, under mu).
+// unavailable, err says why), the scan slots, the workers' file counts
+// (hub goroutine; round 5) and the signal to read them again, and the
+// reviews sent lately (any goroutine, under mu).
 type promptSecretsState struct {
 	enabled bool
 	rev     *promptsecret.Reviewer
@@ -89,6 +90,8 @@ type promptSecretsState struct {
 	files   *secretfiles.Files
 	err     error
 	slots   chan struct{}
+	counts  map[string]int
+	recount chan struct{}
 
 	mu      sync.Mutex
 	reuse   map[string]secretReuse    // reuseKey → the files a sent review made
@@ -123,10 +126,11 @@ func (h *Hub) initPromptSecrets(ctx context.Context) error {
 		h.opts.SecretPendingTTL = DefaultSecretPendingTTL
 	}
 	h.ps = promptSecretsState{enabled: on, slots: make(chan struct{}, maxSecretScans), reuse: map[string]secretReuse{},
-		pending: map[string]*secretPending{}}
+		pending: map[string]*secretPending{}, recount: make(chan struct{}, 1)}
 	if h.opts.SecretsDir == "" {
 		h.ps.err = secretfiles.ErrUnavailable
-	} else if f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log}); err != nil {
+	} else if f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log,
+		Changed: h.secretsChanged}); err != nil {
 		h.log.Warn("no directory for protected prompt secrets: a review that protects one will be refused",
 			"dir", h.opts.SecretsDir, "err", err)
 		h.ps.err = err
@@ -159,12 +163,17 @@ func (h *Hub) reviewCurrent(rev *promptsecret.Reviewer) error {
 
 // reviewHolds is reviewCurrent for a text that goes with or without a
 // review (rev nil: none, nothing to check), where it goes to the terminal:
-// right before its first byte, after any wait (review B2, pass 2).
-func (h *Hub) reviewHolds(rev *promptsecret.Reviewer) error {
+// right before its first byte, after any wait (review B2, pass 2). Round 5:
+// and none of the texts (what is about to go) refers to a protected file
+// revoked since (a revoke that came while it waited: its files are gone).
+func (h *Hub) reviewHolds(rev *promptsecret.Reviewer, texts ...string) error {
 	if rev == nil {
 		return nil
 	}
-	return h.reviewCurrent(rev)
+	if err := h.reviewCurrent(rev); err != nil {
+		return err
+	}
+	return h.referencesHold(texts...)
 }
 
 // newReviewer is a reviewer with a fresh random key (every review made
@@ -192,9 +201,14 @@ func (h *Hub) closePromptSecrets() {
 	}
 }
 
-// promptSecretsView is the switch for the snapshot and the acks.
+// promptSecretsView is the switch for the snapshot and the acks (round 5:
+// with the directory, while available).
 func (h *Hub) promptSecretsView() *proto.PromptSecrets {
-	return &proto.PromptSecrets{Enabled: h.ps.enabled, Available: h.ps.files != nil}
+	v := &proto.PromptSecrets{Enabled: h.ps.enabled, Available: h.ps.files != nil}
+	if h.ps.files != nil {
+		v.Dir = h.ps.files.Dir()
+	}
+	return v
 }
 
 // startPromptSecrets answers prompt_secrets.get, .set (hub goroutine: one
@@ -619,15 +633,10 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 }
 
 // releaseSecrets removes worker id's protected files (hub goroutine): the
-// worker really ended. The files go off the hub goroutine.
+// worker really ended. The files go off the hub goroutine; round 5: those a
+// live worker holds by a lease stay (secretfiles.Release).
 func (h *Hub) releaseSecrets(id string) {
-	h.ps.mu.Lock()
-	for k, r := range h.ps.reuse {
-		if r.owner == secretfiles.Worker(id) {
-			delete(h.ps.reuse, k)
-		}
-	}
-	h.ps.mu.Unlock()
+	h.dropReuse(id)
 	f := h.ps.files
 	if f == nil {
 		return
@@ -637,7 +646,7 @@ func (h *Hub) releaseSecrets(id string) {
 		defer h.wg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := f.Release(ctx, secretfiles.Worker(id)); err != nil {
+		if err := f.Release(ctx, secretfiles.Worker(id), h.liveWorkers); err != nil {
 			h.log.Warn("removing an ended worker's protected files failed (the janitor retries)", "worker", id, "err", err)
 		}
 	}()
@@ -646,7 +655,8 @@ func (h *Hub) releaseSecrets(id string) {
 // runSecretsJanitor sweeps the files at start and every SecretsSweep (Run):
 // a worker known to the hub or open in the store keeps its files (an asleep
 // floor's, a gone herdr session's); a closed or unknown worker's go, and
-// expired pending owners' and what has no row.
+// expired pending owners' and what has no row (round 5: but a file a live
+// worker holds by a lease stays).
 func (h *Hub) runSecretsJanitor(ctx context.Context) {
 	defer h.wg.Done()
 	t := time.NewTicker(h.opts.SecretsSweep)

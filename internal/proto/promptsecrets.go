@@ -14,14 +14,15 @@ package proto
 
 // Commands and the event of the feature.
 const (
-	CmdPromptSecretsGet   = "prompt_secrets.get"
-	CmdPromptSecretsSet   = "prompt_secrets.set"
-	CmdPromptSecretsScan  = "prompt_secrets.scan"
-	EvPromptSecretsUpdate = "prompt_secrets.update"
+	CmdPromptSecretsGet    = "prompt_secrets.get"
+	CmdPromptSecretsSet    = "prompt_secrets.set"
+	CmdPromptSecretsScan   = "prompt_secrets.scan"
+	CmdPromptSecretsRevoke = "prompt_secrets.revoke" // round 5
+	EvPromptSecretsUpdate  = "prompt_secrets.update"
 )
 
 func init() {
-	Commands = append(Commands, CmdPromptSecretsGet, CmdPromptSecretsSet, CmdPromptSecretsScan)
+	Commands = append(Commands, CmdPromptSecretsGet, CmdPromptSecretsSet, CmdPromptSecretsScan, CmdPromptSecretsRevoke)
 }
 
 // Error codes of the feature.
@@ -60,6 +61,10 @@ type PromptSecrets struct {
 	// files (false: a review that protects anything is refused with
 	// secrets_unavailable).
 	Available bool `json:"available"`
+	// Dir (round 5) is that directory, absolute, while Available: a
+	// reference is the bridge's own exactly when its path is
+	// <Dir>/<owner>/<file>.
+	Dir string `json:"dir,omitempty"`
 }
 
 // PromptSecretsUpdate is the prompt_secrets.update event.
@@ -72,6 +77,18 @@ type PromptSecretsUpdate struct {
 // PromptSecretsSetArgs are the args of prompt_secrets.set.
 type PromptSecretsSetArgs struct {
 	Enabled *bool `json:"enabled"`
+}
+
+// PromptSecretsRevokeArgs are the args of prompt_secrets.revoke (round 5):
+// the worker whose protected files go (its own and those it holds by a
+// lease, for every holder).
+type PromptSecretsRevokeArgs struct {
+	Worker string `json:"worker"`
+}
+
+// PromptSecretsRevoke is prompt_secrets.revoke's ack: how many files went.
+type PromptSecretsRevoke struct {
+	Removed int `json:"removed"`
 }
 
 // PromptSecretsScanArgs are the args of prompt_secrets.scan: the text as it

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
@@ -174,6 +175,21 @@ type secretPending struct {
 // reviewed reports a text the bridge answered as reviewed, exactly.
 func (p *secretPending) reviewed(text string) bool { return p != nil && p.texts[text] }
 
+// handedOver splits a wrap-up's prompt (round 5) into a text the bridge
+// answered as reviewed and what follows it after a blank line ("": the
+// prompt is that text); the longest such text. ok false: none starts it.
+func (p *secretPending) handedOver(prompt string) (task, rest string, ok bool) {
+	if p.reviewed(prompt) {
+		return prompt, "", true
+	}
+	for t := range p.texts {
+		if r, found := strings.CutPrefix(prompt, t+"\n\n"); found && len(t) > len(task) {
+			task, rest, ok = t, r, true
+		}
+	}
+	return task, rest, ok
+}
+
 // newPending registers a new hand-over for worker ("": a hire's) under rev,
 // with a fresh pending owner: its token (random; never the owner's id,
 // which the database keeps).
@@ -305,7 +321,7 @@ func (h *Hub) releaseOwner(ctx context.Context, owner secretfiles.Owner) {
 	if h.ps.files == nil {
 		return
 	}
-	if err := h.ps.files.Release(context.WithoutCancel(ctx), owner); err != nil {
+	if err := h.ps.files.Release(context.WithoutCancel(ctx), owner, h.liveWorkers); err != nil {
 		h.log.Warn("removing a pending owner's protected files failed (the janitor removes them once they expire)", "err", err)
 	}
 }

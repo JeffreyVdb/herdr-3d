@@ -699,6 +699,7 @@ func (h *Hub) runLLMHandoff(jctx, hctx context.Context, j *llmJob, hc *handoffCa
 		if err != nil {
 			return fmt.Errorf("%w: %v", errHandoffFailed, err)
 		}
+		h.noteHandoffSecrets(fctx, filed.ID, res.Doc, a.Instruction) // #108 round 5: for its successor
 		rep.DocBytes = len(res.Doc)
 		return nil
 	}()

@@ -291,7 +291,7 @@ func (d *askDriver) typeText(text string) error {
 	if !still {
 		return fmt.Errorf("%w: the question was answered or replaced meanwhile (no more keys pressed)", errStale)
 	}
-	if err := d.h.reviewHolds(d.rev); err != nil {
+	if err := d.h.reviewHolds(d.rev, text); err != nil {
 		return err // review B2: the switch changed while the dialog was driven (no more keys pressed)
 	}
 	d.rev = nil
@@ -423,7 +423,7 @@ func (h *Hub) submitAfterAsk(ctx context.Context, id, session, pane, kind, promp
 	if err != nil {
 		return err
 	}
-	if err := h.reviewHolds(rev); err != nil {
+	if err := h.reviewHolds(rev, prompt); err != nil {
 		return fmt.Errorf("dismissed, but the prompt was not sent: %w", err)
 	}
 	err = h.opts.Term.SubmitPrompt(ctx, session, pane, prompt)

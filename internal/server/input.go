@@ -517,7 +517,7 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	if typesPrompts(cur.kind) {
 		return h.typePrompt(ctx, a.ID, session, pane, a.Text, false, rev)
 	}
-	if err := h.reviewHolds(rev); err != nil {
+	if err := h.reviewHolds(rev, a.Text); err != nil {
 		return nil, unsent(err)
 	}
 	t := h.opts.Term
@@ -586,7 +586,7 @@ func (h *Hub) terminalPrompt(ctx context.Context, a proto.WorkerPromptArgs, sess
 	case statusBlocked:
 		return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
 	}
-	if err := h.reviewHolds(rev); err != nil {
+	if err := h.reviewHolds(rev, a.Text); err != nil {
 		return nil, unsent(err)
 	}
 	if err := h.opts.Term.QueuePrompt(ctx, session, pane, a.Text); err != nil {
@@ -698,7 +698,7 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 	}
 	var stale error
 	if err := h.doWait(ctx, func() {
-		if stale = h.reviewHolds(rev); stale == nil {
+		if stale = h.reviewHolds(rev, text); stale == nil {
 			h.noteTyped(id, text)
 		}
 	}); err != nil {
@@ -878,11 +878,12 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			return redacted(cmd.Args)
 		}
 		return mustJSON(struct {
-			ID          string        `json:"id"`
-			Worktree    string        `json:"worktree,omitempty"`
-			PromptBytes int           `json:"prompt_bytes"`
-			Secrets     *secretsAudit `json:"secrets,omitempty"` // #108 round 2
-		}{a.ID, clip(a.Worktree), len(a.Prompt), auditReviews(a.Secrets)})
+			ID             string        `json:"id"`
+			Worktree       string        `json:"worktree,omitempty"`
+			PromptBytes    int           `json:"prompt_bytes"`
+			Secrets        *secretsAudit `json:"secrets,omitempty"`         // #108 round 2
+			SecretsPending bool          `json:"secrets_pending,omitempty"` // round 5: a hand-over, never its token
+		}{a.ID, clip(a.Worktree), len(a.Prompt), auditReviews(a.Secrets), a.SecretsPending != ""})
 	// #92: the role and the fields named, never the key.
 	case proto.CmdAIModels, proto.CmdAITest, proto.CmdAISet, proto.CmdAIClear:
 		return auditAI(cmd)
