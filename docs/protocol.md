@@ -3851,9 +3851,10 @@ v8.30.1's default rules, generated into the bridge and checked against Gitleaks 
 its provider rules again before a sentence's punctuation (`Use sk_live_….`), and its own structural rules (PEM private
 keys, `Authorization` credentials and long bare `Bearer` tokens, URL passwords and credential-named query or form
 parameters, assignments to credential-like names in env, shell, YAML, JSON, TOML, INI, CLI flags (and curl's
-`-u user:password`) and code, YAML block scalars under them, "the password is X" prose, a quoted value a few words
-after such a word, a line a later sentence names as one, a code fence of one value after a line naming a credential,
-and other exact occurrences of a value found). A provider's token format inside a longer value proposes the value's
+`-u user:password`, never what the shell computes there) and code, YAML block scalars under them, "the password is X"
+prose, a quoted value a few words after such a word when it is the sentence's subject (not "the password check is
+"…""), a line a later sentence names as one (ending on the credential word, never code), a code fence of one value
+after a line naming a credential, and other exact occurrences of a value found). A provider's token format inside a longer value proposes the value's
 rest glued after it too (`Bearer ghp_…!tail` proposes `ghp_…` and `!tail`), but not a list's next item, a URL's
 query or path. Templates and references (`${X}`, `$X`, `{{ … }}`, `<your-token>`, `os.getenv(…)`, `process.env.X`),
 redactions (`****`, `REDACTED`, `xxxx`), names without values and the bridge's own file references are never
@@ -3863,8 +3864,12 @@ left out: a value that runs into one, on either side, is a candidate for its byt
 only looks like one is scanned as any other. A reference stands for a value's place, not its content: a match whose
 shape it may complete (a provider's token format, a length or a digit a detector asks for) or whose edge its own bytes
 made never keeps the bytes of another value around it from being proposed, whichever wins: the bytes it does not cover
-stay candidates (`PASSWORD="ghp_… […] tail"` and `the password is ghp_…[…]tail` propose `ghp_…` and `tail`). A
-candidate is only a proposal: the user decides every one.
+stay candidates (`PASSWORD="ghp_… […] tail"` and `the password is ghp_…[…]tail` propose `ghp_…` and `tail`). Nor
+does a match typed whole inside a value that runs into one, its own range clear of every reference (a complete token,
+a header's credential: `PASSWORD="Prefix-ghp_…![…]tail"` proposes `Prefix-`, `ghp_…`, `!` and `tail`), while a value
+boundary through a reference keeps the bytes it beats (`?token=[…]&x=1` stays clean). Whether a value runs into one
+is read from the references themselves, never from the bytes it holds. A candidate is only a proposal: the user
+decides every one.
 
 **`prompt_secrets.scan {text}`** (at most 32 KiB of UTF-8: longer is `bad_request` stating the limit, never cut)
 answers `{"revision", "candidates"}`. `candidates` (never null) are in text order and **never overlap**: `id`

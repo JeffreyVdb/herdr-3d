@@ -223,3 +223,16 @@ func BenchmarkScan16KiBReferences(b *testing.B) {
 		promptsecret.Scan(text, own)
 	}
 }
+
+// Sentences that end on token-like words: the punctuation pass runs over
+// most of the text (review T5: its windows start before each word, however
+// long).
+func BenchmarkScan16KiBPunctuated(b *testing.B) {
+	part := "Rotate sk_live_k3Jd9fLq0ZrMv8. Then check build_2026_10_18_rc1, and ask (deploy-key-v77-prod). "
+	text := strings.Repeat(part, (16<<10)/len(part)+1)[:16<<10]
+	promptsecret.Scan(text, own)
+	b.ResetTimer()
+	for b.Loop() {
+		promptsecret.Scan(text, own)
+	}
+}

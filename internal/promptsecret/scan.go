@@ -201,7 +201,7 @@ func punctuated(text string, refs []span) []RuleMatch {
 
 // punctMargin is how far before a token-like word a rule's match may start:
 // a keyword-anchored rule's name and separator (at most about 110 bytes:
-// [\w.-]{0,50}? before the keyword, 28 after it).
+// [\w.-]{0,50}? before the keyword, about 30 after it).
 const punctMargin = 256
 
 // minPunctSecret is the shortest secret a rule punctuated runs can find.
@@ -302,8 +302,8 @@ func resolve(text, mtext string, spans, refs []span) []span {
 var valueKinds = map[string]bool{KindAuthHeader: true, KindAssignment: true, KindProse: true}
 
 // kept are the parts of s, which lost to the winners over, that stay
-// proposed (review S1, passes 4 and 5; the tuning round's class 2), each a
-// part of s with its kinds:
+// proposed (review S1, pass 4 and the tuning round's; the tuning round's
+// class 2), each a part of s with its kinds:
 //
 //   - when every winner over it lends, every part no winner has. A winner
 //     lends when it is borrowed (a match a reference helped), or when s is

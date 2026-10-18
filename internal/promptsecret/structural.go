@@ -14,14 +14,14 @@ package promptsecret
 //     code: a credential-like name (password, passwd, pwd, secret, token,
 //     api_key, access_key, private_key, client_secret, auth, …) and its
 //     value: the bytes inside the quotes, or an unquoted value; and curl's
-//     -u user:password: the password;
+//     -u user:password: the password, never what the shell computes;
 //   - yaml-block: a YAML block scalar (| or >) under such a name;
 //   - prose: "the password is X", "API key: X", "the secret X", in a few
-//     languages, a quoted value a few words after the word ("the password
-//     used by the job is «X»"), and a line of one value a later sentence
-//     names ("The preceding line is the actual password."); and fenced: a
-//     code fence of one value after a line that names a credential and ends
-//     in a colon;
+//     languages, a quoted value a few words after the word, its subject
+//     ("the password used by the job is «X»"), and a line of one value a
+//     later sentence names ("The preceding line is the actual password.");
+//     and fenced: a code fence of one value after a line that names a
+//     credential and ends in a colon;
 //   - repeat: another exact occurrence of a value found above (one with a
 //     digit, a symbol or 16 bytes), each its own candidate.
 //
