@@ -34,9 +34,15 @@ type UsageConfig struct {
 	// reads of its session's files (#23, the Claude child-agent source): a
 	// reader per session read, closed when it is no longer read.
 	ClaudeChildren func(session string) ChildReader
+	// CodexChildren, if set, gets each Codex worker's subagents from the
+	// reads of its root rollout and its child rollouts (#25, the Codex
+	// child-agent source), as ClaudeChildren. A session only FindCodex
+	// found is read too: its evidence counts once the hub binds it (herdr
+	// reports it), which replays it.
+	CodexChildren func(session string) ChildReader
 }
 
-// ChildReader reads one Claude session's subagent evidence (#23).
+// ChildReader reads one session's subagent evidence (#23, #25).
 type ChildReader interface {
 	usage.Children
 	Close()
@@ -195,7 +201,7 @@ func (h *Hub) trackUsage(ctx context.Context) {
 	}
 }
 
-// closeKid stops reading a worker's subagent evidence (#23).
+// closeKid stops reading a worker's subagent evidence (#23, #25).
 func (tr *usageTracker) closeKid(id string) {
 	if k := tr.kids[id]; k != nil {
 		k.Close()
@@ -299,10 +305,18 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			if w.session != "" {
 				tr.sessions[w.id] = usage.NewSession(w.harness, w.session, tr.cfg.Roots, tr.cfg.Pricing)
 			}
-			if s := tr.sessions[w.id]; s != nil && w.harness == usage.Claude && tr.cfg.ClaudeChildren != nil { // #23
-				k := tr.cfg.ClaudeChildren(w.session)
-				s.SetChildren(k)
-				tr.kids[w.id] = k
+			if s := tr.sessions[w.id]; s != nil {
+				var k ChildReader
+				switch {
+				case w.harness == usage.Claude && tr.cfg.ClaudeChildren != nil: // #23
+					k = tr.cfg.ClaudeChildren(w.session)
+				case w.harness == usage.Codex && tr.cfg.CodexChildren != nil: // #25
+					k = tr.cfg.CodexChildren(w.session)
+				}
+				if k != nil {
+					s.SetChildren(k)
+					tr.kids[w.id] = k
+				}
 			}
 			if s := tr.sessions[w.id]; s != nil { // #57: the ask, from the same lines, the file's first included
 				l := &txLines{harness: w.harness, ask: transcript.NewAskTracker(w.harness), // #83: and a wrap-up's

@@ -2030,6 +2030,58 @@ Coverage:
 | Activation goes to the owning worker | `ui/overview.children.dom.test.ts` "activation…"; e2e "three levels…" (seated at the worker) |
 | Active only | `world/overview.children.test.ts` "#24 active only"; DOM "active only…"; e2e "a long tree…" |
 
+## 2026-10-18 — #25 (phase 4 of #20): Codex subagents from rollout files (terminal path)
+
+The second production source of #22's model: a Codex worker's subagents on the terminal path (not the shared app-server:
+#27), from its session's rollout files, on **codex-cli 0.160.1, 0.162.1 and 0.163.0**. Code: `internal/codexchild`
+(`Source`, `Listener`, the facts and their derivation in `book.go`, `Rollout` and `ReadTranscript`), `codex.Meta`,
+`codex.ParseMeta`/`ReadMeta` and `codex.ChildFinder` in `internal/codex/sessions.go`, the Codex branch of
+`usage.Session` (`readChildren`), `UsageConfig.CodexChildren` in `internal/server/usage.go`,
+`transcript.CodexHistoryStart`, and the wiring in `internal/app` (with `-codex-sessions`). Research:
+`docs/research/codex-subagents.md`. Docs: `protocol.md` "Codex subagents (#25)".
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Who reads the files | **The usage tracker's `usage.Session`, once per file**, as for Claude: it already tailed each Codex worker's root rollout, so its `usage.Children` listener gets those lines; with a listener set it now also finds the session's **child rollouts** (`codex.ChildFinder`: the date directories from the root rollout's day on, newest first, at most `MaxScan` files; a child by its first line only, `thread_spawn` with `session_id` = the root; first lines read whole are remembered, one still being written is read again) every `SubagentRescan` or when the listener asks (`WantList`: a spawn within a minute whose rollout is not read), tails them and sends their lines by thread id. Not the `Finder`'s metas: they are the root lookup's, keyed for cwd, and only exist for workers herdr reports no session of. Not a second tail: no other reader of the child files exists, and the root's is shared. The child files' tokens are **not** added to the worker's usage (the root's reading is unchanged; Codex root behaviour stays as it was). |
+| 2 | How evidence is made | **Facts per file, keyed by explicit ids, derived anew after each poll** (#23's rule): each rollout's facts (its first line, its spawn calls by `call_id`, the threads its activity records name, lifecycle observations keyed by turn id or activity id) are kept by that file; the children are derived from all of them and only what changed is sent (a `Removed` for one sent that is gone). A file that goes or turns out not to be this session's takes everything it showed with it (#23's retraction, by construction). Every piece of evidence carries the thread id, so a row's id is its native id's from the first observation on: no provisional rows, no merges; `DispatchID` rides along when known. |
+| 3 | Identity | **Line 1 only.** A child is a rollout whose first line is `thread_source: "subagent"` with `source.subagent.thread_spawn`; `native_id` = its `id`; it belongs to `session_id`'s worker (the root at every depth). Never a later `session_meta` (a forked child's line 2 is its parent's), never `forked_from_id`. Guardians (`guardian_review`, `source.subagent.other`) and any subagent source without `thread_spawn` are no children. |
+| 4 | Pairing | **By ids only**: v2's `SubAgentActivity` `started` (`id` = the spawn `call_id`, `agent_thread_id`), read from **every** rollout of the session (a depth-2 spawn is in the depth-1 child's); v1's completed `spawn_agent` `CollabAgentToolCall` with one receiver (`id` `exec-<uuid>` as dispatch id; the exec output's `agent_id` is not read: its link to the item is by time only); a legacy `sub_agent_activity` `started` is a dispatch only when its `event_id` is a spawn call of the same file. Never by time, order, task name or `forked_from_id`. A `started` whose file is not read yet is `running`/`pending` (up to ~0.2 s, or until the next listing). |
+| 5 | Parents | **The child's first line** (`thread_spawn.parent_thread_id`; when the top-level `parent_thread_id` disagrees, none: `unresolved`), else the rollout holding its `started` (root's: `root`; a child's: that child). A parent not seen yet leaves it unresolved until it is (the registry's rule). |
+| 6 | Own records | A child's records with `ordinal < subagent_history_start_ordinal` (and a record with no ordinal when there is a start) are its parent's copied history and count for nothing: lifecycle, times, calls. Not `turn_attribution`: 0.160.1 writes none, and a v1 child's own turn has `initiating_agent_path: null`. |
+| 7 | Lifecycle | **The latest observation wins** (by record time; at the same instant an end over a start, `shut_down` over `interrupted` over `completed`): `running` from a spawn record and each own `task_started`; `completed` from an own `task_complete` or the spawner's `completed` (per turn); `interrupted` from an own `turn_aborted` (any reason) or the spawner's `interrupted` (v2 `interrupt_agent`); `shut_down` from a v1 `close_agent` item. A follow-up is the same row going `running` again. **Tool-call status is never the child's**: `wait` items and outputs (also v1's that name the child with `agents_states` completed), a spawn call's status and `interacted` are not read for state. With no observation yet a child file reads `running` (just spawned). |
+| 8 | What rollouts cannot say | Left as the files show it, never guessed: a child whose process was killed without a record stays `running`; `unknown` is never produced (nothing on disk tells "idle and unclosed" from "process gone"; Codex writes `turn_aborted` on a normal exit, SIGINT and interrupts, which covers the cases seen); `idle` is #27's; an idle v2 child has no close. Recorded as [U] in the research. |
+| 9 | Which sessions | Every Codex session the tracker reads gets a reader, also one only its lookup found (herdr reported none): the registry drops that evidence until the hub binds the session (herdr reports it; herdr's Codex integration does, by its SessionStart hook), and the bind replays it. |
+| 10 | Root recovery | `Meta.Subagent` adds "any `source.subagent`" to the old test (`thread_source: "subagent"` or a parent thread), so `FindSession`, `Finder` and `FindRollout`'s callers never take a child or a guardian for a root; checked over every fixture (forked children, depth 2, 0.160.1, a guardian). `limits`' fallback (`NewestRollouts`) is no root picker: it reads the newest `rate_limits` of any rollout, which are the account's, so a child's are as good; unchanged. |
+| 11 | Transcript | `codexchild.Rollout(root, session, thread)` finds a child's rollout by thread id (`FindRollout`) and accepts it only when its first line is a spawned child of that session; `ReadTranscript` runs the Codex parser over it with `transcript.CodexHistoryStart(start)`: inherited records (the copied `session_meta` among them) become hidden notices, so cursors stay put and the version is the child's own. `sub_agent_activity` is a hidden notice now. Opening it from a client is #26. |
+| 12 | Fixtures | Scrubbed real rollouts (`internal/codexchild/testdata`, README): the live runs a, b, c2, d, e, f-run, f-run2, two v1 cases and the 0.160.1 run, plus two corpus cases from real work sessions (the inherited-prefix trap, a guardian), cut to the records read and with all free text replaced. |
+
+Coverage:
+
+| Bullet | Where |
+|---|---|
+| Spawn, interact/follow-up, wait, interrupt and close resolve to the correct child | `TestCasesWhole` (every case: parent, name, dispatch, end state), `TestVisibleBeforeReportBack`, `TestConcurrentChildren`, `TestFollowUp`, `TestInterrupts` (SIGINT, `interrupt_agent`), v1 close in `TestCasesWhole` (`f-run-v1b`, `f-idle-v1b`: `shut_down`); smoke "spawn", "two concurrent", "follow-up", "interrupt_agent" |
+| Child state never conflated with tool-call status | `TestToolCallStatusIsNotChildState` (a v1 wait naming the child completed, a timed-out v2 wait), `TestFollowUp` (`interacted` alone) |
+| Nested children attach to their recorded parent thread | `TestNestedChild` (from the depth-1 file's `started`, from the depth-2 file's first line alone, the copied line 2 ignored), `TestCodexSubagentsEndToEnd` (`internal/server`); smoke "nested" |
+| Root-session recovery ignores child rollouts | `TestRootRecoveryIgnoresChildren` (`FindSession` and `Finder` over every fixture: forked, depth 2, 0.160.1, guardian), `TestFindSessionSkipsSubagents`, `TestParseMeta` (`internal/codex`) |
+| Fixtures from real rollouts, 0.160.1 included; supported versions recorded | `internal/codexchild/testdata` (README), `TestCasesWhole/g-a0160-v`, `TestInheritedPrefix` (corpus trap); research §6 and this entry |
+| Real-terminal smoke with a spawned child, including bridge restart | below; `TestRestartRebuilds`, `TestReplay` |
+| Existing Claude child and Codex root behaviour unchanged | `internal/claudechild`, `internal/usage`, `internal/server` (`TestClaudeSubagentEndToEnd`, the usage tests) and `internal/transcript` suites pass unchanged |
+| Foreign, gone, second reader, legacy history, child transcript | `TestOtherSessionsChildren`, `TestForeignFile`, `TestGoneFile`, `TestSecondReaderTakesOver`, `TestLegacyActivity`, `TestChildFinder`, `TestChildFinderPartialFirstLine`, `TestReadTranscript`, `TestReadTranscriptRefuses`, `TestCodexSubagentLines` |
+
+**Real-terminal smoke check** (`docs/research/codex-subagents.md` §8): a private bridge built from the branch and a
+private herdr session (`h3d-xsmoke`, own socket and database, `-sessions '^h3d-xsmoke$'`, `-codex-run -`), one Codex
+worker hired by the bridge (`gpt-6-luna`, low; v2 by its model metadata), driven by `worker.prompt`, watched with
+`herdr-world dump`: spawn (the row ~4 s after the prompt, 31 s before the child reported back), two concurrent, nested
+(the inner row first from the depth-1 file's `started`, `pending`, then `available`), follow-up (the same row running
+again) and `interrupt_agent` (`interrupted`); a bridge restart rebuilt the six children from the files alone (native
+ids, nesting, states, times identical). The row ids came back identical on a second restart; on the first they were new,
+because the worker's `/new` before the run had raised its `child_generation` (row ids hash it; #22's "Restart": a
+client never keeps them across epochs). No bug found. The session was then stopped and deleted, the bridge stopped, and
+the throwaway rollouts moved out of `~/.codex/sessions`.
+
+Unverified, and left as the evidence shows: SIGKILL of the Codex process mid-child, legacy-history rollouts (no sample),
+ephemeral children (no rollout), a forked root copying another session's `started` records (none in the corpus).
+
 ## 2026-10-18 — #106 (GitHub): permission cards: one per operation, a send budget, the command on the phone
 
 GitHub issue #106 (not the archive's #106 above, "dismissing finished rows"): a blocked worker's permission card was

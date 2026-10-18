@@ -30,6 +30,9 @@ var codexHiddenEvents = map[string]bool{
 	"exec_command_end": true, "patch_apply_begin": true, "patch_apply_end": true, "mcp_tool_call_begin": true,
 	"mcp_tool_call_end": true, "web_search_begin": true, "web_search_end": true, "turn_diff": true,
 	"context_compacted": true, "view_image_tool_call": true, "entered_review_mode": true, "exited_review_mode": true,
+	// #25: a legacy-history rollout's SubAgentActivity (the call's own row
+	// says it; internal/codexchild reads it).
+	"sub_agent_activity": true,
 }
 
 type codexLine struct {
@@ -169,6 +172,32 @@ type codexMCPCall struct {
 	Result json.RawMessage `json:"result"`
 	// Error is a call that failed with no result: {message} (or a string).
 	Error json.RawMessage `json:"error"`
+}
+
+// CodexHistoryStart reads a Codex subagent's rollout (#25): its records
+// before ordinal start (its subagent_history_start_ordinal, codex.Meta) are
+// its parent's copied history, the copy of the parent's session_meta among
+// them, and are hidden notices, never the child's conversation (0: none).
+func CodexHistoryStart(start int64) Option {
+	return func(l *Log) {
+		if start > 0 && l.harness == Codex {
+			l.parse = func(off int64, b []byte) ([]contrib, string) { return parseCodexFrom(start, off, b) }
+		}
+	}
+}
+
+// parseCodexFrom is parseCodex of a rollout whose records before ordinal
+// start are inherited.
+func parseCodexFrom(start, off int64, b []byte) ([]contrib, string) {
+	var l struct {
+		Timestamp string `json:"timestamp"`
+		Ordinal   *int64 `json:"ordinal"`
+		Type      string `json:"type"`
+	}
+	if json.Unmarshal(b, &l) == nil && off > 0 && (l.Ordinal == nil || *l.Ordinal < start) {
+		return []contrib{hiddenNotice(offID(off), "inherited/"+l.Type, "", parseTS(l.Timestamp))}, ""
+	}
+	return parseCodex(off, b)
 }
 
 // parseCodex reads one line of a Codex rollout.

@@ -696,6 +696,64 @@ disabled by the user's `disableAllHooks`, no `flock`, the log gone) the same chi
 **Restart.** Nothing is kept: the usage tracker reads every worker's files from their start again, and the same
 evidence makes the same rows (`TestRestartAndReplay`).
 
+#### Codex subagents (#25)
+
+#25, phase 4 of #20: a Codex worker on the terminal path (not the shared app-server, #27) gets its children from its
+session's rollout files, observed on **codex-cli 0.160.1, 0.162.1 and 0.163.0** (`docs/research/codex-subagents.md`:
+the records, the timing, the version diff; a version with other records shows fewer children or fewer states, never
+wrong ones). The rollout root is the configured one (`-codex-sessions`, default `$CODEX_HOME/sessions`, else
+`~/.codex/sessions`): the root's `YYYY/MM/DD/rollout-*-<session>.jsonl`, and every child at any depth as a rollout of
+its own in the same date tree (the root's day or later), recognised by its **first line** only: a `session_meta` with
+`thread_source: "subagent"`, a `source.subagent.thread_spawn` and `session_id` = the root session. Nothing else changes
+on the wire: `child.upsert` and `child.removed` as above, with `provider: "codex"` and `source: "rollout"`.
+
+| field | from |
+|---|---|
+| `native_id` | the child's thread id (its first line's `id`) |
+| `name`, `type`, `description` | the `agent_nickname` (v1: the spawn item's `receiver_agents`), the `agent_role` (when written), the last name of the `agent_path` (`/root/outer/inner`: `inner`; else the spawn call's `task_name`) |
+| `parent` | its first line's `thread_spawn.parent_thread_id` (with the top-level `parent_thread_id` agreeing): `root` when it is the session, else `child` (that thread); before its file is read, the rollout holding its `started` record (the root's: `root`; a child's: that child); else `unresolved`. Never `forked_from_id`, never a later `session_meta` |
+| `state` | below |
+| `started_at`, `last_activity_at`, `ended_at` | the spawner's record and the child's own records' timestamps; `ended_at` the latest end's |
+| `transcript` | `available` once its rollout is read; `pending` while it runs without one (spawned, its file not written yet: up to ~0.2 s); `unavailable` when it ended without one |
+
+**When a child shows.** From the spawner's `SubAgentActivity` `started` record (multi-agent v2; its `id` is the
+`spawn_agent` call's: the row's dispatch id) or a completed v1 `spawn_agent` `CollabAgentToolCall` (its single
+receiver; its `id` is the dispatch id), whichever file holds it (a depth-2 child's is in its depth-1 parent's rollout),
+or from the child's own rollout, whichever is read first: always by its thread id, so a row never changes id and
+concurrent children keep their own rows. A legacy-history rollout's `sub_agent_activity` events are read the same way
+(the dispatch id only when a spawn call of that file has it). The bridge lists the date directories on the next read
+after a spawn whose rollout it has not seen (not only every 10 s).
+
+**States** (the latest observation wins; an end over a start at the same instant). `running` from the spawn and from
+each of the child's own `task_started` (a follow-up: the same row again, its `ended_at` cleared). `completed` by its
+own `task_complete` or the spawner's `SubAgentActivity` `completed` (one per turn). `interrupted` by its own
+`turn_aborted` (an interrupt, SIGINT of the root, the process ending) or the spawner's `SubAgentActivity`
+`interrupted` (v2 `interrupt_agent`). `shut_down` by a v1 `close_agent`. A collaboration tool call's status (a `wait`
+that returned or timed out, a v1 wait's `agents_states`, a spawn call done) and `interacted` are never the child's state.
+Nothing else ends a child: not quiet files, not the root's turn ending. A child whose process died without a record
+stays as its files left it. `idle` is never shown from rollouts (#27's).
+
+**Own records only.** A forked child's rollout starts with its parent's copied history: its second line is the
+parent's `session_meta`, and every record with an `ordinal` below its `subagent_history_start_ordinal` is the parent's
+(copied turns, an open one among them). None of them counts, for the state or for the times.
+
+**Not children.** A guardian reviewer (`thread_source: "guardian_review"`, `source.subagent.other`), any subagent
+source without `thread_spawn`, and another root session's child (two Codex workers in one directory) make no row;
+a rollout whose first line is not a spawned child of this session with that thread id counts for nothing (its
+`started` records of nested children neither). Its rollout removed removes its row. Root-session recovery (the sleep
+backfill, the usage tracker's lookup of a Codex worker herdr reports no session of) never takes a child's or a
+guardian's rollout for a worker's session.
+
+**Which workers.** Every Codex worker whose session the usage tracker reads. A session only the tracker's lookup found
+(herdr reported none) is read too, but the hub binds only the session herdr reports: its children show once herdr
+reports it (the bind replays them).
+
+**Transcript.** `codexchild.ReadTranscript` (for #26) finds a child's rollout by its thread id, only a spawned child of
+the root session, and reads it with the Codex parser, its inherited records hidden (`transcript.CodexHistoryStart`).
+
+**Restart.** Nothing is kept: the usage tracker reads every worker's rollouts from their start again, and the same
+evidence makes the same rows (`TestRestartRebuilds`).
+
 ## Events
 
 Every change is an event with a strictly increasing `seq` (+1 per event, per epoch). Clients should apply them in order
@@ -3078,14 +3136,16 @@ derived from the cwd) and its subagents' `<that directory>/<agent_session>/subag
   agent session: the worker's usage follows that session (above).
 
 **Codex** rollouts: `<--codex-sessions>/YYYY/MM/DD/rollout-*-<agent_session>.jsonl` whose first line's
-`session_meta.payload.id` is the session. Codex does not report its session to herdr, so a live Codex worker usually
-has no `agent_session` (until the sleep backfill tells herdr). For its usage the bridge then picks the rollout the
+`session_meta.payload.id` is the session. A Codex without herdr's Codex integration (its SessionStart hook reports the
+session) does not report its session to herdr, so such a worker has no `agent_session` (until the sleep backfill tells
+herdr). For its usage the bridge then picks the rollout the
 backfill would: the newest whose `session_meta.payload.cwd` is the worker's `cwd` and whose session no other worker of
 its floor has (their own `agent_session`, or one picked this way first, in worker id order). It looks again every 30 s
 (a newer rollout there, e.g. after `/new`, takes over) and remembers each rollout's first line, so a lookup reads only
 new files. This is read-only and only for `usage`: herdr is not told, and the worker's `agent_session` stays empty.
 Two Codex agents started in the same folder can get each other's rollout (so the context meter of one can show the
-other's: a known limit, #101).
+other's: a known limit, #101). A subagent's rollout (a spawned child, a guardian reviewer: any `source.subagent`) is
+never picked; #25 reads a worker's child rollouts for its children only, and their tokens are not added to its usage.
 
 - The last `event_msg` of `payload.type: "token_count"` with an `info` holds the totals: `info.total_token_usage` with
   `input_tokens` (cached input and cache writes included), `cached_input_tokens`, `cache_write_input_tokens`,
