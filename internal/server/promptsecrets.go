@@ -438,12 +438,35 @@ func (h *Hub) unprotect(ctx context.Context, p protected) {
 	}
 }
 
+// settleHandoff is a reviewed /handoff's settle (agentAsk.settle, hub
+// goroutine): its files are its request's until the request is sent. Sent,
+// they serve the submission's retry; the request failed (the skill, the
+// limits with the references, a takeover, the worker gone, a cancel) or
+// another one answered it (this text unused), the files the submission
+// made go, off the hub goroutine (never those it reused).
+func (h *Hub) settleHandoff(p protected, owner secretfiles.Owner) func(err error, existing bool) {
+	return func(err error, existing bool) {
+		if err == nil && !existing {
+			h.sentReview(p, owner)
+			return
+		}
+		if len(p.created) == 0 {
+			return
+		}
+		h.wg.Add(1)
+		go func() {
+			defer h.wg.Done()
+			h.unprotect(context.Background(), p)
+		}()
+	}
+}
+
 // queueReviewedPrompt is queuePrompt with the switch on, or with a review
 // (hub goroutine): the cheap refusals now, then on the worker's lane, in
 // order with its other input, the gate, then (back on the hub goroutine)
 // the prompt's own checks and side effects on the protected text, then the
 // send.
-func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(instruction string) error, end inputEnd) error {
+func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(promptHandoff) error, end inputEnd) error {
 	if !h.ps.enabled { // a tab from before the switch went off
 		return fmt.Errorf("%w: prompt secrets are no longer reviewed: send the prompt again", errSecretsReviewStale)
 	}
@@ -463,15 +486,19 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 	if err := h.laneRoom(a.ID); err != nil {
 		return err
 	}
-	rev, typed := h.ps.rev, a.Text
+	rev, typed, owner := h.ps.rev, a.Text, secretfiles.Worker(a.ID)
 	h.queueLane(ctx, a.ID, func(ctx context.Context) {
-		p, err := h.protectText(ctx, rev, secretfiles.Worker(a.ID), time.Time{}, a.Text, a.Secrets)
+		p, err := h.protectText(ctx, rev, owner, time.Time{}, a.Text, a.Secrets)
 		if err != nil {
 			end(ctx, nil, err)
 			return
 		}
 		sent := a
 		sent.Text, sent.Secrets = p.text, nil
+		r := promptReview{typed: typed, protected: len(p.files)}
+		if len(p.files) > 0 {
+			r.settle = h.settleHandoff(p, owner)
+		}
 		type planned struct {
 			work inputWork
 			t    laneTarget
@@ -481,7 +508,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 			if h.ps.rev != rev { // the switch changed meanwhile: the review is stale
 				return planned{err: fmt.Errorf("%w: the setting changed: review again", errSecretsReviewStale)}
 			}
-			work, err := h.planPrompt(ctx, sent, typed, len(p.files), handoff)
+			work, err := h.planPrompt(ctx, sent, r, handoff)
 			if err != nil || work == nil {
 				return planned{err: err}
 			}
@@ -494,8 +521,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 		if err == nil {
 			err = pl.err
 		}
-		if err == nil && pl.work == nil { // a /handoff: its request answers the command; the files are the worker's
-			h.sentReview(p, secretfiles.Worker(a.ID))
+		if err == nil && pl.work == nil { // a /handoff: its request answers the command, and settles the files
 			return
 		}
 		var data any
@@ -505,7 +531,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 		if err != nil {
 			h.unprotect(ctx, p)
 		} else {
-			h.sentReview(p, secretfiles.Worker(a.ID))
+			h.sentReview(p, owner)
 		}
 		end(ctx, data, err)
 	})

@@ -3902,9 +3902,14 @@ never on the hub goroutine, at most 4 scans at once, 10 s each: past it, `secret
   for a harness that rewrites prompts, the translated text). Otherwise the usual `bad_request`, and the files it made
   are removed. With the switch on, a prompt over 32 KiB (a rewriting harness's source may be longer) is `bad_request`.
 - **The ack**: `sent` is the text sent (references in place) when it is not what was typed, `protected` how many
-  ranges went to files. A `/handoff <instruction>` is a handoff request with the protected instruction (stored so).
+  ranges went to files. A `/handoff <instruction>` is a handoff request with the protected instruction (stored so);
+  its ack, once the request is sent, has `sent` (the composer's text with its references) and `protected` too. An
+  `existing` answer used none of the text: neither.
 - **Retry**: the identical submission (same worker, revision and decisions) within 5 minutes of a sent one uses
-  the same files. A send that fails removes the files it made, never those it reused.
+  the same files. A send that fails removes the files it made, never those it reused. A `/handoff`'s files are its
+  request's until the request is sent (its ack): a request that fails, at once or later (no handoff skill, the
+  request over the limits with its references, a person taking over, the worker gone, a cancel), and an `existing`
+  answer remove the files it made, never those it reused; only a request sent makes its files the retry's.
 - **Telegram replies** have no review: a reply with candidates is refused with a fixed sentence (see
   [Notifications](#notifications)).
 

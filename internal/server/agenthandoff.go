@@ -77,12 +77,13 @@ type agentHandoff struct {
 	// checking: the starting checks (catalog, reservation) run.
 	checking bool
 	// Starting: the command, its client and audit row, the text to
-	// prompt and how to answer it.
+	// prompt, how to answer it and (agentAsk.settle) whom to tell.
 	client  *Client
 	cmd     proto.Command
 	auditID int64
 	text    string
 	answer  func(r proto.AgentHandoff, existing bool, queued bool) any
+	settle  func(err error, existing bool)
 	by      string
 	// The tracker's last look at the ended turn: its line count, since
 	// when; and since when the turn ended with herdr idle.
@@ -249,6 +250,11 @@ type agentAsk struct {
 	// is answered, not refused).
 	prompt bool
 	answer func(r proto.AgentHandoff, existing bool, queued bool) any
+	// settle (#108, nil: none) is told how the command ends, just before
+	// its answer (hub goroutine): with the error of a request that failed
+	// once started, or existing when another request answered it; never
+	// for a refusal startAgentHandoff returns.
+	settle func(err error, existing bool)
 }
 
 // agentInstruction is an instruction as sent: trimmed, the default when
@@ -316,7 +322,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 		if ah.req.WorkerID != a.worker {
 			return bad("op %q is another worker's handoff", a.op)
 		}
-		h.answerKnown(ctx, c, cmd, ah.view(), a.answer)
+		h.answerKnown(ctx, c, cmd, ah.view(), a)
 		return nil
 	}
 	if h.ho.svc != nil {
@@ -325,7 +331,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 				return bad("op %q is another worker's handoff", a.op)
 			}
 			ah := &agentHandoff{req: r, state: r.State}
-			h.answerKnown(ctx, c, cmd, ah.view(), a.answer)
+			h.answerKnown(ctx, c, cmd, ah.view(), a)
 			return nil
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
@@ -339,7 +345,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 		return err
 	}
 	if ah := h.ah.byWorker[w.ID]; a.prompt && ah != nil && ah.pending() {
-		h.answerKnown(ctx, c, cmd, ah.view(), a.answer)
+		h.answerKnown(ctx, c, cmd, ah.view(), a)
 		return nil
 	}
 	if _, err := h.agentCannotAsk(w); err != nil {
@@ -353,7 +359,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 	ah := &agentHandoff{req: store.HandoffRequest{Op: a.op, WorkerID: w.ID, Floor: workerFloor(w), Harness: w.AgentKind,
 		AgentSession: w.AgentSession, Offset: -1, Nonce: randHex(8), Instruction: instruction, SendHome: a.sendHome,
 		State: store.HandoffRequestPending, CreatedAt: now.UnixMilli()}, at: now, state: proto.AgentHandoffStarting,
-		checking: true, client: c, cmd: cmd, auditID: auditID, answer: a.answer, by: c.name, lines: -1}
+		checking: true, client: c, cmd: cmd, auditID: auditID, answer: a.answer, settle: a.settle, by: c.name, lines: -1}
 	h.ah.byOp[a.op] = ah
 	h.ah.byWorker[w.ID] = ah
 	h.publishAgentHandoff(w.ID)
@@ -494,19 +500,24 @@ func (h *Hub) agentHandoffPrompt(ah *agentHandoff, call string) error {
 	return nil
 }
 
-// answerKnown answers a command with a request it names (its op, or the
+// answerKnown answers a's command with a request it names (its op, or the
 // worker's pending one): nothing is sent again.
-func (h *Hub) answerKnown(ctx context.Context, c *Client, cmd proto.Command, v proto.AgentHandoff,
-	answer func(r proto.AgentHandoff, existing bool, queued bool) any) {
+func (h *Hub) answerKnown(ctx context.Context, c *Client, cmd proto.Command, v proto.AgentHandoff, a agentAsk) {
+	if a.settle != nil {
+		a.settle(nil, true)
+	}
 	h.audit(ctx, c, cmd, nil)
-	h.reply(c, cmd, answer(v, true, false), nil)
+	h.reply(c, cmd, a.answer(v, true, false), nil)
 }
 
-// endAgentStart writes a starting request's audit row and replies to its
-// command (once).
+// endAgentStart writes a starting request's audit row, tells its settle and
+// replies to its command (once).
 func (h *Hub) endAgentStart(ctx context.Context, ah *agentHandoff, err error, queued ...bool) {
 	if ah.client == nil {
 		return
+	}
+	if ah.settle != nil {
+		ah.settle(err, false)
 	}
 	rep := struct {
 		Worker string `json:"worker"`
