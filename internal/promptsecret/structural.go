@@ -24,7 +24,7 @@ package promptsecret
 // Never a candidate: a template or reference (${X}, $X, {{ … }}, <your-token>,
 // %X%, os.getenv("X"), process.env.X, a dotted name in code), a redaction
 // (****, REDACTED, xxxx), a name without a value, a path, the bridge's own
-// file reference. An unquoted value loses trailing sentence punctuation
+// file reference (exactly: Scan). An unquoted value loses trailing sentence punctuation
 // (. , ; : and an unbalanced closing bracket or quote); a quoted one keeps
 // every byte between its quotes. A weak password is a candidate when it is
 // plainly the value assigned (password=example).
@@ -697,14 +697,12 @@ var (
 )
 
 // notASecret reports a value that is no secret: a template or reference,
-// code, a redaction or placeholder, a path, a public key, or the bridge's
-// reference. quoted: it was between quotes (a dotted name is then a
-// literal).
+// code, a redaction or placeholder, a path or a public key (the bridge's
+// own file references are Scan's to leave out, by their exact bytes).
+// quoted: it was between quotes (a dotted name is then a literal).
 func notASecret(v string, quoted bool) bool {
 	switch {
 	case strings.TrimSpace(v) == "":
-		return true
-	case strings.Contains(v, referencePrefix):
 		return true
 	case templateRef.MatchString(v), placeholder.MatchString(v), xMask.MatchString(v), sshPublic.MatchString(v):
 		return true

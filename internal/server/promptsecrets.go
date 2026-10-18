@@ -108,31 +108,33 @@ func (h *Hub) initPromptSecrets(ctx context.Context) error {
 	if h.opts.SecretReuseTTL <= 0 {
 		h.opts.SecretReuseTTL = DefaultSecretReuseTTL
 	}
-	h.ps = promptSecretsState{enabled: on, rev: newReviewer(), slots: make(chan struct{}, maxSecretScans),
-		reuse: map[string]secretReuse{}}
+	h.ps = promptSecretsState{enabled: on, slots: make(chan struct{}, maxSecretScans), reuse: map[string]secretReuse{}}
 	if h.opts.SecretsDir == "" {
 		h.ps.err = secretfiles.ErrUnavailable
-		return nil
-	}
-	f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log})
-	if err != nil {
+	} else if f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log}); err != nil {
 		h.log.Warn("no directory for protected prompt secrets: a review that protects one will be refused",
 			"dir", h.opts.SecretsDir, "err", err)
 		h.ps.err = err
-		return nil
+	} else {
+		h.ps.files = f
 	}
-	h.ps.files = f
+	h.ps.rev = h.newReviewer()
 	return nil
 }
 
-// newReviewer is a reviewer with a fresh random key: every review made
-// before it is stale.
-func newReviewer() *promptsecret.Reviewer {
+// newReviewer is a reviewer with a fresh random key (every review made
+// before it is stale) that leaves the references to the bridge's own files
+// alone: only those, exactly (a text that only looks like one is scanned).
+func (h *Hub) newReviewer() *promptsecret.Reviewer {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		panic(err)
 	}
-	return promptsecret.NewReviewer(key)
+	var own func(path string) bool
+	if h.ps.files != nil {
+		own = h.ps.files.IsFilePath
+	}
+	return promptsecret.NewReviewer(key, own)
 }
 
 // closePromptSecrets lets the directory's lock go (Run, once every
@@ -193,7 +195,7 @@ func (h *Hub) startPromptSecrets(ctx context.Context, c *Client, cmd proto.Comma
 		}
 		if *a.Enabled != h.ps.enabled {
 			h.ps.enabled = *a.Enabled
-			h.ps.rev = newReviewer()
+			h.ps.rev = h.newReviewer()
 			h.seq++
 			msg := mustJSON(proto.PromptSecretsUpdate{T: proto.EvPromptSecretsUpdate, Seq: h.seq, PromptSecrets: *h.promptSecretsView()})
 			h.ring.add(h.seq, msg)
@@ -225,11 +227,13 @@ func scannable(text, what string) error {
 
 // scanSecrets scans text with rev, off the hub goroutine: at most
 // maxSecretScans at once, within SecretScanTimeout (a scan past it goes on
-// in its slot, and the caller fails).
+// in its slot, and the caller fails: what it still writes is never read).
 func (h *Hub) scanSecrets(ctx context.Context, rev *promptsecret.Reviewer, text string) (promptsecret.Review, error) {
 	var out promptsecret.Review
-	err := h.withSecretSlot(ctx, func() { out = rev.Scan(text) })
-	return out, err
+	if err := h.withSecretSlot(ctx, func() { out = rev.Scan(text) }); err != nil {
+		return promptsecret.Review{}, err
+	}
+	return out, nil
 }
 
 // withSecretSlot runs work in a scan slot within SecretScanTimeout.
@@ -434,12 +438,39 @@ func (h *Hub) unprotect(ctx context.Context, p protected) {
 	}
 }
 
+// settleHandoff is a reviewed /handoff's settle (agentAsk.settle, hub
+// goroutine): its files follow its request's prompt. The request's end
+// decides until the lane begins to send the prompt, the send's result from
+// then on, whatever ended the request meanwhile. Sent, or failed without
+// knowing whether any of it reached the terminal, they stay the worker's
+// and serve the submission's retry; the request failed before the send (the
+// skill, the limits with the references, its transcript, a takeover, the
+// worker gone, a cancel), the send refused before any of it reached the
+// terminal, or another request answered it (this text unused), the files
+// the submission made go, off the hub goroutine (never those it reused).
+func (h *Hub) settleHandoff(p protected, owner secretfiles.Owner) func(err error, existing bool) {
+	return func(err error, existing bool) {
+		if err == nil && !existing {
+			h.sentReview(p, owner)
+			return
+		}
+		if len(p.created) == 0 {
+			return
+		}
+		h.wg.Add(1)
+		go func() {
+			defer h.wg.Done()
+			h.unprotect(context.Background(), p)
+		}()
+	}
+}
+
 // queueReviewedPrompt is queuePrompt with the switch on, or with a review
 // (hub goroutine): the cheap refusals now, then on the worker's lane, in
 // order with its other input, the gate, then (back on the hub goroutine)
 // the prompt's own checks and side effects on the protected text, then the
 // send.
-func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(instruction string) error, end inputEnd) error {
+func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(promptHandoff) error, end inputEnd) error {
 	if !h.ps.enabled { // a tab from before the switch went off
 		return fmt.Errorf("%w: prompt secrets are no longer reviewed: send the prompt again", errSecretsReviewStale)
 	}
@@ -459,15 +490,19 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 	if err := h.laneRoom(a.ID); err != nil {
 		return err
 	}
-	rev, typed := h.ps.rev, a.Text
+	rev, typed, owner := h.ps.rev, a.Text, secretfiles.Worker(a.ID)
 	h.queueLane(ctx, a.ID, func(ctx context.Context) {
-		p, err := h.protectText(ctx, rev, secretfiles.Worker(a.ID), time.Time{}, a.Text, a.Secrets)
+		p, err := h.protectText(ctx, rev, owner, time.Time{}, a.Text, a.Secrets)
 		if err != nil {
 			end(ctx, nil, err)
 			return
 		}
 		sent := a
 		sent.Text, sent.Secrets = p.text, nil
+		r := promptReview{typed: typed, protected: len(p.files)}
+		if len(p.files) > 0 {
+			r.settle = h.settleHandoff(p, owner)
+		}
 		type planned struct {
 			work inputWork
 			t    laneTarget
@@ -477,7 +512,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 			if h.ps.rev != rev { // the switch changed meanwhile: the review is stale
 				return planned{err: fmt.Errorf("%w: the setting changed: review again", errSecretsReviewStale)}
 			}
-			work, err := h.planPrompt(ctx, sent, typed, len(p.files), handoff)
+			work, err := h.planPrompt(ctx, sent, r, handoff)
 			if err != nil || work == nil {
 				return planned{err: err}
 			}
@@ -490,8 +525,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 		if err == nil {
 			err = pl.err
 		}
-		if err == nil && pl.work == nil { // a /handoff: its request answers the command; the files are the worker's
-			h.sentReview(p, secretfiles.Worker(a.ID))
+		if err == nil && pl.work == nil { // a /handoff: its request answers the command, and settles the files
 			return
 		}
 		var data any
@@ -501,7 +535,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 		if err != nil {
 			h.unprotect(ctx, p)
 		} else {
-			h.sentReview(p, secretfiles.Worker(a.ID))
+			h.sentReview(p, owner)
 		}
 		end(ctx, data, err)
 	})
@@ -552,6 +586,19 @@ func (h *Hub) runSecretsJanitor(ctx context.Context) {
 }
 
 func (h *Hub) sweepSecrets(ctx context.Context) {
+	n, err := h.ps.files.Sweep(ctx, h.liveWorkers)
+	if err != nil && ctx.Err() == nil {
+		h.log.Warn("protected secrets sweep failed", "err", err)
+	}
+	if n > 0 {
+		h.log.Info("protected secrets sweep removed owners' files", "owners", n)
+	}
+}
+
+// liveWorkers reads the workers that keep their files: the hub's and those
+// open in the store. Sweep reads it with the files locked (review S2: read
+// before, a worker that started and wrote in between lost its files).
+func (h *Hub) liveWorkers(ctx context.Context) (func(id string) bool, error) {
 	known, err := query(ctx, h, func() map[string]bool {
 		ids := make(map[string]bool, len(h.workers))
 		for id := range h.workers {
@@ -560,18 +607,11 @@ func (h *Hub) sweepSecrets(ctx context.Context) {
 		return ids
 	})
 	if err != nil {
-		return
+		return nil, err
 	}
 	open, err := h.st.OpenWorkers(ctx)
 	if err != nil {
-		h.log.Warn("protected secrets sweep: the workers could not be read", "err", err)
-		return
+		return nil, fmt.Errorf("the workers could not be read: %w", err)
 	}
-	n, err := h.ps.files.Sweep(ctx, func(id string) bool { return known[id] || open[id] })
-	if err != nil {
-		h.log.Warn("protected secrets sweep failed", "err", err)
-	}
-	if n > 0 {
-		h.log.Info("protected secrets sweep removed owners' files", "owners", n)
-	}
+	return func(id string) bool { return known[id] || open[id] }, nil
 }

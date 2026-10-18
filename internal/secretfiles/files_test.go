@@ -127,6 +127,32 @@ func TestWriteKeepsTheExactBytes(t *testing.T) {
 	}
 }
 
+// A path of the directory's own shape: what the bridge's references hold
+// (a scan leaves those alone), nothing else.
+func TestIsFilePath(t *testing.T) {
+	t.Parallel()
+	fx := open(t)
+	files, err := fx.f.Write(ctx, secretfiles.Worker("w-1"), time.Time{}, [][]byte{[]byte("x")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := files[0]
+	if !fx.f.IsFilePath(x.Path) {
+		t.Fatalf("%s is not a file path", x.Path)
+	}
+	gh := "ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"
+	for _, p := range []string{
+		"/x", "/token=" + gh, fx.dir, fx.dir + "/" + x.Dir, fx.dir + "/" + x.Dir + "/", fx.dir + "/" + x.Dir + "/" + gh,
+		fx.dir + "/" + gh + "/" + x.Name, fx.dir + "/" + x.Dir + "/" + x.Name + "/" + x.Name, fx.dir + "x/" + x.Dir + "/" + x.Name,
+		"/tmp" + x.Path, fx.dir + "/" + x.Dir + "/" + strings.ToLower(x.Name), fx.dir + "/../" + x.Dir + "/" + x.Name,
+		fx.dir + "/" + x.Dir + "/.lock",
+	} {
+		if fx.f.IsFilePath(p) {
+			t.Errorf("%s is a file path", p)
+		}
+	}
+}
+
 func TestReleaseAndPendingOwners(t *testing.T) {
 	t.Parallel()
 	fx := open(t)
@@ -199,7 +225,7 @@ func TestSweep(t *testing.T) {
 	must(t, os.Mkdir(other, 0o700))
 
 	*fx.now = fx.now.Add(time.Second)
-	removed, err := fx.f.Sweep(ctx, func(id string) bool { return id == "live" || id == "asleep" })
+	removed, err := fx.f.Sweep(ctx, liveSet("live", "asleep"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,11 +252,55 @@ func TestSweep(t *testing.T) {
 	}
 	// The directory gone altogether (a reboot): the rows go.
 	must(t, os.RemoveAll(fx.dir))
-	if _, err := fx.f.Sweep(ctx, func(string) bool { return true }); err != nil {
+	if _, err := fx.f.Sweep(ctx, liveSet("live", "asleep")); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ := fx.st.SecretOwners(ctx); len(rows) != 0 {
 		t.Errorf("rows after the directory went: %+v", rows)
+	}
+}
+
+// liveSet is a Sweep's liveness: these workers are live.
+func liveSet(ids ...string) func(context.Context) (func(string) bool, error) {
+	return func(context.Context) (func(string) bool, error) {
+		return func(id string) bool { return slices.Contains(ids, id) }, nil
+	}
+}
+
+// The workers' liveness is read with the directory locked (review S2): a
+// worker that starts and writes while it is read keeps its files, and a
+// liveness that cannot be read sweeps nothing.
+func TestSweepReadsLivenessLocked(t *testing.T) {
+	t.Parallel()
+	fx := open(t)
+	written := make(chan []secretfiles.File, 1)
+	_, err := fx.f.Sweep(ctx, func(context.Context) (func(string) bool, error) {
+		go func() {
+			files, err := fx.f.Write(ctx, secretfiles.Worker("new"), time.Time{}, [][]byte{[]byte("x")})
+			if err != nil {
+				t.Error(err)
+			}
+			written <- files
+		}()
+		select { // the write waits for the sweep (read before the lock, it would land first)
+		case files := <-written:
+			written <- files
+		case <-time.After(50 * time.Millisecond):
+		}
+		return func(string) bool { return false }, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files := <-written; len(files) != 1 || !fx.f.Exists(files) {
+		t.Fatalf("the new worker's files %+v", files)
+	}
+	boom := errors.New("no workers")
+	if n, err := fx.f.Sweep(ctx, func(context.Context) (func(string) bool, error) { return nil, boom }); n != 0 || !errors.Is(err, boom) {
+		t.Fatalf("unreadable liveness: %d %v", n, err)
+	}
+	if rows, _ := fx.st.SecretOwners(ctx); len(rows) != 1 {
+		t.Fatalf("rows %+v", rows)
 	}
 }
 

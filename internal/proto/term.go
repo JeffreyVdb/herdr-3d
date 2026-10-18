@@ -163,7 +163,8 @@ type PromptResult struct {
 	// Sent is the text the bridge sent, when it rewrote the typed one for the
 	// worker's harness (#138) or (#108) put file references in place of the
 	// protected secrets; absent when it sent the text as typed. The agent's
-	// transcript shows this text.
+	// transcript shows this text. A /handoff's (#108): the composer's text
+	// with its references, once the request is sent (not when Existing).
 	Sent string `json:"sent,omitempty"`
 	// Protected (#108): how many ranges went to private files (absent: none).
 	Protected int `json:"protected,omitempty"`

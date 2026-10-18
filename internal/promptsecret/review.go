@@ -21,16 +21,21 @@ import (
 // MaxDecisions bounds one submission's decisions.
 const MaxDecisions = 4096
 
-// Reviewer signs and checks revisions with its key.
-type Reviewer struct{ key []byte }
+// Reviewer signs and checks revisions with its key, and scans with the
+// bridge's own file references (Scan's own).
+type Reviewer struct {
+	key []byte
+	own func(path string) bool
+}
 
 // NewReviewer is a Reviewer with key (random, at least 32 bytes, kept in
-// memory only: a restart makes every review stale).
-func NewReviewer(key []byte) *Reviewer {
+// memory only: a restart makes every review stale) whose scans leave the
+// references to the paths own says are the bridge's alone (nil: none).
+func NewReviewer(key []byte, own func(path string) bool) *Reviewer {
 	if len(key) < 32 {
 		panic("promptsecret: a revision key needs 32 bytes")
 	}
-	return &Reviewer{key: slices.Clone(key)}
+	return &Reviewer{key: slices.Clone(key), own: own}
 }
 
 // Found is a candidate as a review shows it: its id (c1, c2, … in text
@@ -49,7 +54,7 @@ type Review struct {
 
 // Scan scans text (valid UTF-8) for review.
 func (r *Reviewer) Scan(text string) Review {
-	cands := Scan(text)
+	cands := Scan(text, r.own)
 	o := NewOffsets(text)
 	rev := Review{Revision: r.revision(text, cands), Found: make([]Found, len(cands))}
 	for i, c := range cands {

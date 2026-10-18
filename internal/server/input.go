@@ -311,17 +311,42 @@ func (h *Hub) startPrompt(ctx context.Context, c *Client, cmd proto.Command) err
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	handoff := func(instruction string) error {
+	handoff := func(ho promptHandoff) error {
 		op := a.Op
 		if op == "" {
 			op = "prompt-" + randHex(8)
 		}
-		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.ID, op: op, instruction: instruction, prompt: true,
-			answer: func(r proto.AgentHandoff, existing, queued bool) any {
-				return proto.PromptResult{Queued: queued, Handoff: &r, Existing: existing}
+		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.ID, op: op, instruction: ho.instruction, prompt: true,
+			settle: ho.settle, answer: func(r proto.AgentHandoff, existing, queued bool) any {
+				res := proto.PromptResult{Queued: queued, Handoff: &r, Existing: existing}
+				if !existing { // #108: what this text became (an existing request used none of it)
+					res.Sent, res.Protected = ho.sent, ho.protected
+				}
+				return res
 			}})
 	}
 	return h.queuePrompt(ctx, a, handoff, h.endCommand(c, cmd))
+}
+
+// promptHandoff is a prompt that is a /handoff (#224), for its handoff
+// callback: the instruction and (#108) what the review made of the prompt:
+// the text sent in place of the typed one ("": as typed), how many ranges
+// went to files, and settle (nil: none), told how the request's command
+// ends (agentAsk.settle).
+type promptHandoff struct {
+	instruction string
+	sent        string
+	protected   int
+	settle      func(err error, existing bool)
+}
+
+// promptReview is what the review made of a prompt (#108) for planPrompt:
+// the text as typed (the prompt's own text is the one sent), how many
+// ranges went to files, and, for a /handoff, its settle.
+type promptReview struct {
+	typed     string
+	protected int
+	settle    func(err error, existing bool)
 }
 
 // errHandoffInGame refuses a /handoff that does not come from the game
@@ -333,11 +358,11 @@ var errHandoffInGame = fmt.Errorf("%w: ask for a handoff in the game", errInvali
 // alike: handoff starts a /handoff (nil: refused), end gets the outcome.
 // #108: with prompt secrets reviewed (or a review given), the prompt goes
 // through the gate first (queueReviewedPrompt).
-func (h *Hub) queuePrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(instruction string) error, end inputEnd) error {
+func (h *Hub) queuePrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(promptHandoff) error, end inputEnd) error {
 	if h.ps.enabled || a.Secrets != nil {
 		return h.queueReviewedPrompt(ctx, a, handoff, end)
 	}
-	work, err := h.planPrompt(ctx, a, a.Text, 0, handoff)
+	work, err := h.planPrompt(ctx, a, promptReview{typed: a.Text}, handoff)
 	if err != nil || work == nil {
 		return err
 	}
@@ -346,11 +371,11 @@ func (h *Hub) queuePrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff
 
 // planPrompt is worker.prompt's checks and side effects for a.Text as it is
 // sent (hub goroutine): the work to run on the worker's lane, or nil when
-// the prompt became a /handoff (its request answers the command). typed is
-// what was typed (#108: the text before its secrets were protected, of
-// which protected went to files): PromptResult.Sent says so when the text
-// sent is another.
-func (h *Hub) planPrompt(ctx context.Context, a proto.WorkerPromptArgs, typed string, protected int, handoff func(instruction string) error) (inputWork, error) {
+// the prompt became a /handoff (its request answers the command). r says
+// what was typed (#108: the text before its secrets were protected, and how
+// many went to files): PromptResult.Sent says so when the text sent is
+// another, a /handoff's ack too.
+func (h *Hub) planPrompt(ctx context.Context, a proto.WorkerPromptArgs, r promptReview, handoff func(promptHandoff) error) (inputWork, error) {
 	if !h.promptSourceOK(a.Text) {
 		return nil, badPromptText("text", len(a.Text))
 	}
@@ -380,7 +405,11 @@ func (h *Hub) planPrompt(ctx context.Context, a proto.WorkerPromptArgs, typed st
 		if handoff == nil {
 			return nil, errHandoffInGame
 		}
-		return nil, handoff(instruction)
+		ho := promptHandoff{instruction: instruction, protected: r.protected, settle: r.settle}
+		if a.Text != r.typed {
+			ho.sent = a.Text
+		}
+		return nil, handoff(ho)
 	}
 	// #140: a built-in whose output or dialog shows only in the terminal,
 	// as typed: it starts no turn, so it is sent without waiting for one.
@@ -410,11 +439,11 @@ func (h *Hub) planPrompt(ctx context.Context, a proto.WorkerPromptArgs, typed st
 			// transcript will show nothing of it, so the game can show the
 			// terminal.
 			if pr, ok := res.(proto.PromptResult); ok {
-				if a.Text != typed {
+				if a.Text != r.typed {
 					pr.Sent = a.Text
 				}
 				pr.Terminal = terminal
-				pr.Protected = protected
+				pr.Protected = r.protected
 				res = pr
 			}
 		}
@@ -478,7 +507,7 @@ func (p promptState) started(since uint64) bool {
 func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pane string) (any, error) {
 	cur, err := query(ctx, h, func() promptState { return h.promptState(a.ID) })
 	if err != nil {
-		return nil, err
+		return nil, unsent(err)
 	}
 	if typesPrompts(cur.kind) {
 		return h.typePrompt(ctx, a.ID, session, pane, a.Text, false)
@@ -486,14 +515,14 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	t := h.opts.Term
 	switch cur.status {
 	case statusAsking:
-		return nil, fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting)
+		return nil, unsent(fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting))
 	case statusBlocked:
 		// #156: blocked only by a shared Codex worker's async question:
 		// through its app-server (herdr would refuse it).
 		if res, ok, err := h.promptViaServer(ctx, a.ID, a.Text); ok {
 			return res, err
 		}
-		return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
+		return nil, unsent(fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState))
 	case statusWorking:
 		if err := t.QueuePrompt(ctx, session, pane, a.Text); err != nil {
 			return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
@@ -510,6 +539,20 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	}
 	return h.retryEnter(ctx, a.ID, session, pane, cur.starts, h.retryKeys(cur.kind, a.Text)...)
 }
+
+// notSentError is a prompt's error from before any of it reached the
+// terminal (unsent): its text and kind are the error's. Any other failure
+// may have left the text with the agent (#108: a reviewed /handoff's files
+// then stay; agentAsk.settle).
+type notSentError struct{ error }
+
+func (e notSentError) Unwrap() error { return e.error }
+
+// unsent marks err as from before any of a prompt reached the terminal.
+func unsent(err error) error { return notSentError{err} }
+
+// notSent reports an error marked unsent.
+func notSent(err error) bool { return errors.As(err, new(notSentError)) }
 
 // terminalPrompt sends a prompt that runs a terminal-only built-in (#140):
 // it opens a dialog or prints in the terminal, and starts no turn. It is
@@ -619,29 +662,29 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 	for end := time.Now().Add(h.opts.PromptReadyWait); ; {
 		var err error
 		if cur, err = query(ctx, h, func() promptState { return h.promptState(id) }); err != nil {
-			return cur, err
+			return cur, unsent(err)
 		}
 		s := cur.status
 		switch {
 		case s == statusAsking && !settling:
-			return cur, fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting)
+			return cur, unsent(fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting))
 		case s == statusBlocked && !settling:
-			return cur, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
+			return cur, unsent(fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState))
 		}
 		if s == statusWorking || s == statusIdle || s == statusDone {
 			break
 		}
 		if time.Now().After(end) || ctx.Err() != nil {
-			return cur, fmt.Errorf("%w: the agent is not ready for a prompt (herdr says %q)", errPromptFailed, s)
+			return cur, unsent(fmt.Errorf("%w: the agent is not ready for a prompt (herdr says %q)", errPromptFailed, s))
 		}
 		sleepCtx(ctx, answerPoll)
 	}
 	t := h.opts.Term
 	if err := h.eraseDirty(ctx, id, session, pane, t.EraseTyped); err != nil {
-		return cur, err
+		return cur, unsent(err) // an earlier prompt's leftovers: none of this one is typed
 	}
 	if err := h.doWait(ctx, func() { h.noteTyped(id, text) }); err != nil {
-		return cur, err
+		return cur, unsent(err)
 	}
 	if err := t.TypePrompt(ctx, session, pane, text); err != nil {
 		h.erasePartlyTyped(ctx, id, session, pane, err, t.EraseTyped)

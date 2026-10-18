@@ -32,9 +32,47 @@ type Candidate struct {
 }
 
 // Scan finds the candidates in text (valid UTF-8): sorted, never
-// overlapping, never inside one of the bridge's file references. The first
-// call compiles the rules.
-func Scan(text string) []Candidate {
+// overlapping. own reports the paths the bridge's own file references hold
+// (nil: none): such a reference, exactly "[secret in file <path>]", is never
+// part of a candidate, and only its bytes are left out (outside). The
+// detectors read the text as typed and, when it holds one, again with each
+// reference masked as one word, so a value that runs into a reference, on
+// either side of it, is found as if a value stood in its place. Overlaps are
+// resolved on the whole ranges; then each candidate keeps its parts outside
+// the references. The first call compiles the rules.
+func Scan(text string, own func(path string) bool) []Candidate {
+	refs := references(text, own)
+	spans := detect(text)
+	if len(refs) > 0 {
+		spans = append(spans, detect(masked(text, refs))...)
+	}
+	spans = slices.DeleteFunc(spans, func(s span) bool { return s.start >= s.end || insideOne(s, refs) })
+	byRange := kindsBySpan(spans)
+	kinds := map[[2]int]spanKinds{}
+	var won []span
+	for _, w := range resolve(spans) {
+		for _, p := range outside(text, []span{w}, refs) {
+			kinds[[2]int{p.start, p.end}] = byRange[[2]int{w.start, w.end}]
+			won = append(won, p)
+		}
+	}
+	more := outside(text, repeats(text, won), refs)
+	for r, k := range kindsBySpan(more) {
+		kinds[r] = k
+	}
+	won = append(won, more...)
+	slices.SortFunc(won, func(a, b span) int { return a.start - b.start })
+	out := make([]Candidate, 0, len(won))
+	for _, s := range won {
+		k := kinds[[2]int{s.start, s.end}]
+		out = append(out, Candidate{Start: s.start, End: s.end, Kinds: k.kinds, Encoded: k.encoded || encoded(text[s.start:s.end])})
+	}
+	return out
+}
+
+// detect is every detector's spans in text: Gitleaks' rules, then the
+// structural ones.
+func detect(text string) []span {
 	var spans []span
 	for _, m := range Gitleaks(text) {
 		rank := rankProvider
@@ -43,20 +81,7 @@ func Scan(text string) []Candidate {
 		}
 		spans = append(spans, span{start: m.Start, end: m.End, kind: "gitleaks:" + m.Rule, rank: rank})
 	}
-	spans = append(spans, structural(text)...)
-	refs := references(text)
-	spans = slices.DeleteFunc(spans, func(s span) bool { return s.start >= s.end || overlapsAny(s.start, s.end, refs) })
-	won := resolve(spans)
-	more := slices.DeleteFunc(repeats(text, won), func(s span) bool { return overlapsAny(s.start, s.end, refs) })
-	won = append(won, more...)
-	slices.SortFunc(won, func(a, b span) int { return a.start - b.start })
-	out := make([]Candidate, 0, len(won))
-	kinds := kindsBySpan(spans, more)
-	for _, s := range won {
-		k := kinds[[2]int{s.start, s.end}]
-		out = append(out, Candidate{Start: s.start, End: s.end, Kinds: k.kinds, Encoded: k.encoded || encoded(text[s.start:s.end])})
-	}
-	return out
+	return append(spans, structural(text)...)
 }
 
 type spanKinds struct {
@@ -131,14 +156,112 @@ const referencePrefix = "[secret in file "
 // file into its context). A path holds no blank and no ']'.
 func Reference(path string) string { return referencePrefix + path + "]" }
 
-var referenceRe = regexp.MustCompile(regexp.QuoteMeta(referencePrefix) + `/[^\]\s]+\]`)
+var referenceRe = regexp.MustCompile(regexp.QuoteMeta(referencePrefix) + `(/[^\]\s]+)\]`)
 
-// references are the bridge's file references already in text: a scan
-// never proposes them (a sent prompt edited and sent again).
-func references(text string) []span {
+// references are the bridge's own file references in text, sorted: the
+// exact reference to a path own says is the bridge's (nil: none). A scan
+// never proposes them (a sent prompt edited and sent again); text that
+// only looks like one, or another path, is scanned as any other.
+func references(text string, own func(path string) bool) []span {
+	if own == nil {
+		return nil
+	}
 	var out []span
-	for _, m := range referenceRe.FindAllStringIndex(text, -1) {
-		out = append(out, span{start: m[0], end: m[1]})
+	for _, m := range referenceRe.FindAllStringSubmatchIndex(text, -1) {
+		if own(text[m[2]:m[3]]) {
+			out = append(out, span{start: m[0], end: m[1]})
+		}
 	}
 	return out
+}
+
+// referenceMask stands in for a reference's bytes in masked: a word (no
+// blank, bracket or punctuation to end a value at) shaped like a token.
+const referenceMask = "Qz7"
+
+// masked is text with each of refs as one word of the same length, so the
+// detectors' byte ranges hold for text.
+func masked(text string, refs []span) string {
+	b := []byte(text)
+	for _, r := range refs {
+		for i := r.start; i < r.end; i++ {
+			b[i] = referenceMask[(i-r.start)%len(referenceMask)]
+		}
+	}
+	return string(b)
+}
+
+// insideOne reports a span within one reference, short of all of it: what
+// a detector read of the reference's own words (a reference as a whole
+// value takes part in resolve, and is cut away after).
+func insideOne(s span, refs []span) bool {
+	for _, r := range refs {
+		if r.start <= s.start && s.end <= r.end {
+			return s.start != r.start || s.end != r.end
+		}
+	}
+	return false
+}
+
+// outside cuts the spans to their bytes outside refs (sorted, apart): one
+// that runs into a reference keeps each part around it, without the blanks
+// at the cut, unless all a part holds is blanks and at most one quote,
+// bracket or comma (a wrapper: secret=([…]) proposes nothing, while
+// PASSWORD="!@#%&+=?_- […]" proposes !@#%&+=?_-); one inside a reference
+// goes.
+func outside(text string, spans, refs []span) []span {
+	var out []span
+	for _, s := range spans {
+		if !overlapsAny(s.start, s.end, refs) {
+			out = append(out, s)
+			continue
+		}
+		at := s.start
+		for _, r := range refs {
+			if r.end <= at || r.start >= s.end {
+				continue
+			}
+			if r.start > at {
+				out = appendPart(out, text, s, at, r.start, at != s.start, true)
+			}
+			at = r.end
+		}
+		if at < s.end {
+			out = appendPart(out, text, s, at, s.end, true, false)
+		}
+	}
+	return out
+}
+
+// appendPart appends the part [start, end) of s, without the blanks at a cut
+// (cutStart, cutEnd: a reference is there), unless it is a wrapper.
+func appendPart(out []span, text string, s span, start, end int, cutStart, cutEnd bool) []span {
+	for cutStart && start < end && isSpace(text[start]) {
+		start++
+	}
+	for cutEnd && end > start && isSpace(text[end-1]) {
+		end--
+	}
+	if wrapper(text[start:end]) {
+		return out
+	}
+	s.start, s.end = start, end
+	return append(out, s)
+}
+
+// wrapper reports a part of a candidate beside a reference that is no
+// secret: blanks and at most one quote, bracket or comma. Anything more
+// (two brackets, a symbol, a letter) may be a password, so it is proposed.
+func wrapper(v string) bool {
+	n := 0
+	for i := 0; i < len(v); i++ {
+		switch {
+		case isSpace(v[i]):
+		case n == 0 && strings.IndexByte("\"'`()[]{},", v[i]) >= 0:
+			n++
+		default:
+			return false
+		}
+	}
+	return true
 }
