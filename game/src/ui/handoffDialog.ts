@@ -3,6 +3,7 @@ import type { AgentHandoff, AgentHandoffAck, HandoffAck, HandoffCandidate, Hando
 import { cacheCopy, cacheState, candidateOf, newOp, noCandidateWhy, omittedNote } from '../world/handoff';
 import { coverageText, jobText, llmModeWhy, omittedText, payloadText, redactionText } from '../world/handoffLlm';
 import { backdropPolicy } from './dismiss';
+import { dialogChips, secretsDirOf, secretTextNodes } from './secretChips';
 import { h, icon, ICON } from './dom';
 import type { DialogHost } from './hire';
 import { failureText } from './messages';
@@ -581,7 +582,8 @@ export class HandoffDialog {
           { class: 'dd-callout dd-callout--box ho-request', role: 'status', 'data-hook': 'ho-request' },
           h('p', {}, h('span', { class: 'tape tape--box' }, r.state === 'filing' ? 'Filing' : 'Asked'), ` since ${since}`),
           h('p', {}, `Waiting for ${this.name}’s agent to finish its turn with the handoff written. It is filed when both are done, within 10 minutes; prompting or answering ${this.name} meanwhile stops it.`),
-          r.instruction ? h('p', { class: 'ho-hint' }, `Instruction: ${r.instruction}`) : null,
+          // #108 round 4: an instruction with protected secrets was stored with their references: chips.
+          r.instruction ? h('p', { class: 'ho-hint', 'data-hook': 'ho-instruction' }, 'Instruction: ', ...secretTextNodes(r.instruction, dialogChips(secretsDirOf(this.host.store), (m, e) => this.setStatus(m, e), (t) => this.host.copy(t)))) : null,
         ),
       ];
     }

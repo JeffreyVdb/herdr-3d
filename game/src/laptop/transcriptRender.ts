@@ -29,7 +29,8 @@ import type { Source } from '../ui/composer/complete';
 import { SendGate } from './transcriptDrafts';
 import { zoomKey } from './keys';
 import { fileRefPath } from './fileRef';
-import { clipboardCopy, FileRefPopover, markFileRefs } from './fileRefPopover';
+import { clipboardCopy, FILE_REF, FileRefPopover, markFileRefs } from './fileRefPopover';
+import { chipSecretRefs } from '../ui/secretChips';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 import { reviewKey } from '../ui/secretsFlow';
 import { keyName } from '../input/shortcuts';
@@ -57,6 +58,8 @@ export interface TranscriptRenderHost {
   onPromptSubmit(text: string, o?: { review: boolean }): void | Promise<boolean>;
   /** #108: the "Review prompt secrets before sending" switch, for the prompt box's "Review secrets" (none: no such control). */
   secrets?: { readonly on: boolean; onChange(fn: () => void): () => void } | null;
+  /** #108 round 4: the bridge's directory of protected files (null: unknown, the references' shape alone makes a chip). */
+  secretsDir?(): string | null;
   /** #64: one image to Drop Zone (null: none can be uploaded here, a pasted image says so). */
   upload?: Uploader | null;
   /** #64: the worker's name, for the upload's file name. */
@@ -1617,7 +1620,7 @@ class Transcript implements TranscriptView {
       case 'thinking':
         return this.thinkingRow(it);
       case 'tool':
-        if (it.tool?.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions)) return askItem(it, it.tool.ask);
+        if (it.tool?.ask && typeof it.tool.ask === 'object' && Array.isArray(it.tool.ask.questions)) return this.withSecretChips(askItem(it, it.tool.ask));
         return it.tool ? this.toolRow(it, scope) : this.unknownRow(it, 'tool call without details');
       case 'subagent':
         return it.subagent ? this.subagentRow(it, scope) : this.unknownRow(it, 'subagent without details');
@@ -1641,7 +1644,17 @@ class Transcript implements TranscriptView {
     const bubble = h('div', { class: 'tx-bubble tx-ans' }, h('div', { class: 'tx-ans-label' }, 'Your answer'), ...pairs);
     if (raw) bubble.append(h('details', { class: 'tx-ans-raw' }, h('summary', {}, 'Raw reply'), h('pre', {}, raw)));
     if (it.truncated) bubble.append(h('div', { class: 'tx-note' }, 'Truncated: only the start is shown.'));
+    for (const a of bubble.querySelectorAll<HTMLElement>('.tx-ans-pair')) this.withSecretChips(a);
     return h('li', { class: 'tx-item tx-user tx-answer' }, bubble);
+  }
+
+  /**
+   * #108 round 4: the bridge's references to protected files under `el` as masked chips (ui/secretChips.ts), each opening
+   * the file popover (#31) with its path and "Copy file path".
+   */
+  private withSecretChips<T extends HTMLElement>(el: T): T {
+    chipSecretRefs(el, { dir: this.host.secretsDir?.() ?? null, action: { kind: 'popover', cls: FILE_REF } });
+    return el;
   }
 
   private unknownRow(it: TranscriptItem, why: string | null): HTMLElement {
@@ -1664,7 +1677,7 @@ class Transcript implements TranscriptView {
         flush();
         const md = h('div', { class: 'tx-md' });
         setMarkdown(md, p.text);
-        box.append(md);
+        box.append(this.withSecretChips(md));
       }
     }
     flush();
@@ -1715,6 +1728,8 @@ class Transcript implements TranscriptView {
     // Its images show once the agent has them: until then the marker reads as the number it will have. #108: protected
     // values never show (`shown`).
     setMarkdown(md, (p.shown ?? p.text).replace(/\[Image #(\d+): [^\]\n]+\]/g, '[Image #$1]'));
+    // #108 round 4: once the bridge said what it sent, its references to protected files are chips.
+    this.withSecretChips(md);
     const meta = h('div', { class: 'tx-pending-meta' }, h('span', { class: 'tx-pending-state' }, this.pendingText(p)));
     if (p.state === 'refused') {
       const why = 'The prompt is still in the box below: change it or send it again.';

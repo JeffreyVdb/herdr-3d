@@ -18,6 +18,7 @@ import type { HireSummary } from './ui/hire';
 import type { ReviewSummary } from './ui/hireReview';
 import type { DictationSummary } from './ui/dictation';
 import type { SecretsReviewSummary } from './ui/secretsReview';
+import type { RevokeSecretsSummary } from './ui/revokeSecrets';
 import type { HireInterpretation } from './net/protocol';
 import type { HandoffDialogSummary } from './ui/handoffDialog';
 import type { CabinetSummary } from './ui/cabinet';
@@ -238,7 +239,7 @@ export interface H3DDebug {
   /** M4: opens the send-home dialog for a worker. */
   openSendHome(workerId: string): void;
   /** M4: what the open hire / send-home dialog shows, null when neither is open; M6: the presets panel (on top), else the start-run dialog first. */
-  dialog(): HireSummary | ReviewSummary | SendHomeSummary | StartRunSummary | PresetsSummary | HirePresetsSummary | AddFloorSummary | OpenPrSummary | DictationSummary | SecretsReviewSummary | null;
+  dialog(): HireSummary | ReviewSummary | SendHomeSummary | StartRunSummary | PresetsSummary | HirePresetsSummary | AddFloorSummary | OpenPrSummary | DictationSummary | SecretsReviewSummary | RevokeSecretsSummary | null;
   /** M6: the start-run dialog for a floor (default: yours) and desk (default: its first free one), as the top bar's Run and M7 open it. */
   openStartRun(o?: Partial<StartRunOptions>): void;
   /** M6: the team presets panel. */
@@ -565,7 +566,7 @@ const h3d: H3DDebug = {
   },
   openSendHome: (id) => app?.openSendHome(id),
   // #108: the review of a prompt's secrets opens over the others (the P overlay, the pack-up confirm): it comes first.
-  dialog: () => app?.secretsReview.summary() ?? app?.addFloor.summary() ?? app?.presetsPanel.summary() ?? app?.hirePresets.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.hireReview.summary() ?? app?.sendHome.summary() ?? app?.dictation.summary() ?? null,
+  dialog: () => app?.secretsReview.summary() ?? app?.revokeSecrets.summary() ?? app?.addFloor.summary() ?? app?.presetsPanel.summary() ?? app?.hirePresets.summary() ?? app?.openPr.summary() ?? app?.startRun.summary() ?? app?.hire.summary() ?? app?.hireReview.summary() ?? app?.sendHome.summary() ?? app?.dictation.summary() ?? null,
   openStartRun: (o) => app?.openStartRun(o),
   openPresets: () => app?.openPresets(),
   arrivals: () => app?.arrivals.info(performance.now() / 1000) ?? [],

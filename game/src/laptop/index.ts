@@ -36,6 +36,7 @@ import { hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type Overla
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
 import { Watches } from './watches';
 import type { PackupGate } from '../world/packup';
+import { secretFilesOf } from '../world/revokeSecrets';
 import type { Worker } from '../net/protocol';
 
 export { screensParam };
@@ -115,6 +116,8 @@ export interface SeatView {
   inLook?(t: EventTarget | null): boolean;
   /** #74: the fullscreen chip for the pane you sit at (null: nothing to say about it). */
   setFullscreen?(chip: FullscreenChip | null): void;
+  /** #108 round 4: how many protected files the worker you sit at holds (0: none, or no way to remove them). */
+  secretFiles?(n: number): void;
 }
 
 /** Keys a focused control of the seat bar keeps (moving between its controls, pressing one). */
@@ -325,6 +328,7 @@ export class Laptops {
       status: (kind, text) => (this.seat?.away ? this.restStatus(this.seat) : this.host.seat.status(kind, text)),
       ...(host.packup ? { packup: host.packup } : {}),
       ...(host.secrets ? { secrets: host.secrets } : {}), // #108
+      secretsDir: () => host.store.promptSecrets.state?.dir ?? null, // #108 round 4: the chips
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
       ...(host.scheduleFollowup ? { scheduleFollowup: (id: string, c: HandoffCandidate) => host.scheduleFollowup?.(id, c) } : {}),
       repoRefs: host.store.repoRefs, // #247
@@ -488,6 +492,16 @@ export class Laptops {
     // #187: `worker_removed` and `asleep` are no news to the seat: the frame loop finds the worker away from the store.
     if (reason === 'observer_failed') this.host.seat.status('error', `${name}’s screen stopped updating. It comes back when herdr-world restarts the observer.`);
     // pane_changed: the next sync watches the new pane.
+  }
+
+  /**
+   * #108 round 4: the seat bar's "protected files" chip follows the seated worker's `secret_files` (the app calls this
+   * on every change of the world; hidden on a bridge without `prompt_secrets.revoke`).
+   */
+  syncSecretFiles(): void {
+    const s = this.seat;
+    if (!s) return;
+    this.host.seat.secretFiles?.(this.host.unsupported('prompt_secrets.revoke') ? 0 : secretFilesOf(this.host.store.workers.get(s.id)));
   }
 
   // ---- #74: fullscreen --------------------------------------------------------------
@@ -698,6 +712,7 @@ export class Laptops {
     this.host.seat.show(v.name, this.mac);
     this.host.seat.status('ok', null);
     this.syncChip(id);
+    this.syncSecretFiles();
     this.host.seat.focus();
     // M16: its transcript is watched from now on. #98: you sit down to its conversation, unless you left it in the
     // terminal, the bridge reads no transcripts or its harness writes none (a shell, another agent).
