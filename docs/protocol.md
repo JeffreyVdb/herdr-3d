@@ -3849,10 +3849,10 @@ stale. Turning it off never deletes a file: the files already written keep their
 On, the bridge finds **possible secrets** in a prompt locally (no network, no model, no provider check): Gitleaks
 v8.30.1's default rules, generated into the bridge and checked against Gitleaks itself (`make secret-rules-parity`),
 its provider rules again before a sentence's punctuation (`Use sk_live_….`, `(hf_…:`), and its own structural rules
-(PEM private keys, `Authorization` credentials and long bare `Bearer` tokens (never what the shell expands there), URL
+(PEM private keys, `Authorization` credentials and long bare `Bearer` tokens (never what the shell expands there, read in the quotes their argument opens with), URL
 passwords and credential-named query or form parameters, assignments to credential-like names in env, shell, YAML,
 JSON, TOML, INI, CLI flags (and curl's
-`-u user:password`, never what the shell computes there) and code, YAML block scalars under them, "the password is X"
+`-u user:password`, never what the shell computes there: its word read as bash reads it, substitutions nested) and code, YAML block scalars under them, "the password is X"
 prose, a quoted value a few words after such a word when it is the sentence's subject (not "the password check is
 "…""), a line a later sentence names as one (ending on the credential word, never code), a code fence of one value
 after a line naming a credential, and other exact occurrences of a value found). A provider's token format inside a longer value proposes the value's
