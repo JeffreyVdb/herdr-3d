@@ -3978,15 +3978,30 @@ reads only the references; a handoff it writes may name the files, which live as
 `existing` answer removes them. Telegram replies and card answers have no review: candidates refuse them (round 1).
 
 **A change of the switch** makes every review made before it stale, also one whose command is already under way: each
-route checks it last, after any wait (a scan slot, the worker's input lane, herdr creating a hire's workspace, a work
-item being read, a handoff's transcript being read), before its text goes on. `packup.detect`, `hire.interpret` and
-`hire_preset.check` check it just before their model reads the text: the command is `secrets_review_stale`, no model
-is called, and the files its review made are removed. A hire (`worker.hire`, `run.start`) checks it once its worker is
-seen, before its first prompt: the worker stays, its prompt does not go (`prompt_error`), and its files are removed;
-`run.start` also checks it when its work item has been read (then nothing is hired). A wrap-up checks it just before its
-prompt is typed (the arm fails with `secrets_review_stale`); an LLM handoff just before the model is called (the job
-fails with code `secrets_review_stale`). A schedule's fire has no review to go stale: its record is of the text and
-the rules.
+route checks it last, after any wait (a scan slot, the worker's input lane, herdr creating a hire's workspace, the agent
+getting ready for a prompt, a dialog being answered, a work item or a handoff's transcript being read, a model's slot),
+right before its text goes on: before its first byte is typed or sent, before each model call. Once the first byte
+went, nothing is checked again (Enter pressed again, a model request retried).
+
+- `packup.detect`, `hire.interpret` and `hire_preset.check` check it just before their model reads the text, and each
+  model call again once it holds one of the model's slots (a call waits for one while others run): the command is
+  `secrets_review_stale`, no model (or no further one) is called, and the files its review made are removed. One whose
+  review went stale by the time its model answered is `secrets_review_stale` too (its hand-over could not be used).
+- A hire (`worker.hire`, `run.start`) checks it once its worker is seen, and again just before its first prompt is
+  typed or sent, after waiting for the agent and on the worker's input lane (Codex: before each try while herdr says the
+  agent is not ready): the worker stays, its prompt does not go (`prompt_error`), and the files its review made are
+  removed (a hand-over's, once its worker claimed it, stay the worker's). `run.start` also checks it when its work item
+  has been read (then nothing is hired).
+- The worker's routes (`worker.prompt`, `worker.answer_ask`, `worker.answer_followup`, `worker.answer_async`, a
+  wrap-up, `worker.handoff` in mode `agent`, a `/handoff`) check it when their turn comes on the worker's input lane and
+  again right before their text goes: once the agent is ready to be typed into, before a Codex prompt is submitted or
+  queued, before the first Other answer is typed into a dialog (a dialog whose text was typed is answered whole), before
+  a dismissal's prompt, as an async answer is marked sending, before a handoff request's prompt. The command is
+  `secrets_review_stale`, nothing of its text is sent, and the files it made are removed (a wrap-up's arm fails so; an
+  agent handoff's request fails).
+- An LLM handoff checks it just before the model is called, and as the call takes its slot: the job fails with code
+  `secrets_review_stale`.
+- A schedule's fire has no review to go stale: its record is of the text and the rules.
 
 **Not reviewed.** `worker.keys` (typing straight into a terminal, as in any terminal); `run.prepare` (it sends the text
 nowhere and keeps none of it: its preview comes back to its sender only, its audit row keeps lengths; the `run.start`
@@ -3999,9 +4014,10 @@ that follows is reviewed); `worker.handoff` in mode `literal` (no typed text); n
 minutes. A hire's (`worker.hire`, `run.start`) is claimed by the new worker once herdr shows it, before its first
 prompt goes; a hire that fails (refused after its review, herdr failing, rolled back, not seen in time) removes them at
 once; one the bridge stopped during expires, and the janitor removes it. A hire that succeeds keeps its files with the
-worker also when its first prompt could not go (Codex's hooks review, a failed send): a resend refers to them. A hire
-whose files expired before its worker was seen sends no prompt (`prompt_error`). Each hire writes its own files: the
-identical hire sent again is refused as today (its desk is taken) and leaves none.
+worker also when its first prompt could not go (Codex's hooks review, a failed send): a resend refers to them; a prompt
+withheld because the switch changed removes them (above). A hire whose files expired before its worker was seen sends no
+prompt (`prompt_error`). Each hire writes its own files: the identical hire sent again is refused as today (its desk is
+taken) and leaves none.
 
 **The hand-over (`secrets_pending`).** A preview, whose text a language model reads before another command sends it,
 answers an opaque `secrets_pending` when it had a review (or continued one): random, never the owner's directory name,
@@ -5373,7 +5389,7 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
 | `input_failed` | #156 `worker.answer_async`: the worker's app-server refused the answer (nothing delivered; the question is `pending` again with its `error`); `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
 | `secrets_review_stored` | #108 round 2 (see [Prompt secrets](#prompt-secrets)): the review of a prompt that is stored (`schedule.create`/`update`, `hire_preset.create`/`update`/`check`; `schedule.retry`/`run_now` of a schedule's stored prompt) protects something: a stored prompt keeps no protected file. Remove the values from it, or protect them when you hire with it. Nothing was stored |
-| `secrets_review_required`, `secrets_review_stale`, `secrets_review_off`, `secrets_unavailable` | #108 (see [Prompt secrets](#prompt-secrets)): the text has possible secrets and the command carries no review of them, or its decisions do not fit the scan (a candidate without exactly one decision; a range empty, outside the text, splitting a surrogate pair or overlapping another); the review's `revision` is not the text's under the current rules, key and switch (the text changed, the bridge restarted, the switch changed), or a review came while the switch is off (round 2: and a `secrets_pending` unknown, expired, from before a restart or a change of the switch, another worker's, or whose files another worker took, also when that happened while the command waited; a switch change while a reviewed command waited, before its text went on; a schedule's prompt changed while its retry's review was checked); round 2: a text of a command with several has no review, or a review names no text the command sends (the message starts with the text's path); `prompt_secrets.scan` while the switch is off; the protection could not run (no private runtime directory, a file could not be written, the scan failed or took over 10 s). Nothing was sent, stored or written on any of them, and the message never quotes the text |
+| `secrets_review_required`, `secrets_review_stale`, `secrets_review_off`, `secrets_unavailable` | #108 (see [Prompt secrets](#prompt-secrets)): the text has possible secrets and the command carries no review of them, or its decisions do not fit the scan (a candidate without exactly one decision; a range empty, outside the text, splitting a surrogate pair or overlapping another); the review's `revision` is not the text's under the current rules, key and switch (the text changed, the bridge restarted, the switch changed), or a review came while the switch is off (round 2: and a `secrets_pending` unknown, expired, from before a restart or a change of the switch, another worker's, or whose files another worker took, also when that happened while the command waited; a switch change while a reviewed command waited, before its text went on, or while a preview's or a preset check's model read it; a schedule's prompt changed while its retry's review was checked); round 2: a text of a command with several has no review, or a review names no text the command sends (the message starts with the text's path); `prompt_secrets.scan` while the switch is off; the protection could not run (no private runtime directory, a file could not be written, the scan failed or took over 10 s). Nothing was sent, stored or written on any of them (but that model's read, of the text with its references), and the message never quotes the text |
 | `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` (#60: `worker.retry_followup` / `worker.followup_message`) for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
