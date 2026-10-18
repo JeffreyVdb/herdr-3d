@@ -1,5 +1,6 @@
 import type { HireOptions, Schedule, ScheduleRemoved, ScheduleSource, ScheduleSpec, ScheduleState } from '../net/protocol';
 import { modelsFor } from './hire';
+import { promptSecretsFailureText } from './promptSecrets';
 import { effortsFor } from './settings';
 
 /**
@@ -249,6 +250,15 @@ export function scheduleFailureText(t: string, code: string, message: string, ti
       return `${it} ${did}: ${why || 'herdr-world refused the spec'}.`;
     case 'unknown_command':
       return 'This herdr-world can’t schedule agents yet: it is older than scheduled agents.';
+    // #108: its prompt's review (a stored prompt keeps no protected file); `secrets_kept`: the game's flow kept it, its words.
+    case 'secrets_review_required':
+    case 'secrets_review_stale':
+    case 'secrets_review_off':
+    case 'secrets_review_stored':
+    case 'secrets_unavailable':
+      return `${it} ${did}. ${promptSecretsFailureText(code, message).replace(/ Nothing was (sent|saved)\.$/, '')}`;
+    case 'secrets_kept':
+      return message.trim();
     case 'offline':
       return `${it} ${did}: not connected to herdr-world.`;
     case 'timeout':

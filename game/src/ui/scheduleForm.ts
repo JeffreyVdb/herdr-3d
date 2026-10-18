@@ -15,6 +15,7 @@ import { chips, gitView, modelField, worktreeControl, type DialogHost } from './
 import type { HireModelPrefs } from './hireModelPrefs';
 import type { HirePrefs } from './hirePrefs';
 import { failureText } from './messages';
+import { onReviewKey, reviewButton, type Go } from './secretsFlow';
 import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft, type Uploader } from './composer/draft';
 import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
@@ -258,6 +259,11 @@ export class ScheduleFormDialog {
         this.cabSearch.value = '';
         this.cabQuery();
       }
+    });
+    // #108: the prompt's review on purpose (Ctrl/⌘+Shift+X, with the switch on); the switch shows or hides its button.
+    onReviewKey(this.form, () => this.host.secrets, () => void this.save(true));
+    host.secrets?.onChange(() => {
+      if (this.dialog.open) this.renderActions();
     });
     this.form.addEventListener('submit', (e) => {
       e.preventDefault();
@@ -726,13 +732,21 @@ export class ScheduleFormDialog {
     const hint = h('p', { class: 'dd-status', id: 'sf-why', 'data-hook': 'sf-why', hidden: !why || this.statusText !== '' }, why ?? '');
     const a = document.activeElement;
     const had = a instanceof HTMLElement && this.actions.contains(a) ? a.dataset.key : null;
-    this.actions.replaceChildren(hint, h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Cancel'), btn);
+    // #108: the stored prompt's review on purpose (with the switch on), then the save.
+    const review = reviewButton(this.host.secrets, this.saving ? 'Saving…' : why, () => void this.save(true), 'prompt');
+    const cancel = h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.close() }, 'Cancel');
+    this.actions.replaceChildren(hint, cancel, ...(review ? [review] : []), btn);
     if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
     this.renderNotices();
   }
 
-  /** Save: the time read again (relative input counts from now), the prompt resolved, the message filed, then the schedule. */
-  async save(): Promise<void> {
+  /**
+   * Save: the time read again (relative input counts from now), the prompt resolved, the message filed, then the schedule.
+   * #108 round 4: with the switch on (or `manual`: "Review secrets"), the prompt is reviewed after it is resolved and before
+   * anything is filed or saved: a saved prompt keeps no protected file, so every match stays as typed (the dialog says
+   * so) and the save carries that review; Cancel saves nothing.
+   */
+  async save(manual = false): Promise<void> {
     if (this.saving || !this.dialog.open) return;
     this.reparse(false);
     const why = this.blocker();
@@ -761,6 +775,18 @@ export class ScheduleFormDialog {
     const text = await this.composer.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
     if (gen !== this.formGen || !this.dialog.open) return;
     if (!text.ok) return end(text.reason === 'upload' ? 'An image did not upload: retry it or remove it.' : text.reason === 'refused' ? text.message : 'The prompt could not be read.', true);
+    const flow = this.host.secrets;
+    const sreq = { key: `schedule:${this.mode === 'edit' ? this.editId : 'new'}`, text: text.text, target: `“${form.title.trim() || 'the schedule'}”`, stored: true, manual };
+    let go: Go = { kind: 'send', protects: 0, shown: text.text, review: null };
+    if (manual && !text.text) return end('Write a prompt first, then review its secrets.', true);
+    if (text.text && flow && (flow.on || manual)) {
+      this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the prompt…');
+      const out = await flow.review(sreq);
+      if (gen !== this.formGen || !this.dialog.open) return;
+      if (out.kind === 'kept') return end(out.why === 'cancel' ? 'Not saved: the prompt is still here.' : out.message, out.why === 'failed');
+      go = out;
+      this.setStatus(handoffMode === 'transcript' && !this.filedPath ? 'Filing the message…' : 'Saving…');
+    }
     let path: string | null = null;
     const t = this.prefill.transcript;
     if (handoffMode === 'transcript' && t) {
@@ -784,8 +810,11 @@ export class ScheduleFormDialog {
     }
     const spec = scheduleSpec(form, text.text, path, this.mode === 'create' ? (this.prefill.source ?? (t ? { kind: 'transcript', worker: t.worker, ...(t.candidate.message ? { message: t.candidate.message } : {}) } : undefined)) : undefined);
     const cmd = this.mode === 'edit' ? 'schedule.update' : 'schedule.create';
-    const r = this.mode === 'edit' ? await this.host.send('schedule.update', { id: this.editId, ...spec }) : await this.host.send('schedule.create', spec);
+    const send = (g: Go) => (this.mode === 'edit' ? this.host.send('schedule.update', { id: this.editId, ...spec, ...(g.secrets ? { secrets: g.secrets } : {}) }) : this.host.send('schedule.create', { ...spec, ...(g.secrets ? { secrets: g.secrets } : {}) }));
+    const d = flow ? await flow.deliver(sreq, go, send) : ({ kind: 'answered', result: await send(go) } as const);
     if (gen !== this.formGen || !this.dialog.open) return;
+    if (d.kind === 'kept') return end(d.message, d.why === 'failed');
+    const r = d.result;
     if (!r.ok) return end(`${scheduleFailureText(cmd, r.code, r.message, spec.title)}${this.filedPath ? ' The message is filed; saving again uses it.' : ''}`, true);
     const s = r.data as Schedule;
     this.saving = false;

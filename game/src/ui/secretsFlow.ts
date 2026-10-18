@@ -60,6 +60,8 @@ export interface SecretsRequest {
   stored?: boolean;
   /** Which of the command's texts this is (a composer with several), for the review's title. */
   field?: string;
+  /** Why it is reviewed now, above the prompt (a failed schedule's repair); a refusal's own note wins. */
+  notice?: string;
 }
 
 /** Send it: with `secrets` when a review decided anything. */
@@ -241,7 +243,7 @@ export class PromptSecretsFlow {
       review,
       target: req.target,
       field: req.field ?? null,
-      notice: again?.notice ?? null,
+      notice: again?.notice ?? req.notice ?? null,
       manual: req.manual === true,
       action: req.action ?? (req.stored ? 'Confirm and save' : 'Confirm and send'),
       stored: req.stored ? STORED_REASON : null,
