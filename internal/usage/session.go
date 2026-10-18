@@ -60,7 +60,7 @@ type Session struct {
 	parse  parser
 	main   *jsonl.Tail
 	subDir string
-	subs   map[string]*jsonl.Tail // Claude subagents, by path
+	subs   map[string]*jsonl.Tail // Claude subagents (#25: Codex child rollouts), by path
 	missAt time.Time              // when a lookup last found nothing
 	subAt  time.Time              // when the subagents were last listed
 	auth   string                 // Codex's auth_mode, read once (NewSession)
@@ -72,12 +72,19 @@ type Session struct {
 	// as last read, by agent id.
 	kids  Children
 	metas map[string]metaStamp
+	// #25: a Codex session's child rollouts are found by children (set
+	// with kids), and threads is each one's thread id, by path.
+	children *codex.ChildFinder
+	threads  map[string]string
 }
 
 // Children gets what a Claude session's files show of its subagents (#23,
 // internal/claudechild): the main transcript's lines, each subagent's
 // transcript lines and meta file, by agent id (the file's agent-<id>), from
-// the same reads as the usage, so every file has one reader.
+// the same reads as the usage, so every file has one reader. A Codex
+// session's (#25, internal/codexchild): the root rollout's lines and each
+// child rollout's (codex.ChildFinder), by the child's thread id; Codex has
+// no meta files, and a child rollout's tokens are not the worker's usage.
 type Children interface {
 	// Main is one complete line of the main transcript and the offset it
 	// starts at.
@@ -111,7 +118,7 @@ type metaStamp struct {
 const MaxMeta = 64 << 10
 
 // SetChildren sends the session's subagent evidence to c (nil: none). Set
-// it before the first Poll (Claude sessions only).
+// it before the first Poll.
 func (s *Session) SetChildren(c Children) { s.kids = c }
 
 // Tap gets the main transcript's lines as the session reads them, so the
@@ -194,7 +201,8 @@ func NewSession(harness, id string, roots Roots, p *Pricing) *Session {
 	if harness != Claude && harness != Codex {
 		return nil
 	}
-	s := &Session{harness: harness, id: id, roots: roots, pricing: p, subs: map[string]*jsonl.Tail{}, metas: map[string]metaStamp{}}
+	s := &Session{harness: harness, id: id, roots: roots, pricing: p, subs: map[string]*jsonl.Tail{}, metas: map[string]metaStamp{},
+		threads: map[string]string{}}
 	if harness == Codex {
 		s.auth = codexAuthMode(roots.CodexSessions)
 	}
@@ -244,6 +252,9 @@ func (s *Session) poll(now time.Time) (u proto.Usage, ok bool) {
 		if s.harness == Claude {
 			s.subDir = filepath.Join(filepath.Dir(path), s.id, "subagents")
 		}
+		if s.harness == Codex && s.kids != nil && s.children == nil { // #25: the children start after the root
+			s.children = &codex.ChildFinder{Root: s.roots.CodexSessions, Session: s.id, From: codex.DateDir(s.roots.CodexSessions, path)}
+		}
 	}
 	err := s.read(now)
 	if errors.Is(err, jsonl.ErrReplaced) {
@@ -290,10 +301,13 @@ func (s *Session) read(now time.Time) error {
 	}); err != nil {
 		return err
 	}
+	if s.children != nil {
+		return s.readChildren(now)
+	}
 	if s.subDir == "" {
 		return nil
 	}
-	if s.subAt.IsZero() || now.Sub(s.subAt) >= SubagentRescan || now.Before(s.subAt) || (s.kids != nil && s.kids.WantList()) {
+	if s.listDue(now) {
 		s.subAt = now
 		entries, _ := os.ReadDir(s.subDir)
 		for _, e := range entries {
@@ -331,6 +345,43 @@ func (s *Session) read(now time.Time) error {
 		}
 		if s.kids != nil {
 			s.readMeta(id, strings.TrimSuffix(p, ".jsonl")+".meta.json")
+		}
+	}
+	return nil
+}
+
+// listDue reports whether the subagents are listed in this read.
+func (s *Session) listDue(now time.Time) bool {
+	return s.subAt.IsZero() || now.Sub(s.subAt) >= SubagentRescan || now.Before(s.subAt) || (s.kids != nil && s.kids.WantList())
+}
+
+// readChildren reads a Codex session's child rollouts (#25): found every
+// SubagentRescan (or when the children ask), each read for the children
+// only.
+func (s *Session) readChildren(now time.Time) error {
+	if s.listDue(now) {
+		s.subAt = now
+		for _, c := range s.children.Find() {
+			if s.subs[c.Path] == nil {
+				s.subs[c.Path], s.threads[c.Path] = jsonl.NewTail(c.Path), c.Meta.ID
+			}
+		}
+	}
+	paths := make([]string, 0, len(s.subs))
+	for p := range s.subs {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		thread := s.threads[p]
+		err := s.subs[p].Next(func(off int64, b []byte) { s.kids.Child(thread, off, b) })
+		switch {
+		case errors.Is(err, jsonl.ErrReplaced):
+			return err
+		case errors.Is(err, fs.ErrNotExist):
+			delete(s.subs, p)
+			delete(s.threads, p)
+			s.kids.Gone(thread)
 		}
 	}
 	return nil
