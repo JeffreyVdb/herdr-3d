@@ -23,6 +23,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/claudechild"
 	"github.com/JeffreyVdb/herdr-3d/internal/codex"
+	"github.com/JeffreyVdb/herdr-3d/internal/codexchild"
 	"github.com/JeffreyVdb/herdr-3d/internal/execpath"
 	"github.com/JeffreyVdb/herdr-3d/internal/fileindex"
 	"github.com/JeffreyVdb/herdr-3d/internal/githubcli"
@@ -877,6 +878,11 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		src := claudeChildren(log, cfg.ClaudeHooks, cfg.Control)
 		opts.ChildSources = append(opts.ChildSources, src)
 		opts.Usage.ClaudeChildren = func(session string) server.ChildReader { return src.Listener(session) }
+	}
+	if cfg.CodexSessions != "" { // #25 Codex subagents (terminal workers), from the usage tracker's reads of their rollouts
+		src := codexchild.New(codexchild.Options{})
+		opts.ChildSources = append(opts.ChildSources, src)
+		opts.Usage.CodexChildren = func(session string) server.ChildReader { return src.Listener(session) }
 	}
 	opts.RunsDir, opts.ReportPoll = cfg.RunsDir, cfg.ReportPoll // M6 runs
 	opts.Boards = cfg.Boards                                    // M7 boards

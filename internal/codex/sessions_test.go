@@ -171,3 +171,37 @@ func TestFindRollout(t *testing.T) {
 		}
 	}
 }
+
+// A session_meta's thread: a root, a spawned child (only thread_spawn with
+// thread_source subagent is one), a guardian reviewer, another subagent
+// kind.
+func TestParseMeta(t *testing.T) {
+	for _, tc := range []struct {
+		name, line   string
+		sub, child   bool
+		parent, nick string
+		start        int64
+	}{
+		{"root", `{"type":"session_meta","payload":{"id":"r","session_id":"r","source":"cli","thread_source":"user"}}`, false, false, "", "", 0},
+		{"child", `{"type":"session_meta","payload":{"id":"c","session_id":"r","parent_thread_id":"p","thread_source":"subagent",` +
+			`"subagent_history_start_ordinal":9,"source":{"subagent":{"thread_spawn":{"parent_thread_id":"p","depth":2,"agent_nickname":"Volta"}}}}}`,
+			true, true, "p", "Volta", 9},
+		{"guardian", `{"type":"session_meta","payload":{"id":"g","session_id":"r","parent_thread_id":"r","thread_source":"guardian_review",` +
+			`"source":{"subagent":{"other":"guardian"}}}}`, true, false, "", "", 0},
+		{"review", `{"type":"session_meta","payload":{"id":"v","source":{"subagent":"review"}}}`, true, false, "", "", 0},
+		{"spawn without thread_source", `{"type":"session_meta","payload":{"id":"c","session_id":"r",` +
+			`"source":{"subagent":{"thread_spawn":{"parent_thread_id":"r"}}}}}`, true, false, "r", "", 0},
+	} {
+		m, ok := ParseMeta([]byte(tc.line))
+		if !ok || m.Subagent() != tc.sub || m.Child() != tc.child || m.HistoryStart != tc.start {
+			t.Errorf("%s: %+v ok %v", tc.name, m, ok)
+			continue
+		}
+		if ts := m.Source; ts != nil && ts.ThreadSpawn != nil && (ts.ThreadSpawn.Parent != tc.parent || ts.ThreadSpawn.Nickname != tc.nick) {
+			t.Errorf("%s: spawn %+v", tc.name, ts.ThreadSpawn)
+		}
+	}
+	if _, ok := ParseMeta([]byte(`{"type":"turn_context","payload":{}}`)); ok {
+		t.Error("a turn_context is no session_meta")
+	}
+}

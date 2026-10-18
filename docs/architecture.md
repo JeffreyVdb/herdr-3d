@@ -344,7 +344,12 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   `internal/claudechild` gets each Claude worker's session files from the usage tracker's own reads (a `usage.Children`
   listener on its `usage.Session`: the main transcript, `subagents/agent-*.jsonl` and their meta files, one reader per
   file), keeps them as facts keyed by explicit ids and derives each child after every poll; it also tails the log of the
-  bridge's own hooks, a `--settings` file (`-claude-hooks`) passed to the Claude workers it starts. Codex: #25, #27.
+  bridge's own hooks, a `--settings` file (`-claude-hooks`) passed to the Claude workers it starts. **Codex** on the
+  terminal path (#25; `protocol.md` "Codex subagents", `decisions.md` "#25"): `internal/codexchild` gets each Codex
+  worker's root rollout and its child rollouts from the same tracker (`usage.Session` finds the children with
+  `codex.ChildFinder`, by their first line's `thread_spawn` and root session), keeps facts per file keyed by explicit ids
+  and derives each child after every poll; `codexchild.ReadTranscript` reads a child's own conversation. The shared
+  app-server path: #27.
 - **Building logos** (M3d, built; details in `protocol.md` "Building logos"): a building can carry a logo, stored by the
   bridge itself (no remote URL, so the game never loads an image from a third-party host, it works offline and through
   the helper). Upload, clear and fetch are HTTP on the bridge socket, `PUT|DELETE|GET /logo/{building}`, not WebSocket
