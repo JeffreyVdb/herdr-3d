@@ -554,13 +554,20 @@ func list(dfd int) ([]string, error) {
 }
 
 // Sweep reconciles the directory with the store (at start, and from time to
-// time): it removes owner directories with no row, those of a worker live
-// says is gone (closed or unknown) and expired pending owners, the files of
+// time): it removes owner directories with no row, those of a worker that
+// is not live (closed or unknown) and expired pending owners, the files of
 // a kept directory with no row, and the rows whose directory or file is
-// gone. Names this package does not make are left alone (logged).
-func (f *Files) Sweep(ctx context.Context, live func(workerID string) bool) (removed int, err error) {
+// gone. Names this package does not make are left alone (logged). liveness
+// reads which workers are live; it is called with the directory locked, so
+// no file is written or claimed between that read and the sweep (a worker
+// whose files are there was live before them).
+func (f *Files) Sweep(ctx context.Context, liveness func(context.Context) (live func(workerID string) bool, err error)) (removed int, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	live, err := liveness(ctx)
+	if err != nil {
+		return 0, err
+	}
 	rows, err := f.st.SecretOwners(ctx)
 	if err != nil {
 		return 0, err

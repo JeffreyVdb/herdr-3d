@@ -556,6 +556,19 @@ func (h *Hub) runSecretsJanitor(ctx context.Context) {
 }
 
 func (h *Hub) sweepSecrets(ctx context.Context) {
+	n, err := h.ps.files.Sweep(ctx, h.liveWorkers)
+	if err != nil && ctx.Err() == nil {
+		h.log.Warn("protected secrets sweep failed", "err", err)
+	}
+	if n > 0 {
+		h.log.Info("protected secrets sweep removed owners' files", "owners", n)
+	}
+}
+
+// liveWorkers reads the workers that keep their files: the hub's and those
+// open in the store. Sweep reads it with the files locked (review S2: read
+// before, a worker that started and wrote in between lost its files).
+func (h *Hub) liveWorkers(ctx context.Context) (func(id string) bool, error) {
 	known, err := query(ctx, h, func() map[string]bool {
 		ids := make(map[string]bool, len(h.workers))
 		for id := range h.workers {
@@ -564,18 +577,11 @@ func (h *Hub) sweepSecrets(ctx context.Context) {
 		return ids
 	})
 	if err != nil {
-		return
+		return nil, err
 	}
 	open, err := h.st.OpenWorkers(ctx)
 	if err != nil {
-		h.log.Warn("protected secrets sweep: the workers could not be read", "err", err)
-		return
+		return nil, fmt.Errorf("the workers could not be read: %w", err)
 	}
-	n, err := h.ps.files.Sweep(ctx, func(id string) bool { return known[id] || open[id] })
-	if err != nil {
-		h.log.Warn("protected secrets sweep failed", "err", err)
-	}
-	if n > 0 {
-		h.log.Info("protected secrets sweep removed owners' files", "owners", n)
-	}
+	return func(id string) bool { return known[id] || open[id] }, nil
 }

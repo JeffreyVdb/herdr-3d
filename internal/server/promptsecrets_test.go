@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -60,7 +61,8 @@ func (sb *secretsBridge) scan(t *testing.T, text string) proto.PromptSecretsScan
 	return ackData[proto.PromptSecretsScan](t, m)
 }
 
-// files are the protected files under dir: path → bytes.
+// files are the protected files under dir: path → bytes. One removed while
+// they are read (a release or a sweep going on) is not there.
 func (sb *secretsBridge) files(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -73,13 +75,17 @@ func (sb *secretsBridge) files(t *testing.T) map[string]string {
 			continue
 		}
 		entries, err := os.ReadDir(filepath.Join(sb.dir, o.Name()))
-		if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
 			t.Fatal(err)
 		}
 		for _, e := range entries {
 			p := filepath.Join(sb.dir, o.Name(), e.Name())
 			b, err := os.ReadFile(p)
-			if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			} else if err != nil {
 				t.Fatal(err)
 			}
 			out[p] = string(b)
