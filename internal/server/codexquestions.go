@@ -271,9 +271,9 @@ func validAsyncText(s string) bool {
 // startAnswerAsync validates worker.answer_async and queues it on the
 // worker's input lane, where it is checked again just before it is sent.
 // #108 round 2: with prompt secrets reviewed, its answers go through the
-// gate on the lane first, then go as admitted now with their texts
-// replaced (review B5: admitted again on the lane, a duplicate queued
-// before the first send would become a retry).
+// gate on the lane first, then go with the admission they got now, their
+// texts replaced (review B5: admitted anew on the lane, a duplicate queued
+// before the first send became a retry).
 func (h *Hub) startAnswerAsync(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.WorkerAnswerAsyncArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
