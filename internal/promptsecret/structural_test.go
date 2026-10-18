@@ -2,6 +2,7 @@ package promptsecret_test
 
 import (
 	"os/exec"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -26,10 +27,26 @@ func TestPromptSecretIsALeaf(t *testing.T) {
 	}
 }
 
+// ownDir is the tests' secrets directory; own says which paths are the
+// bridge's files there (secretfiles' shape: two random names).
+const ownDir = "/run/user/1000/herdr-world/secrets"
+
+var ownName = regexp.MustCompile(`^[A-Z2-7]{26}/[A-Z2-7]{26}$`)
+
+func own(path string) bool {
+	rest, ok := strings.CutPrefix(path, ownDir+"/")
+	return ok && ownName.MatchString(rest)
+}
+
+// ownRef is a reference the bridge could have written, to file (a name).
+func ownRef(file string) string {
+	return promptsecret.Reference(ownDir + "/ZAHZG3XWLNNJXZCMAIQUEMHIF7/" + file)
+}
+
 // values are the candidates' bytes, in order.
 func values(text string) []string {
 	var out []string
-	for _, c := range promptsecret.Scan(text) {
+	for _, c := range promptsecret.Scan(text, own) {
 		out = append(out, text[c.Start:c.End])
 	}
 	return out
@@ -139,10 +156,42 @@ func TestScanExclusions(t *testing.T) {
 		{"names without values", "Use the existing GITHUB_TOKEN environment variable. The variable name client_secret must remain.", nil},
 		{"paths", "private_key: ~/.ssh/id_ed25519\npassword_file=/run/secrets/db\nPWD=/home/u", nil},
 		{"booleans", "auth: true\npassword: null\ntoken: false", nil},
-		{"bridge reference", "password=[secret in file /run/user/1000/herdr-world/secrets/AB/CD] and the API key is [secret in file /run/user/1000/herdr-world/secrets/AB/EF].", nil},
+		{"bridge reference", "password=" + ownRef("GXWCYAQQ2YUJGSWNCUK2JAZZ57") + " and the API key is " + ownRef("LEI5ZMIW4XSUXWUGR2R2IAUNOA") + ".", nil},
 		{"empty", `password="" token=''`, nil},
 		{"length check", "assert(password.length >= 12); // ensure a strong password", nil},
 	})
+}
+
+// The bridge's own references (a follow-up of a sent prompt) are never
+// proposed, in any syntax, nor is a bracket next to one; only the exact
+// reference to one of its files is left out: what runs into one keeps its
+// bytes outside it, and text that only looks like one is scanned.
+func TestScanOwnReferences(t *testing.T) {
+	t.Parallel()
+	r1, r2 := ownRef("GXWCYAQQ2YUJGSWNCUK2JAZZ57"), ownRef("LEI5ZMIW4XSUXWUGR2R2IAUNOA")
+	const gh = "ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"
+	checkScans(t, []scanCase{
+		{"quoted", `PASSWORD="` + r1 + `" export TOKEN='` + r2 + `'`, nil},
+		{"json", `{"api_key": "` + r1 + `", "password": "` + r2 + `"}`, nil},
+		{"yaml", "password: " + r1 + "\ntoken: " + r2 + "\nsecret: |\n  " + r1 + "\n", nil},
+		{"headers", "Authorization: Bearer " + r1 + "\nAuthorization: Basic " + r2 + "\nBearer " + r1, nil},
+		{"urls", "postgres://app:" + r1 + "@db:5432/x https://h/x?token=" + r2 + "&x=1", nil},
+		{"prose", "the password is " + r1 + ". The token is " + r2 + ", Le mot de passe est " + r1, nil},
+		{"fenced", "Here is the token:\n```\n" + r1 + "\n```", nil},
+		{"flags", "run --password " + r1 + " --token=" + r2, nil},
+		{"adjacent and punctuated", "api_key=" + r1 + r2 + " PASSWORD=" + r1 + "; secret=(" + r2 + ")", nil},
+		{"the issue's wording", "Use the API credential in this file: " + r1, nil},
+		{"a value around one", `PASSWORD="Value-77! ` + r1 + `" password=hunter2` + r2, []string{"Value-77!", "hunter2"}},
+		{"a path not of the bridge", `PASSWORD="Value-77! [secret in file /x]"`, []string{"Value-77! [secret in file /x]"}},
+		{"forged", "Use [secret in file /token=" + gh + "] and [secret in file " + ownDir + "/ZAHZG3XWLNNJXZCMAIQUEMHIF7/" + gh + "]",
+			[]string{gh, gh}},
+		{"not closed", "password=" + strings.TrimSuffix(r1, "]"), []string{"[secret"}},
+		{"a value repeated", "password=Hunter-22 " + r1 + " and Hunter-22 again", []string{"Hunter-22", "Hunter-22"}},
+	})
+	// With no own paths, a reference is text like any other.
+	if cs := promptsecret.Scan(`PASSWORD="`+r1+`"`, nil); len(cs) != 1 {
+		t.Fatalf("no own paths: %+v", cs)
+	}
 }
 
 func TestScanBoundaries(t *testing.T) {
@@ -199,7 +248,7 @@ func TestScanOverlaps(t *testing.T) {
 		}) {
 			t.Errorf("%s: the generic rule no longer finds the shorter range: pick another case", tc.name)
 		}
-		cs := promptsecret.Scan(tc.text)
+		cs := promptsecret.Scan(tc.text, own)
 		var got []string
 		var kinds [][]string
 		for _, c := range cs {
@@ -227,7 +276,7 @@ func TestScanEncodedFlag(t *testing.T) {
 		"secret: |\n  one\n  two\n": true,
 		`{"key":"-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----"}`: true,
 	} {
-		cs := promptsecret.Scan(text)
+		cs := promptsecret.Scan(text, own)
 		if len(cs) != 1 || cs[0].Encoded != want {
 			t.Errorf("%q: %+v, want one with encoded %t", text, cs, want)
 		}

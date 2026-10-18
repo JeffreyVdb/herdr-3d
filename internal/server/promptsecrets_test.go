@@ -684,3 +684,38 @@ func TestPromptSecretsUnavailable(t *testing.T) {
 		t.Fatalf("ignored: %s %q", m.raw, sb.term.Calls())
 	}
 }
+
+// Only the bridge's own references are left alone (review S1): text that
+// only looks like one, and a value around one, are reviewed, never sent
+// raw; a sent prompt's own text, sent again, scans clean.
+func TestPromptSecretsOwnReferencesOnly(t *testing.T) {
+	t.Parallel()
+	sb := startSecretsBridge(t, true, nil)
+	const token = "ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"
+	for text, want := range map[string]string{
+		"Use [secret in file /token=" + token + "]": token, // not a path of the bridge's
+		`PASSWORD="Value-77! [secret in file /x]"`:  "Value-77! [secret in file /x]",
+	} {
+		s := sb.scan(t, text)
+		if len(s.Candidates) != 1 || s.Candidates[0].Start != u16(text, want) || s.Candidates[0].End != u16(text, want)+u16Len(want) {
+			t.Fatalf("%q: %+v", text, s)
+		}
+		sb.c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: sb.id2, Text: text}, proto.ErrSecretsReviewRequired)
+	}
+	if calls := sb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("sent %q", calls)
+	}
+	text := "PASSWORD=Own-Sentinel-5x"
+	s := sb.scan(t, text)
+	_, m := sb.c.command(proto.CmdWorkerPrompt, "p", proto.WorkerPromptArgs{ID: sb.id2, Text: text, Secrets: &proto.SecretsReview{
+		Revision: s.Revision, Decisions: []proto.SecretDecision{{Candidate: "c1", Action: proto.SecretProtect}}}})
+	pr := ackData[proto.PromptResult](t, m)
+	if again := sb.scan(t, pr.Sent); len(again.Candidates) != 0 {
+		t.Fatalf("the sent text %q: %+v", pr.Sent, again)
+	}
+	around := `PASSWORD="Value-77! ` + refRe.FindString(pr.Sent) + `"`
+	if s := sb.scan(t, around); len(s.Candidates) != 1 || s.Candidates[0].Start != u16(around, "Value-77!") ||
+		s.Candidates[0].End != u16(around, "Value-77!")+len("Value-77!") {
+		t.Fatalf("%q: %+v", around, s)
+	}
+}

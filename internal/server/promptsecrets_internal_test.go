@@ -30,7 +30,7 @@ func TestScannable(t *testing.T) {
 func TestScanSecretsTimeout(t *testing.T) {
 	h := &Hub{opts: Options{SecretScanTimeout: time.Millisecond}}
 	h.ps.slots = make(chan struct{}, maxSecretScans)
-	rev := promptsecret.NewReviewer([]byte(strings.Repeat("k", 32)))
+	rev := promptsecret.NewReviewer([]byte(strings.Repeat("k", 32)), nil)
 	r, err := h.scanSecrets(context.Background(), rev, strings.Repeat("a ", 8000)+"PASSWORD=Value77!")
 	h.wg.Wait()
 	if !errors.Is(err, errSecretsUnavailable) || r.Revision != "" || r.Found != nil {

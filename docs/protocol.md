@@ -3853,8 +3853,10 @@ passwords and credential-named query or form parameters, assignments to credenti
 JSON, TOML, INI, CLI flags and code, YAML block scalars under them, "the password is X" prose, a code fence of one
 value after a line naming a credential, and other exact occurrences of a value found). Templates and references
 (`${X}`, `$X`, `{{ … }}`, `<your-token>`, `os.getenv(…)`, `process.env.X`), redactions (`****`, `REDACTED`,
-`xxxx`), names without values and the bridge's own file references are never candidates. A candidate is only a
-proposal: the user decides every one.
+`xxxx`), names without values and the bridge's own file references are never candidates: exactly
+`[secret in file <path>]` with a path of the shape of its directory's files; a value that runs into one is a candidate
+for its bytes outside it, and text that only looks like one is scanned as any other. A candidate is only a proposal:
+the user decides every one.
 
 **`prompt_secrets.scan {text}`** (at most 32 KiB of UTF-8: longer is `bad_request` stating the limit, never cut)
 answers `{"revision", "candidates"}`. `candidates` (never null) are in text order and **never overlap**: `id`

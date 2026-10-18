@@ -13,8 +13,9 @@ type Files struct{}
 // Open fails: protected files need Linux.
 func Open(Options) (*Files, error) { return nil, ErrUnsupported }
 
-func (f *Files) Dir() string  { return "" }
-func (f *Files) Close() error { return nil }
+func (f *Files) Dir() string            { return "" }
+func (f *Files) IsFilePath(string) bool { return false }
+func (f *Files) Close() error           { return nil }
 
 func (f *Files) Write(context.Context, Owner, time.Time, [][]byte) ([]File, error) {
 	return nil, ErrUnsupported

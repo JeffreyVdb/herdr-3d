@@ -127,6 +127,32 @@ func TestWriteKeepsTheExactBytes(t *testing.T) {
 	}
 }
 
+// A path of the directory's own shape: what the bridge's references hold
+// (a scan leaves those alone), nothing else.
+func TestIsFilePath(t *testing.T) {
+	t.Parallel()
+	fx := open(t)
+	files, err := fx.f.Write(ctx, secretfiles.Worker("w-1"), time.Time{}, [][]byte{[]byte("x")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	x := files[0]
+	if !fx.f.IsFilePath(x.Path) {
+		t.Fatalf("%s is not a file path", x.Path)
+	}
+	gh := "ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"
+	for _, p := range []string{
+		"/x", "/token=" + gh, fx.dir, fx.dir + "/" + x.Dir, fx.dir + "/" + x.Dir + "/", fx.dir + "/" + x.Dir + "/" + gh,
+		fx.dir + "/" + gh + "/" + x.Name, fx.dir + "/" + x.Dir + "/" + x.Name + "/" + x.Name, fx.dir + "x/" + x.Dir + "/" + x.Name,
+		"/tmp" + x.Path, fx.dir + "/" + x.Dir + "/" + strings.ToLower(x.Name), fx.dir + "/../" + x.Dir + "/" + x.Name,
+		fx.dir + "/" + x.Dir + "/.lock",
+	} {
+		if fx.f.IsFilePath(p) {
+			t.Errorf("%s is a file path", p)
+		}
+	}
+}
+
 func TestReleaseAndPendingOwners(t *testing.T) {
 	t.Parallel()
 	fx := open(t)

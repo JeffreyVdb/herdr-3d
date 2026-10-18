@@ -49,7 +49,7 @@ func TestOffsets(t *testing.T) {
 
 func TestRevision(t *testing.T) {
 	t.Parallel()
-	r := promptsecret.NewReviewer(key)
+	r := promptsecret.NewReviewer(key, own)
 	text := "PASSWORD=Hunter2! and the token is ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"
 	a, b := r.Scan(text), r.Scan(text)
 	if a.Revision != b.Revision || len(a.Found) != 2 || a.Found[0].ID != "c1" || a.Found[1].ID != "c2" {
@@ -58,7 +58,7 @@ func TestRevision(t *testing.T) {
 	if strings.Contains(a.Revision, "Hunter2") || len(a.Revision) < 40 {
 		t.Fatalf("revision %q", a.Revision)
 	}
-	other := promptsecret.NewReviewer([]byte("another key, 32 bytes long......"))
+	other := promptsecret.NewReviewer([]byte("another key, 32 bytes long......"), own)
 	if other.Scan(text).Revision == a.Revision {
 		t.Fatal("the revision does not depend on the key")
 	}
@@ -91,7 +91,7 @@ func mark(s, e int) promptsecret.Decision {
 
 func TestCheck(t *testing.T) {
 	t.Parallel()
-	r := promptsecret.NewReviewer(key)
+	r := promptsecret.NewReviewer(key, own)
 	text := "A_TOKEN=same-value-1 B_TOKEN=same-value-1 🌧 note"
 	rev := r.Scan(text)
 	if len(rev.Found) != 2 {
@@ -148,7 +148,7 @@ func TestCheck(t *testing.T) {
 		text, rev string
 	}{
 		"edited":  {r, text + "!", rev.Revision},
-		"restart": {promptsecret.NewReviewer([]byte("another key, 32 bytes long......")), text, rev.Revision},
+		"restart": {promptsecret.NewReviewer([]byte("another key, 32 bytes long......"), own), text, rev.Revision},
 		"made up": {r, text, "x"},
 		"no scan": {r, text, ""},
 	} {
@@ -177,7 +177,7 @@ func TestReplace(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	// What the bridge wrote is never proposed again.
-	if v := values("password=" + promptsecret.Reference("/run/user/1000/herdr-world/secrets/AB/CD")); len(v) != 0 {
+	if v := values("password=" + ownRef("GXWCYAQQ2YUJGSWNCUK2JAZZ57")); len(v) != 0 {
 		t.Fatalf("reference proposed: %q", v)
 	}
 }
@@ -187,11 +187,11 @@ func TestReplace(t *testing.T) {
 func TestScanTime16KiB(t *testing.T) {
 	text := strings.Repeat("Review the module and keep its behavior. ", (16<<10)/41) + "\nThe password is LongTail8!Secret."
 	text = text[len(text)-(16<<10):]
-	promptsecret.Scan(text)
+	promptsecret.Scan(text, own)
 	var ds []time.Duration
 	for range 20 {
 		start := time.Now()
-		promptsecret.Scan(text)
+		promptsecret.Scan(text, own)
 		ds = append(ds, time.Since(start))
 	}
 	slices.Sort(ds)
@@ -203,9 +203,9 @@ func TestScanTime16KiB(t *testing.T) {
 
 func BenchmarkScan16KiB(b *testing.B) {
 	text := strings.Repeat("Use API_KEY=abc and the password is x7! then review. ", (16<<10)/53)
-	promptsecret.Scan(text)
+	promptsecret.Scan(text, own)
 	b.ResetTimer()
 	for b.Loop() {
-		promptsecret.Scan(text)
+		promptsecret.Scan(text, own)
 	}
 }

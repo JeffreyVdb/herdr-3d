@@ -32,9 +32,12 @@ type Candidate struct {
 }
 
 // Scan finds the candidates in text (valid UTF-8): sorted, never
-// overlapping, never inside one of the bridge's file references. The first
-// call compiles the rules.
-func Scan(text string) []Candidate {
+// overlapping. own reports the paths the bridge's own file references hold
+// (nil: none): such a reference, exactly "[secret in file <path>]", is never
+// part of a candidate; the bytes around it are scanned as usual, and a
+// value that runs into one is a candidate for its bytes outside it. The
+// first call compiles the rules.
+func Scan(text string, own func(path string) bool) []Candidate {
 	var spans []span
 	for _, m := range Gitleaks(text) {
 		rank := rankProvider
@@ -44,10 +47,10 @@ func Scan(text string) []Candidate {
 		spans = append(spans, span{start: m.Start, end: m.End, kind: "gitleaks:" + m.Rule, rank: rank})
 	}
 	spans = append(spans, structural(text)...)
-	refs := references(text)
-	spans = slices.DeleteFunc(spans, func(s span) bool { return s.start >= s.end || overlapsAny(s.start, s.end, refs) })
+	refs := references(text, own)
+	spans = outside(text, slices.DeleteFunc(spans, func(s span) bool { return s.start >= s.end }), refs)
 	won := resolve(spans)
-	more := slices.DeleteFunc(repeats(text, won), func(s span) bool { return overlapsAny(s.start, s.end, refs) })
+	more := outside(text, repeats(text, won), refs)
 	won = append(won, more...)
 	slices.SortFunc(won, func(a, b span) int { return a.start - b.start })
 	out := make([]Candidate, 0, len(won))
@@ -131,14 +134,66 @@ const referencePrefix = "[secret in file "
 // file into its context). A path holds no blank and no ']'.
 func Reference(path string) string { return referencePrefix + path + "]" }
 
-var referenceRe = regexp.MustCompile(regexp.QuoteMeta(referencePrefix) + `/[^\]\s]+\]`)
+var referenceRe = regexp.MustCompile(regexp.QuoteMeta(referencePrefix) + `(/[^\]\s]+)\]`)
 
-// references are the bridge's file references already in text: a scan
-// never proposes them (a sent prompt edited and sent again).
-func references(text string) []span {
+// references are the bridge's own file references in text, sorted: the
+// exact reference to a path own says is the bridge's (nil: none). A scan
+// never proposes them (a sent prompt edited and sent again); text that
+// only looks like one, or another path, is scanned as any other.
+func references(text string, own func(path string) bool) []span {
+	if own == nil {
+		return nil
+	}
 	var out []span
-	for _, m := range referenceRe.FindAllStringIndex(text, -1) {
-		out = append(out, span{start: m[0], end: m[1]})
+	for _, m := range referenceRe.FindAllStringSubmatchIndex(text, -1) {
+		if own(text[m[2]:m[3]]) {
+			out = append(out, span{start: m[0], end: m[1]})
+		}
 	}
 	return out
+}
+
+// outside cuts the spans to their bytes outside refs (sorted, apart): one
+// that runs into a reference keeps each part around it, without the blanks
+// at the cut, when a letter or a digit is left in it (a bracket or a quote
+// next to a reference is no secret); one inside a reference goes.
+func outside(text string, spans, refs []span) []span {
+	var out []span
+	for _, s := range spans {
+		if !overlapsAny(s.start, s.end, refs) {
+			out = append(out, s)
+			continue
+		}
+		at := s.start
+		for _, r := range refs {
+			if r.end <= at || r.start >= s.end {
+				continue
+			}
+			if r.start > at {
+				out = appendPart(out, text, s, at, r.start, at != s.start, true)
+			}
+			at = r.end
+		}
+		if at < s.end {
+			out = appendPart(out, text, s, at, s.end, true, false)
+		}
+	}
+	return out
+}
+
+// appendPart appends the part [start, end) of s, without the blanks at a cut
+// (cutStart, cutEnd: a reference is there), when it holds a letter or a
+// digit.
+func appendPart(out []span, text string, s span, start, end int, cutStart, cutEnd bool) []span {
+	for cutStart && start < end && isSpace(text[start]) {
+		start++
+	}
+	for cutEnd && end > start && isSpace(text[end-1]) {
+		end--
+	}
+	if v := text[start:end]; !hasLetter(v) && !hasDigit(v) {
+		return out
+	}
+	s.start, s.end = start, end
+	return append(out, s)
 }

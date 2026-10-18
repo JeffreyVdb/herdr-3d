@@ -80,6 +80,19 @@ func Open(o Options) (*Files, error) {
 // Dir is the directory.
 func (f *Files) Dir() string { return f.dir }
 
+// IsFilePath reports a path of the shape of this directory's files (its
+// directory, an owner directory and a file, both named as this package
+// names them): what the bridge's references to its files hold. It says
+// nothing of whether the file is there.
+func (f *Files) IsFilePath(path string) bool {
+	rest, ok := strings.CutPrefix(path, f.dir+"/")
+	if !ok {
+		return false
+	}
+	dir, name, ok := strings.Cut(rest, "/")
+	return ok && nameRe.MatchString(dir) && nameRe.MatchString(name)
+}
+
 // Close lets the lock go.
 func (f *Files) Close() error {
 	f.mu.Lock()

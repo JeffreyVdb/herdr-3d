@@ -304,7 +304,7 @@ func TestGeneratedRulesMatchGitleaks(t *testing.T) {
 func TestScanOnThePilotCorpus(t *testing.T) {
 	exact, total, flagged, clean := 0, 0, 0, 0
 	for _, it := range loadCorpus(t) {
-		cs := promptsecret.Scan(it.Text)
+		cs := promptsecret.Scan(it.Text, nil)
 		got := map[[2]int]bool{}
 		for _, c := range cs {
 			got[[2]int{c.Start, c.End}] = true

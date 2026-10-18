@@ -108,31 +108,33 @@ func (h *Hub) initPromptSecrets(ctx context.Context) error {
 	if h.opts.SecretReuseTTL <= 0 {
 		h.opts.SecretReuseTTL = DefaultSecretReuseTTL
 	}
-	h.ps = promptSecretsState{enabled: on, rev: newReviewer(), slots: make(chan struct{}, maxSecretScans),
-		reuse: map[string]secretReuse{}}
+	h.ps = promptSecretsState{enabled: on, slots: make(chan struct{}, maxSecretScans), reuse: map[string]secretReuse{}}
 	if h.opts.SecretsDir == "" {
 		h.ps.err = secretfiles.ErrUnavailable
-		return nil
-	}
-	f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log})
-	if err != nil {
+	} else if f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log}); err != nil {
 		h.log.Warn("no directory for protected prompt secrets: a review that protects one will be refused",
 			"dir", h.opts.SecretsDir, "err", err)
 		h.ps.err = err
-		return nil
+	} else {
+		h.ps.files = f
 	}
-	h.ps.files = f
+	h.ps.rev = h.newReviewer()
 	return nil
 }
 
-// newReviewer is a reviewer with a fresh random key: every review made
-// before it is stale.
-func newReviewer() *promptsecret.Reviewer {
+// newReviewer is a reviewer with a fresh random key (every review made
+// before it is stale) that leaves the references to the bridge's own files
+// alone: only those, exactly (a text that only looks like one is scanned).
+func (h *Hub) newReviewer() *promptsecret.Reviewer {
 	key := make([]byte, 32)
 	if _, err := rand.Read(key); err != nil {
 		panic(err)
 	}
-	return promptsecret.NewReviewer(key)
+	var own func(path string) bool
+	if h.ps.files != nil {
+		own = h.ps.files.IsFilePath
+	}
+	return promptsecret.NewReviewer(key, own)
 }
 
 // closePromptSecrets lets the directory's lock go (Run, once every
@@ -193,7 +195,7 @@ func (h *Hub) startPromptSecrets(ctx context.Context, c *Client, cmd proto.Comma
 		}
 		if *a.Enabled != h.ps.enabled {
 			h.ps.enabled = *a.Enabled
-			h.ps.rev = newReviewer()
+			h.ps.rev = h.newReviewer()
 			h.seq++
 			msg := mustJSON(proto.PromptSecretsUpdate{T: proto.EvPromptSecretsUpdate, Seq: h.seq, PromptSecrets: *h.promptSecretsView()})
 			h.ring.add(h.seq, msg)
