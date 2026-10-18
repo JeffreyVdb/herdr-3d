@@ -44,7 +44,7 @@ import { typingIn } from './input/typing';
 import { ShortcutsDialog } from './ui/shortcutsDialog';
 import { Palette } from './ui/palette';
 import { DictationBar, type DictationLive, type DictationReply } from './ui/dictation';
-import { followupLost, interpretOutcome, outcomeText, PENDING_UNREVIEWED } from './ui/dictationModel';
+import { followupLost, HANDOVER_EXPIRED, interpretOutcome, outcomeText, PENDING_UNREVIEWED } from './ui/dictationModel';
 import { paletteCommands, type PaletteCommand } from './world/palette';
 import { Laptops, type WatchCommand } from './laptop';
 import { SeatBar } from './ui/seat';
@@ -3297,9 +3297,11 @@ export class App {
     }
     const send = async (g: Go): Promise<CommandResult> => {
       const r = await this.send('hire.interpret', { text, ...(pending ? { pending } : {}), ...(g.secrets ? { secrets: g.secrets } : {}), ...(handover ? { secrets_pending: handover } : {}) });
-      // The open review's own sentences were never reviewed (it came before the switch, or its hand-over was lost): a new
-      // review of this sentence would not change that, so this is the bar's line, never a review again.
-      return !r.ok && r.code === 'secrets_review_required' && /^pending\.sources/.test(r.message) ? { ok: false, code: 'secrets_kept', message: PENDING_UNREVIEWED } : r;
+      // The open review's own sentences were never reviewed (it came before the switch, or its hand-over was lost), or its
+      // hand-over is stale (expired, a restart, the switch): a new review of this sentence would not change that, so this
+      // is the bar's line, never a review again.
+      if (!r.ok && r.code === 'secrets_review_required' && /^pending\.sources/.test(r.message)) return { ok: false, code: 'secrets_kept', message: PENDING_UNREVIEWED };
+      return handover && !r.ok && r.code === 'secrets_review_stale' ? { ok: false, code: 'secrets_kept', message: HANDOVER_EXPIRED } : r;
     };
     const d = await this.secrets.deliver(req, go, send);
     if (!live()) return { kind: 'done' };

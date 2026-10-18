@@ -3,6 +3,7 @@ import type { CommandArgs, HireAck } from '../net/protocol';
 import { codexNotice } from '../world/codexServer';
 import type { FailedImage, ResolveResult } from './composer/draft';
 import { HIRE_PROMPT_MAX_BYTES, serializeErrorText } from './composer/model';
+import { HANDOVER_EXPIRED } from './dictationModel';
 import { hiredToast } from './hiredToast';
 import type { ToastKind } from './hud';
 import { failureText } from './messages';
@@ -199,7 +200,12 @@ export class HireCoordinator {
     op.release ??= this.host.reserve(req.floor, req.desk);
     op.phase = 'hiring';
     on.hiring?.(args);
-    const send = (g: Go | null) => this.host.send('worker.hire', g?.secrets ? { ...args, secrets: g.secrets } : args);
+    // #108: the interpreter's hand-over (a dictated hire's `secrets_pending`) refused as stale is not renewed by a review
+    // of the task again: nobody is hired, and the words say to dictate the hire again.
+    const send = async (g: Go | null): Promise<CommandResult> => {
+      const r = await this.host.send('worker.hire', g?.secrets ? { ...args, secrets: g.secrets } : args);
+      return args.secrets_pending !== undefined && !r.ok && r.code === 'secrets_review_stale' ? { ok: false, code: 'secrets_kept', message: HANDOVER_EXPIRED } : r;
+    };
     const sec = req.secrets;
     const d = sec ? await sec.flow.deliver(sec.req, sec.go, send) : ({ kind: 'answered', result: await send(null) } as const);
     // Nothing was sent (the review cancelled, the switch changed): nobody was hired, and the flow says why.

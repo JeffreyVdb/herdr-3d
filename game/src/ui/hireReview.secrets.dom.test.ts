@@ -4,6 +4,7 @@ import type { CommandResult } from '../net/client';
 import type { HireInterpretation, HirePrepare } from '../net/protocol';
 import { flush, installDialogs, secretsBridge } from '../test/secretsBridge';
 import { CAT, FULL } from '../world/hireReviewFixtures';
+import { HANDOVER_EXPIRED } from './dictationModel';
 import type { HireHost } from './hire';
 import { HireReviewDialog } from './hireReview';
 import { HirePrefs } from './hirePrefs';
@@ -114,7 +115,35 @@ describe('HireReviewDialog and prompt secrets (#108 round 4)', () => {
     expect(t.rv.summary()).toMatchObject({ state: 'ready', status: 'Not hired: the review was cancelled. The task is still here.' });
   });
 
-  // #108 round 4 fix (D1's audit): closed while its task is scanned, nothing of that hire goes, nor opens.
+  // #108 round 4 fix (D2's other use): the interpreter's hand-over refused as stale is not renewed by a review of the
+  // task: one send, the review stays open with the task, and says to dictate the hire again.
+  const STALE: CommandResult = { ok: false, code: 'secrets_review_stale', message: 'secrets_pending: unknown or expired' };
+
+  it('an edited task whose hand-over expired: hired once, never reviewed again, says to dictate the hire again', async () => {
+    const t = setup({ hire: [STALE, STALE, STALE] });
+    t.rv.open('floor', WITH_REF, undefined, undefined, 'tok-1');
+    await flush();
+    t.task().value = `${TASK} Then use TOKEN=ghp_abcdefghijklmnopqrstu1 to push.`;
+    t.task().dispatchEvent(new Event('input'));
+    t.hire();
+    await flush();
+    t.b.confirm();
+    await flush();
+    expect(t.b.open()).toBeNull();
+    expect(t.hires).toHaveLength(1);
+    expect(t.rv.summary()).toMatchObject({ state: 'ready', status: HANDOVER_EXPIRED });
+  });
+
+  it('the task as answered, its hand-over expired: the same words', async () => {
+    const t = setup({ hire: [STALE] });
+    t.rv.open('floor', WITH_REF, undefined, undefined, 'tok-1');
+    await flush();
+    t.hire();
+    await flush();
+    expect(t.hires).toHaveLength(1);
+    expect(t.rv.summary()).toMatchObject({ state: 'ready', status: HANDOVER_EXPIRED });
+  });
+
   it('closed (Esc) while the task is scanned: no review opens, nobody is hired, and said so', async () => {
     const t = setup();
     t.rv.open('floor', WITH_REF, undefined, undefined, 'tok-1');

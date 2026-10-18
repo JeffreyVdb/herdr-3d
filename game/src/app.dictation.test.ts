@@ -4,7 +4,7 @@ import { SecretsSim } from '../tools/fixture-secrets.ts';
 import { App } from './app';
 import type { CommandResult } from './net/client';
 import type { HireInterpretation } from './net/protocol';
-import { PENDING_UNREVIEWED } from './ui/dictationModel';
+import { HANDOVER_EXPIRED, PENDING_UNREVIEWED } from './ui/dictationModel';
 import { PromptSecretsFlow } from './ui/secretsFlow';
 import type { SecretsReviewRequest } from './ui/secretsReview';
 import { PromptSecretsBook } from './world/promptSecrets';
@@ -92,6 +92,38 @@ describe('App.interpretDictation and prompt secrets (#108 round 4)', () => {
     await p.run('Hire an agent with the code 4471', true);
     expect(p.reviews.map((r) => [r.manual, r.review.counts().found, r.action])).toEqual([[true, 0, 'Confirm and continue']]);
     expect(p.sent.map(([t]) => t)).toEqual(['prompt_secrets.scan', 'hire.interpret']);
+  });
+
+  // #108 round 4 fix (D2): a hand-over refused as stale (expired, the bridge restarted, the switch changed) cannot be
+  // renewed by a review of the new sentence: that submission ends there, the bar keeps the sentence and says to start over.
+  const STALE: CommandResult = { ok: false, code: 'secrets_review_stale', message: 'secrets_pending: unknown or expired' };
+
+  it('a follow-up whose hand-over expired: asked once, never reviewed again, the bar says to dictate the hire again', async () => {
+    const p = parts({ open: { pending: FULL, handover: 'expired-token' }, answers: [STALE, STALE, STALE] });
+    expect(await p.run('High effort, please.')).toEqual({ kind: 'say', text: HANDOVER_EXPIRED, error: true });
+    expect(p.sent.filter(([t]) => t === 'hire.interpret')).toHaveLength(1);
+    expect(p.reviews).toEqual([]);
+    expect(p.applied).toEqual([]);
+  });
+
+  it('a reviewed follow-up whose hand-over expired: its one review, asked once, the same line', async () => {
+    const p = parts({ open: { pending: FULL, handover: 'expired-token' }, answers: [STALE, STALE] });
+    expect(await p.run(SENTENCE)).toEqual({ kind: 'say', text: HANDOVER_EXPIRED, error: true });
+    expect(p.reviews).toHaveLength(1);
+    expect(p.sent.filter(([t]) => t === 'hire.interpret')).toHaveLength(1);
+  });
+
+  it('the switch off with a hand-over the bridge no longer takes: the same line, not “send it again”', async () => {
+    const p = parts({ on: false, open: { pending: FULL, handover: 'tok-0' }, answers: [STALE, STALE] });
+    expect(await p.run('High effort, please.')).toEqual({ kind: 'say', text: HANDOVER_EXPIRED, error: true });
+    expect(p.sent.map(([t]) => t)).toEqual(['hire.interpret']);
+  });
+
+  it('a first sentence refused as stale (no hand-over) is still reviewed again', async () => {
+    const p = parts({ answers: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    await p.run(SENTENCE);
+    expect(p.reviews).toHaveLength(2);
+    expect(p.opened).toEqual([{ hire: FULL, handover: 'tok-1' }]);
   });
 
   it('the bar closed while a refused sentence is scanned again: asked once, no review opens', async () => {
