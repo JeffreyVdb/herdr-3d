@@ -4,7 +4,7 @@ import { SecretsSim } from '../../tools/fixture-secrets.ts';
 import type { CommandResult } from '../net/client';
 import type { PromptSecretsScan } from '../net/protocol';
 import { PromptSecretsBook, SecretReview } from '../world/promptSecrets';
-import { type Go, PromptSecretsFlow } from './secretsFlow';
+import { type Go, PromptSecretsFlow, STORED_REASON } from './secretsFlow';
 import { SecretsReviewDialog, type SecretsReviewOutcome } from './secretsReview';
 
 // #108 round 3: the review of a prompt's possible secrets, by keyboard and by pointer (a tap is a click).
@@ -49,7 +49,7 @@ function setup(text = TEXT, values = ['ghp_A1b2😀', 'hunter2', 'abc', '.def', 
   const dlg = new SecretsReviewDialog(document.body, { book });
   const review = new SecretReview(text, scanAt(text, values, extra));
   let outcome: SecretsReviewOutcome | null = null;
-  void dlg.open({ review, target: 'Pebble', notice: null, manual: false, action: 'Confirm and send' }).then((o) => (outcome = o));
+  void dlg.open({ review, target: 'Pebble', notice: null, manual: false, action: 'Confirm and send', field: null, stored: null }).then((o) => (outcome = o));
   return { dlg, book, review, ...controls(), flush, outcome: () => outcome as SecretsReviewOutcome | null };
 }
 
@@ -110,6 +110,60 @@ describe('SecretsReviewDialog (#108)', () => {
     Element.prototype.scrollIntoView = function () {};
   });
   afterEach(() => document.body.replaceChildren());
+
+  it('a stored prompt (#108 round 4): every match ignored, Protect and marking refused with why, “Confirm and save” sends the all-ignore review the bridge stores', async () => {
+    document.body.replaceChildren();
+    const book = new PromptSecretsBook();
+    book.reset({ enabled: true, available: true });
+    const dlg = new SecretsReviewDialog(document.body, { book });
+    const sim = new SecretsSim({ emit: () => {}, error: (code, message) => Object.assign(new Error(message), { code }), takeFailure: () => false }, { on: true });
+    const flow = new PromptSecretsFlow({
+      book,
+      unsupported: () => false,
+      send: (t, args) => new Promise<CommandResult>((resolve) => sim.handle(t, { ...args }, () => {}, (data) => resolve({ ok: true, data }))),
+      review: (req) => dlg.open(req),
+    });
+    const text = 'Every night: deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD=hunter22';
+    const go = flow.review({ key: 'schedule:new', text, target: 'Nightly deploy', stored: true });
+    await flush();
+    const c = controls();
+    expect(dlg.summary()).toMatchObject({ stored: STORED_REASON, action: 'Confirm and save', counts: { protect: 0, ignore: 2 } });
+    expect(dlg.summary()?.marks.map((m) => m.state)).toEqual(['ignore', 'ignore']);
+    expect([...c.prompt.querySelectorAll('.sr-tag')].map((t) => t.textContent)).toEqual(['Ignored', 'Ignored']);
+    const note = document.querySelector<HTMLElement>('.sr-stored')!;
+    expect(note.hidden).toBe(false);
+    expect(note.textContent).toBe(`Saved as typed. ${STORED_REASON}`);
+    expect(document.querySelector('.sr-sum')!.textContent).toBe('2 ignored: they are saved as plain text.');
+    // Protect: unavailable, its reason as its title; a tap, Space on the match and M all say why and change nothing.
+    expect(c.strip('protect').getAttribute('aria-disabled')).toBe('true');
+    expect(c.strip('protect').title).toBe(STORED_REASON);
+    c.strip('protect').click();
+    expect(dlg.summary()).toMatchObject({ status: STORED_REASON, error: true, counts: { protect: 0 } });
+    c.key(c.mark('c1'), ' ');
+    expect(dlg.summary()?.marks[0]?.state).toBe('ignore');
+    expect(c.strip('mark').getAttribute('aria-disabled')).toBe('true');
+    selectText(c.prompt, 0, 5);
+    c.key(c.prompt, 'm');
+    expect(dlg.summary()).toMatchObject({ status: STORED_REASON, counts: { manual: 0 } });
+    expect(c.strip('start-left').getAttribute('aria-disabled')).toBe('true');
+    expect(document.querySelector('[data-key="confirm"]')!.textContent).toBe('Confirm and save');
+    (document.querySelector('[data-key="confirm"]') as HTMLElement).click();
+    const out = await go;
+    expect(out).toMatchObject({ kind: 'send', protects: 0, secrets: { decisions: [{ candidate: 'c1', action: 'ignore' }, { candidate: 'c2', action: 'ignore' }] } });
+    const g = out as Go;
+    // The bridge stores it as typed (no file); a protecting review of a stored prompt would be refused.
+    expect(sim.protect(text, g.secrets, 'schedule', () => {}, { stored: true })).toMatchObject({ text, protected: 0 });
+    const protecting = { revision: g.secrets!.revision, decisions: g.secrets!.decisions.map((d, i) => (i ? d : { ...d, action: 'protect' as const })) };
+    expect(() => sim.protect(text, protecting, 'schedule', () => {}, { stored: true })).toThrow(expect.objectContaining({ code: 'secrets_review_stored' }));
+  });
+
+  it('a field of a command with several texts is named in the title (#108 round 4)', async () => {
+    const e = setup();
+    e.dlg.close();
+    void e.dlg.open({ review: e.review, target: 'Pebble', notice: null, manual: false, action: 'Confirm and send', field: 'your answer to question 2', stored: null });
+    expect(document.querySelector('#sr-sub')!.textContent).toBe('To Pebble · your answer to question 2 · 5 possible secrets found');
+    expect(document.querySelector<HTMLElement>('.sr-stored')!.hidden).toBe(true);
+  });
 
   it('A1: a highlight’s title counts the matches the scan found, as the strip does (a mark of yours is “Marked by you”)', () => {
     const e = setup();
@@ -440,7 +494,7 @@ describe('SecretsReviewDialog (#108)', () => {
     expect(document.querySelector('.sr-what')!.textContent).toBe('Found by a password in a URL. Stored as typed: its escapes, percent-encoding or indentation go into the file exactly as you see them.');
     e.dlg.close();
     const review = new SecretReview('x', { revision: 'r', candidates: [] });
-    void e.dlg.open({ review, target: 'Pebble', notice: 'Look it over again.', manual: true, action: 'Confirm and send' });
+    void e.dlg.open({ review, target: 'Pebble', notice: 'Look it over again.', manual: true, action: 'Confirm and send', field: null, stored: null });
     expect(document.querySelector('.sr-notice')!.textContent).toBe('Look it over again.');
     expect(document.querySelector('#sr-sub')!.textContent).toBe('To Pebble · nothing found');
     expect(document.querySelector('.sr-sum')!.textContent).toMatch(/^Nothing was found\. Select text/);

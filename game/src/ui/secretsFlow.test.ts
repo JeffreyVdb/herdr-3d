@@ -207,3 +207,99 @@ describe('#108 delivering a reviewed prompt', () => {
     expect(other.sent).toHaveLength(2);
   });
 });
+
+describe('#108 round 4: the flow for every other composer', () => {
+  /** A scan of `text` from the fixture's rules is not needed here: a scan per text, by its value. */
+  const scanOfText = (text: string, values: string[]) => {
+    let from = 0;
+    return {
+      revision: `rev:${text}`,
+      candidates: values.map((v, i) => {
+        const start = text.indexOf(v, from);
+        from = start + v.length;
+        return { id: `c${i + 1}`, start, end: start + v.length, kinds: ['assignment'] };
+      }),
+    };
+  };
+
+  it('the action word: “Confirm and continue” before an AI step, “Confirm and save” for a stored prompt', async () => {
+    const r = rig({ review: (q) => ({ kind: 'confirm', review: q.review }) });
+    await r.flow.review({ ...req, action: 'Confirm and continue' });
+    await r.flow.review({ ...req, key: 's1', stored: true });
+    expect(r.reviews.map((q) => q.action)).toEqual(['Confirm and continue', 'Confirm and save']);
+    expect(r.reviews.map((q) => q.stored)).toEqual([null, expect.stringMatching(/^A saved prompt keeps no protected file/)]);
+  });
+
+  it('a stored prompt opens with every match ignored: Confirm saves the all-ignore review; Cancel says “Not saved”', async () => {
+    const r = rig({ review: (q) => ({ kind: 'confirm', review: q.review }) });
+    const out = (await r.flow.review({ ...req, stored: true })) as Go;
+    expect(out.secrets).toEqual({ revision: 'rev-1', decisions: [{ candidate: 'c1', action: 'ignore' }, { candidate: 'c2', action: 'ignore' }] });
+    expect(out.protects).toBe(0);
+    const c = rig();
+    expect(await c.flow.review({ ...req, stored: true })).toEqual({ kind: 'kept', why: 'cancel', message: 'Not saved: the review was cancelled.' });
+  });
+
+  it('several texts: each scanned alone and reviewed in turn (its field named), only those that decided anything keyed in `secrets`', async () => {
+    const texts = { text: 'ticket: token=abc123', extra: 'no secret here', prompt: '' };
+    const scans: Record<string, ReturnType<typeof scanOfText>> = { 'ticket: token=abc123': scanOfText(texts.text, ['abc123']), 'no secret here': scanOfText(texts.extra, []) };
+    const book = new PromptSecretsBook();
+    book.reset({ enabled: true, available: true });
+    const sent: string[] = [];
+    const reviews: SecretsReviewRequest[] = [];
+    const flow = new PromptSecretsFlow({
+      book,
+      unsupported: () => false,
+      send: (_t, args) => {
+        sent.push(args.text);
+        return Promise.resolve({ ok: true, data: scans[args.text] });
+      },
+      review: (q) => {
+        reviews.push(q);
+        return Promise.resolve({ kind: 'confirm', review: q.review });
+      },
+    });
+    const freq = {
+      key: 'run:f1:3',
+      target: 'Desk 4',
+      fields: [
+        { path: 'text', text: texts.text, label: 'the ticket' },
+        { path: 'extra', text: texts.extra, label: 'the extra instructions' },
+        { path: 'prompt', text: texts.prompt, label: 'the edited prompt' },
+      ],
+    };
+    const go = await flow.reviewFields(freq);
+    // The empty text is not scanned; the clean one opens nothing.
+    expect(sent).toEqual([texts.text, texts.extra]);
+    expect(reviews.map((q) => q.field)).toEqual(['the ticket']);
+    expect(go).toMatchObject({ kind: 'send', protects: 1, secrets: { text: { revision: `rev:${texts.text}`, decisions: [{ candidate: 'c1', action: 'protect', start: 14, end: 20 }] } }, shown: { text: 'ticket: token=[secret]', extra: texts.extra } });
+    expect(Object.keys((go as { secrets: object }).secrets)).toEqual(['text']);
+    // Refused as stale: reviewed again, the text with decisions opened again (its choices taken over), the clean one not.
+    let n = 0;
+    const d = await flow.deliverFields(freq, go as never, () => Promise.resolve(n++ ? { ok: true, data: {} } : { ok: false, code: 'secrets_review_stale', message: 'stale' }));
+    expect(d).toMatchObject({ kind: 'answered', result: { ok: true } });
+    expect(reviews.map((q) => [q.field, q.notice !== null])).toEqual([
+      ['the ticket', false],
+      ['the ticket', true],
+    ]);
+    // Cancel on any text keeps them all.
+    const cancel = new PromptSecretsFlow({ book, unsupported: () => false, send: (_t, args) => Promise.resolve({ ok: true, data: scans[args.text] }), review: () => Promise.resolve({ kind: 'cancel' }) });
+    expect(await cancel.reviewFields(freq)).toMatchObject({ kind: 'kept', why: 'cancel' });
+  });
+
+  it('several texts, the switch off: today’s send, nothing scanned, no `secrets`', async () => {
+    const r = rig({ on: false });
+    const go = await r.flow.reviewFields({ key: 'a', target: 'Pebble', fields: [{ path: 'note', text: 'pw=hunter2', label: 'your note' }] });
+    expect(go).toEqual({ kind: 'send', protects: 0, shown: { note: 'pw=hunter2' }, reviews: { note: null } });
+    expect(r.sent).toEqual([]);
+  });
+
+  it('several texts unanswered: the identical answers again carry the same reviews (no scan, no dialog)', async () => {
+    const r = rig({ review: (q) => ({ kind: 'confirm', review: q.review }) });
+    const freq = { key: 'w1:ask', target: 'Pebble', fields: [{ path: 'prompt', text: TEXT, label: 'your prompt' }] };
+    const first = await r.flow.reviewFields(freq);
+    await r.flow.deliverFields(freq, first as never, () => Promise.resolve({ ok: false, code: 'timeout', message: 'x' }));
+    const again = await r.flow.reviewFields(freq);
+    expect(again).toMatchObject({ retry: true, secrets: (first as { secrets: unknown }).secrets });
+    expect(r.reviews).toHaveLength(1);
+  });
+});

@@ -14,8 +14,15 @@ export interface SecretsReviewRequest {
   notice: string | null;
   /** Opened on purpose (the prompt box's "Review secrets"): with nothing found, it says to select text. */
   manual: boolean;
-  /** The final action's words: "Confirm and send" (round 4: "Confirm and continue" before an AI step). */
+  /** The final action's words: "Confirm and send", "Confirm and continue" before an AI step, "Confirm and save" (round 4). */
   action: string;
+  /** #108 round 4: which of the command's texts it is (one with several: run.start, the answers), in the title. */
+  field: string | null;
+  /**
+   * #108 round 4: a prompt that is saved (a schedule's, a hire preset's), and why nothing in it can be protected: every
+   * match stays ignored, Protect and marking say this instead. null: a prompt that goes on.
+   */
+  stored: string | null;
 }
 
 export type SecretsReviewOutcome = { kind: 'confirm'; review: SecretReview } | { kind: 'cancel' } | { kind: 'changed'; message: string };
@@ -34,6 +41,10 @@ export interface SecretsReviewSummary {
   counts: ReviewCounts;
   notice: string | null;
   manual: boolean;
+  /** #108 round 4: the field reviewed (null: the command's one text), and a stored prompt's reason (null: not one). */
+  field: string | null;
+  stored: string | null;
+  action: string;
   status: string;
   error: boolean;
 }
@@ -71,6 +82,8 @@ export class SecretsReviewDialog {
   private readonly titleEl = h('h2', { id: 'sr-title' }, 'Review prompt secrets');
   private readonly subEl = h('p', { id: 'sr-sub' });
   private readonly noticeEl = h('div', { class: 'dd-callout sr-notice', role: 'alert' });
+  /** #108 round 4: a stored prompt's note (nothing in it goes to a file). */
+  private readonly storedEl = h('div', { class: 'dd-callout sr-stored', id: 'sr-stored' });
   private readonly sum = h('p', { class: 'sr-sum', id: 'sr-sum' });
   private readonly prompt = h('div', {
     class: 'sr-prompt',
@@ -110,7 +123,7 @@ export class SecretsReviewDialog {
     parent: HTMLElement,
     private readonly host: { book: PromptSecretsBook },
   ) {
-    this.alertEl.hidden = this.statusEl.hidden = this.noticeEl.hidden = true;
+    this.alertEl.hidden = this.statusEl.hidden = this.noticeEl.hidden = this.storedEl.hidden = true;
     const head = h(
       'header',
       { class: 'dd-head' },
@@ -119,9 +132,8 @@ export class SecretsReviewDialog {
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Cancel: nothing is sent', title: 'Cancel (Esc): nothing is sent', onclick: () => this.finish({ kind: 'cancel' }) }, icon(ICON.close)),
     );
     // The counts sit in the footer beside Confirm (what it sends), so a short screen that scrolls the body keeps them in view.
-    const body = h('div', { class: 'dd-body sr-body' }, this.noticeEl, this.prompt, this.strip, this.keysEl);
+    const body = h('div', { class: 'dd-body sr-body' }, this.noticeEl, this.storedEl, this.prompt, this.strip, this.keysEl);
     this.dialog.append(head, body, h('footer', { class: 'dd-foot' }, this.statusEl, this.alertEl, this.sum, this.actions));
-    this.keysEl.append(h('kbd', {}, 'N'), ' next match · ', h('kbd', {}, 'Space'), ' protect or ignore it · ', h('kbd', {}, '←'), h('kbd', {}, '→'), ' its end, with ', h('kbd', {}, 'Shift'), ' its start · select text, then ', h('kbd', {}, 'M'), ' marks it');
     this.wirePrompt();
     this.dialog.addEventListener('keydown', (e) => this.onKey(e));
     // Esc (and any close the platform asks for) is Cancel: nothing is sent. A close event that comes late, after the
@@ -397,6 +409,11 @@ export class SecretsReviewDialog {
   private setState(key: string, state: Mark['state']): void {
     const r = this.req?.review;
     if (!r) return;
+    // A stored prompt is stored as typed: nothing in it is protected (#108 round 4).
+    if (state === 'protect' && this.req?.stored) {
+      this.setStatus(this.req.stored, true);
+      return;
+    }
     // Space, Enter and the strip's button all come here: the same refusal, said the same way (#108 C1).
     const blocker = state === 'ignore' ? r.ignoreBlocker(key) : null;
     if (blocker) {
@@ -429,6 +446,10 @@ export class SecretsReviewDialog {
   private markSelection(): void {
     const r = this.req?.review;
     if (!r) return;
+    if (this.req?.stored) {
+      this.setStatus(this.req.stored, true);
+      return;
+    }
     const sel = this.readSelection() ?? this.picked;
     if (!sel) {
       this.setStatus('Select some text in the prompt first, then mark it.', true);
@@ -485,13 +506,24 @@ export class SecretsReviewDialog {
     if (!req) return;
     const c = req.review.counts();
     this.titleEl.textContent = 'Review prompt secrets';
-    this.subEl.textContent = `To ${req.target} · ${c.found ? `${c.found} possible ${c.found === 1 ? 'secret' : 'secrets'} found` : 'nothing found'}`;
+    this.subEl.textContent = `To ${req.target}${req.field ? ` · ${req.field}` : ''} · ${c.found ? `${c.found} possible ${c.found === 1 ? 'secret' : 'secrets'} found` : 'nothing found'}`;
     this.noticeEl.hidden = !req.notice;
     this.noticeEl.replaceChildren(h('p', {}, req.notice ?? ''));
+    this.storedEl.hidden = !req.stored;
+    this.storedEl.replaceChildren(h('p', {}, h('b', {}, 'Saved as typed. '), req.stored ?? ''));
     this.sum.replaceChildren(
-      ...(c.protect || c.ignore
-        ? [h('b', {}, `${c.protect} protected`), ` as ${c.protect === 1 ? 'a file' : 'files'} on the bridge host${c.manual ? ` (${c.manual} marked by you)` : ''}, `, h('b', {}, `${c.ignore} ignored`), '. Ignored matches are sent as plain text.']
-        : [req.manual || !c.found ? 'Nothing was found. Select text in the prompt and mark it to send it as a file instead.' : '']),
+      ...(req.stored
+        ? c.ignore
+          ? [h('b', {}, `${c.ignore} ignored`), `: ${c.ignore === 1 ? 'it is' : 'they are'} saved as plain text.`]
+          : ['Nothing was found.']
+        : c.protect || c.ignore
+          ? [h('b', {}, `${c.protect} protected`), ` as ${c.protect === 1 ? 'a file' : 'files'} on the bridge host${c.manual ? ` (${c.manual} marked by you)` : ''}, `, h('b', {}, `${c.ignore} ignored`), '. Ignored matches are sent as plain text.']
+          : [req.manual || !c.found ? 'Nothing was found. Select text in the prompt and mark it to send it as a file instead.' : '']),
+    );
+    this.keysEl.replaceChildren(
+      ...(req.stored
+        ? [h('kbd', {}, 'N'), ' next match · a saved prompt keeps every match as typed']
+        : [h('kbd', {}, 'N'), ' next match · ', h('kbd', {}, 'Space'), ' protect or ignore it · ', h('kbd', {}, '←'), h('kbd', {}, '→'), ' its end, with ', h('kbd', {}, 'Shift'), ' its start · select text, then ', h('kbd', {}, 'M'), ' marks it']),
     );
     this.renderPrompt();
     this.renderStrip();
@@ -506,8 +538,9 @@ export class SecretsReviewDialog {
   }
 
   private renderStrip(): void {
-    const r = this.req?.review;
-    if (!r) return;
+    const req = this.req;
+    const r = req?.review;
+    if (!req || !r) return;
     const marks = r.marks();
     const i = marks.findIndex((m) => m.key === this.current);
     const m = marks[i];
@@ -546,7 +579,7 @@ export class SecretsReviewDialog {
         ? h(
             'div',
             { class: 'sr-state', role: 'group', 'aria-label': 'This match' },
-            btn('protect', 'Protect as file', 'Protect as file: it goes to a file on the bridge host, and the prompt says where (Space)', () => this.setState(m.key, 'protect'), { pressed: m.state === 'protect', cls: 'sr-choice' }),
+            btn('protect', 'Protect as file', 'Protect as file: it goes to a file on the bridge host, and the prompt says where (Space)', () => this.setState(m.key, 'protect'), { pressed: m.state === 'protect', refused: req.stored, cls: 'sr-choice' }),
             btn('ignore', 'Ignore this occurrence', 'Ignore this occurrence: it is sent as typed (Space)', () => this.setState(m.key, 'ignore'), {
               pressed: m.state === 'ignore',
               refused: blocker && ignoreRefusal(r, blocker),
@@ -569,7 +602,7 @@ export class SecretsReviewDialog {
     } else {
       what.append(marks.length ? 'Pick a match in the prompt, or step through them.' : 'Select text in the prompt the scan missed, then mark it.');
     }
-    parts.push(h('div', { class: 'sr-markrow' }, btn('mark', 'Mark the selection as secret', 'Mark the text selected in the prompt as a secret (M)', () => this.markSelection(), { icon: ICON.plus, cls: 'sr-markbtn' })));
+    parts.push(h('div', { class: 'sr-markrow' }, btn('mark', 'Mark the selection as secret', 'Mark the text selected in the prompt as a secret (M)', () => this.markSelection(), { icon: ICON.plus, refused: req.stored, cls: 'sr-markbtn' })));
     replaceKeepingFocus(this.strip, parts);
     this.renderMarkButton();
   }
@@ -577,7 +610,7 @@ export class SecretsReviewDialog {
   /** "Mark the selection" says whether there is one. */
   private renderMarkButton(): void {
     const b = this.strip.querySelector<HTMLElement>('[data-key="mark"]');
-    if (!b) return;
+    if (!b || this.req?.stored) return;
     const has = !!this.picked;
     b.setAttribute('aria-disabled', has ? 'false' : 'true');
     b.title = has ? 'Mark the text selected in the prompt as a secret (M)' : 'Select text in the prompt first, then mark it (M)';
@@ -596,6 +629,9 @@ export class SecretsReviewDialog {
       counts: req.review.counts(),
       notice: req.notice,
       manual: req.manual,
+      field: req.field,
+      stored: req.stored,
+      action: req.action,
       status: this.statusText,
       error: this.statusError,
     };
