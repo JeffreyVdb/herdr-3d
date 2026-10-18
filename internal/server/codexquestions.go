@@ -526,7 +526,8 @@ type asyncPrompt struct {
 // tool call"), so it is delivered with the turn's next model request. ok is
 // false when the worker is not blocked that way. #108: a reviewed prompt's
 // review (rev; nil: none) is checked again in the step that finds the
-// block, after its wait (review R2P3-1; stale: unsent).
+// block, after its wait, first as in prompt (review R2P3-1; stale: unsent,
+// whatever blocks the worker).
 func (h *Hub) promptViaServer(ctx context.Context, id, text string, rev *promptsecret.Reviewer) (any, bool, error) {
 	p, err := query(ctx, h, func() asyncPrompt {
 		if err := h.reviewHolds(rev); err != nil {
