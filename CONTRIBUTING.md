@@ -278,7 +278,10 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   hand-over), `net/redact.test.ts` (every route), `ui/drafts.test.ts`, `laptop/asyncDrafts.test.ts`,
   `laptop/followupDrafts.test.ts` and `ui/hire.secrets.dom.test.ts` (memory-only drafts per store),
   `world/promptSecrets.test.ts` (A1: the take-over's fixpoint, also checked in the random walk) and
-  `tools/fixture-secrets.test.ts` (every route of the fixture). The e2e's round-4 cases (`GREP='round 4'`): a hire with
+  `tools/fixture-secrets.test.ts` (every route of the fixture). A composer closed, opened again or stood up from while
+  its text is scanned sends nothing and opens no review (`SecretsRequest.live`): the tests hold the scan with
+  `secretsBridge().holdScans()`; a stale hand-over ends its submission (`src/app.dictation.test.ts`,
+  `ui/hireReview.secrets.dom.test.ts`). The e2e's round-4 cases (`GREP='round 4'`): a hire with
   a protected value, pack up's "Send as written (stay)" and "Send and go home" with the hand-over (the fake AI servers of
   `e2e/packupFakes.ts`, shared with `m110-packup.spec.ts`), a schedule saved with every match ignored and Protect
   refused, a reference as a masked chip in the conversation (its popover and a copy across it), revoke from the seat
