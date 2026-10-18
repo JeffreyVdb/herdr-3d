@@ -1,0 +1,3466 @@
+{
+  "meta": {
+    "variant": "gliner2-described",
+    "repeats": 3,
+    "corpus_sha256": "d2a9cba8ad62328a8d5daf3bc5b412c026f50c16faca7a221fe66e917f87f958",
+    "probe_sha256": "b5e774ccda42dd5f56b6e13dfe6c2e730493d1f1b74329473741a64fcbcc41d3",
+    "runner_sha256": "964325c6e69588c31311ba12b16a077b0e148ec9e7a473fcd7c402a0fa4d66d9",
+    "model": "fastino/gliner2-privacy-filter-PII-multi",
+    "revision": "1cb4166094dc58fa8d836429f060d6c95f62b495",
+    "labels": {
+      "password": "An actual literal password or passphrase value, including all punctuation; exclude variable names, placeholders and references to files.",
+      "api_key": "An actual secret API credential value, excluding its variable name and example placeholders.",
+      "access_token": "An actual secret authentication or bearer token value, excluding labels, public keys and example placeholders."
+    },
+    "chunk_size": 384,
+    "chunk_overlap": 64,
+    "batch_size": 1,
+    "threads": 4,
+    "versions": {
+      "gliner2": "2.1.0",
+      "torch": "2.14.1+cpu",
+      "transformers": "5.16.1"
+    }
+  },
+  "load_seconds": 10.293612954992568,
+  "raw": {
+    "env-quoted-1": [
+      {
+        "start": 18,
+        "end": 32,
+        "score": 0.9923221468925476,
+        "label": "password"
+      }
+    ],
+    "clean-01-1-no-identifier": [
+      {
+        "start": 4,
+        "end": 12,
+        "score": 0.41689532995224,
+        "label": "password"
+      }
+    ],
+    "clean-02-1-no-identifier": [
+      {
+        "start": 4,
+        "end": 12,
+        "score": 0.3355308175086975,
+        "label": "password"
+      }
+    ],
+    "clean-03-1-no-identifier": [
+      {
+        "start": 4,
+        "end": 11,
+        "score": 0.5305703282356262,
+        "label": "api_key"
+      }
+    ],
+    "clean-04-1-no-identifier": [
+      {
+        "start": 28,
+        "end": 32,
+        "score": 0.5113714337348938,
+        "label": "password"
+      }
+    ],
+    "clean-05-1-no-identifier": [
+      {
+        "start": 14,
+        "end": 24,
+        "score": 0.9746126532554626,
+        "label": "password"
+      }
+    ],
+    "clean-06-1-no-identifier": [
+      {
+        "start": 12,
+        "end": 29,
+        "score": 0.7346535921096802,
+        "label": "password"
+      }
+    ],
+    "clean-07-1-no-identifier": [
+      {
+        "start": 11,
+        "end": 31,
+        "score": 0.9259621500968933,
+        "label": "password"
+      }
+    ],
+    "clean-08-1-no-identifier": [
+      {
+        "start": 14,
+        "end": 37,
+        "score": 0.8121590614318848,
+        "label": "password"
+      }
+    ],
+    "clean-09-1-no-identifier": [
+      {
+        "start": 11,
+        "end": 21,
+        "score": 0.9003416895866394,
+        "label": "password"
+      }
+    ],
+    "clean-10-1-no-identifier": [
+      {
+        "start": 11,
+        "end": 19,
+        "score": 0.945239245891571,
+        "label": "password"
+      }
+    ],
+    "clean-11-1-no-identifier": [
+      {
+        "start": 11,
+        "end": 21,
+        "score": 0.978459358215332,
+        "label": "password"
+      }
+    ],
+    "clean-12-1-no-identifier": [
+      {
+        "start": 11,
+        "end": 29,
+        "score": 0.990665078163147,
+        "label": "password"
+      }
+    ],
+    "clean-13-1-no-identifier": [
+      {
+        "start": 11,
+        "end": 19,
+        "score": 0.9703683257102966,
+        "label": "password"
+      }
+    ],
+    "clean-14-1-no-identifier": [
+      {
+        "start": 24,
+        "end": 36,
+        "score": 0.9982783794403076,
+        "label": "api_key"
+      }
+    ],
+    "clean-15-1-no-identifier": [
+      {
+        "start": 9,
+        "end": 33,
+        "score": 0.9838908314704895,
+        "label": "api_key"
+      }
+    ],
+    "clean-16-1-no-identifier": [
+      {
+        "start": 9,
+        "end": 36,
+        "score": 0.9099393486976624,
+        "label": "api_key"
+      }
+    ],
+    "clean-17-1-no-identifier": [
+      {
+        "start": 21,
+        "end": 36,
+        "score": 0.9717530608177185,
+        "label": "api_key"
+      }
+    ],
+    "clean-18-1-no-identifier": [],
+    "clean-19-1-no-identifier": [],
+    "clean-20-1-no-identifier": [],
+    "clean-21-1-no-identifier": [
+      {
+        "start": 20,
+        "end": 41,
+        "score": 0.8406120538711548,
+        "label": "access_token"
+      }
+    ],
+    "clean-22-1-no-identifier": [],
+    "clean-23-1-no-identifier": [],
+    "clean-24-1-no-identifier": [
+      {
+        "start": 4,
+        "end": 11,
+        "score": 0.3545811176300049,
+        "label": "api_key"
+      }
+    ],
+    "clean-25-1-no-identifier": [
+      {
+        "start": 11,
+        "end": 22,
+        "score": 0.5248079299926758,
+        "label": "api_key"
+      }
+    ],
+    "clean-26-1-no-identifier": [],
+    "clean-27-1-no-identifier": [
+      {
+        "start": 31,
+        "end": 38,
+        "score": 0.8503262400627136,
+        "label": "api_key"
+      },
+      {
+        "start": 14,
+        "end": 27,
+        "score": 0.8060972690582275,
+        "label": "api_key"
+      }
+    ],
+    "clean-28-1-no-identifier": [
+      {
+        "start": 32,
+        "end": 47,
+        "score": 0.42510920763015747,
+        "label": "api_key"
+      }
+    ],
+    "clean-29-1-no-identifier": [
+      {
+        "start": 15,
+        "end": 37,
+        "score": 0.6890431046485901,
+        "label": "access_token"
+      }
+    ],
+    "clean-30-1-no-identifier": [
+      {
+        "start": 20,
+        "end": 38,
+        "score": 0.49082186818122864,
+        "label": "password"
+      }
+    ]
+  },
+  "timings_ms": {
+    "env-quoted-1": [
+      206.83595101581886,
+      202.79096701415256,
+      207.34605900361203
+    ],
+    "clean-01-1-no-identifier": [
+      201.84006699128076,
+      241.47991501376964,
+      205.27509099338204
+    ],
+    "clean-02-1-no-identifier": [
+      194.24209301359951,
+      195.08914300240576,
+      214.67352399486117
+    ],
+    "clean-03-1-no-identifier": [
+      262.10511100362055,
+      212.78582597733475,
+      226.94980198866688
+    ],
+    "clean-04-1-no-identifier": [
+      237.6080559915863,
+      297.88274300517514,
+      197.4650509946514
+    ],
+    "clean-05-1-no-identifier": [
+      200.56894098524936,
+      203.8744330056943,
+      249.36486000660807
+    ],
+    "clean-06-1-no-identifier": [
+      197.9668620042503,
+      194.21303502167575,
+      195.04213202162646
+    ],
+    "clean-07-1-no-identifier": [
+      218.4428609907627,
+      256.12971099326387,
+      211.90664698951878
+    ],
+    "clean-08-1-no-identifier": [
+      205.46289297635667,
+      220.67934001097456,
+      232.2016440157313
+    ],
+    "clean-09-1-no-identifier": [
+      201.87347201863304,
+      235.84538398426957,
+      204.17616100166924
+    ],
+    "clean-10-1-no-identifier": [
+      241.3272839912679,
+      258.1759729946498,
+      595.7022679795045
+    ],
+    "clean-11-1-no-identifier": [
+      508.9660210069269,
+      229.2470849934034,
+      221.2169099948369
+    ],
+    "clean-12-1-no-identifier": [
+      201.97397700394504,
+      198.10053298715502,
+      197.24103301996365
+    ],
+    "clean-13-1-no-identifier": [
+      202.0274059905205,
+      201.16538100410253,
+      193.52915600757115
+    ],
+    "clean-14-1-no-identifier": [
+      201.35222299722955,
+      198.2851210050285,
+      202.3126739950385
+    ],
+    "clean-15-1-no-identifier": [
+      209.17704500607215,
+      211.21571600087918,
+      208.31307698972523
+    ],
+    "clean-16-1-no-identifier": [
+      198.06130102369934,
+      199.11360801779665,
+      202.93747397954576
+    ],
+    "clean-17-1-no-identifier": [
+      207.89188900380395,
+      209.47341399732977,
+      222.09220100194216
+    ],
+    "clean-18-1-no-identifier": [
+      202.31982599943876,
+      202.60887499898672,
+      202.86008701077662
+    ],
+    "clean-19-1-no-identifier": [
+      202.53576699178666,
+      199.3394049932249,
+      200.92205100809224
+    ],
+    "clean-20-1-no-identifier": [
+      198.00897099776193,
+      199.01072900393046,
+      198.8064650213346
+    ],
+    "clean-21-1-no-identifier": [
+      202.50839399523102,
+      199.1591890109703,
+      202.04647700302303
+    ],
+    "clean-22-1-no-identifier": [
+      200.37407201016322,
+      196.03160399128683,
+      201.89146700431593
+    ],
+    "clean-23-1-no-identifier": [
+      200.84431598661467,
+      193.30503599485382,
+      195.13925799401477
+    ],
+    "clean-24-1-no-identifier": [
+      201.0187230189331,
+      197.18159100739285,
+      195.20499199279584
+    ],
+    "clean-25-1-no-identifier": [
+      191.63063800078817,
+      201.8402329995297,
+      195.15306601533666
+    ],
+    "clean-26-1-no-identifier": [
+      199.8272570199333,
+      197.33587198425084,
+      200.3763499960769
+    ],
+    "clean-27-1-no-identifier": [
+      200.67623400245793,
+      202.566050022142,
+      198.5711120069027
+    ],
+    "clean-28-1-no-identifier": [
+      197.91904700105079,
+      199.20593401184306,
+      202.42668502032757
+    ],
+    "clean-29-1-no-identifier": [
+      196.44827998126857,
+      199.39654800691642,
+      204.35567200183868
+    ],
+    "clean-30-1-no-identifier": [
+      209.93494198773988,
+      204.84482901520096,
+      205.58415300911292
+    ]
+  },
+  "structure_timings_ms": {
+    "env-quoted-1": [
+      0.2635830023791641,
+      0.06847397889941931,
+      0.06547599332407117
+    ],
+    "clean-01-1-no-identifier": [
+      0.08447800064459443,
+      0.059044978115707636,
+      0.057447003200650215
+    ],
+    "clean-02-1-no-identifier": [
+      0.0534679857082665,
+      0.0526009825989604,
+      0.054283998906612396
+    ],
+    "clean-03-1-no-identifier": [
+      0.052431016229093075,
+      0.05379400681704283,
+      0.05402599344961345
+    ],
+    "clean-04-1-no-identifier": [
+      0.07981900125741959,
+      0.054154981626197696,
+      0.05215400597080588
+    ],
+    "clean-05-1-no-identifier": [
+      0.04587401053868234,
+      0.05431499448604882,
+      0.04679101402871311
+    ],
+    "clean-06-1-no-identifier": [
+      0.03999500768259168,
+      0.0388289918191731,
+      0.054626987548545
+    ],
+    "clean-07-1-no-identifier": [
+      0.04565098788589239,
+      0.04219700349494815,
+      0.04100400838069618
+    ],
+    "clean-08-1-no-identifier": [
+      0.18052899395115674,
+      0.06676398334093392,
+      0.06602000212296844
+    ],
+    "clean-09-1-no-identifier": [
+      0.13541601947508752,
+      0.06091300747357309,
+      0.05734799196943641
+    ],
+    "clean-10-1-no-identifier": [
+      0.1774420088622719,
+      0.05641899770125747,
+      0.054746022215113044
+    ],
+    "clean-11-1-no-identifier": [
+      0.045205000787973404,
+      0.04594799247570336,
+      0.045728025725111365
+    ],
+    "clean-12-1-no-identifier": [
+      0.15052201342768967,
+      0.08426999556832016,
+      0.06313799531199038
+    ],
+    "clean-13-1-no-identifier": [
+      0.043940002797171474,
+      0.045424996642395854,
+      0.05367299309000373
+    ],
+    "clean-14-1-no-identifier": [
+      0.050233997171744704,
+      0.0508459925185889,
+      0.07300599827431142
+    ],
+    "clean-15-1-no-identifier": [
+      0.2319029881618917,
+      0.07031101267784834,
+      0.0704979756847024
+    ],
+    "clean-16-1-no-identifier": [
+      0.04884999361820519,
+      0.05022200639359653,
+      0.04959900979883969
+    ],
+    "clean-17-1-no-identifier": [
+      0.05188799696043134,
+      0.050789996748790145,
+      0.051220005843788385
+    ],
+    "clean-18-1-no-identifier": [
+      0.03586700768209994,
+      0.03540900070220232,
+      0.03536202711984515
+    ],
+    "clean-19-1-no-identifier": [
+      0.05498502287082374,
+      0.057102006394416094,
+      0.05722200148738921
+    ],
+    "clean-20-1-no-identifier": [
+      0.05835699266754091,
+      0.05800998769700527,
+      0.05558200064115226
+    ],
+    "clean-21-1-no-identifier": [
+      0.0506530050188303,
+      0.05039101233705878,
+      0.0508379889652133
+    ],
+    "clean-22-1-no-identifier": [
+      0.13765101903118193,
+      0.0761580013204366,
+      0.07446098607033491
+    ],
+    "clean-23-1-no-identifier": [
+      0.05517000681720674,
+      0.05551101639866829,
+      0.056635995861142874
+    ],
+    "clean-24-1-no-identifier": [
+      0.05449997843243182,
+      0.05556500400416553,
+      0.05467902519740164
+    ],
+    "clean-25-1-no-identifier": [
+      0.14375898172147572,
+      0.06402100552804768,
+      0.06523801130242646
+    ],
+    "clean-26-1-no-identifier": [
+      0.15979501768015325,
+      0.07571198511868715,
+      0.0766300072427839
+    ],
+    "clean-27-1-no-identifier": [
+      0.06364399450831115,
+      0.07242499850690365,
+      0.06381800631061196
+    ],
+    "clean-28-1-no-identifier": [
+      0.03768401802517474,
+      0.03728098818100989,
+      0.03885899786837399
+    ],
+    "clean-29-1-no-identifier": [
+      0.032005016691982746,
+      0.032137002563104033,
+      0.031903007766231894
+    ],
+    "clean-30-1-no-identifier": [
+      0.05164099275134504,
+      0.05017701187171042,
+      0.04975599586032331
+    ]
+  },
+  "combined_timings_ms": {
+    "env-quoted-1": [
+      207.09953401819803,
+      202.85944099305198,
+      207.4115349969361
+    ],
+    "clean-01-1-no-identifier": [
+      201.92454499192536,
+      241.53895999188535,
+      205.3325379965827
+    ],
+    "clean-02-1-no-identifier": [
+      194.29556099930778,
+      195.14174398500472,
+      214.72780799376778
+    ],
+    "clean-03-1-no-identifier": [
+      262.15754201984964,
+      212.8396199841518,
+      227.0038279821165
+    ],
+    "clean-04-1-no-identifier": [
+      237.68787499284372,
+      297.93689798680134,
+      197.5172050006222
+    ],
+    "clean-05-1-no-identifier": [
+      200.61481499578804,
+      203.92874800018035,
+      249.41165102063678
+    ],
+    "clean-06-1-no-identifier": [
+      198.00685701193288,
+      194.25186401349492,
+      195.096759009175
+    ],
+    "clean-07-1-no-identifier": [
+      218.4885119786486,
+      256.1719079967588,
+      211.94765099789947
+    ],
+    "clean-08-1-no-identifier": [
+      205.64342197030783,
+      220.7461039943155,
+      232.26766401785426
+    ],
+    "clean-09-1-no-identifier": [
+      202.00888803810813,
+      235.90629699174315,
+      204.23350899363868
+    ],
+    "clean-10-1-no-identifier": [
+      241.50472600013018,
+      258.23239199235104,
+      595.7570140017197
+    ],
+    "clean-11-1-no-identifier": [
+      509.01122600771487,
+      229.2930329858791,
+      221.262638020562
+    ],
+    "clean-12-1-no-identifier": [
+      202.12449901737273,
+      198.18480298272334,
+      197.30417101527564
+    ],
+    "clean-13-1-no-identifier": [
+      202.07134599331766,
+      201.21080600074492,
+      193.58282900066115
+    ],
+    "clean-14-1-no-identifier": [
+      201.4024569944013,
+      198.33596699754708,
+      202.3856799933128
+    ],
+    "clean-15-1-no-identifier": [
+      209.40894799423404,
+      211.28602701355703,
+      208.38357496540993
+    ],
+    "clean-16-1-no-identifier": [
+      198.11015101731755,
+      199.16383002419025,
+      202.9870729893446
+    ],
+    "clean-17-1-no-identifier": [
+      207.94377700076438,
+      209.52420399407856,
+      222.14342100778595
+    ],
+    "clean-18-1-no-identifier": [
+      202.35569300712086,
+      202.64428399968892,
+      202.89544903789647
+    ],
+    "clean-19-1-no-identifier": [
+      202.59075201465748,
+      199.3965069996193,
+      200.97927300957963
+    ],
+    "clean-20-1-no-identifier": [
+      198.06732799042948,
+      199.06873899162747,
+      198.86204702197574
+    ],
+    "clean-21-1-no-identifier": [
+      202.55904700024985,
+      199.20958002330735,
+      202.09731499198824
+    ],
+    "clean-22-1-no-identifier": [
+      200.5117230291944,
+      196.10776199260727,
+      201.96592799038626
+    ],
+    "clean-23-1-no-identifier": [
+      200.89948599343188,
+      193.3605470112525,
+      195.1958939898759
+    ],
+    "clean-24-1-no-identifier": [
+      201.07322299736552,
+      197.23715601139702,
+      195.25967101799324
+    ],
+    "clean-25-1-no-identifier": [
+      191.77439698250964,
+      201.90425400505774,
+      195.2183040266391
+    ],
+    "clean-26-1-no-identifier": [
+      199.98705203761347,
+      197.41158396936953,
+      200.45298000331968
+    ],
+    "clean-27-1-no-identifier": [
+      200.73987799696624,
+      202.6384750206489,
+      198.6349300132133
+    ],
+    "clean-28-1-no-identifier": [
+      197.95673101907596,
+      199.24321500002407,
+      202.46554401819594
+    ],
+    "clean-29-1-no-identifier": [
+      196.48028499796055,
+      199.42868500947952,
+      204.38757500960492
+    ],
+    "clean-30-1-no-identifier": [
+      209.98658298049122,
+      204.89500602707267,
+      205.63390900497325
+    ]
+  },
+  "short_latency_ms": {
+    "p50": 202.04647700302303,
+    "p95": 258.1759729946498
+  },
+  "combined_short_latency_ms": {
+    "p50": 202.12449901737273,
+    "p95": 258.23239199235104
+  },
+  "proc_peak_rss_mib": 2930.26171875,
+  "child_proc_peak_rss_mib": null,
+  "peak_rss_mib": 2930.26171875,
+  "child_peak_rss_mib": 0.0,
+  "results": {
+    "raw@0.3": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 25,
+        "exact_fn": 0,
+        "exact_precision": 0.038461538461538464,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 24,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [
+          [
+            4,
+            12
+          ]
+        ],
+        "clean-02-1-no-identifier": [
+          [
+            4,
+            12
+          ]
+        ],
+        "clean-03-1-no-identifier": [
+          [
+            4,
+            11
+          ]
+        ],
+        "clean-04-1-no-identifier": [
+          [
+            28,
+            32
+          ]
+        ],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [
+          [
+            12,
+            29
+          ]
+        ],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            14,
+            37
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [
+          [
+            20,
+            41
+          ]
+        ],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [
+          [
+            4,
+            11
+          ]
+        ],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            22
+          ]
+        ],
+        "clean-26-1-no-identifier": [],
+        "clean-27-1-no-identifier": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ]
+        ],
+        "clean-28-1-no-identifier": [
+          [
+            32,
+            47
+          ]
+        ],
+        "clean-29-1-no-identifier": [
+          [
+            15,
+            37
+          ]
+        ],
+        "clean-30-1-no-identifier": [
+          [
+            20,
+            38
+          ]
+        ]
+      }
+    },
+    "structure@0.3": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 8,
+        "exact_fn": 0,
+        "exact_precision": 0.1111111111111111,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 8,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [],
+        "clean-14-1-no-identifier": [],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [],
+        "clean-17-1-no-identifier": [],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "strict_structure@0.3": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 7,
+        "exact_fn": 0,
+        "exact_precision": 0.125,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 7,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [],
+        "clean-14-1-no-identifier": [],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [],
+        "clean-17-1-no-identifier": [],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "combined@0.3": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 27,
+        "exact_fn": 0,
+        "exact_precision": 0.03571428571428571,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 26,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [
+          [
+            4,
+            12
+          ]
+        ],
+        "clean-02-1-no-identifier": [
+          [
+            4,
+            12
+          ]
+        ],
+        "clean-03-1-no-identifier": [
+          [
+            4,
+            11
+          ]
+        ],
+        "clean-04-1-no-identifier": [
+          [
+            28,
+            32
+          ]
+        ],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [
+          [
+            12,
+            29
+          ]
+        ],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [
+          [
+            20,
+            41
+          ]
+        ],
+        "clean-22-1-no-identifier": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [
+          [
+            4,
+            11
+          ]
+        ],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ]
+        ],
+        "clean-28-1-no-identifier": [
+          [
+            32,
+            47
+          ]
+        ],
+        "clean-29-1-no-identifier": [
+          [
+            15,
+            37
+          ]
+        ],
+        "clean-30-1-no-identifier": [
+          [
+            20,
+            38
+          ]
+        ]
+      }
+    },
+    "strict_combined@0.3": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 26,
+        "exact_fn": 0,
+        "exact_precision": 0.037037037037037035,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 25,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [
+          [
+            4,
+            12
+          ]
+        ],
+        "clean-02-1-no-identifier": [
+          [
+            4,
+            12
+          ]
+        ],
+        "clean-03-1-no-identifier": [
+          [
+            4,
+            11
+          ]
+        ],
+        "clean-04-1-no-identifier": [
+          [
+            28,
+            32
+          ]
+        ],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [
+          [
+            12,
+            29
+          ]
+        ],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [
+          [
+            20,
+            41
+          ]
+        ],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [
+          [
+            4,
+            11
+          ]
+        ],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ]
+        ],
+        "clean-28-1-no-identifier": [
+          [
+            32,
+            47
+          ]
+        ],
+        "clean-29-1-no-identifier": [
+          [
+            15,
+            37
+          ]
+        ],
+        "clean-30-1-no-identifier": [
+          [
+            20,
+            38
+          ]
+        ]
+      }
+    },
+    "raw@0.5": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 20,
+        "exact_fn": 0,
+        "exact_precision": 0.047619047619047616,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 19,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [
+          [
+            4,
+            11
+          ]
+        ],
+        "clean-04-1-no-identifier": [
+          [
+            28,
+            32
+          ]
+        ],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [
+          [
+            12,
+            29
+          ]
+        ],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            14,
+            37
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [
+          [
+            20,
+            41
+          ]
+        ],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            22
+          ]
+        ],
+        "clean-26-1-no-identifier": [],
+        "clean-27-1-no-identifier": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ]
+        ],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [
+          [
+            15,
+            37
+          ]
+        ],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "structure@0.5": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 8,
+        "exact_fn": 0,
+        "exact_precision": 0.1111111111111111,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 8,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [],
+        "clean-14-1-no-identifier": [],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [],
+        "clean-17-1-no-identifier": [],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "strict_structure@0.5": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 7,
+        "exact_fn": 0,
+        "exact_precision": 0.125,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 7,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [],
+        "clean-14-1-no-identifier": [],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [],
+        "clean-17-1-no-identifier": [],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "combined@0.5": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 22,
+        "exact_fn": 0,
+        "exact_precision": 0.043478260869565216,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 21,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [
+          [
+            4,
+            11
+          ]
+        ],
+        "clean-04-1-no-identifier": [
+          [
+            28,
+            32
+          ]
+        ],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [
+          [
+            12,
+            29
+          ]
+        ],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [
+          [
+            20,
+            41
+          ]
+        ],
+        "clean-22-1-no-identifier": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ]
+        ],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [
+          [
+            15,
+            37
+          ]
+        ],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "strict_combined@0.5": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 21,
+        "exact_fn": 0,
+        "exact_precision": 0.045454545454545456,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 20,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [
+          [
+            4,
+            11
+          ]
+        ],
+        "clean-04-1-no-identifier": [
+          [
+            28,
+            32
+          ]
+        ],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [
+          [
+            12,
+            29
+          ]
+        ],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [
+          [
+            20,
+            41
+          ]
+        ],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ]
+        ],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [
+          [
+            15,
+            37
+          ]
+        ],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "raw@0.7": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 16,
+        "exact_fn": 0,
+        "exact_precision": 0.058823529411764705,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 15,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [
+          [
+            12,
+            29
+          ]
+        ],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            14,
+            37
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [
+          [
+            20,
+            41
+          ]
+        ],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [],
+        "clean-26-1-no-identifier": [],
+        "clean-27-1-no-identifier": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ]
+        ],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "structure@0.7": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 8,
+        "exact_fn": 0,
+        "exact_precision": 0.1111111111111111,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 8,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [],
+        "clean-14-1-no-identifier": [],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [],
+        "clean-17-1-no-identifier": [],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "strict_structure@0.7": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 7,
+        "exact_fn": 0,
+        "exact_precision": 0.125,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 7,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [],
+        "clean-14-1-no-identifier": [],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [],
+        "clean-17-1-no-identifier": [],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "combined@0.7": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 19,
+        "exact_fn": 0,
+        "exact_precision": 0.05,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 18,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [
+          [
+            12,
+            29
+          ]
+        ],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [
+          [
+            20,
+            41
+          ]
+        ],
+        "clean-22-1-no-identifier": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ]
+        ],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "strict_combined@0.7": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 18,
+        "exact_fn": 0,
+        "exact_precision": 0.05263157894736842,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 17,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [
+          [
+            12,
+            29
+          ]
+        ],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [
+          [
+            20,
+            41
+          ]
+        ],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [
+          [
+            14,
+            27
+          ],
+          [
+            31,
+            38
+          ]
+        ],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "raw@0.9": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 11,
+        "exact_fn": 0,
+        "exact_precision": 0.08333333333333333,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 11,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [],
+        "clean-26-1-no-identifier": [],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "structure@0.9": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 8,
+        "exact_fn": 0,
+        "exact_precision": 0.1111111111111111,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 8,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [],
+        "clean-14-1-no-identifier": [],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [],
+        "clean-17-1-no-identifier": [],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "strict_structure@0.9": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 7,
+        "exact_fn": 0,
+        "exact_precision": 0.125,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 7,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [],
+        "clean-14-1-no-identifier": [],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [],
+        "clean-17-1-no-identifier": [],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "combined@0.9": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 15,
+        "exact_fn": 0,
+        "exact_precision": 0.0625,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 15,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [
+          [
+            14,
+            16
+          ]
+        ],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    },
+    "strict_combined@0.9": {
+      "metrics": {
+        "exact_tp": 1,
+        "exact_fp": 14,
+        "exact_fn": 0,
+        "exact_precision": 0.06666666666666667,
+        "exact_recall": 1.0,
+        "fully_covered": 1,
+        "secrets": 1,
+        "partial_only": 0,
+        "negative_prompts_flagged": 14,
+        "negative_prompts": 30,
+        "groups": {
+          "challenge": {
+            "secrets": 1,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "env-quoted-1": [
+          [
+            18,
+            32
+          ]
+        ],
+        "clean-01-1-no-identifier": [],
+        "clean-02-1-no-identifier": [],
+        "clean-03-1-no-identifier": [],
+        "clean-04-1-no-identifier": [],
+        "clean-05-1-no-identifier": [
+          [
+            14,
+            24
+          ]
+        ],
+        "clean-06-1-no-identifier": [],
+        "clean-07-1-no-identifier": [
+          [
+            11,
+            31
+          ]
+        ],
+        "clean-08-1-no-identifier": [
+          [
+            11,
+            40
+          ]
+        ],
+        "clean-09-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-10-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-11-1-no-identifier": [
+          [
+            11,
+            21
+          ]
+        ],
+        "clean-12-1-no-identifier": [
+          [
+            11,
+            29
+          ]
+        ],
+        "clean-13-1-no-identifier": [
+          [
+            11,
+            19
+          ]
+        ],
+        "clean-14-1-no-identifier": [
+          [
+            24,
+            36
+          ]
+        ],
+        "clean-15-1-no-identifier": [
+          [
+            9,
+            33
+          ]
+        ],
+        "clean-16-1-no-identifier": [
+          [
+            9,
+            36
+          ]
+        ],
+        "clean-17-1-no-identifier": [
+          [
+            21,
+            36
+          ]
+        ],
+        "clean-18-1-no-identifier": [],
+        "clean-19-1-no-identifier": [],
+        "clean-20-1-no-identifier": [],
+        "clean-21-1-no-identifier": [],
+        "clean-22-1-no-identifier": [],
+        "clean-23-1-no-identifier": [],
+        "clean-24-1-no-identifier": [],
+        "clean-25-1-no-identifier": [
+          [
+            11,
+            24
+          ]
+        ],
+        "clean-26-1-no-identifier": [
+          [
+            22,
+            43
+          ]
+        ],
+        "clean-27-1-no-identifier": [],
+        "clean-28-1-no-identifier": [],
+        "clean-29-1-no-identifier": [],
+        "clean-30-1-no-identifier": []
+      }
+    }
+  }
+}

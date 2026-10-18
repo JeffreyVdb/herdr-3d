@@ -1,0 +1,556 @@
+{
+  "detector": "gitleaks",
+  "meta": {
+    "python": "3.12.15",
+    "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+    "threads": 4,
+    "repeats": 1,
+    "corpus_sha256": "1c54a29181fed2f2bf79c81507b7016fd363fc0ff885bf34f965b623386e0ebf",
+    "version": "8.30.1"
+  },
+  "load_seconds": 0.5398866749892477,
+  "peak_rss_mib": 672.91015625,
+  "child_peak_rss_mib": 1155.32421875,
+  "timings_ms": {
+    "github-assignment": [
+      860.3363560105208
+    ],
+    "github-prose": [
+      899.9924469972029
+    ],
+    "github-fine": [
+      914.0646680025384
+    ],
+    "aws-pair": [
+      871.7578359937761
+    ],
+    "openai": [
+      861.6069760173559
+    ],
+    "stripe": [
+      856.746484991163
+    ],
+    "slack": [
+      1085.1067350013182
+    ],
+    "gitlab": [
+      1365.4241749900393
+    ],
+    "npm": [
+      963.7233719986398
+    ],
+    "hf": [
+      944.1114339861088
+    ],
+    "generic-prose": [
+      857.4314930010587
+    ],
+    "generic-assignment": [
+      827.9552079911809
+    ],
+    "bearer": [
+      1032.646976003889
+    ],
+    "password-prose": [
+      1027.1241609880235
+    ],
+    "passphrase": [
+      971.379539987538
+    ],
+    "short-password": [
+      1679.6605389972683
+    ],
+    "punctuation": [
+      1067.549917002907
+    ],
+    "json": [
+      1026.7619020014536
+    ],
+    "env": [
+      1112.1111169923097
+    ],
+    "url": [
+      1147.4311169877183
+    ],
+    "query-token": [
+      1136.9017510151025
+    ],
+    "jwt": [
+      1040.810042002704
+    ],
+    "pem": [
+      1004.4038599880878
+    ],
+    "multiline-token": [
+      923.7979039899074
+    ],
+    "repeat": [
+      1277.8832250041887
+    ],
+    "two-secrets": [
+      1029.3781940126792
+    ],
+    "unicode-context": [
+      1060.1020499889273
+    ],
+    "unicode-secret": [
+      918.8300970126875
+    ],
+    "bare-token": [
+      932.6213260064833
+    ],
+    "bare-password": [
+      810.768401977839
+    ],
+    "long-8k": [
+      759.1277710162103
+    ],
+    "long-16k": [
+      778.5440869920421
+    ],
+    "negative-01": [
+      1119.583332008915
+    ],
+    "negative-02": [
+      1395.8348779997323
+    ],
+    "negative-03": [
+      704.9746999982744
+    ],
+    "negative-04": [
+      738.2112049963325
+    ],
+    "negative-05": [
+      693.1162930268329
+    ],
+    "negative-06": [
+      654.284311021911
+    ],
+    "negative-07": [
+      766.538274998311
+    ],
+    "negative-08": [
+      704.9900559941307
+    ],
+    "negative-09": [
+      658.1126939854585
+    ],
+    "negative-10": [
+      649.2454409890343
+    ],
+    "negative-11": [
+      1049.3876269902103
+    ],
+    "negative-12": [
+      829.3549819791224
+    ],
+    "negative-13": [
+      679.0442620113026
+    ],
+    "negative-14": [
+      680.4835189832374
+    ],
+    "negative-15": [
+      698.7773780128919
+    ],
+    "negative-16": [
+      690.2947300113738
+    ],
+    "negative-17": [
+      672.8390989883337
+    ],
+    "negative-18": [
+      642.5443369953427
+    ],
+    "negative-19": [
+      660.4050110036042
+    ],
+    "negative-20": [
+      796.9849389919546
+    ],
+    "negative-21": [
+      1015.2319810003974
+    ],
+    "negative-22": [
+      731.2558289850131
+    ]
+  },
+  "raw": {
+    "github-assignment": [
+      {
+        "start": 14,
+        "end": 54,
+        "score": 1,
+        "label": "github-pat"
+      }
+    ],
+    "github-prose": [
+      {
+        "start": 4,
+        "end": 44,
+        "score": 1,
+        "label": "github-pat"
+      }
+    ],
+    "github-fine": [
+      {
+        "start": 19,
+        "end": 112,
+        "score": 1,
+        "label": "github-fine-grained-pat"
+      }
+    ],
+    "aws-pair": [
+      {
+        "start": 61,
+        "end": 101,
+        "score": 1,
+        "label": "generic-api-key"
+      },
+      {
+        "start": 18,
+        "end": 38,
+        "score": 1,
+        "label": "aws-access-token"
+      }
+    ],
+    "openai": [
+      {
+        "start": 15,
+        "end": 143,
+        "score": 1,
+        "label": "generic-api-key"
+      }
+    ],
+    "stripe": [
+      {
+        "start": 22,
+        "end": 54,
+        "score": 1,
+        "label": "stripe-access-token"
+      }
+    ],
+    "slack": [
+      {
+        "start": 17,
+        "end": 72,
+        "score": 1,
+        "label": "slack-bot-token"
+      }
+    ],
+    "gitlab": [
+      {
+        "start": 21,
+        "end": 47,
+        "score": 1,
+        "label": "gitlab-pat"
+      }
+    ],
+    "npm": [
+      {
+        "start": 23,
+        "end": 63,
+        "score": 1,
+        "label": "npm-access-token"
+      }
+    ],
+    "hf": [
+      {
+        "start": 9,
+        "end": 46,
+        "score": 1,
+        "label": "generic-api-key"
+      }
+    ],
+    "generic-prose": [],
+    "generic-assignment": [
+      {
+        "start": 18,
+        "end": 58,
+        "score": 1,
+        "label": "generic-api-key"
+      }
+    ],
+    "bearer": [
+      {
+        "start": 31,
+        "end": 73,
+        "score": 1,
+        "label": "curl-auth-header"
+      }
+    ],
+    "password-prose": [],
+    "passphrase": [],
+    "short-password": [],
+    "punctuation": [],
+    "json": [
+      {
+        "start": 42,
+        "end": 74,
+        "score": 1,
+        "label": "generic-api-key"
+      }
+    ],
+    "env": [
+      {
+        "start": 55,
+        "end": 87,
+        "score": 1,
+        "label": "generic-api-key"
+      }
+    ],
+    "url": [],
+    "query-token": [],
+    "jwt": [
+      {
+        "start": 22,
+        "end": 148,
+        "score": 1,
+        "label": "jwt"
+      }
+    ],
+    "pem": [
+      {
+        "start": 22,
+        "end": 396,
+        "score": 1,
+        "label": "private-key"
+      }
+    ],
+    "multiline-token": [],
+    "repeat": [],
+    "two-secrets": [],
+    "unicode-context": [],
+    "unicode-secret": [],
+    "bare-token": [],
+    "bare-password": [],
+    "long-8k": [],
+    "long-16k": [
+      {
+        "start": 17024,
+        "end": 17064,
+        "score": 1,
+        "label": "generic-api-key"
+      }
+    ],
+    "negative-01": [],
+    "negative-02": [],
+    "negative-03": [],
+    "negative-04": [],
+    "negative-05": [],
+    "negative-06": [],
+    "negative-07": [],
+    "negative-08": [],
+    "negative-09": [],
+    "negative-10": [],
+    "negative-11": [],
+    "negative-12": [],
+    "negative-13": [],
+    "negative-14": [],
+    "negative-15": [],
+    "negative-16": [],
+    "negative-17": [],
+    "negative-18": [],
+    "negative-19": [],
+    "negative-20": [],
+    "negative-21": [],
+    "negative-22": []
+  },
+  "results": {
+    "0.5": {
+      "metrics": {
+        "exact_tp": 18,
+        "exact_fp": 0,
+        "exact_fn": 18,
+        "exact_precision": 1.0,
+        "exact_recall": 0.5,
+        "fully_covered": 18,
+        "secrets": 36,
+        "partial_only": 0,
+        "negative_prompts_flagged": 0,
+        "negative_prompts": 22,
+        "groups": {
+          "provider": {
+            "secrets": 11,
+            "exact": 11,
+            "covered": 11
+          },
+          "context": {
+            "secrets": 19,
+            "exact": 5,
+            "covered": 5
+          },
+          "multiline": {
+            "secrets": 2,
+            "exact": 1,
+            "covered": 1
+          },
+          "unlabeled": {
+            "secrets": 2,
+            "exact": 0,
+            "covered": 0
+          },
+          "long": {
+            "secrets": 2,
+            "exact": 1,
+            "covered": 1
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "github-assignment": [
+          [
+            14,
+            54
+          ]
+        ],
+        "github-prose": [
+          [
+            4,
+            44
+          ]
+        ],
+        "github-fine": [
+          [
+            19,
+            112
+          ]
+        ],
+        "aws-pair": [
+          [
+            18,
+            38
+          ],
+          [
+            61,
+            101
+          ]
+        ],
+        "openai": [
+          [
+            15,
+            143
+          ]
+        ],
+        "stripe": [
+          [
+            22,
+            54
+          ]
+        ],
+        "slack": [
+          [
+            17,
+            72
+          ]
+        ],
+        "gitlab": [
+          [
+            21,
+            47
+          ]
+        ],
+        "npm": [
+          [
+            23,
+            63
+          ]
+        ],
+        "hf": [
+          [
+            9,
+            46
+          ]
+        ],
+        "generic-prose": [],
+        "generic-assignment": [
+          [
+            18,
+            58
+          ]
+        ],
+        "bearer": [
+          [
+            31,
+            73
+          ]
+        ],
+        "password-prose": [],
+        "passphrase": [],
+        "short-password": [],
+        "punctuation": [],
+        "json": [
+          [
+            42,
+            74
+          ]
+        ],
+        "env": [
+          [
+            55,
+            87
+          ]
+        ],
+        "url": [],
+        "query-token": [],
+        "jwt": [
+          [
+            22,
+            148
+          ]
+        ],
+        "pem": [
+          [
+            22,
+            396
+          ]
+        ],
+        "multiline-token": [],
+        "repeat": [],
+        "two-secrets": [],
+        "unicode-context": [],
+        "unicode-secret": [],
+        "bare-token": [],
+        "bare-password": [],
+        "long-8k": [],
+        "long-16k": [
+          [
+            17024,
+            17064
+          ]
+        ],
+        "negative-01": [],
+        "negative-02": [],
+        "negative-03": [],
+        "negative-04": [],
+        "negative-05": [],
+        "negative-06": [],
+        "negative-07": [],
+        "negative-08": [],
+        "negative-09": [],
+        "negative-10": [],
+        "negative-11": [],
+        "negative-12": [],
+        "negative-13": [],
+        "negative-14": [],
+        "negative-15": [],
+        "negative-16": [],
+        "negative-17": [],
+        "negative-18": [],
+        "negative-19": [],
+        "negative-20": [],
+        "negative-21": [],
+        "negative-22": []
+      }
+    }
+  },
+  "short_latency_ms": {
+    "p50": 907.0285574998707,
+    "p95": 1365.4241749900393
+  }
+}

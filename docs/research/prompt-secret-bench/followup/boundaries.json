@@ -1,0 +1,118 @@
+{
+  "provider": "huggingface",
+  "token": "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",
+  "delimiters": {
+    "end": {
+      "exact": true,
+      "rule_ids": [
+        "huggingface-access-token"
+      ]
+    },
+    "space": {
+      "exact": true,
+      "rule_ids": [
+        "huggingface-access-token"
+      ]
+    },
+    "period": {
+      "exact": false,
+      "rule_ids": []
+    },
+    "comma": {
+      "exact": false,
+      "rule_ids": []
+    },
+    "semicolon": {
+      "exact": true,
+      "rule_ids": [
+        "huggingface-access-token"
+      ]
+    },
+    "right-paren": {
+      "exact": false,
+      "rule_ids": []
+    },
+    "quote": {
+      "exact": true,
+      "rule_ids": [
+        "huggingface-access-token"
+      ]
+    },
+    "newline": {
+      "exact": true,
+      "rule_ids": [
+        "huggingface-access-token"
+      ]
+    }
+  },
+  "max_accepted_prompt_bytes": 16384,
+  "max_prompt_cases": [
+    {
+      "position": 0,
+      "bytes": 16384,
+      "expected": [
+        14,
+        51
+      ],
+      "predictions": [
+        [
+          14,
+          51
+        ]
+      ],
+      "exact": true,
+      "latencies_ms": [
+        12.073135003447533,
+        11.651631008135155,
+        11.654358997475356,
+        11.391596985049546,
+        11.732904997188598
+      ]
+    },
+    {
+      "position": 8165,
+      "bytes": 16384,
+      "expected": [
+        8179,
+        8216
+      ],
+      "predictions": [
+        [
+          8179,
+          8216
+        ]
+      ],
+      "exact": true,
+      "latencies_ms": [
+        11.7124319949653,
+        11.68087898986414,
+        11.378617986338213,
+        11.370808002538979,
+        11.351997003657743
+      ]
+    },
+    {
+      "position": 16331,
+      "bytes": 16384,
+      "expected": [
+        16345,
+        16382
+      ],
+      "predictions": [
+        [
+          16345,
+          16382
+        ]
+      ],
+      "exact": true,
+      "latencies_ms": [
+        11.470150027889758,
+        11.702389019774273,
+        11.877302022185177,
+        11.417601985158399,
+        11.384053010260686
+      ]
+    }
+  ],
+  "note": "Synthetic scanner-grammar-valid token, not provider-issued; original 17,064-byte pilot is above current worker.prompt limit. No application integration tested."
+}

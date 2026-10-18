@@ -1,0 +1,12 @@
+{
+  "seed": 10820261018,
+  "source_substring_values": true,
+  "rules_frozen_sha256": "b5e774ccda42dd5f56b6e13dfe6c2e730493d1f1b74329473741a64fcbcc41d3",
+  "corpus_sha256": "34a5db426c13c6030ca6b3813c729fc05f73385458d62e42f1bc16cfe582afd4",
+  "prompts": 138,
+  "secret_occurrences": 84,
+  "negative_prompts": 60,
+  "positive_families": 35,
+  "negative_families": 30,
+  "limitation": "Same author; repeated template families; not an independently authored or representative production holdout. Rules frozen before challenge authoring; no post-challenge tuning."
+}

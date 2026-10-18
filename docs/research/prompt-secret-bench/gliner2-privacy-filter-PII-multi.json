@@ -1,0 +1,2295 @@
+{
+  "detector": "gliner2",
+  "meta": {
+    "python": "3.12.15",
+    "platform": "Linux-7.2.5-3-omarchy-x86_64-with-glibc2.44",
+    "threads": 4,
+    "model": "fastino/gliner2-privacy-filter-PII-multi",
+    "revision": "1cb4166094dc58fa8d836429f060d6c95f62b495",
+    "labels": [
+      "password",
+      "secret",
+      "api_key",
+      "access_token",
+      "recovery_code"
+    ],
+    "versions": {
+      "gliner": "0.2.29",
+      "torch": "2.14.1+cpu",
+      "transformers": "5.16.1",
+      "huggingface-hub": "1.33.0"
+    }
+  },
+  "load_seconds": 11.998222240014002,
+  "peak_rss_mib": 5878.03125,
+  "child_peak_rss_mib": 20.4296875,
+  "timings_ms": {
+    "github-assignment": [
+      270.5751450266689,
+      232.15456999605522,
+      225.85101600270718
+    ],
+    "github-prose": [
+      225.4315860045608,
+      231.78899398772046,
+      194.19908500276506
+    ],
+    "github-fine": [
+      371.02376398979686,
+      532.6792179839686,
+      414.48056799708866
+    ],
+    "aws-pair": [
+      223.75745899626054,
+      477.225715003442,
+      768.3803430118132
+    ],
+    "openai": [
+      1000.1354339765385,
+      482.50036098761484,
+      403.00155099248514
+    ],
+    "stripe": [
+      287.73916501086205,
+      292.64534602407366,
+      303.19905900978483
+    ],
+    "slack": [
+      286.92642800160684,
+      462.50315397628583,
+      668.152348982403
+    ],
+    "gitlab": [
+      584.474176983349,
+      335.4622650076635,
+      252.2347469930537
+    ],
+    "npm": [
+      280.6590510008391,
+      278.68401099112816,
+      280.5625600158237
+    ],
+    "hf": [
+      279.4997230230365,
+      275.775270012673,
+      237.89156100247055
+    ],
+    "generic-prose": [
+      219.3139250157401,
+      212.53372900537215,
+      221.13623897894286
+    ],
+    "generic-assignment": [
+      206.83235602336936,
+      233.74309597420506,
+      229.73482200177386
+    ],
+    "bearer": [
+      254.53153398120776,
+      253.63461999222636,
+      192.8481179929804
+    ],
+    "password-prose": [
+      152.02660899376497,
+      235.19262101035565,
+      414.06658801133744
+    ],
+    "passphrase": [
+      573.2086770003662,
+      598.727072996553,
+      429.84405398601666
+    ],
+    "short-password": [
+      269.0333880018443,
+      220.4049669962842,
+      217.61828698799945
+    ],
+    "punctuation": [
+      333.33487302297726,
+      298.3311510179192,
+      295.1713720103726
+    ],
+    "json": [
+      296.79448500974104,
+      281.755496020196,
+      250.5653519765474
+    ],
+    "env": [
+      267.2736340027768,
+      244.09084301441908,
+      243.92362500657327
+    ],
+    "url": [
+      234.59949000971392,
+      236.61931901006028,
+      181.15656499867328
+    ],
+    "query-token": [
+      232.8090310038533,
+      232.94429300585762,
+      282.60752599453554
+    ],
+    "jwt": [
+      308.0538799986243,
+      305.8760919957422,
+      305.9118799865246
+    ],
+    "pem": [
+      626.4145079767331,
+      580.9288329910487,
+      563.2316620030906
+    ],
+    "multiline-token": [
+      240.1256159937475,
+      241.82442898745649,
+      324.1351780015975
+    ],
+    "repeat": [
+      386.6684999957215,
+      603.6527239775751,
+      565.0730999768712
+    ],
+    "two-secrets": [
+      343.2462050113827,
+      283.5227770265192,
+      328.80692300386727
+    ],
+    "unicode-context": [
+      247.51281400676817,
+      244.02802297845483,
+      246.28245498752221
+    ],
+    "unicode-secret": [
+      241.93569298950024,
+      240.64571000053547,
+      239.51871797908098
+    ],
+    "bare-token": [
+      252.08460399881005,
+      290.06940801627934,
+      259.7424710111227
+    ],
+    "bare-password": [
+      198.82245900225826,
+      176.4342229871545,
+      180.23603199981153
+    ],
+    "long-8k": [
+      11594.492230011383,
+      10821.125738992123,
+      12590.93327500159
+    ],
+    "long-16k": [
+      44115.0380189938,
+      43689.4277530082,
+      49865.939873998286
+    ],
+    "negative-01": [
+      552.723751985468,
+      331.56876399880275,
+      249.46860197815113
+    ],
+    "negative-02": [
+      260.5545329861343,
+      257.0281549997162,
+      256.95579100283794
+    ],
+    "negative-03": [
+      215.44552900013514,
+      213.72022599098273,
+      215.7915999996476
+    ],
+    "negative-04": [
+      241.67286799638532,
+      244.4467729947064,
+      246.05044900090434
+    ],
+    "negative-05": [
+      220.32992300228216,
+      223.4052139974665,
+      225.1798810029868
+    ],
+    "negative-06": [
+      242.89326701546088,
+      243.45118599012494,
+      227.26293600862846
+    ],
+    "negative-07": [
+      235.929625981953,
+      239.94612900423817,
+      237.27711400715634
+    ],
+    "negative-08": [
+      202.79287398443557,
+      218.26311899349093,
+      210.2019010053482
+    ],
+    "negative-09": [
+      210.68555998499505,
+      212.44102300261147,
+      213.39714198256843
+    ],
+    "negative-10": [
+      206.72601400292479,
+      160.029216989642,
+      192.4893319956027
+    ],
+    "negative-11": [
+      161.65511298459023,
+      184.67734497971833,
+      276.7025700013619
+    ],
+    "negative-12": [
+      335.99406099529006,
+      502.66321198432706,
+      605.0515790120699
+    ],
+    "negative-13": [
+      330.3019799932372,
+      279.78915700805373,
+      280.2139649866149
+    ],
+    "negative-14": [
+      225.9679880226031,
+      218.90808298485354,
+      218.40691100805998
+    ],
+    "negative-15": [
+      211.99391898699105,
+      213.08626799145713,
+      211.67184598743916
+    ],
+    "negative-16": [
+      214.34356598183513,
+      220.40324500994757,
+      218.8045030052308
+    ],
+    "negative-17": [
+      184.71321897231974,
+      186.7427749966737,
+      195.16877699061297
+    ],
+    "negative-18": [
+      229.20547099784017,
+      220.97087299334817,
+      227.4107210105285
+    ],
+    "negative-19": [
+      227.49064798699692,
+      235.9983829956036,
+      302.800623991061
+    ],
+    "negative-20": [
+      226.3501920097042,
+      217.63195400126278,
+      206.18089201161638
+    ],
+    "negative-21": [
+      265.06918799714185,
+      259.6719590073917,
+      255.94116499996744
+    ],
+    "negative-22": [
+      288.6065720231272,
+      305.5992189911194,
+      293.4434970084112
+    ]
+  },
+  "raw": {
+    "github-assignment": [
+      {
+        "start": 14,
+        "end": 54,
+        "score": 0.5762083530426025,
+        "label": "secret"
+      },
+      {
+        "start": 14,
+        "end": 54,
+        "score": 0.9860250353813171,
+        "label": "access_token"
+      }
+    ],
+    "github-prose": [
+      {
+        "start": 4,
+        "end": 44,
+        "score": 0.5711115598678589,
+        "label": "secret"
+      },
+      {
+        "start": 4,
+        "end": 44,
+        "score": 0.752181887626648,
+        "label": "api_key"
+      },
+      {
+        "start": 4,
+        "end": 44,
+        "score": 0.8908480405807495,
+        "label": "access_token"
+      }
+    ],
+    "github-fine": [
+      {
+        "start": 19,
+        "end": 112,
+        "score": 0.4473651349544525,
+        "label": "secret"
+      },
+      {
+        "start": 19,
+        "end": 112,
+        "score": 0.8707566261291504,
+        "label": "access_token"
+      }
+    ],
+    "aws-pair": [
+      {
+        "start": 61,
+        "end": 101,
+        "score": 0.7122570276260376,
+        "label": "secret"
+      },
+      {
+        "start": 18,
+        "end": 38,
+        "score": 0.6793400049209595,
+        "label": "secret"
+      },
+      {
+        "start": 61,
+        "end": 101,
+        "score": 0.6533052325248718,
+        "label": "access_token"
+      },
+      {
+        "start": 18,
+        "end": 38,
+        "score": 0.5251884460449219,
+        "label": "access_token"
+      }
+    ],
+    "openai": [
+      {
+        "start": 15,
+        "end": 143,
+        "score": 0.6877549886703491,
+        "label": "secret"
+      },
+      {
+        "start": 15,
+        "end": 143,
+        "score": 0.9861050248146057,
+        "label": "api_key"
+      }
+    ],
+    "stripe": [
+      {
+        "start": 22,
+        "end": 54,
+        "score": 0.7156228423118591,
+        "label": "secret"
+      },
+      {
+        "start": 22,
+        "end": 54,
+        "score": 0.9731331467628479,
+        "label": "api_key"
+      }
+    ],
+    "slack": [
+      {
+        "start": 17,
+        "end": 72,
+        "score": 0.5980961918830872,
+        "label": "secret"
+      },
+      {
+        "start": 17,
+        "end": 72,
+        "score": 0.9889916181564331,
+        "label": "access_token"
+      }
+    ],
+    "gitlab": [
+      {
+        "start": 21,
+        "end": 47,
+        "score": 0.620561420917511,
+        "label": "secret"
+      },
+      {
+        "start": 21,
+        "end": 47,
+        "score": 0.988832950592041,
+        "label": "access_token"
+      }
+    ],
+    "npm": [
+      {
+        "start": 23,
+        "end": 63,
+        "score": 0.6178308725357056,
+        "label": "secret"
+      },
+      {
+        "start": 13,
+        "end": 22,
+        "score": 0.3043023943901062,
+        "label": "secret"
+      },
+      {
+        "start": 23,
+        "end": 63,
+        "score": 0.9644057750701904,
+        "label": "access_token"
+      }
+    ],
+    "hf": [
+      {
+        "start": 9,
+        "end": 46,
+        "score": 0.5922489166259766,
+        "label": "secret"
+      },
+      {
+        "start": 0,
+        "end": 8,
+        "score": 0.3544391691684723,
+        "label": "secret"
+      },
+      {
+        "start": 9,
+        "end": 46,
+        "score": 0.9768067002296448,
+        "label": "access_token"
+      }
+    ],
+    "generic-prose": [
+      {
+        "start": 15,
+        "end": 51,
+        "score": 0.9583601951599121,
+        "label": "secret"
+      }
+    ],
+    "generic-assignment": [
+      {
+        "start": 18,
+        "end": 58,
+        "score": 0.6966921091079712,
+        "label": "secret"
+      },
+      {
+        "start": 18,
+        "end": 58,
+        "score": 0.9887759685516357,
+        "label": "api_key"
+      }
+    ],
+    "bearer": [
+      {
+        "start": 24,
+        "end": 73,
+        "score": 0.6224254965782166,
+        "label": "secret"
+      },
+      {
+        "start": 24,
+        "end": 73,
+        "score": 0.9567009210586548,
+        "label": "access_token"
+      }
+    ],
+    "password-prose": [
+      {
+        "start": 25,
+        "end": 36,
+        "score": 0.989595353603363,
+        "label": "password"
+      }
+    ],
+    "passphrase": [
+      {
+        "start": 17,
+        "end": 43,
+        "score": 0.999085545539856,
+        "label": "password"
+      }
+    ],
+    "short-password": [
+      {
+        "start": 16,
+        "end": 21,
+        "score": 0.9987592697143555,
+        "label": "password"
+      }
+    ],
+    "punctuation": [
+      {
+        "start": 41,
+        "end": 46,
+        "score": 0.6293967962265015,
+        "label": "secret"
+      }
+    ],
+    "json": [
+      {
+        "start": 42,
+        "end": 74,
+        "score": 0.8405864238739014,
+        "label": "secret"
+      },
+      {
+        "start": 86,
+        "end": 88,
+        "score": 0.5318039655685425,
+        "label": "secret"
+      },
+      {
+        "start": 26,
+        "end": 39,
+        "score": 0.5289723873138428,
+        "label": "secret"
+      },
+      {
+        "start": 77,
+        "end": 83,
+        "score": 0.4773309826850891,
+        "label": "secret"
+      }
+    ],
+    "env": [
+      {
+        "start": 34,
+        "end": 44,
+        "score": 0.960092306137085,
+        "label": "password"
+      },
+      {
+        "start": 45,
+        "end": 87,
+        "score": 0.6654872894287109,
+        "label": "secret"
+      },
+      {
+        "start": 34,
+        "end": 44,
+        "score": 0.4669596552848816,
+        "label": "secret"
+      },
+      {
+        "start": 55,
+        "end": 87,
+        "score": 0.6754318475723267,
+        "label": "api_key"
+      },
+      {
+        "start": 55,
+        "end": 87,
+        "score": 0.9473057985305786,
+        "label": "access_token"
+      }
+    ],
+    "url": [],
+    "query-token": [],
+    "jwt": [
+      {
+        "start": 15,
+        "end": 148,
+        "score": 0.5555667877197266,
+        "label": "access_token"
+      }
+    ],
+    "pem": [
+      {
+        "start": 277,
+        "end": 283,
+        "score": 0.4263198971748352,
+        "label": "password"
+      },
+      {
+        "start": 33,
+        "end": 44,
+        "score": 0.8134283423423767,
+        "label": "secret"
+      },
+      {
+        "start": 380,
+        "end": 391,
+        "score": 0.7733798027038574,
+        "label": "secret"
+      },
+      {
+        "start": 9,
+        "end": 20,
+        "score": 0.7112460732460022,
+        "label": "secret"
+      },
+      {
+        "start": 367,
+        "end": 370,
+        "score": 0.7041363716125488,
+        "label": "secret"
+      },
+      {
+        "start": 322,
+        "end": 366,
+        "score": 0.5808506608009338,
+        "label": "secret"
+      },
+      {
+        "start": 224,
+        "end": 276,
+        "score": 0.5174320936203003,
+        "label": "secret"
+      },
+      {
+        "start": 190,
+        "end": 223,
+        "score": 0.5124574899673462,
+        "label": "secret"
+      },
+      {
+        "start": 169,
+        "end": 189,
+        "score": 0.4763527512550354,
+        "label": "secret"
+      },
+      {
+        "start": 81,
+        "end": 168,
+        "score": 0.471908301115036,
+        "label": "secret"
+      },
+      {
+        "start": 277,
+        "end": 321,
+        "score": 0.36695635318756104,
+        "label": "secret"
+      },
+      {
+        "start": 50,
+        "end": 80,
+        "score": 0.7359448671340942,
+        "label": "api_key"
+      },
+      {
+        "start": 81,
+        "end": 168,
+        "score": 0.7824988961219788,
+        "label": "access_token"
+      },
+      {
+        "start": 169,
+        "end": 189,
+        "score": 0.7705050706863403,
+        "label": "access_token"
+      },
+      {
+        "start": 224,
+        "end": 276,
+        "score": 0.6184742450714111,
+        "label": "access_token"
+      },
+      {
+        "start": 322,
+        "end": 366,
+        "score": 0.4132351875305176,
+        "label": "access_token"
+      },
+      {
+        "start": 190,
+        "end": 223,
+        "score": 0.358692467212677,
+        "label": "access_token"
+      },
+      {
+        "start": 298,
+        "end": 321,
+        "score": 0.33921483159065247,
+        "label": "access_token"
+      },
+      {
+        "start": 367,
+        "end": 370,
+        "score": 0.48481374979019165,
+        "label": "recovery_code"
+      }
+    ],
+    "multiline-token": [
+      {
+        "start": 67,
+        "end": 95,
+        "score": 0.46633991599082947,
+        "label": "secret"
+      },
+      {
+        "start": 38,
+        "end": 66,
+        "score": 0.41593244671821594,
+        "label": "secret"
+      },
+      {
+        "start": 67,
+        "end": 95,
+        "score": 0.936150312423706,
+        "label": "access_token"
+      },
+      {
+        "start": 38,
+        "end": 66,
+        "score": 0.9199331998825073,
+        "label": "access_token"
+      }
+    ],
+    "repeat": [
+      {
+        "start": 11,
+        "end": 43,
+        "score": 0.7392978072166443,
+        "label": "secret"
+      },
+      {
+        "start": 78,
+        "end": 110,
+        "score": 0.5820392966270447,
+        "label": "secret"
+      },
+      {
+        "start": 11,
+        "end": 43,
+        "score": 0.9996880292892456,
+        "label": "api_key"
+      },
+      {
+        "start": 78,
+        "end": 110,
+        "score": 0.9990347623825073,
+        "label": "api_key"
+      }
+    ],
+    "two-secrets": [
+      {
+        "start": 16,
+        "end": 24,
+        "score": 0.9967562556266785,
+        "label": "password"
+      },
+      {
+        "start": 44,
+        "end": 80,
+        "score": 0.557535707950592,
+        "label": "secret"
+      },
+      {
+        "start": 44,
+        "end": 80,
+        "score": 0.9936274290084839,
+        "label": "api_key"
+      }
+    ],
+    "unicode-context": [
+      {
+        "start": 21,
+        "end": 33,
+        "score": 0.9963518381118774,
+        "label": "password"
+      },
+      {
+        "start": 21,
+        "end": 33,
+        "score": 0.4159751534461975,
+        "label": "secret"
+      }
+    ],
+    "unicode-secret": [
+      {
+        "start": 16,
+        "end": 29,
+        "score": 0.9895927906036377,
+        "label": "password"
+      },
+      {
+        "start": 16,
+        "end": 29,
+        "score": 0.3654468059539795,
+        "label": "secret"
+      }
+    ],
+    "bare-token": [
+      {
+        "start": 4,
+        "end": 44,
+        "score": 0.5360057353973389,
+        "label": "secret"
+      },
+      {
+        "start": 4,
+        "end": 44,
+        "score": 0.45065462589263916,
+        "label": "api_key"
+      },
+      {
+        "start": 4,
+        "end": 44,
+        "score": 0.845970869064331,
+        "label": "access_token"
+      }
+    ],
+    "bare-password": [
+      {
+        "start": 4,
+        "end": 12,
+        "score": 0.9632667899131775,
+        "label": "password"
+      }
+    ],
+    "long-8k": [
+      {
+        "start": 8627,
+        "end": 8643,
+        "score": 0.8045006394386292,
+        "label": "password"
+      },
+      {
+        "start": 8627,
+        "end": 8643,
+        "score": 0.4715539515018463,
+        "label": "secret"
+      }
+    ],
+    "long-16k": [
+      {
+        "start": 17016,
+        "end": 17023,
+        "score": 0.3221887946128845,
+        "label": "secret"
+      },
+      {
+        "start": 17024,
+        "end": 17064,
+        "score": 0.9845525026321411,
+        "label": "api_key"
+      },
+      {
+        "start": 17016,
+        "end": 17023,
+        "score": 0.36815449595451355,
+        "label": "api_key"
+      }
+    ],
+    "negative-01": [
+      {
+        "start": 12,
+        "end": 22,
+        "score": 0.5162304043769836,
+        "label": "secret"
+      },
+      {
+        "start": 12,
+        "end": 22,
+        "score": 0.8501295447349548,
+        "label": "access_token"
+      }
+    ],
+    "negative-02": [
+      {
+        "start": 50,
+        "end": 62,
+        "score": 0.6312656998634338,
+        "label": "secret"
+      },
+      {
+        "start": 9,
+        "end": 15,
+        "score": 0.379740446805954,
+        "label": "secret"
+      }
+    ],
+    "negative-03": [
+      {
+        "start": 17,
+        "end": 29,
+        "score": 0.96060711145401,
+        "label": "access_token"
+      }
+    ],
+    "negative-04": [
+      {
+        "start": 17,
+        "end": 44,
+        "score": 0.4852712154388428,
+        "label": "secret"
+      },
+      {
+        "start": 26,
+        "end": 43,
+        "score": 0.997643768787384,
+        "label": "api_key"
+      }
+    ],
+    "negative-05": [
+      {
+        "start": 14,
+        "end": 24,
+        "score": 0.9796781539916992,
+        "label": "password"
+      }
+    ],
+    "negative-06": [
+      {
+        "start": 52,
+        "end": 59,
+        "score": 0.5044409036636353,
+        "label": "secret"
+      },
+      {
+        "start": 52,
+        "end": 59,
+        "score": 0.9581040143966675,
+        "label": "api_key"
+      }
+    ],
+    "negative-07": [
+      {
+        "start": 24,
+        "end": 88,
+        "score": 0.5105323791503906,
+        "label": "secret"
+      },
+      {
+        "start": 4,
+        "end": 11,
+        "score": 0.46983909606933594,
+        "label": "secret"
+      },
+      {
+        "start": 24,
+        "end": 88,
+        "score": 0.5466838479042053,
+        "label": "access_token"
+      }
+    ],
+    "negative-08": [
+      {
+        "start": 62,
+        "end": 72,
+        "score": 0.8040506839752197,
+        "label": "secret"
+      },
+      {
+        "start": 6,
+        "end": 12,
+        "score": 0.49425438046455383,
+        "label": "secret"
+      },
+      {
+        "start": 13,
+        "end": 53,
+        "score": 0.7252488136291504,
+        "label": "recovery_code"
+      }
+    ],
+    "negative-09": [],
+    "negative-10": [
+      {
+        "start": 17,
+        "end": 25,
+        "score": 0.3094950020313263,
+        "label": "access_token"
+      }
+    ],
+    "negative-11": [],
+    "negative-12": [],
+    "negative-13": [
+      {
+        "start": 38,
+        "end": 106,
+        "score": 0.4935605823993683,
+        "label": "secret"
+      },
+      {
+        "start": 26,
+        "end": 37,
+        "score": 0.42836934328079224,
+        "label": "secret"
+      },
+      {
+        "start": 26,
+        "end": 37,
+        "score": 0.6708330512046814,
+        "label": "api_key"
+      },
+      {
+        "start": 38,
+        "end": 106,
+        "score": 0.45653554797172546,
+        "label": "access_token"
+      }
+    ],
+    "negative-14": [
+      {
+        "start": 4,
+        "end": 21,
+        "score": 0.5533110499382019,
+        "label": "secret"
+      },
+      {
+        "start": 4,
+        "end": 21,
+        "score": 0.741065263748169,
+        "label": "api_key"
+      }
+    ],
+    "negative-15": [
+      {
+        "start": 6,
+        "end": 11,
+        "score": 0.3309481143951416,
+        "label": "secret"
+      },
+      {
+        "start": 6,
+        "end": 11,
+        "score": 0.6928185820579529,
+        "label": "access_token"
+      },
+      {
+        "start": 44,
+        "end": 49,
+        "score": 0.621224045753479,
+        "label": "access_token"
+      },
+      {
+        "start": 14,
+        "end": 35,
+        "score": 0.5584539771080017,
+        "label": "access_token"
+      }
+    ],
+    "negative-16": [
+      {
+        "start": 7,
+        "end": 15,
+        "score": 0.6454256772994995,
+        "label": "password"
+      },
+      {
+        "start": 50,
+        "end": 58,
+        "score": 0.5526114702224731,
+        "label": "password"
+      },
+      {
+        "start": 7,
+        "end": 22,
+        "score": 0.3621186912059784,
+        "label": "secret"
+      }
+    ],
+    "negative-17": [
+      {
+        "start": 18,
+        "end": 31,
+        "score": 0.9496169090270996,
+        "label": "secret"
+      }
+    ],
+    "negative-18": [],
+    "negative-19": [],
+    "negative-20": [],
+    "negative-21": [
+      {
+        "start": 14,
+        "end": 21,
+        "score": 0.4635693430900574,
+        "label": "secret"
+      },
+      {
+        "start": 31,
+        "end": 42,
+        "score": 0.4194989502429962,
+        "label": "secret"
+      }
+    ],
+    "negative-22": []
+  },
+  "results": {
+    "0.3": {
+      "metrics": {
+        "exact_tp": 27,
+        "exact_fp": 48,
+        "exact_fn": 9,
+        "exact_precision": 0.36,
+        "exact_recall": 0.75,
+        "fully_covered": 30,
+        "secrets": 36,
+        "partial_only": 4,
+        "negative_prompts_flagged": 15,
+        "negative_prompts": 22,
+        "groups": {
+          "provider": {
+            "secrets": 11,
+            "exact": 11,
+            "covered": 11
+          },
+          "context": {
+            "secrets": 19,
+            "exact": 13,
+            "covered": 16
+          },
+          "multiline": {
+            "secrets": 2,
+            "exact": 0,
+            "covered": 0
+          },
+          "unlabeled": {
+            "secrets": 2,
+            "exact": 1,
+            "covered": 1
+          },
+          "long": {
+            "secrets": 2,
+            "exact": 2,
+            "covered": 2
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "github-assignment": [
+          [
+            14,
+            54
+          ]
+        ],
+        "github-prose": [
+          [
+            4,
+            44
+          ]
+        ],
+        "github-fine": [
+          [
+            19,
+            112
+          ]
+        ],
+        "aws-pair": [
+          [
+            18,
+            38
+          ],
+          [
+            61,
+            101
+          ]
+        ],
+        "openai": [
+          [
+            15,
+            143
+          ]
+        ],
+        "stripe": [
+          [
+            22,
+            54
+          ]
+        ],
+        "slack": [
+          [
+            17,
+            72
+          ]
+        ],
+        "gitlab": [
+          [
+            21,
+            47
+          ]
+        ],
+        "npm": [
+          [
+            13,
+            22
+          ],
+          [
+            23,
+            63
+          ]
+        ],
+        "hf": [
+          [
+            0,
+            8
+          ],
+          [
+            9,
+            46
+          ]
+        ],
+        "generic-prose": [
+          [
+            15,
+            51
+          ]
+        ],
+        "generic-assignment": [
+          [
+            18,
+            58
+          ]
+        ],
+        "bearer": [
+          [
+            24,
+            73
+          ]
+        ],
+        "password-prose": [
+          [
+            25,
+            36
+          ]
+        ],
+        "passphrase": [
+          [
+            17,
+            43
+          ]
+        ],
+        "short-password": [
+          [
+            16,
+            21
+          ]
+        ],
+        "punctuation": [
+          [
+            41,
+            46
+          ]
+        ],
+        "json": [
+          [
+            26,
+            39
+          ],
+          [
+            42,
+            74
+          ],
+          [
+            77,
+            83
+          ],
+          [
+            86,
+            88
+          ]
+        ],
+        "env": [
+          [
+            34,
+            44
+          ],
+          [
+            45,
+            87
+          ]
+        ],
+        "url": [],
+        "query-token": [],
+        "jwt": [
+          [
+            15,
+            148
+          ]
+        ],
+        "pem": [
+          [
+            9,
+            20
+          ],
+          [
+            33,
+            44
+          ],
+          [
+            50,
+            80
+          ],
+          [
+            81,
+            168
+          ],
+          [
+            169,
+            189
+          ],
+          [
+            190,
+            223
+          ],
+          [
+            224,
+            276
+          ],
+          [
+            277,
+            321
+          ],
+          [
+            322,
+            366
+          ],
+          [
+            367,
+            370
+          ],
+          [
+            380,
+            391
+          ]
+        ],
+        "multiline-token": [
+          [
+            38,
+            66
+          ],
+          [
+            67,
+            95
+          ]
+        ],
+        "repeat": [
+          [
+            11,
+            43
+          ],
+          [
+            78,
+            110
+          ]
+        ],
+        "two-secrets": [
+          [
+            16,
+            24
+          ],
+          [
+            44,
+            80
+          ]
+        ],
+        "unicode-context": [
+          [
+            21,
+            33
+          ]
+        ],
+        "unicode-secret": [
+          [
+            16,
+            29
+          ]
+        ],
+        "bare-token": [
+          [
+            4,
+            44
+          ]
+        ],
+        "bare-password": [
+          [
+            4,
+            12
+          ]
+        ],
+        "long-8k": [
+          [
+            8627,
+            8643
+          ]
+        ],
+        "long-16k": [
+          [
+            17016,
+            17023
+          ],
+          [
+            17024,
+            17064
+          ]
+        ],
+        "negative-01": [
+          [
+            12,
+            22
+          ]
+        ],
+        "negative-02": [
+          [
+            9,
+            15
+          ],
+          [
+            50,
+            62
+          ]
+        ],
+        "negative-03": [
+          [
+            17,
+            29
+          ]
+        ],
+        "negative-04": [
+          [
+            17,
+            44
+          ]
+        ],
+        "negative-05": [
+          [
+            14,
+            24
+          ]
+        ],
+        "negative-06": [
+          [
+            52,
+            59
+          ]
+        ],
+        "negative-07": [
+          [
+            4,
+            11
+          ],
+          [
+            24,
+            88
+          ]
+        ],
+        "negative-08": [
+          [
+            6,
+            12
+          ],
+          [
+            13,
+            53
+          ],
+          [
+            62,
+            72
+          ]
+        ],
+        "negative-09": [],
+        "negative-10": [
+          [
+            17,
+            25
+          ]
+        ],
+        "negative-11": [],
+        "negative-12": [],
+        "negative-13": [
+          [
+            26,
+            37
+          ],
+          [
+            38,
+            106
+          ]
+        ],
+        "negative-14": [
+          [
+            4,
+            21
+          ]
+        ],
+        "negative-15": [
+          [
+            6,
+            11
+          ],
+          [
+            14,
+            35
+          ],
+          [
+            44,
+            49
+          ]
+        ],
+        "negative-16": [
+          [
+            7,
+            22
+          ],
+          [
+            50,
+            58
+          ]
+        ],
+        "negative-17": [
+          [
+            18,
+            31
+          ]
+        ],
+        "negative-18": [],
+        "negative-19": [],
+        "negative-20": [],
+        "negative-21": [
+          [
+            14,
+            21
+          ],
+          [
+            31,
+            42
+          ]
+        ],
+        "negative-22": []
+      }
+    },
+    "0.5": {
+      "metrics": {
+        "exact_tp": 27,
+        "exact_fp": 36,
+        "exact_fn": 9,
+        "exact_precision": 0.42857142857142855,
+        "exact_recall": 0.75,
+        "fully_covered": 30,
+        "secrets": 36,
+        "partial_only": 4,
+        "negative_prompts_flagged": 13,
+        "negative_prompts": 22,
+        "groups": {
+          "provider": {
+            "secrets": 11,
+            "exact": 11,
+            "covered": 11
+          },
+          "context": {
+            "secrets": 19,
+            "exact": 13,
+            "covered": 16
+          },
+          "multiline": {
+            "secrets": 2,
+            "exact": 0,
+            "covered": 0
+          },
+          "unlabeled": {
+            "secrets": 2,
+            "exact": 1,
+            "covered": 1
+          },
+          "long": {
+            "secrets": 2,
+            "exact": 2,
+            "covered": 2
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "github-assignment": [
+          [
+            14,
+            54
+          ]
+        ],
+        "github-prose": [
+          [
+            4,
+            44
+          ]
+        ],
+        "github-fine": [
+          [
+            19,
+            112
+          ]
+        ],
+        "aws-pair": [
+          [
+            18,
+            38
+          ],
+          [
+            61,
+            101
+          ]
+        ],
+        "openai": [
+          [
+            15,
+            143
+          ]
+        ],
+        "stripe": [
+          [
+            22,
+            54
+          ]
+        ],
+        "slack": [
+          [
+            17,
+            72
+          ]
+        ],
+        "gitlab": [
+          [
+            21,
+            47
+          ]
+        ],
+        "npm": [
+          [
+            23,
+            63
+          ]
+        ],
+        "hf": [
+          [
+            9,
+            46
+          ]
+        ],
+        "generic-prose": [
+          [
+            15,
+            51
+          ]
+        ],
+        "generic-assignment": [
+          [
+            18,
+            58
+          ]
+        ],
+        "bearer": [
+          [
+            24,
+            73
+          ]
+        ],
+        "password-prose": [
+          [
+            25,
+            36
+          ]
+        ],
+        "passphrase": [
+          [
+            17,
+            43
+          ]
+        ],
+        "short-password": [
+          [
+            16,
+            21
+          ]
+        ],
+        "punctuation": [
+          [
+            41,
+            46
+          ]
+        ],
+        "json": [
+          [
+            26,
+            39
+          ],
+          [
+            42,
+            74
+          ],
+          [
+            86,
+            88
+          ]
+        ],
+        "env": [
+          [
+            34,
+            44
+          ],
+          [
+            45,
+            87
+          ]
+        ],
+        "url": [],
+        "query-token": [],
+        "jwt": [
+          [
+            15,
+            148
+          ]
+        ],
+        "pem": [
+          [
+            9,
+            20
+          ],
+          [
+            33,
+            44
+          ],
+          [
+            50,
+            80
+          ],
+          [
+            81,
+            168
+          ],
+          [
+            169,
+            189
+          ],
+          [
+            190,
+            223
+          ],
+          [
+            224,
+            276
+          ],
+          [
+            322,
+            366
+          ],
+          [
+            367,
+            370
+          ],
+          [
+            380,
+            391
+          ]
+        ],
+        "multiline-token": [
+          [
+            38,
+            66
+          ],
+          [
+            67,
+            95
+          ]
+        ],
+        "repeat": [
+          [
+            11,
+            43
+          ],
+          [
+            78,
+            110
+          ]
+        ],
+        "two-secrets": [
+          [
+            16,
+            24
+          ],
+          [
+            44,
+            80
+          ]
+        ],
+        "unicode-context": [
+          [
+            21,
+            33
+          ]
+        ],
+        "unicode-secret": [
+          [
+            16,
+            29
+          ]
+        ],
+        "bare-token": [
+          [
+            4,
+            44
+          ]
+        ],
+        "bare-password": [
+          [
+            4,
+            12
+          ]
+        ],
+        "long-8k": [
+          [
+            8627,
+            8643
+          ]
+        ],
+        "long-16k": [
+          [
+            17024,
+            17064
+          ]
+        ],
+        "negative-01": [
+          [
+            12,
+            22
+          ]
+        ],
+        "negative-02": [
+          [
+            50,
+            62
+          ]
+        ],
+        "negative-03": [
+          [
+            17,
+            29
+          ]
+        ],
+        "negative-04": [
+          [
+            26,
+            43
+          ]
+        ],
+        "negative-05": [
+          [
+            14,
+            24
+          ]
+        ],
+        "negative-06": [
+          [
+            52,
+            59
+          ]
+        ],
+        "negative-07": [
+          [
+            24,
+            88
+          ]
+        ],
+        "negative-08": [
+          [
+            13,
+            53
+          ],
+          [
+            62,
+            72
+          ]
+        ],
+        "negative-09": [],
+        "negative-10": [],
+        "negative-11": [],
+        "negative-12": [],
+        "negative-13": [
+          [
+            26,
+            37
+          ]
+        ],
+        "negative-14": [
+          [
+            4,
+            21
+          ]
+        ],
+        "negative-15": [
+          [
+            6,
+            11
+          ],
+          [
+            14,
+            35
+          ],
+          [
+            44,
+            49
+          ]
+        ],
+        "negative-16": [
+          [
+            7,
+            15
+          ],
+          [
+            50,
+            58
+          ]
+        ],
+        "negative-17": [
+          [
+            18,
+            31
+          ]
+        ],
+        "negative-18": [],
+        "negative-19": [],
+        "negative-20": [],
+        "negative-21": [],
+        "negative-22": []
+      }
+    },
+    "0.7": {
+      "metrics": {
+        "exact_tp": 27,
+        "exact_fp": 20,
+        "exact_fn": 9,
+        "exact_precision": 0.574468085106383,
+        "exact_recall": 0.75,
+        "fully_covered": 28,
+        "secrets": 36,
+        "partial_only": 3,
+        "negative_prompts_flagged": 8,
+        "negative_prompts": 22,
+        "groups": {
+          "provider": {
+            "secrets": 11,
+            "exact": 10,
+            "covered": 10
+          },
+          "context": {
+            "secrets": 19,
+            "exact": 14,
+            "covered": 15
+          },
+          "multiline": {
+            "secrets": 2,
+            "exact": 0,
+            "covered": 0
+          },
+          "unlabeled": {
+            "secrets": 2,
+            "exact": 1,
+            "covered": 1
+          },
+          "long": {
+            "secrets": 2,
+            "exact": 2,
+            "covered": 2
+          },
+          "negative": {
+            "secrets": 0,
+            "exact": 0,
+            "covered": 0
+          }
+        }
+      },
+      "predictions": {
+        "github-assignment": [
+          [
+            14,
+            54
+          ]
+        ],
+        "github-prose": [
+          [
+            4,
+            44
+          ]
+        ],
+        "github-fine": [
+          [
+            19,
+            112
+          ]
+        ],
+        "aws-pair": [
+          [
+            61,
+            101
+          ]
+        ],
+        "openai": [
+          [
+            15,
+            143
+          ]
+        ],
+        "stripe": [
+          [
+            22,
+            54
+          ]
+        ],
+        "slack": [
+          [
+            17,
+            72
+          ]
+        ],
+        "gitlab": [
+          [
+            21,
+            47
+          ]
+        ],
+        "npm": [
+          [
+            23,
+            63
+          ]
+        ],
+        "hf": [
+          [
+            9,
+            46
+          ]
+        ],
+        "generic-prose": [
+          [
+            15,
+            51
+          ]
+        ],
+        "generic-assignment": [
+          [
+            18,
+            58
+          ]
+        ],
+        "bearer": [
+          [
+            24,
+            73
+          ]
+        ],
+        "password-prose": [
+          [
+            25,
+            36
+          ]
+        ],
+        "passphrase": [
+          [
+            17,
+            43
+          ]
+        ],
+        "short-password": [
+          [
+            16,
+            21
+          ]
+        ],
+        "punctuation": [],
+        "json": [
+          [
+            42,
+            74
+          ]
+        ],
+        "env": [
+          [
+            34,
+            44
+          ],
+          [
+            55,
+            87
+          ]
+        ],
+        "url": [],
+        "query-token": [],
+        "jwt": [],
+        "pem": [
+          [
+            9,
+            20
+          ],
+          [
+            33,
+            44
+          ],
+          [
+            50,
+            80
+          ],
+          [
+            81,
+            168
+          ],
+          [
+            169,
+            189
+          ],
+          [
+            367,
+            370
+          ],
+          [
+            380,
+            391
+          ]
+        ],
+        "multiline-token": [
+          [
+            38,
+            66
+          ],
+          [
+            67,
+            95
+          ]
+        ],
+        "repeat": [
+          [
+            11,
+            43
+          ],
+          [
+            78,
+            110
+          ]
+        ],
+        "two-secrets": [
+          [
+            16,
+            24
+          ],
+          [
+            44,
+            80
+          ]
+        ],
+        "unicode-context": [
+          [
+            21,
+            33
+          ]
+        ],
+        "unicode-secret": [
+          [
+            16,
+            29
+          ]
+        ],
+        "bare-token": [
+          [
+            4,
+            44
+          ]
+        ],
+        "bare-password": [
+          [
+            4,
+            12
+          ]
+        ],
+        "long-8k": [
+          [
+            8627,
+            8643
+          ]
+        ],
+        "long-16k": [
+          [
+            17024,
+            17064
+          ]
+        ],
+        "negative-01": [
+          [
+            12,
+            22
+          ]
+        ],
+        "negative-02": [],
+        "negative-03": [
+          [
+            17,
+            29
+          ]
+        ],
+        "negative-04": [
+          [
+            26,
+            43
+          ]
+        ],
+        "negative-05": [
+          [
+            14,
+            24
+          ]
+        ],
+        "negative-06": [
+          [
+            52,
+            59
+          ]
+        ],
+        "negative-07": [],
+        "negative-08": [
+          [
+            13,
+            53
+          ],
+          [
+            62,
+            72
+          ]
+        ],
+        "negative-09": [],
+        "negative-10": [],
+        "negative-11": [],
+        "negative-12": [],
+        "negative-13": [],
+        "negative-14": [
+          [
+            4,
+            21
+          ]
+        ],
+        "negative-15": [],
+        "negative-16": [],
+        "negative-17": [
+          [
+            18,
+            31
+          ]
+        ],
+        "negative-18": [],
+        "negative-19": [],
+        "negative-20": [],
+        "negative-21": [],
+        "negative-22": []
+      }
+    }
+  },
+  "short_latency_ms": {
+    "p50": 244.26880800456274,
+    "p95": 584.474176983349
+  }
+}

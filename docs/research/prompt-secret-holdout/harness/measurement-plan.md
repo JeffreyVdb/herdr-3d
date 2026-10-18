@@ -1,0 +1,9 @@
+Frozen before executing the detector in phase 2:
+
+* Leave all frozen artifacts and detector files unchanged; access Scan only through an external Go test overlay.
+* Clean 16 KiB diagnostic: repeat ASCII `build: asset compilation completed successfully; cache hit\n` and slice to exactly 16,384 bytes. It is excluded from frozen accuracy counts.
+* Persistent binary, 10 warmups per each of the 34 exact-limit cases, then 100 round-robin scans per case. Python perf_counter_ns measures RPC round trip, including evaluator pipe/JSON overhead; Go time.Now monotonic scan duration is recorded separately. Neither is product IPC or complete-pipeline latency.
+* Same 10 warmups and 100 repetitions for clean diagnostic, separately labelled. Fixed configuration GOMAXPROCS=4, GOTOOLCHAIN=local, no provider/network verification by harness.
+* Separate fresh isolated binary for four simultaneous workers, 100 scans per worker cycling exact-limit texts; no backlog, one synchronous scan at a time per worker. Record monotonic Go durations and Linux RUSAGE_SELF maximum RSS, with /proc/self/status idle loaded baseline. Peak-minus-current-baseline is conservative and includes runtime allocations, not a causal allocation measurement. Also record baseline high-water mark.
+* Ten fresh processes: first Scan initialization time and Python process-launch-through-response duration, no build time. Absolute RSS includes entire Go test runtime and harness; no subtraction. RUSAGE_SELF excludes child processes; detector binary starts no children in this harness. Python driver and compiler are outside isolated detector RSS.
+* Exact one-to-one endpoints decide recall; overlaps remain visible even alongside an exact candidate. Distinguish undercoverage (partial), containing span (overbroad), crossing span (partial and overextended), misses. Union coverage and raw/decoded source-slice agreements are independent diagnostics. Actual file materialization remains unmeasured.

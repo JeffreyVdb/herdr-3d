@@ -1,0 +1,3295 @@
+{
+  "gitleaks+gliner-pii-small-v1.0@0.3": {
+    "metrics": {
+      "exact_tp": 28,
+      "exact_fp": 50,
+      "exact_fn": 8,
+      "exact_precision": 0.358974358974359,
+      "exact_recall": 0.7777777777777778,
+      "fully_covered": 29,
+      "secrets": 36,
+      "partial_only": 7,
+      "negative_prompts_flagged": 19,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 13
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "predictions": {
+      "github-assignment": [
+        [
+          0,
+          12
+        ],
+        [
+          14,
+          54
+        ]
+      ],
+      "github-prose": [
+        [
+          4,
+          44
+        ]
+      ],
+      "github-fine": [
+        [
+          19,
+          112
+        ]
+      ],
+      "aws-pair": [
+        [
+          0,
+          17
+        ],
+        [
+          18,
+          60
+        ],
+        [
+          61,
+          101
+        ]
+      ],
+      "openai": [
+        [
+          15,
+          143
+        ]
+      ],
+      "stripe": [
+        [
+          22,
+          54
+        ]
+      ],
+      "slack": [
+        [
+          17,
+          72
+        ]
+      ],
+      "gitlab": [
+        [
+          21,
+          47
+        ]
+      ],
+      "npm": [
+        [
+          13,
+          22
+        ],
+        [
+          23,
+          63
+        ]
+      ],
+      "hf": [
+        [
+          0,
+          8
+        ],
+        [
+          9,
+          46
+        ]
+      ],
+      "generic-prose": [
+        [
+          15,
+          51
+        ]
+      ],
+      "generic-assignment": [
+        [
+          0,
+          16
+        ],
+        [
+          18,
+          58
+        ]
+      ],
+      "bearer": [
+        [
+          31,
+          73
+        ]
+      ],
+      "password-prose": [
+        [
+          25,
+          35
+        ]
+      ],
+      "passphrase": [
+        [
+          17,
+          43
+        ]
+      ],
+      "short-password": [
+        [
+          16,
+          21
+        ]
+      ],
+      "punctuation": [
+        [
+          21,
+          28
+        ],
+        [
+          43,
+          46
+        ]
+      ],
+      "json": [
+        [
+          42,
+          74
+        ],
+        [
+          86,
+          88
+        ]
+      ],
+      "env": [
+        [
+          34,
+          43
+        ],
+        [
+          55,
+          87
+        ]
+      ],
+      "url": [
+        [
+          26,
+          32
+        ],
+        [
+          33,
+          41
+        ],
+        [
+          58,
+          62
+        ]
+      ],
+      "query-token": [
+        [
+          46,
+          78
+        ]
+      ],
+      "jwt": [
+        [
+          22,
+          148
+        ]
+      ],
+      "pem": [
+        [
+          22,
+          396
+        ]
+      ],
+      "multiline-token": [
+        [
+          38,
+          95
+        ]
+      ],
+      "repeat": [
+        [
+          11,
+          43
+        ],
+        [
+          78,
+          110
+        ]
+      ],
+      "two-secrets": [
+        [
+          16,
+          24
+        ],
+        [
+          44,
+          80
+        ]
+      ],
+      "unicode-context": [
+        [
+          21,
+          27
+        ],
+        [
+          28,
+          33
+        ],
+        [
+          35,
+          42
+        ]
+      ],
+      "unicode-secret": [
+        [
+          16,
+          20
+        ],
+        [
+          22,
+          28
+        ]
+      ],
+      "bare-token": [
+        [
+          4,
+          44
+        ]
+      ],
+      "bare-password": [
+        [
+          4,
+          12
+        ]
+      ],
+      "long-8k": [
+        [
+          8627,
+          8643
+        ]
+      ],
+      "long-16k": [
+        [
+          17024,
+          17064
+        ]
+      ],
+      "negative-01": [],
+      "negative-02": [
+        [
+          22,
+          25
+        ],
+        [
+          26,
+          30
+        ],
+        [
+          31,
+          35
+        ],
+        [
+          36,
+          41
+        ],
+        [
+          50,
+          62
+        ]
+      ],
+      "negative-03": [
+        [
+          17,
+          29
+        ]
+      ],
+      "negative-04": [
+        [
+          26,
+          43
+        ]
+      ],
+      "negative-05": [
+        [
+          14,
+          23
+        ]
+      ],
+      "negative-06": [
+        [
+          43,
+          50
+        ],
+        [
+          52,
+          59
+        ]
+      ],
+      "negative-07": [
+        [
+          24,
+          88
+        ]
+      ],
+      "negative-08": [
+        [
+          13,
+          53
+        ]
+      ],
+      "negative-09": [
+        [
+          18,
+          54
+        ]
+      ],
+      "negative-10": [
+        [
+          8,
+          25
+        ],
+        [
+          37,
+          47
+        ]
+      ],
+      "negative-11": [],
+      "negative-12": [
+        [
+          35,
+          39
+        ]
+      ],
+      "negative-13": [
+        [
+          38,
+          106
+        ]
+      ],
+      "negative-14": [
+        [
+          4,
+          21
+        ]
+      ],
+      "negative-15": [
+        [
+          6,
+          11
+        ],
+        [
+          14,
+          22
+        ],
+        [
+          23,
+          35
+        ],
+        [
+          37,
+          49
+        ]
+      ],
+      "negative-16": [
+        [
+          16,
+          22
+        ],
+        [
+          23,
+          28
+        ],
+        [
+          43,
+          58
+        ]
+      ],
+      "negative-17": [
+        [
+          18,
+          31
+        ]
+      ],
+      "negative-18": [
+        [
+          16,
+          19
+        ]
+      ],
+      "negative-19": [],
+      "negative-20": [
+        [
+          14,
+          20
+        ]
+      ],
+      "negative-21": [
+        [
+          31,
+          37
+        ]
+      ],
+      "negative-22": [
+        [
+          28,
+          64
+        ]
+      ]
+    }
+  },
+  "gitleaks+gliner-pii-small-v1.0@0.5": {
+    "metrics": {
+      "exact_tp": 27,
+      "exact_fp": 27,
+      "exact_fn": 9,
+      "exact_precision": 0.5,
+      "exact_recall": 0.75,
+      "fully_covered": 28,
+      "secrets": 36,
+      "partial_only": 6,
+      "negative_prompts_flagged": 16,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 12,
+          "covered": 12
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "predictions": {
+      "github-assignment": [
+        [
+          14,
+          54
+        ]
+      ],
+      "github-prose": [
+        [
+          4,
+          44
+        ]
+      ],
+      "github-fine": [
+        [
+          19,
+          112
+        ]
+      ],
+      "aws-pair": [
+        [
+          18,
+          60
+        ],
+        [
+          61,
+          101
+        ]
+      ],
+      "openai": [
+        [
+          15,
+          143
+        ]
+      ],
+      "stripe": [
+        [
+          22,
+          54
+        ]
+      ],
+      "slack": [
+        [
+          17,
+          72
+        ]
+      ],
+      "gitlab": [
+        [
+          21,
+          47
+        ]
+      ],
+      "npm": [
+        [
+          23,
+          63
+        ]
+      ],
+      "hf": [
+        [
+          9,
+          46
+        ]
+      ],
+      "generic-prose": [
+        [
+          15,
+          51
+        ]
+      ],
+      "generic-assignment": [
+        [
+          18,
+          58
+        ]
+      ],
+      "bearer": [
+        [
+          31,
+          73
+        ]
+      ],
+      "password-prose": [
+        [
+          25,
+          35
+        ]
+      ],
+      "passphrase": [
+        [
+          17,
+          43
+        ]
+      ],
+      "short-password": [
+        [
+          16,
+          21
+        ]
+      ],
+      "punctuation": [
+        [
+          21,
+          28
+        ]
+      ],
+      "json": [
+        [
+          42,
+          74
+        ]
+      ],
+      "env": [
+        [
+          34,
+          43
+        ],
+        [
+          55,
+          87
+        ]
+      ],
+      "url": [
+        [
+          58,
+          62
+        ]
+      ],
+      "query-token": [
+        [
+          46,
+          78
+        ]
+      ],
+      "jwt": [
+        [
+          22,
+          148
+        ]
+      ],
+      "pem": [
+        [
+          22,
+          396
+        ]
+      ],
+      "multiline-token": [
+        [
+          38,
+          95
+        ]
+      ],
+      "repeat": [
+        [
+          11,
+          43
+        ],
+        [
+          78,
+          110
+        ]
+      ],
+      "two-secrets": [
+        [
+          44,
+          80
+        ]
+      ],
+      "unicode-context": [
+        [
+          21,
+          27
+        ]
+      ],
+      "unicode-secret": [
+        [
+          16,
+          20
+        ]
+      ],
+      "bare-token": [
+        [
+          4,
+          44
+        ]
+      ],
+      "bare-password": [
+        [
+          4,
+          12
+        ]
+      ],
+      "long-8k": [
+        [
+          8627,
+          8643
+        ]
+      ],
+      "long-16k": [
+        [
+          17024,
+          17064
+        ]
+      ],
+      "negative-01": [],
+      "negative-02": [],
+      "negative-03": [
+        [
+          17,
+          29
+        ]
+      ],
+      "negative-04": [
+        [
+          26,
+          43
+        ]
+      ],
+      "negative-05": [
+        [
+          14,
+          23
+        ]
+      ],
+      "negative-06": [
+        [
+          43,
+          50
+        ],
+        [
+          52,
+          59
+        ]
+      ],
+      "negative-07": [
+        [
+          24,
+          88
+        ]
+      ],
+      "negative-08": [
+        [
+          13,
+          53
+        ]
+      ],
+      "negative-09": [
+        [
+          18,
+          54
+        ]
+      ],
+      "negative-10": [
+        [
+          37,
+          47
+        ]
+      ],
+      "negative-11": [],
+      "negative-12": [
+        [
+          35,
+          39
+        ]
+      ],
+      "negative-13": [
+        [
+          38,
+          106
+        ]
+      ],
+      "negative-14": [
+        [
+          4,
+          21
+        ]
+      ],
+      "negative-15": [
+        [
+          6,
+          11
+        ],
+        [
+          14,
+          22
+        ],
+        [
+          23,
+          35
+        ]
+      ],
+      "negative-16": [
+        [
+          16,
+          22
+        ]
+      ],
+      "negative-17": [
+        [
+          18,
+          31
+        ]
+      ],
+      "negative-18": [],
+      "negative-19": [],
+      "negative-20": [
+        [
+          14,
+          20
+        ]
+      ],
+      "negative-21": [],
+      "negative-22": [
+        [
+          28,
+          64
+        ]
+      ]
+    }
+  },
+  "gitleaks+gliner-pii-small-v1.0@0.7": {
+    "metrics": {
+      "exact_tp": 25,
+      "exact_fp": 11,
+      "exact_fn": 11,
+      "exact_precision": 0.6944444444444444,
+      "exact_recall": 0.6944444444444444,
+      "fully_covered": 26,
+      "secrets": 36,
+      "partial_only": 1,
+      "negative_prompts_flagged": 9,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 10,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 11,
+          "covered": 11
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 0,
+          "covered": 0
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "predictions": {
+      "github-assignment": [
+        [
+          14,
+          54
+        ]
+      ],
+      "github-prose": [
+        [
+          4,
+          44
+        ]
+      ],
+      "github-fine": [
+        [
+          19,
+          112
+        ]
+      ],
+      "aws-pair": [
+        [
+          18,
+          60
+        ],
+        [
+          61,
+          101
+        ]
+      ],
+      "openai": [
+        [
+          15,
+          143
+        ]
+      ],
+      "stripe": [
+        [
+          22,
+          54
+        ]
+      ],
+      "slack": [
+        [
+          17,
+          72
+        ]
+      ],
+      "gitlab": [
+        [
+          21,
+          47
+        ]
+      ],
+      "npm": [
+        [
+          23,
+          63
+        ]
+      ],
+      "hf": [
+        [
+          9,
+          46
+        ]
+      ],
+      "generic-prose": [
+        [
+          15,
+          51
+        ]
+      ],
+      "generic-assignment": [
+        [
+          18,
+          58
+        ]
+      ],
+      "bearer": [
+        [
+          31,
+          73
+        ]
+      ],
+      "password-prose": [],
+      "passphrase": [
+        [
+          17,
+          43
+        ]
+      ],
+      "short-password": [],
+      "punctuation": [],
+      "json": [
+        [
+          42,
+          74
+        ]
+      ],
+      "env": [
+        [
+          55,
+          87
+        ]
+      ],
+      "url": [],
+      "query-token": [
+        [
+          46,
+          78
+        ]
+      ],
+      "jwt": [
+        [
+          22,
+          148
+        ]
+      ],
+      "pem": [
+        [
+          22,
+          396
+        ]
+      ],
+      "multiline-token": [
+        [
+          38,
+          95
+        ]
+      ],
+      "repeat": [
+        [
+          11,
+          43
+        ],
+        [
+          78,
+          110
+        ]
+      ],
+      "two-secrets": [
+        [
+          44,
+          80
+        ]
+      ],
+      "unicode-context": [],
+      "unicode-secret": [
+        [
+          16,
+          20
+        ]
+      ],
+      "bare-token": [],
+      "bare-password": [],
+      "long-8k": [
+        [
+          8627,
+          8643
+        ]
+      ],
+      "long-16k": [
+        [
+          17024,
+          17064
+        ]
+      ],
+      "negative-01": [],
+      "negative-02": [],
+      "negative-03": [
+        [
+          17,
+          29
+        ]
+      ],
+      "negative-04": [
+        [
+          26,
+          43
+        ]
+      ],
+      "negative-05": [],
+      "negative-06": [],
+      "negative-07": [
+        [
+          24,
+          88
+        ]
+      ],
+      "negative-08": [],
+      "negative-09": [
+        [
+          18,
+          54
+        ]
+      ],
+      "negative-10": [],
+      "negative-11": [],
+      "negative-12": [],
+      "negative-13": [
+        [
+          38,
+          106
+        ]
+      ],
+      "negative-14": [
+        [
+          4,
+          21
+        ]
+      ],
+      "negative-15": [],
+      "negative-16": [],
+      "negative-17": [
+        [
+          18,
+          31
+        ]
+      ],
+      "negative-18": [],
+      "negative-19": [],
+      "negative-20": [
+        [
+          14,
+          20
+        ]
+      ],
+      "negative-21": [],
+      "negative-22": [
+        [
+          28,
+          64
+        ]
+      ]
+    }
+  },
+  "gitleaks+gliner2-privacy-filter-PII-multi@0.3": {
+    "metrics": {
+      "exact_tp": 28,
+      "exact_fp": 38,
+      "exact_fn": 8,
+      "exact_precision": 0.42424242424242425,
+      "exact_recall": 0.7777777777777778,
+      "fully_covered": 31,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 15,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "predictions": {
+      "github-assignment": [
+        [
+          14,
+          54
+        ]
+      ],
+      "github-prose": [
+        [
+          4,
+          44
+        ]
+      ],
+      "github-fine": [
+        [
+          19,
+          112
+        ]
+      ],
+      "aws-pair": [
+        [
+          18,
+          38
+        ],
+        [
+          61,
+          101
+        ]
+      ],
+      "openai": [
+        [
+          15,
+          143
+        ]
+      ],
+      "stripe": [
+        [
+          22,
+          54
+        ]
+      ],
+      "slack": [
+        [
+          17,
+          72
+        ]
+      ],
+      "gitlab": [
+        [
+          21,
+          47
+        ]
+      ],
+      "npm": [
+        [
+          13,
+          22
+        ],
+        [
+          23,
+          63
+        ]
+      ],
+      "hf": [
+        [
+          0,
+          8
+        ],
+        [
+          9,
+          46
+        ]
+      ],
+      "generic-prose": [
+        [
+          15,
+          51
+        ]
+      ],
+      "generic-assignment": [
+        [
+          18,
+          58
+        ]
+      ],
+      "bearer": [
+        [
+          24,
+          73
+        ]
+      ],
+      "password-prose": [
+        [
+          25,
+          36
+        ]
+      ],
+      "passphrase": [
+        [
+          17,
+          43
+        ]
+      ],
+      "short-password": [
+        [
+          16,
+          21
+        ]
+      ],
+      "punctuation": [
+        [
+          41,
+          46
+        ]
+      ],
+      "json": [
+        [
+          26,
+          39
+        ],
+        [
+          42,
+          74
+        ],
+        [
+          77,
+          83
+        ],
+        [
+          86,
+          88
+        ]
+      ],
+      "env": [
+        [
+          34,
+          44
+        ],
+        [
+          45,
+          87
+        ]
+      ],
+      "url": [],
+      "query-token": [],
+      "jwt": [
+        [
+          15,
+          148
+        ]
+      ],
+      "pem": [
+        [
+          9,
+          20
+        ],
+        [
+          22,
+          396
+        ]
+      ],
+      "multiline-token": [
+        [
+          38,
+          66
+        ],
+        [
+          67,
+          95
+        ]
+      ],
+      "repeat": [
+        [
+          11,
+          43
+        ],
+        [
+          78,
+          110
+        ]
+      ],
+      "two-secrets": [
+        [
+          16,
+          24
+        ],
+        [
+          44,
+          80
+        ]
+      ],
+      "unicode-context": [
+        [
+          21,
+          33
+        ]
+      ],
+      "unicode-secret": [
+        [
+          16,
+          29
+        ]
+      ],
+      "bare-token": [
+        [
+          4,
+          44
+        ]
+      ],
+      "bare-password": [
+        [
+          4,
+          12
+        ]
+      ],
+      "long-8k": [
+        [
+          8627,
+          8643
+        ]
+      ],
+      "long-16k": [
+        [
+          17016,
+          17023
+        ],
+        [
+          17024,
+          17064
+        ]
+      ],
+      "negative-01": [
+        [
+          12,
+          22
+        ]
+      ],
+      "negative-02": [
+        [
+          9,
+          15
+        ],
+        [
+          50,
+          62
+        ]
+      ],
+      "negative-03": [
+        [
+          17,
+          29
+        ]
+      ],
+      "negative-04": [
+        [
+          17,
+          44
+        ]
+      ],
+      "negative-05": [
+        [
+          14,
+          24
+        ]
+      ],
+      "negative-06": [
+        [
+          52,
+          59
+        ]
+      ],
+      "negative-07": [
+        [
+          4,
+          11
+        ],
+        [
+          24,
+          88
+        ]
+      ],
+      "negative-08": [
+        [
+          6,
+          12
+        ],
+        [
+          13,
+          53
+        ],
+        [
+          62,
+          72
+        ]
+      ],
+      "negative-09": [],
+      "negative-10": [
+        [
+          17,
+          25
+        ]
+      ],
+      "negative-11": [],
+      "negative-12": [],
+      "negative-13": [
+        [
+          26,
+          37
+        ],
+        [
+          38,
+          106
+        ]
+      ],
+      "negative-14": [
+        [
+          4,
+          21
+        ]
+      ],
+      "negative-15": [
+        [
+          6,
+          11
+        ],
+        [
+          14,
+          35
+        ],
+        [
+          44,
+          49
+        ]
+      ],
+      "negative-16": [
+        [
+          7,
+          22
+        ],
+        [
+          50,
+          58
+        ]
+      ],
+      "negative-17": [
+        [
+          18,
+          31
+        ]
+      ],
+      "negative-18": [],
+      "negative-19": [],
+      "negative-20": [],
+      "negative-21": [
+        [
+          14,
+          21
+        ],
+        [
+          31,
+          42
+        ]
+      ],
+      "negative-22": []
+    }
+  },
+  "gitleaks+gliner2-privacy-filter-PII-multi@0.5": {
+    "metrics": {
+      "exact_tp": 28,
+      "exact_fp": 27,
+      "exact_fn": 8,
+      "exact_precision": 0.509090909090909,
+      "exact_recall": 0.7777777777777778,
+      "fully_covered": 31,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 13,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "predictions": {
+      "github-assignment": [
+        [
+          14,
+          54
+        ]
+      ],
+      "github-prose": [
+        [
+          4,
+          44
+        ]
+      ],
+      "github-fine": [
+        [
+          19,
+          112
+        ]
+      ],
+      "aws-pair": [
+        [
+          18,
+          38
+        ],
+        [
+          61,
+          101
+        ]
+      ],
+      "openai": [
+        [
+          15,
+          143
+        ]
+      ],
+      "stripe": [
+        [
+          22,
+          54
+        ]
+      ],
+      "slack": [
+        [
+          17,
+          72
+        ]
+      ],
+      "gitlab": [
+        [
+          21,
+          47
+        ]
+      ],
+      "npm": [
+        [
+          23,
+          63
+        ]
+      ],
+      "hf": [
+        [
+          9,
+          46
+        ]
+      ],
+      "generic-prose": [
+        [
+          15,
+          51
+        ]
+      ],
+      "generic-assignment": [
+        [
+          18,
+          58
+        ]
+      ],
+      "bearer": [
+        [
+          24,
+          73
+        ]
+      ],
+      "password-prose": [
+        [
+          25,
+          36
+        ]
+      ],
+      "passphrase": [
+        [
+          17,
+          43
+        ]
+      ],
+      "short-password": [
+        [
+          16,
+          21
+        ]
+      ],
+      "punctuation": [
+        [
+          41,
+          46
+        ]
+      ],
+      "json": [
+        [
+          26,
+          39
+        ],
+        [
+          42,
+          74
+        ],
+        [
+          86,
+          88
+        ]
+      ],
+      "env": [
+        [
+          34,
+          44
+        ],
+        [
+          45,
+          87
+        ]
+      ],
+      "url": [],
+      "query-token": [],
+      "jwt": [
+        [
+          15,
+          148
+        ]
+      ],
+      "pem": [
+        [
+          9,
+          20
+        ],
+        [
+          22,
+          396
+        ]
+      ],
+      "multiline-token": [
+        [
+          38,
+          66
+        ],
+        [
+          67,
+          95
+        ]
+      ],
+      "repeat": [
+        [
+          11,
+          43
+        ],
+        [
+          78,
+          110
+        ]
+      ],
+      "two-secrets": [
+        [
+          16,
+          24
+        ],
+        [
+          44,
+          80
+        ]
+      ],
+      "unicode-context": [
+        [
+          21,
+          33
+        ]
+      ],
+      "unicode-secret": [
+        [
+          16,
+          29
+        ]
+      ],
+      "bare-token": [
+        [
+          4,
+          44
+        ]
+      ],
+      "bare-password": [
+        [
+          4,
+          12
+        ]
+      ],
+      "long-8k": [
+        [
+          8627,
+          8643
+        ]
+      ],
+      "long-16k": [
+        [
+          17024,
+          17064
+        ]
+      ],
+      "negative-01": [
+        [
+          12,
+          22
+        ]
+      ],
+      "negative-02": [
+        [
+          50,
+          62
+        ]
+      ],
+      "negative-03": [
+        [
+          17,
+          29
+        ]
+      ],
+      "negative-04": [
+        [
+          26,
+          43
+        ]
+      ],
+      "negative-05": [
+        [
+          14,
+          24
+        ]
+      ],
+      "negative-06": [
+        [
+          52,
+          59
+        ]
+      ],
+      "negative-07": [
+        [
+          24,
+          88
+        ]
+      ],
+      "negative-08": [
+        [
+          13,
+          53
+        ],
+        [
+          62,
+          72
+        ]
+      ],
+      "negative-09": [],
+      "negative-10": [],
+      "negative-11": [],
+      "negative-12": [],
+      "negative-13": [
+        [
+          26,
+          37
+        ]
+      ],
+      "negative-14": [
+        [
+          4,
+          21
+        ]
+      ],
+      "negative-15": [
+        [
+          6,
+          11
+        ],
+        [
+          14,
+          35
+        ],
+        [
+          44,
+          49
+        ]
+      ],
+      "negative-16": [
+        [
+          7,
+          15
+        ],
+        [
+          50,
+          58
+        ]
+      ],
+      "negative-17": [
+        [
+          18,
+          31
+        ]
+      ],
+      "negative-18": [],
+      "negative-19": [],
+      "negative-20": [],
+      "negative-21": [],
+      "negative-22": []
+    }
+  },
+  "gitleaks+gliner2-privacy-filter-PII-multi@0.7": {
+    "metrics": {
+      "exact_tp": 30,
+      "exact_fp": 14,
+      "exact_fn": 6,
+      "exact_precision": 0.6818181818181818,
+      "exact_recall": 0.8333333333333334,
+      "fully_covered": 31,
+      "secrets": 36,
+      "partial_only": 2,
+      "negative_prompts_flagged": 8,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 15,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "predictions": {
+      "github-assignment": [
+        [
+          14,
+          54
+        ]
+      ],
+      "github-prose": [
+        [
+          4,
+          44
+        ]
+      ],
+      "github-fine": [
+        [
+          19,
+          112
+        ]
+      ],
+      "aws-pair": [
+        [
+          18,
+          38
+        ],
+        [
+          61,
+          101
+        ]
+      ],
+      "openai": [
+        [
+          15,
+          143
+        ]
+      ],
+      "stripe": [
+        [
+          22,
+          54
+        ]
+      ],
+      "slack": [
+        [
+          17,
+          72
+        ]
+      ],
+      "gitlab": [
+        [
+          21,
+          47
+        ]
+      ],
+      "npm": [
+        [
+          23,
+          63
+        ]
+      ],
+      "hf": [
+        [
+          9,
+          46
+        ]
+      ],
+      "generic-prose": [
+        [
+          15,
+          51
+        ]
+      ],
+      "generic-assignment": [
+        [
+          18,
+          58
+        ]
+      ],
+      "bearer": [
+        [
+          24,
+          73
+        ]
+      ],
+      "password-prose": [
+        [
+          25,
+          36
+        ]
+      ],
+      "passphrase": [
+        [
+          17,
+          43
+        ]
+      ],
+      "short-password": [
+        [
+          16,
+          21
+        ]
+      ],
+      "punctuation": [],
+      "json": [
+        [
+          42,
+          74
+        ]
+      ],
+      "env": [
+        [
+          34,
+          44
+        ],
+        [
+          55,
+          87
+        ]
+      ],
+      "url": [],
+      "query-token": [],
+      "jwt": [
+        [
+          22,
+          148
+        ]
+      ],
+      "pem": [
+        [
+          9,
+          20
+        ],
+        [
+          22,
+          396
+        ]
+      ],
+      "multiline-token": [
+        [
+          38,
+          66
+        ],
+        [
+          67,
+          95
+        ]
+      ],
+      "repeat": [
+        [
+          11,
+          43
+        ],
+        [
+          78,
+          110
+        ]
+      ],
+      "two-secrets": [
+        [
+          16,
+          24
+        ],
+        [
+          44,
+          80
+        ]
+      ],
+      "unicode-context": [
+        [
+          21,
+          33
+        ]
+      ],
+      "unicode-secret": [
+        [
+          16,
+          29
+        ]
+      ],
+      "bare-token": [
+        [
+          4,
+          44
+        ]
+      ],
+      "bare-password": [
+        [
+          4,
+          12
+        ]
+      ],
+      "long-8k": [
+        [
+          8627,
+          8643
+        ]
+      ],
+      "long-16k": [
+        [
+          17024,
+          17064
+        ]
+      ],
+      "negative-01": [
+        [
+          12,
+          22
+        ]
+      ],
+      "negative-02": [],
+      "negative-03": [
+        [
+          17,
+          29
+        ]
+      ],
+      "negative-04": [
+        [
+          26,
+          43
+        ]
+      ],
+      "negative-05": [
+        [
+          14,
+          24
+        ]
+      ],
+      "negative-06": [
+        [
+          52,
+          59
+        ]
+      ],
+      "negative-07": [],
+      "negative-08": [
+        [
+          13,
+          53
+        ],
+        [
+          62,
+          72
+        ]
+      ],
+      "negative-09": [],
+      "negative-10": [],
+      "negative-11": [],
+      "negative-12": [],
+      "negative-13": [],
+      "negative-14": [
+        [
+          4,
+          21
+        ]
+      ],
+      "negative-15": [],
+      "negative-16": [],
+      "negative-17": [
+        [
+          18,
+          31
+        ]
+      ],
+      "negative-18": [],
+      "negative-19": [],
+      "negative-20": [],
+      "negative-21": [],
+      "negative-22": []
+    }
+  },
+  "gitleaks+gliner2-privacy-filter-PII-multi-chunked@0.3": {
+    "metrics": {
+      "exact_tp": 28,
+      "exact_fp": 38,
+      "exact_fn": 8,
+      "exact_precision": 0.42424242424242425,
+      "exact_recall": 0.7777777777777778,
+      "fully_covered": 31,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 15,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 2,
+          "covered": 2
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "predictions": {
+      "github-assignment": [
+        [
+          14,
+          54
+        ]
+      ],
+      "github-prose": [
+        [
+          4,
+          44
+        ]
+      ],
+      "github-fine": [
+        [
+          19,
+          112
+        ]
+      ],
+      "aws-pair": [
+        [
+          18,
+          38
+        ],
+        [
+          61,
+          101
+        ]
+      ],
+      "openai": [
+        [
+          15,
+          143
+        ]
+      ],
+      "stripe": [
+        [
+          22,
+          54
+        ]
+      ],
+      "slack": [
+        [
+          17,
+          72
+        ]
+      ],
+      "gitlab": [
+        [
+          21,
+          47
+        ]
+      ],
+      "npm": [
+        [
+          13,
+          22
+        ],
+        [
+          23,
+          63
+        ]
+      ],
+      "hf": [
+        [
+          0,
+          8
+        ],
+        [
+          9,
+          46
+        ]
+      ],
+      "generic-prose": [
+        [
+          15,
+          51
+        ]
+      ],
+      "generic-assignment": [
+        [
+          18,
+          58
+        ]
+      ],
+      "bearer": [
+        [
+          24,
+          73
+        ]
+      ],
+      "password-prose": [
+        [
+          25,
+          36
+        ]
+      ],
+      "passphrase": [
+        [
+          17,
+          43
+        ]
+      ],
+      "short-password": [
+        [
+          16,
+          21
+        ]
+      ],
+      "punctuation": [
+        [
+          41,
+          46
+        ]
+      ],
+      "json": [
+        [
+          26,
+          39
+        ],
+        [
+          42,
+          74
+        ],
+        [
+          77,
+          83
+        ],
+        [
+          86,
+          88
+        ]
+      ],
+      "env": [
+        [
+          34,
+          44
+        ],
+        [
+          45,
+          87
+        ]
+      ],
+      "url": [],
+      "query-token": [],
+      "jwt": [
+        [
+          15,
+          148
+        ]
+      ],
+      "pem": [
+        [
+          9,
+          20
+        ],
+        [
+          22,
+          396
+        ]
+      ],
+      "multiline-token": [
+        [
+          38,
+          66
+        ],
+        [
+          67,
+          95
+        ]
+      ],
+      "repeat": [
+        [
+          11,
+          43
+        ],
+        [
+          78,
+          110
+        ]
+      ],
+      "two-secrets": [
+        [
+          16,
+          24
+        ],
+        [
+          44,
+          80
+        ]
+      ],
+      "unicode-context": [
+        [
+          21,
+          33
+        ]
+      ],
+      "unicode-secret": [
+        [
+          16,
+          29
+        ]
+      ],
+      "bare-token": [
+        [
+          4,
+          44
+        ]
+      ],
+      "bare-password": [
+        [
+          4,
+          12
+        ]
+      ],
+      "long-8k": [
+        [
+          8627,
+          8643
+        ]
+      ],
+      "long-16k": [
+        [
+          17016,
+          17023
+        ],
+        [
+          17024,
+          17064
+        ]
+      ],
+      "negative-01": [
+        [
+          12,
+          22
+        ]
+      ],
+      "negative-02": [
+        [
+          9,
+          15
+        ],
+        [
+          50,
+          62
+        ]
+      ],
+      "negative-03": [
+        [
+          17,
+          29
+        ]
+      ],
+      "negative-04": [
+        [
+          17,
+          44
+        ]
+      ],
+      "negative-05": [
+        [
+          14,
+          24
+        ]
+      ],
+      "negative-06": [
+        [
+          52,
+          59
+        ]
+      ],
+      "negative-07": [
+        [
+          4,
+          11
+        ],
+        [
+          24,
+          88
+        ]
+      ],
+      "negative-08": [
+        [
+          6,
+          12
+        ],
+        [
+          13,
+          53
+        ],
+        [
+          62,
+          72
+        ]
+      ],
+      "negative-09": [],
+      "negative-10": [
+        [
+          17,
+          25
+        ]
+      ],
+      "negative-11": [],
+      "negative-12": [],
+      "negative-13": [
+        [
+          26,
+          37
+        ],
+        [
+          38,
+          106
+        ]
+      ],
+      "negative-14": [
+        [
+          4,
+          21
+        ]
+      ],
+      "negative-15": [
+        [
+          6,
+          11
+        ],
+        [
+          14,
+          35
+        ],
+        [
+          44,
+          49
+        ]
+      ],
+      "negative-16": [
+        [
+          7,
+          22
+        ],
+        [
+          50,
+          58
+        ]
+      ],
+      "negative-17": [
+        [
+          18,
+          31
+        ]
+      ],
+      "negative-18": [],
+      "negative-19": [],
+      "negative-20": [],
+      "negative-21": [
+        [
+          14,
+          21
+        ],
+        [
+          31,
+          42
+        ]
+      ],
+      "negative-22": []
+    }
+  },
+  "gitleaks+gliner2-privacy-filter-PII-multi-chunked@0.5": {
+    "metrics": {
+      "exact_tp": 27,
+      "exact_fp": 28,
+      "exact_fn": 9,
+      "exact_precision": 0.4909090909090909,
+      "exact_recall": 0.75,
+      "fully_covered": 30,
+      "secrets": 36,
+      "partial_only": 4,
+      "negative_prompts_flagged": 13,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 13,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "predictions": {
+      "github-assignment": [
+        [
+          14,
+          54
+        ]
+      ],
+      "github-prose": [
+        [
+          4,
+          44
+        ]
+      ],
+      "github-fine": [
+        [
+          19,
+          112
+        ]
+      ],
+      "aws-pair": [
+        [
+          18,
+          38
+        ],
+        [
+          61,
+          101
+        ]
+      ],
+      "openai": [
+        [
+          15,
+          143
+        ]
+      ],
+      "stripe": [
+        [
+          22,
+          54
+        ]
+      ],
+      "slack": [
+        [
+          17,
+          72
+        ]
+      ],
+      "gitlab": [
+        [
+          21,
+          47
+        ]
+      ],
+      "npm": [
+        [
+          23,
+          63
+        ]
+      ],
+      "hf": [
+        [
+          9,
+          46
+        ]
+      ],
+      "generic-prose": [
+        [
+          15,
+          51
+        ]
+      ],
+      "generic-assignment": [
+        [
+          18,
+          58
+        ]
+      ],
+      "bearer": [
+        [
+          24,
+          73
+        ]
+      ],
+      "password-prose": [
+        [
+          25,
+          36
+        ]
+      ],
+      "passphrase": [
+        [
+          17,
+          43
+        ]
+      ],
+      "short-password": [
+        [
+          16,
+          21
+        ]
+      ],
+      "punctuation": [
+        [
+          41,
+          46
+        ]
+      ],
+      "json": [
+        [
+          26,
+          39
+        ],
+        [
+          42,
+          74
+        ],
+        [
+          86,
+          88
+        ]
+      ],
+      "env": [
+        [
+          34,
+          44
+        ],
+        [
+          45,
+          87
+        ]
+      ],
+      "url": [],
+      "query-token": [],
+      "jwt": [
+        [
+          15,
+          148
+        ]
+      ],
+      "pem": [
+        [
+          9,
+          20
+        ],
+        [
+          22,
+          396
+        ]
+      ],
+      "multiline-token": [
+        [
+          38,
+          66
+        ],
+        [
+          67,
+          95
+        ]
+      ],
+      "repeat": [
+        [
+          11,
+          43
+        ],
+        [
+          78,
+          110
+        ]
+      ],
+      "two-secrets": [
+        [
+          16,
+          24
+        ],
+        [
+          44,
+          80
+        ]
+      ],
+      "unicode-context": [
+        [
+          21,
+          33
+        ]
+      ],
+      "unicode-secret": [
+        [
+          16,
+          29
+        ]
+      ],
+      "bare-token": [
+        [
+          4,
+          44
+        ]
+      ],
+      "bare-password": [
+        [
+          4,
+          12
+        ]
+      ],
+      "long-8k": [
+        [
+          8627,
+          8637
+        ]
+      ],
+      "long-16k": [
+        [
+          17024,
+          17064
+        ]
+      ],
+      "negative-01": [
+        [
+          12,
+          22
+        ]
+      ],
+      "negative-02": [
+        [
+          50,
+          62
+        ]
+      ],
+      "negative-03": [
+        [
+          17,
+          29
+        ]
+      ],
+      "negative-04": [
+        [
+          26,
+          43
+        ]
+      ],
+      "negative-05": [
+        [
+          14,
+          24
+        ]
+      ],
+      "negative-06": [
+        [
+          52,
+          59
+        ]
+      ],
+      "negative-07": [
+        [
+          24,
+          88
+        ]
+      ],
+      "negative-08": [
+        [
+          13,
+          53
+        ],
+        [
+          62,
+          72
+        ]
+      ],
+      "negative-09": [],
+      "negative-10": [],
+      "negative-11": [],
+      "negative-12": [],
+      "negative-13": [
+        [
+          26,
+          37
+        ]
+      ],
+      "negative-14": [
+        [
+          4,
+          21
+        ]
+      ],
+      "negative-15": [
+        [
+          6,
+          11
+        ],
+        [
+          14,
+          35
+        ],
+        [
+          44,
+          49
+        ]
+      ],
+      "negative-16": [
+        [
+          7,
+          15
+        ],
+        [
+          50,
+          58
+        ]
+      ],
+      "negative-17": [
+        [
+          18,
+          31
+        ]
+      ],
+      "negative-18": [],
+      "negative-19": [],
+      "negative-20": [],
+      "negative-21": [],
+      "negative-22": []
+    }
+  },
+  "gitleaks+gliner2-privacy-filter-PII-multi-chunked@0.7": {
+    "metrics": {
+      "exact_tp": 29,
+      "exact_fp": 15,
+      "exact_fn": 7,
+      "exact_precision": 0.6590909090909091,
+      "exact_recall": 0.8055555555555556,
+      "fully_covered": 30,
+      "secrets": 36,
+      "partial_only": 3,
+      "negative_prompts_flagged": 8,
+      "negative_prompts": 22,
+      "groups": {
+        "provider": {
+          "secrets": 11,
+          "exact": 11,
+          "covered": 11
+        },
+        "context": {
+          "secrets": 19,
+          "exact": 15,
+          "covered": 16
+        },
+        "multiline": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "unlabeled": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "long": {
+          "secrets": 2,
+          "exact": 1,
+          "covered": 1
+        },
+        "negative": {
+          "secrets": 0,
+          "exact": 0,
+          "covered": 0
+        }
+      }
+    },
+    "predictions": {
+      "github-assignment": [
+        [
+          14,
+          54
+        ]
+      ],
+      "github-prose": [
+        [
+          4,
+          44
+        ]
+      ],
+      "github-fine": [
+        [
+          19,
+          112
+        ]
+      ],
+      "aws-pair": [
+        [
+          18,
+          38
+        ],
+        [
+          61,
+          101
+        ]
+      ],
+      "openai": [
+        [
+          15,
+          143
+        ]
+      ],
+      "stripe": [
+        [
+          22,
+          54
+        ]
+      ],
+      "slack": [
+        [
+          17,
+          72
+        ]
+      ],
+      "gitlab": [
+        [
+          21,
+          47
+        ]
+      ],
+      "npm": [
+        [
+          23,
+          63
+        ]
+      ],
+      "hf": [
+        [
+          9,
+          46
+        ]
+      ],
+      "generic-prose": [
+        [
+          15,
+          51
+        ]
+      ],
+      "generic-assignment": [
+        [
+          18,
+          58
+        ]
+      ],
+      "bearer": [
+        [
+          24,
+          73
+        ]
+      ],
+      "password-prose": [
+        [
+          25,
+          36
+        ]
+      ],
+      "passphrase": [
+        [
+          17,
+          43
+        ]
+      ],
+      "short-password": [
+        [
+          16,
+          21
+        ]
+      ],
+      "punctuation": [],
+      "json": [
+        [
+          42,
+          74
+        ]
+      ],
+      "env": [
+        [
+          34,
+          44
+        ],
+        [
+          55,
+          87
+        ]
+      ],
+      "url": [],
+      "query-token": [],
+      "jwt": [
+        [
+          22,
+          148
+        ]
+      ],
+      "pem": [
+        [
+          9,
+          20
+        ],
+        [
+          22,
+          396
+        ]
+      ],
+      "multiline-token": [
+        [
+          38,
+          66
+        ],
+        [
+          67,
+          95
+        ]
+      ],
+      "repeat": [
+        [
+          11,
+          43
+        ],
+        [
+          78,
+          110
+        ]
+      ],
+      "two-secrets": [
+        [
+          16,
+          24
+        ],
+        [
+          44,
+          80
+        ]
+      ],
+      "unicode-context": [
+        [
+          21,
+          33
+        ]
+      ],
+      "unicode-secret": [
+        [
+          16,
+          29
+        ]
+      ],
+      "bare-token": [
+        [
+          4,
+          44
+        ]
+      ],
+      "bare-password": [
+        [
+          4,
+          12
+        ]
+      ],
+      "long-8k": [
+        [
+          8627,
+          8637
+        ]
+      ],
+      "long-16k": [
+        [
+          17024,
+          17064
+        ]
+      ],
+      "negative-01": [
+        [
+          12,
+          22
+        ]
+      ],
+      "negative-02": [],
+      "negative-03": [
+        [
+          17,
+          29
+        ]
+      ],
+      "negative-04": [
+        [
+          26,
+          43
+        ]
+      ],
+      "negative-05": [
+        [
+          14,
+          24
+        ]
+      ],
+      "negative-06": [
+        [
+          52,
+          59
+        ]
+      ],
+      "negative-07": [],
+      "negative-08": [
+        [
+          13,
+          53
+        ],
+        [
+          62,
+          72
+        ]
+      ],
+      "negative-09": [],
+      "negative-10": [],
+      "negative-11": [],
+      "negative-12": [],
+      "negative-13": [],
+      "negative-14": [
+        [
+          4,
+          21
+        ]
+      ],
+      "negative-15": [],
+      "negative-16": [],
+      "negative-17": [
+        [
+          18,
+          31
+        ]
+      ],
+      "negative-18": [],
+      "negative-19": [],
+      "negative-20": [],
+      "negative-21": [],
+      "negative-22": []
+    }
+  }
+}
