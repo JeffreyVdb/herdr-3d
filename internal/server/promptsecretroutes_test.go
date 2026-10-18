@@ -1421,7 +1421,7 @@ func TestPromptSecretsWorkerHandoffAgent(t *testing.T) {
 		t.Fatalf("ack %s", m.raw)
 	}
 	checkRouteSent(t, res.Request.Instruction)
-	prompt, _, _ := ab.mustRequest(t, "w2:p1")
+	prompt, reqPath, _ := ab.mustRequest(t, "w2:p1")
 	if !strings.Contains(prompt, res.Request.Instruction) {
 		t.Fatalf("request prompt %q", prompt)
 	}
@@ -1438,6 +1438,16 @@ func TestPromptSecretsWorkerHandoffAgent(t *testing.T) {
 	}
 	waitFor(t, "no new file", func() bool { return len(protectedFiles(t, dir)) == files })
 	traceFree(t, ab.st, ab.db, []*client{c}, routeSentinel)
+	// Round 5: the handoff the agent files records the files its
+	// instruction named, for a worker hired from it.
+	appendTo(t, ab.codex, codexRequestTurn(prompt, "Saved it."))
+	time.Sleep(150 * time.Millisecond) // the turn ended, herdr idle: the file has its grace
+	writeDoc(t, reqPath, "# Deploy notes\n\nDone.\n")
+	ev := eventWhere(c, func(ev proto.Event) bool { return ev.T == proto.EvHandoffAdded })
+	named, err := ab.st.HandoffSecretsAt(context.Background(), ev.Handoff.Path)
+	if err != nil || len(named) != 2 {
+		t.Fatalf("the handoff names %+v %v", named, err)
+	}
 }
 
 // worker.handoff (llm): the model reads the instruction with its
@@ -1475,6 +1485,15 @@ func TestPromptSecretsWorkerHandoffLLM(t *testing.T) {
 		t.Fatalf("w1 owns %+v", rows)
 	}
 	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
+	// Round 5: the filed handoff records the files its instruction named.
+	w := upsertFor(c, id, llmJobState(store.HandoffJobFiled))
+	filed, err := lb.st.HandoffByID(context.Background(), w.LLMHandoff.Handoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if named, err := lb.st.HandoffSecretsAt(context.Background(), filed.Path); err != nil || len(named) != 2 {
+		t.Fatalf("the handoff names %+v %v", named, err)
+	}
 }
 
 // A wrap-up armed with a review whose prompt then waits on the worker's
