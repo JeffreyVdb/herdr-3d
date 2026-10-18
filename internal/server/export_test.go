@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -46,4 +47,20 @@ func (h *Hub) FloorsKnown(ctx context.Context) bool {
 func (h *Hub) ListedSessions(ctx context.Context) []string {
 	l, _ := query(ctx, h, func() []string { return sortedKeys(h.sc.listed) })
 	return l
+}
+
+// HoldScanSlots takes every prompt secrets scan slot (#108 review B2): a
+// command's gate waits for one until release.
+func (h *Hub) HoldScanSlots() (release func()) {
+	for range maxSecretScans {
+		h.ps.slots <- struct{}{}
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			for range maxSecretScans {
+				<-h.ps.slots
+			}
+		})
+	}
 }

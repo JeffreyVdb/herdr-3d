@@ -152,6 +152,9 @@ type WorkerAnswerAsyncArgs struct {
 	Thread  string           `json:"thread"`
 	Batch   string           `json:"batch"`
 	Answers []AsyncAnswerArg `json:"answers"`
+	// Secrets (#108 round 2, optional): a review per answer
+	// ("answers[N].answer") with possible secrets.
+	Secrets SecretsReviews `json:"secrets,omitempty"`
 }
 
 // AsyncAnswerArg answers one question of the batch.

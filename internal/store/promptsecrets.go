@@ -34,6 +34,15 @@ const migrationPromptSecrets = `CREATE TABLE prompt_secrets_settings (
 		PRIMARY KEY (dir, name)
 	);`
 
+// migrationPromptSecretsReviewed (#108 round 2) records on a stored prompt
+// (a schedule's, a hire preset's) that it was reviewed with the switch on
+// and every possible secret in it left as typed: a digest of the rule set,
+// the text and its candidates (promptsecret.StoredDigest; the prompt is
+// stored as plain text beside it, so the digest tells nothing more). An
+// empty one is none: saved before the switch was on, or while it was off.
+const migrationPromptSecretsReviewed = `ALTER TABLE schedule ADD COLUMN secrets_review TEXT NOT NULL DEFAULT '';
+	ALTER TABLE hire_preset ADD COLUMN secrets_review TEXT NOT NULL DEFAULT '';`
+
 // LoadPromptSecrets returns whether prompts are reviewed for secrets
 // (never set: off).
 func (s *Store) LoadPromptSecrets(ctx context.Context) (enabled bool, err error) {
@@ -113,11 +122,11 @@ func (s *Store) secretOwners(ctx context.Context, q string, args ...any) ([]Secr
 	return out, rows.Err()
 }
 
-// ClaimSecretOwner gives a pending owner's directories to a worker, for
-// good (no expiry): how many there were.
-func (s *Store) ClaimSecretOwner(ctx context.Context, token, workerID string) (int, error) {
+// ClaimSecretOwner gives a pending owner's directories that have not
+// expired by now to a worker, for good (no expiry): how many there were.
+func (s *Store) ClaimSecretOwner(ctx context.Context, token, workerID string, now time.Time) (int, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE prompt_secret_owner SET kind = 'worker', owner_id = ?, expires_at = NULL
-		WHERE kind = 'pending' AND owner_id = ?`, workerID, token)
+		WHERE kind = 'pending' AND owner_id = ? AND (expires_at IS NULL OR expires_at > ?)`, workerID, token, now.UnixMilli())
 	if err != nil {
 		return 0, err
 	}

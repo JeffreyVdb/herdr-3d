@@ -94,6 +94,9 @@ type ScheduleSpec struct {
 	HandoffPath string `json:"handoff_path,omitempty"`
 	// Source is set on create only (absent: manual).
 	Source *ScheduleSource `json:"source,omitempty"`
+	// Secrets (#108 round 2, optional): the review of Prompt's possible
+	// secrets; a stored prompt's decisions all ignore.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // ScheduleCreateArgs are the args of schedule.create.
@@ -110,6 +113,10 @@ type ScheduleUpdateArgs struct {
 // schedule.retry and schedule.dismiss.
 type ScheduleArgs struct {
 	ID string `json:"id"`
+	// Secrets (#108, schedule.retry and schedule.run_now only, optional):
+	// the review of the stored prompt, as a save's: its decisions all
+	// ignore. The schedule keeps its record before it fires.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // Schedule is one schedule as clients see it: every schedule.* command's

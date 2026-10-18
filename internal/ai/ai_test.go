@@ -899,6 +899,49 @@ func TestConcurrencyIsLimitedAcrossConsumersAndRoles(t *testing.T) {
 	}
 }
 
+// A call's gate (WithGate) is asked once the call holds a slot: a call
+// that waited behind another is refused by a gate that closed meanwhile,
+// with the gate's error, and nothing is sent (#108).
+func TestGateIsAskedOnceTheCallHoldsASlot(t *testing.T) {
+	jev, llm := newJev(t), newOpenAI(t, "")
+	s := newSvc(t, jev, ai.Options{MaxConcurrent: 1})
+	configureClassifier(t, s)
+	configureLLM(t, s, llm.URL)
+	llm.chats.Store(0)
+	jev.delay = 300 * time.Millisecond
+	go s.Classifier().Classify(context.Background(), nil, "q") // holds the one slot
+	time.Sleep(50 * time.Millisecond)
+	closed := errors.New("closed")
+	var shut atomic.Bool
+	gate := func() error {
+		if shut.Load() {
+			return closed
+		}
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.LLM().Complete(ai.WithGate(context.Background(), gate), ai.Request{Messages: []ai.Message{{Role: "user", Content: "x"}}})
+		done <- err
+	}()
+	time.Sleep(50 * time.Millisecond) // it waits for the slot
+	shut.Store(true)
+	if err := <-done; err != closed {
+		t.Fatalf("%v, want the gate's error", err)
+	}
+	if n := llm.chats.Load(); n != 0 {
+		t.Fatalf("%d chat calls", n)
+	}
+	// An open gate lets the call go.
+	shut.Store(false)
+	if _, err := s.LLM().Complete(ai.WithGate(context.Background(), gate), ai.Request{Messages: []ai.Message{{Role: "user", Content: "x"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if n := llm.chats.Load(); n != 1 {
+		t.Fatalf("%d chat calls", n)
+	}
+}
+
 func TestTimeoutsAndAtMostOneRetry(t *testing.T) {
 	jev, llm := newJev(t), newOpenAI(t, "")
 	s := newSvc(t, jev, ai.Options{ClassifierTimeout: 80 * time.Millisecond, LLMTimeout: 80 * time.Millisecond})

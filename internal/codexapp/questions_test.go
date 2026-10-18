@@ -283,6 +283,41 @@ func TestQuestionsAdmittedAnswerIsStaleOnceAnotherBegan(t *testing.T) {
 	}
 }
 
+// A ticket with its texts replaced (#108: protected) keeps its admission:
+// a duplicate admitted before the first was begun stays stale.
+func TestTicketWithTextsKeepsItsAdmission(t *testing.T) {
+	q := NewQuestions("th")
+	q.Observe("t1", asyncItem("call_3", contextQ), OriginLive)
+	one, _ := q.Admit("call_3", []Reply{{Index: 0, Text: "a"}})
+	two, _ := q.Admit("call_3", []Reply{{Index: 0, Text: "a"}})
+	if _, err := one.WithTexts([]string{"a", "b"}); !errors.Is(err, ErrBadAnswer) {
+		t.Fatalf("two texts for one answer: %v", err)
+	}
+	one, err := one.WithTexts([]string{"a with [secret in file /x]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, _ = two.WithTexts([]string{"a with [secret in file /y]"})
+	answers, err := q.BeginAdmitted(one)
+	if err != nil || len(answers) != 1 || answers[0].Answer != "a with [secret in file /x]" {
+		t.Fatalf("%+v %v", answers, err)
+	}
+	q.Sent("call_3", []int{0}, "t1", false)
+	q.TurnEnded("t1")
+	if _, err := q.BeginAdmitted(two); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("a duplicate admitted before the send: %v", err)
+	}
+	// The new texts are checked as any: a blank one is refused.
+	retry, err := q.Admit("call_3", []Reply{{Index: 0, Text: "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, _ = retry.WithTexts([]string{" "})
+	if _, err := q.BeginAdmitted(retry); !errors.Is(err, ErrBadAnswer) {
+		t.Fatalf("a blank text: %v", err)
+	}
+}
+
 func TestQuestionsUnconfirmedSendStaysSent(t *testing.T) {
 	q := NewQuestions("th")
 	q.Observe("t1", asyncItem("call_3", contextQ), OriginLive)

@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -44,6 +45,10 @@ const (
 	// DefaultSecretReuseTTL is how long a sent review's files are reused by
 	// the identical submission.
 	DefaultSecretReuseTTL = 5 * time.Minute
+	// DefaultSecretPendingTTL is how long a pending owner's files (a hire's,
+	// a preview's: packup.detect, hire.interpret) wait for the worker that
+	// claims them; unclaimed, the janitor removes them after it.
+	DefaultSecretPendingTTL = 30 * time.Minute
 	// maxSecretScans bounds the scans and writes running at once.
 	maxSecretScans = 4
 )
@@ -53,6 +58,7 @@ var (
 	errSecretsReviewStale    = errors.New("secrets review stale")
 	errSecretsReviewOff      = errors.New("prompt secrets are not reviewed")
 	errSecretsUnavailable    = errors.New("prompt secrets cannot be protected")
+	errSecretsReviewStored   = errors.New("a stored prompt keeps no protected secret")
 )
 
 // promptSecretsErrorCode maps the feature's errors to their codes ("": none).
@@ -66,22 +72,27 @@ func promptSecretsErrorCode(err error) string {
 		return proto.ErrSecretsReviewOff
 	case errors.Is(err, errSecretsUnavailable):
 		return proto.ErrSecretsUnavailable
+	case errors.Is(err, errSecretsReviewStored):
+		return proto.ErrSecretsReviewStored
 	}
 	return ""
 }
 
 // promptSecretsState is the hub's part: the switch and the reviewer (hub
-// goroutine), the files (nil: unavailable, err says why), the scan slots,
-// and the reviews sent lately (any goroutine, under mu).
+// goroutine; cur is the reviewer too, for any goroutine), the files (nil:
+// unavailable, err says why), the scan slots, and the reviews sent lately
+// (any goroutine, under mu).
 type promptSecretsState struct {
 	enabled bool
 	rev     *promptsecret.Reviewer
+	cur     atomic.Pointer[promptsecret.Reviewer]
 	files   *secretfiles.Files
 	err     error
 	slots   chan struct{}
 
-	mu    sync.Mutex
-	reuse map[string]secretReuse // reuseKey → the files a sent review made
+	mu      sync.Mutex
+	reuse   map[string]secretReuse    // reuseKey → the files a sent review made
+	pending map[string]*secretPending // round 2: a preview's hand-over token → it
 }
 
 // secretReuse is a sent review's files, for its identical retry.
@@ -108,7 +119,11 @@ func (h *Hub) initPromptSecrets(ctx context.Context) error {
 	if h.opts.SecretReuseTTL <= 0 {
 		h.opts.SecretReuseTTL = DefaultSecretReuseTTL
 	}
-	h.ps = promptSecretsState{enabled: on, slots: make(chan struct{}, maxSecretScans), reuse: map[string]secretReuse{}}
+	if h.opts.SecretPendingTTL <= 0 {
+		h.opts.SecretPendingTTL = DefaultSecretPendingTTL
+	}
+	h.ps = promptSecretsState{enabled: on, slots: make(chan struct{}, maxSecretScans), reuse: map[string]secretReuse{},
+		pending: map[string]*secretPending{}}
 	if h.opts.SecretsDir == "" {
 		h.ps.err = secretfiles.ErrUnavailable
 	} else if f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log}); err != nil {
@@ -118,8 +133,38 @@ func (h *Hub) initPromptSecrets(ctx context.Context) error {
 	} else {
 		h.ps.files = f
 	}
-	h.ps.rev = h.newReviewer()
+	h.setReviewer()
 	return nil
+}
+
+// setReviewer makes a new reviewer current (hub goroutine): every review
+// made before it is stale.
+func (h *Hub) setReviewer() {
+	h.ps.rev = h.newReviewer()
+	h.ps.cur.Store(h.ps.rev)
+}
+
+// errSettingChanged refuses a review made before the switch last changed.
+var errSettingChanged = fmt.Errorf("%w: the setting changed: review again", errSecretsReviewStale)
+
+// reviewCurrent refuses a review made under rev once the switch changed
+// (any goroutine): checked last before what it reviewed goes on to an
+// agent or a language model, after any wait (#108 round 2).
+func (h *Hub) reviewCurrent(rev *promptsecret.Reviewer) error {
+	if h.ps.cur.Load() != rev {
+		return errSettingChanged
+	}
+	return nil
+}
+
+// reviewHolds is reviewCurrent for a text that goes with or without a
+// review (rev nil: none, nothing to check), where it goes to the terminal:
+// right before its first byte, after any wait (review B2, pass 2).
+func (h *Hub) reviewHolds(rev *promptsecret.Reviewer) error {
+	if rev == nil {
+		return nil
+	}
+	return h.reviewCurrent(rev)
 }
 
 // newReviewer is a reviewer with a fresh random key (every review made
@@ -195,7 +240,7 @@ func (h *Hub) startPromptSecrets(ctx context.Context, c *Client, cmd proto.Comma
 		}
 		if *a.Enabled != h.ps.enabled {
 			h.ps.enabled = *a.Enabled
-			h.ps.rev = h.newReviewer()
+			h.setReviewer()
 			h.seq++
 			msg := mustJSON(proto.PromptSecretsUpdate{T: proto.EvPromptSecretsUpdate, Seq: h.seq, PromptSecrets: *h.promptSecretsView()})
 			h.ring.add(h.seq, msg)
@@ -310,26 +355,12 @@ func (h *Hub) protectText(ctx context.Context, rev *promptsecret.Reviewer, owner
 	if err != nil {
 		return protected{}, err
 	}
-	if review == nil {
-		if len(scan.Found) == 0 {
-			return protected{text: text}, nil
-		}
-		return protected{}, fmt.Errorf("%w: %d possible secrets: review them (prompt_secrets.scan) and send again with secrets",
-			errSecretsReviewRequired, len(scan.Found))
-	}
-	ds, err := decisions(review)
-	if err != nil {
-		return protected{}, err
-	}
-	plan, err := rev.CheckScan(text, scan, review.Revision, ds)
-	var re *promptsecret.ReviewError
+	plan, err := reviewPlan(rev, text, scan, review)
 	switch {
-	case errors.As(err, &re) && re.Stale:
-		return protected{}, fmt.Errorf("%w: %s", errSecretsReviewStale, re.Reason)
 	case err != nil:
-		return protected{}, fmt.Errorf("%w: %v", errSecretsReviewRequired, err)
+		return protected{}, err
 	case len(plan.Protect) == 0:
-		return protected{text: text}, nil // everything ignored: sent as typed
+		return protected{text: text}, nil // nothing found, or everything ignored: sent as typed
 	}
 	if h.ps.files == nil {
 		return protected{}, fmt.Errorf("%w: %v", errSecretsUnavailable, h.ps.err)
@@ -353,6 +384,32 @@ func (h *Hub) protectText(ctx context.Context, rev *promptsecret.Reviewer, owner
 	}
 	p.text = promptsecret.Replace(text, plan.Protect, refs)
 	return p, nil
+}
+
+// reviewPlan checks a text's review against the bridge's scan of it: an
+// empty plan when nothing was found and there is no review; no review with
+// candidates is secrets_review_required, a review of another scan stale.
+func reviewPlan(rev *promptsecret.Reviewer, text string, scan promptsecret.Review, review *proto.SecretsReview) (promptsecret.Plan, error) {
+	if review == nil {
+		if len(scan.Found) == 0 {
+			return promptsecret.Plan{}, nil
+		}
+		return promptsecret.Plan{}, fmt.Errorf("%w: %d possible secrets: review them (prompt_secrets.scan) and send again with secrets",
+			errSecretsReviewRequired, len(scan.Found))
+	}
+	ds, err := decisions(review)
+	if err != nil {
+		return promptsecret.Plan{}, err
+	}
+	plan, err := rev.CheckScan(text, scan, review.Revision, ds)
+	var re *promptsecret.ReviewError
+	switch {
+	case errors.As(err, &re) && re.Stale:
+		return promptsecret.Plan{}, fmt.Errorf("%w: %s", errSecretsReviewStale, re.Reason)
+	case err != nil:
+		return promptsecret.Plan{}, fmt.Errorf("%w: %v", errSecretsReviewRequired, err)
+	}
+	return plan, nil
 }
 
 // writeSecrets writes a review's secrets to files of owner, in a scan slot
@@ -469,10 +526,20 @@ func (h *Hub) settleHandoff(p protected, owner secretfiles.Owner) func(err error
 // (hub goroutine): the cheap refusals now, then on the worker's lane, in
 // order with its other input, the gate, then (back on the hub goroutine)
 // the prompt's own checks and side effects on the protected text, then the
-// send.
+// send. Round 2: a text packup.detect answered as reviewed for this worker
+// (secrets_pending) needs no review again; on the lane, that hand-over is
+// checked again and its files become the worker's before anything is
+// sent (expired while the prompt waited: stale, nothing sent).
 func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(promptHandoff) error, end inputEnd) error {
 	if !h.ps.enabled { // a tab from before the switch went off
 		return fmt.Errorf("%w: prompt secrets are no longer reviewed: send the prompt again", errSecretsReviewStale)
+	}
+	var tok secretPending
+	if a.SecretsPending != "" {
+		var err error
+		if tok, err = h.pendingFor(a.SecretsPending, h.ps.rev, a.ID, false); err != nil {
+			return err
+		}
 	}
 	if err := scannable(a.Text, "text"); err != nil {
 		return err
@@ -492,14 +559,23 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 	}
 	rev, typed, owner := h.ps.rev, a.Text, secretfiles.Worker(a.ID)
 	h.queueLane(ctx, a.ID, func(ctx context.Context) {
-		p, err := h.protectText(ctx, rev, owner, time.Time{}, a.Text, a.Secrets)
+		p := protected{text: a.Text}
+		var err error
+		if a.Secrets != nil || !tok.reviewed(a.Text) {
+			p, err = h.protectText(ctx, rev, owner, time.Time{}, a.Text, a.Secrets)
+		}
+		if err == nil && a.SecretsPending != "" { // the worker's from now on, sent or not
+			if err = h.claimPending(ctx, a.SecretsPending, a.ID, rev); err != nil {
+				h.unprotect(ctx, p)
+			}
+		}
 		if err != nil {
 			end(ctx, nil, err)
 			return
 		}
 		sent := a
-		sent.Text, sent.Secrets = p.text, nil
-		r := promptReview{typed: typed, protected: len(p.files)}
+		sent.Text, sent.Secrets, sent.SecretsPending = p.text, nil, ""
+		r := promptReview{typed: typed, protected: len(p.files), rev: rev}
 		if len(p.files) > 0 {
 			r.settle = h.settleHandoff(p, owner)
 		}
@@ -510,7 +586,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 		}
 		pl, err := query(ctx, h, func() planned {
 			if h.ps.rev != rev { // the switch changed meanwhile: the review is stale
-				return planned{err: fmt.Errorf("%w: the setting changed: review again", errSecretsReviewStale)}
+				return planned{err: errSettingChanged}
 			}
 			work, err := h.planPrompt(ctx, sent, r, handoff)
 			if err != nil || work == nil {

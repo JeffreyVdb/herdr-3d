@@ -22,7 +22,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 )
@@ -58,11 +60,16 @@ type wrapUp struct {
 	state           string // wrapArming, proto.WrapUpArmed, proto.WrapUpNeedsYou
 	reason          string
 	checking        bool // arming: the arm-time check of the tree runs
-	// Arming: the command, its client and audit row, and the text to prompt.
+	// Arming: the command, its client and audit row, and the text to prompt
+	// (#108: and what the review of its prompt made, settled when the arm
+	// ends: kept once the prompt went, else its files removed; the reviewer
+	// it was made under, nil: none).
 	client  *Client
 	cmd     proto.Command
 	auditID int64
 	text    string
+	prot    *protected
+	rev     *promptsecret.Reviewer
 	// by is who armed it, for the send home's audit row.
 	by string
 	// The tracker's last look at the ended turn: its line count, since when.
@@ -306,10 +313,15 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	footer := transcript.WrapUpFooter(strings.Repeat("0", 16))
-	room := herdr.MaxMessage - len(footer) - 2
-	if strings.TrimSpace(a.Prompt) == "" || len(a.Prompt) > room || !herdr.ValidMessage(a.Prompt) {
-		return bad("prompt must be 1-%d bytes of UTF-8 without NUL, got %d bytes", room, len(a.Prompt))
+	if err := wrapUpPromptOK("", a.Prompt); err != nil {
+		return err
+	}
+	var rev *promptsecret.Reviewer // #108: the prompt goes through the gate while arming
+	if h.gated(a.Secrets != nil) {
+		if err := h.stillOn(); err != nil {
+			return err
+		}
+		rev = h.ps.rev
 	}
 	w, f, err := h.fireWorker(a.ID)
 	if err != nil {
@@ -333,7 +345,7 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 	case w.Status == statusBlocked:
 		return fmt.Errorf("%w: %s is blocked: answer its question first", errInvalidState, w.Name)
 	}
-	if err := checkTyped(w.AgentKind, a.Prompt, room, "prompt"); err != nil { // #95
+	if err := wrapUpPromptOK(w.AgentKind, a.Prompt); err != nil { // #95
 		return err
 	}
 	if old := h.wrapups[a.ID]; old != nil && old.state != proto.WrapUpNeedsYou {
@@ -352,25 +364,46 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 	}
 	prev := h.wrapups[a.ID]
 	wu := &wrapUp{id: w.ID, session: w.Session, worktree: op.choice, offset: -1, state: wrapArming, checking: true,
-		client: c, cmd: cmd, auditID: auditID, by: c.name, lines: -1}
+		client: c, cmd: cmd, auditID: auditID, by: c.name, lines: -1, rev: rev}
 	h.wrapups[w.ID] = wu
 	h.log.Info("wrap-up arming", "client", c.name, "req_id", cmd.ReqID, "session", w.Session, "worker", w.ID, "worktree", op.choice)
+	kind := w.AgentKind
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
+		// #108: the prompt through the gate first (its files the worker's),
+		// its limits checked again with the references.
+		prompt, prot := a.Prompt, protected{}
+		var perr error
+		if rev != nil {
+			if prot, perr = h.protectText(ctx, rev, secretfiles.Worker(wu.id), time.Time{}, a.Prompt, a.Secrets); perr == nil {
+				prompt = prot.text
+				if perr = wrapUpPromptOK(kind, prompt); perr != nil {
+					h.unprotect(ctx, prot)
+					prot = protected{}
+				}
+			}
+		}
 		// The first of the checks before a worktree is removed: clean and
 		// pushed now, and held by no schedule (again after CLEAN, and twice
 		// in runFire).
 		var why, held string
 		var cerr error
-		if op.choice != proto.FireKeep {
+		if op.choice != proto.FireKeep && perr == nil {
 			why, held, cerr = h.fireCheck(ctx, op, &fireReport{})
 		}
+		kept := false
 		_ = h.doWait(ctx, func() {
 			if h.wrapups[wu.id] != wu {
 				return // cancelled meanwhile
 			}
 			switch {
+			case perr != nil:
+				h.failArm(ctx, wu, prev, perr)
+				return
+			case rev != nil && h.ps.rev != rev:
+				h.failArm(ctx, wu, prev, errSettingChanged)
+				return
 			case cerr != nil:
 				h.failArm(ctx, wu, prev, fmt.Errorf("%w: %v", errFireFailed, cerr))
 				return
@@ -383,11 +416,32 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 			}
 			wu.checking = false
 			wu.nonce = randHex(8)
-			wu.text = a.Prompt + "\n\n" + transcript.WrapUpFooter(wu.nonce)
+			wu.text = prompt + "\n\n" + transcript.WrapUpFooter(wu.nonce)
+			if len(prot.created) > 0 || prot.key != "" {
+				wu.prot, kept = &prot, true
+			}
 			h.kickUsage()
 		})
+		if !kept {
+			h.unprotect(ctx, prot)
+		}
 	}()
 	return nil
+}
+
+// wrapUpPromptOK checks a wrap-up's prompt (#108: as typed, and again with
+// its references): it fits with the footer, and Claude can type it (kind
+// "": not known yet).
+func wrapUpPromptOK(kind, prompt string) error {
+	footer := transcript.WrapUpFooter(strings.Repeat("0", 16))
+	room := herdr.MaxMessage - len(footer) - 2
+	if strings.TrimSpace(prompt) == "" || len(prompt) > room || !herdr.ValidMessage(prompt) {
+		return bad("prompt must be 1-%d bytes of UTF-8 without NUL, got %d bytes", room, len(prompt))
+	}
+	if kind == "" {
+		return nil
+	}
+	return checkTyped(kind, prompt, room, "prompt")
 }
 
 // failArm ends an arming that failed: the worker's wrap-up is what it was
@@ -405,8 +459,21 @@ func (h *Hub) failArm(ctx context.Context, wu, prev *wrapUp, err error) {
 	h.endArm(ctx, wu, nil, err)
 }
 
-// endArm writes the arm's audit row and replies to its command.
+// endArm writes the arm's audit row and replies to its command. #108: the
+// review's files stay once the prompt went (err nil), else they go.
 func (h *Hub) endArm(ctx context.Context, wu *wrapUp, res *proto.WrapUpResult, err error) {
+	if p := wu.prot; p != nil {
+		wu.prot = nil
+		if err == nil {
+			h.sentReview(*p, secretfiles.Worker(wu.id))
+		} else {
+			h.wg.Add(1)
+			go func() {
+				defer h.wg.Done()
+				h.unprotect(context.Background(), *p)
+			}()
+		}
+	}
 	if wu.client == nil {
 		return
 	}
@@ -503,6 +570,9 @@ func (h *Hub) armed(ctx context.Context, wu *wrapUp, u wrapUpdate) {
 	id, text := wu.id, wu.text
 	h.queueLane(ctx, id, func(ctx context.Context) {
 		t, err := query(ctx, h, func() laneTarget {
+			if wu.rev != nil && h.ps.rev != wu.rev { // #108 review B2: the switch changed while it waited
+				return laneTarget{err: errSettingChanged}
+			}
 			w, _, err := h.termWorker(id)
 			if err != nil {
 				return laneTarget{err: err}
@@ -512,7 +582,7 @@ func (h *Hub) armed(ctx context.Context, wu *wrapUp, u wrapUpdate) {
 		var res any
 		if err == nil {
 			if err = t.err; err == nil {
-				res, err = h.prompt(ctx, proto.WorkerPromptArgs{ID: id, Text: text}, t.session, t.pane)
+				res, err = h.prompt(ctx, proto.WorkerPromptArgs{ID: id, Text: text}, t.session, t.pane, wu.rev)
 			}
 		}
 		if err == nil {

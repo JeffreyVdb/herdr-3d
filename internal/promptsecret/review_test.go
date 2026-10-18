@@ -76,6 +76,32 @@ func TestRevision(t *testing.T) {
 	}
 }
 
+// #108 round 2: a stored prompt's record is the same in every process (no
+// key), and another text, another candidate set or no candidates differ.
+func TestStoredDigest(t *testing.T) {
+	t.Parallel()
+	text := "PASSWORD=Hunter2! and the token is ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"
+	r := promptsecret.NewReviewer(key, own)
+	other := promptsecret.NewReviewer([]byte("another key, 32 bytes long......"), own)
+	d := promptsecret.StoredDigest(text, r.Scan(text))
+	if d != promptsecret.StoredDigest(text, other.Scan(text)) || len(d) < 40 || strings.Contains(d, "Hunter2") {
+		t.Fatalf("digest %q depends on the key or holds the text", d)
+	}
+	if d == r.Scan(text).Revision {
+		t.Fatal("a stored record is a revision")
+	}
+	for _, x := range []string{text + " ", "PASSWORD=Hunter3! and the token is ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"} {
+		if promptsecret.StoredDigest(x, r.Scan(x)) == d {
+			t.Errorf("another text %q, the same digest", x)
+		}
+	}
+	scan := r.Scan(text)
+	scan.Found = scan.Found[:1]
+	if promptsecret.StoredDigest(text, scan) == d {
+		t.Error("another candidate set, the same digest")
+	}
+}
+
 func check(t *testing.T, r *promptsecret.Reviewer, text, rev string, ds ...promptsecret.Decision) (promptsecret.Plan, error) {
 	t.Helper()
 	return r.Check(text, rev, ds)

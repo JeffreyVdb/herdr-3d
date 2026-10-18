@@ -66,6 +66,9 @@ type PackupTestArgs struct {
 type PackupDetectArgs struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
+	// Secrets (#108 round 2, optional): the review of Text's possible
+	// secrets, before the language model reads it.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // PackupDetectResult is packup.detect's ack. Matched false: send the prompt
@@ -77,4 +80,12 @@ type PackupDetectResult struct {
 	Task    string        `json:"task,omitempty"`
 	Removed []PackupRange `json:"removed,omitempty"`
 	Score   float64       `json:"score"`
+	// #108 round 2: Sent is the text the model read (references in place of
+	// the protected secrets; absent: as typed): Removed indexes it, and it
+	// (or Task) is what worker.prompt sends next, with SecretsPending (the
+	// reviewed text needs no review again; the files become the worker's).
+	// Protected: how many ranges went to files.
+	Sent           string `json:"sent,omitempty"`
+	Protected      int    `json:"protected,omitempty"`
+	SecretsPending string `json:"secrets_pending,omitempty"`
 }

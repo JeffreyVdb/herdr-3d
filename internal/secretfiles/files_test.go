@@ -186,10 +186,24 @@ func TestReleaseAndPendingOwners(t *testing.T) {
 	if err := fx.f.Claim(ctx, p1.ID, "w-3"); err != nil {
 		t.Fatal(err)
 	}
+	// #108 round 2: claimed once only (a token never takes another worker's
+	// files), never an expired one nor one with no files.
+	if err := fx.f.Claim(ctx, p1.ID, "w-4"); !errors.Is(err, secretfiles.ErrNotPending) {
+		t.Fatalf("a second claim: %v", err)
+	}
+	if err := fx.f.Claim(ctx, "w-3", "w-4"); !errors.Is(err, secretfiles.ErrNotPending) {
+		t.Fatalf("a worker's id as a token: %v", err)
+	}
+	if err := fx.f.Claim(ctx, secretfiles.NewPending().ID, "w-4"); !errors.Is(err, secretfiles.ErrNotPending) {
+		t.Fatalf("a token with no files: %v", err)
+	}
 	if err := fx.f.ReleaseExpired(ctx); err != nil || !fx.f.Exists(f1) || !fx.f.Exists(f2) {
 		t.Fatalf("before the expiry: %v", err)
 	}
 	*fx.now = exp
+	if err := fx.f.Claim(ctx, p2.ID, "w-4"); !errors.Is(err, secretfiles.ErrNotPending) {
+		t.Fatalf("an expired owner (not swept yet): %v", err)
+	}
 	if err := fx.f.ReleaseExpired(ctx); err != nil {
 		t.Fatal(err)
 	}

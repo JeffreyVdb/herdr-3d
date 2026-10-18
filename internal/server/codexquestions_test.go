@@ -11,6 +11,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
@@ -30,7 +31,13 @@ var (
 // is never opened.
 func asyncWorker(t *testing.T) (*sharedBridge, proto.HireResult) {
 	t.Helper()
-	sb := startSharedBridge(t, true)
+	return asyncWorkerWith(t, nil)
+}
+
+// asyncWorkerWith is asyncWorker with a tweak of the bridge's options.
+func asyncWorkerWith(t *testing.T, tweak func(*server.Options)) (*sharedBridge, proto.HireResult) {
+	t.Helper()
+	sb := startSharedBridgeWith(t, "", newFakeCodexHost(), true, "", tweak)
 	_, m := sb.c.command(proto.CmdWorkerHire, "a", codexHire(1))
 	a := ackData[proto.HireResult](t, m)
 	sb.fl.update("w1", func(w *world.WorkerObs) { w.AgentSession = asyncThread })

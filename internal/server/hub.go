@@ -239,9 +239,11 @@ type Options struct {
 	// SecretsSweep how often the janitor reconciles the files with the
 	// workers (default DefaultSecretsSweep), SecretReuseTTL how long a sent
 	// review's files serve its identical retry (default
-	// DefaultSecretReuseTTL).
-	SecretsDir                                      string
-	SecretScanTimeout, SecretsSweep, SecretReuseTTL time.Duration
+	// DefaultSecretReuseTTL), and (round 2) SecretPendingTTL how long a
+	// pending owner's files wait for the worker a hire or a preview's
+	// follow-up gives them to (default DefaultSecretPendingTTL).
+	SecretsDir                                                        string
+	SecretScanTimeout, SecretsSweep, SecretReuseTTL, SecretPendingTTL time.Duration
 	// M13 whiteboard: the floors' boards (nil: the whiteboard commands and
 	// routes fail with unsupported), and Drop Zone's data directory for
 	// drops.list ("": drops_unavailable).
@@ -1056,6 +1058,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startHireInterpret
 		case proto.CmdHirePresetCheck: // #95
 			start = h.startHirePresetCheck
+		case proto.CmdHirePresetCreate, proto.CmdHirePresetUpdate, proto.CmdHirePresetDelete: // #93; #108: a prompt is scanned first
+			start = h.startHirePreset
 		case proto.CmdCodexServerGet, proto.CmdCodexServerSet: // #155
 			start = h.startCodexServer
 		case proto.CmdWorkerAnswerAsync: // #156
@@ -1340,9 +1344,6 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 	// M6 launch
 	case proto.CmdPresetCreate, proto.CmdPresetUpdate, proto.CmdPresetDelete:
 		data, err = h.presetCommand(ctx, cmd)
-	// #93 hire presets
-	case proto.CmdHirePresetCreate, proto.CmdHirePresetUpdate, proto.CmdHirePresetDelete:
-		data, err = h.hirePresetCommand(ctx, cmd)
 	default:
 		err = fmt.Errorf("%w: %q", errUnknownCommand, cmd.T)
 	}

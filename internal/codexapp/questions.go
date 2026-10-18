@@ -493,6 +493,20 @@ func (q *Questions) Admit(batch string, replies []Reply) (Ticket, error) {
 	return Ticket{q: q, begun: q.begun, batch: batch, replies: replies}, nil
 }
 
+// WithTexts is t with its replies' texts replaced, in order: the same
+// questions, admitted when t was (#108: the answers with their secrets
+// protected). BeginAdmitted checks the texts as it checks any.
+func (t Ticket) WithTexts(texts []string) (Ticket, error) {
+	if len(texts) != len(t.replies) {
+		return Ticket{}, fmt.Errorf("%w: %d texts for %d answers", ErrBadAnswer, len(texts), len(t.replies))
+	}
+	t.replies = slices.Clone(t.replies)
+	for i := range t.replies {
+		t.replies[i].Text = texts[i]
+	}
+	return t, nil
+}
+
 // BeginAdmitted is Begin of an admitted answer, checked again: it is stale
 // (ErrNotPending) for a question another answer began after it was
 // admitted, whatever came of that one. Two submissions of one pending

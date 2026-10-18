@@ -22,10 +22,13 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
+	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 	"github.com/JeffreyVdb/herdr-3d/internal/usage"
@@ -271,6 +274,68 @@ func previewText(s string, max int) (string, bool) {
 	return s, true
 }
 
+// reviewedHandoff is worker.handoff's instruction (modes agent and llm)
+// through the gate (#108 round 2; hub goroutine), its files the worker's,
+// then the handoff with what it made. The agent's request settles them as
+// a /handoff's does (settleHandoff: kept once its prompt is sent, else
+// removed); an LLM job keeps them once it started (the model reads only
+// the references), and an existing op's answer, which uses none of the
+// text, removes them.
+func (h *Hub) reviewedHandoff(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs) error {
+	if err := h.stillOn(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(a.Instruction) == "" {
+		if a.Secrets != nil {
+			return fmt.Errorf("%w: a review needs the instruction it is of", errSecretsReviewRequired)
+		}
+		return h.startHandoffOf(ctx, c, cmd, a) // nothing typed: the default instruction
+	}
+	if err := scannable(a.Instruction, "instruction"); err != nil {
+		return err
+	}
+	rev, owner := h.ps.rev, secretfiles.Worker(a.Worker)
+	startGated(h, ctx, c, cmd, rev, func(ctx context.Context) (protected, error) {
+		return h.protectText(ctx, rev, owner, time.Time{}, a.Instruction, a.Secrets)
+	}, func(ctx context.Context, p protected) { h.unprotect(ctx, p) }, func(ctx context.Context, p protected) error {
+		b := a
+		b.Instruction, b.Secrets = p.text, nil
+		if a.Mode == proto.HandoffModeAgent {
+			ask := agentAsk{worker: b.Worker, op: b.Op, instruction: b.Instruction, sendHome: b.SendHome, rev: rev,
+				answer: func(r proto.AgentHandoff, existing, _ bool) any {
+					res := proto.WorkerHandoffRequestResult{Request: r, Existing: existing}
+					if !existing {
+						res.Protected = len(p.files)
+					}
+					return res
+				}}
+			if len(p.files) > 0 {
+				ask.settle = h.settleHandoff(p, owner)
+			}
+			return h.startAgentHandoff(ctx, c, cmd, ask)
+		}
+		started := false
+		if err := h.startLLMHandoff(ctx, c, cmd, b, rev, func() { started = true }); err != nil {
+			return err
+		}
+		h.settleHandoff(p, owner)(nil, !started)
+		return nil
+	})
+	return nil
+}
+
+// startHandoffOf is startHandoff's modes agent (#224) and llm (#9) for
+// args read.
+func (h *Hub) startHandoffOf(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs) error {
+	if a.Mode == proto.HandoffModeAgent {
+		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.Worker, op: a.Op, instruction: a.Instruction, sendHome: a.SendHome,
+			answer: func(r proto.AgentHandoff, existing, _ bool) any {
+				return proto.WorkerHandoffRequestResult{Request: r, Existing: existing}
+			}})
+	}
+	return h.startLLMHandoff(ctx, c, cmd, a, nil, nil)
+}
+
 // startHandoffPreview answers worker.handoff_preview: the candidate's text,
 // read back from its transcript off the hub goroutine.
 func (h *Hub) startHandoffPreview(ctx context.Context, c *Client, cmd proto.Command) error {
@@ -329,14 +394,11 @@ func (h *Hub) startHandoff(ctx context.Context, c *Client, cmd proto.Command) er
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if a.Mode == proto.HandoffModeAgent { // #224
-		return h.startAgentHandoff(ctx, c, cmd, agentAsk{worker: a.Worker, op: a.Op, instruction: a.Instruction, sendHome: a.SendHome,
-			answer: func(r proto.AgentHandoff, existing, _ bool) any {
-				return proto.WorkerHandoffRequestResult{Request: r, Existing: existing}
-			}})
-	}
-	if a.Mode == proto.HandoffModeLLM { // #9
-		return h.startLLMHandoff(ctx, c, cmd, a)
+	if a.Mode == proto.HandoffModeAgent || a.Mode == proto.HandoffModeLLM { // #224, #9
+		if h.gated(a.Secrets != nil) { // #108
+			return h.reviewedHandoff(ctx, c, cmd, a)
+		}
+		return h.startHandoffOf(ctx, c, cmd, a)
 	}
 	switch {
 	case a.Mode != proto.HandoffModeLiteral:

@@ -212,6 +212,8 @@ var migrations = []string{
 	// #108: "Review prompt secrets before sending" and the protected files'
 	// owners (never a secret).
 	migrationPromptSecrets,
+	// #108 round 2: a stored prompt's review (schedules, hire presets).
+	migrationPromptSecretsReviewed,
 }
 
 // Fingerprint kinds.

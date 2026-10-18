@@ -39,6 +39,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
@@ -77,13 +78,15 @@ type agentHandoff struct {
 	// checking: the starting checks (catalog, reservation) run.
 	checking bool
 	// Starting: the command, its client and audit row, the text to
-	// prompt, how to answer it and (agentAsk.settle) whom to tell.
+	// prompt, how to answer it, (agentAsk.settle) whom to tell and
+	// (agentAsk.rev) its review.
 	client  *Client
 	cmd     proto.Command
 	auditID int64
 	text    string
 	answer  func(r proto.AgentHandoff, existing bool, queued bool) any
 	settle  func(err error, existing bool)
+	rev     *promptsecret.Reviewer
 	// sending: the lane is sending the request's prompt, so the send's
 	// result settles, not the request's end (settleAgentStart).
 	sending bool
@@ -262,6 +265,9 @@ type agentAsk struct {
 	// reached the terminal (sent, or failed without knowing), the error
 	// when none of it did. Never for a refusal startAgentHandoff returns.
 	settle func(err error, existing bool)
+	// rev (#108, nil: none) is the instruction's review, checked again
+	// right before the request's prompt goes (review B2, pass 2).
+	rev *promptsecret.Reviewer
 }
 
 // agentInstruction is an instruction as sent: trimmed, the default when
@@ -366,7 +372,7 @@ func (h *Hub) startAgentHandoff(ctx context.Context, c *Client, cmd proto.Comman
 	ah := &agentHandoff{req: store.HandoffRequest{Op: a.op, WorkerID: w.ID, Floor: workerFloor(w), Harness: w.AgentKind,
 		AgentSession: w.AgentSession, Offset: -1, Nonce: randHex(8), Instruction: instruction, SendHome: a.sendHome,
 		State: store.HandoffRequestPending, CreatedAt: now.UnixMilli()}, at: now, state: proto.AgentHandoffStarting,
-		checking: true, client: c, cmd: cmd, auditID: auditID, answer: a.answer, settle: a.settle, by: c.name, lines: -1}
+		checking: true, client: c, cmd: cmd, auditID: auditID, answer: a.answer, settle: a.settle, rev: a.rev, by: c.name, lines: -1}
 	h.ah.byOp[a.op] = ah
 	h.ah.byWorker[w.ID] = ah
 	h.publishAgentHandoff(w.ID)
@@ -695,7 +701,9 @@ func (h *Hub) agentSeen(ctx context.Context, u agentUpdate) {
 }
 
 // agentArmed records the offset the tracker took and prompts the agent on
-// its input lane, once more checked to be idle or done.
+// its input lane, once more checked to be idle or done, and (#108 review
+// B2) its instruction's review checked again: the switch changed while the
+// request started or waited, nothing is sent.
 func (h *Hub) agentArmed(ctx context.Context, ah *agentHandoff, u agentUpdate) {
 	if (!u.found || u.offset < 0) && h.opts.Now().Sub(ah.at) < agentHandoffFind {
 		return // not found yet: looked for again soon
@@ -722,6 +730,9 @@ func (h *Hub) agentArmed(ctx context.Context, ah *agentHandoff, u agentUpdate) {
 			case w.Ask != nil || (w.Status != statusIdle && w.Status != statusDone):
 				return laneTarget{err: fmt.Errorf("%w: %s is %s: only an idle or done worker is asked", errInvalidState, w.Name, w.Status)}
 			}
+			if err := h.reviewHolds(ah.rev); err != nil {
+				return laneTarget{err: err}
+			}
 			ah.sending = true
 			return laneTarget{session: w.Session, pane: w.PaneID}
 		})
@@ -730,7 +741,7 @@ func (h *Hub) agentArmed(ctx context.Context, ah *agentHandoff, u agentUpdate) {
 		if err == nil {
 			if err = t.err; err == nil {
 				began = true
-				res, err = h.prompt(ctx, proto.WorkerPromptArgs{ID: id, Text: text}, t.session, t.pane)
+				res, err = h.prompt(ctx, proto.WorkerPromptArgs{ID: id, Text: text}, t.session, t.pane, ah.rev)
 			}
 		}
 		if err == nil {

@@ -69,6 +69,9 @@ var (
 	ErrUnsupported = errors.New("protected prompt secrets need Linux")
 	// ErrBusy: another bridge holds the directory.
 	ErrBusy = errors.New("another bridge holds the protected secrets directory")
+	// ErrNotPending: Claim found no pending owner with files by that token
+	// (claimed already, expired, or it never had one).
+	ErrNotPending = errors.New("no pending protected files by that token")
 )
 
 // DefaultDir is $XDG_RUNTIME_DIR/herdr-world/secrets. Without the variable it
