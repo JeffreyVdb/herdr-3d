@@ -253,6 +253,193 @@ describe('#108 a review', () => {
   });
 });
 
+/**
+ * What must hold after every operation on a review (#108 C1): the marks sorted, non-empty, apart and on code point
+ * boundaries, an ignored candidate on its found range, the prompt drawn from them exactly as typed, and decisions the
+ * bridge accepts (protected ranges and ignored candidates' found ranges never overlap).
+ */
+function expectSound(r: SecretReview, at = ''): void {
+  const marks = r.marks();
+  let end = 0;
+  for (const m of marks) {
+    expect(m.start < m.end && m.start >= end, `${at}: ${m.key} [${m.start},${m.end}) after ${end}`).toBe(true);
+    expect(onBoundary(r.text, m.start) && onBoundary(r.text, m.end), `${at}: ${m.key} splits a pair`).toBe(true);
+    if (m.state === 'ignore') expect([m.start, m.end], `${at}: ignored ${m.key} as found`).toEqual([m.found?.start, m.found?.end]);
+    end = m.end;
+  }
+  // The dialog draws each text run, then each mark's own slice: an overlap would draw a character twice.
+  let drawn = '';
+  let from = 0;
+  for (const m of marks) {
+    drawn += r.text.slice(from, m.start) + r.text.slice(m.start, m.end);
+    from = m.end;
+  }
+  expect(drawn + r.text.slice(from), `${at}: the prompt as drawn`).toBe(r.text);
+  const found = new Map(marks.filter((m) => m.found).map((m) => [m.candidate, m.found as { start: number; end: number }]));
+  const ranges = r
+    .decisions()
+    .map((d) => ('start' in d && d.start !== undefined && d.end !== undefined ? { start: d.start, end: d.end } : (found.get(d.candidate ?? null) as { start: number; end: number })))
+    .sort((a, b) => a.start - b.start);
+  ranges.forEach((x, i) => i && expect(ranges[i - 1]!.end <= x.start, `${at}: decisions overlap at ${x.start}`).toBe(true));
+}
+
+describe('#108 C1: no transition makes two marks overlap', () => {
+  // token=abcdef: c1 is abcdef, [6, 12).
+  const text = 'token=abcdef';
+
+  it('a candidate whose end was shrunk, the freed character marked by hand: Ignore is refused (the mark is named), the prompt still as typed', () => {
+    const r = new SecretReview(text, scanAt(text, ['abcdef']));
+    expect(r.nudge('c1', 'end', -1)).toBe(true);
+    expect(r.mark(11, 12)).toEqual({ ok: true, key: 'm1' });
+    expect(r.ignoreBlocker('c1')?.key).toBe('m1');
+    expect(r.setState('c1', 'ignore')).toBe(false);
+    expect(r.get('c1')).toMatchObject({ state: 'protect', start: 6, end: 11 });
+    expectSound(r, 'refused');
+    expect(r.decisions()).toEqual([
+      { candidate: 'c1', action: 'protect', start: 6, end: 11 },
+      { action: 'protect', start: 11, end: 12 },
+    ]);
+    // The mark taken away, Ignore puts the candidate back on its found range.
+    expect(r.unmark('m1')).toBe(true);
+    expect(r.ignoreBlocker('c1')).toBeNull();
+    expect(r.setState('c1', 'ignore')).toBe(true);
+    expect(r.decisions()).toEqual([{ candidate: 'c1', action: 'ignore' }]);
+    expectSound(r, 'ignored');
+  });
+
+  it('the same with the start: shrunk, the freed character marked before it', () => {
+    const r = new SecretReview(text, scanAt(text, ['abcdef']));
+    expect(r.nudge('c1', 'start', 1)).toBe(true);
+    expect(r.mark(6, 7).ok).toBe(true);
+    expect(r.ignoreBlocker('c1')?.key).toBe('m1');
+    expect(r.setState('c1', 'ignore')).toBe(false);
+    expectSound(r);
+  });
+
+  it('a mark that covers the freed character and more (either side) is in the way too; one beside the found range is not', () => {
+    const t = 'say token=abcdef now';
+    const r = new SecretReview(t, scanAt(t, ['abcdef']));
+    r.nudge('c1', 'end', -1);
+    r.nudge('c1', 'start', 1);
+    expect(r.mark(15, 19).ok).toBe(true); // "f no"
+    expect(r.setState('c1', 'ignore')).toBe(false);
+    r.unmark('m1');
+    expect(r.mark(4, 11).ok).toBe(true); // "token=a"
+    expect(r.ignoreBlocker('c1')?.key).toBe('m2');
+    expect(r.setState('c1', 'ignore')).toBe(false);
+    r.unmark('m2');
+    expect(r.mark(16, 20).ok).toBe(true); // " now": beside it
+    expect(r.mark(0, 3).ok).toBe(true);
+    expect(r.ignoreBlocker('c1')).toBeNull();
+    expect(r.setState('c1', 'ignore')).toBe(true);
+    expectSound(r);
+  });
+
+  it('another candidate corrected into the found range is in the way, on either side; ignoring that one first frees it', () => {
+    // c1 abcdef [6, 12), c2 x9 [13, 15).
+    const t = 'token=abcdef x9';
+    const r = new SecretReview(t, scanAt(t, ['abcdef', 'x9']));
+    r.nudge('c1', 'end', -1);
+    r.nudge('c2', 'start', -1);
+    r.nudge('c2', 'start', -1);
+    expect(r.get('c2')).toMatchObject({ start: 11, end: 15 });
+    expect(r.ignoreBlocker('c1')?.key).toBe('c2');
+    expect(r.setState('c1', 'ignore')).toBe(false);
+    expectSound(r, 'c2 in the way');
+    // c2 ignored goes back to [13, 15): c1 can be ignored now.
+    expect(r.setState('c2', 'ignore')).toBe(true);
+    expect(r.setState('c1', 'ignore')).toBe(true);
+    expectSound(r, 'both ignored');
+    // The other side: c2's start shrunk, c1's end extended into it.
+    const s = new SecretReview(t, scanAt(t, ['abcdef', 'x9']));
+    s.nudge('c2', 'start', 1);
+    s.nudge('c1', 'end', 1);
+    s.nudge('c1', 'end', 1);
+    expect(s.get('c1')).toMatchObject({ start: 6, end: 14 });
+    expect(s.ignoreBlocker('c2')?.key).toBe('c1');
+    expect(s.setState('c2', 'ignore')).toBe(false);
+    expectSound(s, 'c1 in the way');
+  });
+
+  it('restoring an ignored candidate puts it on its found range, and while ignored nothing can move into it', () => {
+    const t = 'token=abcdef x9';
+    const r = new SecretReview(t, scanAt(t, ['abcdef', 'x9']));
+    r.setState('c1', 'ignore');
+    expect(r.mark(11, 13).ok).toBe(false);
+    r.nudge('c2', 'start', -1);
+    expect(r.nudge('c2', 'start', -1)).toBe(false);
+    expect(r.canNudge('c2', 'start', -1)).toBe(false);
+    expect(r.setState('c1', 'protect')).toBe(true);
+    expect(r.get('c1')).toMatchObject({ start: 6, end: 12 });
+    expectSound(r);
+  });
+
+  it('a stale review taken over keeps the shrunk candidate and the mark beside it, and Ignore stays refused there', () => {
+    const first = new SecretReview(text, scanAt(text, ['abcdef']));
+    first.nudge('c1', 'end', -1);
+    first.mark(11, 12);
+    const again = new SecretReview(text, scanAt(text, ['abcdef'], 'rev-2'), first);
+    expectSound(again, 'taken over');
+    expect(again.decisions()).toEqual([
+      { candidate: 'c1', action: 'protect', start: 6, end: 11 },
+      { action: 'protect', start: 11, end: 12 },
+    ]);
+    expect(again.setState('c1', 'ignore')).toBe(false);
+    // Ignored earlier, a candidate comes back ignored, and a mark over it is not taken over.
+    const ign = new SecretReview(text, scanAt(text, ['abcdef']));
+    ign.setState('c1', 'ignore');
+    const back = new SecretReview(text, scanAt(text, ['abcdef'], 'rev-2'), ign);
+    expect(back.decisions()).toEqual([{ candidate: 'c1', action: 'ignore' }]);
+    expectSound(back);
+  });
+
+  it('random sequences of every operation, a new scan taking the review over among them, never break it', () => {
+    const t = 'export TOKEN=ghp_A1b2😀\r\npw="hunter2"; key=abc.def x9 😀😀 same: hunter2';
+    const values = ['ghp_A1b2😀', 'hunter2', 'abc', '.def', 'x9', 'hunter2'];
+    // A small deterministic generator (mulberry32): the same sequences every run.
+    let seed = 108;
+    const rand = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+    const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)] as T;
+    for (let run = 0; run < 200; run++) {
+      let r = new SecretReview(t, scanAt(t, values));
+      const ops: string[] = [];
+      for (let n = 0; n < 40; n++) {
+        const keys = r.marks().map((m) => m.key);
+        const k = pick(keys.length ? keys : ['c1']);
+        const op = pick(['nudge', 'nudge', 'nudge', 'mark', 'mark', 'unmark', 'ignore', 'ignore', 'protect', 'rescan']);
+        if (op === 'nudge') {
+          const edge = pick(['start', 'end'] as const);
+          const dir = pick([1, -1] as const);
+          r.nudge(k, edge, dir);
+          ops.push(`nudge ${k} ${edge} ${dir}`);
+        } else if (op === 'mark') {
+          const a = Math.floor(rand() * (t.length + 1));
+          const b = Math.min(t.length, a + 1 + Math.floor(rand() * 4));
+          r.mark(a, b);
+          ops.push(`mark ${a} ${b}`);
+        } else if (op === 'unmark') {
+          r.unmark(k);
+          ops.push(`unmark ${k}`);
+        } else if (op === 'rescan') {
+          // The bridge said stale: the same text scanned again (sometimes with a candidate less), the choices taken over.
+          const vs = rand() < 0.5 ? values : values.filter((_, i) => i !== 2);
+          r = new SecretReview(t, scanAt(t, vs, `rev-${run}-${n}`), r);
+          ops.push(`rescan ${vs.length}`);
+        } else {
+          r.setState(k, op as 'ignore' | 'protect');
+          ops.push(`${op} ${k}`);
+        }
+        expectSound(r, `run ${run}: ${ops.join(', ')}`);
+      }
+    }
+  });
+});
+
 describe('#108 masking', () => {
   it('masks code unit for code unit (offsets still line up), or hides each range behind a word', () => {
     const text = 'k=😀ab x=cd';

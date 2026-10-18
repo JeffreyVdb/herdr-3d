@@ -189,6 +189,60 @@ describe('SecretsReviewDialog (#108)', () => {
     expect(e.dlg.summary()!.counts.manual).toBe(1);
   });
 
+  it('C1: a match shrunk, the freed character marked by hand: Ignore is refused with why, by keyboard and by pointer alike; the mark taken away, it works', () => {
+    // token=abcdef: c1 is abcdef, [6, 12).
+    const text = 'token=abcdef';
+    const e = setup(text, ['abcdef']);
+    e.key(e.mark('c1'), 'ArrowLeft');
+    selectText(e.prompt, 11, 12);
+    e.key(e.prompt, 'm');
+    expect(e.mark('m1').querySelector('.sr-val')!.textContent).toBe('f');
+    // By keyboard: Space on the match.
+    e.mark('c1').click();
+    e.key(e.mark('c1'), ' ', { code: 'Space' });
+    const refused = e.dlg.summary()!;
+    expect(refused.status).toBe('Ignoring sends the whole match as typed, and your mark covers part of it: take that mark away first (Delete on it).');
+    expect(refused.error).toBe(true);
+    expect(e.mark('c1').dataset.state).toBe('protect');
+    expect(e.shown()).toBe(text);
+    expect(e.review.decisions()).toEqual([
+      { candidate: 'c1', action: 'protect', start: 6, end: 11 },
+      { action: 'protect', start: 11, end: 12 },
+    ]);
+    // The strip says so before it is pressed; a tap (no hover on a touch screen) says the same and changes nothing.
+    expect(e.strip('ignore').getAttribute('aria-disabled')).toBe('true');
+    expect(e.strip('ignore').title).toBe(refused.status);
+    e.key(e.mark('c1'), 'Delete');
+    expect(e.dlg.summary()!.status).toMatch(/^A match the scan found stays/);
+    e.strip('ignore').click();
+    expect(e.dlg.summary()!.status).toBe(refused.status);
+    expect(e.strip('ignore').getAttribute('aria-pressed')).toBe('false');
+    expect(e.shown()).toBe(text);
+    // The mark taken away: Ignore puts the match back as found.
+    e.mark('m1').focus();
+    e.key(e.mark('m1'), 'Delete');
+    e.mark('c1').click();
+    expect(e.strip('ignore').getAttribute('aria-disabled')).toBeNull();
+    e.strip('ignore').click();
+    expect(e.mark('c1').dataset.state).toBe('ignore');
+    expect(e.mark('c1').querySelector('.sr-val')!.textContent).toBe('abcdef');
+    expect(e.shown()).toBe(text);
+    expect(e.review.decisions()).toEqual([{ candidate: 'c1', action: 'ignore' }]);
+  });
+
+  it('C1: a neighbouring match moved into the found range is named by its number', () => {
+    const text = 'token=abcdef x9';
+    const e = setup(text, ['abcdef', 'x9']);
+    e.key(e.mark('c1'), 'ArrowLeft');
+    e.mark('c2').click();
+    e.key(e.mark('c2'), 'ArrowLeft', { shiftKey: true });
+    e.key(e.mark('c2'), 'ArrowLeft', { shiftKey: true });
+    e.mark('c1').click();
+    e.key(e.mark('c1'), 'Enter');
+    expect(e.dlg.summary()!.status).toBe('Ignoring sends the whole match as typed, and match 2 now covers part of it: move its edge back first.');
+    expect(e.shown()).toBe(text);
+  });
+
   it('maps a DOM position to the text’s UTF-16 offset: in text, between nodes, in a tape (the next text’s start)', () => {
     const e = setup();
     const val = e.mark('c2').querySelector('.sr-val')!.firstChild as Text;

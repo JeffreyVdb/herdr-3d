@@ -217,9 +217,22 @@ export class SecretReview {
     return start < end && this.list.every((m) => m === self || m.end <= start || end <= m.start);
   }
 
+  /**
+   * The mark that keeps candidate `key` from being ignored (the first in text order), or null. Ignored, a candidate is
+   * its found range as typed, so another mark that took part of that range since (one of yours over a character a
+   * correction freed, a neighbour's edge moved into it) is in the way until it goes or moves back (#108 C1).
+   */
+  ignoreBlocker(key: string): Readonly<Mark> | null {
+    const m = this.list.find((x) => x.key === key);
+    if (!m?.found) return null;
+    const { start, end } = m.found;
+    return this.list.find((x) => x !== m && x.start < end && start < x.end) ?? null;
+  }
+
   setState(key: string, state: MarkState): boolean {
     const m = this.list.find((x) => x.key === key);
     if (!m || !m.found || m.state === state) return false;
+    if (state === 'ignore' && this.ignoreBlocker(key)) return false;
     m.state = state;
     // Ignored, a candidate stays exactly as typed: its found range, never a correction.
     if (state === 'ignore') {

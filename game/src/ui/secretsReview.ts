@@ -390,7 +390,14 @@ export class SecretsReviewDialog {
 
   private setState(key: string, state: Mark['state']): void {
     const r = this.req?.review;
-    if (!r || !r.setState(key, state)) return;
+    if (!r) return;
+    // Space, Enter and the strip's button all come here: the same refusal, said the same way (#108 C1).
+    const blocker = state === 'ignore' ? r.ignoreBlocker(key) : null;
+    if (blocker) {
+      this.setStatus(ignoreRefusal(r, blocker), true);
+      return;
+    }
+    if (!r.setState(key, state)) return;
     this.stamped = key;
     this.current = key;
     this.render();
@@ -498,16 +505,17 @@ export class SecretsReviewDialog {
     const marks = r.marks();
     const i = marks.findIndex((m) => m.key === this.current);
     const m = marks[i];
-    const btn = (key: string, label: string, title: string, on: () => void, opts: { icon?: string; pressed?: boolean; disabled?: boolean; cls?: string } = {}) =>
+    // `refused`: unavailable, and why (its title); a press still goes to `on`, which says so (a touch has no hover).
+    const btn = (key: string, label: string, title: string, on: () => void, opts: { icon?: string; pressed?: boolean; disabled?: boolean; refused?: string | null; cls?: string } = {}) =>
       h(
         'button',
         {
           class: `btn sr-btn${opts.cls ? ` ${opts.cls}` : ''}${opts.icon && !label ? ' btn--icon' : ''}`,
           'data-key': key,
-          title,
+          title: opts.refused ?? title,
           'aria-label': label ? null : title,
           'aria-pressed': opts.pressed === undefined ? null : String(opts.pressed),
-          'aria-disabled': opts.disabled ? 'true' : null,
+          'aria-disabled': opts.disabled || opts.refused ? 'true' : null,
           onclick: () => {
             if (!opts.disabled) on();
           },
@@ -527,12 +535,17 @@ export class SecretsReviewDialog {
     if (m) {
       what.append(m.candidate ? `Found by ${kindsText(m.kinds)}.` : 'Marked by you.');
       if (m.encoded) what.append(' ', h('b', {}, 'Stored as typed:'), ' its escapes, percent-encoding or indentation go into the file exactly as you see them.');
+      const blocker = m.candidate && m.state === 'protect' ? r.ignoreBlocker(m.key) : null;
       const state = m.candidate
         ? h(
             'div',
             { class: 'sr-state', role: 'group', 'aria-label': 'This match' },
             btn('protect', 'Protect as file', 'Protect as file: it goes to a file on the bridge host, and the prompt says where (Space)', () => this.setState(m.key, 'protect'), { pressed: m.state === 'protect', cls: 'sr-choice' }),
-            btn('ignore', 'Ignore this occurrence', 'Ignore this occurrence: it is sent as typed (Space)', () => this.setState(m.key, 'ignore'), { pressed: m.state === 'ignore', cls: 'sr-choice' }),
+            btn('ignore', 'Ignore this occurrence', 'Ignore this occurrence: it is sent as typed (Space)', () => this.setState(m.key, 'ignore'), {
+              pressed: m.state === 'ignore',
+              refused: blocker && ignoreRefusal(r, blocker),
+              cls: 'sr-choice',
+            }),
           )
         : h('div', { class: 'sr-state' }, btn('unmark', 'Remove this mark', 'Remove this mark: that text is sent as typed (Delete)', () => this.unmark(m.key), { icon: ICON.trash }));
       const edges = m.state === 'protect';
@@ -585,6 +598,13 @@ export class SecretsReviewDialog {
 
 function countsLine(c: ReviewCounts): string {
   return `${c.protect} protected, ${c.ignore} ignored.`;
+}
+
+/** Why a match cannot be ignored: `blocker` took part of its found range (#108 C1). */
+function ignoreRefusal(r: SecretReview, blocker: Readonly<Mark>): string {
+  if (!blocker.candidate) return 'Ignoring sends the whole match as typed, and your mark covers part of it: take that mark away first (Delete on it).';
+  const n = r.marks().filter((x) => x.candidate).indexOf(blocker) + 1;
+  return `Ignoring sends the whole match as typed, and match ${n} now covers part of it: move its edge back first.`;
 }
 
 /** Moving `edge` in `dir` makes the range longer. */
