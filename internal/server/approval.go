@@ -34,20 +34,29 @@ var (
 	// incidentalRe are lines a dialog or the screen around it may show that
 	// say how long something has run or that it still runs, never what is
 	// asked (TestIncidentalLines): Claude Code's background task line, a
-	// spinner's status, an elapsed time or a countdown on its own.
+	// spinner's status, "esc to interrupt", an elapsed time or a countdown,
+	// each a whole line.
 	incidentalRe = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)^\d*\s*background (tasks?|shells?|commands?) running( for)?( \d+(\.\d+)?\s?(ms|s|m|h))*\.?$`),
-		regexp.MustCompile(`^[✻✶✳✢·✽*] \S.*\(\d+(\.\d+)?s\b[^)]*\)$`),
-		regexp.MustCompile(`(?i)\besc to interrupt\b`),
+		regexp.MustCompile(`^[✻✶✳✢·✽*] [\p{L}-]+(…|\.\.\.)? \(\d+(\.\d+)?s\b[^)]*\)$`),
+		regexp.MustCompile(`(?i)^\(?esc to interrupt\)?$`),
 		regexp.MustCompile(`(?i)^\(?\d+(\.\d+)?\s?(ms|s|m|h)( \d+s)?\)?$`),
 		regexp.MustCompile(`^\d{1,2}:\d{2}(:\d{2})?$`),
-		regexp.MustCompile(`(?i)^(auto-?)?(deny|denies|denied|declines?|rejects?|cancels?|times? out)\b.*\bin \d+(:\d{2})?\s?(s|secs?|seconds?|m|mins?|minutes?)?\.?$`),
+		regexp.MustCompile(`(?i)^(auto-?)?(deny|denies|denied|declines?|rejects?|cancels?|times? out)\b[\p{L} ]*\bin \d+(:\d{2})?\s?(s|secs?|seconds?|m|mins?|minutes?)?\.?$`),
 	}
 )
+
+// shellChars are what an incidental line never has: a path, a quote, a
+// variable, an operator (a command line that reads like a status line is
+// the operation's).
+const shellChars = "/\\$;|&=<>'\"`"
 
 // isIncidental reports whether a trimmed line only says how long something
 // has run (incidentalRe).
 func isIncidental(t string) bool {
+	if strings.ContainsAny(t, shellChars) {
+		return false
+	}
 	for _, re := range incidentalRe {
 		if re.MatchString(t) {
 			return true

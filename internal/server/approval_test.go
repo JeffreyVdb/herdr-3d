@@ -104,6 +104,31 @@ func TestCardMenuNativeCallReplaced(t *testing.T) {
 	}
 }
 
+// #106: a command line that reads like a status line ("esc to interrupt")
+// is the operation's: the card shows it, and a tap on its Yes once the
+// screen asks about another command sends nothing; the new one gets its
+// own card.
+func TestCardMenuCommandLikeIncidentalThroughTheHub(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridgeWith(t, func(o *server.Options) { o.QuestionPoll = time.Hour; o.AnswerTimeout = time.Millisecond })
+	rb.repliesOn(t)
+	first := bashDialog("echo 'esc to interrupt'; touch /tmp/a", "Perform cleanup")
+	ref := rb.menuCardOf(t, "w1", first)
+	c := rb.ch.Card(ref)
+	if !strings.Contains(c.Text, "echo 'esc to interrupt'; touch /tmp/a") {
+		t.Fatalf("card %q", c.Text)
+	}
+	rb.term.setScreen("w1:p1", strings.Replace(first, "touch /tmp/a", "rm -rf /tmp/b", 1))
+	rb.ch.Tap("t1", ref, buttonData(t, c, "1."))
+	waitCardText(t, rb.ch, ref, notify.CardReplacedText)
+	if calls := rb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("typed %q", calls)
+	}
+	if next := cardOf(t, rb.ch, 2); !strings.Contains(rb.ch.Card(next).Text, "rm -rf /tmp/b") {
+		t.Fatalf("new card %+v", rb.ch.Card(next))
+	}
+}
+
 // #106: a password in shell quotes never reaches the card.
 func TestCardMenuQuotedPasswordThroughTheHub(t *testing.T) {
 	t.Parallel()

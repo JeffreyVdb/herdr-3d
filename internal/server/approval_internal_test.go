@@ -33,10 +33,25 @@ func TestIncidentalLines(t *testing.T) {
 		"rm -f $D/*", "Bash command", "sleep 12s", "timeout 30s make test", "echo running 5s", "Do you want to proceed?",
 		"Create empty file h3d-perm-probe.txt", "Reason: May I create it outside the sandbox?", "$ touch a", "1. Yes",
 		"/tmp/h3d-m5term/claude-a2be86", "deny in tests: rm -rf build",
+		// Command lines that read like a status line.
+		"echo 'esc to interrupt'; touch /tmp/a", "esc to interrupt && rm -rf /tmp/b", "* rm -rf /tmp/b (5s)",
+		"✻ rm -rf /tmp/b (5s)", "cancel /tmp/job in 5s", "Denied in 30s; rm -rf /tmp/b", "background task running 5s; rm -rf /tmp/b",
 	} {
 		if isIncidental(l) {
 			t.Errorf("%q is incidental", l)
 		}
+	}
+}
+
+// #106: a command line that reads like a status line is the operation's,
+// on the card and in the hash: approving one never approves another.
+func TestMenuOpCommandLikeIncidental(t *testing.T) {
+	t.Parallel()
+	const cmd = "echo 'esc to interrupt'; touch /tmp/a"
+	a := parseQuestionOf("claude", claudeBash("", cmd), 1)
+	b := parseQuestionOf("claude", claudeBash("", "echo 'esc to interrupt'; rm -rf /tmp/b"), 1)
+	if a.q.Hash == b.q.Hash || a.op.key == b.op.key || !slices.Contains(a.op.lines, cmd) {
+		t.Fatalf("A %s %q, B %s %q", a.q.Hash, a.op.lines, b.q.Hash, b.op.lines)
 	}
 }
 
