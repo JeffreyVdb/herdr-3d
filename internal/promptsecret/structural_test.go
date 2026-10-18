@@ -465,6 +465,13 @@ func TestScanRecall(t *testing.T) {
 		{"credentials colon", "credentials: Zx81-mQp27-LwRt5", []string{"Zx81-mQp27-LwRt5"}},
 		{"header templates", "Authorization: Bearer ${TOKEN}\nAuthorization: Bearer sk-proj-${OPENAI_API_KEY}\n" +
 			`-H "Authorization: Bearer $(gcloud auth print-access-token)"`, nil},
+		// What the shell expands is no credential (review T4 (p2)); in
+		// single quotes it keeps the '$'.
+		{"header expansions", `curl -H "Authorization: Bearer $$" -H "Authorization: Bearer $?" -H "Authorization: Bearer abc$TOKEN" ` +
+			`-H "Authorization: Bearer Zx81mQp27LwRt5$1" -H "Authorization: Basic dXNlcjpwYXNz$[1]" https://x.test` + "\n" +
+			"Authorization: Bearer Zx81mQp27LwRt5$@\nsend Bearer Zx81mQp27LwRt5$HOST_9, then wait", nil},
+		{"header literal $ in single quotes", `curl -H 'Authorization: Bearer Zx81mQp27LwRt5$HOME' https://x.test`, []string{"Zx81mQp27LwRt5$HOME"}},
+		{"header $ before no expansion", `curl -H "Authorization: Bearer Zx81mQp27LwRt5$%" https://x.test`, []string{"Zx81mQp27LwRt5$%"}},
 		{"bearer url", "use Bearer https://auth.example.test/oauth2/token123456 there", nil},
 		{"header placeholder", "curl -H 'Authorization: Bearer [key]' https://api.example.test", nil},
 		{"credential words without values", "The credential is stored in the vault. Credentials: see the docs. Rotate API credentials yearly.", nil},
@@ -510,6 +517,22 @@ func TestScanRecall(t *testing.T) {
 		{"curl user backquotes", `curl -u "u:abc` + "`id`" + `" https://x.test`, nil},
 		{"curl user parameter", `curl -u u:'abc'$1 https://x.test`, nil},
 		{"curl user literal $", `curl -u 'u:abc$HOME9' https://x.test`, []string{"abc$HOME9"}},
+		// Review T4 (p2): every '$' the shell expands, in double quotes or
+		// none: a special parameter, a digit, $[…], and unquoted $'…' and
+		// $"…" (their bytes are not the password's); before the password
+		// too when the colon is inside it (${CREDS:-u:pw}).
+		{"curl user special parameters", `curl -u "u:abc$?" https://x.test; curl -u "u:abc$$" https://x.test; ` +
+			`curl -u "u:abc$@" https://x.test; curl -u "u:abc$*" https://x.test; curl -u "u:abc$!" https://x.test; ` +
+			`curl -u "u:abc$#" https://x.test; curl -u "u:abc$-" https://x.test; curl -u "u:abc$0" https://x.test`, nil},
+		{"curl user special parameters unquoted", `curl -u u:abc$$ https://x.test; curl -u u:abc$? https://x.test; curl -u u:x$-y https://x.test`, nil},
+		{"curl user arithmetic", `curl -u "u:abc$[1+2]x" https://x.test`, nil},
+		{"curl user ANSI-C and locale quotes", `curl -u u:$'p\x41ss' https://x.test; curl -u u:pre$"x9k2" https://x.test`, nil},
+		{"curl user colon inside an expansion", `curl -u ${C:-u:x9} https://x.test; curl -u "$(u:x)" https://x.test`, nil},
+		{"curl user colon inside backquotes", "curl -u \"`u:x`\" https://x.test", nil},
+		{"curl user after an expansion", `curl -u "$U:abc9!" https://x.test`, []string{"abc9!"}},
+		{"curl user literal $ forms", `curl -u "u:abc$" https://x.test; curl -u "u:ab$%c" https://x.test; curl -u "u:ab$'c" https://x.test; ` +
+			`curl -u 'u:abc$$' https://x.test; curl -u "u:abc\$\$" https://x.test`,
+			[]string{"abc$", "ab$%c", "ab$'c", "abc$$", `abc\$\$`}},
 		{"templates inside quoted words and named lines", `the password used by the job is "pw-${HOST}9" today` + "\n" +
 			"key-$(hostname)-77\nThe preceding line is the actual password.", nil},
 		// 5. A quoted value after a credential word and a few words more.

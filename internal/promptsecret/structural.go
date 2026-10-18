@@ -160,11 +160,16 @@ func credentialAt(text string, i int, line bool) int {
 	return j // a quote or a backslash closes it: its bytes are the value's
 }
 
-// headerValue reports credentials that are a value: not a template inside
-// them (templated), a placeholder in brackets ([token]), a URL, nor what
-// notASecret says (literal: it runs into a reference).
-func headerValue(v string, literal bool) bool {
-	return v != "" && !notASecret(v, literal) && !templated(v) && !strings.Contains(v, "://") && !bracketed.MatchString(v)
+// headerValue reports the credentials [s, e) that are a value: not a
+// template inside them (templated), what the shell expands there (review
+// T4 (p2): -H "Authorization: Bearer abc$TOKEN", $$; read as shellComputed
+// reads a word, unless single quotes keep it), a placeholder in brackets
+// ([token]), a URL, nor what notASecret says (literal: it runs into a
+// reference).
+func headerValue(text string, s, e int, refs []span) bool {
+	v := text[s:e]
+	return v != "" && !notASecret(v, overlapsAny(s, e, refs)) && !templated(v) && !strings.Contains(v, "://") &&
+		!bracketed.MatchString(v) && (e < len(text) && text[e] == '\'' || !shellComputed(text, s, e, s))
 }
 
 // templated reports a template or a command anywhere in a value, not only
@@ -198,14 +203,14 @@ func headerSpans(text, lower string, refs []span) []span {
 		}
 		end := credentialAt(text, m[1], atLineStart(text, m[2]))
 		v := text[m[1]:end]
-		if !headerValue(v, overlapsAny(m[1], end, refs)) || (scheme == "" && !tokenish(v, 8)) {
+		if !headerValue(text, m[1], end, refs) || (scheme == "" && !tokenish(v, 8)) {
 			continue
 		}
 		out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: scheme == ""})
 	}
 	for _, m := range bearers {
 		end := credentialAt(text, m[1], false)
-		if v := text[m[1]:end]; tokenish(v, 16) && headerValue(v, overlapsAny(m[1], end, refs)) {
+		if tokenish(text[m[1]:end], 16) && headerValue(text, m[1], end, refs) {
 			out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: true})
 		}
 	}
@@ -427,9 +432,10 @@ func quoteEnd(text string, i, end int) int {
 }
 
 // shellComputed reports what the shell computes in the word [v, e) from p
-// on (review T4): an unescaped $NAME, $1, ${…}, $(…) or backquote outside
-// single quotes ("u:abc$(cmd)"); never "\$HOME" nor '$HOME', which are
-// typed.
+// on (review T4): an expansion outside single quotes (expands: "u:abc$(cmd)",
+// "u:abc$$", u:$'…') or a backquote, at p or after, or before p with p
+// inside it (${C:-u:pw}); never "\$HOME", '$HOME' nor a '$' that expands
+// nothing ("abc$", "a$%b"), which the shell keeps.
 func shellComputed(text string, v, e, p int) bool {
 	double := false
 	for i := v; i < e; i++ {
@@ -442,14 +448,67 @@ func shellComputed(text string, v, e, p int) bool {
 			}
 		case c == '"':
 			double = !double
-		case i < p:
-		case c == '`':
-			return true
-		case c == '$' && i+1 < e && (strings.IndexByte("({_", text[i+1]) >= 0 || isASCIILetter(text[i+1]) || text[i+1] >= '0' && text[i+1] <= '9'):
-			return true
+		case c == '`' || c == '$' && i+1 < e && expands(text[i+1], double):
+			end := expansionEnd(text, i, e)
+			if end >= p {
+				return true
+			}
+			i = end - 1
 		}
 	}
 	return false
+}
+
+// expands reports a '$' before c that the shell expands, in double quotes
+// or none: a name, a digit, a special parameter (@ * # ? - $ !), ${…},
+// $(…) or $[…]; outside double quotes also $'…' and $"…", whose bytes are
+// not the value's.
+func expands(c byte, double bool) bool {
+	return isASCIILetter(c) || c >= '0' && c <= '9' || strings.IndexByte("_{([@*#?-$!", c) >= 0 || !double && (c == '\'' || c == '"')
+}
+
+// expansionEnd is the end of the expansion or backquote at i in [i, e): to
+// its closing bracket, quote or backquote (e when it has none), or its
+// name's end.
+func expansionEnd(text string, i, e int) int {
+	if text[i] == '`' {
+		return closing(text, i+1, e, 0, '`')
+	}
+	switch c := text[i+1]; c {
+	case '{':
+		return closing(text, i+2, e, '{', '}')
+	case '(':
+		return closing(text, i+2, e, '(', ')')
+	case '[':
+		return closing(text, i+2, e, '[', ']')
+	case '\'', '"':
+		return closing(text, i+2, e, 0, c)
+	}
+	j := i + 2
+	if c := text[i+1]; isASCIILetter(c) || c == '_' {
+		for j < e && (isASCIILetter(text[j]) || text[j] == '_' || text[j] >= '0' && text[j] <= '9') {
+			j++
+		}
+	}
+	return j
+}
+
+// closing is the index after the close that ends a run from j (each open
+// in it nests, when there is one; a backslash escapes the next byte), or e.
+func closing(text string, j, e int, opener, closer byte) int {
+	for depth := 0; j < e; j++ {
+		switch c := text[j]; {
+		case c == '\\':
+			j++
+		case c == closer && depth == 0:
+			return j + 1
+		case c == closer:
+			depth--
+		case c == opener && opener != 0:
+			depth++
+		}
+	}
+	return e
 }
 
 func isASCIILetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
