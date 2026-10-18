@@ -777,6 +777,12 @@ func TestScanHeaderQuoting(t *testing.T) {
 			}
 		}
 	}
+	// A header whose credentials start inside the last one's is their rest,
+	// not a header of its own (each byte is read once: review T4P-1).
+	checkScans(t, []scanCase{
+		{"a header inside a template", "Authorization:${T}:Authorization:Zx81mQp27LwRt5Yv9", nil},
+		{"a header after it", "Authorization: Bearer ${T} Authorization: Bearer Zx81mQp27LwRt5Yv9", []string{"Zx81mQp27LwRt5Yv9"}},
+	})
 }
 
 // Clean text (#108): what is no secret stays unproposed, whatever the

@@ -278,7 +278,11 @@ func headerSpans(text, lower string, refs []span) []span {
 	}
 	slices.Sort(sh.names)
 	sh.names = slices.Compact(sh.names)
+	next := 0 // where the last header's credentials end: credentials that start before it are their rest (each read once)
 	for _, m := range headers {
+		if m[1] < next {
+			continue
+		}
 		scheme := ""
 		if m[4] >= 0 {
 			scheme = strings.ToLower(text[m[4]:m[5]])
@@ -288,6 +292,7 @@ func headerSpans(text, lower string, refs []span) []span {
 			continue // parameters, not one credential: a manual mark
 		}
 		end := credentialAt(text, m[1], atLineStart(text, m[2]))
+		next = end
 		v := text[m[1]:end]
 		if !headerValue(text, m[2], m[1], end, refs, sh) || (scheme == "" && !tokenish(v, 8)) {
 			continue
@@ -1153,27 +1158,35 @@ func quotedAt(text string, v int) (start, end int, ok bool) {
 }
 
 // trimUnquoted drops an unquoted value's trailing sentence punctuation and
-// an unbalanced closing bracket or quote: its new end.
+// an unbalanced closing bracket or quote: its new end. The value's
+// brackets and quotes are counted once (n, by their index in trimmed).
 func trimUnquoted(text string, s, e int) int {
+	const trimmed = "()[]{}\"'`"
+	var n [len(trimmed)]int
+	counted := false
 	for e > s {
 		c := text[e-1]
-		switch c {
-		case '.', ',', ';', ':':
+		if c == '.' || c == ',' || c == ';' || c == ':' {
 			e--
 			continue
-		case ')', ']', '}':
-			o := map[byte]byte{')': '(', ']': '[', '}': '{'}[c]
-			if strings.Count(text[s:e], string(c)) > strings.Count(text[s:e], string(o)) {
-				e--
-				continue
-			}
-		case '"', '\'', '`':
-			if strings.Count(text[s:e], string(c))%2 == 1 {
-				e--
-				continue
-			}
 		}
-		break
+		k := strings.IndexByte(trimmed, c)
+		if k < 0 || k < 6 && k%2 == 0 { // not a closing bracket or a quote
+			break
+		}
+		if !counted {
+			for i := s; i < e; i++ {
+				if j := strings.IndexByte(trimmed, text[i]); j >= 0 {
+					n[j]++
+				}
+			}
+			counted = true
+		}
+		if k < 6 && n[k] <= n[k-1] || k >= 6 && n[k]%2 == 0 { // balanced
+			break
+		}
+		n[k]--
+		e--
 	}
 	return e
 }

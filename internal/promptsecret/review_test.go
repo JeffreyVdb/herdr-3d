@@ -241,7 +241,7 @@ func BenchmarkScan16KiBPunctuated(b *testing.B) {
 // shapes are texts of n bytes at most built to read their bytes again and
 // again: curl's options in nested and unterminated substitutions, many
 // options, options inside other words, deep quoting, headers in one word
-// (review T4P-1: 32 KiB of the first took 10 s).
+// or glued together (review T4P-1: 32 KiB of the first took 10 s).
 func shapes(n int) []struct{ name, text string } {
 	rep := func(unit string, n int) string { return strings.Repeat(unit, n/len(unit)+1)[:n] }
 	return []struct{ name, text string }{
@@ -255,6 +255,8 @@ func shapes(n int) []struct{ name, text string } {
 		{"deep braces", "curl -u u:" + strings.Repeat("${a:-", (n-10)/6) + strings.Repeat("}", (n-10)/6)},
 		{"many headers", "curl" + rep(` -H "Authorization: Bearer Zx81mQp27LwRt5$HOME"`, n-4)},
 		{"headers in a word", "curl -H '" + rep(" -H Bearer P@$$w0rdP@$$w0rd", n-10) + "'"},
+		{"glued headers", rep("Authorization:", n)},
+		{"glued templates", rep("Authorization:$", n)},
 	}
 }
 
