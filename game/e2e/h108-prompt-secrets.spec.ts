@@ -414,7 +414,8 @@ test('the review at 1280x720, at 200% zoom (640x360) and on a phone (390x844, to
     await page.locator('dialog.desk-dlg--prompt [data-key="send"]').click();
     const dlg = page.locator('dialog.desk-dlg--secrets');
     await expect(dlg).toBeVisible();
-    await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined))));
+    // The dialog's entrance done (finite animations only) before anything is measured.
+    await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
     const at = `${size.name}`;
     // The counts sentence, Confirm and Cancel: in view from the start.
     expect(await seenNow(page, ['.sr-sum', ...ALWAYS.map((k) => `dialog.desk-dlg--secrets [data-key="${k}"]`)]), `${at}: in view`).toEqual([]);

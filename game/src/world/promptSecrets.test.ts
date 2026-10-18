@@ -8,6 +8,7 @@ import {
   promptSecretsFailureText,
   PromptSecretsBook,
   promptSecretsStateOf,
+  type Range,
   scanOf,
   SecretReview,
   stepPoint,
@@ -256,15 +257,15 @@ describe('#108 a review', () => {
 /**
  * What must hold after every operation on a review (#108 C1): the marks sorted, non-empty, apart and on code point
  * boundaries, an ignored candidate on its found range, the prompt drawn from them exactly as typed, and decisions the
- * bridge accepts (protected ranges and ignored candidates' found ranges never overlap).
+ * bridge accepts (protected ranges and ignored candidates' found ranges never overlap). The first fault, or null.
  */
-function expectSound(r: SecretReview, at = ''): void {
+function fault(r: SecretReview): string | null {
   const marks = r.marks();
   let end = 0;
   for (const m of marks) {
-    expect(m.start < m.end && m.start >= end, `${at}: ${m.key} [${m.start},${m.end}) after ${end}`).toBe(true);
-    expect(onBoundary(r.text, m.start) && onBoundary(r.text, m.end), `${at}: ${m.key} splits a pair`).toBe(true);
-    if (m.state === 'ignore') expect([m.start, m.end], `${at}: ignored ${m.key} as found`).toEqual([m.found?.start, m.found?.end]);
+    if (!(m.start < m.end && m.start >= end)) return `${m.key} [${m.start},${m.end}) after ${end}`;
+    if (!onBoundary(r.text, m.start) || !onBoundary(r.text, m.end)) return `${m.key} splits a pair`;
+    if (m.state === 'ignore' && (m.start !== m.found?.start || m.end !== m.found.end)) return `ignored ${m.key} not as found`;
     end = m.end;
   }
   // The dialog draws each text run, then each mark's own slice: an overlap would draw a character twice.
@@ -274,14 +275,17 @@ function expectSound(r: SecretReview, at = ''): void {
     drawn += r.text.slice(from, m.start) + r.text.slice(m.start, m.end);
     from = m.end;
   }
-  expect(drawn + r.text.slice(from), `${at}: the prompt as drawn`).toBe(r.text);
-  const found = new Map(marks.filter((m) => m.found).map((m) => [m.candidate, m.found as { start: number; end: number }]));
+  if (drawn + r.text.slice(from) !== r.text) return `drawn as ${JSON.stringify(drawn + r.text.slice(from))}`;
+  const found = new Map(marks.filter((m) => m.found).map((m) => [m.candidate, m.found as Range]));
   const ranges = r
     .decisions()
-    .map((d) => ('start' in d && d.start !== undefined && d.end !== undefined ? { start: d.start, end: d.end } : (found.get(d.candidate ?? null) as { start: number; end: number })))
+    .map((d) => (d.start !== undefined && d.end !== undefined ? { start: d.start, end: d.end } : (found.get(d.candidate ?? null) as Range)))
     .sort((a, b) => a.start - b.start);
-  ranges.forEach((x, i) => i && expect(ranges[i - 1]!.end <= x.start, `${at}: decisions overlap at ${x.start}`).toBe(true));
+  for (let i = 1; i < ranges.length; i++) if ((ranges[i - 1] as Range).end > (ranges[i] as Range).start) return `decisions overlap at ${(ranges[i] as Range).start}`;
+  return null;
 }
+
+const expectSound = (r: SecretReview, at = '') => expect(fault(r), at).toBeNull();
 
 describe('#108 C1: no transition makes two marks overlap', () => {
   // token=abcdef: c1 is abcdef, [6, 12).
@@ -434,7 +438,8 @@ describe('#108 C1: no transition makes two marks overlap', () => {
           r.setState(k, op as 'ignore' | 'protect');
           ops.push(`${op} ${k}`);
         }
-        expectSound(r, `run ${run}: ${ops.join(', ')}`);
+        const bad = fault(r);
+        if (bad) expect(bad, `run ${run}: ${ops.join(', ')}`).toBeNull();
       }
     }
   });
