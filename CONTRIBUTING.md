@@ -75,6 +75,14 @@ one card per operation, kept through redraws and failed reads, ended replaced or
 `transcript`'s `CallTracker` (the calls a Claude transcript waits on), `approval` (the unwired, off-by-default model
 assessment of a permission prompt; the standard library and `ai`'s LLM interface only,
 `TestApprovalUsesOnlyAIInterfaces`, `TestApprovalIsNotWired`);
+#108: `promptsecret` (possible secrets in a prompt, for the user's review: Gitleaks v8.30.1's default rules generated into
+`gitleaks_rules.go` by `tools/secretrules` (its own module, which downloads Gitleaks; `make secret-rules`, and `make
+secret-rules-parity` checks them against Gitleaks itself) and run with the standard library, its MIT licence in
+`LICENSE-gitleaks.txt`; the structural rules; candidates at exact byte ranges, never overlapping; UTF-16 offsets; the
+HMAC revision, the decisions checked against a fresh scan, the file references; the standard library only,
+`TestPromptSecretIsALeaf`) and `secretfiles` (the protected files: a private runtime directory, owner directories
+0700 and files 0600 by random names, fd-relative with no symlink followed, worker and pending owners, release, claim,
+sweep; their owners and names in `store`, never a byte of a secret; Linux, a stub elsewhere);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per
@@ -122,6 +130,8 @@ make codex-shared-tui  # #154/#155: real Codex TUI (codex-cli 0.160.1, 0.161.0, 
                        # (H3D_CODEXSHARE_REAL=1 adds #155's and #158's real-model smokes on ~/.codex: costs inference)
 make codex-shared-bridge  # #158 only: herdr-world itself (app.Serve) driven over its WebSocket against that fixture
 make helper-darwin     # bin/darwin-arm64/h3d-helper (CGO off)
+make secret-rules      # #108: regenerate internal/promptsecret/gitleaks_rules.go (tools/secretrules, its own module: downloads Gitleaks)
+make secret-rules-parity  # #108: the generated rules against Gitleaks itself, and the generated file current (not in make test)
 make dev               # Vite dev server on a portlease-leased port, 127.0.0.1 only
 make shot              # headless WebGL2 screenshot -> game/test-results/shot.png (non-blank check), seconds
 make e2e               # build, then the smoke suite: the 30 essential journeys tagged @smoke (H3D_WORKERS parallel, one run per host)
@@ -507,6 +517,7 @@ that directory.
 | `--runs-dir` | `H3D_RUNS_DIR` | `$XDG_STATE_HOME/write-code/runs`, else `~/.local/state/write-code/runs`: write-code's run directories, for the freelancers' reports (M6, [`docs/protocol.md` "Runs and freelancers"](docs/protocol.md#runs-and-freelancers)); read only |
 | `--dropzone-url` | `HERDR_WORLD_DROPZONE_URL` | `http://127.0.0.1:8080`: Drop Zone, where pasted images are uploaded (#51, [`docs/protocol.md` "Image upload"](docs/protocol.md#image-upload)); the bridge's only client of it |
 | `--screen-dir` | `HERDR_WORLD_SCREEN_DIR` | `$XDG_RUNTIME_DIR/herdr-world/screen` (else `/run/user/<uid>/…` when it exists): where `screen.grab` stores frames, 0700, 10 min each (M13, [`docs/protocol.md` "Screen share"](docs/protocol.md#screen-share)) |
+| `--secrets-dir` | `HERDR_WORLD_SECRETS_DIR` | `$XDG_RUNTIME_DIR/herdr-world/secrets` (else `/run/user/<uid>/…` when it is ours): where protected prompt secrets are kept, 0700 directories and 0600 files, refused (never repaired) when unsafe; none usable: a review that protects anything is `secrets_unavailable` (#108, [`docs/protocol.md` "Prompt secrets"](docs/protocol.md#prompt-secrets)) |
 | `--whiteboards` | `HERDR_WORLD_WHITEBOARDS` | `$XDG_DATA_HOME/herdr-3d/whiteboards`, else `~/.local/share/herdr-3d/whiteboards`: the floors' whiteboards (M13, [`docs/protocol.md` "Whiteboard"](docs/protocol.md#whiteboard)); `-` for none |
 | `--ai-file` | `HERDR_WORLD_AI_FILE` | `ai.json` next to the database: the AI integration's settings and keys, 0600, never in the database (#92, [`docs/protocol.md` "AI integration"](docs/protocol.md#ai-integration)) |
 | `--kaneo-file` | `HERDR_WORLD_KANEO_FILE` | `kaneo.json` next to the database: the Kaneo connection's settings and key, 0600, never in the database and apart from `ai.json` (#184, [`docs/protocol.md` "Kaneo"](docs/protocol.md#kaneo)) |

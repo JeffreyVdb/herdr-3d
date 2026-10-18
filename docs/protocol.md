@@ -271,6 +271,9 @@ client reads that as `{}`.
 `repo_refs` (#247) is the "Repositories from other buildings" switch, `{"all_buildings": bool}` (see
 [Repositories on other floors](#repositories-on-other-floors)); a bridge from before #247 leaves it out.
 
+`prompt_secrets` (#108) is the "Review prompt secrets before sending" switch, `{"enabled": bool, "available": bool}`
+(see [Prompt secrets](#prompt-secrets)); a bridge from before #108 leaves it out.
+
 `repo_discovery` (#54) is repository discovery's settings and status, `{"roots", "interval_minutes", "status"}` (see
 [Repository discovery](#repository-discovery)); a bridge from before #54, or one that cannot run git, leaves it out.
 
@@ -785,6 +788,7 @@ and remember the last `seq` applied.
 | `screen.state` | `sharing`, `surface`? | M13: whether a connected game shares its screen changed, or what kind of surface the latest sharer shares (flat, see [Screen share](#screen-share)) |
 | `codex_server.update` | `enabled`, `available`, `allow_unverified` | #155: the shared Codex server switch changed (flat in the event, see [Shared Codex server](#shared-codex-server)) |
 | `repo_refs.update` | `all_buildings` | #247: the "Repositories from other buildings" switch changed (flat in the event, see [Repositories on other floors](#repositories-on-other-floors)) |
+| `prompt_secrets.update` | `enabled`, `available` | #108: the "Review prompt secrets before sending" switch changed (flat in the event: decode it by its `t`, see [Prompt secrets](#prompt-secrets)) |
 | `repo_discovery.update` | `roots`, `interval_minutes`, `status` | #54: repository discovery's settings or a scan's status changed (a scan started, progressed, ended); flat in the event. `status.revision` moves only when the discovered repositories did (see [Repository discovery](#repository-discovery)) |
 | `handoff.added` | `floor_id`, `session`, `handoff`, `handoff_count` | #223: a handoff was filed: its file is complete and indexed (#58: `floor_id` is its floor, `session` that floor's session; before #58 `session` was the floor, which it still is for a real floor; `handoff_count` the floor's count now; see [Handoffs](#handoffs)) |
 | `handoff.removed` | `floor_id`, `session`, `handoff_id`, `handoff_count` | #223: a handoff was deleted (its file is in the trash) |
@@ -884,7 +888,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `terminal.unwatch` | `{"id": string}` | — | — |
 | `terminal.zoom` | `{"id": string, "on": bool}` | `{"pane", "cols", "rows", "zoom"}` | a `terminal.state` and, if the size changed, a full `terminal.frame` (see [Fullscreen](#fullscreen-74)) |
 | `worker.keys` | `{"id": string, "input": [{"text": string} \| {"key": string}…]}` | — | — (see [Input](#input)) |
-| `worker.prompt` | `{"id": string, "text": string, "op"?: string}` | `{"queued": bool, "retried": bool, "sent"?: string, "terminal"?: true, "handoff"?: AgentHandoff, "existing"?: true}` | the worker's statuses |
+| `worker.prompt` | `{"id": string, "text": string, "op"?: string, "secrets"?: SecretsReview}` | `{"queued": bool, "retried": bool, "sent"?: string, "protected"?: int, "terminal"?: true, "handoff"?: AgentHandoff, "existing"?: true}` (#108: with prompt secrets reviewed, see [Prompt secrets](#prompt-secrets)) | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
 | `worker.answer_ask` | `{"id": string, "tool_use_id": string, "answers"?: [{"question": int, "choices"?: [int…], "other"?: string}…], "cancel"?: true, "prompt"?: string}` | `{"sent": [string…], "resolved": bool, "prompted"?: bool}` | the worker's upsert without its `ask` once the transcript has the answer (before the ack) (see [Laptops: asks](#laptops-asks)) |
 | `transcript.watch` | `{"id": string, "limit"?: 1–500}` | `{"harness", "session", "version", "cursor", "has_more", "pending", "items"}` | `transcript.items` to this connection only (see [Laptops: transcript](#laptops-transcript)) |
@@ -933,6 +937,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `codex_server.set` | `{"enabled"?: bool, "allow_unverified"?: bool}` | the switch; switching on without `available` is `unsupported` | `codex_server.update` (before the ack) when it changes |
 | `repo_refs.get` | `{}` | `{"all_buildings"}`, the "Repositories from other buildings" switch (see [Repositories on other floors](#repositories-on-other-floors)) | — |
 | `repo_refs.set` | `{"all_buildings": bool}` | the switch | `repo_refs.update` (before the ack) when it changes |
+| `prompt_secrets.get` | `{}` | `{"enabled", "available"}`, the "Review prompt secrets before sending" switch (see [Prompt secrets](#prompt-secrets)) | — |
+| `prompt_secrets.set` | `{"enabled": bool}` | the switch; a change makes every review made before it stale | `prompt_secrets.update` (before the ack) when it changes |
+| `prompt_secrets.scan` | `{"text": string}` (at most 32 KiB) | `{"revision", "candidates": [{"id", "start", "end", "kinds", "encoded"?}…]}`; `secrets_review_off` while the switch is off | — |
 | `repo_discovery.get` | `{}` | `{"roots", "interval_minutes", "status"}` (see [Repository discovery](#repository-discovery)) | — |
 | `repo_discovery.set` | `{"roots"?: [absolute path…], "interval_minutes"?: 1–1440}` (at least one) | the state; a change of roots scans at once | `repo_discovery.update` (before the ack) when it changes |
 | `repo_discovery.refresh` | `{}` | the state; a scan starts (after the one in flight) | `repo_discovery.update` (before the ack) |
@@ -3829,6 +3836,93 @@ classifier), and to the LLM endpoint when the classifier says yes, before it is 
 why it is opt-in on its own toggle, and the game's Settings say so above it.
 
 
+### Prompt secrets
+
+#108 round 1. **"Review prompt secrets before sending"** is a bridge-wide switch, **off by default**, persisted like
+`repo_refs`: `prompt_secrets.get`, `prompt_secrets.set {enabled}`, the flat `prompt_secrets.update` event and
+`World.prompt_secrets` (`{"enabled", "available"}`; `available`: the bridge has a private runtime directory for the
+files, else a review that protects anything is refused with `secrets_unavailable`). **Off, nothing here runs**: no
+scan, no file, every route as before; a command that carries a review anyway (a tab from before the switch went off)
+is refused with `secrets_review_stale` and never forwarded. A change of the switch makes every review made before it
+stale. Turning it off never deletes a file: the files already written keep their lifecycle.
+
+On, the bridge finds **possible secrets** in a prompt locally (no network, no model, no provider check): Gitleaks
+v8.30.1's default rules, generated into the bridge and checked against Gitleaks itself (`make secret-rules-parity`),
+and its own structural rules (PEM private keys, `Authorization` credentials and long bare `Bearer` tokens, URL
+passwords and credential-named query or form parameters, assignments to credential-like names in env, shell, YAML,
+JSON, TOML, INI, CLI flags and code, YAML block scalars under them, "the password is X" prose, a code fence of one
+value after a line naming a credential, and other exact occurrences of a value found). Templates and references
+(`${X}`, `$X`, `{{ … }}`, `<your-token>`, `os.getenv(…)`, `process.env.X`), redactions (`****`, `REDACTED`,
+`xxxx`), names without values and the bridge's own file references are never candidates. A candidate is only a
+proposal: the user decides every one.
+
+**`prompt_secrets.scan {text}`** (at most 32 KiB of UTF-8: longer is `bad_request` stating the limit, never cut)
+answers `{"revision", "candidates"}`. `candidates` (never null) are in text order and **never overlap**: `id`
+(`c1`, `c2`, … stable for that revision), `start`, `end` (**`[start, end)` in UTF-16 code units** of `text`, as
+pack up's `removed`: JavaScript's string indexes), `kinds` (what found it: `gitleaks:<rule id>`, `pem`,
+`auth-header`, `url-password`, `url-query`, `assignment`, `yaml-block`, `prose`, `fenced`, `repeat`) and `encoded`
+(its bytes hold a JSON or shell backslash escape, percent-encoding or a YAML block's indentation: the file keeps
+them **as typed**, which the review should say). `revision` is opaque: an HMAC, keyed by a random key the bridge
+process keeps in memory, over the text, the rule set and the candidates. It is never a plain hash of the text.
+`secrets_review_off` while the switch is off.
+
+**A text-carrying command's `secrets`** (round 1: `worker.prompt`; later routes take the same field):
+
+```json
+{"secrets": {"revision": "…", "decisions": [
+  {"candidate": "c1", "action": "protect"},
+  {"candidate": "c2", "action": "ignore"},
+  {"candidate": "c3", "action": "protect", "start": 40, "end": 52},
+  {"action": "protect", "start": 80, "end": 94}
+]}}
+```
+
+A decision is a candidate protected or ignored, a protected candidate with a **corrected** range, or a **manual
+mark** (no candidate, `protect`, a range). The bridge **scans the submitted text itself** and requires: the revision
+is that scan's (else `secrets_review_stale`); every candidate has exactly one decision; every range is non-empty,
+inside the text and on code point boundaries (never between the halves of a surrogate pair); protected ranges and
+ignored candidates never overlap one another (a mark over an ignored candidate is refused: the ignored occurrence
+stays exactly as typed). Anything else is `secrets_review_required`. The client's own list is never trusted. A
+review with only manual marks carries the revision of a scan without candidates.
+
+With the switch on, **`worker.prompt`** is scanned on its worker's input lane (in order with its other input,
+never on the hub goroutine, at most 4 scans at once, 10 s each: past it, `secrets_unavailable`, never a raw send):
+
+- **No `secrets` and candidates found**: `secrets_review_required` ("N possible secrets: review them"), and
+  **nothing** is sent, stored, audited with its text or written to disk. No candidates: the prompt goes as before.
+- **A review**: checked as above; then, before anything else sees the text (its translation for the harness, the
+  `/handoff` check, what is stored or audited, the send), each protected range goes to **its own file**, exactly
+  the bytes of that range as typed (no unescaping, decoding, trimming or added newline), and is replaced by
+  **`[secret in file <absolute path>]`**. An ignored candidate stays plain text and gets no file; the same value
+  protected in one place and ignored in another is honoured separately. Everything ignored: the prompt goes as
+  typed. The path is plain text, never an `@` mention (an agent would read the file into its context).
+- **Limits after the references**: the text with its references must still fit (16 KiB, Claude's typing rules;
+  for a harness that rewrites prompts, the translated text). Otherwise the usual `bad_request`, and the files it made
+  are removed. With the switch on, a prompt over 32 KiB (a rewriting harness's source may be longer) is `bad_request`.
+- **The ack**: `sent` is the text sent (references in place) when it is not what was typed, `protected` how many
+  ranges went to files. A `/handoff <instruction>` is a handoff request with the protected instruction (stored so).
+- **Retry**: the identical submission (same worker, revision and decisions) within 5 minutes of a sent one uses
+  the same files. A send that fails removes the files it made, never those it reused.
+- **Telegram replies** have no review: a reply with candidates is refused with a fixed sentence (see
+  [Notifications](#notifications)).
+
+The files: `$XDG_RUNTIME_DIR/herdr-world/secrets/<owner>/<file>` by default (`--secrets-dir`,
+`HERDR_WORLD_SECRETS_DIR`; without the variable a validated `/run/user/<uid>`; with no usable private runtime
+directory the protection is unavailable, never a disk-backed fallback). The directory is 0700 and must be ours
+(an unsafe one is refused, never repaired), each owner's directory 0700, each file 0600, all named at random (never
+from a secret), created exclusively without following a symlink. The database keeps only the owners (opaque
+directory, worker, created; a pending owner's expiry) and the file names, never a byte of a secret. A worker's
+files go when it **really ends** (closed in herdr while its floor runs, or sent home), not when its floor sleeps or
+its herdr session goes (it resumes); a janitor at start and every 5 minutes removes a closed or unknown worker's
+files, expired pending owners' and what has no owner. Unlinking is not a secure erasure (tmpfs pages can be
+swapped).
+
+**What this does not protect** (docs/decisions.md, 2026-10-18): the agent can still read the file (`cat`, a Read
+tool) and print it; other processes of the same user can read it; text typed straight into the terminal, prompts
+sent before the switch was on and transcripts that already hold a secret are not touched; a candidate the scan
+does not find is sent as typed unless marked by hand.
+
+
 ### Hire interpretation
 
 #211 (phase 2 of #209: dictated hiring). **`hire.interpret {text, pending?}`** reads one dictated sentence ("Hire a
@@ -4946,7 +5040,10 @@ while it is off.
   this was, reply to a newer notification"), the worker's ask (#57: "This worker has a question, tap an answer or
   answer in the game"), over 4096 characters ("too long (N characters)"), more than 6 replies to one worker or 20 in
   all within a minute, the worker gone, asleep or without an agent, its input lane full (32 waiting), herdr failing
-  it, a `/handoff` (ask for it in the game). The bot's answers are bounded too (10 a minute; more are not sent).
+  it, a `/handoff` (ask for it in the game), #108: with prompt secrets reviewed, a reply in which the scan finds a
+  possible secret ("it may hold a password or another secret. Send it from the game, where you can review what is
+  protected": the chat has no review, so nothing is typed). The bot's answers are bounded too (10 a minute; more
+  are not sent).
   Switched on, nothing sent while replies were off is typed (the first poll forgets the backlog, and only a message
   dated after the second of the switch is typed: Telegram's dates are whole seconds, so one sent in that very second
   is dropped too); switched off, unpaired or paired anew, nothing read before is typed, a poll or a reply already
@@ -5128,6 +5225,7 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
 | `sleep_failed` | `herdr session stop` failed (the message has herdr's error), or the floor was not seen asleep within 15 s |
 | `input_failed` | #156 `worker.answer_async`: the worker's app-server refused the answer (nothing delivered; the question is `pending` again with its `error`); `worker.keys` / `worker.answer` / `worker.answer_ask`: herdr refused the keys or text (`terminal.zoom`: herdr refused the zoom), the screen could not be read, or 32 commands already wait for that worker; `worker.answer_ask` also when the dialog was not where it should be before a step, or still there after the last one; the message says why |
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
+| `secrets_review_required`, `secrets_review_stale`, `secrets_review_off`, `secrets_unavailable` | #108 (see [Prompt secrets](#prompt-secrets)): the text has possible secrets and the command carries no review of them, or its decisions do not fit the scan (a candidate without exactly one decision; a range empty, outside the text, splitting a surrogate pair or overlapping another); the review's `revision` is not the text's under the current rules, key and switch (the text changed, the bridge restarted, the switch changed), or a review came while the switch is off; `prompt_secrets.scan` while the switch is off; the protection could not run (no private runtime directory, a file could not be written, the scan failed or took over 10 s). Nothing was sent, stored or written on any of them, and the message never quotes the text |
 | `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` (#60: `worker.retry_followup` / `worker.followup_message`) for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |

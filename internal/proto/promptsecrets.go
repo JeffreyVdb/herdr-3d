@@ -67,7 +67,7 @@ type PromptSecretsSetArgs struct {
 }
 
 // PromptSecretsScanArgs are the args of prompt_secrets.scan: the text as it
-// will be sent (1 byte to 32 KiB of UTF-8; never cut).
+// will be sent (at most 32 KiB of UTF-8; never cut).
 type PromptSecretsScanArgs struct {
 	Text string `json:"text"`
 }
