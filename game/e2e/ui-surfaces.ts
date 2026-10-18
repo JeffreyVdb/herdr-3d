@@ -600,6 +600,28 @@ export const SURFACES: Surface[] = [
     root: 'dialog.desk-dlg--secrets',
   },
   {
+    // #108 round 4: the same review for a stored prompt (a schedule's): every match ignored, Protect refused with why.
+    name: 'secrets-review-stored',
+    fixture: 'demo-m5',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await onFloor(page);
+      await page.evaluate(() => window.__h3d.openSchedules());
+      await page.getByRole('dialog', { name: 'Scheduled agents' }).locator('[data-key="new"]').click();
+      const form = page.getByRole('dialog', { name: 'Schedule an agent' });
+      await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.harness)).not.toBe('');
+      await form.locator('#sf-title-in').fill('Nightly deploy');
+      await form.locator('#sf-when').fill('in 2h');
+      await form.locator('#sf-prompt').click();
+      await page.keyboard.insertText('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD="hunter2x" tonight');
+      await form.locator('[data-key="save"]').click();
+      await expect(page.locator('dialog.desk-dlg--secrets .sr-stored')).toBeVisible();
+      // The refusal said, as a tap on Protect says it.
+      await page.locator('dialog.desk-dlg--secrets .sr-strip [data-key="protect"]').click({ force: true });
+    },
+    root: 'dialog.desk-dlg--secrets',
+  },
+  {
     name: 'send-home',
     fixture: 'demo-m4',
     open: async (page) => {
