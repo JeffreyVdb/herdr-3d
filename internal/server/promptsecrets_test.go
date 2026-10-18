@@ -833,3 +833,36 @@ func TestPromptSecretsOwnReferencesOnly(t *testing.T) {
 		t.Fatalf("%q: %+v", around, s)
 	}
 }
+
+// A value beside one of the bridge's own references is reviewed whatever
+// it holds (review S1, pass 2: a symbol-only password before a reference
+// was cut away as punctuation and sent raw): quoted or not, on either side.
+func TestPromptSecretsSymbolsBesideOwnReference(t *testing.T) {
+	t.Parallel()
+	sb := startSecretsBridge(t, true, nil)
+	seed := "PASSWORD=Seed-Sentinel-73x"
+	s := sb.scan(t, seed)
+	_, m := sb.c.command(proto.CmdWorkerPrompt, "seed", proto.WorkerPromptArgs{ID: sb.id2, Text: seed, Secrets: &proto.SecretsReview{
+		Revision: s.Revision, Decisions: []proto.SecretDecision{{Candidate: "c1", Action: proto.SecretProtect}}}})
+	ref := refRe.FindString(ackData[proto.PromptResult](t, m).Sent)
+	if ref == "" {
+		t.Fatal("no reference")
+	}
+	calls := len(sb.term.Calls())
+	const value = "!@#%&+=?_-"
+	for _, text := range []string{`PASSWORD="` + value + ` ` + ref + `"`, `PASSWORD=` + value + ref,
+		`PASSWORD="` + ref + ` ` + value + `"`, `PASSWORD=` + ref + value} {
+		s := sb.scan(t, text)
+		if len(s.Candidates) != 1 || s.Candidates[0].Start != u16(text, value) || s.Candidates[0].End != u16(text, value)+len(value) {
+			t.Fatalf("%q: %+v", text, s)
+		}
+		sb.c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: sb.id2, Text: text}, proto.ErrSecretsReviewRequired)
+	}
+	if got := sb.term.Calls(); len(got) != calls {
+		t.Fatalf("sent %q", got[calls:])
+	}
+	// A lone wrapper beside it is no secret: the text scans clean.
+	if s := sb.scan(t, "secret=("+ref+")"); len(s.Candidates) != 0 {
+		t.Fatalf("wrapped: %+v", s)
+	}
+}

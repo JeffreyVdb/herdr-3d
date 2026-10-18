@@ -187,7 +187,30 @@ func TestScanOwnReferences(t *testing.T) {
 			[]string{gh, gh}},
 		{"not closed", "password=" + strings.TrimSuffix(r1, "]"), []string{"[secret"}},
 		{"a value repeated", "password=Hunter-22 " + r1 + " and Hunter-22 again", []string{"Hunter-22", "Hunter-22"}},
+		// Review S1 (pass 2): only a reference's bytes, and a lone wrapper
+		// beside it, are left out; any value next to one, on either side,
+		// quoted or not, however weak, is proposed.
+		{"symbols before, quoted", `PASSWORD="!@#%&+=?_- ` + r1 + `"`, []string{"!@#%&+=?_-"}},
+		{"symbols before, unquoted", `PASSWORD=!@#%&+=?_-` + r1, []string{"!@#%&+=?_-"}},
+		{"symbols after, quoted", `PASSWORD="` + r1 + ` !@#%&+=?_-"`, []string{"!@#%&+=?_-"}},
+		{"symbols after, unquoted", `PASSWORD=` + r1 + `!@#%&+=?_-`, []string{"!@#%&+=?_-"}},
+		{"brackets only", `PASSWORD="()[]{} ` + r1 + `"`, []string{"()[]{}"}},
+		{"two wrappers", `PASSWORD="` + r1 + ` ))"`, []string{"))"}},
+		{"one symbol", `PASSWORD="! ` + r1 + `" password=` + r1 + `%`, []string{"!", "%"}},
+		{"digits only", `PASSWORD="` + r1 + ` 12345678" token=` + r1 + `4711`, []string{"12345678", "4711"}},
+		{"letters only", `password=hunter` + r1 + ` secret: ` + r1 + `abcdefgh`, []string{"hunter", "abcdefgh"}},
+		{"short", `PASSWORD=a` + r1 + ` api_key="` + r1 + `x1"`, []string{"a", "x1"}},
+		{"both sides", `PASSWORD="ab ` + r1 + ` #9" password=Z` + r1 + `9`, []string{"ab", "#9", "Z", "9"}},
+		{"lone wrappers", "secret=(" + r1 + ") token=[" + r2 + "] password=\"" + r1 + ",\"", nil},
 	})
+	// A part keeps the detectors of the range it was cut from.
+	for _, text := range []string{`PASSWORD="!@#%&+=?_- ` + r1 + `"`, `PASSWORD=` + r1 + `!@#%&+=?_-`} {
+		for _, c := range promptsecret.Scan(text, own) {
+			if len(c.Kinds) == 0 {
+				t.Errorf("%q: %q has no kinds", text, text[c.Start:c.End])
+			}
+		}
+	}
 	// With no own paths, a reference is text like any other.
 	if cs := promptsecret.Scan(`PASSWORD="`+r1+`"`, nil); len(cs) != 1 {
 		t.Fatalf("no own paths: %+v", cs)
