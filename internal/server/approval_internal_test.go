@@ -302,6 +302,79 @@ func TestRedactLineQuoted(t *testing.T) {
 	}
 }
 
+// #106: a password is the shell word bash reads, escapes and all: a
+// backslash outside quotes, an escaped quote inside double quotes, $'…',
+// runs side by side; a carrier inside a quoted argument reads on to its
+// quote's end; a quote or a backslash left open hides all after it. What
+// follows a closed one stays.
+func TestRedactLineEscaped(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		`sshpass -p "prefix\" suffixsecret" ssh host`:                `sshpass -p [key] ssh host`,
+		`mysql -p"prefix\" suffixsecret" shop`:                       `mysql -p[key] shop`,
+		`curl -u "admin:prefix\" suffixsecret" https://example.test`: `curl -u "admin:[key]" https://example.test`,
+		`curl -u admin:prefix\ suffixsecret https://example.test`:    `curl -u admin:[key] https://example.test`,
+		`curl -u admin:a\"b\'c https://example.test`:                 `curl -u admin:[key] https://example.test`,
+		`curl -u admin\:pw https://example.test`:                     `curl -u admin\:[key] https://example.test`,
+		`curl -u $'admin:a\' b' https://example.test`:                `curl -u $'admin:[key]' https://example.test`,
+		`curl -u $'admin\072pw' https://example.test`:                `curl -u $'admin[key]' https://example.test`,
+		`DB_PASSWORD=a"b c"'d e'$'f\' g' ./migrate`:                  `DB_PASSWORD=[key] ./migrate`,
+		`curl -H "Authorization: Bearer a\" b" https://example.test`: `curl -H "Authorization: [key]" https://example.test`,
+		`curl -d "password=a b" https://example.test`:                `curl -d "password=[key]" https://example.test`,
+		`curl "https://bob:a b@example.test/x"`:                      `curl "https://bob:[key]@example.test/x"`,
+		`git clone https://bob:a\ b@example.test/r.git`:              `git clone https://bob:[key]@example.test/r.git`,
+		`mysql -h db -P3306 -ppw shop`:                               `mysql -h db -P3306 -p[key] shop`,
+		`mysql -e "show tables;" -ppw shop`:                          `mysql -e "show tables;" -p[key] shop`,
+		`mysql -p shop`:                                              `mysql -p shop`,
+		`sshpass -v -p pw ssh host`:                                  `sshpass -v -p [key] ssh host`,
+		`sshpass -P assword: -p pw ssh host`:                         `sshpass -P assword: -p [key] ssh host`,
+		`curl -u "admin:a b https://example.test`:                    `curl -u "admin:[key]"`,
+		`sshpass -p 'a b ssh host`:                                   `sshpass -p [key]`,
+		`curl -u admin:a\`:                                           `curl -u admin:[key]`,
+		`git clone "https://bob:a b@example.test/r.git`:              `git clone "https://bob:[key]@example.test/r.git`,
+		`git clone "https://bob:a b@example.test`:                    `git clone "https://bob:[key]"`,
+		`curl -u admin https://example.test`:                         `curl -u admin https://example.test`,
+		`curl http://localhost:8080/x`:                               `curl http://localhost:8080/x`,
+		`curl https://bob:pw@example.test/x?to=a@b.test`:             `curl https://bob:[key]@example.test/x?to=a@b.test`,
+		`curl -d '{"user":"bob","password":"a b"}' https://x.test`:   `curl -d '{"user":"bob","password":[key]' https://x.test`,
+		`curl -d "{\"api_key\": \"a b\"}" https://x.test`:            `curl -d "{\"api_key\": [key]" https://x.test`,
+		`curl -d '{"Authorization": "Bearer a b"}' https://x.test`:   `curl -d '{"Authorization": [key]' https://x.test`,
+	} {
+		if got := redactLine(in); got != want {
+			t.Errorf("redactLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// #106: an operation's lines are read together, as bash reads a command:
+// a quote or a backslash at a line's end goes on to the next, and each of
+// a password's lines is hidden, the lines kept. On the screen (soft) a line
+// break may be a wrap inside a word, so a word at a line's end goes on.
+func TestRedactLines(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		in   []string
+		soft bool
+		want []string
+	}{
+		{[]string{`sshpass -p "a`, `b" ssh host`}, false, []string{`sshpass -p [key]`, `[key] ssh host`}},
+		{[]string{`sshpass -p a\`, `b ssh host`}, false, []string{`sshpass -p [key]`, `[key] ssh host`}},
+		{[]string{`export TOKEN="a`, `b`, `c"`, `make deploy`}, false, []string{`export TOKEN=[key]`, `[key]`, `[key]`, `make deploy`}},
+		{[]string{`curl -u admin:a`, `https://example.test`}, false, []string{`curl -u admin:[key]`, `https://example.test`}},
+		{[]string{`curl -u admin:a`, `b https://example.test`}, true, []string{`curl -u admin:[key]`, `[key] https://example.test`}},
+		{[]string{`curl -u 'admin:a`, `b' https://example.test`}, true, []string{`curl -u 'admin:[key]`, `[key]' https://example.test`}},
+		{[]string{`git clone https://bob:a`, `b@example.test/r.git`}, true, []string{`git clone https://bob:[key]`, `[key]@example.test/r.git`}},
+		{[]string{`mysql -u root`, `-ppw shop`}, true, []string{`mysql -u root`, `-p[key] shop`}},
+		{[]string{`mysql -u root \`, `-ppw shop`}, false, []string{`mysql -u root \`, `-p[key] shop`}},
+		{[]string{`sshpass \`, `-p pw ssh host`}, false, []string{`sshpass \`, `-p [key] ssh host`}},
+		{nil, false, nil},
+	} {
+		if got := redactLines(tc.in, tc.soft); !slices.Equal(got, tc.want) {
+			t.Errorf("redactLines(%q, %t) = %q, want %q", tc.in, tc.soft, got, tc.want)
+		}
+	}
+}
+
 // #106: a card's lines are bounded: each line, their number and their
 // length in all, what is left out said.
 func TestAboutLinesBounded(t *testing.T) {
@@ -402,6 +475,141 @@ func (r *floodRig) cardsOf(name string) []notify.Card {
 		}
 	}
 	return out
+}
+
+// menuOut is all that leaves for screen (a Claude dialog), blocked on its
+// menu, through the real path (menuFacts → notify.Service → FakeChannel):
+// its card's text, then every message sent. With calls, the menu's
+// native call is the one they match.
+func menuOut(t *testing.T, screen string, calls ...transcript.PendingCall) string {
+	t.Helper()
+	sq := parseQuestionOf("claude", screen, 100)
+	nw := notifyFacts(&proto.Worker{ID: "w1", Status: statusBlocked, StatusSince: 100, Question: &sq.q}, false)
+	var nc *nativeCall
+	if calls != nil {
+		if nc = nativeOf(sq.op, calls, "default"); nc == nil {
+			t.Fatalf("no native call for %q", sq.op.lines)
+		}
+	}
+	menuFacts(nw.Menu, sq.op, nc)
+	r := newFloodRig(t)
+	r.svc.Observe(notify.Observation{Worker: notify.Worker{ID: "w1", Status: statusWorking, StatusSince: 1}, Name: "Blip"})
+	r.svc.Observe(notify.Observation{Worker: nw, Name: "Blip"})
+	if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == 1 }, 5*time.Second) {
+		t.Fatal("no card")
+	}
+	return r.ch.Card(r.ch.Cards()[0]).Text + fmt.Sprintf("\n%+v", r.ch.Sent())
+}
+
+// #106 (the UX review's commands): an escaped quote inside double quotes
+// closes nothing, from the screen and from the native call alike.
+func TestCardMenuEscapedPassword(t *testing.T) {
+	t.Parallel()
+	for _, command := range []string{
+		`curl -u "admin:head\" tailsecret" https://example.test`,
+		`sshpass -p "head\" tailsecret" ssh user@example.test`,
+		`mysql -p"head\" tailsecret" -e "select 1"`,
+	} {
+		for _, native := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s native=%t", command, native), func(t *testing.T) {
+				t.Parallel()
+				var calls []transcript.PendingCall
+				if native {
+					calls = []transcript.PendingCall{bashCall("toolu_pw", command, "Run command")}
+				}
+				if out := menuOut(t, claudeBash("", command), calls...); strings.Contains(out, "tailsecret") || strings.Contains(out, "head") {
+					t.Errorf("left: %s", out)
+				}
+			})
+		}
+	}
+}
+
+// #106: no word of a password leaves, in any form bash reads it, through
+// the real path, from the screen and from the native call: every carrier
+// with every escaping form (a backslash, single, double and $'…' quotes
+// with their escapes, runs side by side), a quote or a backslash left
+// open, a command over lines and a screen's wrap. The synthetic password's
+// every piece has "zq" in it.
+func TestCardMenuPasswordShellWords(t *testing.T) {
+	t.Parallel()
+	carriers := []string{
+		"curl -u admin:%s https://example.test",
+		"curl --user=admin:%s https://example.test",
+		"curl --proxy-user admin:%s -x http://proxy.test https://example.test",
+		"sshpass -p %s ssh host",
+		"sshpass -v -p%s ssh host",
+		"mysql -h db -P3306 -u root -p%s shop",
+		"mysql --password=%s shop",
+		"DB_PASSWORD=%s ./migrate",
+		"gh auth login --token %s --hostname example.test",
+		"git clone https://bob:%s@example.test/r.git",
+	}
+	forms := []string{
+		`zq1\ zq2`,
+		`zq1\"zq2\ zq3`,
+		`zq1\'zq2\'\ zq3`,
+		`'zq1 zq2'`,
+		"\"zq1\\\" zq2 \\\\ zq3 \\$zq4 \\` zq5\"",
+		`$'zq1\' zq2 \\ zq3'`,
+		`zq1"zq2 zq3"'zq4 zq5'$'zq6\' zq7'zq8`,
+		`"zq1 zq2`,
+		`'zq1 zq2`,
+		`$'zq1\' zq2`,
+	}
+	type tc struct {
+		lines  []string // the screen's
+		native string   // the call's command
+	}
+	var cases []tc
+	for _, c := range carriers {
+		for _, f := range forms {
+			cmd := fmt.Sprintf(c, f)
+			cases = append(cases, tc{[]string{cmd}, cmd})
+		}
+	}
+	cases = append(cases,
+		tc{[]string{`curl -u "admin:zq1\" zq2" https://example.test`}, `curl -u "admin:zq1\" zq2" https://example.test`},
+		tc{[]string{`curl --user='admin:zq1 zq2' https://example.test`}, `curl --user='admin:zq1 zq2' https://example.test`},
+		tc{[]string{`curl -H "Authorization: Bearer zq1\" zq2" https://example.test`}, `curl -H "Authorization: Bearer zq1\" zq2" https://example.test`},
+		tc{[]string{`curl -H 'X-Api-Key: zq1 zq2' https://example.test`}, `curl -H 'X-Api-Key: zq1 zq2' https://example.test`},
+		tc{[]string{`curl -d "password=zq1 zq2" https://example.test`}, `curl -d "password=zq1 zq2" https://example.test`},
+		tc{[]string{`curl "https://bob:zq1 zq2@example.test"`}, `curl "https://bob:zq1 zq2@example.test"`},
+		// A backslash at the end.
+		tc{[]string{`sshpass -p zq1\`}, `sshpass -p zq1\`},
+		tc{[]string{`curl -u admin:zq1\`}, `curl -u admin:zq1\`},
+		tc{[]string{`mysql -u root -pzq1\`}, `mysql -u root -pzq1\`},
+		// A command over lines: a quote or a backslash at a line's end goes on.
+		tc{[]string{`sshpass -p "zq1`, `zq2" ssh host`}, "sshpass -p \"zq1\nzq2\" ssh host"},
+		tc{[]string{`sshpass -p zq1\`, `zq2 ssh host`}, "sshpass -p zq1\\\nzq2 ssh host"},
+		tc{[]string{`curl -u 'admin:zq1`, `zq2' https://example.test`}, "curl -u 'admin:zq1\nzq2' https://example.test"},
+		tc{[]string{`export DB_PASSWORD=$'zq1\'`, `zq2'`, `./migrate`}, "export DB_PASSWORD=$'zq1\\'\nzq2'\n./migrate"},
+		tc{[]string{`mysql -u root \`, `-pzq1\ zq2 shop`}, "mysql -u root \\\n  -pzq1\\ zq2 shop"},
+		tc{[]string{`sshpass \`, `-p "zq1 zq2" ssh host`}, "sshpass \\\n  -p \"zq1 zq2\" ssh host"},
+		// A screen's wrap: at a blank inside quotes, inside a word.
+		tc{[]string{`curl -u "admin:zq1`, `zq2" https://example.test`}, `curl -u "admin:zq1 zq2" https://example.test`},
+		tc{[]string{`curl -u admin:zq1zq`, `zq2 https://example.test`}, `curl -u admin:zq1zqzq2 https://example.test`},
+		tc{[]string{`git clone https://bob:zq1zq`, `zq2@example.test/r.git`}, `git clone https://bob:zq1zqzq2@example.test/r.git`},
+		tc{[]string{`mysql -u root -pzq1zq`, `zq2 shop`}, `mysql -u root -pzq1zqzq2 shop`},
+	)
+	for _, c := range cases {
+		for _, native := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%q native=%t", c.lines, native), func(t *testing.T) {
+				t.Parallel()
+				var calls []transcript.PendingCall
+				if native {
+					calls = []transcript.PendingCall{bashCall("toolu_pw", c.native, "Clean the scratch directory")}
+				}
+				out := menuOut(t, claudeBash("", c.lines...), calls...)
+				if strings.Contains(out, "zq") {
+					t.Errorf("left: %s", out)
+				}
+				if native != strings.Contains(out, nativeIn+"/home/u/w1") {
+					t.Errorf("not from the native call (%t): %s", native, out)
+				}
+			})
+		}
+	}
 }
 
 // The issue's reproduction (#106), ported: the screen of an unchanged

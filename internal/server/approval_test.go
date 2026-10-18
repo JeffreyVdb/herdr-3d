@@ -205,6 +205,29 @@ func TestCardMenuQuotedPasswordThroughTheHub(t *testing.T) {
 	}
 }
 
+// #106: a password with a backslash in it goes whole too, through the hub
+// (the review's commands, each valid bash): an escaped quote inside double
+// quotes closes nothing, an escaped blank ends no word.
+func TestCardMenuEscapedPasswordThroughTheHub(t *testing.T) {
+	t.Parallel()
+	for _, command := range []string{
+		`sshpass -p "prefix\" suffixsecret" ssh host`,
+		`mysql -p"prefix\" suffixsecret" shop`,
+		`curl -u "admin:prefix\" suffixsecret" https://example.test`,
+		`curl -u admin:prefix\ suffixsecret https://example.test`,
+	} {
+		t.Run(command, func(t *testing.T) {
+			t.Parallel()
+			rb := startReplyBridge(t)
+			rb.repliesOn(t)
+			c := rb.ch.Card(rb.menuCardOf(t, "w1", bashDialog(command, "Run command")))
+			if strings.Contains(c.Text, "suffixsecret") || strings.Contains(c.Text, "prefix") || !strings.Contains(c.Text, "[key]") {
+				t.Fatalf("card %q", c.Text)
+			}
+		})
+	}
+}
+
 // #106: a permission dialog whose top is off the screen and whose call is
 // not known is not approved from the game either (the screen shows only
 // its end): its No is sent; a change anywhere it shows makes an answer

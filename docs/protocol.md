@@ -4931,8 +4931,10 @@ while it is off.
   word the wrap cut; or its file's path), that call instead: its
   whole command, its description, its directory ("In: …"), the dialog's other lines ("It also says: …") and, in
   bypass mode, that Claude Code denies a removal unanswered after about two minutes. Each line is redacted (a
-  password after `-u user:`, an auth header's value, a secret-looking assignment or option's value, a MySQL or
-  sshpass password, each its whole shell word, quoted or not; a URL's password, key-shaped tokens) and cut at 300
+  password after `-u user:`, an auth header's value, a secret-looking assignment's or option's value, a MySQL or
+  sshpass `-p`, a URL's password: each value the rest of its shell word as bash reads it, backslashes, `'…'`, `"…"`
+  and `$'…'` and all, the lines read together, a quote or a backslash left open hiding the rest of the command;
+  key-shaped tokens) and cut at 300
   characters, at most 24 lines (what says the rest among them) and 1800 characters in all, the rest counted. A dialog whose top is off the screen says so and, without its call, has no
   button for a choice that approves (a Yes): approve it in its terminal in the game. A tap answers as the game's `worker.answer` does,
   with the card's `hash` and the choice's number, on the worker's input lane, no client: the screen is read again
