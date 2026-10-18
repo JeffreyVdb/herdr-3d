@@ -180,11 +180,20 @@ func (h *Hub) dropHireSecrets(ctx context.Context, sec *hireSecrets) {
 
 // claimHireSecrets gives the hire's files to its worker (off the hub
 // goroutine, once it is seen, before its prompt goes): its own pending
-// owner's and the hand-over's.
+// owner's and the hand-over's. A review the switch made stale while the
+// hire ran claims nothing (review B2): its own files go, and the prompt
+// does not. A schedule's stored prompt has no review to go stale.
 func (h *Hub) claimHireSecrets(ctx context.Context, op *hireOp) error {
 	sec := op.secrets
 	if sec == nil {
 		return nil
+	}
+	if sec.stored == nil {
+		if err := h.reviewCurrent(sec.rev); err != nil {
+			h.dropHireSecrets(ctx, sec)
+			sec.ps = nil
+			return err
+		}
 	}
 	if sec.owner.Kind != "" && protectedCount(sec.ps) > 0 {
 		if err := h.ps.files.Claim(context.WithoutCancel(ctx), sec.owner.ID, op.id); err != nil {
@@ -760,16 +769,13 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		h.dropHireSecrets(ctx, op.secrets) // #108: its own files go; a hand-over goes back to pending
 		h.finishHire(ctx, op, nil, err, rep)
 	}
-	if sec := op.secrets; sec != nil {
-		res.Protected = protectedCount(sec.ps)
-		// #108: a schedule's stored prompt goes only as its review left it,
-		// checked before anything reaches herdr.
-		if sec.stored != nil {
-			if err := h.checkStored(ctx, sec.rev, sec.stored.text, sec.stored.record); err != nil {
-				rep.step("prompt secrets: %v", err)
-				fail(err)
-				return
-			}
+	// #108: a schedule's stored prompt goes only as its review left it,
+	// checked before anything reaches herdr.
+	if sec := op.secrets; sec != nil && sec.stored != nil {
+		if err := h.checkStored(ctx, sec.rev, sec.stored.text, sec.stored.record); err != nil {
+			rep.step("prompt secrets: %v", err)
+			fail(err)
+			return
 		}
 	}
 
@@ -890,6 +896,9 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	claimErr := h.claimHireSecrets(ctx, op)
 	if claimErr != nil {
 		rep.step("prompt secrets: %v", claimErr)
+	}
+	if op.secrets != nil {
+		res.Protected = protectedCount(op.secrets.ps)
 	}
 	if op.prompt != "" && claimErr != nil {
 		sent := false

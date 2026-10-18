@@ -17,11 +17,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
+	"github.com/JeffreyVdb/herdr-3d/internal/handoffllm"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -908,6 +910,88 @@ func TestPromptSecretsHireHandOverExpires(t *testing.T) {
 	}
 }
 
+// A switch change while a reviewed preview waits for its scan (review B2)
+// makes it stale before any model reads its text: packup.detect (the
+// switch off, or off and on again), hire_preset.check and hire.interpret.
+// Nothing is left of it.
+func TestPromptSecretsSwitchCancelsQueuedPreviews(t *testing.T) {
+	t.Parallel()
+	roles, llm := newPkRoles(), hireTaskLLM()
+	hb, ids, _, dir := startSecretsPkBridge(t, roles, func(o *server.Options) {
+		o.HirePresetRoles, o.HireIntentRoles = roles, &hiRoles{state: ai.StateReady, llm: llm}
+	})
+	c := hb.c
+	typed := previewText + " and end your turn"
+	const kept = "Rotate it: DB_PASSWORD=Kept-As-Typed-8!"
+	sentence := "Hire a Claude Code agent on Haiku 5.5 to " + previewText
+	for i, tc := range []struct {
+		cmd   string
+		args  func() any
+		again bool
+	}{
+		{proto.CmdPackupDetect, func() any {
+			return proto.PackupDetectArgs{ID: ids["w2"], Text: typed, Secrets: reviewOf(t, c, typed, "c3", "c4")}
+		}, false},
+		{proto.CmdPackupDetect, func() any {
+			return proto.PackupDetectArgs{ID: ids["w2"], Text: typed, Secrets: reviewOf(t, c, typed, "c3", "c4")}
+		}, true},
+		{proto.CmdHirePresetCheck, func() any { return proto.HirePresetCheckArgs{Prompt: kept, Secrets: reviewOf(t, c, kept, "c1")} }, false},
+		{proto.CmdHireInterpret, func() any {
+			return proto.HireInterpretArgs{Text: sentence, Secrets: reviewOf(t, c, sentence, "c3", "c4")}
+		}, false},
+	} {
+		c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+		args := tc.args()
+		release := hb.hub.HoldScanSlots()
+		req := "q" + itoa(i)
+		c.send(proto.Command{T: tc.cmd, ReqID: req, Args: mustRaw(args)})
+		c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+		if tc.again {
+			c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+		}
+		release()
+		if m := c.reply(req); codeOf(m) != proto.ErrSecretsReviewStale {
+			t.Fatalf("%s (again %v): %s", tc.cmd, tc.again, m.raw)
+		}
+		if cl, l := roles.calls(); cl+l+len(llm.Calls()) != 0 {
+			t.Fatalf("%s: the models were called", tc.cmd)
+		}
+		if f := protectedFiles(t, dir); len(f) != 0 {
+			t.Fatalf("%s: files %v", tc.cmd, f)
+		}
+	}
+	traceFree(t, hb.st, hb.db, []*client{c}, routeSentinel)
+}
+
+// A hire whose review the switch made stale while herdr created its
+// workspace (review B2) keeps its worker but sends no prompt, and its
+// files go.
+func TestPromptSecretsHireSwitchWhileHiring(t *testing.T) {
+	t.Parallel()
+	hb, dir := startSecretsHireBridge(t, true, nil)
+	a := hireArgs(0)
+	a.Prompt, a.Secrets = routeText, routeReview(t, hb.c)
+	gate := hireCreating(t, hb, "h", a)
+	hb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	hb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	close(gate)
+	m := hb.c.reply("h")
+	res := ackData[proto.HireResult](t, m)
+	if res.Prompted == nil || *res.Prompted || res.Protected != 0 || !strings.Contains(res.PromptError, "setting changed") {
+		t.Fatalf("ack %s", m.raw)
+	}
+	for _, call := range hb.fl.Calls() {
+		if strings.HasPrefix(call, "prompt ") || strings.HasPrefix(call, "type ") {
+			t.Fatalf("prompted: %q", call)
+		}
+	}
+	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	if rows, _ := hb.st.SecretOwners(context.Background()); len(rows) != 0 {
+		t.Fatalf("owners %+v", rows)
+	}
+	traceFree(t, hb.st, hb.db, []*client{hb.c}, routeSentinel)
+}
+
 // worker.answer_ask: a dismissal's prompt and an Other answer go through
 // the gate on the worker's lane; refused without a review, nothing pressed
 // or typed; an Other the dialog then fails to take removes its files.
@@ -1174,6 +1258,80 @@ func TestPromptSecretsWorkerHandoffLLM(t *testing.T) {
 	}
 	if rows := ownersOf(t, lb.st, "worker", id); len(rows) != 1 || len(protectedFiles(t, dir)) != 2 {
 		t.Fatalf("w1 owns %+v", rows)
+	}
+	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
+}
+
+// A wrap-up armed with a review whose prompt then waits on the worker's
+// lane is refused when its turn comes if the switch changed meanwhile
+// (review B2): nothing typed, its files gone.
+func TestPromptSecretsWrapUpSwitchWhileQueued(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	wb := startWrapBridge(t, "", "", func(o *server.Options) { o.SecretsDir = dir })
+	c := wb.connect(proto.Hello{Client: "wrap-test"})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	gate, started := make(chan struct{}), make(chan struct{}, 1)
+	defer close(gate)
+	wb.term.mu.Lock()
+	wb.term.textGate, wb.term.textStarted = gate, started
+	wb.term.mu.Unlock()
+	c.send(proto.Command{T: proto.CmdWorkerKeys, ReqID: "hold", Args: mustRaw(proto.WorkerKeysArgs{ID: wb.ids["w1"],
+		Input: []proto.InputItem{text("slow hold")}})})
+	<-started
+	args := proto.WorkerWrapUpArgs{ID: wb.ids["w1"], Prompt: routeText, Worktree: proto.FireKeep, Secrets: routeReview(t, c)}
+	c.send(proto.Command{T: proto.CmdWorkerWrapUp, ReqID: "w", Args: mustRaw(args)})
+	waitFor(t, "the wrap-up to be armed", func() bool {
+		got, _ := wb.st.WrapUps(context.Background())
+		return len(got) == 1 && got[0].State == proto.WrapUpArmed
+	})
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	gate <- struct{}{}
+	if m := c.reply("w"); codeOf(m) != proto.ErrSecretsReviewStale {
+		t.Fatalf("wrap-up: %s", m.raw)
+	}
+	if calls := wb.term.Calls(); slices.ContainsFunc(calls, func(s string) bool { return !strings.HasPrefix(s, "text ") && !strings.HasPrefix(s, "observe ") }) {
+		t.Fatalf("typed %q", calls)
+	}
+	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	traceFree(t, wb.st, wb.db, []*client{c}, routeSentinel)
+}
+
+// An LLM handoff whose instruction's review the switch made stale while
+// its transcript was read (review B2) fails before the model reads it.
+func TestPromptSecretsWorkerHandoffLLMSwitchWhileReading(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	var hold atomic.Bool
+	reading, gate := make(chan struct{}, 1), make(chan struct{})
+	defer close(gate)
+	lb := newLLMBridge(t, yes(), func(o *server.Options) {
+		o.SecretsDir = dir
+		next := o.HandoffReduce
+		o.HandoffReduce = func(ctx context.Context, in handoffllm.Input) (handoffllm.Payload, error) {
+			if hold.Load() {
+				reading <- struct{}{}
+				<-gate
+			}
+			return next(ctx, in)
+		}
+	})
+	c := lb.connect(proto.Hello{})
+	c.snapshot()
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	id := lb.ids["w1"]
+	lb.fl.setProcs("w1:p1", running("claude", wrapSess))
+	args := llmArgs(id, lb.candidate(t, c), "op-llm")
+	args.Instruction, args.Secrets = routeText, routeReview(t, c)
+	hold.Store(true)
+	c.mustAck(proto.CmdWorkerHandoff, args)
+	<-reading
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	gate <- struct{}{}
+	w := upsertFor(c, id, llmJobState(proto.LLMHandoffFailed))
+	if w.LLMHandoff.Code != proto.ErrSecretsReviewStale || len(lb.llm.llm.Calls()) != 0 {
+		t.Fatalf("job %+v, %d LLM calls", w.LLMHandoff, len(lb.llm.llm.Calls()))
 	}
 	traceFree(t, lb.st, lb.db, []*client{c}, routeSentinel)
 }

@@ -315,7 +315,7 @@ func (h *Hub) reviewedHandoff(ctx context.Context, c *Client, cmd proto.Command,
 			return h.startAgentHandoff(ctx, c, cmd, ask)
 		}
 		started := false
-		if err := h.startLLMHandoff(ctx, c, cmd, b, func() { started = true }); err != nil {
+		if err := h.startLLMHandoff(ctx, c, cmd, b, rev, func() { started = true }); err != nil {
 			return err
 		}
 		h.settleHandoff(p, owner)(nil, !started)
@@ -333,7 +333,7 @@ func (h *Hub) startHandoffOf(ctx context.Context, c *Client, cmd proto.Command, 
 				return proto.WorkerHandoffRequestResult{Request: r, Existing: existing}
 			}})
 	}
-	return h.startLLMHandoff(ctx, c, cmd, a, nil)
+	return h.startLLMHandoff(ctx, c, cmd, a, nil, nil)
 }
 
 // startHandoffPreview answers worker.handoff_preview: the candidate's text,

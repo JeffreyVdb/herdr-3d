@@ -3974,6 +3974,17 @@ mode `agent` settles them as a `/handoff` does (until the request's prompt is be
 reads only the references; a handoff it writes may name the files, which live as long as that worker) and an
 `existing` answer removes them. Telegram replies and card answers have no review: candidates refuse them (round 1).
 
+**A change of the switch** makes every review made before it stale, also one whose command is already under way: each
+route checks it last, after any wait (a scan slot, the worker's input lane, herdr creating a hire's workspace, a work
+item being read, a handoff's transcript being read), before its text goes on. `packup.detect`, `hire.interpret` and
+`hire_preset.check` check it just before their model reads the text: the command is `secrets_review_stale`, no model
+is called, and the files its review made are removed. A hire (`worker.hire`, `run.start`) checks it once its worker is
+seen, before its first prompt: the worker stays, its prompt does not go (`prompt_error`), and its files are removed;
+`run.start` also checks it when its work item has been read (then nothing is hired). A wrap-up checks it just before its
+prompt is typed (the arm fails with `secrets_review_stale`); an LLM handoff just before the model is called (the job
+fails with code `secrets_review_stale`). A schedule's fire has no review to go stale: its record is of the text and
+the rules.
+
 **Not reviewed.** `worker.keys` (typing straight into a terminal, as in any terminal); `run.prepare` (it sends the text
 nowhere and keeps none of it: its preview comes back to its sender only, its audit row keeps lengths; the `run.start`
 that follows is reviewed); `worker.handoff` in mode `literal` (no typed text); names, labels and titles (a hire's

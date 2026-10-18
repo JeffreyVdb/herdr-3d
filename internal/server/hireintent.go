@@ -87,6 +87,9 @@ func (h *Hub) startHireInterpret(ctx context.Context, c *Client, cmd proto.Comma
 			pv.undo(ctx)
 			return nil, bad("text with its file references must be at most %d bytes, got %d", hireintent.MaxTextBytes, len(pv.text))
 		}
+		if err := pv.current(ctx); err != nil {
+			return nil, err
+		}
 		req.Text = pv.text
 		res := hireintent.Run(ctx, roles, timeout, req)
 		if res.Error != nil {

@@ -175,6 +175,9 @@ func (h *Hub) startPackup(ctx context.Context, c *Client, cmd proto.Command) err
 				pv.undo(ctx)
 				return nil, bad("text with its file references must be at most %d bytes, got %d", herdr.MaxMessage, len(text))
 			}
+			if err := pv.current(ctx); err != nil {
+				return nil, err // never the fail-open path: the prompt has no review now
+			}
 			out := pv.result()
 			res, err := svc.Detect(ctx, text)
 			if err != nil {

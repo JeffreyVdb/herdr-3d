@@ -529,6 +529,9 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 				if err == nil && h.boardKey(a.Floor) != source {
 					err = fmt.Errorf("%w: the floor's issue board changed while its item was read: pick the item again", errStale)
 				}
+				if err == nil && sec != nil { // #108 review B2: the switch changed while the item was read
+					err = h.reviewCurrent(sec.rev)
+				}
 				if err == nil {
 					err = h.runStart(ctx, c, cmd, a, t, sec)
 				}

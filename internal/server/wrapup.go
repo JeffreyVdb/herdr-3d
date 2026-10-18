@@ -62,12 +62,14 @@ type wrapUp struct {
 	checking        bool // arming: the arm-time check of the tree runs
 	// Arming: the command, its client and audit row, and the text to prompt
 	// (#108: and what the review of its prompt made, settled when the arm
-	// ends: kept once the prompt went, else its files removed).
+	// ends: kept once the prompt went, else its files removed; the reviewer
+	// it was made under, nil: none).
 	client  *Client
 	cmd     proto.Command
 	auditID int64
 	text    string
 	prot    *protected
+	rev     *promptsecret.Reviewer
 	// by is who armed it, for the send home's audit row.
 	by string
 	// The tracker's last look at the ended turn: its line count, since when.
@@ -362,7 +364,7 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 	}
 	prev := h.wrapups[a.ID]
 	wu := &wrapUp{id: w.ID, session: w.Session, worktree: op.choice, offset: -1, state: wrapArming, checking: true,
-		client: c, cmd: cmd, auditID: auditID, by: c.name, lines: -1}
+		client: c, cmd: cmd, auditID: auditID, by: c.name, lines: -1, rev: rev}
 	h.wrapups[w.ID] = wu
 	h.log.Info("wrap-up arming", "client", c.name, "req_id", cmd.ReqID, "session", w.Session, "worker", w.ID, "worktree", op.choice)
 	kind := w.AgentKind
@@ -568,6 +570,9 @@ func (h *Hub) armed(ctx context.Context, wu *wrapUp, u wrapUpdate) {
 	id, text := wu.id, wu.text
 	h.queueLane(ctx, id, func(ctx context.Context) {
 		t, err := query(ctx, h, func() laneTarget {
+			if wu.rev != nil && h.ps.rev != wu.rev { // #108 review B2: the switch changed while it waited
+				return laneTarget{err: errSettingChanged}
+			}
 			w, _, err := h.termWorker(id)
 			if err != nil {
 				return laneTarget{err: err}

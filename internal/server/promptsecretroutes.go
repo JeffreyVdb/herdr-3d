@@ -408,14 +408,17 @@ func slicesOf(rs proto.SecretsReviews) []*proto.SecretsReview {
 // preview is what the gate made of a preview's text (packup.detect,
 // hire.interpret) for the language model and the command that follows: the
 // text as typed and as the model reads it (references in place), what the
-// gate wrote, and the hand-over (token: "" when nothing was reviewed;
-// fresh: made for this preview).
+// gate wrote, the hand-over (token: "" when nothing was reviewed; fresh:
+// made for this preview; worker: packup's, "" a hire's), and the reviewer
+// it was made under (nil: the switch off, as typed).
 type preview struct {
 	h            *Hub
 	typed, text  string
 	ps           []protected
 	token        string
 	fresh, files bool
+	worker       string
+	rev          *promptsecret.Reviewer
 }
 
 // previewGate readies a preview's text for the gate (#108 round 2; hub
@@ -443,7 +446,7 @@ func (h *Hub) previewGate(forWorker, text string, review *proto.SecretsReview, t
 		}
 	}
 	return func(ctx context.Context) (*preview, error) {
-		pv := &preview{h: h, typed: text, token: token, files: tok.files}
+		pv := &preview{h: h, typed: text, token: token, files: tok.files, worker: forWorker, rev: rev}
 		owner, expires := tok.owner, tok.expires
 		if pv.token == "" && review != nil {
 			var p secretPending
@@ -459,6 +462,25 @@ func (h *Hub) previewGate(forWorker, text string, review *proto.SecretsReview, t
 		pv.files = pv.files || protectedCount(ps) > 0
 		return pv, nil
 	}, nil
+}
+
+// current checks the preview's review last before the model reads its
+// text (review B2; off the hub goroutine): the switch changed, or the
+// hand-over it continues no longer holds, since the command came (it may
+// wait for a scan slot, then on the model): stale, and what the gate made
+// goes.
+func (pv *preview) current(ctx context.Context) error {
+	if pv.rev == nil {
+		return nil
+	}
+	err := pv.h.reviewCurrent(pv.rev)
+	if err == nil && pv.token != "" {
+		_, err = pv.h.pendingFor(pv.token, pv.rev, pv.worker, pv.worker == "")
+	}
+	if err != nil {
+		pv.undo(ctx)
+	}
+	return err
 }
 
 // dropToken forgets a hand-over this preview made, before it was answered.

@@ -51,6 +51,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/handoff"
 	"github.com/JeffreyVdb/herdr-3d/internal/handoffllm"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
@@ -80,6 +81,9 @@ type llmJob struct {
 	// cancels it any more.
 	filing              bool
 	homeResult, homeWhy string
+	// rev is the reviewer its instruction's review was made under (#108;
+	// nil: none).
+	rev *promptsecret.Reviewer
 }
 
 type llmStop struct{ state, code, msg string }
@@ -479,7 +483,8 @@ type llmReport struct {
 // and the job is followed on Worker.LLMHandoff. started (#108; nil: none)
 // is told when the job starts (not for an existing op's answer, nor when
 // it could not be stored).
-func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs, started func()) error {
+func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHandoffArgs, rev *promptsecret.Reviewer,
+	started func()) error {
 	svc := h.llm.svc
 	switch {
 	case svc == nil:
@@ -516,7 +521,7 @@ func (h *Hub) startLLMHandoff(ctx context.Context, c *Client, cmd proto.Command,
 	model, host := llmRecipient(h.llm.roles)
 	j := &llmJob{model: model, host: host, row: store.HandoffLLMJob{Op: a.Op, WorkerID: w.ID, Floor: workerFloor(w), AgentSession: w.AgentSession,
 		Candidate: hc.c.ID, ArgsHash: hash, Config: svc.Fingerprint(), PromptVersion: handoffllm.PromptVersion, SendHome: a.SendHome,
-		State: store.HandoffJobRunning, CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}}
+		State: store.HandoffJobRunning, CreatedAt: now.UnixMilli(), UpdatedAt: now.UnixMilli()}, rev: rev}
 	// The audit row first, then the job row, then nothing that can fail
 	// before the job runs: a stored running job always has its goroutine.
 	// When either insert fails nothing is stored, nothing was sent, and the
@@ -639,6 +644,10 @@ func (h *Hub) runLLMHandoff(jctx, hctx context.Context, j *llmJob, hc *handoffCa
 			return err
 		}
 		rep.SentBytes, rep.FocusBytes, rep.Redactions = p.Bytes, p.FocusBytes, p.Redactions
+		if j.rev != nil && h.reviewCurrent(j.rev) != nil { // #108 review B2: the switch changed while the transcript was read
+			return &handoffllm.Error{Code: proto.ErrSecretsReviewStale,
+				Msg: "the prompt secrets setting changed while the handoff was being prepared: review the instruction again; nothing was sent"}
+		}
 		res, err = svc.Generate(jctx, p.Messages)
 		rep.AnswerBytes, rep.ElapsedMS, rep.Diag, rep.Effort, rep.MaxTokens = res.Answer, res.Elapsed.Milliseconds(), res.Diag, res.Effort, res.MaxTokens
 		if err != nil {

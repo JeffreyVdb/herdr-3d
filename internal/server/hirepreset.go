@@ -268,8 +268,10 @@ func (h *Hub) startHirePresetCheck(ctx context.Context, c *Client, cmd proto.Com
 		}
 		rev := h.ps.rev
 		gate = func(ctx context.Context) error {
-			_, err := h.storedReview(ctx, rev, a.Prompt, a.Secrets)
-			return err
+			if _, err := h.storedReview(ctx, rev, a.Prompt, a.Secrets); err != nil {
+				return err
+			}
+			return h.reviewCurrent(rev) // review B2: the switch changed while it waited
 		}
 	}
 	roles, timeout := h.hirePresetRoles(), h.opts.HirePresetCheckTimeout
