@@ -521,13 +521,15 @@ func (h *Hub) startAnswer(ctx context.Context, c *Client, cmd proto.Command) err
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	return h.queueAnswer(ctx, a, h.endCommand(c, cmd))
+	return h.queueAnswer(ctx, a, "", h.endCommand(c, cmd))
 }
 
 // queueAnswer is worker.answer's checks and its queueing on the worker's
 // lane (hub goroutine), for a client's command and (#88) a Telegram card's
-// tap alike: end gets the outcome.
-func (h *Hub) queueAnswer(ctx context.Context, a proto.WorkerAnswerArgs, end inputEnd) error {
+// tap alike: end gets the outcome. #106: native, when not "", is the
+// native call the tap was for (nativeCall.id): the menu must still be for
+// it.
+func (h *Hub) queueAnswer(ctx context.Context, a proto.WorkerAnswerArgs, native string, end inputEnd) error {
 	if !hashRe.MatchString(a.Hash) {
 		return bad("hash must be 16 hex characters")
 	}
@@ -543,16 +545,17 @@ func (h *Hub) queueAnswer(ctx context.Context, a proto.WorkerAnswerArgs, end inp
 	}
 	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
 	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
-		return h.answer(ctx, a, session, pane)
+		return h.answer(ctx, a, native, session, pane)
 	}, end)
 }
 
-func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, session, pane string) (any, error) {
+func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, native, session, pane string) (any, error) {
 	screen, err := h.opts.Term.ReadPane(ctx, session, pane)
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading the screen failed: %v", errInputFailed, err)
 	}
 	var sq screenQuestion
+	var nc *nativeCall
 	blocked, err := query(ctx, h, func() bool {
 		w := h.workers[a.ID]
 		if w == nil || w.Status != statusBlocked || w.PaneID != pane {
@@ -560,6 +563,9 @@ func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, session, pan
 		}
 		sq = parseQuestionOf(harnessOf(w), screen, w.StatusSince)
 		h.setQuestion(a.ID, pane, &sq) // what it asks now
+		if native != "" {
+			nc = h.nativeFor(a.ID, sq.op)
+		}
 		return true
 	})
 	switch {
@@ -569,6 +575,8 @@ func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, session, pan
 		return nil, fmt.Errorf("%w: the worker is no longer blocked", errStale)
 	case sq.q.Hash != a.Hash:
 		return nil, fmt.Errorf("%w: the screen asks %q now (hash %s)", errStale, sq.q.Text, sq.q.Hash)
+	case native != "" && (nc == nil || nc.id != native):
+		return nil, fmt.Errorf("%w: the menu is not for the call tapped any more", errStale)
 	}
 	var keys []string
 	if a.Cancel {

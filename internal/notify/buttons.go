@@ -157,9 +157,10 @@ type Answer struct {
 	TurnID   string
 	Followup []FollowupAnswer
 	// A screen menu's (#88): its hash, and the choice's number on the
-	// screen.
+	// screen; (#106) the native call its card was for ("": not known).
 	Hash   string
 	Choice int
+	Native string
 }
 
 // AskAnswer answers one question of an ask: option numbers (1-based) and/or
@@ -1034,7 +1035,7 @@ func oneLine(text string) bool {
 func (ss *session) answer() Answer {
 	a := Answer{WorkerID: ss.worker}
 	if ss.kind == kindMenu {
-		a.Hash = ss.menu.Hash
+		a.Hash, a.Native = ss.menu.Hash, ss.menu.Native
 		for o := range ss.qs[0].picked {
 			a.Choice = ss.menu.Choices[o].N
 		}

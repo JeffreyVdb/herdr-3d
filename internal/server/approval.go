@@ -9,8 +9,10 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -113,12 +115,13 @@ func opOf(harness string, q proto.Question, lines []string, first, qline int, si
 	}
 	op := &menuOp{complete: top >= 0}
 	from, to := top+1, first
-	switch {
-	case top < 0:
+	if top < 0 {
 		from = max(0, first-questionReach)
+	}
+	switch {
 	case head:
 		from = top // Codex: its first line asks, and what follows is what it asks about
-	case qline > top && qline < first && onlyIncidental(lines[qline+1:first]):
+	case harness != transcript.Codex && qline >= from && qline < first && onlyIncidental(lines[qline+1:first]):
 		to = qline // Claude: its question is right above the choices, what it is about above it
 	}
 	var bare strings.Builder
@@ -206,7 +209,11 @@ func redactLine(s string) string {
 // aboutLines is what a menu's card shows of lines (an operation's, the
 // screen's or its native call's): each redacted and cut to aboutLineMax,
 // at most aboutLinesMax of them and aboutMax runes in all, the rest said.
-func aboutLines(lines []string) []string {
+func aboutLines(lines []string) []string { return boundLines(lines, aboutLinesMax, aboutMax) }
+
+// boundLines is lines redacted and bounded: each to aboutLineMax runes, at
+// most maxLines of them and maxRunes in all, the rest said.
+func boundLines(lines []string, maxLines, maxRunes int) []string {
 	var out []string
 	total := 0
 	for i, l := range lines {
@@ -215,7 +222,7 @@ func aboutLines(lines []string) []string {
 			l = string([]rune(l)[:aboutLineMax-1]) + "…"
 		}
 		n := utf8.RuneCountInString(l)
-		if len(out) == aboutLinesMax || total+n > aboutMax {
+		if len(out) == maxLines || total+n > maxRunes {
 			out = append(out, fmt.Sprintf(aboutCut, len(lines)-i))
 			break
 		}
@@ -226,14 +233,20 @@ func aboutLines(lines []string) []string {
 }
 
 // menuFacts adds to a menu's facts what its operation tells (#106): its
-// key, what its card shows (redacted and bounded), and for a permission
-// whose dialog's top is off the screen, its approving choices withheld:
+// key, what its card shows (redacted and bounded: its native call's
+// command, directory and the dialog's other lines when nc is known, else
+// the dialog's lines), and for a permission whose dialog's top is off the
+// screen and whose call is not known, its approving choices withheld:
 // what the card shows of it is not all of it, so no tap approves it.
-func menuFacts(m *notify.Menu, op *menuOp) {
+func menuFacts(m *notify.Menu, op *menuOp, nc *nativeCall) {
 	if m == nil || op == nil {
 		return
 	}
 	m.Op, m.Source = op.key, "screen"
+	if nc != nil {
+		m.Native, m.Source, m.About = nc.id, "native", nc.about(op)
+		return
+	}
 	m.About = aboutLines(op.lines)
 	if op.complete {
 		return
@@ -253,4 +266,217 @@ func menuFacts(m *notify.Menu, op *menuOp) {
 // Yes, as Claude Code and Codex write them).
 func approves(label string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(label)), "yes")
+}
+
+// nativeCall is the agent's own pending call a menu is for (#106): read
+// from its transcript (transcript.CallTracker), with its whole input.
+type nativeCall struct {
+	// id names it: 16 hex over its tool_use id and its input's sum.
+	id   string
+	call transcript.PendingCall
+	// in is its input's fields a card shows; mode the session's permission
+	// mode.
+	in   callInput
+	mode string
+	// cmd is how many of the operation's lines are its command (Bash).
+	cmd int
+}
+
+type callInput struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+	FilePath    string `json:"file_path"`
+}
+
+// fileHeads are Claude Code's file dialogs' heads, and the tools they ask
+// for.
+var fileHeads = map[string][]string{"Create file": {"Write"}, "Edit file": {"Edit", "MultiEdit", "Write"}, "Overwrite file": {"Write"}}
+
+// bare is s without whitespace.
+func bare(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// nativeOf is the one pending call of calls that op is about (nil: none,
+// or more than one could be). A Bash dialog's command lines, joined
+// without whitespace, must be its command (whole; a dialog whose top is
+// off the screen, its end, at least minNativeTail of it); a file dialog's
+// path must be its file_path (or its end). Anything else is not matched.
+func nativeOf(op *menuOp, calls []transcript.PendingCall, mode string) *nativeCall {
+	if op == nil || len(op.lines) == 0 {
+		return nil
+	}
+	var found *nativeCall
+	for _, c := range calls {
+		nc := matchCall(op, c)
+		if nc == nil {
+			continue
+		}
+		if found != nil {
+			return nil
+		}
+		found = nc
+	}
+	if found != nil {
+		found.mode = mode
+		h := sha256.Sum256([]byte(found.call.ID + "\x00" + found.call.Sum))
+		found.id = hex.EncodeToString(h[:])[:16]
+	}
+	return found
+}
+
+// minNativeTail is the fewest characters (no whitespace) of a command's end
+// that match a dialog whose top is off the screen.
+const minNativeTail = 12
+
+func matchCall(op *menuOp, c transcript.PendingCall) *nativeCall {
+	var in callInput
+	if c.Input == nil || json.Unmarshal(c.Input, &in) != nil {
+		return nil
+	}
+	nc := &nativeCall{call: c, in: in}
+	lines := op.lines
+	if op.complete {
+		head := lines[0]
+		if tools, ok := fileHeads[head]; ok {
+			if len(lines) < 2 || !slices.Contains(tools, c.Name) || in.FilePath == "" ||
+				(in.FilePath != lines[1] && !strings.HasSuffix(in.FilePath, "/"+lines[1])) {
+				return nil
+			}
+			return nc
+		}
+		if head != "Bash command" {
+			return nil
+		}
+		lines = lines[1:]
+	}
+	if c.Name != "Bash" || in.Command == "" {
+		return nil
+	}
+	cmd := bare(in.Command)
+	var run strings.Builder
+	for k, l := range lines {
+		run.WriteString(bare(l))
+		got := run.String()
+		switch {
+		case op.complete && got == cmd, !op.complete && len(got) >= minNativeTail && strings.HasSuffix(cmd, got):
+			nc.cmd = k + 1
+			return nc
+		case !strings.Contains(cmd, got):
+			return nil
+		}
+	}
+	return nil
+}
+
+// bypassRmRe is a removal Claude Code still asks about in bypass mode.
+var bypassRmRe = regexp.MustCompile(`(^|[\s;&|(/])(rm|rmdir)\s`)
+
+// What a native call's card adds.
+const (
+	nativeIn     = "In: "
+	nativeSays   = "It also says: "
+	nativeBypass = "Bypass mode: Claude Code still asks about this removal, and denies it if nobody answers within about 2 minutes."
+	nativeFile   = "File: "
+)
+
+// about is what the card shows of a menu with its native call: the
+// dialog's head, the call's command or file, its description and
+// directory, the dialog's lines that are not the call's (why it asks), and
+// in bypass mode, a removal's countdown; redacted and bounded.
+func (nc *nativeCall) about(op *menuOp) []string {
+	head, rest := "", op.lines
+	if op.complete {
+		head, rest = op.lines[0], op.lines[1:]
+	}
+	var main, extra []string
+	switch {
+	case nc.call.Name == "Bash":
+		if head == "" {
+			head = "Bash command"
+		}
+		main = strings.Split(strings.TrimRight(nc.in.Command, "\n"), "\n")
+		rest = rest[min(nc.cmd, len(rest)):]
+		if d := strings.TrimSpace(nc.in.Description); d != "" {
+			extra = append(extra, d)
+		}
+	default:
+		main = []string{nativeFile + nc.in.FilePath}
+		rest = rest[min(1, len(rest)):]
+	}
+	if nc.call.Cwd != "" {
+		extra = append(extra, nativeIn+nc.call.Cwd)
+	}
+	desc := bare(nc.in.Description)
+	for _, l := range rest {
+		if b := bare(l); b != "" && b != desc && nc.call.Name == "Bash" {
+			extra = append(extra, nativeSays+l)
+		}
+	}
+	if nc.mode == "bypassPermissions" && bypassRmRe.MatchString(nc.in.Command) {
+		extra = append(extra, nativeBypass)
+	}
+	out := []string{head}
+	out = append(out, boundLines(main, aboutLinesMax-6, aboutMax-600)...)
+	return append(out, boundLines(extra, 6, 600)...)
+}
+
+// workerCalls are the calls a worker's transcript waits on, and its
+// permission mode (#106).
+type workerCalls struct {
+	calls []transcript.PendingCall
+	mode  string
+}
+
+// callsUpdate is a worker's calls as its transcript says them now.
+type callsUpdate struct {
+	id string
+	workerCalls
+}
+
+// offerCalls queues a worker's pending calls when they changed (by their
+// ids, sums and the mode).
+func (tr *usageTracker) offerCalls(w usageWorker) {
+	var wc workerCalls
+	if t := tr.calls[w.id]; t != nil {
+		wc = workerCalls{calls: t.Pending(), mode: t.Mode()}
+	}
+	var fp strings.Builder
+	fp.WriteString(wc.mode)
+	for _, c := range wc.calls {
+		fp.WriteString("\x00" + c.ID + "\x00" + c.Sum)
+	}
+	if prev, ok := tr.callShown[w.id]; (ok && prev == fp.String()) || (!ok && fp.Len() == 0) {
+		return
+	}
+	tr.callShown[w.id] = fp.String()
+	tr.callUps = append(tr.callUps, callsUpdate{id: w.id, workerCalls: wc})
+}
+
+// setCalls keeps a worker's pending calls (hub goroutine); a worker blocked
+// on a menu is looked at again, so its card learns its call.
+func (h *Hub) setCalls(u callsUpdate) {
+	if len(u.calls) == 0 && u.mode == "" {
+		delete(h.calls, u.id)
+	} else {
+		h.calls[u.id] = u.workerCalls
+	}
+	if qs, ok := h.questions[u.id]; ok && qs.op != nil && h.nt.svc != nil {
+		h.notifyWorker(u.id)
+	}
+}
+
+// nativeFor is the pending call of worker id's transcript that op is about
+// (hub goroutine; nil: none known).
+func (h *Hub) nativeFor(id string, op *menuOp) *nativeCall {
+	wc, ok := h.calls[id]
+	if !ok {
+		return nil
+	}
+	return nativeOf(op, wc.calls, wc.mode)
 }

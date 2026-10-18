@@ -163,7 +163,7 @@ func (h *Hub) notifyWorker(id string) {
 	f := h.floors[w.Floor]
 	nw := notifyFacts(w, f != nil && !f.running)
 	if qs, ok := h.questions[id]; ok && nw.Menu != nil && qs.q == w.Question { // #106
-		menuFacts(nw.Menu, qs.op)
+		menuFacts(nw.Menu, qs.op, h.nativeFor(id, qs.op))
 	}
 	o := notify.Observation{Worker: nw, Name: workerDisplayName(w)}
 	if v := notify.Judge(nw); v.Display == notify.DisplayNeedsYou || v.Display == notify.DisplayDone {
@@ -370,7 +370,7 @@ func (h *Hub) cardAnswer(ctx context.Context, a notify.Answer, done func(error))
 	}
 	return h.handOff(ctx, func(hctx context.Context) error {
 		if a.Hash != "" {
-			return menuError(a, h.queueAnswer(hctx, proto.WorkerAnswerArgs{ID: a.WorkerID, Hash: a.Hash, Choice: a.Choice}, end))
+			return menuError(a, h.queueAnswer(hctx, proto.WorkerAnswerArgs{ID: a.WorkerID, Hash: a.Hash, Choice: a.Choice}, a.Native, end))
 		}
 		if a.TurnID != "" {
 			args := proto.WorkerAnswerFollowupArgs{ID: a.WorkerID, TurnID: a.TurnID}

@@ -2,6 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
 )
 
 // #106: the incidental lines are only what says how long something has run
@@ -182,7 +186,7 @@ func TestMenuOpPartial(t *testing.T) {
 		t.Error("the whole dialog and its end: same identity")
 	}
 	m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &sq.q}, false).Menu
-	menuFacts(m, sq.op)
+	menuFacts(m, sq.op, nil)
 	if m.About[0] != aboutPartial || !slices.Contains(m.About, "rm -f $D/*") {
 		t.Fatalf("about %q", m.About)
 	}
@@ -198,7 +202,7 @@ func TestMenuOpPartial(t *testing.T) {
 	trust := screen(t, "claude-trust")
 	tq := parseQuestionOf("claude", trust[strings.Index(trust, " /tmp/h3d"):], 1)
 	tm := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &tq.q}, false).Menu
-	menuFacts(tm, tq.op)
+	menuFacts(tm, tq.op, nil)
 	if tq.op.complete || slices.ContainsFunc(tm.Choices, func(c notify.MenuChoice) bool { return c.Withheld }) {
 		t.Fatalf("trust %+v %+v", tq.op, tm.Choices)
 	}
@@ -303,7 +307,7 @@ func (r *floodRig) frame(id, name string, since int64, screen string) {
 	sq := parseQuestionOf("claude", screen, since)
 	w := &proto.Worker{ID: id, Status: statusBlocked, StatusSince: since, Question: &sq.q}
 	nw := notifyFacts(w, false)
-	menuFacts(nw.Menu, sq.op)
+	menuFacts(nw.Menu, sq.op, nil)
 	r.svc.Observe(notify.Observation{Worker: nw, Name: name})
 }
 
@@ -381,5 +385,78 @@ func TestPermissionCardStableThroughTickingContext(t *testing.T) {
 				t.Fatalf("cards %+v", cards)
 			}
 		})
+	}
+}
+
+// bashCall is a pending Bash call of command.
+func bashCall(id, command, description string) transcript.PendingCall {
+	in, _ := json.Marshal(map[string]string{"command": command, "description": description})
+	sum := sha256.Sum256(in)
+	return transcript.PendingCall{ID: id, Name: "Bash", Input: in, Sum: hex.EncodeToString(sum[:]), Cwd: "/home/u/w1"}
+}
+
+// #106: a menu's native call is the one pending call whose command the
+// dialog shows whole (joined without whitespace: however it wraps), or
+// whose end a dialog cut at the top shows; a file dialog's by its path.
+// Two candidates, another command, another tool: none.
+func TestNativeOf(t *testing.T) {
+	t.Parallel()
+	cmd := "S=/tmp/run; D=$S/scratch; rm -f $D/*"
+	call := bashCall("toolu_a", cmd, "Clean the scratch directory")
+	full := parseQuestionOf("claude", claudeBash("", cmd), 1)
+	nc := nativeOf(full.op, []transcript.PendingCall{bashCall("toolu_x", "ls", "List"), call}, "")
+	if nc == nil || nc.call.ID != "toolu_a" || nc.cmd != 1 || len(nc.id) != 16 {
+		t.Fatalf("native %+v", nc)
+	}
+	wrapped := parseQuestionOf("claude", claudeBash("", "S=/tmp/run; D=$S/scr", "atch; rm -f $D/*"), 1)
+	if n := nativeOf(wrapped.op, []transcript.PendingCall{call}, ""); n == nil || n.id != nc.id || n.cmd != 2 {
+		t.Fatalf("wrapped %+v", n)
+	}
+	for name, calls := range map[string][]transcript.PendingCall{
+		"two alike":       {call, bashCall("toolu_b", cmd, "Again")},
+		"another command": {bashCall("toolu_c", "S=/tmp/run; D=$S/scratch; rm -rf $D", "x")},
+		"a longer one":    {bashCall("toolu_d", cmd+"; ls", "x")},
+		"another tool":    {{ID: "toolu_e", Name: "Agent", Input: json.RawMessage(`{"command":"` + cmd + `"}`), Sum: "x"}},
+		"too big":         {{ID: "toolu_f", Name: "Bash", Sum: "x"}},
+	} {
+		if n := nativeOf(full.op, calls, ""); n != nil {
+			t.Errorf("%s: %+v", name, n)
+		}
+	}
+	// Cut at the top: its end matches, and makes it whole.
+	tall := claudeBash("", "S=/tmp/run", "D=$S/scratch", "rm -f $D/*")
+	cut := parseQuestionOf("claude", tall[strings.Index(tall, "   D=$S"):], 1)
+	multi := bashCall("toolu_m", "S=/tmp/run\nD=$S/scratch\nrm -f $D/*", "Clean the scratch directory")
+	n := nativeOf(cut.op, []transcript.PendingCall{multi}, "bypassPermissions")
+	if cut.op.complete || n == nil {
+		t.Fatalf("cut %+v / %+v", cut.op, n)
+	}
+	m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &cut.q}, false).Menu
+	menuFacts(m, cut.op, n)
+	if slices.ContainsFunc(m.Choices, func(c notify.MenuChoice) bool { return c.Withheld }) || m.Native != n.id || m.Source != "native" ||
+		!slices.Equal(m.About, []string{"Bash command", "S=/tmp/run", "D=$S/scratch", "rm -f $D/*", "Clean the scratch directory",
+			"In: /home/u/w1", nativeBypass}) {
+		t.Fatalf("menu %+v", m)
+	}
+	short := parseQuestionOf("claude", tall[strings.Index(tall, "   Clean"):], 1)
+	if n := nativeOf(short.op, []transcript.PendingCall{multi}, ""); n != nil {
+		t.Errorf("only its description: %+v", n)
+	}
+	// What the dialog adds is why it asks.
+	warned := strings.Replace(claudeBash("", cmd), "   Clean the scratch directory\n", "   Clean the scratch directory\n ⚠ rm with a variable target\n", 1)
+	w := parseQuestionOf("claude", warned, 1)
+	if about := nativeOf(w.op, []transcript.PendingCall{call}, "").about(w.op); !slices.Contains(about, nativeSays+"⚠ rm with a variable target") {
+		t.Fatalf("about %q", about)
+	}
+	// A file dialog: by its path.
+	wr := parseQuestion(screen(t, "claude-permission-write"), 1)
+	in := json.RawMessage(`{"file_path":"/tmp/h3d-m5term/claude-a2be86/notes-h3d.txt","content":"hello"}`)
+	write := transcript.PendingCall{ID: "toolu_w", Name: "Write", Input: in, Sum: "s", Cwd: "/tmp/h3d-m5term/claude-a2be86"}
+	if n := nativeOf(wr.op, []transcript.PendingCall{write}, ""); n == nil || !slices.Contains(n.about(wr.op), "File: /tmp/h3d-m5term/claude-a2be86/notes-h3d.txt") {
+		t.Fatalf("write %+v", n)
+	}
+	write.Name = "Edit"
+	if n := nativeOf(wr.op, []transcript.PendingCall{write}, ""); n != nil {
+		t.Fatalf("an Edit for a Create file dialog: %+v", n)
 	}
 }
