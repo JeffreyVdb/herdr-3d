@@ -153,6 +153,8 @@ export class StartRunDialog {
   private resolving = false;
   /** Bumped by every open: an answer for an older one is dropped. */
   private opened = 0;
+  /** #108: the opening (`opened`) whose `run.start` is at the bridge now: Esc then leaves a run that still starts. */
+  private sending = -1;
   /**
    * The two composer fields are built once and stay in the form across re-renders (`keepChildren`): a composer that is
    * detached loses its caret, its selection (a drag in progress) and its focus, which a textarea could be given back.
@@ -253,7 +255,9 @@ export class StartRunDialog {
       if (back?.isConnected && !this.dialog.contains(back)) back.focus();
     });
     this.dialog.addEventListener('cancel', () => {
-      if (this.state === 'starting') this.host.toast('The run is still starting; its orchestrator shows up at the desk when it is hired.', 'info');
+      // Esc while the run.start is on its way: the run still starts; the dialog just goes. (#108: not while its texts are
+      // scanned, or scanned again after a refusal: then nothing starts, and nothing is said.)
+      if (this.sending === this.opened) this.host.toast('The run is still starting; its orchestrator shows up at the desk when it is hired.', 'info');
     });
     // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
@@ -993,7 +997,12 @@ export class StartRunDialog {
     this.startingStatus();
     this.render();
     const gen = this.gen;
-    const send = (g: GoFields | null) => this.host.send('run.start', g?.secrets ? { ...args, secrets: g.secrets } : args);
+    const send = (g: GoFields | null) => {
+      this.sending = opened;
+      return this.host.send('run.start', g?.secrets ? { ...args, secrets: g.secrets } : args).finally(() => {
+        if (this.sending === opened) this.sending = -1;
+      });
+    };
     const d = flow && go ? await flow.deliverFields(freq, go, send) : ({ kind: 'answered', result: await send(null) } as const);
     release();
     // Closed while a refusal was reviewed again: nothing started, nothing to say.

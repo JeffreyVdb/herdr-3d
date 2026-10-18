@@ -165,6 +165,8 @@ export class ScheduleFormDialog {
     return this.filing?.path ?? null;
   }
   private saving = false;
+  /** #108: the form (`formGen`) whose `schedule.create`/`schedule.update` is at the bridge now: Esc then leaves a save that still lands. */
+  private sending = -1;
   private statusText = '';
   private statusError = false;
   private ticker: ReturnType<typeof setInterval> | null = null;
@@ -279,7 +281,9 @@ export class ScheduleFormDialog {
       this.composer.closePreview();
     });
     this.dialog.addEventListener('cancel', () => {
-      if (this.saving) this.host.toast('The schedule is still being saved; the list shows it once herdr-world answers.', 'info');
+      // Esc while the save is on its way: it still lands; the form just goes. (#108: not while its prompt is resolved,
+      // scanned or scanned again after a refusal, nor while the message is filed: then nothing is saved, and nothing is said.)
+      if (this.sending === this.formGen) this.host.toast('The schedule is still being saved; the list shows it once herdr-world answers.', 'info');
     });
     // Typed text in here: only the close button and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
@@ -811,7 +815,13 @@ export class ScheduleFormDialog {
     }
     const spec = scheduleSpec(form, text.text, path, this.mode === 'create' ? (this.prefill.source ?? (t ? { kind: 'transcript', worker: t.worker, ...(t.candidate.message ? { message: t.candidate.message } : {}) } : undefined)) : undefined);
     const cmd = this.mode === 'edit' ? 'schedule.update' : 'schedule.create';
-    const send = (g: Go) => (this.mode === 'edit' ? this.host.send('schedule.update', { id: this.editId, ...spec, ...(g.secrets ? { secrets: g.secrets } : {}) }) : this.host.send('schedule.create', { ...spec, ...(g.secrets ? { secrets: g.secrets } : {}) }));
+    const send = (g: Go) => {
+      this.sending = gen;
+      const sent = this.mode === 'edit' ? this.host.send('schedule.update', { id: this.editId, ...spec, ...(g.secrets ? { secrets: g.secrets } : {}) }) : this.host.send('schedule.create', { ...spec, ...(g.secrets ? { secrets: g.secrets } : {}) });
+      return sent.finally(() => {
+        if (this.sending === gen) this.sending = -1;
+      });
+    };
     const d = flow ? await flow.deliver(sreq, go, send) : ({ kind: 'answered', result: await send(go) } as const);
     if (gen !== this.formGen || !this.dialog.open) return;
     if (d.kind === 'kept') return end(d.message, d.why === 'failed');

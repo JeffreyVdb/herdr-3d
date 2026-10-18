@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CommandResult } from '../net/client';
 import type { Building, Floor, Schedule } from '../net/protocol';
 import { flush, installDialogs, secretsBridge } from '../test/secretsBridge';
 import { HandoffBook } from '../world/handoff';
@@ -28,8 +29,8 @@ function world() {
   return { floors, buildings, floorName: (id: string) => floors.get(id)?.name ?? id, city: () => [{ floors: [{ id: 'f1' }] }] };
 }
 
-/** `create`: `schedule.create`'s answers in turn (then saved). */
-function form(o: { on?: boolean; create?: Array<{ ok: false; code: string; message: string }> } = {}) {
+/** `create`: `schedule.create`'s answers in turn (then saved); a promise is an answer still on its way. */
+function form(o: { on?: boolean; create?: Array<CommandResult | Promise<CommandResult>> } = {}) {
   document.body.replaceChildren();
   const b = secretsBridge({ on: o.on ?? true });
   const answers = [...(o.create ?? [])];
@@ -38,6 +39,7 @@ function form(o: { on?: boolean; create?: Array<{ ok: false; code: string; messa
   const handoffs = new HandoffBook();
   handoffs.reset({ counts: {} });
   const sent: Array<{ t: string; args: Record<string, unknown> }> = [];
+  const toasts: string[] = [];
   const host = {
     store: {
       ...world(),
@@ -47,7 +49,7 @@ function form(o: { on?: boolean; create?: Array<{ ok: false; code: string; messa
       floorView: () => ({ settings: {}, suggested: {} }),
     },
     unsupported: () => false,
-    toast: () => {},
+    toast: (m: string) => toasts.push(m),
     now: () => T,
     secrets: b.flow,
     send: async (t: string, args: Record<string, unknown>) => {
@@ -75,7 +77,12 @@ function form(o: { on?: boolean; create?: Array<{ ok: false; code: string; messa
     document.querySelector<HTMLFormElement>('#sf-form')!.dispatchEvent(new Event('submit', { cancelable: true }));
     await flush();
   };
-  return { b, dlg, sent, fill, save, of: (t: string) => sent.filter((x) => x.t === t).map((x) => x.args) };
+  /** Esc: the dialog's `cancel`, then its close. */
+  const esc = () => {
+    document.querySelector<HTMLDialogElement>('dialog.desk-dlg--sched')!.dispatchEvent(new Event('cancel'));
+    dlg.close();
+  };
+  return { b, dlg, sent, fill, save, esc, toasts, of: (t: string) => sent.filter((x) => x.t === t).map((x) => x.args) };
 }
 
 function list(s: Schedule, o: { on?: boolean } = {}) {
@@ -214,6 +221,95 @@ describe('schedules and prompt secrets (#108 round 4)', () => {
     expect(e.of('schedule.create')).toHaveLength(1);
     e.dlg.close();
     release();
+    await flush();
+    expect(e.b.open()).toBeNull();
+    expect(e.of('schedule.create')).toHaveLength(1);
+  });
+
+  // #108 round 4 fix 2 (UX D1's audit): Esc says the schedule is still being saved only while its schedule.create is at the
+  // bridge; closed while its prompt is scanned (or scanned again after a refusal), nothing is saved and nothing is said.
+  it('the form: Esc while its prompt is scanned, or scanned again after a stale refusal: nothing is said', async () => {
+    const first = form();
+    await first.fill(PROMPT);
+    const release1 = first.b.holdScans();
+    await first.save();
+    first.esc();
+    release1();
+    await flush();
+    expect(first.b.open()).toBeNull();
+    expect(first.of('schedule.create')).toEqual([]);
+    expect(first.toasts).toEqual([]);
+
+    const again = form({ create: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    await again.fill(PROMPT);
+    await again.save();
+    const release2 = again.b.holdScans();
+    again.b.confirm();
+    await flush();
+    expect(again.of('schedule.create')).toHaveLength(1);
+    again.esc();
+    release2();
+    await flush();
+    expect(again.b.open()).toBeNull();
+    expect(again.of('schedule.create')).toHaveLength(1);
+    expect(again.toasts).toEqual([]);
+  });
+
+  it('the form: Esc while its schedule.create is at the bridge says it is still being saved', async () => {
+    let answer!: (r: CommandResult) => void;
+    const e = form({ create: [new Promise<CommandResult>((r) => (answer = r))] });
+    await e.fill(PROMPT);
+    await e.save();
+    e.b.confirm();
+    await flush();
+    expect(e.of('schedule.create')).toHaveLength(1);
+    e.esc();
+    expect(e.toasts).toEqual(['The schedule is still being saved; the list shows it once herdr-world answers.']);
+    answer({ ok: true, data: { ...sched(), id: 'sch_new' } });
+    await flush();
+    expect(e.toasts).toHaveLength(1);
+  });
+
+  it('the form: an earlier opening’s save still at the bridge; a newer opening’s Esc during its own scan again says nothing', async () => {
+    let answer!: (r: CommandResult) => void;
+    const e = form({ create: [new Promise<CommandResult>((r) => (answer = r)), { ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    await e.fill(PROMPT);
+    await e.save();
+    e.b.confirm();
+    await flush();
+    e.esc();
+    expect(e.toasts).toHaveLength(1);
+    await e.fill(PROMPT);
+    await e.save();
+    const release = e.b.holdScans();
+    e.b.confirm();
+    await flush();
+    expect(e.of('schedule.create')).toHaveLength(2);
+    e.esc();
+    expect(e.toasts).toHaveLength(1);
+    release();
+    answer({ ok: true, data: { ...sched(), id: 'sch_new' } });
+    await flush();
+    expect(e.of('schedule.create')).toHaveLength(2);
+    expect(e.toasts).toHaveLength(1);
+  });
+
+  it('the form: an earlier opening’s save still at the bridge is that opening’s; a newer one’s Esc during its first scan says nothing', async () => {
+    let answer!: (r: CommandResult) => void;
+    const e = form({ create: [new Promise<CommandResult>((r) => (answer = r))] });
+    await e.fill(PROMPT);
+    await e.save();
+    e.b.confirm();
+    await flush();
+    e.esc();
+    expect(e.toasts).toHaveLength(1);
+    await e.fill(PROMPT);
+    const release = e.b.holdScans();
+    await e.save();
+    e.esc();
+    expect(e.toasts).toHaveLength(1);
+    release();
+    answer({ ok: true, data: { ...sched(), id: 'sch_new' } });
     await flush();
     expect(e.b.open()).toBeNull();
     expect(e.of('schedule.create')).toHaveLength(1);

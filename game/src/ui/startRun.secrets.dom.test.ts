@@ -15,12 +15,13 @@ const PRESET: Preset = { id: 'p_000000000001', name: 'Team', roles: { orch: role
 const TICKET = 'Rotate the deploy credential, the old one is TOKEN=ghp_abcdefghijklmnopqrstu1';
 const EXTRA = 'Use PASSWORD=hunter22 for the staging database.';
 
-/** `starts`: `run.start`'s refusals in turn (then started). */
-function setup(o: { on?: boolean; starts?: CommandResult[] } = {}) {
+/** `starts`: `run.start`'s answers in turn (then started); a promise is an answer still on its way. */
+function setup(o: { on?: boolean; starts?: Array<CommandResult | Promise<CommandResult>> } = {}) {
   document.body.replaceChildren();
   const b = secretsBridge({ on: o.on ?? true });
   const refusals = [...(o.starts ?? [])];
   const sent: Array<{ t: string; args: Record<string, unknown> }> = [];
+  const toasts: string[] = [];
   const book = new PresetBook();
   book.reset([PRESET]);
   const store = {
@@ -41,11 +42,16 @@ function setup(o: { on?: boolean; starts?: CommandResult[] } = {}) {
     if (t === 'run.start') return Promise.resolve(refusals.shift() ?? { ok: true, data: { id: 'w9', launch_id: 'l1', prompt: 'p', prompted: true } });
     return Promise.resolve({ ok: true, data: {} });
   };
-  const host = { store, send, unsupported: () => false, reserve: () => () => {}, held: () => new Set<number>(), toast: () => {}, now: () => Date.now(), upload: () => new Promise(() => {}), hireAt: () => {}, openPresets: () => {}, started: () => {}, secrets: b.flow } as unknown as StartRunHost;
+  const host = { store, send, unsupported: () => false, reserve: () => () => {}, held: () => new Set<number>(), toast: (m: string) => toasts.push(m), now: () => Date.now(), upload: () => new Promise(() => {}), hireAt: () => {}, openPresets: () => {}, started: () => {}, secrets: b.flow } as unknown as StartRunHost;
   const dlg = new StartRunDialog(document.body, host);
   const starts = () => sent.filter((s) => s.t === 'run.start').map((s) => s.args);
   const start = () => document.querySelector<HTMLElement>('.desk-dlg--run [data-key="start"]')!.click();
-  return { b, dlg, sent, starts, start };
+  /** Esc: the dialog's `cancel`, then its close. */
+  const esc = () => {
+    dlg.element.dispatchEvent(new Event('cancel'));
+    dlg.close();
+  };
+  return { b, dlg, sent, starts, start, esc, toasts };
 }
 
 async function opened(t: ReturnType<typeof setup>, ticket: string, extra = '') {
@@ -139,5 +145,120 @@ describe('StartRunDialog and prompt secrets (#108 round 4)', () => {
     await flush();
     expect(t.b.open()).toBeNull();
     expect(t.starts()).toHaveLength(1);
+  });
+
+  // #108 round 4 fix 2 (UX D1): Esc says the run is still starting only while its run.start is at the bridge; closed while
+  // a refusal's texts are scanned again, nothing starts and nothing is said (decisions row 43).
+  it('refused as stale, then Esc while its texts are scanned again: nothing is said, started once', async () => {
+    const t = setup({ starts: [{ ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    await opened(t, TICKET);
+    t.start();
+    await flush();
+    const release = t.b.holdScans();
+    t.b.confirm();
+    await flush();
+    expect(t.starts()).toHaveLength(1);
+    expect(t.dlg.summary()).toMatchObject({ state: 'starting' });
+    t.esc();
+    release();
+    await flush();
+    expect(t.b.open()).toBeNull();
+    expect(t.starts()).toHaveLength(1);
+    expect(t.toasts).toEqual([]);
+  });
+
+  it('Esc while its texts are scanned the first time: nothing is said, nothing starts', async () => {
+    const t = setup();
+    await opened(t, TICKET);
+    const release = t.b.holdScans();
+    t.start();
+    await flush();
+    t.esc();
+    release();
+    await flush();
+    expect(t.b.open()).toBeNull();
+    expect(t.starts()).toEqual([]);
+    expect(t.toasts).toEqual([]);
+  });
+
+  it('Esc while its run.start is at the bridge: the run is still starting, and its toast says how it went', async () => {
+    let answer!: (r: CommandResult) => void;
+    const t = setup({ starts: [new Promise<CommandResult>((r) => (answer = r))] });
+    await opened(t, TICKET);
+    t.start();
+    await flush();
+    t.b.confirm();
+    await flush();
+    expect(t.starts()).toHaveLength(1);
+    t.esc();
+    expect(t.toasts).toEqual(['The run is still starting; its orchestrator shows up at the desk when it is hired.']);
+    answer({ ok: true, data: { id: 'w9', launch_id: 'l1', prompt: 'p', prompted: true } });
+    await flush();
+    expect(t.toasts).toHaveLength(2);
+    expect(t.toasts[1]).toMatch(/^Started a run/);
+  });
+
+  it('an earlier opening’s run.start still at the bridge: a newer opening’s Esc during its own scan again says nothing', async () => {
+    let answer!: (r: CommandResult) => void;
+    const t = setup({ starts: [new Promise<CommandResult>((r) => (answer = r)), { ok: false, code: 'secrets_review_stale', message: 'stale' }] });
+    await opened(t, TICKET);
+    t.start();
+    await flush();
+    t.b.confirm();
+    await flush();
+    expect(t.starts()).toHaveLength(1);
+    t.esc();
+    expect(t.toasts).toHaveLength(1);
+    // Opened again (another desk): its own run, refused as stale, then Esc while it is scanned again.
+    t.dlg.open({ floor: 'floor', desk: 1 });
+    await flush();
+    const ta = document.querySelector<HTMLTextAreaElement>('#run-ticket')!;
+    ta.value = TICKET;
+    ta.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 400));
+    await flush();
+    t.start();
+    await flush();
+    const release = t.b.holdScans();
+    t.b.confirm();
+    await flush();
+    expect(t.starts()).toHaveLength(2);
+    expect(t.dlg.summary()).toMatchObject({ state: 'starting', desk: 1 });
+    t.esc();
+    expect(t.toasts).toHaveLength(1);
+    release();
+    answer({ ok: true, data: { id: 'w9', launch_id: 'l1', prompt: 'p', prompted: true } });
+    await flush();
+    expect(t.starts()).toHaveLength(2);
+    expect(t.toasts.slice(1)).toEqual([expect.stringMatching(/^Started a run/)]);
+  });
+
+  it('an earlier opening’s run.start still at the bridge is that opening’s: a newer one’s Esc during its first scan says nothing', async () => {
+    let answer!: (r: CommandResult) => void;
+    const t = setup({ starts: [new Promise<CommandResult>((r) => (answer = r))] });
+    await opened(t, TICKET);
+    t.start();
+    await flush();
+    t.b.confirm();
+    await flush();
+    t.esc();
+    expect(t.toasts).toHaveLength(1);
+    t.dlg.open({ floor: 'floor', desk: 1 });
+    await flush();
+    const ta = document.querySelector<HTMLTextAreaElement>('#run-ticket')!;
+    ta.value = TICKET;
+    ta.dispatchEvent(new Event('input'));
+    await new Promise((r) => setTimeout(r, 400));
+    await flush();
+    const release = t.b.holdScans();
+    t.start();
+    await flush();
+    t.esc();
+    expect(t.toasts).toHaveLength(1);
+    release();
+    answer({ ok: true, data: { id: 'w9', launch_id: 'l1', prompt: 'p', prompted: true } });
+    await flush();
+    expect(t.starts()).toHaveLength(1);
+    expect(t.toasts.slice(1)).toEqual([expect.stringMatching(/^Started a run/)]);
   });
 });
