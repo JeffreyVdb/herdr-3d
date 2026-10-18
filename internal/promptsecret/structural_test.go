@@ -494,6 +494,24 @@ func TestScanRecall(t *testing.T) {
 		{"curl user placeholders", "Use `curl -u user:pass https://x.test` or curl -u user:password, curl --user admin:[key] there.", nil},
 		{"not curl", "docker run -u 1000:1000 img && git push -u origin main && ps -u root:root", nil},
 		{"not curl's flag", "see curl docs; docker run -u 1000:1000 img", nil},
+		// Review T1: a quoted | ; & is an argument's, no command's end.
+		{"curl after a quoted query", `curl 'https://example.test/?a=1&b=2' -u "user:pa\"ss\$HOME"`, []string{`pa\"ss\$HOME`}},
+		{"curl after a quoted ;", `curl 'https://example.test/?a=1;b=2' -u "user:pa\"ss\$HOME"`, []string{`pa\"ss\$HOME`}},
+		{"curl after a double-quoted |", `curl -H "X-Filter: a|b" --user admin:s3cret! https://x.test`, []string{"s3cret!"}},
+		{"curl after an escaped &", `curl https://x.test/?a=1\&b=2 --user admin:s3cret!`, []string{"s3cret!"}},
+		{"not curl after an unquoted &", "curl https://x.test & sudo --user admin:s3cret! true", nil},
+		// Review T4: what the shell computes is no password (an escaped $ or
+		// one in single quotes is typed). One-letter users: Gitleaks' own
+		// curl rule asks for three.
+		{"curl user substitution", `curl -u "u:abc$(cmd)" https://x.test`, nil},
+		{"curl user substitution, long flag", `curl --user "u:abc$(cmd)" https://x.test`, nil},
+		{"curl user expansion", `curl -u "u:pre${HOST}" https://x.test`, nil},
+		{"curl user variable", `curl -u admin:ab!c$HOME https://x.test`, nil},
+		{"curl user backquotes", `curl -u "u:abc` + "`id`" + `" https://x.test`, nil},
+		{"curl user parameter", `curl -u u:'abc'$1 https://x.test`, nil},
+		{"curl user literal $", `curl -u 'u:abc$HOME9' https://x.test`, []string{"abc$HOME9"}},
+		{"templates inside quoted words and named lines", `the password used by the job is "pw-${HOST}9" today` + "\n" +
+			"key-$(hostname)-77\nThe preceding line is the actual password.", nil},
 		// 5. A quoted value after a credential word and a few words more.
 		{"quoted after words", `the password enclosed in these quotes, including the last character: "Kx81-mQp27LwRt5."`, []string{"Kx81-mQp27LwRt5."}},
 		{"quoted after words, colon", `the password enclosed in these quotes, including the last character: "Kx81-mQp27LwRt5:"`, []string{"Kx81-mQp27LwRt5:"}},

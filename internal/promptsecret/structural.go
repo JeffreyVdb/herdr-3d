@@ -161,11 +161,16 @@ func credentialAt(text string, i int, line bool) int {
 }
 
 // headerValue reports credentials that are a value: not a template inside
-// them (sk-${KEY}, $(cmd)), a placeholder in brackets ([token]), a URL, nor
-// what notASecret says (literal: it runs into a reference).
+// them (templated), a placeholder in brackets ([token]), a URL, nor what
+// notASecret says (literal: it runs into a reference).
 func headerValue(v string, literal bool) bool {
-	return v != "" && !notASecret(v, literal) && !strings.Contains(v, "${") && !strings.Contains(v, "$(") &&
-		!strings.Contains(v, "{{") && !strings.Contains(v, "://") && !bracketed.MatchString(v)
+	return v != "" && !notASecret(v, literal) && !templated(v) && !strings.Contains(v, "://") && !bracketed.MatchString(v)
+}
+
+// templated reports a template or a command anywhere in a value, not only
+// at its start (notASecret's): sk-${KEY}, abc$(cmd), pw-{{ .X }}.
+func templated(v string) bool {
+	return strings.Contains(v, "${") || strings.Contains(v, "$(") || strings.Contains(v, "{{")
 }
 
 // bracketed is a placeholder in square brackets: [token], [your key].
@@ -348,9 +353,11 @@ func assignmentSpans(text string, refs []span) []span {
 // curlPassword is the password in curl's user:password, the shell word at
 // v: after its first colon, as typed (quotes and escapes kept; a word that
 // is one quoted string without its quotes). Not a placeholder: a credential
-// word (user:pass) or one in brackets.
+// word (user:pass) or one in brackets; nor what the shell computes there
+// (shellComputed).
 func curlPassword(text string, v int, refs []span) (span, bool) {
 	s, e := v, shellWordEnd(text, v)
+	word := e
 	quoted := false
 	if qs, qe, ok := quotedAt(text, v); ok && qe+1 == e {
 		s, e, quoted = qs, qe, true
@@ -362,7 +369,8 @@ func curlPassword(text string, v int, refs []span) (span, bool) {
 		return span{}, false
 	}
 	pw := text[s+c+1 : e]
-	if notASecret(pw, quoted || overlapsAny(s+c+1, e, refs)) || credentialKey(pw) || bracketed.MatchString(pw) {
+	if notASecret(pw, quoted || overlapsAny(s+c+1, e, refs)) || credentialKey(pw) || bracketed.MatchString(pw) ||
+		shellComputed(text, v, word, s+c+1) {
 		return span{}, false
 	}
 	return span{start: s + c + 1, end: e, kind: KindAssignment, rank: rankAssignment}, true
@@ -381,21 +389,9 @@ func shellWordEnd(text string, v int) int {
 	i := v
 	for i < le {
 		switch c := text[i]; {
-		case c == '\'':
-			j := strings.IndexByte(text[i+1:le], '\'')
+		case c == '\'' || c == '"':
+			j := quoteEnd(text, i, le)
 			if j < 0 {
-				return i
-			}
-			i += j + 2
-		case c == '"':
-			j := i + 1
-			for j < le && text[j] != '"' {
-				if text[j] == '\\' {
-					j++
-				}
-				j++
-			}
-			if j >= le {
 				return i
 			}
 			i = j + 1
@@ -410,8 +406,57 @@ func shellWordEnd(text string, v int) int {
 	return min(i, le)
 }
 
+// quoteEnd is the index of the quote that closes the shell quote at i
+// before end ('…' as is, "…" with backslash escapes), or -1.
+func quoteEnd(text string, i, end int) int {
+	if text[i] == '\'' {
+		if k := strings.IndexByte(text[i+1:end], '\''); k >= 0 {
+			return i + 1 + k
+		}
+		return -1
+	}
+	for j := i + 1; j < end; j++ {
+		switch text[j] {
+		case '\\':
+			j++
+		case '"':
+			return j
+		}
+	}
+	return -1
+}
+
+// shellComputed reports what the shell computes in the word [v, e) from p
+// on (review T4): an unescaped $NAME, $1, ${…}, $(…) or backquote outside
+// single quotes ("u:abc$(cmd)"); never "\$HOME" nor '$HOME', which are
+// typed.
+func shellComputed(text string, v, e, p int) bool {
+	double := false
+	for i := v; i < e; i++ {
+		switch c := text[i]; {
+		case c == '\\' && (!double || i+1 < e && strings.IndexByte("$`\"\\", text[i+1]) >= 0):
+			i++
+		case c == '\'' && !double:
+			if i = quoteEnd(text, i, e); i < 0 {
+				return false
+			}
+		case c == '"':
+			double = !double
+		case i < p:
+		case c == '`':
+			return true
+		case c == '$' && i+1 < e && (strings.IndexByte("({_", text[i+1]) >= 0 || isASCIILetter(text[i+1]) || text[i+1] >= '0' && text[i+1] <= '9'):
+			return true
+		}
+	}
+	return false
+}
+
+func isASCIILetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
+
 // inCurl reports a curl command before i, in its own part of the line (no
-// | ; && between) or of the lines a trailing backslash continues.
+// unquoted | ; & between: review T1) or of the lines a trailing backslash
+// continues.
 func inCurl(text string, i int) bool {
 	start := i
 	for {
@@ -422,11 +467,20 @@ func inCurl(text string, i int) bool {
 		}
 		start = ls - 1
 	}
-	cmd := text[start:i]
-	if k := strings.LastIndexAny(cmd, "|;&"); k >= 0 {
-		cmd = cmd[k+1:]
+	cmd := start
+	for k := start; k < i; k++ {
+		switch c := text[k]; {
+		case c == '\\':
+			k++
+		case c == '\'' || c == '"':
+			if k = quoteEnd(text, k, i); k < 0 {
+				return false // i is inside the quote
+			}
+		case strings.IndexByte("|;&", c) >= 0:
+			cmd = k + 1
+		}
 	}
-	return curlCommand.MatchString(cmd)
+	return curlCommand.MatchString(text[cmd:i])
 }
 
 // skipBlanks is the first byte at or after i that is not a space or tab.
@@ -772,7 +826,7 @@ func proseQuotedAfter(text string, i int, pw bool) (span, bool) {
 		return span{}, false
 	}
 	val := text[s:e]
-	if notASecret(val, true) || strings.ContainsAny(val, " \t") || pathLike.MatchString(val) || strings.Contains(val, "://") {
+	if notASecret(val, true) || templated(val) || strings.ContainsAny(val, " \t") || pathLike.MatchString(val) || strings.Contains(val, "://") {
 		return span{}, false
 	}
 	if pw && !(len(val) >= 6 && hasLetter(val) && hasDigitOrSymbol(val)) || !pw && !tokenish(val, 8) {
@@ -814,7 +868,7 @@ func lineSpans(text, lower string, refs []span) []span {
 			e--
 		}
 		v := text[s:e]
-		if s >= e || strings.ContainsAny(v, " \t") || notASecret(v, true) || len(v) < 6 {
+		if s >= e || strings.ContainsAny(v, " \t") || notASecret(v, true) || templated(v) || len(v) < 6 {
 			continue
 		}
 		if pw := isPasswordWord(text[m[4]:m[5]]); pw && !hasDigitOrSymbol(v) || !pw && !tokenish(v, 8) {
