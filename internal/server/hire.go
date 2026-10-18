@@ -1953,6 +1953,7 @@ func (h *Hub) finishFire(ctx context.Context, op *fireOp, res *proto.FireResult,
 		}
 		if opErr == nil { // #155: gone, and so is its server
 			h.forgetCodex(ctx, op.id)
+			h.releaseSecrets(op.id) // #108: and its protected files
 		}
 		if op.wrapup != nil { // #83
 			h.wrapUpFired(ctx, op, opErr)

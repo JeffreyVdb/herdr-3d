@@ -120,7 +120,12 @@ func (e *ReviewError) Error() string { return e.Reason }
 // non-empty, in the text, on code point boundaries and apart from the
 // others.
 func (r *Reviewer) Check(text, revision string, decisions []Decision) (Plan, error) {
-	rev := r.Scan(text)
+	return r.CheckScan(text, r.Scan(text), revision, decisions)
+}
+
+// CheckScan is Check with the fresh scan already made: rev must be this
+// Reviewer's Scan of text.
+func (r *Reviewer) CheckScan(text string, rev Review, revision string, decisions []Decision) (Plan, error) {
 	if !hmac.Equal([]byte(revision), []byte(rev.Revision)) {
 		return Plan{}, &ReviewError{Stale: true, Reason: "the review's revision is not this text's: scan it again"}
 	}

@@ -439,6 +439,8 @@ func replyError(err error) error {
 		kind = notify.ReplyGone
 	case errors.Is(err, errHandoffInGame):
 		kind = notify.ReplyHandoff
+	case errors.Is(err, errSecretsReviewRequired), errors.Is(err, errSecretsReviewStale): // #108: no review here
+		kind = notify.ReplySecrets
 	case errors.As(err, &bad):
 		kind = notify.ReplyBadText
 	case errors.Is(err, errInvalidState):

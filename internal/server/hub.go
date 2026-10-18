@@ -232,6 +232,16 @@ type Options struct {
 	// screenshare.DefaultSweep).
 	ScreenDir                             string
 	ScreenTimeout, ScreenTTL, ScreenSweep time.Duration
+	// #108 prompt secrets (promptsecrets.go): SecretsDir is the private
+	// directory protected files go to ("": none, and a review that protects
+	// anything fails with secrets_unavailable). SecretScanTimeout bounds a
+	// scan or a review's writes (default DefaultSecretScanTimeout),
+	// SecretsSweep how often the janitor reconciles the files with the
+	// workers (default DefaultSecretsSweep), SecretReuseTTL how long a sent
+	// review's files serve its identical retry (default
+	// DefaultSecretReuseTTL).
+	SecretsDir                                      string
+	SecretScanTimeout, SecretsSweep, SecretReuseTTL time.Duration
 	// M13 whiteboard: the floors' boards (nil: the whiteboard commands and
 	// routes fail with unsupported), and Drop Zone's data directory for
 	// drops.list ("": drops_unavailable).
@@ -471,11 +481,12 @@ type Hub struct {
 	cx codexState  // #155 shared Codex server
 	nt notifyState // #11 notifications
 
-	rr repoRefsState // #247 repositories on other floors
-	rd repoDiscState // #54 repository discovery
-	sc scheduleState // #62 scheduled agents
-	hs hostState     // #74 server rack
-	ch childState    // #22 native child agents
+	rr repoRefsState      // #247 repositories on other floors
+	ps promptSecretsState // #108 prompt secrets
+	rd repoDiscState      // #54 repository discovery
+	sc scheduleState      // #62 scheduled agents
+	hs hostState          // #74 server rack
+	ch childState         // #22 native child agents
 
 	hirePresets map[string]store.HirePreset // #93: by id (mirrors hire_preset)
 }
@@ -751,6 +762,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 	if err := h.initRepoRefs(ctx); err != nil { // #247
 		return nil, err
 	}
+	if err := h.initPromptSecrets(ctx); err != nil { // #108
+		return nil, err
+	}
 	if err := h.initRepoDiscovery(ctx); err != nil { // #54
 		return nil, err
 	}
@@ -804,6 +818,7 @@ func (h *Hub) Rescans() <-chan struct{} { return h.rescan }
 // operations still running end with ctx before it returns.
 func (h *Hub) Run(ctx context.Context) error {
 	defer close(h.done)
+	defer h.closePromptSecrets() // #108: once nothing uses the files
 	defer h.wg.Wait()
 	defer h.stopHostSampler() // #74
 	if h.opts.RepoOf != nil {
@@ -825,6 +840,10 @@ func (h *Hub) Run(ctx context.Context) error {
 	if h.screen.frames != nil { // M13 screen
 		h.wg.Add(1)
 		go h.runScreenJanitor(ctx)
+	}
+	if h.ps.files != nil { // #108 prompt secrets
+		h.wg.Add(1)
+		go h.runSecretsJanitor(ctx)
 	}
 	if h.opts.AI != nil { // #92 AI integration
 		h.wg.Add(1)
@@ -992,6 +1011,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startHireRepos
 		case proto.CmdRepoRefsGet, proto.CmdRepoRefsSet: // #247
 			start = h.startRepoRefs
+		case proto.CmdPromptSecretsGet, proto.CmdPromptSecretsSet, proto.CmdPromptSecretsScan: // #108
+			start = h.startPromptSecrets
 		case proto.CmdRepoDiscoveryGet, proto.CmdRepoDiscoverySet, proto.CmdRepoDiscoveryRefresh: // #54
 			start = h.startRepoDiscovery
 		// M5 term
@@ -1172,6 +1193,8 @@ func errorCode(err error) string {
 		return handoffErrorCode(err)
 	case packupErrorCode(err) != "": // #110
 		return packupErrorCode(err)
+	case promptSecretsErrorCode(err) != "": // #108
+		return promptSecretsErrorCode(err)
 	case activityErrorCode(err) != "": // #98
 		return activityErrorCode(err)
 	case digestErrorCode(err) != "": // #118
@@ -1627,6 +1650,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			h.forgetAgentHandoff(ctx, id) // #224
 			h.forgetLLMHandoff(id)        // #9
 			h.forgetDismissed(ctx, id)    // #106
+			h.releaseSecrets(id)          // #108: it really ended
 		}
 		ev := proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: session, FloorID: w.Floor, WorkspaceID: w.WorkspaceID}
 		if op := f.fires[id]; op != nil && !rawWS[op.workspaceID] {
@@ -1637,6 +1661,7 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 			h.forgetWrapUp(ctx, id)       // #83: sent home
 			h.forgetAgentHandoff(ctx, id) // #224
 			h.forgetLLMHandoff(id)        // #9
+			h.releaseSecrets(id)          // #108
 		}
 		evs = append(evs, ev)
 	}
@@ -2191,6 +2216,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.InboxDismissed = h.inboxDismissedView() // #106
 	w.CodexServer = h.codexServerView()       // #155
 	w.RepoRefs = h.repoRefsView()             // #247
+	w.PromptSecrets = h.promptSecretsView()   // #108
 	w.RepoDiscovery = h.repoDiscoveryView()   // #54
 	w.Schedules = h.schedulesView()           // #62
 	w.HirePresets = h.hirePresetViews()       // #93

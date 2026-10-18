@@ -41,6 +41,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/repodisc"
 	"github.com/JeffreyVdb/herdr-3d/internal/screenshare"
+	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -88,6 +89,10 @@ const (
 // M13 screen share: where grabbed frames are stored (default
 // screenshare.DefaultDir: $XDG_RUNTIME_DIR/herdr-world/screen, tmpfs).
 const EnvScreenDir = "HERDR_WORLD_SCREEN_DIR"
+
+// #108 prompt secrets: where protected prompt secrets are kept (default
+// secretfiles.DefaultDir: $XDG_RUNTIME_DIR/herdr-world/secrets, tmpfs).
+const EnvSecretsDir = "HERDR_WORLD_SECRETS_DIR"
 
 // EnvCodexRun names the private directory of the shared Codex servers'
 // launchers and sockets (#155).
@@ -481,6 +486,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 	codexRun := fs.String("codex-run", envOr(EnvCodexRun, DefaultCodexRun()), "private directory of the shared Codex servers' launchers and sockets, \"-\" for none (#155) ($"+EnvCodexRun+")")
 	shellPolicy := fs.String("shell", os.Getenv(EnvShell), "shell of woken floors' login environment and of the shared Codex launchers: bash (the default) or fish, an explicit compatibility option; $SHELL is never used ($"+EnvShell+")")
 	screenDir := fs.String("screen-dir", os.Getenv(EnvScreenDir), "private directory (tmpfs) for screen-share frames (default $XDG_RUNTIME_DIR/herdr-world/screen) ($"+EnvScreenDir+")")                      // M13 screen
+	secretsDir := fs.String("secrets-dir", os.Getenv(EnvSecretsDir), "private directory (tmpfs) for protected prompt secrets (default $XDG_RUNTIME_DIR/herdr-world/secrets) ($"+EnvSecretsDir+")")            // #108
 	handoffDir := fs.String("handoff-dir", envOr(EnvHandoffDir, DefaultHandoffDir()), "directory of the filing cabinet's handoffs (<dir>/<floor>/*.md), \"-\" for none ($"+EnvHandoffDir+")")                 // #223
 	whiteboards := fs.String("whiteboards", envOr(EnvWhiteboards, whiteboard.DefaultRoot()), "directory of the floors' whiteboards, \"-\" for none ($"+EnvWhiteboards+")")                                    // M13 whiteboard
 	aiFile := fs.String("ai-file", os.Getenv(EnvAIFile), "file of the AI integration's settings and keys, 0600 (default ai.json next to the database) ($"+EnvAIFile+")")                                      // #92
@@ -636,6 +642,16 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		}
 		*screenDir = dir
 	}
+	if *secretsDir == "" { // #108
+		dir, fallback, err := secretfiles.DefaultDir()
+		switch {
+		case err != nil:
+			log.Warn("no directory for protected prompt secrets: a review that protects one will be refused", "err", err)
+		case fallback:
+			log.Warn("XDG_RUNTIME_DIR is not set: protected prompt secrets go to the user's runtime directory", "dir", dir)
+		}
+		*secretsDir = dir
+	}
 	hireOptions := discoverHireOptions(ctx, log, *codexCLI, *claudeCLI)
 	if err := ctx.Err(); err != nil {
 		return err
@@ -666,6 +682,7 @@ func serveMain(ctx context.Context, name string, args []string, stdout, stderr i
 		Uploads:          images,                                                            // #51 upload
 		TranscriptImages: transcriptImages(log, *dropzoneData, *imageCache, *codexSessions), // M16 images
 		ScreenDir:        *screenDir,                                                        // M13 screen
+		SecretsDir:       *secretsDir,                                                       // #108 prompt secrets
 		Whiteboards:      *whiteboards,                                                      // M13 whiteboard
 		HandoffDir:       *handoffDir,                                                       // #223 handoffs
 		DropsRoot:        *dropzoneData,                                                     // M13 drops.list
@@ -780,6 +797,7 @@ type ServeConfig struct {
 	// M13 screen share: where grabbed frames are stored ("": none, and
 	// screen.grab fails); ScreenTimeout and ScreenTTL: see server.Options.
 	ScreenDir                string
+	SecretsDir               string // #108
 	ScreenTimeout, ScreenTTL time.Duration
 	// M13 whiteboard: the boards' directory ("" or "-": no whiteboards) and
 	// Drop Zone's data directory, for drops.list ("": none).
@@ -890,6 +908,7 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		cfg.BoardWatchPoll, cfg.BoardIdlePoll, cfg.BoardRefreshMin, cfg.BoardTick
 	opts.Limits = cfg.Limits                                                                             // M10 limits
 	opts.ScreenDir, opts.ScreenTimeout, opts.ScreenTTL = cfg.ScreenDir, cfg.ScreenTimeout, cfg.ScreenTTL // M13 screen
+	opts.SecretsDir = cfg.SecretsDir                                                                     // #108
 	if cfg.CodexRun != "" && cfg.Control != nil {                                                        // #155
 		opts.CodexRun = cfg.CodexRun
 		opts.CodexShell = cfg.Control.Shell // #68: the launchers are written in the shell that runs them

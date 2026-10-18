@@ -299,6 +299,12 @@ type termBridge struct {
 
 func startTermBridge(t *testing.T, tweak func(*server.Options), workers ...world.WorkerObs) *termBridge {
 	t.Helper()
+	return startTermBridgeAt(t, "", tweak, workers...)
+}
+
+// startTermBridgeAt is startTermBridge on the database at db ("": a new one).
+func startTermBridgeAt(t *testing.T, db string, tweak func(*server.Options), workers ...world.WorkerObs) *termBridge {
+	t.Helper()
 	ft := newFakeTerm()
 	opts := server.Options{Term: ft, FirstFrame: 2 * time.Second, ObserverBackoff: 5 * time.Millisecond,
 		QuestionPoll: 20 * time.Millisecond, AnswerTimeout: time.Second, PromptRetryWait: 300 * time.Millisecond,
@@ -312,7 +318,7 @@ func startTermBridge(t *testing.T, tweak func(*server.Options), workers ...world
 	if tweak != nil {
 		tweak(&opts)
 	}
-	tb := &termBridge{bridge: startBridge(t, "", opts), term: ft, workers: workers}
+	tb := &termBridge{bridge: startBridge(t, db, opts), term: ft, workers: workers}
 	// #95: an idle agent a prompt is typed into takes a (short) turn.
 	ft.onTyped = func(pane string) { tb.takeTurn(pane) }
 	tb.publishFloor(true)

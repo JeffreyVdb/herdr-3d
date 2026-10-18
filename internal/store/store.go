@@ -209,6 +209,9 @@ var migrations = []string{
 	migrationHirePreset,
 	// #95: hire presets' "Add herdr hiring instructions".
 	migrationHirePresetInstructions,
+	// #108: "Review prompt secrets before sending" and the protected files'
+	// owners (never a secret).
+	migrationPromptSecrets,
 }
 
 // Fingerprint kinds.

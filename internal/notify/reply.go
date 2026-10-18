@@ -54,6 +54,7 @@ const (
 	ReplyHandoff  = "handoff"       // /handoff: the game's
 	ReplyFailed   = "failed"        // herdr failed it, or the bridge
 	ReplyClosed   = "closed"        // #14: the ask or follow-up answered was answered, replaced or ended meanwhile
+	ReplySecrets  = "secrets"       // #108: it may hold a secret, which only the game can review
 	replySent     = "sent"
 	replyNotReply = "not_a_reply"
 	replyNoText   = "no_text"
@@ -106,6 +107,7 @@ var answers = map[string]string{
 	ReplyHandoff:  "Not sent: ask for a handoff in the game.",
 	ReplyFailed:   "Not sent: the bridge could not type it into the worker.",
 	ReplyClosed:   "Not sent: the question was answered in the game, or the agent moved on.",
+	ReplySecrets:  "Not sent: it may hold a password or another secret. Send it from the game, where you can review what is protected.",
 }
 
 // tooLongText is the answer to a reply over MaxReplyRunes.

@@ -126,16 +126,20 @@ func (h *Hub) endCommand(c *Client, cmd proto.Command) inputEnd {
 	}
 }
 
+// laneRoom refuses input to worker id while its lane is full (hub
+// goroutine).
+func (h *Hub) laneRoom(id string) error {
+	if l := h.lanes[id]; l != nil && len(l.jobs) >= maxQueuedInputs {
+		return fmt.Errorf("%w: %d commands are already %w", errInputFailed, len(l.jobs), errLaneFull)
+	}
+	return nil
+}
+
 // queueInput is startInput for any caller (hub goroutine): end gets the
 // outcome (#13: a Telegram reply's, with no client).
 func (h *Hub) queueInput(ctx context.Context, id string, work inputWork, end inputEnd) error {
-	l := h.lanes[id]
-	if l == nil {
-		l = &inputLane{}
-		h.lanes[id] = l
-	}
-	if len(l.jobs) >= maxQueuedInputs {
-		return fmt.Errorf("%w: %d commands are already %w", errInputFailed, len(l.jobs), errLaneFull)
+	if err := h.laneRoom(id); err != nil {
+		return err
 	}
 	h.queueLane(ctx, id, func(ctx context.Context) {
 		t, err := query(ctx, h, func() laneTarget {
@@ -327,37 +331,56 @@ var errHandoffInGame = fmt.Errorf("%w: ask for a handoff in the game", errInvali
 // queuePrompt is worker.prompt's checks and its queueing on the worker's
 // lane (hub goroutine), for a client's command and (#13) a Telegram reply
 // alike: handoff starts a /handoff (nil: refused), end gets the outcome.
+// #108: with prompt secrets reviewed (or a review given), the prompt goes
+// through the gate first (queueReviewedPrompt).
 func (h *Hub) queuePrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff func(instruction string) error, end inputEnd) error {
+	if h.ps.enabled || a.Secrets != nil {
+		return h.queueReviewedPrompt(ctx, a, handoff, end)
+	}
+	work, err := h.planPrompt(ctx, a, a.Text, 0, handoff)
+	if err != nil || work == nil {
+		return err
+	}
+	return h.queueInput(ctx, a.ID, work, end)
+}
+
+// planPrompt is worker.prompt's checks and side effects for a.Text as it is
+// sent (hub goroutine): the work to run on the worker's lane, or nil when
+// the prompt became a /handoff (its request answers the command). typed is
+// what was typed (#108: the text before its secrets were protected, of
+// which protected went to files): PromptResult.Sent says so when the text
+// sent is another.
+func (h *Hub) planPrompt(ctx context.Context, a proto.WorkerPromptArgs, typed string, protected int, handoff func(instruction string) error) (inputWork, error) {
 	if !h.promptSourceOK(a.Text) {
-		return badPromptText("text", len(a.Text))
+		return nil, badPromptText("text", len(a.Text))
 	}
 	w, _, err := h.termWorker(a.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if w.AgentKind == "" {
-		return fmt.Errorf("%w: %s runs no agent (a plain shell: use worker.keys)", errInvalidState, w.Name)
+		return nil, fmt.Errorf("%w: %s runs no agent (a plain shell: use worker.keys)", errInvalidState, w.Name)
 	}
 	kind := w.AgentKind
 	rewrites := h.rewrites(kind)
 	if !rewrites {
 		if !herdr.ValidMessage(a.Text) {
-			return badPromptText("text", len(a.Text))
+			return nil, badPromptText("text", len(a.Text))
 		}
 		if err := checkTyped(kind, a.Text, herdr.MaxMessage, "text"); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if w.Ask != nil { // #57: its dialog would take the text
-		return fmt.Errorf("%w: %s %w: answer it first (worker.answer_ask)", errInvalidState, w.Name, errAskWaiting)
+		return nil, fmt.Errorf("%w: %s %w: answer it first (worker.answer_ask)", errInvalidState, w.Name, errAskWaiting)
 	}
 	// #224: exactly "/handoff [instruction]" asks the agent for a handoff
 	// the bridge files, before any translation.
 	if instruction, ok := handoffCommand(a.Text); ok && h.ho.svc != nil {
 		if handoff == nil {
-			return errHandoffInGame
+			return nil, errHandoffInGame
 		}
-		return handoff(instruction)
+		return nil, handoff(instruction)
 	}
 	// #140: a built-in whose output or dialog shows only in the terminal,
 	// as typed: it starts no turn, so it is sent without waiting for one.
@@ -365,8 +388,7 @@ func (h *Hub) queuePrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff
 	h.tookOver(ctx, a.ID)      // #83: a person prompts: an armed wrap-up is off
 	h.agentTookOver(ctx, a.ID) // #224: and a handoff request
 	h.clearFollowup(ctx, a.ID) // #90: and its follow-up questions are moot
-	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
-		typed := a.Text
+	return func(ctx context.Context, session, pane string) (any, error) {
 		if rewrites {
 			text, err := h.composerPrompt(ctx, a.ID, kind, a.Text, "text")
 			if err != nil {
@@ -384,18 +406,20 @@ func (h *Hub) queuePrompt(ctx context.Context, a proto.WorkerPromptArgs, handoff
 			// (a watched transcript's is a second away).
 			h.kickUsage()
 			// #138: the transcript shows what was sent: say so when it is not
-			// what was typed. #140: and when the transcript will show nothing
-			// of it, so the game can show the terminal.
+			// what was typed (#108: its secrets protected). #140: and when the
+			// transcript will show nothing of it, so the game can show the
+			// terminal.
 			if pr, ok := res.(proto.PromptResult); ok {
 				if a.Text != typed {
 					pr.Sent = a.Text
 				}
 				pr.Terminal = terminal
+				pr.Protected = protected
 				res = pr
 			}
 		}
 		return res, err
-	}, end)
+	}, nil
 }
 
 // typesPrompts reports whether prompts to an agent of this kind are typed
@@ -679,11 +703,36 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 		if json.Unmarshal(cmd.Args, &a) != nil {
 			return redacted(cmd.Args)
 		}
-		return mustJSON(struct {
+		out := struct {
 			ID        string `json:"id"`
 			TextBytes int    `json:"text_bytes"`
 			TextRunes int    `json:"text_runes"`
-		}{a.ID, len(a.Text), utf8.RuneCountInString(a.Text)})
+			// #108: how many decisions of each action, never a range.
+			Protect *int `json:"secrets_protect,omitempty"`
+			Ignore  *int `json:"secrets_ignore,omitempty"`
+		}{ID: a.ID, TextBytes: len(a.Text), TextRunes: utf8.RuneCountInString(a.Text)}
+		if a.Secrets != nil {
+			var protect, ignore int
+			for _, d := range a.Secrets.Decisions {
+				if d.Action == proto.SecretIgnore {
+					ignore++
+				} else {
+					protect++
+				}
+			}
+			out.Protect, out.Ignore = &protect, &ignore
+		}
+		return mustJSON(out)
+	// #108: the scanned text by its lengths, never its text.
+	case proto.CmdPromptSecretsScan:
+		var a proto.PromptSecretsScanArgs
+		if json.Unmarshal(cmd.Args, &a) != nil {
+			return redacted(cmd.Args)
+		}
+		return mustJSON(struct {
+			TextBytes int `json:"text_bytes"`
+			TextRunes int `json:"text_runes"`
+		}{len(a.Text), utf8.RuneCountInString(a.Text)})
 	// #156: the question ids and the answers' lengths, never the answers.
 	case proto.CmdWorkerAnswerAsync:
 		var a proto.WorkerAnswerAsyncArgs
