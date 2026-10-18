@@ -3132,8 +3132,9 @@ derived from the cwd) and its subagents' `<that directory>/<agent_session>/subag
   agent session: the worker's usage follows that session (above).
 
 **Codex** rollouts: `<--codex-sessions>/YYYY/MM/DD/rollout-*-<agent_session>.jsonl` whose first line's
-`session_meta.payload.id` is the session. Codex does not report its session to herdr, so a live Codex worker usually
-has no `agent_session` (until the sleep backfill tells herdr). For its usage the bridge then picks the rollout the
+`session_meta.payload.id` is the session. A Codex without herdr's Codex integration (its SessionStart hook reports the
+session) does not report its session to herdr, so such a worker has no `agent_session` (until the sleep backfill tells
+herdr). For its usage the bridge then picks the rollout the
 backfill would: the newest whose `session_meta.payload.cwd` is the worker's `cwd` and whose session no other worker of
 its floor has (their own `agent_session`, or one picked this way first, in worker id order). It looks again every 30 s
 (a newer rollout there, e.g. after `/new`, takes over) and remembers each rollout's first line, so a lookup reads only
