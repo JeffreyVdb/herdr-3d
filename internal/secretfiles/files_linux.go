@@ -695,7 +695,8 @@ func (f *Files) ending(live func(string) bool, owner Owner) holder {
 
 // heldFiles are the files a live worker holds by a lease (f.mu held); the
 // leases of a worker that is not live are forgotten (stale: it ended while
-// the bridge was down, or its release failed).
+// the bridge was down, or its release failed). A nil map: the leases could
+// not be read, and nothing may be removed for want of a holder.
 func (f *Files) heldFiles(ctx context.Context, live func(string) bool) (map[store.SecretFile]bool, error) {
 	leases, err := f.st.SecretLeases(ctx)
 	if err != nil {
@@ -738,6 +739,9 @@ func (f *Files) reconcile(ctx context.Context, dirs map[string]bool, holds holde
 	}
 	live := func(id string) bool { return holds(store.SecretOwner{Kind: OwnerWorker, OwnerID: id}) }
 	held, err := f.heldFiles(ctx, live)
+	if held == nil {
+		return err
+	}
 	root, rerr := f.openRoot(false)
 	if errors.Is(rerr, unix.ENOENT) { // nothing on disk: only rows to forget
 		for _, r := range ended {
@@ -891,6 +895,9 @@ func (f *Files) Sweep(ctx context.Context, liveness Liveness) (removed int, err 
 	}
 	holds := f.ending(live, Owner{})
 	held, errs := f.heldFiles(ctx, live)
+	if held == nil {
+		return 0, errs
+	}
 	onDisk := map[string]bool{}
 	for _, n := range names {
 		if n == lockName {
