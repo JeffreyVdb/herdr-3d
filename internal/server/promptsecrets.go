@@ -563,6 +563,11 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 			err = pl.err
 		}
 		if err == nil && pl.work == nil { // a /handoff: its request answers the command, and settles the files
+			if a.SecretsPending != "" { // round 2: the request's instruction holds the preview's references
+				if cerr := h.claimPending(ctx, a.SecretsPending, a.ID); cerr != nil {
+					h.log.Warn("a preview's protected files were not kept for the worker", "worker", a.ID, "err", cerr)
+				}
+			}
 			return
 		}
 		var data any

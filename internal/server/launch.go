@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
+	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
@@ -444,6 +445,17 @@ func (h *Hub) reviewedRunStart(ctx context.Context, c *Client, cmd proto.Command
 	}
 	if err := h.stillOn(); err != nil {
 		return err
+	}
+	// As typed first (no file for a text that never fits); runStart and the
+	// hire check them again with their references.
+	if t := strings.TrimSpace(a.Text); a.Text != "" && (t == "" || len(t) > maxRunText) {
+		return bad("text must be 1-%d bytes of text", maxRunText)
+	}
+	if err := validExtra(a.Extra); err != nil {
+		return err
+	}
+	if a.Prompt != "" && !herdr.ValidPrompt(a.Prompt) {
+		return bad("prompt must be 1-%d bytes of text, not starting with \"--\"", herdr.MaxPrompt)
 	}
 	var fields []secretField
 	for _, f := range []secretField{{path: "text", text: a.Text}, {path: "extra", text: a.Extra}, {path: "prompt", text: a.Prompt}} {
