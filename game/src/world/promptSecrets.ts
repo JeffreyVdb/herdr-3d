@@ -169,8 +169,9 @@ export interface ReviewCounts {
 }
 
 /**
- * The decisions on one scan of one text. Every operation keeps the marks sorted, non-empty, apart (touching is
- * fine) and on code point boundaries, so `decisions()` is always a review the bridge can check.
+ * The decisions on one scan of one text. The marks are always sorted, non-empty, apart (touching is fine) and on code
+ * point boundaries, so `decisions()` is always a review the bridge can check: every range change goes through
+ * `place()`, which holds all four.
  */
 export class SecretReview {
   readonly revision: string;
@@ -184,6 +185,7 @@ export class SecretReview {
     earlier?: SecretReview,
   ) {
     this.revision = scan.revision;
+    // A scan is sorted and apart already (`scanOf`).
     this.list = scan.candidates.map((c) => ({ key: c.id, candidate: c.id, start: c.start, end: c.end, found: { start: c.start, end: c.end }, state: 'protect', kinds: [...c.kinds], encoded: c.encoded === true }));
     if (earlier && earlier.text === text) this.takeOver(earlier);
   }
@@ -194,16 +196,15 @@ export class SecretReview {
         const m = this.list.find((x) => x.found && x.found.start === old.found?.start && x.found.end === old.found.end);
         if (!m) continue;
         m.state = old.state;
-        if (old.state === 'protect' && this.fits(old.start, old.end, m)) {
-          m.start = old.start;
-          m.end = old.end;
-        }
-      } else if (this.fits(old.start, old.end, null)) {
+        // A correction that no longer fits stays out: the candidate keeps its found range.
+        if (old.state === 'protect') this.place(m, old.start, old.end);
+      } else {
         this.add(old.start, old.end);
       }
     }
   }
 
+  /** In text order. */
   marks(): readonly Readonly<Mark>[] {
     return this.list;
   }
@@ -215,6 +216,21 @@ export class SecretReview {
   /** No other mark overlaps `[start, end)` (`self` is left out). */
   private fits(start: number, end: number, self: Mark | null): boolean {
     return start < end && this.list.every((m) => m === self || m.end <= start || end <= m.start);
+  }
+
+  /**
+   * Puts `m` (into the list, if it is new) on `[start, end)` when that is on code point boundaries, not empty and
+   * clear of every other mark, then sorts the list. Every range change comes through here: a range can jump past
+   * other marks (Ignore puts a correction that went clear of its found range back there), and the drawn prompt, the
+   * masks and the decisions all go by text order (#108 C1).
+   */
+  private place(m: Mark, start: number, end: number): boolean {
+    if (!onBoundary(this.text, start) || !onBoundary(this.text, end) || !this.fits(start, end, m)) return false;
+    m.start = start;
+    m.end = end;
+    if (!this.list.includes(m)) this.list.push(m);
+    this.list.sort((a, b) => a.start - b.start);
+    return true;
   }
 
   /**
@@ -232,27 +248,21 @@ export class SecretReview {
   setState(key: string, state: MarkState): boolean {
     const m = this.list.find((x) => x.key === key);
     if (!m || !m.found || m.state === state) return false;
-    if (state === 'ignore' && this.ignoreBlocker(key)) return false;
+    // Ignored, a candidate stays exactly as typed: its found range, never a correction, wherever in the text the
+    // correction had gone (a mark between the two is passed over). A mark over that range is in the way (`ignoreBlocker`).
+    if (state === 'ignore' && !this.place(m, m.found.start, m.found.end)) return false;
     m.state = state;
-    // Ignored, a candidate stays exactly as typed: its found range, never a correction.
-    if (state === 'ignore') {
-      m.start = m.found.start;
-      m.end = m.found.end;
-    }
     return true;
   }
 
-  /** Where `edge` of `key` would go one code point in `dir`, or null when it cannot. */
-  private target(key: string, edge: 'start' | 'end', dir: 1 | -1): { m: Mark; to: number } | null {
-    const i = this.list.findIndex((x) => x.key === key);
-    const m = this.list[i];
+  /** `key`'s range with `edge` one code point in `dir`, or null when it cannot go there. */
+  private target(key: string, edge: 'start' | 'end', dir: 1 | -1): { m: Mark; start: number; end: number } | null {
+    const m = this.list.find((x) => x.key === key);
     if (!m || m.state !== 'protect') return null;
     const to = stepPoint(this.text, m[edge], dir);
     if (to === m[edge]) return null;
-    const lo = this.list[i - 1]?.end ?? 0;
-    const hi = this.list[i + 1]?.start ?? this.text.length;
-    if (edge === 'start' ? to < lo || to >= m.end : to > hi || to <= m.start) return null;
-    return { m, to };
+    const r = edge === 'start' ? { start: to, end: m.end } : { start: m.start, end: to };
+    return this.fits(r.start, r.end, m) ? { m, ...r } : null;
   }
 
   canNudge(key: string, edge: 'start' | 'end', dir: 1 | -1): boolean {
@@ -262,9 +272,7 @@ export class SecretReview {
   /** Moves one edge of a protected mark by a code point: the start left extends it, the end left shrinks it. */
   nudge(key: string, edge: 'start' | 'end', dir: 1 | -1): boolean {
     const t = this.target(key, edge, dir);
-    if (!t) return false;
-    t.m[edge] = t.to;
-    return true;
+    return t !== null && this.place(t.m, t.start, t.end);
   }
 
   /** Marks `[start, end)` by hand, its edges taken out of a surrogate pair (outwards). */
@@ -272,15 +280,16 @@ export class SecretReview {
     const s = snap(this.text, Math.min(start, end), -1);
     const e = snap(this.text, Math.max(start, end), 1);
     if (s >= e) return { ok: false, reason: 'Select some text in the prompt first.' };
-    if (!this.fits(s, e, null)) return { ok: false, reason: 'That overlaps a match: correct its edges instead, or select only the text beside it.' };
-    return { ok: true, key: this.add(s, e) };
+    const key = this.add(s, e);
+    return key ? { ok: true, key } : { ok: false, reason: 'That overlaps a match: correct its edges instead, or select only the text beside it.' };
   }
 
-  private add(start: number, end: number): string {
-    const key = `m${++this.manual}`;
-    this.list.push({ key, candidate: null, start, end, found: null, state: 'protect', kinds: [], encoded: false });
-    this.list.sort((a, b) => a.start - b.start);
-    return key;
+  /** A manual mark on `[start, end)`, or null when it does not fit there. */
+  private add(start: number, end: number): string | null {
+    const m: Mark = { key: `m${this.manual + 1}`, candidate: null, start, end, found: null, state: 'protect', kinds: [], encoded: false };
+    if (!this.place(m, start, end)) return null;
+    this.manual++;
+    return m.key;
   }
 
   /** Takes a manual mark away (a candidate is ignored instead). */

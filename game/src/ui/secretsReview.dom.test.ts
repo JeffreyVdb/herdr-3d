@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { SecretsSim } from '../../tools/fixture-secrets.ts';
+import type { CommandResult } from '../net/client';
 import type { PromptSecretsScan } from '../net/protocol';
 import { PromptSecretsBook, SecretReview } from '../world/promptSecrets';
+import { type Go, PromptSecretsFlow } from './secretsFlow';
 import { SecretsReviewDialog, type SecretsReviewOutcome } from './secretsReview';
 
 // #108 round 3: the review of a prompt's possible secrets, by keyboard and by pointer (a tap is a click).
@@ -21,6 +24,24 @@ function scanAt(text: string, values: string[], extra: Partial<PromptSecretsScan
   };
 }
 
+/** The open dialog's prompt, its highlights and strip, keys on them, and the prompt's text as it reads (the tapes left out). */
+function controls() {
+  const prompt = document.querySelector<HTMLElement>('.sr-prompt')!;
+  const mark = (key: string) => prompt.querySelector<HTMLElement>(`.sr-mark[data-key="${key}"]`)!;
+  const strip = (key: string) => document.querySelector<HTMLElement>(`.sr-strip [data-key="${key}"]`)!;
+  const key = (target: Element, k: string, o: KeyboardEventInit = {}) => target.dispatchEvent(new KeyboardEvent('keydown', { key: k, code: o.code ?? (k.length === 1 ? `Key${k.toUpperCase()}` : k), bubbles: true, cancelable: true, ...o }));
+  const shown = () => {
+    const c = prompt.cloneNode(true) as HTMLElement;
+    c.querySelectorAll('.sr-tag').forEach((t) => t.remove());
+    return c.textContent;
+  };
+  return { prompt, mark, strip, key, shown };
+}
+
+const flush = async () => {
+  for (let n = 0; n < 5; n++) await Promise.resolve();
+};
+
 function setup(text = TEXT, values = ['ghp_A1b2😀', 'hunter2', 'abc', '.def', 'hunter2'], extra: Partial<PromptSecretsScan['candidates'][number]>[] = []) {
   document.body.replaceChildren();
   const book = new PromptSecretsBook();
@@ -29,20 +50,29 @@ function setup(text = TEXT, values = ['ghp_A1b2😀', 'hunter2', 'abc', '.def', 
   const review = new SecretReview(text, scanAt(text, values, extra));
   let outcome: SecretsReviewOutcome | null = null;
   void dlg.open({ review, target: 'Pebble', notice: null, manual: false, action: 'Confirm and send' }).then((o) => (outcome = o));
-  const prompt = document.querySelector<HTMLElement>('.sr-prompt')!;
-  const mark = (key: string) => prompt.querySelector<HTMLElement>(`.sr-mark[data-key="${key}"]`)!;
-  const strip = (key: string) => document.querySelector<HTMLElement>(`.sr-strip [data-key="${key}"]`)!;
-  const key = (target: Element, k: string, o: KeyboardEventInit = {}) => target.dispatchEvent(new KeyboardEvent('keydown', { key: k, code: o.code ?? (k.length === 1 ? `Key${k.toUpperCase()}` : k), bubbles: true, cancelable: true, ...o }));
-  /** The prompt's text as it reads, the tapes left out. */
-  const shown = () => {
-    const c = prompt.cloneNode(true) as HTMLElement;
-    c.querySelectorAll('.sr-tag').forEach((t) => t.remove());
-    return c.textContent;
-  };
-  const flush = async () => {
-    for (let n = 0; n < 5; n++) await Promise.resolve();
-  };
-  return { dlg, book, review, prompt, mark, strip, key, shown, flush, outcome: () => outcome as SecretsReviewOutcome | null };
+  return { dlg, book, review, ...controls(), flush, outcome: () => outcome as SecretsReviewOutcome | null };
+}
+
+/**
+ * The dialog as the send flow opens it over the fixture's bridge (its scan, and its check of a review, are the
+ * bridge's: docs/protocol.md "Prompt secrets"): `go` is what Confirm sends, `send` what the bridge makes of it.
+ */
+async function overBridge(text: string) {
+  document.body.replaceChildren();
+  const book = new PromptSecretsBook();
+  book.reset({ enabled: true, available: true });
+  const dlg = new SecretsReviewDialog(document.body, { book });
+  const sim = new SecretsSim({ emit: () => {}, error: (code, message) => Object.assign(new Error(message), { code }), takeFailure: () => false }, { on: true });
+  const flow = new PromptSecretsFlow({
+    book,
+    unsupported: () => false,
+    send: (t, args) => new Promise<CommandResult>((resolve) => sim.handle(t, { ...args }, () => {}, (data) => resolve({ ok: true, data }))),
+    review: (req) => dlg.open(req),
+  });
+  const go = flow.review({ key: 'w1', text, target: 'Pebble' }) as Promise<Go>;
+  await flush();
+  const send = (g: Go) => sim.prompt({ id: 'w1', text, secrets: g.secrets }, 'w1', () => {})?.extra;
+  return { dlg, go, send, ...controls() };
 }
 
 /** Selects `[a, b)` of the prompt's text through its text nodes, as a mouse, a touch or Shift+arrows would. */
@@ -241,6 +271,84 @@ describe('SecretsReviewDialog (#108)', () => {
     e.key(e.mark('c1'), 'Enter');
     expect(e.dlg.summary()!.status).toBe('Ignoring sends the whole match as typed, and match 2 now covers part of it: move its edge back first.');
     expect(e.shown()).toBe(text);
+  });
+
+  describe('C1 (review pass 2): a match moved clear of its found range, the gap marked, then ignored', () => {
+    // token=abcdef xyz: the bridge finds c1 abcdef, [6, 12). Moved onto the x ([13, 14)), the space marked ([12, 13)).
+    const text = 'token=abcdef xyz';
+    type Bridged = Awaited<ReturnType<typeof overBridge>>;
+    const order = (e: Bridged) => e.dlg.summary()!.marks.map((m) => [m.key, m.start, m.end, m.state]);
+    const drawn = (e: Bridged) => [...e.prompt.querySelectorAll<HTMLElement>('.sr-mark')].map((m) => m.dataset.key);
+
+    /** Ignored, c1 is back on its found range, before the mark it passed, and the prompt reads as typed. */
+    const ignored = (e: Bridged) => {
+      expect(order(e)).toEqual([
+        ['c1', 6, 12, 'ignore'],
+        ['m1', 12, 13, 'protect'],
+      ]);
+      expect(drawn(e)).toEqual(['c1', 'm1']);
+      expect(e.shown()).toBe(text);
+    };
+    /** Protected again (no edge moved into the mark), then Confirm: what goes, and the bridge takes it. */
+    const confirmed = async (e: Bridged) => {
+      expect(order(e)).toEqual([
+        ['c1', 6, 12, 'protect'],
+        ['m1', 12, 13, 'protect'],
+      ]);
+      expect(e.shown()).toBe(text);
+      (document.querySelector('[data-key="confirm"]') as HTMLElement).click();
+      const go = await e.go;
+      // The laptop's pending row shows this until the ack: both protected ranges hidden, nothing of abcdef.
+      expect(go.shown).toBe('token=[secret][secret]xyz');
+      expect(go.secrets?.decisions).toEqual([
+        { candidate: 'c1', action: 'protect', start: 6, end: 12 },
+        { action: 'protect', start: 12, end: 13 },
+      ]);
+      expect(e.send(go)).toEqual({ protected: 2, sent: expect.stringMatching(/^token=\[secret in file [^\]]+\]\[secret in file [^\]]+\]xyz$/) });
+    };
+
+    it('by keyboard: → twice, Shift+→ seven times, the space selected and M, N to the match, Space; Enter, then → is refused', async () => {
+      const e = await overBridge(text);
+      expect(document.activeElement).toBe(e.mark('c1'));
+      e.key(e.mark('c1'), 'ArrowRight');
+      e.key(e.mark('c1'), 'ArrowRight');
+      for (let i = 0; i < 7; i++) e.key(e.mark('c1'), 'ArrowRight', { shiftKey: true });
+      expect(order(e)).toEqual([['c1', 13, 14, 'protect']]);
+      selectText(e.prompt, 12, 13);
+      e.key(e.prompt, 'm');
+      expect(drawn(e)).toEqual(['m1', 'c1']);
+      e.key(e.mark('m1'), 'n');
+      expect(document.activeElement).toBe(e.mark('c1'));
+      e.key(e.mark('c1'), ' ', { code: 'Space' });
+      expect(e.dlg.summary()!.error).toBe(false);
+      ignored(e);
+      expect(document.activeElement).toBe(e.mark('c1'));
+      e.key(e.mark('c1'), 'Enter');
+      e.key(e.mark('c1'), 'ArrowRight');
+      expect(e.dlg.summary()).toMatchObject({ status: 'The next match starts there.', error: true });
+      await confirmed(e);
+    });
+
+    it('by pointer: the strip’s End → twice and Start → seven times, the space selected and marked, the match tapped, Ignore; Protect, then End → is unavailable', async () => {
+      const e = await overBridge(text);
+      e.strip('end-right').click();
+      e.strip('end-right').click();
+      for (let i = 0; i < 7; i++) e.strip('start-right').click();
+      expect(order(e)).toEqual([['c1', 13, 14, 'protect']]);
+      // A tap on the strip takes the selection away; the last one is kept for it.
+      selectText(e.prompt, 12, 13);
+      document.getSelection()!.removeAllRanges();
+      e.strip('mark').click();
+      e.mark('c1').click();
+      expect(e.strip('ignore').getAttribute('aria-disabled')).toBeNull();
+      e.strip('ignore').click();
+      ignored(e);
+      expect(e.strip('ignore').getAttribute('aria-pressed')).toBe('true');
+      e.strip('protect').click();
+      expect(e.strip('end-right').getAttribute('aria-disabled')).toBe('true');
+      e.strip('end-right').click();
+      await confirmed(e);
+    });
   });
 
   it('maps a DOM position to the text’s UTF-16 offset: in text, between nodes, in a tape (the next text’s start)', () => {

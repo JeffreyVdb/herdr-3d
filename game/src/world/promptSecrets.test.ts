@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SecretsSim } from '../../tools/fixture-secrets.ts';
 import { isWorldEvent, parseMessage, type PromptSecretsScan, type Snapshot, type WorldEvent } from '../net/protocol';
 import {
   hideRanges,
@@ -282,10 +283,32 @@ function fault(r: SecretReview): string | null {
     .map((d) => (d.start !== undefined && d.end !== undefined ? { start: d.start, end: d.end } : (found.get(d.candidate ?? null) as Range)))
     .sort((a, b) => a.start - b.start);
   for (let i = 1; i < ranges.length; i++) if ((ranges[i - 1] as Range).end > (ranges[i] as Range).start) return `decisions overlap at ${(ranges[i] as Range).start}`;
+  // The command log masks, and the pending row hides, by `protectedRanges()`: exactly the protected marks' code units.
+  const own = marks.filter((m) => m.state === 'protect').sort((a, b) => a.start - b.start);
+  let masked = '';
+  let hidden = '';
+  from = 0;
+  for (const m of own) {
+    masked += r.text.slice(from, m.start) + '•'.repeat(m.end - m.start);
+    hidden += `${r.text.slice(from, m.start)}[secret]`;
+    from = m.end;
+  }
+  if (maskRanges(r.text, r.protectedRanges()) !== masked + r.text.slice(from)) return `masked as ${JSON.stringify(maskRanges(r.text, r.protectedRanges()))}`;
+  if (hideRanges(r.text, r.protectedRanges()) !== hidden + r.text.slice(from)) return `pending row ${JSON.stringify(hideRanges(r.text, r.protectedRanges()))}`;
   return null;
 }
 
 const expectSound = (r: SecretReview, at = '') => expect(fault(r), at).toBeNull();
+
+/** The fixture's bridge with the switch on (its check is the bridge's, docs/protocol.md "Prompt secrets"): its scan of `text`, and what it makes of a review. */
+function simBridge(text: string) {
+  const sim = new SecretsSim({ emit: () => {}, error: (code, message) => Object.assign(new Error(message), { code }), takeFailure: () => false }, { on: true });
+  let ack: unknown;
+  sim.handle('prompt_secrets.scan', { text }, () => {}, (d) => (ack = d));
+  const scan = scanOf(ack, text);
+  if (!scan) throw new Error('no scan');
+  return { scan, send: (r: SecretReview) => sim.prompt({ id: 'w1', text, secrets: r.review() }, 'w1', () => {})?.extra };
+}
 
 describe('#108 C1: no transition makes two marks overlap', () => {
   // token=abcdef: c1 is abcdef, [6, 12).
@@ -398,7 +421,9 @@ describe('#108 C1: no transition makes two marks overlap', () => {
   });
 
   it('random sequences of every operation, a new scan taking the review over among them, never break it', () => {
-    const t = 'export TOKEN=ghp_A1b2😀\r\npw="hunter2"; key=abc.def x9 😀😀 same: hunter2';
+    // Room around most candidates (a range can move well clear of where it was found), two adjacent ones, CRLF and
+    // astral characters.
+    const t = 'export TOKEN=ghp_A1b2😀 now\r\npw="hunter2"; key=abc.def and x9 then 😀😀 here, same: hunter2 at the end';
     const values = ['ghp_A1b2😀', 'hunter2', 'abc', '.def', 'x9', 'hunter2'];
     // A small deterministic generator (mulberry32): the same sequences every run.
     let seed = 108;
@@ -409,18 +434,52 @@ describe('#108 C1: no transition makes two marks overlap', () => {
       return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
     };
     const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)] as T;
+    const int = (lo: number, hi: number) => lo + Math.floor(rand() * (hi - lo + 1));
     for (let run = 0; run < 200; run++) {
       let r = new SecretReview(t, scanAt(t, values));
       const ops: string[] = [];
-      for (let n = 0; n < 40; n++) {
+      // Most operations are on one mark at a time, so a run of them takes it somewhere.
+      let k = 'c1';
+      for (let n = 0; n < 60; n++) {
         const keys = r.marks().map((m) => m.key);
-        const k = pick(keys.length ? keys : ['c1']);
-        const op = pick(['nudge', 'nudge', 'nudge', 'mark', 'mark', 'unmark', 'ignore', 'ignore', 'protect', 'rescan']);
-        if (op === 'nudge') {
+        if (!keys.includes(k) || rand() < 0.2) k = pick(keys.length ? keys : ['c1']);
+        const op = pick(['nudge', 'run', 'drift', 'drift', 'gap', 'gap', 'mark', 'unmark', 'ignore', 'ignore', 'protect', 'rescan']);
+        if (op === 'nudge' || op === 'run') {
           const edge = pick(['start', 'end'] as const);
           const dir = pick([1, -1] as const);
-          r.nudge(k, edge, dir);
-          ops.push(`nudge ${k} ${edge} ${dir}`);
+          const times = op === 'run' ? int(2, 8) : 1;
+          for (let i = 0; i < times; i++) r.nudge(k, edge, dir);
+          ops.push(`${times}x nudge ${k} ${edge} ${dir}`);
+        } else if (op === 'drift') {
+          // The whole range moves (its leading edge first, then the trailing one, a little further sometimes): far
+          // enough, it lies clear of its found range.
+          const dir = pick([1, -1] as const);
+          const lead = dir > 0 ? 'end' : 'start';
+          const trail = dir > 0 ? 'start' : 'end';
+          const by = int(1, 10);
+          const more = int(0, 2);
+          for (let i = 0; i < by; i++) r.nudge(k, lead, dir);
+          for (let i = 0; i < by + more; i++) r.nudge(k, trail, dir);
+          ops.push(`drift ${k} ${dir} by ${by}+${more}`);
+        } else if (op === 'gap') {
+          // A mark between a corrected candidate and its found range, or over the part of that range it gave up.
+          const moved = r.marks().filter((m) => m.found && (m.start !== m.found.start || m.end !== m.found.end));
+          const m = moved.find((x) => x.key === k) ?? (moved.length ? pick(moved) : null);
+          const f = m?.found;
+          if (!m || !f) continue;
+          k = m.key;
+          const room = [
+            [f.end, m.start],
+            [m.end, f.start],
+            [f.start, Math.min(f.end, m.start)],
+            [Math.max(f.start, m.end), f.end],
+          ].filter(([a, b]) => (a as number) < (b as number));
+          if (!room.length) continue;
+          const [a, b] = pick(room) as [number, number];
+          const s = int(a, b - 1);
+          const e = Math.min(b, s + int(1, 3));
+          r.mark(s, e);
+          ops.push(`mark ${s} ${e} (by ${m.key})`);
         } else if (op === 'mark') {
           const a = Math.floor(rand() * (t.length + 1));
           const b = Math.min(t.length, a + 1 + Math.floor(rand() * 4));
@@ -442,6 +501,76 @@ describe('#108 C1: no transition makes two marks overlap', () => {
         if (bad) expect(bad, `run ${run}: ${ops.join(', ')}`).toBeNull();
       }
     }
+    // 12,000 checked steps: a fraction of a second alone, more under a loaded `make test`.
+  }, 20_000);
+});
+
+describe('#108 C1 (review pass 2): a match ignored far from its correction goes back into text order', () => {
+  // token=abcdef xyz: c1 is abcdef, [6, 12) (the fixture's detector finds it too).
+  const text = 'token=abcdef xyz';
+
+  /** c1 moved clear past its found range, onto the x: [13, 14), the space between them free. */
+  const movedPast = (r: SecretReview) => {
+    expect(r.nudge('c1', 'end', 1)).toBe(true);
+    expect(r.nudge('c1', 'end', 1)).toBe(true);
+    for (let i = 0; i < 7; i++) expect(r.nudge('c1', 'start', 1)).toBe(true);
+    expect(r.get('c1')).toMatchObject({ start: 13, end: 14 });
+  };
+  const order = (r: SecretReview) => r.marks().map((m) => [m.key, m.start, m.end, m.state]);
+
+  it('the review’s sequence: the space marked, Ignore passes over it; drawn as typed, the pending row masks both, no edge overlaps after, and the bridge takes it', () => {
+    const bridge = simBridge(text);
+    expect(bridge.scan.candidates).toEqual([{ id: 'c1', start: 6, end: 12, kinds: ['assignment'] }]);
+    const r = new SecretReview(text, bridge.scan);
+    movedPast(r);
+    expect(r.mark(12, 13)).toEqual({ ok: true, key: 'm1' });
+    expect(order(r)).toEqual([
+      ['m1', 12, 13, 'protect'],
+      ['c1', 13, 14, 'protect'],
+    ]);
+    // Nothing covers the found range: Ignore is allowed, and c1 goes back before the mark it passed.
+    expect(r.ignoreBlocker('c1')).toBeNull();
+    expect(r.setState('c1', 'ignore')).toBe(true);
+    expect(order(r)).toEqual([
+      ['c1', 6, 12, 'ignore'],
+      ['m1', 12, 13, 'protect'],
+    ]);
+    expectSound(r, 'ignored');
+    expect(r.setState('c1', 'protect')).toBe(true);
+    expectSound(r, 'protected again');
+    expect(r.protectedRanges()).toEqual([
+      { start: 6, end: 12 },
+      { start: 12, end: 13 },
+    ]);
+    expect(hideRanges(text, r.protectedRanges())).toBe('token=[secret][secret]xyz');
+    expect(maskRanges(text, r.protectedRanges())).toBe('token=•••••••xyz');
+    // Its end meets the mark now: neither edge moves into the other.
+    expect(r.canNudge('c1', 'end', 1)).toBe(false);
+    expect(r.nudge('c1', 'end', 1)).toBe(false);
+    expect(r.nudge('m1', 'start', -1)).toBe(false);
+    expect(r.decisions()).toEqual([
+      { candidate: 'c1', action: 'protect', start: 6, end: 12 },
+      { action: 'protect', start: 12, end: 13 },
+    ]);
+    expect(bridge.send(r)).toEqual({ protected: 2, sent: expect.stringMatching(/^token=\[secret in file [^\]]+\]\[secret in file [^\]]+\]xyz$/) });
+  });
+
+  it('a stale review taken over from there is in text order too, and Ignore works the same on it', () => {
+    const first = new SecretReview(text, scanAt(text, ['abcdef']));
+    movedPast(first);
+    first.mark(12, 13);
+    const again = new SecretReview(text, scanAt(text, ['abcdef'], 'rev-2'), first);
+    expectSound(again, 'taken over');
+    expect(order(again)).toEqual([
+      ['m1', 12, 13, 'protect'],
+      ['c1', 13, 14, 'protect'],
+    ]);
+    expect(again.setState('c1', 'ignore')).toBe(true);
+    expect(order(again)).toEqual([
+      ['c1', 6, 12, 'ignore'],
+      ['m1', 12, 13, 'protect'],
+    ]);
+    expectSound(again, 'ignored');
   });
 });
 
