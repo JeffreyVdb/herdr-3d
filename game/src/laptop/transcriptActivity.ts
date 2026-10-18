@@ -59,6 +59,11 @@ export interface PendingPrompt {
   /** #138: what the bridge sent when it rewrote `text` for the worker's harness (Codex: `$skill`, a bare path): the ack's
    * `sent`. The transcript shows this one, so an item matches either text. */
   sent?: string;
+  /**
+   * #108: what its row shows instead of `text` (absent: `text`): with prompt secrets protected, the text with each one as
+   * `[secret]` until the ack, then the ack's `sent` (their `[secret in file …]` references). Never a protected value.
+   */
+  shown?: string;
   state: 'sending' | 'sent' | 'queued' | 'refused';
   late: boolean;
   /** Why it was refused. */

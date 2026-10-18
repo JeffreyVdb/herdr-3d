@@ -204,7 +204,7 @@ export const BINDINGS = [
   { id: 'radio.track', group: 'aimed', scope: 'aim:radio', keys: [code('KeyR')], label: 'Radio: next track' },
   // ---- dialogs and fields (their own keys; listed so they are findable) ---------------------------
   { id: 'dialog.close', group: 'dialogs', scope: 'dialog', keys: [code('Escape')], label: 'Close the dialog', readonly: true },
-  { id: 'dialog.submit', group: 'dialogs', scope: 'dialog', keys: [code('Enter', { mod: true })], label: 'Submit: hire, Start Run, open a pull request, a board comment', readonly: true },
+  { id: 'dialog.submit', group: 'dialogs', scope: 'dialog', keys: [code('Enter', { mod: true })], label: 'Submit: hire, Start Run, open a pull request, a board comment, confirm a secrets review', readonly: true },
   { id: 'dialog.send', group: 'dialogs', scope: 'dialog', keys: [code('Enter')], label: 'Send, in the conversation’s prompt box', readonly: true },
   // #188: the overview page's own keys (ui/overview.ts), besides its moves and folds.
   { id: 'overview.filter', group: 'dialogs', scope: 'dialog', keys: [code('KeyF')], label: 'On the overview page: active workers only, or everyone', readonly: true },
@@ -212,6 +212,13 @@ export const BINDINGS = [
   { id: 'dialog.newline', group: 'dialogs', scope: 'dialog', keys: [code('Enter', { shift: true })], label: 'A new line, in the hire task and the prompt boxes', readonly: true },
   // #139: the composer's own keys while its suggestion list is open (ui/composer/completion.ts); Enter picks there too.
   { id: 'dialog.complete', group: 'dialogs', scope: 'dialog', keys: [code('ArrowUp'), code('ArrowDown'), code('Tab')], show: [['↑ ↓'], ['Tab']], label: 'In a prompt box’s suggestion list (after / or @): ↑ ↓ choose, Tab or Enter picks, Esc closes only the list', readonly: true },
+  // #108: with "Review prompt secrets before sending" on, the prompt boxes' chord (ui/secretsFlow.ts `reviewKey`) and the
+  // review's own keys (ui/secretsReview.ts).
+  { id: 'dialog.secrets', group: 'dialogs', scope: 'dialog', keys: [code('KeyX', { mod: true, shift: true })], label: 'In a prompt box: review its possible secrets now, to mark one the scan missed (with “Review prompt secrets” on)', readonly: true },
+  { id: 'secrets.next', group: 'dialogs', scope: 'dialog', keys: [code('KeyN'), code('KeyN', { shift: true })], label: 'In the secrets review: the next or the previous match', readonly: true },
+  { id: 'secrets.toggle', group: 'dialogs', scope: 'dialog', keys: [code('Space')], label: 'In the secrets review, on a match: protect it as a file, or ignore it (Enter too)', readonly: true },
+  { id: 'secrets.edges', group: 'dialogs', scope: 'dialog', keys: [code('ArrowLeft'), code('ArrowRight'), code('ArrowLeft', { shift: true }), code('ArrowRight', { shift: true })], show: [['← →'], ['Shift', '← →']], label: 'In the secrets review, on a match: move its end, or (with Shift) its start, by one character', readonly: true },
+  { id: 'secrets.mark', group: 'dialogs', scope: 'dialog', keys: [code('KeyM'), code('Delete')], show: [['M'], ['Delete']], label: 'In the secrets review: mark the text selected in the prompt as a secret; Delete takes a mark you made away', readonly: true },
   // ---- at a laptop (laptop/keys.ts; no help key here) ---------------------------------------------
   { id: 'seat.stand', group: 'laptop', scope: 'seated', keys: [code('Escape')], label: 'Stand up', readonly: true },
   { id: 'seat.view', group: 'laptop', scope: 'seated', keys: [code('Escape', { ctrl: true })], label: 'Terminal or conversation', readonly: true },

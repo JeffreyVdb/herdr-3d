@@ -47,6 +47,8 @@ export const ICON = {
   file: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/>',
   sparkle: `<path d="${SPARKLE_D}" fill="currentColor" stroke="none"/>`,
   folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h3.8l2 2.2h7.2a2 2 0 0 1 2 2v7.8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
+  /** #108: "Review secrets", a prompt box's review of its possible secrets. */
+  lock: '<rect x="5.5" y="10.5" width="13" height="9.5" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/><path d="M12 14.2v2.4"/>',
   // #247: a repository (a book with a bookmark, as GitHub draws one).
   repo: '<path d="M5.5 18V5.5a2 2 0 0 1 2-2h11v13h-11a2 2 0 0 0-2 2 2 2 0 0 0 2 2h11v-3.5"/><path d="M9 20.5v2l1.5-1 1.5 1v-2"/>',
 };

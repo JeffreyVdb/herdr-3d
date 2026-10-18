@@ -1,0 +1,209 @@
+import { describe, expect, it } from 'vitest';
+import type { CommandResult } from '../net/client';
+import type { CommandName } from '../net/protocol';
+import { PromptSecretsBook } from '../world/promptSecrets';
+import { PromptSecretsFlow, type Go } from './secretsFlow';
+import type { SecretsReviewOutcome, SecretsReviewRequest } from './secretsReview';
+
+const TEXT = 'deploy with token=ghp_abc123 and pw=hunter2';
+const at = (v: string) => ({ start: TEXT.indexOf(v), end: TEXT.indexOf(v) + v.length });
+const SCAN = { revision: 'rev-1', candidates: [{ id: 'c1', ...at('ghp_abc123'), kinds: ['assignment'] }, { id: 'c2', ...at('hunter2'), kinds: ['assignment'] }] };
+
+/** A flow over a fake bridge: scans answer from `scans` in turn, the review from `outcomes` (a function of the request). */
+function rig(o: { on?: boolean; scans?: CommandResult[]; review?: (req: SecretsReviewRequest) => SecretsReviewOutcome; unsupported?: CommandName[] } = {}) {
+  const book = new PromptSecretsBook();
+  book.reset({ enabled: o.on ?? true, available: true });
+  const sent: Array<{ t: string; args: unknown }> = [];
+  const reviews: SecretsReviewRequest[] = [];
+  const scans = [...(o.scans ?? [])];
+  const flow = new PromptSecretsFlow({
+    book,
+    unsupported: (t) => (o.unsupported ?? []).includes(t),
+    send: (t, args) => {
+      sent.push({ t, args });
+      return Promise.resolve(scans.shift() ?? { ok: true, data: SCAN });
+    },
+    review: (req) => {
+      reviews.push(req);
+      return Promise.resolve(o.review ? o.review(req) : { kind: 'cancel' });
+    },
+  });
+  return { flow, book, sent, reviews };
+}
+
+const confirmIgnoring = (...ignore: string[]) => (req: SecretsReviewRequest): SecretsReviewOutcome => {
+  // The dialog's own model: take the request's review and decide.
+  const r = req.review;
+  for (const k of ignore) r.setState(k, 'ignore');
+  return { kind: 'confirm', review: r };
+};
+
+const req = { key: 'w1', text: TEXT, target: 'Pebble' };
+
+describe('#108 the send flow of a prompt with possible secrets', () => {
+  it('off (or an older bridge): today’s send, no scan', async () => {
+    for (const r of [rig({ on: false }), rig({ unsupported: ['prompt_secrets.scan'] })]) {
+      const out = await r.flow.review(req);
+      expect(out).toEqual({ kind: 'send', protects: 0, shown: TEXT, review: null });
+      expect(r.sent).toEqual([]);
+      expect(r.reviews).toEqual([]);
+    }
+  });
+
+  it('on, nothing found: sent as today without a review (no empty dialog)', async () => {
+    const r = rig({ scans: [{ ok: true, data: { revision: 'clean', candidates: [] } }] });
+    const out = await r.flow.review(req);
+    expect(out).toMatchObject({ kind: 'send', protects: 0, shown: TEXT, review: null });
+    expect((out as Go).secrets).toBeUndefined();
+    expect(r.sent).toEqual([{ t: 'prompt_secrets.scan', args: { text: TEXT } }]);
+    expect(r.reviews).toEqual([]);
+  });
+
+  it('on, found: the review opens over the whole text; Confirm gives the decisions, the shown text masked', async () => {
+    const r = rig({ review: confirmIgnoring('c2') });
+    const out = (await r.flow.review(req)) as Go;
+    expect(r.reviews).toHaveLength(1);
+    expect(r.reviews[0]).toMatchObject({ target: 'Pebble', notice: null, manual: false, action: 'Confirm and send' });
+    expect(r.reviews[0]?.review.text).toBe(TEXT);
+    expect(out.secrets).toEqual({ revision: 'rev-1', decisions: [{ candidate: 'c1', action: 'protect', ...at('ghp_abc123') }, { candidate: 'c2', action: 'ignore' }] });
+    expect(out.protects).toBe(1);
+    expect(out.shown).toBe('deploy with token=[secret] and pw=hunter2');
+  });
+
+  it('cancel keeps the draft and sends nothing', async () => {
+    const r = rig();
+    expect(await r.flow.review(req)).toEqual({ kind: 'kept', why: 'cancel', message: expect.any(String) });
+    expect(r.sent.map((s) => s.t)).toEqual(['prompt_secrets.scan']);
+  });
+
+  it('the switch changed while the review was open: nothing is sent, the reason is said', async () => {
+    const r = rig({ review: () => ({ kind: 'changed', message: 'Review prompt secrets was switched off in Settings.' }) });
+    expect(await r.flow.review(req)).toEqual({ kind: 'kept', why: 'changed', message: 'Review prompt secrets was switched off in Settings.' });
+  });
+
+  it('the switch went off while the scan ran: kept, never a send', async () => {
+    const book = new PromptSecretsBook();
+    book.reset({ enabled: true, available: true });
+    const flow = new PromptSecretsFlow({
+      book,
+      unsupported: () => false,
+      send: () => {
+        book.upsert({ enabled: false, available: true });
+        return Promise.resolve({ ok: true, data: SCAN });
+      },
+      review: () => Promise.resolve({ kind: 'cancel' }),
+    });
+    expect(await flow.review(req)).toMatchObject({ kind: 'kept', why: 'changed' });
+  });
+
+  it('a scan that fails or cannot be read keeps the draft, with why', async () => {
+    for (const [scan, why] of [
+      [{ ok: false, code: 'secrets_review_off', message: 'off' }, 'off'],
+      [{ ok: false, code: 'secrets_unavailable', message: 'the scan took over 10 s' }, 'failed'],
+      [{ ok: false, code: 'timeout', message: 'x' }, 'failed'],
+      [{ ok: true, data: { revision: 'r', candidates: [{ id: 'c1', start: 5, end: 99, kinds: [] }] } }, 'failed'],
+    ] as const) {
+      const r = rig({ scans: [scan] });
+      const out = await r.flow.review(req);
+      expect(out, JSON.stringify(scan)).toMatchObject({ kind: 'kept', why });
+      expect(r.reviews).toEqual([]);
+    }
+  });
+
+  it('by hand: the review opens even with nothing found; off, it says to switch it on', async () => {
+    const r = rig({ scans: [{ ok: true, data: { revision: 'clean', candidates: [] } }], review: (q) => (q.review.mark(0, 6), { kind: 'confirm', review: q.review }) });
+    const out = (await r.flow.review({ ...req, manual: true })) as Go;
+    expect(r.reviews[0]?.manual).toBe(true);
+    expect(out.secrets).toEqual({ revision: 'clean', decisions: [{ action: 'protect', start: 0, end: 6 }] });
+    expect(await rig({ on: false }).flow.review({ ...req, manual: true })).toMatchObject({ kind: 'kept', why: 'off' });
+  });
+
+  it('a review that protects nothing and ignores nothing is no review: sent without `secrets`', async () => {
+    const r = rig({ scans: [{ ok: true, data: { revision: 'clean', candidates: [] } }], review: (q) => ({ kind: 'confirm', review: q.review }) });
+    const out = (await r.flow.review({ ...req, manual: true })) as Go;
+    expect(out.secrets).toBeUndefined();
+  });
+});
+
+describe('#108 delivering a reviewed prompt', () => {
+  const ok: CommandResult = { ok: true, data: { queued: false, retried: false, sent: 'x', protected: 1 } };
+
+  it('stale or required: scanned and reviewed again (the earlier choices taken over), never sent on its own', async () => {
+    for (const code of ['secrets_review_stale', 'secrets_review_required']) {
+      const r = rig({ scans: [{ ok: true, data: SCAN }, { ok: true, data: { ...SCAN, revision: 'rev-2' } }], review: confirmIgnoring('c2') });
+      const first = (await r.flow.review(req)) as Go;
+      const answers: CommandResult[] = [{ ok: false, code, message: 'no' }, ok];
+      const tried: Go[] = [];
+      const out = await r.flow.deliver(req, first, (go) => (tried.push(go), Promise.resolve(answers.shift() as CommandResult)));
+      expect(out).toMatchObject({ kind: 'answered', result: ok });
+      expect(tried.map((g) => g.secrets?.revision)).toEqual(['rev-1', 'rev-2']);
+      expect(r.reviews).toHaveLength(2);
+      expect(r.reviews[1]?.notice).toMatch(/again|cover/);
+      // The second review started from the first one's choices.
+      expect(r.reviews[1]?.review.get('c2')?.state).toBe('ignore');
+    }
+  });
+
+  it('stale, then cancel: kept, sent once', async () => {
+    let n = 0;
+    const r = rig({ review: (q) => (n++ === 0 ? { kind: 'confirm', review: q.review } : { kind: 'cancel' }) });
+    const first = (await r.flow.review(req)) as Go;
+    let sends = 0;
+    const out = await r.flow.deliver(req, first, () => (sends++, Promise.resolve({ ok: false, code: 'secrets_review_stale', message: 'stale' })));
+    expect(out).toMatchObject({ kind: 'kept', why: 'cancel' });
+    expect(sends).toBe(1);
+  });
+
+  it('a stale re-scan that finds nothing still opens the review (confirm or mark by hand)', async () => {
+    const r = rig({ scans: [{ ok: true, data: SCAN }, { ok: true, data: { revision: 'clean', candidates: [] } }], review: (q) => ({ kind: 'confirm', review: q.review }) });
+    const first = (await r.flow.review(req)) as Go;
+    const answers: CommandResult[] = [{ ok: false, code: 'secrets_review_stale', message: 'stale' }, ok];
+    await r.flow.deliver(req, first, () => Promise.resolve(answers.shift() as CommandResult));
+    expect(r.reviews).toHaveLength(2);
+    expect(r.reviews[1]?.review.marks()).toEqual([]);
+  });
+
+  it('off or unavailable: kept with a note, no automatic send', async () => {
+    for (const [code, why] of [
+      ['secrets_review_off', 'off'],
+      ['secrets_unavailable', 'failed'],
+    ] as const) {
+      const r = rig({ review: (q) => ({ kind: 'confirm', review: q.review }) });
+      const first = (await r.flow.review(req)) as Go;
+      let sends = 0;
+      const out = await r.flow.deliver(req, first, () => (sends++, Promise.resolve({ ok: false, code, message: 'no private runtime directory' })));
+      expect(out).toMatchObject({ kind: 'kept', why });
+      expect(sends).toBe(1);
+    }
+  });
+
+  it('other answers go back to the composer as they are', async () => {
+    const r = rig({ review: (q) => ({ kind: 'confirm', review: q.review }) });
+    const first = (await r.flow.review(req)) as Go;
+    const busy: CommandResult = { ok: false, code: 'invalid_state', message: 'invalid state: blocked' };
+    expect(await r.flow.deliver(req, first, () => Promise.resolve(busy))).toMatchObject({ kind: 'answered', result: busy });
+  });
+
+  it('unanswered (a timeout, a dropped connection): the identical Send again carries the same revision and decisions', async () => {
+    const r = rig({ review: confirmIgnoring('c1') });
+    const first = (await r.flow.review(req)) as Go;
+    const lost = await r.flow.deliver(req, first, () => Promise.resolve({ ok: false, code: 'timeout', message: 'no answer' }));
+    expect(lost).toMatchObject({ kind: 'answered', result: { ok: false, code: 'timeout' } });
+    // The person presses Send again: no scan, no dialog.
+    const again = (await r.flow.review(req)) as Go;
+    expect(again.retry).toBe(true);
+    expect(again.secrets).toEqual(first.secrets);
+    expect(r.sent).toHaveLength(1);
+    expect(r.reviews).toHaveLength(1);
+    // Answered for sure this time: the next Send of it is a new review.
+    await r.flow.deliver(req, again, () => Promise.resolve(ok));
+    await r.flow.review(req);
+    expect(r.sent).toHaveLength(2);
+    // Another text is never a retry.
+    const other = rig({ review: (q) => ({ kind: 'confirm', review: q.review }) });
+    const g = (await other.flow.review(req)) as Go;
+    await other.flow.deliver(req, g, () => Promise.resolve({ ok: false, code: 'disconnected', message: 'x' }));
+    await other.flow.review({ ...req, text: `${TEXT}!` });
+    expect(other.sent).toHaveLength(2);
+  });
+});

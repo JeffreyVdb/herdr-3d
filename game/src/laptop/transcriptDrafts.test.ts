@@ -9,6 +9,29 @@ class Mem {
 }
 
 describe('TranscriptDrafts (#141)', () => {
+  it('#108: with prompt secrets reviewed, drafts stay in memory: nothing written, a stored one removed once loaded; off, saved again', () => {
+    const s = new Mem();
+    s.setItem('h3d.draft.transcript.old', JSON.stringify({ v: 1, text: 'pw=old1' }));
+    let persist = true;
+    const t = new TranscriptDrafts({ storage: s, persist: () => persist });
+    const a = t.get('a', 'Ada');
+    a.replace(0, 0, 'token=abc');
+    expect(s.getItem('h3d.draft.transcript.a')).not.toBeNull();
+    // The switch goes on: what a live draft left in storage goes at once.
+    persist = false;
+    t.persistChanged();
+    expect(s.getItem('h3d.draft.transcript.a')).toBeNull();
+    a.replace(9, 9, '1');
+    expect([...s.data.keys()]).toEqual(['h3d.draft.transcript.old']);
+    // A draft kept from before is read into memory, and leaves storage.
+    expect(t.get('old', 'Old').doc.text).toBe('pw=old1');
+    expect(s.data.size).toBe(0);
+    // Off again: today's behaviour, the live drafts written back.
+    persist = true;
+    t.persistChanged();
+    expect(JSON.parse(s.getItem('h3d.draft.transcript.a') ?? 'null').text).toBe('token=abc1');
+  });
+
   it('gives each worker one draft, writes its text and file chips on every change and clears the key when empty', () => {
     const s = new Mem();
     const t = new TranscriptDrafts({ storage: s });

@@ -113,6 +113,9 @@ import { codexServerSection } from './ui/codexServerSection';
 import { repoDiscoverySection } from './ui/repoDiscoverySection';
 import { floorsSection } from './ui/floorsSection';
 import { repoRefsSection } from './ui/repoRefsSection';
+import { promptSecretsSection } from './ui/promptSecretsSection';
+import { SecretsReviewDialog } from './ui/secretsReview';
+import { PromptSecretsFlow } from './ui/secretsFlow';
 import { CommandCatalogs } from './laptop/commandCatalog';
 import { aiChip } from './world/ai';
 import { LimitsPrefs } from './ui/limitsPrefs';
@@ -240,6 +243,9 @@ export class App {
   /** #210: every hire on its way, from Hire to its outcome. */
   readonly hires: HireCoordinator;
   readonly sendHome: SendHomeDialog;
+  /** #108: the review of a prompt's possible secrets, and the send flow every composer goes through. */
+  readonly secretsReview: SecretsReviewDialog;
+  readonly secrets: PromptSecretsFlow;
   /** #223: the filing dialog and the floor's filing cabinet. */
   readonly handoffDialog: HandoffDialog;
   readonly cabinet: Cabinet;
@@ -503,6 +509,8 @@ export class App {
     );
     // #155: whether new Codex workers get a Codex server of their own (the bridge's switch, off by default).
     settings.addSection('codex', 'Codex workers', codexServerSection({ book: this.store.codexServer, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'workers' });
+    // #108: whether a prompt is scanned for passwords and tokens, and reviewed, before it goes (the bridge's switch, off by default).
+    settings.addSection('prompt-secrets', 'Prompt secrets', promptSecretsSection({ book: this.store.promptSecrets, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'workers' });
     // #247: whether a conversation's `@r:` lists every building's floors (the bridge's switch, off by default).
     settings.addSection('repos', 'Repositories', repoRefsSection({ book: this.store.repoRefs, send: (t, args) => this.send(t, args) }), { store: 'bridge', group: 'integrations' });
     // #54: the folders on the bridge host scanned for Git checkouts, which `@r:` lists too (absent without discovery).
@@ -760,6 +768,9 @@ export class App {
       },
     });
     this.sendHome = new SendHomeDialog(o.host, dialogHost);
+    // #108: with "Review prompt secrets before sending" on, one review dialog and one send flow for every composer.
+    this.secretsReview = new SecretsReviewDialog(o.host, { book: this.store.promptSecrets });
+    this.secrets = new PromptSecretsFlow({ book: this.store.promptSecrets, send: (t, args) => this.send(t, args), unsupported: (t) => this.unsupported.has(t), review: (req) => this.secretsReview.open(req) });
     // #223: a literal handoff, and the cabinet it goes into.
     const copy = (text: string) => copyText(text);
     this.handoffDialog = new HandoffDialog(o.host, {
@@ -817,6 +828,7 @@ export class App {
         themes: this.themes,
         monitors: this.monitorPrefs,
         packup: (id, text, signal) => this.packupCheck(id, text, signal), // #110
+        secrets: this.secrets, // #108
         overview: () => this.openOverview(false), // #118
         handoff: (id) => this.openHandoff(id, true), // #223
         scheduleFollowup: (id, c) => this.openFollowup(id, c), // #64 schedules
@@ -825,7 +837,7 @@ export class App {
       o.params,
     );
     // M5: the Changes panel sits in the HUD, under the top bar, and leaves the floor in view.
-    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, catalogs, packup: (id, text, signal) => this.packupCheck(id, text, signal) });
+    this.prompt = new PromptOverlay(o.host, { ...dialogHost, upload, catalogs, packup: (id, text, signal) => this.packupCheck(id, text, signal), secrets: this.secrets });
     this.openPr = new OpenPrDialog(o.host, {
       ...dialogHost,
       providerName: (floor) => this.boardBook.get(floor).prs?.provider_name ?? this.boardBook.get(floor).issues?.provider_name ?? 'the provider',
@@ -1683,7 +1695,7 @@ export class App {
 
   /** M4 dialogs are open (keys go to them). */
   get dialogOpen(): boolean {
-    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
+    return this.hire.isOpen || this.hireReview.isOpen || this.sendHome.isOpen || this.secretsReview.isOpen || this.handoffDialog.isOpen || this.cabinet.isOpen || this.schedules.isOpen || this.scheduleForm.isOpen || this.prompt.isOpen || this.startRun.isOpen || this.presetsPanel.isOpen || this.hirePresets.isOpen || this.addFloor.isOpen || this.boardsPanel.isOpen || this.openPr.isOpen || this.whiteboard.isOpen || this.overview.isOpen;
   }
 
   /** The desks of the floor with an interior as shown: who sits there, whether its "+" is up, what the walk animation holds (test hook). */
@@ -3648,7 +3660,8 @@ export class App {
     const onFloor = this.mode === 'floor' && (this.place.area === 'floor' || this.place.area === 'fire-escape');
     // #110: a pack-up check's dialog keeps you seated (the prompt box and its draft stay); it still owns the keys.
     // #118: the overview opened from the transcript (O) keeps the seat: Esc closes it back onto the conversation.
-    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen) || this.hud.sheetOpen || this.transitioning;
+    // #108: so does the review of a prompt's secrets (from the prompt box or a paste): Confirm sends from the seat.
+    const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
     if (this.orphaned && !this.laptops.seated) {
       this.orphaned = false;

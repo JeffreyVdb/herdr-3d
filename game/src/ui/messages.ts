@@ -2,6 +2,7 @@
 
 import type { CommandName } from '../net/protocol';
 import { kaneoFailureText } from '../world/kaneo';
+import { promptSecretsFailureText } from '../world/promptSecrets';
 import { scheduleHold } from '../world/hire';
 
 /** The logo requests are HTTP, not commands, but fail with the same codes. */
@@ -134,6 +135,9 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'codex_server.set': 'give Codex workers their own server',
   'repo_refs.get': 'list repositories from other buildings', // #247
   'repo_refs.set': 'list repositories from other buildings',
+  'prompt_secrets.get': 'review prompt secrets', // #108
+  'prompt_secrets.set': 'review prompt secrets',
+  'prompt_secrets.scan': 'look for secrets in prompts',
   'repo_discovery.get': 'scan for repositories', // #54
   'repo_discovery.set': 'scan for repositories',
   'repo_discovery.refresh': 'scan for repositories',
@@ -314,6 +318,12 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
       return `The worktree was kept: ${why || 'it has uncommitted changes or unpushed commits'}.`;
     case 'fire_failed':
       return `${ctx.worker ?? 'The worker'} could not be sent home: ${why || 'herdr-world gave no reason'}.`;
+    // #108: prompt secrets: nothing was sent, stored or written on any of these, and the message never quotes the text.
+    case 'secrets_review_required':
+    case 'secrets_review_stale':
+    case 'secrets_review_off':
+    case 'secrets_unavailable':
+      return promptSecretsFailureText(code, why);
     // M5
     case 'prompt_failed':
       return `The prompt did not reach ${ctx.worker ?? 'the worker'}: ${why.replace(/^prompt_failed:\s*/, '') || 'the agent did not start'}. Your text is still here: try again, or sit at its laptop (E).`;

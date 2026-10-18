@@ -20,7 +20,8 @@ import { effectiveStatus } from '../world/codexQuestions';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
 import { DEFAULT_SCREENS, screensParam, WatchPlanner, type Candidate, type ScreenConfig } from '../world/screens';
-import { InputLanes, InputQueue, seatedKey, textItems, type ZoomAction } from './keys';
+import { InputLanes, InputQueue, MAX_PROMPT, seatedKey, textItems, type ZoomAction } from './keys';
+import type { PromptSecretsFlow } from '../ui/secretsFlow';
 import { fullscreenChip, type FullscreenChip } from './fullscreen';
 import { pasteImages } from './pasteImages';
 import { awayNote, whyAway } from './seatAway';
@@ -81,6 +82,8 @@ export interface LaptopHost {
   monitors?: MonitorPrefs;
   /** #110: the pack-up check before the transcript's prompt box sends (none: it sends at once). */
   packup?: PackupGate;
+  /** #108: the review of a prompt's possible secrets (the transcript's prompt box, a paste to an agent; none: as today). */
+  secrets?: PromptSecretsFlow;
   /** #118: O while you read the transcript: the floor overview over it (none: O is the transcript's). */
   overview?(): void;
   /** #223: the transcript's inline Handoff button: the filing dialog over the seat (none: no button). */
@@ -321,6 +324,7 @@ export class Laptops {
       // #187: while its worker is away the bar keeps saying so (a late ack of a send would say "Sent").
       status: (kind, text) => (this.seat?.away ? this.restStatus(this.seat) : this.host.seat.status(kind, text)),
       ...(host.packup ? { packup: host.packup } : {}),
+      ...(host.secrets ? { secrets: host.secrets } : {}), // #108
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
       ...(host.scheduleFollowup ? { scheduleFollowup: (id: string, c: HandoffCandidate) => host.scheduleFollowup?.(id, c) } : {}),
       repoRefs: host.store.repoRefs, // #247
@@ -780,6 +784,8 @@ export class Laptops {
       else this.host.seat.status('ok', null);
       return;
     }
+    // #108: a reviewed paste that did not go (the switch went off, no private directory): the review's own words.
+    if (r.code === 'not_sent') return this.host.seat.status('ok', r.message);
     // #187: you stay seated: the bar says it, and the frame loop finds the worker away from the store.
     if (r.code === 'unknown_worker') return this.host.seat.status('offline', awayNote(`${name} is no longer on the floor.`));
     if (r.code === 'invalid_state' && kind === 'keys') return this.host.seat.status('offline', awayNote(`${name} has no terminal any more (${r.message.replace(/^invalid state:\s*/, '')}).`));
@@ -933,8 +939,33 @@ export class Laptops {
       this.pasteImages(files);
       return;
     }
-    if (!this.input.paste(text)) this.host.seat.status('error', 'That paste is over 16 KiB: paste less at a time.');
+    if (!this.pasteInto(this.input, this.seat.id, this.seat.name, text)) this.host.seat.status('error', 'That paste is over 16 KiB: paste less at a time.');
     else this.host.seat.status('busy', null);
+  }
+
+  /**
+   * A paste into worker `id`'s lane. False: too long to send. #108: to an agent with prompt secrets reviewed, its possible
+   * secrets are reviewed first (over the seat, which stays; nothing goes before Confirm, Cancel drops it), then it joins
+   * the lane, in order, and the review's flow sends it (a stale review is reviewed again). A plain shell takes keys.
+   */
+  private pasteInto(lane: InputQueue, id: string, name: string, text: string): boolean {
+    const flow = this.host.secrets;
+    if (!flow?.on || !this.host.store.workers.get(id)?.agent_kind) return lane.paste(text);
+    const t = text.replace(/\u0000/g, '');
+    if (!t) return true;
+    if (new TextEncoder().encode(t).length > MAX_PROMPT) return false;
+    const req = { key: id, text: t, target: name };
+    const say = (kind: 'ok' | 'error', msg: string) => {
+      if (this.seat?.id === id) this.host.seat.status(kind, msg);
+      else if (kind === 'error') this.host.toast(msg, 'error');
+    };
+    void flow.review(req).then((go) => {
+      if (go.kind === 'kept') return say(go.why === 'failed' ? 'error' : 'ok', go.why === 'cancel' ? 'Not pasted: the review was cancelled.' : go.message);
+      lane.pasteReviewed(() =>
+        flow.deliver(req, go, (g) => this.host.send('worker.prompt', { id, text: t, ...(g.secrets ? { secrets: g.secrets } : {}) })).then((d): CommandResult => (d.kind === 'kept' ? { ok: false, code: d.why === 'failed' ? 'secrets_unavailable' : 'not_sent', message: d.message } : d.result)),
+      );
+    });
+    return true;
   }
 
   /** #64: the pasted images become markers in one paste (see `pasteImages`); standing up does not cancel it, only a failure is then a toast. */
@@ -947,7 +978,7 @@ export class Laptops {
       name,
       agent: !!this.host.store.workers.get(id)?.agent_kind,
       upload: this.host.upload,
-      paste: (text) => lane.paste(text),
+      paste: (text) => this.pasteInto(lane, id, name, text),
       // The bar's note is a few words wide and ends in an ellipsis: an error is a toast as well, so it can be read whole.
       say: (kind, msg) => {
         if (this.seat?.id === id) this.host.seat.status(kind, msg);

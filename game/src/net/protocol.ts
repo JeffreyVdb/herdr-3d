@@ -333,6 +333,50 @@ export interface RepoRefsUpdate extends RepoRefsState {
   seq: number;
 }
 
+/** #108: the "Review prompt secrets before sending" switch (`prompt_secrets` in the snapshot, `prompt_secrets.update`). */
+export interface PromptSecretsState {
+  /** A prompt is scanned on Send, and any possible secret is reviewed before it goes. Off by default. */
+  enabled: boolean;
+  /** The bridge has a private runtime directory for the files (false: a review that protects anything is refused). */
+  available: boolean;
+}
+
+/** #108: `prompt_secrets.update`: the switch, flat. */
+export interface PromptSecretsUpdate extends PromptSecretsState {
+  t: 'prompt_secrets.update';
+  seq: number;
+}
+
+/** #108: a possible secret `prompt_secrets.scan` found: `[start, end)` in UTF-16 code units of the scanned text. */
+export interface SecretCandidate {
+  /** `c1`, `c2`, … stable for its revision. */
+  id: string;
+  start: number;
+  end: number;
+  /** What found it: `gitleaks:<rule id>`, `pem`, `auth-header`, `url-password`, `url-query`, `assignment`, `yaml-block`, `prose`, `fenced`, `repeat`. */
+  kinds: string[];
+  /** Its bytes hold an escape, percent-encoding or a block's indentation: the file keeps them as typed. */
+  encoded?: boolean;
+}
+
+/** #108: `prompt_secrets.scan` ack: the text's revision (opaque) and its candidates, in text order, never overlapping. */
+export interface PromptSecretsScan {
+  revision: string;
+  candidates: SecretCandidate[];
+}
+
+/**
+ * #108: one choice of a review: a candidate protected (with its range, corrected or not) or ignored, or a manual mark
+ * (no candidate: a protected range). Ranges are UTF-16 code units of the text sent.
+ */
+export type SecretDecision = { candidate: string; action: 'protect' | 'ignore'; start?: number; end?: number } | { candidate?: undefined; action: 'protect'; start: number; end: number };
+
+/** #108: a text-carrying command's `secrets`: the reviewed scan's revision and a decision for every candidate. */
+export interface SecretsReview {
+  revision: string;
+  decisions: SecretDecision[];
+}
+
 /** #54: the repository-discovery settings and the scans' status (`repo_discovery` in the snapshot, `repo_discovery.update`). */
 export interface RepoDiscoveryState {
   /** The absolute folders on the bridge host that are scanned; empty: discovery is off. */
@@ -462,6 +506,8 @@ export interface World {
   codex_server?: CodexServerState;
   /** #247 the "Repositories from other buildings" switch (absent from an older bridge). */
   repo_refs?: RepoRefsState;
+  /** #108 the "Review prompt secrets before sending" switch (absent from an older bridge). */
+  prompt_secrets?: PromptSecretsState;
   /** #54 repository discovery's settings and status (absent from an older bridge, or one that cannot scan). */
   repo_discovery?: RepoDiscoveryState;
   /** #184 the Kaneo connection (absent from an older bridge). Never a key. */
@@ -602,6 +648,8 @@ export type WorldEvent =
   | CodexServerUpdate
   // #247 the "Repositories from other buildings" switch
   | RepoRefsUpdate
+  // #108 the "Review prompt secrets before sending" switch
+  | PromptSecretsUpdate
   // #54 repository discovery
   | RepoDiscoveryUpdate
   // #184 the Kaneo connection
@@ -837,8 +885,11 @@ export interface CommandArgs {
   'worker.wrapup': { id: string; prompt: string; worktree?: FireWorktree };
   'worker.wrapup.cancel': { id: string };
   /** M5 */
-  /** #224: `op` (optional) for an exact "/handoff [instruction]", which becomes an agent handoff request (ack `handoff`). */
-  'worker.prompt': { id: string; text: string; op?: string };
+  /**
+   * #224: `op` (optional) for an exact "/handoff [instruction]", which becomes an agent handoff request (ack `handoff`).
+   * #108: `secrets`, the review of the text's possible secrets (with the switch on and candidates found).
+   */
+  'worker.prompt': { id: string; text: string; op?: string; secrets?: SecretsReview };
   /** Exactly one of `choice` or `cancel`. */
   'worker.answer': { id: string; hash: string; choice?: number; cancel?: boolean };
   /** #57: an answer for every question of the worker's ask, or `cancel` (Esc on its dialog) with an optional `prompt` sent after. */
@@ -936,6 +987,10 @@ export interface CommandArgs {
   'codex_server.set': { enabled?: boolean; allow_unverified?: boolean };
   'repo_refs.get': Record<string, never>; // #247
   'repo_refs.set': { all_buildings: boolean };
+  // #108 prompt secrets (docs/protocol.md "Prompt secrets"): get and set ack `PromptSecretsState`, scan `PromptSecretsScan`.
+  'prompt_secrets.get': Record<string, never>;
+  'prompt_secrets.set': { enabled: boolean };
+  'prompt_secrets.scan': { text: string };
   // #54 repository discovery (docs/protocol.md "Repository discovery"): each acks `RepoDiscoveryState`.
   'repo_discovery.get': Record<string, never>;
   'repo_discovery.set': { roots?: string[]; interval_minutes?: number };
@@ -1100,6 +1155,8 @@ export interface PromptAck {
   /** #224: the prompt was "/handoff [instruction]" and became this agent handoff request (`existing`: one was answered, nothing sent again). */
   handoff?: AgentHandoff;
   existing?: boolean;
+  /** #108: how many reviewed ranges went to files (`sent` then holds their `[secret in file …]` references). */
+  protected?: number;
 }
 
 /** M5: `worker.answer` ack. */
@@ -1295,6 +1352,7 @@ const EVENT_TYPES = new Set([
   'handoff.removed',
   'codex_server.update', // #155 the shared Codex server switch
   'repo_refs.update', // #247 the "Repositories from other buildings" switch
+  'prompt_secrets.update', // #108 the "Review prompt secrets before sending" switch
   'repo_discovery.update', // #54 repository discovery
   'kaneo.update', // #184 the Kaneo connection
   'schedule.upsert', // #62 scheduled agents
@@ -1397,6 +1455,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
     // #247: the "Repositories from other buildings" switch, flat.
     case 'repo_refs.update':
       return typeof o.all_buildings === 'boolean';
+    // #108: the "Review prompt secrets before sending" switch, flat.
+    case 'prompt_secrets.update':
+      return typeof o.enabled === 'boolean' && typeof o.available === 'boolean';
     // #54: repository discovery, flat (the book checks the rest).
     case 'repo_discovery.update':
       return Array.isArray(o.roots) && isObj(o.status);

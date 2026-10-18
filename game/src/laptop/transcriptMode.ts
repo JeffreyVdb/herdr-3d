@@ -16,6 +16,7 @@ import { FollowupDrafts } from './followupDrafts';
 import { CommandCatalogs } from './commandCatalog';
 import { activityCue, reconcile, SENT_TIMEOUT_MS, topSeq, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 import { handoffCommand, newOp } from '../world/handoff';
+import type { Go, PromptSecretsFlow } from '../ui/secretsFlow';
 import { bridgeKey } from '../net/bridgeScope';
 
 export type { ImagesTabHost, ImagesTabView, MountImagesTab, TranscriptRenderHost, TranscriptView };
@@ -107,6 +108,8 @@ export interface TranscriptModeHost {
   catalogs?: CommandCatalogs;
   /** #58: the clock of the pending prompts' "not seen yet" hint (default Date.now; tests pass their own). */
   now?(): number;
+  /** #108: the review of a prompt's possible secrets before it goes (none: it goes as today). */
+  secrets?: PromptSecretsFlow;
 }
 
 /** Remembered per worker: the ones last left in terminal mode (#98: the conversation is the default), newest last. */
@@ -250,6 +253,8 @@ export class TranscriptMode {
   private escBusy = false;
   /** #110: the pack-up check of the prompt being sent (aborted: Esc, standing up). */
   private checking: AbortController | null = null;
+  /** #108: a prompt's secrets are being scanned or reviewed (no second send meanwhile). */
+  private reviewing = false;
   /** #140: each worker's slash commands and skills, kept across seats (the popup shows the last list at once). */
   private readonly catalogs: CommandCatalogs;
   /** #141: each worker's unsent prompt, kept across seats (and its text and file chips across a reload). */
@@ -271,7 +276,9 @@ export class TranscriptMode {
 
   constructor(private readonly host: TranscriptModeHost) {
     this.catalogs = host.catalogs ?? new CommandCatalogs({ send: (t, args) => this.host.send(t, args) });
-    this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage });
+    // #108: with prompt secrets reviewed, the drafts stay in memory (they may hold one), and follow the switch.
+    this.drafts = new TranscriptDrafts({ ...(host.upload ? { upload: host.upload } : {}), storage: host.storage, persist: () => !host.secrets?.on });
+    host.secrets?.onChange(() => this.drafts.persistChanged());
     this.asyncDrafts = new AsyncDrafts(host.storage);
     this.followupDrafts = new FollowupDrafts(host.storage);
   }
@@ -619,11 +626,14 @@ export class TranscriptMode {
     if (s.reveal) void this.revealNow(s);
   }
 
-  /** Sends a prompt from the view: its row is in the timeline at once. Resolves whether it went. */
-  private sendPrompt(s: Sitting, t: string): Promise<boolean> {
+  /**
+   * Sends a prompt from the view: its row is in the timeline at once. Resolves the bridge's answer. #108: `go` carries the
+   * review of its secrets (`secrets`), and what the row may show of it (`shown`: no protected value).
+   */
+  private sendPrompt(s: Sitting, t: string, go: Go | null = null): Promise<CommandResult> {
     const live = () => this.s === s;
     // #58: its row is in the timeline at once, until its `user` item comes; a refused one before it goes.
-    const p: PendingPrompt = { id: `p${++this.pid}`, text: t, state: 'sending', late: false, mark: topSeq(s.items), due: null };
+    const p: PendingPrompt = { id: `p${++this.pid}`, text: t, ...(go?.protects ? { shown: go.shown } : {}), state: 'sending', late: false, mark: topSeq(s.items), due: null };
     s.pending = [...s.pending.filter((x) => x.state !== 'refused'), p];
     // To a worker not at work it starts a turn: that turn's items come after this.
     if (s.status !== 'working') s.sendMark = p.mark;
@@ -632,11 +642,11 @@ export class TranscriptMode {
     // Resolves whether it went: a refused prompt goes back in the box.
     // #224: an exact "/handoff [instruction]" becomes an agent handoff request: one op, so a retry asks once.
     const op = this.handoffOp(s.id, t);
-    return this.host.send('worker.prompt', { id: s.id, text: t, ...(op ? { op } : {}) }).then((r) => {
+    return this.host.send('worker.prompt', { id: s.id, text: t, ...(op ? { op } : {}), ...(go?.secrets ? { secrets: go.secrets } : {}) }).then((r) => {
       // Answered (the client never rejects; it times out): this worker takes the next one, from whichever seat.
       this.prompting.delete(s.id);
       if (op && (r.ok || !UNANSWERED.has(r.code)) && this.handoffOps.get(s.id)?.op === op) this.handoffOps.delete(s.id);
-      if (!live()) return r.ok;
+      if (!live()) return r;
       const ack = (r.ok ? (r.data ?? {}) : {}) as Partial<PromptAck>;
       if (r.ok && ack.terminal === true) {
         // #140: a built-in whose output or dialog shows only in the terminal (/usage, a bare /model): its transcript
@@ -646,7 +656,7 @@ export class TranscriptMode {
         this.pendingChanged(s);
         this.host.status('ok', `Sent to ${s.name}: it shows in the terminal`);
         if (s.mode !== 'terminal') this.setMode('terminal', false);
-        return true;
+        return r;
       }
       if (r.ok && ack.handoff) {
         // #224: the bridge sent its own request (the skill, where to save, the marker), which the transcript shows;
@@ -664,7 +674,7 @@ export class TranscriptMode {
                 ? `${s.name} is already writing a handoff: nothing was sent again`
                 : `Asked ${s.name}’s agent for a handoff: it is filed once its turn ends with the file written`,
         );
-        return true;
+        return r;
       }
       if (r.ok) this.host.status('ok', `Sent to ${s.name}`);
       else this.host.status('error', failureText('worker.prompt', r.code, r.message, { worker: s.name }));
@@ -673,12 +683,13 @@ export class TranscriptMode {
       const sent = typeof ack.sent === 'string' && ack.sent !== '' && ack.sent !== t ? ack.sent : undefined;
       const now = this.now();
       // Already shown by its item (it can come before the ack): nothing to change.
-      if (!s.pending.some((x) => x.id === p.id)) return r.ok;
+      if (!s.pending.some((x) => x.id === p.id)) return r;
       s.pending = s.pending.map((x): PendingPrompt => {
         if (x.id !== p.id) return x;
         if (!r.ok) return { ...x, state: 'refused', reason: failureText('worker.prompt', r.code, r.message, { worker: s.name }), due: null };
-        // A queued prompt may wait for the whole turn: the hint only once the agent stopped working.
-        return { ...x, ...(sent !== undefined ? { sent } : {}), state: queued ? 'queued' : 'sent', due: queued && s.status === 'working' ? null : now + SENT_TIMEOUT_MS };
+        // A queued prompt may wait for the whole turn: the hint only once the agent stopped working. #108: a row that
+        // hides protected values shows what was sent now (their references).
+        return { ...x, ...(sent !== undefined ? { sent, ...(x.shown !== undefined ? { shown: sent } : {}) } : {}), state: queued ? 'queued' : 'sent', due: queued && s.status === 'working' ? null : now + SENT_TIMEOUT_MS };
       });
       // Its item may have come before the ack, under the rewritten text: it takes the row now.
       if (sent !== undefined) {
@@ -686,8 +697,61 @@ export class TranscriptMode {
         if (left !== s.pending) s.pending = left;
       }
       this.pendingChanged(s);
-      return r.ok;
+      return r;
     });
+  }
+
+  /**
+   * A prompt from the view's box, in order (the box is read-only meanwhile and keeps the draft): #108 the review of its
+   * possible secrets (with the switch on; `manual`: "Review secrets" asked for it), then #110 whether it also tells the
+   * worker to leave (not when the review protects anything: pack up's LLM would read the value; round 4 gives it the
+   * references), then the send, seen through the bridge's answer (a stale review is reviewed again, never sent on its
+   * own). Resolves whether it went.
+   */
+  private async submit(s: Sitting, t: string, manual: boolean): Promise<boolean> {
+    const live = () => this.s === s;
+    const flow = this.host.secrets;
+    const req = { key: s.id, text: t, target: s.name, manual };
+    let go: Go = { kind: 'send', protects: 0, shown: t, review: null };
+    const kept = (why: string, message: string) => {
+      if (!live()) return false;
+      this.host.status(why === 'failed' ? 'error' : 'ok', why === 'cancel' ? 'Not sent: the prompt is still in the box.' : message);
+      // The review had the keyboard: back to the box, its draft still in it.
+      queueMicrotask(() => live() && this.focusPrompt());
+      return false;
+    };
+    if (flow && (flow.on || manual)) {
+      this.reviewing = true;
+      this.host.status('ok', manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the prompt…');
+      const out = await flow.review(req).finally(() => (this.reviewing = false));
+      if (!live()) return false;
+      if (out.kind === 'kept') return kept(out.why, out.message);
+      this.host.status('ok', null);
+      go = out;
+    }
+    const check = new AbortController();
+    const checked = go.protects === 0 ? (this.host.packup?.(s.id, t, check.signal) ?? null) : null;
+    if (checked) {
+      this.checking = check;
+      this.host.status('ok', 'Checking the prompt…');
+      const out = await checked;
+      if (this.checking === check) this.checking = null;
+      if (check.signal.aborted || !live()) return false;
+      if (out === 'done') {
+        this.host.status('ok', `Sent the task to ${s.name}: it goes home once it reports CLEAN`);
+        return true;
+      }
+      if (out === 'cancel') {
+        this.host.status('ok', null);
+        // The confirm (or the send home) had the keyboard: back to the box, its draft still in it.
+        queueMicrotask(() => live() && this.focusPrompt());
+        return false;
+      }
+      this.host.status('ok', null);
+    }
+    if (!flow) return (await this.sendPrompt(s, t)).ok;
+    const d = await flow.deliver(req, go, (g) => this.sendPrompt(s, t, g));
+    return d.kind === 'kept' ? kept(d.why, d.message) : d.result.ok;
   }
 
   /**
@@ -728,7 +792,9 @@ export class TranscriptMode {
       repos: { id: s.id, search: { send: (t, args) => this.host.send(t, args), refs: this.host.repoRefs ?? null, discovery: this.host.repoDiscovery ?? null, ...(this.host.floorName ? { floorName: (id: string) => this.host.floorName?.(id) ?? id } : {}) } },
       // #31: read when a file reference opens (the checkout may come or change while you sit).
       cwd: () => this.host.cwd?.(s.id) ?? null,
-      onPromptSubmit: (text) => {
+      // #108: the switch, for the box's "Review secrets".
+      secrets: this.host.secrets ?? null,
+      onPromptSubmit: (text, o) => {
         if (!live()) return Promise.resolve(false);
         const t = text.replace(/\u0000/g, '');
         if (!t.trim()) return Promise.resolve(false);
@@ -737,30 +803,9 @@ export class TranscriptMode {
           return Promise.resolve(false);
         }
         // #58: one on its way at a time (a second Enter while it is sending sends nothing). #110: nor while one is checked.
-        // #141: nor while one from an earlier seat at this worker is.
-        if (s.pending.some((p) => p.state === 'sending') || this.prompting.has(s.id) || this.checking) return Promise.resolve(false);
-        // #110: first whether it also tells the worker to leave. Meanwhile the box is read-only and keeps the draft.
-        const check = new AbortController();
-        const checked = this.host.packup?.(s.id, t, check.signal) ?? null;
-        if (!checked) return this.sendPrompt(s, t);
-        this.checking = check;
-        this.host.status('ok', 'Checking the prompt…');
-        return checked.then((out) => {
-          if (this.checking === check) this.checking = null;
-          if (check.signal.aborted || !live()) return false;
-          if (out === 'done') {
-            this.host.status('ok', `Sent the task to ${s.name}: it goes home once it reports CLEAN`);
-            return true;
-          }
-          if (out === 'cancel') {
-            this.host.status('ok', null);
-            // The confirm (or the send home) had the keyboard: back to the box, its draft still in it.
-            queueMicrotask(() => live() && this.focusPrompt());
-            return false;
-          }
-          this.host.status('ok', null);
-          return this.sendPrompt(s, t);
-        });
+        // #141: nor while one from an earlier seat at this worker is. #108: nor while one is reviewed.
+        if (s.pending.some((p) => p.state === 'sending') || this.prompting.has(s.id) || this.checking || this.reviewing) return Promise.resolve(false);
+        return this.submit(s, t, o?.review === true);
       },
       onDismissPending: (id) => {
         if (!live()) return;

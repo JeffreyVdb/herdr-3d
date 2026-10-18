@@ -16,6 +16,10 @@ import { Drafts, type DraftStorage } from '../ui/drafts';
  *
  * Each worker's `SendGate` is kept here too, for the same reason: a send outlives the view that started it, so the
  * next view of the worker's draft must know it is still on its way (busy, no second send of the same prompt).
+ *
+ * #108: while "Review prompt secrets before sending" is on (`persist` says no), nothing is written: the drafts live in
+ * memory only, and one storage kept from before is removed once it is read (`Drafts`). `persistChanged()` follows the
+ * switch: on, every live draft's stored copy goes at once; off, they are written again.
  */
 
 export interface TranscriptDraftsOptions {
@@ -23,6 +27,8 @@ export interface TranscriptDraftsOptions {
   upload?: Uploader;
   /** Where text and file chips survive a reload (null: memory only). */
   storage?: DraftStorage | null;
+  /** #108: whether storage may keep them now (default: always). */
+  persist?: () => boolean;
 }
 
 /** How many workers' drafts are held live. */
@@ -59,7 +65,7 @@ export class TranscriptDrafts {
   private last: string | null = null;
 
   constructor(private readonly o: TranscriptDraftsOptions = {}) {
-    this.store = o.storage !== undefined ? new Drafts('transcript', o.storage) : new Drafts('transcript');
+    this.store = o.storage !== undefined ? new Drafts('transcript', o.storage, o.persist) : new Drafts('transcript', undefined, o.persist);
   }
 
   /** The worker's draft (its live one, else the one storage kept, else a new one); `label` names its uploads. */
@@ -123,6 +129,15 @@ export class TranscriptDrafts {
     this.live.delete(id);
     v.off();
     v.draft.dispose();
+  }
+
+  /** #108: `persist` changed: the live drafts' stored copies go (memory only now), or are written again. */
+  persistChanged(): void {
+    const keep = this.o.persist?.() ?? true;
+    for (const [id, v] of this.live) {
+      if (keep) this.save(id, v.draft);
+      else this.store.forget(id);
+    }
   }
 
   /** Every live draft goes (what storage kept stays). */
