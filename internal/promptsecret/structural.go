@@ -894,14 +894,17 @@ func proseQuotedAfter(text string, i int, pw bool) (span, bool) {
 }
 
 // lineNamed is a sentence that names a line as a credential: "The
-// preceding line is the actual deployment password."
+// preceding line is the actual deployment password." The credential word
+// ends the phrase (never "the key to this bug", "the token check").
 var lineNamed = regexp.MustCompile(`(?i)\b(?:(preceding|previous|first|above) line|line above) (?:is|was|holds|contains) (?:the |my |our |an? )?` +
-	`(?:actual |real |exact )?(?:[a-z-]+ ){0,2}?(password|passphrase|passwd|token|secret|key|credential)\b`)
+	`((?:actual |real |exact )?(?:[a-z-]+ ){0,2}?)(password|passphrase|passwd|token|secret|key|credential)s?[ \t]*(?:[.!;:,]|\r?\n|$)`)
 
 // lineSpans are the lines of one value a sentence names (lineNamed): the
 // line before the sentence's (the text's first, for "first line"), its
 // blanks off, shaped like a value (a key word's token-like, a password
-// word's with a digit or a symbol).
+// word's with a digit or a symbol) and no code (review T3). A key, token,
+// secret or credential word needs a word before it ("the actual token",
+// "our API key", never bare "the key").
 func lineSpans(text, lower string, refs []span) []span {
 	if !strings.Contains(lower, "line ") {
 		return nil
@@ -926,10 +929,10 @@ func lineSpans(text, lower string, refs []span) []span {
 			e--
 		}
 		v := text[s:e]
-		if s >= e || strings.ContainsAny(v, " \t") || notASecret(v, true) || templated(v) || len(v) < 6 {
+		if s >= e || strings.ContainsAny(v, " \t") || notASecret(v, overlapsAny(s, e, refs)) || templated(v) || len(v) < 6 {
 			continue
 		}
-		if pw := isPasswordWord(text[m[4]:m[5]]); pw && !hasDigitOrSymbol(v) || !pw && !tokenish(v, 8) {
+		if pw := isPasswordWord(text[m[6]:m[7]]); pw && !hasDigitOrSymbol(v) || !pw && (m[4] == m[5] || !tokenish(v, 8)) {
 			continue
 		}
 		out = append(out, span{start: s, end: e, kind: KindProse, rank: rankProse, shaped: true})

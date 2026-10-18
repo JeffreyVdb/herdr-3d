@@ -582,6 +582,13 @@ func TestScanCleanText(t *testing.T) {
 		`The password reset status is "expired". The password strength rating is "too-weak". The token type is "bearer-v2".`,
 		`The secret store backend is "vault-1". The password manager entry is "github-work-2". The API key mode is "live-77".`,
 		`The password, as noted, is "required". The password policy name is "min-length-12".`,
+		// Review T3: a line a sentence names, figuratively or as code, is none.
+		"9fceb02d0ae598e95dc970b74767f19372d61af8\nThe preceding line is the key to reproducing this issue.",
+		"validateToken(user123)\nThe preceding line is the token check.",
+		"a1b2c3d4e5f6\nThe previous line is the key to this bug.",
+		"9fceb02d0ae598e95dc970b74767f19372d61af8\nThe preceding line is the key.",
+		"validateToken(user123)\nThe preceding line is the actual token.",
+		"config.secrets.load()\nThe line above is the real secret.",
 		// Review T6: code holding the mask's bytes, with no reference, is code.
 		"const token = response.Qz7Qz7;\nprivate_key=credentials.Qz7Qz7.load()\npassword = getSecret(Qz7Qz7)",
 	}
