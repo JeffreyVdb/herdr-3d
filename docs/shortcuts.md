@@ -97,7 +97,7 @@ Open dialogs and their fields own the keyboard.
 | `A` | On a floor’s overview page: every floor’s |
 | `Shift` + `Enter` | A new line, in the hire task and the prompt boxes |
 | `↑ ↓` or `Tab` | In a prompt box’s suggestion list (after / or @): ↑ ↓ choose, Tab or Enter picks, Esc closes only the list |
-| `Ctrl/⌘` + `Shift` + `X` | In a prompt box: review its possible secrets now, to mark one the scan missed (with “Review prompt secrets” on) |
+| `Ctrl/⌘` + `Shift` + `X` | In a prompt box, or any text that goes to an agent, a model or a saved prompt (a hire’s task, a run, a schedule, an answer, a handoff instruction): review its possible secrets now, to mark one the scan missed (with “Review prompt secrets” on) |
 | `N` or `Shift` + `N` | In the secrets review: the next or the previous match |
 | `Space` | In the secrets review, on a match: protect it as a file, or ignore it (Enter too) |
 | `← →` or `Shift` + `← →` | In the secrets review, on a match: move its end, or (with Shift) its start, by one character |
