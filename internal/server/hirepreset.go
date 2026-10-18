@@ -19,6 +19,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
@@ -262,11 +263,12 @@ func (h *Hub) startHirePresetCheck(ctx context.Context, c *Client, cmd proto.Com
 		return bad("prompt must be 1-%d bytes of text, got %d bytes", herdr.MaxPrompt, len(a.Prompt))
 	}
 	var gate func(context.Context) error
+	var rev *promptsecret.Reviewer
 	if h.gated(a.Secrets != nil) {
 		if err := h.stillOn(); err != nil {
 			return err
 		}
-		rev := h.ps.rev
+		rev = h.ps.rev
 		gate = func(ctx context.Context) error {
 			if _, err := h.storedReview(ctx, rev, a.Prompt, a.Secrets); err != nil {
 				return err
@@ -293,9 +295,12 @@ func (h *Hub) startHirePresetCheck(ctx context.Context, c *Client, cmd proto.Com
 			}
 		}
 		cls := roles.Classifier()
-		cctx, cancel := context.WithTimeout(ctx, timeout)
+		cctx, cancel := context.WithTimeout(ai.WithGate(ctx, func() error { return h.reviewHolds(rev) }), timeout)
 		defer cancel()
 		score, err := cls.Classify(cctx, map[string]any{"prompt": a.Prompt}, hirePresetCheckQuestion)
+		if err := h.reviewHolds(rev); err != nil {
+			return nil, err // review B2, pass 2: the switch changed while the call waited for a model slot, or ran
+		}
 		if err != nil {
 			if !errors.Is(err, ai.ErrNotReady) && ctx.Err() == nil {
 				h.log.Warn("hire preset check failed", "kind", ai.KindOf(err))

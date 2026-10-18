@@ -644,11 +644,19 @@ func (h *Hub) runLLMHandoff(jctx, hctx context.Context, j *llmJob, hc *handoffCa
 			return err
 		}
 		rep.SentBytes, rep.FocusBytes, rep.Redactions = p.Bytes, p.FocusBytes, p.Redactions
-		if j.rev != nil && h.reviewCurrent(j.rev) != nil { // #108 review B2: the switch changed while the transcript was read
-			return &handoffllm.Error{Code: proto.ErrSecretsReviewStale,
-				Msg: "the prompt secrets setting changed while the handoff was being prepared: review the instruction again; nothing was sent"}
+		// #108 review B2: the switch changed while the transcript was read,
+		// or (pass 2: the call's gate) while the call waited for a model slot.
+		gate := func() error {
+			if j.rev != nil && h.reviewCurrent(j.rev) != nil {
+				return &handoffllm.Error{Code: proto.ErrSecretsReviewStale,
+					Msg: "the prompt secrets setting changed while the handoff was being prepared: review the instruction again; nothing was sent"}
+			}
+			return nil
 		}
-		res, err = svc.Generate(jctx, p.Messages)
+		if err := gate(); err != nil {
+			return err
+		}
+		res, err = svc.Generate(ai.WithGate(jctx, gate), p.Messages)
 		rep.AnswerBytes, rep.ElapsedMS, rep.Diag, rep.Effort, rep.MaxTokens = res.Answer, res.Elapsed.Milliseconds(), res.Diag, res.Effort, res.MaxTokens
 		if err != nil {
 			return err

@@ -179,7 +179,13 @@ func (h *Hub) startPackup(ctx context.Context, c *Client, cmd proto.Command) err
 				return nil, err // never the fail-open path: the prompt has no review now
 			}
 			out := pv.result()
-			res, err := svc.Detect(ctx, text)
+			// Review B2, pass 2: each model call asks again once it holds a
+			// model slot, and a review the switch made stale meanwhile
+			// answers nothing.
+			res, err := svc.Detect(ai.WithGate(ctx, pv.holds), text)
+			if err := pv.current(ctx); err != nil {
+				return nil, err
+			}
 			if err != nil {
 				// Fail open: the prompt goes as written. Only the kind is
 				// logged: a provider's words in err can echo the prompt.

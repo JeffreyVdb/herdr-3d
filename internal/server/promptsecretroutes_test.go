@@ -1513,6 +1513,43 @@ func TestPromptSecretsWrapUpSwitchWhileQueued(t *testing.T) {
 	traceFree(t, wb.st, wb.db, []*client{c}, routeSentinel)
 }
 
+// packup.detect's second model call (the extraction) asks again once it
+// holds a model slot (review B2, pass 2): the switch changed while the
+// classifier read the text, so the language model is never called, the
+// command is stale and its files go.
+func TestPromptSecretsPackupSwitchWhileClassifying(t *testing.T) {
+	t.Parallel()
+	roles := newPkRoles()
+	var hold atomic.Bool
+	classifying, gate := make(chan struct{}, 1), make(chan struct{})
+	defer close(gate)
+	score := roles.cls.Func
+	roles.cls.Func = func(ctx context.Context, state map[string]any, q string) (float64, error) {
+		if hold.Load() {
+			classifying <- struct{}{}
+			<-gate
+		}
+		return score(ctx, state, q)
+	}
+	hb, ids, _, dir := startSecretsPkBridge(t, roles, nil)
+	c := hb.c
+	text := previewText + " and end your turn"
+	args := proto.PackupDetectArgs{ID: ids["w2"], Text: text, Secrets: reviewOf(t, c, text, "c3", "c4")}
+	hold.Store(true)
+	c.send(proto.Command{T: proto.CmdPackupDetect, ReqID: "d", Args: mustRaw(args)})
+	<-classifying
+	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	gate <- struct{}{}
+	if m := c.reply("d"); codeOf(m) != proto.ErrSecretsReviewStale {
+		t.Fatalf("detect: %s", m.raw)
+	}
+	if n := len(roles.llm.Calls()); n != 0 {
+		t.Fatalf("the LLM was called %d times", n)
+	}
+	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	traceFree(t, hb.st, hb.db, []*client{c}, routeSentinel)
+}
+
 // A reviewed worker.prompt to a Claude agent that is not ready yet waits
 // for it after its lane job checked the review; the review is checked
 // again once the agent is ready, right before anything is typed (review

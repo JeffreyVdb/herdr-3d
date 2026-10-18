@@ -464,12 +464,11 @@ func (h *Hub) previewGate(forWorker, text string, review *proto.SecretsReview, t
 	}, nil
 }
 
-// current checks the preview's review last before the model reads its
-// text (review B2; off the hub goroutine): the switch changed, or the
-// hand-over it continues no longer holds, since the command came (it may
-// wait for a scan slot, then on the model): stale, and what the gate made
-// goes.
-func (pv *preview) current(ctx context.Context) error {
+// holds checks the preview's review (review B2; any goroutine): the switch
+// changed, or the hand-over it continues no longer holds, since the command
+// came (it may wait for a scan slot, then on the model): stale. It is the
+// gate of each model call (ai.WithGate), asked once the call holds a slot.
+func (pv *preview) holds() error {
 	if pv.rev == nil {
 		return nil
 	}
@@ -477,6 +476,14 @@ func (pv *preview) current(ctx context.Context) error {
 	if err == nil && pv.token != "" {
 		_, err = pv.h.pendingFor(pv.token, pv.rev, pv.worker, pv.worker == "")
 	}
+	return err
+}
+
+// current is holds before the model is asked, and again once it answered
+// (off the hub goroutine): stale, what the gate made goes, and no answer
+// is given (its hand-over could not be used).
+func (pv *preview) current(ctx context.Context) error {
+	err := pv.holds()
 	if err != nil {
 		pv.undo(ctx)
 	}

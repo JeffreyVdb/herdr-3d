@@ -15,6 +15,7 @@ import (
 	"maps"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/ai"
 	"github.com/JeffreyVdb/herdr-3d/internal/hireintent"
 	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -91,7 +92,10 @@ func (h *Hub) startHireInterpret(ctx context.Context, c *Client, cmd proto.Comma
 			return nil, err
 		}
 		req.Text = pv.text
-		res := hireintent.Run(ctx, roles, timeout, req)
+		res := hireintent.Run(ai.WithGate(ctx, pv.holds), roles, timeout, req) // review B2, pass 2: as packup.detect's
+		if err := pv.current(ctx); err != nil {
+			return nil, err
+		}
 		if res.Error != nil {
 			h.log.Warn("hire interpretation failed", "code", res.Error.Code, "pending", req.Pending != nil)
 		} else {

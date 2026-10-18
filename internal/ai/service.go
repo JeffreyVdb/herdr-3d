@@ -387,8 +387,8 @@ func (s *Service) ready(r Role) (config, bool) {
 
 // begin checks a role is ready and takes a slot; it then checks again, since
 // a call that waited may have been overtaken by a rejected key or given up
-// (its ctx done while it waited: it is not sent). It returns the config to
-// use.
+// (its ctx done while it waited: it is not sent), and asks ctx's gate
+// (WithGate). It returns the config to use.
 func (s *Service) begin(ctx context.Context, r Role) (config, func(), error) {
 	if _, ok := s.ready(r); !ok {
 		return config{}, nil, ErrNotReady
@@ -406,7 +406,31 @@ func (s *Service) begin(ctx context.Context, r Role) (config, func(), error) {
 		release()
 		return config{}, nil, ErrNotReady
 	}
+	if err := passGate(ctx); err != nil {
+		release()
+		return config{}, nil, err
+	}
 	return c, release, nil
+}
+
+// gateKey is the context key of a call's gate (WithGate).
+type gateKey struct{}
+
+// WithGate is ctx for calls that ask gate whether they may still go, last,
+// once they hold a slot (a call may wait for one behind others): its error
+// is the call's, as it is, and nothing is sent. A retry of a call that went
+// does not ask again. #108: a prompt's review, which the secrets switch can
+// make stale while the call waits.
+func WithGate(ctx context.Context, gate func() error) context.Context {
+	return context.WithValue(ctx, gateKey{}, gate)
+}
+
+// passGate is ctx's gate's answer (nil: none, or it lets the call go).
+func passGate(ctx context.Context) error {
+	if gate, ok := ctx.Value(gateKey{}).(func() error); ok {
+		return gate()
+	}
+	return nil
 }
 
 // attempts runs fn with a timeout per attempt, and once more when the first
