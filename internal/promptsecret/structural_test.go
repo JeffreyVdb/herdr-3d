@@ -587,6 +587,114 @@ func TestScanRecall(t *testing.T) {
 	}
 }
 
+// curl's password and a header's credential are read as the shell reads
+// their argument, from its start (review T4 (p2), T3P-1): each value shape
+// in each quoting context is proposed as typed when the shell keeps all its
+// bytes, and not at all when it computes one. A header's credential ends at
+// a blank, quote, backslash or backquote (decisions row 5), so its value is
+// what comes before them.
+func TestScanShellWords(t *testing.T) {
+	t.Parallel()
+	const pre, post = "Zx81!mQp27", "Lw9" // the ! keeps Gitleaks' own curl rule out
+	const all, none, skip = "=", "", "-"  // the whole value; no candidate; a context that cannot hold the shape
+	curl := []string{"curl -u u:%s https://x.test", "curl --user u:%s https://x.test", "curl -u 'u:%s' https://x.test",
+		`curl -u "u:%s" https://x.test`}
+	header := []string{"curl -H 'Authorization: Bearer %s' https://x.test", "curl -H 'Authorization: Bearer %s more' https://x.test",
+		`curl -H "Authorization: Bearer %s" https://x.test`, `curl -H "Authorization: Bearer %s'x" https://x.test`,
+		"Authorization: Bearer %s\nHost: x.test"}
+	shapes := []struct {
+		name, shape string
+		// The candidate in curl's unquoted, '…' and "…" words, and in a
+		// header's '…', "…" and own line.
+		unquoted, single, double, hSingle, hDouble, hLine string
+	}{
+		{"a name", "$HOME", none, all, none, all, none, none},
+		{"an escaped $", `\$HOME`, all, all, all, pre, pre, pre},
+		{"${…}", "${HOST}", none, all, none, none, none, none}, // a header refuses a template, quoted or not
+		{"$(…)", "$(id)", none, all, none, none, none, none},
+		{"$((…))", "$((1+2))", none, all, none, none, none, none},
+		{"$[…]", "$[1+2]", none, all, none, all, none, none},
+		{"backquotes", "`id`", none, all, none, pre, pre, pre},
+		{"$$", "$$", none, all, none, all, none, none},
+		{"$?", "$?", none, all, none, all, none, none},
+		{"$#", "$#", none, all, none, all, none, none},
+		{"$!", "$!", none, all, none, all, none, none},
+		{"$@", "$@", none, all, none, all, none, none},
+		{"$-", "$-", none, all, none, all, none, none},
+		{"$1", "$1", none, all, none, all, none, none},
+		{"$'…'", "$'x'", all, skip, all, skip, pre + "$", pre + "$"},
+		{"$'…' with an escape", `$'\x41'`, none, skip, all, skip, pre + "$", pre + "$"},
+		{"a $ before nothing", "$%", all, all, all, all, all, all},
+		{"a blank", " ", pre, all, all, pre, pre, pre},
+		{"an apostrophe", "'", pre, skip, all, skip, pre, pre},
+		{"operators", ";|&<>()", pre, all, all, all, all, all},
+	}
+	for _, sh := range shapes {
+		v := pre + sh.shape + post
+		check := func(form, want string) {
+			if want == skip {
+				return
+			}
+			text := strings.Replace(form, "%s", v, 1)
+			var wants []string
+			switch want {
+			case all:
+				wants = []string{v}
+			case none:
+			default:
+				wants = []string{want}
+			}
+			if got := values(text); !slices.Equal(got, wants) {
+				t.Errorf("%s: %q\n got  %q\n want %q", sh.name, text, got, wants)
+			}
+		}
+		for i, form := range curl {
+			check(form, []string{sh.unquoted, sh.unquoted, sh.single, sh.double}[i])
+		}
+		for i, form := range header {
+			want := []string{sh.hSingle, sh.hSingle, sh.hDouble, sh.hDouble, sh.hLine}[i]
+			if i == 1 && want == all && strings.ContainsRune(sh.shape, ' ') {
+				want = pre
+			}
+			check(form, want)
+		}
+	}
+	checkScans(t, []scanCase{
+		// The reviewers' texts.
+		{"unquoted substitution", "curl -u u:abc$(id) https://x.test", nil},
+		{"unquoted arithmetic", "curl --user u:abc$((1+2)) https://x.test", nil},
+		{"a blank in single quotes", "curl -H 'Authorization: Bearer P@$$w0rd ' https://x.test", []string{"P@$$w0rd"}},
+		{"an apostrophe in double quotes", `curl -H "Authorization: Bearer $$'suffix" https://x.test; ` +
+			`curl -H "Authorization: Bearer $?'suffix" https://x.test; curl -H "Authorization: Bearer abc$TOKEN'suffix" https://x.test`, nil},
+		{"more in single quotes", "curl -H 'Authorization: Bearer Zx81mQp27LwRt5$HOME more' https://x.test", []string{"Zx81mQp27LwRt5$HOME"}},
+		{"a tab in single quotes", "curl -H 'Authorization: Bearer a!B@c#D$e\t' https://x.test", []string{"a!B@c#D$e"}},
+		// A substitution's own blanks, operators and quotes are inside it.
+		{"an operator in a substitution", "curl -u u:abc$(id;echo x) https://x.test", nil},
+		{"a quoted ) in a substitution", `curl -u u:abc$(echo ")")x https://x.test`, nil},
+		{"a substitution left open", "curl -u u:abc$(id", nil},
+		{"a backquote left open", "Run `curl -u u:Zx81mQp27Lw9`", nil},
+		// An unquoted operator ends the word.
+		{"after ;", "curl -u u:Zx81mQp27Lw9;echo ok", []string{"Zx81mQp27Lw9"}},
+		{"after |", "curl -u u:Zx81mQp27Lw9|cat", []string{"Zx81mQp27Lw9"}},
+		{"after &&", "curl -u u:Zx81mQp27Lw9&&echo ok", []string{"Zx81mQp27Lw9"}},
+		{"after )", "(curl -u u:Zx81mQp27Lw9)", []string{"Zx81mQp27Lw9"}},
+		{"after >", "curl -u u:Zx81mQp27Lw9>out", []string{"Zx81mQp27Lw9"}},
+		// A header's argument opens at the quote before its name, or at the
+		// -H before it; a JSON key's quote closes before its value's opens.
+		{"glued -H", "curl -H'Authorization: Bearer Zx81mQp27$HOMELw9' https://x.test", []string{"Zx81mQp27$HOMELw9"}},
+		{"--header=", "curl --header='Authorization: Bearer Zx81mQp27$HOMELw9' https://x.test", []string{"Zx81mQp27$HOMELw9"}},
+		{"$'…' header", "curl -H $'Authorization: Bearer Zx81mQp27LwRt5Yv9' https://x.test", []string{"Zx81mQp27LwRt5Yv9"}},
+		{"after an apostrophe in prose", "Don't use -H 'Authorization: Bearer Zx81mQp27LwRt5$HOME' here", []string{"Zx81mQp27LwRt5$HOME"}},
+		{"a bare Bearer in another header", "curl -H 'X-Token: Bearer Zx81mQp27LwRt5$HOME' https://x.test", []string{"Bearer", "Zx81mQp27LwRt5$HOME"}},
+		{"a bare Bearer in double quotes", `curl -H "X-Token: Bearer Zx81mQp27LwRt5$HOME" https://x.test`, []string{"Bearer"}},
+		{"JSON in single quotes", `"Authorization": 'Bearer Zx81mQp27LwRt5$x'`, []string{"Zx81mQp27LwRt5$x"}},
+		{"JSON in double quotes", `{"Authorization":"Bearer Zx81mQp27LwRt5$x"}`, nil},
+		// A header further into another quoted argument reads as unquoted
+		// (decisions row 4): its argument's start is not known.
+		{"a header inside a sentence in quotes", "echo 'see Authorization: Bearer Zx81mQp27LwRt5$HOME'", nil},
+	})
+}
+
 // Clean text (#108): what is no secret stays unproposed, whatever the
 // detectors learn: hashes, ids, blobs, fixtures, URLs, names, redactions,
 // templates, prose about secrets and code.

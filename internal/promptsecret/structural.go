@@ -161,15 +161,49 @@ func credentialAt(text string, i int, line bool) int {
 }
 
 // headerValue reports the credentials [s, e) that are a value: not a
-// template inside them (templated), what the shell expands there (review
-// T4 (p2): -H "Authorization: Bearer abc$TOKEN", $$; read as shellComputed
-// reads a word, unless single quotes keep it), a placeholder in brackets
-// ([token]), a URL, nor what notASecret says (literal: it runs into a
-// reference).
-func headerValue(text string, s, e int, refs []span) bool {
+// template inside them (templated), what the shell computes there (read
+// from a, the header's argument: headerArg; review T4 (p2), T3P-1:
+// -H "Authorization: Bearer abc$TOKEN", $$, never '$HOME' nor 'P@$$w0rd '),
+// a placeholder in brackets ([token]), a URL, nor what notASecret says
+// (literal: it runs into a reference).
+func headerValue(text string, a, s, e int, refs []span) bool {
 	v := text[s:e]
-	return v != "" && !notASecret(v, overlapsAny(s, e, refs)) && !templated(v) && !strings.Contains(v, "://") &&
-		!bracketed.MatchString(v) && (e < len(text) && text[e] == '\'' || !shellComputed(text, s, e, s))
+	if v == "" || notASecret(v, overlapsAny(s, e, refs)) || templated(v) || strings.Contains(v, "://") ||
+		bracketed.MatchString(v) {
+		return false
+	}
+	_, computed := shellRead(text, a, e, false)
+	return !overlapsAny(s, e, computed)
+}
+
+// headerFlag is curl's header option, before its argument; headerReach is
+// how far before a header's name it is looked for.
+var headerFlag = regexp.MustCompile(`(?:^|[ \t])(?:-H[ \t]*|--header(?:[ \t]+|=))`)
+
+const headerReach = 256
+
+// headerArg is where the shell argument holding the header name at i
+// starts: the quote right before the name ($'…' from its '$': -H
+// 'Authorization: …', "Authorization": "…"); else the argument of the last
+// -H or --header before it on its line (-H 'X-Token: Bearer …'); else the
+// name. So a header further into another argument reads as unquoted (echo
+// 'Authorization: …'), never as the byte after its credential says.
+func headerArg(text string, i int) int {
+	if i > 0 && (text[i-1] == '\'' || text[i-1] == '"') {
+		i--
+		if text[i] == '\'' && i > 0 && text[i-1] == '$' {
+			i--
+		}
+		return i
+	}
+	w := max(0, i-headerReach)
+	if nl := strings.LastIndexByte(text[w:i], '\n'); nl >= 0 {
+		w += nl + 1
+	}
+	if m := headerFlag.FindAllStringIndex(text[w:i], -1); m != nil {
+		return w + m[len(m)-1][1]
+	}
+	return i
 }
 
 // templated reports a template or a command anywhere in a value, not only
@@ -203,14 +237,18 @@ func headerSpans(text, lower string, refs []span) []span {
 		}
 		end := credentialAt(text, m[1], atLineStart(text, m[2]))
 		v := text[m[1]:end]
-		if !headerValue(text, m[1], end, refs) || (scheme == "" && !tokenish(v, 8)) {
+		if !headerValue(text, headerArg(text, m[2]), m[1], end, refs) || (scheme == "" && !tokenish(v, 8)) {
 			continue
 		}
 		out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: scheme == ""})
 	}
 	for _, m := range bearers {
 		end := credentialAt(text, m[1], false)
-		if tokenish(text[m[1]:end], 16) && headerValue(text, m[1], end, refs) {
+		name := m[1]
+		for text[name-1] == ' ' || text[name-1] == '\t' {
+			name--
+		}
+		if tokenish(text[m[1]:end], 16) && headerValue(text, headerArg(text, name-len("bearer")), m[1], end, refs) {
 			out = append(out, span{start: m[1], end: end, kind: KindAuthHeader, rank: rankAuthHeader, shaped: true})
 		}
 	}
@@ -358,11 +396,17 @@ func assignmentSpans(text string, refs []span) []span {
 // curlPassword is the password in curl's user:password, the shell word at
 // v: after its first colon, as typed (quotes and escapes kept; a word that
 // is one quoted string without its quotes). Not a placeholder: a credential
-// word (user:pass) or one in brackets; nor what the shell computes there
-// (shellComputed).
+// word (user:pass) or one in brackets; nor what the shell computes in it
+// (shellRead: a byte of it or of the rest of its word, review T4).
 func curlPassword(text string, v int, refs []span) (span, bool) {
-	s, e := v, shellWordEnd(text, v)
-	word := e
+	le := strings.IndexByte(text[v:], '\n')
+	if le < 0 {
+		le = len(text)
+	} else {
+		le += v
+	}
+	word, computed := shellRead(text, v, le, true)
+	s, e := v, word
 	quoted := false
 	if qs, qe, ok := quotedAt(text, v); ok && qe+1 == e {
 		s, e, quoted = qs, qe, true
@@ -375,40 +419,89 @@ func curlPassword(text string, v int, refs []span) (span, bool) {
 	}
 	pw := text[s+c+1 : e]
 	if notASecret(pw, quoted || overlapsAny(s+c+1, e, refs)) || credentialKey(pw) || bracketed.MatchString(pw) ||
-		shellComputed(text, v, word, s+c+1) {
+		overlapsAny(s+c+1, word, computed) {
 		return span{}, false
 	}
 	return span{start: s + c + 1, end: e, kind: KindAssignment, rank: rankAssignment}, true
 }
 
-// shellWordEnd is the end of the shell word at v, on its line: quoted parts
-// ('…' as is, "…" with backslash escapes) and escapes outside them, to an
-// unquoted blank or ; | & < > ( ). An unterminated quote ends it.
-func shellWordEnd(text string, v int) int {
-	le := strings.IndexByte(text[v:], '\n')
-	if le < 0 {
-		le = len(text)
-	} else {
-		le += v
-	}
-	i := v
-	for i < le {
+// shellRead reads text from i, to end at most, as bash reads it from
+// outside any quote, for curl's password and a header's credential (review
+// T4 (p2), T3P-1): '…' as is; "…" with backslash escapes; $'…' too, whose
+// escapes the shell rewrites; a backslash outside them escaping the next
+// byte. An expansion (expands: $NAME, a digit, a special parameter, ${…},
+// $(…) and $((…)), $[…], an unquoted $"…") or a backquote is read to its
+// close (to end when it has none), its own quotes, escapes and brackets
+// nested, so a blank or an operator inside it is its own. word: it stops
+// where the word at i ends, at an unquoted blank or ; | & < > ( ) outside
+// all of those, or at a quote left open; else it reads all of [i, end), a
+// quote left open quoting the rest. Its stop, and the ranges whose bytes
+// the shell computes: never "\$HOME", '$HOME', "ab$'c" nor a '$' before
+// nothing it expands ("abc$", "a$%b"), which it keeps.
+func shellRead(text string, i, end int, word bool) (int, []span) {
+	var computed []span
+	for i < end {
 		switch c := text[i]; {
-		case c == '\'' || c == '"':
-			j := quoteEnd(text, i, le)
-			if j < 0 {
-				return i
-			}
-			i = j + 1
-		case c == '\\' && i+1 < le:
+		case c == '\\':
 			i += 2
-		case isSpace(c) || strings.IndexByte(";|&<>()", c) >= 0:
-			return i
+		case c == '\'':
+			k := strings.IndexByte(text[i+1:end], '\'')
+			if k < 0 && word {
+				return i, computed
+			} else if k < 0 {
+				return end, computed
+			}
+			i += k + 2
+		case c == '"' || c == '$' && i+1 < end && text[i+1] == '\'':
+			n := len(computed)
+			j, ok := shellQuoted(text, i, end, &computed)
+			if !ok && word {
+				return i, computed[:n]
+			}
+			i = j
+		case c == '`' || c == '$' && i+1 < end && expands(text[i+1], false):
+			j := shellExpansion(text, i, end)
+			computed = append(computed, span{start: i, end: j})
+			i = j
+		case word && (isSpace(c) || strings.IndexByte(";|&<>()", c) >= 0):
+			return i, computed
 		default:
 			i++
 		}
 	}
-	return min(i, le)
+	return min(i, end), computed
+}
+
+// shellQuoted reads the "…" or $'…' at i, to end at most: the index after
+// its closing quote (end and false when it has none), what the shell
+// computes in it added to computed when that is not nil (in "…" an
+// expansion or a backquote, a '$' before a quote being a byte; in $'…' each
+// escape).
+func shellQuoted(text string, i, end int, computed *[]span) (int, bool) {
+	ansi := text[i] == '$'
+	if ansi {
+		i++
+	}
+	for i++; i < end; {
+		switch c := text[i]; {
+		case c == '\\':
+			if ansi && computed != nil {
+				*computed = append(*computed, span{start: i, end: min(i+2, end)})
+			}
+			i += 2
+		case c == '\'' && ansi || c == '"' && !ansi:
+			return i + 1, true
+		case !ansi && (c == '`' || c == '$' && i+1 < end && expands(text[i+1], true)):
+			j := shellExpansion(text, i, end)
+			if computed != nil {
+				*computed = append(*computed, span{start: i, end: j})
+			}
+			i = j
+		default:
+			i++
+		}
+	}
+	return end, false
 }
 
 // quoteEnd is the index of the quote that closes the shell quote at i
@@ -431,84 +524,76 @@ func quoteEnd(text string, i, end int) int {
 	return -1
 }
 
-// shellComputed reports what the shell computes in the word [v, e) from p
-// on (review T4): an expansion outside single quotes (expands: "u:abc$(cmd)",
-// "u:abc$$", u:$'…') or a backquote, at p or after, or before p with p
-// inside it (${C:-u:pw}); never "\$HOME", '$HOME' nor a '$' that expands
-// nothing ("abc$", "a$%b"), which the shell keeps.
-func shellComputed(text string, v, e, p int) bool {
-	double := false
-	for i := v; i < e; i++ {
-		switch c := text[i]; {
-		case c == '\\' && (!double || i+1 < e && strings.IndexByte("$`\"\\", text[i+1]) >= 0):
-			i++
-		case c == '\'' && !double:
-			if i = quoteEnd(text, i, e); i < 0 {
-				return false
-			}
-		case c == '"':
-			double = !double
-		case c == '`' || c == '$' && i+1 < e && expands(text[i+1], double):
-			end := expansionEnd(text, i, e)
-			if end >= p {
-				return true
-			}
-			i = end - 1
-		}
-	}
-	return false
-}
-
 // expands reports a '$' before c that the shell expands, in double quotes
 // or none: a name, a digit, a special parameter (@ * # ? - $ !), ${…},
-// $(…) or $[…]; outside double quotes also $'…' and $"…", whose bytes are
-// not the value's.
+// $(…) or $[…]; outside double quotes also $"…" (and $'…', which
+// shellRead reads as a quote).
 func expands(c byte, double bool) bool {
 	return isASCIILetter(c) || c >= '0' && c <= '9' || strings.IndexByte("_{([@*#?-$!", c) >= 0 || !double && (c == '\'' || c == '"')
 }
 
-// expansionEnd is the end of the expansion or backquote at i in [i, e): to
-// its closing bracket, quote or backquote (e when it has none), or its
-// name's end.
-func expansionEnd(text string, i, e int) int {
+// shellExpansion is the end of the expansion or backquote at i, to end at
+// most: its close, or its name's end.
+func shellExpansion(text string, i, end int) int {
 	if text[i] == '`' {
-		return closing(text, i+1, e, 0, '`')
+		return shellClose(text, i+1, end, 0, '`')
 	}
 	switch c := text[i+1]; c {
 	case '{':
-		return closing(text, i+2, e, '{', '}')
+		return shellClose(text, i+2, end, '{', '}')
 	case '(':
-		return closing(text, i+2, e, '(', ')')
+		return shellClose(text, i+2, end, '(', ')')
 	case '[':
-		return closing(text, i+2, e, '[', ']')
-	case '\'', '"':
-		return closing(text, i+2, e, 0, c)
+		return shellClose(text, i+2, end, '[', ']')
+	case '\'':
+		j, _ := shellQuoted(text, i, end, nil)
+		return j
+	case '"':
+		j, _ := shellQuoted(text, i+1, end, nil)
+		return j
 	}
 	j := i + 2
 	if c := text[i+1]; isASCIILetter(c) || c == '_' {
-		for j < e && (isASCIILetter(text[j]) || text[j] == '_' || text[j] >= '0' && text[j] <= '9') {
+		for j < end && (isASCIILetter(text[j]) || text[j] == '_' || text[j] >= '0' && text[j] <= '9') {
 			j++
 		}
 	}
 	return j
 }
 
-// closing is the index after the close that ends a run from j (each open
-// in it nests, when there is one; a backslash escapes the next byte), or e.
-func closing(text string, j, e int, opener, closer byte) int {
-	for depth := 0; j < e; j++ {
+// shellClose is the index after the closer that ends a run from j, to end
+// at most (end when none does). With an opener (${…}, $(…), $[…]) its
+// opens nest, and the quotes and expansions in it are read whole; without
+// one (backquotes) a backslash only escapes the next byte.
+func shellClose(text string, j, end int, opener, closer byte) int {
+	for depth := 0; j < end; {
 		switch c := text[j]; {
 		case c == '\\':
-			j++
+			j += 2
+			continue
 		case c == closer && depth == 0:
 			return j + 1
+		case opener == 0:
 		case c == closer:
 			depth--
-		case c == opener && opener != 0:
+		case c == opener:
 			depth++
+		case c == '\'':
+			k := strings.IndexByte(text[j+1:end], '\'')
+			if k < 0 {
+				return end
+			}
+			j += k + 1
+		case c == '"':
+			j, _ = shellQuoted(text, j, end, nil)
+			continue
+		case c == '`' || c == '$' && j+1 < end && expands(text[j+1], false):
+			j = shellExpansion(text, j, end)
+			continue
 		}
+		j++
 	}
-	return e
+	return end
 }
 
 func isASCIILetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
