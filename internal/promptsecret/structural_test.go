@@ -1,6 +1,7 @@
 package promptsecret_test
 
 import (
+	"encoding/base64"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -431,6 +432,10 @@ func TestScanRecall(t *testing.T) {
 	const hf = "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"
 	const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 	const gh = "ghp_GT2MQVTdhGOubkn5tfdOv4eYnhJvEkcAI167"
+	// A JWT of 3 KB (review T5: the pass looked 1 KiB back from the period).
+	longJWT := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`)) + "." +
+		base64.RawURLEncoding.EncodeToString([]byte(`{"sub":"user123","scope":"`+strings.Repeat("read-write-employee123 ", 100)+`"}`)) +
+		".SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 	checkScans(t, []scanCase{
 		// 1. A provider's token before a sentence's punctuation: its rule
 		// asks for a blank, a quote or the end after it.
@@ -440,6 +445,12 @@ func TestScanRecall(t *testing.T) {
 		{"stripe before a period", "Use sk_live_k3Jd9fLq0ZrMv8. Then deploy.", []string{"sk_live_k3Jd9fLq0ZrMv8"}},
 		{"jwt before a comma", "the session cookie holds " + jwt + ", which expires", []string{jwt}},
 		{"token before an exclamation", "Finally got it: " + hf + "!", []string{hf}},
+		{"a long token ends a sentence", "Use " + longJWT + ".", []string{longJWT}},
+		{"a long token, notes before", strings.Repeat("notes for deployment\n", 200) + "Use " + longJWT + ".", []string{longJWT}},
+		{"a long token, no punctuation", "Use " + longJWT, []string{longJWT}},
+		// A long name's colon is no sentence's: the keyword's rule needs it.
+		{"a long name's value", "adafruit_io_key: k3jd9flq0zrmv8xw2pbn7cht4ysg6ure.", []string{"k3jd9flq0zrmv8xw2pbn7cht4ysg6ure"}},
+		{"a long name's value on the next line", "adafruit_io_key:\n  k3jd9flq0zrmv8xw2pbn7cht4ysg6ure.", []string{"k3jd9flq0zrmv8xw2pbn7cht4ysg6ure"}},
 		{"a word with a token's prefix", "Install hf_transfer. Then set sk_live_mode, and run it.", nil},
 		{"a short prefix", "Read the hf_hub docs (see sk_test).", nil},
 		// 2. A header's credential runs to its end: a blank or a quote (a

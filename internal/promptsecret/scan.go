@@ -117,14 +117,16 @@ const sentencePunct = ".,:!?)"
 // punctuated are the findings of the provider rules that ask for
 // gitleaksBoundary after their token where a sentence's punctuation stands
 // instead: a run of sentencePunct right after a token-like word (tokenBefore),
-// before a blank or the end ("Use sk_live_….", "(hf_…)."). Those rules run
+// before a blank or the end ("Use sk_live_….", "(hf_…)."; colons alone only
+// at the end: before more text they are a name's). Those rules run
 // again over a copy of text with each such run blanked (the same length, so
 // the ranges hold), and a finding counts when its token ends at one.
 // Gitleaks itself, and its parity, are untouched (decisions.md, #108 row 1).
-// They run on the lines that hold such a run (at most punctWindow bytes
-// before it), their keywords looked for there: each rule's keyword is in
-// its own match (a token's prefix, the name before a value). When those
-// lines are most of the text, once on the whole text.
+// They run on a window per run, from punctMargin bytes before its word
+// (however long the token: review T5) to the run, their keywords looked
+// for there: each rule's keyword is in its own match (a token's prefix,
+// the name before a value). When the windows are most of the text, once on
+// the whole text.
 func punctuated(text string, refs []span) []RuleMatch {
 	var b []byte
 	ends := map[int]bool{}
@@ -137,7 +139,11 @@ func punctuated(text string, refs []span) []RuleMatch {
 		for j < len(text) && strings.IndexByte(sentencePunct, text[j]) >= 0 {
 			j++
 		}
-		if (j == len(text) || isSpace(text[j])) && tokenBefore(text, i, refs) {
+		if j < len(text) && (!isSpace(text[j]) || strings.Trim(text[i:j], ":") == "") {
+			i = j // inside a word, or a name's colon (adafruit_io_key: …)
+			continue
+		}
+		if ws, ok := tokenBefore(text, i, refs); ok {
 			if b == nil {
 				b = []byte(text)
 			}
@@ -145,7 +151,7 @@ func punctuated(text string, refs []span) []RuleMatch {
 			for k := i; k < j; k++ {
 				b[k] = ' '
 			}
-			ws := max(strings.LastIndexByte(text[:i], '\n')+1, i-punctWindow)
+			ws = max(0, ws-punctMargin)
 			if n := len(wins); n > 0 && ws <= wins[n-1][1] {
 				wins[n-1][1] = j
 			} else {
@@ -193,26 +199,29 @@ func punctuated(text string, refs []span) []RuleMatch {
 	return out
 }
 
-// punctWindow bounds how far before a punctuated run its rules look.
-const punctWindow = 1 << 10
+// punctMargin is how far before a token-like word a rule's match may start:
+// a keyword-anchored rule's name and separator (at most about 110 bytes:
+// [\w.-]{0,50}? before the keyword, 28 after it).
+const punctMargin = 256
 
 // minPunctSecret is the shortest secret a rule punctuated runs can find.
 const minPunctSecret = 14
 
-// tokenBefore reports a word before i that may end a provider's token: at
-// least minPunctSecret bytes with no blank, and a digit, an '_' or both
-// cases (a long plain word, "internationalization.", is none). One that an
-// own reference ends (refs, masked) ends no typed token.
-func tokenBefore(text string, i int, refs []span) bool {
+// tokenBefore is the start of the word before i when it may end a
+// provider's token: at least minPunctSecret bytes with no blank, and a
+// digit, an '_' or both cases (a long plain word, "internationalization.",
+// is none). One that an own reference ends (refs, masked) ends no typed
+// token.
+func tokenBefore(text string, i int, refs []span) (int, bool) {
 	s := i
 	for s > 0 && !isSpace(text[s-1]) {
 		s--
 	}
 	w := text[s:i]
 	if len(w) < minPunctSecret || overlapsAny(i-1, i, refs) {
-		return false
+		return 0, false
 	}
-	return hasDigit(w) || strings.Contains(w, "_") || strings.ToLower(w) != w && strings.ToUpper(w) != w
+	return s, hasDigit(w) || strings.Contains(w, "_") || strings.ToLower(w) != w && strings.ToUpper(w) != w
 }
 
 type spanKinds struct {
