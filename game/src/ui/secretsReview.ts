@@ -228,11 +228,14 @@ export class SecretsReviewDialog {
     this.offsets = new WeakMap();
     const nodes: Node[] = [];
     let at = 0;
-    marks.forEach((m, i) => {
+    // Counted as the strip counts them: the matches the scan found (#108 A1); a mark of yours has no number.
+    const found = r.counts().found;
+    let n = 0;
+    for (const m of marks) {
       if (m.start > at) nodes.push(this.text(text.slice(at, m.start), at));
-      nodes.push(this.markNode(m, i, marks.length));
+      nodes.push(this.markNode(m, m.candidate ? ++n : 0, found));
       at = m.end;
-    });
+    }
     if (at < text.length) nodes.push(this.text(text.slice(at), at));
     const a = document.activeElement;
     const focused = a instanceof HTMLElement && a.classList.contains('sr-mark') && this.prompt.contains(a) ? a.dataset.key : undefined;
@@ -242,7 +245,8 @@ export class SecretsReviewDialog {
     if (focused) this.markEl(focused)?.focus({ preventScroll: true });
   }
 
-  private markNode(m: Readonly<Mark>, i: number, n: number): HTMLElement {
+  /** `nth` of `found`: the match's place among the scan's (0 for a mark of yours). */
+  private markNode(m: Readonly<Mark>, nth: number, found: number): HTMLElement {
     const text = (this.req as SecretsReviewRequest).review.text;
     const word = m.state === 'protect' ? 'Protected' : 'Ignored';
     const value = this.text(text.slice(m.start, m.end), m.start);
@@ -262,7 +266,7 @@ export class SecretsReviewDialog {
         tabindex: m.key === this.current ? '0' : '-1',
         'aria-roledescription': 'possible secret',
         'aria-describedby': 'sr-what',
-        title: `${m.candidate ? `Match ${i + 1} of ${n}` : 'Marked by you'}: ${word.toLowerCase()}${m.encoded ? ', stored as typed' : ''}`,
+        title: `${m.candidate ? `Match ${nth} of ${found}` : 'Marked by you'}: ${word.toLowerCase()}${m.encoded ? ', stored as typed' : ''}`,
       },
       h('span', { class: 'sr-tag' }, tape),
       h('span', { class: 'sr-val' }, value),

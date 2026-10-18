@@ -491,8 +491,13 @@ describe('#108 C1: no transition makes two marks overlap', () => {
         } else if (op === 'rescan') {
           // The bridge said stale: the same text scanned again (sometimes with a candidate less), the choices taken over.
           const vs = rand() < 0.5 ? values : values.filter((_, i) => i !== 2);
-          r = new SecretReview(t, scanAt(t, vs, `rev-${run}-${n}`), r);
+          const scan = scanAt(t, vs, `rev-${run}-${n}`);
+          const before = choices(r);
+          const same = sameFound(r, scan);
+          r = new SecretReview(t, scan, r);
           ops.push(`rescan ${vs.length}`);
+          // #108 A1: the same candidates found again take every earlier choice over, exactly (a sound review fits as it was).
+          if (same && JSON.stringify(choices(r)) !== JSON.stringify(before)) expect(choices(r), `run ${run}: ${ops.join(', ')}`).toEqual(before);
         } else {
           r.setState(k, op as 'ignore' | 'protect');
           ops.push(`${op} ${k}`);
@@ -503,6 +508,77 @@ describe('#108 C1: no transition makes two marks overlap', () => {
     }
     // 12,000 checked steps: a fraction of a second alone, more under a loaded `make test`.
   }, 20_000);
+});
+
+/** Every choice of a review, by where its candidate was found (ids change between scans), manual marks by range. */
+const choices = (r: SecretReview) => r.marks().map((m) => [m.found ? `found ${m.found.start}-${m.found.end}` : 'manual', m.start, m.end, m.state]);
+/** `scan` finds exactly the candidates `r` was made of. */
+const sameFound = (r: SecretReview, scan: PromptSecretsScan) =>
+  JSON.stringify(scan.candidates.map((c) => [c.start, c.end])) ===
+  JSON.stringify(
+    r
+      .marks()
+      .filter((m) => m.found)
+      .map((m) => [m.found?.start, m.found?.end])
+      .sort((a, b) => (a[0] as number) - (b[0] as number)),
+  );
+
+describe('#108 A1: a stale review taken over keeps every earlier choice that still fits', () => {
+  const order = (r: SecretReview) => r.marks().map((m) => [m.key, m.start, m.end, m.state]);
+
+  it('a mark over the character a shrunk start freed stays (the correction is placed before the mark)', () => {
+    const text = 'token=abcdef xyz';
+    const first = new SecretReview(text, scanAt(text, ['abcdef']));
+    expect(first.nudge('c1', 'start', 1)).toBe(true);
+    expect(first.mark(6, 7)).toEqual({ ok: true, key: 'm1' });
+    const again = new SecretReview(text, scanAt(text, ['abcdef'], 'rev-2'), first);
+    expectSound(again, 'taken over');
+    expect(order(again)).toEqual([
+      ['m1', 6, 7, 'protect'],
+      ['c1', 7, 12, 'protect'],
+    ]);
+  });
+
+  it('a correction extended into the room a neighbour’s correction freed stays (every correction is placed at once)', () => {
+    // c1 abcd [2, 6) and c2 efgh [6, 10) touch: c2 gives up its first character, c1 takes it.
+    const text = 'k=abcdefgh;';
+    const first = new SecretReview(text, scanAt(text, ['abcd', 'efgh']));
+    expect(first.nudge('c2', 'start', 1)).toBe(true);
+    expect(first.nudge('c1', 'end', 1)).toBe(true);
+    const again = new SecretReview(text, scanAt(text, ['abcd', 'efgh'], 'rev-2'), first);
+    expectSound(again, 'taken over');
+    expect(order(again)).toEqual([
+      ['c1', 2, 7, 'protect'],
+      ['c2', 7, 10, 'protect'],
+    ]);
+  });
+
+  it('what no longer fits goes back, and what that frees is taken again (a fixpoint): a new candidate wins its found range', () => {
+    // Earlier: c1 abcd and c2 efgh each took the space after it, and xy was marked by hand.
+    const text = 'k=abcd efgh xy;';
+    const first = new SecretReview(text, scanAt(text, ['abcd', 'efgh']));
+    expect(first.nudge('c1', 'end', 1)).toBe(true); // [2, 7): the space
+    expect(first.nudge('c2', 'end', 1)).toBe(true); // [7, 12): the space after efgh
+    expect(first.mark(12, 14)).toEqual({ ok: true, key: 'm1' }); // xy
+    // The rules changed: the space after abcd is no candidate, but " efgh" is found from the space on, and xy too.
+    const scan: PromptSecretsScan = {
+      revision: 'rev-2',
+      candidates: [
+        { id: 'c1', start: 2, end: 6, kinds: ['assignment'] },
+        { id: 'c2', start: 6, end: 11, kinds: ['assignment'] },
+        { id: 'c3', start: 12, end: 14, kinds: ['assignment'] },
+      ],
+    };
+    const again = new SecretReview(text, scan, first);
+    expectSound(again, 'taken over');
+    // c1's correction overlaps the new c2 (found from the space): back to its found range. c2 is new (its found range
+    // differs): proposed as found. The manual mark over xy overlaps the new c3: not taken over.
+    expect(order(again)).toEqual([
+      ['c1', 2, 6, 'protect'],
+      ['c2', 6, 11, 'protect'],
+      ['c3', 12, 14, 'protect'],
+    ]);
+  });
 });
 
 describe('#108 C1 (review pass 2): a match ignored far from its correction goes back into text order', () => {

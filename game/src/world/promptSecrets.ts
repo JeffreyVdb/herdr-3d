@@ -171,7 +171,7 @@ export interface ReviewCounts {
 /**
  * The decisions on one scan of one text. The marks are always sorted, non-empty, apart (touching is fine) and on code
  * point boundaries, so `decisions()` is always a review the bridge can check: every range change goes through
- * `place()`, which holds all four.
+ * `place()`, which holds all four (a take-over's through `settle()`, its batch form).
  */
 export class SecretReview {
   readonly revision: string;
@@ -190,18 +190,47 @@ export class SecretReview {
     if (earlier && earlier.text === text) this.takeOver(earlier);
   }
 
+  /**
+   * The earlier choices, where they still fit (#108 A1): each candidate found again at the same range takes its state
+   * and its correction, every correction at once (one placed alone could meet a neighbour's found range that the
+   * neighbour's own correction freed); a correction that overlaps any other mark where it would be goes back to its
+   * found range, and that again until nothing moves (found ranges never overlap, so it ends). The manual marks come
+   * last, each where it fits. A scan that finds the same candidates takes a review over exactly.
+   */
   private takeOver(earlier: SecretReview): void {
+    const want = new Map<Mark, Range>();
     for (const old of earlier.list) {
-      if (old.found) {
-        const m = this.list.find((x) => x.found && x.found.start === old.found?.start && x.found.end === old.found.end);
-        if (!m) continue;
-        m.state = old.state;
-        // A correction that no longer fits stays out: the candidate keeps its found range.
-        if (old.state === 'protect') this.place(m, old.start, old.end);
-      } else {
-        this.add(old.start, old.end);
+      if (!old.found) continue;
+      const m = this.list.find((x) => x.found && x.found.start === old.found?.start && x.found.end === old.found.end);
+      if (!m) continue;
+      m.state = old.state;
+      if (old.state === 'protect' && (old.start !== old.found.start || old.end !== old.found.end)) want.set(m, { start: old.start, end: old.end });
+    }
+    const at = (m: Mark): Range => want.get(m) ?? { start: m.start, end: m.end };
+    for (let moved = true; moved; ) {
+      moved = false;
+      for (const [m, r] of want) {
+        if (this.list.some((x) => x !== m && at(x).start < r.end && r.start < at(x).end)) {
+          want.delete(m);
+          moved = true;
+        }
       }
     }
+    this.settle(want);
+    for (const old of earlier.list) if (!old.found) this.add(old.start, old.end);
+  }
+
+  /**
+   * `place()` for several candidates at once (the take-over), then the list sorted. One alone could not go first: it
+   * may only fit once another has moved. The ranges are an earlier review's of the same text (on code point boundaries,
+   * non-empty), and the take-over's fixpoint made them apart from one another and from every mark that stays.
+   */
+  private settle(moves: ReadonlyMap<Mark, Range>): void {
+    for (const [m, r] of moves) {
+      m.start = r.start;
+      m.end = r.end;
+    }
+    this.list.sort((a, b) => a.start - b.start);
   }
 
   /** In text order. */

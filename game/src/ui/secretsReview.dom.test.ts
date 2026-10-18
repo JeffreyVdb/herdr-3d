@@ -111,6 +111,18 @@ describe('SecretsReviewDialog (#108)', () => {
   });
   afterEach(() => document.body.replaceChildren());
 
+  it('A1: a highlight’s title counts the matches the scan found, as the strip does (a mark of yours is “Marked by you”)', () => {
+    const e = setup();
+    // A mark of yours before the second match: the strip says "Match 2 of 5" there, and so must the highlight.
+    const at = TEXT.indexOf('PASSWORD');
+    selectText(e.prompt, at, at + 4);
+    e.key(e.prompt, 'm');
+    const titles = [...e.prompt.querySelectorAll<HTMLElement>('.sr-mark')].map((m) => m.title.split(':')[0]);
+    expect(titles).toEqual(['Match 1 of 5', 'Marked by you', 'Match 2 of 5', 'Match 3 of 5', 'Match 4 of 5', 'Match 5 of 5']);
+    e.mark('c2').click();
+    expect(e.strip('next').closest('.sr-nav')?.querySelector('.sr-pos')?.textContent).toBe('Match 2 of 5');
+  });
+
   it('shows the whole prompt as it will be sent, every candidate highlighted at its exact boundaries, its state on tape', () => {
     const e = setup();
     expect(e.shown()).toBe(TEXT);
