@@ -265,7 +265,9 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   `simsecretson=1`, `simsecretsdir=none`, `simfail=no_secrets|secrets_review_stale|secrets_review_required|
   secrets_unavailable|secrets_review_off`, `sim.secret_files` through `window.__h3d.simSecretFiles()`): the review from
   the P overlay, the laptop's prompt box and a paste into its terminal, cancel, a stale review, the switch going off
-  mid-review, and localStorage and `window.__h3d.sent()` checked free of every protected value. For a UX look: `make
+  mid-review, localStorage and `window.__h3d.sent()` checked free of every protected value, and every control of the
+  review reached by pointer and keyboard at 1280x720, 640x360 (200% zoom) and 390x844 (touch), none cut off by a box
+  that does not scroll. For a UX look: `make
   dev`, then `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simsecretson%3D1&floor=herdr-3d`, P on
   Pebble, and a prompt such as `deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD="hunter2x"`.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an

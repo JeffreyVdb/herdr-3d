@@ -329,3 +329,149 @@ test('a prompt near 16 KiB with matches near its start, middle and end: N brings
   expect(ack.data?.protected).toBe(3);
   clean();
 });
+
+/** The review's own controls, by `data-key`: the strip's (a found match in hand), then the footer's and the header's. */
+const STRIP = ['prev', 'next', 'protect', 'ignore', 'start-left', 'start-right', 'end-left', 'end-right', 'mark'];
+const ALWAYS = ['close', 'cancel', 'confirm'];
+
+/**
+ * What hides each control now: an ancestor that cuts it off and that a person cannot scroll (wheel, touch) is a fault;
+ * one that scrolls is fine (the control is reached by scrolling it), and the walk goes on with what it shows. Then,
+ * brought into view (as a click or the focus would), the control is what is under its centre: never the footer.
+ */
+const reachOf = (page: Page, keys: string[]) =>
+  page.evaluate((ks) => {
+    const dlg = document.querySelector('dialog.desk-dlg--secrets') as HTMLElement;
+    const cut: string[] = [];
+    const hidden: string[] = [];
+    const els = ks.map((k) => [k, dlg.querySelector<HTMLElement>(`[data-key="${k}"]:not(.sr-mark)`)] as const);
+    // Everything measured first, as drawn: bringing one into view scrolls the others.
+    for (const [k, el] of els) {
+      if (!el) {
+        cut.push(`${k}: not there`);
+        continue;
+      }
+      let r = { top: el.getBoundingClientRect().top, bottom: el.getBoundingClientRect().bottom };
+      for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+        const oy = getComputedStyle(n).overflowY;
+        if (oy === 'visible') continue;
+        const top = n.getBoundingClientRect().top + n.clientTop;
+        const box = { top, bottom: top + n.clientHeight };
+        if (r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5) continue;
+        if (oy !== 'auto' && oy !== 'scroll') {
+          cut.push(`${k}: cut off by ${n.className || n.tagName} (overflow-y ${oy}): ${Math.round(r.top)}..${Math.round(r.bottom)} outside ${Math.round(box.top)}..${Math.round(box.bottom)}`);
+          break;
+        }
+        r = box;
+      }
+    }
+    for (const [k, el] of els) {
+      if (!el) continue;
+      el.scrollIntoView({ block: 'nearest' });
+      const b = el.getBoundingClientRect();
+      const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      if (!at || !el.contains(at)) hidden.push(`${k}: under ${at ? (at as HTMLElement).className || at.tagName : 'nothing'} once scrolled to`);
+    }
+    return { cut, hidden };
+  }, keys);
+
+/** Seen without scrolling anything: inside the screen and on top at its centre. */
+const seenNow = (page: Page, sels: string[]) =>
+  page.evaluate((ss) => {
+    const out: string[] = [];
+    for (const s of ss) {
+      const el = document.querySelector(s);
+      const b = el?.getBoundingClientRect();
+      if (!el || !b || b.height < 1) {
+        out.push(`${s}: not shown`);
+        continue;
+      }
+      const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      if (b.top < -0.5 || b.bottom > innerHeight + 0.5 || !at || !el.contains(at)) out.push(`${s}: ${Math.round(b.top)}..${Math.round(b.bottom)} of ${innerHeight}, under ${at ? (at as HTMLElement).className || at.tagName : 'nothing'}`);
+    }
+    return out;
+  }, sels);
+
+// #108 U1: at 200% zoom the strip's actions sat below the body's clipping edge, behind the footer, out of reach.
+test('the review at 1280x720, at 200% zoom (640x360) and on a phone (390x844, touch): every control reached by pointer and keyboard, the counts and the footer always in view, the prompt scrolls', async ({ browser }) => {
+  test.setTimeout(300_000);
+  const long = `${TEXT}\n${Array.from({ length: 28 }, (_, i) => `step ${i + 1}: run the release checks and report back`).join('\n')}`;
+  for (const size of [
+    { name: '1280x720', viewport: { width: 1280, height: 720 }, touch: false },
+    { name: '640x360', viewport: { width: 640, height: 360 }, touch: false },
+    { name: '390x844-touch', viewport: { width: 390, height: 844 }, touch: true },
+  ]) {
+    const ctx = await browser.newContext({ viewport: size.viewport, hasTouch: size.touch, isMobile: size.touch });
+    const page = await ctx.newPage();
+    const clean = watchErrors(page);
+    await openGame(page, 'demo-m5', '', `${SIM}&simsecretson=1`);
+    await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+    await frames(page, 3);
+    const id = await idOf(page, 'herdr-3d', 'Pebble');
+    await page.evaluate((i) => window.__h3d.openPrompt(i), id);
+    await expect(page.locator('dialog.desk-dlg--prompt')).toBeVisible();
+    await page.keyboard.insertText(long);
+    await page.locator('dialog.desk-dlg--prompt [data-key="send"]').click();
+    const dlg = page.locator('dialog.desk-dlg--secrets');
+    await expect(dlg).toBeVisible();
+    await page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => undefined))));
+    const at = `${size.name}`;
+    // The counts sentence, Confirm and Cancel: in view from the start.
+    expect(await seenNow(page, ['.sr-sum', ...ALWAYS.map((k) => `dialog.desk-dlg--secrets [data-key="${k}"]`)]), `${at}: in view`).toEqual([]);
+    // The full prompt keeps at least three lines and scrolls (a long prompt), under the wheel too.
+    const well = await page.locator('.sr-prompt').evaluate((p) => {
+      const cs = getComputedStyle(p);
+      return { inner: p.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom), line: parseFloat(cs.lineHeight), scrolls: p.scrollHeight > p.clientHeight, oy: cs.overflowY };
+    });
+    expect(well.inner, `${at}: the prompt's height ${JSON.stringify(well)}`).toBeGreaterThanOrEqual(3 * well.line - 1);
+    expect(well.scrolls && well.oy === 'auto', `${at}: the long prompt scrolls`).toBe(true);
+    const pb = (await page.locator('.sr-prompt').boundingBox())!;
+    await page.mouse.move(pb.x + pb.width / 2, pb.y + pb.height / 2);
+    await page.mouse.wheel(0, 120);
+    await expect.poll(() => page.locator('.sr-prompt').evaluate((p) => p.scrollTop), `${at}: the wheel scrolls the prompt`).toBeGreaterThan(0);
+    // The strip's controls (a found match in hand): never cut off by a box that does not scroll, never under the footer.
+    const found = await reachOf(page, STRIP);
+    expect(found.cut, `${at}: cut off`).toEqual([]);
+    expect(found.hidden, `${at}: hidden`).toEqual([]);
+    // A body taller than its box scrolls under the wheel (over the strip, not the prompt), down to its last control.
+    const body = await page.locator('.sr-body').evaluate((b) => ({ over: b.scrollHeight - b.clientHeight, rect: b.getBoundingClientRect().toJSON() as DOMRect }));
+    if (body.over > 1) {
+      await page.locator('.sr-body').evaluate((b) => (b.scrollTop = 0));
+      const strip = (await page.locator('.sr-strip').boundingBox())!;
+      await page.mouse.move(strip.x + strip.width / 2, Math.min(strip.y + 12, body.rect.bottom - 4));
+      await page.mouse.wheel(0, body.over + 50);
+      await expect.poll(() => page.locator('.sr-body').evaluate((b) => b.scrollTop), `${at}: the wheel scrolls the review`).toBeGreaterThanOrEqual(body.over - 1);
+      expect(await seenNow(page, ['.sr-strip [data-key="mark"]', '.sr-sum', 'dialog.desk-dlg--secrets [data-key="confirm"]']), `${at}: scrolled to the end`).toEqual([]);
+    }
+    // By pointer: Ignore and Protect again, an edge, all where they are drawn.
+    await dlg.locator('.sr-strip [data-key="ignore"]').click();
+    await expect(dlg.locator('.sr-mark[data-key="c1"]')).toHaveAttribute('data-state', 'ignore');
+    await dlg.locator('.sr-strip [data-key="protect"]').click();
+    await dlg.locator('.sr-strip [data-key="start-left"]').click();
+    expect((await review(page))?.marks[0]?.start).toBe(TEXT.indexOf('ghp_') - 1);
+    // By keyboard: Tab from the match in hand reaches every strip control and the footer, each in view when focused.
+    await dlg.locator('.sr-mark[data-key="c1"]').focus();
+    const tabbed: string[] = [];
+    for (let n = 0; n < 16 && !tabbed.includes('confirm'); n++) {
+      await page.keyboard.press('Tab');
+      const k = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.key ?? '');
+      if (!k) continue;
+      tabbed.push(k);
+      expect(await seenNow(page, [`dialog.desk-dlg--secrets [data-key="${k}"]:focus`]), `${at}: ${k} focused`).toEqual([]);
+    }
+    expect(tabbed.filter((k) => STRIP.includes(k) || ALWAYS.includes(k)).sort(), `${at}: tabbed through ${tabbed.join(' ')}`).toEqual([...STRIP, 'cancel', 'confirm'].sort());
+    // A mark of yours in hand: Remove this mark, the same.
+    const a = TEXT.indexOf('admin42');
+    await selectInReview(page, a, a + 'admin42'.length);
+    await dlg.locator('.sr-strip [data-key="mark"]').click();
+    await expect(dlg.locator('.sr-mark[data-manual="true"]')).toHaveCount(1);
+    const mine = await reachOf(page, ['unmark']);
+    expect([...mine.cut, ...mine.hidden], `${at}: Remove this mark`).toEqual([]);
+    await page.locator('.sr-body').evaluate((b) => (b.scrollTop = 0));
+    await shot(page, `h108-review-${size.name}`);
+    await dlg.locator('[data-key="cancel"]').click();
+    await expect(dlg).toBeHidden();
+    clean();
+    await ctx.close();
+  }
+});

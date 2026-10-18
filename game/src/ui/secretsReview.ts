@@ -56,8 +56,9 @@ const plainKey = (e: KeyboardEvent) => !e.ctrlKey && !e.metaKey && !e.altKey && 
  * edge: text and shape, never colour alone). The strip under the well is about the current match: previous and next
  * (N, Shift+N), Protect as file / Ignore this occurrence (Space or Enter on it), its start and end a character at a
  * time (← → the end, Shift+← → the start), and "Mark the selection as secret" (M) for text the scan missed, which
- * Delete takes away again. Counts say what goes to files and what stays plain text. Confirm sends (ignoring the last
- * match never does); Cancel and Esc send nothing.
+ * Delete takes away again. Counts beside Confirm say what goes to files and what stays plain text. Confirm sends
+ * (ignoring the last match never does); Cancel and Esc send nothing. On a short screen (a laptop at 200% zoom) the
+ * body scrolls under the header and the footer, so every control is reached by scrolling it.
  *
  * The prompt is a `contenteditable` that refuses every edit (`beforeinput`, paste, drop, cut, a composition put
  * back): it is there for the caret, so the keyboard selects text with Shift+arrows like anywhere else, and a touch
@@ -117,8 +118,9 @@ export class SecretsReviewDialog {
       h('div', { class: 'dd-titles' }, this.titleEl, this.subEl),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Cancel: nothing is sent', title: 'Cancel (Esc): nothing is sent', onclick: () => this.finish({ kind: 'cancel' }) }, icon(ICON.close)),
     );
-    const body = h('div', { class: 'dd-body sr-body' }, this.noticeEl, this.sum, this.prompt, this.strip, this.keysEl);
-    this.dialog.append(head, body, h('footer', { class: 'dd-foot' }, this.statusEl, this.alertEl, this.actions));
+    // The counts sit in the footer beside Confirm (what it sends), so a short screen that scrolls the body keeps them in view.
+    const body = h('div', { class: 'dd-body sr-body' }, this.noticeEl, this.prompt, this.strip, this.keysEl);
+    this.dialog.append(head, body, h('footer', { class: 'dd-foot' }, this.statusEl, this.alertEl, this.sum, this.actions));
     this.keysEl.append(h('kbd', {}, 'N'), ' next match · ', h('kbd', {}, 'Space'), ' protect or ignore it · ', h('kbd', {}, '←'), h('kbd', {}, '→'), ' its end, with ', h('kbd', {}, 'Shift'), ' its start · select text, then ', h('kbd', {}, 'M'), ' marks it');
     this.wirePrompt();
     this.dialog.addEventListener('keydown', (e) => this.onKey(e));
