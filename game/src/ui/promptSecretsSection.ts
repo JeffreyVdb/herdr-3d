@@ -12,7 +12,7 @@ export interface PromptSecretsSectionHost {
 
 /** What it cannot do, said where it is switched on (docs/decisions.md, #108 row 15). */
 export const SECRETS_LIMIT =
-  'It protects the prompt, not what comes after: the agent can still read a protected file and print it in its conversation, and a value the scan misses is sent as typed unless you mark it in the review.';
+  'It protects the prompt, not what comes after: the agent can still read a protected file and print it in its conversation, and a value the scan misses is sent as typed unless you mark it in the review, which a terminal paste gets only when something is found.';
 
 let serial = 0;
 
