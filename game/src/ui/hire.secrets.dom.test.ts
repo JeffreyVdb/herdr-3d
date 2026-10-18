@@ -135,6 +135,21 @@ describe('HireDialog and prompt secrets (#108 round 4)', () => {
     expect(off.hires()[0]).not.toHaveProperty('secrets');
   });
 
+  it('no first task: nothing to review, hired as today (the dialog busy meanwhile); “Review secrets” asks for one', async () => {
+    const t = setup({ hires: [] });
+    t.dlg.open('floor', 0);
+    await flush();
+    t.press('review');
+    await flush();
+    expect(t.dlg.summary()).toMatchObject({ state: 'ready', status: 'Write the first task first, then review its secrets.', error: true });
+    expect(t.hires()).toEqual([]);
+    t.press('hire');
+    expect(t.dlg.summary()?.state).toBe('hiring');
+    await flush();
+    expect(t.b.scans).toEqual([]);
+    expect(t.hires()).toEqual([expect.not.objectContaining({ prompt: expect.anything() })]);
+  });
+
   it('“Review secrets” opens the review on purpose (nothing found), a mark by hand goes with the hire', async () => {
     const t = setup();
     await typed(t, 'use the code 4471 to get in');

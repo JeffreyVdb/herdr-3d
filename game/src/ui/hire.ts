@@ -1383,17 +1383,14 @@ export class HireDialog {
     const waiting = args.prompt ? doc.snapshot().images.filter((i) => i.status === 'pending' || i.status === 'uploading').length : 0;
     const flow = this.host.secrets;
     let reviewed: { text: string; revision: number; secrets: { flow: PromptSecretsFlow; req: { key: string; text: string; target: string }; go: Go } } | null = null;
-    if (flow && (flow.on || manual)) {
-      if (!args.prompt) {
-        this.state = 'ready';
-        this.setStatus(manual ? 'Write the first task first, then review its secrets.' : '');
-        if (!manual) {
-          // Nothing to review: hired as today.
-          return this.hireNow(floor, desk, args, who, gen, revision, opening, background, sent, doc, added, waiting, null);
-        }
-        this.render();
-        return;
-      }
+    if (manual && !args.prompt) {
+      this.state = 'ready';
+      this.setStatus('Write the first task first, then review its secrets.', true);
+      this.render();
+      return;
+    }
+    // No first task: nothing to review, hired as today.
+    if (flow && (flow.on || manual) && args.prompt) {
       this.setStatus(waiting ? `Uploading ${waiting === 1 ? 'the image' : `${waiting} images`}, then looking for secrets in the first task…` : manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the first task…');
       this.render();
       const still = () => this.dialog.open && gen === this.gen;
