@@ -630,7 +630,27 @@ func TestPromptSecretsHandoffInstruction(t *testing.T) {
 	if b, err := os.ReadFile(ref[1]); err != nil || string(b) != sentinel {
 		t.Fatalf("file %q %v", b, err)
 	}
+	// The composer's resend of the same submission: the request answers it,
+	// and its file is the one already written.
+	_, m = c.command(proto.CmdWorkerPrompt, "p2", proto.WorkerPromptArgs{ID: id, Text: text, Op: "op-s", Secrets: &proto.SecretsReview{
+		Revision: s.Revision, Decisions: []proto.SecretDecision{{Candidate: "c1", Action: proto.SecretProtect}}}})
+	if pr2 := ackData[proto.PromptResult](t, m); pr2.Handoff == nil || !pr2.Existing || pr2.Handoff.Instruction != pr.Handoff.Instruction {
+		t.Fatalf("resend %s", m.raw)
+	}
+	n := 0
+	owners, _ := os.ReadDir(dir)
+	for _, o := range owners {
+		if o.IsDir() {
+			files, _ := os.ReadDir(filepath.Join(dir, o.Name()))
+			n += len(files)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d files after the resend", n)
+	}
 	if strings.Contains(c.heard.String(), sentinel) {
 		t.Fatal("a message holds the secret")
 	}
+	// A plain shell is refused before anything is scanned.
+	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: ab.ids["w3"], Text: "PASSWORD=x9"}, proto.ErrInvalidState)
 }

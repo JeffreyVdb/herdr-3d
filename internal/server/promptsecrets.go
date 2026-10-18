@@ -449,8 +449,12 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 	if !h.promptSourceOK(a.Text) {
 		return badPromptText("text", len(a.Text))
 	}
-	if _, _, err := h.termWorker(a.ID); err != nil {
+	w, _, err := h.termWorker(a.ID)
+	if err != nil {
 		return err
+	}
+	if w.AgentKind == "" {
+		return fmt.Errorf("%w: %s runs no agent (a plain shell: use worker.keys)", errInvalidState, w.Name)
 	}
 	if err := h.laneRoom(a.ID); err != nil {
 		return err
@@ -487,6 +491,7 @@ func (h *Hub) queueReviewedPrompt(ctx context.Context, a proto.WorkerPromptArgs,
 			err = pl.err
 		}
 		if err == nil && pl.work == nil { // a /handoff: its request answers the command; the files are the worker's
+			h.sentReview(p, secretfiles.Worker(a.ID))
 			return
 		}
 		var data any
