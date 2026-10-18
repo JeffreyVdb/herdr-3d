@@ -3907,10 +3907,12 @@ never on the hub goroutine, at most 4 scans at once, 10 s each: past it, `secret
   its ack, once the request is sent, has `sent` (the composer's text with its references) and `protected` too. An
   `existing` answer used none of the text: neither.
 - **Retry**: the identical submission (same worker, revision and decisions) within 5 minutes of a sent one uses
-  the same files. A send that fails removes the files it made, never those it reused. A `/handoff`'s files are its
-  request's until the request is sent (its ack): a request that fails, at once or later (no handoff skill, the
-  request over the limits with its references, a person taking over, the worker gone, a cancel), and an `existing`
-  answer remove the files it made, never those it reused; only a request sent makes its files the retry's.
+  the same files. A send that fails removes the files it made, never those it reused. A `/handoff`'s files follow
+  its request's prompt: until the bridge begins to send it, a request that fails, at once or later (no handoff skill,
+  the request over the limits with its references, a person taking over, the worker gone, a cancel), and an
+  `existing` answer remove the files it made, never those it reused. Once the prompt is being sent, the send decides,
+  whatever ended the request meanwhile: sent, or failed without knowing whether the agent got any of it, the files
+  stay the worker's and serve the retry; refused before any of it reached the agent, they go.
 - **Telegram replies** have no review: a reply with candidates is refused with a fixed sentence (see
   [Notifications](#notifications)).
 

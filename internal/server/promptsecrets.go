@@ -439,11 +439,15 @@ func (h *Hub) unprotect(ctx context.Context, p protected) {
 }
 
 // settleHandoff is a reviewed /handoff's settle (agentAsk.settle, hub
-// goroutine): its files are its request's until the request is sent. Sent,
-// they serve the submission's retry; the request failed (the skill, the
-// limits with the references, a takeover, the worker gone, a cancel) or
-// another one answered it (this text unused), the files the submission
-// made go, off the hub goroutine (never those it reused).
+// goroutine): its files follow its request's prompt. The request's end
+// decides until the lane begins to send the prompt, the send's result from
+// then on, whatever ended the request meanwhile. Sent, or failed without
+// knowing whether any of it reached the terminal, they stay the worker's
+// and serve the submission's retry; the request failed before the send (the
+// skill, the limits with the references, its transcript, a takeover, the
+// worker gone, a cancel), the send refused before any of it reached the
+// terminal, or another request answered it (this text unused), the files
+// the submission made go, off the hub goroutine (never those it reused).
 func (h *Hub) settleHandoff(p protected, owner secretfiles.Owner) func(err error, existing bool) {
 	return func(err error, existing bool) {
 		if err == nil && !existing {

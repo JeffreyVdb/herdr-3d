@@ -84,6 +84,9 @@ type agentHandoff struct {
 	text    string
 	answer  func(r proto.AgentHandoff, existing bool, queued bool) any
 	settle  func(err error, existing bool)
+	// sending: the lane is sending the request's prompt, so the send's
+	// result settles, not the request's end (settleAgentStart).
+	sending bool
 	by      string
 	// The tracker's last look at the ended turn: its line count, since
 	// when; and since when the turn ended with herdr idle.
@@ -250,10 +253,14 @@ type agentAsk struct {
 	// is answered, not refused).
 	prompt bool
 	answer func(r proto.AgentHandoff, existing bool, queued bool) any
-	// settle (#108, nil: none) is told how the command ends, just before
-	// its answer (hub goroutine): with the error of a request that failed
-	// once started, or existing when another request answered it; never
-	// for a refusal startAgentHandoff returns.
+	// settle (#108, nil: none) is told once (hub goroutine) how the
+	// request's prompt ended: existing when another request answered the
+	// command; else, until the lane begins to send the prompt, with the
+	// request's end (the error of one that failed once started) as the
+	// command is answered, and from then on with the send's result
+	// whatever ended the request meanwhile: nil when the prompt may have
+	// reached the terminal (sent, or failed without knowing), the error
+	// when none of it did. Never for a refusal startAgentHandoff returns.
 	settle func(err error, existing bool)
 }
 
@@ -510,14 +517,23 @@ func (h *Hub) answerKnown(ctx context.Context, c *Client, cmd proto.Command, v p
 	h.reply(c, cmd, a.answer(v, true, false), nil)
 }
 
-// endAgentStart writes a starting request's audit row, tells its settle and
+// settleAgentStart tells a request's settle how its prompt ended, once.
+func (h *Hub) settleAgentStart(ah *agentHandoff, err error) {
+	if settle := ah.settle; settle != nil {
+		ah.settle = nil
+		settle(err, false)
+	}
+}
+
+// endAgentStart tells a starting request's settle how it ended unless its
+// prompt is being sent (the send settles), then writes its audit row and
 // replies to its command (once).
 func (h *Hub) endAgentStart(ctx context.Context, ah *agentHandoff, err error, queued ...bool) {
+	if !ah.sending {
+		h.settleAgentStart(ah, err)
+	}
 	if ah.client == nil {
 		return
-	}
-	if ah.settle != nil {
-		ah.settle(err, false)
 	}
 	rep := struct {
 		Worker string `json:"worker"`
@@ -706,11 +722,14 @@ func (h *Hub) agentArmed(ctx context.Context, ah *agentHandoff, u agentUpdate) {
 			case w.Ask != nil || (w.Status != statusIdle && w.Status != statusDone):
 				return laneTarget{err: fmt.Errorf("%w: %s is %s: only an idle or done worker is asked", errInvalidState, w.Name, w.Status)}
 			}
+			ah.sending = true
 			return laneTarget{session: w.Session, pane: w.PaneID}
 		})
 		var res any
+		began := false
 		if err == nil {
 			if err = t.err; err == nil {
+				began = true
 				res, err = h.prompt(ctx, proto.WorkerPromptArgs{ID: id, Text: text}, t.session, t.pane)
 			}
 		}
@@ -718,6 +737,14 @@ func (h *Hub) agentArmed(ctx context.Context, ah *agentHandoff, u agentUpdate) {
 			h.kickUsage()
 		}
 		_ = h.doWait(ctx, func() {
+			if ah.sending { // #108: the send settles, whatever ended the request meanwhile
+				ah.sending = false
+				if err != nil && (!began || notSent(err)) {
+					h.settleAgentStart(ah, err)
+				} else {
+					h.settleAgentStart(ah, nil)
+				}
+			}
 			if err != nil && h.ah.byOp[ah.req.Op] == ah {
 				h.failAgentHandoff(ctx, ah, "its prompt failed: "+err.Error())
 			}

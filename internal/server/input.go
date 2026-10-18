@@ -507,7 +507,7 @@ func (p promptState) started(since uint64) bool {
 func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pane string) (any, error) {
 	cur, err := query(ctx, h, func() promptState { return h.promptState(a.ID) })
 	if err != nil {
-		return nil, err
+		return nil, unsent(err)
 	}
 	if typesPrompts(cur.kind) {
 		return h.typePrompt(ctx, a.ID, session, pane, a.Text, false)
@@ -515,14 +515,14 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	t := h.opts.Term
 	switch cur.status {
 	case statusAsking:
-		return nil, fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting)
+		return nil, unsent(fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting))
 	case statusBlocked:
 		// #156: blocked only by a shared Codex worker's async question:
 		// through its app-server (herdr would refuse it).
 		if res, ok, err := h.promptViaServer(ctx, a.ID, a.Text); ok {
 			return res, err
 		}
-		return nil, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
+		return nil, unsent(fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState))
 	case statusWorking:
 		if err := t.QueuePrompt(ctx, session, pane, a.Text); err != nil {
 			return nil, fmt.Errorf("%w: %v", errPromptFailed, err)
@@ -539,6 +539,20 @@ func (h *Hub) prompt(ctx context.Context, a proto.WorkerPromptArgs, session, pan
 	}
 	return h.retryEnter(ctx, a.ID, session, pane, cur.starts, h.retryKeys(cur.kind, a.Text)...)
 }
+
+// notSentError is a prompt's error from before any of it reached the
+// terminal (unsent): its text and kind are the error's. Any other failure
+// may have left the text with the agent (#108: a reviewed /handoff's files
+// then stay; agentAsk.settle).
+type notSentError struct{ error }
+
+func (e notSentError) Unwrap() error { return e.error }
+
+// unsent marks err as from before any of a prompt reached the terminal.
+func unsent(err error) error { return notSentError{err} }
+
+// notSent reports an error marked unsent.
+func notSent(err error) bool { return errors.As(err, new(notSentError)) }
 
 // terminalPrompt sends a prompt that runs a terminal-only built-in (#140):
 // it opens a dialog or prints in the terminal, and starts no turn. It is
@@ -648,29 +662,29 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 	for end := time.Now().Add(h.opts.PromptReadyWait); ; {
 		var err error
 		if cur, err = query(ctx, h, func() promptState { return h.promptState(id) }); err != nil {
-			return cur, err
+			return cur, unsent(err)
 		}
 		s := cur.status
 		switch {
 		case s == statusAsking && !settling:
-			return cur, fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting)
+			return cur, unsent(fmt.Errorf("%w: the worker %w: answer it first", errInvalidState, errAskWaiting))
 		case s == statusBlocked && !settling:
-			return cur, fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState)
+			return cur, unsent(fmt.Errorf("%w: the worker is blocked: answer its question first", errInvalidState))
 		}
 		if s == statusWorking || s == statusIdle || s == statusDone {
 			break
 		}
 		if time.Now().After(end) || ctx.Err() != nil {
-			return cur, fmt.Errorf("%w: the agent is not ready for a prompt (herdr says %q)", errPromptFailed, s)
+			return cur, unsent(fmt.Errorf("%w: the agent is not ready for a prompt (herdr says %q)", errPromptFailed, s))
 		}
 		sleepCtx(ctx, answerPoll)
 	}
 	t := h.opts.Term
 	if err := h.eraseDirty(ctx, id, session, pane, t.EraseTyped); err != nil {
-		return cur, err
+		return cur, unsent(err) // an earlier prompt's leftovers: none of this one is typed
 	}
 	if err := h.doWait(ctx, func() { h.noteTyped(id, text) }); err != nil {
-		return cur, err
+		return cur, unsent(err)
 	}
 	if err := t.TypePrompt(ctx, session, pane, text); err != nil {
 		h.erasePartlyTyped(ctx, id, session, pane, err, t.EraseTyped)

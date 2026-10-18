@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf16"
@@ -204,6 +205,27 @@ func TestPromptSecretsOffSendsAsToday(t *testing.T) {
 		Secrets: &proto.SecretsReview{Revision: "r"}}, proto.ErrSecretsReviewStale)
 	if len(sb.term.Calls()) != 1 {
 		t.Fatalf("calls %q", sb.term.Calls())
+	}
+}
+
+// Off, a /handoff goes as today too: its ack has no sent or protected, its
+// request's prompt holds the instruction as typed, and no file is made.
+func TestPromptSecretsOffHandoffAsToday(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "secrets")
+	ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.SecretsDir = dir })
+	c := ab.connect(proto.Hello{})
+	c.snapshot()
+	_, m := c.command(proto.CmdWorkerPrompt, "off", proto.WorkerPromptArgs{ID: ab.ids["w2"], Text: "/handoff password=Off-Handoff-Sentinel-73x", Op: "op-off"})
+	if pr := ackData[proto.PromptResult](t, m); pr.Handoff == nil || pr.Sent != "" || pr.Protected != 0 ||
+		strings.Contains(string(m.raw), `"sent":`) || strings.Contains(string(m.raw), `"protected":`) {
+		t.Fatalf("ack %s", m.raw)
+	}
+	if prompt, _, _, n := ab.requested("w2:p1"); n != 1 || !strings.Contains(prompt, "handoff password=Off-Handoff-Sentinel-73x\n") {
+		t.Fatalf("%d requests: %q", n, prompt)
+	}
+	if f := protectedFiles(t, dir); len(f) != 0 {
+		t.Fatalf("files %v", f)
 	}
 }
 
@@ -864,5 +886,177 @@ func TestPromptSecretsSymbolsBesideOwnReference(t *testing.T) {
 	// A lone wrapper beside it is no secret: the text scans clean.
 	if s := sb.scan(t, "secret=("+ref+")"); len(s.Candidates) != 0 {
 		t.Fatalf("wrapped: %+v", s)
+	}
+}
+
+// Once the lane has begun to send a reviewed /handoff's request, the send's
+// result settles its files, whatever ended the request meanwhile (review
+// P2-1): a cancel or a person taking over while the prompt is submitted,
+// and a send that fails without knowing whether the agent took it, leave
+// the file its prompt refers to with the worker. Before the send, the same
+// ends remove it.
+func TestPromptSecretsHandoffSettlesWithItsSend(t *testing.T) {
+	t.Parallel()
+	type held struct {
+		ab      *agBridge
+		c, x    *client
+		dir, op string
+		release func()
+		path    string // the file the submitted prompt refers to
+	}
+	// start sends a reviewed /handoff to w2 (Codex) with the sentinel
+	// protected, and returns once it is held: "submit" once the terminal
+	// took its prompt, "lookup" while its skill is looked up (nothing
+	// sent); "fail" fails the submission instead (it returns once tried).
+	start := func(t *testing.T, sentinel, hold string) held {
+		t.Helper()
+		dir := filepath.Join(t.TempDir(), "secrets")
+		ab := startAgentBridge(t, "", "", "", func(o *server.Options) { o.SecretsDir = dir })
+		c, x := ab.connect(proto.Hello{}), ab.connect(proto.Hello{})
+		c.snapshot()
+		x.snapshot()
+		c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+		text := "/handoff password=" + sentinel
+		_, m := c.command(proto.CmdPromptSecretsScan, "scan", proto.PromptSecretsScanArgs{Text: text})
+		s := ackData[proto.PromptSecretsScan](t, m)
+		entered, gate := make(chan struct{}, 1), make(chan struct{})
+		var once sync.Once
+		release := func() { once.Do(func() { close(gate) }) }
+		t.Cleanup(release)
+		switch hold {
+		case "submit":
+			ab.term.mu.Lock()
+			previous := ab.term.onPrompt
+			ab.term.onPrompt = func(pane, how string) {
+				if previous != nil {
+					previous(pane, how)
+				}
+				if pane == "w2:p1" && how == "submit" {
+					entered <- struct{}{}
+					<-gate
+				}
+			}
+			ab.term.mu.Unlock()
+		case "lookup":
+			ab.cat.mu.Lock()
+			ab.cat.gate, ab.cat.entered = gate, entered
+			ab.cat.mu.Unlock()
+		case "fail":
+			ab.term.mu.Lock()
+			ab.term.submit = []error{errors.New("connection reset by peer")}
+			ab.term.mu.Unlock()
+		}
+		op := "op-" + strings.ToLower(sentinel[:4])
+		args, _ := json.Marshal(proto.WorkerPromptArgs{ID: ab.ids["w2"], Text: text, Op: op, Secrets: &proto.SecretsReview{
+			Revision: s.Revision, Decisions: []proto.SecretDecision{{Candidate: "c1", Action: proto.SecretProtect}}}})
+		c.send(proto.Command{T: proto.CmdWorkerPrompt, ReqID: "p", Args: args})
+		h := held{ab: ab, c: c, x: x, dir: dir, op: op, release: release}
+		if hold == "lookup" {
+			<-entered
+			if f := protectedFiles(t, dir); len(f) != 1 {
+				t.Fatalf("written before the lookup: %v", f)
+			}
+			return h
+		}
+		if hold == "submit" {
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("no submission")
+			}
+		}
+		var prompt string
+		var n int
+		eventually(t, "the request submitted", func() bool { prompt, _, _, n = ab.requested("w2:p1"); return n > 0 })
+		refs := refRe.FindAllStringSubmatch(prompt, -1)
+		if n != 1 || len(refs) != 1 || strings.Contains(prompt, sentinel) {
+			t.Fatalf("submitted %d: %q", n, prompt)
+		}
+		if b, err := os.ReadFile(refs[0][1]); err != nil || string(b) != sentinel {
+			t.Fatalf("the file %q %v", b, err)
+		}
+		h.path = refs[0][1]
+		return h
+	}
+	// failed waits for the request's command to fail.
+	failed := func(t *testing.T, h held) {
+		t.Helper()
+		for {
+			if m := h.c.next(); m.env.ReqID == "p" {
+				if m.env.T != proto.TError {
+					t.Fatalf("the request's command: %s", m.raw)
+				}
+				return
+			}
+		}
+	}
+	// cancel cancels the request from x; keys sends worker.keys from x,
+	// which takes over at once (on the hub) and then waits on the lane.
+	cancel := func(h held) {
+		h.x.mustAck(proto.CmdWorkerHandoffCancel, proto.WorkerHandoffCancelArgs{Worker: h.ab.ids["w2"], Op: h.op})
+	}
+	keys := func(h held) {
+		args, _ := json.Marshal(proto.WorkerKeysArgs{ID: h.ab.ids["w2"], Input: []proto.InputItem{{Key: ptr("esc")}}})
+		h.x.send(proto.Command{T: proto.CmdWorkerKeys, ReqID: "k", Args: args})
+	}
+	// kept: once the lane is done (keys acked), the file the prompt refers
+	// to is still there, the only one.
+	kept := func(t *testing.T, h held, sentinel string) {
+		t.Helper()
+		for {
+			if m := h.x.next(); m.env.ReqID == "k" {
+				if m.env.T != proto.TAck {
+					t.Fatalf("keys %s", m.raw)
+				}
+				break
+			}
+		}
+		if f := protectedFiles(t, h.dir); len(f) != 1 || f[h.path] != sentinel {
+			t.Fatalf("the submitted prompt's file %s: files %v", h.path, f)
+		}
+	}
+	t.Run("cancel after submission", func(t *testing.T) {
+		t.Parallel()
+		const sentinel = "Cancel-Sentinel-73x"
+		h := start(t, sentinel, "submit")
+		cancel(h)
+		failed(t, h)
+		keys(h)
+		h.release()
+		kept(t, h, sentinel)
+	})
+	t.Run("takeover after submission", func(t *testing.T) {
+		t.Parallel()
+		const sentinel = "Takeover-Sentinel-74x"
+		h := start(t, sentinel, "submit")
+		keys(h)
+		failed(t, h)
+		h.release()
+		kept(t, h, sentinel)
+	})
+	t.Run("send failed without knowing", func(t *testing.T) {
+		t.Parallel()
+		const sentinel = "Unknown-Sentinel-75x"
+		h := start(t, sentinel, "fail")
+		failed(t, h)
+		keys(h)
+		kept(t, h, sentinel)
+	})
+	for _, end := range []string{"cancel", "takeover"} {
+		t.Run(end+" before the send", func(t *testing.T) {
+			t.Parallel()
+			h := start(t, "Before-Sentinel-76x", "lookup")
+			if end == "cancel" {
+				cancel(h)
+			} else {
+				keys(h)
+			}
+			failed(t, h)
+			h.release()
+			waitFor(t, "the file removed", func() bool { return len(protectedFiles(t, h.dir)) == 0 })
+			if _, _, _, n := h.ab.requested("w2:p1"); n != 0 {
+				t.Fatalf("%d requests sent", n)
+			}
+		})
 	}
 }
