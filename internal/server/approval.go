@@ -352,10 +352,11 @@ func bare(s string) string {
 }
 
 // nativeOf is the one pending call of calls that op is about (nil: none,
-// or more than one could be). A Bash dialog's command lines, joined
-// without whitespace, must be its command (whole; a dialog whose top is
-// off the screen, its end, at least minNativeTail of it); a file dialog's
-// path must be its file_path (or its end). Anything else is not matched.
+// or more than one could be). A Bash dialog's command lines must draw its
+// command word for word (drawn: whole; a dialog whose top is off the
+// screen, its end, at least minNativeTail characters of it); a file
+// dialog's path must be its file_path (or its end). Anything else is not
+// matched.
 func nativeOf(op *menuOp, calls []transcript.PendingCall, mode string) *nativeCall {
 	if op == nil || len(op.lines) == 0 {
 		return nil
@@ -407,20 +408,61 @@ func matchCall(op *menuOp, c transcript.PendingCall) *nativeCall {
 	if c.Name != "Bash" || in.Command == "" {
 		return nil
 	}
-	cmd := bare(in.Command)
-	var run strings.Builder
-	for k, l := range lines {
-		run.WriteString(bare(l))
-		got := run.String()
-		switch {
-		case op.complete && got == cmd, !op.complete && len(got) >= minNativeTail && strings.HasSuffix(cmd, got):
-			nc.cmd = k + 1
-			return nc
-		case !strings.Contains(cmd, got):
-			return nil
+	cmd := words(in.Command)
+	if op.complete {
+		nc.cmd = drawn(lines, cmd)
+	} else {
+		for n := 1; n <= len(lines) && nc.cmd == 0; n++ {
+			if len(bare(strings.Join(lines[:n], ""))) >= minNativeTail && drawnEnd(lines[:n], cmd) {
+				nc.cmd = n
+			}
 		}
 	}
-	return nil
+	if nc.cmd == 0 {
+		return nil
+	}
+	return nc
+}
+
+// words is s with each run of whitespace one space, trimmed.
+func words(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// drawn is how many of lines, a dialog's from the top, draw cmd (words')
+// whole (0: they do not): their words its words, and where a line breaks,
+// one of its spaces, or none (the wrap cut a word: the screen cannot tell
+// the two apart).
+func drawn(lines []string, cmd string) int {
+	j := 0
+	for k, l := range lines {
+		if k > 0 && j < len(cmd) && cmd[j] == ' ' {
+			j++
+		}
+		l = words(l)
+		if !strings.HasPrefix(cmd[j:], l) {
+			return 0
+		}
+		if j += len(l); j == len(cmd) {
+			return k + 1
+		}
+	}
+	return 0
+}
+
+// drawnEnd reports whether lines draw cmd's end as drawn does its whole
+// (the first may start inside a word).
+func drawnEnd(lines []string, cmd string) bool {
+	j := len(cmd)
+	for k := len(lines) - 1; k >= 0; k-- {
+		if k < len(lines)-1 && j > 0 && cmd[j-1] == ' ' {
+			j--
+		}
+		l := words(lines[k])
+		if !strings.HasSuffix(cmd[:j], l) {
+			return false
+		}
+		j -= len(l)
+	}
+	return true
 }
 
 // bypassRmRe is a removal Claude Code still asks about in bypass mode.

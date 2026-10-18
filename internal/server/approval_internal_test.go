@@ -509,3 +509,47 @@ func TestNativeOf(t *testing.T) {
 		t.Fatalf("an Edit for a Create file dialog: %+v", n)
 	}
 }
+
+// #106: a dialog's command is its call's word for word: a line break is
+// a space of the command or none (a word cut by the wrap), and nothing
+// else is; words joined or split otherwise are another command.
+func TestNativeOfWords(t *testing.T) {
+	t.Parallel()
+	spaced, joined := bashCall("toolu_a", "touch /tmp/a /tmp/b", "Touch them"), bashCall("toolu_b", "touch /tmp/a/tmp/b", "Touch it")
+	for name, tc := range map[string]struct {
+		call  transcript.PendingCall
+		lines []string
+		want  bool
+	}{
+		"one line":           {spaced, []string{"touch /tmp/a /tmp/b"}, true},
+		"wrapped at a space": {spaced, []string{"touch /tmp/a", "/tmp/b"}, true},
+		"wrapped in a word":  {spaced, []string{"touch /tmp/a /tm", "p/b"}, true},
+		"joined":             {spaced, []string{"touch /tmp/a/tmp/b"}, false},
+		"split":              {spaced, []string{"touch /tmp/a /tmp/ b"}, false},
+		"more spaces":        {spaced, []string{"touch  /tmp/a   /tmp/b"}, true},
+		"its own":            {joined, []string{"touch /tmp/a/tmp/b"}, true},
+		"spaced":             {joined, []string{"touch /tmp/a /tmp/b"}, false},
+		"cut by the wrap":    {joined, []string{"touch /tmp/a", "/tmp/b"}, true}, // a wrap may cut a word: the screen cannot tell
+	} {
+		sq := parseQuestionOf("claude", claudeBash("", tc.lines...), 1)
+		if got := nativeOf(sq.op, []transcript.PendingCall{tc.call}, "") != nil; got != tc.want {
+			t.Errorf("%s: matched %t", name, got)
+		}
+	}
+	// Cut at the top: its end, word for word.
+	tall := bashCall("toolu_t", "S=/tmp/run\nD=$S/scratch\ntouch /tmp/a /tmp/b", "Touch them")
+	for name, tc := range map[string]struct {
+		lines []string
+		want  bool
+	}{
+		"its end":        {[]string{"D=$S/scratch", "touch /tmp/a /tmp/b"}, true},
+		"its end joined": {[]string{"D=$S/scratch", "touch /tmp/a/tmp/b"}, false},
+		"cut in a word":  {[]string{"scratch", "touch /tmp/a /tmp/b"}, true},
+	} {
+		full := claudeBash("", append([]string{"S=/tmp/run"}, tc.lines...)...)
+		sq := parseQuestionOf("claude", full[strings.Index(full, "   "+tc.lines[0]):], 1)
+		if got := nativeOf(sq.op, []transcript.PendingCall{tall}, "") != nil; sq.op.complete || got != tc.want {
+			t.Errorf("cut, %s: matched %t (%+v)", name, got, sq.op)
+		}
+	}
+}

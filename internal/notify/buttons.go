@@ -505,9 +505,11 @@ func (s *Service) seen(ctx context.Context, id, key string, menu *menuSeen, bloc
 
 // moved takes a menu's new look of the same operation (#106): its hash,
 // labels or what it is about redrawn. Its card follows (re-rendered in the
-// batch's flush, edited only if it reads otherwise) and a tap answers the
-// new hash; a native call other than the one it was for is another
-// operation: replaced.
+// batch's flush) with a new keyboard whenever its hash or native call
+// changed, so a tap answers only the hash its keyboard was shown with (one
+// on an old keyboard: tapChangedText), even when the text reads the same
+// (a change past what the card shows); a native call other than the one
+// it was for is another operation: replaced.
 func (s *Service) moved(ctx context.Context, ss *session, m *menuSeen) {
 	if m == nil {
 		return
@@ -525,9 +527,8 @@ func (s *Service) moved(ctx context.Context, ss *session, m *menuSeen) {
 	if m.menu.Hash != ss.menu.Hash {
 		ss.redraws++
 	}
-	if !slices.Equal(m.menu.About, ss.menu.About) || !slices.Equal(m.menu.Choices, ss.menu.Choices) {
-		// What it shows changes: a new keyboard, so a tap is on the one
-		// shown with it (one on the old: tapChangedText).
+	if m.menu.Hash != ss.menu.Hash || m.menu.Native != ss.menu.Native || !slices.Equal(m.menu.About, ss.menu.About) ||
+		!slices.Equal(m.menu.Choices, ss.menu.Choices) {
 		ss.tok = newToken()
 	}
 	ss.menu, ss.name = m.menu, m.name

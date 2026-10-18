@@ -104,6 +104,35 @@ func TestCardMenuNativeCallReplaced(t *testing.T) {
 	}
 }
 
+// tapChangedText is what a tap on a card's old keyboard is answered.
+const tapChangedText = "It changed: check the card and tap again"
+
+// tapAnswered waits for the n-th tap's answer and checks it says want.
+func tapAnswered(t *testing.T, ch *notify.FakeChannel, n int, want string) {
+	t.Helper()
+	if !ch.WaitFor(func() bool { return len(ch.TapAnswers()) >= n }, 5*time.Second) || ch.TapAnswers()[n-1].Text != want {
+		t.Fatalf("tap answers %+v, want %q", ch.TapAnswers(), want)
+	}
+}
+
+// newKeyboard waits until card ref's button prefix is no longer old (its
+// keyboard was replaced).
+func newKeyboard(t *testing.T, ch *notify.FakeChannel, ref notify.Ref, prefix, old string) {
+	t.Helper()
+	if !ch.WaitFor(func() bool {
+		for _, row := range ch.Card(ref).Buttons {
+			for _, b := range row {
+				if strings.HasPrefix(b.Text, prefix) {
+					return b.Data != old
+				}
+			}
+		}
+		return false
+	}, 5*time.Second) {
+		t.Fatalf("card %+v kept its keyboard", ch.Card(ref))
+	}
+}
+
 // #106: a command line that reads like a status line ("esc to interrupt")
 // is the operation's: the card shows it, and a tap on its Yes once the
 // screen asks about another command sends nothing; the new one gets its
@@ -129,6 +158,29 @@ func TestCardMenuCommandLikeIncidentalThroughTheHub(t *testing.T) {
 	}
 }
 
+// #106: a change the card cannot show (past a line's 300th character)
+// still gives it a new keyboard: a tap on the old one sends nothing.
+func TestCardMenuClippedChangeThroughTheHub(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridgeWith(t, func(o *server.Options) { o.QuestionPoll = time.Millisecond; o.AnswerTimeout = time.Millisecond })
+	rb.repliesOn(t)
+	command := "echo " + strings.Repeat("ordinary words ", 25) + "; touch /tmp/a /tmp/b"
+	first := bashDialog(command, "Perform cleanup")
+	ref := rb.menuCardOf(t, "w1", first)
+	old := rb.ch.Card(ref)
+	yes := buttonData(t, old, "1.")
+	rb.term.setScreen("w1:p1", strings.Replace(first, "touch /tmp/a /tmp/b", "touch /tmp/a/tmp/b", 1))
+	newKeyboard(t, rb.ch, ref, "1.", yes)
+	if c := rb.ch.Card(ref); c.Text != old.Text {
+		t.Fatalf("the card shows the change: %q", c.Text)
+	}
+	rb.ch.Tap("t1", ref, yes)
+	tapAnswered(t, rb.ch, 1, tapChangedText)
+	if calls := rb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("typed %q", calls)
+	}
+}
+
 // #106: a password in shell quotes never reaches the card.
 func TestCardMenuQuotedPasswordThroughTheHub(t *testing.T) {
 	t.Parallel()
@@ -137,5 +189,27 @@ func TestCardMenuQuotedPasswordThroughTheHub(t *testing.T) {
 	ref := rb.menuCardOf(t, "w1", bashDialog(`sshpass -p 'hunter2' ssh host && curl -u admin:"hunter2" https://x.test`, "Run command"))
 	if c := rb.ch.Card(ref); strings.Contains(c.Text, "hunter2") || !strings.Contains(c.Text, "sshpass -p [key] ssh host") {
 		t.Fatalf("card %q", c.Text)
+	}
+}
+
+// #106: a card that knew its call (A) and whose screen now shows a command
+// that differs from it only in its spaces is not A's any more: it shows
+// what the screen asks, with a new keyboard; a tap on the old one sends
+// nothing.
+func TestCardMenuNativeWordsThroughTheHub(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridgeWith(t, func(o *server.Options) { o.QuestionPoll = time.Millisecond; o.AnswerTimeout = time.Millisecond })
+	rb.repliesOn(t)
+	appendLine(t, rb.claude, bashCallLine("toolu_one", "touch /tmp/a /tmp/b", "Run command"))
+	ref := rb.menuCardOf(t, "w1", bashDialog("touch /tmp/a /tmp/b", "Run command"))
+	old := waitCardText(t, rb.ch, ref, "In: /home/u/w1")
+	rb.term.setScreen("w1:p1", bashDialog("touch /tmp/a/tmp/b", "Run command"))
+	if c := waitCardText(t, rb.ch, ref, "touch /tmp/a/tmp/b"); strings.Contains(c.Text, "In: /home/u/w1") {
+		t.Fatalf("card %q", c.Text)
+	}
+	rb.ch.Tap("t1", ref, buttonData(t, old, "1."))
+	tapAnswered(t, rb.ch, 1, tapChangedText)
+	if calls := rb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("typed %q", calls)
 	}
 }

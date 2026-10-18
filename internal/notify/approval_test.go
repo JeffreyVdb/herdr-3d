@@ -206,3 +206,38 @@ func TestCardMenuOldKeyboard(t *testing.T) {
 		t.Fatalf("taps %+v", taps)
 	}
 }
+
+// #106: a new hash, or a native call learnt, under a card whose text reads
+// the same (a change past what it shows) is a new keyboard too: a tap on
+// the old one never answers the new hash.
+func TestCardMenuNewHashNewKeyboard(t *testing.T) {
+	a := &answerer{}
+	r := newCardRig(t, a)
+	ref := r.menuCard(t, "w1", 100, opMenu("aaaaaaaaaaaaaaaa", "op-a", "touch a b …"))
+	first := r.ch.Card(ref)
+	keyboard := func(old Card) Card {
+		t.Helper()
+		if !r.ch.WaitFor(func() bool { return button(t, r.ch.Card(ref), "1.").Data != button(t, old, "1.").Data }, 5*time.Second) {
+			t.Fatalf("card %+v kept its keyboard", r.ch.Card(ref))
+		}
+		return r.ch.Card(ref)
+	}
+	r.svc.Observe(menuOn("w1", 100, opMenu("bbbbbbbbbbbbbbbb", "op-a", "touch a b …")))
+	second := keyboard(first)
+	native := opMenu("bbbbbbbbbbbbbbbb", "op-a", "touch a b …")
+	native.Native = "nnnnnnnnnnnnnnnn"
+	r.svc.Observe(menuOn("w1", 100, native))
+	now := keyboard(second)
+	for _, old := range []Card{first, second} {
+		if got := r.tapAnswer(t, r.tap(t, ref, button(t, old, "1.").Data)); got != tapChangedText {
+			t.Fatalf("old keyboard's tap: %q", got)
+		}
+	}
+	if now.Text != first.Text || len(a.all()) != 0 {
+		t.Fatalf("card %q, answers %+v", now.Text, a.all())
+	}
+	r.tap(t, ref, button(t, now, "1.").Data)
+	if got := r.waitAnswers(t, a, 1); got[0].Hash != "bbbbbbbbbbbbbbbb" || got[0].Native != "nnnnnnnnnnnnnnnn" {
+		t.Fatalf("answer %+v", got[0])
+	}
+}
