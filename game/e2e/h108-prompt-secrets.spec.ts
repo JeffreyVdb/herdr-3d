@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { frames, leftInTerminal, openGame, openMenu, seatMode, settingsSection, shot, watchErrors } from './game';
 import { CLEANUP, fakeJev, fakeOpenAI, switchOn } from './packupFakes';
+import { boot, SURFACES } from './ui-surfaces';
 
 // #108 round 3: "Review prompt secrets before sending" against the fixture bridge (`sim=1`, tools/fixture-secrets.ts and
 // its fake detector). The switch in Settings; a prompt with possible secrets opens the review of the whole prompt, where
@@ -647,5 +648,109 @@ test('round 4: a schedule’s prompt is saved with every match ignored: Protect 
   const [create] = await sent(page, 'schedule.create');
   expect(create!.args).toMatchObject({ title: 'Nightly deploy', prompt, secrets: { decisions: [{ candidate: 'c1', action: 'ignore' }] } });
   await expect.poll(async () => (await sent(page, 'schedule.create'))[0]?.result?.ok).toBe(true);
+  clean();
+});
+
+const CHIP_REF = /\[secret in file \/run\/user\/1000\/herdr-world\/secrets\/[A-Z2-7]{26}\/[A-Z2-7]{26}\]/;
+
+test('round 4: a protected value’s reference is a masked chip in the conversation: its path in the file popover, the reference in a copy', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  const s = SURFACES.find((x) => x.name === 'secret-chips')!;
+  await boot(page, s.fixture, { ui: 'quiet' }, s.extra ?? '', s.wsQuery);
+  await s.open(page);
+  const msg = page.locator('.seat-transcript .tx-item.tx-user:not(.tx-pending) .tx-md', { has: page.locator('.secret-chip') }).last();
+  const chip = msg.locator('.secret-chip');
+  await expect(chip).toHaveCount(1);
+  await expect(chip).toHaveAccessibleName(/^Protected file: \/run\/user\/1000\/herdr-world\/secrets\//);
+  // On screen: the tape's words, never the path or the value.
+  const visible = await msg.evaluate((el) => {
+    const c = el.cloneNode(true) as HTMLElement;
+    c.querySelectorAll('.secret-chip-ref').forEach((x) => x.remove());
+    return c.textContent?.trim();
+  });
+  expect(visible).toBe('Deploy with TOKEN=protected file now');
+  expect(await page.content()).not.toContain('ghp_abcdefghijklmnopqrstu1');
+  // A copy of the whole message: the reference as sent, in place.
+  const copied = await msg.evaluate((el) => {
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    const sel = document.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(r);
+    const t = sel.toString();
+    sel.removeAllRanges();
+    return t;
+  });
+  expect(copied.trim()).toMatch(new RegExp(`^Deploy with TOKEN=${CHIP_REF.source} now$`));
+  // A press opens the file popover with the path and "Copy file path".
+  await chip.click();
+  const pop = page.locator('.seat-transcript .tx-fref[role="dialog"]');
+  await expect(pop).toBeVisible();
+  await expect(pop.locator('.tx-fref-path')).toHaveText(/^\/run\/user\/1000\/herdr-world\/secrets\/[A-Z2-7]{26}\/[A-Z2-7]{26}$/);
+  await expect(pop.locator('.tx-fref-copy')).toHaveText('Copy file path');
+  await page.keyboard.press('Escape');
+  await expect(pop).toBeHidden();
+  clean();
+});
+
+/** Sends a prompt with a protected value from Pebble's prompt box (seated in its conversation); Pebble's id. */
+async function sendProtectedFromBox(page: Page): Promise<string> {
+  const id = await sitAt(page, 'Pebble', 'transcript');
+  await page.locator('.seat-transcript .tx .tx-input').click();
+  await page.keyboard.insertText('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 now');
+  await page.keyboard.press('Enter');
+  const dlg = page.locator('dialog.desk-dlg--secrets');
+  await expect(dlg).toBeVisible();
+  await dlg.getByRole('button', { name: 'Confirm and send' }).click();
+  await expect(dlg).toBeHidden();
+  await expect.poll(async () => (await sent(page, 'worker.prompt'))[0]?.result?.ok, { timeout: 30_000 }).toBe(true);
+  return id;
+}
+
+test('round 4: revoke: the seat bar’s “protected files” chip asks first, then removes the worker’s files; it keeps working, you stay seated', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', `${SIM}&simsecretson=1`);
+  const id = await sendProtectedFromBox(page);
+  const chip = page.locator('.seat .seat-secrets');
+  await expect(chip).toBeVisible({ timeout: 30_000 });
+  await expect(chip).toContainText('1');
+  await chip.click();
+  const dlg = page.locator('dialog.desk-dlg--revoke');
+  await expect(dlg).toBeVisible();
+  await expect(dlg.locator('#rv-sec-title')).toHaveText('Remove the protected file');
+  await expect(dlg).toContainText('Pebble keeps running, but the references in its earlier prompts will point at nothing');
+  await expect(dlg).toContainText('This cannot be undone.');
+  await expect(dlg.locator('[data-key="cancel"]')).toBeFocused();
+  await shot(page, 'h108-revoke');
+  // Cancel removes nothing.
+  await page.keyboard.press('Escape');
+  await expect(dlg).toBeHidden();
+  expect(await sent(page, 'prompt_secrets.revoke')).toEqual([]);
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
+  await chip.click();
+  await dlg.locator('[data-key="remove"]').click();
+  await expect(dlg).toBeHidden();
+  const [cmd] = await sent(page, 'prompt_secrets.revoke');
+  expect(cmd!.args).toEqual({ worker: id });
+  await expect.poll(async () => ((await sent(page, 'prompt_secrets.revoke'))[0]?.result as { data?: { removed?: number } } | undefined)?.data?.removed).toBe(1);
+  await expect(page.locator('.toast')).toContainText('Removed 1 protected file from Pebble. Pebble keeps working.');
+  await expect(chip).toBeHidden();
+  // This prompt's file is gone (the fixture's list is the whole host's: other tests' Pebbles have files too).
+  const refs = refsOf(((await sent(page, 'worker.prompt'))[0]?.result as { data?: { sent?: string } } | undefined)?.data?.sent);
+  expect(refs.size).toBe(1);
+  expect((await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => refs.has(f.path))).toEqual([]);
+  expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
+  clean();
+});
+
+test('round 4: revoke on a bridge before round 5: no count, no chip', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', `${SIM}&simsecretson=1&simfail=no_revoke`);
+  await sendProtectedFromBox(page);
+  await expect(page.locator('.seat-transcript .secret-chip').first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.seat .seat-secrets')).toBeHidden();
   clean();
 });
