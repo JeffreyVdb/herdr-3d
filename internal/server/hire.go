@@ -178,22 +178,31 @@ func (h *Hub) dropHireSecrets(ctx context.Context, sec *hireSecrets) {
 	}()
 }
 
+// hireReviewHolds refuses a hire's review the switch made stale (review
+// B2; any goroutine): checked once its worker is seen, and again right
+// before its first prompt goes, after waiting for the agent and on its
+// input lane. A schedule's stored prompt has no review to go stale.
+func (h *Hub) hireReviewHolds(op *hireOp) error {
+	if sec := op.secrets; sec != nil && sec.stored == nil {
+		return h.reviewCurrent(sec.rev)
+	}
+	return nil
+}
+
 // claimHireSecrets gives the hire's files to its worker (off the hub
 // goroutine, once it is seen, before its prompt goes): its own pending
 // owner's and the hand-over's. A review the switch made stale while the
 // hire ran claims nothing (review B2): its own files go, and the prompt
-// does not. A schedule's stored prompt has no review to go stale.
+// does not.
 func (h *Hub) claimHireSecrets(ctx context.Context, op *hireOp) error {
 	sec := op.secrets
 	if sec == nil {
 		return nil
 	}
-	if sec.stored == nil {
-		if err := h.reviewCurrent(sec.rev); err != nil {
-			h.dropHireSecrets(ctx, sec)
-			sec.ps = nil
-			return err
-		}
+	if err := h.hireReviewHolds(op); err != nil {
+		h.dropHireSecrets(ctx, sec)
+		sec.ps = nil
+		return err
 	}
 	if sec.owner.Kind != "" && protectedCount(sec.ps) > 0 {
 		if err := h.ps.files.Claim(context.WithoutCancel(ctx), sec.owner.ID, op.id); err != nil {
@@ -897,9 +906,6 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 	if claimErr != nil {
 		rep.step("prompt secrets: %v", claimErr)
 	}
-	if op.secrets != nil {
-		res.Protected = protectedCount(op.secrets.ps)
-	}
 	if op.prompt != "" && claimErr != nil {
 		sent := false
 		res.Prompted, res.PromptError = &sent, claimErr.Error()+": send the prompt again"
@@ -916,11 +922,24 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		op.sent = h.hirePromptFor(op, catalogDir, dir)
 		sent, how, perr := h.sendPrompt(ctx, op, created.PaneID)
 		res.Prompted = &sent
-		if perr != nil {
+		switch {
+		case errors.Is(perr, errSettingChanged):
+			// #108 review B2: the switch changed while the prompt waited for
+			// the agent or its lane: it did not go, and the files its review
+			// made go as at seen (a hand-over's stay the worker's).
+			h.unprotectAll(ctx, op.secrets.ps)
+			op.secrets.ps = nil
+			res.PromptError = perr.Error() + ": send the prompt again"
+			rep.step("prompt secrets: %v", perr)
+			rep.Prompt = "not sent: " + res.PromptError
+		case perr != nil:
 			res.PromptError, rep.Prompt = perr.Error(), "failed: "+perr.Error()
-		} else {
+		default:
 			rep.Prompt = how
 		}
+	}
+	if op.secrets != nil {
+		res.Protected = protectedCount(op.secrets.ps)
 	}
 	choice := store.Hire{Harness: op.harness, Model: op.model, Effort: op.effort}
 	if err := h.doWait(ctx, func() {
@@ -1113,13 +1132,17 @@ func (op *hireOp) delivered() string {
 // retrying while herdr says the agent is not ready yet. An agent still
 // starting up (just past its trust dialog) can take the text but drop the
 // Enter (herdr: agent_prompt_stalled): Enter is pressed again until the
-// worker is seen working.
+// worker is seen working. #108 review B2: its review is checked again
+// before each try (a refused one delivered nothing), never after.
 func (h *Hub) sendPrompt(ctx context.Context, op *hireOp, pane string) (sent bool, how string, err error) {
 	if typesPrompts(op.harness) {
 		return h.typeHirePrompt(ctx, op, pane)
 	}
 	deadline := time.Now().Add(h.opts.TrustTimeout)
 	for tries := 1; ; tries++ {
+		if err := h.hireReviewHolds(op); err != nil {
+			return false, "", err
+		}
 		err := h.opts.Hire.Prompt(ctx, op.session, pane, op.delivered())
 		if err == nil {
 			return true, fmt.Sprintf("sent (try %d)", tries), nil
@@ -1143,7 +1166,8 @@ func (h *Hub) sendPrompt(ctx context.Context, op *hireOp, pane string) (sent boo
 // keys cannot land between two chunks. Then the worker is watched for
 // PromptAckWait to start working, and Enter pressed again until it does
 // (pressUntilWorking: an agent just past its trust dialog can drop the
-// first Enter).
+// first Enter). #108 review B2: its review is checked last, on the lane
+// before anything is typed.
 func (h *Hub) typeHirePrompt(ctx context.Context, op *hireOp, pane string) (sent bool, how string, err error) {
 	deadline := time.Now().Add(h.opts.TrustTimeout)
 	var cur promptState
@@ -1163,7 +1187,15 @@ func (h *Hub) typeHirePrompt(ctx context.Context, op *hireOp, pane string) (sent
 	var typedHow string
 	var typedErr error
 	if err := h.onLane(ctx, op.id, func(ctx context.Context) {
-		if typedErr = h.doWait(ctx, func() { h.noteTyped(op.id, op.delivered()) }); typedErr != nil {
+		var stale error
+		if typedErr = h.doWait(ctx, func() {
+			if stale = h.hireReviewHolds(op); stale == nil {
+				h.noteTyped(op.id, op.delivered())
+			}
+		}); typedErr != nil {
+			return
+		}
+		if typedErr = stale; stale != nil {
 			return
 		}
 		if typedErr = h.opts.Hire.TypePrompt(ctx, op.session, pane, op.delivered()); typedErr != nil {

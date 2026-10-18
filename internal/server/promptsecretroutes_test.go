@@ -30,6 +30,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
+	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
 
 // routeText is a sentinel prompt: c1 (DB_PASSWORD's value) and c2 (TOKEN's)
@@ -1013,6 +1014,110 @@ func TestPromptSecretsHireSwitchWhileHiring(t *testing.T) {
 		t.Fatalf("owners %+v", rows)
 	}
 	traceFree(t, hb.st, hb.db, []*client{hb.c}, routeSentinel)
+}
+
+// claimedHire waits until a hire's worker claimed its files (it was seen,
+// its review checked), then turns the switch off.
+func claimedHire(t *testing.T, hb *hireBridge) {
+	t.Helper()
+	waitFor(t, "the worker to claim the files", func() bool {
+		rows, err := hb.st.SecretOwners(context.Background())
+		return err == nil && len(rows) == 1 && rows[0].Kind == "worker"
+	})
+	hb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+}
+
+// withheldHire checks a hire whose review the switch made stale after its
+// worker claimed the files (review B2, pass 2): the worker stays, nothing
+// of its prompt went to herdr, and its files are gone.
+func withheldHire(t *testing.T, hb *hireBridge, dir string, res proto.HireResult, raw []byte) {
+	t.Helper()
+	if res.ID == "" || res.Prompted == nil || *res.Prompted || res.Protected != 0 || !strings.Contains(res.PromptError, "setting changed") {
+		t.Fatalf("ack %s", raw)
+	}
+	for _, call := range hb.fl.Calls() {
+		if strings.HasPrefix(call, "type ") {
+			t.Fatalf("typed: %q", call)
+		}
+	}
+	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
+	traceFree(t, hb.st, hb.db, []*client{hb.c}, routeSentinel)
+}
+
+// A Claude hire whose switch changes after its worker was seen, while its
+// prompt waits for the agent to be ready (review B2, pass 2), is checked
+// again on its input lane before anything is typed: the worker stays, its
+// prompt does not go, its files go.
+func TestPromptSecretsHireSwitchBeforeItsPrompt(t *testing.T) {
+	t.Parallel()
+	hb, dir := startSecretsHireBridge(t, true, func(o *server.Options) { o.TrustTimeout = 5 * time.Second })
+	hb.fl.mu.Lock()
+	hb.fl.startStatus = "working"
+	hb.fl.mu.Unlock()
+	a := hireArgs(0)
+	a.Prompt, a.Secrets = routeText, routeReview(t, hb.c)
+	hb.c.send(proto.Command{T: proto.CmdWorkerHire, ReqID: "h", Args: mustRaw(a)})
+	claimedHire(t, hb)
+	hb.fl.update("w1", func(w *world.WorkerObs) { w.Status = "idle" })
+	m := hb.c.reply("h")
+	withheldHire(t, hb, dir, ackData[proto.HireResult](t, m), m.raw)
+	if !strings.Contains(string(m.raw), "send the prompt again") {
+		t.Fatalf("ack %s", m.raw)
+	}
+}
+
+// run.start's orchestrator takes the same path: its composed prompt is
+// withheld too when the switch changes while it waits for the agent.
+func TestPromptSecretsRunStartSwitchBeforeItsPrompt(t *testing.T) {
+	t.Parallel()
+	hb, dir := startSecretsHireBridge(t, true, func(o *server.Options) { o.TrustTimeout = 5 * time.Second })
+	hb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", DefaultCwd: proto.Some("/home/u/lab")})
+	seed := hb.connect(proto.Hello{}).snapshot().World.Presets[0].ID
+	hb.fl.mu.Lock()
+	hb.fl.startStatus = "working"
+	hb.fl.mu.Unlock()
+	args := proto.RunStartArgs{Session: "s", DeskIndex: ptr(0), Text: "Tidy the lobby", Extra: routeText, Preset: seed,
+		Orch: &proto.Hire{Harness: "claude", Model: "claude-fable-5-1", Effort: "high"}, Worktree: ptr(false),
+		Secrets: proto.SecretsReviews{"extra": routeReview(t, hb.c)}}
+	hb.c.send(proto.Command{T: proto.CmdRunStart, ReqID: "r", Args: mustRaw(args)})
+	claimedHire(t, hb)
+	hb.fl.update("w1", func(w *world.WorkerObs) { w.Status = "idle" })
+	m := hb.c.reply("r")
+	res := ackData[proto.RunStartResult](t, m)
+	withheldHire(t, hb, dir, res.HireResult, m.raw)
+}
+
+// A Codex hire's prompt is retried while herdr says the agent is not
+// ready: its review is checked again before each try (review B2, pass 2),
+// so a switch change between two tries sends no more.
+func TestPromptSecretsHireCodexSwitchBetweenTries(t *testing.T) {
+	t.Parallel()
+	hb, dir := startSecretsHireBridge(t, true, nil)
+	gate := make(chan struct{})
+	hb.fl.mu.Lock()
+	hb.fl.promptErrs = []error{&herdr.APIError{Code: "agent_not_ready", Message: "starting"}}
+	hb.fl.promptGate = gate
+	hb.fl.mu.Unlock()
+	a := hireArgs(0)
+	a.Harness, a.Model, a.Effort = "codex", "gpt-6-astra", "ultra"
+	a.Prompt, a.Secrets = routeText, routeReview(t, hb.c)
+	hb.c.send(proto.Command{T: proto.CmdWorkerHire, ReqID: "h", Args: mustRaw(a)})
+	prompts := func() (n int) {
+		for _, call := range hb.fl.Calls() {
+			if strings.HasPrefix(call, "prompt ") {
+				n++
+			}
+		}
+		return n
+	}
+	waitFor(t, "the first try", func() bool { return prompts() == 1 })
+	hb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	close(gate)
+	m := hb.c.reply("h")
+	withheldHire(t, hb, dir, ackData[proto.HireResult](t, m), m.raw)
+	if n := prompts(); n != 1 {
+		t.Fatalf("%d tries, want the refused one only", n)
+	}
 }
 
 // worker.answer_ask: a dismissal's prompt and an Other answer go through
