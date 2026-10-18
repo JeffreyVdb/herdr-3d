@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -310,7 +311,7 @@ func TestAboutLinesBounded(t *testing.T) {
 		lines = append(lines, fmt.Sprintf("echo %d %s", i, strings.Repeat("y", 400)))
 	}
 	got := aboutLines(lines)
-	if n := len(got); n > aboutLinesMax+1 || !strings.HasPrefix(got[n-1], "… (") {
+	if n := len(got); n > aboutLinesMax || !strings.HasPrefix(got[n-1], "… (") {
 		t.Fatalf("%d lines, last %q", n, got[len(got)-1])
 	}
 	total := 0
@@ -569,5 +570,42 @@ func TestNativeOfWords(t *testing.T) {
 		if got := nativeOf(sq.op, []transcript.PendingCall{tall}, "") != nil; sq.op.complete || got != tc.want {
 			t.Errorf("cut, %s: matched %t (%+v)", name, got, sq.op)
 		}
+	}
+}
+
+// #106: a native call's card is bounded as a whole: its head, command,
+// directory and the dialog's other lines, with what is cut said, at most
+// aboutLinesMax lines and about aboutMax runes.
+func TestNativeAboutBounded(t *testing.T) {
+	t.Parallel()
+	lines := make([]string, 35)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("echo safe scratch cleanup step %d", i)
+	}
+	scr := strings.Replace(claudeBash("", lines...), " Do you want to proceed?",
+		strings.Repeat(" Another line the dialog says\n", 10)+" Do you want to proceed?", 1)
+	sq := parseQuestionOf("claude", scr, 1)
+	nc := nativeOf(sq.op, []transcript.PendingCall{bashCall("toolu_b", strings.Join(lines, "\n"), "Clean the scratch directory")}, "")
+	if nc == nil {
+		t.Fatal("no native call")
+	}
+	about := nc.about(sq.op)
+	if n, runes := len(about), utf8.RuneCountInString(strings.Join(about, "")); n > aboutLinesMax || runes > aboutMax+aboutLineMax {
+		t.Fatalf("%d lines, %d runes: %q", n, runes, about)
+	}
+	for _, want := range []string{"Bash command", "echo safe scratch cleanup step 0", "In: /home/u/w1"} {
+		if !slices.Contains(about, want) {
+			t.Errorf("about lacks %q: %q", want, about)
+		}
+	}
+	if cut := slices.IndexFunc(about, func(l string) bool { return strings.HasPrefix(l, "… (") }); cut < 0 {
+		t.Errorf("nothing said cut: %q", about)
+	}
+	// A dialog whose top is off the screen: its warning among them.
+	partial := parseQuestionOf("claude", scr[strings.Index(scr, "   echo safe scratch cleanup step 1\n"):], 1)
+	m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &partial.q}, false).Menu
+	menuFacts(m, partial.op, nil)
+	if partial.op.complete || len(m.About) > aboutLinesMax || m.About[0] != aboutPartial {
+		t.Fatalf("partial: %d lines: %q", len(m.About), m.About)
 	}
 }

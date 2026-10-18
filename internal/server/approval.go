@@ -257,11 +257,13 @@ func redactLine(s string) string {
 
 // aboutLines is what a menu's card shows of lines (an operation's, the
 // screen's or its native call's): each redacted and cut to aboutLineMax,
-// at most aboutLinesMax of them and aboutMax runes in all, the rest said.
+// at most aboutLinesMax of them (what says the rest among them) and
+// aboutMax runes in all, the rest said.
 func aboutLines(lines []string) []string { return boundLines(lines, aboutLinesMax, aboutMax) }
 
 // boundLines is lines redacted and bounded: each to aboutLineMax runes, at
-// most maxLines of them and maxRunes in all, the rest said.
+// most maxLines of them (what says the rest among them) and maxRunes in
+// all, the rest said.
 func boundLines(lines []string, maxLines, maxRunes int) []string {
 	var out []string
 	total := 0
@@ -271,7 +273,7 @@ func boundLines(lines []string, maxLines, maxRunes int) []string {
 			l = string([]rune(l)[:aboutLineMax-1]) + "…"
 		}
 		n := utf8.RuneCountInString(l)
-		if len(out) == maxLines || total+n > maxRunes {
+		if (len(out) == maxLines-1 && i < len(lines)-1) || total+n > maxRunes {
 			out = append(out, fmt.Sprintf(aboutCut, len(lines)-i))
 			break
 		}
@@ -296,11 +298,11 @@ func menuFacts(m *notify.Menu, op *menuOp, nc *nativeCall) {
 		m.Native, m.Source, m.About = nc.id, "native", nc.about(op)
 		return
 	}
-	m.About = aboutLines(op.lines)
 	if op.complete {
+		m.About = aboutLines(op.lines)
 		return
 	}
-	m.About = append([]string{aboutPartial}, m.About...)
+	m.About = append([]string{aboutPartial}, boundLines(op.lines, aboutLinesMax-1, aboutMax)...)
 	if m.Kind != proto.QuestionPermission {
 		return
 	}
@@ -513,9 +515,9 @@ func (nc *nativeCall) about(op *menuOp) []string {
 	if nc.mode == "bypassPermissions" && bypassRmRe.MatchString(nc.in.Command) {
 		extra = append(extra, nativeBypass)
 	}
-	out := []string{head}
-	out = append(out, boundLines(main, aboutLinesMax-6, aboutMax-600)...)
-	return append(out, boundLines(extra, 6, 600)...)
+	more := boundLines(extra, 6, 600)
+	out := append([]string{head}, boundLines(main, aboutLinesMax-1-len(more), aboutMax-600)...)
+	return append(out, more...)
 }
 
 // workerCalls are the calls a worker's transcript waits on, and its
