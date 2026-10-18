@@ -599,8 +599,12 @@
   color: var(--error-text);
   font-weight: 700;
 }
+/* The actions wrap rather than leave the screen when a row cannot hold them (#108: "Review secrets" joins every
+   composer's footer while the switch is on; a phone's hire dialog has four). One row as before when they fit. */
 .dd-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
   margin-left: auto;
 }

@@ -361,8 +361,10 @@ export const SURFACES: Surface[] = [
     root: '.toast',
   },
   {
+    // #108 round 4: with "Review prompt secrets" on, its footer has "Review secrets" too (here and in the dialogs below).
     name: 'hire',
     fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openHire(5));
@@ -443,6 +445,7 @@ export const SURFACES: Surface[] = [
     // Everything given: every header collapsed with its value, Location opened (label, folder, worktree), Hire on.
     name: 'hire-review-ready',
     fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
     open: async (page) => {
       await openReview(
         page,
@@ -487,6 +490,7 @@ export const SURFACES: Surface[] = [
   {
     name: 'start-run',
     fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openStartRun({ floor: 'herdr-3d', desk: 5 }));
@@ -560,7 +564,7 @@ export const SURFACES: Surface[] = [
     // #93: the hire preset editor, as "New preset" opens it.
     name: 'hire-preset-editor',
     fixture: 'demo-m4',
-    wsQuery: `${SIM}&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}e`,
+    wsQuery: `${SIM}&simsecretson=1&simhirepresets=ui${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}e`,
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openHire(5));
@@ -633,6 +637,20 @@ export const SURFACES: Surface[] = [
     root: 'dialog.desk-dlg--home',
   },
   {
+    // #108 round 4: the send home's wrap-up, its last prompt with "Review secrets" beside the send (the switch on).
+    name: 'send-home-wrapup',
+    fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
+    open: async (page) => {
+      await onFloor(page);
+      const id = await page.evaluate(() => window.__h3d.world().find((f) => f.session === 'herdr-3d')!.workers[0]!.id);
+      await page.evaluate((w) => window.__h3d.openSendHome(w), id);
+      await page.locator('dialog.desk-dlg--home [data-key="wrap"]').click();
+      await expect(page.locator('dialog.desk-dlg--home [data-key="review"]')).toBeVisible();
+    },
+    root: 'dialog.desk-dlg--home',
+  },
+  {
     // #223: the filing dialog with a reply's exact text (a sim.final of Zippy's), and the floor's filing cabinet.
     name: 'handoff-dialog',
     fixture: 'demo-m5',
@@ -672,7 +690,7 @@ export const SURFACES: Surface[] = [
   {
     name: 'schedule-form',
     fixture: 'demo-m5',
-    wsQuery: `${SIM}&simschedules=8`,
+    wsQuery: `${SIM}&simschedules=8&simsecretson=1`,
     open: async (page) => {
       await onFloor(page);
       await page.evaluate(() => window.__h3d.openSchedules({ floor: 'herdr-3d' }));
