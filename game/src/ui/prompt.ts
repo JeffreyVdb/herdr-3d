@@ -12,6 +12,7 @@ import { failedImagesText, hasContent, heldRefusalText, markedText, notSentText,
 import { WORKER_PROMPT_MAX_BYTES } from './composer/model';
 import type { PackupGate } from '../world/packup';
 import { reviewKey, type Go, type PromptSecretsFlow } from './secretsFlow';
+import { keyName } from '../input/shortcuts';
 // #39 completion
 import { CommandCatalogs } from '../laptop/commandCatalog';
 import { CompletionScope, workerSources } from './dialogCompletion';
@@ -365,7 +366,7 @@ export class PromptOverlay {
             class: 'btn',
             'data-key': 'review',
             'aria-disabled': why ? 'true' : null,
-            title: why ?? 'Look over the prompt’s possible secrets now, and mark one the scan missed (Ctrl+Shift+X)',
+            title: why ?? `Look over the prompt’s possible secrets now, and mark one the scan missed (${keyName('dialog.secrets')})`,
             onclick: () => {
               if (!this.busy && !this.blocker()) void this.send(true);
             },

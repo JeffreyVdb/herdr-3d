@@ -262,6 +262,7 @@ describe('SecretsReviewDialog (#108)', () => {
 
   it('says when a value is stored as typed, and a notice when it opens again', () => {
     const e = setup('url=https://u:p%40ss@h', ['p%40ss'], [{ encoded: true, kinds: ['url-password'] }]);
+    expect(e.mark('c1').querySelector('.sr-tag')!.textContent).toBe('Protected as typed');
     expect(document.querySelector('.sr-what')!.textContent).toBe('Found by a password in a URL. Stored as typed: its escapes, percent-encoding or indentation go into the file exactly as you see them.');
     e.dlg.close();
     const review = new SecretReview('x', { revision: 'r', candidates: [] });

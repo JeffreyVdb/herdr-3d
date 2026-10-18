@@ -32,6 +32,7 @@ import { fileRefPath } from './fileRef';
 import { clipboardCopy, FileRefPopover, markFileRefs } from './fileRefPopover';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 import { reviewKey } from '../ui/secretsFlow';
+import { keyName } from '../input/shortcuts';
 
 /**
  * M16: a worker's conversation as DOM, drawn over the laptop screen while you sit there (the seated view's
@@ -1097,7 +1098,7 @@ class Transcript implements TranscriptView {
     // #108: with "Review prompt secrets before sending" on, the review on purpose (to mark a value the scan would miss).
     this.reviewBtn = h(
       'button',
-      { class: 'tx-review', 'aria-label': 'Review secrets', title: 'Review secrets: look over the prompt’s possible secrets now, and mark one the scan missed (Ctrl+Shift+X)', onclick: () => this.submit(true) },
+      { class: 'tx-review', 'aria-label': 'Review secrets', title: `Review secrets: look over the prompt’s possible secrets now, and mark one the scan missed (${keyName('dialog.secrets')})`, onclick: () => this.submit(true) },
       icon(ICON.lock),
     );
     this.form = h('div', { class: 'tx-prompt' }, this.composer.element, this.reviewBtn, this.sendBtn);

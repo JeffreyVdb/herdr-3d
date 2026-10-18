@@ -253,6 +253,21 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   `go test ./internal/server -run TestNotifyInboxVectors -update-notify-vectors` and checked by
   `game/src/world/notifyVectors.test.ts`; `game/e2e/h11-telegram.spec.ts` drives the fixture bridge's Telegram
   (`tools/fixture-telegram.ts`: `simtelegram=off|token|paired|on|env|old`, `simtelegrampair=<ms>`, `sim.telegram`).
+- #108 round 3 (the game's review of prompt secrets): `game/src/world/promptSecrets.test.ts` (the switch, a scan read
+  strictly, code point steps across astral characters and CRLF, the review's ignore, edges, manual marks and the
+  decisions it sends), `ui/secretsFlow.test.ts` (scan, review, stale and required reviewed again, off and unavailable
+  kept, the identical retry after a lost answer), `ui/secretsReview.dom.test.ts` (the dialog by keyboard and pointer, DOM
+  positions to UTF-16 offsets, a 16 KiB prompt), `ui/prompt.secrets.dom.test.ts` and `laptop/transcriptMode.secrets.test.ts`
+  (the P overlay and the laptop's prompt box through the flow: nothing sent before Confirm, pack up skipped for a
+  protected prompt, the masked pending row, memory-only drafts), `ui/promptSecretsSection.dom.test.ts`,
+  `net/redact.test.ts` (the command log) and `tools/fixture-secrets.test.ts`. `game/e2e/h108-prompt-secrets.spec.ts`
+  drives the fixture bridge (`tools/fixture-secrets.ts`, its own small deterministic detector: `simsecrets=<key>`,
+  `simsecretson=1`, `simsecretsdir=none`, `simfail=no_secrets|secrets_review_stale|secrets_review_required|
+  secrets_unavailable|secrets_review_off`, `sim.secret_files` through `window.__h3d.simSecretFiles()`): the review from
+  the P overlay, the laptop's prompt box and a paste into its terminal, cancel, a stale review, the switch going off
+  mid-review, and localStorage and `window.__h3d.sent()` checked free of every protected value. For a UX look: `make
+  dev`, then `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simsecretson%3D1&floor=herdr-3d`, P on
+  Pebble, and a prompt such as `deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD="hunter2x"`.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
@@ -986,7 +1001,12 @@ when they answer everything, the `worker.answer_ask` args, a recorded answer's l
   focus?})` in `app.ts` is every entry point's) and its create / edit form (`scheduleForm.ts`, shared by "New", Edit and the
   transcript's "Schedule follow-up…"), styled in `schedules.css`; `Hud.toast`'s optional action (a click opens what it is about); the
   desktop notification of a new entry with the game in the background (`desktopNotify.ts`; when one pings,
-  `world/inboxPings.ts`: settle delay, snapshot silence, burst cap). Hidden, named hooks
+  `world/inboxPings.ts`: settle delay, snapshot silence, burst cap); #108 round 3: the review of a prompt's possible
+  secrets (`secretsReview.ts`, `secretsReview.css`: the whole prompt in an edit-refusing `contenteditable`, a highlight
+  per match, the strip of the match in hand), the send flow every composer goes through (`secretsFlow.ts`: scan, review,
+  `worker.prompt` with `secrets`, a stale review reviewed again; the P overlay, the laptop's prompt box and a paste into
+  its terminal use it; round 4 plugs the other composers in) and Settings → Workers → Prompt secrets
+  (`promptSecretsSection.ts`); the switch and the review's model are `world/promptSecrets.ts`. Hidden, named hooks
   wait for later tickets:
   `renderPlanLimits(harness)` (#12), `renderHandoff` (M9) and `renderServices` (#14), each returning null for now.
   `src/input` — first-person walking.
@@ -1052,7 +1072,7 @@ pnpm -C game fixture-server --simulate --fixture demo-m3   # the same, answering
 
 | query param | effect |
 |---|---|
-| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; #51: `simmodels=<n>` adds n Claude models to the hire options (a long model list); M6: `simcrew=<ms>` walks a scripted freelancer in and out; M3d (`tools/fixture-logo.ts`, `tools/logo-art.ts` draws the made-up test logo; no third-party logo ships): `simlogo=<key>` lets `/logo/<building>?simlogo=<key>` reach this connection's world, `simlogos=1` starts every building with a made-up logo, `simfail=logo_missing` makes the images 404, `simfail=logo_busy` fails the next upload) |
+| `ws=<url or path>` | bridge endpoint (default same-origin `/ws`); fixtures take `?play=none\|all\|<ms>`, and `sim=1` to simulate commands (`simms=<ms>` between wake/sleep and hire/send-home steps, default 600; `simfail=wake_failed\|sleep_failed\|hire_failed\|fire_failed` fails the next one, `simfail=fetch_failed` makes origin unreachable for the whole run; `simcap=<session>:<soft>:<hard>[,…]` caps floors; #51: `simmodels=<n>` adds n Claude models to the hire options (a long model list); M6: `simcrew=<ms>` walks a scripted freelancer in and out; M3d (`tools/fixture-logo.ts`, `tools/logo-art.ts` draws the made-up test logo; no third-party logo ships): `simlogo=<key>` lets `/logo/<building>?simlogo=<key>` reach this connection's world, `simlogos=1` starts every building with a made-up logo, `simfail=logo_missing` makes the images 404, `simfail=logo_busy` fails the next upload; #108 (`tools/fixture-secrets.ts`): `simsecrets=<key>` shares the "Review prompt secrets before sending" switch between a key's connections, `simsecretson=1` starts it on, `simsecretsdir=none` plays a bridge host without a private runtime directory, `simfail=no_secrets` a bridge before it, `simfail=secrets_review_stale\|secrets_review_required\|secrets_unavailable\|secrets_review_off` refuses the next reviewed prompt that way) |
 | `backend=webgl2` | force WebGL2 |
 | `screens=<n>` | M5: how many laptops around you are live (default 4, at most 5; `0` watches none: only the laptop you sit at is watched) |
 | `floor=<session>`, `plan=1` | enter a floor on load, open its floor plan |

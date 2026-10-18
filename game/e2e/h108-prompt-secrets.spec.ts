@@ -286,3 +286,41 @@ test('stale: reviewed again with a note, sent only on the new Confirm; the switc
   expect(await page.evaluate(() => (window.__h3d.panel() as { text?: string } | null)?.text)).toBe('and TOKEN=zzz999yyy');
   clean();
 });
+
+test('a prompt near 16 KiB with matches near its start, middle and end: N brings each into the well’s view; Confirm sends it', async ({ page }) => {
+  test.setTimeout(120_000);
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m5', '', `${SIM}&simsecretson=1`);
+  await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
+  await frames(page, 3);
+  await page.evaluate((i) => window.__h3d.openPrompt(i), await idOf(page, 'herdr-3d', 'Pebble'));
+  const line = 'lorem ipsum dolor sit amet, 😀 consectetur adipiscing\n';
+  // Near the 16 KiB limit, with room for the three file references the bridge puts in (it checks the limit after them).
+  const fill = line.repeat(Math.floor(7600 / Buffer.byteLength(line)));
+  const text = `TOKEN=start1x ${fill}TOKEN=middle2x ${fill}TOKEN=end3x`;
+  expect(Buffer.byteLength(text)).toBeLessThanOrEqual(16 * 1024 - 300);
+  expect(Buffer.byteLength(text)).toBeGreaterThan(15_000);
+  await page.keyboard.insertText(text);
+  await page.keyboard.press('Enter');
+  const dlg = page.locator('dialog.desk-dlg--secrets');
+  await expect(dlg).toBeVisible();
+  expect(await reviewText(page)).toBe(text);
+  const inView = (key: string) =>
+    page.evaluate((k) => {
+      const well = document.querySelector('.sr-prompt')!.getBoundingClientRect();
+      const m = document.querySelector(`.sr-mark[data-key="${k}"]`)!.getBoundingClientRect();
+      return m.top >= well.top && m.bottom <= well.bottom;
+    }, key);
+  expect(await inView('c1')).toBe(true);
+  expect(await inView('c3')).toBe(false);
+  await page.keyboard.press('n');
+  await expect.poll(() => inView('c2')).toBe(true);
+  await page.keyboard.press('n');
+  await expect.poll(() => inView('c3')).toBe(true);
+  expect((await review(page))?.current).toBe('c3');
+  await dlg.getByRole('button', { name: 'Confirm and send' }).click();
+  await expect.poll(async () => (await sent(page, 'worker.prompt')).map((c) => c.result?.ok)).toEqual([true]);
+  const ack = (await sent(page, 'worker.prompt'))[0]!.result as { data?: { protected?: number } };
+  expect(ack.data?.protected).toBe(3);
+  clean();
+});

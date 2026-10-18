@@ -1,5 +1,5 @@
 import './secretsReview.css';
-import { pressesBinding } from '../input/shortcuts';
+import { keyName, pressesBinding } from '../input/shortcuts';
 import { kindsText, type Mark, type PromptSecretsBook, type ReviewCounts, type SecretReview } from '../world/promptSecrets';
 import { backdropPolicy } from './dismiss';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
@@ -244,6 +244,8 @@ export class SecretsReviewDialog {
     const text = (this.req as SecretsReviewRequest).review.text;
     const word = m.state === 'protect' ? 'Protected' : 'Ignored';
     const value = this.text(text.slice(m.start, m.end), m.start);
+    // An encoded value goes to its file with its escapes as typed: its tape says so (the strip says what that means).
+    const tape = m.state === 'protect' && m.encoded ? 'Protected as typed' : word;
     const el = h(
       'span',
       {
@@ -260,7 +262,7 @@ export class SecretsReviewDialog {
         'aria-describedby': 'sr-what',
         title: `${m.candidate ? `Match ${i + 1} of ${n}` : 'Marked by you'}: ${word.toLowerCase()}${m.encoded ? ', stored as typed' : ''}`,
       },
-      h('span', { class: 'sr-tag' }, word),
+      h('span', { class: 'sr-tag' }, tape),
       h('span', { class: 'sr-val' }, value),
     );
     el.addEventListener('keydown', (e) => this.onMarkKey(e, m.key));
@@ -483,7 +485,7 @@ export class SecretsReviewDialog {
     const had = document.activeElement instanceof HTMLElement && this.actions.contains(document.activeElement) ? document.activeElement.dataset.key : null;
     this.actions.replaceChildren(
       h('button', { class: 'btn', 'data-key': 'cancel', onclick: () => this.finish({ kind: 'cancel' }) }, 'Cancel'),
-      h('button', { class: 'btn btn--primary', 'data-key': 'confirm', title: `${req.action} (Ctrl+Enter)`, onclick: () => this.confirm() }, req.action),
+      h('button', { class: 'btn btn--primary', 'data-key': 'confirm', title: `${req.action} (${keyName('dialog.submit')})`, onclick: () => this.confirm() }, req.action),
     );
     if (had) this.actions.querySelector<HTMLElement>(`[data-key="${had}"]`)?.focus();
     // The stamp is for the one change it shows.
