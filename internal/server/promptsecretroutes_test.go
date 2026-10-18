@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
@@ -295,4 +296,276 @@ func TestPromptSecretsHireFailureReleases(t *testing.T) {
 	}
 	waitFor(t, "no files", func() bool { return len(protectedFiles(t, dir)) == 0 })
 	traceFree(t, hb.st, hb.db, []*client{hb.c}, routeSentinel)
+}
+
+// Schedules keep no protected file: with the switch on, a prompt with
+// possible secrets is refused without a review, and a review that protects
+// one is secrets_review_stored; one that leaves all as typed is stored
+// with its record, and its fire sends it as typed. A fire, a retry or a
+// run now of a prompt that has no such record fails visibly and sends
+// nothing; off, it fires as today.
+func TestPromptSecretsSchedules(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	sb := startSchedBridge(t, func(o *server.Options) { o.SecretsDir = dir })
+	const before = "Rotate it: DB_PASSWORD=Before-Switch-3!"
+	sp := spec(t0.Add(time.Hour))
+	sp.Prompt = before
+	old := sb.create(sp) // saved while the switch was off
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+
+	sb.at(t0.Add(time.Hour))
+	failed := sb.schedule(old.ID, inState(store.ScheduleFailed))
+	if !strings.Contains(failed.StateReason, "review") || len(sb.creates()) != 0 || len(sb.prompts()) != 0 {
+		t.Fatalf("unreviewed fire: %+v, creates %q, prompts %q", failed, sb.creates(), sb.prompts())
+	}
+	sb.c.mustAck(proto.CmdScheduleRetry, proto.ScheduleArgs{ID: old.ID})
+	sb.schedule(old.ID, func(s proto.Schedule) bool { return s.State == store.ScheduleFailed && s.FiredAt != nil })
+	if len(sb.creates()) != 0 {
+		t.Fatalf("a retry hired: %q", sb.creates())
+	}
+
+	// New ones: refused without a review, or with one that protects.
+	sp = spec(t0.Add(2 * time.Hour))
+	sp.Prompt = routeText
+	_, m := sb.c.command(proto.CmdScheduleCreate, "c1", sp)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	sp.Secrets = routeReview(t, sb.c)
+	_, m = sb.c.command(proto.CmdScheduleCreate, "c2", sp)
+	if code := codeOf(m); code != proto.ErrSecretsReviewStored || !strings.Contains(errorOf(m).Message, "remove") {
+		t.Fatalf("protected: %s", m.raw)
+	}
+	if f := protectedFiles(t, dir); len(f) != 0 {
+		t.Fatalf("files %v", f)
+	}
+	traceFree(t, sb.st, sb.db, []*client{sb.c}, routeSentinel, twinValue)
+
+	// All left as typed: stored with its record, fired as typed.
+	const kept = "Rotate it: DB_PASSWORD=Kept-As-Typed-8!"
+	sp.Prompt, sp.Secrets = kept, reviewOf(t, sb.c, kept, "c1")
+	s := sb.create(sp)
+	if row, err := sb.st.ScheduleByID(context.Background(), s.ID); err != nil || row.SecretsReview == "" || s.Prompt != kept {
+		t.Fatalf("stored %+v, %v", row, err)
+	}
+	sb.at(t0.Add(2 * time.Hour))
+	sb.schedule(s.ID, inState(store.ScheduleDone))
+	if p := sb.prompts(); !slices.Equal(p, []string{kept}) {
+		t.Fatalf("prompts %q", p)
+	}
+
+	// The old one reviewed now (its update), then run again: sent as typed.
+	upd := spec(t0.Add(5 * time.Hour))
+	upd.Prompt, upd.Secrets = before, reviewOf(t, sb.c, before, "c1")
+	_, m = sb.c.command(proto.CmdScheduleUpdate, "u", proto.ScheduleUpdateArgs{ID: old.ID, ScheduleSpec: upd})
+	if code := codeOf(m); code != proto.ErrInvalidState { // a failed one is not updated, it is retried
+		t.Fatalf("update of a failed one: %s", m.raw)
+	}
+	sp = spec(t0.Add(6 * time.Hour))
+	sp.Prompt = before
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	unreviewed := sb.create(sp)
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	sb.c.mustAck(proto.CmdScheduleRunNow, proto.ScheduleArgs{ID: unreviewed.ID})
+	sb.schedule(unreviewed.ID, inState(store.ScheduleFailed))
+	if p := sb.prompts(); len(p) != 1 {
+		t.Fatalf("run now sent %q", p)
+	}
+
+	// Switch off: an unreviewed one fires as today.
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	sb.c.mustAck(proto.CmdScheduleRetry, proto.ScheduleArgs{ID: old.ID})
+	sb.schedule(old.ID, inState(store.ScheduleDone))
+	if p := sb.prompts(); len(p) != 2 || !strings.HasSuffix(p[1], "\n\n"+before) {
+		t.Fatalf("off: prompts %q", p)
+	}
+	if f := protectedFiles(t, dir); len(f) != 0 {
+		t.Fatalf("files %v", f)
+	}
+}
+
+// A schedule's update needs the review of its prompt again (a due time
+// changed alone included), and keeps the record of the text it stores.
+func TestPromptSecretsScheduleUpdate(t *testing.T) {
+	t.Parallel()
+	dir := secretsDirFor(t)
+	sb := startSchedBridge(t, func(o *server.Options) { o.SecretsDir = dir })
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	const kept = "Rotate it: DB_PASSWORD=Kept-As-Typed-8!"
+	sp := spec(t0.Add(time.Hour))
+	sp.Prompt, sp.Secrets = kept, reviewOf(t, sb.c, kept, "c1")
+	s := sb.create(sp)
+	row, _ := sb.st.ScheduleByID(context.Background(), s.ID)
+	sp.DueAt, sp.Secrets = t0.Add(2*time.Hour).UnixMilli(), nil
+	_, m := sb.c.command(proto.CmdScheduleUpdate, "u1", proto.ScheduleUpdateArgs{ID: s.ID, ScheduleSpec: sp})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("update without a review: %s", m.raw)
+	}
+	sp.Prompt = "Rotate it: DB_PASSWORD=Kept-As-Typed-9!"
+	sp.Secrets = reviewOf(t, sb.c, sp.Prompt, "c1")
+	_, m = sb.c.command(proto.CmdScheduleUpdate, "u2", proto.ScheduleUpdateArgs{ID: s.ID, ScheduleSpec: sp})
+	if m.env.T != proto.TAck {
+		t.Fatalf("update: %s", m.raw)
+	}
+	if now, _ := sb.st.ScheduleByID(context.Background(), s.ID); now.SecretsReview == "" || now.SecretsReview == row.SecretsReview {
+		t.Fatalf("record %q, was %q", now.SecretsReview, row.SecretsReview)
+	}
+	// Edited while off: the old record no longer matches, the fire fails.
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	sp.Prompt, sp.Secrets = "Rotate it: DB_PASSWORD=Edited-While-Off-1!", nil
+	sb.c.mustAck(proto.CmdScheduleUpdate, proto.ScheduleUpdateArgs{ID: s.ID, ScheduleSpec: sp})
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	sb.at(t0.Add(2 * time.Hour))
+	sb.schedule(s.ID, inState(store.ScheduleFailed))
+	if len(sb.prompts()) != 0 {
+		t.Fatalf("prompts %q", sb.prompts())
+	}
+}
+
+// Hire presets keep no protected file either; hire_preset.check gives the
+// classifier a prompt only as a preset would store it.
+func TestPromptSecretsHirePresets(t *testing.T) {
+	t.Parallel()
+	roles := newPkRoles()
+	hb, dir := startSecretsHireBridge(t, true, func(o *server.Options) { o.HirePresetRoles = roles })
+	ps := proto.HirePresetSpec{Name: "Deploy", Prompt: routeText, Harness: "claude", Model: "claude-opus-5-5", Effort: "medium"}
+	_, m := hb.c.command(proto.CmdHirePresetCreate, "p1", ps)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	_, m = hb.c.command(proto.CmdHirePresetCheck, "k1", proto.HirePresetCheckArgs{Prompt: routeText})
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("check without a review: %s", m.raw)
+	}
+	ps.Secrets = routeReview(t, hb.c)
+	_, m = hb.c.command(proto.CmdHirePresetCreate, "p2", ps)
+	if code := codeOf(m); code != proto.ErrSecretsReviewStored {
+		t.Fatalf("protected: %s", m.raw)
+	}
+	_, m = hb.c.command(proto.CmdHirePresetCheck, "k2", proto.HirePresetCheckArgs{Prompt: routeText, Secrets: ps.Secrets})
+	if code := codeOf(m); code != proto.ErrSecretsReviewStored {
+		t.Fatalf("check, protected: %s", m.raw)
+	}
+	if cl, _ := roles.calls(); cl != 0 {
+		t.Fatalf("the classifier was asked %d times", cl)
+	}
+	if f := protectedFiles(t, dir); len(f) != 0 {
+		t.Fatalf("files %v", f)
+	}
+	traceFree(t, hb.st, hb.db, []*client{hb.c}, routeSentinel, twinValue)
+
+	const kept = "Rotate it: DB_PASSWORD=Kept-As-Typed-8!"
+	ps.Prompt, ps.Secrets = kept, reviewOf(t, hb.c, kept, "c1")
+	_, m = hb.c.command(proto.CmdHirePresetCheck, "k3", proto.HirePresetCheckArgs{Prompt: kept, Secrets: ps.Secrets})
+	if m.env.T != proto.TAck || len(roles.cls.Calls()) != 1 || roles.cls.Calls()[0].State["prompt"] != kept {
+		t.Fatalf("check, all ignored: %s %+v", m.raw, roles.cls.Calls())
+	}
+	_, m = hb.c.command(proto.CmdHirePresetCreate, "p3", ps)
+	p := ackData[proto.HirePreset](t, m)
+	stored, _ := hb.st.HirePresets(context.Background())
+	if len(stored) != 1 || stored[0].SecretsReview == "" || p.Prompt != kept {
+		t.Fatalf("stored %+v", stored)
+	}
+	// An update with the same prompt and its review keeps a record; off, a
+	// prompt full of secrets is saved as today.
+	ps.Name, ps.Secrets = "Deploy 2", reviewOf(t, hb.c, kept, "c1")
+	hb.c.mustAck(proto.CmdHirePresetUpdate, proto.HirePresetUpdateArgs{ID: p.ID, HirePresetSpec: ps})
+	hb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
+	ps.Prompt, ps.Secrets = routeText, nil
+	hb.c.mustAck(proto.CmdHirePresetUpdate, proto.HirePresetUpdateArgs{ID: p.ID, HirePresetSpec: ps})
+	_, m = hb.c.command(proto.CmdHirePresetCheck, "k4", proto.HirePresetCheckArgs{Prompt: routeText})
+	if m.env.T != proto.TAck || len(roles.cls.Calls()) != 2 {
+		t.Fatalf("off: check %s", m.raw)
+	}
+	if f := protectedFiles(t, dir); len(f) != 0 {
+		t.Fatalf("files %v", f)
+	}
+}
+
+// run.start: a review per text field (the ticket's text, the extra, an
+// edited prompt). The orchestrator gets references; the launch keeps the
+// ticket's text with its references and is named from it; nothing raw is
+// sent, stored, audited or echoed.
+func TestPromptSecretsRunStart(t *testing.T) {
+	t.Parallel()
+	hb, dir := startSecretsHireBridge(t, true, nil)
+	hb.git.repos["/home/u/lab"] = "/home/u/lab"
+	hb.c.mustAck(proto.CmdFloorSettings, proto.FloorSettingsArgs{Session: "s", Repo: proto.Some("JeffreyVdb/lab"),
+		DefaultCwd: proto.Some("/home/u/lab")})
+	c := hb.c
+	seed := hb.connect(proto.Hello{}).snapshot().World.Presets[0].ID
+	orch := proto.Hire{Harness: "claude", Model: "claude-fable-5-1", Effort: "high"}
+	const ticketSentinel = "Ticket-Sentinel-5!"
+	ticket := "Fix login with DB_PASSWORD=" + ticketSentinel
+	args := proto.RunStartArgs{Session: "s", DeskIndex: ptr(3), Text: ticket, Extra: routeText, Orch: &orch, Preset: seed, Worktree: ptr(false)}
+	_, m := c.command(proto.CmdRunStart, "r0", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || !strings.HasPrefix(errorOf(m).Message, "text: ") {
+		t.Fatalf("no review: %s", m.raw)
+	}
+	args.Secrets = proto.SecretsReviews{"text": reviewOf(t, c, ticket)}
+	_, m = c.command(proto.CmdRunStart, "r1", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || !strings.HasPrefix(errorOf(m).Message, "extra: ") {
+		t.Fatalf("no review of the extra: %s", m.raw)
+	}
+	if calls := hb.fl.Calls(); len(calls) != 0 {
+		t.Fatalf("herdr was called: %q", calls)
+	}
+	if f := protectedFiles(t, dir); len(f) != 0 {
+		t.Fatalf("files %v", f)
+	}
+	traceFree(t, hb.st, hb.db, []*client{c}, ticketSentinel, routeSentinel, twinValue)
+
+	args.Secrets["extra"] = routeReview(t, c)
+	_, m = c.command(proto.CmdRunStart, "r2", args)
+	res := ackData[proto.RunStartResult](t, m)
+	if res.Protected != 3 || strings.Contains(res.Prompt, ticketSentinel) {
+		t.Fatalf("ack %s", m.raw)
+	}
+	if got := sentPrompt(t, hb, res.WorkspaceID+":p1"); got != res.Prompt {
+		t.Fatalf("sent %q, acked %q", got, res.Prompt)
+	}
+	_, extra, _ := strings.Cut(res.Prompt, "Deploy it.")
+	checkRouteSent(t, "Deploy it."+extra)
+	l, _, _ := hb.st.RunLaunchByWorker(context.Background(), res.ID)
+	if !strings.HasPrefix(l.TicketText, "Fix login with DB_PASSWORD=[secret in file ") {
+		t.Fatalf("ticket text %q", l.TicketText)
+	}
+	w := workersOf(hb.world(func(w proto.World) bool { _, ok := workersOf(w, "s")[res.WorkspaceID]; return ok }), "s")[res.WorkspaceID]
+	if w.Label != "ORCH|fix-login" {
+		t.Fatalf("label %q", w.Label)
+	}
+	if rows := ownersOf(t, hb.st, "worker", res.ID); len(rows) != 1 {
+		t.Fatalf("the orchestrator owns %+v", rows)
+	}
+	traceFree(t, hb.st, hb.db, []*client{c}, ticketSentinel, routeSentinel)
+
+	// An edited prompt is reviewed whole; the extra beside it is not sent,
+	// so a review of it names no text the start sends.
+	args = proto.RunStartArgs{Session: "s", DeskIndex: ptr(4), Text: "Tidy the lobby", Extra: routeText, Orch: &orch, Preset: seed,
+		Worktree: ptr(false), Prompt: routeText, Secrets: proto.SecretsReviews{"prompt": routeReview(t, c), "extra": routeReview(t, c)}}
+	_, m = c.command(proto.CmdRunStart, "r3", args)
+	if code := codeOf(m); code != proto.ErrSecretsReviewRequired {
+		t.Fatalf("a review of the unused extra: %s", m.raw)
+	}
+	delete(args.Secrets, "extra")
+	_, m = c.command(proto.CmdRunStart, "r4", args)
+	res = ackData[proto.RunStartResult](t, m)
+	checkRouteSent(t, res.Prompt)
+	if got := sentPrompt(t, hb, res.WorkspaceID+":p1"); got != res.Prompt || res.Protected != 2 {
+		t.Fatalf("sent %q, ack %s", got, m.raw)
+	}
+	traceFree(t, hb.st, hb.db, []*client{c}, ticketSentinel, routeSentinel)
+
+	// run.prepare sends nothing anywhere: not reviewed, audited by lengths.
+	_, m = c.command(proto.CmdRunPrepare, "rp", proto.RunPrepareArgs{Session: "s", Text: ticket, Extra: routeText})
+	if m.env.T != proto.TAck {
+		t.Fatalf("prepare %s", m.raw)
+	}
+	log, _ := hb.st.AuditLog(context.Background())
+	for _, e := range log {
+		if strings.Contains(e.Args, ticketSentinel) || strings.Contains(e.Args, routeSentinel) {
+			t.Fatalf("audited %s %s", e.Cmd, e.Args)
+		}
+	}
 }

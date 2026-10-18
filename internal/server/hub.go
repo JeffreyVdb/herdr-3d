@@ -1058,6 +1058,8 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startHireInterpret
 		case proto.CmdHirePresetCheck: // #95
 			start = h.startHirePresetCheck
+		case proto.CmdHirePresetCreate, proto.CmdHirePresetUpdate, proto.CmdHirePresetDelete: // #93; #108: a prompt is scanned first
+			start = h.startHirePreset
 		case proto.CmdCodexServerGet, proto.CmdCodexServerSet: // #155
 			start = h.startCodexServer
 		case proto.CmdWorkerAnswerAsync: // #156
@@ -1342,9 +1344,6 @@ func (h *Hub) command(ctx context.Context, cmd proto.Command) (any, error) {
 	// M6 launch
 	case proto.CmdPresetCreate, proto.CmdPresetUpdate, proto.CmdPresetDelete:
 		data, err = h.presetCommand(ctx, cmd)
-	// #93 hire presets
-	case proto.CmdHirePresetCreate, proto.CmdHirePresetUpdate, proto.CmdHirePresetDelete:
-		data, err = h.hirePresetCommand(ctx, cmd)
 	default:
 		err = fmt.Errorf("%w: %q", errUnknownCommand, cmd.T)
 	}
