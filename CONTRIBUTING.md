@@ -281,8 +281,16 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   `tools/fixture-secrets.test.ts` (every route of the fixture). The e2e's round-4 cases (`GREP='round 4'`): a hire with
   a protected value, pack up's "Send as written (stay)" and "Send and go home" with the hand-over (the fake AI servers of
   `e2e/packupFakes.ts`, shared with `m110-packup.spec.ts`), a schedule saved with every match ignored and Protect
-  refused. For a UX look of pack up: as round 3's, with `simjev=<a fake Jev>`, or the schedule form (Menu → Scheduled
-  agents → New) with the same prompt.
+  refused, a reference as a masked chip in the conversation (its popover and a copy across it), revoke from the seat
+  bar's chip and its absence on a bridge before round 5 (`simfail=no_revoke`). The chips are `world/secretRefs.ts` (the
+  exact references, with `World.prompt_secrets.dir` or the shape alone) and `ui/secretChips.ts`, the revoke control
+  `ui/revokeSecrets.ts` (its texts `world/revokeSecrets.ts`) and the seat bar's chip; their tests
+  `world/secretRefs.test.ts`, `ui/secretChips.dom.test.ts`, `ui/secretChipPlaces.dom.test.ts`,
+  `laptop/transcriptSecretChips.dom.test.ts`, `world/revokeSecrets.test.ts`, `ui/revokeSecrets.dom.test.ts`; the theme
+  audits `secrets-review-stored`, `secret-chips`, `seat-secrets`, `revoke-secrets`, `send-home-wrapup` (and the
+  composers' surfaces with the switch on). For a UX look of pack up: as round 3's, with `simjev=<a fake Jev>`, or the
+  schedule form (Menu → Scheduled agents → New) with the same prompt; of the chips and revoke: send the prompt from
+  Pebble's laptop box (E, then the conversation), then the seat bar's "protected file" chip.
 - `go test ./internal/helper` never runs ssh: the test binary stands in for it (`H3D_FAKE_SSH`) and forwards to an
   in-process bridge.
 
