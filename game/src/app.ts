@@ -3993,7 +3993,12 @@ export class App {
       return;
     }
     if (r.code === 'invalid_state') {
-      this.hud.toast(`${name} isn’t waiting for an answer any more.`, 3200);
+      // #106: refused while it still waits (a permission whose start is off its screen is approved only in its
+      // terminal): the bridge's reason, not "gone".
+      const now = this.store.workerView(id);
+      const why = r.message.replace(/^invalid state:\s*/i, '').replace(/[\s.]+$/, '');
+      if (why && now?.display === 'needs_you' && answerable(now.worker.question)) this.hud.toast(`Not sent to ${name}: ${why}. Its terminal is at its laptop (E).`, 5200, 'error');
+      else this.hud.toast(`${name} isn’t waiting for an answer any more.`, 3200);
       return;
     }
     this.hud.toast(r.code === 'unknown_command' ? 'This herdr-world can’t answer questions yet. Update the bridge to use it.' : commandFailure('worker.answer', r.code, r.message, { worker: name }), 5200, 'error');
