@@ -327,7 +327,8 @@ func TestPromptSecretsHireFailureReleases(t *testing.T) {
 // one is secrets_review_stored; one that leaves all as typed is stored
 // with its record, and its fire sends it as typed. A fire, a retry or a
 // run now of a prompt that has no such record fails visibly and sends
-// nothing; off, it fires as today.
+// nothing; a retry with the review of its stored prompt keeps the record
+// and sends it as typed (review B4); off, it fires as today.
 func TestPromptSecretsSchedules(t *testing.T) {
 	t.Parallel()
 	dir := secretsDirFor(t)
@@ -379,12 +380,30 @@ func TestPromptSecretsSchedules(t *testing.T) {
 		t.Fatalf("prompts %q", p)
 	}
 
-	// The old one reviewed now (its update), then run again: sent as typed.
+	// The old one: a failed schedule is not updated, it is retried with the
+	// review of its stored prompt, which protects nothing (review B4); its
+	// record is kept and it fires as typed.
 	upd := spec(t0.Add(5 * time.Hour))
 	upd.Prompt, upd.Secrets = before, reviewOf(t, sb.c, before, "c1")
 	_, m = sb.c.command(proto.CmdScheduleUpdate, "u", proto.ScheduleUpdateArgs{ID: old.ID, ScheduleSpec: upd})
-	if code := codeOf(m); code != proto.ErrInvalidState { // a failed one is not updated, it is retried
+	if code := codeOf(m); code != proto.ErrInvalidState {
 		t.Fatalf("update of a failed one: %s", m.raw)
+	}
+	_, m = sb.c.command(proto.CmdScheduleRetry, "r1", proto.ScheduleArgs{ID: old.ID, Secrets: reviewOf(t, sb.c, before)})
+	if code := codeOf(m); code != proto.ErrSecretsReviewStored {
+		t.Fatalf("a retry that protects: %s", m.raw)
+	}
+	_, m = sb.c.command(proto.CmdScheduleCancel, "x", proto.ScheduleArgs{ID: old.ID, Secrets: reviewOf(t, sb.c, before, "c1")})
+	if code := codeOf(m); code != proto.ErrBadRequest {
+		t.Fatalf("a review on a cancel: %s", m.raw)
+	}
+	sb.c.mustAck(proto.CmdScheduleRetry, proto.ScheduleArgs{ID: old.ID, Secrets: reviewOf(t, sb.c, before, "c1")})
+	sb.schedule(old.ID, inState(store.ScheduleDone))
+	if p := sb.prompts(); len(p) != 2 || !strings.HasSuffix(p[1], "\n\n"+before) {
+		t.Fatalf("reviewed retry: prompts %q", p)
+	}
+	if row, err := sb.st.ScheduleByID(context.Background(), old.ID); err != nil || row.SecretsReview == "" {
+		t.Fatalf("no record kept: %+v, %v", row, err)
 	}
 	sp = spec(t0.Add(6 * time.Hour))
 	sp.Prompt = before
@@ -393,15 +412,19 @@ func TestPromptSecretsSchedules(t *testing.T) {
 	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
 	sb.c.mustAck(proto.CmdScheduleRunNow, proto.ScheduleArgs{ID: unreviewed.ID})
 	sb.schedule(unreviewed.ID, inState(store.ScheduleFailed))
-	if p := sb.prompts(); len(p) != 1 {
+	if p := sb.prompts(); len(p) != 2 {
 		t.Fatalf("run now sent %q", p)
 	}
 
-	// Switch off: an unreviewed one fires as today.
+	// Switch off: a review is stale, and an unreviewed one fires as today.
 	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(false)})
-	sb.c.mustAck(proto.CmdScheduleRetry, proto.ScheduleArgs{ID: old.ID})
-	sb.schedule(old.ID, inState(store.ScheduleDone))
-	if p := sb.prompts(); len(p) != 2 || !strings.HasSuffix(p[1], "\n\n"+before) {
+	_, m = sb.c.command(proto.CmdScheduleRetry, "r2", proto.ScheduleArgs{ID: unreviewed.ID, Secrets: upd.Secrets})
+	if code := codeOf(m); code != proto.ErrSecretsReviewStale {
+		t.Fatalf("a review while off: %s", m.raw)
+	}
+	sb.c.mustAck(proto.CmdScheduleRetry, proto.ScheduleArgs{ID: unreviewed.ID})
+	sb.schedule(unreviewed.ID, inState(store.ScheduleDone))
+	if p := sb.prompts(); len(p) != 3 || p[2] != before {
 		t.Fatalf("off: prompts %q", p)
 	}
 	if f := protectedFiles(t, dir); len(f) != 0 {

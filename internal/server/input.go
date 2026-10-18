@@ -704,6 +704,8 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 	// decisions' counts.
 	case proto.CmdWorkerHire, proto.CmdHirePresetCreate, proto.CmdHirePresetUpdate, proto.CmdScheduleCreate, proto.CmdScheduleUpdate:
 		return auditTexts(cmd.Args, "prompt")
+	case proto.CmdScheduleRetry, proto.CmdScheduleRunNow: // a review of the stored prompt, by its counts
+		return auditTexts(cmd.Args)
 	case proto.CmdRunPrepare, proto.CmdRunStart:
 		return auditTexts(cmd.Args, "text", "extra", "prompt")
 	case proto.CmdWorkerHandoff: // #224, #9: the instruction is free text: its length only

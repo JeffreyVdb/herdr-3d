@@ -350,7 +350,7 @@ func (h *Hub) checkStored(ctx context.Context, rev *promptsecret.Reviewer, text,
 		return nil
 	}
 	return fmt.Errorf("%w: it has %d possible secrets that “Review prompt secrets before sending” has not seen left as typed "+
-		"(saved before the switch was on, or the rules changed): open the schedule, review them and save it; nothing was sent",
+		"(saved before the switch was on, or the rules changed): open the schedule, review them and retry it; nothing was sent",
 		errStoredUnreviewed, len(scan.Found))
 }
 

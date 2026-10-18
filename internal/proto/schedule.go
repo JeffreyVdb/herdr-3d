@@ -113,6 +113,10 @@ type ScheduleUpdateArgs struct {
 // schedule.retry and schedule.dismiss.
 type ScheduleArgs struct {
 	ID string `json:"id"`
+	// Secrets (#108, schedule.retry and schedule.run_now only, optional):
+	// the review of the stored prompt, as a save's: its decisions all
+	// ignore. The schedule keeps its record before it fires.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // Schedule is one schedule as clients see it: every schedule.* command's
