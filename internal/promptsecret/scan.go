@@ -105,9 +105,15 @@ func detect(text string, refs []span) []span {
 // quote, a ';', an escaped newline or the end.
 const gitleaksBoundary = `(?:[\x60'"\s;]|\\[nr]|$)`
 
+// gitleaksSeparator is what stands between a name and its value in
+// Gitleaks' keyword rules: the only colon a rule punctuated runs may read
+// (TestPunctColonRules).
+const gitleaksSeparator = `(?:=|>|:{1,3}=|\|\||:|=>|\?=|,)`
+
 var (
 	punctOnce  sync.Once
 	punctRules []*compiledRule
+	namedRules []*compiledRule // punctRules with a name before the value
 )
 
 // sentencePunct may end a sentence right after a token (not ']': a
@@ -117,10 +123,14 @@ const sentencePunct = ".,:!?)"
 // punctuated are the findings of the provider rules that ask for
 // gitleaksBoundary after their token where a sentence's punctuation stands
 // instead: a run of sentencePunct right after a token-like word (tokenBefore),
-// before a blank or the end ("Use sk_live_….", "(hf_…)."; colons alone only
-// at the end: before more text they are a name's). Those rules run
-// again over a copy of text with each such run blanked (the same length, so
-// the ranges hold), and a finding counts when its token ends at one.
+// before a blank or the end ("Use sk_live_….", "(hf_…).", "(hf_…: then").
+// Those rules run again over a copy of text with each such run blanked (the
+// same length, so the ranges hold), and a finding counts when its token ends
+// at one. A colon alone before a word a rule's value may be (nameColon) may
+// be a name's instead (adafruit_io_key: k3jd….), which a keyword's rule
+// needs: those rules run again on a second copy that keeps such colons, a
+// finding there counting when it ends at the run after the word that
+// follows one (review T5, E2).
 // Gitleaks itself, and its parity, are untouched (decisions.md, #108 row 1).
 // They run on a window per run, from punctMargin bytes before its word
 // (however long the token: review T5) to the run, their keywords looked
@@ -128,9 +138,8 @@ const sentencePunct = ".,:!?)"
 // the name before a value). When the windows are most of the text, once on
 // the whole text.
 func punctuated(text string, refs []span) []RuleMatch {
-	var b []byte
-	ends := map[int]bool{}
-	var wins [][2]int
+	var all, kept punctCopy // every run blanked; every run but a name's colon
+	name := -1              // the end of the last name's colon
 	for i := 1; i < len(text); i++ {
 		if !wordAt(text, i-1) || strings.IndexByte(sentencePunct, text[i]) < 0 {
 			continue
@@ -139,36 +148,26 @@ func punctuated(text string, refs []span) []RuleMatch {
 		for j < len(text) && strings.IndexByte(sentencePunct, text[j]) >= 0 {
 			j++
 		}
-		if j < len(text) && (!isSpace(text[j]) || strings.Trim(text[i:j], ":") == "") {
-			i = j // inside a word, or a name's colon (adafruit_io_key: …)
+		if j < len(text) && !isSpace(text[j]) {
+			i = j // inside a word
 			continue
 		}
 		if ws, ok := tokenBefore(text, i, refs); ok {
-			if b == nil {
-				b = []byte(text)
-			}
-			ends[i] = true
-			for k := i; k < j; k++ {
-				b[k] = ' '
-			}
-			ws = max(0, ws-punctMargin)
-			if n := len(wins); n > 0 && ws <= wins[n-1][1] {
-				wins[n-1][1] = j
-			} else {
-				wins = append(wins, [2]int{ws, j})
+			w := max(0, ws-punctMargin)
+			all.add(w, i, j, true)
+			switch {
+			case strings.Trim(text[i:j], ":") == "" && nameColon(text, j):
+				name = j
+			case name >= 0 && strings.TrimRight(text[name:ws], " \t\r\n\v\f") == "":
+				kept.add(w, i, j, true) // its word may be that name's value
+			default:
+				kept.add(w, i, j, false)
 			}
 		}
 		i = j
 	}
-	if len(ends) == 0 {
+	if len(all.ends) == 0 {
 		return nil
-	}
-	total := 0
-	for _, w := range wins {
-		total += w[1] - w[0]
-	}
-	if total > len(text)/2 {
-		wins = [][2]int{{0, len(text)}}
 	}
 	loadRules()
 	punctOnce.Do(func() {
@@ -176,27 +175,99 @@ func punctuated(text string, refs []span) []RuleMatch {
 			r := &compiledRules[i]
 			if strings.HasSuffix(r.Regex, gitleaksBoundary) && !strings.Contains(strings.ToLower(r.ID), "generic") {
 				punctRules = append(punctRules, r)
+				if strings.Contains(r.Regex, gitleaksSeparator) {
+					namedRules = append(namedRules, r)
+				}
 			}
 		}
 	})
+	out := all.find(text, punctRules)
+	if len(kept.wins) > 0 {
+		for _, m := range kept.find(text, namedRules) {
+			if !slices.Contains(out, m) {
+				out = append(out, m)
+			}
+		}
+	}
+	return out
+}
+
+// punctCopy is the runs one copy of text blanks: where a finding may end,
+// and the windows the rules run on.
+type punctCopy struct {
+	runs [][2]int
+	ends map[int]bool
+	wins [][2]int
+}
+
+// add blanks the run [i, j) and, when a finding may end there (end), adds
+// its window from ws.
+func (c *punctCopy) add(ws, i, j int, end bool) {
+	c.runs = append(c.runs, [2]int{i, j})
+	if !end {
+		return
+	}
+	if c.ends == nil {
+		c.ends = map[int]bool{}
+	}
+	c.ends[i] = true
+	if n := len(c.wins); n > 0 && ws <= c.wins[n-1][1] {
+		c.wins[n-1][1] = j
+	} else {
+		c.wins = append(c.wins, [2]int{ws, j})
+	}
+}
+
+// find runs rules over the copy's windows of text, its runs blanked.
+func (c *punctCopy) find(text string, rules []*compiledRule) []RuleMatch {
+	if len(c.wins) == 0 {
+		return nil
+	}
+	b := []byte(text)
+	for _, r := range c.runs {
+		for k := r[0]; k < r[1]; k++ {
+			b[k] = ' '
+		}
+	}
+	wins, total := c.wins, 0
+	for _, w := range wins {
+		total += w[1] - w[0]
+	}
+	if total > len(text)/2 {
+		wins = [][2]int{{0, len(text)}}
+	}
 	blanked := string(b)
 	var out []RuleMatch
 	for _, w := range wins {
 		part := blanked[w[0]:w[1]]
 		lower, nl := strings.ToLower(part), newlines(part)
 		var fs []glFinding
-		for _, r := range punctRules {
+		for _, r := range rules {
 			if len(r.Keywords) == 0 || anyContains(lower, r.Keywords) {
 				fs = r.detect(part, nl, fs)
 			}
 		}
 		for _, f := range fs {
-			if m := (RuleMatch{Rule: f.Rule, Start: f.Start + w[0], End: f.End + w[0]}); f.secret != "" && ends[m.End] {
+			if m := (RuleMatch{Rule: f.Rule, Start: f.Start + w[0], End: f.End + w[0]}); f.secret != "" && c.ends[m.End] {
 				out = append(out, m)
 			}
 		}
 	}
 	return out
+}
+
+// nameColon reports a word after a colon run ending at j, past blanks,
+// quotes and '=', that a rule's value may be (minPunctSecret bytes or
+// more): the colon may be a name's (adafruit_io_key:\n  k3jd…).
+func nameColon(text string, j int) bool {
+	for j < len(text) && (isSpace(text[j]) || strings.IndexByte("`'\"=", text[j]) >= 0) {
+		j++
+	}
+	k := j
+	for k < len(text) && k-j < minPunctSecret && !isSpace(text[k]) {
+		k++
+	}
+	return k-j >= minPunctSecret
 }
 
 // punctMargin is how far before a token-like word a rule's match may start:

@@ -448,9 +448,27 @@ func TestScanRecall(t *testing.T) {
 		{"a long token ends a sentence", "Use " + longJWT + ".", []string{longJWT}},
 		{"a long token, notes before", strings.Repeat("notes for deployment\n", 200) + "Use " + longJWT + ".", []string{longJWT}},
 		{"a long token, no punctuation", "Use " + longJWT, []string{longJWT}},
+		// Each ending after an opening parenthesis, at a line's end and
+		// before more words (E2: a colon before more text was read as a
+		// name's only).
+		{"( token : at a line's end", "If it fails, retry with token (" + hf + ":\nThen it works.", []string{hf}},
+		{"( token : before words", "If it fails, retry with token (" + hf + ": then it works.", []string{hf}},
+		{"( token : at the end", "If it fails, retry with token (" + hf + ":", []string{hf}},
+		{"( token . at a line's end", "If it fails, retry with token (" + hf + ".\nThen it works.", []string{hf}},
+		{"( token . before words", "If it fails, retry with token (" + hf + ". Then it works.", []string{hf}},
+		{"( token ; at a line's end", "If it fails, retry with token (" + hf + ";\nThen it works.", []string{hf}},
+		{"( token ; before words", "If it fails, retry with token (" + hf + "; then it works.", []string{hf}},
+		{"( token ) at a line's end", "If it fails, retry with token (" + hf + ")\nThen it works.", []string{hf}},
+		{"( token ) before words", "If it fails, retry with token (" + hf + ") then it works.", []string{hf}},
+		{"token : at a line's end", "retry with token " + hf + ":\nnext", []string{hf}},
+		{"token : before a long word", "the token " + hf + ": https://huggingface.co/settings/tokens", []string{hf}},
+		{"tokens : before each other", "tokens " + hf + ": " + gh + ":\nnext", []string{hf, gh}},
 		// A long name's colon is no sentence's: the keyword's rule needs it.
 		{"a long name's value", "adafruit_io_key: k3jd9flq0zrmv8xw2pbn7cht4ysg6ure.", []string{"k3jd9flq0zrmv8xw2pbn7cht4ysg6ure"}},
 		{"a long name's value on the next line", "adafruit_io_key:\n  k3jd9flq0zrmv8xw2pbn7cht4ysg6ure.", []string{"k3jd9flq0zrmv8xw2pbn7cht4ysg6ure"}},
+		{"a long name's value before a colon", "adafruit_io_key: k3jd9flq0zrmv8xw2pbn7cht4ysg6ure:\nnext", []string{"k3jd9flq0zrmv8xw2pbn7cht4ysg6ure"}},
+		{"long names' colons", "deploy_key_v77_prod:\n  build_2026_10_18_rc1: done\nhuggingface_hub_cache: /var/cache/hf_models_2026\n" +
+			"hf_transfer_enabled_flag: true (huggingface_hub_v2:", nil},
 		{"a word with a token's prefix", "Install hf_transfer. Then set sk_live_mode, and run it.", nil},
 		{"a short prefix", "Read the hf_hub docs (see sk_test).", nil},
 		// 2. A header's credential runs to its end: a blank or a quote (a
