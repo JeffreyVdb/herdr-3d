@@ -654,3 +654,33 @@ func TestPromptSecretsHandoffInstruction(t *testing.T) {
 	// A plain shell is refused before anything is scanned.
 	c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: ab.ids["w3"], Text: "PASSWORD=x9"}, proto.ErrInvalidState)
 }
+
+// With no usable private runtime directory a review that protects anything
+// is refused, never sent raw; one that protects nothing goes as typed.
+func TestPromptSecretsUnavailable(t *testing.T) {
+	t.Parallel()
+	db := filepath.Join(t.TempDir(), "world.db")
+	tb := startTermBridgeAt(t, db, nil, agentW("w2", "codex", "idle"))
+	sb := &secretsBridge{termBridge: tb, db: db, c: tb.connect(proto.Hello{Client: "game"})}
+	snap := sb.c.snapshot()
+	if ps := snap.World.PromptSecrets; ps == nil || ps.Enabled || ps.Available {
+		t.Fatalf("switch %+v", ps)
+	}
+	id := idOf(t, snap, "w2")
+	sb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	const sentinel = "Unav-Sentinel-6x"
+	text := "PASSWORD=" + sentinel
+	s := sb.scan(t, text)
+	review := func(action string) *proto.SecretsReview {
+		return &proto.SecretsReview{Revision: s.Revision, Decisions: []proto.SecretDecision{{Candidate: "c1", Action: action}}}
+	}
+	sb.c.mustError(proto.CmdWorkerPrompt, proto.WorkerPromptArgs{ID: id, Text: text, Secrets: review(proto.SecretProtect)}, proto.ErrSecretsUnavailable)
+	if calls := sb.term.Calls(); len(calls) != 0 {
+		t.Fatalf("sent %q", calls)
+	}
+	sb.noTrace(t, sentinel)
+	_, m := sb.c.command(proto.CmdWorkerPrompt, "ign", proto.WorkerPromptArgs{ID: id, Text: text, Secrets: review(proto.SecretIgnore)})
+	if pr := ackData[proto.PromptResult](t, m); pr.Sent != "" || !slices.Equal(sb.term.Calls(), []string{"submit w2:p1 " + strconv.Quote(text)}) {
+		t.Fatalf("ignored: %s %q", m.raw, sb.term.Calls())
+	}
+}

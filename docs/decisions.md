@@ -2166,3 +2166,4 @@ Coverage:
 | Limits after substitution; retry; rollback | `TestPromptSecretsLimitsAfterSubstitution`, `TestPromptSecretsRetryAndRollback` |
 | Lifecycle: close and send home remove; sleep, a gone session and the switch off keep; startup sweep; pending claim and expiry; unsafe directories refused | `TestPromptSecretsLifecycle`, `TestPromptSecretsSendHome`, `TestPromptSecretsStartupSweep`; `internal/secretfiles` `TestReleaseAndPendingOwners`, `TestSweep`, `TestUnsafeDirectoriesAreRefused`, `TestOwnerDirectoryTampering` (a foreign owner needs root to set up: refused by the same uid check, not tested) |
 | `/handoff` instruction protected before it is stored; Telegram refused | `TestPromptSecretsHandoffInstruction`, `TestPromptSecretsTelegramReply`, `TestReplyErrorKinds` |
+| No private runtime directory: refused, never sent raw; references survive harness translation | `TestPromptSecretsUnavailable`; `internal/harness` `TestTranslateKeepsSecretReferences` |
