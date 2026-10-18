@@ -94,6 +94,9 @@ type ScheduleSpec struct {
 	HandoffPath string `json:"handoff_path,omitempty"`
 	// Source is set on create only (absent: manual).
 	Source *ScheduleSource `json:"source,omitempty"`
+	// Secrets (#108 round 2, optional): the review of Prompt's possible
+	// secrets; a stored prompt's decisions all ignore.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // ScheduleCreateArgs are the args of schedule.create.

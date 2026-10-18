@@ -44,6 +44,9 @@ type WorkerWrapUpArgs struct {
 	ID       string `json:"id"`
 	Prompt   string `json:"prompt"`
 	Worktree string `json:"worktree,omitempty"`
+	// Secrets (#108 round 2, optional): the review of Prompt's possible
+	// secrets.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // WrapUpResult is the ack data of worker.wrapup: the prompt went out, now

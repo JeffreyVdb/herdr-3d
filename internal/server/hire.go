@@ -18,7 +18,9 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/codexapp"
 	"github.com/JeffreyVdb/herdr-3d/internal/gitops"
 	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
+	"github.com/JeffreyVdb/herdr-3d/internal/promptsecret"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
@@ -123,12 +125,82 @@ type hireOp struct {
 	seen                       bool
 	launched                   hireLaunched // run.start's, else nil
 	watch                      *hireWatch   // #62: a schedule's fire, else nil
+	secrets                    *hireSecrets // #108 round 2: its prompt's review, else nil
 	// #39: compose builds the first prompt from its user-typed parts, each
 	// run through tr (run.start's composed prompt: its extra only); nil: the
 	// prompt is the user's text, translated whole. sent is the text the
 	// worker gets (set off the hub goroutine before the prompt goes).
 	compose firstPrompt
 	sent    string
+}
+
+// hireSecrets is what the review of a hire's prompt made (#108 round 2):
+// its fields after the gate (ps: worker.hire's prompt, run.start's text,
+// extra and prompt) with the pending owner of their files (owner; Kind ""
+// with none), claimed by the worker once it is seen and released when the
+// hire fails; hire.interpret's hand-over it sends (token; claimed with
+// them, left pending for another hire when it fails; hiring: taken by
+// this hire); a schedule's stored prompt to check before anything reaches
+// herdr (stored); and the reviewer it was made under.
+type hireSecrets struct {
+	rev    *promptsecret.Reviewer
+	owner  secretfiles.Owner
+	ps     []protected
+	token  string
+	hiring bool
+	stored *storedPrompt
+}
+
+// storedPrompt is a schedule's prompt as stored and the record of its
+// review ("": none).
+type storedPrompt struct{ text, record string }
+
+// dropHireSecrets undoes a hire's review (it failed, or never began): its
+// own files go now, a hand-over it took goes back to pending (it expires
+// unless another hire claims it). Any goroutine; the files go off the hub
+// goroutine.
+func (h *Hub) dropHireSecrets(ctx context.Context, sec *hireSecrets) {
+	if sec == nil {
+		return
+	}
+	if sec.hiring {
+		_ = h.pendingHiring(sec.token, false)
+		sec.hiring = false
+	}
+	if sec.owner.Kind == "" || protectedCount(sec.ps) == 0 {
+		return
+	}
+	owner := sec.owner
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		h.releaseOwner(ctx, owner)
+	}()
+}
+
+// claimHireSecrets gives the hire's files to its worker (off the hub
+// goroutine, once it is seen, before its prompt goes): its own pending
+// owner's and the hand-over's.
+func (h *Hub) claimHireSecrets(ctx context.Context, op *hireOp) error {
+	sec := op.secrets
+	if sec == nil {
+		return nil
+	}
+	if sec.owner.Kind != "" && protectedCount(sec.ps) > 0 {
+		if err := h.ps.files.Claim(context.WithoutCancel(ctx), sec.owner.ID, op.id); err != nil {
+			if errors.Is(err, secretfiles.ErrNotPending) {
+				return fmt.Errorf("%w: its protected files expired before the worker was ready", errSecretsReviewStale)
+			}
+			return fmt.Errorf("%w: %v", errSecretsUnavailable, err)
+		}
+	}
+	if sec.token != "" {
+		if err := h.claimPending(ctx, sec.token, op.id); err != nil {
+			return err
+		}
+		sec.hiring = false
+	}
+	return nil
 }
 
 // hireLaunched finishes a run.start's hire that succeeded (hub goroutine):
@@ -383,36 +455,102 @@ func slug(name string) string {
 }
 
 // startHire validates worker.hire, reserves its desk and name, mints the
-// worker id and starts the hire.
+// worker id and starts the hire. #108 round 2: with prompt secrets
+// reviewed, its prompt goes through the gate first (reviewedHire).
 func (h *Hub) startHire(ctx context.Context, c *Client, cmd proto.Command) error {
 	var a proto.WorkerHireArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
 	a.Floor = floorArg(a.Floor, a.Session) // #58: a client from before floor ids names the session
-	// #95: the herdr hiring instructions for the floor of the hire go after
-	// the task, as run.start's prompt has them. The whole prompt is checked
-	// (hireShape, and beginHire's), and the task alone is translated (#39):
-	// hirePromptFor falls back to a.Prompt, the lines included.
-	var compose firstPrompt
-	if a.HerdrInstructions {
-		if strings.TrimSpace(a.Prompt) == "" {
-			return bad("herdr_instructions needs a prompt")
-		}
-		task, lines := a.Prompt, "\n\n"+hireInstructions(a.Floor)
-		a.Prompt = task + lines
-		compose = func(tr func(string) string) string { return tr(task) + lines }
+	if a.HerdrInstructions && strings.TrimSpace(a.Prompt) == "" {
+		return bad("herdr_instructions needs a prompt")
 	}
-	if err := h.hireShape(a); err != nil {
+	if err := h.hireShape(withHireLines(a)); err != nil {
 		return err
 	}
 	// #58 decision 3: an asleep virtual floor's session wakes first.
 	if waking, err := h.wakeForHire(ctx, c, cmd, a.Floor, func(ctx context.Context) error {
-		return h.beginHire(ctx, c, cmd, a, nil, compose, nil)
+		return h.reviewedHire(ctx, c, cmd, a)
 	}); waking || err != nil {
 		return err
 	}
-	return h.beginHire(ctx, c, cmd, a, nil, compose, nil)
+	return h.reviewedHire(ctx, c, cmd, a)
+}
+
+// withHireLines is a with its prompt as the hire sends it: #95, the herdr
+// hiring instructions for its floor after the task, as run.start's prompt
+// has them.
+func withHireLines(a proto.WorkerHireArgs) proto.WorkerHireArgs {
+	if a.HerdrInstructions {
+		a.Prompt += "\n\n" + hireInstructions(a.Floor)
+	}
+	return a
+}
+
+// hireTask begins a worker.hire whose task (a.Prompt, without the herdr
+// hiring instructions) is as it is sent. The whole prompt is checked
+// (hireShape, and beginHire's), and the task alone is translated (#39):
+// hirePromptFor falls back to a.Prompt, the lines included.
+func (h *Hub) hireTask(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs, sec *hireSecrets) error {
+	var compose firstPrompt
+	if a.HerdrInstructions {
+		task, lines := a.Prompt, "\n\n"+hireInstructions(a.Floor)
+		compose = func(tr func(string) string) string { return tr(task) + lines }
+	}
+	return h.beginHire(ctx, c, cmd, withHireLines(a), nil, compose, nil, sec)
+}
+
+// reviewedHire is worker.hire's prompt through the gate (#108 round 2),
+// with the switch on or a review given, then the hire with what it made:
+// its files go to a pending owner the worker claims once it is seen; a task
+// that is hire.interpret's, exactly as answered (secrets_pending), needs no
+// review again, and its files are claimed with it.
+func (h *Hub) reviewedHire(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs) error {
+	if !h.gated(a.Secrets != nil || a.SecretsPending != "") {
+		return h.hireTask(ctx, c, cmd, a, nil)
+	}
+	if err := h.stillOn(); err != nil {
+		return err
+	}
+	if a.Prompt == "" {
+		if a.Secrets != nil || a.SecretsPending != "" {
+			return fmt.Errorf("%w: a review needs the prompt it is of", errSecretsReviewRequired)
+		}
+		return h.hireTask(ctx, c, cmd, a, nil)
+	}
+	if err := scannable(a.Prompt, "prompt"); err != nil {
+		return err
+	}
+	rev := h.ps.rev
+	var tok secretPending
+	if a.SecretsPending != "" {
+		var err error
+		if tok, err = h.pendingFor(a.SecretsPending, rev, "", true); err != nil {
+			return err
+		}
+	}
+	startGated(h, ctx, c, cmd, rev, func(ctx context.Context) (*hireSecrets, error) {
+		sec := &hireSecrets{rev: rev, token: a.SecretsPending}
+		if a.Secrets == nil && tok.reviewed(a.Prompt) {
+			return sec, nil // hire.interpret's task as it answered it
+		}
+		sec.owner = secretfiles.NewPending()
+		ps, err := h.protectFields(ctx, rev, sec.owner, h.opts.Now().Add(h.opts.SecretPendingTTL),
+			[]secretField{{text: a.Prompt, review: a.Secrets}})
+		if err != nil {
+			return nil, err
+		}
+		sec.ps = ps
+		return sec, nil
+	}, h.dropHireSecrets, func(ctx context.Context, sec *hireSecrets) error {
+		if len(sec.ps) > 0 {
+			a.Prompt = sec.ps[0].text
+		}
+		a.Secrets, a.SecretsPending = nil, ""
+		return h.hireTask(ctx, c, cmd, a, sec)
+	})
+	return nil
 }
 
 // hireShape checks what a hire asks for that needs no floor: the desk is
@@ -444,9 +582,12 @@ func (h *Hub) hireShape(a proto.WorkerHireArgs) error {
 // returns the ack data instead of the HireResult (run.start). compose, if
 // set, rebuilds a.Prompt with its typed parts translated (run.start's
 // composed prompt); nil translates a.Prompt whole (#39). watch, if set,
-// follows a hire the bridge started itself (#62).
+// follows a hire the bridge started itself (#62). sec (#108 round 2), if
+// set, is what the review of its prompt made (a.Prompt is the protected
+// one), or a schedule's stored prompt to check first; an error here leaves
+// it to the caller.
 func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs, launched hireLaunched,
-	compose firstPrompt, watch *hireWatch) error {
+	compose firstPrompt, watch *hireWatch, sec *hireSecrets) error {
 	f, err := h.hireFloor(a.Floor)
 	if err != nil {
 		return err
@@ -515,7 +656,14 @@ func (h *Hub) beginHire(ctx context.Context, c *Client, cmd proto.Command, a pro
 			return err
 		}
 	}
-	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, cmd.Args)
+	if sec != nil && sec.token != "" { // #108: hire.interpret's files are this hire's to claim
+		if err := h.pendingHiring(sec.token, true); err != nil {
+			return err
+		}
+		sec.hiring = true
+	}
+	op.secrets = sec
+	auditID, err := h.st.AuditBegin(ctx, c.name, cmd.T, auditArgs(cmd))
 	if err != nil {
 		return err
 	}
@@ -609,7 +757,20 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 				})
 			}
 		}
+		h.dropHireSecrets(ctx, op.secrets) // #108: its own files go; a hand-over goes back to pending
 		h.finishHire(ctx, op, nil, err, rep)
+	}
+	if sec := op.secrets; sec != nil {
+		res.Protected = protectedCount(sec.ps)
+		// #108: a schedule's stored prompt goes only as its review left it,
+		// checked before anything reaches herdr.
+		if sec.stored != nil {
+			if err := h.checkStored(ctx, sec.rev, sec.stored.text, sec.stored.record); err != nil {
+				rep.step("prompt secrets: %v", err)
+				fail(err)
+				return
+			}
+		}
 	}
 
 	if op.worktree {
@@ -724,7 +885,17 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 		return
 	}
 
-	if op.prompt != "" && hooks {
+	// #108: seen, the worker keeps the files its prompt refers to, also
+	// when the prompt does not go (they live until it ends).
+	claimErr := h.claimHireSecrets(ctx, op)
+	if claimErr != nil {
+		rep.step("prompt secrets: %v", claimErr)
+	}
+	if op.prompt != "" && claimErr != nil {
+		sent := false
+		res.Prompted, res.PromptError = &sent, claimErr.Error()+": send the prompt again"
+		rep.Prompt = "not sent: " + res.PromptError
+	} else if op.prompt != "" && hooks {
 		sent := false
 		res.Prompted, res.PromptError = &sent, "Codex asks to review its hooks: answer it in the terminal, then send the prompt"
 		rep.Prompt = "not sent: " + res.PromptError

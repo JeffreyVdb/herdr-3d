@@ -80,7 +80,8 @@ func auditHireInterpret(cmd proto.Command) json.RawMessage {
 		pending = len(a.Pending.Sources)
 	}
 	return mustJSON(struct {
-		TextBytes      int `json:"text_bytes"`
-		PendingSources int `json:"pending_sources"`
-	}{len(a.Text), pending})
+		TextBytes      int           `json:"text_bytes"`
+		PendingSources int           `json:"pending_sources"`
+		Secrets        *secretsAudit `json:"secrets,omitempty"` // #108 round 2: the decisions' counts
+	}{len(a.Text), pending, auditReviews(a.Secrets)})
 }

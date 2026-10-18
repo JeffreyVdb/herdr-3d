@@ -341,6 +341,12 @@ func (h *Hub) fireSchedule(ctx context.Context, s store.Schedule, now time.Time)
 		proto.WorkerHireArgs
 	}{s.ID, a})}
 	sid := s.ID
+	// #108 round 2: with prompt secrets reviewed, the stored prompt goes
+	// only as its review left it (runHire checks it before anything else).
+	var sec *hireSecrets
+	if h.ps.enabled && s.Prompt != "" {
+		sec = &hireSecrets{rev: h.ps.rev, stored: &storedPrompt{text: s.Prompt, record: s.SecretsReview}}
+	}
 	err := h.beginHire(ctx, h.sc.client, cmd, a, nil, nil, &hireWatch{
 		begun: func(ctx context.Context, id string) error {
 			s.State, s.StateReason, s.FiredAt, s.WorkerID = store.ScheduleRunning, "", now.UnixMilli(), id
@@ -350,7 +356,7 @@ func (h *Hub) fireSchedule(ctx context.Context, s store.Schedule, now time.Time)
 		settled: func(ctx context.Context, id string, res *proto.HireResult, err error) {
 			h.scheduleSettled(ctx, sid, id, res, err)
 		},
-	})
+	}, sec)
 	if err != nil {
 		fail(err.Error()) // s as begun left it, if it ran
 	}

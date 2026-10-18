@@ -427,11 +427,16 @@ func (f *Files) Exists(files []File) bool {
 }
 
 // Claim gives a pending owner's files to worker id: they live as the
-// worker's from now on.
+// worker's from now on. ErrNotPending: it has none (never had a file, was
+// claimed already, or expired, even if the janitor has not removed them
+// yet).
 func (f *Files) Claim(ctx context.Context, token, workerID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	_, err := f.st.ClaimSecretOwner(ctx, token, workerID)
+	n, err := f.st.ClaimSecretOwner(ctx, token, workerID, f.now())
+	if err == nil && n == 0 {
+		err = ErrNotPending
+	}
 	return err
 }
 

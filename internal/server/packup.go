@@ -193,9 +193,10 @@ func auditPackupDetect(cmd proto.Command) json.RawMessage {
 		return redacted(cmd.Args)
 	}
 	return mustJSON(struct {
-		ID        string `json:"id"`
-		TextBytes int    `json:"text_bytes"`
-	}{clip(a.ID), len(a.Text)})
+		ID        string        `json:"id"`
+		TextBytes int           `json:"text_bytes"`
+		Secrets   *secretsAudit `json:"secrets,omitempty"` // #108 round 2: the decisions' counts
+	}{clip(a.ID), len(a.Text), auditReviews(a.Secrets)})
 }
 
 // packupErrorCode maps an error of internal/packup to its protocol code; ""

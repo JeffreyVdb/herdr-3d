@@ -21,12 +21,25 @@ func init() { Commands = append(Commands, CmdHireInterpret) }
 type HireInterpretArgs struct {
 	Text    string              `json:"text"`
 	Pending *HireInterpretation `json:"pending,omitempty"`
+	// #108 round 2 (optional): the review of Text's possible secrets, and
+	// the last answer's secrets_pending (with Pending: its sources need no
+	// review again, and new files join its own).
+	Secrets        *SecretsReview `json:"secrets,omitempty"`
+	SecretsPending string         `json:"secrets_pending,omitempty"`
 }
 
 // HireInterpretResult is hire.interpret's ack: the intent, the proposal of a
 // hire, or the operational error (error: no intent, no proposal, the text
-// kept). A failure of the model is never an error of the command.
-type HireInterpretResult = hireintent.Result
+// kept). A failure of the model is never an error of the command. #108
+// round 2: Text is the sentence the model read (references in place of the
+// protected secrets); Protected how many ranges went to files;
+// SecretsPending, with a review, what the follow-up (the next
+// hire.interpret, the worker.hire of its task) sends back.
+type HireInterpretResult struct {
+	hireintent.Result
+	Protected      int    `json:"protected,omitempty"`
+	SecretsPending string `json:"secrets_pending,omitempty"`
+}
 
 // HireInterpretation is a hire proposal: its sources, harness, model,
 // effort and task with their provenance, the questions to ask, and whether

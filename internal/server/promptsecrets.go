@@ -44,6 +44,10 @@ const (
 	// DefaultSecretReuseTTL is how long a sent review's files are reused by
 	// the identical submission.
 	DefaultSecretReuseTTL = 5 * time.Minute
+	// DefaultSecretPendingTTL is how long a pending owner's files (a hire's,
+	// a preview's: packup.detect, hire.interpret) wait for the worker that
+	// claims them; unclaimed, the janitor removes them after it.
+	DefaultSecretPendingTTL = 30 * time.Minute
 	// maxSecretScans bounds the scans and writes running at once.
 	maxSecretScans = 4
 )
@@ -53,6 +57,7 @@ var (
 	errSecretsReviewStale    = errors.New("secrets review stale")
 	errSecretsReviewOff      = errors.New("prompt secrets are not reviewed")
 	errSecretsUnavailable    = errors.New("prompt secrets cannot be protected")
+	errSecretsReviewStored   = errors.New("a stored prompt keeps no protected secret")
 )
 
 // promptSecretsErrorCode maps the feature's errors to their codes ("": none).
@@ -66,6 +71,8 @@ func promptSecretsErrorCode(err error) string {
 		return proto.ErrSecretsReviewOff
 	case errors.Is(err, errSecretsUnavailable):
 		return proto.ErrSecretsUnavailable
+	case errors.Is(err, errSecretsReviewStored):
+		return proto.ErrSecretsReviewStored
 	}
 	return ""
 }
@@ -80,8 +87,9 @@ type promptSecretsState struct {
 	err     error
 	slots   chan struct{}
 
-	mu    sync.Mutex
-	reuse map[string]secretReuse // reuseKey → the files a sent review made
+	mu      sync.Mutex
+	reuse   map[string]secretReuse    // reuseKey → the files a sent review made
+	pending map[string]*secretPending // round 2: a preview's hand-over token → it
 }
 
 // secretReuse is a sent review's files, for its identical retry.
@@ -108,7 +116,11 @@ func (h *Hub) initPromptSecrets(ctx context.Context) error {
 	if h.opts.SecretReuseTTL <= 0 {
 		h.opts.SecretReuseTTL = DefaultSecretReuseTTL
 	}
-	h.ps = promptSecretsState{enabled: on, slots: make(chan struct{}, maxSecretScans), reuse: map[string]secretReuse{}}
+	if h.opts.SecretPendingTTL <= 0 {
+		h.opts.SecretPendingTTL = DefaultSecretPendingTTL
+	}
+	h.ps = promptSecretsState{enabled: on, slots: make(chan struct{}, maxSecretScans), reuse: map[string]secretReuse{},
+		pending: map[string]*secretPending{}}
 	if h.opts.SecretsDir == "" {
 		h.ps.err = secretfiles.ErrUnavailable
 	} else if f, err := secretfiles.Open(secretfiles.Options{Dir: h.opts.SecretsDir, Store: h.st, Now: h.opts.Now, Log: h.log}); err != nil {
@@ -310,26 +322,12 @@ func (h *Hub) protectText(ctx context.Context, rev *promptsecret.Reviewer, owner
 	if err != nil {
 		return protected{}, err
 	}
-	if review == nil {
-		if len(scan.Found) == 0 {
-			return protected{text: text}, nil
-		}
-		return protected{}, fmt.Errorf("%w: %d possible secrets: review them (prompt_secrets.scan) and send again with secrets",
-			errSecretsReviewRequired, len(scan.Found))
-	}
-	ds, err := decisions(review)
-	if err != nil {
-		return protected{}, err
-	}
-	plan, err := rev.CheckScan(text, scan, review.Revision, ds)
-	var re *promptsecret.ReviewError
+	plan, err := reviewPlan(rev, text, scan, review)
 	switch {
-	case errors.As(err, &re) && re.Stale:
-		return protected{}, fmt.Errorf("%w: %s", errSecretsReviewStale, re.Reason)
 	case err != nil:
-		return protected{}, fmt.Errorf("%w: %v", errSecretsReviewRequired, err)
+		return protected{}, err
 	case len(plan.Protect) == 0:
-		return protected{text: text}, nil // everything ignored: sent as typed
+		return protected{text: text}, nil // nothing found, or everything ignored: sent as typed
 	}
 	if h.ps.files == nil {
 		return protected{}, fmt.Errorf("%w: %v", errSecretsUnavailable, h.ps.err)
@@ -353,6 +351,32 @@ func (h *Hub) protectText(ctx context.Context, rev *promptsecret.Reviewer, owner
 	}
 	p.text = promptsecret.Replace(text, plan.Protect, refs)
 	return p, nil
+}
+
+// reviewPlan checks a text's review against the bridge's scan of it: an
+// empty plan when nothing was found and there is no review; no review with
+// candidates is secrets_review_required, a review of another scan stale.
+func reviewPlan(rev *promptsecret.Reviewer, text string, scan promptsecret.Review, review *proto.SecretsReview) (promptsecret.Plan, error) {
+	if review == nil {
+		if len(scan.Found) == 0 {
+			return promptsecret.Plan{}, nil
+		}
+		return promptsecret.Plan{}, fmt.Errorf("%w: %d possible secrets: review them (prompt_secrets.scan) and send again with secrets",
+			errSecretsReviewRequired, len(scan.Found))
+	}
+	ds, err := decisions(review)
+	if err != nil {
+		return promptsecret.Plan{}, err
+	}
+	plan, err := rev.CheckScan(text, scan, review.Revision, ds)
+	var re *promptsecret.ReviewError
+	switch {
+	case errors.As(err, &re) && re.Stale:
+		return promptsecret.Plan{}, fmt.Errorf("%w: %s", errSecretsReviewStale, re.Reason)
+	case err != nil:
+		return promptsecret.Plan{}, fmt.Errorf("%w: %v", errSecretsReviewRequired, err)
+	}
+	return plan, nil
 }
 
 // writeSecrets writes a review's secrets to files of owner, in a scan slot

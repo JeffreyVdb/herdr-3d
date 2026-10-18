@@ -725,11 +725,12 @@ func auditFollowup(cmd proto.Command) json.RawMessage {
 		NoteBytes  int    `json:"note_bytes,omitempty"`
 	}
 	out := struct {
-		ID        string   `json:"id"`
-		TurnID    string   `json:"turn_id"`
-		Answers   []answer `json:"answers"`
-		NoteBytes int      `json:"note_bytes,omitempty"`
-	}{ID: clip(a.ID), TurnID: clip(a.TurnID), Answers: []answer{}, NoteBytes: len(a.Note)}
+		ID        string        `json:"id"`
+		TurnID    string        `json:"turn_id"`
+		Answers   []answer      `json:"answers"`
+		NoteBytes int           `json:"note_bytes,omitempty"`
+		Secrets   *secretsAudit `json:"secrets,omitempty"` // #108 round 2: the decisions' counts
+	}{ID: clip(a.ID), TurnID: clip(a.TurnID), Answers: []answer{}, NoteBytes: len(a.Note), Secrets: auditReviewMap(a.Secrets)}
 	for _, x := range a.Answers {
 		out.Answers = append(out.Answers, answer{ID: clip(x.ID), ValueBytes: len(x.Value), NoteBytes: len(x.Note)})
 	}

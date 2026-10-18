@@ -56,6 +56,9 @@ type HirePresetSpec struct {
 	Model             string `json:"model"`
 	Effort            string `json:"effort"`
 	HerdrInstructions bool   `json:"herdr_instructions,omitempty"`
+	// Secrets (#108 round 2, optional): the review of Prompt's possible
+	// secrets; a stored prompt's decisions all ignore.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // HirePresetUpdateArgs are hire_preset.update's: the whole spec replaces the
@@ -74,6 +77,8 @@ type HirePresetDeleteArgs struct {
 // would save it.
 type HirePresetCheckArgs struct {
 	Prompt string `json:"prompt"`
+	// Secrets (#108 round 2, optional): as hire_preset.create's.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // HirePresetCheckResult is hire_preset.check's ack: Delegates when the

@@ -698,21 +698,31 @@ func (h *Hub) typeIn(ctx context.Context, id, session, pane, text string, settli
 // lengths and the key names).
 func auditArgs(cmd proto.Command) json.RawMessage {
 	switch cmd.T {
+	// #108 round 2: a hire's prompt (a schedule's fire's too, whose args
+	// name the schedule), a run's texts and a stored prompt by their
+	// lengths, never their text, with the switch on or off; a review by its
+	// decisions' counts.
+	case proto.CmdWorkerHire, proto.CmdHirePresetCreate, proto.CmdHirePresetUpdate, proto.CmdScheduleCreate, proto.CmdScheduleUpdate:
+		return auditTexts(cmd.Args, "prompt")
+	case proto.CmdRunPrepare, proto.CmdRunStart:
+		return auditTexts(cmd.Args, "text", "extra", "prompt")
 	case proto.CmdWorkerHandoff: // #224, #9: the instruction is free text: its length only
 		var a proto.WorkerHandoffArgs
 		if json.Unmarshal(cmd.Args, &a) != nil {
 			return redacted(cmd.Args)
 		}
 		return mustJSON(struct {
-			Worker           string `json:"worker"`
-			Mode             string `json:"mode"`
-			Session          string `json:"session,omitempty"`
-			Candidate        string `json:"candidate,omitempty"`
-			Revision         string `json:"revision,omitempty"`
-			InstructionBytes int    `json:"instruction_bytes,omitempty"`
-			SendHome         bool   `json:"send_home,omitempty"`
-			Op               string `json:"op"`
-		}{clip(a.Worker), clip(a.Mode), clip(a.Session), clip(a.Candidate), clip(a.Revision), len(a.Instruction), a.SendHome, clip(a.Op)})
+			Worker           string        `json:"worker"`
+			Mode             string        `json:"mode"`
+			Session          string        `json:"session,omitempty"`
+			Candidate        string        `json:"candidate,omitempty"`
+			Revision         string        `json:"revision,omitempty"`
+			InstructionBytes int           `json:"instruction_bytes,omitempty"`
+			SendHome         bool          `json:"send_home,omitempty"`
+			Op               string        `json:"op"`
+			Secrets          *secretsAudit `json:"secrets,omitempty"` // #108 round 2
+		}{clip(a.Worker), clip(a.Mode), clip(a.Session), clip(a.Candidate), clip(a.Revision), len(a.Instruction), a.SendHome, clip(a.Op),
+			auditReviews(a.Secrets)})
 	case proto.CmdWorkerKeys:
 		var a proto.WorkerKeysArgs
 		if json.Unmarshal(cmd.Args, &a) != nil {
@@ -787,11 +797,12 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			AnswerBytes int  `json:"answer_bytes"`
 		}
 		out := struct {
-			ID      string   `json:"id"`
-			Thread  string   `json:"thread"`
-			Batch   string   `json:"batch"`
-			Answers []answer `json:"answers,omitempty"`
-		}{ID: a.ID, Thread: clip(a.Thread), Batch: clip(a.Batch)}
+			ID      string        `json:"id"`
+			Thread  string        `json:"thread"`
+			Batch   string        `json:"batch"`
+			Answers []answer      `json:"answers,omitempty"`
+			Secrets *secretsAudit `json:"secrets,omitempty"` // #108 round 2
+		}{ID: a.ID, Thread: clip(a.Thread), Batch: clip(a.Batch), Secrets: auditReviewMap(a.Secrets)}
 		for _, x := range a.Answers {
 			out.Answers = append(out.Answers, answer{x.Index, len(x.Answer)})
 		}
@@ -808,12 +819,13 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			OtherBytes *int  `json:"other_bytes,omitempty"`
 		}
 		out := struct {
-			ID          string   `json:"id"`
-			ToolUseID   string   `json:"tool_use_id"`
-			Answers     []answer `json:"answers,omitempty"`
-			Cancel      bool     `json:"cancel,omitempty"`
-			PromptBytes int      `json:"prompt_bytes,omitempty"`
-		}{ID: a.ID, ToolUseID: clip(a.ToolUseID), Cancel: a.Cancel, PromptBytes: len(a.Prompt)}
+			ID          string        `json:"id"`
+			ToolUseID   string        `json:"tool_use_id"`
+			Answers     []answer      `json:"answers,omitempty"`
+			Cancel      bool          `json:"cancel,omitempty"`
+			PromptBytes int           `json:"prompt_bytes,omitempty"`
+			Secrets     *secretsAudit `json:"secrets,omitempty"` // #108 round 2
+		}{ID: a.ID, ToolUseID: clip(a.ToolUseID), Cancel: a.Cancel, PromptBytes: len(a.Prompt), Secrets: auditReviewMap(a.Secrets)}
 		for _, x := range a.Answers {
 			an := answer{Question: x.Question, Choices: x.Choices}
 			if x.Other != nil {
@@ -843,10 +855,11 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 			return redacted(cmd.Args)
 		}
 		return mustJSON(struct {
-			ID          string `json:"id"`
-			Worktree    string `json:"worktree,omitempty"`
-			PromptBytes int    `json:"prompt_bytes"`
-		}{a.ID, clip(a.Worktree), len(a.Prompt)})
+			ID          string        `json:"id"`
+			Worktree    string        `json:"worktree,omitempty"`
+			PromptBytes int           `json:"prompt_bytes"`
+			Secrets     *secretsAudit `json:"secrets,omitempty"` // #108 round 2
+		}{a.ID, clip(a.Worktree), len(a.Prompt), auditReviews(a.Secrets)})
 	// #92: the role and the fields named, never the key.
 	case proto.CmdAIModels, proto.CmdAITest, proto.CmdAISet, proto.CmdAIClear:
 		return auditAI(cmd)
@@ -900,6 +913,42 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 		}{a.ID, len(a.Title), len(a.Body), a.Confirm})
 	}
 	return cmd.Args
+}
+
+// auditTexts is a command's args with each named text field as its length
+// ("<name>_bytes") and its review (`secrets`: one, or one per field) as
+// the decisions' counts (#108 round 2): never a typed text nor a range.
+// Args that do not read as an object are redacted.
+func auditTexts(raw json.RawMessage, texts ...string) json.RawMessage {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil || m == nil {
+		return redacted(raw)
+	}
+	for _, k := range texts {
+		v, ok := m[k]
+		if !ok {
+			continue
+		}
+		var s string
+		if json.Unmarshal(v, &s) != nil {
+			return redacted(raw)
+		}
+		delete(m, k)
+		m[k+"_bytes"] = mustJSON(len(s))
+	}
+	if v, ok := m["secrets"]; ok {
+		var many proto.SecretsReviews
+		var one proto.SecretsReview
+		switch {
+		case json.Unmarshal(v, &many) == nil:
+			m["secrets"] = mustJSON(auditReviewMap(many))
+		case json.Unmarshal(v, &one) == nil:
+			m["secrets"] = mustJSON(auditReviews(&one))
+		default:
+			return redacted(raw)
+		}
+	}
+	return mustJSON(m)
 }
 
 func redacted(raw json.RawMessage) json.RawMessage {

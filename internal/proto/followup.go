@@ -97,6 +97,9 @@ type WorkerAnswerFollowupArgs struct {
 	// Note is free text after the answers (#60: a fallback's draft kept
 	// when its questions were read on a retry).
 	Note string `json:"note,omitempty"`
+	// Secrets (#108 round 2, optional): a review per text field ("note",
+	// "answers[N].value", "answers[N].note") with possible secrets.
+	Secrets SecretsReviews `json:"secrets,omitempty"`
 }
 
 // WorkerDismissFollowupArgs are the args of worker.dismiss_followup.

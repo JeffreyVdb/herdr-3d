@@ -239,9 +239,11 @@ type Options struct {
 	// SecretsSweep how often the janitor reconciles the files with the
 	// workers (default DefaultSecretsSweep), SecretReuseTTL how long a sent
 	// review's files serve its identical retry (default
-	// DefaultSecretReuseTTL).
-	SecretsDir                                      string
-	SecretScanTimeout, SecretsSweep, SecretReuseTTL time.Duration
+	// DefaultSecretReuseTTL), and (round 2) SecretPendingTTL how long a
+	// pending owner's files wait for the worker a hire or a preview's
+	// follow-up gives them to (default DefaultSecretPendingTTL).
+	SecretsDir                                                        string
+	SecretScanTimeout, SecretsSweep, SecretReuseTTL, SecretPendingTTL time.Duration
 	// M13 whiteboard: the floors' boards (nil: the whiteboard commands and
 	// routes fail with unsupported), and Drop Zone's data directory for
 	// drops.list ("": drops_unavailable).

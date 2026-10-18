@@ -152,6 +152,10 @@ type WorkerPromptArgs struct {
 	// Secrets (#108, optional): the review of Text's possible secrets
 	// (docs/protocol.md "Prompt secrets").
 	Secrets *SecretsReview `json:"secrets,omitempty"`
+	// SecretsPending (#108 round 2, optional): packup.detect's
+	// secrets_pending for this text: its reviewed text needs no review
+	// again, and its files become the worker's once the prompt is sent.
+	SecretsPending string `json:"secrets_pending,omitempty"`
 }
 
 // PromptResult is the ack data of worker.prompt.

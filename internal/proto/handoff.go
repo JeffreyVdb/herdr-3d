@@ -221,6 +221,9 @@ type WorkerHandoffArgs struct {
 	Instruction string `json:"instruction,omitempty"`
 	SendHome    bool   `json:"send_home,omitempty"`
 	Op          string `json:"op"`
+	// Secrets (#108 round 2, optional; modes agent and llm): the review of
+	// Instruction's possible secrets.
+	Secrets *SecretsReview `json:"secrets,omitempty"`
 }
 
 // Agent handoff request states (AgentHandoff.State).

@@ -816,6 +816,12 @@ type WorkerHireArgs struct {
 	// #95: add the herdr hiring instructions for the floor (hire.prepare's
 	// herdr_instructions) to Prompt, after a blank line. It needs a prompt.
 	HerdrInstructions bool `json:"herdr_instructions,omitempty"`
+	// #108 round 2 (optional): the review of Prompt's possible secrets (as
+	// sent, before the herdr instructions), and hire.interpret's
+	// secrets_pending when Prompt is its task (docs/protocol.md "Prompt
+	// secrets").
+	Secrets        *SecretsReview `json:"secrets,omitempty"`
+	SecretsPending string         `json:"secrets_pending,omitempty"`
 }
 
 // HireResult is the ack data of worker.hire.
@@ -834,6 +840,9 @@ type HireResult struct {
 	// #155: Codex is how a Codex hire was launched (absent otherwise):
 	// shared or legacy, and why a hire asked for shared runs legacy.
 	Codex *WorkerCodex `json:"codex,omitempty"`
+	// Protected (#108 round 2): how many ranges of the prompt went to
+	// private files (absent: none).
+	Protected int `json:"protected,omitempty"`
 }
 
 // WorkerArgs are the args of worker.fire.prepare.

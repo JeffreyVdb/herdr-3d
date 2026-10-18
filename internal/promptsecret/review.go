@@ -65,7 +65,29 @@ func (r *Reviewer) Scan(text string) Review {
 
 func (r *Reviewer) revision(text string, cands []Candidate) string {
 	m := hmac.New(sha256.New, r.key)
-	b := []byte("h3d-prompt-secrets/1\x00" + RulesVersion + "\x00")
+	m.Write(scanBytes("h3d-prompt-secrets/1", text, cands))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+// StoredDigest is the record of a stored prompt reviewed with every
+// candidate ignored (#108 round 2: a schedule's or a hire preset's): a
+// plain SHA-256 of the rule set, the text and its candidates, the same for
+// every bridge process. Only for a text stored in plain beside it: it tells
+// nothing the text does not (never a review's revision, which is keyed).
+// A rescan under other rules or of another text gives another digest.
+func StoredDigest(text string, rev Review) string {
+	cands := make([]Candidate, len(rev.Found))
+	for i, f := range rev.Found {
+		cands[i] = f.Candidate
+	}
+	s := sha256.Sum256(scanBytes("h3d-prompt-secrets-stored/1", text, cands))
+	return base64.RawURLEncoding.EncodeToString(s[:])
+}
+
+// scanBytes encodes a scan (the rule set, the text, its candidates) under
+// a purpose's prefix.
+func scanBytes(purpose, text string, cands []Candidate) []byte {
+	b := []byte(purpose + "\x00" + RulesVersion + "\x00")
 	b = binary.AppendUvarint(b, uint64(len(text)))
 	b = append(b, text...)
 	b = binary.AppendUvarint(b, uint64(len(cands)))
@@ -83,8 +105,7 @@ func (r *Reviewer) revision(text string, cands []Candidate) string {
 			b = append(b, 0)
 		}
 	}
-	m.Write(b)
-	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+	return b
 }
 
 // Range is [Start, End): UTF-16 code units in a Decision, bytes in a Plan.

@@ -18,6 +18,7 @@ import (
 
 	"github.com/JeffreyVdb/herdr-3d/internal/gitremote"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/secretfiles"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 )
 
@@ -423,19 +424,78 @@ func (h *Hub) startRunStart(ctx context.Context, c *Client, cmd proto.Command) e
 	}
 	// #58 decision 3: an asleep virtual floor's session wakes first.
 	if waking, err := h.wakeForHire(ctx, c, cmd, a.Floor, func(ctx context.Context) error {
-		return h.runStart(ctx, c, cmd, a, nil)
+		return h.reviewedRunStart(ctx, c, cmd, a)
 	}); waking || err != nil {
 		return err
 	}
-	return h.runStart(ctx, c, cmd, a, nil)
+	return h.reviewedRunStart(ctx, c, cmd, a)
 }
 
-// runStart is startRunStart after the args are read. A work_item that the
-// floor's provider must vouch for or describe (see runTicketOf) is resolved
-// off the hub goroutine, then the start goes on from here with its ticket:
-// stale when the floor's board source changed meanwhile (#184: another
-// tracker, Kaneo connection or project), the item being of the old one.
-func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a proto.RunStartArgs, resolved *proto.RunTicket) error {
+// reviewedRunStart is run.start's texts through the gate (#108 round 2),
+// with the switch on or a review given, each with its own review: the
+// ticket's text (kept with the launch, its label's words, and in the
+// composed prompt), the extra (in the composed prompt; unused beside an
+// edited prompt) and the edited prompt. Their files go to one pending
+// owner the orchestrator claims once it is seen. Then the start goes on
+// with what the gate made of them.
+func (h *Hub) reviewedRunStart(ctx context.Context, c *Client, cmd proto.Command, a proto.RunStartArgs) error {
+	if !h.gated(a.Secrets != nil) {
+		return h.runStart(ctx, c, cmd, a, nil, nil)
+	}
+	if err := h.stillOn(); err != nil {
+		return err
+	}
+	var fields []secretField
+	for _, f := range []secretField{{path: "text", text: a.Text}, {path: "extra", text: a.Extra}, {path: "prompt", text: a.Prompt}} {
+		if f.text == "" || (f.path == "extra" && a.Prompt != "") {
+			continue
+		}
+		if err := scannable(f.text, f.path); err != nil {
+			return err
+		}
+		fields = append(fields, f)
+	}
+	fields, err := reviewFields(a.Secrets, fields)
+	if err != nil {
+		return err
+	}
+	a.Secrets = nil
+	if len(fields) == 0 {
+		return h.runStart(ctx, c, cmd, a, nil, nil)
+	}
+	rev, owner := h.ps.rev, secretfiles.NewPending()
+	startGated(h, ctx, c, cmd, rev, func(ctx context.Context) (*hireSecrets, error) {
+		ps, err := h.protectFields(ctx, rev, owner, h.opts.Now().Add(h.opts.SecretPendingTTL), fields)
+		if err != nil {
+			return nil, err
+		}
+		return &hireSecrets{rev: rev, owner: owner, ps: ps}, nil
+	}, h.dropHireSecrets, func(ctx context.Context, sec *hireSecrets) error {
+		for i, f := range fields {
+			switch f.path {
+			case "text":
+				a.Text = sec.ps[i].text
+			case "extra":
+				a.Extra = sec.ps[i].text
+			case "prompt":
+				a.Prompt = sec.ps[i].text
+			}
+		}
+		return h.runStart(ctx, c, cmd, a, nil, sec)
+	})
+	return nil
+}
+
+// runStart is startRunStart after the args are read (#108: and its texts
+// through the gate, sec what it made: it is beginHire's from there, or
+// dropped here when the start fails off the hub goroutine). A work_item
+// that the floor's provider must vouch for or describe (see runTicketOf)
+// is resolved off the hub goroutine, then the start goes on from here with
+// its ticket: stale when the floor's board source changed meanwhile (#184:
+// another tracker, Kaneo connection or project), the item being of the old
+// one.
+func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a proto.RunStartArgs, resolved *proto.RunTicket,
+	sec *hireSecrets) error {
 	f, err := h.hireFloor(a.Floor)
 	if err != nil {
 		return err
@@ -458,9 +518,10 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 					err = fmt.Errorf("%w: the floor's issue board changed while its item was read: pick the item again", errStale)
 				}
 				if err == nil {
-					err = h.runStart(ctx, c, cmd, a, t)
+					err = h.runStart(ctx, c, cmd, a, t, sec)
 				}
 				if err != nil {
+					h.dropHireSecrets(ctx, sec)
 					h.audit(ctx, c, cmd, err)
 					h.reply(c, cmd, nil, err)
 				}
@@ -536,7 +597,7 @@ func (h *Hub) runStart(ctx context.Context, c *Client, cmd proto.Command, a prot
 			}
 		}
 		return proto.RunStartResult{HireResult: res, LaunchID: launch.ID, Prompt: sent}
-	}, compose, nil)
+	}, compose, nil, sec)
 }
 
 // fillRunIDs records the run id of launches whose orchestrator now shows

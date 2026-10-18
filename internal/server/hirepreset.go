@@ -249,6 +249,7 @@ func auditHirePresetCheck(cmd proto.Command) json.RawMessage {
 		return redacted(cmd.Args)
 	}
 	return mustJSON(struct {
-		PromptBytes int `json:"prompt_bytes"`
-	}{len(a.Prompt)})
+		PromptBytes int           `json:"prompt_bytes"`
+		Secrets     *secretsAudit `json:"secrets,omitempty"` // #108 round 2: the decisions' counts
+	}{len(a.Prompt), auditReviews(a.Secrets)})
 }
