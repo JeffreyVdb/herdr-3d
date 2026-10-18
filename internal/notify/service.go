@@ -51,6 +51,10 @@ const (
 	// #14: a tap on a card, and an answer of the cards handed to the hub.
 	AuditTap    = "notify.tap"
 	AuditAnswer = "notify.answer"
+	// #106: how a menu's card ended, and where its identity was from; an
+	// alert or card set the send budget parked, and how it ended.
+	AuditMenu  = "notify.menu"
+	AuditLimit = "notify.limit"
 )
 
 // Settings are what the store keeps.
@@ -110,6 +114,8 @@ type Options struct {
 	// A *ReplyError says why (ReplyClosed: no longer the worker's). Nil: the
 	// cards' answers are refused.
 	Answer func(ctx context.Context, a Answer, done func(error)) error
+	// Limits is the outbound budget (#106; zero fields: DefaultLimits').
+	Limits Limits
 	Log    *slog.Logger
 }
 
@@ -177,6 +183,15 @@ type passedTest struct {
 
 type job struct{ alert Alert }
 
+// look is what the loop last told the replier of a worker: what it asks
+// (questionKey), the blocked spell it is in (#106; 0: none) and its
+// menu's look ("": none).
+type look struct {
+	key     string
+	blocked int64
+	menu    string
+}
+
 // Service holds the settings and sends the notifications. Observe never
 // blocks; Run does the work. Safe for concurrent use.
 type Service struct {
@@ -199,7 +214,7 @@ type Service struct {
 	bt buttons // #14: the replier's too
 	// keys is what each worker asks now, as the loop last told the replier
 	// (the loop's).
-	keys map[string]string
+	keys map[string]look
 
 	obsMu    sync.Mutex
 	obs      []Observation
@@ -207,6 +222,14 @@ type Service struct {
 	tr       *tracker // the loop's
 	running  atomic.Bool
 	warnOnce sync.Once
+
+	// #106: the send budget, and the alerts it parked (the loop's).
+	lim    *limiter
+	parked map[string]*parked
+	// episodes is each worker's episode as the loop last saw it (#106: an
+	// alert in the queue or between attempts goes only while it is on).
+	epMu     sync.Mutex
+	episodes map[string]string
 }
 
 // New loads the settings.
@@ -228,7 +251,8 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	}
 	s := &Service{opts: opts, change: make(chan struct{}, 1), kick: make(chan struct{}, 1),
 		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle), rp: newReplies(),
-		bt: newButtons(), keys: map[string]string{}}
+		bt: newButtons(), keys: map[string]look{}, lim: newLimiter(opts.Limits.withDefaults(), opts.Clock), parked: map[string]*parked{},
+		episodes: map[string]string{}}
 	if opts.Store != nil {
 		st, ok, err := opts.Store.LoadNotifySettings(ctx)
 		if err != nil {
@@ -543,7 +567,11 @@ func (s *Service) Run(ctx context.Context) {
 			timer = nil
 		}
 		var wake <-chan time.Time
-		if at, ok := s.tr.next(); ok {
+		at, ok := s.tr.next()
+		if p, parked := due(s.parked); parked && (!ok || p.Before(at)) {
+			at, ok = p, true
+		}
+		if ok {
 			timer = s.opts.Clock.NewTimer(at.Sub(s.now()))
 			wake = timer.C()
 		}
@@ -568,32 +596,115 @@ func (s *Service) process() {
 	freelancers := s.freelancers()
 	for _, o := range obs {
 		// #14: what the worker asks now, for its cards (a change only).
-		// #88: a menu's with what its card shows.
-		id, key := o.Worker.ID, ""
+		// #88: a menu's with what its card shows. #106: and the blocked
+		// spell it is in, and its menu's look (a redraw of one operation).
+		id := o.Worker.ID
+		var l look
 		var menu *menuSeen
 		if !o.Gone {
-			key, menu = questionKey(o.Worker), menuOf(o)
+			l.key, menu, l.blocked = questionKey(o.Worker), menuOf(o), blockedSpell(o)
+			if menu != nil {
+				l.menu = fmt.Sprintf("%#v", *menu.menu)
+			}
 		}
-		if s.keys[id] != key {
-			if key == "" {
+		if s.keys[id] != l {
+			if l == (look{}) {
 				delete(s.keys, id)
 			} else {
-				s.keys[id] = key
+				s.keys[id] = l
 			}
-			s.job(func(ctx context.Context) { s.seen(ctx, id, key, menu) })
+			key, blocked := l.key, l.blocked
+			s.job(func(ctx context.Context) { s.seen(ctx, id, key, menu, blocked) })
 		}
 		if o.Gone {
 			s.tr.gone(o.Worker.ID)
+			s.publish(id)
 			continue
 		}
-		if a := s.tr.observe(s.sight(o, freelancers), now); a != nil {
-			s.enqueue(*a)
+		a := s.tr.observe(s.sight(o, freelancers), now)
+		s.publish(id)
+		if a != nil {
+			s.alert(*a)
 		}
 	}
 	for _, a := range s.tr.due(now) {
 		if s.allowed(a.Kind) {
-			s.enqueue(a)
+			s.alert(a)
 		}
+	}
+	s.release(now)
+}
+
+// publish shares worker id's episode, as the tracker has it now, with the
+// sender (#106).
+func (s *Service) publish(id string) {
+	cur := s.tr.current(id)
+	s.epMu.Lock()
+	if cur == "" {
+		delete(s.episodes, id)
+	} else {
+		s.episodes[id] = cur
+	}
+	s.epMu.Unlock()
+}
+
+// current reports whether a's episode is its worker's, as the loop last
+// saw it (#106).
+func (s *Service) current(a Alert) bool {
+	s.epMu.Lock()
+	defer s.epMu.Unlock()
+	return s.episodes[a.WorkerID] == episodeKey(a.Kind, a.Since)
+}
+
+// alert sends a, or parks it while its worker's cooldown or the
+// destination's budget is spent (#106: the latest of a worker's wins). A
+// needs-you alert parked by the cooldown still opens its cards: they draw
+// on the budget, not on the alert's cooldown.
+func (s *Service) alert(a Alert) {
+	ok, at, cause := s.lim.admitAlert(a.WorkerID)
+	if ok {
+		s.enqueue(a)
+		return
+	}
+	park(s.parked, a, at, cause)
+	s.opts.Log.Debug("notifications: an alert waits for its budget", "worker", a.WorkerID, "kind", a.Kind, "cause", cause)
+	if cause == causeCooldown && a.Kind == KindNeedsYou {
+		s.cardsOf(a)
+	}
+}
+
+// cardsOf has the replier open what an alert that went (or would have)
+// comes with: an ask's or follow-up's cards, a menu's once its screen is
+// read (#88).
+func (s *Service) cardsOf(a Alert) {
+	switch {
+	case a.Ask != nil || a.Followup != nil:
+		s.job(func(ctx context.Context) { s.openCards(ctx, a) }) // #14
+	case a.Kind == KindNeedsYou:
+		s.job(func(ctx context.Context) { s.rang(ctx, a) }) // #88
+	}
+}
+
+// release sends the parked alerts whose slot came, if the worker is still
+// in their episode (and its event on); else drops them (#106).
+func (s *Service) release(now time.Time) {
+	for id, p := range s.parked {
+		if p.at.After(now) {
+			continue
+		}
+		row := limitAudit{ID: id, Kind: "alert", Cause: p.cause, Coalesced: p.coalesced, Outcome: "dropped"}
+		a := p.alert
+		if s.tr.current(id) == episodeKey(a.Kind, a.Since) && s.allowed(a.Kind) {
+			ok, at, cause := s.lim.admitAlert(id)
+			if !ok {
+				p.at, p.cause = at, cause
+				continue
+			}
+			s.enqueue(a)
+			row.Outcome = "sent"
+		}
+		delete(s.parked, id)
+		s.audit(context.Background(), AuditLimit, row, nil)
 	}
 }
 
@@ -629,10 +740,12 @@ func (s *Service) sight(o Observation, freelancers bool) sighting {
 	return sg
 }
 
+// enqueue hands the sender an alert the budget let in.
 func (s *Service) enqueue(a Alert) {
 	select {
 	case s.queue <- job{alert: a}:
 	default:
+		s.lim.dropAlert(a.WorkerID)
 		s.dropped.Add(1)
 		s.signal()
 		s.audit(context.Background(), AuditSend, sendAudit{ID: a.WorkerID, Kind: string(a.Kind)}, errors.New(CodeDropped))
@@ -660,6 +773,15 @@ type sendAudit struct {
 	Code     string `json:"code,omitempty"`
 }
 
+// retryAfter is a rate limit's wait in err (0: none).
+func retryAfter(err error) time.Duration {
+	var se *SendError
+	if errors.As(err, &se) && se.Code == CodeRateLimited {
+		return se.RetryAfter
+	}
+	return 0
+}
+
 // Backoff is the wait after the n-th failed delivery (n from 1): 1 s,
 // doubling, at most 30 s.
 func Backoff(n int) time.Duration {
@@ -672,14 +794,33 @@ func Backoff(n int) time.Duration {
 
 // deliver sends one alert: a few attempts, a rate limit's wait honoured,
 // backoff after a network failure or a 5xx; then audited. Switched off
-// meanwhile, it is dropped unsent.
+// meanwhile, it is dropped unsent; (#106) its episode over before an
+// attempt (it waited in the queue, for its pace or a rate limit), it is
+// dropped too, and audited obsolete. Its budget slot counts from its last
+// attempt, or is given back when there was none.
 func (s *Service) deliver(ctx context.Context, a Alert) {
 	n := Notification{WorkerID: a.WorkerID, Name: a.Name, Reason: a.Reason, Line: a.Line, Quiet: s.quiet()}
 	row := sendAudit{ID: a.WorkerID, Kind: string(a.Kind)}
+	defer func() {
+		if row.Attempts > 0 {
+			s.lim.sentAlert(a.WorkerID)
+		} else {
+			s.lim.dropAlert(a.WorkerID)
+		}
+	}()
 	var err error
 	var ref Ref
 	for row.Attempts < MaxAttempts {
 		if !s.allowed(a.Kind) {
+			return
+		}
+		if err = s.lim.wait(ctx); err != nil { // #106: the destination's pacing
+			break
+		}
+		if !s.current(a) {
+			s.opts.Log.Info("notification dropped: its episode ended before it went", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts)
+			row.Code = CodeObsolete
+			s.audit(ctx, AuditSend, row, errors.New(CodeObsolete))
 			return
 		}
 		row.Attempts++
@@ -691,10 +832,12 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 		}
 		var se *SendError
 		if !errors.As(err, &se) || !se.Retryable() || row.Attempts >= MaxAttempts {
+			s.lim.pause(retryAfter(err))
 			break
 		}
 		wait := Backoff(row.Attempts)
 		if se.RetryAfter > 0 {
+			s.lim.pause(se.RetryAfter)
 			if se.RetryAfter > maxRetryAfter {
 				break
 			}
@@ -723,12 +866,7 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 	} else {
 		s.opts.Log.Info("notification sent", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts)
 		s.remember(ctx, ref, a.WorkerID)
-		switch {
-		case a.Ask != nil || a.Followup != nil:
-			s.job(func(ctx context.Context) { s.openCards(ctx, a) }) // #14
-		case a.Kind == KindNeedsYou:
-			s.job(func(ctx context.Context) { s.rang(ctx, a) }) // #88
-		}
+		s.cardsOf(a)
 	}
 	s.audit(ctx, AuditSend, row, aerr)
 }

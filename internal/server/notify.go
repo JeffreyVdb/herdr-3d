@@ -15,8 +15,9 @@ package server
 // follow-up through worker.answer_ask's or worker.answer_followup's own
 // path (cardAnswer); the cards' texts are the worker's facts (notifyFacts),
 // none of a secret ask's. #88: and a blocked worker's permission or trust
-// menu through worker.answer's (queueAnswer); of the menu only its
-// choices' labels go, scrubbed (menuText), never its question line.
+// menu through worker.answer's (queueAnswer); of the menu its choices'
+// labels go, scrubbed (menuText), never its question line, and (#106) what
+// it is about, redacted and bounded (menuFacts).
 
 import (
 	"context"
@@ -66,9 +67,13 @@ func (h *Hub) initNotify(ctx context.Context) error {
 	if h.opts.NotifyChannel == nil {
 		return nil
 	}
+	var limits notify.Limits
+	if l := h.opts.NotifyLimits; l != nil {
+		limits = *l
+	}
 	svc, err := notify.New(ctx, notify.Options{Store: notifyStore{h.st}, Channel: h.opts.NotifyChannel,
 		EnvEnabled: h.opts.NotifyEnabled, Clock: h.opts.NotifyClock, Settle: h.opts.NotifySettle,
-		Audit: h.auditNotify, Prompt: h.replyPrompt, Answer: h.cardAnswer, Log: h.log})
+		Audit: h.auditNotify, Prompt: h.replyPrompt, Answer: h.cardAnswer, Limits: limits, Log: h.log})
 	if err != nil {
 		return fmt.Errorf("notifications: %w", err)
 	}
@@ -161,6 +166,9 @@ func (h *Hub) notifyWorker(id string) {
 	}
 	f := h.floors[w.Floor]
 	nw := notifyFacts(w, f != nil && !f.running)
+	if qs, ok := h.questions[id]; ok && nw.Menu != nil && qs.q == w.Question { // #106
+		menuFacts(nw.Menu, qs.op, h.nativeFor(id, qs.op))
+	}
 	o := notify.Observation{Worker: nw, Name: workerDisplayName(w)}
 	if v := notify.Judge(nw); v.Display == notify.DisplayNeedsYou || v.Display == notify.DisplayDone {
 		o.Line = h.notifyLine(w, nw.Secret())
@@ -366,7 +374,7 @@ func (h *Hub) cardAnswer(ctx context.Context, a notify.Answer, done func(error))
 	}
 	return h.handOff(ctx, func(hctx context.Context) error {
 		if a.Hash != "" {
-			return menuError(a, h.queueAnswer(hctx, proto.WorkerAnswerArgs{ID: a.WorkerID, Hash: a.Hash, Choice: a.Choice}, end))
+			return menuError(a, h.queueAnswer(hctx, proto.WorkerAnswerArgs{ID: a.WorkerID, Hash: a.Hash, Choice: a.Choice}, a.Native, end))
 		}
 		if a.TurnID != "" {
 			args := proto.WorkerAnswerFollowupArgs{ID: a.WorkerID, TurnID: a.TurnID}

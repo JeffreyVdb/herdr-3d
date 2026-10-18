@@ -751,7 +751,7 @@ func TestServiceAgainstTheFake(t *testing.T) {
 			r.ch.stored.UserID, r.ch.stored.UserName = 42, "Ada" // paired before
 			r.ch.mu.Unlock()
 			base := len(r.tg.requests(""))
-			svc, err := notify.New(context.Background(), notify.Options{Channel: r.ch, Clock: r.clock, EnvEnabled: &on})
+			svc, err := notify.New(context.Background(), notify.Options{Channel: r.ch, Clock: r.clock, EnvEnabled: &on, Limits: notify.NoLimits()})
 			if err != nil {
 				t.Fatal(err)
 			}

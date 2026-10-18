@@ -283,7 +283,8 @@ const (
 	CodeTimeout       = "timeout"
 	CodeConflict      = "conflict" // another poller or a webhook
 	CodeFailed        = "provider_failed"
-	CodeDropped       = "dropped" // the queue was full
+	CodeDropped       = "dropped"  // the queue was full
+	CodeObsolete      = "obsolete" // #106: its episode ended before it went
 )
 
 // Error is a failure of a settings command, its message fit to show.

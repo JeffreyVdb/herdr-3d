@@ -1,0 +1,1075 @@
+package server
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"runtime"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/notify"
+	"github.com/JeffreyVdb/herdr-3d/internal/proto"
+	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
+)
+
+// #106: the incidental lines are only what says how long something has run
+// or that it still runs; a command or a dialog's line is none.
+func TestIncidentalLines(t *testing.T) {
+	t.Parallel()
+	for _, l := range []string{
+		"Background task running 0s", "Background task running 12s", "background tasks running 1m 5s", "2 background tasks running",
+		"Background shell running for 3.5s", "✻ Thinking… (12s · ↓ 300 tokens · esc to interrupt)", "✶ Brewing… (4s)",
+		"(esc to interrupt)", "12s", "(3.2s)", "1m 5s", "1:59", "Auto-deny in 1:59", "Denied in 30s", "Times out in 2 minutes",
+	} {
+		if !isIncidental(l) {
+			t.Errorf("%q is not incidental", l)
+		}
+	}
+	for _, l := range []string{
+		"rm -f $D/*", "Bash command", "sleep 12s", "timeout 30s make test", "echo running 5s", "Do you want to proceed?",
+		"Create empty file h3d-perm-probe.txt", "Reason: May I create it outside the sandbox?", "$ touch a", "1. Yes",
+		"/tmp/h3d-m5term/claude-a2be86", "deny in tests: rm -rf build",
+		// Command lines that read like a status line.
+		"echo 'esc to interrupt'; touch /tmp/a", "esc to interrupt && rm -rf /tmp/b", "* rm -rf /tmp/b (5s)",
+		"✻ rm -rf /tmp/b (5s)", "cancel /tmp/job in 5s", "Denied in 30s; rm -rf /tmp/b", "background task running 5s; rm -rf /tmp/b",
+	} {
+		if isIncidental(l) {
+			t.Errorf("%q is incidental", l)
+		}
+	}
+}
+
+// #106: a command line that reads like a status line is the operation's,
+// on the card and in the hash: approving one never approves another.
+func TestMenuOpCommandLikeIncidental(t *testing.T) {
+	t.Parallel()
+	const cmd = "echo 'esc to interrupt'; touch /tmp/a"
+	a := parseQuestionOf("claude", claudeBash("", cmd), 1)
+	b := parseQuestionOf("claude", claudeBash("", "echo 'esc to interrupt'; rm -rf /tmp/b"), 1)
+	if a.q.Hash == b.q.Hash || a.op.key == b.op.key || !slices.Contains(a.op.lines, cmd) {
+		t.Fatalf("A %s %q, B %s %q", a.q.Hash, a.op.lines, b.q.Hash, b.op.lines)
+	}
+}
+
+// #106: what each captured permission and trust dialog is about: its own
+// lines from its top (Claude's rule, Codex's first line), whole, never the
+// conversation above, nor Claude's question and the choices below them.
+func TestMenuOpOnCapturedScreens(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		screen, harness string
+		lines           []string
+	}{
+		{"claude-permission-bash", "claude", []string{"Bash command", "touch h3d-perm-probe.txt", "Create empty file h3d-perm-probe.txt"}},
+		{"claude-permission-write", "claude", []string{"Create file", "notes-h3d.txt", "1 hello"}},
+		{"claude-trust", "claude", []string{"Accessing workspace:", "/tmp/h3d-m5term/claude-a2be86",
+			"Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source",
+			"project, or work from your team). If not, take a moment to review what's in this folder first.",
+			"Claude Code'll be able to read, edit, and execute files here.", "Security guide"}},
+		{"codex-approval", "codex", []string{"Would you like to run the following command?", "Environment: local",
+			"Reason: May I create h3d-codex-probe.txt by rerunning the requested touch command outside the read-only sandbox?",
+			"$ touch h3d-codex-probe.txt"}},
+		{"codex-trust", "codex", []string{"Folder access", "/tmp/h3d-m5term/codex-f3e4dd",
+			"Trust this folder? Codex can read, edit, and run files here, subject to your permission settings. Folder settings",
+			"can run code automatically, even without a model request. Continue only if you trust these files. Your trust",
+			"decision will be saved."}},
+	} {
+		for _, harness := range []string{tc.harness, ""} {
+			sq := parseQuestionOf(harness, screen(t, tc.screen), 1)
+			if sq.op == nil || !sq.op.complete || !slices.Equal(sq.op.lines, tc.lines) {
+				t.Errorf("%s (%q): op %+v", tc.screen, harness, sq.op)
+			}
+		}
+	}
+	if sq := parseQuestion(screen(t, "claude-question"), 1); sq.op != nil {
+		t.Errorf("a choice menu has an op: %+v", sq.op)
+	}
+}
+
+// claudeBash is Claude Code's Bash permission dialog for command (its
+// lines), as the captured screen draws it, under history.
+func claudeBash(history string, command ...string) string {
+	var b strings.Builder
+	b.WriteString(history)
+	b.WriteString(strings.Repeat("─", 120) + "\n Bash command\n\n")
+	for _, l := range command {
+		b.WriteString("   " + l + "\n")
+	}
+	b.WriteString("   Clean the scratch directory\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don't ask again for rm commands\n   3. No\n\n Esc to cancel · Tab to amend\n")
+	return b.String()
+}
+
+// The incident's fixture (#106, the issue's reproduction): a counter in
+// the dialog ticks, nothing else: the same hash, operation and excerpt
+// every read (no worker.upsert, one card); another command is another hash
+// and operation, and so is another blocked spell.
+func TestMenuOpTickingContext(t *testing.T) {
+	t.Parallel()
+	ticket := "Bash command\n rm -f $D/*\n Background task running %ds\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel"
+	real := claudeBash("● Running the cleanup\n", "S=/tmp/run; D=$S/scratch; rm -f $D/*") + "  Background task running %ds\n"
+	real = strings.Replace(real, " Do you want to proceed?", " Background task running %ds\n Do you want to proceed?", 1)
+	for name, s := range map[string]string{"ticket": ticket, "claude": real} {
+		base := parseQuestionOf("claude", strings.ReplaceAll(s, "%d", "0"), 100)
+		for i := 1; i < 10; i++ {
+			sq := parseQuestionOf("claude", strings.ReplaceAll(s, "%d", fmt.Sprint(i)), 100)
+			if sq.q.Hash != base.q.Hash || sq.op.key != base.op.key || !slices.Equal(sq.q.Excerpt, base.q.Excerpt) {
+				t.Fatalf("%s: frame %d: %+v / %+v, want %+v / %+v", name, i, sq.q, sq.op, base.q, base.op)
+			}
+		}
+		other := parseQuestionOf("claude", strings.ReplaceAll(strings.Replace(s, "rm -f $D/*", "rm -f /tmp/other/*", 1), "%d", "0"), 100)
+		if other.q.Hash == base.q.Hash || other.op.key == base.op.key {
+			t.Errorf("%s: another command, same identity", name)
+		}
+		if again := parseQuestionOf("claude", strings.ReplaceAll(s, "%d", "0"), 101); again.q.Hash == base.q.Hash || again.op.key == base.op.key {
+			t.Errorf("%s: another blocked spell, same identity", name)
+		}
+		for _, l := range base.q.Excerpt {
+			if strings.Contains(l, "Background task") {
+				t.Errorf("%s: excerpt %q", name, base.q.Excerpt)
+			}
+		}
+	}
+	if sq := parseQuestionOf("claude", strings.ReplaceAll(ticket, "%d", "0"), 100); sq.op.complete {
+		t.Error("the ticket's fixture has no dialog top: it is not complete")
+	}
+	if sq := parseQuestionOf("claude", strings.ReplaceAll(real, "%d", "0"), 100); !sq.op.complete ||
+		!slices.Equal(sq.op.lines, []string{"Bash command", "S=/tmp/run; D=$S/scratch; rm -f $D/*", "Clean the scratch directory"}) {
+		t.Errorf("op %+v", sq.op)
+	}
+}
+
+// #106: what the old 12-line window and 200-rune clip hid is in the hash
+// now: a change at the top of a tall command, or past a long line's 200th
+// rune, is another hash and operation; above the dialog's top is nothing
+// of it.
+func TestMenuOpBeyondTheWindow(t *testing.T) {
+	t.Parallel()
+	var tall []string
+	for i := range 20 {
+		tall = append(tall, fmt.Sprintf("echo step %d", i))
+	}
+	base := parseQuestionOf("claude", claudeBash("", tall...), 1)
+	changed := slices.Clone(tall)
+	changed[0] = "rm -rf ~/important"
+	if sq := parseQuestionOf("claude", claudeBash("", changed...), 1); sq.q.Hash == base.q.Hash || sq.op.key == base.op.key {
+		t.Error("a change 20 lines up: same identity")
+	}
+	long := "cp a.txt " + strings.Repeat("x", 250) + " /safe/target"
+	lb := parseQuestionOf("claude", claudeBash("", long), 1)
+	if sq := parseQuestionOf("claude", claudeBash("", strings.Replace(long, "/safe/target", "/etc/passwd", 1)), 1); sq.q.Hash == lb.q.Hash ||
+		sq.op.key == lb.op.key {
+		t.Error("a change past the 200th rune: same identity")
+	}
+	if sq := parseQuestionOf("claude", claudeBash("● Something else ran\n  ⎿ 12s\n", tall...), 1); sq.q.Hash != base.q.Hash {
+		t.Error("history above the dialog changed its hash")
+	}
+}
+
+// #106: a rewrap (a resize) of the same command keeps its operation (one
+// card) but not its hash (worker.answer checks what the screen shows); a
+// command whose words are joined otherwise is another hash.
+func TestMenuOpRewrap(t *testing.T) {
+	t.Parallel()
+	wide := parseQuestionOf("claude", claudeBash("", "rm -f /tmp/scratch/a.png /tmp/scratch/b.png"), 1)
+	narrow := parseQuestionOf("claude", claudeBash("", "rm -f /tmp/scratch/a.png", "/tmp/scratch/b.png"), 1)
+	if wide.op.key != narrow.op.key || wide.q.Hash == narrow.q.Hash {
+		t.Errorf("rewrap: key %s/%s hash %s/%s", wide.op.key, narrow.op.key, wide.q.Hash, narrow.q.Hash)
+	}
+	a := parseQuestionOf("claude", claudeBash("", "touch a b"), 1)
+	b := parseQuestionOf("claude", claudeBash("", "touch ab"), 1)
+	if a.q.Hash == b.q.Hash {
+		t.Error("touch a b and touch ab: same hash")
+	}
+}
+
+// #106: a dialog taller than the screen (its top not on it) is not
+// complete: its card shows its end, says so, and withholds the choices
+// that approve; a trust menu's are kept (no command to hide).
+func TestMenuOpPartial(t *testing.T) {
+	t.Parallel()
+	full := claudeBash("", "S=/tmp/run", "D=$S/scratch", "rm -f $D/*")
+	cut := full[strings.Index(full, "   D=$S"):]
+	sq := parseQuestionOf("claude", cut, 1)
+	if sq.op == nil || sq.op.complete || sq.q.Kind != proto.QuestionPermission {
+		t.Fatalf("op %+v (%s)", sq.op, sq.q.Kind)
+	}
+	if whole := parseQuestionOf("claude", full, 1); whole.q.Hash == sq.q.Hash || whole.op.key == sq.op.key {
+		t.Error("the whole dialog and its end: same identity")
+	}
+	m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &sq.q}, false).Menu
+	menuFacts(m, sq.op, nil)
+	if m.About[0] != aboutPartial || !slices.Contains(m.About, "rm -f $D/*") {
+		t.Fatalf("about %q", m.About)
+	}
+	var kept []int
+	for _, c := range m.Choices {
+		if !c.Withheld {
+			kept = append(kept, c.N)
+		}
+	}
+	if !slices.Equal(kept, []int{3}) {
+		t.Fatalf("buttons for %v", kept)
+	}
+	trust := screen(t, "claude-trust")
+	tq := parseQuestionOf("claude", trust[strings.Index(trust, " /tmp/h3d"):], 1)
+	tm := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &tq.q}, false).Menu
+	menuFacts(tm, tq.op, nil)
+	if tq.op.complete || slices.ContainsFunc(tm.Choices, func(c notify.MenuChoice) bool { return c.Withheld }) {
+		t.Fatalf("trust %+v %+v", tq.op, tm.Choices)
+	}
+}
+
+// #106: a dialog whose top is off the screen hashes all it shows of
+// itself, not the 12 lines above its menu: a change far up the screen is
+// another hash.
+func TestMenuOpPartialHashesAllShown(t *testing.T) {
+	t.Parallel()
+	lines := []string{"D=/tmp/safe"}
+	for range 15 {
+		lines = append(lines, "echo step")
+	}
+	full := claudeBash("", append(lines, "rm -f $D/*")...)
+	cut := full[strings.Index(full, "   D="):]
+	a := parseQuestionOf("claude", cut, 1)
+	b := parseQuestionOf("claude", strings.Replace(cut, "D=/tmp/safe", "D=/tmp/important", 1), 1)
+	if a.op.complete || a.q.Hash == b.q.Hash || !slices.Contains(a.op.lines, "D=/tmp/safe") {
+		t.Fatalf("hash %s / %s, op %+v", a.q.Hash, b.q.Hash, a.op)
+	}
+}
+
+// #106: what a line of an operation keeps when it leaves the bridge.
+func TestRedactLine(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"curl -u admin:hunter2 https://example.test":           "curl -u admin:[key] https://example.test",
+		"curl --user 'bob:s3cr3t pass' https://x.test":         "curl --user 'bob:[key]' https://x.test",
+		"curl https://bob:pw123@example.test/x":                "curl https://bob:[key]@example.test/x",
+		`curl -H "Authorization: Bearer abc.def" https://x`:    `curl -H "Authorization: [key]" https://x`,
+		`curl -H 'X-Api-Key: 1234abcd' https://x`:              `curl -H 'X-Api-Key: [key]' https://x`,
+		"API_TOKEN=abc123 make deploy":                         "API_TOKEN=[key] make deploy",
+		"export AWS_SECRET_ACCESS_KEY='zzz' && aws s3 ls":      "export AWS_SECRET_ACCESS_KEY=[key] && aws s3 ls",
+		"PGPASSWORD=pw psql -h db":                             "PGPASSWORD=[key] psql -h db",
+		"gh auth login --with-token --token ghx123":            "gh auth login --with-token --token [key]",
+		"mysql -u root -phunter2 shop":                         "mysql -u root -p[key] shop",
+		"sshpass -p hunter2 ssh host":                          "sshpass -p [key] ssh host",
+		"git push https://ghp_abcdefghijklmnop@github.com/x/y": "git push https://[key]@github.com/x/y",
+		"S=/tmp/run; D=$S/scratch; rm -f $D/*":                 "S=/tmp/run; D=$S/scratch; rm -f $D/*",
+		"mkdir -p build && cp -r src build":                    "mkdir -p build && cp -r src build",
+		"echo \x1b[31mred\x07":                                 "echo  [31mred ",
+	} {
+		if got := redactLine(in); got != want {
+			t.Errorf("redactLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// #106: a password in shell quotes goes whole, every word of it, however
+// it is quoted; what follows it stays.
+func TestRedactLineQuoted(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		`curl -u admin:"hunter2" https://example.test`:                    `curl -u admin:[key] https://example.test`,
+		`curl -u admin:'hun ter2' https://example.test`:                   `curl -u admin:[key] https://example.test`,
+		`curl -u 'admin:hun ter2' https://example.test`:                   `curl -u 'admin:[key]' https://example.test`,
+		`curl -u 'bob:correct horse battery staple' https://example.test`: `curl -u 'bob:[key]' https://example.test`,
+		`curl --user "admin:hunter2" https://example.test`:                `curl --user "admin:[key]" https://example.test`,
+		`curl --user="admin:two words" https://example.test`:              `curl --user="admin:[key]" https://example.test`,
+		`curl -u "admin":"two words" https://example.test`:                `curl -u "admin":[key] https://example.test`,
+		`sshpass -p 'hunter2' ssh user@example.test`:                      `sshpass -p [key] ssh user@example.test`,
+		`sshpass -p"two words" ssh host`:                                  `sshpass -p[key] ssh host`,
+		`mysql -u root -p'hunter2' shop`:                                  `mysql -u root -p[key] shop`,
+		`mysql -p'hunter2' -e 'select 1'`:                                 `mysql -p[key] -e 'select 1'`,
+		`mysql -p"two words" -e 'select 1'`:                               `mysql -p[key] -e 'select 1'`,
+		`gh auth login --token 'two words' --hostname x`:                  `gh auth login --token [key] --hostname x`,
+		`DB_PASSWORD="two words" ./migrate`:                               `DB_PASSWORD=[key] ./migrate`,
+		`DB_PASSWORD=pre'two words' ./migrate`:                            `DB_PASSWORD=[key] ./migrate`,
+		`curl -H 'Authorization: Bearer' -H 'X-Other: value' https://x`:   `curl -H 'Authorization: [key]' -H 'X-Other: value' https://x`,
+	} {
+		got := redactLine(in)
+		if got != want {
+			t.Errorf("redactLine(%q) = %q, want %q", in, got, want)
+		}
+		for _, secret := range []string{"hunter2", "hun", "ter2", "horse", "staple", "two", "words"} {
+			if strings.Contains(got, secret) {
+				t.Errorf("redactLine(%q) = %q keeps %q", in, got, secret)
+			}
+		}
+	}
+}
+
+// #106: a password is the shell word bash reads, escapes and all: a
+// backslash outside quotes, an escaped quote inside double quotes, $'…',
+// runs side by side; a carrier inside a quoted argument reads on to its
+// quote's end; a quote or a backslash left open hides all after it. What
+// follows a closed one stays.
+func TestRedactLineEscaped(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		`sshpass -p "prefix\" suffixsecret" ssh host`:                `sshpass -p [key] ssh host`,
+		`mysql -p"prefix\" suffixsecret" shop`:                       `mysql -p[key] shop`,
+		`curl -u "admin:prefix\" suffixsecret" https://example.test`: `curl -u "admin:[key]" https://example.test`,
+		`curl -u admin:prefix\ suffixsecret https://example.test`:    `curl -u admin:[key] https://example.test`,
+		`curl -u admin:a\"b\'c https://example.test`:                 `curl -u admin:[key] https://example.test`,
+		`curl -u admin\:pw https://example.test`:                     `curl -u admin\:[key] https://example.test`,
+		`curl -u $'admin:a\' b' https://example.test`:                `curl -u $'admin:[key]' https://example.test`,
+		`curl -u $'admin\072pw' https://example.test`:                `curl -u $'admin[key]' https://example.test`,
+		`DB_PASSWORD=a"b c"'d e'$'f\' g' ./migrate`:                  `DB_PASSWORD=[key] ./migrate`,
+		`curl -H "Authorization: Bearer a\" b" https://example.test`: `curl -H "Authorization: [key]" https://example.test`,
+		`curl -d "password=a b" https://example.test`:                `curl -d "password=[key]" https://example.test`,
+		`curl "https://bob:a b@example.test/x"`:                      `curl "https://bob:[key]@example.test/x"`,
+		`git clone https://bob:a\ b@example.test/r.git`:              `git clone https://bob:[key]@example.test/r.git`,
+		`mysql -h db -P3306 -ppw shop`:                               `mysql -h db -P3306 -p[key] shop`,
+		`mysql -e "show tables;" -ppw shop`:                          `mysql -e "show tables;" -p[key] shop`,
+		`mysql -p shop`:                                              `mysql -p shop`,
+		`sshpass -v -p pw ssh host`:                                  `sshpass -v -p [key] ssh host`,
+		`sshpass -P assword: -p pw ssh host`:                         `sshpass -P assword: -p [key] ssh host`,
+		`curl -u "admin:a b https://example.test`:                    `curl -u "admin:[key]"`,
+		`sshpass -p 'a b ssh host`:                                   `sshpass -p [key]`,
+		`curl -u admin:a\`:                                           `curl -u admin:[key]`,
+		`git clone "https://bob:a b@example.test/r.git`:              `git clone "https://bob:[key]@example.test/r.git`,
+		`git clone "https://bob:a b@example.test`:                    `git clone "https://bob:[key]"`,
+		`curl -u admin https://example.test`:                         `curl -u admin https://example.test`,
+		`curl http://localhost:8080/x`:                               `curl http://localhost:8080/x`,
+		`curl https://bob:pw@example.test/x?to=a@b.test`:             `curl https://bob:[key]@example.test/x?to=a@b.test`,
+		`curl -d '{"user":"bob","password":"a b"}' https://x.test`:   `curl -d '{"user":"bob","password":[key]' https://x.test`,
+		`curl -d "{\"api_key\": \"a b\"}" https://x.test`:            `curl -d "{\"api_key\": [key]" https://x.test`,
+		`curl -d '{"Authorization": "Bearer a b"}' https://x.test`:   `curl -d '{"Authorization": [key]' https://x.test`,
+	} {
+		if got := redactLine(in); got != want {
+			t.Errorf("redactLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// #106: an operation's lines are read together, as bash reads a command:
+// a quote or a backslash at a line's end goes on to the next, and each of
+// a password's lines is hidden, the lines kept. On the screen (soft) a line
+// break may be a wrap inside a word, so a word at a line's end goes on.
+func TestRedactLines(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		in   []string
+		soft bool
+		want []string
+	}{
+		{[]string{`sshpass -p "a`, `b" ssh host`}, false, []string{`sshpass -p [key]`, `[key] ssh host`}},
+		{[]string{`sshpass -p a\`, `b ssh host`}, false, []string{`sshpass -p [key]`, `[key] ssh host`}},
+		{[]string{`export TOKEN="a`, `b`, `c"`, `make deploy`}, false, []string{`export TOKEN=[key]`, `[key]`, `[key]`, `make deploy`}},
+		{[]string{`curl -u admin:a`, `https://example.test`}, false, []string{`curl -u admin:[key]`, `https://example.test`}},
+		{[]string{`curl -u admin:a`, `b https://example.test`}, true, []string{`curl -u admin:[key]`, `[key] https://example.test`}},
+		{[]string{`curl -u 'admin:a`, `b' https://example.test`}, true, []string{`curl -u 'admin:[key]`, `[key]' https://example.test`}},
+		{[]string{`git clone https://bob:a`, `b@example.test/r.git`}, true, []string{`git clone https://bob:[key]`, `[key]@example.test/r.git`}},
+		{[]string{`mysql -u root`, `-ppw shop`}, true, []string{`mysql -u root`, `-p[key] shop`}},
+		{[]string{`mysql -u root \`, `-ppw shop`}, false, []string{`mysql -u root \`, `-p[key] shop`}},
+		{[]string{`sshpass \`, `-p pw ssh host`}, false, []string{`sshpass \`, `-p [key] ssh host`}},
+		{nil, false, nil},
+	} {
+		if got := redactLines(tc.in, tc.soft); !slices.Equal(got, tc.want) {
+			t.Errorf("redactLines(%q, %t) = %q, want %q", tc.in, tc.soft, got, tc.want)
+		}
+	}
+}
+
+// #106 (the review's commands): every carrier is found in the text as it
+// is, not in what another's hiding left, so one hiding never hides the
+// next from being found: on the screen a password at a line's end hides
+// the next line's first word too (it may be a wrap), the next command's
+// name, and that command's -p still goes.
+func TestRedactLinesCarrierAfterCarrier(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		in         []string
+		soft, hard []string
+	}{
+		{[]string{`curl -u admin:firstsecret`, `sshpass -p zzsecondsecret ssh target.test`},
+			[]string{`curl -u admin:[key]`, `[key] -p [key] ssh target.test`},
+			[]string{`curl -u admin:[key]`, `sshpass -p [key] ssh target.test`}},
+		{[]string{`curl -u admin:firstsecret`, `mysql -pzzsecondsecret shop`},
+			[]string{`curl -u admin:[key]`, `[key] -p[key] shop`},
+			[]string{`curl -u admin:[key]`, `mysql -p[key] shop`}},
+		{[]string{`TOKEN=firstsecret`, `sshpass -p zzsecondsecret ssh host`},
+			[]string{`TOKEN=[key]`, `[key] -p [key] ssh host`},
+			[]string{`TOKEN=[key]`, `sshpass -p [key] ssh host`}},
+		{[]string{`TOKEN=firstsecret`, `mysql -pzzsecondsecret shop`},
+			[]string{`TOKEN=[key]`, `[key] -p[key] shop`},
+			[]string{`TOKEN=[key]`, `mysql -p[key] shop`}},
+		{[]string{`mysql -pfirstsecret`, `sshpass -p zzsecondsecret ssh host`},
+			[]string{`mysql -p[key]`, `[key] -p [key] ssh host`},
+			[]string{`mysql -p[key]`, `sshpass -p [key] ssh host`}},
+		{[]string{`sshpass -p firstsecret`, `mysql -pzzsecondsecret shop`},
+			[]string{`sshpass -p [key]`, `[key] -p[key] shop`},
+			[]string{`sshpass -p [key]`, `mysql -p[key] shop`}},
+	} {
+		if got := redactLines(tc.in, true); !slices.Equal(got, tc.soft) {
+			t.Errorf("redactLines(%q, true) = %q, want %q", tc.in, got, tc.soft)
+		}
+		if got := redactLines(tc.in, false); !slices.Equal(got, tc.hard) {
+			t.Errorf("redactLines(%q, false) = %q, want %q", tc.in, got, tc.hard)
+		}
+		if got := strings.Join(aboutLines(tc.in), "\n"); strings.Contains(got, "secret") {
+			t.Errorf("aboutLines(%q) = %q", tc.in, got)
+		}
+	}
+}
+
+// #106: only an operation's first redactMax bytes are read for its card.
+// The lines after them are [key]; the line they end in keeps its start and
+// loses the word that goes past them (a token not all there for Scrub to
+// know); a value that reaches them is hidden to them as one left open (a
+// URL's password may end at an @ past them). The lines stay as many, those
+// before are as they would be.
+func TestRedactLinesBounded(t *testing.T) {
+	t.Parallel()
+	steps := make([]string, 2000)
+	for i := range steps {
+		steps[i] = fmt.Sprintf("echo safe step %06d", i)
+	}
+	head := strings.Join(steps, "\n")[:redactMax]
+	cut, start := strings.Count(head, "\n"), head[strings.LastIndex(head, "\n")+1:] // the line it ends in
+	want := start[:strings.LastIndex(start, " ")+1] + "[key]"
+	got := redactLines(steps, false)
+	if len(got) != len(steps) || !slices.Equal(got[:cut], steps[:cut]) || got[cut] != want ||
+		slices.ContainsFunc(got[cut+1:], func(l string) bool { return l != "[key]" }) {
+		t.Errorf("%d lines; at the cut (%d, %q): %q, last: %q", len(got), cut, want, got[cut-1:cut+2], got[len(got)-1])
+	}
+	// The cut inside a word: a token too short there for Scrub to know, a
+	// URL whose password's @ may be past it (a quoted blank, the last before
+	// the cut, after the @ before it): hidden from their start.
+	for word, k := range map[string]int{
+		`ghp_zqabcdefghijklmnopqrstuvwxyz0123456789`:               len(`ghp_zqabcd`),
+		`zqabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ`:         len(`zqabcdefghijklmnopqr`),
+		`https://bob:zq1@zq2"zq3 zq4"zq5zq6zq7@example.test/r.git`: len(`https://bob:zq1@zq2"zq3 zq4"zq5`),
+	} {
+		pad := strings.Repeat("echo ", redactMax/5)[:redactMax-len("git clone ")-k-1]
+		for _, soft := range []bool{false, true} {
+			lines := []string{pad, "git clone " + word, "echo after"}
+			got := redactLines(lines, soft)
+			if strings.Contains(strings.Join(got, "\n"), "zq") || len(got) != 3 || got[0] != pad || got[2] != "[key]" {
+				t.Errorf("cut %d bytes into %q (soft %t): %q", k, word, soft, got[1:])
+			}
+		}
+	}
+	// A -u password in quotes over lines, to the cut.
+	lines := append([]string{strings.Repeat("echo ", redactMax/5)[:redactMax-200], `curl -u "admin:zq0`}, slices.Repeat([]string{"zq zq zq zq zq zq zq"}, 20)...)
+	lines = append(lines, `zq" https://example.test`)
+	for _, soft := range []bool{false, true} {
+		if got := redactLines(lines, soft); strings.Contains(strings.Join(got, "\n"), "zq") || len(got) != len(lines) {
+			t.Errorf("soft %t: %q", soft, got[1:])
+		}
+	}
+}
+
+// redactCost is what redacting lines costs at best of up to three tries,
+// the first within limit ending them: its time and the bytes it allocates.
+func redactCost(f func(), limit time.Duration) (time.Duration, uint64) {
+	best, bytes := time.Duration(1<<62), uint64(1<<63)
+	for try := 0; try < 3 && best > limit; try++ {
+		runtime.GC()
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		start := time.Now()
+		f()
+		d := time.Since(start)
+		runtime.ReadMemStats(&after)
+		best, bytes = min(best, d), min(bytes, after.TotalAlloc-before.TotalAlloc)
+	}
+	return best, bytes
+}
+
+// #106 (the review's case among them): redacting costs as much as its text
+// is long, however hostile: eight times the text costs about eight times
+// the time and bytes, not sixty-four (each command name's words read once,
+// no value read again for each carrier in it). The text is not cut here
+// (redactText): the reading itself is measured. Not parallel: it measures.
+func TestRedactTextLinear(t *testing.T) {
+	for name, text := range map[string]func(n int) ([]string, bool){
+		"command names": func(n int) ([]string, bool) { return []string{"echo " + strings.Repeat("mysql ", n)}, false },
+		"sshpass -p":    func(n int) ([]string, bool) { return []string{"echo " + strings.Repeat("sshpass -p ", n)}, false },
+		"screen lines":  func(n int) ([]string, bool) { return slices.Repeat([]string{"mysql -u root"}, n), true },
+		"open -u":       func(n int) ([]string, bool) { return []string{`echo "` + strings.Repeat(" -u a", n)}, false },
+		"open quote":    func(n int) ([]string, bool) { return []string{`echo "` + strings.Repeat(" TOKEN=a", n)}, false },
+		"headers":       func(n int) ([]string, bool) { return []string{strings.Repeat("cookie: ", n)}, false },
+		"open URLs":     func(n int) ([]string, bool) { return []string{`echo "` + strings.Repeat(" https://u:p@h", n)}, false },
+		"lines' quotes": func(n int) ([]string, bool) { return slices.Repeat([]string{`'a -u b c`}, n), true },
+	} {
+		cost := func(n int, limit time.Duration) (time.Duration, uint64) {
+			lines, soft := text(n)
+			s := strings.Join(lines, "\n")
+			return redactCost(func() { redactText(s, soft, false) }, limit)
+		}
+		small, smallBytes := cost(1000, 0)
+		big, bigBytes := cost(8000, 32*small)
+		t.Logf("%s: 1000: %v, %d bytes; 8000: %v, %d bytes", name, small, smallBytes, big, bigBytes)
+		if big > 32*small || bigBytes > 16*smallBytes {
+			t.Errorf("%s: 8 times the text costs %.1f times the time, %.1f times the bytes", name,
+				float64(big)/float64(small), float64(bigBytes)/float64(smallBytes))
+		}
+	}
+}
+
+// #106: a card's lines are bounded: each line, their number and their
+// length in all, what is left out said.
+func TestAboutLinesBounded(t *testing.T) {
+	t.Parallel()
+	var lines []string
+	for i := range 40 {
+		lines = append(lines, fmt.Sprintf("echo %d %s", i, strings.Repeat("y", 400)))
+	}
+	got := aboutLines(lines)
+	if n := len(got); n > aboutLinesMax || !strings.HasPrefix(got[n-1], "… (") {
+		t.Fatalf("%d lines, last %q", n, got[len(got)-1])
+	}
+	total := 0
+	for _, l := range got[:len(got)-1] {
+		if n := len([]rune(l)); n > aboutLineMax {
+			t.Fatalf("line of %d runes", n)
+		} else {
+			total += n
+		}
+	}
+	if total > aboutMax {
+		t.Fatalf("%d runes", total)
+	}
+	if got := aboutLines([]string{"a", "b"}); !slices.Equal(got, []string{"a", "b"}) {
+		t.Fatalf("short: %q", got)
+	}
+}
+
+// floodRig is the issue's reproduction rig (#106): the real path from a
+// screen to Telegram, parseQuestionOf → notifyFacts → menuFacts →
+// notify.Service → FakeChannel, one worker, replies on, a fake clock.
+type floodRig struct {
+	svc   *notify.Service
+	ch    *notify.FakeChannel
+	clock *notify.FakeClock
+	n     int
+}
+
+func newFloodRig(t *testing.T) *floodRig {
+	t.Helper()
+	ch, st := notify.NewFakeChannel(true), notify.NewFakeStore()
+	settings := notify.DefaultSettings()
+	settings.Enabled, settings.Replies = true, true
+	if err := st.SaveNotifySettings(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	r := &floodRig{ch: ch, clock: notify.NewFakeClock(time.Date(2026, 10, 17, 22, 35, 40, 0, time.UTC))}
+	var err error
+	if r.svc, err = notify.New(t.Context(), notify.Options{Channel: ch, Store: st, Clock: r.clock}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.svc.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+	if !ch.WaitFor(ch.Listening, 5*time.Second) {
+		t.Fatal("not listening")
+	}
+	return r
+}
+
+// frame shows the service worker id (named name) blocked since since on
+// screen.
+func (r *floodRig) frame(id, name string, since int64, screen string) {
+	sq := parseQuestionOf("claude", screen, since)
+	w := &proto.Worker{ID: id, Status: statusBlocked, StatusSince: since, Question: &sq.q}
+	nw := notifyFacts(w, false)
+	menuFacts(nw.Menu, sq.op, nil)
+	r.svc.Observe(notify.Observation{Worker: nw, Name: name})
+}
+
+// barrier waits until the service took everything observed before: a
+// worker of its own turns blocked on a menu, and its card comes after
+// every job queued before it.
+func (r *floodRig) barrier(t *testing.T) {
+	t.Helper()
+	r.n++
+	id, cards := fmt.Sprintf("barrier%d", r.n), len(r.ch.Cards())
+	r.svc.Observe(notify.Observation{Worker: notify.Worker{ID: id, Status: statusWorking, StatusSince: 1}, Name: "Bar"})
+	r.frame(id, "Bar", 50, claudeBash("", "true"))
+	if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) > cards }, 5*time.Second) {
+		t.Fatal("no barrier card")
+	}
+}
+
+// cardsOf are the cards whose head is name's.
+func (r *floodRig) cardsOf(name string) []notify.Card {
+	var out []notify.Card
+	for _, ref := range r.ch.Cards() {
+		if c := r.ch.Card(ref); strings.HasPrefix(c.Text, name+" · ") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// menuOut is all that leaves for screen (a Claude dialog), blocked on its
+// menu, through the real path (menuFacts → notify.Service → FakeChannel):
+// its card's text, then every message sent. With calls, the menu's
+// native call is the one they match.
+func menuOut(t *testing.T, screen string, calls ...transcript.PendingCall) string {
+	t.Helper()
+	sq := parseQuestionOf("claude", screen, 100)
+	nw := notifyFacts(&proto.Worker{ID: "w1", Status: statusBlocked, StatusSince: 100, Question: &sq.q}, false)
+	var nc *nativeCall
+	if calls != nil {
+		if nc = nativeOf(sq.op, calls, "default"); nc == nil {
+			t.Fatalf("no native call for %q", sq.op.lines)
+		}
+	}
+	menuFacts(nw.Menu, sq.op, nc)
+	r := newFloodRig(t)
+	r.svc.Observe(notify.Observation{Worker: notify.Worker{ID: "w1", Status: statusWorking, StatusSince: 1}, Name: "Blip"})
+	r.svc.Observe(notify.Observation{Worker: nw, Name: "Blip"})
+	if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == 1 }, 5*time.Second) {
+		t.Fatal("no card")
+	}
+	return r.ch.Card(r.ch.Cards()[0]).Text + fmt.Sprintf("\n%+v", r.ch.Sent())
+}
+
+// #106 (the UX review's commands): an escaped quote inside double quotes
+// closes nothing, from the screen and from the native call alike.
+func TestCardMenuEscapedPassword(t *testing.T) {
+	t.Parallel()
+	for _, command := range []string{
+		`curl -u "admin:head\" tailsecret" https://example.test`,
+		`sshpass -p "head\" tailsecret" ssh user@example.test`,
+		`mysql -p"head\" tailsecret" -e "select 1"`,
+	} {
+		for _, native := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s native=%t", command, native), func(t *testing.T) {
+				t.Parallel()
+				var calls []transcript.PendingCall
+				if native {
+					calls = []transcript.PendingCall{bashCall("toolu_pw", command, "Run command")}
+				}
+				if out := menuOut(t, claudeBash("", command), calls...); strings.Contains(out, "tailsecret") || strings.Contains(out, "head") {
+					t.Errorf("left: %s", out)
+				}
+			})
+		}
+	}
+}
+
+// #106: no word of a password leaves, in any form bash reads it, through
+// the real path, from the screen and from the native call: every carrier
+// with every escaping form (a backslash, single, double and $'…' quotes
+// with their escapes, runs side by side), a quote or a backslash left
+// open, a command over lines and a screen's wrap. The synthetic password's
+// every piece has "zq" in it.
+func TestCardMenuPasswordShellWords(t *testing.T) {
+	t.Parallel()
+	carriers := []string{
+		"curl -u admin:%s https://example.test",
+		"curl --user=admin:%s https://example.test",
+		"curl --proxy-user admin:%s -x http://proxy.test https://example.test",
+		"sshpass -p %s ssh host",
+		"sshpass -v -p%s ssh host",
+		"mysql -h db -P3306 -u root -p%s shop",
+		"mysql --password=%s shop",
+		"DB_PASSWORD=%s ./migrate",
+		"gh auth login --token %s --hostname example.test",
+		"git clone https://bob:%s@example.test/r.git",
+	}
+	forms := []string{
+		`zq1\ zq2`,
+		`zq1\"zq2\ zq3`,
+		`zq1\'zq2\'\ zq3`,
+		`'zq1 zq2'`,
+		"\"zq1\\\" zq2 \\\\ zq3 \\$zq4 \\` zq5\"",
+		`$'zq1\' zq2 \\ zq3'`,
+		`zq1"zq2 zq3"'zq4 zq5'$'zq6\' zq7'zq8`,
+		`"zq1 zq2`,
+		`'zq1 zq2`,
+		`$'zq1\' zq2`,
+	}
+	type tc struct {
+		lines  []string // the screen's
+		native string   // the call's command
+	}
+	var cases []tc
+	for _, c := range carriers {
+		for _, f := range forms {
+			cmd := fmt.Sprintf(c, f)
+			cases = append(cases, tc{[]string{cmd}, cmd})
+		}
+	}
+	cases = append(cases,
+		tc{[]string{`curl -u "admin:zq1\" zq2" https://example.test`}, `curl -u "admin:zq1\" zq2" https://example.test`},
+		tc{[]string{`curl --user='admin:zq1 zq2' https://example.test`}, `curl --user='admin:zq1 zq2' https://example.test`},
+		tc{[]string{`curl -H "Authorization: Bearer zq1\" zq2" https://example.test`}, `curl -H "Authorization: Bearer zq1\" zq2" https://example.test`},
+		tc{[]string{`curl -H 'X-Api-Key: zq1 zq2' https://example.test`}, `curl -H 'X-Api-Key: zq1 zq2' https://example.test`},
+		tc{[]string{`curl -d "password=zq1 zq2" https://example.test`}, `curl -d "password=zq1 zq2" https://example.test`},
+		tc{[]string{`curl "https://bob:zq1 zq2@example.test"`}, `curl "https://bob:zq1 zq2@example.test"`},
+		// A backslash at the end.
+		tc{[]string{`sshpass -p zq1\`}, `sshpass -p zq1\`},
+		tc{[]string{`curl -u admin:zq1\`}, `curl -u admin:zq1\`},
+		tc{[]string{`mysql -u root -pzq1\`}, `mysql -u root -pzq1\`},
+		// A command over lines: a quote or a backslash at a line's end goes on.
+		tc{[]string{`sshpass -p "zq1`, `zq2" ssh host`}, "sshpass -p \"zq1\nzq2\" ssh host"},
+		tc{[]string{`sshpass -p zq1\`, `zq2 ssh host`}, "sshpass -p zq1\\\nzq2 ssh host"},
+		tc{[]string{`curl -u 'admin:zq1`, `zq2' https://example.test`}, "curl -u 'admin:zq1\nzq2' https://example.test"},
+		tc{[]string{`export DB_PASSWORD=$'zq1\'`, `zq2'`, `./migrate`}, "export DB_PASSWORD=$'zq1\\'\nzq2'\n./migrate"},
+		tc{[]string{`mysql -u root \`, `-pzq1\ zq2 shop`}, "mysql -u root \\\n  -pzq1\\ zq2 shop"},
+		tc{[]string{`sshpass \`, `-p "zq1 zq2" ssh host`}, "sshpass \\\n  -p \"zq1 zq2\" ssh host"},
+		// A screen's wrap: at a blank inside quotes, inside a word.
+		tc{[]string{`curl -u "admin:zq1`, `zq2" https://example.test`}, `curl -u "admin:zq1 zq2" https://example.test`},
+		tc{[]string{`curl -u admin:zq1zq`, `zq2 https://example.test`}, `curl -u admin:zq1zqzq2 https://example.test`},
+		tc{[]string{`git clone https://bob:zq1zq`, `zq2@example.test/r.git`}, `git clone https://bob:zq1zqzq2@example.test/r.git`},
+		tc{[]string{`mysql -u root -pzq1zq`, `zq2 shop`}, `mysql -u root -pzq1zqzq2 shop`},
+	)
+	for _, c := range cases {
+		for _, native := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%q native=%t", c.lines, native), func(t *testing.T) {
+				t.Parallel()
+				var calls []transcript.PendingCall
+				if native {
+					calls = []transcript.PendingCall{bashCall("toolu_pw", c.native, "Clean the scratch directory")}
+				}
+				out := menuOut(t, claudeBash("", c.lines...), calls...)
+				if strings.Contains(out, "zq") {
+					t.Errorf("left: %s", out)
+				}
+				if native != strings.Contains(out, nativeIn+"/home/u/w1") {
+					t.Errorf("not from the native call (%t): %s", native, out)
+				}
+			})
+		}
+	}
+}
+
+// #106 (the review's commands): a password after another one goes too,
+// through the real path, from the screen and from the native call: on the
+// screen the first one's line ends in its password, so the next line's
+// first word, the next command's name, is hidden with it.
+func TestCardMenuPasswordAfterPassword(t *testing.T) {
+	t.Parallel()
+	for _, lines := range [][]string{
+		{`curl -u admin:firstsecret`, `sshpass -p zzsecondsecret ssh host`},
+		{`curl -u admin:firstsecret`, `mysql -pzzsecondsecret shop`},
+		{`TOKEN=firstsecret`, `sshpass -p zzsecondsecret ssh host`},
+		{`TOKEN=firstsecret`, `mysql -pzzsecondsecret shop`},
+		{`mysql -pfirstsecret`, `sshpass -p zzsecondsecret ssh host`},
+		{`sshpass -p firstsecret`, `mysql -pzzsecondsecret shop`},
+	} {
+		for _, native := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%q native=%t", lines, native), func(t *testing.T) {
+				t.Parallel()
+				var calls []transcript.PendingCall
+				if native {
+					calls = []transcript.PendingCall{bashCall("toolu_pw", strings.Join(lines, "\n"), "Run the commands")}
+				}
+				out := menuOut(t, claudeBash("", lines...), calls...)
+				if strings.Contains(out, "secret") {
+					t.Errorf("left: %s", out)
+				}
+				if native != strings.Contains(out, nativeIn+"/home/u/w1") {
+					t.Errorf("not from the native call (%t): %s", native, out)
+				}
+			})
+		}
+	}
+}
+
+// #106: every two carriers together, on two lines and on one (after && and
+// after ;), each with its own synthetic password: no piece of either
+// leaves, through the real path, from the screen and from the native
+// call. A carrier whose password ends its line hides, on the screen, the
+// next line's first word too: the other's command name or carrier.
+func TestCardMenuPasswordPairs(t *testing.T) {
+	t.Parallel()
+	carriers := []string{
+		"curl -u admin:%s",
+		"curl --user=admin:%s https://example.test",
+		"curl --proxy-user admin:%s",
+		"curl -U admin:%s -x http://proxy.test",
+		`curl -H "Authorization: Bearer %s"`,
+		`curl -H 'X-Api-Key: %s' https://example.test`,
+		"export DB_PASSWORD=%s",
+		"API_TOKEN=%s make deploy",
+		"gh auth login --token %s",
+		`curl -d "password=%s"`,
+		"sshpass -p %s ssh host",
+		"sshpass -p %s",
+		"mysql -u root -p%s",
+		"mysql --password=%s shop",
+		"git clone https://bob:%s@example.test/r.git",
+	}
+	for _, a := range carriers {
+		for _, b := range carriers {
+			first, second := fmt.Sprintf(a, "zqfirst"), fmt.Sprintf(b, "zqsecond")
+			for _, lines := range [][]string{
+				{first, second},
+				{first + " && " + second},
+				{first + "; " + second},
+			} {
+				for _, native := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%q native=%t", lines, native), func(t *testing.T) {
+						t.Parallel()
+						var calls []transcript.PendingCall
+						if native {
+							calls = []transcript.PendingCall{bashCall("toolu_pw", strings.Join(lines, "\n"), "Run the commands")}
+						}
+						out := menuOut(t, claudeBash("", lines...), calls...)
+						if strings.Contains(out, "zq") {
+							t.Errorf("left: %s", out)
+						}
+						if native != strings.Contains(out, nativeIn+"/home/u/w1") {
+							t.Errorf("not from the native call (%t): %s", native, out)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+// The issue's reproduction (#106), ported: the screen of an unchanged
+// command and Yes/No choices whose only change is an elapsed counter, ten
+// reads two seconds apart, no answer: one card, still actionable, never
+// closed as answered, one alert. The issue's own screen (no dialog top: its
+// Yes is withheld, its No stays) and Claude's real dialog alike; and the
+// control, the counter frozen.
+func TestPermissionCardStableThroughTickingContext(t *testing.T) {
+	ticket := "Bash command\n rm -f $D/*\n Background task running %ds\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n Esc to cancel"
+	real := strings.Replace(claudeBash("", "S=/tmp/run; D=$S/scratch; rm -f $D/*"), " Do you want to proceed?",
+		" Background task running %ds\n Do you want to proceed?", 1)
+	for _, tc := range []struct {
+		name, screen string
+		frozen       bool
+		buttons      int
+	}{{"ticket", ticket, false, 1}, {"claude", real, false, 3}, {"frozen", ticket, true, 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newFloodRig(t)
+			r.svc.Observe(notify.Observation{Worker: notify.Worker{ID: "w1", Status: statusWorking, StatusSince: 1}, Name: "Blip"})
+			for i := range 10 {
+				n := i
+				if tc.frozen {
+					n = 0
+				}
+				r.frame("w1", "Blip", 100, strings.ReplaceAll(tc.screen, "%d", fmt.Sprint(n)))
+				if i == 0 && !r.ch.WaitFor(func() bool { return len(r.cardsOf("Blip")) == 1 }, 5*time.Second) {
+					t.Fatal("no card")
+				}
+				r.clock.Advance(2 * time.Second)
+			}
+			r.barrier(t)
+			cards := r.cardsOf("Blip")
+			closed := 0
+			for _, c := range cards {
+				if strings.Contains(c.Text, notify.CardInGameText) || strings.Contains(c.Text, notify.CardReplacedText) || len(c.Buttons) == 0 {
+					closed++
+				}
+			}
+			alerts := 0
+			for _, s := range r.ch.Sent() {
+				if s.Name == "Blip" {
+					alerts++
+				}
+			}
+			t.Logf("%d cards, %d closed, %d alerts", len(cards), closed, alerts)
+			if len(cards) != 1 || closed != 0 || alerts != 1 || len(cards[0].Buttons) != tc.buttons ||
+				!strings.Contains(cards[0].Text, "rm -f $D/*") || strings.Contains(cards[0].Text, "Background task") {
+				t.Fatalf("cards %+v", cards)
+			}
+		})
+	}
+}
+
+// bashCall is a pending Bash call of command.
+func bashCall(id, command, description string) transcript.PendingCall {
+	in, _ := json.Marshal(map[string]string{"command": command, "description": description})
+	sum := sha256.Sum256(in)
+	return transcript.PendingCall{ID: id, Name: "Bash", Input: in, Sum: hex.EncodeToString(sum[:]), Cwd: "/home/u/w1"}
+}
+
+// #106: a menu's native call is the one pending call whose command the
+// dialog shows whole (joined without whitespace: however it wraps), or
+// whose end a dialog cut at the top shows; a file dialog's by its path.
+// Two candidates, another command, another tool: none.
+func TestNativeOf(t *testing.T) {
+	t.Parallel()
+	cmd := "S=/tmp/run; D=$S/scratch; rm -f $D/*"
+	call := bashCall("toolu_a", cmd, "Clean the scratch directory")
+	full := parseQuestionOf("claude", claudeBash("", cmd), 1)
+	nc := nativeOf(full.op, []transcript.PendingCall{bashCall("toolu_x", "ls", "List"), call}, "")
+	if nc == nil || nc.call.ID != "toolu_a" || nc.cmd != 1 || len(nc.id) != 16 {
+		t.Fatalf("native %+v", nc)
+	}
+	wrapped := parseQuestionOf("claude", claudeBash("", "S=/tmp/run; D=$S/scr", "atch; rm -f $D/*"), 1)
+	if n := nativeOf(wrapped.op, []transcript.PendingCall{call}, ""); n == nil || n.id != nc.id || n.cmd != 2 {
+		t.Fatalf("wrapped %+v", n)
+	}
+	for name, calls := range map[string][]transcript.PendingCall{
+		"two alike":       {call, bashCall("toolu_b", cmd, "Again")},
+		"another command": {bashCall("toolu_c", "S=/tmp/run; D=$S/scratch; rm -rf $D", "x")},
+		"a longer one":    {bashCall("toolu_d", cmd+"; ls", "x")},
+		"another tool":    {{ID: "toolu_e", Name: "Agent", Input: json.RawMessage(`{"command":"` + cmd + `"}`), Sum: "x"}},
+		"too big":         {{ID: "toolu_f", Name: "Bash", Sum: "x"}},
+	} {
+		if n := nativeOf(full.op, calls, ""); n != nil {
+			t.Errorf("%s: %+v", name, n)
+		}
+	}
+	// Cut at the top: its end matches, and makes it whole.
+	tall := claudeBash("", "S=/tmp/run", "D=$S/scratch", "rm -f $D/*")
+	cut := parseQuestionOf("claude", tall[strings.Index(tall, "   D=$S"):], 1)
+	multi := bashCall("toolu_m", "S=/tmp/run\nD=$S/scratch\nrm -f $D/*", "Clean the scratch directory")
+	n := nativeOf(cut.op, []transcript.PendingCall{multi}, "bypassPermissions")
+	if cut.op.complete || n == nil {
+		t.Fatalf("cut %+v / %+v", cut.op, n)
+	}
+	m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &cut.q}, false).Menu
+	menuFacts(m, cut.op, n)
+	if slices.ContainsFunc(m.Choices, func(c notify.MenuChoice) bool { return c.Withheld }) || m.Native != n.id || m.Source != "native" ||
+		!slices.Equal(m.About, []string{"Bash command", "S=/tmp/run", "D=$S/scratch", "rm -f $D/*", "Clean the scratch directory",
+			"In: /home/u/w1", nativeBypass}) {
+		t.Fatalf("menu %+v", m)
+	}
+	short := parseQuestionOf("claude", tall[strings.Index(tall, "   Clean"):], 1)
+	if n := nativeOf(short.op, []transcript.PendingCall{multi}, ""); n != nil {
+		t.Errorf("only its description: %+v", n)
+	}
+	// What the dialog adds is why it asks.
+	warned := strings.Replace(claudeBash("", cmd), "   Clean the scratch directory\n", "   Clean the scratch directory\n ⚠ rm with a variable target\n", 1)
+	w := parseQuestionOf("claude", warned, 1)
+	if about := nativeOf(w.op, []transcript.PendingCall{call}, "").about(w.op); !slices.Contains(about, nativeSays+"⚠ rm with a variable target") {
+		t.Fatalf("about %q", about)
+	}
+	// A file dialog: by its path.
+	wr := parseQuestion(screen(t, "claude-permission-write"), 1)
+	in := json.RawMessage(`{"file_path":"/tmp/h3d-m5term/claude-a2be86/notes-h3d.txt","content":"hello"}`)
+	write := transcript.PendingCall{ID: "toolu_w", Name: "Write", Input: in, Sum: "s", Cwd: "/tmp/h3d-m5term/claude-a2be86"}
+	if n := nativeOf(wr.op, []transcript.PendingCall{write}, ""); n == nil || !slices.Contains(n.about(wr.op), "File: /tmp/h3d-m5term/claude-a2be86/notes-h3d.txt") {
+		t.Fatalf("write %+v", n)
+	}
+	write.Name = "Edit"
+	if n := nativeOf(wr.op, []transcript.PendingCall{write}, ""); n != nil {
+		t.Fatalf("an Edit for a Create file dialog: %+v", n)
+	}
+}
+
+// #106: a dialog's command is its call's word for word: a line break is
+// a space of the command or none (a word cut by the wrap), and nothing
+// else is; words joined or split otherwise are another command.
+func TestNativeOfWords(t *testing.T) {
+	t.Parallel()
+	spaced, joined := bashCall("toolu_a", "touch /tmp/a /tmp/b", "Touch them"), bashCall("toolu_b", "touch /tmp/a/tmp/b", "Touch it")
+	for name, tc := range map[string]struct {
+		call  transcript.PendingCall
+		lines []string
+		want  bool
+	}{
+		"one line":           {spaced, []string{"touch /tmp/a /tmp/b"}, true},
+		"wrapped at a space": {spaced, []string{"touch /tmp/a", "/tmp/b"}, true},
+		"wrapped in a word":  {spaced, []string{"touch /tmp/a /tm", "p/b"}, true},
+		"joined":             {spaced, []string{"touch /tmp/a/tmp/b"}, false},
+		"split":              {spaced, []string{"touch /tmp/a /tmp/ b"}, false},
+		"more spaces":        {spaced, []string{"touch  /tmp/a   /tmp/b"}, true},
+		"its own":            {joined, []string{"touch /tmp/a/tmp/b"}, true},
+		"spaced":             {joined, []string{"touch /tmp/a /tmp/b"}, false},
+		"cut by the wrap":    {joined, []string{"touch /tmp/a", "/tmp/b"}, true}, // a wrap may cut a word: the screen cannot tell
+	} {
+		sq := parseQuestionOf("claude", claudeBash("", tc.lines...), 1)
+		if got := nativeOf(sq.op, []transcript.PendingCall{tc.call}, "") != nil; got != tc.want {
+			t.Errorf("%s: matched %t", name, got)
+		}
+	}
+	// Cut at the top: its end, word for word.
+	tall := bashCall("toolu_t", "S=/tmp/run\nD=$S/scratch\ntouch /tmp/a /tmp/b", "Touch them")
+	for name, tc := range map[string]struct {
+		lines []string
+		want  bool
+	}{
+		"its end":        {[]string{"D=$S/scratch", "touch /tmp/a /tmp/b"}, true},
+		"its end joined": {[]string{"D=$S/scratch", "touch /tmp/a/tmp/b"}, false},
+		"cut in a word":  {[]string{"scratch", "touch /tmp/a /tmp/b"}, true},
+	} {
+		full := claudeBash("", append([]string{"S=/tmp/run"}, tc.lines...)...)
+		sq := parseQuestionOf("claude", full[strings.Index(full, "   "+tc.lines[0]):], 1)
+		if got := nativeOf(sq.op, []transcript.PendingCall{tall}, "") != nil; sq.op.complete || got != tc.want {
+			t.Errorf("cut, %s: matched %t (%+v)", name, got, sq.op)
+		}
+	}
+}
+
+// #106: a native call's card is bounded as a whole: its head, command,
+// directory and the dialog's other lines, with what is cut said, at most
+// aboutLinesMax lines and about aboutMax runes.
+func TestNativeAboutBounded(t *testing.T) {
+	t.Parallel()
+	lines := make([]string, 35)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("echo safe scratch cleanup step %d", i)
+	}
+	scr := strings.Replace(claudeBash("", lines...), " Do you want to proceed?",
+		strings.Repeat(" Another line the dialog says\n", 10)+" Do you want to proceed?", 1)
+	sq := parseQuestionOf("claude", scr, 1)
+	nc := nativeOf(sq.op, []transcript.PendingCall{bashCall("toolu_b", strings.Join(lines, "\n"), "Clean the scratch directory")}, "")
+	if nc == nil {
+		t.Fatal("no native call")
+	}
+	about := nc.about(sq.op)
+	if n, runes := len(about), utf8.RuneCountInString(strings.Join(about, "")); n > aboutLinesMax || runes > aboutMax+aboutLineMax {
+		t.Fatalf("%d lines, %d runes: %q", n, runes, about)
+	}
+	for _, want := range []string{"Bash command", "echo safe scratch cleanup step 0", "In: /home/u/w1"} {
+		if !slices.Contains(about, want) {
+			t.Errorf("about lacks %q: %q", want, about)
+		}
+	}
+	if cut := slices.IndexFunc(about, func(l string) bool { return strings.HasPrefix(l, "… (") }); cut < 0 {
+		t.Errorf("nothing said cut: %q", about)
+	}
+	// A dialog whose top is off the screen: its warning among them.
+	partial := parseQuestionOf("claude", scr[strings.Index(scr, "   echo safe scratch cleanup step 1\n"):], 1)
+	m := notifyFacts(&proto.Worker{Status: statusBlocked, Question: &partial.q}, false).Menu
+	menuFacts(m, partial.op, nil)
+	if partial.op.complete || len(m.About) > aboutLinesMax || m.About[0] != aboutPartial {
+		t.Fatalf("partial: %d lines: %q", len(m.About), m.About)
+	}
+}
+
+// #106 (the review's case): the hub renders a native call's card itself,
+// so a hostile command just under the native guard, 10000 command names
+// matched from the end its dialog shows, costs it little (before: 4.7 s,
+// 3.2 GB): about what one of redactMax bytes costs, all that is read of
+// it, in time and in bytes allocated. Not parallel: it measures.
+func TestNativeAboutCost(t *testing.T) {
+	about := func(cmd string) (func() []string, int) {
+		call := bashCall("toolu_cost", cmd, "Print names")
+		op := &menuOp{lines: []string{strings.TrimSpace(cmd[len(cmd)-71:])}}
+		nc := nativeOf(op, []transcript.PendingCall{call}, "default")
+		if nc == nil {
+			t.Fatal("no native call")
+		}
+		return func() []string { return nc.about(op) }, len(call.Input)
+	}
+	f, input := about("echo " + strings.Repeat("mysql ", 10000) + "target.test")
+	if input > transcript.MaxCallInput {
+		t.Fatalf("input %d bytes, over the guard", input)
+	}
+	ref, _ := about("echo " + strings.Repeat("mysql ", (redactMax-16)/6) + "target.test")
+	small, smallBytes := redactCost(func() { ref() }, 0)
+	var out []string
+	d, bytes := redactCost(func() { out = f() }, 3*small)
+	t.Logf("input %d bytes: %v, %d bytes allocated; %d bytes: %v, %d", input, d, bytes, redactMax, small, smallBytes)
+	if d > 3*small || bytes > 2*smallBytes {
+		t.Errorf("input %d bytes: %v, %d bytes allocated; %d bytes: %v, %d", input, d, bytes, redactMax, small, smallBytes)
+	}
+	if len(out) != 4 || !strings.HasPrefix(out[1], "echo mysql mysql") || !strings.HasSuffix(out[1], "…") {
+		t.Errorf("about %q", out)
+	}
+}

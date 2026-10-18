@@ -102,11 +102,15 @@ type txLines struct {
 	activity *transcript.ActivityTracker // #98
 	digest   *transcript.DigestTracker   // #118
 	handoff  *transcript.HandoffTracker  // #223
+	calls    *transcript.CallTracker     // #106
 }
 
 func (l *txLines) Line(off int64, b []byte) {
 	if l.ask != nil {
 		l.ask.Line(b)
+	}
+	if l.calls != nil {
+		l.calls.Line(b)
 	}
 	if l.paste != nil {
 		l.paste.line(b)
@@ -139,6 +143,9 @@ func (l *txLines) Line(off int64, b []byte) {
 func (l *txLines) Reset() {
 	if l.ask != nil {
 		l.ask.Reset()
+	}
+	if l.calls != nil {
+		l.calls.Reset()
 	}
 	if l.wrap != nil {
 		l.wrap.Reset()

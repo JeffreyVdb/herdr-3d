@@ -545,3 +545,76 @@ func TestPromptRulesAreInTheHarnessTable(t *testing.T) {
 		}
 	}
 }
+
+// #106: the approval assessment takes only internal/ai's LLM interface: no
+// vendor client, nothing of the bridge (only internal/ai from this module,
+// no net/http), never the service.
+func TestApprovalUsesOnlyAIInterfaces(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go tool")
+	}
+	const mod = "github.com/JeffreyVdb/herdr-3d/"
+	out, err := exec.Command("go", "list", "-deps", mod+"internal/approval").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -deps: %v\n%s", err, out)
+	}
+	for _, dep := range strings.Fields(string(out)) {
+		if strings.HasPrefix(dep, mod) && dep != mod+"internal/approval" && dep != mod+"internal/ai" {
+			t.Errorf("internal/approval depends on %s", dep)
+		}
+	}
+	out, err = exec.Command("go", "list", "-f", `{{join .Imports " "}}`, mod+"internal/approval").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -f: %v\n%s", err, out)
+	}
+	for _, imp := range strings.Fields(string(out)) {
+		if strings.HasPrefix(imp, "net") {
+			t.Errorf("internal/approval imports %s", imp)
+		}
+	}
+	files, _ := filepath.Glob("../approval/*.go")
+	fset := token.NewFileSet()
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if x, ok := sel.X.(*ast.Ident); ok && x.Name == "ai" {
+					switch sel.Sel.Name {
+					case "Service", "New", "Options", "Overrides", "Fields":
+						t.Errorf("%s uses ai.%s: only the interfaces", fset.Position(sel.Pos()), sel.Sel.Name)
+					}
+				}
+			}
+			return true
+		})
+	}
+}
+
+// #106: the approval assessment is a prototype, wired nowhere: neither
+// command reaches it, so nothing is ever approved by a model (default off
+// is no wiring at all; docs/decisions.md, "#106 (GitHub)").
+func TestApprovalIsNotWired(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go tool")
+	}
+	const mod = "github.com/JeffreyVdb/herdr-3d/"
+	for _, pkg := range []string{"cmd/herdr-world", "cmd/h3d-helper", "internal/app", "internal/server"} {
+		out, err := exec.Command("go", "list", "-deps", mod+pkg).CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list -deps %s: %v\n%s", pkg, err, out)
+		}
+		for _, dep := range strings.Fields(string(out)) {
+			if dep == mod+"internal/approval" {
+				t.Errorf("%s depends on internal/approval", pkg)
+			}
+		}
+	}
+}

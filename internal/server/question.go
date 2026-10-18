@@ -61,23 +61,38 @@ type screenQuestion struct {
 	// numbered: the menu shows digits and takes them (Claude's permission
 	// prompts and questions, Codex's approvals), else arrows and Enter.
 	numbered bool
+	// op is what a permission or trust menu is about (#106; nil: another
+	// kind).
+	op *menuOp
+	// about and since are what its hash folds in of the screen (bind adds
+	// its native call's).
+	about []string
+	since int64
 }
 
-// parseQuestion reads what a blocked worker's screen asks (`pane read
-// --source visible` text). Checked against screens captured from Claude
-// Code and Codex under herdr 0.9.0 (testdata/screens): a menu is numbered
-// choices (1…k) or a cursor line and its siblings above key hints, near
-// the bottom of the screen; the question is the line above it that asks.
-// since is when the worker turned blocked (its status_since): it goes into
-// the hash, so each time it is blocked again asks a new question.
+// parseQuestion is parseQuestionOf a harness not known.
 func parseQuestion(screen string, since int64) screenQuestion {
+	return parseQuestionOf("", screen, since)
+}
+
+// parseQuestionOf reads what a blocked worker's screen asks (`pane read
+// --source visible` text), its agent harness's ("claude", "codex"; "": not
+// known). Checked against screens captured from Claude Code and Codex
+// under herdr 0.9.0 (testdata/screens): a menu is numbered choices (1…k)
+// or a cursor line and its siblings above key hints, near the bottom of
+// the screen; the question is the line above it that asks. since is when
+// the worker turned blocked (its status_since): it goes into the hash, so
+// each time it is blocked again asks a new question. #106: a permission or
+// trust menu's hash folds in its operation (opOf), whole, not its
+// incidental lines, which the excerpt leaves out too.
+func parseQuestionOf(harness, screen string, since int64) screenQuestion {
 	lines := strings.Split(strings.ReplaceAll(screen, "\r", ""), "\n")
 	for i, l := range lines {
 		lines[i] = strings.TrimRightFunc(l, unicode.IsSpace)
 	}
 	var nonEmpty []int // indexes of the non-empty lines
 	for i, l := range lines {
-		if strings.TrimSpace(l) != "" {
+		if t := strings.TrimSpace(l); t != "" && !isIncidental(t) {
 			nonEmpty = append(nonEmpty, i)
 		}
 	}
@@ -100,14 +115,21 @@ func parseQuestion(screen string, since int64) screenQuestion {
 	default:
 		sq.q.Kind = proto.QuestionChoice
 	}
-	if first >= 0 {
+	menu := first >= 0
+	if menu {
 		about = menuContext(lines, first)
 	} else if len(nonEmpty) > 0 {
 		first = nonEmpty[len(nonEmpty)-1] + 1 // no menu: the question is among the last lines
 	}
-	sq.q.Text = questionText(lines, first)
+	var qline int
+	sq.q.Text, qline = questionText(lines, first)
 	askDialog(&sq, screen)
-	sq.q.Hash = questionHash(sq.q, about, since)
+	if menu && (sq.q.Kind == proto.QuestionPermission || sq.q.Kind == proto.QuestionTrust) {
+		sq.op = opOf(harness, sq.q, lines, first, qline, since)
+		about = sq.op.hashLines()
+	}
+	sq.about, sq.since = about, since
+	sq.bind(nil)
 	return sq
 }
 
@@ -255,16 +277,17 @@ func isTrustDialog(screen string) bool {
 // questionText is the line above line first (a menu's first choice) that
 // asks: one with a phrase the agents ask with, else one ending in "?",
 // else one with a "?" in it (cut after it); the nearest first, within
-// questionReach lines and above no rule (a line of box drawing).
-func questionText(lines []string, first int) string {
-	var region []string // nearest first
+// questionReach lines and above no rule (a line of box drawing). Its line
+// (-1: none).
+func questionText(lines []string, first int) (string, int) {
+	var region []int // nearest first
 	for i := first - 1; i >= 0 && first-i <= questionReach; i-- {
 		t := strings.TrimSpace(lines[i])
 		if isRule(t) {
 			break
 		}
 		if t != "" {
-			region = append(region, t)
+			region = append(region, i)
 		}
 	}
 	cut := func(t string) string {
@@ -273,22 +296,22 @@ func questionText(lines []string, first int) string {
 		}
 		return t
 	}
-	for _, t := range region {
-		if knownQuestionRe.MatchString(t) {
-			return clip(cut(t))
+	for _, i := range region {
+		if t := strings.TrimSpace(lines[i]); knownQuestionRe.MatchString(t) {
+			return clip(cut(t)), i
 		}
 	}
-	for _, t := range region {
-		if strings.HasSuffix(t, "?") {
-			return clip(t)
+	for _, i := range region {
+		if t := strings.TrimSpace(lines[i]); strings.HasSuffix(t, "?") {
+			return clip(t), i
 		}
 	}
-	for _, t := range region {
-		if strings.Contains(t, "?") {
-			return clip(cut(t))
+	for _, i := range region {
+		if t := strings.TrimSpace(lines[i]); strings.Contains(t, "?") {
+			return clip(cut(t)), i
 		}
 	}
-	return ""
+	return "", -1
 }
 
 // menuContext is what a menu is about: the non-empty lines above its first
@@ -342,11 +365,12 @@ func clip(s string) string {
 }
 
 // questionHash identifies a question for worker.answer: 16 hex over its
-// kind, text and choices, what its menu is about (menuContext) and when the
-// worker turned blocked (not the cursor, not the rest of the excerpt). So
-// an answer is for this operation in this blocked spell only: approving
-// "touch a" never approves the "rm -rf b" asked next, even when the
-// question and its choices read the same.
+// kind, text and choices, what its menu is about (menuContext; #106: a
+// permission or trust menu's operation, and its native call when known)
+// and when the worker turned blocked (not the cursor, not the rest of the
+// excerpt). So an answer is for this operation in this blocked spell only:
+// approving "touch a" never approves the "rm -rf b" asked next, even when
+// the question and its choices read the same.
 func questionHash(q proto.Question, about []string, since int64) string {
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%s\x00%d\x00", q.Kind, q.Text, since)
@@ -380,10 +404,14 @@ func (sq screenQuestion) answerKeys(n int) []string {
 	return append(keys, "enter")
 }
 
-// questionState is a blocked worker's question, read from its pane.
+// questionState is a blocked worker's question, read from its pane, and
+// (#106) what its menu is about, and all it was read as (sq: its hash is
+// bound again when the worker's calls change).
 type questionState struct {
 	pane string
 	q    *proto.Question
+	op   *menuOp
+	sq   *screenQuestion
 }
 
 // withQuestion puts a worker's question on its view while it is blocked,
@@ -419,14 +447,24 @@ func (h *Hub) askQuestions(ctx context.Context) {
 	}
 }
 
+// questionReadGrace is how many reads of a blocked worker's screen in a row
+// may fail before what it asked is withdrawn (#106: one failed read is not
+// a menu gone).
+const questionReadGrace = 5
+
 // questionLoop reads a blocked worker's screen now and every QuestionPoll
-// while it stays blocked in the same pane, and publishes what it asks.
+// while it stays blocked in the same pane, and publishes what it asks. A
+// failed read keeps what it asked, up to questionReadGrace of them.
 func (h *Hub) questionLoop(ctx context.Context, id, session, pane string) {
 	defer h.wg.Done()
+	failed := 0
 	for {
 		screen, readErr := h.opts.Term.ReadPane(ctx, session, pane)
 		if readErr != nil && ctx.Err() == nil {
 			h.log.Debug("reading a blocked worker's screen failed", "worker", id, "err", readErr)
+		}
+		if failed++; readErr == nil {
+			failed = 0
 		}
 		more, err := query(ctx, h, func() bool {
 			w := h.workers[id]
@@ -434,15 +472,20 @@ func (h *Hub) questionLoop(ctx context.Context, id, session, pane string) {
 				delete(h.asking, id)
 				return false
 			}
-			var q *proto.Question
+			var sq *screenQuestion
 			// #156: a shared Codex worker blocked only by an async question
 			// asks nothing on its screen to answer with keys: its questions
 			// are on worker.codex, and a prompt still reaches it.
-			if _, async := h.asyncBlocked(id); readErr == nil && !async {
-				sq := parseQuestion(screen, w.StatusSince)
-				q = &sq.q
+			_, async := h.asyncBlocked(id)
+			switch {
+			case readErr != nil && !async && failed < questionReadGrace:
+				return true
+			case readErr == nil && !async:
+				p := parseQuestionOf(harnessOf(w), screen, w.StatusSince)
+				h.bindNative(id, &p)
+				sq = &p
 			}
-			h.setQuestion(id, pane, q)
+			h.setQuestion(id, pane, sq)
 			return true
 		})
 		if err != nil || !more {
@@ -455,10 +498,14 @@ func (h *Hub) questionLoop(ctx context.Context, id, session, pane string) {
 	}
 }
 
-// setQuestion publishes a blocked worker's question when it changed: a
-// worker.upsert (hub goroutine).
-func (h *Hub) setQuestion(id, pane string, q *proto.Question) {
+// setQuestion publishes a blocked worker's question (nil: none) when it
+// changed: a worker.upsert (hub goroutine).
+func (h *Hub) setQuestion(id, pane string, sq *screenQuestion) {
 	w := h.workers[id]
+	var q *proto.Question
+	if sq != nil {
+		q = &sq.q
+	}
 	if w == nil || reflect.DeepEqual(w.Question, q) {
 		return
 	}
@@ -466,7 +513,7 @@ func (h *Hub) setQuestion(id, pane string, q *proto.Question) {
 	next.Question = q
 	h.workers[id] = &next
 	if q != nil {
-		h.questions[id] = questionState{pane: pane, q: q}
+		h.questions[id] = questionState{pane: pane, q: q, op: sq.op, sq: sq}
 	} else {
 		delete(h.questions, id)
 	}
@@ -483,13 +530,17 @@ func (h *Hub) startAnswer(ctx context.Context, c *Client, cmd proto.Command) err
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	return h.queueAnswer(ctx, a, h.endCommand(c, cmd))
+	return h.queueAnswer(ctx, a, "", h.endCommand(c, cmd))
 }
 
 // queueAnswer is worker.answer's checks and its queueing on the worker's
 // lane (hub goroutine), for a client's command and (#88) a Telegram card's
-// tap alike: end gets the outcome.
-func (h *Hub) queueAnswer(ctx context.Context, a proto.WorkerAnswerArgs, end inputEnd) error {
+// tap alike: end gets the outcome. #106: native, when not "", is the
+// native call the tap was for (nativeCall.id): the menu must still be for
+// it. For both, the hash binds the native call when one is known
+// (bindNative), and a permission whose dialog's top is off the screen is
+// approved only with its call known (partialApproval).
+func (h *Hub) queueAnswer(ctx context.Context, a proto.WorkerAnswerArgs, native string, end inputEnd) error {
 	if !hashRe.MatchString(a.Hash) {
 		return bad("hash must be 16 hex characters")
 	}
@@ -505,23 +556,25 @@ func (h *Hub) queueAnswer(ctx context.Context, a proto.WorkerAnswerArgs, end inp
 	}
 	h.agentTookOver(ctx, a.ID) // #224: a person answers: a handoff request is off
 	return h.queueInput(ctx, a.ID, func(ctx context.Context, session, pane string) (any, error) {
-		return h.answer(ctx, a, session, pane)
+		return h.answer(ctx, a, native, session, pane)
 	}, end)
 }
 
-func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, session, pane string) (any, error) {
+func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, native, session, pane string) (any, error) {
 	screen, err := h.opts.Term.ReadPane(ctx, session, pane)
 	if err != nil {
 		return nil, fmt.Errorf("%w: reading the screen failed: %v", errInputFailed, err)
 	}
 	var sq screenQuestion
+	var nc *nativeCall
 	blocked, err := query(ctx, h, func() bool {
 		w := h.workers[a.ID]
 		if w == nil || w.Status != statusBlocked || w.PaneID != pane {
 			return false
 		}
-		sq = parseQuestion(screen, w.StatusSince)
-		h.setQuestion(a.ID, pane, &sq.q) // what it asks now
+		sq = parseQuestionOf(harnessOf(w), screen, w.StatusSince)
+		nc = h.bindNative(a.ID, &sq)
+		h.setQuestion(a.ID, pane, &sq) // what it asks now
 		return true
 	})
 	switch {
@@ -531,6 +584,10 @@ func (h *Hub) answer(ctx context.Context, a proto.WorkerAnswerArgs, session, pan
 		return nil, fmt.Errorf("%w: the worker is no longer blocked", errStale)
 	case sq.q.Hash != a.Hash:
 		return nil, fmt.Errorf("%w: the screen asks %q now (hash %s)", errStale, sq.q.Text, sq.q.Hash)
+	case native != "" && (nc == nil || nc.id != native):
+		return nil, fmt.Errorf("%w: the menu is not for the call tapped any more", errStale)
+	case !a.Cancel && partialApproval(sq, nc, a.Choice):
+		return nil, fmt.Errorf("%w: part of what it asks about is off its screen, so it is not approved from here: approve it in its terminal", errInvalidState)
 	}
 	var keys []string
 	if a.Cancel {

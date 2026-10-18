@@ -321,6 +321,8 @@ type Options struct {
 	NotifyEnabled *bool
 	NotifySettle  time.Duration
 	NotifyClock   notify.Clock
+	// NotifyLimits is the outbound budget (#106; nil: notify's defaults).
+	NotifyLimits *notify.Limits
 
 	// #155 shared Codex server: CodexRun is the private directory of the
 	// shared launches' launchers and sockets ("" or no CodexHost: the switch
@@ -415,6 +417,7 @@ type Hub struct {
 	zoom      zoomTabs                 // #74: the tabs zoomed for them
 	lanes     map[string]*inputLane    // worker id → its input commands, in order
 	questions map[string]questionState // worker id → what its blocked screen asks
+	calls     map[string]workerCalls   // #106: worker id → the calls its transcript waits on
 	asking    map[string]bool          // worker id → its screen reader runs
 	// #57: worker id → its ask as last published, and the last ask call
 	// whose result its transcript recorded.

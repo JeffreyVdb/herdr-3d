@@ -68,7 +68,13 @@ loop of the pairing and (#13) the replies, `setMessageReaction`; only `app` impo
 `TestNotifyCoreIsProviderNeutral`); #13: `notify`'s `reply.go` (a reply to a notification checked, rate-limited,
 typed through the hub's `Prompt` callback and confirmed or answered); #14: `notify`'s `buttons.go` (a card per question
 of an ask or follow-up, the taps resolved and collected, answered through the hub's `Answer` callback, the cards edited
-to their end; #88: one for a blocked worker's screen permission or trust menu, answered as `worker.answer`);
+to their end; #88: one for a blocked worker's screen permission or trust menu, answered as `worker.answer`; #106:
+one card per operation, kept through redraws and failed reads, ended replaced or no longer waiting); #106: `notify`'s
+`limits.go` (the send budget per destination: the paced calls, the minute's alerts and cards, what waits for it),
+`server`'s `approval.go` (a menu's operation read off its screen, its redacted card lines, its native call) and
+`transcript`'s `CallTracker` (the calls a Claude transcript waits on), `approval` (the unwired, off-by-default model
+assessment of a permission prompt; the standard library and `ai`'s LLM interface only,
+`TestApprovalUsesOnlyAIInterfaces`, `TestApprovalIsNotWired`);
 M7 boards:
   `provider` (what the two interfaces share: people, comments, rate, error kinds), `tracker` (the neutral issue
   interface) and `codehost` (the neutral pull request interface), `github` (the GitHub provider behind both: one feed per

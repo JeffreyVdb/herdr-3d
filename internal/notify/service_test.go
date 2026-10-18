@@ -40,7 +40,7 @@ func newRigWith(t *testing.T, on bool, tweak func(*Options, *Settings)) *rig {
 	r := &rig{ch: NewFakeChannel(true), clock: NewFakeClock(t0), store: NewFakeStore()}
 	st := DefaultSettings()
 	st.Enabled = on
-	opts := Options{Store: r.store, Channel: r.ch, Clock: r.clock,
+	opts := Options{Store: r.store, Channel: r.ch, Clock: r.clock, Limits: NoLimits(), // #106: limitsRig's tests have them
 		Audit: func(_ context.Context, cmd string, args any, err error) {
 			r.mu.Lock()
 			r.audits = append(r.audits, auditRow{cmd, args, err})

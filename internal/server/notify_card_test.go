@@ -183,7 +183,7 @@ func TestCardFollowupThroughTheHub(t *testing.T) {
 	clock := notify.NewFakeClock(time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC))
 	enabled := true
 	fb := startFuBridgeWith(t, "", "", newFuRoles(), on(), "", func(o *server.Options) {
-		o.NotifyChannel, o.NotifyEnabled, o.NotifyClock = ch, &enabled, clock
+		o.NotifyChannel, o.NotifyEnabled, o.NotifyClock, o.NotifyLimits = ch, &enabled, clock, noLimits()
 	})
 	c := fb.connect(proto.Hello{})
 	c.snapshot()
@@ -241,11 +241,12 @@ func (rb *replyBridge) menuCardOf(t *testing.T, ws, screen string) notify.Ref {
 
 // #88 acceptance through the hub: a worker blocked on Claude's permission
 // prompt gets its notification, then one card: what it asks (a fixed
-// line, not its question) and its choices, scrubbed, a button each,
-// nothing of the command it is for. A tap answers
-// as worker.answer does (the choice's digit on the worker's lane); the
-// card says so. A trust menu (no digits) is answered with arrows and
-// Enter, as the game's would be. Audited by indices, without a text.
+// line, not its question) and its choices, scrubbed, a button each; #106:
+// and the command it is for, its password redacted, never its question
+// line. A tap answers as worker.answer does (the choice's digit on the
+// worker's lane); the card says so. A trust menu (no digits) is answered
+// with arrows and Enter, as the game's would be. Audited by indices,
+// without a text.
 func TestCardMenuThroughTheHub(t *testing.T) {
 	t.Parallel()
 	rb := startReplyBridge(t)
@@ -253,7 +254,8 @@ func TestCardMenuThroughTheHub(t *testing.T) {
 	rb.term.onKeys = func(string, []string) { go rb.setStatus("w1", "working") }
 	ref := rb.menuCardOf(t, "w1", secretPermission(t))
 	c := rb.ch.Card(ref)
-	for _, want := range []string{"Permission\nIt asks for your permission.", "1. Yes", "2. Yes, and don't ask again for …\n", "3. No"} {
+	for _, want := range []string{"Permission\nIt asks for your permission.", "Bash command\ncurl -u admin:[key] https://example.test\n",
+		"1. Yes", "2. Yes, and don't ask again for …\n", "3. No"} {
 		if !strings.Contains(c.Text, want) {
 			t.Fatalf("card %q lacks %q", c.Text, want)
 		}
@@ -267,7 +269,7 @@ func TestCardMenuThroughTheHub(t *testing.T) {
 	for _, n := range rb.ch.Sent() {
 		shown += "\n" + n.Line
 	}
-	for _, secret := range []string{menuCmdSecret, menuQSecret, menuLblSecret, "curl", "example.test"} {
+	for _, secret := range []string{menuCmdSecret, menuQSecret, menuLblSecret, "proceed with"} {
 		if strings.Contains(shown, secret) {
 			t.Fatalf("%q left the bridge: %q", secret, shown)
 		}
@@ -287,7 +289,7 @@ func TestCardMenuThroughTheHub(t *testing.T) {
 	time.Sleep(2 * time.Millisecond) // status_since is in ms: a new one
 	ref = rb.menuCardOf(t, "w1", readScreen(t, "claude-trust"))
 	c = rb.ch.Card(ref)
-	if !strings.Contains(c.Text, "Trust folder\nIt asks whether to trust a folder.") || strings.Contains(c.Text, "Quick safety check") || len(c.Buttons) != 2 || strings.Contains(c.Text, "/tmp/h3d-m5term") {
+	if !strings.Contains(c.Text, "Trust folder\nIt asks whether to trust a folder.") || !strings.Contains(c.Text, "\n/tmp/h3d-m5term/claude-a2be86\n") || len(c.Buttons) != 2 {
 		t.Fatalf("trust card %+v", c)
 	}
 	rb.ch.Tap("t2", ref, buttonData(t, c, "2."))
@@ -333,8 +335,8 @@ func TestCardMenuThroughTheHub(t *testing.T) {
 }
 
 // A tap on a menu the screen no longer shows (#88: the hub reads it again
-// before any key): no key is sent and the card says no longer open; the
-// new menu gets its own card.
+// before any key): no key is sent and (#106) the card says it was
+// replaced; the new menu gets its own card, about its own command.
 func TestCardMenuStaleThroughTheHub(t *testing.T) {
 	t.Parallel()
 	rb := startReplyBridgeWith(t, func(o *server.Options) { o.QuestionPoll = time.Hour })
@@ -344,13 +346,13 @@ func TestCardMenuStaleThroughTheHub(t *testing.T) {
 	yes := buttonData(t, rb.ch.Card(ref), "1.")
 	rb.term.setScreen("w1:p1", strings.ReplaceAll(first, "touch h3d-perm-probe.txt", "rm -rf important-project"))
 	rb.ch.Tap("t1", ref, yes)
-	if c := waitCardText(t, rb.ch, ref, notify.CardClosedText); len(c.Buttons) != 0 {
+	if c := waitCardText(t, rb.ch, ref, notify.CardReplacedText); len(c.Buttons) != 0 {
 		t.Fatalf("buttons left %+v", c.Buttons)
 	}
 	if calls := rb.term.Calls(); len(calls) != 0 {
 		t.Fatalf("typed %q", calls)
 	}
-	if next := cardOf(t, rb.ch, 2); next == ref || !strings.Contains(rb.ch.Card(next).Text, "It asks for your permission.") {
+	if next := cardOf(t, rb.ch, 2); next == ref || !strings.Contains(rb.ch.Card(next).Text, "rm -rf important-project") {
 		t.Fatalf("new card %+v", rb.ch.Card(next))
 	}
 }
@@ -372,5 +374,57 @@ func TestCardMenuUnresolvedThroughTheHub(t *testing.T) {
 	ans := waitNotifyRows(t, rb.st, notify.AuditAnswer, 1)
 	if !ans[0].OK || !strings.Contains(ans[0].Args, `"outcome":"unresolved"`) {
 		t.Fatalf("audit %+v", ans[0])
+	}
+}
+
+// #106: failed screen reads keep what a blocked worker asks for a few reads
+// (questionReadGrace), then withdraw it; its Telegram card stays through
+// both, buttons and all, never "answered", and the same menu read again is
+// the same card.
+func TestCardMenuThroughFailedReads(t *testing.T) {
+	t.Parallel()
+	rb := startReplyBridgeWith(t, func(o *server.Options) { o.QuestionPoll = time.Millisecond })
+	rb.repliesOn(t)
+	ref := rb.menuCardOf(t, "w1", readScreen(t, "claude-permission-bash"))
+	at, gate := make(chan struct{}), make(chan bool)
+	rb.term.mu.Lock()
+	rb.term.readAt, rb.term.readGate = at, gate
+	rb.term.mu.Unlock()
+	question := func() *proto.Question {
+		for _, w := range rb.connect(proto.Hello{}).snapshot().World.Workers {
+			if w.ID == rb.ids["w1"] {
+				return w.Question
+			}
+		}
+		t.Fatal("no w1")
+		return nil
+	}
+	// Each read waits at the gate: everything before it is done.
+	for range server.QuestionReadGrace - 1 {
+		<-at
+		gate <- true
+	}
+	<-at
+	if question() == nil {
+		t.Fatal("withdrawn before its grace")
+	}
+	gate <- true
+	<-at
+	if question() != nil {
+		t.Fatal("still there past its grace")
+	}
+	gate <- false
+	<-at
+	if question() == nil {
+		t.Fatal("not read again")
+	}
+	rb.term.mu.Lock()
+	rb.term.readAt, rb.term.readGate = nil, nil
+	rb.term.mu.Unlock()
+	gate <- false
+	time.Sleep(50 * time.Millisecond)
+	if c := rb.ch.Card(ref); len(rb.ch.Cards()) != 1 || len(c.Buttons) != 3 || strings.Contains(c.Text, notify.CardInGameText) ||
+		strings.Contains(c.Text, notify.CardGoneText) {
+		t.Fatalf("%d cards, %+v", len(rb.ch.Cards()), c)
 	}
 }

@@ -33,7 +33,7 @@ func newCardRig(t *testing.T) *cardRig {
 		t.Fatal(err)
 	}
 	cr := &cardRig{rig: r}
-	svc, err := notify.New(context.Background(), notify.Options{Store: st, Channel: r.ch, Clock: r.clock,
+	svc, err := notify.New(context.Background(), notify.Options{Store: st, Channel: r.ch, Clock: r.clock, Limits: notify.NoLimits(),
 		Prompt: func(context.Context, string, string, func(error)) error { t.Error("typed as a prompt"); return nil },
 		Answer: func(_ context.Context, a notify.Answer, done func(error)) error {
 			cr.mu.Lock()
@@ -449,8 +449,8 @@ func TestCardMenuOverHTTP(t *testing.T) {
 }
 
 // #88 over HTTP: the menu changes on the screen (a new hash): the card
-// says it was answered in the game, its buttons gone; the old card's tap
-// is answered "no longer open" and answers nothing. Keys that leave the
+// says (#106) it was replaced, its buttons gone; the old card's tap is
+// answered "no longer open" and answers nothing. Keys that leave the
 // worker blocked: the new card says so.
 func TestCardMenuStaleOverHTTP(t *testing.T) {
 	cr := newCardRig(t)
@@ -460,7 +460,7 @@ func TestCardMenuStaleOverHTTP(t *testing.T) {
 	msg := cr.blockedOn(t, "w-a", codexMenu("aaaaaaaaaaaaaaaa"))
 	stale := cr.data(t, msg, "1.")
 	cr.svc.Observe(notify.Observation{Worker: notify.Worker{ID: "w-a", Status: "blocked", StatusSince: 100, Menu: codexMenu("bbbbbbbbbbbbbbbb")}, Name: "Pixel"})
-	if labels := cr.waitText(t, msg, notify.CardInGameText); len(labels) != 0 {
+	if labels := cr.waitText(t, msg, notify.CardReplacedText); len(labels) != 0 {
 		t.Fatalf("buttons left %q", labels)
 	}
 	waitFor(t, "the new menu's card", func() bool { return len(cr.tg.requests("sendMessage")) == 3 })

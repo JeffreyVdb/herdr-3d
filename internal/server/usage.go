@@ -127,7 +127,12 @@ type usageTracker struct {
 	hoUps     []handoffUpdate
 	// #23: the reader of each Claude worker's subagent evidence.
 	kids map[string]ChildReader
-	now  func() time.Time
+	// #106: the calls each Claude worker's transcript waits on, what was
+	// last published of them, and this round's changes.
+	calls     map[string]*transcript.CallTracker
+	callShown map[string]string
+	callUps   []callsUpdate
+	now       func() time.Time
 }
 
 // foundCodex is a Codex session found by a worker's cwd, and when.
@@ -160,7 +165,8 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 		found:    map[string]foundCodex{}, logs: map[string]*txLog{},
 		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
 		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, dgOffered: map[string]digestOffered{},
-		hoOffered: map[string]handoffOffered{}, kids: map[string]ChildReader{}, now: time.Now}
+		hoOffered: map[string]handoffOffered{}, kids: map[string]ChildReader{}, calls: map[string]*transcript.CallTracker{},
+		callShown: map[string]string{}, now: time.Now}
 }
 
 // trackUsage runs the tracker until ctx is done.
@@ -233,17 +239,22 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 	dgs := tr.dgUps                // #118
 	hos := tr.hoUps                // #223
 	ahs := tr.agentUps             // #224
+	calls := tr.callUps            // #106
 	for _, id := range tr.pasted { // #95
 		h.log.Warn("a prompt the bridge typed reached Claude Code as a paste: its paste threshold may have changed (#95)",
 			"worker", id)
 	}
-	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending || len(acts) > 0 || len(dgs) > 0 || len(hos) > 0 || len(ahs) > 0 {
+	if len(ups) > 0 || len(asks) > 0 || len(wraps) > 0 || len(fus) > 0 || tr.fuPending || len(acts) > 0 || len(dgs) > 0 || len(hos) > 0 || len(ahs) > 0 ||
+		len(calls) > 0 {
 		pending, err := query(ctx, h, func() bool {
 			for _, u := range ups {
 				h.setUsage(u.id, u.usage)
 			}
 			for _, a := range asks {
 				h.setAsk(a.id, a.ask, a.resolved)
+			}
+			for _, c := range calls { // #106
+				h.setCalls(c)
 			}
 			for _, u := range wraps {
 				h.wrapUpSeen(ctx, u)
@@ -278,7 +289,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 	ws = tr.findCodex(ws, now)
 	tr.askUps, tr.wrapUps, tr.pasted, tr.followUps, tr.actUps, tr.dgUps, tr.hoUps = nil, nil, nil, nil, nil, nil, nil
-	tr.agentUps = nil
+	tr.agentUps, tr.callUps = nil, nil
 	var ups []usageUpdate
 	seen := map[string]bool{}
 	for _, w := range ws {
@@ -288,6 +299,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			tr.keys[w.id] = key
 			tr.sessions[w.id] = nil
 			delete(tr.asks, w.id)
+			delete(tr.calls, w.id)
 			delete(tr.lines, w.id)
 			tr.closeKid(w.id)
 			if w.session != "" {
@@ -311,12 +323,16 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 					followup: transcript.NewFollowupTracker(w.harness),                               // #90: and the turn's final message
 					activity: transcript.NewActivityTracker(w.harness, tr.cfg.Images, w.cwd, tr.now), // #98: and what it does
 					digest:   transcript.NewDigestTracker(w.harness),                                 // #118: and its digest
-					handoff:  transcript.NewHandoffTracker(w.harness)}                                // #223: and its last reply
+					handoff:  transcript.NewHandoffTracker(w.harness),                                // #223: and its last reply
+					calls:    transcript.NewCallTracker(w.harness)}                                   // #106: and the calls it waits on
 				if w.harness == transcript.Claude { // #95: and typed prompts arriving as a paste
 					l.paste = newPasteWatch()
 				}
 				if l.ask != nil {
 					tr.asks[w.id] = l.ask
+				}
+				if l.calls != nil {
+					tr.calls[w.id] = l.calls
 				}
 				tr.lines[w.id] = l
 				s.SetLines(l)
@@ -340,6 +356,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			}
 			tr.throttle.forget(w.id)
 			tr.offerAsk(w)
+			tr.offerCalls(w) // #106
 			tr.offerWrapUp(w)
 			tr.offerAgentHandoff(w)  // #224
 			tr.offerFollowup(w)      // #90
@@ -358,6 +375,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		u, ok := s.Poll(now)
 		tr.syncTranscript(w, s, tr.keys[w.id])
 		tr.offerAsk(w)
+		tr.offerCalls(w) // #106
 		tr.offerWrapUp(w)
 		tr.offerAgentHandoff(w)  // #224
 		tr.offerFollowup(w)      // #90
@@ -380,6 +398,11 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			delete(tr.sessions, id)
 			delete(tr.asks, id)
 			delete(tr.askShown, id)
+			if _, ok := tr.callShown[id]; ok { // #106
+				tr.callUps = append(tr.callUps, callsUpdate{id: id})
+			}
+			delete(tr.calls, id)
+			delete(tr.callShown, id)
 			delete(tr.lines, id)
 			delete(tr.fuOffered, id)  // #90
 			delete(tr.actOffered, id) // #98

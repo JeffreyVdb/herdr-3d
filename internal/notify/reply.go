@@ -210,12 +210,30 @@ func (s *Service) listening() (bool, time.Time) {
 
 // replier handles the replies and the prompts that ended, one at a time.
 func (s *Service) replier(ctx context.Context) {
+	var timer Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
 	for {
+		// #106: and when the earliest parked card set may go.
+		var wake <-chan time.Time
+		if at, ok := due(s.bt.parked); ok {
+			timer = s.opts.Clock.NewTimer(at.Sub(s.now()))
+			wake = timer.C()
+		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.rp.kick:
+		case <-wake:
 		}
+		if timer != nil {
+			timer.Stop()
+			timer = nil
+		}
+		s.releaseCards(ctx)
 		for ctx.Err() == nil {
 			s.rp.mu.Lock()
 			in, ended, jobs := s.rp.in, s.rp.ended, s.rp.jobs
@@ -351,9 +369,7 @@ func (s *Service) ended(ctx context.Context, d done) {
 		d.row.Outcome = replySent
 		s.audit(ctx, AuditReply, d.row, nil)
 		s.opts.Log.Info("reply typed into its worker", "worker", d.row.ID)
-		cctx, cancel := context.WithTimeout(ctx, SendTimeout)
-		defer cancel()
-		if err := s.opts.Channel.Confirm(cctx, d.r.Ref); err != nil {
+		if err := s.call(ctx, func(ctx context.Context) error { return s.opts.Channel.Confirm(ctx, d.r.Ref) }); err != nil {
 			s.opts.Log.Warn("notifications: a reply's confirmation was not delivered", "code", CodeOf(err))
 		}
 		return
@@ -377,9 +393,7 @@ func (s *Service) answer(ctx context.Context, msg Ref, text string) {
 		s.opts.Log.Debug("notifications: an answer to a reply was not sent (too many)")
 		return
 	}
-	actx, cancel := context.WithTimeout(ctx, SendTimeout)
-	defer cancel()
-	if err := s.opts.Channel.Answer(actx, msg, text); err != nil {
+	if err := s.call(ctx, func(ctx context.Context) error { return s.opts.Channel.Answer(ctx, msg, text) }); err != nil {
 		s.opts.Log.Warn("notifications: an answer to a reply was not delivered", "code", CodeOf(err))
 	}
 }

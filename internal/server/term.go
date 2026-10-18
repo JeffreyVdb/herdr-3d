@@ -651,6 +651,7 @@ func (h *Hub) initTerm() {
 	h.zoom.tabs = map[string]*zoomTab{} // #74
 	h.lanes = map[string]*inputLane{}
 	h.questions = map[string]questionState{}
+	h.calls = map[string]workerCalls{} // #106
 	h.asking = map[string]bool{}
 	h.asks = map[string]*proto.Ask{} // #57
 	h.askResolved = map[string]string{}
