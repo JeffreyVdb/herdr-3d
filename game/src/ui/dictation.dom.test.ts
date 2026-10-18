@@ -280,4 +280,39 @@ describe('the dictation bar (#213)', () => {
     t.bar.open(t.opener);
     expect(t.bar.summary()).toMatchObject({ state: 'editing', text: '', floors: [] });
   });
+
+  it('#108 round 4: with “Review prompt secrets” on, “Review secrets” and Ctrl+Shift+X send the sentence with its review asked for; off, no such control', async () => {
+    const t = setup();
+    let on = true;
+    const fns = new Set<() => void>();
+    const calls: Array<unknown> = [];
+    document.body.replaceChildren();
+    const bar = new DictationBar(document.body, {
+      submit: (_text, _live, o) => (calls.push(o), Promise.resolve({ kind: 'done' as const })),
+      pickFloor: t.pickFloor,
+      store: { floorName: (id: string) => id, city: () => [] } as never,
+      here: () => null,
+      online: () => true,
+      secrets: { get on() { return on; }, onChange: (fn: () => void) => (fns.add(fn), () => void fns.delete(fn)) },
+    });
+    bar.open(null);
+    const field = document.querySelector<HTMLTextAreaElement>('#dict-field')!;
+    field.value = 'Hire an agent with the code 4471.';
+    field.dispatchEvent(new Event('input'));
+    const review = document.querySelector<HTMLButtonElement>('.dict-review')!;
+    expect(review.hidden).toBe(false);
+    expect(review.textContent).toBe('Review secrets');
+    review.click();
+    await t.flush();
+    expect(calls).toEqual([{ review: true }]);
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', code: 'KeyX', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await t.flush();
+    expect(calls).toEqual([{ review: true }, { review: true }]);
+    on = false;
+    for (const fn of fns) fn();
+    expect(review.hidden).toBe(true);
+    field.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', code: 'KeyX', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await t.flush();
+    expect(calls).toHaveLength(2);
+  });
 });

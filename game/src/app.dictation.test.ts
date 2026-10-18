@@ -47,7 +47,7 @@ function parts(o: { on?: boolean; open?: { pending: HireInterpretation; handover
     hereFloor: () => 'f1',
     openDictatedReview: async (_floor: string, hire: HireInterpretation, _live: unknown, handover: string | null) => (opened.push({ hire, handover }), { kind: 'done' }),
   };
-  const run = (text: string) => (App.prototype as unknown as { interpretDictation(this: unknown, text: string, live: () => boolean): Promise<unknown> }).interpretDictation.call(self, text, () => true);
+  const run = (text: string, manual = false) => (App.prototype as unknown as { interpretDictation(this: unknown, text: string, live: () => boolean, manual: boolean): Promise<unknown> }).interpretDictation.call(self, text, () => true, manual);
   return { run, reviews, sent, opened, applied };
 }
 
@@ -81,5 +81,12 @@ describe('App.interpretDictation and prompt secrets (#108 round 4)', () => {
     await p.run(SENTENCE);
     expect(p.reviews).toEqual([]);
     expect(p.sent.map(([t]) => t)).toEqual(['hire.interpret']);
+  });
+
+  it('“Review secrets” on the bar (or its chord): the review opens with nothing found, then the sentence goes with it', async () => {
+    const p = parts();
+    await p.run('Hire an agent with the code 4471', true);
+    expect(p.reviews.map((r) => [r.manual, r.review.counts().found, r.action])).toEqual([[true, 0, 'Confirm and continue']]);
+    expect(p.sent.map(([t]) => t)).toEqual(['prompt_secrets.scan', 'hire.interpret']);
   });
 });

@@ -901,8 +901,10 @@ export const SURFACES: Surface[] = [
   },
   {
     // #213: the dictation bar on a floor, a dictated command (two lines) in its box.
+    // #108 round 4: with "Review prompt secrets" on, "Review secrets" sits beside Send.
     name: 'dictation',
     fixture: 'demo-m4',
+    wsQuery: `${SIM}&simsecretson=1`,
     open: async (page) => {
       await onFloor(page);
       await page.keyboard.press('Control+Shift+Space');

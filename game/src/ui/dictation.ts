@@ -2,7 +2,9 @@ import type { HireInterpretation } from '../net/protocol';
 import { floorList, floorRow, type FloorItem, type FloorRow, type FloorSource } from '../world/palette';
 import { barKey, FLOOR_QUESTION } from './dictationModel';
 import { backdropPolicy } from './dismiss';
-import { h } from './dom';
+import { h, icon, ICON } from './dom';
+import { reviewKey } from './secretsFlow';
+import type { CardSecrets } from '../laptop/askStack';
 import { listKey, paintActiveRow, wrapIndex } from './listbox';
 import './credits.css';
 import './palette.css';
@@ -37,7 +39,9 @@ export interface DictationHost {
    * Interprets `text` and routes the answer (a hire goes to the review, and the game closes the bar for it). The game
    * asks `live` when the answer comes, before it does anything with it: not live, it does nothing.
    */
-  submit(text: string, live: DictationLive): Promise<DictationReply>;
+  submit(text: string, live: DictationLive, o?: { review?: boolean }): Promise<DictationReply>;
+  /** #108 round 4: "Review prompt secrets before sending", for the bar's "Review secrets" (absent: no such control). */
+  secrets?: CardSecrets | null;
   /** The floor picked for a hire that had none: the game checks it can take the hire, then opens the review there. */
   pickFloor(floor: string, hire: HireInterpretation, live: DictationLive, handover: string | null): Promise<DictationReply>;
   store: FloorSource;
@@ -76,6 +80,13 @@ export class DictationBar {
     placeholder: 'Say or type what to do, like “Hire a Claude agent on Sonnet 5.5 with high effort to fix the login bug.”',
   });
   private readonly sendBtn = h('button', { class: 'btn btn--primary dict-send', type: 'button' }, 'Send');
+  /** #108 round 4: the sentence's review on purpose (with the switch on), then its send; Ctrl/⌘+Shift+X in the field too. */
+  private readonly reviewBtn = h(
+    'button',
+    { class: 'btn dict-review', type: 'button', 'data-key': 'review', title: 'Review secrets: look over the sentence’s possible secrets now, and mark one the scan missed (Ctrl/⌘+Shift+X)' },
+    icon(ICON.lock),
+    'Review secrets',
+  );
   private readonly spinner = h('span', { class: 'dict-pending', 'aria-hidden': 'true', hidden: true });
   private readonly status = h('p', { id: 'dict-status', class: 'dict-status', role: 'status', 'aria-live': 'polite' });
   private readonly question = h('p', { class: 'pal-title dict-question', id: 'dict-question', hidden: true });
@@ -108,7 +119,7 @@ export class DictationBar {
       { class: 'dict-head' },
       h('label', { id: 'dict-label', class: 'dict-label', for: 'dict-field' }, 'Say a command'),
       this.field,
-      h('div', { class: 'dict-row' }, this.spinner, this.status, this.sendBtn),
+      h('div', { class: 'dict-row' }, this.spinner, this.status, this.reviewBtn, this.sendBtn),
     );
     const foot = h(
       'footer',
@@ -122,6 +133,10 @@ export class DictationBar {
     this.field.addEventListener('compositionstart', () => (this.composing = true));
     this.field.addEventListener('compositionend', () => setTimeout(() => (this.composing = false), 0));
     this.sendBtn.addEventListener('click', () => void this.submit());
+    this.reviewBtn.addEventListener('click', () => void this.submit(true));
+    const showReview = () => (this.reviewBtn.hidden = !host.secrets?.on);
+    showReview();
+    host.secrets?.onChange(showReview);
     // What is pressed here is the bar's: the game, the seated terminal and the dialog under it must not see it.
     this.dialog.addEventListener('keydown', (e) => e.stopPropagation());
     // A press on a floor keeps the keyboard in the field.
@@ -206,7 +221,6 @@ export class DictationBar {
       this.state = 'editing';
       this.hire = null;
       this.handover = null;
-    this.handover = null;
       this.drawFloors();
       this.say('', false);
     }
@@ -214,6 +228,12 @@ export class DictationBar {
 
   private key(e: KeyboardEvent): void {
     if (this.composing && (e.key === 'Enter' || e.key === 'Escape')) return;
+    // #108: the sentence's review on purpose, then its send.
+    if (reviewKey(e) && this.host.secrets?.on) {
+      e.preventDefault();
+      if (!e.repeat) void this.submit(true);
+      return;
+    }
     if (this.state === 'floor') {
       const ix = this.rows.findIndex((r) => r.floor === this.active);
       const k = listKey(e, { rows: this.rows.some((r) => r.enabled), can: ix >= 0 && !!this.rows[ix]?.enabled });
@@ -243,7 +263,8 @@ export class DictationBar {
 
   // ---- sending -----------------------------------------------------------------------------
 
-  private async submit(): Promise<void> {
+  /** `review` (#108): "Review secrets": the sentence's review opens even when the scan finds nothing. */
+  private async submit(review = false): Promise<void> {
     // One request at a time: another Enter while it is on its way sends nothing.
     if (this.state === 'pending') return;
     const text = this.field.value;
@@ -258,7 +279,7 @@ export class DictationBar {
     this.drawFloors();
     this.say('Reading the command…', false);
     const live = this.liveFor(gen);
-    const reply = await this.host.submit(text, live);
+    const reply = await (review ? this.host.submit(text, live, { review: true }) : this.host.submit(text, live));
     if (!live()) return;
     this.answer(reply);
   }

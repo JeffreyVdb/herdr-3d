@@ -1263,7 +1263,7 @@ export class HireDialog {
     const save = this.savePresetButton();
     const hadSave = !!save && document.activeElement?.getAttribute('data-key') === 'save-preset' && this.actions.contains(document.activeElement);
     // #108: the first task's review on purpose (with the switch on), then the hire.
-    const review = reviewButton(this.host.secrets, this.state !== 'ready' ? 'The hire is on its way.' : blocker, () => void this.hire(true), 'first task');
+    const review = reviewButton(this.host.secrets, this.state === 'preparing' ? 'Checking the floor first…' : this.state !== 'ready' ? 'The hire is on its way.' : blocker, () => void this.hire(true), 'first task');
     const hadReview = document.activeElement?.getAttribute('data-key') === 'review' && this.actions.contains(document.activeElement);
     this.actions.replaceChildren(...[save, retry, cancel, review, hire].filter((x): x is HTMLButtonElement => !!x));
     if (hadReview) review?.focus();

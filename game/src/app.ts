@@ -438,8 +438,11 @@ export class App {
       bridges: { book: this.bridges, switchTo: (b) => void this.switchBridge(b), openSettings: () => this.openSettingsAt('bridges') },
       held: { list: () => this.hireReview.heldReviews(), review: (id) => void this.reviewHeld(id) },
     });
+    const flowOn = () => (this.secrets as PromptSecretsFlow | undefined)?.on === true;
     this.dictation = new DictationBar(o.host, {
-      submit: (text, live) => this.interpretDictation(text, live),
+      submit: (text, live, o) => this.interpretDictation(text, live, o?.review === true),
+      // #108: the flow is made further down (after the bar): its switch is read when asked, its changes heard from the book.
+      secrets: { get on() { return flowOn(); }, onChange: (fn: () => void) => this.store.promptSecrets.onChange(fn) },
       pickFloor: (floor, hire, live, handover) => this.openDictatedReview(floor, hire, live, handover),
       store: this.store,
       here: () => this.hereFloor(),
@@ -3277,15 +3280,15 @@ export class App {
    * bar asked which. Everything else is the bar's line, with the text kept. Nothing here sends `worker.hire`. An answer
    * for a bar that was closed (or closed and opened again) since it asked is no one's: nothing is done with it (`live`).
    */
-  private async interpretDictation(text: string, live: DictationLive): Promise<DictationReply> {
+  private async interpretDictation(text: string, live: DictationLive, manual = false): Promise<DictationReply> {
     const ticket = this.hireReview.begin();
     const pending = this.hireReview.pendingInterpretation();
     // #108 round 4: the sentence's secrets are reviewed before the LLM reads it ("Confirm and continue"); the answer
     // holds their references and a hand-over the review keeps for the next sentence and the hire.
     const handover = pending ? this.hireReview.pendingHandover() : null;
-    const req = { key: 'dictation', text, target: 'the hire interpreter', action: 'Confirm and continue' as const };
+    const req = { key: 'dictation', text, target: 'the hire interpreter', action: 'Confirm and continue' as const, manual };
     let go: Go = { kind: 'send', protects: 0, shown: text, review: null };
-    if (this.secrets.on) {
+    if (this.secrets.on || manual) {
       const out = await this.secrets.review(req);
       if (!live()) return { kind: 'done' };
       if (out.kind === 'kept') return { kind: 'say', text: out.why === 'cancel' ? 'Not sent: the review was cancelled. Your words are still here.' : out.message, error: out.why === 'failed' };
