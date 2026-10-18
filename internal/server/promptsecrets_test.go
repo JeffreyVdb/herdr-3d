@@ -893,7 +893,9 @@ func TestPromptSecretsSymbolsBesideOwnReference(t *testing.T) {
 // value around it (review S1, pass 3: the masked reference completed a
 // GitHub token's 40 bytes, that match beat the password's own, and the
 // password's rest was sent raw once every candidate was protected; pass 4:
-// the same in unquoted prose, whose own span the mask shaped too).
+// the same in unquoted prose, whose own span the mask shaped too), nor does
+// a complete token typed inside a value that runs into one (the tuning
+// round: the value's typed prefix was sent raw).
 func TestPromptSecretsTokenBesideOwnReference(t *testing.T) {
 	t.Parallel()
 	sb := startSecretsBridge(t, true, nil)
@@ -906,22 +908,42 @@ func TestPromptSecretsTokenBesideOwnReference(t *testing.T) {
 		t.Fatal("no reference")
 	}
 	const head, tail = "ghp_GT2MQVTdhGOubkn5tfdOv4eY", "Tail-Sentinel-77!"
-	for i, text := range []string{`PASSWORD="` + head + ref + ` ` + tail + `"`, "the password is " + head + ref + tail} {
-		s = sb.scan(t, text)
-		if len(s.Candidates) != 2 || s.Candidates[0].Start != u16(text, head) || s.Candidates[0].End != u16(text, head)+len(head) ||
-			s.Candidates[1].Start != u16(text, tail) || s.Candidates[1].End != u16(text, tail)+len(tail) {
-			t.Fatalf("%q: %+v", text, s)
+	const gh, prefix = head + "nhJvEkcAI167", "Prefix-Sentinel-77-"
+	for i, tc := range []struct {
+		text string
+		want []string // the candidates, in order: each the first occurrence after the one before
+	}{
+		{`PASSWORD="` + head + ref + ` ` + tail + `"`, []string{head, tail}},
+		{"the password is " + head + ref + tail, []string{head, tail}},
+		{`PASSWORD="` + prefix + gh + "!" + ref + tail + `"`, []string{prefix, gh, "!", tail}},
+	} {
+		s = sb.scan(t, tc.text)
+		at := 0
+		for j, w := range tc.want {
+			start := u16Len(tc.text[:at]) + u16(tc.text[at:], w)
+			if j >= len(s.Candidates) || s.Candidates[j].Start != start || s.Candidates[j].End != start+u16Len(w) {
+				t.Fatalf("%q: %+v, want %q", tc.text, s, tc.want)
+			}
+			at += strings.Index(tc.text[at:], w) + len(w)
+		}
+		if len(s.Candidates) != len(tc.want) {
+			t.Fatalf("%q: %+v, want %q", tc.text, s, tc.want)
 		}
 		var protect []proto.SecretDecision
 		for _, c := range s.Candidates {
 			protect = append(protect, proto.SecretDecision{Candidate: c.ID, Action: proto.SecretProtect})
 		}
-		_, m = sb.c.command(proto.CmdWorkerPrompt, fmt.Sprint("p", i), proto.WorkerPromptArgs{ID: sb.id2, Text: text,
+		_, m = sb.c.command(proto.CmdWorkerPrompt, fmt.Sprint("p", i), proto.WorkerPromptArgs{ID: sb.id2, Text: tc.text,
 			Secrets: &proto.SecretsReview{Revision: s.Revision, Decisions: protect}})
 		pr := ackData[proto.PromptResult](t, m)
-		calls := sb.term.Calls()
-		if pr.Protected != 2 || strings.Contains(pr.Sent, head) || strings.Contains(pr.Sent, tail) || strings.Contains(calls[len(calls)-1], tail) {
-			t.Fatalf("sent %q (ack %s)", calls[len(calls)-1], m.raw)
+		last := sb.term.Calls()[len(sb.term.Calls())-1]
+		if pr.Protected != len(tc.want) {
+			t.Fatalf("sent %q (ack %s)", last, m.raw)
+		}
+		for _, w := range []string{head, tail, prefix} {
+			if strings.Contains(pr.Sent, w) || strings.Contains(last, w) {
+				t.Fatalf("%q sent raw: %q (ack %s)", w, last, m.raw)
+			}
 		}
 	}
 }

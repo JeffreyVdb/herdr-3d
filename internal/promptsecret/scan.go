@@ -293,35 +293,41 @@ func resolve(text, mtext string, spans, refs []span) []span {
 var valueKinds = map[string]bool{KindAuthHeader: true, KindAssignment: true, KindProse: true}
 
 // kept are the parts of s, which lost to the winners over, that stay
-// proposed (review S1, pass 4; the tuning round's class 2), each a part of
-// s with its kinds:
+// proposed (review S1, passes 4 and 5; the tuning round's class 2), each a
+// part of s with its kinds:
 //
-//   - when every winner over it is borrowed, every part no winner has: a
-//     match a reference helped never takes the value's other typed bytes;
-//   - when each is borrowed or a provider's format strictly inside s, a
-//     value (valueKinds), only the bytes glued after such a format (in
-//     mtext, text with refs masked: through a reference too): the value's
-//     rest it cut short (to a blank or an escape's backslash), never a
-//     list's next item, a URL's query or path (one led by , ; & / ? #), nor
-//     a sentence's punctuation.
+//   - when every winner over it lends, every part no winner has. A winner
+//     lends when it is borrowed (a match a reference helped), or when s is
+//     a structural value that runs into a reference and the winner lies
+//     inside it, its own range clear of every reference (a token, a
+//     header's credential, a URL's password typed whole in the value): a
+//     value that runs into a reference has every typed byte proposed;
+//   - when each lends or is a provider's format inside s, a value
+//     (valueKinds), only the bytes glued after such a format (in mtext,
+//     text with refs masked: through a reference too): the value's rest it
+//     cut short (to a blank or an escape's backslash), never a list's next
+//     item, a URL's query or path (one led by , ; & / ? #), nor a
+//     sentence's punctuation.
 //
-// Any other winner (a value's own boundary: url-query over prose
-// "[…]&x=1"; a provider beside s) takes s's bytes, as rank says. A part is
-// never only blanks; nor a wrapper or punctuation, unless s runs into a
-// reference: then whatever it holds is proposed (outside drops a wrapper
-// beside one).
+// Any other winner (a value's own boundary through a reference: url-query
+// over prose "[…]&x=1"; a provider beside s) takes s's bytes, as rank says.
+// A part is never only blanks; nor a wrapper or punctuation, unless s runs
+// into a reference: then whatever it holds is proposed (outside drops a
+// wrapper beside one).
 func kept(text, mtext string, s span, over, refs []span) []span {
+	beside := overlapsAny(s.start, s.end, refs)
 	all := true
 	for _, w := range over {
+		inside := s.start <= w.start && w.end <= s.end
 		switch {
 		case w.borrowed:
-		case w.rank == rankProvider && valueKinds[s.kind] && s.start <= w.start && w.end <= s.end:
+		case beside && inside && s.rank > rankProvider && s.rank < rankGeneric && !overlapsAny(w.start, w.end, refs):
+		case w.rank == rankProvider && valueKinds[s.kind] && inside:
 			all = false
 		default:
 			return nil
 		}
 	}
-	beside := overlapsAny(s.start, s.end, refs)
 	var out []span
 	at := s.start
 	for _, g := range append(slices.SortedFunc(slices.Values(over), func(a, b span) int { return a.start - b.start }),

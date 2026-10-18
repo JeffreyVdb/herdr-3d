@@ -263,6 +263,21 @@ func TestScanOwnReferences(t *testing.T) {
 		{"curl through one", "curl -u admin:ab" + r1 + "cd https://x.test", []string{"ab", "cd"}},
 		{"a named line through one", "ab" + r1 + "cd\nThe preceding line is the actual password.", []string{"ab", "cd"}},
 		{"credential phrase through one", "The API credential is AKIAH3JW" + r1 + "!Q6RM3UVZ7XK", []string{"AKIAH3JW", "!Q6RM3UVZ7XK"}},
+		// Review S1 (tune): a match typed whole inside a value that runs into
+		// one (a complete token, a header's credential, a URL's password)
+		// takes none of the value's other typed bytes, before or after it.
+		{"a complete token inside a value", `PASSWORD="Prefix-Sentinel-77-` + gh + "!" + r1 + `Tail-Sentinel-77!"`,
+			[]string{"Prefix-Sentinel-77-", gh, "!", "Tail-Sentinel-77!"}},
+		{"a complete token inside a value, glued", `PASSWORD="Prefix77-` + gh + r1 + `Tail77"`, []string{"Prefix77-", gh, "Tail77"}},
+		{"a complete token after one", `PASSWORD="` + r1 + `Prefix77-` + gh + `"`, []string{"Prefix77-", gh}},
+		{"prose, a complete token inside", `the password is "Prefix77-` + gh + "!" + r1 + `Tail77"`, []string{"Prefix77-", gh, "!", "Tail77"}},
+		{"prose unquoted, a complete token inside", "the password is Prefix77-" + gh + "!" + r1 + "Tail77", []string{"Prefix77-", gh, "!", "Tail77"}},
+		{"a bare header, a complete token inside", "Bearer Prefix77-" + gh + r1 + "Tail77", []string{"Prefix77-", gh, "Tail77"}},
+		{"a header inside a value", `PASSWORD="Bearer abcdefghij1234567890 ` + r1 + ` tail"`, []string{"Bearer", "abcdefghij1234567890", "tail"}},
+		{"a URL's password inside a value", `PASSWORD="https://app:Hunter-22@db.test ` + r1 + `"`, []string{"https://app:", "Hunter-22", "@db.test"}},
+		// Chosen: beside one, the value's next item is its bytes too
+		// (without one, token=ghp_…,extra proposes the token alone).
+		{"a token and a list beside one", `PASSWORD="` + gh + `,extra ` + r1 + `"`, []string{gh, ",extra"}},
 	})
 	// A part keeps the detectors of the range it was cut from.
 	for _, text := range []string{`PASSWORD="!@#%&+=?_- ` + r1 + `"`, `PASSWORD=` + r1 + `!@#%&+=?_-`} {
@@ -285,10 +300,11 @@ func TestScanOwnReferences(t *testing.T) {
 	}
 }
 
-// Review S1 (pass 4), as a matrix: a value that runs into the bridge's own
-// references, in each syntax, on either side of one, between two, keeps
-// every typed byte outside them proposed, whatever wins inside it (a token
-// the mask completes, one a reference's '[' cuts short, a complete one).
+// Review S1 (pass 4, and the tuning round), as a matrix: a value that runs
+// into the bridge's own references, in each syntax, on either side of one,
+// between two, with typed bytes before the token or not, keeps every typed
+// byte outside them proposed, whatever wins inside it (a token the mask
+// completes, one a reference's '[' cuts short, a complete one).
 // Only the references' bytes, a lone wrapper beside one, and an unquoted
 // value's closing bracket (a sentence's) are left out.
 func TestScanReferenceMatrix(t *testing.T) {
@@ -325,24 +341,29 @@ func TestScanReferenceMatrix(t *testing.T) {
 		{"header", "Authorization: Bearer ", "", false},
 	}
 	trailing := []string{"", "TailSentinel", "!@#%&+=?_-", ")"}
-	n := 0
 	for _, tok := range tokens {
 		layouts := []struct{ name, value string }{
 			{"before", r1 + tok.head + tok.rest},
 			{"after", tok.head + tok.rest + r1},
 			{"middle", tok.head + r1 + tok.rest},
 			{"two", tok.head + r1 + tok.rest + r2 + "End88"},
+			// Review S1 (tune): typed bytes before the token too.
+			{"typed before, after", "Prefix-77-" + tok.head + tok.rest + r1},
+			{"typed around, after", "Prefix-77-" + tok.head + tok.rest + "!" + r1},
+			{"typed before, before", r1 + "Prefix-77-" + tok.head + tok.rest},
+			{"typed before, middle", "Prefix-77-" + tok.head + r1 + tok.rest},
 		}
-		for _, l := range layouts {
-			for _, tail := range trailing {
-				for _, syn := range syntaxes {
-					n++
-					checkReferenceCoverage(t, tok.name+"/"+l.name+"/"+syn.name+"/"+tail, syn.pre, l.value+tail, syn.post, syn.quoted)
+		t.Run(tok.name, func(t *testing.T) {
+			t.Parallel()
+			for _, l := range layouts {
+				for _, tail := range trailing {
+					for _, syn := range syntaxes {
+						checkReferenceCoverage(t, l.name+"/"+syn.name+"/"+tail, syn.pre, l.value+tail, syn.post, syn.quoted)
+					}
 				}
 			}
-		}
+		})
 	}
-	t.Logf("%d cases", n)
 }
 
 // checkReferenceCoverage scans pre+value+post and checks that every byte of
