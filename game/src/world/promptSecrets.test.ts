@@ -38,6 +38,9 @@ describe('#108 the "Review prompt secrets before sending" switch', () => {
     expect(promptSecretsStateOf({ enabled: true })).toBeNull();
     expect(promptSecretsStateOf({ enabled: 'yes', available: true })).toBeNull();
     expect(promptSecretsStateOf(null)).toBeNull();
+    // Round 5: the files' directory, an absolute path of the bridge's characters (anything else is left out).
+    expect(promptSecretsStateOf({ enabled: true, available: true, dir: '/run/user/1000/herdr-world/secrets' })).toEqual({ enabled: true, available: true, dir: '/run/user/1000/herdr-world/secrets' });
+    for (const dir of ['relative/dir', '/run/user/1000/secrets/', '/a b', '/x]y', 7]) expect(promptSecretsStateOf({ enabled: true, available: true, dir })).toEqual({ enabled: true, available: true });
   });
 
   it('the book: null from an older bridge (off), upserts tell the listeners', () => {

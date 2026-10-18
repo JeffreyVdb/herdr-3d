@@ -14,10 +14,11 @@ import type { PromptSecretsScan, PromptSecretsState, SecretCandidate, SecretDeci
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 
-/** A well-formed switch (unknown keys dropped), else null. */
+/** A well-formed switch (unknown keys dropped; round 5's `dir` kept only when it is an absolute path), else null. */
 export function promptSecretsStateOf(v: unknown): PromptSecretsState | null {
   if (!isObj(v) || typeof v.enabled !== 'boolean' || typeof v.available !== 'boolean') return null;
-  return { enabled: v.enabled, available: v.available };
+  const dir = typeof v.dir === 'string' && /^\/[A-Za-z0-9._/-]*[A-Za-z0-9._-]$/.test(v.dir) ? v.dir : null;
+  return { enabled: v.enabled, available: v.available, ...(dir ? { dir } : {}) };
 }
 
 /** The switch, and who listens for changes. */
@@ -76,6 +77,8 @@ export function promptSecretsFailureText(code: string, message: string): string 
       return 'The prompt has possible secrets the review did not cover. Nothing was sent.';
     case 'secrets_unavailable':
       return `herdr-world can’t keep secrets in files right now${message.trim() ? ` (${message.trim().replace(/[.:]\s*$/, '')})` : ''}. Nothing was sent.`;
+    case 'secrets_review_stored':
+      return 'A saved prompt keeps no protected file: remove the value from it, or protect it when you hire with it. Nothing was saved.';
     default:
       return message.trim() || code;
   }

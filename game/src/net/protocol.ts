@@ -339,6 +339,11 @@ export interface PromptSecretsState {
   enabled: boolean;
   /** The bridge has a private runtime directory for the files (false: a review that protects anything is refused). */
   available: boolean;
+  /**
+   * #108 round 5: the directory of the files (absolute), present when `available`: a reference to one of them is
+   * `[secret in file <dir>/<owner>/<file>]` exactly (absent from an older bridge: the game goes by the shape alone).
+   */
+  dir?: string;
 }
 
 /** #108: `prompt_secrets.update`: the switch, flat. */
@@ -375,6 +380,25 @@ export type SecretDecision = { candidate: string; action: 'protect' | 'ignore'; 
 export interface SecretsReview {
   revision: string;
   decisions: SecretDecision[];
+}
+
+/**
+ * #108 round 2: the `secrets` of a command with several texts (`run.start`, `worker.answer_ask`,
+ * `worker.answer_followup`, `worker.answer_async`): a review per text that decided anything, keyed by the text's path in
+ * the args (`"text"`, `"extra"`, `"prompt"`, `"note"`, `"answers[N].other"`, `"answers[N].value"`, `"answers[N].note"`,
+ * `"answers[N].answer"`; `N` its position in the args' `answers`). Each is of that text alone, as sent.
+ */
+export type SecretsReviews = Record<string, SecretsReview>;
+
+/** #108 round 5: `prompt_secrets.revoke` ack: how many protected files the worker held and lost. */
+export interface PromptSecretsRevokeAck {
+  removed: number;
+}
+
+// Declaration merging: #108 round 5.
+export interface Worker {
+  /** How many protected files the worker holds (its own and any leased to it); absent when none, or an older bridge. */
+  secret_files?: number;
 }
 
 /** #54: the repository-discovery settings and the scans' status (`repo_discovery` in the snapshot, `repo_discovery.update`). */
@@ -743,6 +767,8 @@ export interface HireAck {
   prompt_error?: string;
   /** #155: how a Codex hire was launched: shared, or legacy and why (absent for other hires, or with the switch off). */
   codex?: WorkerCodex;
+  /** #108 round 2: how many ranges of the prompt went to files (absent: none). */
+  protected?: number;
 }
 
 /**
@@ -794,6 +820,10 @@ export interface HireInterpretAck {
   reason?: 'multiple';
   hire?: HireInterpretation;
   error?: { code: string; message: string };
+  /** #108 round 2: how many ranges of `text` went to files (`text`, `hire.sources` and `hire.task` hold the references). */
+  protected?: number;
+  /** #108 round 2: the hand-over the next `hire.interpret` and the `worker.hire` of its task send back. */
+  secrets_pending?: string;
 }
 
 /** M4: `worker.fire.prepare` ack: what the send-home dialog shows. */
@@ -864,7 +894,13 @@ export interface CommandArgs {
   /** M4 */
   'hire.prepare': { floor: string; cwd?: string };
   /** #213: a dictated sentence to a hire proposal (docs/protocol.md "Hire interpretation"); a follow-up carries the review's proposal as `pending`. Acks `HireInterpretAck`. */
-  'hire.interpret': { text: string; pending?: HireInterpretation };
+  'hire.interpret': {
+    text: string;
+    pending?: HireInterpretation;
+    /** #108 round 2: the review of `text`, and the last answer's `secrets_pending` (its sentences need no review again). */
+    secrets?: SecretsReview;
+    secrets_pending?: string;
+  };
   'worker.hire': {
     floor: string;
     desk_index: number;
@@ -877,23 +913,34 @@ export interface CommandArgs {
     prompt?: string;
     /** #95: the bridge adds the herdr hiring instructions for the floor after the prompt (only to a bridge whose snapshot says `herdr_instructions`). */
     herdr_instructions?: boolean;
+    /** #108 round 2: the review of `prompt` (as sent, before the herdr instructions), and `hire.interpret`'s hand-over when `prompt` is its task. */
+    secrets?: SecretsReview;
+    secrets_pending?: string;
   };
   'worker.fire.prepare': { id: string };
   /** `handoff` (#223: filed through the shared filing service, see `worker.handoff`) and `stop_services` (#14) are reserved, not sent yet. */
   'worker.fire': { id: string; worktree?: FireWorktree };
   /** #83: the cleanup prompt (the bridge appends its result-line footer) and the send home's worktree choice. */
-  'worker.wrapup': { id: string; prompt: string; worktree?: FireWorktree };
+  'worker.wrapup': {
+    id: string;
+    prompt: string;
+    worktree?: FireWorktree;
+    /** #108 round 2: the review of `prompt` (before the bridge's footer). */
+    secrets?: SecretsReview;
+    /** #108 round 5: `packup.detect`'s hand-over for this worker: its task as answered, a blank line and the cleanup sentence need no review for the task. */
+    secrets_pending?: string;
+  };
   'worker.wrapup.cancel': { id: string };
   /** M5 */
   /**
    * #224: `op` (optional) for an exact "/handoff [instruction]", which becomes an agent handoff request (ack `handoff`).
    * #108: `secrets`, the review of the text's possible secrets (with the switch on and candidates found).
    */
-  'worker.prompt': { id: string; text: string; op?: string; secrets?: SecretsReview };
+  'worker.prompt': { id: string; text: string; op?: string; secrets?: SecretsReview; /** #108 round 2: `packup.detect`'s hand-over: its `sent` (or `task`) needs no review again. */ secrets_pending?: string };
   /** Exactly one of `choice` or `cancel`. */
   'worker.answer': { id: string; hash: string; choice?: number; cancel?: boolean };
   /** #57: an answer for every question of the worker's ask, or `cancel` (Esc on its dialog) with an optional `prompt` sent after. */
-  'worker.answer_ask': { id: string; tool_use_id: string; answers?: AskAnswerArg[]; cancel?: boolean; prompt?: string };
+  'worker.answer_ask': { id: string; tool_use_id: string; answers?: AskAnswerArg[]; cancel?: boolean; prompt?: string; /** #108 round 2: `prompt`, `answers[N].other`. */ secrets?: SecretsReviews };
   'worker.changes': { id: string };
   /** #136: the worker's slash commands and skills (ack `WorkerCommands`). */
   'worker.commands': { id: string };
@@ -940,6 +987,8 @@ export interface CommandArgs {
     label?: string;
     /** The edited preview; absent: the bridge composes it. */
     prompt?: string;
+    /** #108 round 2: `text`, `extra` (only beside no `prompt`), `prompt`. */
+    secrets?: SecretsReviews;
   };
   // M7: boards (docs/protocol.md "Boards: issues and pull requests").
   'board.watch': { floor: string };
@@ -960,7 +1009,7 @@ export interface CommandArgs {
   'followups.get': Record<string, never>;
   'followups.set': { enabled?: boolean; threshold?: number };
   'followups.test': { threshold?: number };
-  'worker.answer_followup': { id: string; turn_id: string; answers: FollowupAnswer[]; note?: string };
+  'worker.answer_followup': { id: string; turn_id: string; answers: FollowupAnswer[]; note?: string; /** #108 round 2: `note`, `answers[N].value`, `answers[N].note`. */ secrets?: SecretsReviews };
   'worker.dismiss_followup': { id: string; turn_id: string };
   // #60: the extraction once more (a fallback's; acks `RetryFollowupAck`), the whole message (`FollowupMessageAck`).
   'worker.retry_followup': { id: string; turn_id: string };
@@ -969,7 +1018,8 @@ export interface CommandArgs {
   'packup.get': Record<string, never>;
   'packup.set': { enabled?: boolean; threshold?: number };
   'packup.test': { threshold?: number };
-  'packup.detect': { id: string; text: string };
+  /** #108 round 2: `secrets`, the review of `text` before the models read it. */
+  'packup.detect': { id: string; text: string; secrets?: SecretsReview };
   // #106 the inbox: hide a done worker's row until its next working → done. Ack `{dismissed: boolean}`; false: ignored (no longer current).
   'inbox.dismiss': { id: string; status_since: number };
   // #98 activity settings ("Classify unknown commands", docs/protocol.md).
@@ -991,12 +1041,14 @@ export interface CommandArgs {
   'prompt_secrets.get': Record<string, never>;
   'prompt_secrets.set': { enabled: boolean };
   'prompt_secrets.scan': { text: string };
+  /** #108 round 5: removes every protected file the worker holds now (its own and any leased to it); it keeps running. Acks `PromptSecretsRevokeAck`. */
+  'prompt_secrets.revoke': { worker: string };
   // #54 repository discovery (docs/protocol.md "Repository discovery"): each acks `RepoDiscoveryState`.
   'repo_discovery.get': Record<string, never>;
   'repo_discovery.set': { roots?: string[]; interval_minutes?: number };
   'repo_discovery.refresh': Record<string, never>;
   // #156 Codex async questions. `worker.answer_async` acks `AsyncAnswerAck`.
-  'worker.answer_async': { id: string; thread: string; batch: string; answers: { index: number; answer: string }[] };
+  'worker.answer_async': { id: string; thread: string; batch: string; answers: { index: number; answer: string }[]; /** #108 round 2: `answers[N].answer`. */ secrets?: SecretsReviews };
   'worker.dismiss_async': { id: string; thread: string; batch: string; indexes?: number[] };
   'activity.set': { model_enabled?: boolean; threshold?: number; margin?: number; daily_cap?: number };
   // #118 floor overview summaries (docs/protocol.md "Floor overview summaries"). `digest.test` acks `DigestTestAck`.
@@ -1050,9 +1102,9 @@ export interface CommandArgs {
   'worker.handoff':
     | { worker: string; mode: 'literal'; session: string; candidate: string; revision: string; send_home?: boolean; op: string }
     /** #224: asks the worker's agent (acks `AgentHandoffAck`); the outcome follows on `Worker.agent_handoff`. */
-    | { worker: string; mode: 'agent'; instruction?: string; send_home?: boolean; op: string }
+    | { worker: string; mode: 'agent'; instruction?: string; send_home?: boolean; op: string; /** #108 round 2: the review of `instruction`. */ secrets?: SecretsReview }
     /** #9: the configured LLM writes it from the snapshot up to the candidate (acks `LLMHandoffAck`); the job follows on `Worker.llm_handoff`. */
-    | { worker: string; mode: 'llm'; session: string; candidate: string; revision: string; instruction?: string; send_home?: boolean; op: string };
+    | { worker: string; mode: 'llm'; session: string; candidate: string; revision: string; instruction?: string; send_home?: boolean; op: string; secrets?: SecretsReview };
   /** #224: cancels a running agent handoff request, or dismisses a settled one (acks `AgentHandoff`; #9: an LLM job's op acks `LLMHandoff`). */
   'worker.handoff_cancel': { worker: string; op: string };
   /** A floor's handoffs, newest first, or with `q` the matches (acks `HandoffListAck`). */
@@ -1067,10 +1119,10 @@ export interface CommandArgs {
   'schedule.update': { id: string } & Omit<ScheduleSpec, 'source'>;
   /** While `scheduled` or `waiting`; `schedule.removed` follows. */
   'schedule.cancel': { id: string };
-  /** While `scheduled`: fires now, without the grace check. */
-  'schedule.run_now': { id: string };
-  /** While `failed` or `skipped`: the same spec, fired now. */
-  'schedule.retry': { id: string };
+  /** While `scheduled`: fires now, without the grace check. #108 round 2: `secrets` as `schedule.retry`'s. */
+  'schedule.run_now': { id: string; secrets?: SecretsReview };
+  /** While `failed` or `skipped`: the same spec, fired now. #108 round 2: `secrets`, the review of its stored prompt (every decision ignore): it is kept, then it fires. */
+  'schedule.retry': { id: string; secrets?: SecretsReview };
   /** While `failed` or `skipped`: out of view (`schedule.removed`). */
   'schedule.dismiss': { id: string };
   // #93 hire presets (docs/protocol.md "Hire presets"); create and update ack the `HirePreset` as stored.
@@ -1079,7 +1131,7 @@ export interface CommandArgs {
   'hire_preset.update': { id: string } & HirePresetSpec;
   'hire_preset.delete': { id: string };
   /** #95: whether the prompt hands work to other agents (the editor's nudge to tick "Add herdr hiring instructions"). Acks `HirePresetCheckAck`. */
-  'hire_preset.check': { prompt: string };
+  'hire_preset.check': { prompt: string; /** #108 round 2: as a save's (every decision ignore). */ secrets?: SecretsReview };
 }
 
 // M5: blocked workers' questions, usage, and the acks of the prompt, answer and Changes commands (docs/protocol.md
@@ -2485,6 +2537,13 @@ export interface PackupDetectAck {
   task?: string;
   removed?: PackupRange[];
   score: number;
+  /**
+   * #108 round 2: the text the models read, the protected secrets as references (absent: as typed): `removed` indexes
+   * it, and it (or `task`) is what `worker.prompt` sends next, with `secrets_pending`.
+   */
+  sent?: string;
+  protected?: number;
+  secrets_pending?: string;
 }
 
 export interface PackupTestSample {
@@ -3153,6 +3212,8 @@ export interface AgentHandoffAck {
   request: AgentHandoff;
   handoff?: HandoffEntry;
   existing?: boolean;
+  /** #108 round 2: how many ranges of the instruction went to files (absent: none, or `existing`). */
+  protected?: number;
 }
 
 export type CacheState = 'warm' | 'expired' | 'unknown';
@@ -3264,6 +3325,8 @@ export interface ScheduleSpec {
   handoff_path?: string;
   /** Create only (absent: manual). */
   source?: ScheduleSource;
+  /** #108 round 2: the review of `prompt` (a stored prompt: every decision ignore). */
+  secrets?: SecretsReview;
 }
 
 /** One schedule as the bridge shows it: every `schedule.*` ack, `World.schedules`, `schedule.upsert`. */
@@ -3339,6 +3402,8 @@ export interface HirePresetSpec {
   effort: string;
   /** #95: only to a bridge whose snapshot says `herdr_instructions` (an older one refuses the field). */
   herdr_instructions?: boolean;
+  /** #108 round 2: the review of `prompt` (a stored prompt: every decision ignore). */
+  secrets?: SecretsReview;
 }
 
 /** #95 `hire_preset.check` ack: `delegates` false also on any failure, a timeout or a classifier not ready. */

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadFixture } from './fixture-server.ts';
 import { SimWorld, type SimOptions } from './fixture-sim.ts';
-import { detect, SECRETS_DIR } from './fixture-secrets.ts';
+import { detect, ownerDir, SECRETS_DIR } from './fixture-secrets.ts';
 
 // #108: the fixture's prompt secrets: the switch, the fake detector's scan, and worker.prompt's review gate.
 
@@ -57,11 +57,12 @@ describe('the fixture’s prompt secrets (#108)', () => {
   it('the switch: off by default, set, shared by a key, absent on an older bridge', () => {
     const a = world({ secrets: 'k1' });
     const b = world({ secrets: 'k1' });
-    expect(a.snap.world.prompt_secrets).toEqual({ enabled: false, available: true });
+    // Round 5's `dir` (the files' directory) is there while one is available.
+    expect(a.snap.world.prompt_secrets).toEqual({ enabled: false, available: true, dir: SECRETS_DIR });
     const out = a.run('prompt_secrets.set', { enabled: true });
     expect(out[0]).toMatchObject({ t: 'prompt_secrets.update', enabled: true, available: true });
     expect(out.at(-1)).toMatchObject({ t: 'ack', data: { enabled: true, available: true } });
-    expect(b.heard.filter((m) => m.t === 'prompt_secrets.update')).toEqual([{ t: 'prompt_secrets.update', enabled: true, available: true, seq: expect.any(Number) }]);
+    expect(b.heard.filter((m) => m.t === 'prompt_secrets.update')).toEqual([{ t: 'prompt_secrets.update', enabled: true, available: true, dir: SECRETS_DIR, seq: expect.any(Number) }]);
     expect(b.run('prompt_secrets.get').at(-1)).toMatchObject({ data: { enabled: true } });
     expect(a.run('prompt_secrets.set', {}).at(-1)).toMatchObject({ t: 'error', code: 'bad_request' });
     expect(world({ secretsOn: true, secretsDir: 'none' }).snap.world.prompt_secrets).toEqual({ enabled: true, available: false });
@@ -100,7 +101,8 @@ describe('the fixture’s prompt secrets (#108)', () => {
     const ack = await e.answer('worker.prompt', { id: pebble, text: TEXT, secrets: { revision: scan.revision, decisions } });
     expect(ack).toMatchObject({ t: 'ack', data: { protected: 4 } });
     const sent = (ack.data as { sent: string }).sent;
-    expect(sent).toMatch(new RegExp(`^\\[secret in file ${SECRETS_DIR}/${pebble}/f\\d+\\] with TOKEN=\\[secret in file [^\\]]+\\] and PASSWORD=\\[secret in file [^\\]]+\\]; the password is s3cr3t!x then \\[secret in file [^\\]]+\\] and hunt😀r2$`));
+    // The bridge's shape: <dir>/<owner>/<file>, both names 26 of A-Z2-7 (the worker's directory is one per owner).
+    expect(sent).toMatch(new RegExp(`^\\[secret in file ${SECRETS_DIR}/${ownerDir(pebble)}/[A-Z2-7]{26}\\] with TOKEN=\\[secret in file [^\\]]+\\] and PASSWORD=\\[secret in file [^\\]]+\\]; the password is s3cr3t!x then \\[secret in file [^\\]]+\\] and hunt😀r2$`));
     const files = (e.run('sim.secret_files').at(-1)?.data as { files: Array<{ path: string; text: string }> }).files.filter((f) => sent.includes(f.path));
     expect(files.map((f) => f.text)).toEqual(['deploy', 'ghp_abcdefghijklmnopqrstu1', '"hunt😀r2"', 'ghp_abcdefghijklmnopqrstu1']);
     // The identical submission again reuses its files.

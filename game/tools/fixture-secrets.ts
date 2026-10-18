@@ -21,7 +21,9 @@
 //   a directory: `secrets_unavailable`. Then each protected range becomes `[secret in file <path>]` (its exact text is
 //   kept for `sim.secret_files`), the prompt goes on as before (tools/fixture-panels.ts) as the text it now is, and the
 //   ack adds `sent` (when it changed) and `protected`. The identical submission again (same worker, revision and
-//   decisions) reuses its files. Off, a prompt that carries `secrets` is `secrets_review_stale`.
+//   decisions) reuses its files. Off, a prompt that carries `secrets` is `secrets_review_stale`. Every other route's
+//   text goes through the same check (`protect()`). A file's path has the bridge's shape: `<dir>/<owner>/<file>`, both
+//   names 26 of `A-Z2-7` (an owner's from its id, a file's at random), so the game's chips take it as the bridge's.
 // - `simfail=secrets_review_stale|secrets_review_required|secrets_unavailable|secrets_review_off` refuses the next
 //   `worker.prompt` that carries a review that way (`secrets_review_off` switches it off first, for every client;
 //   `secrets_review_stale` changes the key, as a restart would).
@@ -70,6 +72,8 @@ interface Switch {
 }
 
 const shared = new Map<string, Switch>();
+/** Each owner's directory name (the bridge's are random; here one per owner, for the whole host). */
+const ownerDirs = new Map<string, string>();
 /** The files the simulated bridge wrote, by path (every world's: one simulated host). */
 const files = new Map<string, { owner: string; text: string }>();
 let fileSerial = 0;
@@ -81,6 +85,20 @@ const RETRY_MS = 5 * 60_000;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v);
 const bytes = (s: string) => Buffer.byteLength(s, 'utf8');
+const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+/** A name as the bridge's files and owner directories have them (`[A-Z2-7]{26}`, crypto/rand.Text's). */
+export function fileName(): string {
+  let out = '';
+  for (const b of randomBytes(26)) out += B32[b & 31];
+  return out;
+}
+/** `owner`'s directory: one name per owner, kept. */
+export function ownerDir(owner: string): string {
+  let d = ownerDirs.get(owner);
+  if (!d) ownerDirs.set(owner, (d = fileName()));
+  return d;
+}
+
 /** Not between the halves of a surrogate pair. */
 function onBoundary(text: string, i: number): boolean {
   if (i <= 0 || i >= text.length) return i === 0 || i === text.length;
@@ -184,7 +202,12 @@ export class SecretsSim {
   }
 
   view(): Obj {
-    return { enabled: this.sw.enabled, available: this.sw.available };
+    return { enabled: this.sw.enabled, available: this.sw.available, ...(this.sw.available ? { dir: SECRETS_DIR } : {}) };
+  }
+
+  /** The switch is on (a route's text goes through `protect()`). */
+  get on(): boolean {
+    return this.supported && this.sw.enabled;
   }
 
   decorate(world: Obj): void {
@@ -246,13 +269,29 @@ export class SecretsSim {
    */
   prompt(a: Obj, owner: string, send: Send): { args: Obj; extra: Obj; rollback(): void } | null {
     if (!this.supported || typeof a.text !== 'string') return null;
-    const text = a.text;
-    const review = a.secrets;
+    const p = this.protect(a.text, a.secrets, owner, send);
+    if (!p) return null;
+    const rest: Obj = { ...a };
+    delete rest.secrets;
+    if (!p.protected) return { args: rest, extra: { protected: 0 }, rollback: () => {} };
+    return { args: { ...rest, text: p.text }, extra: { sent: p.text, protected: p.protected }, rollback: p.rollback };
+  }
+
+  /**
+   * One text through the gate, as any route's (docs/protocol.md "Prompt secrets"): refused (throws) with the bridge's
+   * codes and `field: ` before the message when given (a route with several texts), or the text with each protected
+   * range as a reference to a file of `owner`. Null: nothing to do (off without a review, a bridge before #108, or
+   * nothing found and no review). `stored`: a saved prompt, whose review must ignore everything
+   * (`secrets_review_stored`, no file). The `simfail=secrets_*` failures are taken by the first text with a review.
+   */
+  protect(text: string, review: unknown, owner: string, send: Send, o: { field?: string; stored?: boolean } = {}): { text: string; protected: number; rollback(): void } | null {
+    if (!this.supported) return null;
+    const at = o.field ? `${o.field}: ` : '';
     if (!this.sw.enabled) {
       if (review !== undefined) throw this.h.error('secrets_review_stale', 'secrets review: the switch is off');
       return null;
     }
-    if (bytes(text) > MAX_SCAN_BYTES) throw this.h.error('bad_request', 'text must be at most 32 KiB');
+    if (bytes(text) > MAX_SCAN_BYTES) throw this.h.error('bad_request', `${at}text must be at most 32 KiB`);
     if (review !== undefined) {
       if (this.h.takeFailure('secrets_review_off')) {
         this.set(false, send);
@@ -262,21 +301,20 @@ export class SecretsSim {
         this.sw.key = randomBytes(32);
         throw this.h.error('secrets_review_stale', 'the review’s revision is not this text’s: scan it again');
       }
-      if (this.h.takeFailure('secrets_review_required')) throw this.h.error('secrets_review_required', 'secrets review: scan it again and review');
+      if (this.h.takeFailure('secrets_review_required')) throw this.h.error('secrets_review_required', `${at}secrets review: scan it again and review`);
       if (this.h.takeFailure('secrets_unavailable')) throw this.h.error('secrets_unavailable', 'no private runtime directory');
     }
     const cands = detect(text);
     if (review === undefined) {
       if (!cands.length) return null;
-      throw this.h.error('secrets_review_required', `${cands.length} possible ${cands.length === 1 ? 'secret' : 'secrets'}: review them`);
+      throw this.h.error('secrets_review_required', `${at}${cands.length} possible ${cands.length === 1 ? 'secret' : 'secrets'}: review them`);
     }
-    const ds = this.check(text, cands, review);
+    const ds = this.check(text, cands, review, at);
     const protect = ds.flatMap((d) => (d.protect ? [d.range ?? (cands.find((c) => c.id === d.candidate) as Candidate)] : [])).map((r) => ({ start: r.start, end: r.end }));
     protect.sort((x, y) => x.start - y.start);
+    if (o.stored && protect.length) throw this.h.error('secrets_review_stored', `${at}a stored prompt keeps no protected file: remove those values from it, or protect them when you hire with it`);
     const ignored = ds.filter((d) => !d.protect).map((d) => d.candidate).sort();
-    const rest: Obj = { ...a };
-    delete rest.secrets;
-    if (!protect.length) return { args: rest, extra: { protected: 0 }, rollback: () => {} };
+    if (!protect.length) return { text, protected: 0, rollback: () => {} };
     if (!this.sw.available) throw this.h.error('secrets_unavailable', 'no private runtime directory');
     const key = JSON.stringify([owner, (review as Obj).revision, protect, ignored]);
     const now = Date.now();
@@ -286,7 +324,7 @@ export class SecretsSim {
     if (again && now - again.at < RETRY_MS) paths = again.paths;
     else {
       paths = made = protect.map((r) => {
-        const path = `${SECRETS_DIR}/${owner}/f${++fileSerial}`;
+        const path = `${SECRETS_DIR}/${ownerDir(owner)}/${fileName()}`;
         files.set(path, { owner, text: text.slice(r.start, r.end) });
         return path;
       });
@@ -298,18 +336,18 @@ export class SecretsSim {
       if (made.length) this.sent.delete(key);
     };
     let out = '';
-    let at = 0;
+    let from = 0;
     protect.forEach((r, i) => {
-      out += `${text.slice(at, r.start)}[secret in file ${paths[i]}]`;
-      at = r.end;
+      out += `${text.slice(from, r.start)}[secret in file ${paths[i]}]`;
+      from = r.end;
     });
-    out += text.slice(at);
-    return { args: { ...rest, text: out }, extra: { sent: out, protected: protect.length }, rollback };
+    out += text.slice(from);
+    return { text: out, protected: protect.length, rollback };
   }
 
   /** The decisions of a review against the fresh scan (docs/protocol.md): refused with the bridge's codes. */
-  private check(text: string, cands: Candidate[], review: unknown): Decision[] {
-    const bad = (why: string) => this.h.error('secrets_review_required', `secrets review: ${why}`);
+  private check(text: string, cands: Candidate[], review: unknown, at = ''): Decision[] {
+    const bad = (why: string) => this.h.error('secrets_review_required', `${at}secrets review: ${why}`);
     if (!isObj(review) || typeof review.revision !== 'string' || !Array.isArray(review.decisions)) throw bad('a review is {revision, decisions}');
     if (review.revision !== this.revision(text, cands)) throw this.h.error('secrets_review_stale', 'the review’s revision is not this text’s: scan it again');
     const out: Decision[] = [];

@@ -138,6 +138,7 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'prompt_secrets.get': 'review prompt secrets', // #108
   'prompt_secrets.set': 'review prompt secrets',
   'prompt_secrets.scan': 'look for secrets in prompts',
+  'prompt_secrets.revoke': 'remove a worker’s protected files', // #108 round 5
   'repo_discovery.get': 'scan for repositories', // #54
   'repo_discovery.set': 'scan for repositories',
   'repo_discovery.refresh': 'scan for repositories',
@@ -323,6 +324,7 @@ export function failureText(t: CommandName | LogoAction, code: string, message: 
     case 'secrets_review_stale':
     case 'secrets_review_off':
     case 'secrets_unavailable':
+    case 'secrets_review_stored':
       return promptSecretsFailureText(code, why);
     // M5
     case 'prompt_failed':
