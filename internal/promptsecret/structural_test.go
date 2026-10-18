@@ -462,6 +462,7 @@ func TestScanRecall(t *testing.T) {
 		{"( token ) before words", "If it fails, retry with token (" + hf + ") then it works.", []string{hf}},
 		{"token : at a line's end", "retry with token " + hf + ":\nnext", []string{hf}},
 		{"token : before a long word", "the token " + hf + ": https://huggingface.co/settings/tokens", []string{hf}},
+		{"( token : before a long line", "retry with token (" + hf + ":\nhttps://huggingface.co/settings/tokens", []string{hf}},
 		{"tokens : before each other", "tokens " + hf + ": " + gh + ":\nnext", []string{hf, gh}},
 		// A long name's colon is no sentence's: the keyword's rule needs it.
 		{"a long name's value", "adafruit_io_key: k3jd9flq0zrmv8xw2pbn7cht4ysg6ure.", []string{"k3jd9flq0zrmv8xw2pbn7cht4ysg6ure"}},
