@@ -53,6 +53,7 @@ function setup(o: { on?: boolean; handoff?: CommandResult[] } = {}) {
     send: (cmd: string, args: Record<string, unknown>): Promise<CommandResult> => {
       sent.push({ cmd, args });
       if (cmd === 'worker.handoff_preview') return Promise.resolve({ ok: true, data: args.mode === 'llm' ? LLM_PV : (previews.shift() ?? AGENT_PV) });
+      if (cmd === 'worker.handoff' && args.mode === 'llm') return Promise.resolve(answers.shift() ?? { ok: true, data: { job: { op: 'x', state: 'running', started_at: 1, updated_at: 1, model: 'gpt-handoff', host: 'llm.example:8443' } } });
       if (cmd === 'worker.handoff') return Promise.resolve(answers.shift() ?? { ok: true, data: { request: { op: 'x', state: 'pending', started_at: 1 }, protected: 1 } });
       return Promise.resolve({ ok: true, data: {} });
     },
