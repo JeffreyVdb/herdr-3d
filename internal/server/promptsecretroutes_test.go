@@ -712,13 +712,61 @@ func TestPromptSecretsPreviewExpires(t *testing.T) {
 	}
 }
 
-// hire.interpret: the LLM reads the sentence with its references; the
-// proposal's sources and task hold them; the follow-up sentence and the
-// hire of the task need no review again; the hire's worker claims the
-// files. A pending sentence nobody reviewed is refused.
-func TestPromptSecretsHireInterpret(t *testing.T) {
+// A worker.prompt with a hand-over that expires while it waits on the
+// worker's lane is refused when its turn comes (review B1): nothing typed,
+// for a hand-over with files (the janitor removed them) and for one whose
+// review left everything as typed (no file to miss).
+func TestPromptSecretsPendingExpiresWhileQueued(t *testing.T) {
 	t.Parallel()
-	llm := &ai.FakeLLM{Func: func(_ context.Context, req ai.Request) (string, error) {
+	ttl := time.Second
+	hb, ids, term, dir := startSecretsPkBridge(t, newPkRoles(), func(o *server.Options) {
+		o.SecretPendingTTL, o.SecretsSweep = ttl, 20*time.Millisecond
+	})
+	c := hb.c
+	typed := previewText + " and end your turn"
+	preview := func(req string, ignore ...string) proto.PackupDetectResult {
+		t.Helper()
+		_, m := c.command(proto.CmdPackupDetect, req, proto.PackupDetectArgs{ID: ids["w2"], Text: typed, Secrets: reviewOf(t, c, typed, ignore...)})
+		return ackData[proto.PackupDetectResult](t, m)
+	}
+	files, plain := preview("d1", "c3", "c4"), preview("d2", "c1", "c2", "c3", "c4")
+	made := time.Now()
+	if files.Protected != 2 || plain.Protected != 0 || plain.SecretsPending == "" || !plain.Matched {
+		t.Fatalf("previews %+v %+v", files, plain)
+	}
+	gate := make(chan struct{})
+	defer close(gate)
+	started := make(chan struct{}, 1)
+	term.mu.Lock()
+	term.textGate, term.textStarted = gate, started
+	term.mu.Unlock()
+	raw, _ := json.Marshal(proto.WorkerKeysArgs{ID: ids["w2"], Input: []proto.InputItem{text("slow hold")}})
+	c.send(proto.Command{T: proto.CmdWorkerKeys, ReqID: "hold", Args: raw})
+	<-started
+	for i, res := range []proto.PackupDetectResult{files, plain} {
+		raw, _ = json.Marshal(proto.WorkerPromptArgs{ID: ids["w2"], Text: res.Task, SecretsPending: res.SecretsPending})
+		c.send(proto.Command{T: proto.CmdWorkerPrompt, ReqID: "q" + itoa(i), Args: raw})
+	}
+	c.mustAck(proto.CmdPromptSecretsGet, nil) // both are queued, their hand-overs valid then
+	waitFor(t, "the hand-overs to expire", func() bool { return len(protectedFiles(t, dir)) == 0 && time.Since(made) > ttl })
+	gate <- struct{}{}
+	for _, req := range []string{"q0", "q1"} {
+		if m := c.reply(req); codeOf(m) != proto.ErrSecretsReviewStale {
+			t.Fatalf("%s: %s", req, m.raw)
+		}
+	}
+	if calls := term.Calls(); len(calls) != 1 || !strings.HasPrefix(calls[0], "text ") {
+		t.Fatalf("typed %q", calls)
+	}
+	if rows := ownersOf(t, hb.st, "worker", ids["w2"]); len(rows) != 0 {
+		t.Fatalf("w2 owns %+v", rows)
+	}
+}
+
+// hireTaskLLM interprets "… to <task>" as a Claude hire on Haiku 5.5 of
+// that task, and any other sentence as its effort high.
+func hireTaskLLM() *ai.FakeLLM {
+	return &ai.FakeLLM{Func: func(_ context.Context, req ai.Request) (string, error) {
 		var p struct {
 			Command string `json:"command"`
 		}
@@ -730,13 +778,46 @@ func TestPromptSecretsHireInterpret(t *testing.T) {
 		}
 		return `{"intent":"hire","harness":null,"model":null,"effort":"high","task":null,"multiple":false,"selection_unclear":false}`, nil
 	}}
+}
+
+// startSecretsInterpretBridge is a hire bridge whose hire.interpret reads
+// with llm, with a protected secrets directory and the switch on.
+func startSecretsInterpretBridge(t *testing.T, llm *ai.FakeLLM, tweak func(*server.Options)) (*hireBridge, string) {
+	t.Helper()
 	dir := secretsDirFor(t)
 	hb := startHireBridge(t, func(o *server.Options) {
 		cat := hiCatalog
 		o.HireOptions, o.HireIntentRoles, o.SecretsDir = &cat, &hiRoles{state: ai.StateReady, llm: llm}, dir
+		if tweak != nil {
+			tweak(o)
+		}
 	})
+	hb.c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
+	return hb, dir
+}
+
+// hireCreating sends a hire, held at its workspace's create: it waits until
+// herdr was asked, and close(gate) lets it go on.
+func hireCreating(t *testing.T, hb *hireBridge, req string, a proto.WorkerHireArgs) (gate chan struct{}) {
+	t.Helper()
+	gate = make(chan struct{})
+	hb.fl.createGate = gate
+	hb.c.send(proto.Command{T: proto.CmdWorkerHire, ReqID: req, Args: mustRaw(a)})
+	waitFor(t, "the hire to reach herdr", func() bool {
+		return slices.ContainsFunc(hb.fl.Calls(), func(s string) bool { return strings.HasPrefix(s, "create ") })
+	})
+	return gate
+}
+
+// hire.interpret: the LLM reads the sentence with its references; the
+// proposal's sources and task hold them; the follow-up sentence and the
+// hire of the task need no review again; the hire's worker claims the
+// files. A pending sentence nobody reviewed is refused.
+func TestPromptSecretsHireInterpret(t *testing.T) {
+	t.Parallel()
+	llm := hireTaskLLM()
+	hb, dir := startSecretsInterpretBridge(t, llm, nil)
 	c := hb.c
-	c.mustAck(proto.CmdPromptSecretsSet, proto.PromptSecretsSetArgs{Enabled: ptr(true)})
 	text := "Hire a Claude Code agent on Haiku 5.5 to " + previewText
 	_, m := c.command(proto.CmdHireInterpret, "i0", proto.HireInterpretArgs{Text: text})
 	if code := codeOf(m); code != proto.ErrSecretsReviewRequired || len(llm.Calls()) != 0 {
@@ -794,6 +875,37 @@ func TestPromptSecretsHireInterpret(t *testing.T) {
 		t.Fatalf("a second hire with it: %s", m.raw)
 	}
 	traceFree(t, hb.st, hb.db, []*client{c}, routeSentinel, "Forged-Source-3!")
+}
+
+// A hire with hire.interpret's hand-over that expires before its worker is
+// seen keeps the worker and sends no prompt (review B1), also when the
+// review left everything as typed (no file the claim could miss).
+func TestPromptSecretsHireHandOverExpires(t *testing.T) {
+	t.Parallel()
+	ttl := 300 * time.Millisecond
+	hb, _ := startSecretsInterpretBridge(t, hireTaskLLM(), func(o *server.Options) { o.SecretPendingTTL = ttl })
+	c := hb.c
+	text := "Hire a Claude Code agent on Haiku 5.5 to " + previewText
+	res := interpretCmd(t, c, "i", proto.HireInterpretArgs{Text: text, Secrets: reviewOf(t, c, text, "c1", "c2", "c3", "c4")})
+	made := time.Now()
+	if res.Hire == nil || res.Protected != 0 || res.SecretsPending == "" {
+		t.Fatalf("interpreted %+v", res)
+	}
+	a := hireArgs(0)
+	a.Harness, a.Model, a.Effort, a.Prompt, a.SecretsPending = "claude", "claude-haiku-5-5", "high", res.Hire.Task.Value, res.SecretsPending
+	gate := hireCreating(t, hb, "h", a)
+	waitFor(t, "the hand-over to expire", func() bool { return time.Since(made) > ttl })
+	close(gate)
+	m := c.reply("h")
+	hired := ackData[proto.HireResult](t, m)
+	if hired.Prompted == nil || *hired.Prompted || !strings.Contains(hired.PromptError, "secrets_pending") {
+		t.Fatalf("ack %s", m.raw)
+	}
+	for _, call := range hb.fl.Calls() {
+		if strings.HasPrefix(call, "prompt ") || strings.HasPrefix(call, "type ") {
+			t.Fatalf("prompted: %q", call)
+		}
+	}
 }
 
 // worker.answer_ask: a dismissal's prompt and an Other answer go through

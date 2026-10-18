@@ -133,7 +133,7 @@ func startGated[T any](h *Hub, ctx context.Context, c *Client, cmd proto.Command
 		derr := h.doWait(ctx, func() {
 			err := gerr
 			if err == nil && h.ps.rev != rev {
-				err = fmt.Errorf("%w: the setting changed: review again", errSecretsReviewStale)
+				err = errSettingChanged
 			}
 			if err == nil {
 				err = next(ctx, out)
@@ -249,7 +249,7 @@ func (h *Hub) pendingHiring(token string, on bool) error {
 			p.hiring = false
 		}
 		return nil
-	case p == nil || p.claimed != "":
+	case p == nil || !h.opts.Now().Before(p.expires) || p.claimed != "":
 		return errPendingStale
 	case p.hiring:
 		return fmt.Errorf("%w: another hire is using the review of this text", errBusy)
@@ -258,17 +258,25 @@ func (h *Hub) pendingHiring(token string, on bool) error {
 	return nil
 }
 
-// claimPending gives token's files to worker (off the hub goroutine): once
-// only; a token whose files are this worker's already is done. A token
-// with no files is only marked.
-func (h *Hub) claimPending(ctx context.Context, token, worker string) error {
+// claimPending gives token's files to worker (off the hub goroutine),
+// before anything of what it reviewed goes to the worker (review B1): the
+// hand-over checked again as pendingFor does, as it may have expired or
+// the switch changed while the command waited (stale), then its files
+// claimed (stale if they expired meanwhile). Once only; a token whose
+// files are this worker's already is done. A token with no files is only
+// marked.
+func (h *Hub) claimPending(ctx context.Context, token, worker string, rev *promptsecret.Reviewer) error {
+	if err := h.reviewCurrent(rev); err != nil {
+		return err
+	}
 	h.ps.mu.Lock()
 	p := h.ps.pending[token]
-	if p == nil {
+	switch {
+	case p == nil || !h.opts.Now().Before(p.expires) || p.rev != rev,
+		p.worker != "" && p.worker != worker, p.claimed != "" && p.claimed != worker:
 		h.ps.mu.Unlock()
 		return errPendingStale
-	}
-	if p.claimed == worker {
+	case p.claimed == worker:
 		h.ps.mu.Unlock()
 		return nil
 	}
@@ -529,7 +537,7 @@ func (h *Hub) queueReviewed(ctx context.Context, id string, reviews proto.Secret
 		}
 		pl, err := query(ctx, h, func() planned {
 			if h.ps.rev != rev { // the switch changed meanwhile
-				return planned{err: fmt.Errorf("%w: the setting changed: review again", errSecretsReviewStale)}
+				return planned{err: errSettingChanged}
 			}
 			work, err := plan(ctx, texts)
 			if err != nil {

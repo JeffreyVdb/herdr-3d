@@ -195,7 +195,7 @@ func (h *Hub) claimHireSecrets(ctx context.Context, op *hireOp) error {
 		}
 	}
 	if sec.token != "" {
-		if err := h.claimPending(ctx, sec.token, op.id); err != nil {
+		if err := h.claimPending(ctx, sec.token, op.id, sec.rev); err != nil {
 			return err
 		}
 		sec.hiring = false

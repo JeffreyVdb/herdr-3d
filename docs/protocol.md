@@ -3997,18 +3997,23 @@ usual (its references scan clean).
 
 - `packup.detect` for worker W: the models read `sent` (references in place; absent: as typed), and `removed` indexes
   `sent`, not what was typed. `worker.prompt {"id": W, "text", "secrets_pending"}` with `text` exactly `sent` (or the
-  text as typed, when there is no `sent`) or `task` needs no review; once that prompt is sent, the files are W's (a
-  failed send leaves them pending for its retry).
+  text as typed, when there is no `sent`) or `task` needs no review. The hand-over is checked again when the prompt's
+  turn comes on W's input lane (it may wait there behind W's other input): expired, or the switch changed, meanwhile is
+  `secrets_review_stale` and nothing is sent. Else its files become W's then, before anything is sent, and stay W's
+  whatever the send does (its retry, to W, uses them).
 - `hire.interpret`: the LLM reads `text` (the sentence with its references) and the pending proposal's sentences. A
   follow-up `{"text", "pending", "secrets_pending"}` needs no review for the sentences that hand-over answered; any
   other `pending.sources[N]` must have no candidate (else `secrets_review_required`, `pending.sources[N]: …`), with or
   without a hand-over. A new sentence's files join the same owner, and the answer keeps the same `secrets_pending`.
   `worker.hire {"prompt": <hire.task.value>, "secrets_pending"}` needs no review for that exact task (an edited task is
-  reviewed as usual) and its worker claims the files; a hire that fails leaves them for another attempt.
+  reviewed as usual) and its worker claims the files once herdr shows it, the hand-over checked again then: expired (or
+  the switch changed) by then, the worker stays and its prompt does not go (`prompt_error`). A hire that fails leaves
+  them for another attempt.
 - Refused with `secrets_review_stale`: an unknown or expired hand-over, one from before a restart or a change of the
   switch, one for another worker (packup's is its worker's only, never a hire's), one whose files another worker
-  claimed (one hire takes `hire.interpret`'s); `busy` while another hire is using it. A preview never followed up
-  leaves nothing once it expired.
+  claimed (one hire takes `hire.interpret`'s); `busy` while another hire is using it. Each is checked when the command
+  arrives and again just before its text goes on (above), as a command may wait. A preview never followed up leaves
+  nothing once it expired.
 
 **Stored prompts** (schedules, hire presets) keep **no** protected file: their files would outlive every agent. With
 the switch on, every `schedule.create`/`update` and `hire_preset.create`/`update` scans the prompt (an update that

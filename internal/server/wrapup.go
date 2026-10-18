@@ -400,7 +400,7 @@ func (h *Hub) startWrapUp(ctx context.Context, c *Client, cmd proto.Command) err
 				h.failArm(ctx, wu, prev, perr)
 				return
 			case rev != nil && h.ps.rev != rev:
-				h.failArm(ctx, wu, prev, fmt.Errorf("%w: the setting changed: review again", errSecretsReviewStale))
+				h.failArm(ctx, wu, prev, errSettingChanged)
 				return
 			case cerr != nil:
 				h.failArm(ctx, wu, prev, fmt.Errorf("%w: %v", errFireFailed, cerr))
