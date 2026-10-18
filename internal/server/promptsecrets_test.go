@@ -889,6 +889,65 @@ func TestPromptSecretsSymbolsBesideOwnReference(t *testing.T) {
 	}
 }
 
+// A token format that a reference's place completes takes no bytes from the
+// value around it (review S1, pass 3: the masked reference completed a
+// GitHub token's 40 bytes, that match beat the password's own, and the
+// password's rest was sent raw once every candidate was protected; pass 4:
+// the same in unquoted prose, whose own span the mask shaped too), nor does
+// a complete token typed inside a value that runs into one (the tuning
+// round: the value's typed prefix was sent raw).
+func TestPromptSecretsTokenBesideOwnReference(t *testing.T) {
+	t.Parallel()
+	sb := startSecretsBridge(t, true, nil)
+	seed := "PASSWORD=Seed-Sentinel-73x"
+	s := sb.scan(t, seed)
+	_, m := sb.c.command(proto.CmdWorkerPrompt, "seed", proto.WorkerPromptArgs{ID: sb.id2, Text: seed, Secrets: &proto.SecretsReview{
+		Revision: s.Revision, Decisions: []proto.SecretDecision{{Candidate: "c1", Action: proto.SecretProtect}}}})
+	ref := refRe.FindString(ackData[proto.PromptResult](t, m).Sent)
+	if ref == "" {
+		t.Fatal("no reference")
+	}
+	const head, tail = "ghp_GT2MQVTdhGOubkn5tfdOv4eY", "Tail-Sentinel-77!"
+	const gh, prefix = head + "nhJvEkcAI167", "Prefix-Sentinel-77-"
+	for i, tc := range []struct {
+		text string
+		want []string // the candidates, in order: each the first occurrence after the one before
+	}{
+		{`PASSWORD="` + head + ref + ` ` + tail + `"`, []string{head, tail}},
+		{"the password is " + head + ref + tail, []string{head, tail}},
+		{`PASSWORD="` + prefix + gh + "!" + ref + tail + `"`, []string{prefix, gh, "!", tail}},
+	} {
+		s = sb.scan(t, tc.text)
+		at := 0
+		for j, w := range tc.want {
+			start := u16Len(tc.text[:at]) + u16(tc.text[at:], w)
+			if j >= len(s.Candidates) || s.Candidates[j].Start != start || s.Candidates[j].End != start+u16Len(w) {
+				t.Fatalf("%q: %+v, want %q", tc.text, s, tc.want)
+			}
+			at += strings.Index(tc.text[at:], w) + len(w)
+		}
+		if len(s.Candidates) != len(tc.want) {
+			t.Fatalf("%q: %+v, want %q", tc.text, s, tc.want)
+		}
+		var protect []proto.SecretDecision
+		for _, c := range s.Candidates {
+			protect = append(protect, proto.SecretDecision{Candidate: c.ID, Action: proto.SecretProtect})
+		}
+		_, m = sb.c.command(proto.CmdWorkerPrompt, fmt.Sprint("p", i), proto.WorkerPromptArgs{ID: sb.id2, Text: tc.text,
+			Secrets: &proto.SecretsReview{Revision: s.Revision, Decisions: protect}})
+		pr := ackData[proto.PromptResult](t, m)
+		last := sb.term.Calls()[len(sb.term.Calls())-1]
+		if pr.Protected != len(tc.want) {
+			t.Fatalf("sent %q (ack %s)", last, m.raw)
+		}
+		for _, w := range []string{head, tail, prefix} {
+			if strings.Contains(pr.Sent, w) || strings.Contains(last, w) {
+				t.Fatalf("%q sent raw: %q (ack %s)", w, last, m.raw)
+			}
+		}
+	}
+}
+
 // Once the lane has begun to send a reviewed /handoff's request, the send's
 // result settles its files, whatever ended the request meanwhile (review
 // P2-1): a cancel or a person taking over while the prompt is submitted,

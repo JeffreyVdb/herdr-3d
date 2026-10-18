@@ -2,6 +2,7 @@ package promptsecret_test
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -233,5 +234,93 @@ func BenchmarkScan16KiB(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		promptsecret.Scan(text, own)
+	}
+}
+
+// A sent prompt's text edited and scanned again: the bridge's references in
+// several syntaxes (the masked pass runs too).
+func BenchmarkScan16KiBReferences(b *testing.B) {
+	r := ownRef("GXWCYAQQ2YUJGSWNCUK2JAZZ57")
+	part := "Deploy with PASSWORD=" + r + " and Authorization: Bearer " + r + ". The token is " + r + ", see https://h.test/x?token=" +
+		r + "&x=1 (" + r + "). Review the module, keep its behavior.\n"
+	text := strings.Repeat(part, (16<<10)/len(part)+1)[:16<<10]
+	promptsecret.Scan(text, own)
+	b.ResetTimer()
+	for b.Loop() {
+		promptsecret.Scan(text, own)
+	}
+}
+
+// Sentences that end on token-like words: the punctuation pass runs over
+// most of the text (review T5: its windows start before each word, however
+// long).
+func BenchmarkScan16KiBPunctuated(b *testing.B) {
+	part := "Rotate sk_live_k3Jd9fLq0ZrMv8. Then check build_2026_10_18_rc1, and ask (deploy-key-v77-prod). "
+	text := strings.Repeat(part, (16<<10)/len(part)+1)[:16<<10]
+	promptsecret.Scan(text, own)
+	b.ResetTimer()
+	for b.Loop() {
+		promptsecret.Scan(text, own)
+	}
+}
+
+// shapes are texts of n bytes at most built to read their bytes again and
+// again: curl's options in nested and unterminated substitutions, many
+// options, options inside other words, deep quoting, headers in one word
+// or glued together (review T4P-1: 32 KiB of the first took 10 s).
+func shapes(n int) []struct{ name, text string } {
+	rep := func(unit string, n int) string { return strings.Repeat(unit, n/len(unit)+1)[:n] }
+	return []struct{ name, text string }{
+		{"nested", strings.Repeat("curl -u u:$$$(", n/15) + strings.Repeat(")", n/15)},
+		{"unterminated", rep("curl -u u:$$$(", n)},
+		{"many options", "curl" + rep(" -u u:Zx81!mQp27", n-4)},
+		{"options in words", "curl " + rep("-u u:-u ", n-5)},
+		{"options in open quotes", "curl " + rep("-u u:'a -u ", n-5)},
+		{"options in open backquotes", "curl " + rep("-u u:`a -u ", n-5)},
+		{"deep quoting", "curl -u u:" + strings.Repeat(`"$(echo `, (n-10)/10) + strings.Repeat(`)"`, (n-10)/10)},
+		{"deep braces", "curl -u u:" + strings.Repeat("${a:-", (n-10)/6) + strings.Repeat("}", (n-10)/6)},
+		{"many headers", "curl" + rep(` -H "Authorization: Bearer Zx81mQp27LwRt5$HOME"`, n-4)},
+		{"headers in a word", "curl -H '" + rep(" -H Bearer P@$$w0rdP@$$w0rd", n-10) + "'"},
+		{"glued headers", rep("Authorization:", n)},
+		{"glued templates", rep("Authorization:$", n)},
+	}
+}
+
+// Each shape's cost grows linearly: 4, 8, 16 and 32 KiB.
+func BenchmarkScanShapes(b *testing.B) {
+	sizes := []int{4 << 10, 8 << 10, 16 << 10, 32 << 10}
+	for k, sh := range shapes(1 << 10) {
+		for _, n := range sizes {
+			text := shapes(n)[k].text
+			b.Run(fmt.Sprintf("%s/%dKiB", sh.name, n>>10), func(b *testing.B) {
+				b.SetBytes(int64(len(text)))
+				for b.Loop() {
+					promptsecret.Scan(text, own)
+				}
+			})
+		}
+	}
+}
+
+// No shape costs more than linearly: its scan at 8 times the size
+// (shapeSizes: 32 KiB and 4 KiB) takes at most 24 times as long (8 when
+// linear; review T4P-1's took 70 times), or is quick anyway.
+func TestScanTimeShapes(t *testing.T) {
+	best := func(text string) time.Duration {
+		d := time.Hour
+		for range 2 {
+			start := time.Now()
+			promptsecret.Scan(text, own)
+			d = min(d, time.Since(start))
+		}
+		return d
+	}
+	small, large := shapes(shapeSizes[0]), shapes(shapeSizes[1])
+	for k := range small {
+		ts, tl := best(small[k].text), best(large[k].text)
+		t.Logf("%s: %d KiB %v, %d KiB %v", small[k].name, shapeSizes[0]>>10, ts, shapeSizes[1]>>10, tl)
+		if tl > 24*ts && tl > 250*time.Millisecond {
+			t.Errorf("%s: %v, then %v at 8 times the size: more than linear", small[k].name, ts, tl)
+		}
 	}
 }
