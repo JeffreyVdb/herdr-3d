@@ -3935,12 +3935,14 @@ message):
    `{"due_at":"<RFC 3339>","title":"…","draft_prompt":"…"}` or `{"none":true}`. `draft_prompt` addresses a fresh agent,
    describes the deferred steps and assumes the reply is attached as a handoff.
 4. **Validate**, at the time the answer came: no suggestion (recorded as looked at) for `none`, a `due_at` that is not
-   RFC 3339 with an explicit offset or `Z`, is now or past, or more than 30 days ahead, an empty title or prompt, a
-   prompt over 32 KiB or starting with `--`, JSON that does not parse, an answer cut off, a timeout or any failed call.
+   RFC 3339 with an explicit offset or `Z` (exactly: two-digit fields, upper-case `T` and `Z`, a `.` fraction, an offset
+   up to ±23:59), is now or past, or more than 30 days ahead, an empty title or prompt, a prompt over 32 KiB or starting
+   with `--`, JSON that does not parse, an answer cut off, a timeout or any failed call.
    The title is folded to one line and cut to 200 bytes (`…`); the prompt is never cut. `due_at` is unix ms (UTC).
 5. **Once**: each message looked at is recorded by worker and SHA-256 (`schedsuggest_seen`, the last 20 per worker),
-   with its suggestion while open. A restart or a re-read never asks again; an open suggestion comes back as it was, a
-   closed one never. A classifier failure is not recorded.
+   with its suggestion while open. A restart, a re-read or a newer turn with the same reply never asks again, nor
+   does the same message offered while it is still being looked at; an open suggestion comes back as it was (onto its
+   own turn only), a closed one never. A classifier failure is not recorded.
 
 **`schedule_suggestion`** on the worker: `id` is the turn's id (as a follow-up's `turn_id`); `message` names the reply's
 transcript row, the handoff candidate's `message` (Claude's `message.id`, Codex's message item id); `due_at` is unix
@@ -3950,8 +3952,9 @@ ms; `score` the gate's; `at` when it was made. It goes (the worker's upsert, the
   `message` (after the schedule is stored; a create from a transcript row or of another message leaves it);
 - **`worker.dismiss_schedule_suggestion {id, suggestion}`** names it (`id` the worker, `suggestion` its `id`;
   `stale` when the worker has none or another, `unknown_worker`); audited;
-- the transcript goes on: a new prompt or turn, or a newer turn's message (a result that comes back after that is
-  recorded, never shown); the worker is gone.
+- the transcript goes on: a new prompt or turn, or a newer turn's message, one with the same reply included (a turn
+  is its `id`; that newer turn gets no suggestion of its own, its message was looked at; a result that comes back after
+  that is recorded, never shown); the worker is gone.
 
 **Privacy.** With the feature on, every agent's final message goes to TypeSafe (the classifier), and to the configured
 LLM endpoint when the classifier says a step must wait, with the current time and the zone. Only the final assistant
