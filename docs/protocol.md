@@ -5506,11 +5506,15 @@ while it is off.
   message: `<name> · <Question | Follow-up | Permission | Trust folder | Report request>`, each question with its
   options (a menu: what it asks, what it is about, its choices; a report: its request, scrubbed, at most 1500
   characters), then "Replies are off: answer in the game." (or, `replies` on, that a reply is typed into the worker);
-  a secret ask's says only "A question waits in the game (its answer is secret)." Anything waiting (an alert or a
-  question's cards parked by the send budget, queued, between attempts, a card waiting for its pace) is checked again
-  as it goes: notifications, `events.needs_you` or the channel off, it is dropped; the mode changed, an alert that is
-  not a question is dropped; a question goes in the form the mode and `replies` say then (its cards, its text with
-  that ending, or the broader mode's alert and its cards).
+  a secret ask's says only "A question waits in the game (its answer is secret)." Whether anything that waited goes,
+  and how, is decided at the last moment, right before each message or card is sent, after every wait (parked by
+  its worker's minute or the send budget, queued, paced, between attempts, a rate limit's pause, between two cards of
+  a set): notifications, `events.needs_you` or the channel off, it is dropped; the mode changed, an alert that is
+  not a question is dropped; a question goes once, in the form the mode and `replies` say then (its cards, its text
+  with that ending, or the broader mode's alert and its cards). A question's card set whose first card went (it
+  rang) is not formed again: switched off, the rest of it is not sent; `replies` off, its cards end as replies off
+  and the questions not yet sent go as one silent text (`2 of 3` …, ending "Replies are off: answer in the game.");
+  the mode changed, the rest goes on, silent as it was. Cards after a broader mode's alert just stop.
 - **Once per episode**: an episode is the worker, needs-you or done, and (H3D-1) what it is about, in either mode: an
   `ask` its `tool_use_id`, a `followup` its turn, a report request its `input_required` (a new one once the old was
   resolved), a wrap-up its `armed_at`, an orchestrator over its cap its pass, a bare `blocked` status its
@@ -5653,7 +5657,8 @@ while it is off.
   "cards"?, "attempts", "status"?, "code"?}` (#106: `code` `obsolete`, an alert dropped unsent as its episode ended;
   H3D-1: `reason` the message's reason, `about` what the episode is about: `ask`, `followup`, `menu`, `report`,
   `wrapup`, `review_cap`, `blocked`, `done`; `via` `cards` when a Questions only question went as its cards alone
-  (no attempts, `cards` how many), `question` when its text was the message; `cards` on an alert how many of its
+  (no attempts, `cards` how many: those sent, when its set stopped part way), `question` when its text was the
+  message (the rest of a stopped set too: a row of its own); `cards` on an alert how many of its
   question's cards were open once its own went: a menu read later is on its `notify.menu` row),
   `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}` and (#13)
   `notify.reply` `{"id"?, "text_bytes", "text_runes", "outcome"}` (`sent`, else the refusal: `not_a_reply`,
