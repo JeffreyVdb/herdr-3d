@@ -120,8 +120,9 @@ type claudeUsage struct {
 	post    map[string]tokens // messages after the snapshot, by model
 	snap    *claudeSnapshot
 	lastTS  time.Time // the main transcript's latest assistant message
-	model   string    // the main transcript's last model
-	effort  string    // the effort of the main thread's last assistant line that records one (H3D-2)
+	model   string    // the main transcript's last model, a sidechain's line included: the context window, the pricing and the cache evidence are its
+	shown   string    // the model of the main thread's last assistant line (a sidechain's is not it): Usage.Model (H3D-2)
+	effort  string    // the effort that line records, "" when it records none or not a level name (H3D-2)
 	any     string    // the last model anywhere
 	context int64     // the main transcript's last prompt (input, cache writes and reads)
 	// ctxOK: context is a measure. A /compact boundary clears it (the summary's
@@ -199,8 +200,8 @@ func (c *claudeUsage) line(main bool, b []byte) {
 				c.lastTS = ts
 			}
 			c.model, c.context, c.ctxOK = m.Model, u.Input+u.CacheCreation+u.CacheRead, true
-			if e := CleanEffort(l.Effort); e != "" && !l.IsSidechain {
-				c.effort = e
+			if !l.IsSidechain {
+				c.shown, c.effort = m.Model, CleanEffort(l.Effort)
 			}
 			if base := strings.TrimSuffix(m.Model, oneM); base != c.longFor {
 				c.long = false
@@ -341,13 +342,9 @@ func (c *claudeUsage) usage(p *Pricing) proto.Usage {
 	}
 	cost, unknownModel := priceModels(p, Claude, priced, func(t tokens, pr Price) float64 { return t.cost(pr) })
 	u.CostUSDEst = roundCost(base + cost)
-	u.Model = c.model
-	if u.Model == "" {
-		u.Model = c.any
-	}
-	u.Effort = c.effort
+	u.Model, u.Effort = c.shown, c.effort
 	switch {
-	case u.Model == "" && c.snap == nil:
+	case c.model == "" && c.any == "" && c.snap == nil:
 		u.Priced = proto.PricedNone
 	case unknown || unknownModel:
 		u.Priced = proto.PricedUnknownModel

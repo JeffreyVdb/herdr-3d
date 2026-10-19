@@ -412,7 +412,7 @@ shown as the hire catalog launches it (Claude's `[1m]` mark dropped; `<synthetic
 an effort only when it is a plain level name. Changes arrive as `worker.upsert`, not `worker.usage`, since the usage
 event carries no worker fields. The transcript's sources: Codex's latest `turn_context` (`model`; `effort`, else
 `collaboration_mode.settings.reasoning_effort`); Claude Code's latest main-thread assistant message (`message.model`; the
-`effort` field that line carries, which Claude Code does not document: a line without it leaves the effort unknown).
+`effort` field that line carries, which Claude Code does not document: a line without it leaves the effort unknown; a sidechain line moves neither).
 
 **Identity.** When a workspace appears (bridge start, herdr restart, reconnect), the bridge matches it to a stored worker
 by, in order: a pane-label marker `h3d-<short uuid>`; the native `agent_session` id; label + identity directory (only for

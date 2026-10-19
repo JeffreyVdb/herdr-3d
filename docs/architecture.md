@@ -128,7 +128,7 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   - Native args are not persisted by herdr → bridge stores harness/model/effort, `hired_at`, the desk, and the last
     choice per floor (the dialog's default when the floor has no `default_hire`).
   - H3D-2: a worker's shown model/effort is observed over reported, per field: its current agent session's transcript
-    (`usage.model`/`usage.effort`, kept in the hub's `usage`/`usageAgent`, never stored) over the stored hire values or
+    (`usage.model`/`usage.effort`, kept in the hub's `usage`/`usageFor`, never stored) over the stored hire values or
     `h3d_*` tokens (the hub's `reported`, what `persist` and `metaOf` see), else unknown. This is what shows the model of a
     worker a coordinator started with a raw `herdr agent start`; `hireInstructions` also asks for `h3d_harness`/`h3d_model`/
     `h3d_effort` as the reported fallback (decisions.md, H3D-2).

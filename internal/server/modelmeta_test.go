@@ -359,3 +359,53 @@ func TestRestartReadsTheCurrentSessionsTranscript(t *testing.T) {
 		return w.AgentSession == codexB && w.Model == "gpt-6.1-luna" && w.Effort == "low"
 	})
 }
+
+// A Codex rollout found by its cwd before herdr named the session is that
+// rollout's evidence, not whatever session herdr names next: it shows while
+// herdr names none and when herdr names that rollout (nothing republishes the
+// unchanged usage, so nothing flickers), and the first upsert that carries
+// another session has none of it.
+func TestCwdFoundEvidenceDoesNotSurviveANamedSessionChange(t *testing.T) {
+	e := newModelMetaEnv(t)
+	e.writeRollout(codexA, turnContext("gpt-6.1-sol", "medium"), codexTokens(1000))
+	b := e.start(true)
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	b.floor("s", true, codexWorker(""))
+	shown(b, is("gpt-6.1-sol", "medium"))
+
+	// The same rollout, now named; unchanged usage rounds pass without a
+	// republish (they would not have retagged it).
+	b.floor("s", true, codexWorker(codexA))
+	shown(b, func(w proto.Worker) bool {
+		return w.AgentSession == codexA && w.Model == "gpt-6.1-sol" && w.Effort == "medium"
+	})
+	time.Sleep(100 * time.Millisecond)
+
+	b.floor("s", true, codexWorker(codexB))
+	for {
+		ev := c.until(proto.EvWorkerUpsert)
+		if ev.Worker.AgentSession != codexB {
+			continue
+		}
+		if ev.Worker.Model != "" || ev.Worker.Effort != "" {
+			t.Fatalf("first upsert of the new session shows the old one's evidence: model %q effort %q", ev.Worker.Model, ev.Worker.Effort)
+		}
+		return
+	}
+}
+
+// A cwd-found rollout is still the evidence while the lookup resolves to it,
+// round after round.
+func TestCwdFoundEvidenceStaysWhileNoSessionIsNamed(t *testing.T) {
+	e := newModelMetaEnv(t)
+	e.writeRollout(codexA, turnContext("gpt-6.1-sol", "medium"), codexTokens(1000))
+	b := e.start(true)
+	b.floor("s", true, codexWorker(""))
+	shown(b, is("gpt-6.1-sol", "medium"))
+	time.Sleep(100 * time.Millisecond)
+	b.floor("s", true, codexWorker(""))
+	if got := shown(b, func(w proto.Worker) bool { return w.AgentSession == "" }); got.Model != "gpt-6.1-sol" || got.Effort != "medium" {
+		t.Fatalf("lookup still resolving to the rollout: model %q effort %q", got.Model, got.Effort)
+	}
+}

@@ -437,13 +437,13 @@ type Hub struct {
 	wg       sync.WaitGroup                 // floor operations and the suggester
 
 	usage map[string]*proto.Usage // M5 usage: by worker id, as last published
-	// H3D-2: the agent session (the worker's AgentSession) each usage was read
-	// for, and the model and effort the hire record, tokens or hire op reported
-	// for each worker, kept apart from the model and effort its transcript
+	// H3D-2: the transcript session each usage was read from (usageFor), and
+	// the model and effort the hire record, tokens or hire op reported for
+	// each worker, kept apart from the model and effort its transcript
 	// observed (usage): the view merges them (shownModel), the store and
 	// metaOf only ever see the reported ones.
-	usageAgent map[string]string
-	reported   map[string]modelEffort
+	usageFor map[string]usageTag
+	reported map[string]modelEffort
 	// M5 term
 	term      termWatches              // laptop screens being watched
 	zoom      zoomTabs                 // #74: the tabs zoomed for them
@@ -722,7 +722,7 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		creating:      map[string]*createOp{},
 		suggest:       make(chan suggestJob, 256),
 		usage:         map[string]*proto.Usage{},
-		usageAgent:    map[string]string{},
+		usageFor:      map[string]usageTag{},
 		reported:      map[string]modelEffort{},
 		limits:        map[string]proto.Limits{},
 		limitsPoller:  newLimitsPoller(opts.Limits),
@@ -1898,13 +1898,13 @@ func (h *Hub) floorNames(session string) map[string]nameClaim {
 // shownModel is the model and effort a worker shows (H3D-2), each field on
 // its own: what the transcript of its current agent session says of it (its
 // usage), else what was reported (the hire op, the stored record, the h3d_*
-// tokens), else unknown. A usage read for another agent session than the
-// worker's now is not its evidence; one read before herdr named the session
-// (a Codex found by its cwd) is.
+// tokens), else unknown. A usage is the evidence of the transcript session
+// it was read from (usageFor.evidenceOf): not of another one the worker has
+// now.
 func (h *Hub) shownModel(id, agent string) (model, effort string) {
 	model, effort = h.reported[id].model, h.reported[id].effort
 	u := h.usage[id]
-	if u == nil || (h.usageAgent[id] != agent && h.usageAgent[id] != "") {
+	if u == nil || !h.usageFor[id].evidenceOf(agent) {
 		return model, effort
 	}
 	if m := usage.CleanModel(u.Model); m != "" {
