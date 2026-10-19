@@ -121,9 +121,11 @@ so. Wire names are the app-server's (camelCase), except inside `source`, which i
 - After a restart nothing is loaded; every child is `notLoaded` (the killed one too) [R][F], and the parent's resume
   does not load them [R].
 - The store reconstructs the killed child's last turn as `interrupted` in `thread/read {includeTurns: true}` [R]. The
-  bridge does **not** read turns at recovery: one hydrating read per historical child, on every join, to learn what is
-  only "not running" for the board; it shows `unknown` (or the rollout's end, when it has one) instead (`decisions.md`
-  "#27").
+  bridge does **not** read a historical child's turns at recovery: one read per child, on every join, to learn what is
+  only "not running" for the board; it shows `unknown` (or the rollout's end, when it has one) instead. The exception
+  is a child whose end the bridge itself showed before the loss: one `thread/turns/list` of one turn, which gives the
+  turn's `id`, `status` and `completedAt` (seconds) on 0.160.1 and 0.163.0 [F: `TestCodexShareChildrenMissedEnds`], so
+  a follow-up that ended while the bridge was away is not hidden by the older end (`decisions.md` "#27" row 13).
 
 ## 8. Ephemeral children
 

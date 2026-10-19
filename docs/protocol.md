@@ -795,6 +795,7 @@ flip it back:
 - `completed` / `interrupted`: the end of its latest turn the server showed: the parent's `subAgentActivity`
   `completed` / `interrupted` (`interrupt_agent`), the child's own `turn/completed` (`failed` is `interrupted`), or,
   when it went `idle` with neither within a second, its last turn read without items. `shut_down`: a v1 `closeAgent`.
+  An end shown before a lost connection is read again when the bridge joins next (below).
 - `idle`: loaded and idle with no end known (an ephemeral child whose turns cannot be read, a turn read still in
   progress), unless its rollouts show an end, which is then the state.
 - `unknown`: not in the server's memory (`notLoaded`, `thread/closed`, a restarted server's) with no end the server or
@@ -806,8 +807,11 @@ flip it back:
 left or replaced) no live claim stands: every child `running` or `idle` on the server's word, and every one only the
 rollouts show `running`, is `unknown`; the ends stay. The join's own reconnect recovers them: until its recovery is
 done nothing of the worker's children is sent, then each is what the server says now (a child still running is
-`running` again, the same row). A bridge restart is the same: the server is asked again; the rollouts' `running` of a
-killed child never comes back.
+`running` again, the same row). A child whose end the bridge showed before the loss and that is not running now has
+its last turn read once: a newer turn that ended (a follow-up completed or interrupted meanwhile) is its end, at that
+turn's `completedAt`; one still in progress drops the old end; the same turn, none or a refused read keeps the end as
+it was. No other child's turns are read. A bridge restart is the same: the server is asked again; the rollouts'
+`running` of a killed child never comes back.
 
 **Ephemeral children** are live only: no rollout (`transcript: "unavailable"`, the transcript view says it has no
 conversation to show), never listed, no turns to read. Their row shows what the events said and stays with its end.
