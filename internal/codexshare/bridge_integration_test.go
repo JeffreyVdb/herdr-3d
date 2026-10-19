@@ -205,7 +205,8 @@ type bclient struct {
 	workers map[string]proto.Worker
 	floors  map[string]proto.Floor
 	server  *proto.CodexServer
-	events  []string // every event's type and worker, for evidence
+	kids    map[string]proto.Child // #27: by row id
+	events  []string               // every event's type and worker, for evidence
 	replies map[string]chan []byte
 	changed chan struct{}
 	closed  bool
@@ -225,7 +226,7 @@ func (b *bridge) dial(name string) *bclient {
 		f.t.Fatal(err)
 	}
 	c := &bclient{t: f.t, f: f, name: name, conn: conn, ctx: ctx, stop: cancel, workers: map[string]proto.Worker{},
-		floors: map[string]proto.Floor{}, replies: map[string]chan []byte{}, changed: make(chan struct{})}
+		floors: map[string]proto.Floor{}, kids: map[string]proto.Child{}, replies: map[string]chan []byte{}, changed: make(chan struct{})}
 	if _, err := conn.Hello(ctx, proto.Hello{Client: name}); err != nil {
 		cancel()
 		f.t.Fatal(err)
@@ -275,6 +276,10 @@ func (c *bclient) read() {
 				for _, fl := range s.World.Floors {
 					c.floors[fl.Session] = fl
 				}
+				clear(c.kids)
+				for _, ch := range s.World.Children {
+					c.kids[ch.ID] = ch
+				}
 				c.server = s.World.CodexServer
 				if c.server == nil {
 					c.server = &proto.CodexServer{}
@@ -305,6 +310,12 @@ func (c *bclient) read() {
 				c.events = append(c.events, ev.T+" "+ev.ID+" "+ev.Reason)
 			case proto.EvFloorUpsert:
 				c.floors[ev.Floor.Session] = *ev.Floor
+			case proto.EvChildUpsert:
+				c.kids[ev.Child.ID] = *ev.Child
+				c.events = append(c.events, ev.T+" "+ev.Child.WorkerID+" "+ev.Child.NativeID+" "+ev.Child.State+" "+ev.Child.Source)
+			case proto.EvChildRemoved:
+				delete(c.kids, ev.ID)
+				c.events = append(c.events, ev.T+" "+ev.WorkerID+" "+ev.ID)
 			}
 		}
 		c.notifyLocked()

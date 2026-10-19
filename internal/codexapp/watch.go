@@ -52,6 +52,10 @@ type Options struct {
 	// CallTimeout bounds each request (initialize, thread/resume,
 	// thread/unsubscribe).
 	CallTimeout time.Duration
+	// StableAPI initializes without the experimentalApi capability, as a
+	// client that did not negotiate it (#27's tests: the server then
+	// refuses thread/list's ancestorThreadId, and Descendants falls back).
+	StableAPI bool
 }
 
 // EventKind is what an Event reports.
@@ -102,6 +106,16 @@ type Thread struct {
 		Type string `json:"type"` // notLoaded, idle, systemError, active
 	} `json:"status"`
 	Turns []Turn `json:"turns"`
+	// #27: a child thread's metadata (children.go). Source is the raw
+	// SessionSource (Spawn decodes it); a child's SessionID is not its
+	// root's (its own thread id on 0.163.0).
+	SessionID      string          `json:"sessionId"`
+	ParentThreadID string          `json:"parentThreadId"`
+	Source         json.RawMessage `json:"source"`
+	ThreadSource   string          `json:"threadSource"`
+	AgentNickname  string          `json:"agentNickname"`
+	AgentRole      string          `json:"agentRole"`
+	CreatedAt      int64           `json:"createdAt"` // unix seconds
 	// Partial: the thread has older turns than Turns (#158): a batch
 	// missing from them may still be in the thread.
 	Partial bool `json:"-"`
@@ -330,7 +344,7 @@ func (w *Watcher) join(ctx context.Context, c *conn) (*Thread, string, error) {
 	}
 	if err := c.call(cctx, "initialize", map[string]any{
 		"clientInfo":   map[string]any{"name": ClientName, "title": "herdr-3d", "version": w.o.ClientVersion},
-		"capabilities": map[string]any{"experimentalApi": true},
+		"capabilities": map[string]any{"experimentalApi": !w.o.StableAPI},
 	}, &init); err != nil {
 		return nil, "", err
 	}

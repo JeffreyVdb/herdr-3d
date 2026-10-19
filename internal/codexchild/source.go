@@ -11,6 +11,12 @@
 // line read twice or a bridge restart (the tracker reads every file from
 // its start again) give the same answer. Evidence goes out when it
 // changed, through Run's emit. docs/protocol.md "Codex subagents (#25)".
+//
+// #27 (phase 6, server.go): for a shared-server worker the same Source
+// also hears its own app-server through the bridge's join of its thread,
+// the authority on its children's state; both go through one derivation
+// and one queue (combine). docs/protocol.md "Codex subagents through the
+// shared app-server (#27)".
 package codexchild
 
 import (
@@ -31,6 +37,13 @@ const maxIdleBooks = 256
 type Options struct {
 	// Now is the bridge's clock (default time.Now).
 	Now func() time.Time
+	// #27, the server half (server.go): how long an idle child waits for
+	// its turn's end before its last turn is read (default DefaultSettle),
+	// the bound of each read (default DefaultReadTimeout), how long a
+	// failed recovery waits to be tried again (default DefaultRetry), and
+	// where it is logged (default nowhere).
+	Settle, ReadTimeout, Retry time.Duration
+	Log                        func(msg string, args ...any)
 }
 
 // Source is the Codex child-agent source. Its methods are safe for
@@ -43,6 +56,7 @@ type Source struct {
 	books map[string]*book // by root session
 	queue []childagents.Evidence
 	touch int
+	base  context.Context // Run's: the observers' (#27)
 }
 
 // book is one root session's evidence.
@@ -53,12 +67,27 @@ type book struct {
 	// them, as far as this source knows).
 	sent    []childagents.Evidence
 	touched int
+	// srv is what the session's app-server showed (#27; nil: no join of
+	// it was seen).
+	srv *server
 }
 
 // New returns a source.
 func New(o Options) *Source {
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.Settle <= 0 {
+		o.Settle = DefaultSettle
+	}
+	if o.ReadTimeout <= 0 {
+		o.ReadTimeout = DefaultReadTimeout
+	}
+	if o.Retry <= 0 {
+		o.Retry = DefaultRetry
+	}
+	if o.Log == nil {
+		o.Log = func(string, ...any) {}
 	}
 	return &Source{opts: o, kick: make(chan struct{}, 1), books: map[string]*book{}}
 }
@@ -80,7 +109,7 @@ func (s *Source) evict() {
 	idle := 0
 	var oldest *book
 	for _, b := range s.books {
-		if len(b.readers) == 0 {
+		if len(b.readers) == 0 && b.srv == nil {
 			idle++
 			if oldest == nil || b.touched < oldest.touched {
 				oldest = b
@@ -213,12 +242,12 @@ func (l *Listener) Close() {
 			break
 		}
 	}
-	if len(b.readers) == 0 {
+	if len(b.readers) == 0 && b.srv == nil {
 		b.sent = nil
 		s.evict()
 		return
 	}
-	if owner { // the next reader's facts are the session's now: sent after its next read, which may be its first
+	if owner && len(b.readers) > 0 { // the next reader's facts are the session's now: sent after its next read, which may be its first
 		b.readers[0].pending = true
 	}
 }
@@ -235,7 +264,10 @@ func (b *book) facts() *facts {
 // it was last sent, and a removal of each child sent that is gone. With
 // s.mu held.
 func (s *Source) flush(b *book) {
-	next := derive(b.session, b.facts())
+	if b.srv != nil && b.srv.recovering {
+		return // sent once the join's recovery is done (#27)
+	}
+	next := b.derive()
 	used := make([]bool, len(b.sent))
 	var out, removed []childagents.Evidence
 	for _, e := range next {
@@ -282,12 +314,21 @@ func (s *Source) Replay(session string) {
 	if b == nil {
 		return
 	}
-	b.sent = derive(b.session, b.facts())
+	b.sent = b.derive()
 	s.enqueue(b.sent...)
+}
+
+// derive is the session's evidence: its rollouts', with its server's word
+// (combine).
+func (b *book) derive() []childagents.Evidence {
+	return combine(b.session, derive(b.session, b.facts()), b.srv)
 }
 
 // Run sends the evidence queued until ctx ends.
 func (s *Source) Run(ctx context.Context, emit func(childagents.Evidence)) error {
+	s.mu.Lock()
+	s.base = ctx
+	s.mu.Unlock()
 	for {
 		for evs := s.take(); len(evs) > 0; evs = s.take() {
 			for _, e := range evs {

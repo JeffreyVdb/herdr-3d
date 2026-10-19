@@ -47,6 +47,8 @@ type fakeCodexHost struct {
 	sends []fakeSend
 	// #158: the thread a new join reads (nil: an empty one).
 	history *codexapp.Thread
+	// #27: what a join's observational reads answer (nil: they fail).
+	reader codexapp.ChildReader
 }
 
 // fakeSend is one Steer or StartTurn of a fake watch.
@@ -89,6 +91,40 @@ func (w *fakeCodexWatch) StartTurn(_ context.Context, text, cid string) (string,
 		return fn(text, cid)
 	}
 	return "t-started", nil
+}
+
+// #27: a join reads child threads through the host's reader.
+func (w *fakeCodexWatch) childReader() (codexapp.ChildReader, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.host.reader == nil || w.closed {
+		return nil, codexapp.ErrNotAttached
+	}
+	return w.host.reader, nil
+}
+
+func (w *fakeCodexWatch) ReadThread(ctx context.Context, id string) (*codexapp.Thread, error) {
+	r, err := w.childReader()
+	if err != nil {
+		return nil, err
+	}
+	return r.ReadThread(ctx, id)
+}
+
+func (w *fakeCodexWatch) LastTurn(ctx context.Context, id string) (*codexapp.Turn, error) {
+	r, err := w.childReader()
+	if err != nil {
+		return nil, err
+	}
+	return r.LastTurn(ctx, id)
+}
+
+func (w *fakeCodexWatch) Descendants(ctx context.Context, root string) (codexapp.Descendants, error) {
+	r, err := w.childReader()
+	if err != nil {
+		return codexapp.Descendants{}, err
+	}
+	return r.Descendants(ctx, root)
 }
 
 func newFakeCodexHost() *fakeCodexHost {

@@ -550,8 +550,8 @@ orchestrator (Cog)"), else you ("Asked of you"). The inbox row opens the complet
 thread's `thread.id`) are its **native child agents**: conversations inside the worker, not panes, freelancers or desks.
 The bridge publishes them whether or not a transcript is open: `children` in the snapshot, `child.upsert` and
 `child.removed` events, and each worker's `child_generation`. Phase 1 is the model and the protocol; the providers are
-sources of evidence for it: Claude Code since #23 ([below](#claude-code-subagents-23)), Codex rollouts (#25) and the
-shared Codex server (#27) to come. The floor overview shows them under their workers since #24 (an `unresolved` one
+sources of evidence for it: Claude Code since #23 ([below](#claude-code-subagents-23)), Codex rollouts since #25 and
+the shared Codex server since #27. The floor overview shows them under their workers since #24 (an `unresolved` one
 directly under its root worker, marked as having no known parent); since #26 a child row opens the child's own
 conversation, watched by its own target ([A child's transcript](#a-childs-transcript-26)).
 
@@ -704,10 +704,10 @@ evidence makes the same rows (`TestRestartAndReplay`).
 
 #### Codex subagents (#25)
 
-#25, phase 4 of #20: a Codex worker on the terminal path (not the shared app-server, #27) gets its children from its
-session's rollout files, observed on **codex-cli 0.160.1, 0.162.1 and 0.163.0** (`docs/research/codex-subagents.md`:
-the records, the timing, the version diff; a version with other records shows fewer children or fewer states, never
-wrong ones). The rollout root is the configured one (`-codex-sessions`, default `$CODEX_HOME/sessions`, else
+#25, phase 4 of #20: a Codex worker gets its children from its session's rollout files (a shared-server worker too,
+whose own app-server decides their state since #27, [below](#codex-subagents-through-the-shared-app-server-27)),
+observed on **codex-cli 0.160.1, 0.162.1 and 0.163.0** (`docs/research/codex-subagents.md`: the records, the timing,
+the version diff; a version with other records shows fewer children or fewer states, never wrong ones). The rollout root is the configured one (`-codex-sessions`, default `$CODEX_HOME/sessions`, else
 `~/.codex/sessions`): the root's `YYYY/MM/DD/rollout-*-<session>.jsonl`, and every child at any depth as a rollout of
 its own in the same date tree (the root's day or later), recognised by its **first line** only: a `session_meta` with
 `thread_source: "subagent"`, a `source.subagent.thread_spawn` and `session_id` = the root session. Nothing else changes
@@ -737,7 +737,7 @@ own `task_complete` or the spawner's `SubAgentActivity` `completed` (one per tur
 `interrupted` (v2 `interrupt_agent`). `shut_down` by a v1 `close_agent`. A collaboration tool call's status (a `wait`
 that returned or timed out, a v1 wait's `agents_states`, a spawn call done) and `interacted` are never the child's state.
 Nothing else ends a child: not quiet files, not the root's turn ending. A child whose process died without a record
-stays as its files left it. `idle` is never shown from rollouts (#27's).
+stays as its files left it. `idle` is never shown from rollouts (only a shared server's, #27).
 
 **Own records only.** A forked child's rollout starts with its parent's copied history: its second line is the
 parent's `session_meta`, and every record with an `ordinal` below its `subagent_history_start_ordinal` is the parent's
@@ -759,6 +759,73 @@ the root session, and reads it with the Codex parser, its inherited records hidd
 
 **Restart.** Nothing is kept: the usage tracker reads every worker's rollouts from their start again, and the same
 evidence makes the same rows (`TestRestartRebuilds`).
+
+#### Codex subagents through the shared app-server (#27)
+
+#27, phase 6 of #20: a Codex worker on the shared server (`codex.mode: "shared"`, [Shared Codex
+server](#shared-codex-server)) has its children tracked **live from its own app-server**, the one that owns its
+conversation, through the bridge's join of its thread (the same passive connection #156's async questions use); its
+rollouts still give the rest, as for any Codex worker (#25 above). Observed on **codex-cli 0.160.1, 0.162.1 and
+0.163.0** (`docs/research/codex-server-subagents.md`). Nothing else changes on the wire: `child.upsert` and
+`child.removed` with `provider: "codex"`; a state the server decided says `source: "app_server"`, one the rollouts
+decided `source: "rollout"`. A row is the same row whichever source spoke (keyed by the child's thread id).
+
+| field | from the server (the rollouts' when they have it first, #25) |
+|---|---|
+| `native_id` | the child's `thread.id` (`subAgentActivity.agentThreadId`, `collabAgentToolCall.receiverThreadIds`) |
+| `name`, `type`, `description` | `agentNickname`, `agentRole`, the last name of the `agent_path` (`source.subAgent.thread_spawn`, or the item's `agentPath`) |
+| `parent` | `parentThreadId` (`root` when it is the worker's thread, else `child`); before a read, the stream that named it (the root's: `root`; a child's: that child) |
+| `state`, `ended_at` | below |
+| `started_at`, `last_activity_at` | the items' and turns' times (`startedAtMs`/`completedAtMs`, a turn's seconds), the thread's `createdAt` |
+| `transcript` | its rollout's (#25, through #26's target); `pending` while the server names a child whose rollout is not read yet; **`unavailable` for an ephemeral child**, whatever else says |
+
+**When a child shows.** From the parent's `subAgentActivity` `started` (its `id`, the spawn call's, is the row's
+dispatch id) or a completed v1 `collabAgentToolCall` spawn, or a status of a thread the bridge reads and finds spawned
+under the worker's thread (a nested child, one spawned before the bridge's connection), and on every join from the
+server's own list of the thread's descendants. A just-spawned child's first status (`idle`, its pending init) shows
+nothing: the row comes with its `started`, `running`. Never `thread/started` (Codex sends none for a child), never by
+name, time or order. A thread that is not a spawned child (a guardian review, a side thread) or whose parent chain ends
+in another thread makes no row.
+
+**States.** The server is the authority once the bridge has joined the worker's thread this run; the rollouts never
+flip it back:
+
+- `running`: the child's status is `active`, or its turn started, or its spawn was seen; a follow-up runs the same row
+  again (`ended_at` cleared).
+- `completed` / `interrupted`: the end of its latest turn the server showed: the parent's `subAgentActivity`
+  `completed` / `interrupted` (`interrupt_agent`), the child's own `turn/completed` (`failed` is `interrupted`), or,
+  when it went `idle` with neither within a second, its last turn read without items. `shut_down`: a v1 `closeAgent`.
+  An end shown before a lost connection is read again when the bridge joins next (below).
+- `idle`: loaded and idle with no end known (an ephemeral child whose turns cannot be read, a turn read still in
+  progress), unless its rollouts show an end, which is then the state.
+- `unknown`: not in the server's memory (`notLoaded`, `thread/closed`, a restarted server's) with no end the server or
+  its rollouts showed (a killed process's child, whose rollout never ends: never `running`).
+- A tool call's status (a `wait` that returned or timed out, a spawn call done) and `interacted` are never the child's
+  state; the parent's turn ending ends no child.
+
+**Connection or server loss.** When the bridge's join ends (a dropped connection, a dead or stopped server, the join
+left or replaced) no live claim stands: every child `running` or `idle` on the server's word, and every one only the
+rollouts show `running`, is `unknown`; the ends stay. The join's own reconnect recovers them: until its recovery is
+done nothing of the worker's children is sent, then each is what the server says now (a child still running is
+`running` again, the same row). A child whose end the bridge showed before the loss and that is not running now has
+its last turn read once: a newer turn that ended (a follow-up completed or interrupted meanwhile) is its end, at that
+turn's `completedAt`; one still in progress drops the old end; the same turn, none or a refused read keeps the end as
+it was. No other child's turns are read. A bridge restart is the same: the server is asked again; the rollouts'
+`running` of a killed child never comes back.
+
+**Ephemeral children** are live only: no rollout (`transcript: "unavailable"`, the transcript view says it has no
+conversation to show), never listed, no turns to read. Their row shows what the events said and stays with its end.
+Codex makes a child ephemeral only when its spawner is, and a shared worker's thread never is (the bridge does not
+join an ephemeral thread), so a shared worker has none in practice.
+
+**What the bridge sends Codex.** Observational reads on its own connection only: `thread/read` without turns,
+`thread/turns/list` of one turn without items, `thread/list` (`ancestorThreadId`, experimental; refused without the
+capability, then the loaded threads and the listed subagent threads by parent chain) and `thread/loaded/list`. It never
+resumes, loads or starts a child's turn and never sends an override: a resume would emit `thread/goal/cleared` to the
+terminal too, and none is needed (the parent's join already carries the child's events or their broadcasts). Leaving
+is its own `thread/unsubscribe` and connection close: only its subscriptions go, a running child runs on.
+
+**Restart.** Nothing is kept: every join recovers the children from the server, and the rollouts are read again (#25).
 
 ## Events
 

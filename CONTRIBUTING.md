@@ -17,8 +17,11 @@
   top-N search `fileindex` ranks with; `server`, `store` and `proto` import neither, `TestFileIndexIsWiredByTheApp`), `childagents` (#22: the native child agents of the workers' own sessions: the `Registry` the hub keeps them in, the `Source` interface the provider phases of #20 implement and the `Evidence` they report; nothing persisted; `childagents/childagentstest` is the fixture source and its scripts, test code only), `codex` (Codex session ids and rollout files, for the sleep backfill and usage), `codexapp` (#155: the bridge's side
   of a shared-server Codex worker's own app-server: the passive protocol adapter `Watcher` (initialize, `thread/resume`
   by id only, bounded reconnect, `thread/unsubscribe`, never answers a server request), the launcher (bash by default, fish by option), the
-  processes it may stop (only those carrying the launch's marker token), and the checks before a launch; every Codex
-  protocol detail the bridge knows; `server` uses it), `codexreply` (#183: the native reply to Codex's async questions, its envelope built and recognised by one rule; standard library only, `codexapp` re-exports it and `transcript` reads the readable answer entries with it), `codexshare` (#154: test fixture only, imported by nothing; it
+  processes it may stop (only those carrying the launch's marker token), and the checks before a launch; #27: a child
+  thread's metadata and items, and the `Watcher`'s observational reads of them (`ChildReader`: never a resume); every
+  Codex protocol detail the bridge knows; `server` uses it), `codexchild` (#25 / #27: the Codex `childagents.Source`: a
+  worker's subagents from its rollouts, read by the usage tracker, and for a shared-server worker its own app-server's
+  word on their state, through the hub's join, in one derivation), `codexreply` (#183: the native reply to Codex's async questions, its envelope built and recognised by one rule; standard library only, `codexapp` re-exports it and `transcript` reads the readable answer entries with it), `codexshare` (#154: test fixture only, imported by nothing; it
   imports `codexapp` (its dial, and #155's launch and adapter in the real-TUI suites): an isolated CODEX_HOME, a
   scripted Responses mock, an app-server client over its unix socket and a throwaway herdr session driver for the real
   Codex TUI; #158: its full-stack suites, under the `integration` tag only, also boot herdr-world through `app.Serve`

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,17 @@ type Request struct {
 //	MOCK:shell <cmd>         exec_command <cmd>; then MOCK_SHELL_DONE <output>
 //	MOCK:approve <cmd>       exec_command <cmd> asking for escalation (an approval)
 //	MOCK:hold <name>         keep the response open until Release(name)
+//	MOCK:spawn <task> <msg>  spawn_agent: a child named <task>, given <msg>
+//	                         (its own turn's directive), no forked history
+//	MOCK:followup <task> <msg>   followup_task: a new turn of child <task>
+//	MOCK:message <task> <msg>    send_message: <msg> queued for child <task>
+//	MOCK:interrupt <task>    interrupt_agent: child <task>'s turn
+//	MOCK:wait <ms>           wait_agent with timeout_ms <ms>
+//
+// The collaboration tools are Codex's multi-agent v2 (the catalog's
+// multi_agent_version), called in the namespace Codex offered them in
+// (none on 0.160.1–0.163.0). A child's turn reaches the mock like any
+// other: its user message is the spawn's or follow-up's <msg>.
 //
 // The ask directives take hold=<name> to hold the response that follows the
 // tool's output, so the turn stays active. A reply envelope gets
@@ -224,19 +236,23 @@ type inputItem struct {
 	Output  json.RawMessage `json:"output"`
 }
 
-// texts joins the text parts of a content or output value.
+// texts joins the text parts of a content or output value. A message
+// from another agent (a spawn's or follow-up's task) carries its payload
+// as encrypted_content, which is the plain text when the mock sent it so.
 func texts(raw json.RawMessage) string {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return s
 	}
 	var parts []struct {
-		Text string `json:"text"`
+		Text      string `json:"text"`
+		Encrypted string `json:"encrypted_content"`
 	}
 	_ = json.Unmarshal(raw, &parts)
 	var b strings.Builder
 	for _, p := range parts {
 		b.WriteString(p.Text)
+		b.WriteString(p.Encrypted)
 	}
 	return b.String()
 }
@@ -254,7 +270,7 @@ func classify(body []byte) Request {
 			r.Kind, r.CallID, r.Output = KindTool, it.CallID, texts(it.Output)
 			continue
 		}
-		if it.Type == "message" && it.Role == "user" {
+		if it.Type == "message" && it.Role == "user" || it.Type == "agent_message" {
 			t := texts(it.Content)
 			// Injected context, not the user's words: the environment, and
 			// (#224) a "$skill" prompt's skill text, a message of its own
@@ -313,6 +329,39 @@ func message(id, text string) map[string]any {
 func functionCall(callID, name string, args any) map[string]any {
 	b, _ := json.Marshal(args)
 	return map[string]any{"type": "function_call", "call_id": callID, "name": name, "arguments": string(b)}
+}
+
+// collabCall is a function call of a collaboration tool, in the namespace
+// the request offered it in (a namespace tool listing it), if any.
+func collabCall(body []byte, callID, name string, args any) map[string]any {
+	out := functionCall(callID, name, args)
+	if ns := toolNamespace(body, name); ns != "" {
+		out["namespace"] = ns
+	}
+	return out
+}
+
+// toolNamespace is the namespace a request's tools put name in ("": none,
+// or a plain function tool).
+func toolNamespace(body []byte, name string) string {
+	var req struct {
+		Tools []struct {
+			Type  string `json:"type"`
+			Name  string `json:"name"`
+			Tools []struct {
+				Name string `json:"name"`
+			} `json:"tools"`
+		} `json:"tools"`
+	}
+	_ = json.Unmarshal(body, &req)
+	for _, t := range req.Tools {
+		for _, in := range t.Tools {
+			if in.Name == name {
+				return t.Name
+			}
+		}
+	}
+	return ""
 }
 
 type question struct {
@@ -413,6 +462,19 @@ func (m *Mock) serve(w http.ResponseWriter, r *http.Request) {
 			})
 		case "hold":
 			hold = rest
+		case "spawn", "followup", "message":
+			task, msg, _ := strings.Cut(rest, " ")
+			name := map[string]string{"spawn": "spawn_agent", "followup": "followup_task", "message": "send_message"}[verb]
+			args := map[string]any{"target": task, "message": strings.TrimSpace(msg)}
+			if verb == "spawn" {
+				args = map[string]any{"task_name": task, "fork_turns": "none", "message": strings.TrimSpace(msg)}
+			}
+			out = collabCall(body, callID, name, args)
+		case "interrupt":
+			out = collabCall(body, callID, "interrupt_agent", map[string]any{"target": rest})
+		case "wait":
+			ms, _ := strconv.Atoi(rest)
+			out = collabCall(body, callID, "wait_agent", map[string]any{"timeout_ms": ms})
 		default:
 			out = message(msgID, "MOCK_ECHO "+oneLine(req.UserText, 80))
 		}
