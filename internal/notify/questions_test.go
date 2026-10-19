@@ -422,3 +422,43 @@ func TestQuestionsOnlyDropsWaitingAlerts(t *testing.T) {
 	}
 	r.noMore(t, 1)
 }
+
+// A freelancer with an unresolved report request, blocked later on a
+// permission menu: the menu's card still comes (with an alert in the
+// broader mode, its blocked spell's, as before the episode was the
+// request), and the request, seen again after it, notifies no more.
+func TestMenuOfAWorkerWithARequest(t *testing.T) {
+	for _, mode := range []string{ModeEverything, ModeQuestions} {
+		t.Run(mode, func(t *testing.T) {
+			r := questionsRig(t, mode, true)
+			r.svc.Observe(working("m"))
+			r.svc.Observe(reportObs("m", 60000, muffinAsks))
+			if !r.ch.WaitSent(1, 5*time.Second) {
+				t.Fatal("the request sent nothing")
+			}
+			onMenu := reportObs("m", 120000, muffinAsks)
+			onMenu.Worker.Status = "blocked"
+			r.svc.Observe(onMenu)
+			onMenu.Worker.Menu = permMenu("0123456789abcdef")
+			r.svc.Observe(onMenu)
+			if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == 1 }, 5*time.Second) {
+				t.Fatalf("%d menu cards, want 1", len(r.ch.Cards()))
+			}
+			want := 1 // under Questions only the card is the message
+			if mode == ModeEverything {
+				want = 2
+				if !r.ch.WaitSent(2, 5*time.Second) {
+					t.Fatal("the menu's spell sent no alert")
+				}
+			}
+			if c := r.ch.SentCard(r.ch.Cards()[0]); c.Quiet == (mode == ModeQuestions) {
+				t.Fatalf("card quiet %v in %s", c.Quiet, mode)
+			}
+			r.svc.Observe(reportObs("m", 180000, muffinAsks)) // answered: the request again
+			r.noMore(t, want)
+			if len(r.ch.Cards()) != 1 {
+				t.Fatalf("%d cards", len(r.ch.Cards()))
+			}
+		})
+	}
+}

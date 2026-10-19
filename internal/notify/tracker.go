@@ -1,6 +1,14 @@
 package notify
 
-import "time"
+import (
+	"slices"
+	"time"
+)
+
+// maxKnown is how many of a worker's latest episodes the tracker keeps as
+// known (H3D-1: a question that comes back after another, still
+// unresolved, is not new).
+const maxKnown = 16
 
 // Kind is what an episode is about: the two events a notification is for.
 type Kind string
@@ -74,10 +82,12 @@ type pendingDone struct {
 // same episode then (it is cancelled when it leaves, and settles again when
 // it comes back). An episode that may not notify when it starts (the floor
 // asleep, the feature or its event off, a freelancer's done not listed) is
-// known silently. Not safe for concurrent use.
+// known silently. H3D-1: a worker's latest maxKnown episodes are known, so
+// one seen again after another (a report request after a permission menu)
+// does not notify again. Not safe for concurrent use.
 type tracker struct {
 	settle  time.Duration
-	known   map[string]string // worker id → the last episode known
+	known   map[string][]string // worker id → its latest episodes known, oldest first
 	pending map[string]pendingDone
 	// cur is each worker's episode at its last sighting (#106: a parked
 	// alert goes only if its episode is still on).
@@ -85,7 +95,19 @@ type tracker struct {
 }
 
 func newTracker(settle time.Duration) *tracker {
-	return &tracker{settle: settle, known: map[string]string{}, pending: map[string]pendingDone{}, cur: map[string]string{}}
+	return &tracker{settle: settle, known: map[string][]string{}, pending: map[string]pendingDone{}, cur: map[string]string{}}
+}
+
+// know adds key to worker id's known episodes.
+func (t *tracker) know(id, key string) {
+	k := slices.DeleteFunc(t.known[id], func(x string) bool { return x == key })
+	if key != "" {
+		k = append(k, key)
+	}
+	if len(k) > maxKnown {
+		k = k[len(k)-maxKnown:]
+	}
+	t.known[id] = k
 }
 
 // current is worker id's episode at its last sighting ("": none).
@@ -100,22 +122,22 @@ func (t *tracker) observe(s sighting, now time.Time) *Alert {
 	}
 	known, seen := t.known[s.id]
 	if !seen {
-		t.known[s.id] = s.key
+		t.know(s.id, s.key)
 		return nil
 	}
 	if p, ok := t.pending[s.id]; ok && p.key != s.key {
 		delete(t.pending, s.id) // it left that done episode
 	}
-	if s.key == "" || s.key == known {
+	if s.key == "" || slices.Contains(known, s.key) {
 		return nil
 	}
 	if !s.eligible {
-		t.known[s.id] = s.key
+		t.know(s.id, s.key)
 		delete(t.pending, s.id)
 		return nil
 	}
 	if s.kind == KindNeedsYou {
-		t.known[s.id] = s.key
+		t.know(s.id, s.key)
 		a := s.alert
 		return &a
 	}
@@ -128,11 +150,11 @@ func (t *tracker) observe(s sighting, now time.Time) *Alert {
 	return nil
 }
 
-// reopen forgets that key was worker id's last known episode (H3D-1: a
-// report request resolved; asked again, it is a new one).
+// reopen forgets key among worker id's known episodes (H3D-1: a report
+// request resolved; asked again, it is a new one).
 func (t *tracker) reopen(id, key string) {
-	if k, ok := t.known[id]; ok && k == key {
-		t.known[id] = ""
+	if k, ok := t.known[id]; ok {
+		t.known[id] = slices.DeleteFunc(k, func(x string) bool { return x == key })
 	}
 }
 
@@ -150,7 +172,7 @@ func (t *tracker) due(now time.Time) []Alert {
 		if p.due.After(now) {
 			continue
 		}
-		t.known[id] = p.key
+		t.know(id, p.key)
 		delete(t.pending, id)
 		out = append(out, p.alert)
 	}

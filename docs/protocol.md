@@ -5511,9 +5511,11 @@ while it is off.
 - **Once per episode**: an episode is the worker, needs-you or done, and (H3D-1) what it is about, in either mode: an
   `ask` its `tool_use_id`, a `followup` its turn, a report request its `input_required` (a new one once the old was
   resolved), a wrap-up its `armed_at`, an orchestrator over its cap its pass, a bare `blocked` status its
-  `status_since` (the blocked spell), done its `status_since`; under Questions only a menu its operation (#106's
-  identity), its blocked status before it no episode of its own. So the same unresolved question seen again with
-  another `status_since`, activity line or redraw sends nothing. (The game's inbox still names its rows by `since`.)
+  `status_since` (the blocked spell), done its `status_since`; a screen menu its operation (#106's identity) under
+  Questions only, and in either mode for a worker whose needs-you is not its blocked status (a report request, a cap,
+  a wrap-up; a bare block's menu belongs to its spell's episode). The bridge knows a worker's latest 16 episodes, so
+  the same unresolved question seen again with another `status_since`, activity line or redraw, or after another
+  question, sends nothing. (The game's inbox still names its rows by `since`.)
   What the bridge sees of a worker first (its start, a herdr session back) is known without a
   message, so a restart sends nothing old; so is an episode that starts while the feature, its event or the channel
   is off, or the floor sleeps: switching on later, or a floor waking, sends nothing old either.

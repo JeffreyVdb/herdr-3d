@@ -133,3 +133,29 @@ func TestTrackerGoneForgets(t *testing.T) {
 		t.Fatal("a worker seen again notified at once")
 	}
 }
+
+// H3D-1: an episode seen again after another is still known (a request
+// after a permission menu), up to maxKnown of them; reopen makes one new.
+func TestTrackerKnowsRecentEpisodes(t *testing.T) {
+	tr := newTracker(5 * time.Second)
+	tr.observe(see("a", "", 0, true), t0)
+	if tr.observe(see("a", KindNeedsYou, 1, true), t0) == nil || tr.observe(see("a", KindNeedsYou, 2, true), t0) == nil {
+		t.Fatal("new episodes not notified")
+	}
+	if a := tr.observe(see("a", KindNeedsYou, 1, true), t0); a != nil {
+		t.Fatalf("episode 1 again: %+v", a)
+	}
+	tr.reopen("a", episodeKey(KindNeedsYou, "1"))
+	if tr.observe(see("a", KindNeedsYou, 1, true), t0) == nil {
+		t.Fatal("a reopened episode not notified")
+	}
+	for i := int64(10); i < 10+maxKnown; i++ {
+		tr.observe(see("a", KindNeedsYou, i, true), t0)
+	}
+	if tr.observe(see("a", KindNeedsYou, 2, true), t0) == nil {
+		t.Fatal("an episode past maxKnown is still known")
+	}
+	if n := len(tr.known["a"]); n != maxKnown {
+		t.Fatalf("%d known", n)
+	}
+}

@@ -67,15 +67,30 @@ const (
 // episode is what a needs-you sighting's episode is (its id, without the
 // kind) and what it is about, from the worker awake and the rule's
 // verdict of it; question: a pending question Questions only lets through
-// (questions: that mode).
+// (questions: that mode). A screen menu is an episode of its own under
+// Questions only, and in the broader mode for a worker whose needs-you is
+// not its blocked status (a report request, a cap, a wrap-up: else its
+// menu's card would wait for an alert that never comes); a bare block's
+// menu stays in its blocked spell's episode (#88: its card follows the
+// spell's alert).
 func episode(w Worker, v Verdict, questions bool) (id, about string, question bool) {
 	switch {
 	case v.Reason == ReasonQuestion:
 		return "ask|" + w.Ask.ToolUseID, aboutAsk, true
 	case v.Reason == ReasonFollowup:
 		return "followup|" + w.Followup.TurnID, aboutFollowup, true
-	case questions && validMenu(w):
+	}
+	id, about, question = needs(w, v, questions)
+	if validMenu(w) && (questions || about != aboutBlocked) {
 		return "menu|" + menuID(w.Menu), aboutMenu, true
+	}
+	return id, about, question
+}
+
+// needs is episode's for a worker that asks no ask or follow-up, its menu
+// aside.
+func needs(w Worker, v Verdict, questions bool) (id, about string, question bool) {
+	switch {
 	case isFreelancer(v.Role) && reportAsks(w.Report) && (questions || v.Reason == ReasonReport):
 		return reportID(w.Report), aboutReport, strings.TrimSpace(w.Report.Request) != ""
 	case v.Reason == ReasonWrapUp:
