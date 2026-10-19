@@ -13,6 +13,12 @@
  * place: a status change flashes the row in its new colour once, a new now line flips in, the order never follows a
  * status. Motion goes under `prefers-reduced-motion` and battery saver (`data-calm`): no cascade, flap or blink.
  *
+ * #119: the "Working on" column is the row's own and kept across its refreshes (an activity tick rebuilds the rest of the
+ * row, never it), its now line too, updated in place: a now line that waits for the model's first summary is a row of
+ * split-flap cells (`ui/flaps.ts`), a model's line that arrives resolves into place flap by flap, a model's line whose
+ * refresh is out stays readable, dimmed, with a busy mark where its age was. The lines keep their height (the now line
+ * two lines', the task line one) and their metadata slot its width, whatever state they are in.
+ *
  * #188: the same page shows **all floors** too (O in the city or a lobby, the top bar's City Overview, `a` on a
  * floor's page): every floor of the city as a row over its workers (`buildCityOverview`), out of the centre, never the
  * wall screen. Both views have a filter, **Active only / All** (`f`, remembered per view): the rows it hides fold away
@@ -24,6 +30,7 @@
  */
 
 import { lineStatusText } from '../world/digestSettings';
+import { FlapClock } from './flaps';
 import {
   ageText,
   aiTitle,
@@ -38,6 +45,7 @@ import {
   sinceText,
   sleepyFloors,
   spanText,
+  titleKey,
   visibleRows,
   type CityOverviewData,
   type CountItem,
@@ -132,11 +140,52 @@ const retriable = (r: OverviewWorkerRow): boolean => [r.task, r.now].some((l) =>
 /** #188: an asleep floor's mark, a crescent (drawn: no glyph stands in for it). */
 const MOON = '<path d="M15.5 4.2a7.6 7.6 0 1 0 4.3 11.1 6.2 6.2 0 0 1-4.3-11.1z"/>';
 
-/** The row's own signature: it is rebuilt only when this changes (#24: its wires, `more`, too). */
-function rowSig(v: VisibleRow): string {
+/** The row's own signature: it is rebuilt only when this changes (#24: its wires, `more`, too; #119: calm or not). */
+function rowSig(v: VisibleRow, calm: boolean): string {
   const r = v.row;
-  return JSON.stringify([r, v.depth, v.expandable, v.expanded, v.more]);
+  return JSON.stringify([r, v.depth, v.expandable, v.expanded, v.more, calm]);
 }
+
+/** #119: skeleton cells of a now line that waits for the model's first summary: about a line's width. */
+const SKELETON_CELLS = 40;
+
+/** #119: a part of the "Working on" column, kept while its signature holds. */
+interface Part {
+  sig: string;
+  el: HTMLElement;
+}
+
+/** #119: a worker row's now line: its element (kept), what it shows (its signature), the text it shows to compare. */
+interface NowPart extends Part {
+  el: HTMLParagraphElement;
+  /** The text shown, as it is compared for a change (a title's `titleKey`); '' while loading. */
+  key: string;
+}
+
+/** #119: a worker row's "Working on" column, kept across the row's refreshes. */
+interface WhatParts {
+  el: HTMLElement;
+  ticket: Part | null;
+  task: Part | null;
+  now: NowPart | null;
+  quiet: Part | null;
+}
+
+interface RowEntry {
+  el: HTMLElement;
+  sig: string;
+  display: string | null;
+  what: WhatParts | null;
+}
+
+/**
+ * #119: a now line shows the split-flap skeleton in its text's place: the model's line is being written (a call is out)
+ * and what would show is a fallback, or nothing. Under the daily cap, or retrying, or failed, the fallback shows.
+ */
+export const loadingNow = (l: OverviewLine): boolean => !l.llm && l.status?.state === 'pending' && l.status.reason !== 'daily_cap';
+
+/** #119: a model's now line whose refresh call is out: its text stays, with a busy mark where its age was. */
+const refreshing = (l: OverviewLine): boolean => l.llm && l.status?.state === 'pending';
 
 export class OverviewOverlay {
   private readonly root: HTMLDivElement;
@@ -157,7 +206,9 @@ export class OverviewOverlay {
   private view: OverviewView | null = null;
   private keysEl: HTMLElement | null = null;
   private from: ViewRect | null = null;
-  private rows = new Map<string, { el: HTMLElement; sig: string; display: string | null; now: string | null }>();
+  private rows = new Map<string, RowEntry>();
+  /** #119: the now lines' split-flap motion. */
+  private readonly flaps = new FlapClock({ calm: () => this.calm() });
   private visible: VisibleRow[] = [];
   private focusKey: string | null = null;
   private inerted: HTMLElement[] = [];
@@ -318,6 +369,7 @@ export class OverviewOverlay {
   }
 
   private reset(): void {
+    this.flaps.clear();
     this.rows.clear();
     this.leaving.clear();
     this.board.replaceChildren();
@@ -359,6 +411,7 @@ export class OverviewOverlay {
     window.removeEventListener('keydown', this.onKeyCapture, true);
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.flaps.clear();
     this.returnFocus?.focus?.();
     this.host.closed();
   }
@@ -442,30 +495,23 @@ export class OverviewOverlay {
     this.visible.forEach((v, i) => {
       const key = v.row.key;
       seen.add(key);
-      const sig = rowSig(v);
+      const sig = rowSig(v, calm);
       let entry = this.rows.get(key);
       const display = v.row.kind === 'worker' ? v.row.display : null;
-      const nowText = v.row.kind === 'worker' ? (v.row.now?.text ?? null) : null;
       if (!entry) {
         const el = h('div', { class: 'ov-row', role: 'treeitem', tabindex: '-1', 'data-key': key });
-        entry = { el, sig: '', display, now: nowText };
+        entry = { el, sig: '', display, what: null };
         this.rows.set(key, entry);
-        this.fill(el, v, now);
+        this.fill(entry, v, now, false);
         entry.sig = sig;
         if (!this.root.classList.contains('ov--enter') && !calm) retrigger(el, 'ov-row--new');
       } else if (entry.sig !== sig) {
         const flash = !calm && display !== null && entry.display !== null && entry.display !== display;
-        const flap = !calm && nowText !== null && entry.now !== nowText;
-        this.fill(entry.el, v, now);
+        this.fill(entry, v, now, true);
         entry.sig = sig;
         if (flash) retrigger(entry.el, 'ov-row--flash');
-        if (flap) {
-          const n = entry.el.querySelector<HTMLElement>('.ov-now');
-          if (n) retrigger(n, 'ov-flip-in');
-        }
       } else this.since(entry.el, v.row, now);
       entry.display = display;
-      entry.now = nowText;
       entry.el.style.setProperty('--i', String(Math.min(i, 24)));
       entry.el.setAttribute('aria-posinset', String(i + 1));
       order.push(entry.el);
@@ -476,6 +522,7 @@ export class OverviewOverlay {
     const fold: HTMLElement[] = [];
     for (const [k, e] of this.rows) {
       if (!seen.has(k)) {
+        if (e.what?.now) this.flaps.cancel(e.what.now.el);
         // A row of a group you just collapsed, or one the filter hides now, folds away where it was; one that left goes at once.
         if (!calm && present.has(k) && typeof e.el.animate === 'function') {
           this.leaving.set(e.el, k);
@@ -581,9 +628,17 @@ export class OverviewOverlay {
     );
   }
 
-  /** Builds a row's content. */
-  private fill(el: HTMLElement, v: VisibleRow, now: number): void {
+  /**
+   * Builds a row's content. #119: a worker row's "Working on" column is kept (`what`), the rest is built again;
+   * `live`: the row was on the page already, so a now line that changed arrives with its motion.
+   */
+  private fill(entry: RowEntry, v: VisibleRow, now: number, live: boolean): void {
+    const el = entry.el;
     const r = v.row;
+    if (r.kind !== 'worker' && entry.what) {
+      if (entry.what.now) this.flaps.cancel(entry.what.now.el);
+      entry.what = null;
+    }
     // #188: on the all-floors page a floor is a band over its rows, which read as on a floor's page (no indent).
     const city = this.view?.kind === 'city' && r.kind !== 'floor';
     const nest = city ? v.depth - 1 : v.depth;
@@ -618,15 +673,9 @@ export class OverviewOverlay {
         h('span', { class: 'ov-meta' }, [mark ? '' : r.harness, r.model].filter(Boolean).join(' ')),
         r.orch?.overCap ? h('span', { class: 'ov-cap' }, 'Over cap') : null,
       );
-      const what = h(
-        'div',
-        { class: 'ov-what' },
-        r.ticket ? this.ticketEl(r) : null,
-        r.task ? lineEl('task', r.task, now) : null,
-        r.now ? lineEl('now', r.now, now) : null,
-        !r.ticket && !r.task && !r.now ? h('p', { class: 'ov-line ov-quiet' }, r.activity ? 'No summary yet' : 'No turn yet') : null,
-      );
-      el.replaceChildren(h('span', { class: 'ov-light', 'aria-hidden': 'true' }), wire ?? '', fold ?? '', who, what, workerSince(r, now));
+      const what = this.what(entry, r, now, live);
+      place(el, [h('span', { class: 'ov-light', 'aria-hidden': 'true' }), wire, fold, who, what, workerSince(r, now)]);
+      this.ages(el, r, now);
       return;
     }
     delete el.dataset.display;
@@ -738,19 +787,80 @@ export class OverviewOverlay {
     const t = el.querySelector('.ov-since .ov-time');
     const span = spanText(now - r.since);
     if (t && t.textContent !== span) t.textContent = span;
-    if (r.now?.llm && r.now.at) {
-      const age = el.querySelector('.ov-now .ov-age');
-      const a = ageText(r.now.at, now);
-      if (age && age.textContent !== a) age.textContent = a;
-      const mark = el.querySelector<HTMLElement>('.ov-now .ov-ai');
-      const title = aiTitle(r.now, now);
-      if (mark && mark.title !== title) {
-        mark.title = title;
-        mark.setAttribute('aria-label', title);
-      }
-    }
+    this.ages(el, r, now);
     const label = rowLabel(r, now);
     if (el.getAttribute('aria-label') !== label) el.setAttribute('aria-label', label);
+  }
+
+  /** #198: a model's now line's age and its sparkle's words, in place (#119: the column is kept across a rebuild too). */
+  private ages(el: HTMLElement, r: OverviewWorkerRow, now: number): void {
+    if (!r.now?.llm || !r.now.at) return;
+    const age = el.querySelector('.ov-now .ov-age');
+    const a = ageText(r.now.at, now);
+    if (age && age.textContent !== a) age.textContent = a;
+    const mark = el.querySelector<HTMLElement>('.ov-now .ov-ai');
+    const title = aiTitle(r.now, now);
+    if (mark && mark.title !== title) {
+      mark.title = title;
+      mark.setAttribute('aria-label', title);
+    }
+  }
+
+  /**
+   * #119: a worker row's "Working on" column, kept: the ticket, the task line and the quiet line are built again only
+   * when they changed, the now line is updated in place (`nowLine`); none of them moves when the rest of the row is
+   * built again, so a now line's motion goes on through an activity tick.
+   */
+  private what(entry: RowEntry, r: OverviewWorkerRow, now: number, live: boolean): HTMLElement {
+    const w = (entry.what ??= { el: h('div', { class: 'ov-what' }), ticket: null, task: null, now: null, quiet: null });
+    const part = (prev: Part | null, sig: string, make: () => HTMLElement): Part => (prev?.sig === sig ? prev : { sig, el: make() });
+    w.ticket = r.ticket ? part(w.ticket, JSON.stringify(r.ticket), () => this.ticketEl(r)) : null;
+    w.task = r.task ? part(w.task, JSON.stringify(r.task), () => lineEl('task', r.task as OverviewLine, now)) : null;
+    if (r.now) w.now = this.nowLine(w.now, r.now, now, live);
+    else if (w.now) {
+      this.flaps.cancel(w.now.el);
+      w.now = null;
+    }
+    const quiet = !r.ticket && !r.task && !r.now ? (r.activity ? 'No summary yet' : 'No turn yet') : null;
+    w.quiet = quiet ? part(w.quiet, quiet, () => h('p', { class: 'ov-line ov-quiet ov-nosum' }, quiet)) : null;
+    place(w.el, [w.ticket?.el, w.task?.el, w.now?.el, w.quiet?.el]);
+    return w.el;
+  }
+
+  /**
+   * #119: a worker row's now line, its element kept: rebuilt inside when what it shows changed. Waiting for the model's
+   * first summary: the split-flap skeleton (calm: a still bar). A text that changed on a row already shown arrives: a
+   * model's line resolves flap by flap, any other flips in; a title's only when more than its spinner changed.
+   */
+  private nowLine(prev: NowPart | null, line: OverviewLine, now: number, live: boolean): NowPart {
+    const calm = this.calm();
+    const loading = loadingNow(line);
+    const sig = JSON.stringify(loading ? ['loading', calm] : line);
+    if (prev?.sig === sig) return prev;
+    const el = prev?.el ?? (h('p', {}) as HTMLParagraphElement);
+    this.flaps.cancel(el);
+    const key = loading ? '' : line.source === 'title' ? titleKey(line.text) : line.text;
+    if (loading) {
+      el.className = 'ov-line ov-now ov-now--loading';
+      el.setAttribute('aria-busy', 'true');
+      const cells = calm ? [] : Array.from({ length: SKELETON_CELLS }, () => h('span', { class: 'ov-fc' }));
+      el.replaceChildren(
+        h('b', {}, 'Now'),
+        h('span', { class: 'ov-text ov-flaprow', 'aria-hidden': 'true' }, ...(calm ? [h('span', { class: 'ov-flapbar' }, 'summarizing…')] : cells)),
+        h('span', { class: 'ov-ai-meta' }, calm ? null : h('span', { class: 'ov-loading' }, 'summarizing')),
+      );
+      this.flaps.skeleton(el, cells);
+      return { el, sig, key };
+    }
+    el.removeAttribute('aria-busy');
+    const parts = lineParts('now', line, now);
+    el.className = parts.className;
+    el.replaceChildren(...parts.children);
+    if (live && prev?.key !== key && line.text) {
+      if (line.llm) this.flaps.resolve(el, parts.text, line.text);
+      else if (!calm) retrigger(el, 'ov-flip-in');
+    }
+    return { el, sig, key };
   }
 
   private childCount(key: string): number {
@@ -949,9 +1059,11 @@ function textOf(e: Node | undefined): string {
 
 /** A worker row's spoken label: who, the ticket, the lines with what became of them, the status and how long. */
 function rowLabel(r: OverviewWorkerRow, now: number): string {
+  // #119: a model's line whose refresh is out says so; a now line that loads says that alone, its text once it arrived.
   const ai = (l: OverviewLine, kind: 'task' | 'now') =>
-    l.llm ? ` (AI summary${l.at ? `, ${ageText(l.at, now)}` : ''}${l.status ? `; ${lineStatusText(l.status, kind, true).chip}` : ''})` : statusLabel(l, kind);
-  return [r.name, r.tag, harnessName(r.harness), r.model, r.activity, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${ai(r.task, 'task')}` : null, r.now ? `Now: ${r.now.text}${ai(r.now, 'now')}` : null, sinceText(r.display, r.since, now)]
+    l.llm ? ` (AI summary${l.at ? `, ${ageText(l.at, now)}` : ''}${l.status ? `; ${refreshing(l) ? 'refreshing' : lineStatusText(l.status, kind, true).chip}` : ''})` : statusLabel(l, kind);
+  const nowText = (l: OverviewLine) => (loadingNow(l) ? 'Now: AI summary loading' : `Now: ${l.text || 'no summary yet'}${ai(l, 'now')}`);
+  return [r.name, r.tag, harnessName(r.harness), r.model, r.activity, r.ticket ? `${r.ticket.key}${r.ticket.title ? ` ${r.ticket.title}` : ''}` : null, r.task ? `Task: ${r.task.text}${ai(r.task, 'task')}` : null, r.now ? nowText(r.now) : null, sinceText(r.display, r.since, now)]
     .filter(Boolean)
     .join(' · ');
 }
@@ -1035,26 +1147,43 @@ function workerSince(r: OverviewWorkerRow, now: number): HTMLElement {
  * line was written, and (#174) what became of the model's line, with Retry.
  */
 function lineEl(kind: 'task' | 'now', line: OverviewLine, now: number): HTMLElement {
-  const title = line.llm ? aiTitle(line, now, kind) : '';
-  const meta = [line.llm && line.at ? h('span', { class: 'ov-age' }, ageText(line.at, now)) : null, ...statusEls(line, kind)].filter((e) => e !== null);
-  return h(
-    'p',
-    { class: `ov-line ov-${kind}${line.status ? ' ov-line--status' : ''}` },
-    h('b', {}, kind === 'task' ? 'Task' : 'Now', line.llm ? h('span', { class: 'ov-ai', title, role: 'img', 'aria-label': title }, icon(ICON.sparkle)) : null),
-    h('span', { class: `ov-text ov-${kind}-text`, title: line.text }, line.text),
-    meta.length ? h('span', { class: 'ov-ai-meta' }, ...meta) : null,
-  );
+  const p = lineParts(kind, line, now);
+  return h('p', { class: p.className }, ...p.children);
 }
 
 /**
- * #174: what became of the model's line: pending as quiet words (#232), a failed one as a chip (its words in the title
- * and for a screen reader), and Retry when it helps. #198: on a model's now line, a failed refresh of it.
+ * A line's parts (`lineEl`; #119: the now line's kept element takes them in place): its class, its children and its
+ * text's span. #119: the metadata slot is always there (empty too), its width kept, so the text beside it never moves.
+ */
+function lineParts(kind: 'task' | 'now', line: OverviewLine, now: number): { className: string; children: HTMLElement[]; text: HTMLElement } {
+  const title = line.llm ? aiTitle(line, now, kind) : '';
+  const busy = refreshing(line);
+  const meta = [line.llm && line.at && !busy ? h('span', { class: 'ov-age' }, ageText(line.at, now)) : null, ...statusEls(line, kind)].filter((e) => e !== null);
+  const failed = line.status && line.status.state !== 'pending';
+  const text = line.text ? h('span', { class: `ov-text ov-${kind}-text`, title: line.text }, line.text) : h('span', { class: `ov-text ov-${kind}-text ov-quiet` }, 'No summary yet');
+  return {
+    className: `ov-line ov-${kind}${failed ? ' ov-line--status' : ''}${busy ? ' ov-now--refreshing' : ''}`,
+    children: [h('b', {}, kind === 'task' ? 'Task' : 'Now', line.llm ? h('span', { class: 'ov-ai', title, role: 'img', 'aria-label': title }, icon(ICON.sparkle)) : null), text, h('span', { class: 'ov-ai-meta' }, ...meta)],
+    text,
+  };
+}
+
+/**
+ * #174: what became of the model's line: a failed one as a chip (its words in the title and for a screen reader), and
+ * Retry when it helps; waiting for the daily cap as quiet words (#232). #198: on a model's now line, a failed refresh of
+ * it. #119: a call out for it (a fallback's task line, a model's now line being refreshed): the busy mark.
  */
 function statusEls(line: OverviewLine, kind: 'task' | 'now'): HTMLElement[] {
   if (!line.status) return [];
   const t = lineStatusText(line.status, kind, line.llm);
+  if (line.status.state === 'pending' && line.status.reason !== 'daily_cap') return [busyMark(t.detail)];
   const chip = h('span', { class: `ov-ai-state ov-ai-state--${line.status.state}${line.llm ? ' ov-ai-state--kept' : ''}`, title: t.detail, role: 'img', 'aria-label': t.detail }, t.chip);
   return t.retry ? [chip, h('button', { class: 'ov-retry', tabindex: '-1', 'data-retry': '1', title: 'Try the AI summary again (R)' }, 'Retry')] : [chip];
+}
+
+/** #119: a call out for a line: two small flaps turning (still under calm), its words in the title and for a screen reader. */
+function busyMark(detail: string): HTMLElement {
+  return h('span', { class: 'ov-busy', title: detail, role: 'img', 'aria-label': detail }, h('i', {}), h('i', {}));
 }
 
 /** The row's spoken label gets the chip's short words: the rest is on the chip. */
@@ -1070,6 +1199,19 @@ function svgEl(markup: string): SVGSVGElement {
   const t = document.createElement('template');
   t.innerHTML = markup;
   return t.content.firstElementChild as SVGSVGElement;
+}
+
+/**
+ * #119: puts `kids` (nulls left out) in `parent` in order without moving one already there: one that stays keeps its
+ * place in the document, so its animations and its motion's cells go on.
+ */
+function place(parent: Element, kids: ReadonlyArray<Node | null | undefined>): void {
+  const want = kids.filter((k): k is Node => !!k);
+  const keep = new Set(want);
+  for (const c of [...parent.childNodes]) if (!keep.has(c)) c.remove();
+  want.forEach((k, i) => {
+    if (parent.childNodes[i] !== k) parent.insertBefore(k, parent.childNodes[i] ?? null);
+  });
 }
 
 /** Plays a one-shot CSS animation class again. */
