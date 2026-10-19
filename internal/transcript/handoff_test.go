@@ -594,3 +594,34 @@ func TestHandoffRegionAfterReset(t *testing.T) {
 		t.Fatalf("StillLatest: %v", err)
 	}
 }
+
+// #66: a follow-up turn's Message names the same transcript row as the
+// handoff candidate of the same reply (the schedule suggestion's chip goes
+// on it).
+func TestFollowupTurnMessageIsTheCandidates(t *testing.T) {
+	for _, tc := range []struct{ harness, file string }{
+		{Claude, "followup_questions.jsonl"},
+		{Codex, "followup_questions.jsonl"},
+		{Claude, "followup_summary.jsonl"},
+		{Codex, "followup_summary.jsonl"},
+	} {
+		raw, err := os.ReadFile(filepath.Join("testdata", tc.harness, tc.file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr, fu := NewHandoffTracker(tc.harness), NewFollowupTracker(tc.harness)
+		var off int64
+		for _, l := range bytes.SplitAfter(raw, []byte("\n")) {
+			if line := bytes.TrimRight(l, "\n"); len(line) > 0 {
+				evs := TurnEvents(tc.harness, line)
+				tr.Events(Span{Off: off, N: len(line)}, line, evs)
+				fu.Events(evs)
+			}
+			off += int64(len(l))
+		}
+		c, turn := tr.Candidate(), fu.Turn()
+		if c == nil || turn == nil || turn.Message == "" || turn.Message != c.Message {
+			t.Fatalf("%s/%s: candidate %+v, turn %+v", tc.harness, tc.file, c, turn)
+		}
+	}
+}
