@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-19T14:00:00Z","type":"session_meta","payload":{"id":"22222222-2222-4222-8222-222222222222","model_provider":"openai","cwd":"/synthetic/workspace"}}
+{"timestamp":"2026-10-19T14:00:01Z","type":"turn_context","payload":{"model":"gpt-6.1-sol","effort":"medium","cwd":"/synthetic/workspace","collaboration_mode":{"mode":"default","settings":{"model":"gpt-6.1-sol","reasoning_effort":"medium"}}}}

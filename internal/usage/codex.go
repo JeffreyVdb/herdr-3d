@@ -52,12 +52,18 @@ func (a codexTokens) cost(p Price) float64 {
 type codexLine struct {
 	Type    string `json:"type"`
 	Payload struct {
-		Type          string  `json:"type"`
-		Model         string  `json:"model"`
-		ModelProvider string  `json:"model_provider"`
-		StartedAt     float64 `json:"started_at"`
-		CompletedAt   float64 `json:"completed_at"`
-		Info          *struct {
+		Type          string `json:"type"`
+		Model         string `json:"model"`
+		Effort        string `json:"effort"` // turn_context: the turn's reasoning effort
+		ModelProvider string `json:"model_provider"`
+		Collaboration *struct {
+			Settings struct {
+				Effort string `json:"reasoning_effort"`
+			} `json:"settings"`
+		} `json:"collaboration_mode"` // turn_context: where the effort is when it is not on top
+		StartedAt   float64 `json:"started_at"`
+		CompletedAt float64 `json:"completed_at"`
+		Info        *struct {
 			Total  codexTokens `json:"total_token_usage"`
 			Last   codexTokens `json:"last_token_usage"`
 			Window int64       `json:"model_context_window"`
@@ -71,6 +77,7 @@ type codexLine struct {
 // model active then; a counter that goes down starts the sums over.
 type codexUsage struct {
 	model   string
+	effort  string // the last turn_context's reasoning effort ("": it stated none)
 	total   *codexTokens
 	byModel map[string]codexTokens // sums to total
 	context int64                  // the last request's tokens
@@ -150,6 +157,12 @@ func (c *codexUsage) line(_ bool, b []byte) {
 			}
 			c.model = m
 		}
+		// H3D-2: the latest turn's effort; a turn that states none leaves it unknown.
+		e := l.Payload.Effort
+		if e == "" && l.Payload.Collaboration != nil {
+			e = l.Payload.Collaboration.Settings.Effort
+		}
+		c.effort = CleanEffort(e)
 	case l.Type == "event_msg" && l.Payload.Type == "token_count" && l.Payload.Info != nil:
 		cur := l.Payload.Info.Total
 		switch {
@@ -270,7 +283,7 @@ func codexAuthMode(sessions string) string {
 }
 
 func (c *codexUsage) usage(p *Pricing) proto.Usage {
-	u := proto.Usage{Model: c.model, Priced: proto.PricedNone}
+	u := proto.Usage{Model: c.model, Effort: c.effort, Priced: proto.PricedNone}
 	if c.total != nil {
 		t := *c.total
 		u.Input, u.CacheRead, u.CacheWrite, u.Output = t.uncached(), t.Cached, t.Write, t.Output

@@ -22,9 +22,16 @@ func floorLineOf(floor string) string {
 		"in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor."
 }
 
+// agentLineOf is the agent line (H3D-2): the harness, model and effort tokens.
+const agentLineOf = "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, " +
+	"the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: " +
+	"the floor shows them as that agent's model line."
+
 // herdrLines are #95's herdr hiring instructions for floor: run.start's
-// placement line and floor line, a blank line between them.
-func herdrLines(floor string) string { return placementLine + "\n\n" + floorLineOf(floor) }
+// placement line, floor line and agent line, a blank line between them.
+func herdrLines(floor string) string {
+	return placementLine + "\n\n" + floorLineOf(floor) + "\n\n" + agentLineOf
+}
 
 // #95: the snapshot says the bridge adds the herdr hiring instructions, and
 // hire.prepare's ack carries them for its floor (a virtual floor its own id,
