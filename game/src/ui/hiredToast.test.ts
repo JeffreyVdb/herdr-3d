@@ -33,6 +33,13 @@ describe('hiredToast', () => {
     expect(t.text).toContain('No own Codex server: .envrc is blocked: /r/.envrc.');
   });
 
+  it('direnv without a mise version is a warning with the short, actionable copy', () => {
+    const t = hiredToast(LEAD, { codex: { mode: 'legacy', note: 'shared Codex server: direnv is installed through mise but has no version selected for /r; started the usual way' } }, '');
+    expect(t.kind).toBe('warn');
+    expect(t.text).toContain('No own Codex server: direnv is installed with mise, but no version of it is selected for this worker’s folder (/r).');
+    expect(t.text).not.toContain('mise use');
+  });
+
   it('a task that was not sent is an error, also beside a fallback (the more severe wins), both said', () => {
     expect(hiredToast(LEAD, {}, NOT_SENT)).toEqual({ text: `${LEAD} ${NOT_SENT}`, kind: 'error' });
     const t = hiredToast(LEAD, { codex: UNVERIFIED }, NOT_SENT);

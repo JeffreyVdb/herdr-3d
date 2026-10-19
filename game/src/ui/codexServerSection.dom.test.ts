@@ -146,4 +146,18 @@ describe('what a worker’s Codex launch tells you (#155)', () => {
     ).toEqual({ tone: 'note', text: 'No own Codex server this time: the shared Codex server is not verified with Codex 0.159.9 yet (verified: 0.160.x, 0.161.x, 0.162.x or 0.163.x). It runs with Codex’s built-in one; the next wake tries its own again.' });
     expect(codexNotice({})).toBeNull();
   });
+
+  // #116: direnv is a mise shim with no version selected. The note is the Go side's literal
+  // (internal/codexapp/preflight_test.go, internal/server/codexserver_test.go); mise's diagnostic is not in it and not shown.
+  it('direnv with no mise version selected: what it is, where to fix it, what the worker is left with', () => {
+    const n = codexNotice({ codex: { mode: 'legacy', note: 'shared Codex server: direnv is installed through mise but has no version selected for /home/u/repo; started the usual way' } });
+    expect(n).toEqual({
+      tone: 'note',
+      text:
+        'No own Codex server: direnv is installed with mise, but no version of it is selected for this worker’s folder (/home/u/repo). ' +
+        'Select one for the bridge (see docs/git-worktrees.md). ' +
+        'It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript; send it home and hire a new one once that is fixed.',
+    });
+    expect(n?.text).not.toMatch(/mise use|No version is set|ERROR|\n/);
+  });
 });

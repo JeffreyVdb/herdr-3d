@@ -399,7 +399,7 @@ export class SimWorld {
       (m) => this.announce(m),
       o.fail !== 'no_herdr_instructions',
     ); // #93, #95
-    this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run', o.fail === 'codex_unverified'); // #155, #186
+    this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run', o.fail === 'codex_unverified', o.fail === 'codex_direnv'); // #155, #186, #116
     this.children = new ChildrenSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.childEvents ?? []);
     this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
     this.host = new HostSim(
