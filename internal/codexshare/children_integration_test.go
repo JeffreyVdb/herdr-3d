@@ -615,6 +615,18 @@ func TestCodexShareChildrenMissedEnds(t *testing.T) {
 		return c
 	}
 
+	// Lost with nothing meanwhile: the end stays as it was, its time
+	// included (the parent's subagent-completed-<turn id> names the turn
+	// the read gives).
+	before := len(b.states(alpha))
+	b.w.Close()
+	time.Sleep(time.Second)
+	b.join(f.sock, false)
+	time.Sleep(time.Second)
+	if c := b.state(alpha, proto.ChildCompleted); c.EndedAt != first.EndedAt || len(b.states(alpha)) != before {
+		t.Fatalf("nothing newer: %+v (was %+v), states %v", c, first, b.states(alpha))
+	}
+
 	// Lost; a follow-up runs and is interrupted meanwhile.
 	b.w.Close()
 	time.Sleep(time.Second) // the rollouts read the follow-up as it runs
