@@ -566,6 +566,85 @@ func TestCodexShareChildrenReconnect(t *testing.T) {
 	}
 }
 
+// TestCodexShareChildrenMissedEnds: a child's end shown before the join
+// was lost is not its state once a follow-up ran and ended while no join
+// saw it (R1). The bridge's watcher leaves (Lost, the hub's dropped join),
+// the terminal follows the completed child up and interrupts it, and the
+// same source joins again: interrupted, at the new turn's end; then the
+// reverse, completed after an interrupted one. Nothing else is sent
+// meanwhile (the end stays while lost, no running in between).
+func TestCodexShareChildrenMissedEnds(t *testing.T) {
+	f := newHeadless(t)
+	d := f.client("terminal")
+	root := f.rootThread(d)
+	b := f.newBridge(f.sock, root, false)
+	from := d.Mark()
+	turn := f.turn(d, root, "MOCK:spawn alpha MOCK:say first")
+	alpha, _ := f.spawned(d, from, "alpha")
+	f.waitTurn(d, root, turn)
+	b.state(alpha, proto.ChildCompleted)
+	time.Sleep(time.Second) // its own turn's end, then the parent's completed
+	first := b.state(alpha, proto.ChildCompleted)
+	// childTurn waits for the child's own turn/completed (the terminal's
+	// connection, initialized before the spawn, gets them) with status.
+	childTurn := func(from int, status string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(f.ctx, 60*time.Second)
+		defer cancel()
+		if _, err := d.WaitNotificationFrom(ctx, from, "turn/completed", func(m Message) bool {
+			n, _ := codexapp.DecodeChildNote(m.Params)
+			return n.ThreadID == alpha && n.Turn.Status == status
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rejoin := func(want string, after proto.Child) proto.Child {
+		t.Helper()
+		before := len(b.states(alpha))
+		b.join(f.sock, false)
+		b.state(alpha, want)
+		time.Sleep(time.Second) // the rollouts polled again: no flip
+		c := b.state(alpha, want)
+		if c.ID != after.ID || c.Source != proto.ChildFromAppServer || c.EndedAt <= after.EndedAt {
+			t.Fatalf("rejoined: %+v (before the loss %+v)", c, after)
+		}
+		if got := b.states(alpha); !slices.Equal(got[before-1:], []string{after.State, want}) {
+			t.Errorf("states %v", got)
+		}
+		t.Logf("rejoined: %s at %d (was %s at %d)", c.State, c.EndedAt, after.State, after.EndedAt)
+		return c
+	}
+
+	// Lost; a follow-up runs and is interrupted meanwhile.
+	b.w.Close()
+	time.Sleep(time.Second) // the rollouts read the follow-up as it runs
+	from = d.Mark()
+	turn = f.turn(d, root, "MOCK:followup alpha MOCK:hold a2")
+	if err := f.mock.WaitHeld(f.ctx, "a2"); err != nil {
+		t.Fatal(err)
+	}
+	f.waitTurn(d, root, turn)
+	time.Sleep(time.Second)
+	turn = f.turn(d, root, "MOCK:interrupt alpha")
+	f.waitTurn(d, root, turn)
+	childTurn(from, codexapp.TurnInterrupted)
+	_ = f.mock.Release("a2")
+	if c := b.row(alpha, "kept", func(proto.Child) bool { return true }); c.State != proto.ChildCompleted || c.EndedAt != first.EndedAt {
+		t.Fatalf("lost: %+v (was %+v)", c, first)
+	}
+	second := rejoin(proto.ChildInterrupted, first)
+
+	// Lost again; a follow-up completes meanwhile.
+	b.w.Close()
+	time.Sleep(time.Second)
+	from = d.Mark()
+	turn = f.turn(d, root, "MOCK:followup alpha MOCK:say again")
+	f.waitTurn(d, root, turn)
+	childTurn(from, codexapp.TurnCompleted)
+	time.Sleep(time.Second)
+	rejoin(proto.ChildCompleted, second)
+}
+
 // TestCodexShareChildrenServerLoss: the server is killed (SIGKILL) while a
 // child runs: no running claim survives (unknown), and after a restart the
 // child is not loaded and its rollout has no end: unknown, never running.
