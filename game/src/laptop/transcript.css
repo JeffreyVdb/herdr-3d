@@ -3694,3 +3694,180 @@
   }
 }
 /* ubuntu:end */
+
+/* #26: a native child's own conversation. The title becomes a breadcrumb from the worker (the way back, a control) to
+   the child, whose state wears the floor overview's pip: the same diamond, filled or ringed in the same status colours,
+   so the row you clicked on the board and the page you land on read as one thing. Read only: the prompt box's place
+   says so and offers the way back. The strip does not zoom: fixed sizes, as its other controls. */
+.tx-crumbs {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tx-crumb-back {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px 2px 4px;
+  border: 1px solid var(--ctl-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ctl-text-2);
+  font-weight: 650;
+}
+.tx-crumb-back:hover {
+  color: var(--ctl-text);
+  background: var(--ctl-hover);
+}
+.tx-crumb-worker,
+.tx-crumb-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tx-crumb-worker {
+  max-width: 16ch;
+}
+.tx-crumb-sep {
+  flex: none;
+  display: inline-flex;
+  color: var(--ctl-text-3);
+}
+.tx-crumb-here {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.tx-crumb-name {
+  font-weight: 750;
+  letter-spacing: 0.02em;
+}
+.tx-crumb-type {
+  flex: none;
+  color: var(--ctl-text-3);
+}
+.tx-crumb-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: 4px;
+  color: var(--ctl-text-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tx-crumb-pip {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 1.5px;
+  background: var(--pip, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--pip-ring, var(--pip, var(--idle)));
+  transform: rotate(45deg);
+}
+.tx-crumbs[data-state='running'] {
+  --pip: var(--working);
+}
+.tx-crumbs[data-state='completed'] {
+  --pip: var(--done);
+}
+.tx-crumbs[data-state='idle'] {
+  --pip-ring: var(--idle);
+}
+.tx-crumbs[data-state='shut_down'] {
+  --pip-ring: var(--asleep);
+}
+.tx-crumbs[data-state='interrupted'] .tx-crumb-pip {
+  background: linear-gradient(135deg, var(--waiting) 50%, transparent 50%);
+  box-shadow: inset 0 0 0 1.5px var(--waiting);
+}
+.tx-crumbs[data-state='unknown'] .tx-crumb-pip {
+  box-shadow: none;
+  outline: 1.5px dashed var(--ctl-text-3);
+  outline-offset: -1.5px;
+}
+.tx-crumbs[data-state='unknown'] .tx-crumb-state {
+  color: var(--ctl-text-3);
+}
+/* Running: the pip breathes, as a working worker's light does (still with reduced motion). */
+.tx-crumbs[data-state='running'] .tx-crumb-pip {
+  animation: tx-crumb-live 1.6s ease-in-out infinite alternate;
+}
+@keyframes tx-crumb-live {
+  to {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tx-crumbs[data-state='running'] .tx-crumb-pip {
+    animation: none;
+  }
+}
+.tx[data-child] .tx-prompt {
+  display: none;
+}
+.tx-child-foot {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--ctl-line);
+  background: var(--ctl-bar);
+  color: var(--ctl-text-2);
+  font-family: var(--ctl-font);
+  font-size: 12px;
+}
+.tx-child-back {
+  padding: 4px 12px;
+  border: 1px solid var(--ctl-border);
+  border-radius: 6px;
+  background: var(--ctl-well);
+  color: var(--ctl-text);
+  font-weight: 650;
+}
+.tx-child-back:hover {
+  background: var(--ctl-hover);
+}
+.tx-older {
+  display: block;
+  margin: 4px auto 12px;
+  padding: 4px 14px;
+  border: 1px solid var(--tx-line, var(--ctl-border));
+  border-radius: 999px;
+  background: transparent;
+  color: var(--tx-text-2);
+  font-size: calc(12px * var(--tx-k, 1));
+}
+.tx-older:hover:not(:disabled) {
+  color: var(--tx-text);
+}
+.tx-older:disabled {
+  cursor: progress;
+}
+.tx-older[hidden] {
+  display: none;
+}
+/* A child's empty timeline says why: opening, not written yet, or none at all. */
+.tx-empty[data-child] {
+  max-width: 46ch;
+  margin: 0 auto;
+}
+.tx-empty-title {
+  margin: 0 0 6px;
+  color: var(--tx-text-2);
+  font-weight: 650;
+}
+.tx-empty-body {
+  margin: 0;
+  color: var(--tx-text-3);
+  text-wrap: pretty;
+}

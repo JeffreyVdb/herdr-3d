@@ -341,3 +341,95 @@ describe('transcript mode with the real render module', () => {
     r.mode.stand();
   });
 });
+
+describe('#26: a child’s conversation with the real render module', () => {
+  it('the board opens a child: its breadcrumb, its own items live, pending words, and back to the worker’s view as it was', async () => {
+    const sent: Sent[] = [];
+    const send = (t: string, args: unknown) => new Promise<CommandResult>((resolve) => sent.push({ t, args: args as Record<string, unknown>, resolve }));
+    const root = document.createElement('div');
+    document.body.append(root);
+    layer = root;
+    const status: Array<[string, string | null]> = [];
+    let watches: TranscriptWatches | null = null;
+    const mode = new TranscriptMode({
+      send,
+      feed: () => null,
+      renderer: loadRenderer,
+      overlay: () => {
+        const box = document.createElement('div');
+        box.hidden = true;
+        root.append(box);
+        return box;
+      },
+      pane: (box) => {
+        const p = document.createElement('div');
+        p.className = 'seat-pane';
+        box.append(p);
+        return p;
+      },
+      storage: null,
+      status: (kind, text) => status.push([kind, text]),
+      modeChanged: () => {},
+      childChanged: () => sync(),
+    });
+    watches = new TranscriptWatches({
+      send,
+      sink: {
+        reset: (id, ack, child) => (child ? mode.resetChild(id, child, ack) : mode.reset(id, ack)),
+        push: (id, items, updates, head, child) => (child ? mode.pushChild(id, child, items, updates, head) : mode.push(id, items, updates, head)),
+        stop: () => {},
+      },
+      failed: () => {},
+      closed: () => {},
+      now: () => 0,
+    });
+    const sync = () => {
+      const child = mode.child;
+      watches?.sync(new Set(['w1']), child ? [{ id: 'w1', child }] : []);
+    };
+    const last = (t: string) => [...sent].reverse().find((s) => s.t === t) as Sent;
+    mode.place({ left: 0, top: 0, width: 900, height: 700 });
+    mode.sit('w1', 'Nibble', true, 'claude');
+    sync();
+    last('transcript.watch').resolve({ ok: true, data: { harness: 'claude', session: 's1', version: '2.1.0', cursor: 'c:1', has_more: false, pending: false, items: CLAUDE } });
+    await settle(() => root.querySelectorAll('.tx-item').length > 0);
+    const parentView = root.querySelector('.tx') as HTMLElement;
+    const parentRows = parentView.querySelectorAll('.tx-item').length;
+
+    const ada = { id: 'ch_ada', generation: 4, provider: 'claude' };
+    mode.openChild(ada, { name: 'Explore', type: null, description: 'Check the other seated overlays', state: 'running', since: 'running 2m' });
+    expect(last('transcript.watch').args).toEqual({ id: 'w1', limit: 200, child: ada });
+    await settle(() => root.querySelectorAll('.tx').length === 2);
+    const childView = [...root.querySelectorAll<HTMLElement>('.tx')].find((v) => v !== parentView) as HTMLElement;
+    // The breadcrumb: back to the worker (a control), the child with its state; no prompt box; why it is empty.
+    const back = childView.querySelector<HTMLButtonElement>('.tx-crumb-back');
+    expect(back?.textContent).toBe('Nibble');
+    expect(back?.getAttribute('aria-label')).toBe('Back to Nibble’s conversation');
+    expect(childView.querySelector('.tx-crumb-here')?.getAttribute('aria-current')).toBe('page');
+    expect(childView.querySelector('.tx-crumb-name')?.textContent).toBe('Explore');
+    expect(childView.querySelector('.tx-crumbs')?.getAttribute('data-state')).toBe('running');
+    expect(childView.querySelector('.tx-crumb-state')?.textContent).toBe('running 2m');
+    expect(childView.querySelector('.tx-title')).toBeNull();
+    expect(childView.querySelector('.tx-child-foot')?.textContent).toContain('Back to Nibble');
+    expect(childView.querySelector('.tx-empty')?.textContent).toBe('Opening Explore’s conversation…');
+    expect((parentView.parentElement as HTMLElement).hidden).toBe(true);
+
+    // Not written yet: said so. Then it appears, live on the same watch.
+    last('transcript.watch').resolve({ ok: true, data: { harness: 'claude', session: '', version: '', cursor: 'c:1', has_more: false, pending: true, availability: 'pending', items: [] } });
+    await settle(() => childView.querySelector('.tx-empty')?.textContent?.startsWith('Explore hasn’t written anything yet') === true);
+    watches.items({ t: 'transcript.items', id: 'w1', child: ada, items: SUBAGENT, updates: [], harness: 'claude', session: 'aa37', version: '2.1.0', cursor: 'c:1', has_more: false, pending: false, availability: 'available' });
+    await settle(() => childView.querySelectorAll('.tx-item').length > 0);
+    expect(childView.querySelector<HTMLElement>('.tx-empty')?.hidden).toBe(true);
+    expect(parentView.querySelectorAll('.tx-item').length).toBe(parentRows);
+
+    // Back: the child's watch goes, the worker's view is the one it was.
+    back?.click();
+    await settle(() => root.querySelectorAll('.tx').length === 1);
+    expect(root.querySelector('.tx')).toBe(parentView);
+    expect((parentView.parentElement as HTMLElement).hidden).toBe(false);
+    expect(parentView.querySelectorAll('.tx-item').length).toBe(parentRows);
+    expect(last('transcript.unwatch').args).toEqual({ id: 'w1', child: ada });
+    expect(watches.ids()).toEqual(['w1']);
+    mode.stand();
+  });
+});

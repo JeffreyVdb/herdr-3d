@@ -32,6 +32,7 @@ import { fileRefPath } from './fileRef';
 import { clipboardCopy, FILE_REF, FileRefPopover, markFileRefs } from './fileRefPopover';
 import { chipSecretRefs } from '../ui/secretChips';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
+import { ChildBar, type ChildViewHost, type ChildViewState } from './transcriptChild';
 import { reviewKey } from '../ui/secretsFlow';
 import { keyName } from '../input/shortcuts';
 
@@ -122,6 +123,11 @@ export interface TranscriptRenderHost {
   cwd?(): string | null;
   /** #31: puts a file reference's path on the clipboard, false when refused (none: the browser's clipboard). */
   copy?(text: string): Promise<boolean>;
+  /**
+   * #26: the view is one of the worker's native children's conversation (none: the worker's own). Read only: no prompt
+   * box, cards or context meter; its bar is a breadcrumb back to the worker (`transcriptChild.ts`).
+   */
+  child?: ChildViewHost | null;
 }
 
 export interface BlockedQuestion {
@@ -166,6 +172,8 @@ export interface TranscriptView {
   /** The keyboard to the timeline (its scroll keys work at once). */
   focus(): void;
   focusPrompt(): void;
+  /** #26: a child's view: its state, its log's availability and whether older items can be shown. */
+  setChild?(s: ChildViewState): void;
   destroy(): void;
 }
 
@@ -1011,6 +1019,8 @@ class Transcript implements TranscriptView {
   private readonly sending: SendGate;
   private readonly offSending: () => void;
   private readonly empty: HTMLDivElement;
+  /** #26: a child's breadcrumb, read-only note and older items' button (null: the worker's own view). */
+  private readonly childBar: ChildBar | null = null;
 
   private following = true;
   /** Rows that came in while you were scrolled up; the chip counts the ones that show (#59: recounted on each toggle). */
@@ -1226,6 +1236,28 @@ class Transcript implements TranscriptView {
       cwd: () => host.cwd?.() ?? null,
       copy: (t) => (host.copy ? host.copy(t) : clipboardCopy(t)),
     });
+    if (host.child) {
+      // #26: the breadcrumb takes the title's place; the note and the way back take the prompt box's.
+      const child = host.child;
+      this.childBar = new ChildBar(
+        {
+          ...child,
+          // Older items go above what you read: it stays where it was on the screen.
+          loadOlder: async () => {
+            const below = this.scroller.scrollHeight - this.scroller.scrollTop;
+            await child.loadOlder();
+            this.scroller.scrollTop = this.scroller.scrollHeight - below;
+          },
+        },
+        this.empty,
+        (text) => (this.live.textContent = text),
+      );
+      this.titleEl.replaceWith(this.childBar.el);
+      this.form.hidden = true;
+      this.form.after(this.childBar.foot);
+      this.scroller.prepend(this.childBar.older);
+      this.root.dataset.child = '';
+    }
     this.unprefs = this.prefs.onChange((what) => this.applyPrefs(what));
     this.applyPrefs(null);
     this.updateCounts();
@@ -1556,8 +1588,12 @@ class Transcript implements TranscriptView {
   }
 
   focusPrompt(): void {
-    if (this.destroyed || this.promptOff) return;
+    if (this.destroyed || this.promptOff || this.childBar) return;
     this.composer.focus();
+  }
+
+  setChild(s: ChildViewState): void {
+    if (!this.destroyed) this.childBar?.set(s);
   }
 
   destroy(): void {

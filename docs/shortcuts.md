@@ -109,7 +109,7 @@ Every key goes to the terminal or the conversation, except these. Esc stands you
 
 | Keys | Does |
 | --- | --- |
-| `Esc` | Stand up |
+| `Esc` | Stand up (from a subagent’s conversation: back to its worker’s first) |
 | `Ctrl` + `Esc` | Terminal or conversation |
 | `Ctrl/⌘` + `P` | The command palette (the terminal no longer gets Ctrl+P; ↑ is still previous history) |
 | `Ctrl/⌘` + `Shift` + `Space` | The dictation bar (the terminal does not get this chord) |

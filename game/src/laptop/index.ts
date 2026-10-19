@@ -2,7 +2,8 @@ import { codexNotice, type CodexNotice } from '../world/codexServer';
 import * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
 import type { CommandCatalogs } from './commandCatalog';
-import type { Ask, CommandArgs, CommandName, ConnMessage, HandoffCandidate, KeyItem } from '../net/protocol';
+import type { Ask, Child, CommandArgs, CommandName, ConnMessage, HandoffCandidate, KeyItem, TranscriptChild } from '../net/protocol';
+import { childSinceText } from '../world/overview';
 import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
 import { PrintMeshes } from '../render/prints';
@@ -32,7 +33,7 @@ import { ImageFeeds, type ImageFeed } from './imageFeed';
 import { decodeBitmap, Prints, printsParam, PRINT_WATCH_LIMIT } from './prints';
 import { LaptopTerminal, LIVE_SIZE } from './terminal';
 import { createSeatTabs, FLIP_KEY } from './seatTabs';
-import { hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type OverlayRect, type SeatMode } from './transcriptMode';
+import { childEndText, hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type ChildInfo, type OverlayRect, type SeatMode } from './transcriptMode';
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
 import { Watches } from './watches';
 import type { PackupCheck } from '../ui/packupSend';
@@ -301,7 +302,8 @@ export class Laptops {
     this.transcript = new TranscriptMode({
       // #187: the conversation stays while its worker is away; its prompt box keeps the draft and what goes to the worker is refused (reading older items is not).
       send: (t, args) => (this.seat?.away && TO_WORKER.has(t) ? Promise.resolve({ ok: false, code: 'unavailable', message: this.seat.away }) : this.host.send(t, args)),
-      feed: (id) => this.feeds.get(id),
+      feed: (id, child) => this.feeds.get(id, child),
+      childChanged: () => this.syncWatches(), // #26: a child's watch, beside the worker's
       renderer: loadRenderer,
       imagesRenderer: loadImagesTab,
       tabs: (pick) => createSeatTabs(pick),
@@ -342,22 +344,24 @@ export class Laptops {
     this.transcripts = new TranscriptWatches({
       send: (t, args) => this.host.watch(t, args),
       sink: {
-        reset: (id, ack) => {
+        reset: (id, ack, child) => {
           // A new watch (or a new session after /clear): what the feed knew is stale.
-          this.feeds.peek(id)?.reset();
-          this.feeds.get(id).note(ack.items);
-          this.transcript.reset(id, ack);
+          this.feeds.peek(id, child)?.reset();
+          this.feeds.get(id, child).note(ack.items);
+          if (child) this.transcript.resetChild(id, child, ack);
+          else this.transcript.reset(id, ack);
         },
-        push: (id, items, updates, head) => {
-          this.feeds.get(id).note([...items, ...updates]);
-          this.transcript.push(id, items, updates, head);
+        push: (id, items, updates, head, child) => {
+          this.feeds.get(id, child).note([...items, ...updates]);
+          if (child) this.transcript.pushChild(id, child, items, updates, head);
+          else this.transcript.push(id, items, updates, head);
         },
-        stop: (id) => {
-          if (this.seat?.id !== id) this.feeds.drop(id);
+        stop: (id, child) => {
+          if (child ? this.transcript.child?.id !== child.id : this.seat?.id !== id) this.feeds.drop(id, child);
         },
       },
-      failed: (id, code, message) => this.onTranscriptFailed(id, code, message),
-      closed: (id, reason) => this.onTranscriptClosed(id, reason),
+      failed: (id, code, message, child) => (child ? this.onChildFailed(id, child, code, message) : this.onTranscriptFailed(id, code, message)),
+      closed: (id, reason, child) => (child ? this.onChildClosed(id, child, reason) : this.onTranscriptClosed(id, reason)),
       now: () => performance.now(),
     });
     // #59: the screens follow the preset once its font can draw, and the seated one the zoom.
@@ -583,6 +587,54 @@ export class Laptops {
     if (this.seat?.id !== id) return;
     // #187: a worker that left or a floor asleep keeps the conversation up (see `whyAway`); the watch waits for it.
     if (reason === 'session_changed' && this.transcript.mode !== 'terminal') this.host.seat.status('ok', `${this.seat.name} started a new session`);
+  }
+
+  // ---- #26: a native child's conversation ---------------------------------------------
+
+  /**
+   * Opens child `childId` of the worker you sit at in the transcript view (the floor overview's child row): its own
+   * conversation over the worker's, with the way back. False (the seat bar says why) when it cannot be.
+   */
+  openChild(childId: string): boolean {
+    const s = this.seat;
+    if (!s) return false;
+    const c = this.host.store.children.get(s.id, childId);
+    if (!c) {
+      this.host.seat.status('ok', childEndText('not_found', s.name)?.text ?? null);
+      return false;
+    }
+    const why = this.whyNoTranscript();
+    if (why !== null) {
+      this.host.seat.status('error', why);
+      return false;
+    }
+    this.transcript.openChild({ id: c.id, generation: c.generation, provider: c.provider }, childInfo(c, Date.now()));
+    return true;
+  }
+
+  /** The open child is the store's row of the same generation still (each frame); gone, back to its worker's view. */
+  private syncChild(id: string): void {
+    const t = this.transcript.child;
+    if (!t) return;
+    const c = this.host.store.children.get(id, t.id);
+    if (c && c.generation === t.generation) {
+      this.transcript.childSeen(childInfo(c, Date.now()));
+      return;
+    }
+    const replaced = this.host.store.children.generation(id) !== t.generation;
+    this.transcript.closeChild(childEndText(replaced ? 'stale' : 'not_found', this.seat?.name ?? 'its worker'));
+  }
+
+  private onChildFailed(id: string, child: TranscriptChild, code: string, message: string): void {
+    if (this.seat?.id !== id || this.transcript.child?.id !== child.id) return;
+    this.transcript.closeChild(childEndText(code, this.seat.name, message));
+  }
+
+  private onChildClosed(id: string, child: TranscriptChild, reason: string): void {
+    if (this.seat?.id !== id || this.transcript.child?.id !== child.id) return;
+    // Its log went (not_found) or a resync: watched again, its ack says what there is. Anything else ends it.
+    if (reason === 'resync' || reason === 'not_found') return;
+    this.transcript.closeChild(childEndText(reason, this.seat.name));
   }
 
   /** Where the monitor's glass is on the viewport (CSS px), between the top bar and the seat bar. */
@@ -886,7 +938,8 @@ export class Laptops {
 
   /**
    * M16: a keydown while you read the transcript. Nothing goes to the pane:
-   * Ctrl+Esc goes back to the terminal, Esc stands you up, Enter goes to the
+   * Ctrl+Esc goes back to the terminal, Esc stands you up (#26: from a
+   * child's conversation, back to its worker's first), Enter goes to the
    * prompt box, O opens the floor overview (#118); every other key
    * (scrolling, typing in the prompt box) is the transcript's own, as is a key
    * it already took (`defaultPrevented`).
@@ -901,8 +954,9 @@ export class Laptops {
     const mods = e.ctrlKey || e.metaKey || e.altKey || e.shiftKey;
     if (e.key === 'Escape' && !mods) {
       e.preventDefault();
-      // #110: Esc while the prompt is being checked cancels the send, nothing else.
-      if (!this.transcript.cancelCheck()) this.stand();
+      // #110: Esc while the prompt is being checked cancels the send, nothing else. #26: a child's conversation goes back
+      // to its worker's first; the next Esc stands you up.
+      if (!this.transcript.cancelCheck() && !this.transcript.closeChild()) this.stand();
     } else if (e.key === 'Enter' && !mods && !this.transcriptOwns(e.target)) {
       e.preventDefault();
       this.transcript.focusPrompt();
@@ -1111,6 +1165,7 @@ export class Laptops {
           this.transcript.handoffSeen(candidateOf(v.worker)); // #223
           this.transcript.codexSeen(v.worker.codex ?? null, status === 'working'); // #157: its async questions
           this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
+          this.syncChild(s.id); // #26
         }
       }
     }
@@ -1271,11 +1326,17 @@ export class Laptops {
     // M16: the transcript of the worker you sit at (not counted against the terminal watches), and a few items of the
     // desks that have prints (only their images matter).
     const tx = new Map<string, number>();
+    const kids: { id: string; child: TranscriptChild }[] = [];
     if (!this.whyNoTranscript()) {
       for (const id of this.prints.wants()) tx.set(id, PRINT_WATCH_LIMIT);
-      if (this.seat && !this.seat.away) tx.set(this.seat.id, WATCH_LIMIT);
+      if (this.seat && !this.seat.away) {
+        tx.set(this.seat.id, WATCH_LIMIT);
+        // #26: the child open over its conversation, beside it (the worker's own watch stays: its view waits underneath).
+        const child = this.transcript.child;
+        if (child) kids.push({ id: this.seat.id, child });
+      }
     }
-    this.transcripts.sync(tx);
+    this.transcripts.sync(tx, kids);
   }
 
   private moveCamera(cam: THREE.PerspectiveCamera, now: number): void {
@@ -1490,4 +1551,16 @@ export class Laptops {
     this.terms.clear();
     this.pool.length = 0;
   }
+}
+
+/** #26: what the seat shows of a child: its name as the overview has it (its type beside a nickname) and its state in words. */
+function childInfo(c: Child, now: number): ChildInfo {
+  const name = c.name ?? c.type ?? 'Subagent';
+  return {
+    name,
+    type: c.type && c.type !== name ? c.type : null,
+    description: c.description ?? null,
+    state: c.state,
+    since: childSinceText({ state: c.state, startedAt: c.started_at ?? null, endedAt: c.ended_at ?? null, lastActivityAt: c.last_activity_at ?? null }, now),
+  };
 }

@@ -1,5 +1,6 @@
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, ImageRef, TranscriptImageAck, TranscriptImagesAck, TranscriptItem } from '../net/protocol';
+import type { CommandArgs, ImageRef, TranscriptChild, TranscriptImageAck, TranscriptImagesAck, TranscriptItem } from '../net/protocol';
+import { targetKey } from './transcriptWatches';
 
 /**
  * M16 phase 2: the images of one worker's watched transcript, fetched by hash.
@@ -114,6 +115,8 @@ export class ImageFeed {
   constructor(
     readonly id: string,
     private readonly host: ImageFeedHost,
+    /** #26: the child whose transcript this is (its watch's images only: the bridge authorizes per watch); none, the worker's. */
+    readonly child?: TranscriptChild,
   ) {}
 
   /** The feed learned of new images (`note` of items with images): the lists are stale. */
@@ -221,7 +224,7 @@ export class ImageFeed {
       const cursors = new Set<string>();
       let before: string | undefined;
       for (;;) {
-        const r = await this.host.send('transcript.images', { id: this.id, limit: LIST_PAGE, ...(before ? { before } : {}) });
+        const r = await this.host.send('transcript.images', { id: this.id, limit: LIST_PAGE, ...(before ? { before } : {}), ...(this.child ? { child: this.child } : {}) });
         if (this.disposed) return [];
         // Another timeline began (a fresh watch): these pages are the old one's; list the new one instead.
         if (this.timeline !== timeline) return this.list();
@@ -291,7 +294,7 @@ export class ImageFeed {
 
   private request(hash: string, size: 'thumb' | 'full'): Promise<CommandResult> {
     const agent = this.agentOf.get(hash);
-    return this.host.send('transcript.image', { id: this.id, hash, size, ...(agent ? { agent } : {}) });
+    return this.host.send('transcript.image', { id: this.id, hash, size, ...(this.child ? { child: this.child } : agent ? { agent } : {}) });
   }
 
   private make(ack: TranscriptImageAck): ImageData {
@@ -404,28 +407,30 @@ export class ImageFeed {
   }
 }
 
-/** The feeds of the workers whose images are on screen. */
+/** The feeds of the workers whose images are on screen (#26: and of a child's transcript, by its target). */
 export class ImageFeeds {
   private readonly byId = new Map<string, ImageFeed>();
 
   constructor(private readonly host: ImageFeedHost) {}
 
-  get(id: string): ImageFeed {
-    let f = this.byId.get(id);
+  get(id: string, child?: TranscriptChild): ImageFeed {
+    const key = targetKey(id, child);
+    let f = this.byId.get(key);
     if (!f || f.isDisposed) {
-      f = new ImageFeed(id, this.host);
-      this.byId.set(id, f);
+      f = new ImageFeed(id, this.host, child);
+      this.byId.set(key, f);
     }
     return f;
   }
 
-  peek(id: string): ImageFeed | null {
-    return this.byId.get(id) ?? null;
+  peek(id: string, child?: TranscriptChild): ImageFeed | null {
+    return this.byId.get(targetKey(id, child)) ?? null;
   }
 
-  drop(id: string): void {
-    this.byId.get(id)?.dispose();
-    this.byId.delete(id);
+  drop(id: string, child?: TranscriptChild): void {
+    const key = targetKey(id, child);
+    this.byId.get(key)?.dispose();
+    this.byId.delete(key);
   }
 
   ids(): string[] {

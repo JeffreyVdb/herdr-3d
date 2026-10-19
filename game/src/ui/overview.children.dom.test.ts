@@ -113,8 +113,8 @@ describe('#24 child rows on the page', () => {
     expect(e?.querySelector('.ov-since .ov-doing')?.textContent).toBe('completed in 3m');
     expect(e?.querySelector('.ov-tx')?.textContent).toBe('transcript pending');
     expect(e?.querySelector('.ov-line .ov-text')?.textContent).toBe('No task description');
-    expect(e?.getAttribute('aria-label')).toBe('Subagent Subagent · Claude · completed in 3m · transcript pending: go to its worker');
-    expect(f?.getAttribute('aria-label')).toBe('Subagent Ada · worker · Codex · running 4m · transcript available: go to its worker');
+    expect(e?.getAttribute('aria-label')).toBe('Subagent Subagent · Claude · completed in 3m · transcript pending: open its conversation');
+    expect(f?.getAttribute('aria-label')).toBe('Subagent Ada · worker · Codex · running 4m · transcript available: open its conversation');
   });
 
   it('keeps the six states apart in words; unknown says so, with no time', () => {
@@ -150,7 +150,7 @@ describe('#24 child rows on the page', () => {
     expect(lines.map((l) => l.getAttribute('class'))).toEqual(['ov-wire-loose']);
   });
 
-  it('activation (Enter, click) goes to the worker that owns it until #26: goToChild(worker, child), the page closes', () => {
+  it('activation (Enter, click) opens the child’s own conversation at the worker that owns it (#26): goToChild(worker, child), the page closes', () => {
     const { ov, host } = setup();
     ov.open('top');
     rowEl('child:ch-f2')?.focus();
