@@ -6,6 +6,8 @@
 //   (`unsupported`); a change is a `codex_server.update` with the switch flat in it; the ack is the switch.
 // - #186: with `simfail=codex_unverified` (a Codex the shared server is not verified with), a Codex hire while the
 //   switch is on falls back as herdr-world's does: its ack and its worker carry `codex: {mode: 'legacy', note}`.
+// - #116: with `simfail=codex_direnv` (direnv is a mise shim with no version selected), the same hire falls back with
+//   herdr-world's one-line reason for it (the dir is the hire's cwd, `/home/u/repo` here).
 // Otherwise no worker is launched differently here: the hires stay the simulator's.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
@@ -25,16 +27,23 @@ export class CodexServerSim {
   private readonly h: CodexServerHost;
   private readonly available: boolean;
   private readonly unverified: boolean;
+  private readonly direnv: boolean;
 
-  constructor(h: CodexServerHost, available: boolean, unverified = false) {
+  constructor(h: CodexServerHost, available: boolean, unverified = false, direnv = false) {
     this.h = h;
     this.available = available;
     this.unverified = unverified;
+    this.direnv = direnv;
   }
 
   /** #186: how a hire of `harness` was launched (the ack's and the worker's `codex`), when it is not the usual way. */
   hire(harness: string): { mode: 'legacy'; note: string } | undefined {
-    if (!this.enabled || this.allowUnverified || !this.unverified || harness !== 'codex') return undefined;
+    if (!this.enabled || harness !== 'codex') return undefined;
+    // #116: an inactive mise shim refuses before the version is read, and "allow unverified" does not skip it.
+    if (this.direnv) {
+      return { mode: 'legacy', note: 'shared Codex server: direnv is installed through mise but has no version selected for /home/u/repo; started the usual way' };
+    }
+    if (this.allowUnverified || !this.unverified) return undefined;
     return {
       mode: 'legacy',
       note: 'shared Codex server: unsupported Codex version: "codex-cli 0.999.0" (supported: codex-cli 0.160.x, 0.161.x, 0.162.x or 0.163.x); started the usual way',

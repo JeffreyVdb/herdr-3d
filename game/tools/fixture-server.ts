@@ -25,7 +25,7 @@
 // changes_failed` for the next prompt / answer / changes (tools/fixture-panels.ts).
 // M6 crew: `simcrew=<ms>` walks a scripted freelancer through its lifecycle by
 // itself (tools/fixture-crew.ts; `sim.crew` steps it on demand). M10: `simlimits=ok|hot|reached|old|transcript|noplan|none` picks the
-// plan limits' readings (tools/fixture-limits.ts), `simfail=no_m10` plays a bridge without them. #155: `simfail=no_codex_run` a bridge that cannot start Codex workers' own servers, #186: `simfail=codex_unverified` one whose Codex hires fall back to the built-in server while the switch is on (tools/fixture-codex-server.ts). #51: `simmodels=<n>` adds n
+// plan limits' readings (tools/fixture-limits.ts), `simfail=no_m10` plays a bridge without them. #155: `simfail=no_codex_run` a bridge that cannot start Codex workers' own servers, #186: `simfail=codex_unverified` one whose Codex hires fall back to the built-in server while the switch is on (tools/fixture-codex-server.ts), #116: `simfail=codex_direnv` the same fall back with direnv's mise shim having no version selected. #51: `simmodels=<n>` adds n
 // Claude models to the hire options (a long model list). #74: `simzoom=old|single|split|headless` plays the bridge's pane zoom
 // (tools/fixture-screen.ts). #58: `simecho=<ms>` writes a prompt's `user` item to its
 // worker's transcript watch that long after the turn takes it (tools/fixture-panels.ts; absent: never).

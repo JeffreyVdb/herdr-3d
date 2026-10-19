@@ -113,12 +113,29 @@ test('the seat bar’s Codex notice fits a phone, and a wide window keeps its ro
 // #186: a Codex hire that asked for its own server and got Codex's built-in one (`simfail=codex_unverified`: a
 // codex-cli 0.999.0 the shared server is not verified with) is hired: a warning toast, with its own sign, that names the
 // version and what it costs, not the red of a failed hire.
-test('a hire that falls back to Codex’s built-in server is a warning, not an error', async ({ page }) => {
+// #116: so is one whose direnv is a mise shim with no version selected (`simfail=codex_direnv`), with copy that says
+// where to fix it and what the worker is left with, and none of mise's own lines.
+const FALLBACKS = [
+  {
+    name: 'a hire that falls back to Codex’s built-in server is a warning, not an error',
+    fail: 'codex_unverified',
+    text: /^Hired .* at Desk 15 .*Here they come\. No own Codex server: the shared Codex server is not verified with Codex 0\.999\.0 yet \(verified: 0\.160\.x, 0\.161\.x, 0\.162\.x or 0\.163\.x\)\. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript\.$/,
+    shot: 'hire-codex-fallback-warning',
+  },
+  {
+    name: 'a hire whose direnv has no mise version selected is a warning with a way out',
+    fail: 'codex_direnv',
+    text: /^Hired .* at Desk 15 .*Here they come\. No own Codex server: direnv is installed with mise, but no version of it is selected for this worker’s folder \(\/home\/u\/repo\)\. Select one for the bridge \(see docs\/git-worktrees\.md\)\. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript; send it home and hire a new one once that is fixed\.$/,
+    shot: 'hire-codex-direnv-warning',
+  },
+];
+for (const fb of FALLBACKS)
+test(fb.name, async ({ page }) => {
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   // Stay on the floor (#116 off), so the toast is in view for the shot.
   await page.addInitScript(() => localStorage.setItem('h3d.hire.goto', 'off'));
-  await openGame(page, 'demo-m4', '', 'play=none&sim=1&simms=150&simusage=0&simfail=codex_unverified');
+  await openGame(page, 'demo-m4', '', 'play=none&sim=1&simms=150&simusage=0&simfail=' + fb.fail);
   const section = await openSection(page);
   await section.getByRole('checkbox', { name: 'Give new Codex workers their own Codex server' }).check();
   await expect(section.locator('.settings-status')).toHaveText('On. The next Codex hire gets its own server.');
@@ -142,15 +159,13 @@ test('a hire that falls back to Codex’s built-in server is a warning, not an e
   await page.keyboard.press('Enter');
   await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
   const toast = page.locator('.toast');
-  await expect(toast).toHaveText(
-    /^Hired .* at Desk 15 .*Here they come\. No own Codex server: the shared Codex server is not verified with Codex 0\.999\.0 yet \(verified: 0\.160\.x, 0\.161\.x, 0\.162\.x or 0\.163\.x\)\. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript\.$/,
-  );
+  await expect(toast).toHaveText(fb.text);
   await expect(toast).toHaveAttribute('data-kind', 'warn');
   // Not colour alone: the warning's drawn sign.
   expect(await toast.evaluate((el) => getComputedStyle(el, '::before').maskImage || getComputedStyle(el, '::before').webkitMaskImage)).toContain('svg');
   // Clear of the limits plate, which the hire dialog folded and which is back now.
   const [tb, lb] = await Promise.all([toast.boundingBox(), page.locator('[data-hook="limits"]').boundingBox()]);
   expect(tb && lb && (tb.y >= lb.y + lb.height || tb.x + tb.width <= lb.x)).toBe(true);
-  await shot(page, 'hire-codex-fallback-warning');
+  await shot(page, fb.shot);
   clean();
 });

@@ -87,6 +87,50 @@ If the host's shell environment cannot be changed, [`mise exec -- <command>`](ht
 loads the worktree's config for one command and its children without shell activation. Use it as a fallback,
 for example `mise exec -- sh -c 'make setup && make lint && make shot'`.
 
+**direnv for the shared Codex server (#116).** A Codex hire with the shared-server switch on runs `direnv status --json` in
+the worker's folder before it starts the worker's own Codex server (it refuses a folder whose `.envrc` is not allowed).
+With direnv installed through mise and no version selected for that folder, mise's shim exits 1 with `No version is set
+for shim: direnv`. The bridge cannot tell whether the `.envrc` is allowed, so it refuses; the hire still works, on Codex's
+built-in server, and its laptop notice reads "direnv is installed with mise, but no version of it is selected for this
+worker's folder". Two places need a selected direnv:
+
+- **The bridge's environment.** The preflight runs inside `herdr-world`, in the worker's directory, with the bridge's
+  environment minus the `HERDR_*` and `CLAUDE*` variables (`MISE_*` stays). mise reads the config files of that directory
+  and its parents, so a worktree outside the main checkout's directories does not see the main checkout's `mise.local.toml`.
+- **The worker's pane.** The shared server is started from the worker's own pane and takes that pane's environment,
+  direnv's exports included (`codexapp.Launch`). If the pane's shell runs direnv's hook, direnv must resolve there too, for
+  the worker's folder. The bridge's check passing does not prove the pane's, so check from the worker's folder as below.
+
+Choose the narrowest option that covers both. Find the installed version first and check from the worker's folder:
+
+```sh
+mise ls direnv            # the installed versions
+cd <worker folder> && mise which direnv   # prints a path once a version is selected
+```
+
+1. **Per worktree**, in the ignored `mise.local.toml` from above: add `direnv@<installed>` to the `mise use --path
+   "$PWD/mise.local.toml" …` command. It needs no trust; it is only a `[tools]` entry. This only helps a folder that
+   already exists: a hire that makes a new worktree checks it before any such file could be there.
+2. **For every worktree in one folder**, including the ones hires create: a `mise.toml` holding only
+   `[tools]` / `direnv = "<installed>"` in the folder that holds them (herdr's are under `~/.herdr/worktrees/<repo>/`).
+   mise reads every parent directory's config, so each worktree below it, and both the bridge's check and the worker's
+   pane there, select that version; a `[tools]`-only file needs no trust. Do the same in a parent of the main checkout
+   if workers are hired there too.
+3. **For the bridge**, when you want one answer for the bridge's own checks: `systemctl --user edit herdr-world`, then
+   `[Service]` / `Environment=MISE_DIRENV_VERSION=<installed>`, and restart the service. This selects the version for the
+   bridge's process only; the worker's pane still needs option 1, 2 or 4.
+4. **For the whole host**, an explicit choice of yours: `mise use -g direnv@<installed>`. It affects every directory and
+   every agent on the host.
+
+herdr-3d never runs `mise use`, installs a tool, trusts a config or runs `direnv allow`: the selection is yours. mise's own
+diagnostic is not in the note or on the laptop; the bridge logs it at Warn, with the worker and its folder
+(`journalctl --user -u herdr-world`, look for "direnv has no version selected").
+
+**A worker that already fell back stays on the built-in server.** Its launch is recorded as `legacy`: fixing the tool
+selection, or switching the shared-server setting off and on, does not move it to its own server, and the bridge never
+migrates a running worker. After the selection is fixed, send that worker home and hire a new one with the shared-server
+setting on. Until then its async questions cannot be answered from the transcript.
+
 ## Rules
 
 - Never symlink or copy `node_modules` from another checkout. A later install in one tree would change the other.
