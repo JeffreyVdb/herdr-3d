@@ -373,7 +373,7 @@ floor with no workers and an `error`).
 | `name` | string | display name, unique among the floor's workers (see below) |
 | `desk_index` | int ≥ 0 | the worker's desk on its floor (see below) |
 | `harness` | string, optional | `claude`, `codex`, …: the `h3d_harness` token, else `agent_kind` when that is `claude` or `codex` |
-| `model`, `effort` | string, optional | the `h3d_model` / `h3d_effort` tokens (e.g. `claude-opus-5-5` / `xhigh`, `gpt-6-sol` / `high`) |
+| `model`, `effort` | string, optional | what the worker runs on, each field on its own (H3D-2): what the transcript of its **current** agent session says of it (`usage.model` / `usage.effort`, below), else what was reported: the hire (`worker.hire`'s record) or the `h3d_model` / `h3d_effort` tokens (e.g. `claude-opus-5-5` / `xhigh`, `gpt-6-sol` / `high`), else absent. Never the floor's hire defaults. |
 | `resume` | `pending` \| `confirmed` \| `fallback` \| `failed`, optional | only during and after a wake, for workers with an `agent_session`: how their agent came back (see [Wake and sleep](#wake-and-sleep)). Cleared by the next sleep and by a bridge restart. |
 | `hired_at` | int, optional | unix ms when the bridge hired this worker (`worker.hire`; stored). A client that first sees a worker with a recent `hired_at` (the game: under ~15 s) plays its arrival (M6b: it drops in to its chair; M4: it walked in). |
 | `branch` | string, optional | the checked-out branch of a worker in a linked worktree (`worktree.linked`), when known (read from the checkout's git `HEAD`; absent on a detached `HEAD`) |
@@ -400,6 +400,19 @@ floor with no workers and an `error`).
 
 `harness`, `model` and `effort` are remembered once seen: herdr drops tokens when it restarts and asleep floors have
 none, so the bridge keeps the last known value until a new one shows up. They are absent when never known.
+
+**What `model` and `effort` show (H3D-2).** The stored hire values (the `worker.hire` record, the tokens) are the
+*reported* ones; the transcript of the worker's current agent session, when it says something, is the *observed* one, and
+wins per field: a worker hired as `X high` whose session switched to `Y medium` shows `Y medium`, one whose transcript
+only names the model shows its model with the reported effort. A raw `herdr agent start` (a coordinator's workers) has
+no record and often no tokens, so its transcript is all there is. The observed values are never stored: the store keeps
+the reported ones (and a bridge restart reads the transcript again), the observed ones go when the worker's agent
+session changes (until the new transcript says anything, the reported ones show) and with its `usage`. A model id is
+shown as the hire catalog launches it (Claude's `[1m]` mark dropped; `<synthetic>` and unreadable ids are no evidence),
+an effort only when it is a plain level name. Changes arrive as `worker.upsert`, not `worker.usage`, since the usage
+event carries no worker fields. The transcript's sources: Codex's latest `turn_context` (`model`; `effort`, else
+`collaboration_mode.settings.reasoning_effort`); Claude Code's latest main-thread assistant message (`message.model`; the
+`effort` field that line carries, which Claude Code does not document: a line without it leaves the effort unknown).
 
 **Identity.** When a workspace appears (bridge start, herdr restart, reconnect), the bridge matches it to a stored worker
 by, in order: a pane-label marker `h3d-<short uuid>`; the native `agent_session` id; label + identity directory (only for
@@ -1629,7 +1642,7 @@ remote-tracking refs) and is audited like any command.
 | `choice`, `choice_source` | the harness/model/effort to pre-select: the floor's `default_hire` (`"floor_default"`), else the last choice hired on this floor (`"last"`, stored per floor in SQLite, table `floor_hire_last`), else `null` (`"none"`). A remembered choice no longer in `hire_options` is skipped. |
 | `label` | the next generated worker name (a name no worker of the floor owns or holds): the default label, and the new worker's name when the hire keeps it |
 | `git` | `null` when `cwd` is not in a git work tree. Else `repo_root` (the work tree's top level), `default_branch` (from `origin/HEAD`, else `main` / `master` when `origin/<that>` exists; `""` when unknown), `base_sha` and `base_time` (unix ms, commit time) of `origin/<default_branch>` **after** `git fetch origin`, `fetched` and, when the fetch failed (no `origin`, offline, …, bounded at 20 s), `fetch_error`. A failed fetch is not an error of `hire.prepare` (the base shown is then the last fetched one), but the dialog should warn: a worktree hire now would be refused with `fetch_failed`. A plain hire is unaffected. |
-| `herdr_instructions` | #95: the herdr hiring instructions for this floor, exactly as `worker.hire` with `herdr_instructions` adds them after a blank line: `run.start`'s placement line and floor line (`h3d_floor=<this floor id>`; a client from before floor ids gets the session's). The hire form shows them before Hire. A bridge from before #95 leaves it out. |
+| `herdr_instructions` | #95: the herdr hiring instructions for this floor, exactly as `worker.hire` with `herdr_instructions` adds them after a blank line: `run.start`'s placement line, floor line (`h3d_floor=<this floor id>`; a client from before floor ids gets the session's) and, since H3D-2, the agent line asking for `h3d_harness` / `h3d_model` / `h3d_effort`. The hire form shows them before Hire. A bridge from before #95 leaves it out. |
 | `capacity` | workers on this floor (`floor.count`, hires in flight included; a repository's idle main checkout is not a worker, see "Hidden main checkouts") and on every running floor the bridge watches (`host.count`), with the configured caps (`--warn-workers-per-floor` / `--max-workers-per-floor`, `--warn-workers` / `--max-workers`). A hire that would reach above `hard` is refused (`capacity`); above `soft` the dialog should warn. `load` is the host's 1-minute load average, CPU count and memory in use (`/proc`); absent when unreadable. |
 
 **`worker.hire`** hires a worker at a free desk:
@@ -1657,7 +1670,7 @@ remote-tracking refs) and is audited like any command.
 | `cwd` | absolute, existing directory; default as in `hire.prepare` |
 | `worktree` | `true`: hire into a new linked git worktree and branch of `cwd`'s repository (below); `cwd` must be in a git work tree with a known `origin/<default>` |
 | `prompt` | optional first task, 1–32768 bytes of UTF-8 without NUL, not starting with `--` (herdr's CLI would read it as a flag). Sent once the agent is ready. For Claude it is typed (#95, step 5): no control characters but line ends (`\r\n` and `\r` go as `\n`) and tabs (four spaces each), at most 32768 bytes as typed, else `bad_request`. The game sends pasted images as `[Image #n: <absolute path>]` markers in the text, after uploading them (`POST /upload`, above). #39: it is what the dialog's composer holds (`/skill`, `@path`, plain repository paths and URLs): for Codex the bridge rewrites it once, when it sends it (see [Completion before a hire](#completion-before-a-hire)). |
-| `herdr_instructions` | #95, optional: `true` appends a blank line and the herdr hiring instructions for the hire's floor (the floor after `floor`/`session` resolves, a virtual floor its own id) to `prompt`, in `run.start`'s order: the placement line, a blank line, the floor line. It needs a `prompt` (else `bad_request`). The whole composed prompt is held to `prompt`'s rules (size, typed for Claude), so a task that fits alone and not with the lines is `bad_request`; #39's Codex rewrite touches the typed task only, never the lines. Only to a bridge whose snapshot says `herdr_instructions` (see [Hire presets](#hire-presets)). |
+| `herdr_instructions` | #95, optional: `true` appends a blank line and the herdr hiring instructions for the hire's floor (the floor after `floor`/`session` resolves, a virtual floor its own id) to `prompt`, in `run.start`'s order: the placement line, a blank line, the floor line, a blank line, the agent line (H3D-2). It needs a `prompt` (else `bad_request`). The whole composed prompt is held to `prompt`'s rules (size, typed for Claude), so a task that fits alone and not with the lines is `bad_request`; #39's Codex rewrite touches the typed task only, never the lines. Only to a bridge whose snapshot says `herdr_instructions` (see [Hire presets](#hire-presets)). |
 | `handoff`, `stop_services` | reserved (#11, #14); refused like any unknown field |
 
 Capacity: a hire that would put the floor above `--max-workers-per-floor` or the host above `--max-workers` is
@@ -1946,6 +1959,8 @@ Team:
 Start every agent you hire in its own herdr workspace or tab, never in a split pane of your tab or of another agent's tab: a laptop shows a pane at its own size, and a fullscreen terminal is wanted.
 
 Also tag every herdr workspace you create with the token h3d_floor=<floor id>, in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor.
+
+Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: the floor shows them as that agent's model line.
 
 Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.
 
@@ -3162,6 +3177,7 @@ Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.
 | `cost_usd_est` | an API-equivalent **estimate** in USD, 6 decimals (below): standard API rates, not what a subscription costs; fast mode, batch, tool fees and discounts are not in it. The game labels it `≈$`. |
 | `priced` | `known`; `unknown_model` when some tokens are of a model the table does not know (priced as the most expensive model of that harness, the game flags it) or Claude Code's own cost says so; `none` while no model was seen |
 | `model` | the model the transcript reports last (Claude: the main transcript's last message; Codex: the last `turn_context`) |
+| `effort` | H3D-2: the reasoning effort the transcript reports last (Claude: the main thread's last assistant line that records one; Codex: the last `turn_context`'s). Absent when it records none. Additive: an older bridge does not send it. With `model` it is the worker's observed model and effort (see the worker's `model`, `effort`). |
 | `context_pct`, `context_window` | how full the context window is (below), 0–100 with one decimal, and the window used; `null` and 0 when unknown |
 | `context_tokens` | #101: the main thread's context in use, in tokens: what the next turn starts with, the same definition for Claude and Codex (below). 0 when unknown (no usage read yet, or just after a `/compact`): never a measured 0. Not `tokens`, which is cumulative. Additive: an older bridge does not send it (the game then shows the share and the window only). |
 | `context_window_estimated` | #101: `true` when `context_window` was **assumed** (the model table's, or its family's), `false`/absent when it was seen (a `[1m]` on the model, context above 200K) or is the agent's own (Codex). Additive, as above. |
@@ -3175,7 +3191,8 @@ Worker field **`usage`** (in snapshots and `worker.upsert`) and event **`worker.
   it, below) changes, on the first check after it: that usage was the old session's. The new session's comes as a
   `worker.usage` once its transcript is read (still at most once per 5 s; read in that same check, it replaces the old
   one directly). Workers without an `agent_session` have none (plain shells), except
-  a running Codex (below).
+  a running Codex (below). H3D-2: a usage whose `model` or `effort` changes what the worker shows as its own `model` and
+  `effort` goes out as a `worker.upsert` (which carries the usage too), not a `worker.usage`.
 - The bridge checks every worker's transcripts every 2 s, reading from a stored byte offset: complete lines only (an
   incomplete last line waits for the next read), so appending a line reads only that line. A file that shrank or was
   replaced is read again from the start and its session counted afresh. A transcript not found is looked for again at
@@ -5445,8 +5462,9 @@ hires as typed. The audit log keeps the prompt's length only (`prompt_bytes`), n
  "effort":"high","prompt":"For each pull request, spawn a subagent that merges it.","herdr_instructions":true}}
 ```
 
-The worker's first prompt is then the task, a blank line, the placement line, a blank line and `Also tag every herdr
-workspace you create with the token h3d_floor=v-43c5d831ba4c, …`.
+The worker's first prompt is then the task, a blank line, the placement line, a blank line, `Also tag every herdr
+workspace you create with the token h3d_floor=v-43c5d831ba4c, …`, a blank line and the agent line (`… the tokens
+h3d_harness, h3d_model and h3d_effort, …`, H3D-2).
 
 Stored in SQLite `hire_preset (id, name, name_key, floor, prompt, harness, model, effort, created_at, updated_at,
 herdr_instructions)`, `floor` NULL for a global one, with a unique index on (scope, `name_key`): the name case-folded

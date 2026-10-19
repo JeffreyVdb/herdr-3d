@@ -32,13 +32,22 @@ func floorLine(floor string) string {
 		", in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor."
 }
 
+// agentLine tells the orchestrator to tag the workspaces it creates with what
+// it starts their agents with (H3D-2). A raw `herdr agent start` carries no
+// hire record: the tokens are what the bridge then reports of the agent's
+// harness, model and effort until its transcript says what it runs on.
+const agentLine = "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, " +
+	"the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: " +
+	"the floor shows them as that agent's model line."
+
 // hireInstructions are the herdr hiring instructions for floor: where an
-// agent starts the agents it hires, and the floor to tag them with. run.start
+// agent starts the agents it hires, and the floor, harness, model and effort
+// to tag them with. run.start
 // puts them in an orchestrator's first prompt; #95 a worker.hire with
 // herdr_instructions (a hire preset's "Add herdr hiring instructions") adds
 // them after its prompt, and hire.prepare shows them.
 func hireInstructions(floor string) string {
-	return placementLine + "\n\n" + floorLine(floor)
+	return placementLine + "\n\n" + floorLine(floor) + "\n\n" + agentLine
 }
 
 // writeCodeSkill is the skill an orchestrator's first prompt runs.

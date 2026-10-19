@@ -127,6 +127,11 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   - codex: `-m gpt-6-sol|gpt-6-luna|gpt-6-astra -c model_reasoning_effort=low…max (+ultra sol/astra) --dangerously-bypass-approvals-and-sandbox`
   - Native args are not persisted by herdr → bridge stores harness/model/effort, `hired_at`, the desk, and the last
     choice per floor (the dialog's default when the floor has no `default_hire`).
+  - H3D-2: a worker's shown model/effort is observed over reported, per field: its current agent session's transcript
+    (`usage.model`/`usage.effort`, kept in the hub's `usage`/`usageAgent`, never stored) over the stored hire values or
+    `h3d_*` tokens (the hub's `reported`, what `persist` and `metaOf` see), else unknown. This is what shows the model of a
+    worker a coordinator started with a raw `herdr agent start`; `hireInstructions` also asks for `h3d_harness`/`h3d_model`/
+    `h3d_effort` as the reported fallback (decisions.md, H3D-2).
   - Trust dialog (verified live, herdr 0.9.0): both agents ask about a folder they have not seen, and a fresh worktree
     always is one. Claude's dialog makes `agent start` fail with `agent_not_ready` (`blocked`); Codex's is not detected
     (herdr says `idle`). `herdr worktree create --trust-repository` is herdr's own git trust and does not help. The

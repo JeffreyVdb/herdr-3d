@@ -82,6 +82,7 @@ type usageWorker struct {
 type usageUpdate struct {
 	id    string
 	usage *proto.Usage
+	agent string // H3D-2: the agent session herdr reported for the worker when it was read (usageWorker.agent)
 }
 
 // usageTracker maps workers to their agent sessions' transcripts and
@@ -256,7 +257,7 @@ func (tr *usageTracker) round(ctx context.Context, h *Hub) {
 		len(calls) > 0 {
 		pending, err := query(ctx, h, func() bool {
 			for _, u := range ups {
-				h.setUsage(u.id, u.usage)
+				h.setUsage(u.id, u.usage, u.agent)
 			}
 			for _, a := range asks {
 				h.setAsk(a.id, a.ask, a.resolved)
@@ -361,7 +362,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		}
 		if s == nil {
 			if w.shown { // no agent session any more: no usage
-				ups = append(ups, usageUpdate{id: w.id})
+				ups = append(ups, usageUpdate{id: w.id, agent: w.agent})
 			}
 			tr.throttle.forget(w.id)
 			tr.offerAsk(w)
@@ -394,12 +395,12 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		tr.offerHandoff(w, s)    // #223
 		if ok {
 			if pub, emit := tr.throttle.offer(w.id, u, now); emit {
-				ups = append(ups, usageUpdate{id: w.id, usage: &pub})
+				ups = append(ups, usageUpdate{id: w.id, usage: &pub, agent: w.agent})
 				continue
 			}
 		}
 		if clear {
-			ups = append(ups, usageUpdate{id: w.id})
+			ups = append(ups, usageUpdate{id: w.id, agent: w.agent})
 		}
 	}
 	for id := range tr.keys {
@@ -531,6 +532,7 @@ func (h *Hub) usageWorkers() []usageWorker {
 	for id := range h.usage {
 		if h.workers[id] == nil {
 			delete(h.usage, id)
+			delete(h.usageAgent, id) // H3D-2
 		}
 	}
 	for id := range h.asks { // #57
@@ -553,8 +555,11 @@ func (h *Hub) usageWorkers() []usageWorker {
 }
 
 // setUsage publishes a worker's new usage (worker.usage), or its usage
-// gone (nil: worker.upsert without it).
-func (h *Hub) setUsage(id string, u *proto.Usage) {
+// gone (nil: worker.upsert without it). agent is the agent session the
+// usage was read for. H3D-2: the usage is also the worker's observed model
+// and effort, so one that changes what the worker shows (shownModel) goes
+// out as a worker.upsert, which carries them, not a worker.usage.
+func (h *Hub) setUsage(id string, u *proto.Usage, agent string) {
 	w := h.workers[id]
 	if w == nil {
 		return
@@ -564,13 +569,18 @@ func (h *Hub) setUsage(id string, u *proto.Usage) {
 	}
 	next := *w
 	next.Usage = u
-	h.workers[id] = &next
 	if u == nil {
 		delete(h.usage, id)
+		delete(h.usageAgent, id)
+	} else {
+		h.usage[id], h.usageAgent[id] = u, agent
+	}
+	next.Model, next.Effort = h.shownModel(id, next.AgentSession)
+	h.workers[id] = &next
+	if u == nil || next.Model != w.Model || next.Effort != w.Effort {
 		h.emit(proto.Event{T: proto.EvWorkerUpsert, Worker: &next})
 		return
 	}
-	h.usage[id] = u
 	h.emit(proto.Event{T: proto.EvWorkerUsage, ID: id, Session: w.Session, Usage: u})
 }
 

@@ -3,7 +3,7 @@ import type { Snapshot, WorldEvent } from '../src/net/protocol';
 import { WorldStore } from '../src/world/store';
 import { loadFixture } from './fixture-server';
 import { SimWorld } from './fixture-sim';
-import { composePrompt, floorLine, ISSUE_STATUS_LINE, itemRef, PLACEMENT_LINE, runLabel, SIM_BUILD_TEAM } from './fixture-start';
+import { AGENT_LINE, composePrompt, floorLine, ISSUE_STATUS_LINE, itemRef, PLACEMENT_LINE, runLabel, SIM_BUILD_TEAM } from './fixture-start';
 
 type Msg = Record<string, unknown>;
 
@@ -38,7 +38,7 @@ function rig(fail?: string) {
 const last = (ms: Msg[]) => ms[ms.length - 1] as Msg;
 const data = (m: Msg | undefined) => (m?.t === 'ack' ? (m.data as Record<string, unknown>) : undefined);
 const ROLES = SIM_BUILD_TEAM.roles;
-const TEAM = ['Team:', '- coders: claude claude-opus-5-5, effort medium', '- reviewers: codex gpt-6-sol, reasoning high', '- ux reviewers: codex gpt-6-sol, reasoning high', '- researchers: codex gpt-6-sol, reasoning low', '', PLACEMENT_LINE, '', floorLine('herdr-3d')];
+const TEAM = ['Team:', '- coders: claude claude-opus-5-5, effort medium', '- reviewers: codex gpt-6-sol, reasoning high', '- ux reviewers: codex gpt-6-sol, reasoning high', '- researchers: codex gpt-6-sol, reasoning low', '', PLACEMENT_LINE, '', floorLine('herdr-3d'), '', AGENT_LINE];
 
 describe('composePrompt (contract 2.2)', () => {
   const url = 'https://github.com/JeffreyVdb/lab/issues/3';

@@ -39,7 +39,7 @@ func TestWorkerUsage(t *testing.T) {
 	w1 := worker("w1", "a", sess, "working")
 	w1.Harness = world.HarnessClaude
 	b.floor("s1", true, w1, worker("w2", "shell", "", "idle"))
-	ev := c.until(proto.EvWorkerUsage)
+	ev := c.untilFirstUsage()
 	if ev.Usage == nil || ev.Usage.Input != 1000 || ev.Usage.Tokens != 1010 || ev.Usage.Priced != proto.PricedKnown ||
 		ev.Usage.UpdatedAt == 0 || ev.Session != "s1" {
 		t.Fatalf("first usage = %+v", ev)
@@ -111,7 +111,7 @@ func TestUsageGoesWithItsAgentSession(t *testing.T) {
 	w := worker("w1", "a", oldID, "working")
 	w.Harness = world.HarnessClaude
 	b.floor("s1", true, w)
-	id := c.until(proto.EvWorkerUsage).ID
+	id := c.untilFirstUsage().ID
 
 	w.AgentSession = newID
 	b.floor("s1", true, w)
@@ -124,6 +124,22 @@ func TestUsageGoesWithItsAgentSession(t *testing.T) {
 	for _, sw := range b.connect(proto.Hello{}).snapshot().World.Workers {
 		if sw.ID == id && sw.Usage != nil {
 			t.Fatalf("session %s shows the old session's usage %+v", sw.AgentSession, sw.Usage)
+		}
+	}
+}
+
+// untilFirstUsage reads until a worker's first usage arrives: a worker.usage,
+// or (H3D-2: its transcript's model is what the worker shows now, which only
+// an upsert carries) a worker.upsert with the usage, returned as the former.
+func (c *client) untilFirstUsage() proto.Event {
+	c.t.Helper()
+	for {
+		ev := c.event()
+		switch {
+		case ev.T == proto.EvWorkerUsage:
+			return ev
+		case ev.T == proto.EvWorkerUpsert && ev.Worker.Usage != nil:
+			return proto.Event{T: proto.EvWorkerUsage, ID: ev.Worker.ID, Session: ev.Worker.Session, Usage: ev.Worker.Usage}
 		}
 	}
 }
