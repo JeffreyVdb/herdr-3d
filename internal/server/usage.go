@@ -353,8 +353,8 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		}
 		s := tr.sessions[w.id]
 		tr.syncTranscript(w, s, tr.keys[w.id])
-		tr.syncKidTranscripts(w, s) // #26
-		tr.wrapBefore(w)            // #83
+		tr.syncKidTranscripts(w, s)                          // #26
+		tr.wrapBefore(w)                                     // #83
 		tr.agentBefore(w)                                    // #224
 		if l := tr.lines[w.id]; l != nil && l.paste != nil { // #95
 			l.paste.sums = w.typed

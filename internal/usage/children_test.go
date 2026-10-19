@@ -108,7 +108,7 @@ func TestChildTap(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(sub, "agent-a1.jsonl"), "c1\n")
 	writeFile(t, filepath.Join(sub, "agent-a9.jsonl"), "z1\n") // not watched: listed with it, never tapped
-	s.Poll(t0.Add(time.Second))                                 // within SubagentRescan: listed for the watched one
+	s.Poll(t0.Add(time.Second))                                // within SubagentRescan: listed for the watched one
 	f, ok := s.Child("a1")
 	if !ok || f.Path != filepath.Join(sub, "agent-a1.jsonl") || f.File == nil || f.Next != 3 || f.HistoryStart != 0 {
 		t.Fatalf("child = %+v %v", f, ok)
