@@ -159,3 +159,79 @@ test('a fire updates the open dialog live; with it closed, a toast’s click ope
   await expect.poll(async () => (await list(page))?.attention.map((r) => r.id).includes(next)).toBe(false);
   clean();
 });
+
+// #66 schedule suggestions: Zippy starts with a finished rollout reply whose suggestion is the chip
+// (`simschedsuggest=on&simsuggest=<key>`, tools/fixture-schedsuggest.ts). Its click opens the form prefilled from it;
+// only Save schedules, and the chip goes. Its × dismisses it for good: a reload does not bring it back.
+const suggestSim = (key: string) => `${SIM}&simschedsuggest=on&simsuggest=${key}-${Date.now()}`;
+
+async function sitAtZippy(page: Page, params: string): Promise<{ w: Worker; tx: ReturnType<Page['locator']> }> {
+  await openGame(page, 'demo-m5', '', params);
+  const w = demoWorker('Zippy');
+  await onFloor(page);
+  expect(await page.evaluate((id) => window.__h3d.face(id), w.id)).toBe(true);
+  await frames(page, 3);
+  expect(await page.evaluate((id) => window.__h3d.sitAt(id), w.id)).toBe(true);
+  await frames(page, 20);
+  await seatMode(page, 'transcript');
+  return { w, tx: page.locator('.seat-transcript .tx') };
+}
+
+test('the suggestion chip opens the form prefilled; Save schedules it and the chip goes', async ({ page }) => {
+  const clean = watchErrors(page);
+  const { w, tx } = await sitAtZippy(page, suggestSim('save'));
+  const chip = tx.getByRole('button', { name: /^Schedule follow-up · tomorrow \d\d:45/ });
+  await expect(chip).toHaveCount(1);
+  // On the reply's row, beside Handoff, in place of the plain button.
+  await expect(tx.getByRole('button', { name: 'Schedule follow-up…' })).toHaveCount(0);
+  await expect(tx.locator('.tx-handoff').getByRole('button', { name: 'Handoff', exact: true })).toHaveCount(1);
+  await expect(tx.getByRole('button', { name: 'Dismiss the suggested follow-up' })).toHaveCount(1);
+  // The game told the bridge its zone on connect.
+  expect((await sent(page)).filter((c) => c.t === 'schedule_suggestions.zone')).toHaveLength(1);
+  await shot(page, 'h66-suggestion-chip');
+  await chip.click();
+  const form = page.getByRole('dialog', { name: 'Schedule a follow-up to Zippy' });
+  await expect(form).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.preparing)).toBe(false);
+  const f = await page.evaluate(() => window.__h3d.scheduleForm());
+  expect(f).toMatchObject({ title: 'Post-soak cleanup: Vector 0.59 rollout', handoff: 'transcript', harness: w.harness, cwd: w.cwd });
+  const tomorrow = new Date();
+  const due = Date.UTC(tomorrow.getUTCFullYear(), tomorrow.getUTCMonth(), tomorrow.getUTCDate() + 1, 10, 45);
+  expect(f?.due).toBe(due);
+  // Opening it scheduled nothing.
+  expect((await sent(page)).filter((c) => c.t === 'schedule.create')).toEqual([]);
+  await shot(page, 'h66-suggestion-form');
+  await form.getByRole('button', { name: 'File and schedule' }).click();
+  await expect(form).toBeHidden();
+  const create = (await sent(page)).find((c) => c.t === 'schedule.create');
+  expect(create?.args).toMatchObject({ title: 'Post-soak cleanup: Vector 0.59 rollout', due_at: due, source: { kind: 'suggestion', worker: w.id } });
+  expect(String(create?.args.prompt)).toContain('You are picking up the Vector 0.59 rollout');
+  // The bridge has it.
+  await expect.poll(async () => (await sent(page)).find((c) => c.t === 'schedule.create')?.ok).toBe(true);
+  await expect(tx.locator('.tx-sched-sug')).toHaveCount(0);
+  await expect(tx.getByRole('button', { name: 'Schedule follow-up…' })).toHaveCount(1);
+  clean();
+});
+
+test('the chip’s × dismisses it for good: a reload does not bring it back', async ({ page }) => {
+  const clean = watchErrors(page);
+  const params = suggestSim('dismiss');
+  const { tx } = await sitAtZippy(page, params);
+  await expect(tx.locator('.tx-sched-sug')).toHaveCount(1);
+  // Cancelling the form leaves it.
+  await tx.locator('.tx-sched-sug').click();
+  const form = page.getByRole('dialog', { name: 'Schedule a follow-up to Zippy' });
+  await expect(form).toBeVisible();
+  await form.locator('[data-key="cancel"]').click();
+  await expect(form).toBeHidden();
+  await expect(tx.locator('.tx-sched-sug')).toHaveCount(1);
+  await tx.getByRole('button', { name: 'Dismiss the suggested follow-up' }).click();
+  await expect(tx.locator('.tx-sched-sug')).toHaveCount(0);
+  await expect(tx.getByRole('button', { name: 'Schedule follow-up…' })).toHaveCount(1);
+  expect((await sent(page)).filter((c) => c.t === 'worker.dismiss_schedule_suggestion' && c.ok)).toHaveLength(1);
+  expect((await sent(page)).filter((c) => c.t === 'schedule.create')).toEqual([]);
+  const again = await sitAtZippy(page, params);
+  await expect(again.tx.getByRole('button', { name: 'Schedule follow-up…' })).toHaveCount(1);
+  await expect(again.tx.locator('.tx-sched-sug')).toHaveCount(0);
+  clean();
+});

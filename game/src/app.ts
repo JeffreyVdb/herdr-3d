@@ -1636,7 +1636,7 @@ export class App {
   private sendZone(): void {
     const st = this.store.scheduleSuggestions.state;
     const zone = this.timePrefs.timeZone ?? browserZone();
-    if (!st || st.zone === zone || this.conn.phase !== 'live') return;
+    if (!st || st.zone === zone) return;
     void this.send('schedule_suggestions.zone', { zone });
   }
 

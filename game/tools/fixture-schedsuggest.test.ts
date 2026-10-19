@@ -106,6 +106,8 @@ describe('fixture schedule suggestions', () => {
     expect(s?.message).toBe(r.snap().workers[0]?.handoff?.message);
     expect(rig({ schedSuggest: 'on', suggestKey: key }).sug('A')).toBeDefined(); // a reload: still open
     r.ack('worker.dismiss_schedule_suggestion', { id: 'A', suggestion: s?.id });
-    expect(rig({ schedSuggest: 'on', suggestKey: key }).sug('A')).toBeUndefined();
+    const again = rig({ schedSuggest: 'on', suggestKey: key });
+    expect(again.sug('A')).toBeUndefined();
+    expect(again.snap().workers[0]?.handoff).toBeDefined(); // the reply is still there
   });
 });

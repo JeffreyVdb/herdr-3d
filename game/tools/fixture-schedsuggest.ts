@@ -16,7 +16,7 @@
 //   too (after the create); `worker.prompt`, `sim.prompt_turn` and `sim.final` (the transcript went on) clear it;
 // - `simsuggest=<key>` starts Zippy (else the first Claude worker) with a finished reply and its suggestion. A
 //   suggestion dismissed or saved is remembered by the key, as a bridge's database would: a reload (a new connection)
-//   does not seed it again. The key keeps parallel tests apart.
+//   plays the reply again but not its suggestion. The key keeps parallel tests apart.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { ScheduleSuggestion, Worker } from '../src/net/protocol.ts';
@@ -137,12 +137,16 @@ export class SchedSuggestSim {
     this.h.emit(send, { t: 'schedule_suggestions.update', ...this.view() });
   }
 
-  /** `simsuggest=<key>`: Zippy's finished reply and its suggestion, unless the key's was dismissed or saved. In the snapshot: no event. */
+  /**
+   * `simsuggest=<key>`: Zippy's finished reply and its suggestion; once the key's was dismissed or saved, the reply only
+   * (a bridge restarted on the same transcript). In the snapshot: no event.
+   */
   seed(): void {
-    if (this.key === null || shared.get(this.key)?.closed) return;
+    if (this.key === null) return;
     const w = this.h.workers.find((x) => x.name === 'Zippy') ?? this.h.workers.find((x) => (x.harness ?? x.agent_kind) === 'claude');
     if (!w) return;
     this.h.final(w.id, SEED_REPLY);
+    if (shared.get(this.key)?.closed) return;
     w.schedule_suggestion = this.suggestion(w, { due_at: tomorrowAt1045(this.h.now()), title: SEED_TITLE, draft_prompt: SEED_PROMPT });
     this.seeded = w.id;
   }
