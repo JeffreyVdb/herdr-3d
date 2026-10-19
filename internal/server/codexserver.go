@@ -649,6 +649,10 @@ func (h *Hub) hireShared(ctx context.Context, op *hireOp, pane, dir string, a he
 		return legacy(fmt.Errorf("the path %s has characters the shared launch does not pass", dir))
 	}
 	if err := h.opts.CodexHost.Preflight(ctx, dir, op.codexPolicy); err != nil {
+		var du *codexapp.DirenvUnselectedError
+		if errors.As(err, &du) {
+			h.log.Warn("direnv has no version selected: the shared Codex server falls back", "worker", op.id, "dir", du.Dir, "detail", du.Detail)
+		}
 		return legacy(err)
 	}
 	sl := &sharedLaunch{id: op.id, session: op.session, pane: pane, agent: op.agent, agentDef: a, rec: rec, policy: op.codexPolicy}
