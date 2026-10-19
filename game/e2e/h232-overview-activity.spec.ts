@@ -3,7 +3,8 @@ import { frames, openGame, shot, watchErrors } from './game';
 
 // #232 on demo-m118's lab floor, its workers given these states on their way to the page (the frames the game sends are
 // kept): Poppy (Claude) investigating with a model's now line 2 minutes old; Juniper (Codex) testing, its model's line
-// 7 minutes old and its refresh failed; Sprout needs you while its AI line is pending; Basil working with no activity;
+// 7 minutes old and its refresh failed; Sprout needs you while its AI line waits for the daily cap (#119: a line only
+// pending shows the split-flap skeleton instead, m119-flaps); Basil working with no activity;
 // Radish idle; Turnip (a one-off worker) looking at an image, under a model's task line and a model's now line of the
 // bridge's full budget (100 runes). In Quiet and Ubuntu: the since column says what each does in plain words (or its
 // state), the sparkle sits by its line's label with the age quiet after the text, pending is quiet words, a failed
@@ -26,7 +27,7 @@ async function patch(page: Page): Promise<void> {
       activity: { kind: 'testing', detail: 'pnpm vitest run src/ui/overview.dom.test.ts', since: T },
       digest: { now: 'Round 1 of the lobby directory is out to code', now_source: 'llm', now_at: T - 7 * 60e3, now_status: { state: 'failed', reason: 'timeout' } },
     },
-    Sprout: { status: 'blocked', since: T - 4 * 60e3, activity: null, digest: { now: 'Pass 3 still has two blockers', now_source: 'recap', now_status: { state: 'pending' } } },
+    Sprout: { status: 'blocked', since: T - 4 * 60e3, activity: null, digest: { now: 'Pass 3 still has two blockers', now_source: 'recap', now_status: { state: 'pending', reason: 'daily_cap' } } },
     Basil: { status: 'working', since: T - 12 * 60e3, activity: null },
     Radish: { status: 'idle', since: T - 41 * 60e3, activity: null },
     Turnip: {
@@ -99,11 +100,11 @@ for (const theme of ['quiet', 'ubuntu'] as const) {
     }
     await expect(row('Poppy').locator('.ov-now .ov-age')).toHaveText('2m ago');
     await expect(row('Juniper').locator('.ov-now .ov-age')).toHaveText('7m ago');
-    // A failed refresh: the chip and Retry after the age; pending: quiet words, no sparkle (the line is the fallback).
+    // A failed refresh: the chip and Retry after the age; waiting: quiet words, no sparkle (the line is the fallback).
     await expect(row('Juniper').locator('.ov-now .ov-ai-state')).toHaveText('refresh failed');
     await expect(row('Juniper').locator('.ov-now .ov-retry')).toBeVisible();
     const pending = row('Sprout').locator('.ov-now .ov-ai-state--pending');
-    await expect(pending).toHaveText('AI pending');
+    await expect(pending).toHaveText('AI waiting');
     expect(await pending.evaluate((e) => getComputedStyle(e).borderTopWidth)).toBe('0px');
     expect(await row('Sprout').locator('.ov-ai').count()).toBe(0);
     // The time keeps its place at the column's right edge, row to row.
