@@ -865,7 +865,7 @@ and remember the last `seq` applied.
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
 | `activity.update` | `model_enabled`, `threshold`, `margin`, `daily_cap`, `calls_today`, `cache_size`, `state`, `classifier`, `env` | #98: "Classify unknown commands"' state changed (a setting, a call counted, the classifier's state); the whole state, flat in the event. Its `classifier` is a role's state (a string), not `ai.update`'s object: decode it by its `t` (see [Activity](#activity)) |
 | `digest.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `daily_cap`, `calls_today`, `reasoning_effort`, `max_tokens`, `reasoning`, `effort_stale` | #118: the floor overview summaries' state changed (a setting, a call counted, a passing test, the LLM's state); the whole state, flat in the event. Its `roles` has `llm` only: decode it by its `t` (see [Floor overview summaries](#floor-overview-summaries)) |
-| `notify.update` | `enabled`, `state`, `missing`?, `env`, `tested`, `events`, `quiet`, `freelancers`, `replies`, `channel`, `last_error`?, `dropped`? | #11: the Telegram notifications' state changed (a setting, the token, a pairing, a test, a delivery's failure or the next success); the whole state, flat in the event, never a token (see [Notifications](#notifications)) |
+| `notify.update` | `enabled`, `state`, `missing`?, `env`, `tested`, `events`, `quiet`, `freelancers`, `replies`, `mode`, `channel`, `last_error`?, `dropped`? | #11: the Telegram notifications' state changed (a setting, the token, a pairing, a test, a delivery's failure or the next success); the whole state, flat in the event, never a token (see [Notifications](#notifications)) |
 | `handoff_llm.update` | `enabled`, `state`, `missing`?, `roles`, `env`, `tested`, `input_bytes`, `max_tokens`, `reasoning_effort`, `reasoning`, `effort_stale`, `timeout_s`, `prompt_version`, `categories` | #9: the LLM handoffs' state changed (a setting, a passing test, the LLM's state or config); the whole state, flat in the event (see [LLM handoffs](#llm-handoffs)) |
 | `preset.upsert` | `preset` | a team preset was created, renamed or its roles changed (full object) |
 | `preset.removed` | `id` | a team preset was deleted (floors whose `last_preset` it was get a `floor.upsert` next) |
@@ -1037,7 +1037,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `digest.test` | `{}` | `{"ok", "reason"?, "samples": [{"kind": "task"\|"now", "line"?, "error"?, "diag"?}], "latency_ms"}` (`diag`: the call's sanitized [diagnostics](#floor-overview-summaries)) | `digest.update` when it changes `tested` |
 | `digest.retry` | `{"id"?: worker id}` | `{"retried": n}`: the failed lines of that worker (every worker without an id) are due again, their attempts counted anew; `incomplete` while the feature is off or the LLM not ready; `unknown_worker` (#174) | `worker.upsert` of the workers whose line status changed |
 | `notify.get` | `{}` | the notifications' state (see [Notifications](#notifications)) | — |
-| `notify.set` | `{"enabled"?: bool, "events"?: {"needs_you"?: bool, "done"?: bool}, "quiet"?: bool, "freelancers"?: bool, "replies"?: bool}` | its state; switching on needs a token (`not_configured`), a paired account (`not_paired`) and a delivered `notify.test` of both within 30 minutes (`test_required`); `env_locked` while the environment sets it. #13: switching `replies` on needs a token and a paired account (no test) | `notify.update` (before the ack) |
+| `notify.set` | `{"enabled"?: bool, "events"?: {"needs_you"?: bool, "done"?: bool}, "quiet"?: bool, "freelancers"?: bool, "replies"?: bool, "mode"?: "everything" \| "questions"}` | its state; switching on needs a token (`not_configured`), a paired account (`not_paired`) and a delivered `notify.test` of both within 30 minutes (`test_required`); `env_locked` while the environment sets it. #13: switching `replies` on needs a token and a paired account (no test). H3D-1: another `mode` is `bad_request` (a bridge before it refuses the field: `bad_request`, unknown field) | `notify.update` (before the ack) |
 | `notify.test` | `{}` | `{"ok": true, "latency_ms"}`: the test message reached Telegram for the paired account; else its delivery's code (`blocked`, `unauthorized`, `rate_limited`, `unreachable`, `timeout`, `provider_failed`) | `notify.update` when it changes `tested` or `last_error` |
 | `notify.token.set` | `{"key": bot token}` | its state, once Telegram's `getMe` accepted the token (`bad_request`: not shaped like one; `unauthorized`); another bot's token unpairs; `env_locked` when the environment gives the token. Audited as `{"key_given": true}` | `notify.update` (before the ack) |
 | `notify.token.clear` | `{}` | its state: the token and the paired account forgotten (`env_locked` as above) | `notify.update` (before the ack) |
@@ -5514,8 +5514,39 @@ while it is off.
   still the same done episode (cancelled when it leaves done; it settles again if it comes back). A freelancer's done
   only with `freelancers` on (off by default, as the inbox's). Waiting workers (#98) and asleep floors never notify.
   The inbox's read and dismissed rows (#106) are the browser's; the bridge ignores them.
-- **Once per episode**: an episode is the worker, needs-you or done, and its `since` (`ask.since`, else `followup.at`,
-  else `status_since`). What the bridge sees of a worker first (its start, a herdr session back) is known without a
+- **Questions only** (H3D-1, `mode` `questions`; the default `everything` is all of the above): only a worker's
+  pending question notifies: an `ask`, a `followup`, a permission or folder-trust menu its screen shows, or a
+  freelancer's report request, its `input_required` the message's text. Done, a wrap-up `needs_you`, an orchestrator
+  over its cap and a bare `blocked` send nothing (`events.done` and `freelancers` are kept, and do not apply). The
+  question is the message, with no alert before it: with `replies` on, its cards (below), the first ringing unless
+  `quiet`, the rest silent; a menu's card opens when the menu is read, though the blocked status before it sent
+  nothing. Without cards (`replies` off, a report request, a follow-up of more than 4 questions) its text is the
+  message: `<name> · <Question | Follow-up | Permission | Trust folder | Report request>`, each question with its
+  options (a menu: what it asks, what it is about, its choices; a report: its request, scrubbed, at most 1500
+  characters), then "Replies are off: answer in the game." (or, `replies` on, that a reply is typed into the worker);
+  a secret ask's says only "A question waits in the game (its answer is secret)." Whether anything that waited goes,
+  and how, is decided at the last moment, right before each message or card is sent, after every wait (parked by
+  its worker's minute or the send budget, queued, paced, between attempts, a rate limit's pause, between two cards of
+  a set): notifications, `events.needs_you` or the channel off, it is dropped; the mode changed, an alert that is
+  not a question is dropped; a question goes once, in the form the mode and `replies` say then (its cards, its text
+  with that ending, or the broader mode's alert and its cards). A question's card set whose first card went (it
+  rang) is not formed again: switched off, the rest of it is not sent; `replies` off, its cards end as replies off
+  and the questions not yet sent go as one silent text (`2 of 3` …, ending "Replies are off: answer in the game.");
+  the mode changed, the rest goes on, silent as it was. Cards after a broader mode's alert just stop.
+- **Once per episode**: an episode is the worker, needs-you or done, and (H3D-1) what it is about, in either mode: an
+  `ask` its `tool_use_id`, a `followup` its turn, a report request its `input_required` (a new one once the old was
+  resolved), a wrap-up its `armed_at`, an orchestrator over its cap its pass, a bare `blocked` status its
+  `status_since` (the blocked spell), done its `status_since`; a screen menu the decision it asks for (#106's
+  operation without its blocked spell: its kind, its choices' count and its lines) and the native call it was first
+  known for (a call known later is the same; another call under the same operation is a new decision), under
+  Questions only, and in either mode for a worker whose needs-you is not its blocked status (a report request, a cap,
+  a wrap-up; a bare block's menu belongs to its spell's episode). A menu asked again with the same screen and no
+  native call known cannot be told from the same one seen again, and sends nothing. The bridge never forgets an
+  episode a worker still shows (its ask, follow-up, report request, stuck wrap-up, cap, menu) and knows its latest 16
+  others, so the same unresolved question seen again with another `status_since`, activity line or redraw, or after
+  other questions, sends nothing; a menu episode that notified, seen again in another blocked spell, gets its card
+  back, silent. (The game's inbox still names its rows by `since`.)
+  What the bridge sees of a worker first (its start, a herdr session back) is known without a
   message, so a restart sends nothing old; so is an episode that starts while the feature, its event or the channel
   is off, or the floor sleeps: switching on later, or a floor waking, sends nothing old either.
 - **The message** (plain text, no link previews; `quiet` delivers it without a sound): the worker's name, the reason
@@ -5538,7 +5569,9 @@ while it is off.
   second bridge with that token: Telegram's 409) `conflict`, both retried with a backoff; an unused code ends as
   `{"state": "expired"}`. `notify.pair.cancel` stops it, `notify.unpair` forgets the account.
 - **Settings** (bridge-wide, SQLite `notify_settings`): `enabled`, `events {"needs_you", "done"}`, `quiet`,
-  `freelancers`, `replies` (#13, off by default, apart from `enabled`: no environment override). `HERDR_WORLD_NOTIFY_ENABLED` / `--notify-enabled` (`true` / `false`) wins over the stored switch and
+  `freelancers`, `replies` (#13, off by default, apart from `enabled`: no environment override), `mode` (H3D-1:
+  `everything`, the default and what a setting saved before it reads as, or `questions`; a game that does not know
+  it reads `everything`). `HERDR_WORLD_NOTIFY_ENABLED` / `--notify-enabled` (`true` / `false`) wins over the stored switch and
   lists `enabled` in `env` (`env_locked`); it needs no test, the channel must still be ready. Otherwise switching on
   needs a token, a paired account and a `notify.test` delivered with them in the last 30 minutes (`tested`).
 - **State**: `off`; `incomplete` (on, `missing` lists `token` and/or `recipient`: nothing is sent); `ready`; `blocked`
@@ -5638,8 +5671,13 @@ while it is off.
   is dropped (`notify.send` code `obsolete`). A needs-you alert held by its worker's minute still lets its card go.
   Silent messages count. A restart starts no burst: workers first seen are known silently and nothing waiting
   survives it.
-- **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "attempts", "status"?, "code"?}`
-  (#106: `code` `obsolete`, an alert dropped unsent as its episode ended),
+- **Audit**: the bridge's own rows, client `bridge`: `notify.send` `{"id", "kind", "reason"?, "about"?, "via"?,
+  "cards"?, "attempts", "status"?, "code"?}` (#106: `code` `obsolete`, an alert dropped unsent as its episode ended;
+  H3D-1: `reason` the message's reason, `about` what the episode is about: `ask`, `followup`, `menu`, `report`,
+  `wrapup`, `review_cap`, `blocked`, `done`; `via` `cards` when a Questions only question went as its cards alone
+  (no attempts, `cards` how many: those sent, when its set stopped part way), `question` when its text was the
+  message (the rest of a stopped set too: a row of its own); `cards` on an alert how many of its
+  question's cards were open once its own went: a menu read later is on its `notify.menu` row),
   `notify.pair` `{"outcome": "paired" | "cancelled" | "expired", "ignored"?, "errors"?, "status"?}` and (#13)
   `notify.reply` `{"id"?, "text_bytes", "text_runes", "outcome"}` (`sent`, else the refusal: `not_a_reply`,
   `no_text`, `relayed`, `stale`, `too_long`, `unknown`, `rate_limited`, `ask`, `gone`, `invalid_state`, `busy`,
@@ -5654,9 +5692,10 @@ while it is off.
   (`answered`, `unresolved`, `replaced`, `gone`, `replies_off`; `failed`, an error: not delivered): where its identity
   was from, whether its approving choices were withheld, how often its hash changed under one operation, how many
   operations its blocked spell asked about; `notify.limit` `{"id", "kind": "alert" | "cards", "cause": "cooldown" |
-  "budget" | "worker_cards", "coalesced"?, "outcome": "sent" | "dropped"}` when something the send budget held goes
-  or is dropped, with how many later states it stood for. Never a message's text, an answer, a label, a command, a
-  hash, a code, a token or a Telegram id.
+  "budget" | "worker_cards", "coalesced"?, "outcome": "sent" | "dropped" | "returned"}` when something the send budget
+  held goes or is dropped, with how many later states it stood for (H3D-1: `returned`, a question's cards that could no
+  longer be its message, `replies` or the mode changed, handed back to go as they say now). Never a message's text,
+  an answer, a label, a command, a hash, a code, a token or a Telegram id.
 
 ### Host stats
 

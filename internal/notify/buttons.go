@@ -214,11 +214,14 @@ func menuID(m *Menu) string {
 func cardID(m *Menu) string { return menuID(m) + "|" + m.Native }
 
 // menuSeen is a worker's screen menu as the loop saw it (#88): what its
-// card shows, and the blocked spell (status_since) it is of.
+// card shows, and the blocked spell (status_since) it is of; (H3D-1) the
+// episode it is ("": its blocked spell's, a bare block's in the broader
+// mode).
 type menuSeen struct {
 	menu  *Menu
 	name  string
 	since int64
+	ep    string
 }
 
 // menuOf is what an observation's menu card would show (nil: it asks
@@ -491,7 +494,7 @@ func (s *Service) seen(ctx context.Context, id, key string, menu *menuSeen, bloc
 		case ss.kind == kindMenu:
 			// What it asks now opens its own card first (ending this one as
 			// replaced), unless it gets none now: then this one ends.
-			s.openMenu(ctx, id)
+			s.openMenu(ctx, id, s.questionsOnly(), false)
 			if s.bt.of(id) == ss {
 				s.endMenu(ctx, ss, "")
 			}
@@ -500,7 +503,7 @@ func (s *Service) seen(ctx context.Context, id, key string, menu *menuSeen, bloc
 			s.closeCards(ctx, ss, CardInGameText)
 		}
 	}
-	s.openMenu(ctx, id)
+	s.openMenu(ctx, id, s.questionsOnly(), false)
 }
 
 // moved takes a menu's new look of the same operation (#106): its hash,
@@ -587,18 +590,24 @@ func (s *Service) releaseCards(ctx context.Context) {
 		}
 		delete(s.bt.parked, id)
 		var sent bool
-		if p.alert.Menu != nil {
-			sent = s.openMenu(ctx, id)
-		} else {
-			sent = s.openCards(ctx, p.alert)
+		ok, back := s.rings(p.alert) // H3D-1: the gates and the form as they are now
+		switch {
+		case !ok:
+		case p.alert.Menu != nil:
+			sent, back = s.openMenu(ctx, id, p.alert.Ring, p.alert.tracked)
+		default:
+			sent, back = s.openCards(ctx, p.alert)
 		}
 		if again := s.bt.parked[id]; again != nil {
 			again.coalesced += p.coalesced // parked again: still the same wait
 			continue
 		}
 		row := limitAudit{ID: id, Kind: "cards", Cause: p.cause, Coalesced: p.coalesced, Outcome: "dropped"}
-		if sent {
+		switch {
+		case sent:
 			row.Outcome = "sent"
+		case back:
+			row.Outcome = "returned"
 		}
 		s.audit(ctx, AuditLimit, row, nil)
 	}
@@ -619,7 +628,9 @@ func (s *Service) auditMenu(ctx context.Context, ss *session, outcome string) {
 
 // rang takes a needs-you notification that went without cards of its own
 // (#88): the worker's menu of that blocked spell gets its card, now or
-// once the screen is read.
+// once the screen is read. H3D-1: a Ring one's card is the notification
+// (it rings); a menu episode's seen again in another spell gets its card
+// back silent.
 func (s *Service) rang(ctx context.Context, a Alert) {
 	if _, ok := s.bt.rang[a.WorkerID]; !ok && len(s.bt.rang) >= 256 {
 		for id := range s.bt.rang {
@@ -631,24 +642,27 @@ func (s *Service) rang(ctx context.Context, a Alert) {
 	if sp := s.bt.rang[a.WorkerID]; sp == nil || sp.since != a.Since {
 		s.bt.rang[a.WorkerID] = &spell{since: a.Since}
 	}
-	s.openMenu(ctx, a.WorkerID)
+	s.openMenu(ctx, a.WorkerID, a.Ring, a.tracked)
 }
 
 // openMenu opens worker id's menu card (#88) when the loop saw its menu and
 // the notification of the same blocked spell went, once an operation
-// (openCards: replies on, not open already).
-func (s *Service) openMenu(ctx context.Context, id string) bool {
+// (openCards: replies on, not open already). H3D-1: ring: the card is the
+// notification (Questions only): it rings; tracked: for the tracker's own
+// alert of its episode (back: handed back to the loop, openCards').
+func (s *Service) openMenu(ctx context.Context, id string, ring, tracked bool) (sent, back bool) {
 	m := s.bt.menus[id]
 	sp := s.bt.rang[id]
 	if sp == nil || m == nil || sp.since != m.since || slices.Contains(sp.carded, cardID(m.menu)) {
-		return false
+		return false, false
 	}
 	sp.saw(menuID(m.menu))
-	if !s.openCards(ctx, Alert{WorkerID: id, Name: m.name, Kind: KindNeedsYou, Since: m.since, Menu: m.menu}) {
-		return false
+	a := Alert{WorkerID: id, Name: m.name, Kind: KindNeedsYou, Reason: ReasonNeedsYou, About: aboutMenu, Since: m.since, Menu: m.menu,
+		Key: m.ep, Asks: m.ep != "", Question: ring, Ring: ring, tracked: tracked}
+	if sent, back = s.openCards(ctx, a); sent {
+		sp.card(cardID(m.menu))
 	}
-	sp.card(cardID(m.menu))
-	return true
+	return sent, back
 }
 
 // repliesOff edits every open card to say replies are off.
@@ -683,16 +697,40 @@ func newToken() string {
 	return hex.EncodeToString(b)
 }
 
+// carded is how many cards of what alert a asks are open now (H3D-1: its
+// notify.send row's): its ask's or follow-up's, else its blocked spell's
+// menu's.
+func (s *Service) carded(a Alert) int {
+	ss := s.bt.of(a.WorkerID)
+	switch {
+	case ss == nil:
+		return 0
+	case a.Ask != nil || a.Followup != nil:
+		if ss.key == alertKey(a) {
+			return len(ss.qs)
+		}
+	case ss.kind == kindMenu && ss.since == a.Since:
+		return len(ss.qs)
+	}
+	return 0
+}
+
 // openCards sends an alert's cards (after its notification), while
-// replies are on and the worker still asks it; true: they went.
-func (s *Service) openCards(ctx context.Context, a Alert) bool {
+// replies are on and the worker still asks it; sent: they went. H3D-1: a
+// Ring alert's cards are the notification (Questions only): the first
+// rings, unless Quiet, and they write its notify.send row. Each card goes
+// only if it still may at the last moment, after its pace (cardGoes): a
+// set that may not stops there; one whose question is formed otherwise now
+// goes back to the loop (back: handBack), whole before its first card,
+// else the rest of it as text (From).
+func (s *Service) openCards(ctx context.Context, a Alert) (sent, back bool) {
 	key := alertKey(a)
-	if on, _ := s.listening(); !on || key == "" || s.bt.cur[a.WorkerID] != key {
-		return false
+	if on, _ := s.listening(); !on || key == "" || s.bt.cur[a.WorkerID] != key || !s.allowed(a.Kind) {
+		return false, false
 	}
 	old := s.bt.of(a.WorkerID)
 	if old != nil && old.key == key {
-		return false
+		return false, false
 	}
 	ss := &session{tok: newToken(), worker: a.WorkerID, name: a.Name, key: key}
 	n := 0
@@ -708,14 +746,17 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 		ss.kind, ss.fu, n = kindFollowup, a.Followup, len(a.Followup.Questions)
 	}
 	if n == 0 || n > MaxCards {
-		return false
+		return false, false
 	}
 	// #106: the set goes whole within the budget, or waits whole (parked,
 	// the latest of the worker's wins); the old one ends only when it goes.
 	if ok, at, cause := s.lim.admitCards(a.WorkerID, n); !ok {
+		if p := s.bt.parked[a.WorkerID]; p != nil && p.alert.tracked && alertKey(p.alert) == key {
+			a.tracked = true // H3D-1: still its episode's alert's set
+		}
 		park(s.bt.parked, a, at, cause)
 		s.opts.Log.Debug("notifications: a worker's cards wait for their budget", "worker", a.WorkerID, "cause", cause)
-		return false
+		return false, false
 	}
 	if old != nil {
 		if old.kind == kindMenu {
@@ -727,15 +768,43 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 	for range n {
 		ss.qs = append(ss.qs, &qstate{picked: map[int]bool{}})
 	}
+	row := sendAudit{ID: a.WorkerID, Kind: string(a.Kind), Reason: a.Reason, About: a.About, Via: viaCards}
 	for i, q := range ss.qs {
 		c := s.render(ss, i, "")
-		c.Quiet = true // the notification rang already
 		var ref Ref
+		goes := false
 		err := s.call(ctx, func(ctx context.Context) error {
+			if goes, back = s.cardGoes(a, i); !goes {
+				s.lim.refund() // no call made
+				return nil
+			}
+			c.Quiet = !a.Ring || i > 0 || s.quiet() // else the notification rang already
 			var err error
 			ref, err = s.opts.Channel.SendCard(ctx, c)
 			return err
 		})
+		if !goes && err == nil {
+			// H3D-1: it may no longer go as it waited for its pace: the
+			// rest of the set is not sent as cards.
+			s.lim.dropCards(a.WorkerID, n-i)
+			ss.qs = ss.qs[:i]
+			if i > 0 {
+				status := CardInGameAsk
+				if on, _ := s.listening(); !on && s.allowed(a.Kind) {
+					status = CardOffText
+				}
+				if a.Ring {
+					row.Cards = i
+					s.audit(ctx, AuditSend, row, nil)
+				}
+				s.closeCards(ctx, ss, status)
+			}
+			if back {
+				a.From = i
+				s.handBack(a)
+			}
+			return i > 0, back
+		}
 		s.lim.sentCards(a.WorkerID, 1) // #106: its slot counts from now, sent or failed
 		if err != nil || !ref.Valid() {
 			s.lim.dropCards(a.WorkerID, n-i-1)
@@ -744,8 +813,15 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 			if ss.kind == kindMenu {
 				s.auditMenu(ctx, ss, menuFailed)
 			}
+			if a.Ring {
+				row.Cards, row.Code = i, CodeOf(err)
+				if row.Code == "" {
+					row.Code = CodeFailed
+				}
+				s.audit(ctx, AuditSend, row, errors.New(row.Code))
+			}
 			s.closeCards(ctx, ss, CardInGameAsk)
-			return false
+			return false, false
 		}
 		q.card, q.shown = ref, c
 		s.bt.cards[ref] = at{ss, i}
@@ -756,7 +832,32 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 	for len(s.bt.sessions) > MaxSessions {
 		s.bt.forget(s.bt.sessions[0])
 	}
-	return true
+	if a.Ring {
+		row.Cards = n
+		s.audit(ctx, AuditSend, row, nil)
+	}
+	return true, false
+}
+
+// cardGoes is goes for card i of alert a's set, at the last moment before
+// it is sent (H3D-1). None goes once notifications, their event or the
+// channel are off, nor once replies are. A Ring set's first card is its
+// question's message: formed otherwise now (replies off, the mode
+// changed), the question goes back whole (goes). Once that card rang the
+// question went: replies off, the rest goes back as text; the mode
+// changed, the rest goes on, quiet as it was. A set that follows an alert
+// that went (not Ring) just stops.
+func (s *Service) cardGoes(a Alert, i int) (ok, back bool) {
+	switch {
+	case !s.allowed(a.Kind):
+		return false, false
+	case a.Ring && i == 0:
+		return s.goes(a)
+	}
+	if on, _ := s.listening(); !on {
+		return false, a.Ring && a.tracked
+	}
+	return true, false
 }
 
 // closeCards edits a session's cards to their end, status, and forgets it.

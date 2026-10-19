@@ -245,6 +245,9 @@ test('keyboard only: the same journey with Tab, Shift+Tab, Enter and Space, the 
   await expect(on).toBeChecked();
   await at(on);
   await destination(tg, 'Paired', 'Alerts are on');
+  // H3D-1: what to send, one stop for its radio group (the checked one), then the events.
+  await page.keyboard.press('Tab');
+  await at(tg.getByLabel('Everything that needs you'));
   await page.keyboard.press('Tab');
   const needs = tg.getByLabel(/A worker needs you/);
   await at(needs);
@@ -260,8 +263,8 @@ test('keyboard only: the same journey with Tab, Shift+Tab, Enter and Space, the 
   await at(done);
   const sets = (await notifySent(page)).filter((c) => c.t === 'notify.set').map((c) => c.args);
   expect(sets).toEqual([{ enabled: true }, { events: { needs_you: false } }, { events: { done: false } }]);
-  // Back up past the switch and the test to Unpair.
-  for (let i = 0; i < 4; i++) await page.keyboard.press('Shift+Tab');
+  // Back up past what to send, the switch and the test to Unpair.
+  for (let i = 0; i < 5; i++) await page.keyboard.press('Shift+Tab');
   const unpair = tg.getByRole('button', { name: 'Unpair' });
   await at(unpair);
   await page.keyboard.press('Enter');
@@ -331,5 +334,51 @@ test('Allow replies: off by default, its own switch, mouse and keyboard', async 
   await replies.uncheck();
   await expect(replies).toBeDisabled();
   await expect(block).toContainText('Pair your account first.');
+  clean();
+});
+
+// H3D-1: what to send, a radio group between the switch and the events: Questions only greys out the finished-work
+// switches with why; picked with the mouse and with the arrows, the focus kept; it fits a phone.
+test('what to send: Everything that needs you or Questions only, mouse and keyboard', async ({ page }) => {
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6', '', `${SIM}&simtelegram=on`);
+  const tg = await telegram(page);
+  const status = tg.locator('.settings-status');
+  const group = tg.getByRole('group', { name: 'What to send' });
+  const everything = group.getByRole('radio', { name: 'Everything that needs you' });
+  const questions = group.getByRole('radio', { name: 'Questions only' });
+  const done = tg.getByLabel(/A worker finishes/);
+  const freelancers = tg.getByLabel(/Also when a freelancer/);
+  const why = tg.getByText('Questions only: finished work is never sent.');
+  await expect(everything).toBeChecked();
+  await expect(done).toBeEnabled();
+  await expect(why).toBeHidden();
+  // Mouse.
+  await questions.check();
+  await expect(status).toHaveText('Saved: only questions are sent.');
+  await expect(questions).toBeChecked();
+  await expect(done).toBeDisabled();
+  await expect(done).toBeChecked(); // its position kept, for when everything comes back
+  await expect(freelancers).toBeDisabled();
+  await expect(why).toBeVisible();
+  await expect(tg).toContainText('On: the bridge messages you when a worker asks you a question.');
+  await shot(page, 'h3d1-telegram-questions-only');
+  // Keyboard: the arrows pick, the focus stays on the group.
+  await questions.focus();
+  await page.keyboard.press('ArrowUp');
+  await expect(status).toHaveText('Saved: everything that needs you is sent.');
+  await expect(everything).toBeChecked();
+  await expect(everything).toBeFocused();
+  await expect(done).toBeEnabled();
+  await expect(why).toBeHidden();
+  const sets = (await notifySent(page)).filter((c) => c.t === 'notify.set').map((c) => c.args);
+  expect(sets).toEqual([{ mode: 'questions' }, { mode: 'everything' }]);
+  // A phone: the group fits, no sideways scroll.
+  await questions.check();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await group.scrollIntoViewIfNeeded();
+  await expect(questions).toBeInViewport();
+  expect(await page.evaluate(() => { const b = document.querySelector('dialog.settings .settings-body')!; return b.scrollWidth <= b.clientWidth; })).toBe(true);
+  await shot(page, 'h3d1-telegram-questions-only-phone');
   clean();
 });

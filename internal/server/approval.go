@@ -89,6 +89,9 @@ type menuOp struct {
 	// spell, its choices' count and its lines joined without whitespace (a
 	// rewrap or a resize moves only that).
 	key string
+	// decision is key without the blocked spell (H3D-1: the decision a
+	// notification is about, the same though its status_since flips).
+	decision string
 }
 
 // isLeftRule reports whether l, untrimmed, is a solid rule from the
@@ -148,6 +151,9 @@ func opOf(harness string, q proto.Question, lines []string, first, qline int, si
 	h := sha256.New()
 	fmt.Fprintf(h, "%s\x00%d\x00%d\x00%t\x00%s", q.Kind, since, len(q.Choices), op.complete, bare.String())
 	op.key = hex.EncodeToString(h.Sum(nil))[:16]
+	h.Reset()
+	fmt.Fprintf(h, "%s\x00%d\x00%t\x00%s", q.Kind, len(q.Choices), op.complete, bare.String())
+	op.decision = hex.EncodeToString(h.Sum(nil))[:16]
 	return op
 }
 
@@ -219,7 +225,7 @@ func boundLines(lines []string, maxLines, maxRunes int) []string {
 }
 
 // menuFacts adds to a menu's facts what its operation tells (#106): its
-// key, what its card shows (redacted and bounded: its native call's
+// key (H3D-1: and its decision's), what its card shows (redacted and bounded: its native call's
 // command, directory and the dialog's other lines when nc is known, else
 // the dialog's lines), and for a permission whose dialog's top is off the
 // screen and whose call is not known, its approving choices withheld:
@@ -228,7 +234,7 @@ func menuFacts(m *notify.Menu, op *menuOp, nc *nativeCall) {
 	if m == nil || op == nil {
 		return
 	}
-	m.Op, m.Source = op.key, "screen"
+	m.Op, m.Decision, m.Source = op.key, op.decision, "screen"
 	if nc != nil {
 		m.Native, m.Source, m.About = nc.id, "native", nc.about(op)
 		return

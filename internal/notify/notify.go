@@ -32,6 +32,9 @@ type Notification struct {
 	// Line is one line of what the worker did or asks (scrubbed by the
 	// bridge; "" for none: a secret ask's).
 	Line string
+	// Body (H3D-1, Questions only) is the question itself, on lines of its
+	// own, in place of Line ("": none).
+	Body string
 	// Quiet: delivered without a sound.
 	Quiet bool
 	// Test: the settings' test message (Name and Reason empty).
@@ -45,12 +48,15 @@ const LineMax = 200
 const TestText = "herdr-3d: notifications reach you here. You will get a message when a worker needs you or finishes."
 
 // Text is the message as plain text: the worker and the reason, then the
-// line.
+// line (H3D-1: or the question's body).
 func (n Notification) Text() string {
 	if n.Test {
 		return TestText
 	}
 	s := n.Name + " · " + n.Reason
+	if n.Body != "" {
+		return clip16(s+"\n"+n.Body, CardTextMax)
+	}
 	if l := OneLine(n.Line, LineMax); l != "" {
 		s += "\n" + l
 	}

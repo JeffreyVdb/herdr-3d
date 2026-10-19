@@ -185,6 +185,9 @@ func notifyFacts(w *proto.Worker, asleep bool) notify.Worker {
 		OverCap: w.OverCap, Pass: w.Pass, Phase: w.Phase}
 	if r := w.Report; r != nil {
 		n.Report = &notify.Report{State: r.State, InputRequired: r.InputRequired, Resolved: r.InputResolved != nil}
+		if r.InputRequired != nil {
+			n.Report.Request = reportRequest(*r.InputRequired, r.InputTruncated)
+		}
 	}
 	if a := w.Ask; a != nil {
 		n.Ask = &notify.Ask{ToolUseID: a.ToolUseID, Since: a.Since}
@@ -215,7 +218,7 @@ func notifyFacts(w *proto.Worker, asleep bool) notify.Worker {
 		}
 	}
 	if u := w.WrapUp; u != nil {
-		n.WrapUpState = u.State
+		n.WrapUpState, n.WrapUpArmedAt = u.State, u.ArmedAt
 	}
 	if c := w.Codex; c != nil {
 		n.CodexShared, n.CodexAsyncBlocked = c.Mode == proto.CodexModeShared, c.AsyncBlocked
@@ -232,6 +235,17 @@ func notifyFacts(w *proto.Worker, asleep bool) notify.Worker {
 		}
 	}
 	return n
+}
+
+// reportRequest is a report's input_required as a Questions only message
+// may show it (H3D-1): scrubbed of what looks like a secret, trimmed, its
+// cut marked.
+func reportRequest(s string, cut bool) string {
+	s = strings.TrimSpace(digest.Scrub(s))
+	if s != "" && cut {
+		s += "… (cut: the rest is in the game)"
+	}
+	return s
 }
 
 var (
@@ -491,7 +505,7 @@ func (h *Hub) startNotify(ctx context.Context, c *Client, cmd proto.Command) err
 		if err := decodeArgs(cmd.Args, &a); err != nil {
 			return err
 		}
-		u := notify.Update{Enabled: a.Enabled, Quiet: a.Quiet, Freelancers: a.Freelancers, Replies: a.Replies}
+		u := notify.Update{Enabled: a.Enabled, Quiet: a.Quiet, Freelancers: a.Freelancers, Replies: a.Replies, Mode: a.Mode}
 		if e := a.Events; e != nil {
 			u.NeedsYou, u.Done = e.NeedsYou, e.Done
 		}

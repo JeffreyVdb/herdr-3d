@@ -28,6 +28,7 @@ describe('notifyStateOf (#11)', () => {
       quiet: true,
       freelancers: false,
       replies: true,
+      mode: 'everything',
       channel: { provider: 'telegram', key_set: true, key_hint: 'Dsaw', bot: 'herdr3d_bot', paired: { name: 'Ada', at: 5 }, pairing: { state: 'waiting', code: 'K7QM-4XPA', expires_at: 600_000 } },
       last_error: { code: 'blocked', message: 'no', at: 9 },
       dropped: 2,
@@ -38,6 +39,13 @@ describe('notifyStateOf (#11)', () => {
   it('replies are off unless the bridge says true (#13)', () => {
     expect(notifyStateOf({ ...full, replies: undefined })!.replies).toBe(false);
     expect(notifyStateOf({ ...full, replies: 'yes' })!.replies).toBe(false);
+  });
+
+  it('the mode is questions only when the bridge says so; an older bridge’s (none) is everything (H3D-1)', () => {
+    expect(notifyStateOf({ ...full, mode: 'questions' })!.mode).toBe('questions');
+    expect(notifyStateOf({ ...full, mode: 'everything' })!.mode).toBe('everything');
+    expect(notifyStateOf(full)!.mode).toBe('everything');
+    expect(notifyStateOf({ ...full, mode: 'digest' })!.mode).toBe('everything');
   });
 
   it('refuses what is not a state', () => {

@@ -48,6 +48,13 @@ const (
 	NotifyBlocked    = notify.StateBlocked
 )
 
+// Modes of the notifications (NotifyState.Mode, H3D-1): everything that
+// needs you, or only a worker's pending question.
+const (
+	NotifyModeEverything = notify.ModeEverything
+	NotifyModeQuestions  = notify.ModeQuestions
+)
+
 // NotifyUpdate is the notify.update event. It is not an Event: the fields
 // of NotifyState would collide with the other flat ones.
 type NotifyUpdate struct {
@@ -70,6 +77,8 @@ type NotifySetArgs struct {
 	Freelancers *bool             `json:"freelancers,omitempty"`
 	// Replies (#13): a reply to a notification is typed into its worker.
 	Replies *bool `json:"replies,omitempty"`
+	// Mode (H3D-1): NotifyModeEverything or NotifyModeQuestions.
+	Mode *string `json:"mode,omitempty"`
 }
 
 // NotifyTokenSetArgs are the args of notify.token.set: the bot token

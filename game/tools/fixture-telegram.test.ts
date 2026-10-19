@@ -57,6 +57,15 @@ describe('the simulated Telegram notifications (#11)', () => {
     expect(r.store.notifySettings.state).toMatchObject({ enabled: true, state: 'ready', tested: true, quiet: true, events: { needs_you: true, done: false } });
   });
 
+  it('keeps the mode, everything until set, and refuses another (H3D-1)', () => {
+    const r = rig();
+    expect(r.store.notifySettings.state?.mode).toBe('everything');
+    expect(r.cmd('notify.set', { mode: 'questions' }).ack()).toBeTruthy();
+    expect(r.store.notifySettings.state?.mode).toBe('questions');
+    expect(r.cmd('notify.set', { mode: 'digest' }).err()?.code).toBe('bad_request');
+    expect(r.store.notifySettings.state?.mode).toBe('questions');
+  });
+
   it('pairs by itself after simtelegrampair, expires, conflicts and blocks', () => {
     const r = rig({ telegram: 'token', telegramPairMs: 500 });
     r.cmd('notify.pair.start', {});

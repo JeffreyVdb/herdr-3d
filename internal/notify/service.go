@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,11 +71,13 @@ type Settings struct {
 	// Replies (#13): a reply to a notification is typed into its worker.
 	// Off by default, and apart from Enabled.
 	Replies bool
+	// Mode (H3D-1) is ModeEverything or ModeQuestions ("": everything).
+	Mode string
 }
 
 // DefaultSettings: off, both events, with sound, no freelancers, no
-// replies.
-func DefaultSettings() Settings { return Settings{NeedsYou: true, Done: true} }
+// replies, everything that needs you.
+func DefaultSettings() Settings { return Settings{NeedsYou: true, Done: true, Mode: ModeEverything} }
 
 // Store keeps the settings (the bridge's database), and (#13) which worker
 // each sent notification was about, bounded (the store forgets the oldest).
@@ -147,7 +150,9 @@ type View struct {
 	Quiet       bool   `json:"quiet"`
 	Freelancers bool   `json:"freelancers"`
 	// Replies (#13): a reply to a notification is typed into its worker.
-	Replies   bool         `json:"replies"`
+	Replies bool `json:"replies"`
+	// Mode (H3D-1): ModeEverything or ModeQuestions.
+	Mode      string       `json:"mode"`
 	Channel   ChannelState `json:"channel"`
 	LastError *LastError   `json:"last_error,omitempty"`
 	// Dropped counts the alerts and sightings dropped since the bridge
@@ -158,6 +163,8 @@ type View struct {
 // Update is a change of the settings: a nil field is kept.
 type Update struct {
 	Enabled, NeedsYou, Done, Quiet, Freelancers, Replies *bool
+	// Mode (H3D-1): ModeEverything or ModeQuestions.
+	Mode *string
 }
 
 // TestResult is notify.test's answer.
@@ -184,12 +191,14 @@ type passedTest struct {
 type job struct{ alert Alert }
 
 // look is what the loop last told the replier of a worker: what it asks
-// (questionKey), the blocked spell it is in (#106; 0: none) and its
-// menu's look ("": none).
+// (questionKey), the blocked spell it is in (#106; 0: none), its menu's
+// look ("": none) and (H3D-1) its menu's episode ("": its blocked
+// spell's).
 type look struct {
 	key     string
 	blocked int64
 	menu    string
+	ep      string
 }
 
 // Service holds the settings and sends the notifications. Observe never
@@ -216,10 +225,16 @@ type Service struct {
 	// (the loop's).
 	keys map[string]look
 
-	obsMu    sync.Mutex
-	obs      []Observation
-	dropped  atomic.Int64
-	tr       *tracker // the loop's
+	obsMu sync.Mutex
+	obs   []Observation
+	// back is the questions handed back to the loop (H3D-1: handBack).
+	back    []Alert
+	dropped atomic.Int64
+	tr      *tracker // the loop's
+	// H3D-1, the loop's: each worker's menu episodes by decision
+	// (menuEpisode), and the menu episode of its that notified last.
+	menuEps  map[string]map[string]menuEp
+	rung     map[string]string
 	running  atomic.Bool
 	warnOnce sync.Once
 
@@ -252,7 +267,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	s := &Service{opts: opts, change: make(chan struct{}, 1), kick: make(chan struct{}, 1),
 		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle), rp: newReplies(),
 		bt: newButtons(), keys: map[string]look{}, lim: newLimiter(opts.Limits.withDefaults(), opts.Clock), parked: map[string]*parked{},
-		episodes: map[string]string{}}
+		episodes: map[string]string{}, menuEps: map[string]map[string]menuEp{}, rung: map[string]string{}}
 	if opts.Store != nil {
 		st, ok, err := opts.Store.LoadNotifySettings(ctx)
 		if err != nil {
@@ -299,7 +314,7 @@ func (s *Service) View() View {
 	defer s.mu.Unlock()
 	v := View{Enabled: s.enabledLocked(), Env: []string{}, Tested: ready && s.testedLocked(fp),
 		Events: Events{NeedsYou: s.set.NeedsYou, Done: s.set.Done}, Quiet: s.set.Quiet, Freelancers: s.set.Freelancers,
-		Replies: s.set.Replies, Channel: ch, Dropped: s.dropped.Load()}
+		Replies: s.set.Replies, Mode: s.modeLocked(), Channel: ch, Dropped: s.dropped.Load()}
 	if s.opts.EnvEnabled != nil {
 		v.Env = append(v.Env, "enabled")
 	}
@@ -330,7 +345,7 @@ func (s *Service) View() View {
 }
 
 // allowed reports whether an alert of kind may go now: switched on, the
-// channel ready, its event on.
+// channel ready, its event on (H3D-1: done never under Questions only).
 func (s *Service) allowed(k Kind) bool {
 	if !s.opts.Channel.Ready() {
 		return false
@@ -341,9 +356,30 @@ func (s *Service) allowed(k Kind) bool {
 		return false
 	}
 	if k == KindDone {
-		return s.set.Done
+		return s.set.Done && s.modeLocked() != ModeQuestions
 	}
 	return s.set.NeedsYou
+}
+
+// admits reports whether alert a may go now: allowed, and (H3D-1) a
+// question under Questions only. Checked again wherever an alert waited (a
+// parked one's release, each delivery), so a mode changed meanwhile holds.
+func (s *Service) admits(a Alert) bool {
+	return s.allowed(a.Kind) && (a.Question || !s.questionsOnly())
+}
+
+func (s *Service) modeLocked() string {
+	if s.set.Mode == ModeQuestions {
+		return ModeQuestions
+	}
+	return ModeEverything
+}
+
+// questionsOnly: the mode is ModeQuestions (H3D-1).
+func (s *Service) questionsOnly() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.modeLocked() == ModeQuestions
 }
 
 func (s *Service) freelancers() bool {
@@ -392,6 +428,10 @@ func (s *Service) Apply(ctx context.Context, u Update) error {
 			next.Enabled = *u.Enabled
 		}
 	}
+	if m := u.Mode; m != nil && *m != ModeEverything && *m != ModeQuestions {
+		s.mu.Unlock()
+		return &Error{CodeBadRequest, fmt.Sprintf("mode must be %q or %q", ModeEverything, ModeQuestions)}
+	}
 	// #13: replies need a token and a paired account (no test: nothing is
 	// sent to switch them on).
 	if u.Replies != nil && *u.Replies && !s.set.Replies {
@@ -412,6 +452,9 @@ func (s *Service) Apply(ctx context.Context, u Update) error {
 		if f.v != nil {
 			*f.dst = *f.v
 		}
+	}
+	if u.Mode != nil {
+		next.Mode = *u.Mode
 	}
 	if s.opts.Store != nil {
 		if err := s.opts.Store.SaveNotifySettings(ctx, next); err != nil {
@@ -586,28 +629,37 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
-// process takes the waiting sightings and the settled done episodes.
+// process takes the waiting sightings, the questions handed back and the
+// settled done episodes.
 func (s *Service) process() {
 	s.obsMu.Lock()
-	obs := s.obs
-	s.obs = nil
+	obs, back := s.obs, s.back
+	s.obs, s.back = nil, nil
 	s.obsMu.Unlock()
 	now := s.now()
-	freelancers := s.freelancers()
+	freelancers, questions := s.freelancers(), s.questionsOnly()
 	for _, o := range obs {
+		id := o.Worker.ID
+		var sg sighting
+		if !o.Gone {
+			sg = s.sight(o, freelancers, questions)
+		}
 		// #14: what the worker asks now, for its cards (a change only).
 		// #88: a menu's with what its card shows. #106: and the blocked
 		// spell it is in, and its menu's look (a redraw of one operation).
-		id := o.Worker.ID
 		var l look
 		var menu *menuSeen
 		if !o.Gone {
 			l.key, menu, l.blocked = questionKey(o.Worker), menuOf(o), blockedSpell(o)
 			if menu != nil {
-				l.menu = fmt.Sprintf("%#v", *menu.menu)
+				if sg.alert.About == aboutMenu {
+					menu.ep = sg.key
+				}
+				l.menu, l.ep = fmt.Sprintf("%#v", *menu.menu), menu.ep
 			}
 		}
-		if s.keys[id] != l {
+		changed := s.keys[id] != l
+		if changed {
 			if l == (look{}) {
 				delete(s.keys, id)
 			} else {
@@ -618,21 +670,55 @@ func (s *Service) process() {
 		}
 		if o.Gone {
 			s.tr.gone(o.Worker.ID)
+			delete(s.menuEps, id)
+			delete(s.rung, id)
 			s.publish(id)
 			continue
 		}
-		a := s.tr.observe(s.sight(o, freelancers), now)
+		if r := o.Worker.Report; r != nil && r.Resolved && r.InputRequired != nil {
+			s.tr.reopen(id, episodeKey(KindNeedsYou, reportID(r))) // H3D-1: asked again, it is new
+		}
+		a := s.tr.observe(sg, now)
 		s.publish(id)
-		if a != nil {
+		switch {
+		case a != nil:
 			s.alert(*a)
+		case changed && sg.eligible && sg.alert.About == aboutMenu && s.rung[id] == sg.key:
+			// H3D-1: a menu episode that notified, seen again in another
+			// look (a status flip: another blocked spell) sends nothing
+			// new; its card comes back, silent, if that spell has none.
+			r := sg.alert
+			s.job(func(ctx context.Context) { s.rang(ctx, r) })
 		}
 	}
+	for _, a := range back {
+		if a.Key == "" || s.tr.current(a.WorkerID) != a.Key {
+			row := a.sendRow() // its episode ended while it waited, as deliver's
+			row.Code = CodeObsolete
+			s.audit(context.Background(), AuditSend, row, errors.New(CodeObsolete))
+			continue
+		}
+		s.alert(a)
+	}
 	for _, a := range s.tr.due(now) {
-		if s.allowed(a.Kind) {
+		if s.admits(a) {
 			s.alert(a)
 		}
 	}
 	s.release(now)
+}
+
+// handBack has the loop take back a question that waited to go as its
+// cards and can no longer (H3D-1: replies or the mode changed meanwhile):
+// it goes as the settings say now (form), if its episode is still on.
+func (s *Service) handBack(a Alert) {
+	s.obsMu.Lock()
+	s.back = append(s.back, a)
+	s.obsMu.Unlock()
+	select {
+	case s.kick <- struct{}{}:
+	default:
+	}
 }
 
 // publish shares worker id's episode, as the tracker has it now, with the
@@ -653,14 +739,28 @@ func (s *Service) publish(id string) {
 func (s *Service) current(a Alert) bool {
 	s.epMu.Lock()
 	defer s.epMu.Unlock()
-	return s.episodes[a.WorkerID] == episodeKey(a.Kind, a.Since)
+	return s.episodes[a.WorkerID] == a.Key
 }
 
 // alert sends a, or parks it while its worker's cooldown or the
 // destination's budget is spent (#106: the latest of a worker's wins). A
 // needs-you alert parked by the cooldown still opens its cards: they draw
-// on the budget, not on the alert's cooldown.
+// on the budget, not on the alert's cooldown. H3D-1: a Questions only
+// question goes as its cards alone while it can have them (the first
+// rings; the cards' budget, not the alert's cooldown), else as its text
+// (form).
 func (s *Service) alert(a Alert) {
+	a = s.form(a)
+	if !s.admits(a) {
+		return
+	}
+	if a.About == aboutMenu {
+		s.rung[a.WorkerID] = a.Key
+	}
+	if a.Ring {
+		s.cardsOf(a)
+		return
+	}
 	ok, at, cause := s.lim.admitAlert(a.WorkerID)
 	if ok {
 		s.enqueue(a)
@@ -668,39 +768,90 @@ func (s *Service) alert(a Alert) {
 	}
 	park(s.parked, a, at, cause)
 	s.opts.Log.Debug("notifications: an alert waits for its budget", "worker", a.WorkerID, "kind", a.Kind, "cause", cause)
-	if cause == causeCooldown && a.Kind == KindNeedsYou {
+	if cause == causeCooldown && a.Kind == KindNeedsYou && a.Body == "" {
 		s.cardsOf(a)
 	}
 }
 
 // cardsOf has the replier open what an alert that went (or would have)
 // comes with: an ask's or follow-up's cards, a menu's once its screen is
-// read (#88).
+// read (#88). H3D-1: a Ring alert's (its cards are the message) only if
+// they still may be when the replier gets to them (rings).
 func (s *Service) cardsOf(a Alert) {
 	switch {
 	case a.Ask != nil || a.Followup != nil:
-		s.job(func(ctx context.Context) { s.openCards(ctx, a) }) // #14
+		s.job(func(ctx context.Context) { // #14
+			if ok, _ := s.rings(a); ok {
+				s.openCards(ctx, a)
+			}
+		})
 	case a.Kind == KindNeedsYou:
-		s.job(func(ctx context.Context) { s.rang(ctx, a) }) // #88
+		s.job(func(ctx context.Context) { // #88
+			if ok, _ := s.rings(a); ok {
+				s.rang(ctx, a)
+			}
+		})
 	}
 }
 
+// goes decides whether alert a, formed before it waited, may go now as it
+// is (H3D-1): it is asked at the last moment before each send of its
+// message (its text or alert, each of its cards), after every wait. Not
+// admitted now (switched off, its event off, the channel not ready, not a
+// question under Questions only), it is dropped; formed otherwise now
+// (replies or the mode changed), it goes back to the loop (back), the
+// tracker's own alert only (tracked: the one question is formed again
+// once; a card the replier opened of itself is dropped, its episode's
+// alert goes).
+func (s *Service) goes(a Alert) (ok, back bool) {
+	f := s.form(a)
+	switch {
+	case !s.admits(f):
+		return false, false
+	case f.Ring != a.Ring || f.Question != a.Question || f.Body != a.Body:
+		return false, a.tracked
+	}
+	return true, false
+}
+
+// rings reports whether alert a's cards may go as it was formed (any
+// alert but a Ring one: true). H3D-1: a Ring alert's cards are the
+// message (goes; back: handed back to the loop).
+func (s *Service) rings(a Alert) (ok, back bool) {
+	if !a.Ring {
+		return true, false
+	}
+	if ok, back = s.goes(a); back {
+		s.handBack(a)
+	}
+	return ok, back
+}
+
 // release sends the parked alerts whose slot came, if the worker is still
-// in their episode (and its event on); else drops them (#106).
+// in their episode (and its event on); else drops them (#106). H3D-1:
+// formed again first, so a question goes as the settings say now (its
+// cards, or its text with replies' ending as they are).
 func (s *Service) release(now time.Time) {
 	for id, p := range s.parked {
 		if p.at.After(now) {
 			continue
 		}
 		row := limitAudit{ID: id, Kind: "alert", Cause: p.cause, Coalesced: p.coalesced, Outcome: "dropped"}
-		a := p.alert
-		if s.tr.current(id) == episodeKey(a.Kind, a.Since) && s.allowed(a.Kind) {
-			ok, at, cause := s.lim.admitAlert(id)
-			if !ok {
-				p.at, p.cause = at, cause
-				continue
+		a := s.form(p.alert)
+		if s.tr.current(id) == a.Key && s.admits(a) {
+			if a.About == aboutMenu {
+				s.rung[id] = a.Key
 			}
-			s.enqueue(a)
+			if a.Ring {
+				s.cardsOf(a)
+			} else {
+				ok, at, cause := s.lim.admitAlert(id)
+				if !ok {
+					p.at, p.cause = at, cause
+					continue
+				}
+				s.enqueue(a)
+			}
 			row.Outcome = "sent"
 		}
 		delete(s.parked, id)
@@ -708,14 +859,19 @@ func (s *Service) release(now time.Time) {
 	}
 }
 
-// sight is what the tracker sees of an observation.
-func (s *Service) sight(o Observation, freelancers bool) sighting {
+// sight is what the tracker sees of an observation (questions: under
+// Questions only, H3D-1).
+func (s *Service) sight(o Observation, freelancers, questions bool) sighting {
 	w := o.Worker
 	v := Judge(w)
 	latent := v
 	if w.Asleep {
 		w.Asleep = false
 		latent = Judge(w)
+	}
+	menu := ""
+	if validMenu(w) {
+		menu = s.menuEpisode(w.ID, w.Menu)
 	}
 	sg := sighting{id: o.Worker.ID}
 	switch latent.Display {
@@ -726,16 +882,24 @@ func (s *Service) sight(o Observation, freelancers bool) sighting {
 	default:
 		return sg
 	}
-	sg.key = episodeKey(sg.kind, latent.Since)
-	sg.eligible = v.Candidate(freelancers) && s.allowed(sg.kind)
-	sg.alert = Alert{WorkerID: o.Worker.ID, Kind: sg.kind, Reason: v.Reason, Name: o.Name, Line: o.Line, Since: latent.Since}
+	id, about, question := strconv.FormatInt(latent.Since, 10), aboutDone, false
 	if sg.kind == KindNeedsYou {
-		switch v.Reason {
-		case ReasonQuestion:
-			sg.alert.Ask = w.Ask
-		case ReasonFollowup:
-			sg.alert.Followup = w.Followup
-		}
+		id, about, question = episode(w, latent, questions, menu)
+		sg.live = live(w, latent, menu)
+	}
+	sg.key = episodeKey(sg.kind, id)
+	sg.eligible = v.Candidate(freelancers) && s.allowed(sg.kind) && (question || !questions)
+	sg.alert = Alert{WorkerID: o.Worker.ID, Kind: sg.kind, Reason: v.Reason, Name: o.Name, Line: o.Line, Since: latent.Since,
+		Key: sg.key, About: about, Asks: question, Question: questions && question, tracked: true}
+	switch about {
+	case aboutAsk:
+		sg.alert.Ask = w.Ask
+	case aboutFollowup:
+		sg.alert.Followup = w.Followup
+	case aboutMenu:
+		sg.alert.Menu = w.Menu
+	case aboutReport:
+		sg.alert.Report = w.Report.Request
 	}
 	return sg
 }
@@ -748,7 +912,7 @@ func (s *Service) enqueue(a Alert) {
 		s.lim.dropAlert(a.WorkerID)
 		s.dropped.Add(1)
 		s.signal()
-		s.audit(context.Background(), AuditSend, sendAudit{ID: a.WorkerID, Kind: string(a.Kind)}, errors.New(CodeDropped))
+		s.audit(context.Background(), AuditSend, a.sendRow(), errors.New(CodeDropped))
 	}
 }
 
@@ -764,13 +928,28 @@ func (s *Service) sender(ctx context.Context) {
 }
 
 // sendAudit is a notify.send row's args: whom and why, how it went; never
-// the text.
+// the text. H3D-1: why is the rule's reason and what the episode is about
+// (about*); Cards is how many question cards went with it (0: none), Via
+// how the message went (via*; "": an alert).
 type sendAudit struct {
 	ID       string `json:"id"`
 	Kind     string `json:"kind"`
+	Reason   string `json:"reason,omitempty"`
+	About    string `json:"about,omitempty"`
+	Via      string `json:"via,omitempty"`
+	Cards    int    `json:"cards,omitempty"`
 	Attempts int    `json:"attempts,omitempty"`
 	Status   int    `json:"status,omitempty"`
 	Code     string `json:"code,omitempty"`
+}
+
+// sendRow is a's notify.send row, before it went.
+func (a Alert) sendRow() sendAudit {
+	row := sendAudit{ID: a.WorkerID, Kind: string(a.Kind), Reason: a.Reason, About: a.About}
+	if a.Body != "" {
+		row.Via = viaQuestion
+	}
+	return row
 }
 
 // retryAfter is a rate limit's wait in err (0: none).
@@ -797,10 +976,10 @@ func Backoff(n int) time.Duration {
 // meanwhile, it is dropped unsent; (#106) its episode over before an
 // attempt (it waited in the queue, for its pace or a rate limit), it is
 // dropped too, and audited obsolete. Its budget slot counts from its last
-// attempt, or is given back when there was none.
+// attempt, or is given back when there was none. H3D-1: whether it goes,
+// and how, is decided after its pace, right before each attempt (goes).
 func (s *Service) deliver(ctx context.Context, a Alert) {
-	n := Notification{WorkerID: a.WorkerID, Name: a.Name, Reason: a.Reason, Line: a.Line, Quiet: s.quiet()}
-	row := sendAudit{ID: a.WorkerID, Kind: string(a.Kind)}
+	row := a.sendRow()
 	defer func() {
 		if row.Attempts > 0 {
 			s.lim.sentAlert(a.WorkerID)
@@ -811,9 +990,6 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 	var err error
 	var ref Ref
 	for row.Attempts < MaxAttempts {
-		if !s.allowed(a.Kind) {
-			return
-		}
 		if err = s.lim.wait(ctx); err != nil { // #106: the destination's pacing
 			break
 		}
@@ -823,6 +999,17 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 			s.audit(ctx, AuditSend, row, errors.New(CodeObsolete))
 			return
 		}
+		// H3D-1: the last moment before it goes: a question whose form
+		// changed while it waited (the mode, replies) goes back to the loop.
+		if ok, back := s.goes(a); !ok {
+			s.lim.refund() // no call made: its form goes at once
+			if back {
+				s.handBack(a)
+			}
+			return
+		}
+		// The rest of a card set goes quiet: its first card rang.
+		n := Notification{WorkerID: a.WorkerID, Name: a.Name, Reason: a.head(), Line: a.Line, Body: a.Body, Quiet: s.quiet() || a.From > 0}
 		row.Attempts++
 		sctx, cancel := context.WithTimeout(ctx, SendTimeout)
 		ref, err = s.opts.Channel.Send(sctx, n)
@@ -866,7 +1053,17 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 	} else {
 		s.opts.Log.Info("notification sent", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts)
 		s.remember(ctx, ref, a.WorkerID)
-		s.cardsOf(a)
+		if a.Kind == KindNeedsYou && a.Body == "" {
+			// H3D-1: its row, once its cards had their turn (the replier's,
+			// in order).
+			s.cardsOf(a)
+			sent := row
+			s.job(func(ctx context.Context) {
+				sent.Cards = s.carded(a)
+				s.audit(ctx, AuditSend, sent, nil)
+			})
+			return
+		}
 	}
 	s.audit(ctx, AuditSend, row, aerr)
 }

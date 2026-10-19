@@ -2,7 +2,11 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,7 +21,7 @@ func TestNotifySettings(t *testing.T) {
 	if _, ok, err := st.LoadNotifySettings(ctx); ok || err != nil {
 		t.Fatalf("fresh settings: ok %v, %v", ok, err)
 	}
-	want := store.NotifySettings{Enabled: true, NeedsYou: true, Quiet: true, Replies: true}
+	want := store.NotifySettings{Enabled: true, NeedsYou: true, Quiet: true, Replies: true, Mode: "questions"}
 	if err := st.SaveNotifySettings(ctx, store.NotifySettings{Done: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -28,6 +32,52 @@ func TestNotifySettings(t *testing.T) {
 	st = open(t, path)
 	if got, ok, err := st.LoadNotifySettings(ctx); !ok || err != nil || got != want {
 		t.Fatalf("reopened: %+v %v %v", got, ok, err)
+	}
+}
+
+// H3D-1: a row saved before the mode existed loads as everything (the mode
+// it had); the mode is kept across a reopen, and an empty one is saved as
+// everything.
+func TestNotifySettingsMode(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "w.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := slices.IndexFunc(store.Migrations, func(q string) bool { return strings.Contains(q, "notify_settings ADD COLUMN mode") })
+	if before < 0 {
+		t.Fatal("no migration adds the mode")
+	}
+	for _, q := range append(slices.Clone(store.Migrations[:before]), "PRAGMA user_version = "+strconv.Itoa(before),
+		`INSERT INTO notify_settings (id, enabled, needs_you, done, quiet, freelancers, replies, updated_at)
+			VALUES (1, 1, 1, 0, 1, 0, 1, '2026-10-18T12:00:00Z')`) {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	st := open(t, path)
+	old := store.NotifySettings{Enabled: true, NeedsYou: true, Quiet: true, Replies: true, Mode: "everything"}
+	if got, ok, err := st.LoadNotifySettings(ctx); !ok || err != nil || got != old {
+		t.Fatalf("migrated: %+v %v %v", got, ok, err)
+	}
+	q := old
+	q.Mode = "questions"
+	if err := st.SaveNotifySettings(ctx, q); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	st = open(t, path)
+	if got, _, _ := st.LoadNotifySettings(ctx); got != q {
+		t.Fatalf("reopened: %+v", got)
+	}
+	q.Mode = ""
+	if err := st.SaveNotifySettings(ctx, q); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := st.LoadNotifySettings(ctx); got.Mode != "everything" {
+		t.Fatalf("an empty mode saved as %q", got.Mode)
 	}
 }
 

@@ -140,6 +140,17 @@ func (lm *limiter) wait(ctx context.Context) error {
 	}
 }
 
+// refund gives back a token wait took for a call that was not made
+// (H3D-1: the message may no longer go as it waited; goes).
+func (lm *limiter) refund() {
+	if lm.l.Burst < 0 || lm.l.Pace <= 0 {
+		return
+	}
+	lm.mu.Lock()
+	lm.tokens = min(float64(lm.l.Burst), lm.tokens+1)
+	lm.mu.Unlock()
+}
+
 // pause holds every paced call for d (a rate limit's retry_after).
 func (lm *limiter) pause(d time.Duration) {
 	if lm.l.Burst < 0 || d <= 0 {

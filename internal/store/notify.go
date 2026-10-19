@@ -4,7 +4,8 @@ package store
 // notify, quiet and the freelancers' done. The bot token and the paired
 // person are not here: they are the Telegram channel's own 0600 file.
 // #13: the replies' switch, and which worker each sent notification was
-// about (a reply to it is typed into that worker).
+// about (a reply to it is typed into that worker). H3D-1: the mode
+// (everything, or questions only).
 
 import (
 	"context"
@@ -38,6 +39,10 @@ const migrationNotifyReplies = `ALTER TABLE notify_settings ADD COLUMN replies I
 	);
 	CREATE INDEX notify_message_created ON notify_message (created_at);`
 
+// migrationNotifyMode adds the mode (H3D-1): a row saved before it is
+// everything, the mode there was.
+const migrationNotifyMode = `ALTER TABLE notify_settings ADD COLUMN mode TEXT NOT NULL DEFAULT 'everything';`
+
 // The sent notifications kept for replies: the newest NotifyMessagesKept,
 // none older than NotifyMessageAge before the newest.
 const (
@@ -45,16 +50,18 @@ const (
 	NotifyMessageAge   = 7 * 24 * time.Hour
 )
 
-// NotifySettings are the notifications' settings.
+// NotifySettings are the notifications' settings (internal/notify's
+// Settings, field for field).
 type NotifySettings struct {
 	Enabled, NeedsYou, Done, Quiet, Freelancers, Replies bool
+	Mode                                                 string
 }
 
 // LoadNotifySettings returns the stored settings (ok false: none yet).
 func (s *Store) LoadNotifySettings(ctx context.Context) (NotifySettings, bool, error) {
 	var n NotifySettings
-	err := s.db.QueryRowContext(ctx, `SELECT enabled, needs_you, done, quiet, freelancers, replies FROM notify_settings WHERE id = 1`).
-		Scan(&n.Enabled, &n.NeedsYou, &n.Done, &n.Quiet, &n.Freelancers, &n.Replies)
+	err := s.db.QueryRowContext(ctx, `SELECT enabled, needs_you, done, quiet, freelancers, replies, mode FROM notify_settings WHERE id = 1`).
+		Scan(&n.Enabled, &n.NeedsYou, &n.Done, &n.Quiet, &n.Freelancers, &n.Replies, &n.Mode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return n, false, nil
 	}
@@ -63,11 +70,16 @@ func (s *Store) LoadNotifySettings(ctx context.Context) (NotifySettings, bool, e
 
 // SaveNotifySettings stores the settings.
 func (s *Store) SaveNotifySettings(ctx context.Context, n NotifySettings) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO notify_settings (id, enabled, needs_you, done, quiet, freelancers, replies, updated_at)
-		VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+	mode := n.Mode
+	if mode == "" {
+		mode = "everything"
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO notify_settings (id, enabled, needs_you, done, quiet, freelancers, replies, mode, updated_at)
+		VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled, needs_you = excluded.needs_you, done = excluded.done,
-		quiet = excluded.quiet, freelancers = excluded.freelancers, replies = excluded.replies, updated_at = excluded.updated_at`,
-		n.Enabled, n.NeedsYou, n.Done, n.Quiet, n.Freelancers, n.Replies, s.ts())
+		quiet = excluded.quiet, freelancers = excluded.freelancers, replies = excluded.replies, mode = excluded.mode,
+		updated_at = excluded.updated_at`,
+		n.Enabled, n.NeedsYou, n.Done, n.Quiet, n.Freelancers, n.Replies, mode, s.ts())
 	return err
 }
 
