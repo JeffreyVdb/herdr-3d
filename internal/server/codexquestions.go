@@ -124,6 +124,13 @@ type codexNote struct {
 
 // codexNotification is one notification of the join (hub goroutine).
 func (h *Hub) codexNotification(ctx context.Context, id string, cw *codexWatch, method string, params json.RawMessage) {
+	// #27: every notification of the worker's current thread's join also
+	// goes to the child observer, which keeps those of its children (and
+	// the root's items naming them). The root's handling below is
+	// unchanged: another thread's events are dropped here as before.
+	if h.opts.CodexChildren != nil && h.cx.launches[id].Thread == cw.thread {
+		h.opts.CodexChildren.Notify(cw.thread, method, params)
+	}
 	var n codexNote
 	if json.Unmarshal(params, &n) != nil || n.ThreadID != cw.thread || h.cx.launches[id].Thread != cw.thread {
 		return

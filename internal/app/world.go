@@ -897,10 +897,16 @@ func Serve(ctx context.Context, cfg ServeConfig) error {
 		opts.ChildSources = append(opts.ChildSources, src)
 		opts.Usage.ClaudeChildren = func(session string) server.ChildReader { return src.Listener(session) }
 	}
-	if cfg.CodexSessions != "" { // #25 Codex subagents (terminal workers), from the usage tracker's reads of their rollouts
-		src := codexchild.New(codexchild.Options{})
+	if cfg.CodexSessions != "" || cfg.CodexRun != "" {
+		// #25 Codex subagents, from the usage tracker's reads of their
+		// rollouts; #27 a shared-server worker's, live from its own
+		// app-server through the bridge's join, in the same source.
+		src := codexchild.New(codexchild.Options{Log: log.Warn})
 		opts.ChildSources = append(opts.ChildSources, src)
-		opts.Usage.CodexChildren = func(session string) server.ChildReader { return src.Listener(session) }
+		opts.CodexChildren = src
+		if cfg.CodexSessions != "" {
+			opts.Usage.CodexChildren = func(session string) server.ChildReader { return src.Listener(session) }
+		}
 	}
 	opts.RunsDir, opts.ReportPoll = cfg.RunsDir, cfg.ReportPoll // M6 runs
 	opts.Boards = cfg.Boards                                    // M7 boards

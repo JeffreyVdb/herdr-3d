@@ -14,6 +14,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -50,8 +51,20 @@ type CodexHost interface {
 	Watch(o codexapp.Options) (CodexWatch, error)
 }
 
+// CodexChildren is #27's observer of a shared worker's child threads
+// (codexchild.Source), keyed by the worker's root thread: the join's
+// connection subscribed (Joined, with its observational reads), each of
+// its notifications (Notify) and its end (Lost: a disconnect, a failure,
+// the join left or replaced). Called on the hub goroutine; none blocks.
+type CodexChildren interface {
+	Joined(thread string, r codexapp.ChildReader)
+	Notify(thread, method string, params json.RawMessage)
+	Lost(thread string)
+}
+
 // CodexWatch is a running codexapp.Watcher: its two sends (#156), each on
-// an explicit request, and leaving.
+// an explicit request, and leaving. The real one is also a
+// codexapp.ChildReader (#27).
 type CodexWatch interface {
 	Steer(ctx context.Context, expectedTurn, text, clientID string) (string, error)
 	StartTurn(ctx context.Context, text, clientID string) (string, error)
@@ -371,8 +384,7 @@ func (h *Hub) syncCodexWatches(ctx context.Context) {
 		retry := cw.failed && !cw.permanent && time.Since(cw.failedAt) >= h.opts.CodexRejoin ||
 			cw.attached && cw.unresolved && time.Since(cw.unresolvedAt) >= h.opts.CodexRejoin
 		if retry || cw.policy != h.cx.policy || !h.wantsCodexWatch(id) || l.Thread != cw.thread || l.Token != cw.token {
-			delete(h.cx.watches, id)
-			go cw.w.Close() // never on the hub goroutine: its events go through do
+			h.dropCodexWatch(id, cw)
 			h.refreshCodex(id)
 		}
 	}
@@ -404,8 +416,18 @@ func (h *Hub) wantsCodexWatch(id string) bool {
 // again (a transcript opened: the player is looking at it now).
 func (h *Hub) retryCodexJoin(id string) {
 	if cw := h.cx.watches[id]; cw != nil && cw.failed {
-		delete(h.cx.watches, id)
-		go cw.w.Close()
+		h.dropCodexWatch(id, cw)
+	}
+}
+
+// dropCodexWatch leaves a worker's join (hub goroutine). Its own events
+// stop here (codexEvent drops a join that is not the worker's), so #27's
+// observer is told now: no live claim of its children stands.
+func (h *Hub) dropCodexWatch(id string, cw *codexWatch) {
+	delete(h.cx.watches, id)
+	go cw.w.Close() // never on the hub goroutine: its events go through do
+	if h.opts.CodexChildren != nil {
+		h.opts.CodexChildren.Lost(cw.thread)
 	}
 }
 
@@ -420,6 +442,7 @@ func (h *Hub) codexEvent(ctx context.Context, id string, cw *codexWatch, e codex
 	case codexapp.EvJoined:
 		cw.attached = true
 		h.codexJoined(ctx, id, cw, e.Thread)
+		h.codexChildrenJoined(id, cw)
 	case codexapp.EvNotification:
 		h.codexNotification(ctx, id, cw, e.Method, e.Params)
 	case codexapp.EvServerRequest:
@@ -427,12 +450,14 @@ func (h *Hub) codexEvent(ctx context.Context, id string, cw *codexWatch, e codex
 	case codexapp.EvDisconnected, codexapp.EvClosed:
 		cw.attached, cw.turn = false, ""
 		clear(cw.requests)
+		h.codexChildrenLost(cw)
 	case codexapp.EvFailed:
 		// Kept: refused for good (not tried again while the target is
 		// unchanged), or its retries are spent (tried again after
 		// CodexRejoin).
 		cw.attached, cw.turn = false, ""
 		clear(cw.requests)
+		h.codexChildrenLost(cw)
 		cw.failed, cw.failedAt = true, time.Now()
 		cw.permanent = errors.Is(e.Err, codexapp.ErrUnsupported) || errors.Is(e.Err, codexapp.ErrEphemeral) ||
 			errors.Is(e.Err, codexapp.ErrWrongThread)
@@ -442,6 +467,26 @@ func (h *Hub) codexEvent(ctx context.Context, id string, cw *codexWatch, e codex
 		fn(e)
 	}
 	h.refreshCodex(id)
+}
+
+// codexChildrenJoined tells #27's observer the join is subscribed (on
+// every connection: one made after a child was spawned is not subscribed
+// to it, and a rejoin's thread/resume returns no children). Only for the
+// worker's current thread, and only a watch that can read (the real
+// Watcher).
+func (h *Hub) codexChildrenJoined(id string, cw *codexWatch) {
+	r, ok := cw.w.(codexapp.ChildReader)
+	if h.opts.CodexChildren == nil || !ok || h.cx.launches[id].Thread != cw.thread {
+		return
+	}
+	h.opts.CodexChildren.Joined(cw.thread, r)
+}
+
+// codexChildrenLost tells #27's observer the join's connection ended.
+func (h *Hub) codexChildrenLost(cw *codexWatch) {
+	if h.opts.CodexChildren != nil {
+		h.opts.CodexChildren.Lost(cw.thread)
+	}
 }
 
 // sharedLaunch is a shared launch in progress, off the hub goroutine.
@@ -523,8 +568,7 @@ func (h *Hub) stopSharedServer(ctx context.Context, id string) (note string) {
 		if l.Mode == store.CodexShared {
 			h.cx.busy[id] = true
 			if cw := h.cx.watches[id]; cw != nil {
-				delete(h.cx.watches, id)
-				go cw.w.Close()
+				h.dropCodexWatch(id, cw)
 			}
 		}
 		return l
@@ -552,8 +596,7 @@ func (h *Hub) forgetCodex(ctx context.Context, id string) {
 		return
 	}
 	if cw := h.cx.watches[id]; cw != nil {
-		delete(h.cx.watches, id)
-		go cw.w.Close()
+		h.dropCodexWatch(id, cw)
 	}
 	if err := h.st.ForgetCodexLaunch(ctx, id); err != nil {
 		h.log.Error("forgetting the codex launch failed", "worker", id, "err", err)

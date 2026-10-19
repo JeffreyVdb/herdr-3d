@@ -366,9 +366,13 @@ type Options struct {
 	HostStats     *hoststats.Config
 
 	// #22 native child agents: ChildSources report the workers' native
-	// children (none yet in production: the providers are #20's later
-	// phases; tests pass childagentstest.FixtureSource).
+	// children (Claude's #23 and Codex's #25 in production; tests pass
+	// childagentstest.FixtureSource).
 	ChildSources []childagents.Source
+	// #27: CodexChildren observes a shared worker's child threads through
+	// the bridge's join of its root thread (codexchild.Source, also one of
+	// ChildSources; nil: not observed).
+	CodexChildren CodexChildren
 }
 
 // DefaultMaxDesks is the default Options.MaxDesks.
