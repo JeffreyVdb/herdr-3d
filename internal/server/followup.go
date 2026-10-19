@@ -89,6 +89,10 @@ type followupCand struct {
 	turn     transcript.Turn
 	at       time.Time // when the hub got it
 	inflight bool      // the pipeline runs on it
+	// left counts the pipeline's results still to come (#66: the follow-up
+	// questions' and the schedule suggestion's): it waits in pending until
+	// the last.
+	left int
 }
 
 // followupShown is a worker's open follow-up and the message it is of.
@@ -170,6 +174,7 @@ func (h *Hub) followupView(id string) *proto.Followup {
 // have seen it working) makes the open follow-up moot: it is cleared, so its
 // turn_id is stale and a newer message is looked at in its place.
 func (h *Hub) followupSeen(ctx context.Context, u followupUpdate) {
+	h.suggestionSeen(ctx, u) // #66: the same turn end
 	s := h.fu.shown[u.id]
 	if u.turn == nil {
 		delete(h.fu.pending, u.id) // a prompt or a new turn: nothing to look at
@@ -178,10 +183,10 @@ func (h *Hub) followupSeen(ctx context.Context, u followupUpdate) {
 		}
 		return
 	}
-	if s != nil && s.hash == u.turn.Hash {
+	if s != nil && s.hash == u.turn.Hash && !h.suggestionWants(u.id, u.turn.Hash) {
 		return // shown already
 	}
-	if s != nil {
+	if s != nil && s.hash != u.turn.Hash {
 		h.clearFollowup(ctx, u.id) // a newer turn's message
 	}
 	h.fu.pending[u.id] = &followupCand{turn: *u.turn, at: h.opts.Now()}
@@ -198,15 +203,23 @@ func (h *Hub) sweepFollowups(ctx context.Context) bool {
 	return len(h.fu.pending) > 0
 }
 
-// followupSkip is why a worker's ended turn is not looked at ("": it is).
+// followupSkip is why a worker's ended turn is not looked at for follow-up
+// questions ("": it is).
 func (h *Hub) followupSkip(w *proto.Worker) string {
+	if h.fu.svc == nil || !h.fu.svc.Ready() {
+		return "the feature is not ready"
+	}
+	return turnSkip(w)
+}
+
+// turnSkip is why a worker's ended turn is not looked at by any feature on
+// it ("": it is): what other paths cover, freelancers, other harnesses.
+func turnSkip(w *proto.Worker) string {
 	harness := w.Harness
 	if harness == "" {
 		harness = w.AgentKind
 	}
 	switch {
-	case h.fu.svc == nil || !h.fu.svc.Ready():
-		return "the feature is not ready"
 	case w.Ask != nil:
 		return "an ask is pending (#57)"
 	case w.Status == statusBlocked:
@@ -222,9 +235,16 @@ func (h *Hub) followupSkip(w *proto.Worker) string {
 // considerFollowup decides on a worker's ended turn: keep waiting (true),
 // or drop it (false) once skipped, restored or handed to the pipeline (it
 // is then kept, inflight, until the pipeline is done).
+// #66: the schedule suggestions look at the same ended turn: the pipeline
+// runs for each feature that is ready and has not looked at the message yet
+// (runTurn).
 func (h *Hub) considerFollowup(ctx context.Context, id string, c *followupCand) bool {
 	w := h.workers[id]
-	if w == nil || h.followupSkip(w) != "" || strings.TrimSpace(c.turn.Text) == "" {
+	if w == nil || strings.TrimSpace(c.turn.Text) == "" {
+		return false
+	}
+	fu, ss := h.followupSkip(w) == "", h.suggestionSkip(w) == ""
+	if !fu && !ss {
 		return false
 	}
 	now := h.opts.Now()
@@ -232,37 +252,45 @@ func (h *Hub) considerFollowup(ctx context.Context, id string, c *followupCand) 
 	if w.Status == statusWorking || now.Sub(c.at) < debounce || now.UnixMilli()-w.StatusSince < debounce.Milliseconds() {
 		return true
 	}
+	if fu {
+		fu = h.followupUnseen(ctx, id, c)
+	}
+	if ss {
+		ss = h.suggestionUnseen(ctx, id, c)
+	}
+	if !fu && !ss {
+		return false
+	}
+	c.inflight = true
+	h.runTurn(ctx, id, c, fu, ss)
+	return true
+}
+
+// followupUnseen reports whether the follow-up questions never looked at
+// c's message. Looked at before (a restart, a re-read): never again, and an
+// open follow-up comes back.
+func (h *Hub) followupUnseen(ctx context.Context, id string, c *followupCand) bool {
 	seen, ok, err := h.st.FollowupSeenOf(ctx, id, c.turn.Hash)
 	if err != nil {
 		h.log.Error("reading follow-up record failed", "worker", id, "err", err)
 		return false
 	}
-	if ok {
-		// Looked at before (a restart, a re-read): never again. An open
-		// follow-up comes back.
-		var f proto.Followup
-		if seen.Followup != "" && !seen.Cleared && json.Unmarshal([]byte(seen.Followup), &f) == nil {
-			h.setFollowup(id, &f, c.turn.Hash, c.turn.Text)
-		}
-		return false
+	if !ok {
+		return true
 	}
-	c.inflight = true
-	svc, text, turnID := h.fu.svc, c.turn.Text, c.turn.ID
-	h.wg.Add(1)
-	go func() {
-		defer h.wg.Done()
-		res, err := svc.Detect(ctx, text)
-		_ = h.do(ctx, func(ctx context.Context) { h.followupDone(ctx, id, c, turnID, res, err) })
-	}()
-	return true
+	var f proto.Followup
+	if s := h.fu.shown[id]; s != nil && s.hash == c.turn.Hash {
+		return false // shown already
+	}
+	if seen.Followup != "" && !seen.Cleared && json.Unmarshal([]byte(seen.Followup), &f) == nil {
+		h.setFollowup(id, &f, c.turn.Hash, c.turn.Text)
+	}
+	return false
 }
 
 // followupDone takes the pipeline's result (hub goroutine).
 func (h *Hub) followupDone(ctx context.Context, id string, c *followupCand, turnID string, res *followup.Result, err error) {
-	current := h.fu.pending[id] == c
-	if current {
-		delete(h.fu.pending, id)
-	}
+	current := h.turnPartDone(id, c)
 	if err != nil {
 		// Not recorded: a later look (a restart) may try again. ai's errors
 		// never carry a key.

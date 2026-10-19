@@ -36,6 +36,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/repodisc"
 	"github.com/JeffreyVdb/herdr-3d/internal/runs"
+	"github.com/JeffreyVdb/herdr-3d/internal/schedsuggest"
 	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
@@ -275,6 +276,13 @@ type Options struct {
 	FollowupsEnabled *bool
 	FollowupDebounce time.Duration
 	FollowupRoles    followup.Roles
+	// #66 schedule suggestions: ScheduleSuggestionsEnabled is the
+	// environment's toggle (HERDR_WORLD_SCHEDULE_SUGGESTIONS_ENABLED; nil:
+	// not set), ScheduleSuggestRoles the models (default FollowupRoles, then
+	// AI; tests pass fakes). They look at the follow-up questions' turn ends
+	// (FollowupDebounce).
+	ScheduleSuggestionsEnabled *bool
+	ScheduleSuggestRoles       schedsuggest.Roles
 	// #110 pack up on request: PackupEnabled is the environment's toggle
 	// (HERDR_WORLD_PACKUP_ENABLED; nil: not set), PackupTimeout bounds a
 	// packup.detect's models (default packup.DetectTimeout), PackupRoles the models
@@ -471,6 +479,7 @@ type Hub struct {
 	dismissed map[string]int64 // #106: inbox dismissals, worker id → status_since
 
 	fu  followupState     // #90 follow-up questions
+	ss  suggestState      // #66 schedule suggestions
 	ho  handoffState      // #223 handoffs
 	ah  agentHandoffState // #224 agent handoff requests
 	llm llmHandoffState   // #9 LLM handoffs
@@ -737,6 +746,9 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		return nil, err
 	}
 	if err := h.initFollowups(ctx); err != nil { // #90
+		return nil, err
+	}
+	if err := h.initScheduleSuggestions(ctx); err != nil { // #66
 		return nil, err
 	}
 	if err := h.initHandoffs(ctx); err != nil { // #223
@@ -1060,6 +1072,10 @@ func (h *Hub) Command(ctx context.Context, c *Client, cmd proto.Command) error {
 			start = h.startKaneo
 		case proto.CmdFollowupsGet, proto.CmdFollowupsSet, proto.CmdFollowupsTest: // #90
 			start = h.startFollowups
+		case proto.CmdScheduleSuggestionsGet, proto.CmdScheduleSuggestionsSet, proto.CmdScheduleSuggestionsZone: // #66
+			start = h.startScheduleSuggestions
+		case proto.CmdWorkerDismissScheduleSuggestion: // #66
+			start = h.startDismissScheduleSuggestion
 		case proto.CmdPackupGet, proto.CmdPackupSet, proto.CmdPackupTest, proto.CmdPackupDetect: // #110
 			start = h.startPackup
 		case proto.CmdHireInterpret: // #211
@@ -1199,6 +1215,8 @@ func errorCode(err error) string {
 		return coded.code
 	case followupErrorCode(err) != "": // #90
 		return followupErrorCode(err)
+	case scheduleSuggestErrorCode(err) != "": // #66
+		return scheduleSuggestErrorCode(err)
 	case handoffLLMErrorCode(err) != "": // #9
 		return handoffLLMErrorCode(err)
 	case handoffErrorCode(err) != "": // #223
@@ -1463,10 +1481,11 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 			delete(h.typed, id) // #95
 			delete(h.starts, id)
 			delete(h.dirty, id)
-			delete(h.dg, id)                               // #118
-			delete(h.dgs.ws, id)                           // #118 phase 2
-			h.dropFollowup(context.Background(), id, true) // #90: gone
-			h.ch.reg.Remove(id)                            // #22: its children go with its worker.removed
+			delete(h.dg, id)                                                      // #118
+			delete(h.dgs.ws, id)                                                  // #118 phase 2
+			h.dropFollowup(context.Background(), id, true)                        // #90: gone
+			h.dropSuggestion(context.Background(), id, store.ScheduleSuggestGone) // #66
+			h.ch.reg.Remove(id)                                                   // #22: its children go with its worker.removed
 			if w != nil {
 				h.emit(proto.Event{T: proto.EvWorkerRemoved, ID: id, Session: w.Session, FloorID: w.Floor, WorkspaceID: w.WorkspaceID})
 			}
@@ -1644,11 +1663,12 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		delete(h.typed, id) // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
-		delete(h.dg, id)              // #118
-		delete(h.dgs.ws, id)          // #118 phase 2
-		h.dropFollowup(ctx, id, true) // #90: gone
-		delete(h.ho.cands, id)        // #223
-		h.ch.reg.Remove(id)           // #22: its children go with its worker.removed
+		delete(h.dg, id)                                     // #118
+		delete(h.dgs.ws, id)                                 // #118 phase 2
+		h.dropFollowup(ctx, id, true)                        // #90: gone
+		h.dropSuggestion(ctx, id, store.ScheduleSuggestGone) // #66
+		delete(h.ho.cands, id)                               // #223
+		h.ch.reg.Remove(id)                                  // #22: its children go with its worker.removed
 		if w == nil {
 			continue
 		}
@@ -1791,6 +1811,7 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 			h.dropFollowup(ctx, id, false)
 		}
 		next.Followup = h.followupView(id)
+		next.ScheduleSuggestion = h.suggestionView(id)      // #66
 		next.Handoff = h.handoffView(id, next.AgentSession) // #223
 		next.AgentHandoff = h.agentHandoffView(id)          // #224
 		h.llmSessionSeen(id, next.AgentSession)             // #9: another session stops its job
@@ -2214,24 +2235,25 @@ func (h *Hub) snapshot() proto.Snapshot {
 	hire := h.hireOptions()
 	w := proto.World{Buildings: h.buildingViews(), Unassigned: []string{}, Floors: []proto.Floor{}, Workers: []proto.Worker{},
 		HireOptions: &hire, Presets: h.presetViews(), Limits: h.limitsViews(), Children: []proto.Child{}} // M6 launch: presets; M10 limits; #22
-	w.Screen = h.screenView()                 // M13 screen
-	w.AI = h.aiView()                         // #92 AI integration
-	w.Kaneo = h.kaneoView()                   // #184 Kaneo
-	w.Followups = h.followupsView()           // #90
-	w.Handoffs = h.handoffsView()             // #223
-	w.Packup = h.packupView()                 // #110
-	w.Activity = h.activityView()             // #98
-	w.Digest = h.digestView()                 // #118
-	w.HandoffLLM = h.handoffLLMView()         // #9
-	w.Notify = h.notifyView()                 // #11
-	w.InboxDismissed = h.inboxDismissedView() // #106
-	w.CodexServer = h.codexServerView()       // #155
-	w.RepoRefs = h.repoRefsView()             // #247
-	w.PromptSecrets = h.promptSecretsView()   // #108
-	w.RepoDiscovery = h.repoDiscoveryView()   // #54
-	w.Schedules = h.schedulesView()           // #62
-	w.HirePresets = h.hirePresetViews()       // #93
-	w.HerdrInstructions = true                // #95
+	w.Screen = h.screenView()                           // M13 screen
+	w.AI = h.aiView()                                   // #92 AI integration
+	w.Kaneo = h.kaneoView()                             // #184 Kaneo
+	w.Followups = h.followupsView()                     // #90
+	w.ScheduleSuggestions = h.scheduleSuggestionsView() // #66
+	w.Handoffs = h.handoffsView()                       // #223
+	w.Packup = h.packupView()                           // #110
+	w.Activity = h.activityView()                       // #98
+	w.Digest = h.digestView()                           // #118
+	w.HandoffLLM = h.handoffLLMView()                   // #9
+	w.Notify = h.notifyView()                           // #11
+	w.InboxDismissed = h.inboxDismissedView()           // #106
+	w.CodexServer = h.codexServerView()                 // #155
+	w.RepoRefs = h.repoRefsView()                       // #247
+	w.PromptSecrets = h.promptSecretsView()             // #108
+	w.RepoDiscovery = h.repoDiscoveryView()             // #54
+	w.Schedules = h.schedulesView()                     // #62
+	w.HirePresets = h.hirePresetViews()                 // #93
+	w.HerdrInstructions = true                          // #95
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {
