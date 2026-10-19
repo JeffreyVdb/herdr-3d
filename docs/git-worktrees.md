@@ -109,12 +109,17 @@ cd <worker folder> && mise which direnv   # prints a path once a version is sele
 ```
 
 1. **Per worktree**, in the ignored `mise.local.toml` from above: add `direnv@<installed>` to the `mise use --path
-   "$PWD/mise.local.toml" …` command. It needs no trust; it is only a `[tools]` entry.
-2. **For the bridge**, when a worktree sits outside the main checkout's config ancestry or you want one answer for the
-   bridge's own checks: `systemctl --user edit herdr-world`, then
+   "$PWD/mise.local.toml" …` command. It needs no trust; it is only a `[tools]` entry. This only helps a folder that
+   already exists: a hire that makes a new worktree checks it before any such file could be there.
+2. **For every worktree in one folder**, including the ones hires create: a `mise.toml` holding only
+   `[tools]` / `direnv = "<installed>"` in the folder that holds them (herdr's are under `~/.herdr/worktrees/<repo>/`).
+   mise reads every parent directory's config, so each worktree below it, and both the bridge's check and the worker's
+   pane there, select that version; a `[tools]`-only file needs no trust. Do the same in a parent of the main checkout
+   if workers are hired there too.
+3. **For the bridge**, when you want one answer for the bridge's own checks: `systemctl --user edit herdr-world`, then
    `[Service]` / `Environment=MISE_DIRENV_VERSION=<installed>`, and restart the service. This selects the version for the
-   bridge's process only; the worker's pane still needs option 1 or 3.
-3. **For the whole host**, an explicit choice of yours: `mise use -g direnv@<installed>`. It affects every directory and
+   bridge's process only; the worker's pane still needs option 1, 2 or 4.
+4. **For the whole host**, an explicit choice of yours: `mise use -g direnv@<installed>`. It affects every directory and
    every agent on the host.
 
 herdr-3d never runs `mise use`, installs a tool, trusts a config or runs `direnv allow`: the selection is yours. mise's own
