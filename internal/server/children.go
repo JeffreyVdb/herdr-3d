@@ -41,6 +41,9 @@ func (h *Hub) childEvidence(ctx context.Context, e childagents.Evidence) {
 		for _, ev := range evs {
 			h.emit(ev)
 		}
+		if len(evs) > 0 {
+			h.syncTranscriptWatches() // #26: a child watch's row removed or merged away
+		}
 	}) != nil {
 		return
 	}

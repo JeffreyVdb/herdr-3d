@@ -75,8 +75,8 @@ test('three levels nest on the page and the wall; keys move, fold and open at an
   await page.keyboard.press('Shift+ArrowRight');
   await expect.poll(async () => (await rows(page)).length).toBe(4);
 
-  // Enter on a child: until #26 it seats at the worker that owns it, as the worker's own row does (the fixture's worker
-  // names no harness, so its laptop opens on its terminal rather than a conversation).
+  // Enter on a child: it seats at the worker that owns it, as the worker's own row does, and (#26) asks for the child's
+  // own conversation; this read-only fixture bridge has no transcripts (h26-child-transcripts.spec.ts plays them).
   await page.keyboard.press('End');
   await expect.poll(async () => (await pageInfo(page))?.focused).toBe(curie);
   await page.keyboard.press('Enter');

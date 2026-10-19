@@ -20,7 +20,7 @@
  *
  * #24: the workers' native child agents nest under them as quieter conversation rows (a diamond pip for a lamp), to any
  * depth: wires per level, the indent capped at `NEST_MAX` levels (deeper rows say their level), collapse and keys as for
- * any group. Activating one goes to its worker until #26 opens the child's own transcript (`OverviewHost.goToChild`).
+ * any group. Activating one seats you at its worker with the child's own conversation open (#26, `OverviewHost.goToChild`).
  */
 
 import { lineStatusText } from '../world/digestSettings';
@@ -82,8 +82,8 @@ export interface OverviewHost {
   /** A worker row: sit at its laptop with its conversation on screen (`App.goToWorker(id, 'transcript')`). */
   goTo(id: string): void;
   /**
-   * #24: a native child's row. Until #26 opens the child's own transcript it seats at the worker that owns it, with that
-   * worker's conversation (`App.goToWorker(workerId, 'transcript')`).
+   * #24: a native child's row: seats at the worker that owns it and (#26) opens that child's own conversation over the
+   * worker's, with the way back (`App.goToWorker(workerId, 'transcript', childId)`).
    */
   goToChild(workerId: string, childId: string): void;
   /** A ticket: the in-game issue window over the page. */
@@ -958,7 +958,7 @@ function rowLabel(r: OverviewWorkerRow, now: number): string {
 
 /**
  * #24: a child row's spoken label: what it is, whose, what it was asked, its state and time, its transcript, and where
- * activating it goes (its worker, until #26). `nest` past NEST_MAX: its level too (the indent no longer says it).
+ * activating it goes (#26: its own conversation, at its worker). `nest` past NEST_MAX: its level too (the indent no longer says it).
  */
 function childLabel(r: OverviewChildRow, nest: number, now: number): string {
   return [
@@ -973,13 +973,13 @@ function childLabel(r: OverviewChildRow, nest: number, now: number): string {
   ]
     .filter(Boolean)
     .join(' · ')
-    .concat(': go to its worker');
+    .concat(': open its conversation');
 }
 
 /** #24: a child row's since column: its state in words and its time where one means something (`childSince`). */
 function childSinceEl(r: OverviewChildRow, now: number): HTMLElement {
   const s = childSince(r, now);
-  return sinceEl([h('span', { class: 'ov-state' }, s.word), h('span', { class: 'ov-sep' }, ' '), h('span', { class: 'ov-time' }, s.time ?? '')], 'Go to worker');
+  return sinceEl([h('span', { class: 'ov-state' }, s.word), h('span', { class: 'ov-sep' }, ' '), h('span', { class: 'ov-time' }, s.time ?? '')], 'Open its conversation');
 }
 
 /** Where a nested row's elbow meets it (px from its top): a worker's name, a child's (its row is tighter). */

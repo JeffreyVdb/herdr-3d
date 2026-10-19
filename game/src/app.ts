@@ -881,8 +881,8 @@ export class App {
         cityData: () => this.cityOverviewData(), // #188
         goToFloor: (floor) => void this.goToFloor(floor),
         goTo: (id) => void this.goToWorker(id, 'transcript'),
-        // #24: a native child's row seats at its worker; #26 opens the child's own transcript here.
-        goToChild: (workerId) => void this.goToWorker(workerId, 'transcript'),
+        // #24: a native child's row seats at its worker; #26: with the child's own conversation open over the worker's.
+        goToChild: (workerId, childId) => void this.goToWorker(workerId, 'transcript', childId),
         openTicket: (floor, id) => this.boardsPanel.openItem('issues', floor, id, { pin: true }),
         retrySummary: (id) =>
           void this.send('digest.retry', { id }).then((r) => {
@@ -4139,9 +4139,10 @@ export class App {
    * #100: an inbox row's (or a notification's) click. Unlike N it teleports: straight onto the worker's floor (no
    * elevator panel), facing it, and sat at its laptop with its conversation on screen (not the view E remembers),
    * from anywhere (`view`: 'terminal' puts the terminal on screen instead). False when it cannot be done (in a transition, the worker or its floor went). When the laptop
-   * cannot be sat at, you are left facing the worker with the reason (`sitAt`'s toast), and it is still true.
+   * cannot be sat at, you are left facing the worker with the reason (`sitAt`'s toast), and it is still true. #26: `child`,
+   * one of its native children's row id: that child's conversation opens over the worker's (the way back is on screen).
    */
-  async goToWorker(id: string, view: 'terminal' | 'transcript' = 'transcript'): Promise<boolean> {
+  async goToWorker(id: string, view: 'terminal' | 'transcript' = 'transcript', child: string | null = null): Promise<boolean> {
     if (this.transitioning) return false;
     const was = this.store.workerView(id);
     if (!was) return false;
@@ -4162,6 +4163,7 @@ export class App {
     // The conversation for this sit only: what E opens next time stays as you left it.
     if (this.sitAt(id)) {
       this.laptops.transcript.setMode(view, false);
+      if (child) this.laptops.openChild(child);
       this.laptops.focusSeat();
     }
     if (finished !== null) void this.send('inbox.dismiss', { id, status_since: finished }); // #106 (an older bridge just ignores it)

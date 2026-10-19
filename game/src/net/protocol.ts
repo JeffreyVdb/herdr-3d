@@ -961,16 +961,17 @@ export interface CommandArgs {
   'terminal.zoom': { id: string; on: boolean };
   'worker.keys': { id: string; input: KeyItem[] };
   // M16: the transcript view at a laptop (docs/protocol.md "Laptops: transcript").
-  'transcript.watch': { id: string; limit?: number };
-  'transcript.unwatch': { id: string };
+  /** #26: `child`, one of the worker's native children's own transcript (its own watch, beside the worker's). */
+  'transcript.watch': { id: string; limit?: number; child?: TranscriptChild };
+  'transcript.unwatch': { id: string; child?: TranscriptChild };
   /** The items before `before` (a cursor); with `agent`, a Claude subagent's own timeline (`before` '': its newest). */
-  'transcript.page': { id: string; before: string; limit?: number; agent?: string };
+  'transcript.page': { id: string; before: string; limit?: number; agent?: string; child?: TranscriptChild };
   /** One item in full; with `agent`, an item of that subagent's timeline. */
-  'transcript.item': { id: string; item: string; agent?: string };
+  'transcript.item': { id: string; item: string; agent?: string; child?: TranscriptChild };
   /** M16 phase 2: one image by the hash of an `ImageRef` this connection was sent (never a path). */
-  'transcript.image': { id: string; hash: string; size: 'thumb' | 'full'; agent?: string };
+  'transcript.image': { id: string; hash: string; size: 'thumb' | 'full'; agent?: string; child?: TranscriptChild };
   /** M16 phase 2: every image of the session (no bytes), also the ones older than the watch's window. */
-  'transcript.images': { id: string; before?: string; limit?: number };
+  'transcript.images': { id: string; before?: string; limit?: number; child?: TranscriptChild };
   // M6 start: team presets and starting a run.
   'preset.create': { name: string; roles: PresetRoles };
   /** `roles` replaces all five. */
@@ -1791,6 +1792,20 @@ export interface TranscriptItem {
   raw_type?: string;
 }
 
+/**
+ * #26: a transcript command's target is one of the worker's native children: its row (`Child.id`), the worker's child
+ * generation the game saw (`Child.generation`) and its provider. The bridge finds its log from the worker's own row and
+ * session; another generation is refused (`stale`), a row that is not the worker's `not_found`.
+ */
+export interface TranscriptChild {
+  id: string;
+  generation: number;
+  provider: string;
+}
+
+/** #26: a child watch's log: read, not written or found yet (or a provisional child), or none (its provider says so, or it went). */
+export type TranscriptAvailability = 'available' | 'pending' | 'unavailable';
+
 /** What a watch says of the transcript it reads (the ack; the first push after a `pending` one). */
 export interface TranscriptHead {
   harness: string;
@@ -1801,6 +1816,8 @@ export interface TranscriptHead {
   has_more: boolean;
   /** No transcript yet (a fresh hire, a plain shell): items come once it appears. */
   pending: boolean;
+  /** #26: a child watch's only (a push with a head alone may change it while pending). */
+  availability?: TranscriptAvailability;
 }
 
 /** `transcript.watch` ack. */
@@ -1843,17 +1860,22 @@ export interface TranscriptImagesAck {
 export interface TranscriptItems extends Partial<TranscriptHead> {
   t: 'transcript.items';
   id: string;
+  /** #26: the child watch's push (absent: the worker's own). */
+  child?: TranscriptChild;
   /** New items (absent: none). */
   items?: TranscriptItem[];
   /** Whole replacements of items already sent, by `id` (a tool result arriving, a streamed message growing). */
   updates?: TranscriptItem[];
 }
 
-export type TranscriptClosedReason = 'worker_removed' | 'asleep' | 'session_changed' | 'resync' | 'not_found';
+/** #26: `evicted`, a child watch the connection's newer child watch replaced (two at most). */
+export type TranscriptClosedReason = 'worker_removed' | 'asleep' | 'session_changed' | 'resync' | 'not_found' | 'evicted';
 
 export interface TranscriptClosed {
   t: 'transcript.closed';
   id: string;
+  /** #26: the child watch's (absent: the worker's own). */
+  child?: TranscriptChild;
   reason: TranscriptClosedReason | string;
 }
 

@@ -220,7 +220,7 @@ export const BINDINGS = [
   { id: 'secrets.edges', group: 'dialogs', scope: 'dialog', keys: [code('ArrowLeft'), code('ArrowRight'), code('ArrowLeft', { shift: true }), code('ArrowRight', { shift: true })], show: [['← →'], ['Shift', '← →']], label: 'In the secrets review, on a match: move its end, or (with Shift) its start, by one character', readonly: true },
   { id: 'secrets.mark', group: 'dialogs', scope: 'dialog', keys: [code('KeyM'), code('Delete')], show: [['M'], ['Delete']], label: 'In the secrets review: mark the text selected in the prompt as a secret; Delete takes a mark you made away', readonly: true },
   // ---- at a laptop (laptop/keys.ts; no help key here) ---------------------------------------------
-  { id: 'seat.stand', group: 'laptop', scope: 'seated', keys: [code('Escape')], label: 'Stand up', readonly: true },
+  { id: 'seat.stand', group: 'laptop', scope: 'seated', keys: [code('Escape')], label: 'Stand up (from a subagent’s conversation: back to its worker’s first)', readonly: true },
   { id: 'seat.view', group: 'laptop', scope: 'seated', keys: [code('Escape', { ctrl: true })], label: 'Terminal or conversation', readonly: true },
   { id: 'seat.palette', group: 'laptop', scope: 'seated', keys: [code('KeyP', { mod: true })], label: 'The command palette (the terminal no longer gets Ctrl+P; ↑ is still previous history)', readonly: true },
   { id: 'seat.dictate', group: 'laptop', scope: 'seated', keys: [code('Space', { mod: true, shift: true })], label: 'The dictation bar (the terminal does not get this chord)', readonly: true },

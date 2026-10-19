@@ -27,18 +27,29 @@
 // - #21: `demo-h21` is Codex's code changes in every source and state (`h21Timeline`), half of them older than a watch's
 //   window: "Jump to message" from its screenshot pages them in.
 // - #56: `demo-h56` is Codex's collaboration calls and agent messages (`h56Timeline`).
+// - #26: a native child's own transcript (`child: {id, generation, provider}` on watch/unwatch/page/item/image/images),
+//   for the children the world has (the children fixtures, `?ws=/fixture/children-nested?sim=1`): a child of another
+//   generation is `stale`, one the worker has not (or of another provider) `not_found`. A child whose row has no native id
+//   or says `transcript: pending` acks pending (`availability: pending`), `unavailable` unavailable; any other its own
+//   timeline (`childTimeline`: a Claude child the demo's subagent's, a Codex child a long one of its own). Two child
+//   watches per connection, a third evicts the oldest (`evicted`); they do not count against the four. `sim.transcript
+//   {id, child, items?, updates?, head?, close?}` pushes to (or closes) a child watch, `head` the fields of a head to
+//   send with it (a pending child going live). `child.removed` of a watched child closes it `not_found`, a worker.upsert
+//   with another child generation `session_changed`.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PNG } from 'pngjs';
-import type { Floor, ImageRef, TranscriptItem, Worker } from '../src/net/protocol.ts';
+import type { Child, Floor, ImageRef, TranscriptChild, TranscriptItem, Worker } from '../src/net/protocol.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
 
 export const SIM_MAX_TRANSCRIPT_WATCHES = 4;
+/** #26: child watches per connection (the bridge's MaxChildTranscriptWatches). */
+export const SIM_MAX_CHILD_WATCHES = 2;
 /** The agent id of the demo's subagent: the one fixtures/transcript/claude-subagent.json was read from. */
 export const SIM_SUBAGENT = 'aa3716c63ba631707';
 
@@ -124,6 +135,8 @@ export interface TranscriptHost {
   extra?(id: string): TranscriptItem[];
   /** #98: the image its current activity shows (tools/fixture-activity.ts): served without a watch, like the bridge. */
   activityHash?(id: string): string | undefined;
+  /** #26: worker id's child by its row id (tools/fixture-children.ts; none: no children). */
+  child?(worker: string, id: string): Child | undefined;
 }
 
 const FIXTURES = join(import.meta.dirname, '..', 'fixtures', 'transcript');
@@ -355,6 +368,28 @@ interface Watch {
   items: TranscriptItem[];
   /** The hashes this connection was sent for this worker. */
   sent: Set<string>;
+  /** #26: a child watch's target, and when it was made (the oldest is evicted). */
+  child?: TranscriptChild;
+  born?: number;
+}
+
+/** #26: a watch's key: the worker id, with the child's row for a child's. */
+const keyOf = (id: string, child?: TranscriptChild | null) => (child ? `${id}\u0000${child.id}` : id);
+
+/**
+ * #26: a child's own timeline: a Claude child's is the demo's subagent's (fixtures/transcript/claude-subagent.json); a
+ * Codex child's its task, then its work, long enough (when `long`) that older items are paged in.
+ */
+export function childTimeline(c: Child, now: number, long = false): TranscriptItem[] {
+  if (c.provider === 'claude') return subagentItems().map((it, i) => ({ ...it, seq: i + 1 }));
+  const name = c.name ?? c.type ?? 'Subagent';
+  const steps = long ? 120 : 6;
+  const all: TranscriptItem[] = [{ id: `${c.id}-task`, seq: 0, ts: 0, kind: 'user', parts: [{ text: c.description ?? `${name}, look into this and report back.` }] }];
+  for (let i = 1; i <= steps; i++) {
+    all.push({ id: `${c.id}-run-${i}`, seq: 0, ts: 0, kind: 'tool', tool: { name: 'exec_command', input_summary: `rg -n "headless" src/ --glob '*.ts' | sed -n '${i},${i + 20}p'`, status: 'ok', output_text: `src/render/backend.ts:${40 + i}: headless: true` } });
+    all.push({ id: `${c.id}-say-${i}`, seq: 0, ts: 0, kind: 'assistant', parts: [{ text: `Step ${i}: the flags in \`backend.ts\` already pick the discrete GPU; checking the next caller.` }] });
+  }
+  return all.map((it, i) => ({ ...it, seq: i + 1, ts: now - (all.length - i) * 9_000 }));
 }
 
 export class TranscriptSim {
@@ -377,7 +412,7 @@ export class TranscriptSim {
       if (!this.on && t.startsWith('transcript.')) throw this.host.error('unknown_command', `unknown command: "${t}"`);
       if (t === 'transcript.watch') ack(this.watch(a, send));
       else if (t === 'transcript.unwatch') {
-        this.watches.delete(this.str(a, 'id'));
+        this.watches.delete(keyOf(this.str(a, 'id'), this.childArg(a)));
         ack();
       } else if (t === 'transcript.page') ack(this.page(a));
       else if (t === 'transcript.item') ack(this.item(a));
@@ -414,11 +449,50 @@ export class TranscriptSim {
     return w;
   }
 
+  /** #26: a command's `child`, checked as the bridge does (null: none). */
+  private childArg(a: Obj): TranscriptChild | null {
+    if (a.child === undefined) return null;
+    const c = a.child as Partial<TranscriptChild> | null;
+    if (!c || typeof c.id !== 'string' || !c.id || (c.provider !== 'claude' && c.provider !== 'codex') || typeof c.generation !== 'number') {
+      throw this.host.error('bad_request', 'bad args: child needs its id, generation and provider (claude or codex)');
+    }
+    return { id: c.id, generation: c.generation, provider: c.provider };
+  }
+
+  /** #26: the row a child target names, of its worker's generation now. */
+  private childRow(id: string, t: TranscriptChild): Child {
+    const w = this.worker(id);
+    if ((w.child_generation ?? 0) !== t.generation) throw this.host.error('stale', `the worker's session was replaced (generation ${w.child_generation ?? 0}, not ${t.generation}): its children went with it`);
+    const c = this.host.child?.(id, t.id);
+    if (!c || c.provider !== t.provider) throw this.host.error('not_found', `worker "${id}" has no ${t.provider} child "${t.id}"`);
+    return c;
+  }
+
+  private born = 0;
+
+  /** #26: a child's watch: its own timeline, or pending / unavailable. */
+  private watchChild(id: string, t: TranscriptChild, limit: number, send: Send): Obj {
+    const c = this.childRow(id, t);
+    const key = keyOf(id, t);
+    const availability = !c.native_id || c.transcript === 'pending' ? 'pending' : c.transcript === 'unavailable' ? 'unavailable' : 'available';
+    const items = availability === 'available' ? childTimeline(c, this.host.now(), c.state === 'running') : [];
+    const watch: Watch = { send, items, sent: new Set(), child: t, born: ++this.born };
+    this.watches.set(key, watch);
+    const kids = [...this.watches.entries()].filter(([, w]) => w.child).sort((x, y) => (x[1].born ?? 0) - (y[1].born ?? 0));
+    if (kids.length > SIM_MAX_CHILD_WATCHES) this.close((kids[0] as [string, Watch])[0], 'evicted');
+    const from = Math.max(0, items.length - limit);
+    const shown = items.slice(from);
+    this.note(watch, shown);
+    return { harness: c.provider, session: c.native_id ?? '', version: availability === 'available' ? '0.160.1' : '', cursor: `c:${items[from]?.seq ?? 1}`, has_more: from > 0, pending: availability !== 'available', availability, items: shown };
+  }
+
   private watch(a: Obj, send: Send): Obj {
     const id = this.str(a, 'id');
     const limit = this.limit(a);
     this.worker(id);
-    const n = this.watches.size - (this.watches.has(id) ? 1 : 0);
+    const child = this.childArg(a);
+    if (child) return this.watchChild(id, child, limit, send);
+    const n = [...this.watches.values()].filter((w) => !w.child).length - (this.watches.has(id) ? 1 : 0);
     if (n >= SIM_MAX_TRANSCRIPT_WATCHES) throw this.host.error('capacity', `capacity: this connection already watches ${n} transcripts (--max-transcript-watches)`);
     const items = (this.timeline?.items ?? demoTimeline)(this.host.now());
     const top = items.reduce((m, it) => Math.max(m, it.seq), 0);
@@ -434,8 +508,9 @@ export class TranscriptSim {
 
   private watched(a: Obj): Watch {
     const id = this.str(a, 'id');
-    const w = this.watches.get(id);
-    if (!w) {
+    const child = this.childArg(a);
+    const w = this.watches.get(keyOf(id, child));
+    if (!w || (child && w.child?.generation !== child.generation)) {
       this.worker(id);
       throw this.host.error('invalid_state', 'invalid state: this connection does not watch that transcript');
     }
@@ -534,10 +609,12 @@ export class TranscriptSim {
 
   private sim(a: Obj): Obj {
     const id = this.str(a, 'id');
-    const w = this.watches.get(id);
-    if (!w) throw this.host.error('invalid_state', `no transcript watch of "${id}"`);
+    const child = this.childArg(a);
+    const key = keyOf(id, child);
+    const w = this.watches.get(key);
+    if (!w) throw this.host.error('invalid_state', `no transcript watch of "${id}"${child ? ` for child "${child.id}"` : ''}`);
     if (typeof a.close === 'string' && a.close) {
-      this.close(id, a.close);
+      this.close(key, a.close);
       return { closed: true };
     }
     const items = Array.isArray(a.items) ? (a.items as TranscriptItem[]) : [];
@@ -549,25 +626,42 @@ export class TranscriptSim {
     }
     this.note(w, items);
     this.note(w, updates);
-    w.send({ t: 'transcript.items', id, items, updates });
+    const head = a.head && typeof a.head === 'object' ? (a.head as Obj) : {};
+    w.send({ t: 'transcript.items', id, ...(w.child ? { child: w.child } : {}), items, updates, ...head });
     return { pushed: items.length + updates.length };
   }
 
-  private close(id: string, reason: string): void {
-    const w = this.watches.get(id);
+  /** Ends the watch of `key` (a worker id, or #26 a child's key) and tells its connection why. */
+  private close(key: string, reason: string): void {
+    const w = this.watches.get(key);
     if (!w) return;
-    this.watches.delete(id);
-    w.send({ t: 'transcript.closed', id, reason });
+    this.watches.delete(key);
+    const id = key.split('\u0000')[0] as string;
+    w.send({ t: 'transcript.closed', id, ...(w.child ? { child: w.child } : {}), reason });
+  }
+
+  /** The watches of worker id (its own and, #26, its children's), by key. */
+  private keysOf(id: string): string[] {
+    return [...this.watches.keys()].filter((k) => k === id || k.startsWith(`${id}\u0000`));
   }
 
   /** World events end the watches they concern (as the bridge's syncTranscriptWatches). */
   onEvent(m: Obj): void {
     if (!this.watches.size || typeof m.seq !== 'number') return;
-    if (m.t === 'worker.removed' && typeof m.id === 'string') this.close(m.id, 'worker_removed');
+    if (m.t === 'worker.removed' && typeof m.id === 'string') for (const k of this.keysOf(m.id)) this.close(k, 'worker_removed');
     else if (m.t === 'floor.upsert') {
       const f = m.floor as Floor | undefined;
       if (f?.state !== 'asleep') return;
-      for (const id of [...this.watches.keys()]) if (this.host.worker(id)?.session === f.session) this.close(id, 'asleep');
+      for (const key of [...this.watches.keys()]) if (this.host.worker(key.split('\u0000')[0] as string)?.session === f.session) this.close(key, 'asleep');
+    } else if (m.t === 'child.removed' && typeof m.worker_id === 'string' && typeof m.id === 'string') {
+      this.close(keyOf(m.worker_id, { id: m.id, generation: 0, provider: '' }), 'not_found'); // #26
+    } else if (m.t === 'worker.upsert') {
+      const w = m.worker as Worker | undefined;
+      if (!w) return;
+      for (const k of this.keysOf(w.id)) {
+        const c = this.watches.get(k)?.child;
+        if (c && c.generation !== (w.child_generation ?? 0)) this.close(k, 'session_changed'); // #26
+      }
     }
   }
 }

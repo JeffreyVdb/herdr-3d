@@ -129,6 +129,21 @@ func (r *Registry) Children(id string) []proto.Child {
 	return out
 }
 
+// Child is worker id's child by its row id (#26: a transcript target names
+// it so); false when the worker has no such row now (another worker's, one
+// removed or merged into another, or one of an older generation).
+func (r *Registry) Child(id, row string) (proto.Child, bool) {
+	rt := r.roots[id]
+	if rt == nil {
+		return proto.Child{}, false
+	}
+	rw := rt.rows[row]
+	if rw == nil {
+		return proto.Child{}, false
+	}
+	return rw.c, true
+}
+
 func (r *Registry) newRoot(id, session string) *root {
 	r.gen++
 	return &root{worker: id, session: session, gen: r.gen, rows: map[string]*row{}, native: map[string]string{}, dispatch: map[string]string{}}

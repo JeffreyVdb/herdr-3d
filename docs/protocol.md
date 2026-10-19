@@ -552,7 +552,8 @@ The bridge publishes them whether or not a transcript is open: `children` in the
 `child.removed` events, and each worker's `child_generation`. Phase 1 is the model and the protocol; the providers are
 sources of evidence for it: Claude Code since #23 ([below](#claude-code-subagents-23)), Codex rollouts (#25) and the
 shared Codex server (#27) to come. The floor overview shows them under their workers since #24 (an `unresolved` one
-directly under its root worker, marked as having no known parent); opening a child's own transcript is #26.
+directly under its root worker, marked as having no known parent); since #26 a child row opens the child's own
+conversation, watched by its own target ([A child's transcript](#a-childs-transcript-26)).
 
 ```json
 {"t":"child.upsert","seq":1210,"child":{"id":"ch_7f3a09c2e1d4b856","native_id":"a3f9c1e2","provider":"claude",
@@ -893,10 +894,10 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.prompt` | `{"id": string, "text": string, "op"?: string, "secrets"?: SecretsReview, "secrets_pending"?: string}` | `{"queued": bool, "retried": bool, "sent"?: string, "protected"?: int, "terminal"?: true, "handoff"?: AgentHandoff, "existing"?: true}` (#108: with prompt secrets reviewed, see [Prompt secrets](#prompt-secrets)) | the worker's statuses |
 | `worker.answer` | `{"id": string, "hash": string, "choice"?: 1–9, "cancel"?: true}` | `{"sent": [string…], "resolved": bool}` | the worker's upsert without its `question` when it moves on |
 | `worker.answer_ask` | `{"id": string, "tool_use_id": string, "answers"?: [{"question": int, "choices"?: [int…], "other"?: string}…], "cancel"?: true, "prompt"?: string, "secrets"?: {"prompt"?, "answers[N].other"?: SecretsReview}}` | `{"sent": [string…], "resolved": bool, "prompted"?: bool}` | the worker's upsert without its `ask` once the transcript has the answer (before the ack) (see [Laptops: asks](#laptops-asks)) |
-| `transcript.watch` | `{"id": string, "limit"?: 1–500}` | `{"harness", "session", "version", "cursor", "has_more", "pending", "items"}` | `transcript.items` to this connection only (see [Laptops: transcript](#laptops-transcript)) |
-| `transcript.unwatch` | `{"id": string}` | — | — |
-| `transcript.page` | `{"id": string, "before"?: cursor, "limit"?: 1–500, "agent"?: string}` | `{"items", "cursor", "has_more"}` | — |
-| `transcript.item` | `{"id": string, "item": string, "agent"?: string}` | `{"item"}` | — |
+| `transcript.watch` | `{"id": string, "limit"?: 1–500, "child"?: TranscriptChild}` | `{"harness", "session", "version", "cursor", "has_more", "pending", "availability"?, "items"}` | `transcript.items` to this connection only (see [Laptops: transcript](#laptops-transcript); #26 `child`: [A child's transcript](#a-childs-transcript-26)) |
+| `transcript.unwatch` | `{"id": string, "child"?: TranscriptChild}` | — | — |
+| `transcript.page` | `{"id": string, "before"?: cursor, "limit"?: 1–500, "agent"?: string, "child"?: TranscriptChild}` | `{"items", "cursor", "has_more"}` | — |
+| `transcript.item` | `{"id": string, "item": string, "agent"?: string, "child"?: TranscriptChild}` | `{"item"}` | — |
 | `preset.create` | `{"name": string, "roles": {…}}` | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
 | `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
@@ -3316,7 +3317,7 @@ appended since) when its `subagent` item's status changes. Each watch keeps the 
 A page is also cut at about 4 MiB of items (the older ones wait for the next page: `has_more`), and at 2000 items
 hidden ones included. `transcript.page` and `transcript.item` are only for a worker this connection watches (else, or
 while it is pending, `invalid_state`), run off the hub and are not audit-logged (they are reads of what the watch
-shows). `transcript.watch` and `transcript.unwatch` are audit-logged with the worker id only, never content.
+shows). `transcript.watch` and `transcript.unwatch` are audit-logged with the worker id only (#26: and a child target's `child`, ids only), never content.
 
 #### Items
 
@@ -3465,7 +3466,7 @@ regular file of at most 25 MB whose bytes are a PNG, JPEG, GIF or WebP. A path o
 file system call, so the bridge does not even look at it; anything refused is an `unavailable` image whose `path` the
 view shows as text with "not available". A path that vanished is the same. The client never names a path.
 
-**`transcript.image`** `{id, hash, size, agent?}`, `size` `thumb` or `full`: the image with that hash, only for a worker
+**`transcript.image`** `{id, hash, size, agent?, child?}` (#26: `child`, a hash sent on that child's watch), `size` `thumb` or `full`: the image with that hash, only for a worker
 this connection watches and **only for a hash the bridge already sent this connection** (in the watch ack, a push, a
 page, an item or the image list; else `not_found`, also for a hash that never was in the transcript). Ack:
 `{mime, width, height, bytes, size, data}` with `data` the base64 of the image (`thumb`: at most **480 px** on the
@@ -3480,7 +3481,7 @@ connection that stands on the worker's floor (see [Activity](#activity)): `{id, 
 to the worker's current `activity.image.hash`. Any other hash, `size: "full"`, or a connection not on that floor gets
 the rules above (no watch: `invalid_state`). At most 8 such reads are in flight over the bridge (`busy`).
 
-**`transcript.images`** `{id, before?, limit?}`: the images of the session, oldest first, as
+**`transcript.images`** `{id, before?, limit?, child?}`: the images of the session (#26: of the child's log), oldest first, as
 `{"images": [ImageRef…], "cursor"?, "has_more"?}`, from the index (the whole file, not only the watch's window; each
 item that has images is read back once and its images remembered). Without `before` the newest come; a page is whole
 items (the newest ones, until `limit` refs, default 500, at most 2000 — `bad_request` above — or about 1 MiB of JSON;
@@ -3508,7 +3509,57 @@ count as sent.
 sent home), `asleep` (its floor went to sleep), `session_changed` (another agent session: a new `agent_session`, or
 another Codex rollout picked, e.g. after `/clear` or `/new`; watch again for the new one), `resync` (see above; also a
 transcript file that was truncated or replaced) or `not_found` (the transcript file went). It is not sent for a
-`transcript.unwatch`, a re-watch or a closed connection.
+`transcript.unwatch`, a re-watch or a closed connection. #26: a child watch's closes carry its `child`, and add
+`evicted` ([below](#a-childs-transcript-26)).
+
+#### A child's transcript (#26)
+
+A native child's own conversation ([Native child agents](#native-child-agents-22)) is a transcript target of its own:
+the worker's `id` plus **`child`**, a `TranscriptChild`, on `transcript.watch`, `transcript.unwatch`,
+`transcript.page`, `transcript.item`, `transcript.image` and `transcript.images`:
+
+| field | type | |
+|---|---|---|
+| `id` | string | the child's row id (`Child.id`, `ch_…`): stable for the row's life, also when its native id arrives later |
+| `generation` | uint | the worker's `child_generation` the client saw (its `Child.generation`) |
+| `provider` | string | `claude` or `codex`, as the row's |
+
+```json
+{"t":"transcript.watch","req_id":"70","args":{"id":"6db1905e-…","child":{"id":"ch_7f3a09c2e1d4b856","generation":4,"provider":"claude"}}}
+{"t":"ack","req_id":"70","data":{"harness":"claude","session":"a3f9c1e2","version":"2.1.285","cursor":"c:1","has_more":false,"pending":false,"availability":"available","items":[…]}}
+{"t":"transcript.items","id":"6db1905e-…","child":{"id":"ch_7f3a09c2e1d4b856","generation":4,"provider":"claude"},"items":[…],"updates":[]}
+{"t":"transcript.closed","id":"6db1905e-…","child":{"id":"ch_7f3a09c2e1d4b856","generation":4,"provider":"claude"},"reason":"session_changed"}
+```
+
+- **The client never names a file.** The bridge finds the row through the worker's own registry rows and reads the log
+  its own session's tail reads: a Claude child's `<the worker's session directory>/<agent_session>/subagents/agent-<native_id>.jsonl`
+  (the worker's main transcript's directory), a Codex child's rollout that is a spawned child of the worker's
+  `agent_session` (`codex.ChildFinder`, its first line), never a directory scan by name. Two workers in one directory
+  (one Claude projects directory) have different sessions, so their children never cross.
+- **Refused:** a `generation` that is not the worker's now is `stale` (its session was replaced: the children went with
+  it); a row the worker does not have now (another worker's, removed, merged into the row seen first) or of another
+  `provider` is `not_found`; a `child` without its `id` or a known `provider` is `bad_request`, as is `agent` with
+  `child` (a child's timeline is its own target). Reads (`page`, `item`, `image`, `images`) need a watch of that very
+  child and generation (`invalid_state` otherwise, or while it is pending).
+- **Live and read once.** The log follows the child's file as the worker's session's tail reads it (each line once,
+  shared with the usage and the child evidence; no second tail) and pushes like the worker's own watch, at most 4 a
+  second. A Codex child's records before its `subagent_history_start_ordinal` (its parent's copied history) are hidden,
+  not shown as the child's activity. A completed child's history, its older pages (`transcript.page` with its
+  `cursor`) and its images are read from the file whenever it is watched.
+- **`availability`** (a child watch's head only): `available` once its log is read; while `pending: true`, `pending`
+  (a provisional child with no native id yet, or its file not written or not found yet) or `unavailable` (its row's
+  `transcript` says there is none, or the file went). Never the parent's or a sibling's conversation instead. While
+  pending, a change between the two comes as a `transcript.items` with a head alone (no items); once the file appears
+  the same watch goes live: the first push has the newest page and the head (`availability: "available"`).
+- **Isolation.** Each child watch has its own cursors and `seq`s (its file's), and its own sent hashes:
+  `transcript.image` with `child` serves only a hash sent on that child's watch, and a hash sent on the worker's own
+  watch is not one a child's may read (nor the reverse).
+- **Closes** carry `child`: `session_changed` (the worker's session was replaced), `not_found` (the row went, or its
+  file did: a new watch says `unavailable`), `resync`, `worker_removed`, `asleep`, and **`evicted`**: a connection has
+  at most **2** child watches (apart from `--max-transcript-watches`, which they never count against); a third evicts
+  the oldest. The bridge follows at most **16** children's logs at once for all connections (a child watched by two is
+  one); a watch of another past it is `capacity`. A log goes with its last watch; watched again, it is read again from
+  its file.
 
 ### Laptops: asks
 
@@ -5505,7 +5556,7 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
 | `handoff_llm_unavailable`, `handoff_llm_invalid`, `handoff_llm_stale`, `handoff_llm_interrupted` | #9 (see [LLM handoffs](#llm-handoffs)): LLM handoffs are off, their LLM not ready or untested (nothing was sent); the model's answer is not a handoff of the agreed shape; the LLM's config, the agent session or the worker changed while it was written; the bridge restarted while it was written (never sent again). Nothing was filed and nobody was sent home on any of them; the last three are a job's `code` |
 | `handoff_skill_missing` | #224: the worker's harness lists no `handoff` skill in its checkout (or its skills could not be listed), so its agent cannot be asked for a handoff; nothing was sent (see [Ask the agent](#ask-the-agent)) |
 | `handoff_unavailable`, `handoff_source`, `handoff_failed` | #223 (see [Handoffs](#handoffs)): the worker has no candidate or not the one named (stale: a newer turn, another session or revision); the candidate's lines in the transcript, or those that completed it, are not what they were (replaced, truncated, changed); writing or registering the file failed. Nothing was filed and nobody was sent home on any of them |
-| `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches`; the message says which |
+| `capacity` | `worker.hire` above `--max-workers-per-floor` or `--max-workers`, `terminal.watch` above `--max-watches` or `--max-observers`, `transcript.watch` above `--max-transcript-watches` (#26: a child's past the 16 children's logs the bridge follows); the message says which |
 | `not_clean` | #83: `worker.wrapup` with a delete for a tree that is not clean and pushed now; `worker.fire` asked to delete a worktree whose tree is dirty or has unpushed commits; for `delete_branch` also when the checkout is no longer on the branch the bridge made or that branch has commits on no remote |
 | `fetch_failed` | `worker.hire` with `worktree: true` whose `git fetch origin` failed (no `origin`, offline, timed out after 20 s, …); the message is git's error. Nothing was made. (After the accept, like `bad_request` for a missing default branch.) |
 | `hire_failed`, `fire_failed` | herdr or git failed during a hire / send-home; the message says which step and why. `fire_failed` also when the agent did not exit (still running, or its processes could not be read): then nothing was closed or removed. `hire_failed` names what its rollback kept. |
@@ -5516,7 +5567,7 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
 | `secrets_review_stored` | #108 round 2 (see [Prompt secrets](#prompt-secrets)): the review of a prompt that is stored (`schedule.create`/`update`, `hire_preset.create`/`update`/`check`; `schedule.retry`/`run_now` of a schedule's stored prompt) protects something: a stored prompt keeps no protected file. Remove the values from it, or protect them when you hire with it. Nothing was stored |
 | `secrets_review_required`, `secrets_review_stale`, `secrets_review_off`, `secrets_unavailable` | #108 (see [Prompt secrets](#prompt-secrets)): the text has possible secrets and the command carries no review of them, or its decisions do not fit the scan (a candidate without exactly one decision; a range empty, outside the text, splitting a surrogate pair or overlapping another); the review's `revision` is not the text's under the current rules, key and switch (the text changed, the bridge restarted, the switch changed), or a review came while the switch is off (round 2: and a `secrets_pending` unknown, expired, from before a restart or a change of the switch, another worker's, or whose files another worker took, also when that happened while the command waited; a switch change while a reviewed command waited, before its text went on, or while a preview's or a preset check's model read it; a schedule's prompt changed while its retry's review was checked); round 2: a text of a command with several has no review, or a review names no text the command sends (the message starts with the text's path); `prompt_secrets.scan` while the switch is off; the protection could not run (no private runtime directory, a file could not be written, the scan failed or took over 10 s). Nothing was sent, stored or written on any of them (but that model's read, of the text with its references), and the message never quotes the text |
-| `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` (#60: `worker.retry_followup` / `worker.followup_message`) for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read |
+| `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` (#60: `worker.retry_followup` / `worker.followup_message`) for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read; #26 a transcript command whose `child` names another generation than the worker's now (its session was replaced) |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `files_failed` | #137 `worker.files` (#39: `hire.files`) whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |

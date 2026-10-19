@@ -60,6 +60,7 @@ import { SecretsSim } from './fixture-secrets.ts';
 import { HirePresetSim } from './fixture-hirepreset.ts';
 // #106: the inbox's dismissals (`inbox.dismiss`, `sim.status`, `simfail=no_inbox`).
 import { InboxSim } from './fixture-inbox.ts';
+import { ChildrenSim } from './fixture-children.ts'; // #26
 // M16: the transcript view (`transcript.watch`, `sim.transcript`, `simfail=no_m16`).
 import { TranscriptSim } from './fixture-transcript.ts';
 // #57: agents' structured questions (`sim.ask`, `worker.answer_ask`).
@@ -80,6 +81,8 @@ import { ScheduleSim } from './fixture-schedule.ts';
 export interface SimOptions {
   /** Time between the scripted steps of a wake or sleep (and a hire, a send-home). */
   stepMs?: number;
+  /** #26: the fixture's recorded child events, folded into the world's children (tools/fixture-children.ts). */
+  childEvents?: readonly Record<string, unknown>[];
   /** `simclock=manual`: scripted timers run only when `sim.advance {ms}` releases them. */
   manualClock?: boolean;
   /**
@@ -337,6 +340,7 @@ export class SimWorld {
         error: (code, message) => new CmdError(code, message),
         extra: (id) => [...this.asks.extra(id), ...this.handoffs.extra(id)], // #223: the replies and prompts sim.final played
         activityHash: (id) => this.activity.hash(id),
+        child: (worker, id) => this.children.get(worker, id), // #26
       },
       o.fail !== 'no_m16',
       o.transcript,
@@ -396,6 +400,7 @@ export class SimWorld {
       o.fail !== 'no_herdr_instructions',
     ); // #93, #95
     this.codexServer = new CodexServerSim({ emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.fail !== 'no_codex_run', o.fail === 'codex_unverified'); // #155, #186
+    this.children = new ChildrenSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message) }, o.childEvents ?? []);
     this.inbox = new InboxSim({ workers: this.workers, emit: (send, m) => this.emit(send, m), error: (code, message) => new CmdError(code, message), now: () => this.now() }, o.fail !== 'no_inbox');
     this.host = new HostSim(
       o.host ?? 'ok',
@@ -490,6 +495,7 @@ export class SimWorld {
   private readonly secrets: SecretsSim;
   private readonly hirePresets: HirePresetSim; // #93
   private readonly inbox: InboxSim;
+  private readonly children: ChildrenSim; // #26
   /** M13: the screen share (tools/fixture-share.ts). */
   private readonly share = new ShareSim(
     (send, m) => this.emit(send, m),
@@ -638,6 +644,7 @@ export class SimWorld {
     this.handoffs.decorate(world); // #223
     this.schedules.decorate(world); // #64 schedules
     this.inbox.decorate(world); // #106
+    this.children.decorate(world); // #26
     this.share.decorate(world); // M13
     const out = structuredClone(world);
     // #58: the wire's shape (see the top).
@@ -787,6 +794,7 @@ export class SimWorld {
       if (this.repos.handle(m.t, a, send, ack)) return; // #247
       if (this.hirePresets.handle(m.t, a, send, ack)) return; // #93
       if (this.inbox.handle(m.t, a, send, ack)) return; // #106
+      if (this.children.handle(m.t, a, send, ack)) return; // #26
       if (this.handoffs.handle(m.t, a, send, ack, fail)) return; // #223, #9
       if (this.schedules.handle(m.t, a, send, ack, fail)) return; // #64 schedules
       if (this.share.handle(m.t, a, send, ack, fail)) return; // M13

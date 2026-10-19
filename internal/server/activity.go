@@ -349,8 +349,8 @@ func (h *Hub) viewing(c *Client, floor string) bool {
 	h.term.mu.Unlock()
 	h.tx.mu.Lock()
 	defer h.tx.mu.Unlock()
-	for id := range h.tx.byC[c] {
-		if on(id) {
+	for _, w := range h.tx.byC[c] { // #26: keyed by target, a child's too
+		if on(w.id) {
 			return true
 		}
 	}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
-import type { TranscriptItem } from '../net/protocol';
-import { TranscriptWatches, watchAck } from './transcriptWatches';
+import type { TranscriptChild, TranscriptItem } from '../net/protocol';
+import { targetKey, TranscriptWatches, watchAck } from './transcriptWatches';
 
 const item = (id: string, seq = 1, extra: Partial<TranscriptItem> = {}): TranscriptItem => ({ id, seq, ts: 0, kind: 'assistant', parts: [{ text: id }], ...extra });
 
@@ -13,18 +13,22 @@ function harness() {
   const failed: Array<[string, string]> = [];
   const closed: Array<[string, string]> = [];
   let now = 0;
+  /** #26: a child watch's target reads `worker/child`. */
+  const of = (id: string, child?: TranscriptChild) => (child ? `${id}/${child.id}` : id);
+  const heads: string[] = [];
   const w = new TranscriptWatches({
     send: (t, args) => new Promise((resolve) => sent.push({ t, args: args as unknown as Record<string, unknown>, resolve })),
     sink: {
-      reset: (id, ack) => log.push(`reset ${id} ${ack.items.map((i) => i.id).join(',')}`),
-      push: (id, items, u) => {
+      reset: (id, ack, child) => log.push(`reset ${of(id, child)} ${ack.items.map((i) => i.id).join(',')}${ack.availability ? ` (${ack.availability})` : ''}`),
+      push: (id, items, u, head, child) => {
         updates.push(u);
-        log.push(`push ${id} +${items.map((i) => i.id).join(',')} ~${u.map((i) => i.id).join(',')}`);
+        if (head) heads.push(`${of(id, child)} ${JSON.stringify(head)}`);
+        log.push(`push ${of(id, child)} +${items.map((i) => i.id).join(',')} ~${u.map((i) => i.id).join(',')}`);
       },
-      stop: (id) => log.push(`stop ${id}`),
+      stop: (id, child) => log.push(`stop ${of(id, child)}`),
     },
-    failed: (id, code) => failed.push([id, code]),
-    closed: (id, reason) => closed.push([id, reason]),
+    failed: (id, code, _m, child) => failed.push([of(id, child), code]),
+    closed: (id, reason, child) => closed.push([of(id, child), reason]),
     now: () => now,
   });
   const answer = async (i: number, r: CommandResult) => {
@@ -33,7 +37,7 @@ function harness() {
     await Promise.resolve();
   };
   const ack = (items: TranscriptItem[], o: object = {}): CommandResult => ({ ok: true, data: { harness: 'claude', session: 's1', version: '2.3.1', cursor: 'c:1', has_more: false, pending: false, items, ...o } });
-  return { w, sent, log, updates, failed, closed, answer, ack, tick: (ms: number) => (now += ms) };
+  return { w, sent, log, updates, heads, failed, closed, answer, ack, tick: (ms: number) => (now += ms) };
 }
 
 const want = (...ids: string[]) => new Set(ids);
@@ -320,5 +324,108 @@ describe('TranscriptWatches', () => {
     expect(h.log).toEqual(['stop a']);
     h.w.sync(want('a'));
     expect(h.sent.map((s) => s.t)).toEqual(['transcript.watch', 'transcript.watch']);
+  });
+});
+
+describe('TranscriptWatches: #26 child targets', () => {
+  const ada: TranscriptChild = { id: 'ch_ada', generation: 3, provider: 'claude' };
+  const bell: TranscriptChild = { id: 'ch_bell', generation: 3, provider: 'claude' };
+  const kid = (child: TranscriptChild) => [{ id: 'a', child }];
+
+  it('a child is watched by its own target beside the worker’s own; each gets its own acks and pushes', async () => {
+    const h = harness();
+    h.w.sync(want('a'), kid(ada));
+    expect(h.sent.map((s) => [s.t, s.args])).toEqual([
+      ['transcript.watch', { id: 'a', limit: 200 }],
+      ['transcript.watch', { id: 'a', limit: 200, child: ada }],
+    ]);
+    expect(h.w.ids()).toEqual(['a', targetKey('a', ada)]);
+    await h.answer(1, h.ack([item('c1')], { session: 'agent-1', availability: 'available' }));
+    await h.answer(0, h.ack([item('p1')]));
+    h.w.items({ t: 'transcript.items', id: 'a', items: [item('p2', 2)], updates: [] });
+    h.w.items({ t: 'transcript.items', id: 'a', child: ada, items: [item('c2', 2)], updates: [] });
+    expect(h.log).toEqual(['reset a/ch_ada c1 (available)', 'reset a p1', 'push a +p2 ~', 'push a/ch_ada +c2 ~']);
+    // Back to the parent: only the child's watch goes; the worker's own is untouched.
+    h.w.sync(want('a'));
+    expect(h.sent.slice(2).map((s) => [s.t, s.args])).toEqual([['transcript.unwatch', { id: 'a', child: ada }]]);
+    expect(h.log.at(-1)).toBe('stop a/ch_ada');
+    expect(h.w.ids()).toEqual(['a']);
+    expect(h.w.ready('a')).toBe(true);
+  });
+
+  it('a late ack or a stale push of a child replaced by another (or by another generation) is dropped', async () => {
+    const h = harness();
+    h.w.sync(new Set(), kid(ada));
+    h.w.sync(new Set(), kid(bell)); // you opened another child before the first answered
+    expect(h.sent.map((s) => [s.t, s.args])).toEqual([
+      ['transcript.watch', { id: 'a', limit: 200, child: ada }],
+      ['transcript.unwatch', { id: 'a', child: ada }],
+      ['transcript.watch', { id: 'a', limit: 200, child: bell }],
+    ]);
+    await h.answer(0, h.ack([item('ada1')])); // the first one's ack, late
+    h.w.items({ t: 'transcript.items', id: 'a', child: ada, items: [item('ada2', 2)], updates: [] });
+    expect(h.log).toEqual(['stop a/ch_ada']);
+    await h.answer(2, h.ack([item('bell1')]));
+    // A push naming the same row of another generation, or no child at all, is not this watch's.
+    h.w.items({ t: 'transcript.items', id: 'a', child: { ...bell, generation: 2 }, items: [item('old', 2)], updates: [] });
+    h.w.items({ t: 'transcript.items', id: 'a', items: [item('own', 2)], updates: [] });
+    h.w.closed({ t: 'transcript.closed', id: 'a', child: { ...bell, generation: 2 }, reason: 'session_changed' });
+    expect(h.log).toEqual(['stop a/ch_ada', 'reset a/ch_bell bell1']);
+    expect(h.closed).toEqual([]);
+    // The game sees the worker's next generation: the child of the old one is unwatched (its row is gone with it).
+    h.w.sync(new Set(), kid({ ...bell, generation: 4 }));
+    expect(h.sent.slice(3).map((s) => [s.t, s.args])).toEqual([
+      ['transcript.unwatch', { id: 'a', child: bell }],
+      ['transcript.watch', { id: 'a', limit: 200, child: { ...bell, generation: 4 } }],
+    ]);
+  });
+
+  it('a pending child: its head alone changes the availability; the push that brings its log has its cursor', async () => {
+    const h = harness();
+    h.w.sync(new Set(), kid(ada));
+    await h.answer(0, h.ack([], { session: '', pending: true, availability: 'pending' }));
+    h.w.items({ t: 'transcript.items', id: 'a', child: ada, items: [], updates: [], harness: 'claude', session: '', pending: true, availability: 'unavailable', cursor: 'c:1', has_more: false, version: '' });
+    h.w.items({ t: 'transcript.items', id: 'a', child: ada, items: [item('c1', 4)], updates: [], harness: 'claude', session: 'ag', pending: false, availability: 'available', cursor: 'c:4', has_more: true, version: '2' });
+    expect(h.log).toEqual(['reset a/ch_ada  (pending)', 'push a/ch_ada + ~', 'push a/ch_ada +c1 ~']);
+    expect(h.heads).toEqual([
+      'a/ch_ada {"harness":"claude","session":"","cursor":"c:1","has_more":false,"pending":true,"availability":"unavailable"}',
+      'a/ch_ada {"harness":"claude","session":"ag","cursor":"c:4","has_more":true,"pending":false,"availability":"available"}',
+    ]);
+    expect(watchAck({ availability: 'later' }).availability).toBeUndefined();
+  });
+
+  it('a child’s closes: its log went (not_found) or resync are watched again; session_changed and evicted end it', async () => {
+    const h = harness();
+    h.w.sync(new Set(), kid(ada));
+    await h.answer(0, h.ack([item('c1')]));
+    h.w.closed({ t: 'transcript.closed', id: 'a', child: ada, reason: 'resync' });
+    expect(h.sent.at(-1)?.args).toEqual({ id: 'a', limit: 200, child: ada });
+    await h.answer(1, h.ack([item('c1')]));
+    h.tick(3000);
+    h.w.closed({ t: 'transcript.closed', id: 'a', child: ada, reason: 'not_found' });
+    h.tick(2500);
+    h.w.sync(new Set(), kid(ada));
+    expect(h.sent).toHaveLength(3);
+    await h.answer(2, h.ack([], { pending: true, availability: 'unavailable' }));
+    h.w.closed({ t: 'transcript.closed', id: 'a', child: ada, reason: 'session_changed' });
+    h.tick(2500);
+    expect(h.log.slice(-1)).toEqual(['stop a/ch_ada']);
+    expect(h.closed).toEqual([
+      ['a/ch_ada', 'resync'],
+      ['a/ch_ada', 'not_found'],
+      ['a/ch_ada', 'session_changed'],
+    ]);
+    // A refusal (the child went meanwhile) says which target it was.
+    h.w.sync(new Set(), kid(bell));
+    await h.answer(3, { ok: false, code: 'not_found', message: 'worker "a" has no claude child "ch_bell"' });
+    expect(h.failed).toEqual([['a/ch_bell', 'not_found']]);
+  });
+
+  it('the connection dropping stops the child’s watch too', async () => {
+    const h = harness();
+    h.w.sync(want('a'), kid(ada));
+    h.w.lost();
+    expect(h.log).toEqual(['stop a', 'stop a/ch_ada']);
+    expect(h.w.count).toBe(0);
   });
 });

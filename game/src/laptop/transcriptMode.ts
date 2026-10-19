@@ -1,7 +1,7 @@
 import type { CommandResult } from '../net/client';
 import type { RepoSearchHost } from './repoSearch';
 import { HANDOVER_STALE, packupAction, packupStep, type PackupCheck } from '../ui/packupSend';
-import type { AnswerAskAck, Ask, CommandArgs, Followup, FollowupMessageAck, HandoffCandidate, ImageRef, PromptAck, Question, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
+import type { AnswerAskAck, Ask, ChildState, CommandArgs, Followup, FollowupMessageAck, HandoffCandidate, ImageRef, PromptAck, Question, TranscriptAvailability, TranscriptChild, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import type { ViewPrefs } from '../ui/themePrefs';
@@ -9,7 +9,8 @@ import { MAX_PROMPT } from './keys';
 import type { mountTranscript, TranscriptRenderHost, TranscriptView } from './transcriptRender';
 import type { ImageFeed } from './imageFeed';
 import type { ImagesTabHost, ImagesTabView, MountImagesTab } from './imagesTab';
-import { itemsOf, type TimelineOf } from './transcriptWatches';
+import { itemsOf, type PushHead, type TimelineOf } from './transcriptWatches';
+import type { ChildViewState } from './transcriptChild';
 import { TranscriptDrafts } from './transcriptDrafts';
 import { AsyncDrafts } from './asyncDrafts';
 import { FollowupDrafts } from './followupDrafts';
@@ -69,8 +70,10 @@ export interface TranscriptModeHost {
   send<
     T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.retry_followup' | 'worker.followup_message' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files' | 'worker.repos',
   >(t: T, args: CommandArgs[T]): Promise<CommandResult>;
-  /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list). */
-  feed(id: string): ImageFeed | null;
+  /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list); #26: of a child's. */
+  feed(id: string, child?: TranscriptChild): ImageFeed | null;
+  /** #26: a child's conversation was opened or left (its watch follows). */
+  childChanged?(): void;
   /** Loads the render module (`loadRenderer`; tests pass a fake). */
   renderer(): Promise<MountTranscript | null>;
   /** Loads the images tab (`loadImagesTab`; none: the tab is not there and the mode stays the conversation). */
@@ -113,6 +116,32 @@ export interface TranscriptModeHost {
   secrets?: PromptSecretsFlow;
   /** #108 round 4: the bridge's directory of protected files (`World.prompt_secrets.dir`; null: not known). */
   secretsDir?(): string | null;
+}
+
+/** #26: what the seat shows of a child (its row in the store, as the overview has it). */
+export interface ChildInfo {
+  name: string;
+  type?: string | null;
+  description?: string | null;
+  state: ChildState;
+  /** Its state and time in the overview's words (`childSinceText`). */
+  since: string;
+}
+
+/** #26: a native child's conversation, open over its worker's (whose view stays as it was, hidden). */
+interface ChildSitting {
+  target: TranscriptChild;
+  info: ChildInfo;
+  /** As in `Sitting`: its timeline, by `id`; where older items start. */
+  items: TranscriptItem[];
+  index: Map<string, number>;
+  cursor: string;
+  hasMore: boolean;
+  /** What its watch said of its log (null: no answer yet). */
+  availability: TranscriptAvailability | null;
+  view: TranscriptView | null;
+  pane: HTMLElement | null;
+  mounting: boolean;
 }
 
 /** Remembered per worker: the ones last left in terminal mode (#98: the conversation is the default), newest last. */
@@ -230,6 +259,8 @@ interface Sitting {
   taken: Set<string>;
   /** The transcript the `seq`s (and so `taken` and the marks) are of: `harness/session`, the bridge's key (null: no ack yet). */
   timeline: string | null;
+  /** #26: the child whose conversation is open over the worker's (null: the worker's own). */
+  child: ChildSitting | null;
   /** What the view was last told of the cue (it is recomputed only when this changes). */
   cueKey: string;
   cueDirty: boolean;
@@ -344,7 +375,7 @@ export class TranscriptMode {
       id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', handoff: null, handoffKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
-      pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true,
+      pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true, child: null,
     };
     if (opens) this.setMode(last, false);
     else this.host.modeChanged('terminal');
@@ -358,6 +389,7 @@ export class TranscriptMode {
     this.checking = null;
     this.s = null;
     this.rect = null;
+    this.dropChild(s);
     s.unsub?.();
     if (s.relist) clearTimeout(s.relist);
     if (s.view) {
@@ -436,7 +468,9 @@ export class TranscriptMode {
     }
     s.box.hidden = false;
     this.watchImages(s);
+    if (s.child?.pane) s.child.pane.hidden = true;
     if (s.mode === 'images') return this.showTab(s);
+    if (s.child) return this.showChild(s, s.child);
     if (s.viewPane) s.viewPane.hidden = false;
     if (s.tabPane) s.tabPane.hidden = true;
     if (s.view) {
@@ -549,6 +583,7 @@ export class TranscriptMode {
   async jump(ref: ImageRef): Promise<boolean> {
     const s = this.s;
     if (!s || !ref.item_id) return false;
+    this.closeChild(); // #26: the worker's own message, under the child's
     s.reveal = ref.item_id;
     this.setMode('transcript');
     if (s.view) return this.revealNow(s);
@@ -612,7 +647,8 @@ export class TranscriptMode {
     }
     const pane = this.pane(s);
     s.viewPane = pane === s.box ? null : pane;
-    if (s.viewPane) s.viewPane.hidden = s.mode !== 'transcript';
+    // #26: a child opened meanwhile stays on top; this view waits underneath.
+    if (s.viewPane) s.viewPane.hidden = s.mode !== 'transcript' || !!s.child;
     s.view = mount(pane, this.renderHost(s));
     this.counts.mounted++;
     // #140: the transcript opened: its commands are asked for (the popup asks again when it opens).
@@ -986,14 +1022,220 @@ export class TranscriptMode {
       return;
     }
     s.focusLater = false;
-    const view = s.mode === 'images' ? s.tab : s.view;
+    const view = s.mode === 'images' ? s.tab : (s.child?.view ?? (s.child ? null : s.view));
     if (view) view.focus();
     else if (typeof b.focus === 'function') b.focus({ preventScroll: true });
   }
 
-  /** Enter in transcript mode: to the prompt box. */
+  /** Enter in transcript mode: to the prompt box (a child's view has none). */
   focusPrompt(): void {
-    if (this.s?.mode === 'transcript') this.s.view?.focusPrompt();
+    if (this.s?.mode === 'transcript' && !this.s.child) this.s.view?.focusPrompt();
+  }
+
+  // ---- #26: a native child's conversation -----------------------------------------------
+
+  /** The child open over the seated worker's conversation (its watch's target), or null. */
+  get child(): TranscriptChild | null {
+    return this.s?.child?.target ?? null;
+  }
+
+  /** The open child's name (null: none open). */
+  get childName(): string | null {
+    return this.s?.child?.info.name ?? null;
+  }
+
+  /** The open child's timeline length and what its watch said (test hook). */
+  get childState(): { id: string; items: number; availability: TranscriptAvailability | null; hasMore: boolean; mounted: boolean } | null {
+    const c = this.s?.child;
+    return c ? { id: c.target.id, items: c.items.length, availability: c.availability, hasMore: c.hasMore, mounted: !!c.view } : null;
+  }
+
+  /**
+   * Opens a child's conversation over the seated worker's (whose view, scroll and pages stay as they are underneath): the
+   * conversation mode, read only, with a breadcrumb back. Another child open is closed first.
+   */
+  openChild(target: TranscriptChild, info: ChildInfo): void {
+    const s = this.s;
+    if (!s) return;
+    const open = s.child;
+    if (open && open.target.id === target.id && open.target.generation === target.generation) {
+      this.childSeen(info);
+    } else {
+      this.dropChild(s);
+      s.child = { target, info, items: [], index: new Map(), cursor: '', hasMore: false, availability: null, view: null, pane: null, mounting: false };
+      this.host.childChanged?.();
+    }
+    if (s.mode !== 'transcript') this.setMode('transcript', false);
+    else this.show(s);
+  }
+
+  /**
+   * Back to the worker's own conversation, as it was (`status`: why, on the seat bar: the child went, its worker's
+   * session was replaced). False when no child was open.
+   */
+  closeChild(status: { kind: 'ok' | 'error'; text: string } | null = null): boolean {
+    const s = this.s;
+    if (!s?.child) return false;
+    this.dropChild(s);
+    this.host.childChanged?.();
+    if (status) this.host.status(status.kind, status.text);
+    if (s.mode === 'transcript') this.show(s);
+    return true;
+  }
+
+  /** The open child's row as the store has it now (every frame): its state on the breadcrumb. */
+  childSeen(info: ChildInfo): void {
+    const c = this.s?.child;
+    if (!c) return;
+    const was = c.info;
+    c.info = info;
+    if (was.state !== info.state || was.since !== info.since) this.childDrawn(c);
+  }
+
+  private dropChild(s: Sitting): void {
+    const c = s.child;
+    if (!c) return;
+    s.child = null;
+    if (c.view) {
+      c.view.destroy();
+      this.counts.destroyed++;
+    }
+    c.pane?.remove();
+  }
+
+  private showChild(s: Sitting, c: ChildSitting): void {
+    if (s.viewPane) s.viewPane.hidden = true;
+    if (s.tabPane) s.tabPane.hidden = true;
+    if (c.pane) c.pane.hidden = false;
+    if (c.view) {
+      this.focus();
+      return;
+    }
+    if (c.mounting) return;
+    c.mounting = true;
+    const gen = s.gen;
+    const done = (mount: MountTranscript | null) => {
+      if (this.s?.gen !== gen || this.s.child !== c || !this.s.box) return;
+      c.mounting = false;
+      if (!mount) {
+        this.closeChild({ kind: 'error', text: 'The transcript view did not load: try again.' });
+        return;
+      }
+      const pane = this.pane(s);
+      c.pane = pane === s.box ? null : pane;
+      if (c.pane) c.pane.hidden = s.mode !== 'transcript';
+      c.view = mount(pane, this.childHost(s, c));
+      this.counts.mounted++;
+      c.view.setItems([...c.items]);
+      this.childDrawn(c);
+      if (s.mode === 'transcript') this.focus();
+    };
+    void this.host.renderer().then(done, () => done(null));
+  }
+
+  private childDrawn(c: ChildSitting): void {
+    const st: ChildViewState = { state: c.info.state, since: c.info.since, availability: c.availability, hasMore: c.hasMore };
+    c.view?.setChild?.(st);
+  }
+
+  /** The render host of a child's view: read only (nothing goes to the worker from it), its reads by its target. */
+  private childHost(s: Sitting, c: ChildSitting): TranscriptRenderHost {
+    const live = () => this.s === s && s.child === c;
+    const no = { ok: false as const, code: 'unsupported', message: 'A subagent takes no answers here.' };
+    const target = c.target;
+    return {
+      images: this.host.feed(s.id, target),
+      label: s.name,
+      ...(this.host.prefs ? { prefs: this.host.prefs } : {}),
+      cwd: () => this.host.cwd?.(s.id) ?? null,
+      onPromptSubmit: () => Promise.resolve(false),
+      onAnswer: () => {},
+      onAnswerAsk: () => Promise.resolve(no),
+      onSwitchToTerminal: () => {
+        if (live()) this.setMode('terminal');
+      },
+      loadSubagent: () => Promise.reject(new Error('A subagent’s own subagents open from the floor overview.')),
+      loadItem: async (itemId) => {
+        const r = await this.host.send('transcript.item', { id: s.id, item: itemId, child: target });
+        if (!r.ok) throw new Error(failureText('transcript.item', r.code, r.message, { worker: s.name }));
+        const items = itemsOf([(r.data as { item?: unknown } | null)?.item]);
+        if (items.length) this.host.feed(s.id, target)?.note(items);
+        return items[0] ?? null;
+      },
+      child: {
+        worker: s.name,
+        name: c.info.name,
+        type: c.info.type ?? null,
+        description: c.info.description ?? null,
+        onBack: () => {
+          if (live()) this.closeChild();
+        },
+        loadOlder: () => this.childOlder(s, c),
+      },
+    };
+  }
+
+  /** The open child's older items, before its cursor, merged into its timeline by `seq`. */
+  private async childOlder(s: Sitting, c: ChildSitting): Promise<void> {
+    if (!c.hasMore || !c.cursor) return;
+    const r = await this.host.send('transcript.page', { id: s.id, before: c.cursor, limit: REVEAL_LIMIT, child: c.target });
+    if (this.s !== s || s.child !== c) return;
+    if (!r.ok) {
+      this.host.status('error', failureText('transcript.page', r.code, r.message, { worker: s.name }));
+      return;
+    }
+    const d = typeof r.data === 'object' && r.data !== null ? (r.data as Record<string, unknown>) : {};
+    const got = itemsOf(d.items);
+    this.host.feed(s.id, c.target)?.note(got);
+    c.cursor = typeof d.cursor === 'string' && d.cursor ? d.cursor : c.cursor;
+    c.hasMore = d.has_more === true && got.length > 0;
+    const known = new Set(c.items.map((it) => it.id));
+    c.items = [...got.filter((it) => !known.has(it.id)), ...c.items].sort((a, b) => a.seq - b.seq);
+    c.index = new Map(c.items.map((it, i) => [it.id, i]));
+    c.view?.setItems([...c.items]);
+    this.childDrawn(c);
+  }
+
+  /** The open child of `id`'s watch for `child` (null: another child, another generation, or none open). */
+  private childOf(id: string, child: TranscriptChild): ChildSitting | null {
+    const c = this.s?.id === id ? this.s.child : null;
+    return c && c.target.id === child.id && c.target.generation === child.generation ? c : null;
+  }
+
+  /** #26: a child watch's ack: its whole timeline, replaced, and what it said of its log. */
+  resetChild(id: string, child: TranscriptChild, ack: TranscriptWatchAck): void {
+    const c = this.childOf(id, child);
+    if (!c) return;
+    c.items = [...ack.items];
+    c.index = new Map(c.items.map((it, i) => [it.id, i]));
+    c.cursor = ack.cursor;
+    c.hasMore = ack.has_more;
+    c.availability = ack.availability ?? (ack.pending ? 'pending' : 'available');
+    c.view?.setItems([...c.items]);
+    this.childDrawn(c);
+  }
+
+  /** #26: a child watch's push: new items and replacements; a head says where its log is now. */
+  pushChild(id: string, child: TranscriptChild, items: TranscriptItem[], updates: TranscriptItem[], head?: PushHead): void {
+    const c = this.childOf(id, child);
+    if (!c) return;
+    if (head) {
+      if (head.availability) c.availability = head.availability;
+      else if (head.pending === false) c.availability = 'available';
+      if (head.cursor !== undefined) c.cursor = head.cursor;
+      if (head.has_more !== undefined) c.hasMore = head.has_more;
+    }
+    const changed = [...items, ...updates];
+    for (const it of changed) {
+      const at = c.index.get(it.id);
+      if (at !== undefined) c.items[at] = it;
+      else {
+        c.index.set(it.id, c.items.length);
+        c.items.push(it);
+      }
+    }
+    if (changed.length) c.view?.applyUpdates(changed);
+    if (head) this.childDrawn(c);
   }
 
   // ---- the watch's sink ------------------------------------------------------------
@@ -1232,6 +1474,31 @@ export class TranscriptMode {
     b.style.height = `${r.height}px`;
     if (this.s?.focusLater && this.s.box === b) this.focus();
   }
+}
+
+/**
+ * #26: why an open child's conversation ends, for the seat bar, as the view goes back to its worker's: its worker's
+ * session was replaced (`stale` refusal, `session_changed` close, a new generation in the store), the child went (`not_found`
+ * refusal, its row gone), a bridge before #26 (`bad_request`: it knows no `child`), too many followed. Null: nothing to
+ * say (the worker left or its floor sleeps: the seat says so).
+ */
+export function childEndText(why: string, worker: string, message = ''): { kind: 'ok' | 'error'; text: string } | null {
+  switch (why) {
+    case 'stale':
+    case 'session_changed':
+      return { kind: 'ok', text: `${worker} started a new session: its subagents went with the old one` };
+    case 'not_found':
+      return { kind: 'ok', text: `That subagent is no longer listed: back to ${worker}’s conversation` };
+    case 'bad_request':
+      return { kind: 'error', text: 'This herdr-world can’t open a subagent’s conversation yet. Update the bridge to use it.' };
+    case 'capacity':
+      return { kind: 'error', text: 'herdr-world is following as many subagent conversations as it allows. Try again in a moment.' };
+    case 'worker_removed':
+    case 'asleep':
+    case 'evicted':
+      return null;
+  }
+  return { kind: 'error', text: failureText('transcript.watch', why, message, { worker }) };
 }
 
 /** A `transcript.page` ack for a subagent (`TranscriptPageAck`): its items, oldest first. */

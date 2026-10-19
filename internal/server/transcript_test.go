@@ -43,8 +43,8 @@ func writeTranscript(t *testing.T, path, content string) {
 	}
 }
 
-// push reads until the transcript push or close of worker id (other
-// messages are skipped).
+// push reads until the transcript push or close of worker id's own watch
+// (other messages are skipped).
 func (c *client) push(id string) (proto.TranscriptItems, proto.TranscriptClosed) {
 	c.t.Helper()
 	for {
@@ -53,13 +53,13 @@ func (c *client) push(id string) (proto.TranscriptItems, proto.TranscriptClosed)
 		case proto.TTranscriptItems:
 			var p proto.TranscriptItems
 			_ = json.Unmarshal(m.raw, &p)
-			if p.ID == id {
+			if p.ID == id && p.Child == nil {
 				return p, proto.TranscriptClosed{}
 			}
 		case proto.TTranscriptClosed:
 			var cl proto.TranscriptClosed
 			_ = json.Unmarshal(m.raw, &cl)
-			if cl.ID == id {
+			if cl.ID == id && cl.Child == nil {
 				return proto.TranscriptItems{}, cl
 			}
 		}

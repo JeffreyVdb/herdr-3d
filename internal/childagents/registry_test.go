@@ -594,3 +594,51 @@ func TestRowIDs(t *testing.T) {
 		t.Fatalf("ids %v, %v", a, b)
 	}
 }
+
+// #26: a transcript target names a child by its worker and row id: found
+// only under its own worker and generation, and gone with a merge, a
+// removal or the session's replacement.
+func TestChildByRowID(t *testing.T) {
+	r := childagents.New()
+	r.Worker("w", "s")
+	r.Worker("v", "sv")
+	prov := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "toolu_1", Source: "transcript"})[0].Child.ID
+	c, ok := r.Child("w", prov)
+	if !ok || c.ID != prov || c.NativeID != "" || c.WorkerID != "w" || c.Generation != r.Generation("w") {
+		t.Fatalf("provisional = %+v %v", c, ok)
+	}
+	if _, ok := r.Child("v", prov); ok {
+		t.Fatal("another worker's row found")
+	}
+	if _, ok := r.Child("nobody", prov); ok {
+		t.Fatal("a row of a worker not seen found")
+	}
+	// The native id arrives: the same row id, now with it.
+	apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "toolu_1", NativeID: "a1", Source: "hook"})
+	if c, ok := r.Child("w", prov); !ok || c.NativeID != "a1" {
+		t.Fatalf("named = %+v %v", c, ok)
+	}
+	// Two rows of one child: the one seen later merges into the one seen first and is gone.
+	first := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, NativeID: "a2", Source: "hook"})[0].Child.ID
+	late := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "toolu_2", Source: "transcript"})[0].Child.ID
+	if _, ok := r.Child("w", late); !ok {
+		t.Fatal("provisional row not found")
+	}
+	apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "toolu_2", NativeID: "a2", Source: "transcript"})
+	if _, ok := r.Child("w", late); ok {
+		t.Fatal("merged row still found")
+	}
+	if c, ok := r.Child("w", first); !ok || c.NativeID != "a2" {
+		t.Fatalf("kept row = %+v %v", c, ok)
+	}
+	// Removed; then the session replaced: nothing of the old generation.
+	apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, NativeID: "a1", Removed: true, Source: "hook"})
+	if _, ok := r.Child("w", prov); ok {
+		t.Fatal("removed row still found")
+	}
+	keep := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, NativeID: "a3", Source: "hook"})[0].Child.ID
+	r.Worker("w", "s2")
+	if _, ok := r.Child("w", keep); ok {
+		t.Fatal("a row of the replaced session found")
+	}
+}

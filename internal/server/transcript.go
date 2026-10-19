@@ -6,6 +6,12 @@ package server
 // watched worker's lines to its transcript.Log) and pushes new and changed
 // items to the watching connection only: connection-scoped messages, no
 // seq, never in the replay ring.
+//
+// #26: a watch's target is a worker or one of its native children (its
+// registry row, proto.TranscriptChild). A child's log is found from the
+// worker's own row and session, never from the client, and read through the
+// same session's tail of its file (usage.Session.Child); watches are keyed
+// by target, so a worker's own watch and a child's run side by side.
 
 import (
 	"container/list"
@@ -41,6 +47,16 @@ const (
 	maxImageReads = 16
 	// maxSentHashes bounds the image hashes a watch remembers sending.
 	maxSentHashes = 200_000
+	// MaxChildTranscriptWatches (#26) is how many child watches one
+	// connection has, apart from its MaxTranscriptWatches: a seat shows one
+	// child at a time, and the one before it may still be closing. A newer
+	// one evicts the oldest (transcript.closed evicted).
+	MaxChildTranscriptWatches = 2
+	// MaxChildTranscriptLogs (#26) is how many children's logs the bridge
+	// follows at once, for every connection (a child watched twice is one
+	// log); a watch of another one past it is refused (capacity). A log goes
+	// with its last watch; watched again, it is read again from its file.
+	MaxChildTranscriptLogs = 16
 )
 
 // txOffer is what the usage tracker found for a watched worker: its agent
@@ -49,12 +65,19 @@ const (
 type txOffer struct {
 	key, harness, session string
 	log                   *transcript.Log
+	// avail (#26, a child's) is its proto.Transcript* availability while
+	// log is nil.
+	avail string
 }
 
-// txWatch is one connection watching one worker's transcript.
+// txWatch is one connection watching one worker's transcript, or (#26)
+// one of its children's.
 type txWatch struct {
 	c       *Client
 	id      string
+	child   *proto.TranscriptChild // #26: nil for the worker's own
+	key     string                 // the target (txKey)
+	born    uint64                 // order of the watches made (#26: the oldest child watch is evicted)
 	limit   int
 	cancel  context.CancelFunc
 	offers  chan txOffer // (cap 1) the tracker's latest
@@ -111,22 +134,85 @@ func (w *txWatch) wasSent(hash string) bool {
 }
 
 // txWatches are the running transcript watches (their own lock: pushes are
-// sent from the watches' goroutines).
+// sent from the watches' goroutines), by connection and target.
 type txWatches struct {
-	mu  sync.Mutex
-	byC map[*Client]map[string]*txWatch
+	mu   sync.Mutex
+	byC  map[*Client]map[string]*txWatch
+	born uint64
 }
 
-func (t *txWatches) get(c *Client, id string) *txWatch {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.byC[c][id]
+// txKey is a watch's target: worker id, or (#26) worker id and child row.
+func txKey(id string, child *proto.TranscriptChild) string {
+	if child == nil {
+		return id
+	}
+	return id + "\x00" + child.ID
 }
 
-func (t *txWatches) count(c *Client) int {
+func (t *txWatches) get(c *Client, key string) *txWatch {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return len(t.byC[c])
+	return t.byC[c][key]
+}
+
+// count is how many watches of workers' own transcripts (child: of
+// children) a connection has.
+func (t *txWatches) count(c *Client, child bool) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	n := 0
+	for _, w := range t.byC[c] {
+		if (w.child != nil) == child {
+			n++
+		}
+	}
+	return n
+}
+
+// oldestChild is a connection's oldest child watch but the one of key.
+func (t *txWatches) oldestChild(c *Client, key string) *txWatch {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var old *txWatch
+	for k, w := range t.byC[c] {
+		if w.child != nil && k != key && (old == nil || w.born < old.born) {
+			old = w
+		}
+	}
+	return old
+}
+
+// childLogs is how many children's logs the watches need, but the one of
+// key: every connection's child watches, a child watched twice once.
+func (t *txWatches) childLogs(key string) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	seen := map[string]bool{}
+	for _, m := range t.byC {
+		for k, w := range m {
+			if w.child != nil && k != key {
+				seen[k] = true
+			}
+		}
+	}
+	return len(seen)
+}
+
+// children are the children of worker id that are watched (one each).
+func (t *txWatches) children(id string) []*txWatch {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var out []*txWatch
+	seen := map[string]bool{}
+	for _, m := range t.byC {
+		for k, w := range m {
+			if w.child != nil && w.id == id && !seen[k] {
+				seen[k] = true
+				out = append(out, w)
+			}
+		}
+	}
+	return out
 }
 
 // add registers w, replacing (and returning) the connection's watch of the
@@ -139,10 +225,12 @@ func (t *txWatches) add(w *txWatch) (old *txWatch) {
 		m = map[string]*txWatch{}
 		t.byC[w.c] = m
 	}
-	if old = m[w.id]; old != nil {
+	if old = m[w.key]; old != nil {
 		old.stopped = true
 	}
-	m[w.id] = w
+	t.born++
+	w.born = t.born
+	m[w.key] = w
 	return old
 }
 
@@ -151,11 +239,11 @@ func (t *txWatches) add(w *txWatch) (old *txWatch) {
 func (t *txWatches) remove(w *txWatch) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if w.stopped || t.byC[w.c][w.id] != w {
+	if w.stopped || t.byC[w.c][w.key] != w {
 		return false
 	}
 	w.stopped = true
-	delete(t.byC[w.c], w.id)
+	delete(t.byC[w.c], w.key)
 	if len(t.byC[w.c]) == 0 {
 		delete(t.byC, w.c)
 	}
@@ -174,8 +262,24 @@ func (t *txWatches) all() []*txWatch {
 	return out
 }
 
-// watched reports whether any connection watches worker id.
+// watched reports whether any connection watches worker id's transcript
+// or (#26) one of its children's.
 func (t *txWatches) watched(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, m := range t.byC {
+		for _, w := range m {
+			if w.id == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// watchedOwn reports whether any connection watches worker id's own
+// transcript.
+func (t *txWatches) watchedOwn(id string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, m := range t.byC {
@@ -186,13 +290,13 @@ func (t *txWatches) watched(id string) bool {
 	return false
 }
 
-// offer hands the tracker's verdict on worker id to its watches, the
-// latest replacing one not taken yet.
-func (t *txWatches) offer(id string, o txOffer) {
+// offer hands the tracker's verdict on a target (txKey) to its watches,
+// the latest replacing one not taken yet.
+func (t *txWatches) offer(key string, o txOffer) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, m := range t.byC {
-		w := m[id]
+		w := m[key]
 		if w == nil {
 			continue
 		}
@@ -268,25 +372,62 @@ func (h *Hub) startTranscriptWatch(ctx context.Context, c *Client, cmd proto.Com
 	if err != nil {
 		return err
 	}
-	n := h.tx.count(c)
-	if h.tx.get(c, a.ID) != nil { // a re-watch replaces it
-		n--
-	}
-	if n >= h.opts.MaxTranscriptWatches {
-		return fmt.Errorf("%w: this connection already watches %d transcripts (--max-transcript-watches)", errCapacity, n)
+	key := txKey(a.ID, a.Child)
+	if a.Child != nil { // #26
+		if _, err := h.txChild(a.ID, a.Child); err != nil {
+			return err
+		}
+		if n := h.tx.childLogs(key); n >= MaxChildTranscriptLogs {
+			return fmt.Errorf("%w: the bridge already follows %d child transcripts", errCapacity, n)
+		}
+	} else {
+		n := h.tx.count(c, false)
+		if h.tx.get(c, key) != nil { // a re-watch replaces it
+			n--
+		}
+		if n >= h.opts.MaxTranscriptWatches {
+			return fmt.Errorf("%w: this connection already watches %d transcripts (--max-transcript-watches)", errCapacity, n)
+		}
 	}
 	wctx, cancel := context.WithCancel(ctx)
-	w := &txWatch{c: c, id: a.ID, limit: a.Limit, cancel: cancel, offers: make(chan txOffer, 1), agents: newAgentLogs(h.txImageOptions(wk.Cwd)),
+	w := &txWatch{c: c, id: a.ID, child: a.Child, key: key, limit: a.Limit, cancel: cancel, offers: make(chan txOffer, 1),
 		sent: map[string]struct{}{}, reads: make(chan struct{}, maxImageReads)}
+	if a.Child == nil {
+		w.agents = newAgentLogs(h.txImageOptions(wk.Cwd))
+	}
 	if old := h.tx.add(w); old != nil {
 		old.cancel()
+	}
+	if a.Child != nil && h.tx.count(c, true) > MaxChildTranscriptWatches {
+		if old := h.tx.oldestChild(c, key); old != nil {
+			h.closeTranscriptWatch(old, proto.ClosedEvicted)
+		}
 	}
 	h.wg.Add(1)
 	go h.runTranscriptWatch(ctx, wctx, w, cmd)
 	h.kickUsage()
-	h.retryCodexJoin(a.ID)  // #156: a failed join is tried again when the player looks
-	h.syncCodexWatches(ctx) // #155: a shared Codex worker's thread is joined now
+	if a.Child == nil {
+		h.retryCodexJoin(a.ID)  // #156: a failed join is tried again when the player looks
+		h.syncCodexWatches(ctx) // #155: a shared Codex worker's thread is joined now
+	}
 	return nil
+}
+
+// txChild is the child a transcript target names (#26): a row of the
+// worker's now, of its current generation and the provider named (hub
+// goroutine).
+func (h *Hub) txChild(id string, t *proto.TranscriptChild) (proto.Child, error) {
+	if t.ID == "" || (t.Provider != proto.ChildClaude && t.Provider != proto.ChildCodex) {
+		return proto.Child{}, bad("child needs its id and its provider (%q or %q)", proto.ChildClaude, proto.ChildCodex)
+	}
+	if g := h.ch.reg.Generation(id); g != t.Generation {
+		return proto.Child{}, &codedError{proto.ErrStale, fmt.Errorf("the worker's session was replaced (generation %d, not %d): its children went with it", g, t.Generation)}
+	}
+	c, ok := h.ch.reg.Child(id, t.ID)
+	if !ok || c.Provider != t.Provider {
+		return proto.Child{}, &codedError{proto.ErrNotFound, fmt.Errorf("worker %q has no %s child %q", id, t.Provider, t.ID)}
+	}
+	return c, nil
 }
 
 // txWorker is the worker a transcript command is for: known, on a watched
@@ -312,11 +453,11 @@ func (h *Hub) txWorker(id string) (*proto.Worker, error) {
 // startTranscriptUnwatch answers transcript.unwatch; a watch that is not
 // there is a no-op.
 func (h *Hub) startTranscriptUnwatch(ctx context.Context, c *Client, cmd proto.Command) error {
-	var a proto.WorkerArgs
+	var a proto.TranscriptUnwatchArgs
 	if err := decodeArgs(cmd.Args, &a); err != nil {
 		return err
 	}
-	if w := h.tx.get(c, a.ID); w != nil && h.tx.remove(w) {
+	if w := h.tx.get(c, txKey(a.ID, a.Child)); w != nil && h.tx.remove(w) {
 		w.cancel()
 	}
 	h.syncCodexWatches(ctx) // #155
@@ -335,8 +476,9 @@ func (h *Hub) dropTranscriptWatches(c *Client) {
 	}
 }
 
-// syncTranscriptWatches ends the watches whose worker went or fell asleep
-// (hub goroutine, after each observation).
+// syncTranscriptWatches ends the watches whose worker went or fell asleep,
+// and (#26) the child watches whose child went or whose worker's session
+// was replaced (hub goroutine, after each observation and child evidence).
 func (h *Hub) syncTranscriptWatches() {
 	for _, w := range h.tx.all() {
 		reason := ""
@@ -346,6 +488,13 @@ func (h *Hub) syncTranscriptWatches() {
 			reason = proto.ClosedWorkerRemoved
 		case h.floors[wk.Session] == nil || !h.floors[wk.Session].running:
 			reason = proto.ClosedAsleep
+		case w.child != nil:
+			var ce *codedError
+			if _, err := h.txChild(w.id, w.child); errors.As(err, &ce) && ce.code == proto.ErrStale {
+				reason = proto.ClosedSessionChanged
+			} else if err != nil {
+				reason = proto.ClosedNotFound
+			}
 		}
 		if reason != "" {
 			h.closeTranscriptWatch(w, reason)
@@ -360,8 +509,8 @@ func (h *Hub) closeTranscriptWatch(w *txWatch, reason string) {
 		return
 	}
 	w.cancel()
-	h.log.Debug("transcript watch closed", "client", w.c.name, "worker", w.id, "reason", reason)
-	h.deliver(w.c, mustJSON(proto.TranscriptClosed{T: proto.TTranscriptClosed, ID: w.id, Reason: reason}))
+	h.log.Debug("transcript watch closed", "client", w.c.name, "worker", w.id, "child", w.child != nil, "reason", reason)
+	h.deliver(w.c, mustJSON(proto.TranscriptClosed{T: proto.TTranscriptClosed, ID: w.id, Child: w.child, Reason: reason}))
 }
 
 // runTranscriptWatch follows the tracker's offers for the watch's worker:
@@ -371,10 +520,13 @@ func (h *Hub) closeTranscriptWatch(w *txWatch, reason string) {
 func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd proto.Command) {
 	defer h.wg.Done()
 	defer w.cancel()
-	defer w.agents.close()
+	if w.agents != nil {
+		defer w.agents.close()
+	}
 	var (
 		acked bool
 		key   string
+		avail string // #26: a pending child's availability, as last sent
 		log   *transcript.Log
 		sub   *transcript.Sub
 		last  time.Time
@@ -424,7 +576,25 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 		if o.log != nil {
 			hd.Version = o.log.Version()
 		}
+		if w.child != nil { // #26
+			hd.Availability = proto.TranscriptAvailable
+			if pending {
+				hd.Availability = o.avail
+			}
+		}
 		return hd
+	}
+	// push sends a push of the watch: false when the watch ended.
+	push := func(m proto.TranscriptItems) bool {
+		m.T, m.ID, m.Child = proto.TTranscriptItems, w.id, w.child
+		if err := h.tx.send(w, mustJSON(m)); err != nil {
+			if errors.Is(err, errResync) {
+				h.log.Debug("transcript watch resync", "client", w.c.name, "worker", w.id)
+				closeWith(proto.ClosedResync)
+			}
+			return false
+		}
+		return true
 	}
 	flush := func() bool {
 		armed = false
@@ -439,15 +609,7 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 		}
 		w.noteImages(items)
 		w.noteImages(updates)
-		msg := mustJSON(proto.TranscriptItems{T: proto.TTranscriptItems, ID: w.id, Items: items, Updates: updates})
-		if err := h.tx.send(w, msg); err != nil {
-			if errors.Is(err, errResync) {
-				h.log.Debug("transcript watch resync", "client", w.c.name, "worker", w.id)
-				closeWith(proto.ClosedResync)
-			}
-			return false
-		}
-		return true
+		return push(proto.TranscriptItems{Items: items, Updates: updates})
 	}
 	var wake <-chan struct{}
 	for {
@@ -458,7 +620,7 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 		case o := <-w.offers:
 			switch {
 			case !acked && o.log == nil:
-				acked, key = true, o.key
+				acked, key, avail = true, o.key, o.avail
 				h.tx.setLog(w, nil, o.session)
 				h.finishTranscriptCmd(hctx, w, cmd, &proto.TranscriptWatchResult{
 					TranscriptHead: head(o, transcript.Page{Cursor: transcript.Cursor(1)}, true),
@@ -479,18 +641,20 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 				wake = sub.Wake()
 				hd := head(o, page, false)
 				w.noteImages(page.Items)
-				msg := mustJSON(proto.TranscriptItems{T: proto.TTranscriptItems, ID: w.id, Items: page.Items,
-					Updates: []proto.TranscriptItem{}, TranscriptHead: &hd})
-				if err := h.tx.send(w, msg); err != nil {
-					if errors.Is(err, errResync) {
-						closeWith(proto.ClosedResync)
-					}
+				if !push(proto.TranscriptItems{Items: page.Items, Updates: []proto.TranscriptItem{}, TranscriptHead: &hd}) {
 					return
 				}
 				last = time.Now()
 			case log == nil:
 				key = o.key
 				h.tx.setLog(w, nil, o.session)
+				if w.child != nil && o.avail != avail { // #26: pending <-> unavailable, said by a head alone
+					avail = o.avail
+					hd := head(o, transcript.Page{Cursor: transcript.Cursor(1)}, true)
+					if !push(proto.TranscriptItems{Items: []proto.TranscriptItem{}, Updates: []proto.TranscriptItem{}, TranscriptHead: &hd}) {
+						return
+					}
+				}
 			case o.key != key: // another agent session or rollout
 				closeWith(proto.ClosedSessionChanged)
 				return
@@ -536,8 +700,8 @@ func (h *Hub) finishTranscriptCmd(hctx context.Context, w *txWatch, cmd proto.Co
 		w.noteImages(data.Items)
 		// An empty view in the game is traced from here: which worker, and why (no transcript yet, or nothing in it).
 		if data.Pending || len(data.Items) == 0 {
-			h.log.Debug("transcript watch acked empty", "client", w.c.name, "worker", w.id, "req_id", cmd.ReqID,
-				"pending", data.Pending, "items", len(data.Items), "limit", w.limit)
+			h.log.Debug("transcript watch acked empty", "client", w.c.name, "worker", w.id, "child", w.child != nil, "req_id", cmd.ReqID,
+				"pending", data.Pending, "availability", data.Availability, "items", len(data.Items), "limit", w.limit)
 		}
 	}
 	if derr := h.doWait(hctx, func() {
@@ -557,6 +721,7 @@ func (h *Hub) finishTranscriptCmd(hctx context.Context, w *txWatch, cmd proto.Co
 // only for a worker the connection watches.
 func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Command) error {
 	var id, agent string
+	var child *proto.TranscriptChild // #26
 	var work func(w *txWatch, log *transcript.Log) (any, error)
 	switch cmd.T {
 	case proto.CmdTranscriptPage:
@@ -583,7 +748,7 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 			h.reply(c, cmd, nil, bad("before is needed (it is optional with agent)"))
 			return nil
 		}
-		id, agent = a.ID, a.Agent
+		id, agent, child = a.ID, a.Agent, a.Child
 		work = func(w *txWatch, log *transcript.Log) (any, error) {
 			p, err := log.Before(before, a.Limit)
 			if err != nil {
@@ -602,7 +767,7 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 			h.reply(c, cmd, nil, bad("item is needed"))
 			return nil
 		}
-		id, agent = a.ID, a.Agent
+		id, agent, child = a.ID, a.Agent, a.Child
 		work = func(w *txWatch, log *transcript.Log) (any, error) {
 			it, ok, err := log.Item(a.Item)
 			switch {
@@ -630,11 +795,11 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 		}
 		// #98: the image a worker's activity shows now, for a connection on
 		// its floor (its thumbnail only).
-		if load := h.activityImage(c, a.ID, a.Hash); load != nil && a.Size == proto.ImageThumb && a.Agent == "" {
+		if load := h.activityImage(c, a.ID, a.Hash); load != nil && a.Size == proto.ImageThumb && a.Agent == "" && a.Child == nil {
 			h.readActivityImage(ctx, c, cmd, a.Hash, load)
 			return nil
 		}
-		id, agent = a.ID, a.Agent
+		id, agent, child = a.ID, a.Agent, a.Child
 		work = func(w *txWatch, log *transcript.Log) (any, error) { return readImage(w, log, a) }
 	case proto.CmdTranscriptImages:
 		var a proto.TranscriptImagesArgs
@@ -657,7 +822,7 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 				return nil
 			}
 		}
-		id = a.ID
+		id, child = a.ID, a.Child
 		work = func(w *txWatch, log *transcript.Log) (any, error) {
 			pg, err := log.Images(before, a.Limit)
 			if err != nil {
@@ -670,8 +835,12 @@ func (h *Hub) startTranscriptRead(ctx context.Context, c *Client, cmd proto.Comm
 			return proto.TranscriptImagesResult{Images: pg.Refs, Cursor: pg.Cursor, HasMore: pg.HasMore}, nil
 		}
 	}
-	w := h.tx.get(c, id)
-	if w == nil {
+	if agent != "" && child != nil {
+		h.reply(c, cmd, nil, bad("agent and child cannot go together: a child's timeline is its own target"))
+		return nil
+	}
+	w := h.tx.get(c, txKey(id, child))
+	if w == nil || (child != nil && *w.child != *child) {
 		if _, err := h.txWorker(id); err != nil {
 			h.reply(c, cmd, nil, err)
 			return nil
@@ -804,10 +973,23 @@ func (tr *usageTracker) syncTranscript(w usageWorker, s *usage.Session, key stri
 	s.SetTap(log)
 }
 
-// offers is the tracker's verdict for every watched worker after a round.
+// offers is the tracker's verdict for every watched worker after a round,
+// and (#26) for every watched child, by target (txKey).
 func (tr *usageTracker) offers(ws []usageWorker) map[string]txOffer {
 	out := map[string]txOffer{}
 	for _, w := range ws {
+		for _, k := range w.kids {
+			// A provisional child (no native id yet) is pending whatever its row says; one whose log is not read
+			// is pending, or unavailable when its provider says so.
+			o := txOffer{key: k.logKey(), harness: k.harness, session: k.native, avail: proto.TranscriptPending}
+			if k.native != "" && k.avail == proto.TranscriptUnavailable {
+				o.avail = proto.TranscriptUnavailable
+			}
+			if l := tr.kidLogs[w.id][k.key]; l != nil && l.key == o.key && l.log.Err() == nil {
+				o.log, o.avail = l.log, proto.TranscriptAvailable
+			}
+			out[k.key] = o
+		}
 		if !w.watched {
 			continue
 		}
@@ -818,6 +1000,94 @@ func (tr *usageTracker) offers(ws []usageWorker) map[string]txOffer {
 		out[w.id] = o
 	}
 	return out
+}
+
+// txKid is a child of a worker a connection watches (#26), as the hub's
+// registry has it now: its target (txKey), native id ("": provisional), the
+// worker's agent session it belongs to, its harness and the transcript
+// availability its evidence says.
+type txKid struct {
+	key, native, session, harness, avail string
+}
+
+// logKey is the identity of the child's log.
+func (k txKid) logKey() string { return k.harness + "/" + k.session + "/" + k.native }
+
+// txKids are worker id's watched children (hub goroutine): rows of its
+// current generation only (a watch of another is about to close).
+func (h *Hub) txKids(id string) []txKid {
+	var out []txKid
+	for _, w := range h.tx.children(id) {
+		c, err := h.txChild(id, w.child)
+		if err != nil {
+			continue
+		}
+		k := txKid{key: w.key, native: c.NativeID, session: c.AgentSession, harness: c.Provider, avail: c.Transcript}
+		if k.harness == transcript.Claude && k.native != "" && !transcript.ValidAgentID(k.native) {
+			k.native, k.avail = "", proto.TranscriptUnavailable // never a file of its name
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// syncKidTranscripts keeps a log of each watched child of worker w whose
+// transcript its session reads, fed by the session's own tail of it, and
+// drops the others (usage tracker goroutine, before and after the session's
+// Poll). Only children of the session the worker has now: another session's
+// child never reaches its log, nor does a child of another worker in the
+// same directory (its own session).
+func (tr *usageTracker) syncKidTranscripts(w usageWorker, s *usage.Session) {
+	want := map[string]txKid{}
+	var natives []string
+	for _, k := range w.kids {
+		if k.native != "" && tr.keys[w.id] == k.harness+"/"+k.session {
+			want[k.key] = k
+			natives = append(natives, k.native)
+		}
+	}
+	tr.closeKidLogs(w.id, want)
+	if s == nil {
+		return
+	}
+	s.WantChildren(natives)
+	for key, k := range want {
+		if tr.kidLogs[w.id][key] != nil {
+			continue
+		}
+		f, ok := s.Child(k.native)
+		if !ok {
+			continue // not read yet: looked for in the next Poll
+		}
+		opts := tr.imageOptions(w.cwd)
+		if k.harness == transcript.Codex {
+			opts = append(opts, transcript.CodexHistoryStart(f.HistoryStart)) // its parent's copied history is not its own
+		}
+		log, err := transcript.Follow(k.harness, f.Path, f.File, f.Next, opts...)
+		if err != nil {
+			continue
+		}
+		if tr.kidLogs[w.id] == nil {
+			tr.kidLogs[w.id] = map[string]*txLog{}
+		}
+		tr.kidLogs[w.id][key] = &txLog{key: k.logKey(), log: log}
+		s.SetChildTap(k.native, log)
+	}
+}
+
+// closeKidLogs closes worker id's child logs, but the ones keep still wants
+// (the same log, still running).
+func (tr *usageTracker) closeKidLogs(id string, keep map[string]txKid) {
+	for key, l := range tr.kidLogs[id] {
+		if k, ok := keep[key]; ok && l.key == k.logKey() && l.log.Err() == nil {
+			continue
+		}
+		l.log.Close()
+		delete(tr.kidLogs[id], key)
+	}
+	if len(tr.kidLogs[id]) == 0 {
+		delete(tr.kidLogs, id)
+	}
 }
 
 // txImageOptions are the options a transcript log is opened with for a

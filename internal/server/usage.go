@@ -63,7 +63,7 @@ type usageWorker struct {
 	// floor is its session; codexCwd the cwd of a Codex agent herdr knows
 	// no session of, to find its rollout by (else "").
 	floor, codexCwd string
-	watched         bool   // M16: a connection watches its transcript
+	watched         bool   // M16: a connection watches its transcript (its own: #26's children are kids)
 	cwd             string // M16: its directory, a root of its transcript's path images
 	asking          bool   // #57: it has an ask now
 	status          string // #98: herdr's status, and when its last idle or done began
@@ -74,6 +74,8 @@ type usageWorker struct {
 	// #223: the agent session herdr reports (the hub's AgentSession):
 	// session may be one findCodex found instead.
 	agent string
+	// #26: its children whose transcripts a connection watches.
+	kids []txKid
 }
 
 // usageUpdate is a worker's new usage, or (nil) its usage gone.
@@ -94,6 +96,9 @@ type usageTracker struct {
 	// by their sessions' tails), and the last round's verdicts for them.
 	logs     map[string]*txLog
 	txOffers map[string]txOffer
+	// #26: the logs of the watched children's transcripts (fed by their
+	// sessions' tails of them), by worker id and target (txKey).
+	kidLogs map[string]map[string]*txLog
 	// #57: the asks read from every worker's transcript, what was last
 	// published of them, and this round's changes.
 	asks     map[string]*transcript.AskTracker
@@ -162,7 +167,7 @@ func newUsageTracker(cfg UsageConfig) *usageTracker {
 	}
 	return &usageTracker{cfg: cfg, keys: map[string]string{}, sessions: map[string]*usage.Session{},
 		throttle: usageThrottle{every: cfg.Throttle, shown: map[string]proto.Usage{}, at: map[string]time.Time{}},
-		found:    map[string]foundCodex{}, logs: map[string]*txLog{},
+		found:    map[string]foundCodex{}, logs: map[string]*txLog{}, kidLogs: map[string]map[string]*txLog{},
 		asks: map[string]*transcript.AskTracker{}, askShown: map[string]askShown{}, lines: map[string]*txLines{},
 		fuOffered: map[string]followupOffered{}, actOffered: map[string]activityOffered{}, dgOffered: map[string]digestOffered{},
 		hoOffered: map[string]handoffOffered{}, kids: map[string]ChildReader{}, calls: map[string]*transcript.CallTracker{},
@@ -219,6 +224,9 @@ func (tr *usageTracker) closeLogs() {
 	for id, l := range tr.logs {
 		l.log.Close()
 		delete(tr.logs, id)
+	}
+	for id := range tr.kidLogs {
+		tr.closeKidLogs(id, nil)
 	}
 }
 
@@ -345,6 +353,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		}
 		s := tr.sessions[w.id]
 		tr.syncTranscript(w, s, tr.keys[w.id])
+		tr.syncKidTranscripts(w, s)                          // #26
 		tr.wrapBefore(w)                                     // #83
 		tr.agentBefore(w)                                    // #224
 		if l := tr.lines[w.id]; l != nil && l.paste != nil { // #95
@@ -366,7 +375,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 			continue
 		}
 		s.SetRescan(0)
-		if w.watched || w.agentHo != nil { // #224: a request's transcript is looked for as a watched one's
+		if w.watched || w.agentHo != nil || len(w.kids) > 0 { // #224: a request's transcript is looked for as a watched one's (#26: a watched child's too)
 			s.SetRescan(WatchedRescan)
 		}
 		if l := tr.lines[w.id]; l != nil && l.activity != nil { // #98: herdr's status before the round's lines
@@ -374,6 +383,7 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		}
 		u, ok := s.Poll(now)
 		tr.syncTranscript(w, s, tr.keys[w.id])
+		tr.syncKidTranscripts(w, s) // #26
 		tr.offerAsk(w)
 		tr.offerCalls(w) // #106
 		tr.offerWrapUp(w)
@@ -416,6 +426,11 @@ func (tr *usageTracker) poll(ws []usageWorker, now time.Time) []usageUpdate {
 		if !seen[id] {
 			l.log.Close()
 			delete(tr.logs, id)
+		}
+	}
+	for id := range tr.kidLogs { // #26
+		if !seen[id] {
+			tr.closeKidLogs(id, nil)
 		}
 	}
 	for id, l := range tr.lines { // #95
@@ -506,8 +521,8 @@ func (h *Hub) usageWorkers() []usageWorker {
 			harness = w.AgentKind
 		}
 		uw := usageWorker{id: id, harness: harness, session: w.AgentSession, agent: w.AgentSession, shown: w.Usage != nil, floor: w.Session,
-			watched: h.tx.watched(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), agentHo: h.agentWatchOf(id), typed: h.typedSums(id),
-			status: w.Status, idleAt: h.act.idleAt[id]}
+			watched: h.tx.watchedOwn(id), cwd: w.Cwd, asking: w.Ask != nil, wrap: h.wrapWatchOf(id), agentHo: h.agentWatchOf(id), typed: h.typedSums(id),
+			status: w.Status, idleAt: h.act.idleAt[id], kids: h.txKids(id)}
 		if w.AgentSession == "" && w.AgentKind == usage.Codex && w.Cwd != "" {
 			uw.codexCwd = w.Cwd
 		}
