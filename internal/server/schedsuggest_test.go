@@ -484,6 +484,39 @@ func TestScheduleSuggestionStaleResult(t *testing.T) {
 	}
 }
 
+// A message offered again while its extraction still runs behind another
+// one's (A, then B, then A again in a newer turn) is not looked at twice:
+// each message once, in flight included. A's late result is of a turn the
+// transcript went past: recorded, never shown.
+func TestScheduleSuggestionRepeatedWhileInFlight(t *testing.T) {
+	t.Parallel()
+	roles := ssRoles(time.Now().Add(5 * time.Hour))
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	inner := roles.llm.Func
+	roles.llm.Func = func(ctx context.Context, req ai.Request) (string, error) {
+		<-release
+		return inner(ctx, req)
+	}
+	fb := startSsBridge(t, "", "", roles, nil, on())
+	defer unblock() // before the bridge stops
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	fb.say(t, "msg_a1", ssSoakText)
+	waitFor(t, "A's extraction", func() bool { return len(roles.llm.Calls()) >= 1 })
+	fb.say(t, "msg_b", ssSoakText+" Also soak B.")
+	waitFor(t, "B's extraction", func() bool { return len(roles.llm.Calls()) >= 2 })
+	fb.say(t, "msg_a2", ssSoakText)
+	fuQuiet()
+	unblock()
+	fuQuiet()
+	if c, l := roles.calls(); c != 2 || l != 2 {
+		t.Fatalf("two messages, calls = %d, %d", c, l)
+	}
+	fb.noSuggestions(t)
+}
+
 // The settings: switched on without a test (both roles ready), the
 // threshold bounded, the zone an IANA name; each change one
 // schedule_suggestions.update. The environment's toggle is read-only.

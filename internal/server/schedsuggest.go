@@ -53,16 +53,17 @@ type suggestState struct {
 	// latest is each worker's latest ended turn (its Turn.ID): a result of
 	// another is stale, one with the same reply included.
 	latest map[string]string
-	// running is the message whose extraction runs, per worker: the same
-	// message offered again meanwhile (a re-read) is not asked twice.
-	running map[string]string
+	// running is each worker's messages (hashes) whose extraction runs: the
+	// same message offered again meanwhile (a re-read, a newer turn with the
+	// same reply behind another) is not asked twice.
+	running map[string]map[string]bool
 	last    string // the view as last published (JSON)
 }
 
 // initScheduleSuggestions makes the feature's service (NewHub); none
 // without the AI integration.
 func (h *Hub) initScheduleSuggestions(ctx context.Context) error {
-	h.ss = suggestState{shown: map[string]*suggestionShown{}, latest: map[string]string{}, running: map[string]string{}}
+	h.ss = suggestState{shown: map[string]*suggestionShown{}, latest: map[string]string{}, running: map[string]map[string]bool{}}
 	roles := h.opts.ScheduleSuggestRoles
 	if roles == nil && h.opts.FollowupRoles != nil {
 		roles = h.opts.FollowupRoles
@@ -169,7 +170,7 @@ func (h *Hub) suggestionWants(id, hash string) bool {
 // earlier turn with the same reply closes: the transcript went on while the
 // bridge was down).
 func (h *Hub) suggestionUnseen(ctx context.Context, id string, c *followupCand) bool {
-	if h.ss.running[id] == c.turn.Hash {
+	if h.ss.running[id][c.turn.Hash] {
 		return false
 	}
 	seen, ok, err := h.st.ScheduleSuggestSeenOf(ctx, id, c.turn.Hash)
@@ -209,7 +210,10 @@ func (h *Hub) runTurn(ctx context.Context, id string, c *followupCand, fu, ss bo
 	}
 	if ss {
 		c.left++
-		h.ss.running[id] = c.turn.Hash
+		if h.ss.running[id] == nil {
+			h.ss.running[id] = map[string]bool{}
+		}
+		h.ss.running[id][c.turn.Hash] = true
 	}
 	fuDone := func(res *followup.Result, err error) {
 		_ = h.do(ctx, func(ctx context.Context) { h.followupDone(ctx, id, c, turnID, res, err) })
@@ -259,8 +263,11 @@ func (h *Hub) turnPartDone(id string, c *followupCand) bool {
 // suggestionDone takes the schedule pipeline's result (hub goroutine).
 func (h *Hub) suggestionDone(ctx context.Context, id string, c *followupCand, res *schedsuggest.Result, err error) {
 	h.turnPartDone(id, c)
-	if h.ss.running[id] == c.turn.Hash {
-		delete(h.ss.running, id)
+	if r := h.ss.running[id]; r != nil {
+		delete(r, c.turn.Hash)
+		if len(r) == 0 {
+			delete(h.ss.running, id)
+		}
 	}
 	if err != nil {
 		// Not recorded: a later look (a restart) may try again. ai's errors
