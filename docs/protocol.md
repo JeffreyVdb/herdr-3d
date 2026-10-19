@@ -846,6 +846,7 @@ and remember the last `seq` applied.
 | `limits.update` | `provider`, `plan`, `windows`, `at`, `stale`, `error`?, `source`?, `reached`?, `credits`? | a provider's plan limits were read (flat in the event, see [Plan limits](#plan-limits)); one per provider per read, about every 2 minutes while a client is connected |
 | `ai.update` | `classifier`, `llm`, `last_error`? | #92: the AI integration's state changed (a role saved or cleared, a test passed or failed, a key rejected); the whole state, flat in the event (see [AI integration](#ai-integration)) |
 | `followups.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #90: the follow-up questions' state changed (a setting, a passing test, a model's state); the whole state, flat in the event (see [Follow-up questions](#follow-up-questions)) |
+| `schedule_suggestions.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `zone`? | #66: the schedule suggestions' state changed (a setting, the zone, a model's state); the whole state, flat in the event: decode it by its `t` (see [Schedule suggestions](#schedule-suggestions)) |
 | `inbox.dismissed` | `id`, `status_since` | #106: a finished worker's inbox row was dismissed, by any client (see [Inbox](#inbox)); sent to every client, only when the dismissal is new |
 | `packup.update` | `enabled`, `threshold`, `state`, `missing`?, `roles`, `env`, `tested` | #110: pack up on request's state changed (a setting, a passing test, a model's state); the whole state, flat in the event, the follow-up questions' fields: decode it by its `t` (see [Pack up on request](#pack-up-on-request)) |
 | `worker.activity` | `id`, `session`, `workspace_id`, `activity`? | #98: the worker's `activity` changed (absent: cleared); only on a change, at most twice a second per worker. A change that comes with a status change is in that `worker.upsert` instead (see [Activity](#activity)) |
@@ -985,6 +986,9 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `followups.get` | `{}` | the follow-up questions' state (see [Follow-up questions](#follow-up-questions)) | — |
 | `followups.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | the follow-up questions' state | `followups.update` (before the ack) |
 | `followups.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"name": "questions" \| "grill" \| "done", "expect", "score", "flagged", "questions"?, "source"?, "error"?, "unlisted"?}], "latency_ms"}` | `followups.update` when it changes `tested` |
+| `schedule_suggestions.get` | `{}` | the schedule suggestions' state (see [Schedule suggestions](#schedule-suggestions)) | — |
+| `schedule_suggestions.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | their state (`incomplete` to switch on without both models, `env_locked`) | `schedule_suggestions.update` (before the ack) |
+| `schedule_suggestions.zone` | `{"zone"}`: an IANA time zone | their state | `schedule_suggestions.update` when the zone changed (before the ack) |
 | `packup.get` | `{}` | pack up on request's state (see [Pack up on request](#pack-up-on-request)) | — |
 | `packup.set` | `{"enabled"?: bool, "threshold"?: 0.05–0.99}` | its state | `packup.update` (before the ack) |
 | `packup.test` | `{"threshold"?: 0.05–0.99}` | `{"ok", "reason"?, "threshold", "samples": [{"text", "expect", "core"?, "score", "matched", "task"?, "want_task"?, "right", "error"?}], "right", "total", "latency_ms"}` | `packup.update` when it changes `tested` |
@@ -994,6 +998,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `worker.dismiss_followup` | `{"id", "turn_id"}` | — | the worker's upsert without its `followup` (before the ack) |
 | `worker.retry_followup` (#60) | `{"id", "turn_id"}` | `{"source", "error"?}` once the extraction ran again | the worker's upsert with the new `followup` (before the ack) |
 | `worker.followup_message` (#60) | `{"id", "turn_id"}` | `{"text", "cut"?}`: the message the follow-up is of | — |
+| `worker.dismiss_schedule_suggestion` (#66) | `{"id", "suggestion"}` | — | the worker's upsert without its `schedule_suggestion` (before the ack) |
 | `worker.handoff_preview` | `{"worker", "candidate"}` (#224 `mode: "agent"`, #9 `mode: "llm"`: see [Ask the agent](#ask-the-agent), [LLM handoffs](#llm-handoffs)) | `{"candidate", "text", "truncated"?, "title", "provenance", "can_send_home", "send_home_blocked"?}` (see [Handoffs](#handoffs)) | — |
 | `worker.handoff` | `{"worker", "mode": "literal", "session", "candidate", "revision", "send_home"?, "op"}` | `{"handoff", "existing"?, "send_home"?: "started" \| "skipped", "send_home_reason"?}` | `handoff.added` (before the ack) when filed; `worker.removed` later when sent home |
 | `worker.handoff` (#9) | `{"worker", "mode": "llm", "session", "candidate", "revision", "instruction"?, "send_home"?, "op", "secrets"?: SecretsReview}` | `{"job", "existing"?}` at once; the job follows on `Worker.llm_handoff` (see [LLM handoffs](#llm-handoffs)) | `worker.upsert` (the job), `handoff.added` when filed, `worker.removed` later when sent home |
@@ -2362,7 +2367,7 @@ Unknown keys of the CLIs are ignored; the fields above are only ever added to.
 
 ### AI integration
 
-#92. Two bridge-wide models, configured once and used by features (#90 follow-up questions, see [Follow-up questions](#follow-up-questions)): the **classifier**
+#92. Two bridge-wide models, configured once and used by features (#90 follow-up questions, see [Follow-up questions](#follow-up-questions); #66 [schedule suggestions](#schedule-suggestions)): the **classifier**
 (Jev, by TypeSafe: a score in [0,1] for a yes/no question about some state) and the **LLM** (any OpenAI-compatible
 endpoint: OpenRouter, LiteLLM, vLLM, Ollama, Xiaomi MiMo…). `internal/ai` holds them and knows no feature: a feature
 takes the `ai.Classifier` or `ai.LLM` interface (with fakes for its tests). **Configuring a model sends nothing.** The
@@ -3882,6 +3887,82 @@ which is one Tab stop); Tab moves the focus through the card to Dismiss, Send an
 card's options and texts, while on the timeline it goes to the prompt box as ever. On a very short screen (a phone's
 laptop) the timeline and the strip fold away while the card is up, and the card scrolls above a one-line prompt box.
 
+### Schedule suggestions
+
+#66 (part 5 of [Scheduled agents](#scheduled-agents)). An agent often ends a turn with work that can only happen later
+("24h soak, until about 10:45 UTC tomorrow. After the soak: delete the backups, attach the evidence and close the
+ticket."). With the feature on and both AI models `ready`, the bridge looks at the same final message as the
+[follow-up questions](#follow-up-questions), at the same moment, and when it says a step must wait, drafts the
+schedule: when, a title and the first prompt of a fresh agent. The game offers it as a chip on that reply. **Nothing is
+ever scheduled without a `schedule.create`**: the chip opens the schedule form, and only its save creates.
+
+```json
+"schedule_suggestions":{"enabled":true,"threshold":0.7,"state":"ready","roles":{"classifier":"ready","llm":"ready"},"env":[],"zone":"Europe/Brussels"}
+"schedule_suggestion":{"id":"3f9c1a7b2e4d6a80","message":"msg_01Fu00000000000000000002","due_at":1792320300000,
+  "title":"Post-soak cleanup: Vector 0.59 rollout","draft_prompt":"You are picking up the Vector 0.59 rollout after its 24h soak. Read the attached handoff …",
+  "score":0.93,"at":1792234320000}
+```
+
+**Settings** (bridge-wide, in the database): `schedule_suggestions.get` answers them, the snapshot's
+`schedule_suggestions` holds them (absent without the AI integration), **`schedule_suggestions.update`** carries them
+flat (its own event: its fields would collide with `followups.update`'s); `schedule_suggestions.set`,
+`schedule_suggestions.zone` and a model's change publish it before their ack.
+
+- `enabled` is off by default. `HERDR_WORLD_SCHEDULE_SUGGESTIONS_ENABLED` / `--schedule-suggestions-enabled` (`true` /
+  `false`) wins over the stored toggle and lists `enabled` in `env`; changing it then is `env_locked`.
+- `threshold` (default 0.7, 0.05–0.99; else `bad_request`): the classifier's score at which a message defers a step.
+- `state`: `off`, `incomplete` (on, but a model is not `ready`: `missing` lists `classifier` / `llm`; nothing runs),
+  `ready`; `roles` are both models' states. **Only `ready` runs**; anything else makes zero calls on turn end.
+- **`schedule_suggestions.set {enabled?, threshold?}`**: switching on needs both models `ready` (`incomplete`
+  otherwise). There is no test (unlike `followups.test`): a suggestion schedules nothing by itself.
+- `zone`: the IANA time zone the extraction reads clock times in, as a game last sent it with
+  **`schedule_suggestions.zone {zone}`** (absent: none yet, read as UTC). The game sends its own (the time-of-day
+  setting's, else the browser's) after each snapshot and when that setting changes, if it differs from `zone`; the last
+  one wins. `bad_request` unless the bridge's Go `time` package loads it (`Local` and offsets like `+02:00` are refused).
+
+**Detection**, on the follow-up questions' turn end (their steps 1 and 2: the 2 s settle, the same skips, the same
+message):
+
+1. **Calls.** For a message neither feature has looked at, with both `ready`: **one `ClassifyMany`** with both
+   questions on the same state, then the follow-up extraction, then this one (the follow-up questions never wait on
+   it). With only the follow-up questions on: their own `Classify`, as before. With only this one: one `Classify`. All
+   under the AI integration's bounds (two calls in flight over the bridge, timeouts, one retry).
+2. **Gate**: the classifier scores `{"last_agent_message": <the last 96,000 characters>}` for "Does the message say that
+   a step must be done later, after a waiting period or at a specific future time?". Under the threshold: nothing.
+3. **Extract**: the LLM (JSON mode, temperature 0, its own 45 s timeout, no retry of a call that may have reached the
+   provider; cut off or empty, once more with effort `none` / `minimal` when the model's catalog takes it) gets the
+   message, the current time in UTC and the user's zone (or "not known: UTC"), and answers
+   `{"due_at":"<RFC 3339>","title":"…","draft_prompt":"…"}` or `{"none":true}`. `draft_prompt` addresses a fresh agent,
+   describes the deferred steps and assumes the reply is attached as a handoff.
+4. **Validate**, at the time the answer came: no suggestion (recorded as looked at) for `none`, a `due_at` that is not
+   RFC 3339 with an explicit offset or `Z`, is now or past, or more than 30 days ahead, an empty title or prompt, a
+   prompt over 32 KiB or starting with `--`, JSON that does not parse, an answer cut off, a timeout or any failed call.
+   The title is folded to one line and cut to 200 bytes (`…`); the prompt is never cut. `due_at` is unix ms (UTC).
+5. **Once**: each message looked at is recorded by worker and SHA-256 (`schedsuggest_seen`, the last 20 per worker),
+   with its suggestion while open. A restart or a re-read never asks again; an open suggestion comes back as it was, a
+   closed one never. A classifier failure is not recorded.
+
+**`schedule_suggestion`** on the worker: `id` is the turn's id (as a follow-up's `turn_id`); `message` names the reply's
+transcript row, the handoff candidate's `message` (Claude's `message.id`, Codex's message item id); `due_at` is unix
+ms; `score` the gate's; `at` when it was made. It goes (the worker's upsert, the record closed) when:
+
+- a **`schedule.create`** with `source {kind: "suggestion", worker, message}` names the worker and its suggestion's
+  `message` (after the schedule is stored; a create from a transcript row or of another message leaves it);
+- **`worker.dismiss_schedule_suggestion {id, suggestion}`** names it (`id` the worker, `suggestion` its `id`;
+  `stale` when the worker has none or another, `unknown_worker`); audited;
+- the transcript goes on: a new prompt or turn, or a newer turn's message (a result that comes back after that is
+  recorded, never shown); the worker is gone.
+
+**Privacy.** With the feature on, every agent's final message goes to TypeSafe (the classifier), and to the configured
+LLM endpoint when the classifier says a step must wait, with the current time and the zone. Only the final assistant
+message is sent, never the transcript or tool output; the game's Settings say so above the toggle.
+
+The game puts the chip on the reply's row, in place of "Schedule follow-up…" beside Handoff: "Schedule follow-up ·
+tomorrow 12:45 (10:45 UTC)" (the viewer's clock, UTC beside it; a time that passed says so) and a × that dismisses it.
+Its click opens the schedule form prefilled with the title, `due_at`, `draft_prompt`, the source worker's hire spec and
+"Attach this message as a handoff" on, source `suggestion`; a passed time is flagged there and Save waits for a new
+one. Cancelling the form leaves the chip.
+
 ### Pack up on request
 
 #110. A prompt you send a worker sometimes also tells it to leave once the task is done ("make a PR, then go home and
@@ -5188,7 +5269,8 @@ false) makes the fire a worktree hire from `cwd`'s repository. `wake_floor` (def
 asleep. `handoff_path`: an absolute path to a handoff the worker reads. `on_miss` (`run_late`, the default, or `skip`)
 and `max_lateness_ms` (positive, `run_late` only; absent: no limit) are the missed-window policy below. `source` (create
 only; default `{"kind":"manual"}`): `manual`, `transcript` or `suggestion`, with the source `worker` and `message` ids
-when known.
+when known; a `suggestion` one naming a worker's open suggestion closes it (#66, [Schedule
+suggestions](#schedule-suggestions)).
 
 **States.** `scheduled` (not due) → `waiting` (due, its fire waits: the floor wakes, is busy, is not seen yet, or has no
 free desk; `state_reason` says which) → `running` (the hire is in flight; `worker_id`, `fired_at` set) → `done`
@@ -5634,7 +5716,7 @@ updates on an Arch-based host, and its disks' activity. All of it is sampled **o
 | `prompt_failed` | `worker.prompt` was not submitted: herdr failed, or the agent did not start working even after Enter was pressed again |
 | `secrets_review_stored` | #108 round 2 (see [Prompt secrets](#prompt-secrets)): the review of a prompt that is stored (`schedule.create`/`update`, `hire_preset.create`/`update`/`check`; `schedule.retry`/`run_now` of a schedule's stored prompt) protects something: a stored prompt keeps no protected file. Remove the values from it, or protect them when you hire with it. Nothing was stored |
 | `secrets_review_required`, `secrets_review_stale`, `secrets_review_off`, `secrets_unavailable` | #108 (see [Prompt secrets](#prompt-secrets)): the text has possible secrets and the command carries no review of them, or its decisions do not fit the scan (a candidate without exactly one decision; a range empty, outside the text, splitting a surrogate pair or overlapping another); the review's `revision` is not the text's under the current rules, key and switch (the text changed, the bridge restarted, the switch changed), or a review came while the switch is off (round 2: and a `secrets_pending` unknown, expired, from before a restart or a change of the switch, another worker's, or whose files another worker took, also when that happened while the command waited; a switch change while a reviewed command waited, before its text went on, or while a preview's or a preset check's model read it; a schedule's prompt changed while its retry's review was checked); round 2: a text of a command with several has no review, or a review names no text the command sends (the message starts with the text's path); `prompt_secrets.scan` while the switch is off; the protection could not run (no private runtime directory, a file could not be written, the scan failed or took over 10 s). Nothing was sent, stored or written on any of them (but that model's read, of the text with its references), and the message never quotes the text |
-| `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` (#60: `worker.retry_followup` / `worker.followup_message`) for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read; #26 a transcript command whose `child` names another generation than the worker's now (its session was replaced) |
+| `stale` | #184 `issue.set_status` with `after` on a Kaneo board that changed since it was read (Kaneo's 409), `floor.settings.set` whose floor's tracker or Kaneo link, or the Kaneo connection, changed while it was checked, and `run.start` whose `work_item` was being read when the floor's board source changed; #156 `worker.answer_async` / `worker.dismiss_async` for a `thread` that is not the worker's now, an unknown batch, or a question not in a state it can take (answered, dismissed, sending, sent; checked again on the input lane); #90 `worker.answer_followup` / `worker.dismiss_followup` (#60: `worker.retry_followup` / `worker.followup_message`) for a `turn_id` that is not the worker's follow-up (answered, dismissed, or a newer turn); #66 `worker.dismiss_schedule_suggestion` for a `suggestion` that is not the worker's open one (accepted, dismissed, or the transcript went on); `worker.answer` for a question the worker's screen no longer asks (another `hash`), or a worker no longer blocked; `worker.answer_ask` for an ask the worker no longer has (another `tool_use_id`, or none), also when it was answered or replaced while its keys were being pressed, or (`cancel`) the screen shows another question; `pr.merge` whose head moved since it was read; #26 a transcript command whose `child` names another generation than the worker's now (its session was replaced) |
 | `changes_failed` | `worker.changes` whose git calls failed, or took longer than 10 s together; the message is git's error |
 | `not_a_repo` | `worker.changes` for a worker whose directory is not in a git work tree |
 | `files_failed` | #137 `worker.files` (#39: `hire.files`) whose listing failed (git's error, rg's, or the listing could not start) with no earlier index of that checkout to answer from |
