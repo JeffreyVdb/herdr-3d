@@ -40,6 +40,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/shell"
 	"github.com/JeffreyVdb/herdr-3d/internal/store"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
+	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
 	"github.com/JeffreyVdb/herdr-3d/internal/world"
 )
@@ -436,6 +437,13 @@ type Hub struct {
 	wg       sync.WaitGroup                 // floor operations and the suggester
 
 	usage map[string]*proto.Usage // M5 usage: by worker id, as last published
+	// H3D-2: the transcript session each usage was read from (usageFor), and
+	// the model and effort the hire record, tokens or hire op reported for
+	// each worker, kept apart from the model and effort its transcript
+	// observed (usage): the view merges them (shownModel), the store and
+	// metaOf only ever see the reported ones.
+	usageFor map[string]usageTag
+	reported map[string]modelEffort
 	// M5 term
 	term      termWatches              // laptop screens being watched
 	zoom      zoomTabs                 // #74: the tabs zoomed for them
@@ -549,6 +557,9 @@ type savedWorker struct {
 // workerMeta is what the bridge keeps with a worker beyond what herdr
 // currently shows: the last known harness, model and effort, and since
 // when (unix ms) it has had its status.
+// modelEffort is a model and an effort as one source says them ("": unknown).
+type modelEffort struct{ model, effort string }
+
 type workerMeta struct {
 	harness, model, effort string
 	status                 string
@@ -711,6 +722,8 @@ func NewHub(ctx context.Context, st *store.Store, opts Options) (*Hub, error) {
 		creating:      map[string]*createOp{},
 		suggest:       make(chan suggestJob, 256),
 		usage:         map[string]*proto.Usage{},
+		usageFor:      map[string]usageTag{},
+		reported:      map[string]modelEffort{},
 		limits:        map[string]proto.Limits{},
 		limitsPoller:  newLimitsPoller(opts.Limits),
 		dg:            map[string]*transcript.Digest{},
@@ -1478,7 +1491,8 @@ func (h *Hub) removeFloor(u world.FloorGone) {
 			w := h.workers[id]
 			delete(h.workers, id)
 			delete(h.saved, id)
-			delete(h.typed, id) // #95
+			delete(h.reported, id) // H3D-2
+			delete(h.typed, id)    // #95
 			delete(h.starts, id)
 			delete(h.dirty, id)
 			delete(h.dg, id)                                                      // #118
@@ -1634,6 +1648,9 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		var base workerMeta
 		if prev := h.workers[id]; prev != nil {
 			base = metaOf(prev)
+			if r, ok := h.reported[id]; ok { // H3D-2: not the view's, which may hold what its transcript says
+				base.model, base.effort = r.model, r.effort
+			}
 		} else if op := f.hires[id]; op != nil {
 			base = workerMeta{harness: op.harness, model: op.model, effort: op.effort, hiredAt: op.hiredAt, floor: op.floor}
 		} else if r, ok := records[id]; ok {
@@ -1660,7 +1677,8 @@ func (h *Hub) syncWorkers(ctx context.Context, session string, f *floorState, ob
 		w := h.workers[id]
 		delete(h.workers, id)
 		delete(h.saved, id)
-		delete(h.typed, id) // #95
+		delete(h.reported, id) // H3D-2
+		delete(h.typed, id)    // #95
 		delete(h.starts, id)
 		delete(h.dirty, id)
 		delete(h.dg, id)                                     // #118
@@ -1798,9 +1816,11 @@ func (h *Hub) syncFloorWorkers(ctx context.Context, f *floorState, obs []world.W
 			h.seatedNew(id, at) // M6 runs
 		}
 		next := workerView(id, session, w, metas[i], names[i], desk, h.resume[id])
-		next.ChildGeneration = h.childSession(id, next.AgentSession) // #22: a replaced session drops its children
-		next.SecretFiles = h.ps.counts[id]                           // #108 round 5
-		h.withRun(next, w, metas[i], links[id])                      // M6 runs
+		h.reported[id] = modelEffort{metas[i].model, metas[i].effort}
+		next.Model, next.Effort = h.shownModel(id, next.AgentSession) // H3D-2
+		next.ChildGeneration = h.childSession(id, next.AgentSession)  // #22: a replaced session drops its children
+		next.SecretFiles = h.ps.counts[id]                            // #108 round 5
+		h.withRun(next, w, metas[i], links[id])                       // M6 runs
 		if w.Worktree != nil && w.Worktree.Linked && w.Worktree.CheckoutPath != "" {
 			next.Branch = h.branchOf(w.Worktree.CheckoutPath, at)
 		}
@@ -1875,6 +1895,27 @@ func (h *Hub) floorNames(session string) map[string]nameClaim {
 	return m
 }
 
+// shownModel is the model and effort a worker shows (H3D-2), each field on
+// its own: what the transcript of its current agent session says of it (its
+// usage), else what was reported (the hire op, the stored record, the h3d_*
+// tokens), else unknown. A usage is the evidence of the transcript session
+// it was read from (usageFor.evidenceOf): not of another one the worker has
+// now.
+func (h *Hub) shownModel(id, agent string) (model, effort string) {
+	model, effort = h.reported[id].model, h.reported[id].effort
+	u := h.usage[id]
+	if u == nil || !h.usageFor[id].evidenceOf(agent) {
+		return model, effort
+	}
+	if m := usage.CleanModel(u.Model); m != "" {
+		model = m
+	}
+	if e := usage.CleanEffort(u.Effort); e != "" {
+		effort = e
+	}
+	return model, effort
+}
+
 func metaOf(w *proto.Worker) workerMeta {
 	m := workerMeta{harness: w.Harness, model: w.Model, effort: w.Effort, status: w.Status, statusSince: w.StatusSince,
 		hiredAt: w.HiredAt, floor: w.Floor}
@@ -1901,8 +1942,9 @@ func (h *Hub) branchOf(checkout string, at time.Time) string {
 }
 
 // nextMeta folds an observation into what the bridge knows about a worker:
-// harness, model and effort are remembered once seen (herdr drops tokens on
-// a restart), and status_since only moves when the status changes.
+// harness, model and effort (the reported ones, H3D-2: not what a transcript
+// says of them) are remembered once seen (herdr drops tokens on a restart),
+// and status_since only moves when the status changes.
 func nextMeta(m workerMeta, w world.WorkerObs, now int64) workerMeta {
 	if w.Harness != "" {
 		m.harness = w.Harness

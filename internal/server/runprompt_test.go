@@ -33,9 +33,15 @@ const placementLine = "Start every agent you hire in its own herdr workspace or 
 const floorLineS = "Also tag every herdr workspace you create with the token h3d_floor=s, " +
 	"in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor."
 
-// buildHead is the team of buildTeam, the placement rule and the floor line
-// of floor "s".
-const buildHead = buildTeamLines + "\n\n" + placementLine + "\n\n" + floorLineS
+// agentLineT asks the orchestrator to tag its agents' workspaces with the
+// harness, model and effort it starts them with (H3D-2).
+const agentLineT = "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, " +
+	"the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: " +
+	"the floor shows them as that agent's model line."
+
+// buildHead is the team of buildTeam, the placement rule, the floor line
+// of floor "s" and the agent line.
+const buildHead = buildTeamLines + "\n\n" + placementLine + "\n\n" + floorLineS + "\n\n" + agentLineT
 
 func TestRunPrompt(t *testing.T) {
 	t.Parallel()
@@ -83,7 +89,7 @@ func TestRunPrompt(t *testing.T) {
 				"- coders: codex gpt-6-luna, reasoning xhigh\n" +
 				"- reviewers: claude claude-fable-5-1, effort max\n" +
 				"- ux reviewers: claude claude-opus-5-5, effort low\n" +
-				"- researchers: codex gpt-6-astra, reasoning ultra\n\n" + placementLine + "\n\n" + floorLineS + "\n\n" + statusLine},
+				"- researchers: codex gpt-6-astra, reasoning ultra\n\n" + placementLine + "\n\n" + floorLineS + "\n\n" + agentLineT + "\n\n" + statusLine},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := server.RunPrompt(tc.call, tc.ticket, tc.issue, tc.roles, "s", tc.extra); got != tc.want {
@@ -100,7 +106,7 @@ func TestRunPromptNamesTheFloor(t *testing.T) {
 	got := server.RunPrompt("/write-code", "Fix the lobby.", false, buildTeam, "v-0123456789ab", "")
 	want := "/write-code Fix the lobby.\n\n" + buildTeamLines + "\n\n" + placementLine + "\n\n" +
 		"Also tag every herdr workspace you create with the token h3d_floor=v-0123456789ab, " +
-		"in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor."
+		"in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor.\n\n" + agentLineT
 	if got != want {
 		t.Fatalf("prompt =\n%s\nwant\n%s", got, want)
 	}

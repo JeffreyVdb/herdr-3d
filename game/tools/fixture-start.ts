@@ -67,8 +67,11 @@ export const PLACEMENT_LINE = "Start every agent you hire in its own herdr works
 /** #58: the bridge's floorLine: tag the workspaces you create with your floor (a floor id). */
 export const floorLine = (floor: string): string =>
   `Also tag every herdr workspace you create with the token h3d_floor=${floor}, in the same herdr workspace report-metadata call as its other h3d_ tokens: it puts that agent on your floor.`;
+/** H3D-2: the bridge's agentLine: tag the workspaces you create with the harness, model and effort their agents start with. */
+export const AGENT_LINE =
+  "Also tag every herdr workspace you create with the tokens h3d_harness, h3d_model and h3d_effort, the harness, model id and effort you start that agent with, in the same herdr workspace report-metadata call as the floor token: the floor shows them as that agent's model line.";
 /** #95: the herdr hiring instructions for a floor (the bridge's hireInstructions): `worker.hire` adds them after a blank line. */
-export const herdrInstructions = (floor: string): string => `${PLACEMENT_LINE}\n\n${floorLine(floor)}`;
+export const herdrInstructions = (floor: string): string => `${PLACEMENT_LINE}\n\n${floorLine(floor)}\n\n${AGENT_LINE}`;
 
 /** Added for an issue ticket, after the team: how the issue's status follows the run. */
 export const ISSUE_STATUS_LINE = 'Move the ticket status accordingly, pull request always means QA, merging the PR always means Done.';

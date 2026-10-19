@@ -28,7 +28,9 @@
   and drive it with `proto`'s client, which keeps the rule: test imports are not in any package's graph;
   `docs/research/codex-shared-tui.md`), `usage` (M5: agents' token
   usage and cost from their transcripts, read incrementally, and the pricing table; #101: the main thread's context in use
-  and its window, resolved from `[1m]`, observed context, the table and the model's family, cleared by a compaction), `jsonl` (the shared reading of
+  and its window, resolved from `[1m]`, observed context, the table and the model's family, cleared by a compaction; H3D-2: the model
+  and effort a transcript reports (`Usage.Effort`, `CleanModel`, `CleanEffort`), which the hub shows as a worker's `model` and `effort` over its reported
+  ones, per field, and never stores: `Hub.shownModel`, docs/decisions.md H3D-2), `jsonl` (the shared reading of
   those JSONL files: one tail per transcript, complete lines from byte offsets, no symlinks), `transcript` (M16: the
   Claude and Codex transcripts as one timeline of items, indexed by offset for the laptop's conversation view; phase 2:
   their images as `ImageRef`s, decoded, hashed and resolved through the allowlist of path roots; #57: the agents'

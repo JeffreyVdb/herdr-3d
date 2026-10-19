@@ -1158,6 +1158,9 @@ type Usage struct {
 	Priced     string  `json:"priced"`
 	// Model is the model the transcript reports (last seen).
 	Model string `json:"model,omitempty"`
+	// Effort is the reasoning effort the transcript reports (last seen; H3D-2,
+	// additive: absent when it records none, and from older bridges).
+	Effort string `json:"effort,omitempty"`
 	// ContextPct is the share of the context window in use, 0–100 with one
 	// decimal, null when unknown; ContextWindow is the window used (0:
 	// unknown).
