@@ -1386,6 +1386,8 @@ class Transcript implements TranscriptView {
     const key = c ? `${c.id}|${sug ? `${sug.id}|${when?.when}|${when?.passed}|${this.dismissing}` : ''}` : '';
     const btn = this.handoffEl;
     if (btn && row && c && btn.parentElement === row && btn.dataset.key === key) return;
+    const a = document.activeElement;
+    const had = a instanceof HTMLElement && btn?.contains(a) ? a.dataset.key : null;
     btn?.remove();
     this.handoffEl = null;
     if (!row || !c) return;
@@ -1417,6 +1419,11 @@ class Transcript implements TranscriptView {
     );
     row.append(el);
     this.handoffEl = el;
+    // The keyboard keeps its place: the same button, else (a × gone or busy) the one that schedules.
+    if (had) {
+      const same = el.querySelector<HTMLButtonElement>(`[data-key="${had}"]`);
+      (same && !same.disabled ? same : el.querySelector<HTMLElement>('[data-key="schedule"]'))?.focus();
+    }
   }
 
   /**

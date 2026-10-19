@@ -120,6 +120,20 @@ describe('the schedule suggestion chip', () => {
     expect(plain()).toHaveLength(1);
   });
 
+  it('keeps the keyboard on the row: dismissed with ×, focus lands on the plain button that returns', async () => {
+    view = mountTranscript(container, host());
+    view.setItems([item('msg_a#0', 1, 'assistant')]);
+    view.setHandoff?.(cand('msg_a'));
+    view.setScheduleSuggestion?.(sug('msg_a'));
+    x()!.focus();
+    x()!.click();
+    expect(document.activeElement).toBe(chip()); // the × is busy
+    await flush();
+    view.setScheduleSuggestion?.(null); // the bridge's upsert
+    expect(plain()).toHaveLength(1);
+    expect(document.activeElement).toBe(plain()[0]);
+  });
+
   it('is keyboard reachable: the chip and its × are buttons in order', () => {
     view = mountTranscript(container, host());
     view.setItems([item('msg_a#0', 1, 'assistant')]);
