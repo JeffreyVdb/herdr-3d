@@ -214,6 +214,8 @@ test('a summaryâ€™s loading, arrival and refresh move no row, and keep the lineâ
   // is a step back from the settled line's colour (never brighter; dimmer where the settled one has the room).
   const composed = await refreshContrast(page);
   expect(composed).toHaveLength(DISPLAYS.length * THEMES.length);
+  // Each theme's own colours were measured (not Quiet's twice).
+  for (const d of DISPLAYS) expect(composed.find((c) => c.at === `ubuntu ${d}`)?.settled).not.toEqual(composed.find((c) => c.at === `quiet ${d}`)?.settled);
   for (const c of composed) {
     for (const v of c.refresh) expect(v, `${c.at}: ${c.refresh.join(' / ')}`).toBeGreaterThanOrEqual(4.5);
     c.refresh.forEach((v, i) => expect(v, `${c.at} against its settled line`).toBeLessThanOrEqual(c.settled[i]!));
