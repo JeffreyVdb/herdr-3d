@@ -573,6 +573,17 @@
 .dd-notices:empty {
   display: none;
 }
+/* #117: the classifier's question, by the buttons like the notices. */
+.dd-asking {
+  flex: 1 1 100%;
+}
+.dd-asking:empty {
+  display: none;
+}
+.dd-asking .dd-callout p {
+  margin: 0;
+  max-width: 62ch;
+}
 .dd-fetch {
   display: flex;
   flex-wrap: wrap;

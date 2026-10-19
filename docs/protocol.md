@@ -1061,7 +1061,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `hire_preset.create` | #93: `{"name", "floor"?, "prompt", "harness", "model", "effort", "herdr_instructions"?: bool, "secrets"?: SecretsReview}`; `floor` empty or absent: global (see [Hire presets](#hire-presets)) | the preset | `hire_preset.upsert` |
 | `hire_preset.update` | `{"id", …}`: `hire_preset.create`'s args, the whole spec replaced (its scope and #95 `herdr_instructions` too) | the preset | `hire_preset.upsert`; none when nothing changed |
 | `hire_preset.delete` | `{"id"}` | — | `hire_preset.removed` |
-| `hire_preset.check` | #95: `{"prompt", "secrets"?: SecretsReview}` (1–32 KiB, not blank) | `{"delegates": bool, "score"}`; `delegates` false also when the classifier is not ready, fails or takes over 1.2 s | — |
+| `hire_preset.check` | #95: `{"prompt", "secrets"?: SecretsReview}` (1–32 KiB, not blank) | `{"delegates": bool, "score"}`; `delegates` false also when the classifier is not ready, fails or takes over 1.2 s. Asked by the preset editor's Save and (#117) by a plain Hire worker's Hire | — |
 
 ```json
 {"t":"floor.assign","req_id":"8","args":{"session":"code-review","building":"b_3f09a1c2d4e5","index":0}}
@@ -5422,12 +5422,21 @@ means "the current hiring instructions", so presets pick up a later change of th
 shows the exact lines from `hire.prepare`'s `herdr_instructions`, and a hire form may untick them for one hire. Only a
 bridge whose snapshot says `herdr_instructions: true` takes the field (an older one refuses it as unknown).
 
+#117: a plain **Hire worker** form (no preset) has the same box, off by default, and sends `herdr_instructions: true`
+when it is ticked: any `worker.hire` with a prompt takes it, preset or not. With the box off, Hire first asks
+`hire_preset.check` (below) and, on a "yes", asks the player in the dialog whether to hire with the instructions or
+without; the answer only decides whether the flag is sent. No bridge or protocol change: the command keeps its name.
+
 `hire_preset.check {"prompt"}` asks the AI integration's classifier (#92) "Does this task tell the AI coding agent to
 start, spawn, hire or hand work to other AI agents (subagents, workers, coders, reviewers) instead of doing all of it
 itself?" with state `{"prompt"}`: `delegates` is `score ≥ 0.7`. It fails open: no classifier, one not ready (no call),
 an error or 1.2 s gone by answer `{"delegates": false, "score": 0}`. The game asks it on a preset's Save with the box
-off (never on Use or Hire) and, on a "yes", asks the player whether to tick the box; it gives up after 1.5 s. The
-audit log keeps the prompt's length only (`prompt_bytes`), never its text.
+off and, on a "yes", asks the player whether to tick the box (never on Use); #117: and on a plain Hire worker's Hire
+with the box off, after the first task's secrets review (the review's resolved text, with its `secrets` when the review
+protects nothing; when it protects something, that text with each marked range as `[redacted]` and no `secrets`: the
+check takes only a review that leaves every candidate as typed, and the classifier must not read a protected value),
+asking "Hire with instructions" / "Hire without" on a "yes" (a form from a preset never asks). It gives up after 1.5 s and
+hires as typed. The audit log keeps the prompt's length only (`prompt_bytes`), never its text.
 
 ```json
 {"t":"hire_preset.check","req_id":"c1","args":{"prompt":"For each pull request, spawn a subagent that merges it."}}

@@ -362,6 +362,11 @@ export class SecretReview {
   protectedRanges(): Range[] {
     return this.list.filter((m) => m.state === 'protect').map((m) => ({ start: m.start, end: m.end }));
   }
+
+  /** Every mark's range, protected or left as typed (an ignored one is its found range), in text order: all the review looked at. */
+  markedRanges(): Range[] {
+    return this.list.map((m) => ({ start: m.start, end: m.end }));
+  }
 }
 
 // ---- masking --------------------------------------------------------------------------------------------------

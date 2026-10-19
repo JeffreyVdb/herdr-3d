@@ -384,7 +384,9 @@ for (const width of [1280, 360]) {
     await page.evaluate(() => window.__h3d.openHire(5));
     const worker = page.locator('#hire-worktree');
     await expect(worker).not.toBeChecked();
-    await worker.check();
+    // The label, as a player does: the box itself is visually hidden, and (#117: the herdr instructions box above it) at 360px
+    // its static place is below the dialog's visible area.
+    await page.locator('label[for="hire-worktree"]').click();
     await expect(worker).toBeChecked();
     await page.keyboard.press('Escape');
     await page.evaluate(() => window.__h3d.openStartRun());
