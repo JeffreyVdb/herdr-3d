@@ -14,7 +14,7 @@ package server
 // A suggestion becomes Worker.ScheduleSuggestion until it is accepted (a
 // schedule.create whose source names it), dismissed
 // (worker.dismiss_schedule_suggestion), or the transcript goes on (a prompt,
-// another turn). Each message looked at is recorded by worker and SHA-256
+// another turn, one with the same reply included). Each message looked at is recorded by worker and SHA-256
 // (schedsuggest_seen) with its suggestion and why it closed: a restart or a
 // re-read never asks the models again, an open suggestion comes back, a
 // closed one never does. Nothing is ever scheduled here: accepting the chip
@@ -50,8 +50,8 @@ type suggestState struct {
 	svc   *schedsuggest.Service
 	roles schedsuggest.Roles
 	shown map[string]*suggestionShown // worker id → its open suggestion
-	// latest is each worker's latest ended turn (its message's hash): a
-	// result of another is stale.
+	// latest is each worker's latest ended turn (its Turn.ID): a result of
+	// another is stale, one with the same reply included.
 	latest map[string]string
 	// running is the message whose extraction runs, per worker: the same
 	// message offered again meanwhile (a re-read) is not asked twice.
@@ -135,7 +135,8 @@ func (h *Hub) suggestionSkip(w *proto.Worker) string {
 
 // suggestionSeen takes a worker's latest ended turn from the tracker (with
 // followupSeen): the transcript gone on to a new prompt or turn closes the
-// open suggestion.
+// open suggestion. A turn is its Turn.ID: a newer one with the same reply
+// closes it too (and gets none: its message was looked at).
 func (h *Hub) suggestionSeen(ctx context.Context, u followupUpdate) {
 	s := h.ss.shown[u.id]
 	if u.turn == nil {
@@ -145,9 +146,9 @@ func (h *Hub) suggestionSeen(ctx context.Context, u followupUpdate) {
 		}
 		return
 	}
-	h.ss.latest[u.id] = u.turn.Hash
-	if s != nil && s.hash != u.turn.Hash {
-		h.closeSuggestion(ctx, u.id, store.ScheduleSuggestMoved) // a newer turn's message
+	h.ss.latest[u.id] = u.turn.ID
+	if s != nil && s.s.ID != u.turn.ID {
+		h.closeSuggestion(ctx, u.id, store.ScheduleSuggestMoved) // a newer turn
 	}
 }
 
@@ -164,7 +165,9 @@ func (h *Hub) suggestionWants(id, hash string) bool {
 
 // suggestionUnseen reports whether the feature never looked at c's message
 // and is not looking at it now. Looked at before (a restart, a re-read):
-// never again, and an open suggestion comes back.
+// never again, and an open suggestion of c's turn comes back (one of an
+// earlier turn with the same reply closes: the transcript went on while the
+// bridge was down).
 func (h *Hub) suggestionUnseen(ctx context.Context, id string, c *followupCand) bool {
 	if h.ss.running[id] == c.turn.Hash {
 		return false
@@ -178,12 +181,19 @@ func (h *Hub) suggestionUnseen(ctx context.Context, id string, c *followupCand) 
 		return true
 	}
 	var s proto.ScheduleSuggestion
-	if cur := h.ss.shown[id]; cur != nil && cur.hash == c.turn.Hash {
+	if cur := h.ss.shown[id]; cur != nil && cur.s.ID == c.turn.ID {
 		return false
 	}
-	if seen.Suggestion != "" && seen.Outcome == "" && json.Unmarshal([]byte(seen.Suggestion), &s) == nil {
-		h.setSuggestion(id, &s, c.turn.Hash)
+	if seen.Suggestion == "" || seen.Outcome != "" || json.Unmarshal([]byte(seen.Suggestion), &s) != nil {
+		return false
 	}
+	if s.ID != c.turn.ID {
+		if err := h.st.CloseScheduleSuggestSeen(ctx, id, c.turn.Hash, store.ScheduleSuggestMoved); err != nil {
+			h.log.Error("closing schedule suggestion record failed", "worker", id, "err", err)
+		}
+		return false
+	}
+	h.setSuggestion(id, &s, c.turn.Hash)
 	return false
 }
 
@@ -271,7 +281,7 @@ func (h *Hub) suggestionDone(ctx context.Context, id string, c *followupCand, re
 	// Superseded meanwhile (another turn, a prompt, the worker gone or
 	// asking): the message was looked at, and nothing is shown.
 	w := h.workers[id]
-	stale := h.ss.latest[id] != c.turn.Hash || w == nil || h.suggestionSkip(w) != ""
+	stale := h.ss.latest[id] != c.turn.ID || w == nil || h.suggestionSkip(w) != ""
 	var raw, outcome string
 	if s != nil {
 		b, _ := json.Marshal(s)

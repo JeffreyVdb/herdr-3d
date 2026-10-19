@@ -417,6 +417,46 @@ func TestScheduleSuggestionTranscriptMovesOn(t *testing.T) {
 	fb2.noSuggestions(t)
 }
 
+// A newer turn with the same reply is the transcript going on too: it
+// closes the older turn's suggestion (moved) and gets none, its message was
+// looked at already (each message once). The same when it came while the
+// bridge was down: the older turn's open suggestion is not restored onto it.
+func TestScheduleSuggestionSameTextNewTurn(t *testing.T) {
+	t.Parallel()
+	roles := ssRoles(time.Now().Add(5 * time.Hour).Truncate(time.Second))
+	fb := startSsBridge(t, "", "", roles, nil, on())
+	c := fb.connect(proto.Hello{})
+	c.snapshot()
+	id := fb.ids["w1"]
+	fb.say(t, "msg_same1", ssSoakText)
+	suggestionOf(c, id)
+	fb.say(t, "msg_same2", ssSoakText) // prompt, reply and turn end read in one poll
+	upsertFor(c, id, func(w *proto.Worker) bool { return w.ScheduleSuggestion == nil })
+	fuQuiet()
+	fb.noSuggestions(t)
+	if c, l := roles.calls(); c != 1 || l != 1 {
+		t.Fatalf("calls after the same reply: %d, %d", c, l)
+	}
+
+	text := ssSoakText + " (chart too)"
+	fb.say(t, "msg_same3", text)
+	if s := suggestionOf(c, id).ScheduleSuggestion; s.Message != "msg_same3" {
+		t.Fatalf("suggestion = %+v", s)
+	}
+	fb.stop()
+	fb.say(t, "msg_same4", text) // while the bridge is down
+	fb2 := startSsBridge(t, fb.db, fb.dir, roles, nil, on())
+	fuQuiet()
+	fb2.noSuggestions(t)
+	fb2.stop()
+	fb3 := startSsBridge(t, fb.db, fb.dir, roles, nil, on())
+	fuQuiet()
+	fb3.noSuggestions(t)
+	if c, l := roles.calls(); c != 2 || l != 2 {
+		t.Fatalf("calls after the restarts: %d, %d", c, l)
+	}
+}
+
 // A suggestion made after its turn was superseded (a prompt came while the
 // LLM drafted it) is recorded, never shown.
 func TestScheduleSuggestionStaleResult(t *testing.T) {
