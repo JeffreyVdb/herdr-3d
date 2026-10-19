@@ -21,7 +21,7 @@ import { onReviewKey, reviewButton, type Go } from './secretsFlow';
  * like the M4 dialogs; Esc in the editor goes back to the list (or to the form it came from), Esc in the list closes.
  *
  * #95: the editor's "Add herdr hiring instructions" box, on a bridge that adds them (an older one: a hint to update it).
- * With the box off, Save first asks the classifier (`hire_preset.check`, never on Use or Hire) whether the prompt hands
+ * With the box off, Save first asks the classifier (`hire_preset.check`; Use never does, and Hire worker asks on a plain form only, #117) whether the prompt hands
  * work to other agents; when it does, the editor asks in place (Turn on and save / Save as is; Esc back to the editor).
  * The box is only ever ticked by a click, and anything but a "yes" in time saves the preset as it is.
  */

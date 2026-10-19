@@ -130,7 +130,7 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker dro
   expect(d.blocker).toBeNull();
   await expect(page.locator('.dd-capacity')).toHaveText('pastry: 14 of 24 · host: 35 of 60 · load 2.4 on 16 CPUs · memory 41 %');
   await expect(page.locator('#hire-worktree')).toBeChecked();
-  await expect(page.locator('.dd-base')).toContainText('A new h3d/… branch from origin/main @');
+  await expect(page.locator('#hire-worktree-base')).toContainText('A new h3d/… branch from origin/main @');
   // M10: the simulated bridge reads the plan limits; the chosen harness's are shown (e2e/m10-limits.spec.ts has the rest).
   await expect(page.locator('[data-hook="plan-limits"] .lm-line')).toHaveCount(1);
   await expect(page.locator('[data-hook="plan-limits"]')).toContainText('Claude');
@@ -142,7 +142,10 @@ test('E on an empty desk: the hire dialog from the keyboard, then the worker dro
   expect(await page.evaluate(() => window.__h3d.panel())).toBeNull();
   d = (await dialog(page)) as Hire;
   expect(d.form.prompt).toBe('Label the loaves, extra seeds\nthen bake');
-  // Harness → model → effort from the keyboard: Tab into each chip group, arrows pick.
+  // #117: the box for the herdr hiring instructions comes first (off; Space ticks it), then harness → model → effort from
+  // the keyboard: Tab into each chip group, arrows pick.
+  await page.keyboard.press('Tab');
+  expect(await focusedKey(page)).toBe('instructions');
   await page.keyboard.press('Tab');
   expect(await focusedKey(page)).toBe('harness:claude');
   await page.keyboard.press('ArrowRight');
@@ -533,7 +536,7 @@ test('a failed git fetch: no worktree from a stale origin, the error and Fetch a
   const box = page.locator('#hire-worktree');
   await expect(box).toBeDisabled();
   await expect(box).not.toBeChecked();
-  await expect(page.locator('.dd-base')).toContainText('Off: origin could not be fetched. Last fetched origin/main @');
+  await expect(page.locator('#hire-worktree-base')).toContainText('Off: origin could not be fetched. Last fetched origin/main @');
   // In view without scrolling: the error, Fetch again, the caps and Hire.
   const fetchNote = page.locator('dialog.desk-dlg--hire #hire-fetch');
   await expect(fetchNote).toBeInViewport({ ratio: 1 });

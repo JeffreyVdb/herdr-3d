@@ -54,6 +54,8 @@ describe('the fixture’s fake detector (#108)', () => {
 
   it('leaves templates, references and names without a value alone; says when a value is encoded', () => {
     expect(detect('TOKEN=$GITHUB_TOKEN api_key=${KEY} pw: <your-password> max_tokens=5 [secret in file /x/y]')).toEqual([]);
+    // #117: a redaction is no value (the bridge's `notASecret`), in an assignment too: the check's text for a protected task.
+    expect(detect('TOKEN=[redacted] and PASSWORD=[redacted] the password is [redacted]')).toEqual([]);
     expect(detect('DB_PASSWORD=p%40ss')).toEqual([{ id: 'c1', start: 12, end: 18, kinds: ['assignment'], encoded: true }]);
   });
 });

@@ -228,8 +228,8 @@ function valueAt(text: string, at: number): { start: number; end: number } | nul
   return end > at ? { start: at, end } : null;
 }
 
-/** Templates, references and the bridge's own file references are never candidates. */
-const notASecret = (v: string) => !v || /^(\$|<|\{\{|\[secret in file )/.test(v) || /^(true|false|null)$/i.test(v);
+/** Templates, references, a redaction (the bridge's `notASecret`: any value that says "redacted", #117's check text) and the bridge's own file references are never candidates. */
+const notASecret = (v: string) => !v || /^(\$|<|\{\{|\[secret in file )/.test(v) || /^(true|false|null)$/i.test(v) || /redacted/i.test(v);
 
 /** The bridge's own references (decisions row 6): exactly its directory's shape, as `Files.IsFilePath` reads it. */
 // (`SECRETS_DIR` holds no character a pattern reads specially.)

@@ -354,4 +354,30 @@ describe('HireCoordinator: #95 the herdr hiring instructions', () => {
     expect(o.kind === 'not_sent' && o.message).toContain('herdr hiring instructions');
     expect(t.sends).toHaveLength(1);
   });
+
+  it('#117: a plain hire (no preset) counts the lines only when its box is ticked, or “Hire with instructions” was answered', async () => {
+    const t = setup();
+    const lines = 'Start every agent in its own workspace.\n\nTag each with h3d_floor=pastry.';
+    const added = 2 + new TextEncoder().encode(lines).length;
+    const full = 'x'.repeat(32 * 1024);
+    // Box off (or "Hire without"): no `added`, no flag; a task of exactly 32 KiB is sent as typed.
+    const off = t.hires.start(req({ args: args(14, full), prompt: draft(full) }));
+    await tick();
+    expect(t.sends[0]).toMatchObject({ prompt: full });
+    expect(t.sends[0]).not.toHaveProperty('herdr_instructions');
+    t.answer(0, { ok: true, data: { id: 'w1', prompted: true } });
+    await off.done;
+    // Box ticked (or the question answered "with"): the same task no longer fits, and the message names the lines.
+    const on = await t.hires.start(req({ key: 'k2', args: { ...args(15, full), herdr_instructions: true }, prompt: draft(full), added, background: false })).done;
+    expect(on.kind).toBe('not_sent');
+    expect(on.kind === 'not_sent' && on.message).toContain('herdr hiring instructions');
+    expect(t.sends).toHaveLength(1);
+    // What fits with them is sent with the flag.
+    const fits = 'x'.repeat(32 * 1024 - added);
+    const ok = t.hires.start(req({ key: 'k3', args: { ...args(16, fits), herdr_instructions: true }, prompt: draft(fits), added }));
+    await tick();
+    expect(t.sends[1]).toMatchObject({ prompt: fits, herdr_instructions: true });
+    t.answer(1, { ok: true, data: { id: 'w2', prompted: true } });
+    await ok.done;
+  });
 });
