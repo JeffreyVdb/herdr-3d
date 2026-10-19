@@ -132,10 +132,12 @@ func (f *hfx) newBridge(sock, root string, stable bool) *cbridge {
 // join starts the watcher (the hub's codexEvent wiring) and waits for it.
 func (b *cbridge) join(sock string, stable bool) {
 	b.f.t.Helper()
+	ready := make(chan struct{}) // b.w is set
 	w, err := codexapp.Watch(codexapp.Options{Socket: sock, Thread: b.root, StableAPI: stable, MinBackoff: 100 * time.Millisecond,
 		MaxBackoff: 500 * time.Millisecond, MaxRetries: 50, OnEvent: func(e codexapp.Event) {
 			switch e.Kind {
 			case codexapp.EvJoined:
+				<-ready
 				b.src.Joined(b.root, b.w)
 				b.joins <- struct{}{}
 			case codexapp.EvNotification:
@@ -148,6 +150,7 @@ func (b *cbridge) join(sock string, stable bool) {
 		b.f.t.Fatal(err)
 	}
 	b.w = w
+	close(ready)
 	b.waitJoin()
 }
 
@@ -473,7 +476,18 @@ func TestCodexShareChildrenNoExtraTurns(t *testing.T) {
 			t.Errorf("child %s was resumed", id)
 		}
 	}
+	// Three bridges left (unsubscribed, closed): the running child runs on
+	// and ends for the terminal.
+	if err := f.mock.WaitHeld(f.ctx, "h1"); err != nil {
+		t.Fatal(err)
+	}
+	from = d.Mark()
 	_ = f.mock.Release("h1")
+	ctx, cancel := context.WithTimeout(f.ctx, 30*time.Second)
+	defer cancel()
+	if _, err := d.WaitNotificationFrom(ctx, from, "turn/completed", func(m Message) bool { return m.Param("threadId") == held }); err != nil {
+		t.Fatalf("the child did not end after the bridges left: %v", err)
+	}
 }
 
 // TestCodexShareChildrenStableAPI: a connection without the experimental

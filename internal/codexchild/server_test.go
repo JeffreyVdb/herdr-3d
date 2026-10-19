@@ -216,8 +216,8 @@ func TestServerLifecycle(t *testing.T) {
 	// the parent's started, the child active.
 	s.r.child("c1", root, codexapp.ThreadIdle, 1)
 	s.status("c1", codexapp.ThreadIdle)
-	if cs := s.reg.Children("w"); len(cs) == 1 && cs[0].State == proto.ChildIdle {
-		t.Fatalf("a fresh child's pending init read as idle: %+v", cs[0])
+	if cs := s.reg.Children("w"); len(cs) != 0 {
+		t.Fatalf("a fresh child shown from its pending init: %+v", cs[0])
 	}
 	s.activity(root, "started", "c1", "call_spawn1", 5000)
 	c := s.row("c1")
@@ -259,6 +259,9 @@ func TestServerLifecycle(t *testing.T) {
 	}
 	if got := s.stateSeq("c1"); !slices.Equal(got, []string{proto.ChildRunning, proto.ChildCompleted, proto.ChildRunning, proto.ChildInterrupted}) {
 		t.Errorf("states %v", got)
+	}
+	if s.evs[0].State != proto.ChildRunning {
+		t.Errorf("first shown as %q", s.evs[0].State)
 	}
 	if n := len(s.reg.Children("w")); n != 1 {
 		t.Errorf("%d rows", n)
@@ -458,7 +461,9 @@ func TestServerV1CollabCalls(t *testing.T) {
 			"tool": tool, "status": status, "senderThreadId": root, "receiverThreadIds": receivers}})
 	}
 	call("spawnAgent", "inProgress", "v1")
-	s.state("v1", proto.ChildUnknown, "")
+	if n := len(s.reg.Children("w")); n != 0 {
+		t.Fatalf("a spawn in progress shows its child: %d rows", n)
+	}
 	call("spawnAgent", "completed", "v1")
 	s.state("v1", proto.ChildRunning, "")
 	call("sendInput", "failed", "v1")

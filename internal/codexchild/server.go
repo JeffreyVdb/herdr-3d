@@ -779,6 +779,9 @@ func combine(session string, roll []childagents.Evidence, sv *server) []childage
 	}
 	slices.SortFunc(kids, func(a, b *kid) int { return cmp.Compare(a.seq, b.seq) })
 	for _, k := range kids {
+		if !k.ran && k.end == "" && k.live == "" && sv.attached {
+			continue // just spawned (its pending init's idle): shown with its started
+		}
 		out = append(out, overlay(session, childagents.Evidence{}, k, sv.attached))
 	}
 	return out
