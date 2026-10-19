@@ -1,4 +1,4 @@
-import type { CommandArgs, CommandName, NotifyState, NotifyTestAck } from '../net/protocol';
+import type { CommandArgs, CommandName, NotifyMode, NotifyState, NotifyTestAck } from '../net/protocol';
 import type { CommandResult } from '../net/client';
 import { botLink, botName, notifyFailureText, pairingText, type NotifyBook } from '../world/notifySettings';
 import { el } from './settings';
@@ -15,11 +15,28 @@ export interface TelegramSectionHost {
 
 /** What leaves the machine, shown above the switch: it is what the switch agrees to. */
 export const TELEGRAM_PRIVACY =
-  'Each message holds the worker’s name, why it needs you or that it finished, and one line of what it did: the floor overview’s line, else the last line it wrote, with anything shaped like a key or token removed. A question marked secret is never included. With Allow replies on (below), a worker’s question also comes with its whole text and options, and a permission or folder-trust menu with its choices and what it asks about: the command, file or folder, with the passwords, keys and tokens the bridge recognises removed (the rest of the screen stays on your machine). Messages go through Telegram’s servers to your account only; nothing is sent while this is off. Saving the token, Pair, Send test message and Allow replies (below) still contact Telegram, even while it is off.';
+  'Each message holds the worker’s name, why it needs you or that it finished, and one line of what it did: the floor overview’s line, else the last line it wrote, with anything shaped like a key or token removed. A question marked secret is never included. With Allow replies on (below), or with Questions only, a worker’s question also comes with its whole text and options, a report’s request with its text, and a permission or folder-trust menu with its choices and what it asks about: the command, file or folder, with the passwords, keys and tokens the bridge recognises removed (the rest of the screen stays on your machine). Messages go through Telegram’s servers to your account only; nothing is sent while this is off. Saving the token, Pair, Send test message and Allow replies (below) still contact Telegram, even while it is off.';
 
 /** #13: what Allow replies agrees to, shown above its switch. #14: and the question's buttons. #88: and a screen menu's (#106: with what it asks about). */
 export const TELEGRAM_REPLIES =
   'Reply to a notification in Telegram and the bridge types your reply into that worker, as you would in the game. When a worker asks a question, its notification is followed by the question, its options and their descriptions, with a button for each: a tap answers it as the game would (a secret question only says to answer it in the game). A worker waiting on a permission or folder-trust menu gets a card with what it asks about (the command, file or folder, at most 24 lines) and a button per choice. Passwords, keys and tokens the bridge recognises are removed first; one written in a form it does not recognise is sent as it is. When the start of a command is off the worker’s screen and the bridge cannot read it whole, approving it has no button: approve it in the worker’s terminal, at its laptop in the game. A tap picks that choice on its screen, if the same menu is still there. Only messages from your paired account count, and only its replies to the bot’s messages and taps on its buttons; everything else the bot receives does nothing. A 👍 on your reply means it was sent; otherwise the bot says why not. This is separate from the notifications switch above.';
+
+/** H3D-1: the two modes, as the selector names and explains them. */
+export const TELEGRAM_MODES: ReadonlyArray<{ mode: NotifyMode; label: string; hint: string }> = [
+  {
+    mode: 'everything',
+    label: 'Everything that needs you',
+    hint: 'A question, a permission prompt, a block, a report’s request, a stuck wrap-up or review, each once; and finished work, as switched below.',
+  },
+  {
+    mode: 'questions',
+    label: 'Questions only',
+    hint: 'Only a question you can answer: an ask, a follow-up, a permission or folder-trust menu, or a report’s request. The question itself is the message, with its choices; nothing comes before it.',
+  },
+];
+
+/** H3D-1: why the finished-work switches are greyed out under Questions only. */
+export const TELEGRAM_QUESTIONS_ONLY_DONE = 'Questions only: finished work is never sent.';
 
 const BOTFATHER = 'https://t.me/BotFather';
 const CONFIRM_MS = 4000;
@@ -99,7 +116,9 @@ function check(id: string, text: string): { label: HTMLLabelElement; box: HTMLIn
  * sends it is paired, every other message is ignored), and a test message. Then the switch (off until a test
  * reached you with this bot and account; the bridge's environment can set it, and then it is read-only here), the
  * two events, quiet delivery and freelancers' finished work. #13: then Allow replies, a block of its own: a reply to a
- * notification is typed into its worker (off by default, needs a paired account, no test).
+ * notification is typed into its worker (off by default, needs a paired account, no test). H3D-1: between the switch
+ * and the events, what to send: everything that needs you, or questions only (a native radio group); under Questions
+ * only the finished-work switches stay, greyed out with why, since nothing finished is sent.
  */
 export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) => SectionHandle {
   return (body) => {
@@ -207,6 +226,20 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     on.box.setAttribute('aria-describedby', `${id}-privacy ${id}-on-hint`);
     const onHint = el('p', 'settings-field-hint');
     onHint.id = `${id}-on-hint`;
+    // H3D-1: what to send. A native radio group, so the keyboard and the announcement are the platform's.
+    const modes = el('fieldset', 'settings-tg-events settings-tg-mode');
+    modes.append(el('legend', 'settings-field-label', 'What to send'));
+    const modeBoxes = TELEGRAM_MODES.map((m) => {
+      const c = check(`${id}-mode-${m.mode}`, m.label);
+      c.box.type = 'radio';
+      c.box.name = `${id}-mode`;
+      c.box.value = m.mode;
+      const hint = el('p', 'settings-field-hint', m.hint);
+      hint.id = `${c.box.id}-hint`;
+      c.box.setAttribute('aria-describedby', hint.id);
+      modes.append(c.label, hint);
+      return c.box;
+    });
     const events = el('fieldset', 'settings-tg-events');
     events.append(el('legend', 'settings-field-label', 'Send a message when'));
     const needs = check(`${id}-needs`, 'A worker needs you (a question, a block, a follow-up)');
@@ -214,6 +247,10 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     events.append(needs.label, done.label);
     const quiet = check(`${id}-quiet`, 'Quiet: deliver without a sound');
     const freelancers = check(`${id}-freelancers`, 'Also when a freelancer (coder, reviewer) finishes');
+    const finishedHint = el('p', 'settings-field-hint', TELEGRAM_QUESTIONS_ONLY_DONE);
+    finishedHint.id = `${id}-finished-hint`;
+    done.box.setAttribute('aria-describedby', finishedHint.id);
+    freelancers.box.setAttribute('aria-describedby', finishedHint.id);
     // #13: replies, their own block: they type into workers, which the notifications switch never does.
     const replyBlock = el('div', 'settings-tg-replies');
     replyBlock.setAttribute('role', 'group');
@@ -230,7 +267,7 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     const status = el('p', 'settings-status');
     status.setAttribute('role', 'status');
     status.setAttribute('aria-live', 'polite');
-    opts.append(privacy, on.label, onHint, events, quiet.label, freelancers.label, replyBlock, status);
+    opts.append(privacy, on.label, onHint, modes, events, quiet.label, freelancers.label, finishedHint, replyBlock, status);
 
     root.append(dest, tokenBlock, pairBlock, testBlock, opts);
     body.append(lede, missing, root);
@@ -245,6 +282,8 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
     let tick: ReturnType<typeof setInterval> | null = null;
     /** A switch's position while its notify.set is on its way (null: the bridge's). */
     const wanted = new Map<HTMLInputElement, boolean>();
+    /** H3D-1: the mode picked while its notify.set is on its way (null: the bridge's). */
+    let wantedMode: NotifyMode | null = null;
 
     const st = (): NotifyState | null => host.book.state;
     const envHas = (f: string) => st()?.env.includes(f) ?? false;
@@ -364,7 +403,9 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
             ? 'On, but paused: no token or no paired account. Nothing is sent.'
             : s.state === 'blocked'
               ? 'On, but Telegram refused the last message: see the status at the top.'
-              : 'On: the bridge messages you when a worker needs you or finishes.'
+              : s.mode === 'questions'
+                ? 'On: the bridge messages you when a worker asks you a question.'
+                : 'On: the bridge messages you when a worker needs you or finishes.'
           : !ready
             ? 'Set up the bot and pair your account first.'
             : s.tested
@@ -389,6 +430,16 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
         box.checked = wanted.get(box) ?? v;
         box.disabled = busy;
       }
+      // H3D-1: the mode; under Questions only nothing finished is sent, so its switches are greyed out, with why.
+      const mode = wantedMode ?? s.mode;
+      for (const r of modeBoxes) {
+        r.checked = r.value === mode;
+        r.disabled = busy;
+      }
+      const questionsOnly = mode === 'questions';
+      done.box.disabled ||= questionsOnly;
+      freelancers.box.disabled ||= questionsOnly;
+      finishedHint.hidden = !questionsOnly;
       status.textContent = note?.text ?? '';
       status.classList.toggle('settings-field-error', !!note?.error);
       status.hidden = !note;
@@ -541,6 +592,18 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
         replies.box.checked ? 'Replies on. Reply to a notification in Telegram to type into its worker.' : 'Replies off. Nothing you send the bot reaches a worker.',
       ),
     );
+
+    for (const r of modeBoxes) {
+      r.addEventListener('change', () => {
+        if (!r.checked) return;
+        const mode = r.value as NotifyMode;
+        wantedMode = mode;
+        void act('notify.set', { mode }, 'Saving…', mode === 'questions' ? 'Saved: only questions are sent.' : 'Saved: everything that needs you is sent.').then(() => {
+          wantedMode = null;
+          sync();
+        });
+      });
+    }
 
     const off = host.book.onChange(sync);
     sync();

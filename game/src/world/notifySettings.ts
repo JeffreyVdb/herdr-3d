@@ -47,6 +47,8 @@ export function notifyStateOf(v: unknown): NotifyState | null {
     quiet: v.quiet === true,
     freelancers: v.freelancers === true,
     replies: v.replies === true,
+    // H3D-1: an older bridge says none: everything is what it sends.
+    mode: v.mode === 'questions' ? 'questions' : 'everything',
     channel: channelOf(v.channel),
   };
   const missing = Array.isArray(v.missing) ? v.missing.filter((x): x is string => x === 'token' || x === 'recipient') : [];

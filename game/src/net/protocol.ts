@@ -1073,7 +1073,7 @@ export interface CommandArgs {
   'digest.retry': { id?: string };
   // #11 Telegram notifications (docs/protocol.md "Notifications"): each acks `NotifyState`, `notify.test` `NotifyTestAck`.
   'notify.get': Record<string, never>;
-  'notify.set': { enabled?: boolean; events?: { needs_you?: boolean; done?: boolean }; quiet?: boolean; freelancers?: boolean; replies?: boolean };
+  'notify.set': { enabled?: boolean; events?: { needs_you?: boolean; done?: boolean }; quiet?: boolean; freelancers?: boolean; replies?: boolean; mode?: NotifyMode };
   'notify.test': Record<string, never>;
   /** The bot token from @BotFather: checked by the bridge (getMe) and kept there; never sent back, never logged (`loggedArgs`). */
   'notify.token.set': { key: string };
@@ -2780,6 +2780,9 @@ export interface NotifyChannel {
   pairing?: NotifyPairing;
 }
 
+/** H3D-1: what notifies: everything that needs you, or only a question you can answer. */
+export type NotifyMode = 'everything' | 'questions';
+
 export interface NotifyState {
   enabled: boolean;
   state: NotifyFeatureState;
@@ -2794,6 +2797,8 @@ export interface NotifyState {
   freelancers: boolean;
   /** #13: a reply to a notification, from the paired account, is typed into its worker. Off by default. */
   replies: boolean;
+  /** H3D-1: everything that needs you (the default; an older bridge's), or only a worker's pending question. */
+  mode: NotifyMode;
   channel: NotifyChannel;
   last_error?: { code: string; message: string; at: number };
   /** Alerts dropped since the bridge started (a full queue). */

@@ -54,6 +54,8 @@ export class TelegramSim {
   private quiet = false;
   private freelancers = false;
   private replies = false;
+  /** H3D-1: the notifications' mode (not `mode`, the sim's own). */
+  private send: 'everything' | 'questions' = 'everything';
   private blocked = false;
   private lastError: { code: string; message: string; at: number } | null = null;
 
@@ -91,6 +93,7 @@ export class TelegramSim {
       quiet: this.quiet,
       freelancers: this.freelancers,
       replies: this.replies,
+      mode: this.send,
       channel,
     };
     if (missing.length) v.missing = missing;
@@ -124,7 +127,7 @@ export class TelegramSim {
           this.only(a, []);
           break;
         case 'notify.set':
-          this.only(a, ['enabled', 'events', 'quiet', 'freelancers', 'replies']);
+          this.only(a, ['enabled', 'events', 'quiet', 'freelancers', 'replies', 'mode']);
           this.set(a);
           break;
         case 'notify.test':
@@ -240,6 +243,7 @@ export class TelegramSim {
     const quiet = bool('quiet', a.quiet);
     const freelancers = bool('freelancers', a.freelancers);
     const replies = bool('replies', a.replies);
+    if (a.mode !== undefined && a.mode !== 'everything' && a.mode !== 'questions') throw this.d.error('bad_request', 'mode must be "everything" or "questions"');
     if (replies && !this.replies) {
       if (!this.token) throw this.d.error('not_configured', 'set the bot token first');
       if (!this.paired) throw this.d.error('not_paired', 'pair your Telegram account first');
@@ -259,6 +263,7 @@ export class TelegramSim {
     if (quiet !== undefined) this.quiet = quiet;
     if (freelancers !== undefined) this.freelancers = freelancers;
     if (replies !== undefined) this.replies = replies;
+    if (a.mode !== undefined) this.send = a.mode as 'everything' | 'questions';
   }
 
   private control(a: Obj, _send: Send): void {

@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import { NotifyBook, notifyFailureText } from '../world/notifySettings';
-import { telegramDestination, telegramSection } from './telegramSection';
+import { TELEGRAM_MODES, TELEGRAM_PRIVACY, TELEGRAM_QUESTIONS_ONLY_DONE, telegramDestination, telegramSection } from './telegramSection';
 
 type View = Record<string, unknown>;
 
@@ -481,5 +481,86 @@ describe('Settings → Telegram: Allow replies (#13)', () => {
     await m.flush();
     expect(m.status().textContent).toBe(notifyFailureText('not_paired', ''));
     expect(box.checked).toBe(false);
+  });
+});
+
+describe('Settings → Telegram: what to send (H3D-1)', () => {
+  const PAIRED_ON = { enabled: true, state: 'ready', tested: true, channel: ADA };
+  const radio = (body: HTMLElement, value: string) => body.querySelector<HTMLInputElement>(`input[type="radio"][value="${value}"]`)!;
+  const finished = (body: HTMLElement) => [...body.querySelectorAll<HTMLElement>('.settings-field-hint')].find((h) => h.textContent === TELEGRAM_QUESTIONS_ONLY_DONE)!;
+
+  it('a radio group of the two modes, each described; an older bridge (no mode) shows everything', () => {
+    const old = view(PAIRED_ON);
+    delete old.mode;
+    const m = mount(old);
+    const group = radio(m.body, 'everything').closest('fieldset')!;
+    expect(group.querySelector('legend')!.textContent).toBe('What to send');
+    expect([...group.querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((r) => [r.value, r.checked, r.name === radio(m.body, 'questions').name])).toEqual([
+      ['everything', true, true],
+      ['questions', false, true],
+    ]);
+    for (const { mode, label, hint } of TELEGRAM_MODES) {
+      const r = radio(m.body, mode);
+      expect(r.closest('label')!.textContent).toBe(label);
+      expect(document.getElementById(r.getAttribute('aria-describedby')!)!.textContent).toBe(hint);
+    }
+    // Everything: the finished-work switches as before, and no reason shown.
+    expect(m.box(/A worker finishes/).disabled).toBe(false);
+    expect(m.box(/freelancer/).disabled).toBe(false);
+    expect(finished(m.body).hidden).toBe(true);
+  });
+
+  it('Questions only greys out the finished-work switches, keeps their positions and says why', () => {
+    const m = mount(view({ ...PAIRED_ON, mode: 'questions', freelancers: true }));
+    expect(radio(m.body, 'questions').checked).toBe(true);
+    const done = m.box(/A worker finishes/);
+    const fl = m.box(/freelancer/);
+    expect([done.disabled, done.checked, fl.disabled, fl.checked]).toEqual([true, true, true, true]);
+    expect(m.box(/A worker needs you/).disabled).toBe(false);
+    expect(m.box(/Quiet/).disabled).toBe(false);
+    const why = finished(m.body);
+    expect(why.hidden).toBe(false);
+    expect(done.getAttribute('aria-describedby')).toBe(why.id);
+    expect(fl.getAttribute('aria-describedby')).toBe(why.id);
+    expect(m.body.textContent).toContain('On: the bridge messages you when a worker asks you a question.');
+  });
+
+  it('a pick is saved with notify.set {mode}, held while on its way, said, and the keyboard kept on it', async () => {
+    let mode = 'everything';
+    const m = mount(view(PAIRED_ON), (t) => (t === 'notify.set' ? { ok: true, data: view({ ...PAIRED_ON, mode }) } : { ok: true, data: null }));
+    m.rig.hold = true;
+    const q = radio(m.body, 'questions');
+    q.focus();
+    mode = 'questions';
+    q.click();
+    expect(m.args.at(-1)).toEqual({ mode: 'questions' });
+    expect(q.checked).toBe(true); // the pick, not the bridge's yet
+    expect(m.box(/A worker finishes/).disabled).toBe(true);
+    m.release();
+    await m.flush();
+    expect(m.status().textContent).toBe('Saved: only questions are sent.');
+    expect(q.checked).toBe(true);
+    expect(document.activeElement).toBe(q);
+    m.rig.hold = false;
+    mode = 'everything';
+    radio(m.body, 'everything').click();
+    await m.flush();
+    expect(m.args.at(-1)).toEqual({ mode: 'everything' });
+    expect(m.status().textContent).toBe('Saved: everything that needs you is sent.');
+    expect(m.box(/A worker finishes/).disabled).toBe(false);
+  });
+
+  it('a refusal says why and puts the bridge’s mode back', async () => {
+    const m = mount(view(PAIRED_ON), (t) => (t === 'notify.set' ? { ok: false, code: 'bad_request', message: 'json: unknown field "mode"' } : { ok: true, data: null }));
+    radio(m.body, 'questions').click();
+    await m.flush();
+    await m.flush();
+    expect(m.status().textContent).toBe('json: unknown field "mode"');
+    expect(radio(m.body, 'everything').checked).toBe(true);
+    expect(m.box(/A worker finishes/).disabled).toBe(false);
+  });
+
+  it('the privacy note says Questions only sends the question’s text', () => {
+    expect(TELEGRAM_PRIVACY).toContain('or with Questions only, a worker’s question also comes with its whole text');
   });
 });
