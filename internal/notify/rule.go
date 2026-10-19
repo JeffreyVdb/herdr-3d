@@ -140,6 +140,10 @@ type Menu struct {
 	// for ("": not known); a menu whose Native changes from one to another
 	// is another operation, though its Op stays.
 	Op, Native string
+	// Decision (H3D-1) names what it asks across blocked spells: its Op
+	// without the spell ("": Op's identity, else Hash's). The episode a
+	// notification is about; never a card's or an answer's key.
+	Decision string
 	// Source is where its identity is from ("native", "screen"), for the
 	// diagnostics.
 	Source string

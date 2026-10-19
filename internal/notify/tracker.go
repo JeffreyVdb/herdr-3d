@@ -6,8 +6,9 @@ import (
 )
 
 // maxKnown is how many of a worker's latest episodes the tracker keeps as
-// known (H3D-1: a question that comes back after another, still
-// unresolved, is not new).
+// known besides the ones it still shows (H3D-1: a question that comes back
+// after another, still unresolved, is not new; one it shows is never
+// forgotten).
 const maxKnown = 16
 
 // Kind is what an episode is about: the two events a notification is for.
@@ -43,9 +44,11 @@ type Alert struct {
 	// H3D-1: Key is the episode (episodeKey: an alert goes only while it
 	// is its worker's), About what it is about (about*, for the audit).
 	Key, About string
-	// Question: a pending question Questions only lets through: its cards,
-	// else its text (Body), are the message, with no alert before them.
-	Question bool
+	// Asks: the episode is a pending question Questions only lets through
+	// (whatever the mode now). Question: it goes as one (the mode was
+	// Questions only when it was formed): its cards, else its text (Body),
+	// are the message, with no alert before them.
+	Asks, Question bool
 	// Report is a report request's text as it may leave the bridge
 	// (Report.Request).
 	Report string
@@ -67,6 +70,9 @@ type sighting struct {
 	// the feature and its event on, the channel ready).
 	eligible bool
 	alert    Alert
+	// live is every episode the worker shows now, beside key (H3D-1: never
+	// forgotten while shown).
+	live []string
 }
 
 type pendingDone struct {
@@ -84,10 +90,12 @@ type pendingDone struct {
 // asleep, the feature or its event off, a freelancer's done not listed) is
 // known silently. H3D-1: a worker's latest maxKnown episodes are known, so
 // one seen again after another (a report request after a permission menu)
-// does not notify again. Not safe for concurrent use.
+// does not notify again, and one it still shows (a report request under
+// many menus) is never forgotten. Not safe for concurrent use.
 type tracker struct {
 	settle  time.Duration
 	known   map[string][]string // worker id → its latest episodes known, oldest first
+	live    map[string][]string // worker id → the episodes its last sighting showed
 	pending map[string]pendingDone
 	// cur is each worker's episode at its last sighting (#106: a parked
 	// alert goes only if its episode is still on).
@@ -95,17 +103,28 @@ type tracker struct {
 }
 
 func newTracker(settle time.Duration) *tracker {
-	return &tracker{settle: settle, known: map[string][]string{}, pending: map[string]pendingDone{}, cur: map[string]string{}}
+	return &tracker{settle: settle, known: map[string][]string{}, live: map[string][]string{}, pending: map[string]pendingDone{},
+		cur: map[string]string{}}
 }
 
-// know adds key to worker id's known episodes.
+// know adds key to worker id's known episodes: of those its worker no
+// longer shows the latest maxKnown are kept; its episode now, and the
+// others it shows, all are.
 func (t *tracker) know(id, key string) {
 	k := slices.DeleteFunc(t.known[id], func(x string) bool { return x == key })
 	if key != "" {
 		k = append(k, key)
 	}
-	if len(k) > maxKnown {
-		k = k[len(k)-maxKnown:]
+	shown := func(x string) bool { return x == t.cur[id] || slices.Contains(t.live[id], x) }
+	past := 0
+	for _, x := range k {
+		if !shown(x) {
+			past++
+		}
+	}
+	for ; past > maxKnown; past-- {
+		i := slices.IndexFunc(k, func(x string) bool { return !shown(x) })
+		k = slices.Delete(k, i, i+1)
 	}
 	t.known[id] = k
 }
@@ -119,6 +138,11 @@ func (t *tracker) observe(s sighting, now time.Time) *Alert {
 		delete(t.cur, s.id)
 	} else {
 		t.cur[s.id] = s.key
+	}
+	if len(s.live) == 0 {
+		delete(t.live, s.id)
+	} else {
+		t.live[s.id] = s.live
 	}
 	known, seen := t.known[s.id]
 	if !seen {
@@ -161,6 +185,7 @@ func (t *tracker) reopen(id, key string) {
 // gone forgets a worker that left.
 func (t *tracker) gone(id string) {
 	delete(t.known, id)
+	delete(t.live, id)
 	delete(t.pending, id)
 	delete(t.cur, id)
 }

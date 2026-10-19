@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JeffreyVdb/herdr-3d/internal/notify"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
@@ -253,5 +255,49 @@ func TestMenuErrorKinds(t *testing.T) {
 	}
 	if err := replyError(menuError(notify.Answer{ToolUseID: "t"}, notBlocked)); !errors.As(err, &re) || re.Kind != notify.ReplyState {
 		t.Fatalf("ask: %v", err)
+	}
+}
+
+// Review R1: one unresolved permission menu, its screen the same, seen
+// again at each status_since flip (its operation's key changes with the
+// spell) is one message under Questions only, replies off.
+func TestMenuEpisodeAcrossStatusFlips(t *testing.T) {
+	ch, on := notify.NewFakeChannel(true), true
+	svc, err := notify.New(context.Background(), notify.Options{Channel: ch, EnvEnabled: &on, Limits: notify.NoLimits()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := notify.ModeQuestions
+	if err := svc.Apply(context.Background(), notify.Update{Mode: &mode}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	svc.Observe(notify.Observation{Worker: notify.Worker{ID: "w", Status: "working", StatusSince: 1}, Name: "Pixel"})
+	sc := screen(t, "codex-approval")
+	ops, decisions := map[string]bool{}, map[string]bool{}
+	for i, since := range []int64{60000, 120000, 180000} {
+		sq := parseQuestion(sc, since)
+		w := notifyFacts(&proto.Worker{ID: "w", Status: "blocked", StatusSince: since, Question: &sq.q}, false)
+		menuFacts(w.Menu, sq.op, nil)
+		ops[w.Menu.Op], decisions[w.Menu.Decision] = true, true
+		svc.Observe(notify.Observation{Worker: w, Name: "Pixel"})
+		if i == 0 && !ch.WaitSent(1, 5*time.Second) {
+			t.Fatal("the permission was not sent")
+		}
+	}
+	if len(ops) != 3 || len(decisions) != 1 {
+		t.Fatalf("%d operation keys, want one a spell (#106's card identity); %d decisions, want 1", len(ops), len(decisions))
+	}
+	if ch.WaitSent(2, 300*time.Millisecond) {
+		t.Fatalf("the same unresolved permission sent again across status flips: %d messages", len(ch.Sent()))
 	}
 }

@@ -135,7 +135,8 @@ func TestTrackerGoneForgets(t *testing.T) {
 }
 
 // H3D-1: an episode seen again after another is still known (a request
-// after a permission menu), up to maxKnown of them; reopen makes one new.
+// after a permission menu), up to maxKnown of them besides those its
+// worker still shows; reopen makes one new.
 func TestTrackerKnowsRecentEpisodes(t *testing.T) {
 	tr := newTracker(5 * time.Second)
 	tr.observe(see("a", "", 0, true), t0)
@@ -155,7 +156,38 @@ func TestTrackerKnowsRecentEpisodes(t *testing.T) {
 	if tr.observe(see("a", KindNeedsYou, 2, true), t0) == nil {
 		t.Fatal("an episode past maxKnown is still known")
 	}
-	if n := len(tr.known["a"]); n != maxKnown {
-		t.Fatalf("%d known", n)
+	if n := len(tr.known["a"]); n != maxKnown+1 {
+		t.Fatalf("%d known, want maxKnown and the one it is in", n)
+	}
+}
+
+// H3D-1 (review R5): an episode its worker still shows (a report request
+// under its menus) is never forgotten, however many come between; once it
+// is no longer shown it is forgotten like any other.
+func TestTrackerKeepsLiveEpisodes(t *testing.T) {
+	tr := newTracker(5 * time.Second)
+	tr.observe(see("a", "", 0, true), t0)
+	request := see("a", KindNeedsYou, 1, true)
+	if tr.observe(request, t0) == nil {
+		t.Fatal("the request not notified")
+	}
+	for i := int64(10); i < 10+3*maxKnown; i++ {
+		s := see("a", KindNeedsYou, i, true)
+		s.live = []string{request.key}
+		if tr.observe(s, t0) == nil {
+			t.Fatalf("episode %d not notified", i)
+		}
+	}
+	if n := len(tr.known["a"]); n != maxKnown+2 {
+		t.Fatalf("%d known, want maxKnown, the live one and the one it is in", n)
+	}
+	if a := tr.observe(request, t0); a != nil {
+		t.Fatalf("the request, shown all along, notified again: %+v", a)
+	}
+	for i := int64(100); i < 100+maxKnown; i++ {
+		tr.observe(see("a", KindNeedsYou, i, true), t0)
+	}
+	if tr.observe(request, t0) == nil {
+		t.Fatal("an episode no longer shown, past maxKnown, is still known")
 	}
 }

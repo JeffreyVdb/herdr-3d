@@ -8,11 +8,23 @@ package notify
 // orchestrator over its review-pass cap by its pass, a bare blocked status
 // by its blocked spell (its status_since), done by when it started. So the
 // same unresolved question, seen again with a new status_since, a new
-// activity line or a redraw, does not notify again, in either mode.
+// activity line or a redraw, does not notify again, in either mode. A
+// screen menu is named by the decision it asks for (Menu.Decision: its
+// operation without its blocked spell) and the native call it is for, a
+// call known later adopted, another one a new decision (menuEpisode). An
+// episode its worker still shows is never forgotten (tracker.know).
+//
+// A question that waited (parked by the send budget, queued, between two
+// attempts) is formed again as it goes (form): switched off or its event
+// off, it is dropped; replies or the mode changed, it goes as they say now
+// (its cards, its text, or the broader mode's alert), the replier handing
+// it back to the loop (handBack) when its cards can no longer be the
+// message.
 //
 // Under Questions only, a worker notifies only for a question you can
 // answer: an ask, a follow-up, a permission or folder-trust menu its screen
-// shows (named by its operation, as its card is), or a report request whose
+// shows (named by the decision it asks for: its operation without its
+// blocked spell, and its native call), or a report request whose
 // text the message shows. The question is the message: with replies on,
 // its cards (the first rings); else its text, ending in where to answer it.
 // No alert goes before it; done, wrap-up, review-pass-cap and bare blocked
@@ -67,13 +79,14 @@ const (
 // episode is what a needs-you sighting's episode is (its id, without the
 // kind) and what it is about, from the worker awake and the rule's
 // verdict of it; question: a pending question Questions only lets through
-// (questions: that mode). A screen menu is an episode of its own under
+// (questions: that mode). menu is its screen menu's episode id ("": no
+// valid menu; menuEpisode's). A screen menu is an episode of its own under
 // Questions only, and in the broader mode for a worker whose needs-you is
 // not its blocked status (a report request, a cap, a wrap-up: else its
 // menu's card would wait for an alert that never comes); a bare block's
 // menu stays in its blocked spell's episode (#88: its card follows the
 // spell's alert).
-func episode(w Worker, v Verdict, questions bool) (id, about string, question bool) {
+func episode(w Worker, v Verdict, questions bool, menu string) (id, about string, question bool) {
 	switch {
 	case v.Reason == ReasonQuestion:
 		return "ask|" + w.Ask.ToolUseID, aboutAsk, true
@@ -81,8 +94,8 @@ func episode(w Worker, v Verdict, questions bool) (id, about string, question bo
 		return "followup|" + w.Followup.TurnID, aboutFollowup, true
 	}
 	id, about, question = needs(w, v, questions)
-	if validMenu(w) && (questions || about != aboutBlocked) {
-		return "menu|" + menuID(w.Menu), aboutMenu, true
+	if menu != "" && (questions || about != aboutBlocked) {
+		return menu, aboutMenu, true
 	}
 	return id, about, question
 }
@@ -94,15 +107,107 @@ func needs(w Worker, v Verdict, questions bool) (id, about string, question bool
 	case isFreelancer(v.Role) && reportAsks(w.Report) && (questions || v.Reason == ReasonReport):
 		return reportID(w.Report), aboutReport, strings.TrimSpace(w.Report.Request) != ""
 	case v.Reason == ReasonWrapUp:
-		return "wrapup|" + strconv.FormatInt(w.WrapUpArmedAt, 10), aboutWrapUp, false
+		return wrapUpID(w), aboutWrapUp, false
 	case v.Role == "orch" && overCap(w):
-		pass := "over"
-		if w.Pass != nil {
-			pass = strconv.Itoa(*w.Pass)
-		}
-		return "crew|" + pass, aboutCrew, false
+		return crewID(w), aboutCrew, false
 	}
 	return "blocked|" + strconv.FormatInt(v.Since, 10), aboutBlocked, false
+}
+
+// wrapUpID is a wrap-up's episode id: when it was armed.
+func wrapUpID(w Worker) string { return "wrapup|" + strconv.FormatInt(w.WrapUpArmedAt, 10) }
+
+// crewID is an orchestrator over its review-pass cap's episode id: its
+// pass.
+func crewID(w Worker) string {
+	pass := "over"
+	if w.Pass != nil {
+		pass = strconv.Itoa(*w.Pass)
+	}
+	return "crew|" + pass
+}
+
+// live is every needs-you episode worker w (awake, its verdict v) shows
+// now, besides the one it is in (key's): what it asks, its report request,
+// its stuck wrap-up, its cap, its menu (menu's id). The tracker never
+// forgets a live one (H3D-1: a request still shown under many menus stays
+// known).
+func live(w Worker, v Verdict, menu string) []string {
+	var ids []string
+	if validAsk(w.Ask) {
+		ids = append(ids, "ask|"+w.Ask.ToolUseID)
+	}
+	if validFollowup(w.Followup) {
+		ids = append(ids, "followup|"+w.Followup.TurnID)
+	}
+	if isFreelancer(v.Role) && reportAsks(w.Report) {
+		ids = append(ids, reportID(w.Report))
+	}
+	if w.WrapUpState == "needs_you" {
+		ids = append(ids, wrapUpID(w))
+	}
+	if v.Role == "orch" && overCap(w) {
+		ids = append(ids, crewID(w))
+	}
+	if menu != "" {
+		ids = append(ids, menu)
+	}
+	keys := make([]string, len(ids))
+	for i, id := range ids {
+		keys[i] = episodeKey(KindNeedsYou, id)
+	}
+	return keys
+}
+
+// menuDecision names the decision a menu asks for across blocked spells
+// (H3D-1): its Decision, else its operation (menuID).
+func menuDecision(m *Menu) string {
+	if m.Decision != "" {
+		return m.Decision
+	}
+	return menuID(m)
+}
+
+// menuEp is a worker's menu episode as the loop knows it (H3D-1): the
+// decision it asks for, the native call it is for ("": none known yet),
+// its id.
+type menuEp struct{ decision, native, id string }
+
+// menuEpisode is worker id's menu m's episode id (the loop's): its
+// decision and the native call it was first known for. The same decision
+// seen again (another status_since, a redraw, a working spell between) is
+// the same episode; a native call known later is adopted (the same id: one
+// prompt rings once); another native call than the one known replaces it
+// (#106 row 4: a new decision, a new id).
+func (s *Service) menuEpisode(id string, m *Menu) string {
+	d := menuDecision(m)
+	e, ok := s.menuEps[id]
+	switch {
+	case !ok || e.decision != d || (e.native != "" && m.Native != "" && m.Native != e.native):
+		e = menuEp{decision: d, native: m.Native, id: "menu|" + d + "|" + m.Native}
+	case e.native == "":
+		e.native = m.Native
+	}
+	s.menuEps[id] = e
+	return e.id
+}
+
+// form is alert a as it goes under the settings now (H3D-1): a question
+// (Asks) under Questions only is the message, as its cards (Ring) while it
+// can have them, else as its text (Body); anything else is an alert.
+// Wherever a question waited it is formed again, so replies or the mode
+// changed meanwhile hold.
+func (s *Service) form(a Alert) Alert {
+	a.Question, a.Ring, a.Body = a.Asks && s.questionsOnly(), false, ""
+	if a.Question {
+		if s.cardable(a) {
+			a.Ring = true
+		} else {
+			on, _ := s.listening()
+			a.Body = questionText(a, on)
+		}
+	}
+	return a
 }
 
 // reportID is a report request's episode id: its text's (r.InputRequired
