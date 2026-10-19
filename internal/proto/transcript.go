@@ -29,6 +29,9 @@ const (
 	ClosedSessionChanged = "session_changed"
 	ClosedResync         = "resync"
 	ClosedNotFound       = "not_found"
+	// ClosedEvicted (#26): a child watch the connection's newer child watch
+	// replaced (at most MaxChildTranscriptWatches each).
+	ClosedEvicted = "evicted"
 )
 
 // Item kinds.
@@ -295,10 +298,31 @@ type TranscriptNotice struct {
 	Source string `json:"source,omitempty"` // the line type ("system/turn_duration", "attachment/date", …)
 }
 
+// TranscriptChild (#26) makes a transcript command's target one of the
+// worker's native children (docs/protocol.md "Native child agents"): its
+// row id (Child.ID), the worker's child generation the client saw (its
+// Child.Generation) and its provider. The bridge finds the child's log
+// itself, from the worker's own registry row and session; a generation that
+// is not the worker's now, a row that is not the worker's or another
+// provider is refused. Absent: the worker's own transcript.
+type TranscriptChild struct {
+	ID         string `json:"id"`
+	Generation uint64 `json:"generation"`
+	Provider   string `json:"provider"`
+}
+
 // TranscriptWatchArgs are the args of transcript.watch (limit 0: 200).
 type TranscriptWatchArgs struct {
-	ID    string `json:"id"`
-	Limit int    `json:"limit,omitempty"`
+	ID    string           `json:"id"`
+	Limit int              `json:"limit,omitempty"`
+	Child *TranscriptChild `json:"child,omitempty"` // #26
+}
+
+// TranscriptUnwatchArgs are the args of transcript.unwatch (#26: child, the
+// child watch of the worker; absent, its own).
+type TranscriptUnwatchArgs struct {
+	ID    string           `json:"id"`
+	Child *TranscriptChild `json:"child,omitempty"`
 }
 
 // TranscriptHead is what a watch says of the transcript it reads.
@@ -309,6 +333,11 @@ type TranscriptHead struct {
 	Cursor  string `json:"cursor"`
 	HasMore bool   `json:"has_more"`
 	Pending bool   `json:"pending"`
+	// Availability (#26, a child watch's only) is TranscriptAvailable once
+	// its log is read; while Pending, TranscriptPending (a provisional child,
+	// or its log not written or not found yet) or TranscriptUnavailable (the
+	// provider says it has none, or it went).
+	Availability string `json:"availability,omitempty"`
 }
 
 // TranscriptWatchResult is the ack data of transcript.watch.
@@ -323,6 +352,7 @@ type TranscriptWatchResult struct {
 type TranscriptItems struct {
 	T       string           `json:"t"`
 	ID      string           `json:"id"`
+	Child   *TranscriptChild `json:"child,omitempty"` // #26: the child watch's
 	Items   []TranscriptItem `json:"items"`
 	Updates []TranscriptItem `json:"updates"`
 	*TranscriptHead
@@ -330,19 +360,21 @@ type TranscriptItems struct {
 
 // TranscriptClosed ends a watch the client did not unwatch.
 type TranscriptClosed struct {
-	T      string `json:"t"`
-	ID     string `json:"id"`
-	Reason string `json:"reason"`
+	T      string           `json:"t"`
+	ID     string           `json:"id"`
+	Child  *TranscriptChild `json:"child,omitempty"` // #26: the child watch's
+	Reason string           `json:"reason"`
 }
 
 // TranscriptPageArgs are the args of transcript.page: the items before a
 // cursor, or with agent a Claude subagent's timeline (before "": its
 // newest).
 type TranscriptPageArgs struct {
-	ID     string `json:"id"`
-	Before string `json:"before,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
-	Agent  string `json:"agent,omitempty"`
+	ID     string           `json:"id"`
+	Before string           `json:"before,omitempty"`
+	Limit  int              `json:"limit,omitempty"`
+	Agent  string           `json:"agent,omitempty"`
+	Child  *TranscriptChild `json:"child,omitempty"` // #26: a page of the child watch's log
 }
 
 // TranscriptPageResult is the ack data of transcript.page.
@@ -355,9 +387,10 @@ type TranscriptPageResult struct {
 // TranscriptItemArgs are the args of transcript.item (agent: an item of
 // that subagent's timeline).
 type TranscriptItemArgs struct {
-	ID    string `json:"id"`
-	Item  string `json:"item"`
-	Agent string `json:"agent,omitempty"`
+	ID    string           `json:"id"`
+	Item  string           `json:"item"`
+	Agent string           `json:"agent,omitempty"`
+	Child *TranscriptChild `json:"child,omitempty"` // #26
 }
 
 // TranscriptItemResult is the ack data of transcript.item.
@@ -380,10 +413,11 @@ const MaxFullImageBase64 = 12 << 20
 // hash of an ImageRef this connection was sent (agent: of that subagent's
 // timeline).
 type TranscriptImageArgs struct {
-	ID    string `json:"id"`
-	Hash  string `json:"hash"`
-	Size  string `json:"size"`
-	Agent string `json:"agent,omitempty"`
+	ID    string           `json:"id"`
+	Hash  string           `json:"hash"`
+	Size  string           `json:"size"`
+	Agent string           `json:"agent,omitempty"`
+	Child *TranscriptChild `json:"child,omitempty"` // #26: a hash sent on the child watch
 }
 
 // TranscriptImageResult is the ack data of transcript.image.
@@ -404,9 +438,10 @@ type TranscriptImageResult struct {
 // about how many refs to send at most (default DefaultSessionImages); a page
 // is whole items, and is also bounded in bytes.
 type TranscriptImagesArgs struct {
-	ID     string `json:"id"`
-	Before string `json:"before,omitempty"`
-	Limit  int    `json:"limit,omitempty"`
+	ID     string           `json:"id"`
+	Before string           `json:"before,omitempty"`
+	Limit  int              `json:"limit,omitempty"`
+	Child  *TranscriptChild `json:"child,omitempty"` // #26
 }
 
 // TranscriptImagesResult is the ack data of transcript.images: a run of the

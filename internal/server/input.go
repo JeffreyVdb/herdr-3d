@@ -904,10 +904,11 @@ func auditArgs(cmd proto.Command) json.RawMessage {
 	// #95: the preset's prompt by its length, never its text.
 	case proto.CmdHirePresetCheck:
 		return auditHirePresetCheck(cmd)
-	// M16 transcript: the worker id only.
+	// M16 transcript: the worker id only (#26: and a child's target).
 	case proto.CmdTranscriptWatch, proto.CmdTranscriptUnwatch:
 		var a struct {
-			ID string `json:"id"`
+			ID    string                 `json:"id"`
+			Child *proto.TranscriptChild `json:"child,omitempty"`
 		}
 		if json.Unmarshal(cmd.Args, &a) != nil {
 			return redacted(cmd.Args)
