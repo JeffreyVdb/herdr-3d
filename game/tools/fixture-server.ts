@@ -55,6 +55,9 @@
 // `simsecretson=1` starts it on, `simsecretsdir=none` plays a bridge host without a private runtime directory;
 // `simfail=no_secrets` a bridge before it, `simfail=secrets_review_stale|secrets_review_required|secrets_unavailable|
 // secrets_review_off` refuses the next reviewed prompt so; `sim.secret_files` lists the files (tools/fixture-secrets.ts).
+// #66: `simschedsuggest=on|off|incomplete|env|env-off|none` fixes the schedule suggestions' state with no models;
+// `simsuggest=<key>` starts Zippy (demo-m5) with a finished rollout reply and its suggestion (the chip), a dismissed or
+// saved one remembered by the key across a reload; `sim.suggest` gives any worker one (tools/fixture-schedsuggest.ts).
 // #51: `POST /upload` stores nothing and answers a fake Drop Zone path (tools/fixture-upload.ts); the query of the ws URL
 // carries `fail_upload=<N|all>&upload_key=<key>` to make uploads fail.
 import { readFileSync } from 'node:fs';
@@ -252,6 +255,9 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             ...(q.get('simhandoffs') ? { handoffs: Math.min(40, Math.max(0, Number(q.get('simhandoffs')) || 0)) } : {}),
             // #64 schedules: this many schedules in every state across the first two floors (tools/fixture-schedule.ts).
             ...(q.get('simschedules') ? { schedules: Math.min(80, Math.max(0, Number(q.get('simschedules')) || 0)) } : {}),
+            // #66: the schedule suggestions' state with no models, and Zippy's seeded suggestion remembered by the key (tools/fixture-schedsuggest.ts).
+            ...(q.get('simschedsuggest') ? { schedSuggest: q.get('simschedsuggest') as string } : {}),
+            ...(q.get('simsuggest') ? { suggestKey: q.get('simsuggest') as string } : {}),
             // #9: LLM handoffs with no endpoint: the feature's state and the jobs' outcome (tools/fixture-handoff.ts).
             ...(q.get('simhandoffllm') ? { handoffLlm: q.get('simhandoffllm') as string } : {}),
             ...(q.get('simhandoffllmout') ? { handoffLlmOut: q.get('simhandoffllmout') as string } : {}),

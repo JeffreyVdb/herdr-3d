@@ -490,7 +490,7 @@ export class App {
       group: 'ai',
     });
     // #66: on the same turn ends, a schedule the agent's reply suggests: its own switch and threshold.
-    settings.addSection('schedule_suggestions', 'Schedule suggestions', scheduleSuggestionsSection({ book: this.store.scheduleSuggestions, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
+    settings.addSection('schedule-suggestions', 'Schedule suggestions', scheduleSuggestionsSection({ book: this.store.scheduleSuggestions, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
       store: 'bridge',
       group: 'ai',
     });

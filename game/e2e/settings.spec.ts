@@ -190,9 +190,9 @@ for (const [w, h] of [
     const tree = await list.ariaSnapshot();
     expect(tree.split('\n').slice(1).every((l) => /^\s+- tab "/.test(l)), tree).toBe(true);
     await expect(dialog.locator('.settings-nav-label:visible')).toHaveText(['General', 'Workers', 'AI', 'Integrations']);
-    expect(await ids(page)).toEqual(['appearance', 'display', 'floors', 'time', 'notifications', 'harness-models', 'task-levels', 'codex', 'ai', 'followups', 'packup', 'activity', 'digest', 'handoff-llm', 'repos', 'kaneo', 'telegram']);
+    expect(await ids(page)).toEqual(['appearance', 'display', 'floors', 'time', 'notifications', 'harness-models', 'task-levels', 'codex', 'ai', 'followups', 'schedule-suggestions', 'packup', 'activity', 'digest', 'handoff-llm', 'repos', 'kaneo', 'telegram']);
     const tabs = list.getByRole('tab');
-    expect(await tabs.count()).toBe(17);
+    expect(await tabs.count()).toBe(18);
 
     // Each tab shows its section, named by the tab, and only that one.
     for (const id of await ids(page)) {
