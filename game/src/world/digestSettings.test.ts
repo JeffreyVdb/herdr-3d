@@ -109,6 +109,8 @@ describe('the reasoning effort and the completion budget (#174)', () => {
     expect(keptRetry.detail).toMatch(/The summary shown is the previous one; .* It tries again at \d\d:\d\d.*\. Retry now with R\.$/);
     expect(keptRetry.detail).not.toContain('fallback');
     expect(lineStatusText({ state: 'pending', reason: 'daily_cap' }, 'task')).toMatchObject({ chip: 'AI waiting', retry: false });
+    // #119: a refresh call out for a model's now line that still shows: no chip (the page draws its busy mark), its words.
+    expect(lineStatusText({ state: 'pending' }, 'now', true)).toEqual({ chip: '', detail: 'Refreshing this AI summary from newer activity. The summary shown is the previous one until the new one arrives.', retry: false });
     expect(reasonWord('empty_answer')).toBe('the model answered with no text');
     expect(reasonWord('weird_code')).toBe('weird code');
   });

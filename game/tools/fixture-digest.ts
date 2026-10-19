@@ -9,7 +9,8 @@
 // - while ready, every worker with a digest on the floor the game stands on (its `board.watch`, passed on to the
 //   boards) gets its lines written by the LLM, one call at a time, under the daily cap: a one-off worker's task from
 //   its task line, every worker's now from its lines and title; each goes out as a `worker.upsert` with the sources
-//   `llm`. Off, or the LLM failing: the fixture's own lines stay.
+//   `llm`; while a call is out its line's status is `pending` (#119). Off, or the LLM failing: the fixture's own
+//   lines stay.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { Worker } from '../src/net/protocol.ts';
@@ -123,9 +124,17 @@ export class DigestSim {
     this.busy = true;
     void (async () => {
       const next = { ...d };
+      // #119: while its call is out, the line says pending (a model's now line too), in a worker.upsert of its own.
+      const pending = (kind: 'task' | 'now') => {
+        const cur = this.h.workers.find((x) => x.id === w.id);
+        if (!cur?.digest || !this.enabled) return;
+        cur.digest = { ...cur.digest, [`${kind}_status`]: { state: 'pending' } };
+        this.h.emit(send, { t: 'worker.upsert', worker: cur });
+      };
       const take = async (kind: 'task' | 'now') => {
         if (this.calls >= this.dailyCap) return;
         this.calls++;
+        pending(kind);
         const data = kind === 'task' ? d.task ?? '' : `Step 1:\n${d.now ?? w.title ?? ''}${w.issue?.title ? `\nContext: Ticket #${w.issue.number}: ${w.issue.title}` : ''}`;
         const line = await this.line(kind === 'task' ? TASK_SYSTEM : NOW_SYSTEM, data, kind === 'task' ? 80 : 100);
         if (!line) return;

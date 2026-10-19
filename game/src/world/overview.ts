@@ -32,8 +32,9 @@ export interface OverviewLine {
   llm: boolean;
   /**
    * #174: the model's line is awaited or failed while this fallback shows (pending, retrying, failed); absent otherwise.
-   * #198: on a model's now line (`llm`), a refresh from newer activity failed (retrying, failed only) and this line is the
-   * previous one.
+   * #198: on a model's now line (`llm`), a refresh from newer activity failed (retrying, failed) and this line is the
+   * previous one; (#119) or its refresh call is out (pending). #119: a now line awaited with no fallback to show has
+   * `text` '' and a pending status.
    */
   status?: DigestLineStatus;
   /** #198: a model's now line: when it was written (unix ms, bridge clock: `now_at`), not when the activity it sums up happened. */
@@ -208,13 +209,13 @@ const STATES: readonly string[] = ['pending', 'retrying', 'failed'];
 
 /**
  * A well-formed status of a line (unknown shapes are no status): of a fallback, or (#198) of a model's now line whose
- * refresh failed (`retrying`, `failed`: a model's line is never shown as pending, and its task line has none).
+ * refresh failed (`retrying`, `failed`), or (#119) whose refresh call is out (`pending`). A model's task line has none.
  */
 function statusOf(v: unknown, source: string, kind: 'task' | 'now'): DigestLineStatus | null {
   if (typeof v !== 'object' || v === null) return null;
   const o = v as Record<string, unknown>;
   if (typeof o.state !== 'string' || !STATES.includes(o.state)) return null;
-  if (source === 'llm' && (kind === 'task' || o.state === 'pending')) return null;
+  if (source === 'llm' && kind === 'task') return null;
   return {
     state: o.state as DigestLineStatus['state'],
     ...(typeof o.reason === 'string' && o.reason ? { reason: o.reason } : {}),
@@ -223,12 +224,25 @@ function statusOf(v: unknown, source: string, kind: 'task' | 'now'): DigestLineS
   };
 }
 
+/** #119: a now line with no text to show is kept while the model's line is awaited (`pending`): the page shows it loading. */
 function line(text: string | undefined | null, source: string | undefined, status: unknown, kind: 'task' | 'now'): OverviewLine | null {
-  const t = text?.replace(/\s+/g, ' ').trim();
-  if (!t) return null;
+  const t = text?.replace(/\s+/g, ' ').trim() ?? '';
   const s = (source ?? '') as LineSource;
   const st = statusOf(status, s, kind);
+  if (!t && !(kind === 'now' && st?.state === 'pending')) return null;
   return { text: t, source: s, llm: s === 'llm', ...(st ? { status: st } : {}) };
+}
+
+/**
+ * #119: a terminal title as it is compared for a change: without what moves on every tick when herdr has not stripped
+ * it (a Codex spinner frame after the name or later in a /title order, the action-required `[ ! ]` / `[ . ]` blink), its
+ * spaces collapsed. A title's now line flips only when this changes.
+ */
+export function titleKey(text: string): string {
+  return text
+    .replace(/[\u2800-\u28FF]|\[ [!.] \] /g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** A worker's ticket: its run's issue (`#123 · title`) or board card. */

@@ -126,6 +126,8 @@ describe('the wall’s what column (#118)', () => {
     // A failed refresh of the line: the page's chip after the age (the wall drops it first when short of room).
     expect(lineMark({ ...llmNow, status: { state: 'failed', reason: 'timeout' } }, 'now', at + 2 * 60_000)).toBe('2m ago · refresh failed');
     expect(lineMark({ ...llmNow, status: { state: 'retrying', reason: 'timeout', retry_at: at + 10 * 60_000 } }, 'now', at)).toMatch(/^just now · refresh failed · retry \d\d:\d\d/);
+    // #119: a refresh call out for it is no news on the wall: the age alone, as before.
+    expect(lineMark({ ...llmNow, status: { state: 'pending' } }, 'now', at + 2 * 60_000)).toBe('2m ago');
     // No time: only the age goes, never the failure.
     expect(lineMark({ ...now, source: 'llm', llm: true, status: { state: 'failed', reason: 'timeout' } }, 'now', at)).toBe('refresh failed');
     expect(lineMark({ ...now, source: 'llm', llm: true, status: { state: 'retrying', reason: 'timeout', retry_at: at + 10 * 60_000 } }, 'now', at)).toMatch(/^refresh failed · retry \d\d:\d\d/);
