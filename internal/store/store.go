@@ -217,6 +217,9 @@ var migrations = []string{
 	// #108 round 5: the protected files a worker holds by a lease, and the
 	// files a filed handoff names.
 	migrationPromptSecretsLeases,
+	// #66: schedule suggestions' settings (with the user's time zone) and
+	// the messages they looked at.
+	migrationScheduleSuggest,
 }
 
 // Fingerprint kinds.
