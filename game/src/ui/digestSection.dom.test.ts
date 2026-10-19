@@ -195,6 +195,18 @@ describe('the floor overview summaries section (#118)', () => {
     expect(hint.classList.contains('settings-field-error')).toBe(true);
   });
 
+  it('reasoning without effort selection offers only the default; a stale effort can be cleared', () => {
+    const reasoning = { support: 'supported', model: 'deepseek/deepseek-r1', efforts: [], listed: true, mandatory: true };
+    const m = mount(state({ reasoning }));
+    expect([...m.effort().options].map((o) => o.value)).toEqual(['']);
+    expect(m.effort().disabled).toBe(true);
+    expect(document.getElementById(m.effort().getAttribute('aria-describedby')!)!.textContent).toContain('does not offer a reasoning effort choice');
+    m.book.upsert(state({ reasoning, reasoning_effort: 'low', effort_stale: true }));
+    expect(m.effort().disabled).toBe(false);
+    expect(m.effort().value).toBe('low');
+    expect([...m.effort().options].map((o) => o.value)).toEqual(['', 'low']);
+  });
+
   it('the completion budget: shown as the effective value, validated, sent, and not the lines’ length', async () => {
     const m = mount(state({ max_tokens: 1024, reasoning: LUNA }));
     expect(m.tokens().value).toBe('1024');

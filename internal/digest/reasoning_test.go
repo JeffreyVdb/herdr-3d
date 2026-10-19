@@ -193,6 +193,19 @@ func TestStaleEffortIsSurfacedAndNotSent(t *testing.T) {
 	if !s.View().EffortStale {
 		t.Fatal("not stale for a model without reasoning")
 	}
+	// Reasoning support alone does not keep a saved effort valid.
+	r.read = ai.Reasoning{Support: ai.SupportYes, Efforts: []string{}, Listed: true, Mandatory: true}
+	r.ModelReasoning(context.Background())
+	if !s.View().EffortStale {
+		t.Fatal("not stale for a model without effort selection")
+	}
+	if _, err := s.Summarize(context.Background(), nowInput("A model without effort selection")); err != nil {
+		t.Fatal(err)
+	}
+	calls = r.llm.Calls()
+	if c := calls[len(calls)-1]; c.ReasoningEffort != "" {
+		t.Fatalf("effort sent without a selector: %q", c.ReasoningEffort)
+	}
 }
 
 // What was tested is what is enabled: a changed model, effort or budget needs

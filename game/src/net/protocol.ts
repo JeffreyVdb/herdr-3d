@@ -2637,7 +2637,7 @@ export interface DigestState {
   effort_stale: boolean;
 }
 
-/** #174: a model's reasoning effort as its catalog lists it. `efforts` (lowest first) is what to offer; `listed`: it is the catalog's own list. */
+/** #174: a model's reasoning effort. `efforts` (lowest first) is what to offer; `listed` constrains choices to it (empty means no effort selector). */
 export interface DigestReasoning {
   support: 'supported' | 'unsupported' | 'unknown';
   model?: string;

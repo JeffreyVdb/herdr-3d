@@ -111,7 +111,7 @@ export interface EffortChoice {
 /**
  * The reasoning effort dropdown's entries for a state: the provider's default first (nothing sent, and the model's own
  * default when the catalog names it), then exactly the efforts the model's catalog lists (the generic low/medium/high
- * when it lists none; none at all for a model without reasoning), and a saved effort the model does not take last,
+ * when effort selection is unknown; none when it is unsupported), and a saved effort the model does not take last,
  * marked, so it is surfaced rather than silently dropped.
  */
 export function effortChoices(s: Pick<DigestState, 'reasoning' | 'reasoning_effort'>): EffortChoice[] {
@@ -134,6 +134,7 @@ export function effortNote(s: Pick<DigestState, 'reasoning' | 'reasoning_effort'
     case 'unknown':
       return 'The endpoint does not describe this model’s reasoning, so the usual efforts are offered. One it does not take fails the call with a clear error; the provider’s default sends nothing.';
   }
+  if (r.listed && r.efforts.length === 0) return `${model ? `Model${model}` : 'This model'} does not offer a reasoning effort choice: the provider’s default applies.`;
   if (r.mandatory) return `${model ? `Model${model}` : 'This model'} always reasons: it cannot be turned off.`;
   return r.listed ? `The efforts${model ? ` of${model}` : ''}, as its catalog lists them.` : 'The usual efforts; the catalog does not list this model’s own.';
 }

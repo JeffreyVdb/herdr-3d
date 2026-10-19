@@ -4496,7 +4496,12 @@ transcript's text.
   "listed", "default_effort"?, "mandatory"?}`, read from OpenRouter's `GET {base}/models` entry: `reasoning.supported_efforts`,
   `default_effort`, `mandatory`, else `supported_parameters`; other endpoints list ids only: `unknown`, offered the
   generic `low`, `medium`, `high`, and any effort the gateway knows is accepted by `digest.set`). `listed` says the
-  efforts are the catalog's own allowlist: another is `bad_request`, as is any effort for a model with no reasoning
+  efforts are constrained by the catalog: another is `bad_request`. Inside a known `reasoning` object,
+  omitted `supported_efforts` means **no effort selector** (`support: "supported"`, `listed: true`, `efforts: []`),
+  while explicit `null` allows all gateway efforts, excluding `none` when reasoning is mandatory. No selector
+  means provider default only, for summaries and follow-up extraction; custom `extra_body.reasoning` stays intact,
+  and extraction schedules no effort-based retry. Generic endpoints without a reasoning object keep their earlier
+  behavior. Any effort is also `bad_request` for a model with no reasoning,
   and `none` for a mandatory one. A saved effort the model no longer takes is `effort_stale`: it is shown, **not
   sent** (the provider's default applies). A model the provider answers 400 to with an effort set is `bad_request`
   (`bad_config` in the audit), never silent. The test and the state's `tested` cover the LLM in use **and** the
