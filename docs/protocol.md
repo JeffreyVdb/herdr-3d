@@ -3917,7 +3917,7 @@ flat (its own event: its fields would collide with `followups.update`'s); `sched
   otherwise). There is no test (unlike `followups.test`): a suggestion schedules nothing by itself.
 - `zone`: the IANA time zone the extraction reads clock times in, as a game last sent it with
   **`schedule_suggestions.zone {zone}`** (absent: none yet, read as UTC). The game sends its own (the time-of-day
-  setting's, else the browser's) after each snapshot and when that setting changes, if it differs from `zone`; the last
+  setting's, else the browser's) on connect, once it has the snapshot and the connection is live, and when that setting changes, if it differs from `zone`; the last
   one wins. `bad_request` unless the bridge's Go `time` package loads it (`Local` and offsets like `+02:00` are refused).
 
 **Detection**, on the follow-up questions' turn end (their steps 1 and 2: the 2 s settle, the same skips, the same
