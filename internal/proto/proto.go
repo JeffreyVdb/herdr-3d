@@ -497,8 +497,10 @@ type WorkerDigest struct {
 	// TaskStatus and NowStatus (#174): while the model's line is awaited or
 	// its attempt failed, and the line shown is a fallback; absent otherwise.
 	// #198: NowStatus also goes with a model's now line (NowSource "llm")
-	// when a refresh of it from newer steps failed, "retrying" or "failed"
-	// only (never "pending"): the line shown is the model's previous one.
+	// when a refresh of it from newer steps failed, "retrying" or "failed":
+	// the line shown is the model's previous one. #119: and "pending" there
+	// only while the refresh call is out (never while it waits for its gap,
+	// a settle or the daily budget).
 	TaskStatus *DigestLineStatus `json:"task_status,omitempty"`
 	NowStatus  *DigestLineStatus `json:"now_status,omitempty"`
 }

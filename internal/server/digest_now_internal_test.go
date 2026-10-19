@@ -462,10 +462,10 @@ func upserts(t *testing.T, c *Client) int {
 }
 
 // U1: a refresh of newer steps that fails keeps the model's previous line and
-// its time, and says so beside it: failed (its steps were tried), retrying
-// with its time (newer steps wait for the delay); never pending while a
-// refresh is only on its way. The next success, a manual retry that works
-// and a reset clear it.
+// its time, and says so beside it: pending while its call is out (#119),
+// failed (its steps were tried), retrying with its time (newer steps wait for
+// the delay). The next success, a manual retry that works and a reset clear
+// it.
 func TestDigestNowFailedRefreshKeepsLineWithStatus(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -494,15 +494,15 @@ func TestDigestNowFailedRefreshKeepsLineWithStatus(t *testing.T) {
 		t.Fatalf("after the first line: %+v", d)
 	}
 	// Newer steps of the same turn, after the gap: the refresh is out, the
-	// line shows with no status (no pending beside a model's line).
+	// line shows and says pending beside it (#119; #198 sent nothing here).
 	clock = clock.Add(2 * time.Minute)
 	broken = true
 	more()
 	if !h.dgs.inflight {
 		t.Fatal("no refresh out")
 	}
-	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus != nil {
-		t.Fatalf("refresh on its way: %+v", d)
+	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus == nil || d.NowStatus.State != proto.LinePending {
+		t.Fatalf("refresh on its way: %+v (status %+v)", d, d.NowStatus)
 	}
 	runOp(t, h)
 	failedAt := clock
@@ -568,5 +568,100 @@ func TestDigestNowFailedRefreshKeepsLineWithStatus(t *testing.T) {
 	noOp(t, h) // the gap holds
 	if d := dg(); d.NowSource == proto.DigestLLM || (d.NowStatus != nil && (d.NowStatus.State != proto.LinePending || d.NowStatus.Attempts != 0)) {
 		t.Fatalf("after a reset: %+v (status %+v)", d, d.NowStatus)
+	}
+}
+
+// #119: beside a model's now line, pending says a refresh call is out: it
+// comes with the call (a worker.upsert), goes when the call lands (another),
+// a success or a failure, and is never there while newer steps only wait for
+// the worker's gap or a turn's settle (a wait is no call in progress).
+func TestDigestNowPendingBesideModelLineOnlyWhileCalling(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	clock := time.Date(2026, 10, 8, 10, 0, 0, 0, time.Local)
+	h, llm := dgHubFor(t, &clock, false)
+	h.opts.DigestGap, h.opts.DigestSettle = time.Minute, 30*time.Second
+	h.opts.DigestRetry = func(n int) (time.Duration, bool) { return 10 * time.Minute, n < 3 }
+	broken := false
+	llm.Func = func(context.Context, ai.Request) (string, error) {
+		if broken {
+			return "", &ai.Error{Kind: ai.KindTimeout, Msg: "slow"}
+		}
+		return "Reading the lift code", nil
+	}
+	c := view(ctx, h)
+	steps := []string{"Reading the lift code"}
+	more := func(ended int) {
+		steps = append(steps, "Step "+clock.Format("15:04:05"))
+		h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgMid(ended, steps...)})
+	}
+	dg := func() *proto.WorkerDigest { return h.workers["w"].Digest }
+	pending := func(d *proto.WorkerDigest) bool {
+		return d.NowStatus != nil && d.NowStatus.State == proto.LinePending
+	}
+	h.digestSeen(ctx, digestUpdate{id: "w", epoch: 1, digest: dgMid(0, steps...)})
+	runOp(t, h)
+	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus != nil {
+		t.Fatalf("after the first line: %+v", d)
+	}
+	upserts(t, c)
+
+	// Newer steps within the gap: they wait, no pending, no worker.upsert.
+	clock = clock.Add(10 * time.Second)
+	more(0)
+	noOp(t, h)
+	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus != nil {
+		t.Fatalf("waiting for the gap: %+v (status %+v)", d, d.NowStatus)
+	}
+	if n := upserts(t, c); n != 0 {
+		t.Fatalf("%d worker.upserts while the steps wait for the gap", n)
+	}
+
+	// The gap is over: the call goes, pending comes with it in one upsert,
+	// the model's line still shows.
+	clock = clock.Add(time.Minute)
+	fire(ctx, h)
+	if !h.dgs.inflight {
+		t.Fatal("no refresh out")
+	}
+	if d := dg(); d.NowSource != proto.DigestLLM || d.Now != "Reading the lift code" || !pending(d) {
+		t.Fatalf("refresh out: %+v (status %+v)", d, d.NowStatus)
+	}
+	if n := upserts(t, c); n != 1 {
+		t.Fatalf("%d worker.upserts when the call went, want 1", n)
+	}
+	// It lands: pending goes in one more upsert.
+	runOp(t, h)
+	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus != nil || d.NowAt != clock.UnixMilli() {
+		t.Fatalf("after the refresh: %+v (status %+v)", d, d.NowStatus)
+	}
+	if n := upserts(t, c); n != 1 {
+		t.Fatalf("%d worker.upserts when the call landed, want 1", n)
+	}
+
+	// A turn ends: its steps wait for the settle (and the gap), no pending.
+	clock = clock.Add(2 * time.Minute)
+	more(1)
+	noOp(t, h)
+	if d := dg(); d.NowStatus != nil {
+		t.Fatalf("waiting for the settle: status %+v", d.NowStatus)
+	}
+	// Settled: the call goes and fails; pending, then failed beside the line.
+	broken = true
+	clock = clock.Add(30 * time.Second)
+	fire(ctx, h)
+	if d := dg(); !pending(d) || d.NowSource != proto.DigestLLM {
+		t.Fatalf("refresh out after the settle: %+v (status %+v)", d, d.NowStatus)
+	}
+	runOp(t, h)
+	if d := dg(); d.NowSource != proto.DigestLLM || d.NowStatus == nil || d.NowStatus.State != proto.LineFailed {
+		t.Fatalf("after a failed refresh: %+v (status %+v)", d, d.NowStatus)
+	}
+	// Newer steps in the retry delay: retrying, not pending.
+	clock = clock.Add(time.Minute)
+	more(1)
+	noOp(t, h)
+	if d := dg(); d.NowStatus == nil || d.NowStatus.State != proto.LineRetrying {
+		t.Fatalf("in the retry delay: status %+v", d.NowStatus)
 	}
 }
