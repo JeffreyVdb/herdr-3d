@@ -177,3 +177,19 @@ export function countdownText(at: number, now: number): string {
   else span = `${Math.floor(a / DAY)} d${Math.floor((a % DAY) / HOUR) ? ` ${Math.floor((a % DAY) / HOUR)} h` : ''}`;
   return d > 0 ? `in ${span}` : `${span} overdue`;
 }
+
+/**
+ * #66: a time near now in a few words, as a chip says it: `today 12:45`, `tomorrow 12:45`, `Wed 12:45` within the week,
+ * else `Sat 31 Oct 12:45` (with the year when it is another). Days are the zone's calendar days.
+ */
+export function dayClockText(at: number, now: number, tz: string): string {
+  const c = civilAt(at, tz);
+  const n = civilAt(now, tz);
+  const days = Math.round((Date.UTC(c.year, c.month - 1, c.day) - Date.UTC(n.year, n.month - 1, n.day)) / DAY);
+  const clock = `${pad(c.hour)}:${pad(c.minute)}`;
+  if (days === 0) return `today ${clock}`;
+  if (days === 1) return `tomorrow ${clock}`;
+  if (days === -1) return `yesterday ${clock}`;
+  if (days > 1 && days < 7) return `${WEEKDAY[c.weekday]} ${clock}`;
+  return `${WEEKDAY[c.weekday]} ${c.day} ${MONTH[c.month - 1]}${c.year === n.year ? '' : ` ${c.year}`} ${clock}`;
+}

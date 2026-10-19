@@ -201,6 +201,9 @@ type World struct {
 	// #110 pack up on request: the feature's settings and state. nil (left
 	// out) when the bridge has no AI service.
 	Packup *Packup `json:"packup,omitempty"`
+	// #66 schedule suggestions: the feature's settings and state. nil (left
+	// out) when the bridge has no AI service.
+	ScheduleSuggestions *ScheduleSuggestions `json:"schedule_suggestions,omitempty"`
 	// #98 activity: "Classify unknown commands", its settings and state.
 	// nil (left out) when the bridge has no AI service.
 	Activity *ActivityState `json:"activity,omitempty"`
@@ -418,6 +421,10 @@ type Worker struct {
 	// #90: Followup is the open questions of the agent's final message,
 	// until they are answered, dismissed or the agent is prompted again.
 	Followup *Followup `json:"followup,omitempty"`
+	// #66: ScheduleSuggestion is a schedule the agent's final message
+	// suggests, until it is accepted (a schedule.create from it), dismissed,
+	// or the transcript goes on.
+	ScheduleSuggestion *ScheduleSuggestion `json:"schedule_suggestion,omitempty"`
 	// #223: Handoff is the agent's latest completed final reply a literal
 	// handoff can file (absent: none now, or no filing cabinet).
 	Handoff *HandoffCandidate `json:"handoff,omitempty"`

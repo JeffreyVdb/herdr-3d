@@ -1,7 +1,7 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { Ask, CommandArgs, Followup, HandoffCandidate, TranscriptChanges, TranscriptCollab, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
+import type { Ask, CommandArgs, Followup, HandoffCandidate, ScheduleSuggestion, TranscriptChanges, TranscriptCollab, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
 import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
@@ -13,6 +13,8 @@ import type { ImageFeed } from './imageFeed';
 import { imageRuns, imagesOf, isImageOnly, isImagePart, isOmittedPart, Thumbs } from './transcriptImages';
 import { h, icon, ICON } from '../ui/dom';
 import { handoffRow } from '../world/handoff';
+import { suggestionFor, suggestionWhen } from '../world/scheduleSuggest';
+import { browserZone } from '../world/daylight';
 // #64: the prompt box is the shared composer, so a screenshot can be pasted into it
 import { mountComposer, type Composer } from '../ui/composer/composer';
 import { Draft as PromptDraft, type Uploader } from '../ui/composer/draft';
@@ -80,8 +82,13 @@ export interface TranscriptRenderHost {
   followupDrafts?: { get(turn: string): FollowupDraft | null; set(turn: string, d: FollowupDraft): void; clear(turn: string): void };
   /** #223: the inline Handoff button on the worker's latest completed reply was pressed (none: no button). */
   onHandoff?(c: HandoffCandidate): void;
-  /** #64 schedules: "Schedule follow-up…" beside it, on the same reply (none: no button). */
-  onScheduleFollowup?(c: HandoffCandidate): void;
+  /**
+   * #64 schedules: "Schedule follow-up…" beside it, on the same reply (none: no button). #66: with `s`, the suggestion
+   * chip that stands in its place was clicked.
+   */
+  onScheduleFollowup?(c: HandoffCandidate, s?: ScheduleSuggestion): void;
+  /** #66: the suggestion chip's ×: dismisses it for good (none: no ×). */
+  onDismissScheduleSuggestion?(s: ScheduleSuggestion): Promise<FollowupResult>;
   /** #157: answers a Codex worker's async questions (none: the card cannot send). */
   onAnswerAsync?(args: CommandArgs['worker.answer_async'], o?: AnswerOptions): Promise<AsyncResult>;
   /** #157: hides them in the bridge. */
@@ -152,6 +159,11 @@ export interface TranscriptView {
    * it, gets the inline Handoff button; no other row ever does.
    */
   setHandoff?(c: HandoffCandidate | null): void;
+  /**
+   * #66: the worker's schedule suggestion (null: none). On its reply's row (the handoff candidate's) the chip
+   * "Schedule follow-up · tomorrow 12:45 (10:45 UTC)" stands in for the plain "Schedule follow-up…".
+   */
+  setScheduleSuggestion?(s: ScheduleSuggestion | null): void;
   /**
    * #157: the worker's Codex launch (null: none): its async questions, on a card above the prompt box, which stays on;
    * `working`: the worker works on (its effective status, not a real block), the card's "still working".
@@ -1033,6 +1045,11 @@ class Transcript implements TranscriptView {
   /** #223: the worker's handoff candidate, and the inline button on its row (null: none shown). */
   private handoff: HandoffCandidate | null = null;
   private handoffEl: HTMLElement | null = null;
+  /** #66: the worker's schedule suggestion, the × in flight, and the minute tick that keeps the chip's day words true. */
+  private suggestion: ScheduleSuggestion | null = null;
+  private dismissing = false;
+  private suggestionTick: ReturnType<typeof setInterval> | null = null;
+  private readonly zone = browserZone();
   private readonly asyncq: AsyncCard; // #157
   /**
    * #157: the follow-up's card and the async questions' both up (an idle Codex worker keeps the questions its last turn
@@ -1342,23 +1359,42 @@ class Transcript implements TranscriptView {
     this.stick(); // following: the button under the last reply stays in view
   }
 
+  setScheduleSuggestion(s: ScheduleSuggestion | null): void {
+    if (this.destroyed) return;
+    this.suggestion = s && typeof s === 'object' && typeof s.id === 'string' ? s : null;
+    this.dismissing = false;
+    // The day words change at midnight and the time can pass while it shows: a look every minute while there is one.
+    if (this.suggestion && !this.suggestionTick) this.suggestionTick = setInterval(() => this.syncHandoff(), 60_000);
+    if (!this.suggestion && this.suggestionTick) {
+      clearInterval(this.suggestionTick);
+      this.suggestionTick = null;
+    }
+    this.syncHandoff();
+  }
+
   /**
    * #223: the one inline Handoff button, on the row of the candidate's message when the timeline holds it (a page
-   * without it has none: never the last row of a partial page). A row rebuilt by an update gets it back.
+   * without it has none: never the last row of a partial page). A row rebuilt by an update gets it back. #66: a
+   * suggestion of the same message puts its chip in place of "Schedule follow-up…"; the key tells a changed chip.
    */
   private syncHandoff(): void {
     const c = this.host.onHandoff || this.host.onScheduleFollowup ? this.handoff : null;
     const id = handoffRow(this.timeline.values(), c);
     const row = id ? this.timeline.row(id) : undefined;
+    const sug = this.host.onScheduleFollowup ? suggestionFor(this.suggestion, c) : null;
+    const when = sug ? suggestionWhen(sug, Date.now(), this.zone) : null;
+    const key = c ? `${c.id}|${sug ? `${sug.id}|${when?.when}|${when?.passed}|${this.dismissing}` : ''}` : '';
     const btn = this.handoffEl;
-    if (btn && row && c && btn.parentElement === row && btn.dataset.cand === c.id) return;
+    if (btn && row && c && btn.parentElement === row && btn.dataset.key === key) return;
+    const a = document.activeElement;
+    const had = a instanceof HTMLElement && btn?.contains(a) ? a.dataset.key : null;
     btn?.remove();
     this.handoffEl = null;
     if (!row || !c) return;
     const note = `tx-ho-note-${++handoffIds}`;
     const el = h(
       'div',
-      { class: 'tx-handoff', 'data-cand': c.id },
+      { class: 'tx-handoff', 'data-cand': c.id, 'data-key': key },
       this.host.onHandoff
         ? h(
             'button',
@@ -1368,7 +1404,10 @@ class Transcript implements TranscriptView {
           )
         : null,
       // #64 schedules: a fresh worker later, with this reply attached as a literal handoff (the form files it on Save).
-      this.host.onScheduleFollowup
+      // #66: the agent's own suggestion of when and what, while there is one, in its place.
+      sug && when
+        ? this.suggestionChip(c, sug, when)
+        : this.host.onScheduleFollowup
         ? h(
             'button',
             { class: 'tx-sched-btn', 'data-key': 'schedule', title: 'Hire a fresh worker later that goes on from this reply', onclick: () => this.host.onScheduleFollowup?.(c) },
@@ -1380,6 +1419,62 @@ class Transcript implements TranscriptView {
     );
     row.append(el);
     this.handoffEl = el;
+    // The keyboard keeps its place: the same button, else (a × gone or busy) the one that schedules.
+    if (had) {
+      const same = el.querySelector<HTMLButtonElement>(`[data-key="${had}"]`);
+      (same && !same.disabled ? same : el.querySelector<HTMLElement>('[data-key="schedule"]'))?.focus();
+    }
+  }
+
+  /**
+   * #66: the suggestion chip: one button that opens the schedule form prefilled from it (nothing is scheduled before
+   * its Save), joined to a × that dismisses it for good. A time that has passed says so; the form then flags it.
+   */
+  private suggestionChip(c: HandoffCandidate, s: ScheduleSuggestion, when: { when: string; utc: string; passed: boolean }): HTMLElement {
+    const label = when.passed ? `Schedule follow-up · suggested ${when.when}, passed` : `Schedule follow-up · ${when.when}${when.utc ? ` (${when.utc})` : ''}`;
+    const open = h(
+      'button',
+      {
+        class: 'tx-sched-btn tx-sched-sug',
+        'data-key': 'schedule',
+        'data-suggestion': s.id,
+        'aria-label': label,
+        title: `Suggested by the agent: “${s.title}”. Opens the schedule form, prefilled; nothing is scheduled until you save.`,
+        onclick: () => this.host.onScheduleFollowup?.(c, s),
+      },
+      icon(CLOCK),
+      h('span', { class: 'tx-sched-label' }, 'Schedule follow-up'),
+      h('span', { class: 'tx-sched-when', 'data-passed': String(when.passed) }, when.passed ? `suggested ${when.when}, passed` : when.when),
+      when.utc && !when.passed ? h('span', { class: 'tx-sched-utc' }, `(${when.utc})`) : null,
+    );
+    const dismiss = this.host.onDismissScheduleSuggestion
+      ? h(
+          'button',
+          {
+            class: 'tx-sched-x',
+            'data-key': 'dismiss-suggestion',
+            'aria-label': 'Dismiss the suggested follow-up',
+            title: 'Dismiss this suggestion (the plain “Schedule follow-up…” comes back)',
+            disabled: this.dismissing,
+            onclick: (e: Event) => {
+              e.stopPropagation();
+              if (this.dismissing) return;
+              this.dismissing = true;
+              this.syncHandoff();
+              void this.host.onDismissScheduleSuggestion?.(s).then((r) => {
+                if (this.destroyed || this.suggestion?.id !== s.id) return;
+                // Gone: the upsert takes the chip away; refused, it stays to try again.
+                if (!r.ok) {
+                  this.dismissing = false;
+                  this.syncHandoff();
+                }
+              });
+            },
+          },
+          icon(ICON.close),
+        )
+      : null;
+    return h('span', { class: 'tx-sched-chip', role: 'group', 'aria-label': 'Suggested follow-up' }, open, dismiss);
   }
 
   /** #157: the worker's Codex launch, and whether it works on (its effective status: the card's "still working"). */
@@ -1598,6 +1693,7 @@ class Transcript implements TranscriptView {
 
   destroy(): void {
     if (this.destroyed) return;
+    if (this.suggestionTick) clearInterval(this.suggestionTick); // #66
     this.destroyed = true;
     if (this.ticker) clearInterval(this.ticker);
     this.ticker = null;

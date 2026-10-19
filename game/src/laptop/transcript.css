@@ -3548,6 +3548,93 @@
   }
 }
 
+/* #66: the agent's suggested follow-up, in place of the plain "Schedule follow-up…": the same button family, but filled
+   (the agent proposes a time, the plain one asks for one) and joined to its ×. The time is the chip's information: set in
+   tabular figures and weight, the UTC hint beside it quieter. */
+.tx-sched-chip {
+  display: inline-flex;
+  align-items: stretch;
+  max-width: 100%;
+}
+.tx .tx-sched-sug {
+  flex-wrap: wrap;
+  column-gap: 6px;
+  row-gap: 0;
+  min-width: 0;
+  border-color: var(--tx-sun);
+  background: color-mix(in srgb, var(--tx-sun) 20%, transparent);
+  border-radius: 6px 0 0 3px;
+  text-align: left;
+}
+.tx .tx-sched-sug:hover {
+  background: color-mix(in srgb, var(--tx-sun) 32%, transparent);
+}
+.tx-sched-when {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.tx-sched-when::before {
+  content: '·';
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--tx-text-2);
+}
+.tx-sched-when[data-passed='true'] {
+  font-weight: 600;
+  color: var(--tx-text-2);
+}
+.tx-sched-utc {
+  color: var(--tx-text-2);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.tx-sched-x {
+  display: inline-grid;
+  place-items: center;
+  min-width: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--tx-sun);
+  border-left-width: 0;
+  border-radius: 0 6px 3px 0;
+  background: color-mix(in srgb, var(--tx-sun) 10%, transparent);
+  color: var(--tx-text-2);
+  cursor: pointer;
+  transition:
+    background 140ms ease-out,
+    color 140ms ease-out;
+}
+.tx-sched-x svg {
+  width: 12px;
+  height: 12px;
+}
+.tx-sched-x:hover {
+  background: color-mix(in srgb, var(--tx-sun) 26%, transparent);
+  color: var(--tx-text);
+}
+.tx-sched-x:focus-visible {
+  outline: 2px solid var(--tx-sun);
+  outline-offset: 2px;
+}
+.tx-sched-x:disabled {
+  cursor: progress;
+  opacity: 0.55;
+}
+/* ubuntu:begin */
+:root[data-ui-theme='ubuntu'] .tx .tx-sched-x {
+  min-width: 36px;
+}
+@media (pointer: coarse) {
+  :root[data-ui-theme='ubuntu'] .tx .tx-sched-x {
+    min-width: 44px;
+  }
+}
+/* ubuntu:end */
+@media (prefers-reduced-motion: reduce) {
+  .tx-sched-x {
+    transition: none;
+  }
+}
+
 /* #31: a file reference's popover (fileRefPopover.ts): its full path, selectable whole, and "Copy file path". App chrome,
    so the UI theme's raised surface (#216); the path is machine text, in the transcript's mono on a recessed well. It
    sits in the root, over the timeline, never clipped by its scroller, and is kept inside the screen (narrow ones too).

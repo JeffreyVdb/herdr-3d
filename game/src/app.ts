@@ -7,7 +7,7 @@ import { loggedArgs } from './net/redact';
 import { deleteLogo, logoUrl, putLogo } from './net/logo';
 import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
-import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation, type HireInterpretAck } from './net/protocol';
+import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type ScheduleSuggestion, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation, type HireInterpretAck } from './net/protocol';
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
@@ -103,6 +103,7 @@ import { kaneoSection } from './ui/kaneoSection';
 import { telegramSection } from './ui/telegramSection';
 // #90 follow-up questions
 import { followupsSection } from './ui/followupsSection';
+import { scheduleSuggestionsSection } from './ui/scheduleSuggestionsSection';
 import { packupSection } from './ui/packupSection';
 import { digestSection } from './ui/digestSection';
 import { handoffLlmSection } from './ui/handoffLlmSection';
@@ -479,12 +480,17 @@ export class App {
     this.settings.addSection(
       'ai',
       'AI integration',
-      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions', 'Pack up on request', 'Classify unknown commands'], llm: ['Follow-up questions', 'Pack up on request', 'Floor overview summaries'] } }),
+      aiSection({ book: this.store.ai, send: (t, args) => this.send(t, args), usedBy: { classifier: ['Follow-up questions', 'Schedule suggestions', 'Pack up on request', 'Classify unknown commands'], llm: ['Follow-up questions', 'Schedule suggestions', 'Pack up on request', 'Floor overview summaries'] } }),
       { store: 'bridge', group: 'ai' },
     );
     // #90: the first feature on those models: its own switch and threshold, under them.
     const settings = this.settings;
     settings.addSection('followups', 'Follow-up questions', followupsSection({ book: this.store.followups, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
+      store: 'bridge',
+      group: 'ai',
+    });
+    // #66: on the same turn ends, a schedule the agent's reply suggests: its own switch and threshold.
+    settings.addSection('schedule-suggestions', 'Schedule suggestions', scheduleSuggestionsSection({ book: this.store.scheduleSuggestions, send: (t, args) => this.send(t, args), showAi: () => settings.reveal('ai') }), {
       store: 'bridge',
       group: 'ai',
     });
@@ -564,6 +570,7 @@ export class App {
     // M17: start at the time's light (not eased from noon), and follow the settings live.
     this.readTime(true);
     this.timePrefs.onChange(() => this.readTime(false));
+    this.timePrefs.onChange(() => this.sendZone()); // #66
     this.planCam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 100);
     this.controls = new OrbitControls(this.cityCam, this.r.domElement);
     this.controls.enableDamping = true;
@@ -609,6 +616,7 @@ export class App {
           this.applyChange(this.store.applySnapshot(s));
           this.yieldTakenDesks(this.store.workers.keys());
           this.syncDeliveries(); // M6c
+          this.sendZone(); // #66
         },
         onEvent: (e) => this.onWorldEvent(e),
         onConn: (m) => this.laptops.onConn(m),
@@ -616,9 +624,11 @@ export class App {
         onScreen: (m) => this.screen.onMessage(m), // M13 screen
         onHost: (m) => this.rack.onMessage(m), // #74 server rack
         onState: (s) => {
+          const wasLive = this.conn.phase === 'live';
           // M3d: a logo that could not be fetched is tried again once the bridge is back (also after a replay, which sends no snapshot).
           if (s.phase === 'live' && this.conn.phase !== 'live' && this.logos.retryFailed()) this.syncLogos();
           this.conn = s;
+          if (s.phase === 'live' && !wasLive) this.sendZone(); // #66: the snapshot may come before the connection is live
           // M7: a dropped connection forgot its board watch; the next live one watches again.
           if (s.phase !== 'live') this.watched = null;
           if (s.phase !== 'live') this.rack.connLost(); // #74: the bridge forgot the host watch too
@@ -851,7 +861,7 @@ export class App {
         secrets: this.secrets, // #108
         overview: () => this.openOverview(false), // #118
         handoff: (id) => this.openHandoff(id, true), // #223
-        scheduleFollowup: (id, c) => this.openFollowup(id, c), // #64 schedules
+        scheduleFollowup: (id, c, sug) => this.openFollowup(id, c, sug), // #64 schedules, #66 its suggestion
         catalogs, // #39
       },
       o.params,
@@ -1604,13 +1614,33 @@ export class App {
     this.schedules.open({ ...o, floor: o.floor === undefined ? this.hereFloor() : o.floor });
   }
 
-  /** "Schedule follow-up…" on a worker's latest reply: the form over the seat, prefilled from the worker. */
-  openFollowup(id: string, c: HandoffCandidate): void {
+  /**
+   * "Schedule follow-up…" on a worker's latest reply: the form over the seat, prefilled from the worker. #66: from its
+   * suggestion chip, with the suggestion's title, time and prompt too, and the suggestion as its source (the bridge
+   * closes the suggestion once that schedule is saved; cancelling the form leaves the chip).
+   */
+  openFollowup(id: string, c: HandoffCandidate, sug?: ScheduleSuggestion): void {
     const w = this.store.workers.get(id);
     const v = this.store.workerView(id);
     if (!w || !v) return;
     const choice = w.harness && w.model && w.effort ? { harness: w.harness, model: w.model, effort: w.effort } : undefined;
-    this.scheduleForm.open({ floor: v.worker.floor, seated: !!this.laptops.seated, prefill: { ...(choice ? { choice } : {}), ...(w.cwd ? { cwd: w.cwd } : {}), transcript: { worker: id, name: v.name, candidate: c } } });
+    const suggested = sug
+      ? { title: sug.title, prompt: sug.draft_prompt, dueAt: sug.due_at, source: { kind: 'suggestion' as const, worker: id, ...(sug.message ? { message: sug.message } : {}) } }
+      : {};
+    this.scheduleForm.open({ floor: v.worker.floor, seated: !!this.laptops.seated, prefill: { ...(choice ? { choice } : {}), ...(w.cwd ? { cwd: w.cwd } : {}), ...suggested, transcript: { worker: id, name: v.name, candidate: c } } });
+  }
+
+  /**
+   * #66: the zone the bridge's schedule suggestions read clock times in: this browser's (Settings → Day and night, else
+   * its own), sent on connect (the snapshot, or the connection turning live, whichever is last) and when the setting
+   * changes, when it differs. Never in answer to an update: two browsers in two zones would send theirs back and forth
+   * (the last to connect or change wins).
+   */
+  private sendZone(): void {
+    const st = this.store.scheduleSuggestions.state;
+    const zone = this.timePrefs.timeZone ?? browserZone();
+    if (!st || st.zone === zone || this.conn.phase !== 'live') return;
+    void this.send('schedule_suggestions.zone', { zone });
   }
 
   /**

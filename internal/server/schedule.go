@@ -570,6 +570,7 @@ func (h *Hub) scheduleCommand(ctx context.Context, cmd proto.Command, record *st
 		v := scheduleView(s)
 		h.emit(proto.Event{T: proto.EvScheduleUpsert, Schedule: &v})
 		h.log.Info("schedule created", "schedule", s.ID, "floor", s.Floor, "due_at", s.DueAt)
+		h.acceptSuggestion(ctx, a.Source) // #66: saved from a suggestion: it is dealt with
 		return s, nil
 	}
 

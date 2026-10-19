@@ -1,0 +1,74 @@
+{
+ "cases": [
+  {
+   "name": "rollout-soak",
+   "message": "messages/rollout-soak.md",
+   "now": "2026-10-18T10:52:00Z",
+   "zone": "Europe/Brussels",
+   "score": 0.93,
+   "llm": "{\"due_at\": \"2026-10-19T10:45:00Z\", \"title\": \"Post-soak cleanup: Vector 0.59 rollout\", \"draft_prompt\": \"You are picking up the Vector 0.59 rollout after its 24h soak. Read the attached handoff (the original agent's summary) first.\\n\\n1. Check the Loki ingest dashboard and run `journalctl -u vector --since \\\"24 hours ago\\\" | grep -c ERROR` on two shippers.\\n2. If both are clean, delete the backups: `ansible shippers -m file -a \\\"path=/var/backups/vector-0.58 state=absent\\\" -b`.\\n3. Attach the dashboard screenshot to OPS-2291 as evidence and close the ticket.\"}",
+   "want_due": "2026-10-19T10:45:00Z",
+   "live_tolerance_min": 30
+  },
+  {
+   "name": "relative-2h",
+   "message": "messages/relative-2h.md",
+   "now": "2026-10-18T14:00:00Z",
+   "zone": "America/New_York",
+   "score": 0.88,
+   "llm": "{\"due_at\": \"2026-10-18T12:00:00-04:00\", \"title\": \"Swap orders_current to orders_v7\", \"draft_prompt\": \"You are picking up a staging reindex. Read the attached handoff first.\\n\\nCheck that the `orders` reindex job on staging reports `reindex complete`. Then point the alias `orders_current` at `orders_v7` and drop `orders_v6`. If the job has not finished, do nothing and say so.\"}",
+   "want_due": "2026-10-18T16:00:00Z",
+   "live_tolerance_min": 20
+  },
+  {
+   "name": "after-soak",
+   "message": "messages/after-soak.md",
+   "now": "2026-10-18T09:15:00Z",
+   "zone": "Europe/Brussels",
+   "score": 0.9,
+   "llm": "{\"due_at\": \"2026-10-19T07:30:00+02:00\", \"title\": \"Promote ratelimit-v2 after the canary soak\", \"draft_prompt\": \"You are picking up the `ratelimit-v2` canary on `edge-eu-1` after its 24h soak. Read the attached handoff first.\\n\\nIf `edge_429_ratio` stayed under 0.5 % and no `RateLimiterPanic` alert fired, run `deploy promote ratelimit-v2 --all` and remove the `ratelimit_v1_fallback` flag in the same change. Otherwise stop and report what you found.\"}",
+   "want_due": "2026-10-19T05:30:00Z",
+   "live_tolerance_min": 60
+  },
+  {
+   "name": "next-steps",
+   "message": "messages/next-steps.md",
+   "now": "2026-10-18T15:00:00Z",
+   "zone": "Europe/Brussels",
+   "score": 0.18,
+   "llm": "",
+   "want_due": "",
+   "want_why": "gate"
+  },
+  {
+   "name": "past-time",
+   "message": "messages/past-time.md",
+   "now": "2026-10-18T10:30:00Z",
+   "zone": "UTC",
+   "score": 0.72,
+   "llm": "{\"due_at\": \"2026-10-18T09:00:00Z\", \"title\": \"Vacuum after the upgrade window\", \"draft_prompt\": \"Run the vacuum.\"}",
+   "want_due": "",
+   "want_why": "not in the future"
+  },
+  {
+   "name": "followup-question",
+   "message": "messages/followup-question.md",
+   "now": "2026-10-18T15:00:00Z",
+   "zone": "",
+   "score": 0.11,
+   "llm": "",
+   "want_due": "",
+   "want_why": "gate"
+  },
+  {
+   "name": "codex-final",
+   "codex": "codex-final.jsonl",
+   "now": "2026-10-19T08:10:21Z",
+   "zone": "Europe/Brussels",
+   "score": 0.91,
+   "llm": "{\"due_at\": \"2026-10-23T18:00:00Z\", \"title\": \"Remove the legacy staging edge TLS secret\", \"draft_prompt\": \"You are picking up a TLS certificate rotation on staging after the old certificate expired. Read the attached handoff first.\\n\\n1. Delete the secret: `kubectl -n edge delete secret edge-tls-legacy`.\\n2. Remove its mount from `deploy/edge-proxy.yaml` and roll the deployment.\\n3. Confirm `curl -vI https://staging.example.internal` shows only the new chain.\"}",
+   "want_due": "2026-10-23T18:00:00Z",
+   "live_tolerance_min": 30
+  }
+ ]
+}

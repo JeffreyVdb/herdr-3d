@@ -193,6 +193,58 @@ func TestFollowupUsesOnlyAIInterfaces(t *testing.T) {
 	}
 }
 
+// #66: internal/schedsuggest takes only internal/ai's interfaces: it
+// imports no vendor client and nothing of the bridge (only internal/ai from
+// this module, no net/http), and never names the service or a provider. The
+// hub hands it the models.
+func TestScheduleSuggestUsesOnlyAIInterfaces(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go tool")
+	}
+	const mod = "github.com/JeffreyVdb/herdr-3d/"
+	out, err := exec.Command("go", "list", "-deps", mod+"internal/schedsuggest").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -deps: %v\n%s", err, out)
+	}
+	for _, dep := range strings.Fields(string(out)) {
+		if strings.HasPrefix(dep, mod) && dep != mod+"internal/schedsuggest" && dep != mod+"internal/ai" {
+			t.Errorf("internal/schedsuggest depends on %s", dep)
+		}
+	}
+	out, err = exec.Command("go", "list", "-f", `{{join .Imports " "}}`, mod+"internal/schedsuggest").CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -f: %v\n%s", err, out)
+	}
+	for _, imp := range strings.Fields(string(out)) {
+		if strings.HasPrefix(imp, "net") {
+			t.Errorf("internal/schedsuggest imports %s", imp)
+		}
+	}
+	files, _ := filepath.Glob("../schedsuggest/*.go")
+	fset := token.NewFileSet()
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if x, ok := sel.X.(*ast.Ident); ok && x.Name == "ai" {
+					switch sel.Sel.Name {
+					case "Service", "New", "Options", "Overrides", "Fields":
+						t.Errorf("%s uses ai.%s: only the interfaces", fset.Position(sel.Pos()), sel.Sel.Name)
+					}
+				}
+			}
+			return true
+		})
+	}
+}
+
 // #110: pack up on request takes only internal/ai's interfaces: it imports
 // no vendor client and nothing of the bridge (only internal/ai from this
 // module, no net/http), and never names the service or a provider. The hub
