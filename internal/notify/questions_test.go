@@ -904,10 +904,8 @@ func TestPacedSettings(t *testing.T) {
 				if err := r.svc.Apply(context.Background(), u); err != nil {
 					t.Fatal(err)
 				}
-				for range 3 {
-					r.clock.Advance(time.Minute)
-					r.settle(t)
-				}
+				r.clock.Advance(time.Minute) // one pace: what was decided against gave its token back
+				r.settle(t)
 				ns, cs := r.ch.Sent(), r.ch.Cards()
 				switch change {
 				case "enabled", "needs_you":
@@ -1171,8 +1169,19 @@ func TestSendTimeMatrix(t *testing.T) {
 						t.Fatalf("its first card: %q", got)
 					}
 				case went:
-					if len(newSent) != 0 {
-						t.Fatalf("%d messages after the question went: %+v", len(newSent), newSent)
+					// The rest of its cards (all of a broader mode's alert's),
+					// quiet: none lost.
+					want := 1
+					if w.multi && c.mode == ModeEverything {
+						want = 2
+					}
+					if len(newSent) != 0 || len(newCards) != want {
+						t.Fatalf("after the question went: %d messages, %d cards, want %d", len(newSent), len(newCards), want)
+					}
+					for _, ref := range newCards {
+						if !r.ch.SentCard(ref).Quiet {
+							t.Fatal("a card rang after the question went")
+						}
 					}
 				case mode == ModeEverything:
 					if len(newSent) != 1 || newSent[0].Body != "" {

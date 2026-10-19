@@ -1002,6 +1002,7 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 		// H3D-1: the last moment before it goes: a question whose form
 		// changed while it waited (the mode, replies) goes back to the loop.
 		if ok, back := s.goes(a); !ok {
+			s.lim.refund() // no call made: its form goes at once
 			if back {
 				s.handBack(a)
 			}

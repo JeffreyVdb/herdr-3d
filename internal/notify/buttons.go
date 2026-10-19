@@ -775,6 +775,7 @@ func (s *Service) openCards(ctx context.Context, a Alert) (sent, back bool) {
 		goes := false
 		err := s.call(ctx, func(ctx context.Context) error {
 			if goes, back = s.cardGoes(a, i); !goes {
+				s.lim.refund() // no call made
 				return nil
 			}
 			c.Quiet = !a.Ring || i > 0 || s.quiet() // else the notification rang already
