@@ -1,5 +1,5 @@
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare } from '../net/protocol';
+import type { CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePresetCheckAck, HirePrepare } from '../net/protocol';
 import {
   baseText,
   capacityView,
@@ -22,7 +22,7 @@ import {
 import { labelsOf, modelEntries, modelMatches, type ModelEntry, type ModelLabels } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
 import { isComplete, levelChipText, levelProblem, preselectLevel, type TaskLevelId } from '../world/taskLevels';
-import { exactProblem, instructionsBlocker, pickExact, presetChoiceText, type ExactProblem } from '../world/hirePresets';
+import { exactProblem, instructionsBlocker, nudgeWanted, pickExact, presetChoiceText, type ExactProblem } from '../world/hirePresets';
 import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
@@ -112,7 +112,7 @@ export interface HirePresetSeed {
   effort: string;
   /** Images of the first task left out (a preset keeps text only). */
   imagesLeftOut: number;
-  /** #95: the form's "Add herdr hiring instructions" (only a form from a preset has one; absent: off). */
+  /** #95: the form's "Add herdr hiring instructions" (#117: every form has one, on a bridge that adds them; absent: off). */
   instructions?: boolean;
 }
 
@@ -154,6 +154,9 @@ export interface LevelChip {
 
 export type HireState = 'preparing' | 'ready' | 'hiring' | 'failed';
 
+/** #117: the question a plain hire asks, with the box off, when the classifier says the first task starts other agents. */
+export const HIRE_ASK_TEXT = 'This task starts other agents (workers or subagents). Add herdr hiring instructions so they get their own workspace on this floor?';
+
 /** What the hire dialog shows (test hook). */
 export interface HireSummary {
   kind: 'hire';
@@ -179,10 +182,12 @@ export interface HireSummary {
   /** #93: the form came from a hire preset: which, its saved choice, and what of that choice cannot be hired now (null: all of it can). */
   preset?: { id: string; name: string; saved: { harness: string; model: string; effort: string }; problem: ExactProblem | null };
   /**
-   * #95: the form's "Add herdr hiring instructions" (a form from a preset, on a bridge that adds them): ticked or not for
+   * #95: the form's "Add herdr hiring instructions" (#117: any form, on a bridge that adds them): ticked or not for
    * this hire, the exact lines hire.prepare gave for this floor, and the first prompt's bytes with them while ticked.
    */
   instructions?: { on: boolean; lines: string; bytes: number };
+  /** #117: the question the hire waits on (the classifier said the task starts other agents, the box was off); absent when none is open. */
+  asking?: true;
 }
 
 /** The worktree option as shown (null: hidden, the folder is no git repo). */
@@ -452,7 +457,9 @@ export class HireDialog {
   private readonly actions = h('div', { class: 'dd-actions' });
   /** What must be seen before pressing Hire (a failed fetch, the caps, a taken desk): by the buttons, never scrolled away. */
   private readonly notices = h('div', { class: 'dd-notices' });
-  private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.statusEl, this.alertEl, this.actions);
+  /** #117: the question a plain hire asks before it hires (below the notices, by the buttons). */
+  private readonly askEl = h('div', { class: 'dd-asking' });
+  private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.askEl, this.statusEl, this.alertEl, this.actions);
   private floor = '';
   private desk = 0;
   private prefill: HirePrefill = {};
@@ -486,6 +493,8 @@ export class HireDialog {
   private uploadFailed = false;
   /** #108: the opening (`gen`) whose Hire resolves and reviews its first task now: nobody is hired yet, so closing hires nobody. */
   private reviewing = -1;
+  /** #117: `reviewing` is the classifier's check (not the secrets review): what the toast says on Esc. */
+  private classifying = false;
   /** The label the user typed (the prepared name is only a default), restored over the prepared one. */
   private typedLabel: string | null = null;
   /** The model filter of a long list; a harness switch clears it. */
@@ -501,6 +510,13 @@ export class HireDialog {
   private bytesEl: HTMLElement | null = null;
   /** #95: "What's added" stays open across a re-render of the options. */
   private linesOpen = false;
+  /**
+   * #117: the question open in the dialog (the classifier said the first task starts other agents, the box was off): what
+   * the hire needs to go on with either answer, and the form it was asked about (`key`: a change to it drops the question).
+   */
+  private asking: { gen: number; key: string; go: (withLines: boolean) => void } | null = null;
+  /** #117: per desk draft, the first task "Hire without" was answered for: not asked again for exactly that text. */
+  private readonly declined = new Map<string, string>();
   /** #210: holds the desk, uploads, sends `worker.hire`: the same for a hire waited for here and one in the background. */
   private readonly hires: HireCoordinator;
   /** This dialog among others (a hire's key is the dialog and its generation). */
@@ -536,13 +552,28 @@ export class HireDialog {
     // A late answer (a prepare, or a hire sent before Esc) is for a dialog that is gone: it never touches the next one.
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) this.gen++;
+      this.asking = null;
+      this.askEl.replaceChildren();
       // An enlarged image is nested in this dialog: it goes with it (it holds a window key listener).
       this.editor.closePreview();
     });
-    this.dialog.addEventListener('cancel', () => {
+    this.dialog.addEventListener('cancel', (e) => {
+      // #117: Esc on the question goes back to the form, keeping the task; nobody is hired.
+      if (this.asking) {
+        e.preventDefault();
+        this.asking = null;
+        this.renderActions();
+        this.setStatus('Not hired: the first task is still here.');
+        this.editor.focus();
+        return;
+      }
       // Esc while the hire is on its way: the hire still happens; the dialog just goes. (#108: not before its first task
       // was reviewed: then nobody is hired.)
-      if (this.state === 'hiring') this.host.toast(this.reviewing === this.gen ? 'Not hired: it was closed before its first task was checked for secrets.' : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
+      if (this.state === 'hiring') {
+        const unsent = this.reviewing === this.gen;
+        const why = this.classifying ? 'checked' : 'checked for secrets';
+        this.host.toast(unsent ? `Not hired: it was closed before its first task was ${why}.` : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
+      }
     });
     // #51: typed text or a consequential choice in here: only the close button and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
@@ -594,6 +625,8 @@ export class HireDialog {
     this.level = null;
     this.exact = prefill.preset && prefill.choice ? { ...prefill.preset, saved: { ...prefill.choice } } : null;
     this.addLines = this.exact?.instructions === true;
+    this.asking = null;
+    this.askEl.replaceChildren();
     this.linesOpen = false;
     this.uploadFailed = false;
     // The desk's composer draft (images too) if it is still in memory, else the text storage kept; a first task handed in starts a draft of its own.
@@ -892,6 +925,7 @@ export class HireDialog {
     if (this.state === 'preparing') return 'Waiting for herdr-world…';
     if (this.state === 'failed') return this.statusText || 'herdr-world could not prepare the hire.';
     if (this.state === 'hiring') return 'The hire is on its way.';
+    if (this.asking) return 'Answer the question above first.';
     const taken = this.takenBy();
     if (taken) return taken.why;
     if (this.host.unsupported('worker.hire')) return failureText('worker.hire', 'unknown_command', '');
@@ -1100,11 +1134,11 @@ export class HireDialog {
 
   /**
    * #95: the herdr hiring instructions this hire would add (hire.prepare's, for this floor), null when the form has no
-   * box: not from a preset, or a bridge that does not add them (nothing sends it the flag).
+   * box: a bridge that does not add them (nothing sends it the flag). #117: a plain form has the box too, off.
    */
   private instructionLines(): string | null {
     const lines = this.prep?.herdr_instructions;
-    return this.exact && lines && this.host.store.hirePresets?.instructions ? lines : null;
+    return lines && this.host.store.hirePresets?.instructions ? lines : null;
   }
 
   /** #95: the first prompt's bytes as the bridge sends it with the lines: the task, a blank line, the lines. */
@@ -1118,7 +1152,8 @@ export class HireDialog {
   }
 
   /**
-   * #95: the per-hire "Add herdr hiring instructions" under the preset note, ticked to match the preset; while ticked,
+   * #95: the per-hire "Add herdr hiring instructions" under the preset note (#117: or first, on a plain form), ticked to
+   * match the preset (a plain form: off); while ticked,
    * "What's added" shows the exact lines with this floor's id, and the byte count includes them.
    */
   private instructionsControl(lines: string): HTMLElement {
@@ -1130,7 +1165,7 @@ export class HireDialog {
     });
     const saved = this.exact?.instructions === true;
     const hint =
-      this.addLines !== saved
+      this.exact && this.addLines !== saved
         ? `${this.addLines ? 'On' : 'Off'} for this hire only; the preset has it ${saved ? 'on' : 'off'}.`
         : this.addLines
           ? 'Each agent this worker starts gets its own herdr workspace or tab, tagged with this floor.'
@@ -1254,6 +1289,7 @@ export class HireDialog {
   }
 
   private renderActions(): void {
+    this.renderAsk();
     const blocker = this.blocker();
     // #95: the byte count with the lines follows the typing (a re-render of the options never runs for it).
     const lines = this.bytesEl && this.instructionLines();
@@ -1359,6 +1395,12 @@ export class HireDialog {
    */
   private async hire(manual = false): Promise<void> {
     if (this.state !== 'ready' || !this.prep) return;
+    // #117: the question is open: it is answered first (an Enter or a click on Hire never answers it).
+    this.renderAsk();
+    if (this.asking) {
+      this.focusAsk();
+      return;
+    }
     const blocker = this.blocker();
     if (blocker) {
       this.setStatus(blocker, true);
@@ -1387,6 +1429,7 @@ export class HireDialog {
     this.uploadFailed = false;
     const waiting = args.prompt ? doc.snapshot().images.filter((i) => i.status === 'pending' || i.status === 'uploading').length : 0;
     const flow = this.host.secrets;
+    const still = () => this.dialog.open && gen === this.gen;
     let reviewed: { text: string; revision: number; secrets: { flow: PromptSecretsFlow; req: { key: string; text: string; target: string }; go: Go } } | null = null;
     if (manual && !args.prompt) {
       this.state = 'ready';
@@ -1398,7 +1441,6 @@ export class HireDialog {
     if (flow && (flow.on || manual) && args.prompt) {
       this.setStatus(waiting ? `Uploading ${waiting === 1 ? 'the image' : `${waiting} images`}, then looking for secrets in the first task…` : manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the first task…');
       this.render();
-      const still = () => this.dialog.open && gen === this.gen;
       this.reviewing = gen;
       const res = await doc.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES - added });
       if (!still()) return;
@@ -1426,7 +1468,108 @@ export class HireDialog {
       }
       reviewed = { text: res.text, revision: res.revision, secrets: { flow, req, go: out } };
     }
+    // #117: a plain form with the box off: does the first task start other agents? Only a "yes" in time stops the hire, to ask.
+    if (args.prompt && this.askWanted()) {
+      this.setStatus('Checking whether the first task starts other agents…');
+      this.render();
+      this.reviewing = gen;
+      this.classifying = true;
+      const yes = await this.delegates(reviewed?.text ?? args.prompt, reviewed?.secrets.go.secrets);
+      this.classifying = false;
+      if (this.reviewing === gen) this.reviewing = -1;
+      if (!still()) return;
+      if (yes) {
+        this.state = 'ready';
+        this.resolveForm();
+        this.setStatus('');
+        this.render();
+        this.ask(gen, (withLines) => {
+          const lines = this.instructionLines();
+          let sending = args;
+          let extra = added;
+          if (withLines && lines !== null) {
+            // The box as the question answered it, before anything that can stop the hire, so the form says what was asked.
+            this.addLines = true;
+            const blocked = instructionsBlocker(reviewed?.text ?? this.f.prompt, lines);
+            if (blocked) {
+              this.setStatus(blocked, true);
+              this.render();
+              return;
+            }
+            sending = { ...args, herdr_instructions: true };
+            extra = 2 + new TextEncoder().encode(lines).length;
+          } else this.declined.set(this.draftKey(), this.f.prompt);
+          this.state = 'hiring';
+          this.hiringText = null;
+          this.uploadFailed = false;
+          this.render();
+          void this.hireNow(floor, desk, sending, who, gen, revision, opening, background, sent, doc, extra, waiting, reviewed);
+        });
+        return;
+      }
+      this.setStatus('');
+    }
     return this.hireNow(floor, desk, args, who, gen, revision, opening, background, sent, doc, added, waiting, reviewed);
+  }
+
+  /**
+   * #117: whether Hire asks the classifier if the first task starts other agents (`nudgeWanted`, as the preset editor's
+   * Save): a plain form (a preset's own choice is the player's), on a bridge with the box and the check, the classifier
+   * ready, the box off, and the player did not already answer "Hire without" for exactly this text.
+   */
+  private askWanted(): boolean {
+    if (this.exact || this.instructionLines() === null) return false;
+    const supported = !!this.host.store.hirePresets?.instructions && !this.host.unsupported('hire_preset.check');
+    const ready = supported && this.host.store.ai?.state?.classifier.state === 'ready';
+    return nudgeWanted({ prompt: this.f.prompt, instructions: this.addLines }, { supported, ready, dismissed: this.declined.get(this.draftKey()) ?? null });
+  }
+
+  /** #117: the classifier's say on the first task (the text the review saw, with its `secrets`): false for anything but a "yes" (a refusal, a timeout, an older bridge's `unknown_command`). Never logged. */
+  private async delegates(prompt: string, secrets: Go['secrets']): Promise<boolean> {
+    const r = await this.host.send('hire_preset.check', { prompt, ...(secrets ? { secrets } : {}) });
+    return r.ok && (r.data as HirePresetCheckAck | undefined)?.delegates === true;
+  }
+
+  /** The form the question was asked about: any change to it takes the question back (`go` would hire something else). */
+  private askKey(): string {
+    return JSON.stringify([this.floor, this.desk, this.f, this.addLines]);
+  }
+
+  /** #117: the question, in the dialog by the buttons: "Hire with instructions" / "Hire without"; focus goes to the first only now, after the answer arrived. */
+  private ask(gen: number, go: (withLines: boolean) => void): void {
+    this.asking = { gen, key: this.askKey(), go };
+    const without = h('button', { type: 'button', class: 'btn btn--sm', 'data-key': 'ask-without', title: 'Hire as typed; this text is not asked about again', onclick: () => this.answer(false) }, 'Hire without');
+    const withLines = h('button', { type: 'button', class: 'btn btn--sm btn--primary', 'data-key': 'ask-with', onclick: () => this.answer(true) }, 'Hire with instructions');
+    // The key held down since Hire (Enter repeats) must not land here as an answer: only a fresh press does.
+    for (const b of [without, withLines])
+      b.addEventListener('keydown', (e) => {
+        if (e.repeat) e.preventDefault();
+      });
+    this.askEl.replaceChildren(
+      h('div', { class: 'dd-callout pp-confirm', role: 'alert', 'data-hook': 'hire-ask' }, h('p', {}, HIRE_ASK_TEXT), h('div', { class: 'pp-confirm-actions' }, without, withLines)),
+    );
+    this.renderActions();
+    this.focusAsk();
+  }
+
+  private focusAsk(): void {
+    this.askEl.querySelector<HTMLElement>('[data-key="ask-with"]')?.focus();
+  }
+
+  private answer(withLines: boolean): void {
+    this.renderAsk();
+    const a = this.asking;
+    if (!a) return;
+    this.asking = null;
+    this.renderAsk();
+    a.go(withLines);
+  }
+
+  /** The question goes when its form changed (typing, a pick, the box), or its dialog did. */
+  private renderAsk(): void {
+    const a = this.asking;
+    if (a && (a.gen !== this.gen || !this.dialog.open || a.key !== this.askKey())) this.asking = null;
+    if (!this.asking) this.askEl.replaceChildren();
   }
 
   /** The hire, once its first task was reviewed (`reviewed`: its resolved text and review; null: as the form has it). */
@@ -1568,6 +1711,7 @@ export class HireDialog {
       images: this.editor.draft.snapshot().images.map((i) => ({ n: i.n, name: i.name, status: i.status, path: i.path })),
       ...(this.levelMode ? { level: { mode: this.levelMode, picked: this.level, chips: this.levelChips() } } : {}),
       ...(this.exact ? { preset: { id: this.exact.id, name: this.exact.name, saved: { ...this.exact.saved }, problem: this.exactProblem() } } : {}),
+      ...(this.asking ? { asking: true as const } : {}),
       ...(this.instructionLines() !== null ? { instructions: { on: this.addLines, lines: this.instructionLines() as string, bytes: this.bytesWithLines(this.instructionLines() as string) } } : {}),
     };
   }
