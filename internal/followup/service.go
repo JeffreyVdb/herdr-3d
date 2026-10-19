@@ -235,6 +235,22 @@ func (s *Service) Detect(ctx context.Context, text string) (*Result, error) {
 	return run(ctx, s.opts.Roles.Classifier(), s.opts.Roles.LLM(), text, s.Threshold(), s.Ready, s.reasoning(ctx))
 }
 
+// Scored is Detect for a score the caller already has (#66: one ClassifyMany
+// scores this feature's gate and the schedule suggestions'): below the
+// threshold no call, else the extraction, while the feature is ready.
+func (s *Service) Scored(ctx context.Context, text string, score float64) (*Result, error) {
+	res := &Result{Score: score}
+	if score < s.Threshold() {
+		return res, nil
+	}
+	if !s.Ready() {
+		return nil, ai.ErrNotReady
+	}
+	res.Flag = true
+	res.Extraction = Extract(ctx, s.opts.Roles.LLM(), text, s.reasoning(ctx))
+	return res, nil
+}
+
 // Retry extracts a flagged message's questions again (worker.retry_followup,
 // #60): no classifier, only while the feature is ready.
 func (s *Service) Retry(ctx context.Context, text string) (Extraction, error) {
