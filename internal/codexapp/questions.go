@@ -81,6 +81,9 @@ type Turn struct {
 	ID     string `json:"id"`
 	Status string `json:"status"` // inProgress, completed, interrupted, failed
 	Items  []Item `json:"items"`
+	// CompletedAt is when it ended (unix seconds; 0: under way, or not
+	// given).
+	CompletedAt int64 `json:"completedAt"`
 }
 
 // TurnInProgress is a running turn's status.

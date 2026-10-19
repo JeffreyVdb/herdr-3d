@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -74,9 +75,13 @@ type kid struct {
 	live string
 	ran  bool // seen running on this server; an idle before it says nothing
 	// end is the end of its latest turn the server showed (completed,
-	// interrupted, shut_down; "": none since it last ran), at endAt.
+	// interrupted, shut_down; "": none since it last ran), at endAt, of
+	// the turn endTurn ("": not named). endStale: shown by a join before
+	// the last loss, not read since (a turn may have run meanwhile).
 	end           string
 	endAt         int64
+	endTurn       string
+	endStale      bool
 	started, last int64
 	seq           int
 	settle        time.Time // an idle with no end yet: read its last turn then
@@ -145,13 +150,15 @@ func (s *Source) Lost(session string) {
 }
 
 // forget drops every live claim (running, idle, a pending settle): they
-// were the connection's that ended. The ends it showed stay.
+// were the connection's that ended. The ends it showed stay, unverified
+// until the next join's recovery reads them (verify).
 func (sv *server) forget() {
 	for _, k := range sv.kids {
 		if k.live == liveRunning || k.live == liveIdle {
 			k.live = ""
 		}
 		k.settle = time.Time{}
+		k.endStale = k.end != ""
 	}
 }
 
@@ -367,8 +374,60 @@ func (o *observer) recover() {
 			}
 		})
 	}
+	o.verify()
 	// Every child's status is the server's now: its live claims stand.
 	o.apply(func(sv *server) { sv.attached, sv.recovering = true, false })
+}
+
+// verify reads the last turn of each child whose end was shown before the
+// join was lost and that is not running now (recovery, before its claims
+// stand): a turn may have run and ended, or still be under way, while no
+// join saw it. Bounded to the ends this bridge itself showed; never a read
+// for any other child.
+func (o *observer) verify() {
+	var ids []string
+	o.src.mu.Lock()
+	if b := o.src.books[o.session]; b != nil && b.srv != nil && b.srv.token == o.token {
+		for id, k := range b.srv.kids {
+			if k.endStale && k.live != liveRunning {
+				ids = append(ids, id)
+			}
+		}
+	}
+	o.src.mu.Unlock()
+	slices.Sort(ids)
+	for _, id := range ids {
+		ctx, cancel := o.call()
+		t, err := o.r.LastTurn(ctx, id)
+		cancel()
+		o.apply(func(sv *server) {
+			if k := sv.kids[id]; k != nil && k.endStale {
+				k.reread(t, err)
+			}
+		})
+	}
+}
+
+// reread takes the last turn read for an end carried over a loss: the
+// same turn (or none, or a refusal: an ephemeral child, a legacy one not
+// loaded) keeps the end as it was; a newer one that ended is the end, at
+// its time; one under way supersedes it (no end: the rollouts' or none,
+// by combine).
+func (k *kid) reread(t *codexapp.Turn, err error) {
+	k.endStale = false
+	switch {
+	case err != nil || t == nil:
+	case t.Status == codexapp.TurnInProgress:
+		k.end, k.endAt, k.endTurn = "", 0, ""
+	case k.endTurn != "" && t.ID == k.endTurn:
+	case k.endTurn == "" && (endOf(t.Status) == k.end || k.end == proto.ChildShutDown) &&
+		(k.endAt == 0 || t.CompletedAt*1000 <= k.endAt+1000):
+		// Not named (an interrupt's, a close's): a turn ended the same way
+		// (or any, before a close) and no later than it, give or take its
+		// time's whole second, is its turn.
+	default:
+		k.turnEnded(t.ID, t.Status, t.CompletedAt*1000)
+	}
 }
 
 // chained reports whether id's parent chain, through the listed threads
@@ -422,7 +481,7 @@ func (o *observer) handle(n note) {
 		if o.known(cn.ThreadID) {
 			o.apply(func(sv *server) {
 				if k := sv.kids[cn.ThreadID]; k != nil {
-					k.turnEnded(cn.Turn.Status, cn.Turn.CompletedAt*1000)
+					k.turnEnded(cn.Turn.ID, cn.Turn.Status, cn.Turn.CompletedAt*1000)
 				}
 			})
 		}
@@ -496,9 +555,9 @@ func (o *observer) item(cn codexapp.ChildNote, now time.Time) {
 						k.running(0)
 					}
 				case codexapp.ActivityCompleted:
-					k.ended(proto.ChildCompleted, at)
+					k.ended(proto.ChildCompleted, at, strings.TrimPrefix(it.ID, activityCompletedPrefix))
 				case codexapp.ActivityInterrupted:
-					k.ended(proto.ChildInterrupted, at)
+					k.ended(proto.ChildInterrupted, at, "")
 				}
 			case codexapp.ItemCollabToolCall:
 				if it.Status != "completed" {
@@ -513,7 +572,7 @@ func (o *observer) item(cn codexapp.ChildNote, now time.Time) {
 						k.running(0)
 					}
 				case codexapp.ToolCloseAgent:
-					k.ended(proto.ChildShutDown, at)
+					k.ended(proto.ChildShutDown, at, "")
 				}
 			}
 		}
@@ -660,7 +719,7 @@ func (o *observer) settle() {
 			}
 			k.settle = time.Time{}
 			if err == nil && t != nil && t.Status != codexapp.TurnInProgress {
-				k.turnEnded(t.Status, 0)
+				k.turnEnded(t.ID, t.Status, 0)
 				return
 			}
 			k.live = liveIdle
@@ -722,14 +781,18 @@ func (k *kid) status(st string, recovered bool) {
 // running: a turn of it runs (again): its earlier end is over.
 func (k *kid) running(at int64) {
 	k.live, k.ran, k.end, k.endAt, k.settle = liveRunning, true, "", 0, time.Time{}
+	k.endTurn, k.endStale = "", false
 	if at > 0 && (k.started == 0 || at < k.started) {
 		k.started = at
 	}
 }
 
-// ended: its turn ended as state at at (ms; 0: not shown).
-func (k *kid) ended(state string, at int64) {
+// ended: its turn ended as state at at (ms; 0: not shown); turn names it
+// ("": not named, the turn a named end before it named, if any: no turn
+// ran between them).
+func (k *kid) ended(state string, at int64, turn string) {
 	k.end, k.endAt, k.settle = state, at, time.Time{}
+	k.endTurn, k.endStale = cmp.Or(turn, k.endTurn), false
 	k.ran = true
 	if k.live != liveNotLoaded {
 		k.live = liveIdle
@@ -737,16 +800,28 @@ func (k *kid) ended(state string, at int64) {
 	k.last = max(k.last, at)
 }
 
-// turnEnded takes a turn's end status (completed; interrupted or failed:
-// interrupted, #22 having no failed state).
-func (k *kid) turnEnded(status string, at int64) {
-	switch status {
-	case codexapp.TurnCompleted:
-		k.ended(proto.ChildCompleted, at)
-	case codexapp.TurnInterrupted, codexapp.TurnFailed:
-		k.ended(proto.ChildInterrupted, at)
+// turnEnded takes turn's end status.
+func (k *kid) turnEnded(turn, status string, at int64) {
+	if state := endOf(status); state != "" {
+		k.ended(state, at, turn)
 	}
 }
+
+// endOf is a turn status's end (completed; interrupted or failed:
+// interrupted, #22 having no failed state; "": not an end).
+func endOf(status string) string {
+	switch status {
+	case codexapp.TurnCompleted:
+		return proto.ChildCompleted
+	case codexapp.TurnInterrupted, codexapp.TurnFailed:
+		return proto.ChildInterrupted
+	}
+	return ""
+}
+
+// activityCompletedPrefix starts a subAgentActivity completed's id; the
+// child's turn id follows.
+const activityCompletedPrefix = "subagent-completed-"
 
 // combine is the session's evidence: the rollouts' (derive), and while the
 // server owns the session, its word on each child's state.

@@ -374,8 +374,42 @@ func TestServerLossAndRecovery(t *testing.T) {
 	s.join()
 	s.state("run", proto.ChildUnknown, proto.ChildFromAppServer)
 	s.state("done", proto.ChildCompleted, "")
-	if s.r.count("last ") != 0 {
-		t.Errorf("recovery read turns: %v", s.r.calls)
+	// A recovery reads the last turn only of a child whose end was shown
+	// before the loss (a turn may have run meanwhile): done, at each join
+	// (none: its end stands); never run or new, which had none.
+	if s.r.count("last done") != 2 || s.r.count("last ") != 2 {
+		t.Errorf("recovery turn reads: %v", s.r.calls)
+	}
+}
+
+// R1: an end shown before a loss is not the state once a follow-up ran
+// and was interrupted while no join saw it. The recovery reads its last
+// turn; a newer end on disk then gives its time.
+func TestServerMissedFollowupEnd(t *testing.T) {
+	s := newSrig(t)
+	s.join()
+	s.r.child("c", root, codexapp.ThreadActive, 1)
+	s.activity(root, "started", "c", "spawn", 1000)
+	s.turn("turn/completed", "c", codexapp.TurnCompleted, 2)
+	s.state("c", proto.ChildCompleted, "")
+	s.src.Lost(root)
+	s.settle()
+	// While disconnected, a follow-up runs and is interrupted.
+	s.r.setStatus("c", codexapp.ThreadIdle)
+	s.r.mu.Lock()
+	s.r.last["c"] = &codexapp.Turn{ID: "new-turn", Status: codexapp.TurnInterrupted}
+	s.r.mu.Unlock()
+	s.join()
+	s.state("c", proto.ChildInterrupted, proto.ChildFromAppServer)
+	s.src.mu.Lock()
+	k := s.src.books[root].srv.kids["c"]
+	state, at, _ := decide(childagents.Evidence{State: proto.ChildInterrupted, EndedAt: 4000}, k, true)
+	s.src.mu.Unlock()
+	if state != proto.ChildInterrupted || at != 4000 {
+		t.Fatalf("after missed follow-up, got state=%s endedAt=%d; current server turn is interrupted and rollout end=4000; last-turn reads=%d", state, at, s.r.count("last "))
+	}
+	if n := s.r.count("last c"); n != 1 {
+		t.Errorf("%d turn reads: %v", n, s.r.calls)
 	}
 }
 
