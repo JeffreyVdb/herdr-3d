@@ -5506,16 +5506,24 @@ while it is off.
   message: `<name> · <Question | Follow-up | Permission | Trust folder | Report request>`, each question with its
   options (a menu: what it asks, what it is about, its choices; a report: its request, scrubbed, at most 1500
   characters), then "Replies are off: answer in the game." (or, `replies` on, that a reply is typed into the worker);
-  a secret ask's says only "A question waits in the game (its answer is secret)." An alert waiting (parked by the
-  send budget, queued, between attempts) when the mode changes is checked again and dropped unless it is a question.
+  a secret ask's says only "A question waits in the game (its answer is secret)." Anything waiting (an alert or a
+  question's cards parked by the send budget, queued, between attempts, a card waiting for its pace) is checked again
+  as it goes: notifications, `events.needs_you` or the channel off, it is dropped; the mode changed, an alert that is
+  not a question is dropped; a question goes in the form the mode and `replies` say then (its cards, its text with
+  that ending, or the broader mode's alert and its cards).
 - **Once per episode**: an episode is the worker, needs-you or done, and (H3D-1) what it is about, in either mode: an
   `ask` its `tool_use_id`, a `followup` its turn, a report request its `input_required` (a new one once the old was
   resolved), a wrap-up its `armed_at`, an orchestrator over its cap its pass, a bare `blocked` status its
-  `status_since` (the blocked spell), done its `status_since`; a screen menu its operation (#106's identity) under
+  `status_since` (the blocked spell), done its `status_since`; a screen menu the decision it asks for (#106's
+  operation without its blocked spell: its kind, its choices' count and its lines) and the native call it was first
+  known for (a call known later is the same; another call under the same operation is a new decision), under
   Questions only, and in either mode for a worker whose needs-you is not its blocked status (a report request, a cap,
-  a wrap-up; a bare block's menu belongs to its spell's episode). The bridge knows a worker's latest 16 episodes, so
-  the same unresolved question seen again with another `status_since`, activity line or redraw, or after another
-  question, sends nothing. (The game's inbox still names its rows by `since`.)
+  a wrap-up; a bare block's menu belongs to its spell's episode). A menu asked again with the same screen and no
+  native call known cannot be told from the same one seen again, and sends nothing. The bridge never forgets an
+  episode a worker still shows (its ask, follow-up, report request, stuck wrap-up, cap, menu) and knows its latest 16
+  others, so the same unresolved question seen again with another `status_since`, activity line or redraw, or after
+  other questions, sends nothing; a menu episode that notified, seen again in another blocked spell, gets its card
+  back, silent. (The game's inbox still names its rows by `since`.)
   What the bridge sees of a worker first (its start, a herdr session back) is known without a
   message, so a restart sends nothing old; so is an episode that starts while the feature, its event or the channel
   is off, or the floor sleeps: switching on later, or a floor waking, sends nothing old either.
@@ -5661,9 +5669,10 @@ while it is off.
   (`answered`, `unresolved`, `replaced`, `gone`, `replies_off`; `failed`, an error: not delivered): where its identity
   was from, whether its approving choices were withheld, how often its hash changed under one operation, how many
   operations its blocked spell asked about; `notify.limit` `{"id", "kind": "alert" | "cards", "cause": "cooldown" |
-  "budget" | "worker_cards", "coalesced"?, "outcome": "sent" | "dropped"}` when something the send budget held goes
-  or is dropped, with how many later states it stood for. Never a message's text, an answer, a label, a command, a
-  hash, a code, a token or a Telegram id.
+  "budget" | "worker_cards", "coalesced"?, "outcome": "sent" | "dropped" | "returned"}` when something the send budget
+  held goes or is dropped, with how many later states it stood for (H3D-1: `returned`, a question's cards that could no
+  longer be its message, `replies` or the mode changed, handed back to go as they say now). Never a message's text,
+  an answer, a label, a command, a hash, a code, a token or a Telegram id.
 
 ### Host stats
 
