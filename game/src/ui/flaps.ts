@@ -1,8 +1,8 @@
 /**
  * #119: the overview's split-flap motion, one clock for every line on the page. A now line that waits for the model's
- * first summary is a row of flap cells turning through `░▒▓█` (`skeleton`); a model's line that arrives resolves left to
- * right, each character turning through a few glyphs before it settles on its own letter (`resolve`), like a
- * departures board.
+ * first summary is a row of flap cells turning through the board's letters and figures (`skeleton`); a model's line that
+ * arrives resolves left to right, each character turning through a few of them before it settles on its own letter
+ * (`resolve`), like a departures board. (`░▒▓█` read as a hatched stripe at a line's size, not as flaps.)
  *
  * The cells are the page's DOM, kept across the page's refreshes (the overview keeps the line's element): a job holds
  * its cells and goes on whatever else of the row is rebuilt. A glyph is the cell's `data-g`, drawn by CSS
@@ -14,7 +14,8 @@
  * asks `calm()` itself: a resolve shows its text at once, and a running job ends where it is.
  */
 
-export const FLAP_GLYPHS = ['░', '▒', '▓', '█'] as const;
+/** What a flap turns through: the board's capitals and figures (the data font has them all; never braille). */
+export const FLAP_GLYPHS: readonly string[] = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'];
 /** A skeleton cell turns this often. */
 const SKELETON_MS = 110;
 /** A resolving cell turns this often. */
@@ -45,8 +46,14 @@ interface Job {
   finish(): void;
 }
 
-/** A glyph for cell `i` at turn `n`: it changes every turn, cells apart from their neighbours. */
-const glyph = (i: number, n: number): string => FLAP_GLYPHS[(i * 3 + n + (n >> 1) + ((i * n) & 1)) % FLAP_GLYPHS.length] as string;
+/** A glyph for cell `i` at turn `n`: it changes every turn, cells apart from their neighbours (a small integer hash). */
+function glyph(i: number, n: number): string {
+  let x = Math.imul(i + 1, 0x9e3779b1) ^ Math.imul(n + 1, 0x85ebca6b);
+  x ^= x >>> 15;
+  x = Math.imul(x, 0x2c1b3c6d);
+  x ^= x >>> 12;
+  return FLAP_GLYPHS[(x >>> 0) % FLAP_GLYPHS.length] as string;
+}
 
 function setGlyph(cell: HTMLElement, g: string): void {
   if (cell.dataset.g !== g) cell.dataset.g = g;
@@ -87,7 +94,10 @@ export class FlapClock {
         const n = Math.floor((t - t0) / SKELETON_MS);
         if (n !== turn) {
           turn = n;
-          cells.forEach((c, i) => setGlyph(c, glyph(i, n)));
+          // Two cells in five turn each time, in bands that travel left to right across the line.
+          cells.forEach((c, i) => {
+            if ((((n - i) % 5) + 5) % 5 < 2) setGlyph(c, glyph(i, n));
+          });
         }
         return true;
       },

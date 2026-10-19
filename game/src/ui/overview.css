@@ -1000,10 +1000,28 @@
   min-height: 19px;
   min-height: 1lh;
 }
+/* The text takes the line's room, so the slot is at the line's end (its states line up down the board); the slot always
+   has a line's height and baseline (an empty one too: the zero-width space). */
+.ov-task > .ov-text,
+.ov-now > .ov-text {
+  flex: 1 1 auto;
+}
 .ov-task > .ov-ai-meta,
 .ov-now > .ov-ai-meta {
   justify-content: flex-end;
   min-width: 14ch;
+}
+.ov-task > .ov-ai-meta::before,
+.ov-now > .ov-ai-meta::before,
+.ov-now--loading::before {
+  content: '\200b';
+  width: 0;
+  margin-right: -8px;
+}
+/* A loading line's baseline is the text's, as it will be once the line arrives (the cells and the label have none of
+   the text's size). */
+.ov-now--loading::before {
+  margin-right: -7px;
 }
 /* The text is laid out the same flap by flap and once whole: no kerning or ligature across its letters' cells. */
 .ov-now-text {
@@ -1011,8 +1029,8 @@
   font-variant-ligatures: none;
 }
 
-/* #119: a now line waiting for the model's first summary: a row of flap cells at its first line, turning through ░▒▓█
-   (ui/flaps.ts), the header's tiles in small; cells that do not fit go to a second row that is never shown. */
+/* #119: a now line waiting for the model's first summary: a row of flap cells at its first line, turning through the
+   board's letters (ui/flaps.ts), the header's tiles in small; cells that do not fit go to a second row never shown. */
 .ov-line > .ov-flaprow {
   display: flex;
   flex: 1 1 auto;
@@ -1025,7 +1043,7 @@
 .ov-fc {
   position: relative;
   flex: none;
-  width: 10px;
+  width: 11px;
   height: 15px;
   border-radius: 2px;
   background: linear-gradient(to bottom, var(--ov-flap-top) 0 50%, var(--ov-flap-bottom) 50% 100%);
@@ -1038,14 +1056,13 @@
   inset: 0;
   display: grid;
   place-items: center;
-  color: color-mix(in srgb, var(--ov-accent) 78%, var(--ov-text-3));
+  color: var(--ov-text-2);
   font-family: var(--ov-mono);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
 }
 /* The hinge, over the glyph, as on the header's tiles. */
 .ov-fc::before,
-.ov-flapbar::before,
 .ov-busy > i::after {
   content: '';
   position: absolute;
@@ -1054,9 +1071,8 @@
   height: 1px;
   background: rgb(0 0 0 / 55%);
 }
-/* Calm: one still bar in the flap colours, saying what it is. */
+/* Calm: one still bar in the flap colours, saying what it is (no hinge: through its words it reads as struck out). */
 .ov-flapbar {
-  position: relative;
   display: flex;
   align-items: center;
   width: min(100%, 26em);
@@ -1487,10 +1503,13 @@
   .ov-line--status > .ov-ai-meta {
     flex-basis: 100%;
   }
-  /* #119: a phone keeps a smaller slot (an age, the busy mark, `summarizing`). */
-  .ov-task > .ov-ai-meta,
+  /* #119: a phone keeps smaller slots: the now line's for an age or `summarizing`, the task line's for the busy mark
+     (`AI waiting` grows it; a failure goes under the line). */
   .ov-now > .ov-ai-meta {
     min-width: 11ch;
+  }
+  .ov-task > .ov-ai-meta {
+    min-width: 3ch;
   }
   /* #232: the name and the model keep the most of the top line; the activity is its verb over its time, beside them. */
   .ov-row > .ov-since,
