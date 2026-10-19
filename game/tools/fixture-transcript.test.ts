@@ -184,3 +184,58 @@ describe('TranscriptSim', () => {
     expect([...older, ...items].map((it) => it.seq)).toEqual(ids.map((_, i) => i + 1));
   });
 });
+
+describe('TranscriptSim: #26 child targets', () => {
+  /** The children-nested fixture simulated: Nibble over Ada (running), Bell (idle) and Curie (completed, no transcript). */
+  function kids() {
+    const rec = loadFixture('children-nested');
+    const out: Msg[] = [];
+    const sim = new SimWorld(rec.snapshot as never, { stepMs: 100, now: () => 1_000_000, childEvents: rec.events as Msg[] });
+    let n = 0;
+    const cmd = (t: string, args: unknown) => {
+      const req_id = `r${++n}`;
+      sim.handle({ t, req_id, args }, (m) => out.push(m));
+      return out.find((m) => m.req_id === req_id) as Msg & { data?: Record<string, unknown>; code?: string };
+    };
+    const snap = sim.snapshot() as { world: { workers: Array<{ id: string; child_generation?: number }>; children?: Array<{ id: string; name?: string; generation: number; provider: string }> } };
+    const worker = snap.world.workers[0] as { id: string };
+    const child = (name: string) => {
+      const c = snap.world.children?.find((x) => x.name === name) as { id: string; generation: number; provider: string };
+      return { id: c.id, generation: c.generation, provider: c.provider };
+    };
+    return { sim, out, cmd, worker: worker.id, child, snap };
+  }
+
+  it('the world has the fixture’s children; a child’s watch is its own timeline beside the worker’s, its reads by its target', () => {
+    const r = kids();
+    expect(r.snap.world.children?.map((c) => c.name)).toEqual(['Ada', 'Bell', 'Curie']);
+    const ada = r.child('Ada');
+    expect(r.cmd('transcript.watch', { id: r.worker }).data?.pending).toBe(false);
+    const ack = watchAck(r.cmd('transcript.watch', { id: r.worker, child: ada }).data);
+    expect(ack).toMatchObject({ harness: 'codex', session: 'th-a', availability: 'available', pending: false, has_more: true });
+    expect(ack.items).toHaveLength(200);
+    const older = r.cmd('transcript.page', { id: r.worker, child: ada, before: ack.cursor });
+    expect((older.data?.items as TranscriptItem[])[0]?.kind).toBe('user');
+    expect(r.cmd('transcript.item', { id: r.worker, child: ada, item: ack.items[0]?.id }).data).toBeDefined();
+    // Live: a push to the child's watch carries its target.
+    r.cmd('sim.transcript', { id: r.worker, child: ada, items: [{ id: 'ada-new', seq: 999, ts: 0, kind: 'assistant', parts: [{ text: 'Done.' }] }] });
+    expect(r.out.at(-2)).toMatchObject({ t: 'transcript.items', id: r.worker, child: ada });
+    // Pending and unavailable say so; the worker's own watch is still one of four.
+    expect(r.cmd('transcript.watch', { id: r.worker, child: r.child('Curie') }).data).toMatchObject({ pending: true, availability: 'unavailable', items: [] });
+    expect(r.cmd('sim.transcripts', {}).data?.watches).toBe(3);
+  });
+
+  it('refuses a stale generation, another worker’s or provider’s row; a third child evicts the oldest; a replaced session closes it', () => {
+    const r = kids();
+    const ada = r.child('Ada');
+    expect(r.cmd('transcript.watch', { id: r.worker, child: { ...ada, generation: ada.generation + 1 } }).code).toBe('stale');
+    expect(r.cmd('transcript.watch', { id: r.worker, child: { ...ada, provider: 'claude' } }).code).toBe('not_found');
+    expect(r.cmd('transcript.watch', { id: r.worker, child: { ...ada, id: 'ch_nope' } }).code).toBe('not_found');
+    expect(r.cmd('transcript.watch', { id: r.worker, child: { id: ada.id } }).code).toBe('bad_request');
+    for (const name of ['Ada', 'Bell', 'Curie']) r.cmd('transcript.watch', { id: r.worker, child: r.child(name) });
+    expect(r.out.find((m) => m.t === 'transcript.closed')).toMatchObject({ id: r.worker, child: ada, reason: 'evicted' });
+    r.cmd('sim.child_session', { id: r.worker });
+    const closed = r.out.filter((m) => m.t === 'transcript.closed' && m.reason === 'session_changed');
+    expect(closed.map((m) => (m.child as { id: string }).id)).toEqual([r.child('Bell').id, r.child('Curie').id]);
+  });
+});

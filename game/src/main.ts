@@ -189,6 +189,8 @@ export interface H3DDebug {
    * arm a failure), `sim.codex_answer` (the terminal answers), `sim.codex_turn_end` (`t` names which; fixture server only).
    */
   simCodex(t: 'sim.codex' | 'sim.codex_answer' | 'sim.codex_turn_end', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
+  /** #26: the fixture simulator's children (`sim.child` upserts or removes one, `sim.child_session` replaces a worker's session; tools/fixture-children.ts). */
+  simChild(t: 'sim.child' | 'sim.child_session', args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #83: the fixture simulator's `sim.wrapup`: an armed worker's transcript reports `clean`, `blocked` (with a reason) or `none`. */
   simWrapUp(args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; code?: string }>;
   /** #106: the simulator moves a worker to a status (`sim.status`, a `worker.status` with a new `status_since`; fixture server only). */
@@ -509,6 +511,11 @@ const h3d: H3DDebug = {
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
   },
   simCodex: async (t, args) => {
+    if (!app) return { ok: false, code: 'not_started' };
+    const r = await app.client.request(t as CommandName, args as never);
+    return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };
+  },
+  simChild: async (t, args) => {
     if (!app) return { ok: false, code: 'not_started' };
     const r = await app.client.request(t as CommandName, args as never);
     return r.ok ? { ok: true, data: r.data } : { ok: false, code: (r as { code?: string }).code ?? 'error' };

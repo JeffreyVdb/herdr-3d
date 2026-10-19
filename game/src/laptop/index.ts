@@ -102,6 +102,8 @@ export interface SeatView {
   focus(): void;
   /** M16: the terminal or the conversation is up. */
   setMode(mode: SeatMode): void;
+  /** #26: a child's conversation is open over the worker's (its name; null: none): Esc goes back, nothing to write. */
+  childOpen?(name: string | null): void;
   /**
    * #57: the worker's agent asks a question (null: it does not): in terminal mode a line says so and how to answer it
    * in the transcript view (`key`: T while you have not typed into the terminal since, else Ctrl+Esc).
@@ -303,7 +305,10 @@ export class Laptops {
       // #187: the conversation stays while its worker is away; its prompt box keeps the draft and what goes to the worker is refused (reading older items is not).
       send: (t, args) => (this.seat?.away && TO_WORKER.has(t) ? Promise.resolve({ ok: false, code: 'unavailable', message: this.seat.away }) : this.host.send(t, args)),
       feed: (id, child) => this.feeds.get(id, child),
-      childChanged: () => this.syncWatches(), // #26: a child's watch, beside the worker's
+      childChanged: () => {
+        this.host.seat.childOpen?.(this.transcript.childName); // #26: Esc goes back first
+        this.syncWatches(); // #26: a child's watch, beside the worker's
+      },
       renderer: loadRenderer,
       imagesRenderer: loadImagesTab,
       tabs: (pick) => createSeatTabs(pick),
@@ -1524,6 +1529,8 @@ export class Laptops {
     /** #58: the cue the view shows (`thinking@<since>`, '' for none) and the pending prompts' states. */
     cue: string;
     pending: string[];
+    /** #26: the child open over the conversation (null: none): its row, items, what its watch said, its view mounted. */
+    child: TranscriptMode['childState'];
   } {
     const b = this.transcript.box;
     const r = b && !b.hidden ? b.getBoundingClientRect() : null;
@@ -1538,6 +1545,7 @@ export class Laptops {
       counts: { ...this.transcript.counts },
       cue: this.transcript.cueState,
       pending: this.transcript.pending.map((p) => (p.late ? `${p.state}+late` : p.state)),
+      child: this.transcript.childState,
     };
   }
 

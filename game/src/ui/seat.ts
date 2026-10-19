@@ -67,6 +67,8 @@ export class SeatBar implements SeatView {
   private name = '';
   private mac = false;
   private current: SeatMode = 'terminal';
+  /** #26: the child whose conversation is open over the worker's (Esc goes back first, nothing is written there), or null. */
+  private child: string | null = null;
 
   constructor(
     private readonly hud: HTMLElement,
@@ -287,10 +289,19 @@ export class SeatBar implements SeatView {
     this.mac = mac;
     this.tape.textContent = `At ${name}’s laptop`;
     this.current = 'terminal';
+    this.child = null;
     this.renderMode();
     this.status('ok', null);
     this.el.hidden = false;
     this.hud.dataset.seated = '1';
+  }
+
+  /** #26: a child's conversation is open over the worker's (its name) or not (null): the note and the keys say so. */
+  childOpen(name: string | null): void {
+    if (name === this.child) return;
+    this.child = name;
+    this.renderMode();
+    this.status('ok', null);
   }
 
   /** M16: what the laptop shows: the terminal (your keys go to it) or the conversation (they stay in the view). */
@@ -304,6 +315,8 @@ export class SeatBar implements SeatView {
   private renderMode(): void {
     const m = this.current;
     this.el.dataset.mode = m;
+    // #26: Esc goes back to the worker's conversation first: the stand button stops naming it.
+    this.el.toggleAttribute('data-child', this.child !== null && m === 'transcript');
     const aria = { terminal: 'Showing the terminal: switch to the conversation or the images', transcript: 'Showing the conversation: switch to the terminal', images: 'Showing the images: switch to the terminal' };
     this.modeBtn.setAttribute('aria-label', aria[m]);
     for (const k of ['terminal', 'transcript', 'images'] as const) this.modeOpts[k].toggleAttribute('data-on', k === m);
@@ -321,7 +334,9 @@ export class SeatBar implements SeatView {
       return a;
     };
     this.keys.replaceChildren(
-      ...(m === 'transcript'
+      ...(m === 'transcript' && this.child !== null
+        ? [key(['Esc'], `Back to ${this.name}`), flip, swap('Terminal'), aside(`A subagent’s conversation, read only; PgUp, PgDn, j and k scroll`)]
+        : m === 'transcript'
         ? [key(['Enter'], 'Write a prompt'), flip, swap('Terminal'), aside(`PgUp, PgDn, j and k scroll; ${nothing}`)]
         : m === 'images'
           ? [key(['Enter'], 'Open'), flip, swap('Terminal'), aside(`Arrows move between images; ${nothing}`)]
@@ -366,7 +381,7 @@ export class SeatBar implements SeatView {
     this.el.dataset.state = kind;
     // Sending is quick: keep the resting line instead of flickering "sending".
     if (kind === 'busy') return;
-    this.note.textContent = text ?? (this.current === 'transcript' ? `Reading ${this.name}’s conversation` : this.current === 'images' ? `Looking at ${this.name}’s images` : `Your keys go to ${this.name}’s terminal`);
+    this.note.textContent = text ?? (this.current === 'transcript' ? `Reading ${this.child ?? this.name}’s conversation` : this.current === 'images' ? `Looking at ${this.name}’s images` : `Your keys go to ${this.name}’s terminal`);
     this.note.title = this.note.textContent;
   }
 

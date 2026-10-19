@@ -101,7 +101,8 @@ function play(ws: WebSocket, rec: Recorded, mode: string, epoch: string, sim: Si
   const send = (m: unknown) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(m));
   let greeted = false;
   const timers: ReturnType<typeof setTimeout>[] = [];
-  const world = sim ? new SimWorld(rec.snapshot, sim) : null;
+  // #26: a children fixture's children are the simulated world's from the start (it plays no recorded events).
+  const world = sim ? new SimWorld(rec.snapshot, { ...sim, childEvents: rec.events.filter((e) => typeof e.t === 'string' && e.t.startsWith('child.')) }) : null;
   // M3d: /logo requests with the same `simlogo=<key>` belong to this world.
   if (world && seedLogos) world.seedLogos();
   const unregister = world && logoKey !== null ? registerLogoWorld(logoKey, world) : null;

@@ -124,6 +124,14 @@
 .seat-stand:hover {
   background: var(--raised-hover);
 }
+/* #26: in a subagent's conversation Esc goes back to its worker's first (the keys line says so): the button stands you up
+   without naming the key. */
+.seat[data-child] .seat-stand kbd {
+  display: none;
+}
+.seat[data-child] .seat-stand {
+  padding-left: 11px;
+}
 .seat-stand kbd {
   display: inline-grid;
   place-items: center;

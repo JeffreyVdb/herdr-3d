@@ -1039,6 +1039,11 @@ export class TranscriptMode {
     return this.s?.child?.target ?? null;
   }
 
+  /** The open child's name (null: none open). */
+  get childName(): string | null {
+    return this.s?.child?.info.name ?? null;
+  }
+
   /** The open child's timeline length and what its watch said (test hook). */
   get childState(): { id: string; items: number; availability: TranscriptAvailability | null; hasMore: boolean; mounted: boolean } | null {
     const c = this.s?.child;
