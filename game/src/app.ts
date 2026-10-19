@@ -624,9 +624,11 @@ export class App {
         onScreen: (m) => this.screen.onMessage(m), // M13 screen
         onHost: (m) => this.rack.onMessage(m), // #74 server rack
         onState: (s) => {
+          const wasLive = this.conn.phase === 'live';
           // M3d: a logo that could not be fetched is tried again once the bridge is back (also after a replay, which sends no snapshot).
           if (s.phase === 'live' && this.conn.phase !== 'live' && this.logos.retryFailed()) this.syncLogos();
           this.conn = s;
+          if (s.phase === 'live' && !wasLive) this.sendZone(); // #66: the snapshot may come before the connection is live
           // M7: a dropped connection forgot its board watch; the next live one watches again.
           if (s.phase !== 'live') this.watched = null;
           if (s.phase !== 'live') this.rack.connLost(); // #74: the bridge forgot the host watch too
@@ -1630,13 +1632,14 @@ export class App {
 
   /**
    * #66: the zone the bridge's schedule suggestions read clock times in: this browser's (Settings → Day and night, else
-   * its own), sent on connect and when the setting changes, when it differs. Never in answer to an update: two
-   * browsers in two zones would send theirs back and forth (the last to connect or change wins).
+   * its own), sent on connect (the snapshot, or the connection turning live, whichever is last) and when the setting
+   * changes, when it differs. Never in answer to an update: two browsers in two zones would send theirs back and forth
+   * (the last to connect or change wins).
    */
   private sendZone(): void {
     const st = this.store.scheduleSuggestions.state;
     const zone = this.timePrefs.timeZone ?? browserZone();
-    if (!st || st.zone === zone) return;
+    if (!st || st.zone === zone || this.conn.phase !== 'live') return;
     void this.send('schedule_suggestions.zone', { zone });
   }
 

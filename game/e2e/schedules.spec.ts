@@ -186,8 +186,8 @@ test('the suggestion chip opens the form prefilled; Save schedules it and the ch
   await expect(tx.getByRole('button', { name: 'Schedule follow-up…' })).toHaveCount(0);
   await expect(tx.locator('.tx-handoff').getByRole('button', { name: 'Handoff', exact: true })).toHaveCount(1);
   await expect(tx.getByRole('button', { name: 'Dismiss the suggested follow-up' })).toHaveCount(1);
-  // The game told the bridge its zone on connect.
-  expect((await sent(page)).filter((c) => c.t === 'schedule_suggestions.zone')).toHaveLength(1);
+  // The game told the bridge its zone on connect, once, and the bridge took it.
+  await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'schedule_suggestions.zone').map((c) => c.ok)).toEqual([true]);
   await shot(page, 'h66-suggestion-chip');
   await chip.click();
   const form = page.getByRole('dialog', { name: 'Schedule a follow-up to Zippy' });
