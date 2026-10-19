@@ -1494,6 +1494,7 @@ export class HireDialog {
             if (blocked) {
               this.setStatus(blocked, true);
               this.render();
+              this.dialog.querySelector<HTMLElement>('#hire-instructions')?.focus();
               return;
             }
             sending = { ...args, herdr_instructions: true };

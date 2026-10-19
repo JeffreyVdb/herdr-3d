@@ -244,6 +244,7 @@ describe('HireDialog asks about the herdr hiring instructions (#117)', () => {
     expect(t.hires()).toEqual([]);
     expect(ask()).toBeNull();
     expect(box()?.checked).toBe(true);
+    expect(document.activeElement).toBe(box());
     expect(t.dlg.summary()).toMatchObject({ state: 'ready', error: true, instructions: { on: true } });
     expect(t.dlg.summary()!.status).toContain('over 32 KiB');
     expect(t.dlg.summary()!.blocker).toContain('over 32 KiB');
