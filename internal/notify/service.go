@@ -692,9 +692,13 @@ func (s *Service) process() {
 		}
 	}
 	for _, a := range back {
-		if a.Key != "" && s.tr.current(a.WorkerID) == a.Key {
-			s.alert(a)
+		if a.Key == "" || s.tr.current(a.WorkerID) != a.Key {
+			row := a.sendRow() // its episode ended while it waited, as deliver's
+			row.Code = CodeObsolete
+			s.audit(context.Background(), AuditSend, row, errors.New(CodeObsolete))
+			continue
 		}
+		s.alert(a)
 	}
 	for _, a := range s.tr.due(now) {
 		if s.admits(a) {
@@ -821,6 +825,9 @@ func (s *Service) release(now time.Time) {
 		row := limitAudit{ID: id, Kind: "alert", Cause: p.cause, Coalesced: p.coalesced, Outcome: "dropped"}
 		a := s.form(p.alert)
 		if s.tr.current(id) == a.Key && s.admits(a) {
+			if a.About == aboutMenu {
+				s.rung[id] = a.Key
+			}
 			if a.Ring {
 				s.cardsOf(a)
 			} else {
