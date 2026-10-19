@@ -10,9 +10,9 @@ class CmdError extends Error {
   }
 }
 
-function sim(available = true, unverified = false) {
+function sim(available = true, unverified = false, direnv = false) {
   const sent: Array<Record<string, unknown>> = [];
-  const s = new CodexServerSim({ emit: (send, m) => send(m), error: (code, message) => new CmdError(code, message) }, available, unverified);
+  const s = new CodexServerSim({ emit: (send, m) => send(m), error: (code, message) => new CmdError(code, message) }, available, unverified, direnv);
   const run = (t: string, a: Record<string, unknown> = {}) => {
     let acked: unknown;
     s.handle(t, a, (m) => sent.push(m), (d) => (acked = d));
@@ -63,5 +63,16 @@ describe('the fixture’s shared Codex server switch (#155)', () => {
     const plain = sim();
     plain.run('codex_server.set', { enabled: true });
     expect(plain.s.hire('codex')).toBeUndefined();
+  });
+
+  it('#116: with direnv unselected, a Codex hire with the switch on falls back with the one-line reason, even when unverified Codex is allowed', () => {
+    const { s, run } = sim(true, false, true);
+    expect(s.hire('codex')).toBeUndefined();
+    run('codex_server.set', { enabled: true, allow_unverified: true });
+    expect(s.hire('codex')).toEqual({
+      mode: 'legacy',
+      note: 'shared Codex server: direnv is installed through mise but has no version selected for /home/u/repo; started the usual way',
+    });
+    expect(s.hire('claude')).toBeUndefined();
   });
 });

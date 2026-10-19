@@ -73,10 +73,26 @@ export function codexNotice(w: { codex?: Worker['codex'] | undefined }): CodexNo
   if (c.mode === 'shared' && c.server === 'stopped' && c.note) return { tone: 'down', text: `Its Codex server is not running (${c.note}).` };
   if (c.mode === 'legacy' && c.note) {
     const why = c.note.replace(/^shared Codex server: /, '').replace(/; started the usual way$/, '');
+    const dir = DIRENV_UNSELECTED.exec(why)?.[1];
+    if (dir !== undefined) {
+      return {
+        tone: 'note',
+        text:
+          `No own Codex server: direnv is installed with mise, but no version of it is selected for this worker’s folder (${dir}). ` +
+          'Select one for the bridge (see docs/git-worktrees.md). ' +
+          'It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript; send it home and hire a new one once that is fixed.',
+      };
+    }
     return { tone: 'note', text: `No own Codex server: ${plainWhy(why)}. It runs on Codex’s built-in server, so its async questions can’t be answered from the transcript.` };
   }
   return null;
 }
+
+/**
+ * #116: the bridge's refusal when direnv is a mise shim with no version selected (`codexapp.DirenvUnselectedError`,
+ * its one line; mise's own text stays in the bridge's log): the worker's folder. The same words as the Go side's.
+ */
+const DIRENV_UNSELECTED = /^direnv is installed through mise but has no version selected for (.+)$/;
 
 /**
  * #186: the bridge's refusal of a Codex its shared server is not verified with, by `codex --version`

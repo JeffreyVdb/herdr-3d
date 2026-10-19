@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -457,6 +458,36 @@ func TestSharedCodexHireFallsBack(t *testing.T) {
 				t.Fatalf("worker codex = %+v", w.Codex)
 			}
 		})
+	}
+}
+
+// #116: direnv is a mise shim with no version selected. The hire falls back
+// with the one-line reason as its note (the game shows copy for exactly this
+// text); mise's own diagnostic goes to the bridge log, not to the note.
+func TestSharedCodexHireDirenvUnselected(t *testing.T) {
+	t.Parallel()
+	const detail = "mise ERROR No version is set for shim: direnv\nSet a global default version with one of the following:\nmise use -g direnv@2.38.2\n"
+	logs := &lockedBuffer{}
+	sb := startSharedBridgeWith(t, "", newFakeCodexHost(), true, "", func(o *server.Options) {
+		o.Log = slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	})
+	sb.host.preErr = &codexapp.DirenvUnselectedError{Dir: "/home/u/repo", Detail: detail}
+	_, m := sb.c.command(proto.CmdWorkerHire, "h", codexHire(1))
+	res := ackData[proto.HireResult](t, m)
+	const note = "shared Codex server: direnv is installed through mise but has no version selected for /home/u/repo; started the usual way"
+	if res.Codex == nil || res.Codex.Mode != proto.CodexModeLegacy || res.Codex.Note != note {
+		t.Fatalf("hire result %s", m.raw)
+	}
+	calls := sb.fl.Calls()
+	if !strings.HasPrefix(calls[len(calls)-1], "start-agent w1:p1 ") || !strings.Contains(calls[len(calls)-1], " codex ") {
+		t.Fatalf("herdr calls = %q", calls)
+	}
+	if l := sb.launches(t)[res.ID]; l.Mode != store.CodexLegacy || l.Note != note {
+		t.Fatalf("launch = %+v", l)
+	}
+	if got := logs.String(); !strings.Contains(got, "level=WARN") || !strings.Contains(got, "worker="+res.ID) ||
+		!strings.Contains(got, "dir=/home/u/repo") || !strings.Contains(got, "mise use -g direnv@2.38.2") {
+		t.Fatalf("log = %s", got)
 	}
 }
 

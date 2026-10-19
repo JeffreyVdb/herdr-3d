@@ -2398,3 +2398,24 @@ Coverage:
 | Decoding | `TestDecodeChildNote`, `TestThreadChildMetadata` (probe frames of 0.162.1 and 0.163.0, the schema's v1 shape, unknown values) |
 | On the wire for a hired worker; transcript through #26's target | `TestCodexShareBridgeChildren` (`worker_id`, `agent_session` = the thread, `source: app_server`, `transcript: available`, `running` then `completed`) |
 | Versions recorded | this entry, `protocol.md`, the research doc §10 |
+
+## 2026-10-19 — #116: direnv is a mise shim with no version selected
+
+A Codex hire with the shared-server switch on fell back to Codex's built-in server with mise's whole multi-line diagnostic
+as its note (`direnv status: direnv: exit status 1: mise ERROR No version is set for shim: direnv …`), shown as it was on
+the seat bar and in the hire's toast. The investigation (`docs/research/codex-direnv-preflight.md`): the bridge's PATH is
+shim-first, direnv is installed but no version is selected for the worker's directory, so the shim passes `exec.LookPath`
+and then fails. The fallback itself stays (#18, #155, #186). Code: `ExecError`, `DirenvUnselectedError` and the
+recognition in `Preflight.Check` (`internal/codexapp/preflight.go`), the Warn in `hireShared`
+(`internal/server/codexserver.go`), `codexNotice` (`game/src/world/codexServer.ts`), the fixture's `simfail=codex_direnv`
+(`game/tools/fixture-codex-server.ts`).
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Missing, or present and unusable | **Not the same.** A direnv that is genuinely absent is still skipped (nothing to check). A shim that exists but cannot run is a refusal: the `.envrc` could not be validated, so it is neither "direnv missing" nor "no `.envrc`". Any other nonzero exit stays the generic `direnv status: …` refusal. |
+| 2 | Recognition | The runner's failure is a typed `*ExecError{Name, Err, Stderr}` (its text exactly as before, `Unwrap` to the exec error, stderr kept to 4 KiB instead of 300 bytes). `Check` turns an `ExecError` whose stderr carries mise's `No version is set for shim: direnv` (or `mise which`'s `is not currently active`) into `*DirenvUnselectedError{Dir, Detail}`. Matching the text is the only signal mise gives: its exit code is 1 like any failure. |
+| 3 | One line out, the detail kept | `Error()` is `direnv is installed through mise but has no version selected for <dir>`: that is the persisted note (`shared Codex server: …; started the usual way`) and the hire result. `Detail` is mise's stderr; `hireShared` logs it at Warn with the worker and the directory. The wake path runs no preflight (`startSharedServer` only), so it has no such note. |
+| 4 | Laptop copy | `codexNotice` recognizes that one line (the same words on both sides, pinned by a test in each language) and says what it is, where to fix it (`docs/git-worktrees.md`) and what the worker is left with, and to send it home and hire a new one. No mise lines. Other reasons render as before. |
+| 5 | Remedy | Documentation only (`docs/git-worktrees.md`): the bridge's environment and the worker's pane both need a selected direnv; per-worktree `mise.local.toml`, a bridge `Environment=MISE_DIRENV_VERSION=…`, or a global `mise use -g` as the host owner's choice. **The app never runs `mise use`, installs, trusts a config, writes `direnv.toml` or runs `direnv allow`**, and does not choose a version for the host. Rejected: probing `mise which` to pick a binary path (it would make the app choose a version policy, and a stale path breaks on upgrade). |
+| 6 | An existing fallback hire | Persisted as `legacy`; it is never migrated, by a fix or by toggling the setting. Send it home and hire a new one (documented). |
+| 7 | Tests | Through the real `ExecRunner` with executable `direnv` scripts in `t.TempDir()` (`TestPreflightRealRunner`: inactive shim, `mise which` wording, other failure, no `.envrc`, allowed, blocked, denied, missing executable; `TestExecError`); `TestSharedCodexHireDirenvUnselected` (the exact note, the legacy launch, the usual start, the Warn); `ui/codexServerSection.dom.test.ts`, `ui/hiredToast.test.ts`, the fixture test and `e2e/h155-codex-server.spec.ts` (`simfail=codex_direnv`). |

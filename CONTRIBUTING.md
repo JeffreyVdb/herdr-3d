@@ -389,7 +389,11 @@ parts:
   `make integration` runs the live check that ten probes leave no Claude project and no Codex rollout behind.
 - **codex / direnv before a shared launch** (#155, `codexapp.Preflight`, only for a Codex hire with the switch on):
   `codex --version` (in a temp directory) and `direnv status --json` in the hire's directory, with the `HERDR_*` /
-  `CLAUDE*` variables removed, 5 s each. The bridge itself then only connects to the worker's own socket (its
+  `CLAUDE*` variables removed, 5 s each. (#116: a direnv that is a mise shim with no version selected exits 1 with mise's
+  `No version is set for shim: direnv`; `Preflight` refuses it with the one-line `DirenvUnselectedError`, keeps mise's text as its `Detail`
+  and `hireShared` logs that at Warn. A direnv that is not installed at all is still skipped. The worker falls back to Codex's built-in
+  server, as for a blocked `.envrc`; the fix is a mise selection, see `docs/git-worktrees.md`. The fixture bridge plays it with
+  `simfail=codex_direnv`, next to `simfail=codex_unverified`.) The bridge itself then only connects to the worker's own socket (its
   `Watcher`) and signals processes whose environment carries the launch's `H3D_CODEX_SERVER` token; it never starts,
   connects to or stops the CODEX_HOME daemon, and every `codex` it has the pane run names `--remote` with the worker's
   socket or is that server.
