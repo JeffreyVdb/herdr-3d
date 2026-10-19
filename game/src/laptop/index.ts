@@ -2,7 +2,7 @@ import { codexNotice, type CodexNotice } from '../world/codexServer';
 import * as THREE from 'three/webgpu';
 import type { CommandResult } from '../net/client';
 import type { CommandCatalogs } from './commandCatalog';
-import type { Ask, Child, CommandArgs, CommandName, ConnMessage, HandoffCandidate, KeyItem, TranscriptChild } from '../net/protocol';
+import type { Ask, Child, CommandArgs, CommandName, ConnMessage, HandoffCandidate, KeyItem, ScheduleSuggestion, TranscriptChild } from '../net/protocol';
 import { childSinceText } from '../world/overview';
 import { glassFrame, screenFrame } from '../render/desks';
 import type { OfficeView } from '../render/office';
@@ -17,6 +17,7 @@ import { failureText } from '../ui/messages';
 import { askAgent, askOf } from '../world/ask';
 import { followupOf } from '../world/followup';
 import { candidateOf } from '../world/handoff';
+import { suggestionOf } from '../world/scheduleSuggest';
 import { effectiveStatus } from '../world/codexQuestions';
 import type { WorldStore } from '../world/store';
 import { DESK_H, SEAT_OFFSET } from '../world/layout';
@@ -90,8 +91,8 @@ export interface LaptopHost {
   overview?(): void;
   /** #223: the transcript's inline Handoff button: the filing dialog over the seat (none: no button). */
   handoff?(id: string): void;
-  /** #64 schedules: "Schedule follow-up…" beside it: the schedule form over the seat (none: no button). */
-  scheduleFollowup?(id: string, c: HandoffCandidate): void;
+  /** #64 schedules: "Schedule follow-up…" beside it: the schedule form over the seat (none: no button); #66: or its suggestion chip. */
+  scheduleFollowup?(id: string, c: HandoffCandidate, s?: ScheduleSuggestion): void;
 }
 
 /** The HUD while you sit at a laptop. */
@@ -337,7 +338,7 @@ export class Laptops {
       ...(host.secrets ? { secrets: host.secrets } : {}), // #108
       secretsDir: () => host.store.promptSecrets.state?.dir ?? null, // #108 round 4: the chips
       ...(host.handoff ? { handoff: (id: string) => host.handoff?.(id) } : {}),
-      ...(host.scheduleFollowup ? { scheduleFollowup: (id: string, c: HandoffCandidate) => host.scheduleFollowup?.(id, c) } : {}),
+      ...(host.scheduleFollowup ? { scheduleFollowup: (id: string, c: HandoffCandidate, sug?: ScheduleSuggestion) => host.scheduleFollowup?.(id, c, sug) } : {}),
       repoRefs: host.store.repoRefs, // #247
       repoDiscovery: host.store.repoDiscovery, // #54
       floorName: (id: string) => host.store.floorName(id), // #58
@@ -1168,6 +1169,7 @@ export class Laptops {
           this.syncCodex(codexNotice(v.worker)); // #155
           this.transcript.followedUp(followupOf(v.worker)); // #90
           this.transcript.handoffSeen(candidateOf(v.worker)); // #223
+          this.transcript.suggestionSeen(suggestionOf(v.worker)); // #66
           this.transcript.codexSeen(v.worker.codex ?? null, status === 'working'); // #157: its async questions
           this.transcript.usageSeen(v.worker.usage ?? null); // #101: its context meter (the worker's usage is replaced, not edited, when it changes)
           this.syncChild(s.id); // #26

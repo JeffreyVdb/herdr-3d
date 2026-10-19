@@ -27,6 +27,7 @@ import { wrapUpOf } from './wrapup';
 import { AiBook } from './ai';
 // #90: follow-up questions
 import { followupOf, FollowupsBook } from './followup';
+import { ScheduleSuggestionsBook } from './scheduleSuggest';
 import { PackupBook } from './packup';
 // #98: "Classify unknown commands" (the activity settings)
 import { ActivitySettingsBook } from './activitySettings';
@@ -232,6 +233,8 @@ export class WorldStore {
   readonly ai = new AiBook();
   /** #90: the follow-up questions feature's settings and state (`known` false from an older bridge). */
   readonly followups = new FollowupsBook();
+  /** #66 schedule suggestions: the feature's settings and state. */
+  readonly scheduleSuggestions = new ScheduleSuggestionsBook();
   /** #110: pack up on request's settings and state (`known` false from an older bridge). */
   readonly packup = new PackupBook();
   /** #98: the "Classify unknown commands" settings and state (`known` false from an older bridge). */
@@ -294,6 +297,7 @@ export class WorldStore {
     this.ai.reset(s.world.ai);
     this.followups.reset(s.world.followups);
     this.packup.reset(s.world.packup); // #110
+    this.scheduleSuggestions.reset(s.world.schedule_suggestions); // #66
     this.activitySettings.reset(s.world.activity); // #98
     this.digestSettings.reset(s.world.digest); // #118
     this.notifySettings.reset(s.world.notify); // #11
@@ -433,6 +437,9 @@ export class WorldStore {
         break;
       case 'packup.update': // #110
         this.packup.upsert(e);
+        break;
+      case 'schedule_suggestions.update': // #66
+        this.scheduleSuggestions.upsert(e);
         break;
       // #98: what the agent is doing changed (absent: cleared); its status stays.
       case 'worker.activity': {

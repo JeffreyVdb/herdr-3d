@@ -1,7 +1,7 @@
 import type { CommandResult } from '../net/client';
 import type { RepoSearchHost } from './repoSearch';
 import { HANDOVER_STALE, packupAction, packupStep, type PackupCheck } from '../ui/packupSend';
-import type { AnswerAskAck, Ask, ChildState, CommandArgs, Followup, FollowupMessageAck, HandoffCandidate, ImageRef, PromptAck, Question, TranscriptAvailability, TranscriptChild, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
+import type { AnswerAskAck, Ask, ChildState, CommandArgs, Followup, FollowupMessageAck, HandoffCandidate, ImageRef, ScheduleSuggestion, PromptAck, Question, TranscriptAvailability, TranscriptChild, TranscriptItem, TranscriptWatchAck, Usage, WorkerCodex } from '../net/protocol';
 import type { Uploader } from '../ui/composer/draft';
 import { failureText } from '../ui/messages';
 import type { ViewPrefs } from '../ui/themePrefs';
@@ -68,7 +68,7 @@ export interface OverlayRect {
 
 export interface TranscriptModeHost {
   send<
-    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.retry_followup' | 'worker.followup_message' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files' | 'worker.repos',
+    T extends 'worker.prompt' | 'worker.keys' | 'worker.answer' | 'worker.answer_ask' | 'worker.answer_followup' | 'worker.dismiss_followup' | 'worker.dismiss_schedule_suggestion' | 'worker.retry_followup' | 'worker.followup_message' | 'worker.answer_async' | 'worker.dismiss_async' | 'transcript.page' | 'transcript.item' | 'worker.commands' | 'worker.files' | 'worker.repos',
   >(t: T, args: CommandArgs[T]): Promise<CommandResult>;
   /** M16 phase 2: the images of a worker's transcript (thumbnails, full images, the session list); #26: of a child's. */
   feed(id: string, child?: TranscriptChild): ImageFeed | null;
@@ -98,8 +98,11 @@ export interface TranscriptModeHost {
   prefs?: ViewPrefs;
   /** #223: the inline Handoff button of a worker's reply was pressed: the filing dialog (none: no button). */
   handoff?(id: string, c: HandoffCandidate): void;
-  /** #64 schedules: "Schedule follow-up…" beside it: the schedule form, prefilled from the worker (none: no button). */
-  scheduleFollowup?(id: string, c: HandoffCandidate): void;
+  /**
+   * #64 schedules: "Schedule follow-up…" beside it: the schedule form, prefilled from the worker (none: no button). #66:
+   * with `s`, the worker's suggestion chip was clicked: prefilled from it too.
+   */
+  scheduleFollowup?(id: string, c: HandoffCandidate, s?: ScheduleSuggestion): void;
   /** #247: the shared "Repositories from other buildings" switch, for the prompt box's `@r:` (none: as if off). */
   repoRefs?: RepoSearchHost['refs'];
   /** #54: repository discovery, for the prompt box's `@r:` (none: as if off). */
@@ -213,6 +216,9 @@ interface Sitting {
   /** #223: the worker's handoff candidate (the inline button's), and its id + revision. */
   handoff: HandoffCandidate | null;
   handoffKey: string;
+  /** #66: the worker's schedule suggestion (the chip's), and its id + time. */
+  suggestion: ScheduleSuggestion | null;
+  suggestionKey: string;
   /** #157: the worker's Codex launch (its async questions), and what of it the card shows (a new one told from the same one). */
   codex: WorkerCodex | null;
   /** #157: the worker works on (its effective status): the async card's "still working". */
@@ -372,7 +378,7 @@ export class TranscriptMode {
     // The way to read it last time (what the first Ctrl+Esc shows when it opens in the terminal).
     const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
-      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', handoff: null, handoffKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
+      id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', handoff: null, handoffKey: '', suggestion: null, suggestionKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
       viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true, child: null,
@@ -663,6 +669,7 @@ export class TranscriptMode {
     if (s.ask) s.view.setAsk(s.ask);
     if (s.followup) s.view.setFollowup(s.followup);
     if (s.handoff) s.view.setHandoff?.(s.handoff);
+    if (s.suggestion) s.view.setScheduleSuggestion?.(s.suggestion);
     if (s.codex) s.view.setCodex(s.id, s.codex, s.codexWorking);
     if (s.pending.length) s.view.setPending(s.pending);
     s.cueKey = '';
@@ -852,7 +859,16 @@ export class TranscriptMode {
     const follow = this.host.scheduleFollowup;
     return {
       ...(handoff ? { onHandoff: (c: HandoffCandidate) => live() && handoff(s.id, c) } : {}),
-      ...(follow ? { onScheduleFollowup: (c: HandoffCandidate) => live() && follow(s.id, c) } : {}),
+      ...(follow ? { onScheduleFollowup: (c: HandoffCandidate, sug?: ScheduleSuggestion) => live() && follow(s.id, c, sug) } : {}),
+      // #66: the chip's ×: the suggestion goes for good (the upsert takes the chip away).
+      onDismissScheduleSuggestion: async (sug: ScheduleSuggestion) => {
+        if (!live()) return { ok: false, code: 'stale', message: 'You got up.' };
+        const r = await this.host.send('worker.dismiss_schedule_suggestion', { id: s.id, suggestion: sug.id });
+        if (r.ok) return { ok: true };
+        const message = failureText('worker.dismiss_schedule_suggestion', r.code, r.message, { worker: s.name });
+        if (live() && r.code !== 'stale') this.host.status('error', message);
+        return { ok: false, code: r.code, message };
+      },
       images: this.host.feed(s.id),
       upload: this.host.upload ?? null,
       label: s.name,
@@ -1400,6 +1416,17 @@ export class TranscriptMode {
     s.followupKey = key;
     s.followup = f;
     s.view?.setFollowup(f);
+  }
+
+  /** #66: the worker's schedule suggestion (from the store; null when it has none). */
+  suggestionSeen(sug: ScheduleSuggestion | null): void {
+    const s = this.s;
+    if (!s) return;
+    const key = sug ? `${sug.id}\u0000${sug.message ?? ''}\u0000${sug.due_at}` : '';
+    if (key === s.suggestionKey) return;
+    s.suggestionKey = key;
+    s.suggestion = sug;
+    s.view?.setScheduleSuggestion?.(sug);
   }
 
   /** #223: the worker's handoff candidate (from the store; null when it has none). */

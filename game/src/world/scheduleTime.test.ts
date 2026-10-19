@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countdownText, parseDuration, parseWhen, utcHint, wallText, wallToEpochMs, whenText } from './scheduleTime';
+import { countdownText, dayClockText, parseDuration, parseWhen, utcHint, wallText, wallToEpochMs, whenText } from './scheduleTime';
 
 // #64 schedules: the form's time parsing. Node 26 has Temporal: it is the oracle for the wall-clock resolution
 // (disambiguation 'compatible'). Typed locally, so no Temporal lib reaches the app's program (stable Safari lacks it).
@@ -228,5 +228,24 @@ describe('the times as the dialog shows them', () => {
     expect(countdownText(now + 2 * 86_400_000 + 3 * 3_600_000, now)).toBe('in 2 d 3 h');
     expect(countdownText(now + 400, now)).toBe('due now');
     expect(countdownText(now - 3 * 60_000, now)).toBe('3 min overdue');
+  });
+});
+
+describe('dayClockText (#66 the suggestion chip)', () => {
+  const now = Date.UTC(2026, 9, 18, 21, 30); // Sun 18 Oct, 23:30 in Brussels
+  it('names the day on the zone’s calendar', () => {
+    expect(dayClockText(Date.UTC(2026, 9, 18, 21, 45), now, 'Europe/Brussels')).toBe('today 23:45');
+    // 10:45 UTC on the 19th is tomorrow in Brussels, and in UTC too.
+    expect(dayClockText(Date.UTC(2026, 9, 19, 10, 45), now, 'Europe/Brussels')).toBe('tomorrow 12:45');
+    expect(dayClockText(Date.UTC(2026, 9, 19, 10, 45), now, 'UTC')).toBe('tomorrow 10:45');
+    // 22:15 UTC on the 18th is already the 19th in Brussels: tomorrow there, today in UTC.
+    expect(dayClockText(Date.UTC(2026, 9, 18, 22, 15), now, 'Europe/Brussels')).toBe('tomorrow 00:15');
+    expect(dayClockText(Date.UTC(2026, 9, 18, 22, 15), now, 'UTC')).toBe('today 22:15');
+  });
+  it('a weekday within the week, else the date', () => {
+    expect(dayClockText(Date.UTC(2026, 9, 21, 8, 0), now, 'UTC')).toBe('Wed 08:00');
+    expect(dayClockText(Date.UTC(2026, 9, 31, 8, 0), now, 'UTC')).toBe('Sat 31 Oct 08:00');
+    expect(dayClockText(Date.UTC(2027, 0, 2, 8, 0), now, 'UTC')).toBe('Sat 2 Jan 2027 08:00');
+    expect(dayClockText(Date.UTC(2026, 9, 17, 8, 0), now, 'UTC')).toBe('yesterday 08:00');
   });
 });

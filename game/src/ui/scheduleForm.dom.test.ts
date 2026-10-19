@@ -570,4 +570,60 @@ describe('ScheduleFormDialog (#64 schedules)', () => {
       expect(e.of('schedule.create')[0]?.args.source).toEqual({ kind: 'transcript', worker: 'w-1', message: 'msg_01' });
     });
   });
+  // #66: the suggestion chip opens the form prefilled from the suggestion too: its title, time and draft prompt, the
+  // message attached, and the suggestion as the source the bridge closes it by. Only Save creates; Cancel sends nothing.
+  describe('from a schedule suggestion', () => {
+    const DUE = T + 26 * H;
+    const open = (e: ReturnType<typeof setup>, due = DUE) =>
+      e.dlg.open({
+        floor: 'f1',
+        prefill: {
+          choice: { harness: 'codex', model: 'gpt-6-sol', effort: 'high' },
+          cwd: '/home/dev/wt/pixel',
+          title: 'Post-soak cleanup',
+          prompt: 'You are picking up after the soak. Read the attached handoff first.',
+          dueAt: due,
+          source: { kind: 'suggestion', worker: 'w-1', message: 'msg_01' },
+          transcript: { worker: 'w-1', name: 'Pixel', candidate: CAND },
+        },
+      });
+
+    it('prefills the title, the exact time, the draft prompt and the message attached; Save files it and creates from the suggestion', async () => {
+      const e = setup();
+      open(e);
+      await e.flush();
+      expect(e.dlg.summary()).toMatchObject({ title: 'Post-soak cleanup', due: DUE, handoff: 'transcript', harness: 'codex' });
+      expect(e.q('[data-hook="sf-attach"]').textContent).toMatch(/^Attach this message as a handoff/);
+      expect(e.sent.map((x) => x.t)).toEqual(['hire.prepare']);
+      await e.save();
+      expect(e.sent.map((x) => x.t).filter((t) => t !== 'hire.prepare')).toEqual(['worker.handoff', 'schedule.create']);
+      expect(e.of('schedule.create')[0]?.args).toMatchObject({
+        title: 'Post-soak cleanup',
+        due_at: DUE,
+        prompt: 'You are picking up after the soak. Read the attached handoff first.',
+        handoff_path: '/home/dev/handoff/f1/filed.md',
+        source: { kind: 'suggestion', worker: 'w-1', message: 'msg_01' },
+      });
+    });
+
+    it('Cancel sends nothing (the chip stays: the bridge never heard of it)', async () => {
+      const e = setup();
+      open(e);
+      await e.flush();
+      e.q<HTMLButtonElement>('[data-key="cancel"]').click();
+      expect(e.dlg.isOpen).toBe(false);
+      expect(e.sent.map((x) => x.t)).toEqual(['hire.prepare']);
+    });
+
+    it('a suggested time that has passed is flagged, and Save waits for a new one', async () => {
+      const e = setup();
+      open(e, T - H);
+      await e.flush();
+      expect(e.dlg.summary()).toMatchObject({ due: null });
+      expect(e.q('[data-hook="sf-resolved"]').textContent).toBe('The suggested time has passed: type or pick a new one.');
+      expect(e.q('[data-key="save"]').getAttribute('aria-disabled')).toBe('true');
+      e.type('when', 'in 2h');
+      expect(e.dlg.summary().due).toBe(T + 2 * H);
+    });
+  });
 });
