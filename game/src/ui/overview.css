@@ -34,6 +34,9 @@
   --ov-text: #eef2fb;
   --ov-text-2: #b9c3dc;
   --ov-text-3: #7d89ab;
+  /* #119: a model's now line being refreshed, a step back from --ov-text-2 (its own token, never an opacity: asleep rows
+     set theirs, each >= 4.5:1 on the ink and the hover row). */
+  --ov-text-refresh: #8a95b4;
   --ov-accent: var(--accent-text);
   /* Quiet: Archivo and Departure Mono (--display-font / --data-font, uiTheme.css); Ubuntu: Ubuntu and Ubuntu Mono. */
   --ov-display: var(--display-font);
@@ -653,6 +656,7 @@
 .ov-row[data-display='asleep'] {
   --ov-text: #9aa5c2;
   --ov-text-2: #8390b0;
+  --ov-text-refresh: #7d89ab;
   --ov-key-asleep: #b8954a;
 }
 .ov-row[data-display='asleep'] .ov-ticket-key {
@@ -922,8 +926,9 @@
   font-size: 14px;
   font-weight: 380;
 }
-/* #232: the label on the text's baseline, the sparkle of a line the AI model wrote hugging it, the text a small step after
-   (no slot kept for a sparkle a line does not have). */
+/* #232: the label on the text's baseline, the sparkle of a line the AI model wrote hugging it, the text a small step after.
+   #119: a line the model did not write (a fallback, the loading skeleton) keeps the sparkle's room, so its text starts
+   where the model's line will, and the text slot never moves or narrows when the model's line arrives. */
 .ov-line > b {
   display: inline-flex;
   flex: none;
@@ -938,14 +943,19 @@
 /* #232: the sparkle centred on the capitals of the text beside it, not on the small label: its box sits on the baseline
    (it has no text of its own), then goes down half its height and up half the text's cap height, in the text's face and
    size (`cap` is that face's cap height). */
-.ov-ai {
+.ov-ai,
+.ov-ai-room {
   display: inline-flex;
   color: var(--ov-text-2);
   font-family: var(--font);
   font-size: 14px;
   translate: 0 calc(50% - 0.5cap);
 }
-.ov-ai > svg {
+.ov-ai-room {
+  visibility: hidden;
+}
+.ov-ai > svg,
+.ov-ai-room > svg {
   width: 13px;
   height: 13px;
 }
@@ -1113,10 +1123,11 @@
   font-style: normal;
   line-height: 1;
 }
-/* #119: a model's line being refreshed: still readable, a step back, the busy mark where its age goes. */
+/* #119: a model's line being refreshed: still readable, a step back (its own colour, AA in every row state, never an
+   opacity over the row's own dimmer tokens), the busy mark where its age goes. */
 .ov-now--refreshing > .ov-now-text {
-  opacity: 0.66;
-  transition: opacity 200ms var(--ov-ease);
+  color: var(--ov-text-refresh);
+  transition: color 200ms var(--ov-ease);
 }
 /* Two small flaps whose upper leaves turn over in turn; still under calm. */
 .ov-busy {
@@ -1545,10 +1556,14 @@
   --ov-text: var(--text);
   --ov-text-2: var(--text-2);
   --ov-text-3: var(--text-3);
+  --ov-text-refresh: var(--text-3);
 }
+/* An asleep row's refreshing line: the UI has no tone under --text-3, so its own, --text-3 a step toward the aubergine
+   (>= 6:1 on --surface and --raised). */
 :root[data-ui-theme='ubuntu'] .ov-row[data-display='asleep'] {
   --ov-text: var(--text-2);
   --ov-text-2: var(--text-3);
+  --ov-text-refresh: #b896ae;
   --ov-key-asleep: var(--asleep);
 }
 :root[data-ui-theme='ubuntu'] .ov ::selection {
@@ -1636,7 +1651,8 @@
 :root[data-ui-theme='ubuntu'] .ov-ai-state {
   font-size: 12px;
 }
-:root[data-ui-theme='ubuntu'] .ov-ai > svg {
+:root[data-ui-theme='ubuntu'] .ov-ai > svg,
+:root[data-ui-theme='ubuntu'] .ov-ai-room > svg {
   width: 14px;
   height: 14px;
 }

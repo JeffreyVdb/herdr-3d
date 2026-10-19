@@ -8,16 +8,22 @@ import { frames, openGame, shot, watchErrors } from './game';
 
 const FIRST = 'Reviewing the picker port before the PR goes out to the reviewers';
 const SECOND = 'Rerunning the picker tests after the reviewer asked for a smaller diff';
+const TASK = 'Port the worker picker to the new overlay';
 
 type Digest = Record<string, unknown>;
 
-/** Turnip's digest per step: a first summary on its way over its title, the model's line, a refresh of it, the next. */
+/** Turnip's digest per step: a first summary on its way over its title (its task the prompt's), the model's lines (now
+ *  and task), a refresh of the now line, the next. */
 const STEPS: Record<string, (at: number) => Digest> = {
-  loading: () => ({ now_source: 'title', now_status: { state: 'pending' } }),
-  first: (at) => ({ now: FIRST, now_source: 'llm', now_at: at }),
-  refresh: (at) => ({ now: FIRST, now_source: 'llm', now_at: at, now_status: { state: 'pending' } }),
-  second: (at) => ({ now: SECOND, now_source: 'llm', now_at: at }),
+  loading: () => ({ task: TASK, task_source: 'prompt', now_source: 'title', now_status: { state: 'pending' } }),
+  first: (at) => ({ task: TASK, task_source: 'llm', task_at: at, now: FIRST, now_source: 'llm', now_at: at }),
+  refresh: (at) => ({ task: TASK, task_source: 'llm', task_at: at, now: FIRST, now_source: 'llm', now_at: at, now_status: { state: 'pending' } }),
+  second: (at) => ({ task: TASK, task_source: 'llm', task_at: at, now: SECOND, now_source: 'llm', now_at: at }),
 };
+
+/** The row states the board draws (`data-display`), and its two UI themes. */
+const DISPLAYS = ['working', 'needs_you', 'waiting', 'done', 'idle', 'asleep'];
+const THEMES = ['quiet', 'ubuntu'];
 
 interface Rig {
   /** Gives Turnip the step's digest and sends Turnip's last worker.upsert again with it. */
@@ -34,7 +40,7 @@ async function rig(page: Page): Promise<Rig> {
   const at = Date.now() - 2 * 60_000;
   const patch = (w: { label?: string; name?: string; digest?: Digest }) => {
     if (w.label !== 'Turnip' && w.name !== 'Turnip') return;
-    const { now: _n, now_source: _s, now_at: _a, now_status: _st, ...rest } = w.digest ?? {};
+    const { now: _n, now_source: _s, now_at: _a, now_status: _st, task: _t, task_source: _ts, task_at: _ta, task_status: _tst, ...rest } = w.digest ?? {};
     w.digest = { ...rest, ...STEPS[mode]?.(at) };
     last = w as Record<string, unknown>;
   };
@@ -62,7 +68,10 @@ async function rig(page: Page): Promise<Rig> {
   };
 }
 
-/** Every row's box, and Turnip's lines' and metadata slots' (rounded to the pixel). */
+/**
+ * Every row's box, and Turnip's lines' and metadata slots' (rounded to the pixel); its lines' text slots' left edge and
+ * width (the flap row is shorter than the text that replaces it, inside the line's kept height).
+ */
 async function boxes(page: Page): Promise<Record<string, number[]>> {
   return page.evaluate(() => {
     const out: Record<string, number[]> = {};
@@ -70,14 +79,79 @@ async function boxes(page: Page): Promise<Record<string, number[]>> {
       const r = e?.getBoundingClientRect();
       return r ? [r.x, r.y, r.width, r.height].map((n) => Math.round(n)) : [];
     };
+    const slot = (e: Element | null) => box(e).filter((_, i) => i === 0 || i === 2);
     document.querySelectorAll<HTMLElement>('.ov-row').forEach((r) => (out[r.dataset.key ?? ''] = box(r)));
     const t = [...document.querySelectorAll('.ov-row')].find((r) => r.textContent?.includes('Turnip')) ?? null;
     out.now = box(t?.querySelector('.ov-now') ?? null);
+    out.nowText = slot(t?.querySelector('.ov-now > .ov-text') ?? null); // the flap row while loading, the text after
     out.nowMeta = box(t?.querySelector('.ov-now > .ov-ai-meta') ?? null);
     out.task = box(t?.querySelector('.ov-task') ?? null);
+    out.taskText = slot(t?.querySelector('.ov-task > .ov-text') ?? null);
     out.taskMeta = box(t?.querySelector('.ov-task > .ov-ai-meta') ?? null);
     return out;
   });
+}
+
+/**
+ * Turnip's refreshing now text as composed in the browser, for each row state and theme: its colour (its alpha and every
+ * opacity over it folded in) over the row's ground, the board's ink and the hover row's; and the settled line's colour,
+ * to see it is a step back. Ratios rounded to 0.01.
+ */
+async function refreshContrast(page: Page): Promise<{ at: string; refresh: number[]; settled: number[] }[]> {
+  return page.evaluate(
+    ({ displays, themes }) => {
+      const row = [...document.querySelectorAll<HTMLElement>('.ov-row')].find((r) => r.textContent?.includes('Turnip'))!;
+      const line = row.querySelector<HTMLElement>('.ov-now')!;
+      const text = line.querySelector<HTMLElement>('.ov-now-text')!;
+      const root = document.documentElement;
+      const theme0 = root.getAttribute('data-ui-theme');
+      const display0 = row.dataset.display ?? '';
+      const probe = document.createElement('i');
+      row.append(probe);
+      const rgba = (c: string): number[] => {
+        probe.style.color = c;
+        const [r = 0, g = 0, b = 0, a = 1] = (getComputedStyle(probe).color.match(/[\d.]+/g) ?? []).map(Number);
+        return [r, g, b, a];
+      };
+      const lum = ([r, g, b]: number[]) =>
+        [r, g, b].map((v) => (v! / 255 <= 0.03928 ? v! / 255 / 12.92 : ((v! / 255 + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i]!, 0);
+      const ratio = (fg: number[], bg: number[]) => {
+        const [x, y] = [lum(fg), lum(bg)].sort((a, b) => b - a);
+        return Math.round(((x! + 0.05) / (y! + 0.05)) * 100) / 100;
+      };
+      /** `el`'s colour composed over `bg`: its alpha times every opacity from it up to the board. */
+      const over = (el: HTMLElement, bg: number[]) => {
+        const [r, g, b, a] = rgba(getComputedStyle(el).color);
+        let k = a!;
+        for (let e: HTMLElement | null = el; e && !e.classList.contains('ov'); e = e.parentElement) k *= Number(getComputedStyle(e).opacity);
+        return [r, g, b].map((v, i) => v! * k + bg[i]! * (1 - k));
+      };
+      const ground = () => {
+        for (let e: HTMLElement | null = row; e; e = e.parentElement) {
+          const c = rgba(getComputedStyle(e).backgroundColor);
+          if (c[3]! > 0) return c;
+        }
+        return [0, 0, 0, 1];
+      };
+      text.style.transition = 'none';
+      const out: { at: string; refresh: number[]; settled: number[] }[] = [];
+      for (const theme of themes) {
+        root.setAttribute('data-ui-theme', theme);
+        for (const d of displays) {
+          row.dataset.display = d;
+          const bgs = [ground(), rgba(getComputedStyle(row).getPropertyValue('--ov-ink-2'))];
+          out.push({ at: `${theme} ${d}`, refresh: bgs.map((bg) => ratio(over(text, bg), bg)), settled: bgs.map((bg) => ratio(over(line, bg), bg)) });
+        }
+      }
+      if (theme0 === null) root.removeAttribute('data-ui-theme');
+      else root.setAttribute('data-ui-theme', theme0);
+      row.dataset.display = display0;
+      text.style.transition = '';
+      probe.remove();
+      return out;
+    },
+    { displays: DISPLAYS, themes: THEMES },
+  );
 }
 
 async function openOverview(page: Page): Promise<void> {
@@ -136,6 +210,15 @@ test('a summaryâ€™s loading, arrival and refresh move no row, and keep the lineâ
   await expect(line.locator('.ov-busy')).toBeVisible();
   await expect(line.locator('.ov-now-text')).toHaveText(FIRST);
   expect(await boxes(page)).toEqual(before);
+  // Its dimming keeps the text AA (4.5:1) on the row's ground and the hover row, in every row state and both themes, and
+  // is a step back from the settled line's colour (never brighter; dimmer where the settled one has the room).
+  const composed = await refreshContrast(page);
+  expect(composed).toHaveLength(DISPLAYS.length * THEMES.length);
+  for (const c of composed) {
+    for (const v of c.refresh) expect(v, `${c.at}: ${c.refresh.join(' / ')}`).toBeGreaterThanOrEqual(4.5);
+    c.refresh.forEach((v, i) => expect(v, `${c.at} against its settled line`).toBeLessThanOrEqual(c.settled[i]!));
+  }
+  expect(composed.filter((c) => c.refresh[0]! < c.settled[0]!).map((c) => c.at)).toEqual(composed.map((c) => c.at));
   await shot(page, 'm119-refresh');
   r.step('second');
   await expect(line.locator('.ov-ch').first()).toBeAttached();

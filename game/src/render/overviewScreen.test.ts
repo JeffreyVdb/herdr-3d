@@ -232,7 +232,7 @@ describe('the overview’s colours (#118)', () => {
   it('AA: every status light is >= 3:1 on the ink (and the hover row); text >= 4.5:1; white on every chip >= 4.5:1', () => {
     for (const bg of [token('ov-ink'), token('ov-ink-2')]) {
       for (const [k, c] of Object.entries(STATUS_CSS)) expect(contrast(c, bg), `${k} on ${bg}`).toBeGreaterThanOrEqual(3);
-      for (const t of ['ov-text', 'ov-text-2', 'ov-text-3']) expect(contrast(token(t), bg), `${t} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+      for (const t of ['ov-text', 'ov-text-2', 'ov-text-3', 'ov-text-refresh']) expect(contrast(token(t), bg), `${t} on ${bg}`).toBeGreaterThanOrEqual(4.5);
     }
     for (const [k, c] of Object.entries(STATUS_CHIP_CSS)) expect(contrast('#ffffff', c), `white on ${k}`).toBeGreaterThanOrEqual(4.5);
   });
@@ -245,10 +245,31 @@ describe('the overview’s colours (#118)', () => {
     const own = /\.ov-row\[data-display='asleep'\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
     const asleep = (name: string) => new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`).exec(own)?.[1] ?? token(name);
     expect(asleep('ov-text')).not.toBe(token('ov-text')); // it does dim
-    const used = ['ov-text', 'ov-text-2', 'ov-text-3', 'ov-key-asleep'].map(asleep);
+    const used = ['ov-text', 'ov-text-2', 'ov-text-3', 'ov-key-asleep', 'ov-text-refresh'].map(asleep);
     for (const bg of [token('ov-ink'), token('ov-ink-2')]) for (const t of used) expect(contrast(t, bg), `${t} on ${bg}`).toBeGreaterThanOrEqual(4.5);
     // The ticket key uses its asleep colour.
     expect(css).toMatch(/data-display='asleep'\] \.ov-ticket-key \{\s*color: var\(--ov-key-asleep\)/);
+  });
+
+  it('#119: a refreshing now line steps back through its own colour, never an opacity: AA on every row, a row asleep too', () => {
+    // The rules for a refreshing line: a colour token, nothing composed over the row's own (an asleep row's dimmer) text.
+    const rules = [...css.matchAll(/([^{}]*refreshing[^{}]*)\{([^}]*)\}/g)];
+    expect(rules.length).toBeGreaterThan(0);
+    for (const [sel, body] of rules.map(([, a, b]) => [a?.trim(), b])) expect(body, `${sel}`).not.toMatch(/(^|[\s;])(opacity|filter)\s*:/);
+    expect(css).toMatch(/\.ov-now--refreshing > \.ov-now-text \{\s*color: var\(--ov-text-refresh\)/);
+    // The row states other than asleep set no text token of their own: the default pair below covers them.
+    expect(new Set([...css.matchAll(/data-display='(\w+)'\][^{]*\{[^}]*--ov-text/g)].map((m) => m[1]))).toEqual(new Set(['asleep']));
+    const own = /\.ov-row\[data-display='asleep'\]\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+    const asleep = (name: string) => new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`).exec(own)?.[1] ?? token(name);
+    for (const [refresh, settled] of [
+      [token('ov-text-refresh'), token('ov-text-2')],
+      [asleep('ov-text-refresh'), asleep('ov-text-2')],
+    ] as const) {
+      for (const bg of [token('ov-ink'), token('ov-ink-2')]) {
+        expect(contrast(refresh, bg), `${refresh} on ${bg}`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(refresh, bg), `${refresh} a step back from ${settled}`).toBeLessThan(contrast(settled, bg));
+      }
+    }
   });
 });
 

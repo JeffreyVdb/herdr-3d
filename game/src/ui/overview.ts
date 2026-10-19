@@ -845,7 +845,7 @@ export class OverviewOverlay {
       el.setAttribute('aria-busy', 'true');
       const cells = calm ? [] : Array.from({ length: SKELETON_CELLS }, () => h('span', { class: 'ov-fc' }));
       el.replaceChildren(
-        h('b', {}, 'Now'),
+        label('Now', null),
         h('span', { class: 'ov-text ov-flaprow', 'aria-hidden': 'true' }, ...(calm ? [h('span', { class: 'ov-flapbar' }, 'summarizing…')] : cells)),
         h('span', { class: 'ov-ai-meta' }, calm ? null : h('span', { class: 'ov-loading' }, 'summarizing')),
       );
@@ -1163,7 +1163,7 @@ function lineParts(kind: 'task' | 'now', line: OverviewLine, now: number): { cla
   const text = line.text ? h('span', { class: `ov-text ov-${kind}-text`, title: line.text }, line.text) : h('span', { class: `ov-text ov-${kind}-text ov-quiet` }, 'No summary yet');
   return {
     className: `ov-line ov-${kind}${failed ? ' ov-line--status' : ''}${busy ? ' ov-now--refreshing' : ''}`,
-    children: [h('b', {}, kind === 'task' ? 'Task' : 'Now', line.llm ? h('span', { class: 'ov-ai', title, role: 'img', 'aria-label': title }, icon(ICON.sparkle)) : null), text, h('span', { class: 'ov-ai-meta' }, ...meta)],
+    children: [label(kind === 'task' ? 'Task' : 'Now', line.llm ? h('span', { class: 'ov-ai', title, role: 'img', 'aria-label': title }, icon(ICON.sparkle)) : null), text, h('span', { class: 'ov-ai-meta' }, ...meta)],
     text,
   };
 }
@@ -1179,6 +1179,14 @@ function statusEls(line: OverviewLine, kind: 'task' | 'now'): HTMLElement[] {
   if (line.status.state === 'pending' && line.status.reason !== 'daily_cap') return [busyMark(t.detail)];
   const chip = h('span', { class: `ov-ai-state ov-ai-state--${line.status.state}${line.llm ? ' ov-ai-state--kept' : ''}`, title: t.detail, role: 'img', 'aria-label': t.detail }, t.chip);
   return t.retry ? [chip, h('button', { class: 'ov-retry', tabindex: '-1', 'data-retry': '1', title: 'Try the AI summary again (R)' }, 'Retry')] : [chip];
+}
+
+/**
+ * A line's label: the model's sparkle beside it (#232), else (#119) the sparkle's room, hidden and for no one, so the text
+ * after it starts at the same place and keeps its width whoever wrote the line, loading too.
+ */
+function label(name: string, sparkle: HTMLElement | null): HTMLElement {
+  return h('b', {}, name, sparkle ?? h('span', { class: 'ov-ai-room', 'aria-hidden': 'true' }, icon(ICON.sparkle)));
 }
 
 /** #119: a call out for a line: two small flaps turning (still under calm), its words in the title and for a screen reader. */
