@@ -34,6 +34,7 @@ type FakeChannel struct {
 	cardN   int64
 	cards   []Ref
 	shown   map[Ref]Card
+	first   map[Ref]Card // H3D-1: as each was sent (its Quiet)
 	edits   int
 	tapAns  []FakeTapAnswer
 	prompts []FakePrompt
@@ -67,7 +68,7 @@ type FakeAnswer struct {
 // NewFakeChannel is a fake with a token and a paired recipient when ready.
 func NewFakeChannel(ready bool) *FakeChannel {
 	f := &FakeChannel{st: ChannelState{Provider: "fake"}, change: make(chan struct{}, 1), sentC: make(chan struct{}, 64),
-		cardN: FakeCardBase - 1, shown: map[Ref]Card{}}
+		cardN: FakeCardBase - 1, shown: map[Ref]Card{}, first: map[Ref]Card{}}
 	if ready {
 		f.st.KeySet, f.st.KeyHint, f.st.Paired = true, "abcd", &Recipient{Name: "Ada", At: 1}
 	}
@@ -398,7 +399,7 @@ func (f *FakeChannel) SendCard(_ context.Context, c Card) (Ref, error) {
 	f.cardN++
 	ref := Ref{FakeChatID, f.cardN}
 	f.cards = append(f.cards, ref)
-	f.shown[ref] = c
+	f.shown[ref], f.first[ref] = c, c
 	f.mu.Unlock()
 	f.tick()
 	return ref, nil
@@ -456,6 +457,13 @@ func (f *FakeChannel) Card(ref Ref) Card {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.shown[ref]
+}
+
+// SentCard is card ref as it was sent (H3D-1: whether it rang).
+func (f *FakeChannel) SentCard(ref Ref) Card {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.first[ref]
 }
 
 // Edits counts the cards' edits.

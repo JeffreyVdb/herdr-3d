@@ -76,6 +76,24 @@ func TestNotifyFactsCardTexts(t *testing.T) {
 	}
 }
 
+// H3D-1: a report's request is in its facts as a Questions only message may
+// show it (scrubbed, trimmed, a cut marked), and a wrap-up's when-armed.
+func TestNotifyFactsReportAndWrapUp(t *testing.T) {
+	req := "  Push to https://ada:hunter2@git.example.com or wait?\n"
+	n := notifyFacts(&proto.Worker{Report: &proto.RunReport{State: "ready", InputRequired: &req, InputTruncated: true},
+		WrapUp: &proto.WrapUp{State: "needs_you", ArmedAt: 42}}, false)
+	if want := "Push to https://ada:[key]@git.example.com or wait?… (cut: the rest is in the game)"; n.Report.Request != want ||
+		*n.Report.InputRequired != req {
+		t.Fatalf("request %q", n.Report.Request)
+	}
+	if n.WrapUpState != "needs_you" || n.WrapUpArmedAt != 42 {
+		t.Fatalf("wrap-up %q %d", n.WrapUpState, n.WrapUpArmedAt)
+	}
+	if blank := "  "; notifyFacts(&proto.Worker{Report: &proto.RunReport{State: "ready", InputRequired: &blank, InputTruncated: true}}, false).Report.Request != "" {
+		t.Fatal("a blank request shows text")
+	}
+}
+
 // #88: a blocked worker's permission or trust menu is in its facts with
 // its labels scrubbed, a command in them elided, never its question line
 // or its excerpt; a choice menu, or one of a worker no longer blocked, is

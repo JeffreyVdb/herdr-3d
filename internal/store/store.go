@@ -220,6 +220,7 @@ var migrations = []string{
 	// #66: schedule suggestions' settings (with the user's time zone) and
 	// the messages they looked at.
 	migrationScheduleSuggest,
+	migrationNotifyMode,
 }
 
 // Fingerprint kinds.

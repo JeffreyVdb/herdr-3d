@@ -252,6 +252,23 @@ func TestNotifyCommands(t *testing.T) {
 	if got := code(r); got != notify.CodeBadRequest {
 		t.Fatalf("blank token: %s", got)
 	}
+	// H3D-1: the mode, everything until set, kept by the store; another
+	// value is refused.
+	if s.Mode != proto.NotifyModeEverything {
+		t.Fatalf("mode %q", s.Mode)
+	}
+	questions, other := proto.NotifyModeQuestions, "digest"
+	_, r = c.command(proto.CmdNotifySet, "r9", proto.NotifySetArgs{Mode: &questions})
+	if s := state(r); s.Mode != proto.NotifyModeQuestions || !s.Events.NeedsYou {
+		t.Fatalf("questions only %+v", s)
+	}
+	if st, _, _ := b.st.LoadNotifySettings(context.Background()); st.Mode != proto.NotifyModeQuestions {
+		t.Fatalf("stored mode %q", st.Mode)
+	}
+	_, r = c.command(proto.CmdNotifySet, "r10", proto.NotifySetArgs{Mode: &other})
+	if got := code(r); got != notify.CodeBadRequest {
+		t.Fatalf("another mode: %s", got)
+	}
 }
 
 // #12: notify.token.set args that do not decode (the token as a bare string,

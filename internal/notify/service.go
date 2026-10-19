@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -70,11 +71,13 @@ type Settings struct {
 	// Replies (#13): a reply to a notification is typed into its worker.
 	// Off by default, and apart from Enabled.
 	Replies bool
+	// Mode (H3D-1) is ModeEverything or ModeQuestions ("": everything).
+	Mode string
 }
 
 // DefaultSettings: off, both events, with sound, no freelancers, no
-// replies.
-func DefaultSettings() Settings { return Settings{NeedsYou: true, Done: true} }
+// replies, everything that needs you.
+func DefaultSettings() Settings { return Settings{NeedsYou: true, Done: true, Mode: ModeEverything} }
 
 // Store keeps the settings (the bridge's database), and (#13) which worker
 // each sent notification was about, bounded (the store forgets the oldest).
@@ -147,7 +150,9 @@ type View struct {
 	Quiet       bool   `json:"quiet"`
 	Freelancers bool   `json:"freelancers"`
 	// Replies (#13): a reply to a notification is typed into its worker.
-	Replies   bool         `json:"replies"`
+	Replies bool `json:"replies"`
+	// Mode (H3D-1): ModeEverything or ModeQuestions.
+	Mode      string       `json:"mode"`
 	Channel   ChannelState `json:"channel"`
 	LastError *LastError   `json:"last_error,omitempty"`
 	// Dropped counts the alerts and sightings dropped since the bridge
@@ -158,6 +163,8 @@ type View struct {
 // Update is a change of the settings: a nil field is kept.
 type Update struct {
 	Enabled, NeedsYou, Done, Quiet, Freelancers, Replies *bool
+	// Mode (H3D-1): ModeEverything or ModeQuestions.
+	Mode *string
 }
 
 // TestResult is notify.test's answer.
@@ -299,7 +306,7 @@ func (s *Service) View() View {
 	defer s.mu.Unlock()
 	v := View{Enabled: s.enabledLocked(), Env: []string{}, Tested: ready && s.testedLocked(fp),
 		Events: Events{NeedsYou: s.set.NeedsYou, Done: s.set.Done}, Quiet: s.set.Quiet, Freelancers: s.set.Freelancers,
-		Replies: s.set.Replies, Channel: ch, Dropped: s.dropped.Load()}
+		Replies: s.set.Replies, Mode: s.modeLocked(), Channel: ch, Dropped: s.dropped.Load()}
 	if s.opts.EnvEnabled != nil {
 		v.Env = append(v.Env, "enabled")
 	}
@@ -330,7 +337,7 @@ func (s *Service) View() View {
 }
 
 // allowed reports whether an alert of kind may go now: switched on, the
-// channel ready, its event on.
+// channel ready, its event on (H3D-1: done never under Questions only).
 func (s *Service) allowed(k Kind) bool {
 	if !s.opts.Channel.Ready() {
 		return false
@@ -341,9 +348,30 @@ func (s *Service) allowed(k Kind) bool {
 		return false
 	}
 	if k == KindDone {
-		return s.set.Done
+		return s.set.Done && s.modeLocked() != ModeQuestions
 	}
 	return s.set.NeedsYou
+}
+
+// admits reports whether alert a may go now: allowed, and (H3D-1) a
+// question under Questions only. Checked again wherever an alert waited (a
+// parked one's release, each delivery), so a mode changed meanwhile holds.
+func (s *Service) admits(a Alert) bool {
+	return s.allowed(a.Kind) && (a.Question || !s.questionsOnly())
+}
+
+func (s *Service) modeLocked() string {
+	if s.set.Mode == ModeQuestions {
+		return ModeQuestions
+	}
+	return ModeEverything
+}
+
+// questionsOnly: the mode is ModeQuestions (H3D-1).
+func (s *Service) questionsOnly() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.modeLocked() == ModeQuestions
 }
 
 func (s *Service) freelancers() bool {
@@ -392,6 +420,10 @@ func (s *Service) Apply(ctx context.Context, u Update) error {
 			next.Enabled = *u.Enabled
 		}
 	}
+	if m := u.Mode; m != nil && *m != ModeEverything && *m != ModeQuestions {
+		s.mu.Unlock()
+		return &Error{CodeBadRequest, fmt.Sprintf("mode must be %q or %q", ModeEverything, ModeQuestions)}
+	}
 	// #13: replies need a token and a paired account (no test: nothing is
 	// sent to switch them on).
 	if u.Replies != nil && *u.Replies && !s.set.Replies {
@@ -412,6 +444,9 @@ func (s *Service) Apply(ctx context.Context, u Update) error {
 		if f.v != nil {
 			*f.dst = *f.v
 		}
+	}
+	if u.Mode != nil {
+		next.Mode = *u.Mode
 	}
 	if s.opts.Store != nil {
 		if err := s.opts.Store.SaveNotifySettings(ctx, next); err != nil {
@@ -593,7 +628,7 @@ func (s *Service) process() {
 	s.obs = nil
 	s.obsMu.Unlock()
 	now := s.now()
-	freelancers := s.freelancers()
+	freelancers, questions := s.freelancers(), s.questionsOnly()
 	for _, o := range obs {
 		// #14: what the worker asks now, for its cards (a change only).
 		// #88: a menu's with what its card shows. #106: and the blocked
@@ -621,14 +656,17 @@ func (s *Service) process() {
 			s.publish(id)
 			continue
 		}
-		a := s.tr.observe(s.sight(o, freelancers), now)
+		if r := o.Worker.Report; r != nil && r.Resolved && r.InputRequired != nil {
+			s.tr.reopen(id, episodeKey(KindNeedsYou, reportID(r))) // H3D-1: asked again, it is new
+		}
+		a := s.tr.observe(s.sight(o, freelancers, questions), now)
 		s.publish(id)
 		if a != nil {
 			s.alert(*a)
 		}
 	}
 	for _, a := range s.tr.due(now) {
-		if s.allowed(a.Kind) {
+		if s.admits(a) {
 			s.alert(a)
 		}
 	}
@@ -653,14 +691,25 @@ func (s *Service) publish(id string) {
 func (s *Service) current(a Alert) bool {
 	s.epMu.Lock()
 	defer s.epMu.Unlock()
-	return s.episodes[a.WorkerID] == episodeKey(a.Kind, a.Since)
+	return s.episodes[a.WorkerID] == a.Key
 }
 
 // alert sends a, or parks it while its worker's cooldown or the
 // destination's budget is spent (#106: the latest of a worker's wins). A
 // needs-you alert parked by the cooldown still opens its cards: they draw
-// on the budget, not on the alert's cooldown.
+// on the budget, not on the alert's cooldown. H3D-1: a Questions only
+// question goes as its cards alone while it can have them (the first
+// rings; the cards' budget, not the alert's cooldown), else as its text.
 func (s *Service) alert(a Alert) {
+	if a.Question {
+		if s.cardable(a) {
+			a.Ring = true
+			s.cardsOf(a)
+			return
+		}
+		on, _ := s.listening()
+		a.Body = questionText(a, on)
+	}
 	ok, at, cause := s.lim.admitAlert(a.WorkerID)
 	if ok {
 		s.enqueue(a)
@@ -668,7 +717,7 @@ func (s *Service) alert(a Alert) {
 	}
 	park(s.parked, a, at, cause)
 	s.opts.Log.Debug("notifications: an alert waits for its budget", "worker", a.WorkerID, "kind", a.Kind, "cause", cause)
-	if cause == causeCooldown && a.Kind == KindNeedsYou {
+	if cause == causeCooldown && a.Kind == KindNeedsYou && a.Body == "" {
 		s.cardsOf(a)
 	}
 }
@@ -694,7 +743,7 @@ func (s *Service) release(now time.Time) {
 		}
 		row := limitAudit{ID: id, Kind: "alert", Cause: p.cause, Coalesced: p.coalesced, Outcome: "dropped"}
 		a := p.alert
-		if s.tr.current(id) == episodeKey(a.Kind, a.Since) && s.allowed(a.Kind) {
+		if s.tr.current(id) == a.Key && s.admits(a) {
 			ok, at, cause := s.lim.admitAlert(id)
 			if !ok {
 				p.at, p.cause = at, cause
@@ -708,8 +757,9 @@ func (s *Service) release(now time.Time) {
 	}
 }
 
-// sight is what the tracker sees of an observation.
-func (s *Service) sight(o Observation, freelancers bool) sighting {
+// sight is what the tracker sees of an observation (questions: under
+// Questions only, H3D-1).
+func (s *Service) sight(o Observation, freelancers, questions bool) sighting {
 	w := o.Worker
 	v := Judge(w)
 	latent := v
@@ -726,16 +776,23 @@ func (s *Service) sight(o Observation, freelancers bool) sighting {
 	default:
 		return sg
 	}
-	sg.key = episodeKey(sg.kind, latent.Since)
-	sg.eligible = v.Candidate(freelancers) && s.allowed(sg.kind)
-	sg.alert = Alert{WorkerID: o.Worker.ID, Kind: sg.kind, Reason: v.Reason, Name: o.Name, Line: o.Line, Since: latent.Since}
+	id, about, question := strconv.FormatInt(latent.Since, 10), aboutDone, false
 	if sg.kind == KindNeedsYou {
-		switch v.Reason {
-		case ReasonQuestion:
-			sg.alert.Ask = w.Ask
-		case ReasonFollowup:
-			sg.alert.Followup = w.Followup
-		}
+		id, about, question = episode(w, latent, questions)
+	}
+	sg.key = episodeKey(sg.kind, id)
+	sg.eligible = v.Candidate(freelancers) && s.allowed(sg.kind) && (question || !questions)
+	sg.alert = Alert{WorkerID: o.Worker.ID, Kind: sg.kind, Reason: v.Reason, Name: o.Name, Line: o.Line, Since: latent.Since,
+		Key: sg.key, About: about, Question: questions && question}
+	switch about {
+	case aboutAsk:
+		sg.alert.Ask = w.Ask
+	case aboutFollowup:
+		sg.alert.Followup = w.Followup
+	case aboutMenu:
+		sg.alert.Menu = w.Menu
+	case aboutReport:
+		sg.alert.Report = w.Report.Request
 	}
 	return sg
 }
@@ -748,7 +805,7 @@ func (s *Service) enqueue(a Alert) {
 		s.lim.dropAlert(a.WorkerID)
 		s.dropped.Add(1)
 		s.signal()
-		s.audit(context.Background(), AuditSend, sendAudit{ID: a.WorkerID, Kind: string(a.Kind)}, errors.New(CodeDropped))
+		s.audit(context.Background(), AuditSend, a.sendRow(), errors.New(CodeDropped))
 	}
 }
 
@@ -764,13 +821,28 @@ func (s *Service) sender(ctx context.Context) {
 }
 
 // sendAudit is a notify.send row's args: whom and why, how it went; never
-// the text.
+// the text. H3D-1: why is the rule's reason and what the episode is about
+// (about*); Cards is how many question cards went with it (0: none), Via
+// how the message went (via*; "": an alert).
 type sendAudit struct {
 	ID       string `json:"id"`
 	Kind     string `json:"kind"`
+	Reason   string `json:"reason,omitempty"`
+	About    string `json:"about,omitempty"`
+	Via      string `json:"via,omitempty"`
+	Cards    int    `json:"cards,omitempty"`
 	Attempts int    `json:"attempts,omitempty"`
 	Status   int    `json:"status,omitempty"`
 	Code     string `json:"code,omitempty"`
+}
+
+// sendRow is a's notify.send row, before it went.
+func (a Alert) sendRow() sendAudit {
+	row := sendAudit{ID: a.WorkerID, Kind: string(a.Kind), Reason: a.Reason, About: a.About}
+	if a.Body != "" {
+		row.Via = viaQuestion
+	}
+	return row
 }
 
 // retryAfter is a rate limit's wait in err (0: none).
@@ -799,8 +871,8 @@ func Backoff(n int) time.Duration {
 // dropped too, and audited obsolete. Its budget slot counts from its last
 // attempt, or is given back when there was none.
 func (s *Service) deliver(ctx context.Context, a Alert) {
-	n := Notification{WorkerID: a.WorkerID, Name: a.Name, Reason: a.Reason, Line: a.Line, Quiet: s.quiet()}
-	row := sendAudit{ID: a.WorkerID, Kind: string(a.Kind)}
+	n := Notification{WorkerID: a.WorkerID, Name: a.Name, Reason: a.head(), Line: a.Line, Body: a.Body, Quiet: s.quiet()}
+	row := a.sendRow()
 	defer func() {
 		if row.Attempts > 0 {
 			s.lim.sentAlert(a.WorkerID)
@@ -811,7 +883,7 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 	var err error
 	var ref Ref
 	for row.Attempts < MaxAttempts {
-		if !s.allowed(a.Kind) {
+		if !s.admits(a) {
 			return
 		}
 		if err = s.lim.wait(ctx); err != nil { // #106: the destination's pacing
@@ -866,7 +938,17 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 	} else {
 		s.opts.Log.Info("notification sent", "worker", a.WorkerID, "kind", a.Kind, "attempts", row.Attempts)
 		s.remember(ctx, ref, a.WorkerID)
-		s.cardsOf(a)
+		if a.Kind == KindNeedsYou && a.Body == "" {
+			// H3D-1: its row, once its cards had their turn (the replier's,
+			// in order).
+			s.cardsOf(a)
+			sent := row
+			s.job(func(ctx context.Context) {
+				sent.Cards = s.carded(a)
+				s.audit(ctx, AuditSend, sent, nil)
+			})
+			return
+		}
 	}
 	s.audit(ctx, AuditSend, row, aerr)
 }

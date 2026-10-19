@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"strconv"
 	"testing"
 	"time"
 )
@@ -10,7 +11,7 @@ var t0 = time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
 func see(id string, k Kind, since int64, eligible bool) sighting {
 	s := sighting{id: id, kind: k, eligible: eligible, alert: Alert{WorkerID: id, Kind: k}}
 	if k != "" {
-		s.key = episodeKey(k, since)
+		s.key = episodeKey(k, strconv.FormatInt(since, 10))
 	}
 	return s
 }

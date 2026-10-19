@@ -1,9 +1,6 @@
 package notify
 
-import (
-	"strconv"
-	"time"
-)
+import "time"
 
 // Kind is what an episode is about: the two events a notification is for.
 type Kind string
@@ -14,9 +11,10 @@ const (
 	KindDone     Kind = "done"
 )
 
-// episodeKey names an episode of a worker: its kind and when it started. A
-// new since is a new episode (inboxPings.ts episode()).
-func episodeKey(k Kind, since int64) string { return string(k) + "|" + strconv.FormatInt(since, 10) }
+// episodeKey names an episode of a worker: its kind and what it is (H3D-1:
+// episode's, the question or state it is about; a done episode's is when it
+// started). Another id is another episode.
+func episodeKey(k Kind, id string) string { return string(k) + "|" + id }
 
 // Alert is a notification about to go: whom it is about and what it says.
 type Alert struct {
@@ -31,9 +29,23 @@ type Alert struct {
 	// Since is when the episode started, unix ms (#88: a menu's card goes
 	// with the notification of its blocked spell).
 	Since int64
-	// Menu is what a menu's card asks (#88: never on an alert the tracker
-	// sends; openMenu's).
+	// Menu is what a menu's card asks (#88: openMenu's; H3D-1: and what a
+	// Questions only alert about a menu asks).
 	Menu *Menu
+	// H3D-1: Key is the episode (episodeKey: an alert goes only while it
+	// is its worker's), About what it is about (about*, for the audit).
+	Key, About string
+	// Question: a pending question Questions only lets through: its cards,
+	// else its text (Body), are the message, with no alert before them.
+	Question bool
+	// Report is a report request's text as it may leave the bridge
+	// (Report.Request).
+	Report string
+	// Body is the question's text, the message itself (questionText; "":
+	// the alert's line).
+	Body string
+	// Ring: the first of its cards rings (they are the notification).
+	Ring bool
 }
 
 // sighting is one look at a worker for the tracker.
@@ -114,6 +126,14 @@ func (t *tracker) observe(s sighting, now time.Time) *Alert {
 	}
 	t.pending[s.id] = pendingDone{key: s.key, due: now.Add(t.settle), alert: s.alert}
 	return nil
+}
+
+// reopen forgets that key was worker id's last known episode (H3D-1: a
+// report request resolved; asked again, it is a new one).
+func (t *tracker) reopen(id, key string) {
+	if k, ok := t.known[id]; ok && k == key {
+		t.known[id] = ""
+	}
 }
 
 // gone forgets a worker that left.

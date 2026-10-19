@@ -53,8 +53,10 @@ type Worker struct {
 	Ask     *Ask
 	// Followup is the open follow-up questions (nil: none).
 	Followup *Followup
-	// WrapUpState is the wrap-up's state ("": none).
-	WrapUpState string
+	// WrapUpState is the wrap-up's state ("": none); WrapUpArmedAt when it
+	// was armed, unix ms (H3D-1: which wrap-up it is).
+	WrapUpState   string
+	WrapUpArmedAt int64
 	// CodexShared and CodexAsyncBlocked: a shared Codex worker whose blocked
 	// is only an async question's (#157).
 	CodexShared, CodexAsyncBlocked bool
@@ -72,6 +74,9 @@ type Report struct {
 	InputRequired *string
 	// Resolved: the report carries an input_resolved.
 	Resolved bool
+	// Request is InputRequired as a notification may show it (H3D-1:
+	// scrubbed by the bridge, trimmed, marked when it was cut).
+	Request string
 }
 
 // Ask is the agent's structured question.

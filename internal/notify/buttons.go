@@ -644,7 +644,10 @@ func (s *Service) openMenu(ctx context.Context, id string) bool {
 		return false
 	}
 	sp.saw(menuID(m.menu))
-	if !s.openCards(ctx, Alert{WorkerID: id, Name: m.name, Kind: KindNeedsYou, Since: m.since, Menu: m.menu}) {
+	// H3D-1: under Questions only the card is the notification: it rings.
+	a := Alert{WorkerID: id, Name: m.name, Kind: KindNeedsYou, Reason: ReasonNeedsYou, About: aboutMenu, Since: m.since, Menu: m.menu,
+		Ring: s.questionsOnly()}
+	if !s.openCards(ctx, a) {
 		return false
 	}
 	sp.card(cardID(m.menu))
@@ -683,8 +686,28 @@ func newToken() string {
 	return hex.EncodeToString(b)
 }
 
+// carded is how many cards of what alert a asks are open now (H3D-1: its
+// notify.send row's): its ask's or follow-up's, else its blocked spell's
+// menu's.
+func (s *Service) carded(a Alert) int {
+	ss := s.bt.of(a.WorkerID)
+	switch {
+	case ss == nil:
+		return 0
+	case a.Ask != nil || a.Followup != nil:
+		if ss.key == alertKey(a) {
+			return len(ss.qs)
+		}
+	case ss.kind == kindMenu && ss.since == a.Since:
+		return len(ss.qs)
+	}
+	return 0
+}
+
 // openCards sends an alert's cards (after its notification), while
-// replies are on and the worker still asks it; true: they went.
+// replies are on and the worker still asks it; true: they went. H3D-1: a
+// Ring alert's cards are the notification (Questions only): the first
+// rings, unless Quiet, and they write its notify.send row.
 func (s *Service) openCards(ctx context.Context, a Alert) bool {
 	key := alertKey(a)
 	if on, _ := s.listening(); !on || key == "" || s.bt.cur[a.WorkerID] != key {
@@ -727,9 +750,10 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 	for range n {
 		ss.qs = append(ss.qs, &qstate{picked: map[int]bool{}})
 	}
+	row := sendAudit{ID: a.WorkerID, Kind: string(a.Kind), Reason: a.Reason, About: a.About, Via: viaCards}
 	for i, q := range ss.qs {
 		c := s.render(ss, i, "")
-		c.Quiet = true // the notification rang already
+		c.Quiet = !a.Ring || i > 0 || s.quiet() // else the notification rang already
 		var ref Ref
 		err := s.call(ctx, func(ctx context.Context) error {
 			var err error
@@ -744,6 +768,13 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 			if ss.kind == kindMenu {
 				s.auditMenu(ctx, ss, menuFailed)
 			}
+			if a.Ring {
+				row.Cards, row.Code = i, CodeOf(err)
+				if row.Code == "" {
+					row.Code = CodeFailed
+				}
+				s.audit(ctx, AuditSend, row, errors.New(row.Code))
+			}
 			s.closeCards(ctx, ss, CardInGameAsk)
 			return false
 		}
@@ -755,6 +786,10 @@ func (s *Service) openCards(ctx context.Context, a Alert) bool {
 	s.bt.sessions = append(s.bt.sessions, ss)
 	for len(s.bt.sessions) > MaxSessions {
 		s.bt.forget(s.bt.sessions[0])
+	}
+	if a.Ring {
+		row.Cards = n
+		s.audit(ctx, AuditSend, row, nil)
 	}
 	return true
 }
