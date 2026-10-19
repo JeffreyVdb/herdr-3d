@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -263,6 +264,12 @@ func LoadZone(zone string) (*time.Location, error) {
 // ErrNone is Parse's answer to {"none": true}.
 var ErrNone = errors.New("none")
 
+// rfc3339 is RFC 3339's date-time with an upper-case T and Z (Go's parser
+// takes no other): two-digit fields, a "." fraction, an offset of hours
+// and minutes. time.RFC3339 alone also takes a one-digit hour, a ","
+// fraction and offsets like +24:00 or +01:60.
+var rfc3339 = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$`)
+
 // Parse reads the LLM's answer (the first JSON object in it) and validates
 // it at now:
 //   - {"none": true} is ErrNone;
@@ -292,7 +299,7 @@ func Parse(text string, now time.Time) (Draft, error) {
 	}
 	at := strings.TrimSpace(raw.DueAt)
 	due, err := time.Parse(time.RFC3339, at)
-	if err != nil {
+	if err != nil || !rfc3339.MatchString(at) {
 		return Draft{}, fmt.Errorf("due_at %q is not an RFC 3339 time with an offset", clip(at, 40))
 	}
 	switch {
