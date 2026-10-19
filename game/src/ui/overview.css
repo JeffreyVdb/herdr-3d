@@ -927,8 +927,9 @@
   font-weight: 380;
 }
 /* #232: the label on the text's baseline, the sparkle of a line the AI model wrote hugging it, the text a small step after.
-   #119: a line the model did not write (a fallback, the loading skeleton) keeps the sparkle's room, so its text starts
-   where the model's line will, and the text slot never moves or narrows when the model's line arrives. */
+   #119: a line awaiting the model's (the loading skeleton, a fallback with `pending`) keeps the sparkle's room, so its
+   text starts where the model's line will and the text slot never moves or narrows when that arrives; a settled
+   fallback keeps none (no dead space after its label). */
 .ov-line > b {
   display: inline-flex;
   flex: none;

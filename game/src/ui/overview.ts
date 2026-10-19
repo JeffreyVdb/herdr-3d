@@ -845,7 +845,7 @@ export class OverviewOverlay {
       el.setAttribute('aria-busy', 'true');
       const cells = calm ? [] : Array.from({ length: SKELETON_CELLS }, () => h('span', { class: 'ov-fc' }));
       el.replaceChildren(
-        label('Now', null),
+        label('Now', null, true),
         h('span', { class: 'ov-text ov-flaprow', 'aria-hidden': 'true' }, ...(calm ? [h('span', { class: 'ov-flapbar' }, 'summarizing…')] : cells)),
         h('span', { class: 'ov-ai-meta' }, calm ? null : h('span', { class: 'ov-loading' }, 'summarizing')),
       );
@@ -1163,7 +1163,7 @@ function lineParts(kind: 'task' | 'now', line: OverviewLine, now: number): { cla
   const text = line.text ? h('span', { class: `ov-text ov-${kind}-text`, title: line.text }, line.text) : h('span', { class: `ov-text ov-${kind}-text ov-quiet` }, 'No summary yet');
   return {
     className: `ov-line ov-${kind}${failed ? ' ov-line--status' : ''}${busy ? ' ov-now--refreshing' : ''}`,
-    children: [label(kind === 'task' ? 'Task' : 'Now', line.llm ? h('span', { class: 'ov-ai', title, role: 'img', 'aria-label': title }, icon(ICON.sparkle)) : null), text, h('span', { class: 'ov-ai-meta' }, ...meta)],
+    children: [label(kind === 'task' ? 'Task' : 'Now', line.llm ? h('span', { class: 'ov-ai', title, role: 'img', 'aria-label': title }, icon(ICON.sparkle)) : null, line.status?.state === 'pending'), text, h('span', { class: 'ov-ai-meta' }, ...meta)],
     text,
   };
 }
@@ -1182,11 +1182,12 @@ function statusEls(line: OverviewLine, kind: 'task' | 'now'): HTMLElement[] {
 }
 
 /**
- * A line's label: the model's sparkle beside it (#232), else (#119) the sparkle's room, hidden and for no one, so the text
- * after it starts at the same place and keeps its width whoever wrote the line, loading too.
+ * A line's label: the model's sparkle beside it (#232). #119: a line awaiting the model's (the skeleton, a fallback with
+ * `pending`, the daily cap's too) keeps the sparkle's room, hidden and for no one, so its text starts where the model's
+ * line will and keeps its width when that arrives; a settled fallback has none (#232: no dead space after its label).
  */
-function label(name: string, sparkle: HTMLElement | null): HTMLElement {
-  return h('b', {}, name, sparkle ?? h('span', { class: 'ov-ai-room', 'aria-hidden': 'true' }, icon(ICON.sparkle)));
+function label(name: string, sparkle: HTMLElement | null, awaiting: boolean): HTMLElement {
+  return h('b', {}, name, sparkle ?? (awaiting ? h('span', { class: 'ov-ai-room', 'aria-hidden': 'true' }, icon(ICON.sparkle)) : null));
 }
 
 /** #119: a call out for a line: two small flaps turning (still under calm), its words in the title and for a screen reader. */

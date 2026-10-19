@@ -12,10 +12,10 @@ const TASK = 'Port the worker picker to the new overlay';
 
 type Digest = Record<string, unknown>;
 
-/** Turnip's digest per step: a first summary on its way over its title (its task the prompt's), the model's lines (now
- *  and task), a refresh of the now line, the next. */
+/** Turnip's digest per step: a first summary on its way over its title (its task the prompt's, the model's on its way
+ *  too), the model's lines (now and task), a refresh of the now line, the next. */
 const STEPS: Record<string, (at: number) => Digest> = {
-  loading: () => ({ task: TASK, task_source: 'prompt', now_source: 'title', now_status: { state: 'pending' } }),
+  loading: () => ({ task: TASK, task_source: 'prompt', task_status: { state: 'pending' }, now_source: 'title', now_status: { state: 'pending' } }),
   first: (at) => ({ task: TASK, task_source: 'llm', task_at: at, now: FIRST, now_source: 'llm', now_at: at }),
   refresh: (at) => ({ task: TASK, task_source: 'llm', task_at: at, now: FIRST, now_source: 'llm', now_at: at, now_status: { state: 'pending' } }),
   second: (at) => ({ task: TASK, task_source: 'llm', task_at: at, now: SECOND, now_source: 'llm', now_at: at }),

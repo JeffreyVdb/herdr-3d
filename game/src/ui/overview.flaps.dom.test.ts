@@ -219,4 +219,38 @@ describe('the overview’s now line while the model writes it (#119)', () => {
     expect(task.querySelector('.ov-flaprow')).toBeNull();
     expect(task.hasAttribute('aria-busy')).toBe(false);
   });
+
+  it('the label keeps the sparkle’s room only while its line awaits the model’s: the skeleton, a pending fallback (now and task)', () => {
+    const capped = { state: 'pending', reason: 'daily_cap' } as const;
+    const { ov, row, upsert } = setup([
+      // Settled fallbacks (no status, retrying, failed): no room, no dead space after the label (#232).
+      worker('settled', { digest: { task: 'Port the importer', task_source: 'prompt', now: 'Waiting for review', now_source: 'recap' } }),
+      worker('failed', { digest: { task: 'Port it', task_source: 'prompt', task_status: { state: 'retrying' }, now: 'Waiting', now_source: 'recap', now_status: { state: 'failed' } } }),
+      // Awaiting: the skeleton with a pending task fallback; the daily cap's wait over a fallback.
+      worker('loading', { digest: { task: 'Port the importer', task_source: 'prompt', task_status: pending, ...titleNow() }, title: 'Reading' }),
+      worker('capped', { digest: { task: 'Port it', task_source: 'prompt', task_status: capped, now: 'Waiting', now_source: 'recap', now_status: capped } }),
+      // The model's lines: the sparkle itself, no room.
+      worker('llm', { digest: { task: 'x', task_source: 'llm', ...llmNow(LINE, { now_status: pending }) } }),
+    ]);
+    ov.open('top');
+    const rooms = (id: string) => ['.ov-task', '.ov-now'].map((l) => row(id).querySelectorAll(`${l} > b > .ov-ai-room`).length);
+    expect(rooms('settled')).toEqual([0, 0]);
+    expect(rooms('failed')).toEqual([0, 0]);
+    expect(row('loading').querySelector('.ov-now')?.classList.contains('ov-now--loading')).toBe(true);
+    expect(rooms('loading')).toEqual([1, 1]);
+    expect(rooms('capped')).toEqual([1, 1]);
+    expect(rooms('llm')).toEqual([0, 0]);
+    expect(row('llm').querySelectorAll('b > .ov-ai')).toHaveLength(2);
+    // The room is for no one: hidden from assistive tech, no name, no text.
+    for (const r of document.querySelectorAll('.ov-ai-room')) {
+      expect(r.getAttribute('aria-hidden')).toBe('true');
+      expect(r.hasAttribute('role') || r.hasAttribute('title') || r.hasAttribute('aria-label')).toBe(false);
+      expect(r.textContent).toBe('');
+    }
+    // A settled fallback's task gets the room once the model's line is on its way, and loses it if the call fails.
+    upsert('settled', { digest: { task: 'Port the importer', task_source: 'prompt', task_status: pending, now: 'Waiting for review', now_source: 'recap' } });
+    expect(rooms('settled')).toEqual([1, 0]);
+    upsert('settled', { digest: { task: 'Port the importer', task_source: 'prompt', task_status: { state: 'failed' }, now: 'Waiting for review', now_source: 'recap' } });
+    expect(rooms('settled')).toEqual([0, 0]);
+  });
 });
