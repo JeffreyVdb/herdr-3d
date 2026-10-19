@@ -228,6 +228,8 @@ export interface Worker {
   wrapup?: WrapUp;
   /** #90: the open questions of its agent's final message, found by the AI integration's models, until answered or moot. */
   followup?: Followup;
+  /** #66: a schedule its agent's final message suggests, until it is accepted (a `schedule.create` from it), dismissed or moot. */
+  schedule_suggestion?: ScheduleSuggestion;
   /** #223: its agent's latest completed final reply, which a literal handoff can file (absent: none now, or no cabinet). */
   handoff?: HandoffCandidate;
   /** #224: its agent handoff request while it runs, and after it failed (until dismissed or a new one starts). */
@@ -516,6 +518,8 @@ export interface World {
   followups?: FollowupsState;
   /** #110 pack up on request: the feature's settings and state (absent from an older bridge, or one without the AI service). */
   packup?: PackupState;
+  /** #66 schedule suggestions: the feature's settings and state (absent from an older bridge, or one without the AI service). */
+  schedule_suggestions?: ScheduleSuggestionsState;
   /** #98 "Classify unknown commands": the activity classifier's settings and state (absent from an older bridge, or one without the AI service). */
   activity?: ActivityState;
   /** #118 floor overview summaries: the feature's settings and state (absent from an older bridge, or one without the AI service). */
@@ -654,6 +658,8 @@ export type WorldEvent =
   | FollowupsUpdate
   // #110 pack up on request
   | PackupUpdate
+  // #66 schedule suggestions
+  | ScheduleSuggestionsUpdate
   // #98 what the agent is doing
   | WorkerActivityEvent
   // #98 activity settings ("Classify unknown commands")
@@ -1015,6 +1021,12 @@ export interface CommandArgs {
   // #60: the extraction once more (a fallback's; acks `RetryFollowupAck`), the whole message (`FollowupMessageAck`).
   'worker.retry_followup': { id: string; turn_id: string };
   'worker.followup_message': { id: string; turn_id: string };
+  // #66 schedule suggestions (docs/protocol.md "Schedule suggestions"): the settings (ack `ScheduleSuggestionsState`), the
+  // zone the extraction reads clock times in (the game's, on connect and when it changes), a suggestion dismissed.
+  'schedule_suggestions.get': Record<string, never>;
+  'schedule_suggestions.set': { enabled?: boolean; threshold?: number };
+  'schedule_suggestions.zone': { zone: string };
+  'worker.dismiss_schedule_suggestion': { id: string; suggestion: string };
   // #110 pack up on request (docs/protocol.md "Pack up on request"). `packup.detect` acks `PackupDetectAck`.
   'packup.get': Record<string, never>;
   'packup.set': { enabled?: boolean; threshold?: number };
@@ -1395,6 +1407,7 @@ const EVENT_TYPES = new Set([
   'ai.update', // #92 AI integration
   'followups.update', // #90 follow-up questions
   'packup.update', // #110 pack up on request
+  'schedule_suggestions.update', // #66 schedule suggestions
   'worker.activity', // #98 what the agent is doing
   'activity.update', // #98 activity settings
   'digest.update', // #118 floor overview summaries
@@ -1486,6 +1499,9 @@ export function isWorldEvent(m: ServerMessage): m is WorldEvent {
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
     // #110 pack up on request: the fields of `PackupState` flat in the event.
     case 'packup.update':
+      return typeof o.enabled === 'boolean' && typeof o.state === 'string';
+    // #66 schedule suggestions: the fields of `ScheduleSuggestionsState` flat in the event.
+    case 'schedule_suggestions.update':
       return typeof o.enabled === 'boolean' && typeof o.state === 'string';
     // #98: `activity` absent (or null) clears it.
     case 'worker.activity':
@@ -2533,6 +2549,45 @@ export interface FollowupsTestAck {
   threshold: number;
   samples: FollowupsTestSample[];
   latency_ms: number;
+}
+
+// #66 schedule suggestions (docs/protocol.md "Schedule suggestions"): when an agent's final message says a step must
+// wait, the bridge's models draft a schedule, offered as a chip on that reply. Nothing is scheduled without a save.
+
+/** A worker's suggested schedule (`Worker.schedule_suggestion`). */
+export interface ScheduleSuggestion {
+  /** The turn it is of: what `worker.dismiss_schedule_suggestion` names. */
+  id: string;
+  /** The transcript row it is of: the handoff candidate's `message`. */
+  message?: string;
+  /** When the deferred steps can start (unix ms). */
+  due_at: number;
+  title: string;
+  /** The first prompt of a fresh agent, which reads the attached handoff first. */
+  draft_prompt: string;
+  score: number;
+  /** When it was made (unix ms). */
+  at: number;
+}
+
+/** The feature's settings and state: the follow-up questions' fields without a test, and the zone it reads times in. */
+export interface ScheduleSuggestionsState {
+  enabled: boolean;
+  threshold: number;
+  state: FollowupsFeatureState;
+  /** The models that are not ready. */
+  missing?: AiRole[];
+  roles: { classifier: AiRoleState; llm: AiRoleState };
+  /** The fields the bridge's environment sets (`enabled`): read-only here. */
+  env: string[];
+  /** The IANA zone a game last sent (absent: none yet, times without a zone are read as UTC). */
+  zone?: string;
+}
+
+/** `schedule_suggestions.update`: the whole state, flat. */
+export interface ScheduleSuggestionsUpdate extends ScheduleSuggestionsState {
+  t: 'schedule_suggestions.update';
+  seq: number;
 }
 
 // #110 pack up on request (docs/protocol.md "Pack up on request"): before a prompt goes out, whether it also tells the

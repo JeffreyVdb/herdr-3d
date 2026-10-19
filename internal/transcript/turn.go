@@ -316,6 +316,11 @@ type Turn struct {
 	Hash string
 	// Text is the final message's text, its ends trimmed.
 	Text string
+	// Message is the final message's id (#66): Claude's message.id, Codex's
+	// message item id ("" for a Codex last_agent_message with no message
+	// read). It names the same transcript row as the handoff candidate's
+	// Message.
+	Message string
 }
 
 // FollowupTracker follows one transcript's lines and knows the latest turn
@@ -408,5 +413,9 @@ func (t *FollowupTracker) end() {
 	sum := sha256.Sum256([]byte(text))
 	h := hex.EncodeToString(sum[:])
 	id := sha256.Sum256([]byte(strconv.Itoa(t.turns) + "\x00" + t.msg.msgID + "\x00" + t.turnID + "\x00" + t.msg.itemID + "\x00" + h))
-	t.set(&Turn{ID: hex.EncodeToString(id[:8]), Hash: h, Text: text})
+	msg := t.msg.itemID
+	if t.msg.harness == Claude {
+		msg = t.msg.msgID
+	}
+	t.set(&Turn{ID: hex.EncodeToString(id[:8]), Hash: h, Text: text, Message: msg})
 }

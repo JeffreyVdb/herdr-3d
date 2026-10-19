@@ -321,8 +321,70 @@ describe('HireDialog from a hire preset: herdr hiring instructions (#95)', () =>
     expect(host.savePreset).toHaveBeenLastCalledWith(expect.objectContaining({ instructions: false }), expect.any(HTMLElement));
   });
 
-  it('a plain hire and a bridge before #95 have no box, and nothing sends the flag', async () => {
-    const plain = setup({ lines: LINES });
+  it('a plain hire has the box, off, with the plain-form hint, and nothing is sent while it is off', async () => {
+    const { dlg, inner, hires } = setup({ lines: LINES });
+    dlg.open('v-0123456789ab', 0, { prompt: PROMPT });
+    await tick();
+    expect(box()?.checked).toBe(false);
+    expect(summary(dlg).instructions).toEqual({ on: false, lines: LINES, bytes: enc.encode(PROMPT).length + 2 + enc.encode(LINES).length });
+    expect(document.querySelector('[data-hook="instructions"]')?.textContent).toContain('Tick it if this task starts other agents');
+    expect(document.querySelector('[data-hook="instructions"]')?.textContent).not.toContain('preset');
+    expect(document.querySelector('[data-hook="instructions-lines"]')).toBeNull();
+    await inner.hire();
+    expect(hires[0]).toMatchObject({ prompt: PROMPT });
+    expect(hires[0]).not.toHaveProperty('herdr_instructions');
+  });
+
+  it('ticking the box on a plain hire shows the exact lines and the plain-form hint, and sends the flag with the typed prompt, never the lines', async () => {
+    const { dlg, inner, hires } = setup({ lines: LINES });
+    dlg.open('v-0123456789ab', 0, { prompt: PROMPT });
+    await tick();
+    const b = box() as HTMLInputElement;
+    b.checked = true;
+    b.dispatchEvent(new Event('change'));
+    const bytes = enc.encode(PROMPT).length + 2 + enc.encode(LINES).length;
+    expect(summary(dlg).instructions).toEqual({ on: true, lines: LINES, bytes });
+    const hook = document.querySelector('[data-hook="instructions"]');
+    expect(hook?.textContent).toContain('Each agent this worker starts gets its own herdr workspace or tab');
+    expect(hook?.textContent).not.toContain('for this hire only');
+    expect(document.querySelector('[data-hook="instructions-lines"] pre')?.textContent).toBe(LINES);
+    expect(document.querySelector('[data-hook="instructions-bytes"]')?.textContent).toContain(bytes.toLocaleString('en-US'));
+    await inner.hire();
+    expect(hires[0]).toEqual(expect.objectContaining({ floor: 'v-0123456789ab', prompt: PROMPT, herdr_instructions: true }));
+    expect(JSON.stringify(hires[0])).not.toContain('h3d_floor');
+  });
+
+  it('a plain hire blocks Hire with a reason when the task is over 32 KiB only with the lines, and the box can be unticked', async () => {
+    const { dlg } = setup({ lines: LINES });
+    const room = 32 * 1024 - 2 - enc.encode(LINES).length;
+    dlg.open('floor', 0, { prompt: 'x'.repeat(room + 1) });
+    await tick();
+    expect(summary(dlg).blocker).toBeNull();
+    const b = box() as HTMLInputElement;
+    b.checked = true;
+    b.dispatchEvent(new Event('change'));
+    expect(summary(dlg).blocker).toContain('over 32 KiB');
+    expect(document.querySelector('[data-key="hire"]')?.getAttribute('aria-disabled')).toBe('true');
+    b.checked = false;
+    b.dispatchEvent(new Event('change'));
+    expect(summary(dlg).blocker).toBeNull();
+  });
+
+  it('“Save as preset…” on a plain hire carries the box as the form has it', async () => {
+    const { dlg, host } = setup({ lines: LINES });
+    dlg.open('floor', 0, { prompt: PROMPT });
+    await tick();
+    (document.querySelector('[data-key="save-preset"]') as HTMLButtonElement).click();
+    expect(host.savePreset).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: PROMPT, instructions: false }), expect.any(HTMLElement));
+    const b = box() as HTMLInputElement;
+    b.checked = true;
+    b.dispatchEvent(new Event('change'));
+    (document.querySelector('[data-key="save-preset"]') as HTMLButtonElement).click();
+    expect(host.savePreset).toHaveBeenLastCalledWith(expect.objectContaining({ prompt: PROMPT, instructions: true }), expect.any(HTMLElement));
+  });
+
+  it('a bridge before #95 has no box, plain or from a preset, and nothing sends the flag', async () => {
+    const plain = setup();
     plain.dlg.open('floor', 0, { prompt: PROMPT });
     await tick();
     expect(box()).toBeNull();

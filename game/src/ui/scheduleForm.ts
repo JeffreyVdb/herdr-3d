@@ -44,6 +44,8 @@ export interface ScheduleFormHost extends DialogHost {
 export interface ScheduleFormPrefill {
   title?: string;
   prompt?: string;
+  /** #66: when (unix ms), as a suggestion has it: shown on the zone's clock, its instant kept; passed, it is flagged. */
+  dueAt?: number;
   choice?: { harness: string; model: string; effort: string };
   cwd?: string;
   source?: ScheduleSource;
@@ -362,10 +364,12 @@ export class ScheduleFormDialog {
     }
     this.composer.setDraft(this.newDraft(this.f.prompt));
     this.titleIn.value = this.f.title;
-    // The time has no default (a follow-up's included); an edit shows its own on the zone's clock, and keeps its instant
-    // until the field reads otherwise: the wall clock read back could be the overlap's other showing, and has no seconds.
-    this.whenIn.value = e ? wallText(e.due_at, this.zone) : '';
-    this.kept = e ? { text: this.whenIn.value, at: e.due_at } : null;
+    // The time has no default (a plain follow-up's included); an edit (#66: or a suggestion) shows its own on the zone's
+    // clock, and keeps its instant until the field reads otherwise: the wall clock read back could be the overlap's
+    // other showing, and has no seconds.
+    const at = e ? e.due_at : p.dueAt;
+    this.whenIn.value = at ? wallText(at, this.zone) : '';
+    this.kept = at ? { text: this.whenIn.value, at } : null;
     this.cwdIn.value = this.f.cwd || p.cwd || '';
     this.f.cwd = this.cwdIn.value;
     this.wakeIn.checked = this.f.wakeFloor;
@@ -470,7 +474,9 @@ export class ScheduleFormDialog {
     const k = this.kept;
     const r: When = k && this.whenIn.value.trim() === k.text && k.at > this.parsedAt ? { ok: true, at: k.at, zone: this.zone, relative: false } : parseWhen(this.whenIn.value, this.parsedAt, this.zone);
     this.f.due = r.ok ? r.at : null;
-    this.f.dueError = r.ok ? '' : r.error;
+    // #66: a suggestion's time that passed (before the form opened, or while it is open) says so.
+    const passed = !r.ok && k && this.mode === 'create' && k.at === this.prefill.dueAt && this.whenIn.value.trim() === k.text;
+    this.f.dueError = r.ok ? '' : passed ? 'The suggested time has passed: type or pick a new one.' : r.error;
     if (r.ok) this.picker.value = wallText(r.at, this.zone, 'T');
     this.picker.min = wallText(this.host.now(), this.zone, 'T');
     this.renderResolved();

@@ -322,6 +322,28 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   `scheduled` or `waiting` schedule holds the linked worktree its `cwd` is in (`internal/server/schedulehold.go`,
   derived from the schedules on each check, never cached): send-home prepare, fire and wrap-up refuse to delete it, and
   a wrap-up's CLEAN keeps it instead.
+- **Schedule suggestions** (#66, part 5 of #61; `protocol.md` "Schedule suggestions", `decisions.md` "#66"): when an
+  agent's final reply says a step must wait, the bridge drafts a schedule and the game offers it as a chip on that
+  reply; nothing is scheduled until the schedule form is saved. `internal/schedsuggest` (only `internal/ai`,
+  `TestScheduleSuggestUsesOnlyAIInterfaces`) holds the gate question, the extraction's request and its validation
+  (`Parse`: RFC 3339 with an offset, in the future, at most 30 days out, kept in UTC) and the settings `Service` (the
+  toggle, the threshold, the user's IANA zone the game sends, the env override). It rides the follow-up questions' turn
+  end, no tracker of its own: `internal/server/followup.go`'s `considerFollowup` looks at a settled turn for each
+  feature that is ready and has not seen the message, and `runTurn` (`internal/server/schedsuggest.go`) calls the
+  models off the hub goroutine: both → one `ClassifyMany`, then the follow-up extraction, then the schedule's. The
+  suggestion is `Worker.schedule_suggestion` (its row: `transcript.Turn.Message`, the handoff candidate's message id),
+  recorded once per message in `schedsuggest_seen`, closed by a `schedule.create` from it, a dismiss or the transcript
+  going on. The game: the chip in `laptop/transcriptRender.ts`, the form's prefill (`ScheduleFormPrefill.dueAt`,
+  source `suggestion`), `ui/scheduleSuggestionsSection.ts`, `world/scheduleSuggest.ts`.
+- **AI roles and their callers** (#92; `protocol.md` "AI integration"): `internal/ai` knows no feature; each takes
+  `ai.Classifier` or `ai.LLM` through a `Roles` interface the hub fills from the one `ai.Service`, so the two global
+  call slots, the timeouts and the one retry are shared. The **classifier**: the follow-up questions (#90) and the
+  schedule suggestions (#66) on each settled turn end (one `ClassifyMany` when both look at a message), pack up on
+  request (#110, `packup.detect`), "Classify unknown commands" (#98, `internal/activity`) and the hire presets' nudge
+  (#95, `hire_preset.check`). The **LLM**: the follow-up extraction (#90), the schedule suggestion's draft (#66), pack
+  up's cut (#110), the floor overview summaries (#118, `internal/digest`), LLM handoffs (#9, `internal/handoffllm`) and
+  the dictated hire (#211, `internal/hireintent`). A feature runs only while it is switched on and its roles are
+  `ready`.
 - **Hire presets** (#93; details in `protocol.md` "Hire presets", `decisions.md` "#93"): a named first prompt with its
   harness, model and effort, on one floor (a floor id) or global, stored in SQLite `hire_preset`
   (`internal/store/hirepreset.go`; a virtual floor's delete removes its own in the same transaction) and mirrored by the

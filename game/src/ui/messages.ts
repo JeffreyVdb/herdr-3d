@@ -95,6 +95,11 @@ const DOES: Record<CommandName | LogoAction, string> = {
   'worker.dismiss_followup': 'dismiss follow-up questions',
   'worker.retry_followup': 'read follow-up questions again',
   'worker.followup_message': 'show the agent’s message',
+  // #66
+  'schedule_suggestions.get': 'keep the schedule suggestions',
+  'schedule_suggestions.set': 'keep the schedule suggestions',
+  'schedule_suggestions.zone': 'keep the schedule suggestions’ time zone',
+  'worker.dismiss_schedule_suggestion': 'dismiss schedule suggestions',
   // #223
   'worker.handoff_preview': 'file handoffs',
   'worker.handoff': 'file handoffs',
