@@ -47,7 +47,7 @@ import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
 import type { Source } from './composer/complete';
 import { CommandCatalogs } from '../laptop/commandCatalog';
 import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
-import { onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './secretsFlow';
+import { classifierView, onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './secretsFlow';
 
 /**
  * The hire dialog (M4): E on an empty desk's "+", or the top bar's Hire for
@@ -1474,7 +1474,8 @@ export class HireDialog {
       this.render();
       this.reviewing = gen;
       this.classifying = true;
-      const yes = await this.delegates(reviewed?.text ?? args.prompt, reviewed?.secrets.go.secrets);
+      const asked = reviewed ? classifierView(reviewed.text, reviewed.secrets.go) : { prompt: args.prompt };
+      const yes = await this.delegates(asked.prompt, asked.secrets);
       this.classifying = false;
       if (this.reviewing === gen) this.reviewing = -1;
       if (!still()) return;
@@ -1525,8 +1526,8 @@ export class HireDialog {
     return nudgeWanted({ prompt: this.f.prompt, instructions: this.addLines }, { supported, ready, dismissed: this.declined.get(this.draftKey()) ?? null });
   }
 
-  /** #117: the classifier's say on the first task (the text the review saw, with its `secrets`): false for anything but a "yes" (a refusal, a timeout, an older bridge's `unknown_command`). Never logged. */
-  private async delegates(prompt: string, secrets: Go['secrets']): Promise<boolean> {
+  /** #117: the classifier's say on the first task (`classifierView` of the text the review saw: its `secrets`, or the text redacted where the review protects): false for anything but a "yes" (a refusal, a timeout, an older bridge's `unknown_command`). Never logged. */
+  private async delegates(prompt: string, secrets?: Go['secrets']): Promise<boolean> {
     const r = await this.host.send('hire_preset.check', { prompt, ...(secrets ? { secrets } : {}) });
     return r.ok && (r.data as HirePresetCheckAck | undefined)?.delegates === true;
   }

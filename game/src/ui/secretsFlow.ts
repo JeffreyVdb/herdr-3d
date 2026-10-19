@@ -138,6 +138,21 @@ function goOf(review: SecretReview): Go {
   return { kind: 'send', ...(decisions.length ? { secrets: { revision: review.revision, decisions } } : {}), protects: ranges.length, shown: hideRanges(review.text, ranges), review };
 }
 
+/**
+ * #117: a text and its `secrets`, as the classifier of `hire_preset.check` may be asked about it. The bridge's check is a
+ * stored-prompt review: it takes a review that leaves every candidate as typed, and refuses one that protects anything
+ * (`secrets_review_stored`, nothing classified). So a review that protects something is not sent: the text goes with
+ * every marked range (protected or left as typed) as `[redacted]`, and no review. The bridge scans that text, finds
+ * nothing (`notASecret` takes `[redacted]` as no value, in an assignment too: not so for `[secret]`, which `Go.shown`
+ * draws) and reads it as a plain prompt; the value the player chose to protect never reaches the classifier. A review
+ * that protects nothing goes as it is.
+ */
+export const CHECK_REDACTED = '[redacted]';
+export function classifierView(text: string, go: Go): { prompt: string; secrets?: SecretsReview } {
+  if (go.protects > 0 && go.review) return { prompt: hideRanges(text, go.review.markedRanges(), CHECK_REDACTED) };
+  return { prompt: text, ...(go.secrets ? { secrets: go.secrets } : {}) };
+}
+
 /** #108: the chord that opens the review now, from a prompt box (`dialog.secrets`, docs/shortcuts.md). */
 export const reviewKey = (e: KeyEventLike): boolean => pressesBinding(e, 'dialog.secrets');
 

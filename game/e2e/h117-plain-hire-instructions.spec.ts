@@ -44,7 +44,7 @@ function fakeJev(): Promise<{ url: string; close(): Promise<void> }> {
 }
 
 /** The game on a bridge whose classifier is set up through Settings (a fake Jev says yes to a task that starts an agent); `jev` null: no classifier. */
-async function boot(page: Page, jev: string | null): Promise<void> {
+async function boot(page: Page, jev: string | null, more = ''): Promise<void> {
   await page.addInitScript(() => {
     try {
       localStorage.setItem('h3d.hire.goto', 'off');
@@ -52,7 +52,7 @@ async function boot(page: Page, jev: string | null): Promise<void> {
       /* blocked */
     }
   });
-  await openGame(page, 'demo-m3', '', `play=none&sim=1&simms=150&simusage=0&simhirepresets=${keyOf()}${jev ? `&simjev=${encodeURIComponent(jev)}` : ''}`);
+  await openGame(page, 'demo-m3', '', `play=none&sim=1&simms=150&simusage=0&simhirepresets=${keyOf()}${more}${jev ? `&simjev=${encodeURIComponent(jev)}` : ''}`);
   if (!jev) return;
   await openMenu(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -168,6 +168,41 @@ test('the question: Esc keeps the task, “Hire without” hires as typed, “Hi
     expect((await hires(page)).at(-1)).toMatchObject({ floor: 'herdr-3d', prompt: PLAIN });
     expect((await hires(page)).at(-1)).not.toHaveProperty('herdr_instructions');
     expect(await checks(page)).toHaveLength(4);
+  } finally {
+    await jev.close();
+  }
+  clean();
+});
+
+test('with prompt secrets reviewed: a protected value never reaches the check, and the task still gets the question', async ({ page }) => {
+  test.setTimeout(180_000);
+  const jev = await fakeJev();
+  const clean = watchErrors(page);
+  const SECRET = 'ghp_abcdefghijklmnopqrstu1';
+  const SECRET_TASK = `Start an agent per service with TOKEN=${SECRET} and let it roll out the upgrade.`;
+  try {
+    await boot(page, jev.url, '&simsecretson=1');
+    await openHire(page, 'pastry', 14);
+    await write(page, SECRET_TASK);
+    await hireDlg(page).locator('[data-key="hire"]').click();
+    const review = page.locator('dialog.desk-dlg--secrets');
+    await expect(review).toBeVisible({ timeout: 15_000 });
+    await review.getByRole('button', { name: /^Confirm and/ }).click();
+    const ask = hireDlg(page).locator('[data-hook="hire-ask"]');
+    await expect(ask).toBeVisible({ timeout: 15_000 });
+    // The check is a stored-prompt review on the bridge: the protected value is redacted in it, and no review goes with it.
+    const [check] = await checks(page);
+    expect(check?.args).toEqual({ prompt: SECRET_TASK.replace(SECRET, '[redacted]') });
+    expect(JSON.stringify(await checks(page))).not.toContain(SECRET);
+    expect(await hires(page)).toEqual([]);
+    await ask.getByRole('button', { name: 'Hire with instructions' }).click();
+    await expect(hireDlg(page)).toBeHidden({ timeout: 20_000 });
+    // The hire carries the review (the command log masks the protected value): the bridge protects it.
+    expect(await hires(page)).toEqual([
+      expect.objectContaining({ desk_index: 14, prompt: SECRET_TASK.replace(SECRET, '•'.repeat(SECRET.length)), herdr_instructions: true, secrets: expect.objectContaining({ decisions: [expect.objectContaining({ action: 'protect' })] }) }),
+    ]);
+    await expect.poll(async () => (await firstPrompts(page)).length).toBe(1);
+    expect((await firstPrompts(page))[0]?.prompt).not.toContain(SECRET);
   } finally {
     await jev.close();
   }

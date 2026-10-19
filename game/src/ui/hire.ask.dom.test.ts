@@ -61,7 +61,20 @@ function setup(o: Opts = {}) {
     send: (t: string, args: Record<string, unknown>) => {
       sent.push({ t, args });
       if (t === 'hire.prepare') return Promise.resolve({ ok: true, data: lines === null ? prep : { ...prep, herdr_instructions: lines } });
-      if (t === 'hire_preset.check') return Promise.resolve(o.check ? o.check(args) : { ok: true, data: { delegates: true, score: 0.9 } });
+      if (t === 'hire_preset.check') {
+        if (o.check) return Promise.resolve(o.check(args));
+        // With the switch on, the bridge's own gate: the check is a stored-prompt review (a review that protects anything is
+        // `secrets_review_stored`, a text with candidates and no review `secrets_review_required`; nothing is classified).
+        if (b) {
+          try {
+            b.sim.gate(t, { ...args }, () => {}, {} as never);
+          } catch (e) {
+            const err = e as { code?: string; message: string };
+            return Promise.resolve({ ok: false, code: err.code ?? 'internal', message: err.message });
+          }
+        }
+        return Promise.resolve({ ok: true, data: { delegates: true, score: 0.9 } });
+      }
       return Promise.resolve(answers.shift() ?? { ok: true, data: { id: 'w9', prompted: true } });
     },
     unsupported: (t: string) => !!o.unsupported?.includes(t),
@@ -133,7 +146,7 @@ describe('HireDialog asks about the herdr hiring instructions (#117)', () => {
     expect(ask()).not.toBeNull();
   });
 
-  it('after the secrets review, and with its secrets', async () => {
+  it('after the secrets review: a protected value never reaches the check, which asks about the task with it redacted', async () => {
     const t = setup({ secrets: true });
     await typed(t, SECRET_TASK);
     await hirePress();
@@ -141,14 +154,41 @@ describe('HireDialog asks about the herdr hiring instructions (#117)', () => {
     expect(t.checks()).toEqual([]);
     t.b!.confirm();
     await flush();
-    const [check] = t.checks();
-    expect(check).toMatchObject({ prompt: SECRET_TASK, secrets: { decisions: [{ candidate: 'c1', action: 'protect' }] } });
+    // The bridge refuses a review that protects (`secrets_review_stored`): so the check carries the text with the value
+    // redacted and no review, which the bridge's gate takes as a plain prompt.
+    expect(t.checks()).toEqual([{ prompt: 'Start an agent per service with TOKEN=[redacted] and report back' }]);
+    expect(JSON.stringify(t.checks())).not.toContain('ghp_');
     expect(ask()).not.toBeNull();
     expect(t.hires()).toEqual([]);
     press('ask-with');
     await flush();
+    // The hire itself still carries the review and the typed text: the bridge protects it.
     const [args] = t.hires();
-    expect(args).toMatchObject({ prompt: SECRET_TASK, herdr_instructions: true, secrets: check!.secrets });
+    expect(args).toMatchObject({ prompt: SECRET_TASK, herdr_instructions: true, secrets: { decisions: [{ candidate: 'c1', action: 'protect' }] } });
+  });
+
+  it('protected and left as typed in one task: every marked value is redacted in the check (the bridge finds no candidate in it)', async () => {
+    const t = setup({ secrets: true });
+    const task = 'Start an agent per service with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD=Other-Pass-9 and report back';
+    await typed(t, task);
+    await hirePress();
+    t.b!.confirm('c2');
+    await flush();
+    expect(t.checks()).toEqual([{ prompt: 'Start an agent per service with TOKEN=[redacted] and PASSWORD=[redacted] and report back' }]);
+    expect(ask()).not.toBeNull();
+    press('ask-without');
+    await flush();
+    expect(t.hires()[0]).toMatchObject({ prompt: task, secrets: { decisions: [{ candidate: 'c1', action: 'protect' }, { candidate: 'c2', action: 'ignore' }] } });
+  });
+
+  it('a review that leaves every value as typed goes to the check as it is, with its review', async () => {
+    const t = setup({ secrets: true });
+    await typed(t, SECRET_TASK);
+    await hirePress();
+    t.b!.confirm('c1');
+    await flush();
+    expect(t.checks()).toEqual([{ prompt: SECRET_TASK, secrets: { revision: expect.any(String), decisions: [{ candidate: 'c1', action: 'ignore' }] } }]);
+    expect(ask()).not.toBeNull();
   });
 
   it('“Hire with instructions” ticks the box and sends the flag with the typed task, never the lines', async () => {

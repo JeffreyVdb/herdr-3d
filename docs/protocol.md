@@ -5347,8 +5347,10 @@ start, spawn, hire or hand work to other AI agents (subagents, workers, coders, 
 itself?" with state `{"prompt"}`: `delegates` is `score ≥ 0.7`. It fails open: no classifier, one not ready (no call),
 an error or 1.2 s gone by answer `{"delegates": false, "score": 0}`. The game asks it on a preset's Save with the box
 off and, on a "yes", asks the player whether to tick the box (never on Use); #117: and on a plain Hire worker's Hire
-with the box off, after the first task's secrets review (the same `secrets`, the review's resolved text), asking
-"Hire with instructions" / "Hire without" on a "yes" (a form from a preset never asks). It gives up after 1.5 s and
+with the box off, after the first task's secrets review (the review's resolved text, with its `secrets` when the review
+protects nothing; when it protects something, that text with each marked range as `[redacted]` and no `secrets`: the
+check takes only a review that leaves every candidate as typed, and the classifier must not read a protected value),
+asking "Hire with instructions" / "Hire without" on a "yes" (a form from a preset never asks). It gives up after 1.5 s and
 hires as typed. The audit log keeps the prompt's length only (`prompt_bytes`), never its text.
 
 ```json
