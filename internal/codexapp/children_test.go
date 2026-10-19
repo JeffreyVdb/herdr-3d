@@ -11,7 +11,7 @@ import (
 )
 
 // Frames of #27's live probe (codex-cli 0.163.0 and 0.162.1, a real model:
-// docs/research/codex-subagents.md §9), cut to the fields read; the ids are
+// docs/research/codex-server-subagents.md), cut to the fields read; the ids are
 // Codex's own, the paths scrubbed.
 const (
 	probeRoot  = "01a152fd-2d6a-7a52-923e-7831ee9a079d"

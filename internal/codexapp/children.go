@@ -1,15 +1,16 @@
 package codexapp
 
-// #27 (phase 6 of #20): the child threads (subagents) of a shared worker's
-// thread, as its own app-server shows them (docs/research/codex-subagents.md
-// §9, codex-cli 0.160.1–0.163.0). This file decodes what names a child and
-// reads the server observationally through the bridge's join: thread/read
-// without turns, thread/turns/list of one turn without items, thread/list
-// and thread/loaded/list. None of them subscribes, loads a thread or
-// starts a turn, and none sends an override; the bridge never resumes a
-// child (a resume emits thread/goal/cleared to every subscriber, the
-// terminal included). Every decoder is tolerant: a value it does not know
-// is kept as it is, never an error.
+// #27 (phase 6 of #20): the child threads (subagents) of a shared
+// worker's thread, as its own app-server shows them
+// (docs/research/codex-server-subagents.md, codex-cli 0.160.1–0.163.0).
+// This file decodes what names a child and reads the server
+// observationally through the bridge's join: thread/read without turns,
+// thread/turns/list of one turn without items, thread/list and
+// thread/loaded/list. None of them subscribes, loads a thread or starts a
+// turn, and none sends an override; the bridge never resumes a child (a
+// resume emits thread/goal/cleared to every subscriber, the terminal
+// included). Every decoder is tolerant: a value it does not know is kept
+// as it is, never an error.
 
 import (
 	"context"

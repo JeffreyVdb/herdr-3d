@@ -11,6 +11,12 @@
 // line read twice or a bridge restart (the tracker reads every file from
 // its start again) give the same answer. Evidence goes out when it
 // changed, through Run's emit. docs/protocol.md "Codex subagents (#25)".
+//
+// #27 (phase 6, server.go): for a shared-server worker the same Source
+// also hears its own app-server through the bridge's join of its thread,
+// the authority on its children's state; both go through one derivation
+// and one queue (combine). docs/protocol.md "Codex subagents through the
+// shared app-server (#27)".
 package codexchild
 
 import (
