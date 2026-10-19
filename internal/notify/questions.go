@@ -14,12 +14,16 @@ package notify
 // call known later adopted, another one a new decision (menuEpisode). An
 // episode its worker still shows is never forgotten (tracker.know).
 //
-// A question that waited (parked by the send budget, queued, between two
-// attempts) is formed again as it goes (form): switched off or its event
-// off, it is dropped; replies or the mode changed, it goes as they say now
-// (its cards, its text, or the broader mode's alert), the replier handing
-// it back to the loop (handBack) when its cards can no longer be the
-// message.
+// A question waits (parked by the cooldown or the send budget, queued,
+// paced by the destination, between two attempts, between two of its
+// cards); what it may be and how is decided at the last moment, after
+// every wait, right before each send (goes): switched off, its event off
+// or the channel not ready, it is dropped; replies or the mode changed, it
+// goes back to the loop (handBack) and goes as they say now (its cards,
+// its text, or the broader mode's alert). A card set stopped after its
+// first card (it rang: the question went) ends there: switched off, the
+// rest is not sent; replies off, the rest goes as one text (From); the
+// mode changed, the rest of the set goes on, quiet as it was.
 //
 // Under Questions only, a worker notifies only for a question you can
 // answer: an ask, a follow-up, a permission or folder-trust menu its screen
@@ -168,37 +172,49 @@ func menuDecision(m *Menu) string {
 	return menuID(m)
 }
 
-// menuEp is a worker's menu episode as the loop knows it (H3D-1): the
-// decision it asks for, the native call it is for ("": none known yet),
-// its id.
-type menuEp struct{ decision, native, id string }
+// menuEp is a menu episode of a decision as the loop knows it (H3D-1):
+// the native call it is for ("": none known yet), its id.
+type menuEp struct{ native, id string }
 
 // menuEpisode is worker id's menu m's episode id (the loop's): its
 // decision and the native call it was first known for. The same decision
-// seen again (another status_since, a redraw, a working spell between) is
-// the same episode; a native call known later is adopted (the same id: one
-// prompt rings once); another native call than the one known replaces it
-// (#106 row 4: a new decision, a new id).
+// seen again (another status_since, a redraw, a working spell between,
+// other menus between) is the same episode; a native call known later is
+// adopted (the same id: one prompt rings once); another native call than
+// the one known replaces it (#106 row 4: a new decision, a new id). A
+// worker's decisions are kept while the tracker holds their episode (its
+// latest known, those it shows), so the bound is the tracker's.
 func (s *Service) menuEpisode(id string, m *Menu) string {
 	d := menuDecision(m)
-	e, ok := s.menuEps[id]
+	eps := s.menuEps[id]
+	if eps == nil {
+		eps = map[string]menuEp{}
+		s.menuEps[id] = eps
+	}
+	e, ok := eps[d]
 	switch {
-	case !ok || e.decision != d || (e.native != "" && m.Native != "" && m.Native != e.native):
-		e = menuEp{decision: d, native: m.Native, id: "menu|" + d + "|" + m.Native}
+	case !ok || (e.native != "" && m.Native != "" && m.Native != e.native):
+		e = menuEp{native: m.Native, id: "menu|" + d + "|" + m.Native}
 	case e.native == "":
 		e.native = m.Native
 	}
-	s.menuEps[id] = e
+	eps[d] = e
+	for x, o := range eps {
+		if x != d && !s.tr.holds(id, episodeKey(KindNeedsYou, o.id)) {
+			delete(eps, x)
+		}
+	}
 	return e.id
 }
 
 // form is alert a as it goes under the settings now (H3D-1): a question
 // (Asks) under Questions only is the message, as its cards (Ring) while it
-// can have them, else as its text (Body); anything else is an alert.
-// Wherever a question waited it is formed again, so replies or the mode
+// can have them, else as its text (Body); anything else is an alert. The
+// rest of a stopped card set (From) is its text in either mode. Wherever
+// a question waited it is formed again (goes), so replies or the mode
 // changed meanwhile hold.
 func (s *Service) form(a Alert) Alert {
-	a.Question, a.Ring, a.Body = a.Asks && s.questionsOnly(), false, ""
+	a.Question, a.Ring, a.Body = a.Asks && (s.questionsOnly() || a.From > 0), false, ""
 	if a.Question {
 		if s.cardable(a) {
 			a.Ring = true
@@ -229,9 +245,9 @@ func (a Alert) head() string {
 }
 
 // cardable reports whether a Questions only alert goes as its cards: replies
-// on, and cards it can have.
+// on, and cards it can have (the rest of a stopped set has none).
 func (s *Service) cardable(a Alert) bool {
-	if on, _ := s.listening(); !on {
+	if on, _ := s.listening(); !on || a.From > 0 {
 		return false
 	}
 	n := 0
@@ -250,9 +266,9 @@ func (s *Service) cardable(a Alert) bool {
 }
 
 // questionText is a Questions only alert's question as its message's text,
-// under its head (Notification.Text): the questions with their options,
-// then where to answer it (replies: on). A secret ask's says only that a
-// question waits.
+// under its head (Notification.Text): the questions with their options
+// (from a.From on, numbered in the whole set), then where to answer it
+// (replies: on). A secret ask's says only that a question waits.
 func questionText(a Alert, replies bool) string {
 	end := CardOffText
 	if replies {
@@ -264,7 +280,8 @@ func questionText(a Alert, replies bool) string {
 		return QuestionSecretText
 	case a.Ask != nil:
 		n := len(a.Ask.Questions)
-		for i, q := range a.Ask.Questions {
+		for i := min(a.From, n); i < n; i++ {
+			q := a.Ask.Questions[i]
 			var b strings.Builder
 			label := OneLine(q.Header, cardLabelMax)
 			if n > 1 {
@@ -287,7 +304,8 @@ func questionText(a Alert, replies bool) string {
 		}
 	case a.Followup != nil:
 		n := len(a.Followup.Questions)
-		for i, q := range a.Followup.Questions {
+		for i := min(a.From, n); i < n; i++ {
+			q := a.Followup.Questions[i]
 			var b strings.Builder
 			if n > 1 {
 				fmt.Fprintf(&b, "%d of %d\n", i+1, n)

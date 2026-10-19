@@ -865,3 +865,431 @@ func TestMenuCardBackAfterStatusFlip(t *testing.T) {
 		})
 	}
 }
+
+// Review pass 2 (R3/R4): the settings changed while a question waits for
+// the destination's pace (its text, or its card) are what it goes by.
+func TestPacedSettings(t *testing.T) {
+	for _, cards := range []bool{false, true} {
+		for _, change := range []string{"enabled", "needs_you", "replies", "mode"} {
+			t.Run(fmt.Sprintf("cards=%t/%s", cards, change), func(t *testing.T) {
+				r := newRigWith(t, true, func(o *Options, st *Settings) {
+					st.Mode, st.Replies = ModeQuestions, cards
+					o.Limits = NoLimits()
+					o.Limits.Burst, o.Limits.Pace = 1, time.Minute
+				})
+				if cards {
+					waitListening(t, r.ch)
+				}
+				if err := r.svc.lim.wait(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				r.svc.Observe(working("w"))
+				r.svc.Observe(asking("w", dbAsk("paced-ask", false, false)))
+				r.waitTimer(t, 1)
+				no, yes, mode := false, true, ModeEverything
+				var u Update
+				switch change {
+				case "enabled":
+					u.Enabled = &no
+				case "needs_you":
+					u.NeedsYou = &no
+				case "replies":
+					u.Replies = &no
+					if !cards {
+						u.Replies = &yes
+					}
+				case "mode":
+					u.Mode = &mode
+				}
+				if err := r.svc.Apply(context.Background(), u); err != nil {
+					t.Fatal(err)
+				}
+				for range 3 {
+					r.clock.Advance(time.Minute)
+					r.settle(t)
+				}
+				ns, cs := r.ch.Sent(), r.ch.Cards()
+				switch change {
+				case "enabled", "needs_you":
+					if len(ns) > 0 || len(cs) > 0 {
+						t.Fatalf("sent after %s off: %d text, %d cards", change, len(ns), len(cs))
+					}
+				case "replies":
+					if cards {
+						if len(cs) > 0 || len(ns) != 1 || !strings.HasSuffix(ns[0].Body, CardOffText) {
+							t.Fatalf("replies off: %d text, %d cards", len(ns), len(cs))
+						}
+					} else if len(ns) > 0 || len(cs) != 1 {
+						t.Fatalf("replies on: %d text, %d cards", len(ns), len(cs))
+					}
+				case "mode":
+					if len(ns) != 1 || ns[0].Body != "" {
+						t.Fatalf("everything mode: %d text, %d cards", len(ns), len(cs))
+					}
+				}
+			})
+		}
+	}
+}
+
+// Review N1: a menu whose native call was adopted, seen again after
+// another menu between, is the same question: it does not notify again.
+func TestNativeAdoptionAcrossInterveningMenu(t *testing.T) {
+	r := questionsRig(t, ModeQuestions, false)
+	r.svc.Observe(working("w"))
+	a := permMenu("hash-a")
+	a.Op, a.Decision = "op-a", "decision-a"
+	r.svc.Observe(menuOn("w", 100, a))
+	if !r.ch.WaitSent(1, 5*time.Second) {
+		t.Fatal("no first permission")
+	}
+	adopted := *a
+	adopted.Native = "call-a"
+	r.svc.Observe(menuOn("w", 100, &adopted))
+	r.noMore(t, 1)
+	b := permMenu("hash-b")
+	b.Op, b.Decision, b.Native = "op-b", "decision-b", "call-b"
+	r.svc.Observe(menuOn("w", 100, b))
+	if !r.ch.WaitSent(2, 5*time.Second) {
+		t.Fatal("no second permission")
+	}
+	r.svc.Observe(menuOn("w", 100, &adopted))
+	r.noMore(t, 2)
+}
+
+// loud counts what rang: the messages sent (a failed attempt aside) and
+// the cards, each without Quiet.
+func (r *rig) loud() int {
+	n := 0
+	for _, s := range r.ch.Sent() {
+		if s.Name != "(failed)" && !s.Quiet {
+			n++
+		}
+	}
+	for _, ref := range r.ch.Cards() {
+		if !r.ch.SentCard(ref).Quiet {
+			n++
+		}
+	}
+	return n
+}
+
+// delivered is every message sent but the failed attempts.
+func (r *rig) delivered() []Notification {
+	var out []Notification
+	for _, n := range r.ch.Sent() {
+		if n.Name != "(failed)" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// twoAsk is an ask of two questions: its cards are a set of two.
+func twoAsk(id string) *Ask {
+	a := dbAsk(id, false, false)
+	a.Questions = append(a.Questions, AskQuestion{HasOptions: true, Header: "Cache", Question: "Which cache?",
+		Options: []AskOption{{Label: "Redis"}, {Label: "None"}}})
+	return a
+}
+
+// The send-time matrix (H3D-1, review R3/R4): a question waiting at each
+// wait point when a setting changes is decided at the last moment before
+// it goes. Switched off or its event off: nothing more goes. Formed
+// otherwise now: it arrives once, in the form the settings say. A card set
+// whose first card rang (the question went) ends by the partial-set rule:
+// replies off, the rest as one quiet text; the mode changed, the rest
+// quiet as it was. Then nothing more goes (no duplicate, no busy loop). A
+// new wait point is a row of waits.
+func TestSendTimeMatrix(t *testing.T) {
+	no, yes := false, true
+	everything, questions := ModeEverything, ModeQuestions
+	changes := []struct {
+		name    string
+		mode    string // the mode before
+		replies *bool  // replies before (nil: on for a card set, else off)
+		u       Update
+		off     bool // nothing more may go
+	}{
+		{"enabled_off", ModeQuestions, nil, Update{Enabled: &no}, true},
+		{"needs_you_off", ModeQuestions, nil, Update{NeedsYou: &no}, true},
+		{"mode_to_questions", ModeEverything, nil, Update{Mode: &questions}, false},
+		{"mode_to_everything", ModeQuestions, nil, Update{Mode: &everything}, false},
+		{"replies_off", ModeQuestions, &yes, Update{Replies: &no}, false},
+		{"replies_on", ModeQuestions, &no, Update{Replies: &yes}, false},
+	}
+	paced := func(l *Limits) { l.Burst, l.Pace = 1, time.Minute }
+	type waitRig struct {
+		r       *rig
+		hold    chan struct{}
+		entered chan struct{}
+	}
+	waits := []struct {
+		name  string
+		cards bool // it waits as a card set (replies on)
+		multi bool // a set of two
+		// before: no second question first (the first question rings
+		// first, and the second waits behind it).
+		limits func(*Limits)
+		first  bool
+		drain  bool // the pace's token taken first (Questions only)
+		// went: what of it rang before it waited (mode: before).
+		went func(mode string) bool
+		// failing: its first card or attempt fails (card: rate limited;
+		// text: held, then down).
+		failing string
+	}{
+		{name: "budget_park", cards: true, first: true,
+			limits: func(l *Limits) { l.WorkerCards, l.Window = 1, time.Minute },
+			went:   func(mode string) bool { return mode == ModeEverything }},
+		{name: "cooldown_park", first: true, limits: func(l *Limits) { l.Cooldown = time.Minute }},
+		{name: "paced_text", limits: paced, drain: true},
+		{name: "paced_cards", cards: true, limits: paced, drain: true,
+			went: func(mode string) bool { return mode == ModeEverything }},
+		{name: "between_cards", cards: true, multi: true, limits: paced,
+			went: func(string) bool { return true }},
+		{name: "retry_backoff", limits: func(*Limits) {}, failing: "text"},
+		{name: "card_retry", cards: true, limits: func(*Limits) {}, failing: "card",
+			went: func(mode string) bool { return mode == ModeEverything }},
+	}
+	for _, w := range waits {
+		for _, c := range changes {
+			replies := w.cards
+			if c.replies != nil {
+				replies = *c.replies
+			}
+			if w.cards && !replies {
+				continue // a card set waits only while replies are on
+			}
+			t.Run(w.name+"/"+c.name, func(t *testing.T) {
+				wr := waitRig{}
+				r := newRigWith(t, true, func(o *Options, st *Settings) {
+					st.Mode, st.Replies = c.mode, replies
+					o.Answer = (&answerer{}).answer
+					o.Prompt = (&prompter{}).prompt
+					o.Limits = NoLimits()
+					w.limits(&o.Limits)
+				})
+				wr.r = r
+				if replies {
+					waitListening(t, r.ch)
+				}
+				// The question: an ask (its cards, its text with replies off,
+				// the broader mode's alert); waiting as text with replies on
+				// under Questions only, a report request.
+				report := !w.cards && replies && c.mode == ModeQuestions
+				first, second := asking("w", dbAsk("ask-a", false, false)), asking("w", dbAsk("ask-b", false, false))
+				text, other := "Which database?", ""
+				switch {
+				case report:
+					first, second = reportObs("w", 60000, muffinAsks), reportObs("w", 60000, "Which art?")
+					text = "Which art?"
+				case w.multi:
+					second = asking("w", twoAsk("ask-b"))
+					text, other = "Which cache?", "Which database?"
+				}
+				switch w.failing {
+				case "text":
+					wr.hold, wr.entered = make(chan struct{}), make(chan struct{})
+					r.ch.SendErr = func(_ context.Context, n int) error {
+						if n == 0 {
+							close(wr.entered)
+							<-wr.hold
+							return &SendError{Code: CodeUnreachable, Msg: "down"}
+						}
+						return nil
+					}
+				case "card":
+					r.ch.CardErr = func(_ context.Context, n int) error {
+						if n == 0 {
+							return &SendError{Code: CodeRateLimited, Msg: "slow down", RetryAfter: 5 * time.Second}
+						}
+						return nil
+					}
+				}
+				r.svc.Observe(working("w"))
+				if w.first {
+					r.svc.Observe(first)
+					if !r.ch.WaitFor(func() bool { return r.loud() == 1 }, 5*time.Second) {
+						t.Fatal("the first question did not go")
+					}
+					r.settle(t)
+				}
+				if w.drain && c.mode == ModeQuestions || w.drain && !w.cards {
+					if err := r.svc.lim.wait(context.Background()); err != nil {
+						t.Fatal(err)
+					}
+				}
+				r.svc.Observe(second)
+				if wr.entered != nil {
+					select {
+					case <-wr.entered: // its first attempt is under way
+					case <-time.After(5 * time.Second):
+						t.Fatal("no attempt")
+					}
+				} else {
+					r.waitTimer(t, 1)
+					r.settle(t)
+				}
+				went := w.went != nil && w.went(c.mode)
+				loud, sent, cards := r.loud(), len(r.delivered()), len(r.ch.Cards())
+				if err := r.svc.Apply(context.Background(), c.u); err != nil {
+					t.Fatal(err)
+				}
+				if wr.hold != nil {
+					close(wr.hold)
+					r.waitTimer(t, 1) // its backoff
+				}
+				for range 4 {
+					r.clock.Advance(time.Minute)
+					r.settle(t)
+				}
+				newSent, newCards := r.delivered()[sent:], r.ch.Cards()[cards:]
+				mode, on := c.mode, replies
+				if c.u.Mode != nil {
+					mode = *c.u.Mode
+				}
+				if c.u.Replies != nil {
+					on = *c.u.Replies
+				}
+				switch {
+				case c.off:
+					if len(newSent) != 0 || len(newCards) != 0 {
+						t.Fatalf("went though off: %d messages, %d cards", len(newSent), len(newCards))
+					}
+				case went && w.multi && !on:
+					// The rest of the set, as one quiet text.
+					if len(newCards) != 0 || len(newSent) != 1 {
+						t.Fatalf("rest of the set: %d messages, %d cards", len(newSent), len(newCards))
+					}
+					n := newSent[0]
+					if !n.Quiet || !strings.Contains(n.Body, "2 of 2") || !strings.Contains(n.Body, text) ||
+						strings.Contains(n.Body, other) || !strings.HasSuffix(n.Body, CardOffText) {
+						t.Fatalf("rest of the set: %+v", n)
+					}
+					if got := r.ch.Card(r.ch.Cards()[0]).Text; !strings.HasSuffix(got, CardOffText) {
+						t.Fatalf("its first card: %q", got)
+					}
+				case went:
+					if len(newSent) != 0 {
+						t.Fatalf("%d messages after the question went: %+v", len(newSent), newSent)
+					}
+				case mode == ModeEverything:
+					if len(newSent) != 1 || newSent[0].Body != "" {
+						t.Fatalf("not one alert: %+v", newSent)
+					}
+					for _, ref := range newCards {
+						if !r.ch.SentCard(ref).Quiet {
+							t.Fatal("a card rang after its alert")
+						}
+					}
+				case on && !report:
+					if len(newSent) != 0 || len(newCards) != 1 || !strings.Contains(r.ch.SentCard(newCards[0]).Text, text) {
+						t.Fatalf("not one card: %d messages, %d cards", len(newSent), len(newCards))
+					}
+				default:
+					end := CardOffText
+					if on {
+						end = QuestionReplyText
+					}
+					if len(newCards) != 0 || len(newSent) != 1 || !strings.Contains(newSent[0].Body, text) ||
+						!strings.HasSuffix(newSent[0].Body, end) {
+						t.Fatalf("not one text ending %q: %+v, %d cards", end, newSent, len(newCards))
+					}
+				}
+				want := loud + 1
+				if c.off || went {
+					want = loud
+				}
+				if got := r.loud(); got != want {
+					t.Fatalf("%d rang after the change, want %d", got-loud, want-loud)
+				}
+				// Nothing more: no duplicate, no busy loop.
+				sent, cards = len(r.delivered()), len(r.ch.Cards())
+				for range 3 {
+					r.clock.Advance(time.Minute)
+					r.settle(t)
+				}
+				if len(r.delivered()) != sent || len(r.ch.Cards()) != cards {
+					t.Fatalf("more went later: %d messages, %d cards", len(r.delivered())-sent, len(r.ch.Cards())-cards)
+				}
+			})
+		}
+	}
+}
+
+// A menu's ringing card the replier opened of itself (seen: its native
+// call replaced) whose mode changed while it waited for its pace is
+// dropped, not handed back: its episode's own alert is, so the question
+// goes once, as the broader mode's alert.
+func TestReplacedMenuFormedAgainOnce(t *testing.T) {
+	r := newRigWith(t, true, func(o *Options, st *Settings) {
+		st.Mode, st.Replies = ModeQuestions, true
+		o.Answer = (&answerer{}).answer
+		o.Limits = NoLimits()
+		o.Limits.Burst, o.Limits.Pace = 1, time.Minute
+	})
+	waitListening(t, r.ch)
+	a := permMenu("hash-a")
+	a.Op, a.Decision, a.Native = "op-a", "decision-a", "call-a"
+	r.svc.Observe(working("w"))
+	r.svc.Observe(menuOn("w", 100, a))
+	if !r.ch.WaitFor(func() bool { return len(r.ch.Cards()) == 1 }, 5*time.Second) {
+		t.Fatal("no card")
+	}
+	b := *a
+	b.Native = "call-b"
+	r.svc.Observe(menuOn("w", 100, &b))
+	r.waitTimer(t, 1) // the replaced card's edit waits for its pace
+	r.clock.Advance(time.Minute)
+	r.waitCard(t, r.ch.Cards()[0], CardReplacedText)
+	r.waitTimer(t, 1) // the new card waits for its pace
+	everything := ModeEverything
+	if err := r.svc.Apply(context.Background(), Update{Mode: &everything}); err != nil {
+		t.Fatal(err)
+	}
+	for range 4 {
+		r.clock.Advance(time.Minute)
+		r.settle(t)
+	}
+	if sent := r.delivered(); len(sent) != 1 || sent[0].Body != "" {
+		t.Fatalf("want one alert: %+v", sent)
+	}
+	if r.loud() != 2 {
+		t.Fatalf("%d rang, want 2 (the first card, the alert)", r.loud())
+	}
+}
+
+// N1 and R2 together: adopted native calls hold across other menus, a
+// replaced one is a new question, the decisions between stay known.
+func TestMenuDecisionSequence(t *testing.T) {
+	r := questionsRig(t, ModeQuestions, false)
+	r.svc.Observe(working("w"))
+	menu := func(d, native string) Observation {
+		m := permMenu("hash-" + d + native)
+		m.Op, m.Decision, m.Native = "op-"+d, "decision-"+d, native
+		return menuOn("w", 100, m)
+	}
+	for i, s := range []struct {
+		d, native string
+		want      int
+	}{
+		{"a", "", 1},
+		{"a", "call-a", 1}, // adopted
+		{"b", "call-b", 2},
+		{"a", "call-a", 2}, // N1: still adopted after b
+		{"a", "call-c", 3}, // R2: another native call
+		{"b", "call-b", 3},
+		{"c", "", 4},
+		{"c", "call-x", 4},
+		{"a", "call-c", 4},
+		{"b", "call-b", 4},
+		{"c", "call-x", 4},
+	} {
+		r.svc.Observe(menu(s.d, s.native))
+		r.settle(t)
+		if n := len(r.ch.Sent()); n != s.want {
+			t.Fatalf("step %d (%s/%s): %d messages, want %d", i, s.d, s.native, n, s.want)
+		}
+	}
+}

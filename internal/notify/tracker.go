@@ -57,6 +57,14 @@ type Alert struct {
 	Body string
 	// Ring: the first of its cards rings (they are the notification).
 	Ring bool
+	// From is the first of its questions it still has to show (H3D-1: the
+	// rest of a card set stopped after its first card, as text; 0: all).
+	From int
+	// tracked: the tracker's own alert of its episode (sight's), not a
+	// card the replier opens of itself (a menu's, seen); only it goes back
+	// to the loop when its form changed (handBack), so one question is
+	// formed again once.
+	tracked bool
 }
 
 // sighting is one look at a worker for the tracker.
@@ -127,6 +135,12 @@ func (t *tracker) know(id, key string) {
 		k = slices.Delete(k, i, i+1)
 	}
 	t.known[id] = k
+}
+
+// holds reports whether worker id's episode key is known, or shown at its
+// last sighting.
+func (t *tracker) holds(id, key string) bool {
+	return t.cur[id] == key || slices.Contains(t.known[id], key) || slices.Contains(t.live[id], key)
 }
 
 // current is worker id's episode at its last sighting ("": none).

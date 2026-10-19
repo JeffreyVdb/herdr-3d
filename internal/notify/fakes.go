@@ -21,6 +21,10 @@ type FakeChannel struct {
 	// SendErr, when set, is called before each send: its error is the
 	// send's (nil: delivered). It may block (a provider that hangs).
 	SendErr func(ctx context.Context, n int) error
+	// CardErr, when set, is called before each card is sent (n: the cards
+	// tried so far, from 0): its error is the send's (nil: delivered).
+	CardErr func(ctx context.Context, n int) error
+	cardTry int
 	change  chan struct{}
 	sentC   chan struct{}
 	hooks   Hooks
@@ -394,7 +398,16 @@ func (s *FakeStore) NotifyMessage(_ context.Context, msg Ref) (string, time.Time
 }
 
 // SendCard records c as the next card (FakeCardBase, …).
-func (f *FakeChannel) SendCard(_ context.Context, c Card) (Ref, error) {
+func (f *FakeChannel) SendCard(ctx context.Context, c Card) (Ref, error) {
+	f.mu.Lock()
+	hook, k := f.CardErr, f.cardTry
+	f.cardTry++
+	f.mu.Unlock()
+	if hook != nil {
+		if err := hook(ctx, k); err != nil {
+			return Ref{}, err
+		}
+	}
 	f.mu.Lock()
 	f.cardN++
 	ref := Ref{FakeChatID, f.cardN}

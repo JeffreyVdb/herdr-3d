@@ -231,9 +231,9 @@ type Service struct {
 	back    []Alert
 	dropped atomic.Int64
 	tr      *tracker // the loop's
-	// H3D-1, the loop's: each worker's menu episode (menuEpisode), and the
-	// menu episode of its that notified last.
-	menuEps  map[string]menuEp
+	// H3D-1, the loop's: each worker's menu episodes by decision
+	// (menuEpisode), and the menu episode of its that notified last.
+	menuEps  map[string]map[string]menuEp
 	rung     map[string]string
 	running  atomic.Bool
 	warnOnce sync.Once
@@ -267,7 +267,7 @@ func New(ctx context.Context, opts Options) (*Service, error) {
 	s := &Service{opts: opts, change: make(chan struct{}, 1), kick: make(chan struct{}, 1),
 		queue: make(chan job, opts.Queue), set: DefaultSettings(), tr: newTracker(opts.Settle), rp: newReplies(),
 		bt: newButtons(), keys: map[string]look{}, lim: newLimiter(opts.Limits.withDefaults(), opts.Clock), parked: map[string]*parked{},
-		episodes: map[string]string{}, menuEps: map[string]menuEp{}, rung: map[string]string{}}
+		episodes: map[string]string{}, menuEps: map[string]map[string]menuEp{}, rung: map[string]string{}}
 	if opts.Store != nil {
 		st, ok, err := opts.Store.LoadNotifySettings(ctx)
 		if err != nil {
@@ -794,23 +794,37 @@ func (s *Service) cardsOf(a Alert) {
 	}
 }
 
-// rings reports whether alert a's cards may go as it was formed (any
-// alert but a Ring one: true). H3D-1: a Ring alert's cards are the
-// message, so the gates are checked again as they go: switched off, its
-// event off or the channel not ready meanwhile, they are dropped; replies
-// or the mode changed, the loop takes the question back (back: handBack)
-// to go as the settings say now.
-func (s *Service) rings(a Alert) (ok, back bool) {
+// goes decides whether alert a, formed before it waited, may go now as it
+// is (H3D-1): it is asked at the last moment before each send of its
+// message (its text or alert, each of its cards), after every wait. Not
+// admitted now (switched off, its event off, the channel not ready, not a
+// question under Questions only), it is dropped; formed otherwise now
+// (replies or the mode changed), it goes back to the loop (back), the
+// tracker's own alert only (tracked: the one question is formed again
+// once; a card the replier opened of itself is dropped, its episode's
+// alert goes).
+func (s *Service) goes(a Alert) (ok, back bool) {
+	f := s.form(a)
 	switch {
-	case !a.Ring:
-		return true, false
-	case !s.allowed(a.Kind):
+	case !s.admits(f):
 		return false, false
-	case !s.form(a).Ring:
-		s.handBack(a)
-		return false, true
+	case f.Ring != a.Ring || f.Question != a.Question || f.Body != a.Body:
+		return false, a.tracked
 	}
 	return true, false
+}
+
+// rings reports whether alert a's cards may go as it was formed (any
+// alert but a Ring one: true). H3D-1: a Ring alert's cards are the
+// message (goes; back: handed back to the loop).
+func (s *Service) rings(a Alert) (ok, back bool) {
+	if !a.Ring {
+		return true, false
+	}
+	if ok, back = s.goes(a); back {
+		s.handBack(a)
+	}
+	return ok, back
 }
 
 // release sends the parked alerts whose slot came, if the worker is still
@@ -876,7 +890,7 @@ func (s *Service) sight(o Observation, freelancers, questions bool) sighting {
 	sg.key = episodeKey(sg.kind, id)
 	sg.eligible = v.Candidate(freelancers) && s.allowed(sg.kind) && (question || !questions)
 	sg.alert = Alert{WorkerID: o.Worker.ID, Kind: sg.kind, Reason: v.Reason, Name: o.Name, Line: o.Line, Since: latent.Since,
-		Key: sg.key, About: about, Asks: question, Question: questions && question}
+		Key: sg.key, About: about, Asks: question, Question: questions && question, tracked: true}
 	switch about {
 	case aboutAsk:
 		sg.alert.Ask = w.Ask
@@ -962,9 +976,9 @@ func Backoff(n int) time.Duration {
 // meanwhile, it is dropped unsent; (#106) its episode over before an
 // attempt (it waited in the queue, for its pace or a rate limit), it is
 // dropped too, and audited obsolete. Its budget slot counts from its last
-// attempt, or is given back when there was none.
+// attempt, or is given back when there was none. H3D-1: whether it goes,
+// and how, is decided after its pace, right before each attempt (goes).
 func (s *Service) deliver(ctx context.Context, a Alert) {
-	n := Notification{WorkerID: a.WorkerID, Name: a.Name, Reason: a.head(), Line: a.Line, Body: a.Body, Quiet: s.quiet()}
 	row := a.sendRow()
 	defer func() {
 		if row.Attempts > 0 {
@@ -976,16 +990,6 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 	var err error
 	var ref Ref
 	for row.Attempts < MaxAttempts {
-		// H3D-1: formed again before each attempt: a question whose form
-		// changed meanwhile (the mode, replies) goes back to the loop.
-		f := s.form(a)
-		if !s.admits(f) {
-			return
-		}
-		if f.Ring || f.Body != a.Body || f.Question != a.Question {
-			s.handBack(a)
-			return
-		}
 		if err = s.lim.wait(ctx); err != nil { // #106: the destination's pacing
 			break
 		}
@@ -995,6 +999,16 @@ func (s *Service) deliver(ctx context.Context, a Alert) {
 			s.audit(ctx, AuditSend, row, errors.New(CodeObsolete))
 			return
 		}
+		// H3D-1: the last moment before it goes: a question whose form
+		// changed while it waited (the mode, replies) goes back to the loop.
+		if ok, back := s.goes(a); !ok {
+			if back {
+				s.handBack(a)
+			}
+			return
+		}
+		// The rest of a card set goes quiet: its first card rang.
+		n := Notification{WorkerID: a.WorkerID, Name: a.Name, Reason: a.head(), Line: a.Line, Body: a.Body, Quiet: s.quiet() || a.From > 0}
 		row.Attempts++
 		sctx, cancel := context.WithTimeout(ctx, SendTimeout)
 		ref, err = s.opts.Channel.Send(sctx, n)
