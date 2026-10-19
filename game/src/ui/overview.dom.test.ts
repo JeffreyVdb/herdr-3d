@@ -113,8 +113,9 @@ describe('the overview page (#118)', () => {
     expect(rows[0]?.querySelector('.ov-task .ov-ai')?.getAttribute('title')).toBe('AI-generated summary of what this worker was asked to do.');
     expect(rows[0]?.querySelector('.ov-now .ov-ai')?.getAttribute('title')).toMatch(/^AI-generated summary of this worker’s recent activity \(its last 5 steps\); generated just now\./);
     expect(document.querySelector('.ov-since .ov-ai, .ov-llm')).toBeNull();
-    // A task line has no time: the sparkle alone; a model's now line says how old it is at the line's end.
-    expect(rows[0]?.querySelector('.ov-task .ov-ai-meta')).toBeNull();
+    // A task line has no time: the sparkle alone (#119: its metadata slot kept, empty); a model's now line says how old it
+    // is at the line's end.
+    expect(rows[0]?.querySelector('.ov-task .ov-ai-meta')?.textContent).toBe('');
     expect(rows[0]?.querySelector('.ov-now > .ov-ai-meta > .ov-age')?.textContent).toBe('just now');
     expect(rows[0]?.getAttribute('aria-label')).toContain('Task: Fix the login test (AI summary) · Now: Running the e2e suite (AI summary, just now)');
     expect(rows[1]?.getAttribute('aria-label')).not.toContain('AI');
@@ -125,7 +126,7 @@ describe('the overview page (#118)', () => {
     ov.open('top');
     const line = document.querySelector<HTMLElement>('.ov-now');
     expect(line?.querySelector('.ov-ai')?.getAttribute('aria-label')).toBe('AI-generated summary of this worker’s recent activity (its last 5 steps).');
-    expect(line?.querySelector('.ov-ai-meta')).toBeNull();
+    expect(line?.querySelector('.ov-ai-meta')?.childElementCount).toBe(0); // #119: the slot is kept, empty
     expect(line?.textContent).toBe('NowWriting the changelog');
     expect(document.querySelector('.ov-row')?.getAttribute('aria-label')).toContain('Now: Writing the changelog (AI summary)');
   });
@@ -184,10 +185,14 @@ describe('the overview page (#118)', () => {
     expect(now(0)?.getAttribute('aria-label')).toContain('token budget');
     expect(now(0)?.getAttribute('title')).toContain('with newer activity or when the turn ends');
     expect(rows[0]?.querySelectorAll('.ov-retry')).toHaveLength(2);
-    // Pending: quiet words in the line's metadata (#232: no outline), no retry, and no sparkle (the line shown is the
-    // fallback); the model's own line carries the sparkle and no status.
-    expect(task(1)?.textContent).toBe('AI pending');
-    expect(task(1)?.parentElement?.className).toBe('ov-ai-meta');
+    // Pending: (#119) the busy mark in the line's metadata (its words in its title and for a screen reader), no retry, and
+    // no sparkle (the line shown is the fallback); the model's own line carries the sparkle and no status.
+    const busy = rows[1]?.querySelector<HTMLElement>('.ov-task > .ov-ai-meta > .ov-busy');
+    expect(busy?.getAttribute('role')).toBe('img');
+    expect(busy?.getAttribute('aria-label')).toBe('The AI line is being written; the line shown is the fallback until then.');
+    expect(busy?.title).toBe(busy?.getAttribute('aria-label'));
+    expect(rows[1]?.querySelector('.ov-task-text')?.textContent).toBe('Replace Hacker with Ubuntu styling');
+    expect(task(1)).toBeNull();
     expect(rows[1]?.querySelector('.ov-ai')).toBeNull();
     expect(rows[1]?.querySelector('.ov-retry')).toBeNull();
     const css = readFileSync(resolve(import.meta.dirname, 'overview.css'), 'utf8');
@@ -247,11 +252,17 @@ describe('the overview page (#118)', () => {
     expect(chip(1)?.getAttribute('title')).toContain('It tries again at');
     expect(rows[1]?.getAttribute('aria-label')).toMatch(/\(AI summary, 1m ago; refresh failed · retry \d\d:\d\d.*\)/);
     expect(line(1)?.querySelector('.ov-retry')).not.toBeNull();
-    // A refresh only on its way is no news: the sparkle and the age alone.
-    expect(line(2)?.querySelector('.ov-ai-meta')?.textContent).toBe('1m ago');
+    // #119 (#198 showed nothing here): a refresh call out keeps the line, dimmed, and the busy mark takes the age's place.
+    expect(line(2)?.querySelector('.ov-now-text')?.textContent).toBe('Running the lift tests');
+    expect(line(2)?.classList.contains('ov-now--refreshing')).toBe(true);
+    expect(line(2)?.querySelector('.ov-ai-meta')?.textContent).toBe('');
+    expect(line(2)?.querySelector('.ov-ai-meta > .ov-busy')?.getAttribute('aria-label')).toMatch(/^Refreshing this AI summary from newer activity\./);
+    expect(line(2)?.querySelector('.ov-age, .ov-flaprow')).toBeNull();
+    expect(line(2)?.hasAttribute('aria-busy')).toBe(false);
     expect(chip(2)).toBeNull();
     expect(line(2)?.querySelector('.ov-retry')).toBeNull();
     expect(line(2)?.classList.contains('ov-line--status')).toBe(false);
+    expect(rows[2]?.getAttribute('aria-label')).toContain('Now: Running the lift tests (AI summary, 1m ago; refreshing)');
   });
 
   it('the live activity is the since column’s plain words while working, the name and model alone in the Worker column (#232)', () => {

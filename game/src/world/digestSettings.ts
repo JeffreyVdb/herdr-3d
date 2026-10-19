@@ -179,14 +179,19 @@ export interface LineStatusText {
 /**
  * What a line's status says (#174): shown where the AI badge would be, while a fallback stands in for the model's line.
  * `kind` is the line it is of: the task is asked again by itself; the now line waits for the next turn. `kept` (#198):
- * the line shown is the model's previous now line, beside its AI mark, and a refresh of it from newer activity failed.
+ * the line shown is the model's previous now line, beside its AI mark, and a refresh of it from newer activity failed
+ * (#119: or is on its way: no chip).
  */
 export function lineStatusText(st: DigestLineStatus, kind: 'task' | 'now', kept = false): LineStatusText {
   const why = reasonWord(st.reason);
   const tries = st.attempts && st.attempts > 1 ? ` after ${st.attempts} attempts` : '';
   const settings = ' Raise the completion budget or lower the reasoning effort under Settings › Floor overview summaries.';
   const hint = st.reason === 'truncated' ? settings : '';
-  if (kept && st.state !== 'pending') {
+  if (kept && st.state === 'pending') {
+    // #119: its refresh call is out; the page shows a busy mark, the wall nothing new.
+    return { chip: '', detail: 'Refreshing this AI summary from newer activity. The summary shown is the previous one until the new one arrives.', retry: false };
+  }
+  if (kept) {
     const failed = `Refreshing this AI summary from newer activity failed${tries}: ${why}. The summary shown is the previous one; its age is when it was written.${hint}`;
     return st.state === 'retrying'
       ? {

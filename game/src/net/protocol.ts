@@ -3033,8 +3033,9 @@ export interface WorkerDigest {
   /** #174: what became of the model's line while a fallback shows in its place (absent: nothing awaited); never with `task_source` `llm`. */
   task_status?: DigestLineStatus;
   /**
-   * #174: the same for the now line. #198: with `now_source` `llm` too, but only `retrying` or `failed`: a refresh from
-   * newer activity failed and the model's previous line (written at `now_at`) still shows; never `pending` there.
+   * #174: the same for the now line. #198: with `now_source` `llm` too, `retrying` or `failed`: a refresh from newer
+   * activity failed and the model's previous line (written at `now_at`) still shows. #119: and `pending` there only
+   * while the refresh call is out (no `reason`); a wait for the gap or the daily budget is not sent beside it.
    */
   now_status?: DigestLineStatus;
 }

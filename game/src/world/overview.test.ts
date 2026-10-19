@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Floor, HireOptions, Snapshot, Worker } from '../net/protocol';
 import { WorldStore } from './store';
-import { aiTitle, ageText, allNodes, buildOverview, countItems, sinceText, visibleRows, type OverviewWorkerRow } from './overview';
+import { aiTitle, ageText, allNodes, buildOverview, countItems, sinceText, titleKey, visibleRows, type OverviewWorkerRow } from './overview';
 
 const NOW = 1_790_000_000_000;
 
@@ -162,7 +162,7 @@ describe('buildOverview: a row', () => {
     expect(row(s, 'same').tag).toBe('CODE r1');
   });
 
-  it('carries the status of a line the model has not written; of a model’s now line only a failed refresh (#174, #198)', () => {
+  it('carries the status of a line the model has not written; of a model’s now line a failed refresh (#174, #198) or one on its way (#119)', () => {
     const src = store([
       worker('a', 'top', { desk_index: 0, digest: { task: 'Investigate. Missing diffs.', task_source: 'prompt', now_source: 'title', task_status: { state: 'retrying', reason: 'truncated', attempts: 2, retry_at: NOW + 5 }, now_status: { state: 'failed', reason: 'timeout' } }, title: 'Reading' }),
       worker('b', 'top', { desk_index: 1, digest: { task: 'x', task_source: 'llm', now: 'y', now_source: 'llm', task_status: { state: 'failed' }, now_status: { state: 'pending' } } }),
@@ -174,11 +174,39 @@ describe('buildOverview: a row', () => {
     expect(rows[0]?.task?.status).toEqual({ state: 'retrying', reason: 'truncated', attempts: 2, retry_at: NOW + 5 });
     expect(rows[0]?.now?.status).toEqual({ state: 'failed', reason: 'timeout' });
     expect(rows[1]?.task?.status).toBeUndefined();
-    expect(rows[1]?.now?.status).toBeUndefined();
+    // #119 (reverses #198's rule): pending beside a model's now line is its refresh call, out now. A model's task line has none.
+    expect(rows[1]?.now?.status).toEqual({ state: 'pending' });
     expect(rows[2]?.task?.status).toBeUndefined();
     // #198: the model's previous now line still shows, and its refresh failed: both, with the line's time.
     expect(rows[3]?.now).toEqual({ text: 'Reading the lift code', source: 'llm', llm: true, at: NOW - 60_000, status: { state: 'failed', reason: 'timeout', attempts: 1 } });
     expect(rows[4]?.now?.status).toEqual({ state: 'retrying', reason: 'timeout', attempts: 1, retry_at: NOW + 5 });
+  });
+
+  it('#119: a now line awaited with no fallback text to show keeps its status (an empty line), a task line with no text stays out', () => {
+    const s = store([
+      worker('title', 'top', { desk_index: 0, title: '  ', digest: { now_source: 'title', now_status: { state: 'pending' } } }),
+      worker('recap', 'top', { desk_index: 1, digest: { now_source: 'recap', now_status: { state: 'pending', reason: 'daily_cap' } } }),
+      worker('none', 'top', { desk_index: 2, title: '', digest: { now_source: 'title' } }),
+      worker('failed', 'top', { desk_index: 3, title: '', digest: { now_source: 'title', now_status: { state: 'failed', reason: 'timeout' } } }),
+      worker('task', 'top', { desk_index: 4, digest: { task: ' ', task_source: 'prompt', task_status: { state: 'pending' } } }),
+    ]);
+    expect(row(s, 'title').now).toEqual({ text: '', source: 'title', llm: false, status: { state: 'pending' } });
+    expect(row(s, 'recap').now).toEqual({ text: '', source: 'recap', llm: false, status: { state: 'pending', reason: 'daily_cap' } });
+    expect(row(s, 'none').now).toBeNull();
+    expect(row(s, 'failed').now).toBeNull();
+    expect(row(s, 'task').task).toBeNull();
+  });
+
+  it('#119: titleKey leaves out what changes on every tick of a terminal title (Codex spinner frames, the action-required blink)', () => {
+    // Codex: thread-title generation pending (the spinner after the name), a /title order with the spinner later, the mic.
+    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    expect(new Set(frames.map((f) => titleKey(`Fix the lift doors ${f}`)))).toEqual(new Set(['Fix the lift doors']));
+    expect(new Set(frames.map((f) => titleKey(`herdr-3d ${f} Working`)))).toEqual(new Set(['herdr-3d Working']));
+    expect(titleKey('● ⠋ Fix the lift doors')).toBe(titleKey('● ⠙ Fix the lift doors'));
+    expect(titleKey('[ ! ] Action Required')).toBe(titleKey('[ . ] Action Required'));
+    // A real change is still one; a title with nothing of the kind is itself, its spaces collapsed.
+    expect(titleKey('Fix the lift doors ⠋')).not.toBe(titleKey('Fix the stairs ⠋'));
+    expect(titleKey('  Reading   hub.go ')).toBe('Reading hub.go');
   });
 
   it('a one-off worker’s task, and every worker’s now line from the digest: the recap, else its title; the activity apart', () => {

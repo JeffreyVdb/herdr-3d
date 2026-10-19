@@ -51,7 +51,7 @@ package server
 //
 // #198: a failed now line keeps the previous line (or the fallback), and
 // NowStatus says it failed or when it is retried, beside a kept model's line
-// too (not pending there: a refresh on its way is no news). Its steps are
+// too (pending there only while the refresh call is out, #119). Its steps are
 // not sent again by themselves; newer steps are, once the gap and
 // the retry policy's delay after the n-th failure in a row (DigestRetry, as
 // a task line's) are over, until the policy says no more (digest.MaxAttempts
@@ -201,8 +201,9 @@ func (h *Hub) refreshDigest(id string) {
 // lines in their place while the feature is ready: the task line of a
 // one-off worker's current prompt, the now line unless a recap is newer.
 // A model's now line kept after a refresh of newer steps failed carries that
-// failure (failed, or retrying with its time, #198); never pending: a
-// refresh on its way is no news while the line shows.
+// failure (failed, or retrying with its time, #198), and pending only while
+// its refresh call is out (#119): newer steps that wait for their gap or
+// settle, or for the day's budget, are no call in progress.
 func (h *Hub) workerDigest(id string, w *proto.Worker) *proto.WorkerDigest {
 	d := h.dg[id]
 	out := composeDigest(d)
@@ -221,7 +222,9 @@ func (h *Hub) workerDigest(id string, w *proto.Worker) *proto.WorkerDigest {
 	}
 	if d.Steps > 0 {
 		st := h.nowStatus(id, l)
-		if out.NowSource != proto.DigestLLM || (st != nil && st.State != proto.LinePending) {
+		fl := h.dgs.flight
+		calling := fl != nil && fl.id == id && fl.in.Kind == digest.KindNow
+		if out.NowSource != proto.DigestLLM || st == nil || st.State != proto.LinePending || calling {
 			out.NowStatus = st
 		}
 	}
