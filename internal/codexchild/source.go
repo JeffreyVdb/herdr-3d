@@ -33,10 +33,11 @@ type Options struct {
 	Now func() time.Time
 	// #27, the server half (server.go): how long an idle child waits for
 	// its turn's end before its last turn is read (default DefaultSettle),
-	// the bound of each read (default DefaultReadTimeout), and where a
-	// failed recovery is logged (default nowhere).
-	Settle, ReadTimeout time.Duration
-	Log                 func(msg string, args ...any)
+	// the bound of each read (default DefaultReadTimeout), how long a
+	// failed recovery waits to be tried again (default DefaultRetry), and
+	// where it is logged (default nowhere).
+	Settle, ReadTimeout, Retry time.Duration
+	Log                        func(msg string, args ...any)
 }
 
 // Source is the Codex child-agent source. Its methods are safe for
@@ -75,6 +76,9 @@ func New(o Options) *Source {
 	}
 	if o.ReadTimeout <= 0 {
 		o.ReadTimeout = DefaultReadTimeout
+	}
+	if o.Retry <= 0 {
+		o.Retry = DefaultRetry
 	}
 	if o.Log == nil {
 		o.Log = func(string, ...any) {}
@@ -254,6 +258,9 @@ func (b *book) facts() *facts {
 // it was last sent, and a removal of each child sent that is gone. With
 // s.mu held.
 func (s *Source) flush(b *book) {
+	if b.srv != nil && b.srv.recovering {
+		return // sent once the join's recovery is done (#27)
+	}
 	next := b.derive()
 	used := make([]bool, len(b.sent))
 	var out, removed []childagents.Evidence

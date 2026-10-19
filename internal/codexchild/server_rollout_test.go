@@ -119,3 +119,32 @@ func TestNoJoinKeepsTheRolloutRule(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 }
+
+// A bridge's join while a child runs: the rollouts' running, then the
+// server's, never an unknown between them (nothing is sent while the join
+// recovers).
+func TestJoinDoesNotFlickerARunningChild(t *testing.T) {
+	r := newRig(t, "a")
+	r.src.opts.Settle = 10 * time.Millisecond
+	r.write(r.session, 14)
+	r.write(aChild, 20)
+	r.poll()
+	fr := newFakeReader()
+	fr.child(aChild, r.session, codexapp.ThreadActive, 1)
+	r.src.Joined(r.session, fr)
+	r.quiet()
+	r.poll()
+	r.apply()
+	var states []string
+	for _, e := range r.evs {
+		if e.NativeID == aChild && e.State != "" && (len(states) == 0 || states[len(states)-1] != e.State) {
+			states = append(states, e.State)
+		}
+	}
+	if len(states) != 1 || states[0] != proto.ChildRunning {
+		t.Fatalf("states %v", states)
+	}
+	if c := r.one(aChild); c.Source != proto.ChildFromAppServer {
+		t.Fatalf("%+v", c)
+	}
+}

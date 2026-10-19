@@ -125,7 +125,7 @@ type srig struct {
 }
 
 func newSrig(t *testing.T) *srig {
-	s := &srig{t: t, src: New(Options{Settle: 20 * time.Millisecond}), reg: childagents.New(), r: newFakeReader()}
+	s := &srig{t: t, src: New(Options{Settle: 20 * time.Millisecond, Retry: 30 * time.Millisecond}), reg: childagents.New(), r: newFakeReader()}
 	s.reg.Worker("w", root)
 	return s
 }
@@ -376,14 +376,42 @@ func TestServerLossAndRecovery(t *testing.T) {
 	}
 }
 
-// A refused recovery (the connection went) leaves the claims as Lost put
-// them; nothing is guessed.
+// A failed recovery leaves the join's claims untrusted (nothing is
+// guessed) and is tried again after Retry.
 func TestServerRecoveryFails(t *testing.T) {
 	s := newSrig(t)
-	s.r.fail = errors.New("closed")
 	s.join()
-	if n := len(s.reg.Children("w")); n != 0 {
-		t.Fatalf("%d rows", n)
+	s.r.child("c", root, codexapp.ThreadActive, 1)
+	s.activity(root, "started", "c", "call_c", 1)
+	s.src.Lost(root)
+	s.r.mu.Lock()
+	s.r.fail = errors.New("closed")
+	s.r.mu.Unlock()
+	s.src.Joined(root, s.r)
+	time.Sleep(100 * time.Millisecond)
+	for _, e := range s.src.take() {
+		_, _ = s.reg.Apply(e)
+	}
+	s.state("c", proto.ChildUnknown, proto.ChildFromAppServer)
+	s.r.mu.Lock()
+	s.r.fail = nil
+	s.r.mu.Unlock()
+	s.settle()
+	s.state("c", proto.ChildRunning, proto.ChildFromAppServer)
+}
+
+// Until a join's recovery is done, the connection before it's claims are
+// gone and its own not read: a running child is unknown, not running.
+func TestServerRejoinTrustsOnlyItsRecovery(t *testing.T) {
+	s := newSrig(t)
+	s.join()
+	s.r.child("c", root, codexapp.ThreadActive, 1)
+	s.activity(root, "started", "c", "call_c", 1)
+	s.src.Lost(root)
+	s.r.setStatus("c", codexapp.ThreadNotLoaded) // a restarted server
+	s.join()
+	if got := s.stateSeq("c"); !slices.Equal(got, []string{proto.ChildRunning, proto.ChildUnknown}) {
+		t.Fatalf("states %v", got)
 	}
 }
 

@@ -330,3 +330,50 @@ func TestMockDelayPostponesTheOutput(t *testing.T) {
 		t.Fatal("response was not delayed")
 	}
 }
+
+// #27: the collaboration directives call Codex's multi-agent v2 tools in
+// the namespace the request offered them in, and a child's task (an
+// agent_message carrying its payload as encrypted_content) is a turn whose
+// directive the mock follows.
+func TestMockCollaborationDirectives(t *testing.T) {
+	m := startMock(t)
+	withTools := func(text string) string {
+		var b map[string]any
+		_ = json.Unmarshal([]byte(userBody(text)), &b)
+		b["tools"] = []any{map[string]any{"type": "function", "name": "exec_command"},
+			map[string]any{"type": "namespace", "name": "collaboration", "tools": []any{map[string]any{"name": "spawn_agent"},
+				map[string]any{"name": "followup_task"}, map[string]any{"name": "send_message"}, map[string]any{"name": "interrupt_agent"},
+				map[string]any{"name": "wait_agent"}}}}
+		out, _ := json.Marshal(b)
+		return string(out)
+	}
+	for _, c := range []struct{ text, name, args string }{
+		{"MOCK:spawn alpha MOCK:hold a1", "spawn_agent", `{"fork_turns":"none","message":"MOCK:hold a1","task_name":"alpha"}`},
+		{"MOCK:followup alpha MOCK:say again", "followup_task", `{"message":"MOCK:say again","target":"alpha"}`},
+		{"MOCK:message alpha hi there", "send_message", `{"message":"hi there","target":"alpha"}`},
+		{"MOCK:interrupt beta", "interrupt_agent", `{"target":"beta"}`},
+		{"MOCK:wait 300", "wait_agent", `{"timeout_ms":300}`},
+	} {
+		it := item(t, post(t, m, withTools(c.text)))
+		if it["type"] != "function_call" || it["name"] != c.name || it["namespace"] != "collaboration" || it["arguments"] != c.args {
+			t.Errorf("%s: %+v", c.text, it)
+		}
+	}
+	// Without a namespace tool (another version's request): a plain call.
+	if it := item(t, post(t, m, userBody("MOCK:interrupt beta"))); it["namespace"] != nil || it["name"] != "interrupt_agent" {
+		t.Errorf("plain: %+v", it)
+	}
+	// A child's task, as Codex 0.163.0 sends it.
+	b, _ := json.Marshal(map[string]any{"model": "mock", "input": []any{
+		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "<environment_context>\n</environment_context>"}}},
+		map[string]any{"type": "agent_message", "author": "/root", "recipient": "/root/alpha", "content": []any{
+			map[string]any{"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/alpha\nSender: /root\nPayload:\n"},
+			map[string]any{"type": "encrypted_content", "encrypted_content": "MOCK:say child-done"}}},
+	}})
+	if it := item(t, post(t, m, string(b))); assistantText(it) != "child-done" {
+		t.Errorf("child's turn: %+v", it)
+	}
+	if r := m.Requests()[len(m.Requests())-1]; r.Kind != KindTurn || r.Directive != "say" {
+		t.Errorf("child's request %+v", r)
+	}
+}

@@ -34,8 +34,10 @@ const (
 	DefaultSettle = time.Second
 	// DefaultReadTimeout bounds one read of the server.
 	DefaultReadTimeout = 10 * time.Second
-	maxNotes           = 1024 // notifications queued; past it the observer recovers again
-	maxNotKids         = 1024 // thread ids read and found not to be children, remembered
+	// DefaultRetry is how long a failed recovery waits to be tried again.
+	DefaultRetry = 2 * time.Second
+	maxNotes     = 1024 // notifications queued; past it the observer recovers again
+	maxNotKids   = 1024 // thread ids read and found not to be children, remembered
 )
 
 // server is a session's server facts: what its app-server showed through
@@ -44,14 +46,20 @@ type server struct {
 	// owned: a join of the session was seen this run, so the server is
 	// the authority on its children's state from now on (combine).
 	owned bool
-	// attached: joined now; token names the join (Joined and Lost bump it,
-	// so a late result of an older join is dropped).
+	// attached: joined now and recovered (until its recovery is done, a
+	// join's live claims are not trusted: those of the join before it are
+	// gone, its own not read yet); token names the join (Joined and Lost
+	// bump it, so a late result of an older join is dropped).
 	attached bool
-	token    int
-	obs      *observer
-	kids     map[string]*kid // by thread id
-	seq      int
-	notKids  map[string]bool
+	// recovering: a join's first recovery is under way. Nothing of the
+	// session is sent meanwhile, so a running child does not show unknown
+	// for the moment between a bridge's join and its recovery.
+	recovering bool
+	token      int
+	obs        *observer
+	kids       map[string]*kid // by thread id
+	seq        int
+	notKids    map[string]bool
 }
 
 // kid is what the server showed of one child thread.
@@ -105,8 +113,9 @@ func (s *Source) Joined(session string, r codexapp.ChildReader) {
 	if sv.obs != nil {
 		sv.obs.stop()
 	}
-	sv.owned, sv.attached = true, true
+	sv.owned, sv.attached, sv.recovering = true, false, true
 	sv.token++
+	sv.forget()
 	ctx := s.base
 	if ctx == nil {
 		ctx = context.Background()
@@ -123,18 +132,27 @@ func (s *Source) Lost(session string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b := s.books[session]
-	if b == nil || b.srv == nil || !b.srv.attached {
+	if b == nil || b.srv == nil || b.srv.obs == nil {
 		return
 	}
 	sv := b.srv
-	sv.attached = false
+	sv.attached, sv.recovering = false, false
 	sv.token++
 	sv.obs.stop()
 	sv.obs = nil
+	sv.forget()
+	s.flush(b)
+}
+
+// forget drops every live claim (running, idle, a pending settle): they
+// were the connection's that ended. The ends it showed stay.
+func (sv *server) forget() {
 	for _, k := range sv.kids {
+		if k.live == liveRunning || k.live == liveIdle {
+			k.live = ""
+		}
 		k.settle = time.Time{}
 	}
-	s.flush(b)
 }
 
 // Notify is a notification of session's join (the hub goroutine; never
@@ -179,8 +197,9 @@ type observer struct {
 	mu       sync.Mutex
 	queue    []note
 	resync   bool
+	retryAt  time.Time // a failed recovery is tried again then
 	busy     bool
-	recovers int // recoveries done (tests)
+	recovers int // recoveries tried (tests)
 }
 
 func newObserver(base context.Context, s *Source, session string, token int, r codexapp.ChildReader) *observer {
@@ -211,6 +230,9 @@ func (o *observer) wake() {
 func (o *observer) take() ([]note, bool) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if !o.retryAt.IsZero() && !o.src.opts.Now().Before(o.retryAt) {
+		o.resync, o.retryAt = true, time.Time{}
+	}
 	q, rs := o.queue, o.resync
 	o.queue, o.resync = nil, false
 	o.busy = len(q) > 0 || rs
@@ -236,6 +258,11 @@ func (o *observer) run() {
 		o.busy = false
 		o.mu.Unlock()
 		next := o.nextSettle()
+		o.mu.Lock()
+		if r := o.retryAt; !r.IsZero() && (next.IsZero() || r.Before(next)) {
+			next = r
+		}
+		o.mu.Unlock()
 		if !t.Stop() {
 			select {
 			case <-t.C:
@@ -286,7 +313,12 @@ func (o *observer) recover() {
 	d, err := o.r.Descendants(ctx, o.session)
 	cancel()
 	if err != nil {
+		// Its live claims stay unknown meanwhile; tried again after Retry.
 		o.src.opts.Log("recovering the codex children failed", "session", o.session, "err", err)
+		o.mu.Lock()
+		o.retryAt = o.src.opts.Now().Add(o.src.opts.Retry)
+		o.mu.Unlock()
+		o.apply(func(sv *server) { sv.recovering = false })
 		return
 	}
 	found := map[string]bool{}
@@ -335,6 +367,8 @@ func (o *observer) recover() {
 			}
 		})
 	}
+	// Every child's status is the server's now: its live claims stand.
+	o.apply(func(sv *server) { sv.attached, sv.recovering = true, false })
 }
 
 // chained reports whether id's parent chain, through the listed threads
@@ -839,5 +873,5 @@ func (s *Source) quiet(session string) bool {
 	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	return !o.busy && len(o.queue) == 0 && !o.resync && o.recovers > 0 && !settling
+	return !o.busy && len(o.queue) == 0 && !o.resync && o.recovers > 0 && o.retryAt.IsZero() && !settling
 }
