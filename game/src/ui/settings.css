@@ -1472,6 +1472,11 @@ dialog.settings {
   padding: 0;
   border: 0;
 }
+/* H3D-1: what to send is a fieldset before the events; panels.css's `.settings fieldset` rule (floor settings) would
+ * draw its solid bottom line under it: the section's dividers are its own dashed ones. */
+.settings-tg-opts .settings-tg-events {
+  border-bottom: 0;
+}
 .settings-tg-events legend {
   margin-bottom: 2px;
   padding: 0;
