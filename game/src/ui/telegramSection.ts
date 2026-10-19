@@ -19,7 +19,7 @@ export const TELEGRAM_PRIVACY =
 
 /** #13: what Allow replies agrees to, shown above its switch. #14: and the question's buttons. #88: and a screen menu's (#106: with what it asks about). */
 export const TELEGRAM_REPLIES =
-  'Reply to a notification in Telegram and the bridge types your reply into that worker, as you would in the game. When a worker asks a question, its notification is followed by the question, its options and their descriptions, with a button for each: a tap answers it as the game would (a secret question only says to answer it in the game). A worker waiting on a permission or folder-trust menu gets a card with what it asks about (the command, file or folder, at most 24 lines) and a button per choice. Passwords, keys and tokens the bridge recognises are removed first; one written in a form it does not recognise is sent as it is. When the start of a command is off the worker’s screen and the bridge cannot read it whole, approving it has no button: approve it in the worker’s terminal, at its laptop in the game. A tap picks that choice on its screen, if the same menu is still there. Only messages from your paired account count, and only its replies to the bot’s messages and taps on its buttons; everything else the bot receives does nothing. A 👍 on your reply means it was sent; otherwise the bot says why not. This is separate from the notifications switch above.';
+  'Reply to a notification in Telegram and the bridge types your reply into that worker, as you would in the game. When a worker asks a question, its notification is followed by the question, its options and their descriptions, with a button for each (with Questions only, these are the notification): a tap answers it as the game would (a secret question only says to answer it in the game). A worker waiting on a permission or folder-trust menu gets a card with what it asks about (the command, file or folder, at most 24 lines) and a button per choice. Passwords, keys and tokens the bridge recognises are removed first; one written in a form it does not recognise is sent as it is. When the start of a command is off the worker’s screen and the bridge cannot read it whole, approving it has no button: approve it in the worker’s terminal, at its laptop in the game. A tap picks that choice on its screen, if the same menu is still there. Only messages from your paired account count, and only its replies to the bot’s messages and taps on its buttons; everything else the bot receives does nothing. A 👍 on your reply means it was sent; otherwise the bot says why not. This is separate from the notifications switch above.';
 
 /** H3D-1: the two modes, as the selector names and explains them. */
 export const TELEGRAM_MODES: ReadonlyArray<{ mode: NotifyMode; label: string; hint: string }> = [
@@ -580,7 +580,13 @@ export function telegramSection(host: TelegramSectionHost): (body: HTMLElement) 
           acting = false;
         });
     });
-    on.box.addEventListener('change', () => set(on.box, { enabled: on.box.checked }, on.box.checked ? 'On. You will get a message when a worker needs you or finishes.' : 'Off. Nothing is sent.'));
+    on.box.addEventListener('change', () =>
+      set(
+        on.box,
+        { enabled: on.box.checked },
+        !on.box.checked ? 'Off. Nothing is sent.' : (wantedMode ?? st()?.mode) === 'questions' ? 'On. You will get a message when a worker asks you a question.' : 'On. You will get a message when a worker needs you or finishes.',
+      ),
+    );
     needs.box.addEventListener('change', () => set(needs.box, { events: { needs_you: needs.box.checked } }, 'Saved.'));
     done.box.addEventListener('change', () => set(done.box, { events: { done: done.box.checked } }, 'Saved.'));
     quiet.box.addEventListener('change', () => set(quiet.box, { quiet: quiet.box.checked }, quiet.box.checked ? 'Saved: messages arrive without a sound.' : 'Saved: messages arrive with a sound.'));
