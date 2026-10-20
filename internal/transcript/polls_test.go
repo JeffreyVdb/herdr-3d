@@ -255,6 +255,17 @@ func TestPollTypedCode(t *testing.T) {
 	})
 }
 
+// #132: a quote in a regex literal is not a string's: the poll between two
+// such regexes is still a poll, with its process.
+func TestPollBetweenRegexes(t *testing.T) {
+	call := codexLineOf("response_item", fmt.Sprintf(`{"type":"custom_tool_call","call_id":"call_re","name":"exec","input":%q}`,
+		`const quote = /"/; text(await tools.write_stdin({session_id:12,chars:''})); const quote2 = /"/;`))
+	result := codexLineOf("response_item", `{"type":"custom_tool_call_output","call_id":"call_re","output":"Script completed\nOutput:\n{\"chunk_id\":\"a\",\"exit_code\":1,\"output\":\"failed\"}"}`)
+	checkRows(t, "regexes", rowsOf(itemsOf(t, Codex, call+result)), map[string]row{
+		"call_re": {"Waited for background terminal 12", "exited 1", proto.ToolError, ""},
+	})
+}
+
 // #132: the session → command link is the index's, in file order: a log
 // built from the file and one fed line by line (the tail's) give the same
 // rows, and so do a capped list item of a big line and the item in full.

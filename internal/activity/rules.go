@@ -317,133 +317,175 @@ func codexScript(script string) Call {
 }
 
 // scriptCall is one tools.<name>( call of a Codex script: its name and the
-// script after it, up to the next call. A call written inside a string
-// literal or a comment is text, not a call (#132: typed code, a grep for
-// one); a script whose literals the scan cannot close counts every match.
+// script after it, up to the next call. What a write_stdin types (chars)
+// and what an exec_command runs (cmd) is text, not code: a call written in
+// it is not one (#132: typed code, a grep for a call). Any other match
+// counts, wherever it is (a comment, another string): the script is not
+// lexed, so a regex literal or a division can never hide a real call.
 type scriptCall struct{ name, args string }
 
+// textKeys are the argument of a call whose string value is text.
+var textKeys = map[string]string{"write_stdin": "chars", "exec_command": "cmd"}
+
 func scriptCalls(script string) []scriptCall {
+	var texts [][2]int // the text of the calls kept so far, still ahead
 	locs := toolCallRe.FindAllStringSubmatchIndex(script, -1)
-	if len(locs) > 0 {
-		if spans, ok := literalSpans(script); ok {
-			locs = outsideSpans(locs, spans)
+	kept := locs[:0]
+	for _, l := range locs {
+		if inText(&texts, l[0]) {
+			continue
+		}
+		kept = append(kept, l)
+		if key, ok := textKeys[script[l[2]:l[3]]]; ok {
+			if start, end, ok := textArg(script, l[1], key); ok {
+				texts = append(texts, [2]int{start, end})
+			}
 		}
 	}
 	var calls []scriptCall
-	for i, l := range locs {
+	for i, l := range kept {
 		end := len(script)
-		if i+1 < len(locs) {
-			end = locs[i+1][0]
+		if i+1 < len(kept) {
+			end = kept[i+1][0]
 		}
 		calls = append(calls, scriptCall{name: script[l[2]:l[3]], args: script[l[1]:end]})
 	}
 	return calls
 }
 
-// literalSpans are where a JS script's string literals ("…", '…', the
-// text of `…` but not its ${…}) and comments are, in order, [start, end).
-// ok is false when one does not end: a cut script, a quoted string with a
-// newline in it (a regex literal or the like the scan misread). Regex
-// literals are not read; a // after a backslash is not a comment.
-func literalSpans(s string) (spans [][2]int, ok bool) {
-	var subs []int // the brace depth at each open ${
-	depth := 0
-	// template reads a template's text after i (its ` or the } of a ${…})
-	// to its end (true) or to a ${ (false), and returns where it stopped
-	// (-1: no end).
-	template := func(i int) (int, bool) {
-		for j := i + 1; j < len(s); j++ {
-			switch {
-			case s[j] == '\\':
-				j++
-			case s[j] == '`':
-				spans = append(spans, [2]int{i, j + 1})
-				return j, true
-			case s[j] == '$' && j+1 < len(s) && s[j+1] == '{':
-				spans = append(spans, [2]int{i, j + 2})
-				return j + 1, false
-			}
+// inText says whether at is inside one of texts, dropping those that end
+// before it (the matches come in order).
+func inText(texts *[][2]int, at int) bool {
+	in := false
+	kept := (*texts)[:0]
+	for _, t := range *texts {
+		if t[1] <= at {
+			continue
 		}
-		return -1, false
+		kept = append(kept, t)
+		in = in || t[0] <= at
 	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c == '"' || c == '\'':
-			j := i + 1
-			for ; j < len(s) && s[j] != c; j++ {
-				if s[j] == '\n' {
-					return nil, false
-				}
-				if s[j] == '\\' {
-					j++
-				}
-			}
-			if j >= len(s) {
-				return nil, false
-			}
-			spans = append(spans, [2]int{i, j + 1})
-			i = j
-		case c == '`':
-			j, closed := template(i)
-			if j < 0 {
-				return nil, false
-			}
-			if !closed {
-				subs = append(subs, depth)
-				depth++
-			}
-			i = j
-		case c == '/' && i+1 < len(s) && (s[i+1] == '/' || s[i+1] == '*') && (i == 0 || s[i-1] != '\\'):
-			end := len(s)
-			if s[i+1] == '/' {
-				if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
-					end = i + j
-				}
-			} else {
-				j := strings.Index(s[i+2:], "*/")
-				if j < 0 {
-					return nil, false
-				}
-				end = i + 2 + j + 2
-			}
-			spans = append(spans, [2]int{i, end})
-			i = end - 1
-		case c == '{':
-			depth++
-		case c == '}':
-			depth--
-			if n := len(subs); n > 0 && depth == subs[n-1] {
-				subs = subs[:n-1]
-				j, closed := template(i)
-				if j < 0 {
-					return nil, false
-				}
-				if !closed {
-					subs = append(subs, depth)
-					depth++
-				}
-				i = j
-			}
-		}
-	}
-	return spans, len(subs) == 0
+	*texts = kept
+	return in
 }
 
-// outsideSpans are the matches of locs that start outside spans (both in
-// order).
-func outsideSpans(locs [][]int, spans [][2]int) [][]int {
-	var out [][]int
-	k := 0
-	for _, l := range locs {
-		for k < len(spans) && spans[k][1] <= l[0] {
-			k++
+// textArg is where the string value of key is in a call's argument object,
+// read from i (just after the call's paren) one key: value pair at a time:
+// bare or quoted keys, shorthand, values that are a string, a template
+// without ${…}, a number or a name. ok is false for anything else (an
+// expression, a regex, a nested object, a value with a newline, no such
+// key, a key that is not a string): then nothing in the call is text.
+func textArg(s string, i int, key string) (start, end int, ok bool) {
+	i = skipSpace(s, i)
+	if i >= len(s) || s[i] != '{' {
+		return 0, 0, false
+	}
+	for i++; ; i++ {
+		i = skipSpace(s, i)
+		if i >= len(s) {
+			return 0, 0, false
 		}
-		if k == len(spans) || l[0] < spans[k][0] {
-			out = append(out, l)
+		var k string
+		switch c := s[i]; {
+		case c == '"' || c == '\'':
+			e := jsQuoted(s, i)
+			if e < 0 {
+				return 0, 0, false
+			}
+			k, i = s[i+1:e-1], e
+		case c == '_' || c == '$' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z':
+			j := i + 1
+			for j < len(s) && jsNamePart(s[j]) {
+				j++
+			}
+			k, i = s[i:j], j
+		default:
+			return 0, 0, false
+		}
+		i = skipSpace(s, i)
+		if i < len(s) && s[i] == ',' {
+			continue // shorthand
+		}
+		if i >= len(s) || s[i] != ':' {
+			return 0, 0, false
+		}
+		i = skipSpace(s, i+1)
+		if i >= len(s) {
+			return 0, 0, false
+		}
+		v, e := i, -1
+		switch s[i] {
+		case '"', '\'':
+			e = jsQuoted(s, i)
+		case '`':
+			e = jsTemplate(s, i)
+		default:
+			if k == key {
+				return 0, 0, false
+			}
+			for e = i; e < len(s) && (jsNamePart(s[e]) || s[e] == '.' || s[e] == '-' || s[e] == '+'); e++ {
+			}
+			if e == i {
+				return 0, 0, false
+			}
+		}
+		if e < 0 {
+			return 0, 0, false
+		}
+		i = skipSpace(s, e)
+		if i >= len(s) || s[i] != ',' && s[i] != '}' {
+			return 0, 0, false
+		}
+		if k == key {
+			return v, e, true
+		}
+		if s[i] == '}' {
+			return 0, 0, false
 		}
 	}
-	return out
+}
+
+// jsQuoted is the end of the "…" or '…' string at i (-1: a newline in it,
+// or no end).
+func jsQuoted(s string, i int) int {
+	for j := i + 1; j < len(s); j++ {
+		switch s[j] {
+		case s[i]:
+			return j + 1
+		case '\\':
+			j++
+		case '\n', '\r':
+			return -1
+		}
+	}
+	return -1
+}
+
+// jsTemplate is the end of the `…` template at i (-1: a ${…} in it, or no
+// end).
+func jsTemplate(s string, i int) int {
+	for j := i + 1; j < len(s); j++ {
+		switch {
+		case s[j] == '`':
+			return j + 1
+		case s[j] == '\\':
+			j++
+		case s[j] == '$' && j+1 < len(s) && s[j+1] == '{':
+			return -1
+		}
+	}
+	return -1
+}
+
+func jsNamePart(c byte) bool {
+	return c == '_' || c == '$' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9'
+}
+
+func skipSpace(s string, i int) int {
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+		i++
+	}
+	return i
 }
 
 // scriptArg is the string argument re finds in a call's args ("": none).
