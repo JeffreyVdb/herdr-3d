@@ -52,6 +52,8 @@ test('the review opens collapsed or open as its values say, and only Hire hires'
   await page.locator('#review-label').press('Enter');
   await page.locator('#review-cwd').press('Enter');
   await page.locator('[data-key="sec:task"]').click();
+  // (The composer's caret starts at the text's start: go to its end, as in a textarea.)
+  await page.locator('#review-task').press('ControlOrMeta+End');
   await page.locator('#review-task').press('Enter');
   expect(await hires(page)).toHaveLength(0);
 

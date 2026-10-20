@@ -3544,6 +3544,9 @@ export interface Child {
   name?: string;
   type?: string;
   description?: string;
+  /** What it runs on, as its own transcript reports it (Claude only): the model id and its effort level. */
+  model?: string;
+  effort?: string;
   state: ChildState;
   /** The evidence source that set `state` (`hook`, `transcript`, `app_server`, `rollout`, `fixture`, …). */
   source: string;
@@ -3595,7 +3598,7 @@ export function decodeChild(v: unknown): Child | null {
     c.parent = 'child';
     c.parent_id = v.parent_id;
   }
-  for (const k of ['native_id', 'name', 'type', 'description'] as const) {
+  for (const k of ['native_id', 'name', 'type', 'description', 'model', 'effort'] as const) {
     const x = v[k];
     if (isStr(x) && x) c[k] = x;
   }

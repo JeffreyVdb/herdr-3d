@@ -11,6 +11,7 @@ import type { DialogHost, HireHost } from './hire';
 import { HirePrefs } from './hirePrefs';
 import { HireReviewDialog } from './hireReview';
 import { SendHomeDialog } from './sendHome';
+import type { Draft as PromptDraft } from './composer/draft';
 
 // #108 round 4: the dialogs that show a text the bridge sent back with references to protected files (pack up's
 // prompt, an agent handoff's instruction, a dictated task): each exact reference is a chip; a text box that holds
@@ -166,14 +167,13 @@ describe('a dictated task (#108 round 4)', () => {
     expect(chip.tagName).toBe('SPAN');
     expect(chip.hasAttribute('tabindex')).toBe(false);
     expect(sum.textContent).not.toContain('herdr-world/secrets');
-    const box = document.querySelector<HTMLTextAreaElement>('#review-task')!;
-    expect(box.value).toBe(`deploy with ${ref(A)} and tag it.`);
+    const box = (rv as unknown as { composer: { getDraft(): PromptDraft } }).composer.getDraft();
+    expect(box.doc.text).toBe(`deploy with ${ref(A)} and tag it.`);
     const line = document.querySelector<HTMLElement>('#review-task-refs')!;
     expect(line.hidden).toBe(false);
     expect(chips(line)).toEqual([A]);
     // An edit that drops it: the line goes.
-    box.value = 'deploy and tag it.';
-    box.dispatchEvent(new Event('input'));
+    box.replace(0, box.doc.text.length, 'deploy and tag it.');
     expect(line.hidden).toBe(true);
     expect(chips(sum)).toEqual([]);
   });

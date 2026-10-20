@@ -6,6 +6,7 @@ import { WorldStore } from './store';
 import {
   buildCityOverview,
   buildOverview,
+  childShortName,
   childSinceText,
   cityCountItems,
   countItems,
@@ -134,6 +135,24 @@ describe('#24 buildOverview: native children', () => {
     expect(a).toMatchObject({ kind: 'child', key: 'child:a', id: 'a', workerId: 'w', provider: 'codex', name: 'Ada', type: 'explorer', description: 'Map the hub', state: 'idle', unresolved: false, transcript: 'pending' });
     expect(b).toMatchObject({ name: 'Explore', type: null, description: null, state: 'completed' });
     expect(c).toMatchObject({ name: 'Subagent', type: null, state: 'unknown', transcript: 'unavailable' });
+  });
+
+  it('what a child runs on reads as a worker’s model does: its readable name and effort; empty when not known', () => {
+    const s = store(
+      [worker('w', 'top')],
+      [
+        child('a', 'w', { type: 'general-purpose', model: 'claude-sonnet-5-5', effort: 'high' }),
+        child('b', 'w', { provider: 'codex', name: 'Ada', model: 'gpt-6-sol' }),
+        child('c', 'w'),
+      ],
+    );
+    expect(childRows(buildOverview(s, 'top')).map((r) => r.model)).toEqual(['Sonnet 5.5 high', 'GPT 6 Sol', '']);
+  });
+
+  it('a long default name is shown shorter; any other as it is', () => {
+    expect(childShortName('general-purpose')).toBe('general');
+    expect(childShortName('Explore')).toBe('Explore');
+    expect(childShortName('impeccable-manual-edit-applier')).toBe('impeccable-manual-edit-applier');
   });
 
   it('keeps the order of childTree (start, native id, name, row id), not the order they came in', () => {

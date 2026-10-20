@@ -349,7 +349,7 @@ function presetText(s: DraftSnapshot): string {
 }
 
 /** The prompt as the form sees it: the text, each image a bare `[Image #n]` (the paths only exist once uploaded, at send time). */
-function promptText(s: DraftSnapshot): string {
+export function promptText(s: DraftSnapshot): string {
   let n = 0;
   return s.segments.map((g) => (g.kind === 'text' ? g.text : g.kind === 'image' ? `[Image #${++n}]` : mentionOf(g.path))).join('');
 }

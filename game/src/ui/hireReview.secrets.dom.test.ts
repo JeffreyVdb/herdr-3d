@@ -8,6 +8,7 @@ import { HANDOVER_EXPIRED } from './dictationModel';
 import type { HireHost } from './hire';
 import { HireReviewDialog } from './hireReview';
 import { HirePrefs } from './hirePrefs';
+import type { Draft as PromptDraft } from './composer/draft';
 
 // #108 round 4: a dictated hire's review with prompt secrets reviewed: the interpreter's hand-over goes with the hire; the
 // task as it answered it needs no review again, an edited one is reviewed as usual; the hand-over survives a follow-up.
@@ -56,8 +57,12 @@ function setup(o: { hire?: CommandResult[] } = {}) {
   } as unknown as HireHost;
   const rv = new HireReviewDialog(document.body, host);
   const hire = () => document.querySelector<HTMLElement>('.desk-dlg [data-key="hire"]')!.click();
-  const task = () => document.querySelector<HTMLTextAreaElement>('#review-task')!;
-  return { b, rv, hires, toasts, hire, task };
+  /** The human writes `text` over the whole task, as an edit in its box. */
+  const setTask = (text: string) => {
+    const d = (rv as unknown as { composer: { getDraft(): PromptDraft } }).composer.getDraft();
+    d.replace(0, d.doc.text.length, text);
+  };
+  return { b, rv, hires, toasts, hire, setTask };
 }
 
 describe('HireReviewDialog and prompt secrets (#108 round 4)', () => {
@@ -87,8 +92,7 @@ describe('HireReviewDialog and prompt secrets (#108 round 4)', () => {
     t.rv.open('floor', WITH_REF, undefined, undefined, 'tok-1');
     await flush();
     const edited = `${TASK} Then use TOKEN=ghp_abcdefghijklmnopqrstu1 to push.`;
-    t.task().value = edited;
-    t.task().dispatchEvent(new Event('input'));
+    t.setTask(edited);
     t.hire();
     await flush();
     expect(t.b.open()).toMatchObject({ counts: { found: 1 }, action: 'Confirm and send' });
@@ -105,8 +109,7 @@ describe('HireReviewDialog and prompt secrets (#108 round 4)', () => {
     await flush();
     expect(t.rv.apply(WITH_REF, t.rv.begin()!)).toBe(true);
     expect(t.rv.pendingHandover()).toBe('tok-1');
-    t.task().value = `${TASK} PASSWORD=hunter22`;
-    t.task().dispatchEvent(new Event('input'));
+    t.setTask(`${TASK} PASSWORD=hunter22`);
     t.hire();
     await flush();
     t.b.cancel();
@@ -123,8 +126,7 @@ describe('HireReviewDialog and prompt secrets (#108 round 4)', () => {
     const t = setup({ hire: [STALE, STALE, STALE] });
     t.rv.open('floor', WITH_REF, undefined, undefined, 'tok-1');
     await flush();
-    t.task().value = `${TASK} Then use TOKEN=ghp_abcdefghijklmnopqrstu1 to push.`;
-    t.task().dispatchEvent(new Event('input'));
+    t.setTask(`${TASK} Then use TOKEN=ghp_abcdefghijklmnopqrstu1 to push.`);
     t.hire();
     await flush();
     t.b.confirm();
@@ -148,8 +150,7 @@ describe('HireReviewDialog and prompt secrets (#108 round 4)', () => {
     const t = setup();
     t.rv.open('floor', WITH_REF, undefined, undefined, 'tok-1');
     await flush();
-    t.task().value = `${TASK} PASSWORD=hunter22`;
-    t.task().dispatchEvent(new Event('input'));
+    t.setTask(`${TASK} PASSWORD=hunter22`);
     const release = t.b.holdScans();
     t.hire();
     await flush();
