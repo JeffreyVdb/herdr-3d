@@ -696,8 +696,15 @@ function diffStat(hunks: unknown[]): { add: number; del: number } {
 
 /** The lines a diff draws at a time: its first ones, then each "Show next" (#171). */
 const MAX_DIFF_LINES = 2000;
-/** #126: the lines a diff drawn near the view puts in per frame (its first ones at once, the rest the frames after). */
-const DIFF_SLICE = 50;
+/**
+ * #126: the most diff lines put off that are drawn in one frame: DIFF_NEAR of a body near the view (each line is a
+ * max-content grid: 200 took 25 ms to lay out), DIFF_FRAME in all (one away from the view is not laid out:
+ * `content-visibility: auto`; 500 a frame kept every frame of the worst page at 17 ms).
+ */
+const DIFF_NEAR = 50;
+const DIFF_FRAME = 500;
+/** #126: draws the next `max` lines at most of a diff put off; `done`: all of them are drawn (its fixed height gone). */
+type DiffStep = (max: number) => { drawn: number; done: boolean };
 
 const statEl = (add: number, del: number) => h('span', { class: 'tx-diff-stat' }, h('span', { class: 'tx-add-n' }, `+${add}`), ' ', h('span', { class: 'tx-del-n' }, `−${del}`));
 
@@ -730,10 +737,10 @@ function diffRows(hunks: unknown[]): { rows: DiffRow[]; lines: Array<string[] | 
 /**
  * A diff's lines as a unified view with line numbers: `limit` of them, then "Show next" adds MAX_DIFF_LINES more in place
  * (`around` wraps the change, to keep the reader's place; `onShown` hears how many show now). Its body scrolls, and takes
- * the focus to scroll from the keyboard (Transcript.onKey). #126: `later` may put its lines off (true: it calls `draw` when
- * the body comes near the view); the body keeps their room meanwhile, and they are drawn DIFF_SLICE a frame.
+ * the focus to scroll from the keyboard (Transcript.onKey). #126: `later` may put its lines off (true: the view draws them
+ * with `step`, a few at a time); the body keeps their room meanwhile.
  */
-function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => void) => void, onShown: (shown: number) => void, later?: (el: HTMLElement, draw: () => void) => boolean): HTMLElement {
+function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => void) => void, onShown: (shown: number) => void, later?: (el: HTMLElement, step: DiffStep) => boolean): HTMLElement {
   const { rows, lines } = diffRows(Array.isArray(diff.hunks) ? diff.hunks : []);
   const total = rows.reduce((s, r) => s + (r.kind === 'head' ? 0 : 1), 0);
   const box = h('div', { class: 'tx-diff-lines' });
@@ -768,10 +775,13 @@ function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => v
     // #206: drawn plain, coloured once its hunk is tokenized (while these rows are still the page's).
     colours = diffColours(diff.path, lines, body);
   };
-  const pump = () => {
-    draw(Math.min(target, shown + DIFF_SLICE));
-    if (shown < target && pos < rows.length) void backfill.yield().then(() => body.isConnected && pump());
-    else body.style.removeProperty('height');
+  const step: DiffStep = (max) => {
+    start();
+    const was = shown;
+    draw(Math.min(target, shown + max));
+    const done = shown >= target || pos >= rows.length;
+    if (done) body.style.removeProperty('height');
+    return { drawn: shown - was, done };
   };
   // #126: as tall as its lines will be (each is a line of the body's font, whose own maximum caps it) until they are.
   let n = 0;
@@ -781,10 +791,8 @@ function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => v
     n++;
   }
   body.style.height = `${n * 1.5}em`;
-  const deferred = later?.(body, () => {
-    start();
-    pump();
-  });
+  body.style.setProperty('contain-intrinsic-block-size', `auto ${n * 1.5}em`);
+  const deferred = later?.(body, step);
   if (!deferred) {
     start();
     draw(target);
@@ -939,6 +947,19 @@ class Timeline {
     return this.filling !== 0;
   }
 
+  /** #126: rows are still to build and one of them will show (`shows`), but none built so far does: still opening. */
+  opening(shows: (it: TranscriptItem) => boolean): boolean {
+    if (!this.pending.length) return false;
+    for (const id of this.rows.keys()) {
+      const it = this.items.get(id);
+      if (it && shows(it)) return false;
+    }
+    return this.pending.some((id) => {
+      const it = this.items.get(id);
+      return !!it && this.wants(it) && shows(it);
+    });
+  }
+
   has(id: string): boolean {
     return this.items.has(id);
   }
@@ -1019,9 +1040,12 @@ class Timeline {
       for (const it of sorted.slice(from)) if (!this.rows.has(it.id) && this.wants(it)) this.rows.set(it.id, this.view.renderRow(it, this.scope));
       this.place(sorted.slice(from));
     } else {
-      // A screenful at least, newest first.
+      // A screenful at least, newest first, of rows that show (a tool row "Hide tool calls" hides fills none, nor does an
+      // image-only row merged into the older one of its run), for TOPUP_MS at most.
       const start = backfill.now();
+      const late = () => backfill.now() - start > TOPUP_MS;
       let n = 0;
+      let run: string | null = null;
       for (let limit = FIRST_ROWS; ; limit = n + TOPUP_ROWS) {
         const rows: HTMLElement[] = [];
         while (from > 0 && n < limit) {
@@ -1030,10 +1054,14 @@ class Timeline {
           const row = this.view.renderRow(it, this.scope);
           this.rows.set(it.id, row);
           rows.push(row);
-          n++;
+          const img = isImageOnly(it) ? it.kind : null;
+          const shows = this.view.rowShows(it) && (img === null || img !== run);
+          run = img;
+          if (shows) n++;
+          else if (late()) break;
         }
         this.el.prepend(...rows.reverse());
-        if (from === 0 || backfill.now() - start > TOPUP_MS || !bg.room()) break;
+        if (from === 0 || late() || !bg.room()) break;
       }
     }
     this.pending = sorted.slice(0, from).map((it) => it.id);
@@ -1336,11 +1364,15 @@ class Transcript implements TranscriptView {
   /** #126: the watch's answer is still to come: the outline of a conversation opening stands in the empty state's place. */
   private loading: boolean;
   private readonly loader: HTMLElement;
-  /** #126: the changed files' lines still to draw, drawn once they come near the view. */
+  /**
+   * #126: the changed files' lines still to draw, by body, in the order they were built (the newest rows' first). The ones
+   * that come near the view go first (`drawQueue`); once the open settles, every other one, one at a time (`draining`),
+   * so find in page finds every line. DIFF_NEAR / DIFF_FRAME lines a frame at most (`drawing`: the next frame is to draw them).
+   */
   private lazyIO: IntersectionObserver | null = null;
-  private readonly lazyDraw = new Map<Element, () => void>();
-  /** #126: the ones come near the view, drawn a frame's budget at a time (`drawing`: a frame is drawing them). */
-  private readonly drawQueue: Array<() => void> = [];
+  private readonly lazyDraw = new Map<Element, DiffStep>();
+  private readonly drawQueue: Array<[Element, DiffStep]> = [];
+  private draining: [Element, DiffStep] | null = null;
   private drawing = false;
   /** #26: a child's breadcrumb, read-only note and older items' button (null: the worker's own view). */
   private readonly childBar: ChildBar | null = null;
@@ -1404,7 +1436,14 @@ class Transcript implements TranscriptView {
     container: HTMLElement,
     private readonly host: TranscriptRenderHost,
   ) {
-    this.timeline = new Timeline(this, '', false, { hold: (change) => this.holdBottom(change), room: () => this.room(), done: () => this.filled() });
+    this.timeline = new Timeline(this, '', false, {
+      hold: (change) => {
+        this.holdBottom(change);
+        if (!this.loader.hidden) this.updateCounts(); // #126: the first row that shows may be in
+      },
+      room: () => this.room(),
+      done: () => this.filled(),
+    });
     this.countEl = h('span', { class: 'tx-count' });
     this.sysBtn = h('button', { class: 'tx-sys-toggle', 'aria-pressed': 'false', title: 'Show system notices and unrecognised entries', onclick: () => this.toggleSystem() });
     this.banner = h('div', { class: 'tx-banner', role: 'alert', hidden: true });
@@ -2021,6 +2060,7 @@ class Transcript implements TranscriptView {
     this.lazyIO?.disconnect();
     this.lazyDraw.clear();
     this.drawQueue.length = 0;
+    this.draining = null;
     if (this.ticker) clearInterval(this.ticker);
     this.ticker = null;
     this.resize?.disconnect();
@@ -2044,6 +2084,11 @@ class Transcript implements TranscriptView {
   /** Rows of the timeline that merge image-only items need to know whether system rows show (they break a run then). */
   get systemShown(): boolean {
     return this.showSystem;
+  }
+
+  /** #126: whether an item's row shows under the prefs now (a tool row looked at from the chip does too). */
+  rowShows(it: TranscriptItem): boolean {
+    return this.shows(it) || this.revealed.has(it.id);
   }
 
   // --- rows ---
@@ -2788,17 +2833,22 @@ class Transcript implements TranscriptView {
     return s.clientHeight > 0 && s.scrollHeight < s.clientHeight * 1.25;
   }
 
-  /** #126: the backfill built the last row: what looks for a row anywhere in the timeline looks again. */
+  /** #126: the backfill built the last row: what looks for a row anywhere in the timeline looks again; the diffs put off are drawn. */
   private filled(): void {
     if (this.destroyed) return;
     this.root.removeAttribute('data-building');
     this.syncHandoff();
     this.fileRefs.place();
+    this.updateCounts();
     this.stick();
+    this.drawSoon();
   }
 
-  /** #126: `draw` runs once `el` comes near the view, keeping the reader's place; false: no IntersectionObserver, not put off. */
-  private later(el: HTMLElement, draw: () => void): boolean {
+  /**
+   * #126: `el`'s lines are drawn with `step` once it comes near the view, or once the open settles (all the rows built),
+   * keeping the reader's place; false: no IntersectionObserver, not put off.
+   */
+  private later(el: HTMLElement, step: DiffStep): boolean {
     if (typeof IntersectionObserver === 'undefined') return false;
     this.lazyIO ??= new IntersectionObserver(
       (entries) => {
@@ -2807,26 +2857,61 @@ class Transcript implements TranscriptView {
           this.lazyIO?.unobserve(e.target);
           const f = this.lazyDraw.get(e.target);
           this.lazyDraw.delete(e.target);
-          if (f) this.drawQueue.push(f);
+          if (f) this.drawQueue.push([e.target, f]);
         }
         this.drawDue();
       },
       { root: this.scroller, rootMargin: '100% 0px' },
     );
-    this.lazyDraw.set(el, draw);
+    this.lazyDraw.set(el, step);
     this.lazyIO.observe(el);
+    this.root.setAttribute('data-drawing', '');
+    if (!this.timeline.building) this.drawSoon();
     return true;
   }
 
-  /** #126: draws what came near the view, `backfill.budgetMs` of it per frame, the reader's place (or the bottom) kept. */
+  /**
+   * #126: draws the lines put off, DIFF_NEAR or DIFF_FRAME of them (and `backfill.budgetMs`) per frame, the reader's place
+   * (or the bottom) kept: the ones near the view first, then, once the open settles, the others newest first, one diff at
+   * a time.
+   */
   private drawDue(): void {
-    if (this.drawing || this.destroyed || !this.drawQueue.length) return;
+    if (this.destroyed) return;
     const start = backfill.now();
+    let lines = 0;
     this.keepPlace(() => {
-      while (this.drawQueue.length && backfill.now() - start < backfill.budgetMs) this.drawQueue.shift()?.();
+      while (lines < DIFF_FRAME && backfill.now() - start < backfill.budgetMs) {
+        const near = this.drawQueue[0];
+        if (near && lines >= DIFF_NEAR) break;
+        const next = near ?? (this.timeline.building ? null : (this.draining ??= this.nextLazy()));
+        if (!next) break;
+        // A body whose row is gone (drawn anew, a resync) is dropped.
+        const { drawn, done } = next[0].isConnected ? next[1]((near ? DIFF_NEAR : DIFF_FRAME) - lines) : { drawn: 0, done: true };
+        lines += drawn;
+        if (!done) continue;
+        if (near) this.drawQueue.shift();
+        else this.draining = null;
+      }
     });
     this.stick();
-    if (!this.drawQueue.length) return;
+    const more = this.drawQueue.length > 0 || this.draining !== null || this.lazyDraw.size > 0;
+    this.root.toggleAttribute('data-drawing', more);
+    if (this.drawQueue.length || ((this.draining || this.lazyDraw.size) && !this.timeline.building)) this.drawSoon();
+  }
+
+  /** #126: once the open settled, the next diff put off, in the order they were built. */
+  private nextLazy(): [Element, DiffStep] | null {
+    for (const [el, step] of this.lazyDraw) {
+      this.lazyDraw.delete(el);
+      this.lazyIO?.unobserve(el);
+      if (el.isConnected) return [el, step];
+    }
+    return null;
+  }
+
+  /** #126: `drawDue` after the next frame (one at a time). */
+  private drawSoon(): void {
+    if (this.drawing || this.destroyed) return;
     this.drawing = true;
     void backfill.yield().then(() => {
       this.drawing = false;
@@ -2856,9 +2941,10 @@ class Transcript implements TranscriptView {
     this.countEl.textContent = n ? `${n - sys} ${n - sys === 1 ? 'entry' : 'entries'}` : '';
     this.sysBtn.textContent = sys ? `Show system (${sys})` : 'Show system';
     if (this.showSystem) this.sysBtn.textContent = sys ? `Hide system (${sys})` : 'Hide system';
-    // #126: empty only once the watch said so; until then the conversation is opening.
+    // #126: empty only once the watch said so; until then the conversation is opening. So it is while the rows built so
+    // far all hide (Hide tool calls) and one still to build shows; a page where none shows is blank, as before #126.
     this.empty.hidden = n > 0 || this.pendingRows.length > 0 || this.loading;
-    this.loader.hidden = !this.loading || n > 0;
+    this.loader.hidden = n > 0 ? !this.timeline.building || !this.timeline.opening((it) => this.rowShows(it)) : !this.loading;
     const tools = this.timeline.tools(this.showSystem).length;
     this.toolsCount.textContent = tools ? String(tools) : '';
     this.renderBusy();
@@ -2891,6 +2977,7 @@ class Transcript implements TranscriptView {
       this.failedHidden.clear();
       this.revealed.clear();
       for (const r of this.root.querySelectorAll('.tx-reveal')) r.classList.remove('tx-reveal');
+      this.updateCounts(); // #126: while rows are built, whether one shows yet
     }
     this.zoomBtns.reset.textContent = `${zoom}%`;
     this.zoomBtns.reset.setAttribute('aria-label', `Text size ${zoom}%${zoom === ZOOM.reset ? '' : ', back to 100%'}`);

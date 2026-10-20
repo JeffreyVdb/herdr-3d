@@ -338,3 +338,253 @@ describe('#126: built when they show', () => {
     expect($('.tx-diff-more')).toBeNull();
   });
 });
+
+// #126 R1: find in page finds what is in the page: once the open settles every changed file's line the view shows open is
+// drawn, near the view or not (an observer that never sees anything here), as before #126.
+describe('#126: every diff line drawn once the open settles', () => {
+  const edit = (n: number, path: string, count = 3, mark = 'x'): TranscriptItem => ({
+    id: `e${n}`,
+    seq: n,
+    ts: T0 + n * 1000,
+    kind: 'tool',
+    tool: { name: 'Edit', input_summary: path, status: 'ok', diff: { path, hunks: [{ old_start: 1, old_lines: 0, new_start: 1, new_lines: count, lines: Array.from({ length: count }, (_, i) => `+${mark} ${path} ${i + 1}`) }] } },
+  });
+  /** Prose rows with changed files at the top (the oldest), in the middle, in rows the backfill builds and in the newest. */
+  const page = () => many(1, 300, (n) => (n === 1 ? edit(n, 'top.ts', 40) : n === 150 ? edit(n, 'middle.ts', 1200) : n === 200 ? edit(n, 'backfilled.ts', 7) : n === 295 ? edit(n, 'newest.ts', 5) : say(n)));
+  const drawnLines = (sel = '') => container.querySelectorAll(`${sel} .tx-dl:not(.tx-dh)`).length;
+  const drawing = () => !!$('.tx[data-drawing]');
+  async function settled(): Promise<void> {
+    await built();
+    for (let n = 0; drawing() && n < 500; n++) await slice();
+  }
+
+  beforeEach(() => {
+    // Nothing ever comes near the view.
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+
+  it('draws them all after the backfill, without the view coming near them', async () => {
+    view = mountTranscript(container, host());
+    view.setItems(page());
+    expect(drawing()).toBe(true);
+    expect(drawnLines()).toBe(0);
+    // The rows first: no line while rows are still to build.
+    await slice();
+    expect(building()).toBe(true);
+    expect(drawnLines()).toBe(0);
+    await settled();
+    expect(drawing()).toBe(false);
+    expect(drawnLines()).toBe(40 + 1200 + 7 + 5);
+    for (const [id, n] of [['e1', 40], ['e150', 1200], ['e200', 7], ['e295', 5]] as const) {
+      expect(drawnLines(`[data-id="${id}"]`)).toBe(n);
+      expect(($(`[data-id="${id}"] .tx-diff-body`) as HTMLElement).style.height).toBe('');
+    }
+    expect($('[data-id="e150"] .tx-diff-body')?.textContent).toContain('+x middle.ts 1200');
+  });
+
+  it('a page with no backfill draws its diffs after its first frame', async () => {
+    view = mountTranscript(container, host());
+    view.setItems([say(1), edit(2, 'a.ts', 70), say(3)]);
+    expect(building()).toBe(false);
+    expect(drawnLines()).toBe(0);
+    await settled();
+    expect(drawnLines()).toBe(70);
+  });
+
+  it('keeps "Show next" as it was: the lines past its cut are not drawn, its state kept across a new row', async () => {
+    view = mountTranscript(container, host());
+    view.setItems([edit(1, 'big.ts', 2500), ...many(2, 100)]);
+    await settled();
+    expect(drawnLines()).toBe(2000);
+    expect($('.tx-diff-more .tx-link')?.textContent).toBe('Show next 500 lines (500 left)');
+    ($('.tx-diff-more .tx-link') as HTMLButtonElement).click();
+    expect(drawnLines()).toBe(2500);
+    // The row drawn anew (an update) shows as many again, drawn after its frame.
+    view.applyUpdates([{ ...edit(1, 'big.ts', 2500), ts: T0 + 1 }]);
+    await settled();
+    expect(drawnLines()).toBe(2500);
+    expect($('.tx-diff-more')).toBeNull();
+  });
+
+  it('a resync during the drawing: kept rows go on, a changed one is drawn anew, none twice', async () => {
+    view = mountTranscript(container, host());
+    const items = page();
+    view.setItems(items);
+    await built();
+    await slice();
+    expect(drawing()).toBe(true);
+    const kept = $('[data-id="e1"]');
+    // The same items again, but the middle file changed.
+    view.setItems(items.map((it) => (it.id === 'e150' ? edit(150, 'middle.ts', 60, 'y') : structuredClone(it))));
+    expect($('[data-id="e1"]')).toBe(kept);
+    await settled();
+    expect(drawnLines('[data-id="e1"]')).toBe(40);
+    expect(drawnLines('[data-id="e150"]')).toBe(60);
+    expect($('[data-id="e150"] .tx-diff-body')?.textContent).not.toContain('+x middle.ts');
+    expect(drawnLines()).toBe(40 + 60 + 7 + 5);
+  });
+
+  it('a live update to a diff row during the drawing is drawn whole; one that comes after it too', async () => {
+    view = mountTranscript(container, host());
+    view.setItems(page());
+    await built();
+    await slice();
+    view.applyUpdates([edit(1, 'top.ts', 90, 'z')]);
+    await settled();
+    expect(drawnLines('[data-id="e1"]')).toBe(90);
+    view.applyUpdates([edit(301, 'later.ts', 30)]);
+    expect(drawing()).toBe(true);
+    await settled();
+    expect(drawnLines('[data-id="e301"]')).toBe(30);
+    expect(drawnLines()).toBe(90 + 1200 + 7 + 5 + 30);
+  });
+
+  it('going away during the drawing ends it', async () => {
+    view = mountTranscript(container, host());
+    view.setItems(page());
+    await built();
+    await slice();
+    const n = drawnLines();
+    expect(n).toBeLessThan(1252);
+    const root = $('.tx') as HTMLElement;
+    view.destroy();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(root.querySelectorAll('.tx-dl:not(.tx-dh)').length).toBe(n);
+  });
+
+  it('with tool calls hidden, a call’s changes still show, and are drawn', async () => {
+    const prefs = new ViewPrefs(null);
+    prefs.hideTools = true;
+    view = mountTranscript(container, host({ prefs }));
+    view.setItems(page());
+    await settled();
+    expect(drawnLines()).toBe(40 + 1200 + 7 + 5);
+  });
+
+  it('with "Show changes" off nothing is drawn (closed, as before); turned on, every file is', async () => {
+    const prefs = new ViewPrefs(null);
+    prefs.showChanges = false;
+    view = mountTranscript(container, host({ prefs }));
+    view.setItems(page());
+    await settled();
+    expect(drawnLines()).toBe(0);
+    expect(drawing()).toBe(false);
+    prefs.showChanges = true;
+    expect(drawing()).toBe(true);
+    await settled();
+    expect(drawnLines()).toBe(40 + 1200 + 7 + 5);
+  });
+
+  it('draws a frame’s lines at most per frame', async () => {
+    view = mountTranscript(container, host());
+    view.setItems([edit(1, 'a.ts', 1900), edit(2, 'b.ts', 1900), say(3)]);
+    await slice();
+    const first = drawnLines();
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBeLessThanOrEqual(500);
+    await settled();
+    expect(drawnLines()).toBe(3800);
+  });
+});
+
+// #126 R2: with "Hide tool calls" on, the first screenful is of rows that show; until one is built the view is opening.
+describe('#126: opening until a row that shows is built', () => {
+  const bash = (n: number): TranscriptItem => ({ id: `t${n}`, seq: n, ts: T0 + n * 1000, kind: 'tool', tool: { name: 'Bash', input_summary: `ls ${n}`, status: 'ok', output_text: `out ${n}` } });
+  const hidden = () => {
+    const prefs = new ViewPrefs(null);
+    prefs.hideTools = true;
+    return prefs;
+  };
+  const loader = () => $('.txl') as HTMLElement;
+  const empty = () => $('.tx-empty') as HTMLElement;
+
+  it('keeps the loader while the first build, out of time, holds only hidden tool rows', async () => {
+    let t = 0;
+    backfill.now = () => (t += 3); // the first build's 30 ms run out after a few rows
+    view = mountTranscript(container, host({ prefs: hidden(), loading: true }));
+    view.setItems([say(0), ...many(1, 199, bash)]);
+    view.setLoading?.(false);
+    expect(ids().length).toBeGreaterThan(0);
+    expect(ids()).not.toContain('a0');
+    expect(loader().hidden).toBe(false);
+    expect(empty().hidden).toBe(true);
+    await built();
+    expect(ids()).toContain('a0');
+    expect(loader().hidden).toBe(true);
+    expect(empty().hidden).toBe(true);
+  });
+
+  it('hides the loader in the slice that builds the first row that shows', async () => {
+    let t = 0;
+    backfill.now = () => (t += 3);
+    view = mountTranscript(container, host({ prefs: hidden() }));
+    view.setItems([...many(0, 99, bash), say(100), ...many(101, 299, bash)]);
+    while (!$('[data-id="a100"]') && building()) {
+      expect(loader().hidden).toBe(false);
+      await slice();
+    }
+    expect(building()).toBe(true); // older rows are still to build
+    expect(loader().hidden).toBe(true);
+  });
+
+  it('counts only rows that show toward the first screenful', () => {
+    backfill.now = () => 0;
+    view = mountTranscript(container, host({ prefs: hidden() }));
+    view.setItems(many(1, 200, (n) => (n % 2 ? bash(n) : say(n))));
+    expect(ids().filter((id) => id?.startsWith('a'))).toHaveLength(30);
+  });
+
+  it('counts an image run as one row', () => {
+    backfill.now = () => 0;
+    view = mountTranscript(container, host());
+    view.setItems([...many(1, 100), ...many(101, 140, shot)]);
+    expect(ids()).toHaveLength(40 + 29);
+  });
+
+  it('a page where nothing shows is blank, as before: no loader, not "No conversation yet."', async () => {
+    let t = 0;
+    backfill.now = () => (t += 3);
+    view = mountTranscript(container, host({ prefs: hidden(), loading: true }));
+    view.setItems(many(1, 200, bash));
+    view.setLoading?.(false);
+    expect(building()).toBe(true);
+    expect(loader().hidden).toBe(true);
+    expect(empty().hidden).toBe(true);
+    await built();
+    expect(loader().hidden).toBe(true);
+    expect(empty().hidden).toBe(true);
+  });
+
+  it('follows "Hide tool calls" turned off and on during the backfill', async () => {
+    let t = 0;
+    backfill.now = () => (t += 3);
+    const prefs = hidden();
+    view = mountTranscript(container, host({ prefs }));
+    view.setItems([say(0), ...many(1, 199, bash)]);
+    expect(loader().hidden).toBe(false);
+    prefs.hideTools = false;
+    expect(loader().hidden).toBe(true);
+    prefs.hideTools = true;
+    expect(loader().hidden).toBe(false);
+    await built();
+    expect(loader().hidden).toBe(true);
+  });
+
+  it('"Show system" while opening: a system row that shows ends the wait', async () => {
+    let t = 0;
+    backfill.now = () => (t += 3);
+    view = mountTranscript(container, host({ prefs: hidden() }));
+    view.setItems([say(0), ...many(1, 199, (n) => (n === 198 ? notice(n) : bash(n)))]);
+    expect(loader().hidden).toBe(false);
+    ($('.tx-sys-toggle') as HTMLButtonElement).click();
+    expect($('[data-id="n198"]')).not.toBeNull();
+    expect(loader().hidden).toBe(true);
+  });
+});

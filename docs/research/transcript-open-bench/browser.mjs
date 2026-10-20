@@ -3,9 +3,11 @@
 //   portlease run --project herdr-3d --worktree . --name bench --service transcript-open -- \
 //     node docs/research/transcript-open-bench/browser.mjs PRIVATE_OUT_DIR
 // Prints file names, sizes and timings only. #126: the first frame is the newest rows'; the older ones are built after it
-// (`data-building` on the view until the last): `filled` is when that ended. The long tasks and long animation frames
-// are counted over the whole of it; `fillLoaf` is the longest frame that started after the first one (`maxLoaf` includes
-// the first, which also holds the mount and this script's copy of the items).
+// (`data-building` on the view until the last): `filled` is when that ended. Then the changed files' lines put off are
+// drawn (`data-drawing` until the last): `drawn` is when that ended, `lines` the diff lines in the page then. The long
+// tasks and long animation frames are counted over the whole of it; `fillLoaf` is the longest frame that started after
+// the first one (`maxLoaf` includes the first, which also holds the mount and this script's copy of the items), `drawLoaf`
+// the longest that started after `filled`.
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readdir, readFile } from 'node:fs/promises';
@@ -51,19 +53,35 @@ for (let pass = 0; pass < 2; pass++) {
       await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
       const firstFrameMs = performance.now() - t1;
       const painted = performance.now();
+      // Every frame's gap from the one before it, until the lines are drawn (LoAF only sees frames over 50 ms).
+      const gaps = [];
+      let ticking = true;
+      let last = painted;
+      const tick = (t) => {
+        gaps.push(t - last);
+        last = t;
+        if (ticking) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
       const firstNodes = root.querySelectorAll('*').length;
       while (root.querySelector('.tx[data-building]') && performance.now() - t1 < 60_000) await new Promise((r) => setTimeout(r, 20));
       const filledMs = performance.now() - t1;
+      while (root.querySelector('.tx[data-drawing]') && performance.now() - t1 < 60_000) await new Promise((r) => setTimeout(r, 20));
+      const drawnMs = performance.now() - t1;
+      const lines = root.querySelectorAll('.tx-dl').length;
+      ticking = false;
+      gaps.sort((a, b) => a - b);
       await new Promise((r) => setTimeout(r, 300)); // late work (highlighting) shows as long tasks
       po.disconnect();
       lo.disconnect();
       const nodes = root.querySelectorAll('*').length;
       view.destroy();
       root.replaceChildren();
-      return { mountMs, setItemsMs, firstFrameMs, firstNodes, filledMs, nodes, longTasks: long.length, maxLongTask: Math.max(0, ...long), maxLoaf: Math.max(0, ...loaf.map((e) => e.duration)), fillLoaf: Math.max(0, ...loaf.filter((e) => e.startTime >= painted - 1).map((e) => e.duration)) };
+      const filledAt = t1 + filledMs;
+      return { mountMs, setItemsMs, firstFrameMs, firstNodes, filledMs, drawnMs, lines, maxGap: gaps.at(-1) ?? 0, p95Gap: gaps[Math.floor(gaps.length * 0.95)] ?? 0, drawLoaf: Math.max(0, ...loaf.filter((e) => e.startTime >= filledAt).map((e) => e.duration)), nodes, longTasks: long.length, maxLongTask: Math.max(0, ...long), maxLoaf: Math.max(0, ...loaf.map((e) => e.duration)), fillLoaf: Math.max(0, ...loaf.filter((e) => e.startTime >= painted - 1).map((e) => e.duration)) };
     });
     const round = (x) => Math.round(x);
-    console.log(JSON.stringify({ pass, f, mb: ack.file_mb, items: ack.items.length, server_ms: round(ack.build_ms + ack.page_ms), mount: round(r.mountMs), setItems: round(r.setItemsMs), firstFrame: round(r.firstFrameMs), firstNodes: r.firstNodes, filled: round(r.filledMs), nodes: r.nodes, longTasks: r.longTasks, maxLongTask: round(r.maxLongTask), maxLoaf: round(r.maxLoaf), fillLoaf: round(r.fillLoaf) }));
+    console.log(JSON.stringify({ pass, f, mb: ack.file_mb, items: ack.items.length, server_ms: round(ack.build_ms + ack.page_ms), mount: round(r.mountMs), setItems: round(r.setItemsMs), firstFrame: round(r.firstFrameMs), firstNodes: r.firstNodes, filled: round(r.filledMs), drawn: round(r.drawnMs), lines: r.lines, nodes: r.nodes, longTasks: r.longTasks, maxLongTask: round(r.maxLongTask), maxLoaf: round(r.maxLoaf), fillLoaf: round(r.fillLoaf), drawLoaf: round(r.drawLoaf), maxGap: round(r.maxGap), p95Gap: round(r.p95Gap) }));
   }
 }
 await browser.close();
