@@ -55,8 +55,10 @@ func TestScheduleHerdrInstructionsSaved(t *testing.T) {
 	if !s.HerdrInstructions || s.Prompt != sp.Prompt || len(evs) != 1 || !evs[0].Schedule.HerdrInstructions {
 		t.Fatalf("created %s, events %+v", m.raw, evs)
 	}
-	if ev := other.until(proto.EvScheduleUpsert); ev.Schedule.ID == s.ID && !ev.Schedule.HerdrInstructions {
-		t.Fatalf("other client: %+v", ev.Schedule)
+	for ev := other.until(proto.EvScheduleUpsert); ev.Schedule.ID != s.ID || !ev.Schedule.HerdrInstructions; ev = other.until(proto.EvScheduleUpsert) {
+		if ev.Schedule.ID == s.ID {
+			t.Fatalf("other client: %+v", ev.Schedule)
+		}
 	}
 	if row, err := sb.st.ScheduleByID(context.Background(), s.ID); err != nil || !row.HerdrInstructions || row.Prompt != sp.Prompt {
 		t.Fatalf("stored %+v, %v", row, err)
