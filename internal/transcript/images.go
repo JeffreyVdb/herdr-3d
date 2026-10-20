@@ -48,6 +48,9 @@ type imgSrc struct {
 	// roots is a path image's extra roots: the exact file a Codex
 	// view_image call named.
 	roots []string
+	// known is an inline image of a big line read capped (#126): b64 is
+	// only its start, this is what the index found the image is.
+	known *memoVal
 }
 
 // imgRef is an image a contribution puts in an item: its (unresolved) ref
@@ -220,19 +223,13 @@ func (e *imageEnv) resolveInline(src *imgSrc) memoVal {
 	if ok {
 		return v
 	}
-	data, err := decodeB64(src.b64)
-	switch {
-	case err != nil || len(data) == 0:
-		v = memoVal{unavailable: true, reason: imgcache.ReasonInvalid}
-	case len(data) > imgcache.MaxImage:
-		v = memoVal{unavailable: true, reason: imgcache.ReasonTooLarge}
-	default:
-		hash := imgcache.Hash(data)
-		info, ierr := imgcache.Inspect(data)
-		v = memoVal{hash: hash, mime: info.Mime, bytes: int64(len(data)), width: info.Width, height: info.Height}
-		if ierr == nil {
+	if src.known != nil {
+		v = *src.known // its bytes are read again when they are asked for (Image)
+	} else {
+		var data []byte
+		if v, data = inspectInline(src.b64); data != nil {
 			if c := e.cache(); c != nil {
-				c.Put(hash, data)
+				c.Put(v.hash, data)
 			}
 		}
 	}
@@ -248,6 +245,24 @@ func (e *imageEnv) resolveInline(src *imgSrc) memoVal {
 		}
 	}
 	return v
+}
+
+// inspectInline decodes an inline image and says what it is; data is its
+// bytes when they are an image the cache may keep.
+func inspectInline(b64 string) (v memoVal, data []byte) {
+	data, err := decodeB64(b64)
+	switch {
+	case err != nil || len(data) == 0:
+		return memoVal{unavailable: true, reason: imgcache.ReasonInvalid}, nil
+	case len(data) > imgcache.MaxImage:
+		return memoVal{unavailable: true, reason: imgcache.ReasonTooLarge}, nil
+	}
+	info, ierr := imgcache.Inspect(data)
+	v = memoVal{hash: imgcache.Hash(data), mime: info.Mime, bytes: int64(len(data)), width: info.Width, height: info.Height}
+	if ierr != nil {
+		return v, nil
+	}
+	return v, data
 }
 
 func (e *imageEnv) resolvePath(src *imgSrc) memoVal {

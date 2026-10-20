@@ -3371,9 +3371,13 @@ tail reads goes into the index as it is read. While a worker is watched its tran
 (not 30 s) when it is not found yet, and a Codex worker's rollout is picked again every 2 s. While any transcript is watched the tail reads every **1 s** instead of every 2 s, so a pasted screenshot is in the view within 3 s of its line being written (1 s to read it, at most 250 ms to push it, then the thumbnail). A `worker.prompt` that succeeded, and a watched worker turning `working`, have the tail read at once instead of on its next tick (#58): the prompt's `user` item is pushed in well under a second, the 250 ms between two pushes of a watch at most (`TestPromptEchoLatency`).
 
 **The index**, not the transcript, is what the bridge keeps: for each item the byte offsets of its lines (and the few
-ids that pair a call with its result). An item is read back from the file when it is sent. A 50 MB transcript, mostly
-base64 images, indexes in about 0.3 s and adds a few MB to the bridge; its first page takes milliseconds, and paging to
-the top never reads the file from the start again.
+ids that pair a call with its result). An item is read back from the file when it is sent. For a line of 256 kB or more
+the index also notes where its long base64 strings are and what its inline images are (hashed once, when the line is
+indexed): an item in a list (an ack, a page, a push) reads such a line without them and is the same item, byte for
+byte; `transcript.item` and an image's bytes read the whole line. A 50 MB transcript, mostly base64 images, indexes in
+about 0.3 s and adds a few MB to the bridge; its first page takes milliseconds (a 220 MB Codex rollout of multi-MB
+image lines: about 2 s to index, 45 ms for its first page), and paging to the top never reads the file from the start
+again.
 
 **`transcript.watch`** `{id, limit}` (`limit` 1–500, default 200) acks once the index has caught up, with the newest
 `limit` visible items (hidden ones between them come along, see `hidden`) and:

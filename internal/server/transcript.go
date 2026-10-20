@@ -546,17 +546,20 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 	fail := func(err error) {
 		if !acked {
 			h.tx.remove(w)
-			h.finishTranscriptCmd(hctx, w, cmd, nil, err)
+			h.finishTranscriptCmd(hctx, w, cmd, nil, nil, err)
 		}
 	}
-	// open subscribes to a log once it is indexed.
-	open := func(o txOffer) (transcript.Page, bool) {
+	// open subscribes to a log once it is indexed; cost is how long that
+	// took.
+	open := func(o txOffer) (transcript.Page, *txReadCost, bool) {
+		t0 := time.Now()
 		select {
 		case <-ctx.Done():
 			fail(fmt.Errorf("%w: the watch stopped before its transcript was read", errInvalidState))
-			return transcript.Page{}, false
+			return transcript.Page{}, nil, false
 		case <-o.log.Ready():
 		}
+		t1 := time.Now()
 		s, page, err := o.log.Subscribe(w.limit)
 		if err != nil {
 			reason := closedReason(err)
@@ -565,11 +568,11 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 			} else {
 				closeWith(reason)
 			}
-			return transcript.Page{}, false
+			return transcript.Page{}, nil, false
 		}
 		sub, log, key = s, o.log, o.key
 		h.tx.setLog(w, o.log, o.session)
-		return page, true
+		return page, &txReadCost{wait: t1.Sub(t0), page: time.Since(t1)}, true
 	}
 	head := func(o txOffer, p transcript.Page, pending bool) proto.TranscriptHead {
 		hd := proto.TranscriptHead{Harness: o.harness, Session: o.session, Cursor: p.Cursor, HasMore: p.HasMore, Pending: pending}
@@ -584,10 +587,14 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 		}
 		return hd
 	}
-	// push sends a push of the watch: false when the watch ended.
+	// push sends a push of the watch: false when the watch ended. pushed
+	// is the size of the last one.
+	var pushed int
 	push := func(m proto.TranscriptItems) bool {
 		m.T, m.ID, m.Child = proto.TTranscriptItems, w.id, w.child
-		if err := h.tx.send(w, mustJSON(m)); err != nil {
+		b := mustJSON(m)
+		pushed = len(b)
+		if err := h.tx.send(w, b); err != nil {
 			if errors.Is(err, errResync) {
 				h.log.Debug("transcript watch resync", "client", w.c.name, "worker", w.id)
 				closeWith(proto.ClosedResync)
@@ -624,17 +631,17 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 				h.tx.setLog(w, nil, o.session)
 				h.finishTranscriptCmd(hctx, w, cmd, &proto.TranscriptWatchResult{
 					TranscriptHead: head(o, transcript.Page{Cursor: transcript.Cursor(1)}, true),
-					Items:          []proto.TranscriptItem{}}, nil)
+					Items:          []proto.TranscriptItem{}}, nil, nil)
 			case !acked:
-				page, ok := open(o)
+				page, cost, ok := open(o)
 				if !ok {
 					return
 				}
 				acked, wake = true, sub.Wake()
 				h.finishTranscriptCmd(hctx, w, cmd, &proto.TranscriptWatchResult{TranscriptHead: head(o, page, false),
-					Items: page.Items}, nil)
+					Items: page.Items}, cost, nil)
 			case log == nil && o.log != nil: // pending: the transcript appeared
-				page, ok := open(o)
+				page, cost, ok := open(o)
 				if !ok {
 					return
 				}
@@ -644,6 +651,7 @@ func (h *Hub) runTranscriptWatch(hctx, ctx context.Context, w *txWatch, cmd prot
 				if !push(proto.TranscriptItems{Items: page.Items, Updates: []proto.TranscriptItem{}, TranscriptHead: &hd}) {
 					return
 				}
+				h.logTranscriptRead(w, "", cost, len(page.Items), pushed)
 				last = time.Now()
 			case log == nil:
 				key = o.key
@@ -693,9 +701,24 @@ func closedReason(err error) string {
 	return proto.ClosedResync
 }
 
+// txReadCost is what reading a watch's first page took (#126): the wait
+// for the log's index, then the page.
+type txReadCost struct{ wait, page time.Duration }
+
+// logTranscriptRead logs what a watch's first page cost and its size (the
+// ack's, or the push's after a pending ack): sizes and times, never
+// content.
+func (h *Hub) logTranscriptRead(w *txWatch, reqID string, cost *txReadCost, items, bytes int) {
+	h.log.Debug("transcript watch read", "client", w.c.name, "worker", w.id, "child", w.child != nil, "req_id", reqID,
+		"wait_ms", cost.wait.Milliseconds(), "page_ms", cost.page.Milliseconds(), "items", items, "limit", w.limit,
+		"bytes", bytes)
+}
+
 // finishTranscriptCmd audits transcript.watch (the worker id only) and
-// answers it.
-func (h *Hub) finishTranscriptCmd(hctx context.Context, w *txWatch, cmd proto.Command, data *proto.TranscriptWatchResult, err error) {
+// answers it; cost is what its page took to read (nil: none was read).
+func (h *Hub) finishTranscriptCmd(hctx context.Context, w *txWatch, cmd proto.Command, data *proto.TranscriptWatchResult,
+	cost *txReadCost, err error) {
+	var ack []byte // encoded here, off the hub goroutine
 	if data != nil {
 		w.noteImages(data.Items)
 		// An empty view in the game is traced from here: which worker, and why (no transcript yet, or nothing in it).
@@ -703,14 +726,18 @@ func (h *Hub) finishTranscriptCmd(hctx context.Context, w *txWatch, cmd proto.Co
 			h.log.Debug("transcript watch acked empty", "client", w.c.name, "worker", w.id, "child", w.child != nil, "req_id", cmd.ReqID,
 				"pending", data.Pending, "availability", data.Availability, "items", len(data.Items), "limit", w.limit)
 		}
+		ack = mustJSON(proto.Ack{T: proto.TAck, ReqID: cmd.ReqID, Data: data})
+		if cost != nil {
+			h.logTranscriptRead(w, cmd.ReqID, cost, len(data.Items), len(ack))
+		}
 	}
 	if derr := h.doWait(hctx, func() {
 		h.audit(hctx, w.c, cmd, err)
-		if data == nil {
+		if ack == nil {
 			h.reply(w.c, cmd, nil, err)
 			return
 		}
-		h.reply(w.c, cmd, data, err)
+		h.replyAck(w.c, cmd, ack)
 	}); derr != nil {
 		h.log.Warn("command abandoned", "cmd", cmd.T, "err", derr)
 	}

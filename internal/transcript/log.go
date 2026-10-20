@@ -4,10 +4,11 @@
 //
 // A Log never holds the transcript: it indexes where each item's lines
 // are (byte offsets) and reads them back from the file when an item is
-// asked for. It is built once from the file, off the caller's goroutine
-// and cancellable, then kept current with the lines the worker's one tail
-// reads (internal/usage shares its read through Line), so the file is
-// never tailed twice.
+// asked for (a list item skips a big line's base64: biglines.go). It is
+// built once from the file, off the caller's goroutine and cancellable,
+// then kept current with the lines the worker's one tail reads
+// (internal/usage shares its read through Line), so the file is never
+// tailed twice.
 package transcript
 
 import (
@@ -105,6 +106,10 @@ type Log struct {
 	subs     map[*Sub]struct{}
 	isReady  bool
 	env      *imageEnv // resolves the items' images
+	// big are the records of the big lines, by offset; bigLine is the
+	// shortest line that gets one.
+	big     map[int64]*bigRec
+	bigLine int
 }
 
 func parserOf(harness string) func(int64, []byte) ([]contrib, string) {
@@ -173,7 +178,7 @@ func open(harness, path string, fi fs.FileInfo, opts []Option) (*Log, error) {
 	}
 	l := &Log{harness: harness, path: path, parse: parserOf(harness), f: f, r: f, fi: got, ready: make(chan struct{}),
 		done: make(chan struct{}), byID: map[string]int32{}, msgs: map[string]*msgState{}, subs: map[*Sub]struct{}{},
-		env: newImageEnv()}
+		env: newImageEnv(), big: map[int64]*bigRec{}, bigLine: bigLine}
 	for _, o := range opts {
 		o(l)
 	}
@@ -230,14 +235,40 @@ func (l *Log) Refresh(ctx context.Context) error {
 	return err
 }
 
-// scan indexes the complete lines in [from, to).
+// resolving bounds the big lines (MiB) whose parse a scan keeps while their
+// images are resolved alongside it.
+const resolving = 32
+
+// scan indexes the complete lines in [from, to). The images of its big
+// lines are resolved alongside, within resolving; it returns once they are.
 func (l *Log) scan(ctx context.Context, from, to int64) (int64, error) {
+	var bg sync.WaitGroup
+	sem := make(chan struct{}, resolving) // a MiB each; only this goroutine takes
 	next, err := jsonl.Scan(l.r, from, to, scanChunk, func(off int64, line []byte) {
 		cs, v := l.parse(off, line)
+		r := bigCuts(line, l.bigLine)
 		l.mu.Lock()
-		l.index(off, len(line), cs, v)
+		l.index(off, len(line), cs, v, nil)
 		l.mu.Unlock()
+		if r != nil {
+			w := min(resolving, max(1, len(line)>>20))
+			for range w {
+				sem <- struct{}{}
+			}
+			bg.Go(func() {
+				defer func() {
+					for range w {
+						<-sem
+					}
+				}()
+				r.resolve(cs)
+				l.mu.Lock()
+				l.big[off] = r
+				l.mu.Unlock()
+			})
+		}
 	}, ctx.Err)
+	bg.Wait()
 	l.mu.Lock()
 	if next > l.built {
 		l.built = next
@@ -261,12 +292,16 @@ func (l *Log) Line(off int64, b []byte) {
 	}
 	l.mu.Unlock()
 	cs, v := l.parse(off, b)
+	r := bigCuts(b, l.bigLine)
+	if r != nil {
+		r.resolve(cs)
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.err != nil {
 		return
 	}
-	l.index(off, len(b), cs, v)
+	l.index(off, len(b), cs, v, r)
 	l.built = off + int64(len(b)) + 1
 }
 
@@ -341,10 +376,14 @@ func (l *Log) Len() int {
 	return len(l.entries)
 }
 
-// index adds one line's contributions (under mu).
-func (l *Log) index(off int64, n int, cs []contrib, version string) {
+// index adds one line's contributions, and its record if it is big (under
+// mu).
+func (l *Log) index(off int64, n int, cs []contrib, version string, r *bigRec) {
 	if version != "" {
 		l.version = version
+	}
+	if r != nil {
+		l.big[off] = r
 	}
 	for k := range cs {
 		c := &cs[k]
@@ -468,9 +507,18 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 		return nil, err
 	}
 	es := make([]entry, len(idx))
+	var big map[int64]*bigRec // the records of the items' big lines (capped)
 	for j, i := range idx {
 		es[j] = l.entries[i]
 		es[j].spans = append([]span(nil), l.entries[i].spans...)
+		for _, sp := range es[j].spans {
+			if r := l.big[sp.off]; r != nil && !full {
+				if big == nil {
+					big = map[int64]*bigRec{}
+				}
+				big[sp.off] = r
+			}
+		}
 	}
 	l.mu.Unlock()
 	// parsed shares one line's parse between the entries that came from it.
@@ -487,23 +535,16 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 		for _, sp := range e.spans {
 			cs, ok := parsed[sp.off]
 			if !ok {
-				if cap(buf) < int(sp.n) {
-					buf = make([]byte, sp.n)
+				var err error
+				if cs, buf, err = l.readLine(buf, sp, big[sp.off]); err != nil {
+					return nil, err
 				}
-				buf = buf[:sp.n]
-				if _, err := l.r.ReadAt(buf, sp.off); err != nil {
-					if l.Err() != nil {
-						return nil, l.Err()
-					}
-					return nil, fmt.Errorf("%w: %v", ErrReplaced, err)
-				}
-				cs, _ = l.parse(sp.off, buf)
-				if parsedBytes+int(sp.n) > maxParsedBytes {
+				if parsedBytes+len(buf) > maxParsedBytes {
 					clear(parsed)
 					parsedBytes = 0
 				}
 				parsed[sp.off] = cs
-				parsedBytes += int(sp.n)
+				parsedBytes += len(buf)
 			}
 			if int(sp.k) >= len(cs) {
 				continue // the file changed under the index: a resync follows
@@ -522,6 +563,30 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 		out = append(out, b.finish(full))
 	}
 	return out, nil
+}
+
+// readLine reads the line of sp into buf and parses it: capped (without
+// r's cuts) when r is set, unless the capped parse does not match r.
+func (l *Log) readLine(buf []byte, sp span, r *bigRec) ([]contrib, []byte, error) {
+	if r != nil {
+		b, err := l.readCapped(buf, sp, r)
+		if err != nil {
+			return nil, nil, l.readErr(err)
+		}
+		if cs, ok := l.parseCapped(b, sp, r); ok {
+			return cs, b, nil
+		}
+		buf = b
+	}
+	if cap(buf) < int(sp.n) {
+		buf = make([]byte, sp.n)
+	}
+	buf = buf[:sp.n]
+	if _, err := l.r.ReadAt(buf, sp.off); err != nil {
+		return nil, nil, l.readErr(err)
+	}
+	cs, _ := l.parse(sp.off, buf)
+	return cs, buf, nil
 }
 
 // Page is a run of items, oldest first, and where the run starts.
@@ -754,10 +819,7 @@ func (s *Sub) Close() {
 func (l *Log) parseAt(off int64, n int) ([]contrib, error) {
 	buf := make([]byte, n)
 	if _, err := l.r.ReadAt(buf, off); err != nil {
-		if l.Err() != nil {
-			return nil, l.Err()
-		}
-		return nil, fmt.Errorf("%w: %v", ErrReplaced, err)
+		return nil, l.readErr(err)
 	}
 	cs, _ := l.parse(off, buf)
 	return cs, nil
