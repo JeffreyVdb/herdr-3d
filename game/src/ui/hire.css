@@ -574,8 +574,10 @@
   display: none;
 }
 /* #117: the classifier's question, by the buttons like the notices. */
+/* #127: never wider than the footer (it would run off the dialog's left edge, where nothing scrolls), its answers wrapping. */
 .dd-asking {
   flex: 1 1 100%;
+  min-width: 0;
 }
 .dd-asking:empty {
   display: none;
@@ -583,6 +585,16 @@
 .dd-asking .dd-callout p {
   margin: 0;
   max-width: 62ch;
+}
+.dd-asking .pp-confirm-actions {
+  flex-wrap: wrap;
+}
+/* A phone's width: the answers share their line, or each takes a whole one (the primary's 280px cap too). */
+@media (max-width: 560px) {
+  .dd-asking .pp-confirm-actions > .btn {
+    flex: 1 1 auto;
+    max-width: none;
+  }
 }
 .dd-fetch {
   display: flex;
