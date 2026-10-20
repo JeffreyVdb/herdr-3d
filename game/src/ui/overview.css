@@ -406,11 +406,12 @@
     transform 180ms var(--ov-ease),
     box-shadow 180ms var(--ov-ease);
   /* #145: a row off the board's view is skipped: no style, layout, paint or animation until it scrolls near (or takes
-     the focus). Its height is the one it last had, a worker row's until it was ever shown, so the scrollbar holds still.
+     the focus). Its height is the one it last had, a worker row's until it was ever shown (the content box's: its padding and rule
+     come on top), so the scrollbar holds still.
      Its paint is clipped: the lamp's glow and the needs-you ring stay inside its padding box, and its wires may cross its
      rule (the stub runs over it into the next row's). */
   content-visibility: auto;
-  contain-intrinsic-block-size: auto 64px;
+  contain-intrinsic-block-size: auto 41px;
   overflow-clip-margin: border-box;
 }
 .ov-row:hover,
@@ -435,7 +436,7 @@
 .ov-row--child {
   padding-top: 7px;
   padding-bottom: 7px;
-  contain-intrinsic-block-size: auto 35px;
+  contain-intrinsic-block-size: auto 20px;
 }
 .ov-row--child .ov-fold {
   top: 5px;
@@ -561,7 +562,7 @@
   border-bottom-color: transparent;
   border-radius: 0 0 6px 6px;
   background: linear-gradient(to bottom, var(--ov-band-tint), transparent 85%);
-  contain-intrinsic-block-size: auto 56px;
+  contain-intrinsic-block-size: auto 28px;
 }
 .ov-board > .ov-row--floor:first-child {
   margin-top: 0;
