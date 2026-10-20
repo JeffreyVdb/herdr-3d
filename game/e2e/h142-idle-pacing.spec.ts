@@ -47,7 +47,7 @@ test('world events in the city and on a floor keep the idle rate; a wheel gets 1
   expect(city.changes).toBeGreaterThan(10); // the events kept coming
   expect(city.held).toBe(0);
   expect(city.ticks[120]).toBe(0);
-  expect(city.ticks[60]).toBeGreaterThan(100);
+  expect(city.ticks[60]).toBeGreaterThan(50);
   await wheelThenIdle(page, 120, 60);
 
   await page.evaluate(() => window.__h3d.enterFloor('herdr-3d'));
@@ -57,7 +57,7 @@ test('world events in the city and on a floor keep the idle rate; a wheel gets 1
   expect(floor.held).toBe(0);
   // Real animation (an arrival, a walk-out) is 120 Hz by design: none plays here.
   expect(floor.ticks[120]).toBe(0);
-  expect(floor.ticks[60]).toBeGreaterThan(100);
+  expect(floor.ticks[60]).toBeGreaterThan(50);
   await wheelThenIdle(page, 120, 60);
   clean();
 });
@@ -85,7 +85,7 @@ test('with battery saver, world events keep 30 Hz; a wheel gets 60 for its windo
   expect(saver.changes).toBeGreaterThan(10);
   expect(saver.held).toBe(0);
   expect(saver.ticks[60]).toBe(0);
-  expect(saver.ticks[30]).toBeGreaterThan(100);
+  expect(saver.ticks[30]).toBeGreaterThan(50);
   await wheelThenIdle(page, 60, 30);
   clean();
 });

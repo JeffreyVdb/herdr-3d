@@ -971,7 +971,7 @@ export class App {
     this.pacing.changes++;
     this.statusDirty = true;
     this.planDirty = true;
-    this.activity(false);
+    // #142: a world event is not interaction: no fast frame rate for it (idle still draws it on the next frame).
     if (c.structure) {
       const firstWorld = this.city.isEmpty;
       this.city.build(this.store.city());
@@ -2780,7 +2780,6 @@ export class App {
           return;
         }
         o.setWhiteboard(tex);
-        this.activity(false);
       })
       .catch((err: unknown) => {
         if (!abort.signal.aborted) console.warn('whiteboard render not loaded', err);
@@ -2840,7 +2839,7 @@ export class App {
       if (i === 0) ring();
       else window.setTimeout(ring, i * GONG_GAP_MS);
     });
-    this.activity(false);
+    // #142: the fly-offs and the gong's swing ask for frames themselves (`boardsBusy`, from the next frame on).
   }
 
   /** Watches the floor you stand on for boards, and only that one (one per connection); nothing on the street or in the city. */
@@ -2916,7 +2915,6 @@ export class App {
       this.hud.setBoardInfo('board.issues', info(st.issues, st.issues?.cards.filter((c) => c.state === 'open').length ?? 0));
       this.hud.setBoardInfo('board.prs', info(st.prs, st.prs?.prs.length ?? 0));
       this.pacing.boardPushes++;
-      this.activity(false);
     }
     this.boardsPanel.refresh();
   }
