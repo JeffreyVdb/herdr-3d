@@ -10,7 +10,10 @@ export type Coverage = 'none' | 'scrim' | 'opaque';
 export interface FrameInputs {
   hidden: boolean;
   batterySaver: boolean;
-  /** ms since the last input, camera move or scene transition. */
+  /**
+   * ms since the last activity: input, a camera move or a scene transition (0 while something animates: walking, a
+   * camera tween, the doors, arrivals, busy boards). #142: a world event or a board push is not activity; idle draws it.
+   */
   sinceActivity: number;
   /** #143: default 'none'. */
   covered?: Coverage;
@@ -25,7 +28,7 @@ export const OPAQUE_HZ = 4;
 /** #143: under the whiteboard's 88–92 % scrim, where the scene's motion barely reads. */
 export const SCRIM_HZ = 20;
 
-/** How long after the last input the game still counts as "interacting". */
+/** How long after the last activity (`sinceActivity`) the game still counts as "interacting". */
 export const ACTIVE_WINDOW_MS = 1500;
 
 export function targetHz(i: FrameInputs): number {
