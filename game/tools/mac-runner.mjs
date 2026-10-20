@@ -5,9 +5,66 @@
 //   pose: overview | row (on the floor) | street | landing | window (M3b: outside, the top landing, a south window) | laptop (M5: seated at one)
 //         mezz | desk (M3c: at the corner office's glass on the mezzanine, seated at your desk)
 //         boards (M7: south of the board wall, facing the issues board)
+//   overview: { ms } (#145: the overview page alone, the scene stopped: `overview()` below)
 const cfg = JSON.parse(Buffer.from(process.argv[2] ?? '', 'base64').toString('utf8'));
 const { chromium } = await import('playwright-core');
 const exe = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+
+/**
+ * #145: the overview page alone. The scene is stopped first (the document reads as hidden, so the app stops its frame
+ * loop as for a hidden tab); then O opens the page four times (closed between): the time from the key to the end of
+ * the first frame after it, the first open and again; then the open page is left alone for `ms`: the renderer's main
+ * thread per second and per frame (this Chrome runs without vsync, so its frame rate is its own), and its layers.
+ */
+async function overview(page, o) {
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.__h145 = [];
+    addEventListener('keydown', (e) => e.code === 'KeyO' && requestAnimationFrame(() => setTimeout(() => window.__h145.push(Math.round((performance.now() - e.timeStamp) * 10) / 10))), true);
+  });
+  await page.waitForTimeout(500);
+  const shown = () => page.waitForFunction(() => window.__h3d.overview()?.page?.open && !document.querySelector('.ov.ov--enter'), null, { timeout: 10_000 });
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press('KeyO');
+    await shown();
+    if (i === 3) break;
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !window.__h3d.overview()?.page?.open, null, { timeout: 10_000 });
+    await page.waitForTimeout(1000);
+  }
+  const opens = await page.evaluate(() => window.__h145);
+  const cdp = await page.context().newCDPSession(page);
+  let layers = [];
+  cdp.on('LayerTree.layerTreeDidChange', (e) => e.layers && (layers = e.layers));
+  await cdp.send('LayerTree.enable');
+  await cdp.send('Performance.enable');
+  await page.waitForTimeout(1000);
+  const m = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map((x) => [x.name, x.value]));
+  await page.evaluate(() => {
+    window.__h145f = 0;
+    const tick = () => (window.__h145f++, requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  });
+  const a = await m();
+  await page.waitForTimeout(o.ms);
+  const b = await m();
+  const frames = await page.evaluate(() => window.__h145f);
+  const per = (k, n) => Math.round(((b[k] - a[k]) / n) * (k.endsWith('Duration') ? 1e6 : 1e3)) / 1e3;
+  const keys = ['TaskDuration', 'RecalcStyleDuration', 'RecalcStyleCount', 'LayoutDuration', 'LayoutCount'];
+  const s = o.ms / 1000;
+  return {
+    rows: await page.evaluate(() => window.__h3d.overview()?.page?.rows.length),
+    openMs: { first: opens[0], again: opens.slice(1) },
+    seconds: s,
+    frames,
+    // Durations in ms, counts as counts: per second, and per frame.
+    perSecond: Object.fromEntries(keys.map((k) => [k, per(k, s)])),
+    perFrame: Object.fromEntries(keys.map((k) => [k, per(k, frames)])),
+    layers: layers.length,
+  };
+}
+
 const browser = await chromium.launch({
   executablePath: exe,
   headless: true,
@@ -78,6 +135,7 @@ try {
       }
       await page.waitForTimeout(job.settle ?? 1500);
       if (job.bench) out.bench = await page.evaluate((o) => window.__h3d.bench(o), job.bench);
+      if (job.overview) out.overview = await overview(page, job.overview);
       if (job.shot) out.png = (await page.screenshot()).toString('base64');
     } catch (e) {
       out.failed = String(e && e.message ? e.message : e);

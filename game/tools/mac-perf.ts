@@ -84,11 +84,16 @@ const jobs = [
   { name: 'floor60-street', path: `/?${fx('perf-floor60')}&ts`, floor: 'perf-floor', pose: 'street', bench: BENCH, settle: 2500 },
   { name: 'demo-city', path: `/?${fx('demo')}`, shot: true, settle: 2500 },
   { name: 'demo-desk-row', path: `/?${fx('demo')}`, floor: 'herdr-3d', pose: 'row', shot: true },
+  // #145: the overview page alone, the scene stopped (opt-in: H3D_PERF_JOBS=floor60-ov,city240-ov,floor96-ov): the busy
+  // floor's page and the all-floors page left open 20 s, and the 96 needs-you rows' page opened four times.
+  { name: 'floor60-ov', path: `/?${fx('perf-floor60')}`, floor: 'perf-floor', overview: { ms: 20_000 } },
+  { name: 'city240-ov', path: `/?${fx('perf-city240')}`, overview: { ms: 20_000 }, settle: 2500 },
+  { name: 'floor96-ov', path: `/?${fx('perf-floor96')}`, floor: 'perf-floor96', overview: { ms: 5000 } },
   // Diagnostics (select with H3D_PERF_JOBS=a,b,…).
   { name: 'city240-nobadges', path: `/?${fx('perf-city240')}&ts&badges=0`, bench: BENCH, settle: 2500 },
   { name: 'city240-noshadows', path: `/?${fx('perf-city240')}&ts&shadows=0`, bench: BENCH, settle: 2500 },
   { name: 'city240-nots', path: `/?${fx('perf-city240')}`, bench: BENCH, settle: 2500 },
-].filter((j) => (process.env.H3D_PERF_JOBS ? process.env.H3D_PERF_JOBS.split(',').includes(j.name) : !j.name.startsWith('city240-no')));
+].filter((j) => (process.env.H3D_PERF_JOBS ? process.env.H3D_PERF_JOBS.split(',').includes(j.name) : !j.name.startsWith('city240-no') && !('overview' in j)));
 
 async function main(): Promise<void> {
   mkdirSync(OUT, { recursive: true });

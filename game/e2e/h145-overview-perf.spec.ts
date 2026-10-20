@@ -169,8 +169,14 @@ test('the overview page alone: idle and scrolling on perf-floor60 and perf-city2
       await page.keyboard.press('KeyO');
       await page.waitForTimeout(800);
     });
-    opens.push(openCost(events));
     await expect.poll(() => page.evaluate(() => window.__h3d.overview()?.page?.rows.length)).toBe(96);
+    // The rows the open drew (their ring running): those near the view, unless the open drew them all.
+    const rings = await page.evaluate(() => {
+      const all = document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations === Infinity);
+      return { all: all.length, drawn: all.filter((a) => (a.effect as KeyframeEffect).target?.closest('.ov-row')?.querySelector('.ov-name')?.checkVisibility({ contentVisibilityAuto: true }) ?? true).length };
+    });
+    const cost = openCost(events);
+    opens.push(cost && { ...cost, rings });
     await expect(page.locator('.ov')).not.toHaveClass(/ov--enter/, { timeout: 5000 });
     await page.keyboard.press('Escape');
     await expect.poll(() => page.evaluate(() => window.__h3d.overview()?.page?.open)).toBe(false);
