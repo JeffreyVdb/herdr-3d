@@ -50,6 +50,8 @@ import { walkOutRoute, type Waypoint } from './world/route';
 export interface H3DDebug {
   backend: BackendName | null;
   frames: number;
+  /** #143: the game clock (`App.time`, ms: the frame's rAF timestamp) that the last rendered frame was stepped to. */
+  frameAt: number;
   error: string | null;
   /** True once a world snapshot has been rendered. */
   ready: boolean;
@@ -75,6 +77,12 @@ export interface H3DDebug {
   lookAt(): LookAt | null;
   /** #124: what E, P, C, X and the digits act on right now (aimed at, or picked with T), and whether it was picked; the shortcut list's state. */
   target(): { kind: string; id: string; label: string; picked: boolean } | null;
+  /**
+   * #142: what the frame loop decided, per display frame since the last `reset`: `ticks` by target Hz, `held` the fast
+   * rate kept by the activity window alone (nothing animating), the frames each animation held it, and the world changes
+   * and board pushes applied meanwhile; `hz` / `active` / `sinceActivity` the last decision.
+   */
+  pacing(reset?: boolean): ReturnType<import('./app').App['pacingInfo']> | null;
   shortcutsOpen(): boolean;
   /** M3c: sits you at your desk (as E on it does); false unless you stand in your corner office. */
   sit(): boolean;
@@ -383,6 +391,7 @@ let screenTrace: Array<{ frame: number; screens: ReturnType<H3DDebug['screens']>
 const h3d: H3DDebug = {
   backend: null,
   frames: 0,
+  frameAt: 0,
   error: null,
   ready: false,
   view: () => ({
@@ -399,6 +408,7 @@ const h3d: H3DDebug = {
   sit: () => app?.sit() ?? false,
   lookAt: () => app?.lookAt() ?? null,
   target: () => app?.targetInfo() ?? null,
+  pacing: (reset) => app?.pacingInfo(reset) ?? null,
   shortcutsOpen: () => app?.shortcuts.isOpen ?? false,
   status: (id) => app?.rendered.get(id) ?? null,
   world: () =>
@@ -791,6 +801,7 @@ async function start(): Promise<void> {
   a.render = () => {
     origRender();
     h3d.frames = a.frames;
+    h3d.frameAt = a.time * 1000;
     screenTrace?.push({ frame: a.frames, screens: a.laptops.screens() });
     if (!h3d.ready && a.store.snapshots > 0) h3d.ready = true;
   };

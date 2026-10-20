@@ -225,6 +225,8 @@ export class WorldStore {
   structureVersion = 0;
   /** Models and efforts a default hire may use (M3), else the built-in lists. */
   hireOptions: HireOptions = DEFAULT_HIRE_OPTIONS;
+  /** #134: `hire.prepare` and `run.prepare` take `preview` (false from an older bridge). */
+  preparePreview = false;
   /** M6 start: team presets (`known` false from an older bridge). */
   readonly presets = new PresetBook();
   /** M10 limits: the plan limits (`known` false from an older bridge); the widget renders on `limits.version`. */
@@ -292,6 +294,7 @@ export class WorldStore {
     for (const id of [...this.localDesks.keys()]) if (!this.workers.has(id)) this.localDesks.delete(id);
     this.crewSeen.snapshot(this.workers.values());
     this.hireOptions = hireOptionsOf(s.world.hire_options);
+    this.preparePreview = s.world.prepare_preview === true;
     this.presets.reset(s.world.presets);
     this.limits.reset(s.world.limits);
     this.ai.reset(s.world.ai);

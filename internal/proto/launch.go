@@ -83,6 +83,8 @@ type RunPrepareArgs struct {
 	Preset   string       `json:"preset,omitempty"`
 	Orch     *Hire        `json:"orch,omitempty"`
 	Extra    string       `json:"extra,omitempty"`
+	// #134: as HirePrepareArgs.Preview: local git only, run.start fetches.
+	Preview bool `json:"preview,omitempty"`
 }
 
 // RunTicket is what a run works on: a GitHub issue, free text, or (#184)

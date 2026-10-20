@@ -110,6 +110,9 @@ describe('SimWorld runs (M6)', () => {
     const none = data(r.cmd('run.prepare', { session: 'herdr-3d' }).got()[0]);
     expect(none).toMatchObject({ prompt: '', label: '', ticket: null, preset: SIM_BUILD_TEAM.id, orch: ROLES.orch, cwd: '/home/dev/devel/herdr-3d', capacity: { floor: { count: 18 } } });
     expect(none?.git).toMatchObject({ fetched: true });
+    // #134: a preview reads the local refs.
+    expect(data(r.cmd('run.prepare', { session: 'herdr-3d', text: 'Make it purple', preview: true }).got()[0])?.git).toMatchObject({ fetched: false, preview: true });
+    expect(r.cmd('run.prepare', { session: 'herdr-3d', preview: 1 }).got()[0]).toMatchObject({ code: 'bad_request' });
     const url = 'https://github.com/JeffreyVdb/herdr-3d/issues/7';
     expect(data(r.cmd('run.prepare', { session: 'herdr-3d', issue: '#7' }).got()[0])).toMatchObject({
       prompt: [`/write-code ${url}`, '', ...TEAM, '', ISSUE_STATUS_LINE].join('\n'),

@@ -138,25 +138,64 @@ export function ageText(then: number, now: number): string {
   return `${Math.floor(h / 24)} d old`;
 }
 
-/** "origin/main @ 1a2b3c4, 3 h old". */
+/** "origin/main @ 1a2b3c4, 3 h old"; a preview without local origin refs: "origin/HEAD" (#134). */
 export function baseText(g: HireGit, now: number): string {
+  if (g.preview && (!g.default_branch || !g.base_sha)) return 'origin/HEAD';
   return `origin/${g.default_branch} @ ${g.base_sha.slice(0, 7)}, ${ageText(g.base_time, now)}`;
 }
 
-/**
- * Whether a worktree hire can be offered: the folder is a repo and origin was
- * just fetched. A worktree branches from a freshly fetched origin/<default>,
- * never from a stale one (the bridge refuses it with `fetch_failed`).
- */
-export function worktreeUsable(g: HireGit | null): boolean {
-  return !!g && g.fetched;
+/** #134: what a preview's base is: the last fetched one, or not known yet; either way the hire fetches before it branches (null: a fetch's answer). */
+export function baseHint(g: HireGit): string | null {
+  if (!g.preview) return null;
+  return !g.default_branch || !g.base_sha ? 'not fetched into this checkout yet; checked before branching' : 'last fetched; refreshed before branching';
 }
 
-/** Why the worktree is off after a failed fetch (null: origin is fresh). */
+/**
+ * Whether a worktree hire can be offered: origin was just fetched, or (#134) the base is a local preview. A worktree
+ * branches from a freshly fetched origin/<default>, never from a stale one: the hire fetches first and is refused
+ * (`fetch_failed`) when that fails.
+ */
+export function worktreeUsable(g: HireGit | null): boolean {
+  return !!g && (g.fetched || g.preview === true);
+}
+
+/** Why the worktree is off after a failed fetch (null: origin is fresh, or the base is a preview that was not fetched). */
 export function fetchNote(g: HireGit): { text: string; error: boolean } | null {
-  if (g.fetched) return null;
+  if (g.fetched || g.preview) return null;
   const why = g.fetch_error ? `: ${g.fetch_error}` : '';
   return { text: `git fetch origin failed${why}. A worktree needs a fresh origin/${g.default_branch || 'main'}: fetch again, or hire without one.`, error: true };
+}
+
+/**
+ * #134: the git answer a dialog keeps: a preview of the repository a fetch already answered for says less than that
+ * fetch (a failure it showed, or the base it found), so the fetch's answer stays.
+ */
+export function newerGit(had: HireGit | null | undefined, got: HireGit | null): HireGit | null {
+  return got?.preview && had && !had.preview && had.repo_root === got.repo_root ? had : got;
+}
+
+/**
+ * #134: the fetches a dialog sent for origin. A preview never cancels one: a fetch's answer is still the dialog's when
+ * no fetch was sent after it (nor the dialog opened again) and the dialog shows the repository it is about, whatever
+ * previews were sent or answered meanwhile (`newerGit` keeps it over those). Another repository's answer is dropped.
+ */
+export class OriginFetches {
+  private n = 0;
+
+  /** A fetch sent now: every older one's answer is stale. */
+  start(): number {
+    return ++this.n;
+  }
+
+  /** The dialog opened again: no fetch sent before is its. */
+  forget(): void {
+    this.n++;
+  }
+
+  /** Whether fetch `ticket`'s git `got` is still for `shown`, the git on screen (no repository on either side: the same). */
+  current(ticket: number, shown: HireGit | null | undefined, got: HireGit | null): boolean {
+    return ticket === this.n && (shown?.repo_root ?? null) === (got?.repo_root ?? null);
+  }
 }
 
 /** The desks of a floor nobody sits at, lowest first. */

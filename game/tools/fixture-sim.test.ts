@@ -255,6 +255,16 @@ describe('SimWorld wake and sleep', () => {
 });
 
 describe('SimWorld hire and send home (M4)', () => {
+  it('#134: advertises prepare_preview; a preview of a down origin is no fetch failure, a fetch still is', () => {
+    const r = rig('demo-m4', 'fetch_failed');
+    expect(r.store.preparePreview).toBe(true);
+    const preview = data(r.cmd('hire.prepare', { session: 'pastry', preview: true }).got()[0]);
+    expect(preview.git).toMatchObject({ preview: true, fetched: false });
+    expect(preview.git).not.toHaveProperty('fetch_error');
+    expect(data(r.cmd('hire.prepare', { session: 'pastry' }).got()[0]).git).toMatchObject({ fetched: false, fetch_error: expect.any(String) });
+    expect(r.cmd('hire.prepare', { session: 'pastry', preview: 'yes' }).got()[0]).toMatchObject({ code: 'bad_request' });
+  });
+
   const NOW = 1_790_600_000_000;
   const m4 = (fail?: string) => rig('demo-m4', fail, { now: () => NOW, caps: { scratchpad: { soft: 3, hard: 4 } } });
   const data = (m: Msg | undefined) => m?.data as Record<string, any>;
