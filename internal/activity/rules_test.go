@@ -2,6 +2,7 @@ package activity
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -231,5 +232,87 @@ func TestShellSplitting(t *testing.T) {
 	}
 	if len(segs[4].files) != 0 {
 		t.Fatalf("2>&1 is no file: %+v", segs[4])
+	}
+}
+
+// #132: what a Codex call does with background terminals, without the shell
+// rules: its commands, the sessions it polls and what it types.
+func TestCodexTerminals(t *testing.T) {
+	cases := []struct {
+		name, tool string
+		input      json.RawMessage
+		want       Terminals
+	}{
+		{"a pure poll", "exec", script(`const r = await tools.write_stdin({session_id:84659,chars:"",yield_time_ms:5000,max_output_tokens:1000});`),
+			Terminals{Nested: []Nested{{Session: 84659}}, Polls: []int64{84659}}},
+		{"quoted keys", "exec", script(`text(await tools.write_stdin({"session_id":12,"chars":"","yield_time_ms":30000}));`),
+			Terminals{Nested: []Nested{{Session: 12}}, Polls: []int64{12}}},
+		{"a session in a variable", "exec", script(`const id = 5; text(await tools.write_stdin({session_id:id,chars:""})); text(await tools.write_stdin({session_id, chars:""}));`),
+			Terminals{Nested: []Nested{{Session: -1}, {Session: -1}}, Polls: []int64{-1, -1}}},
+		{"no chars", "exec", script(`text(await tools.write_stdin({session_id:12}));`),
+			Terminals{Nested: []Nested{{Session: 12}}, Polls: []int64{12}}},
+		{"ctrl-c, escaped either way", "exec", script(`await tools.write_stdin({session_id:7,chars:"\u0003"}); await tools.write_stdin({session_id:8,chars:'\x03'});`),
+			Terminals{Nested: []Nested{{Session: 7, Chars: "\x03"}, {Session: 8, Chars: "\x03"}}, Polls: []int64{7, 8}}},
+		{"typed text in a template literal", "exec", script("await tools.write_stdin({session_id:7,chars:`y\n`});"),
+			Terminals{Nested: []Nested{{Session: 7, Chars: "y\n"}}, Polls: []int64{7}}},
+		{"a poll and an image", "exec", script(`text(await tools.write_stdin({session_id:3,chars:""})); image((await tools.view_image({path:"a.png"})).image_url);`),
+			Terminals{Nested: []Nested{{Session: 3}}, Polls: []int64{3}}},
+		{"a poll and a command", "exec", script(`await tools.write_stdin({session_id:3,chars:""}); await tools.exec_command({cmd:"ls -la"});`),
+			Terminals{Nested: []Nested{{Session: 3}, {Command: "ls -la"}}, Polls: []int64{3}}},
+		{"commands", "exec", script(`await Promise.all([tools.exec_command({cmd:"go test ./..."}), tools.exec_command({"cmd":'pnpm build'})]);`),
+			Terminals{Nested: []Nested{{Command: "go test ./..."}, {Command: "pnpm build"}}}},
+		{"a poll and a patch", "exec", script(`await tools.write_stdin({session_id:3,chars:""}); await tools.apply_patch("*** Begin Patch\n*** End Patch");`),
+			Terminals{Nested: []Nested{{Session: 3}}, Polls: []int64{3}, Other: true}},
+		{"direct exec_command", "exec_command", execCmd("uv run pytest -x"), Terminals{Nested: []Nested{{Command: "uv run pytest -x"}}}},
+		{"direct write_stdin", "write_stdin", json.RawMessage(`{"session_id":4321,"chars":"\u0004","yield_time_ms":30000}`),
+			Terminals{Nested: []Nested{{Session: 4321, Chars: "\x04"}}, Polls: []int64{4321}}},
+		{"namespaced", "functions.write_stdin", json.RawMessage(`{"session_id":5}`), Terminals{Nested: []Nested{{Session: 5}}, Polls: []int64{5}}},
+		{"another tool", "apply_patch", json.RawMessage(`"*** Begin Patch"`), Terminals{Other: true}},
+	}
+	for _, c := range cases {
+		got := CodexTerminals(c.tool, c.input)
+		if g, w := fmt.Sprintf("%+v", got), fmt.Sprintf("%+v", c.want); g != w {
+			t.Errorf("%s: %s, want %s", c.name, g, w)
+		}
+	}
+}
+
+// #132: the sessions a call's output says its commands started, matched as
+// Sessions.Started matches them.
+func TestStarts(t *testing.T) {
+	cmd := func(s string) Nested { return Nested{Command: s} }
+	poll := func(id int64) Nested { return Nested{Session: id} }
+	cases := []struct {
+		name   string
+		nested []Nested
+		polls  []int64
+		output string
+		want   []Start
+	}{
+		{"direct, running", []Nested{cmd("a")}, nil, "Chunk ID: 1\nWall time: 10.0 seconds\nProcess running with session ID 4321\nOutput:\n", []Start{{4321, 0}}},
+		{"direct, exited", []Nested{cmd("a")}, nil, "Chunk ID: 1\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\nok\n", nil},
+		{"chunks in call order", []Nested{poll(9), cmd("a"), cmd("b")}, []int64{9}, "Script completed\nWall time 1.0 seconds\nOutput:\n" +
+			`{"chunk_id":"1","wall_time_seconds":0.5,"exit_code":0,"output":""}` + "\n" +
+			`{"chunk_id":"2","wall_time_seconds":1.0,"session_id":11,"output":""}` + "\n" +
+			`{"chunk_id":"3","wall_time_seconds":1.0,"session_id":12,"output":""}`, []Start{{11, 1}, {12, 2}}},
+		{"one command, chunks that do not line up", []Nested{poll(9), cmd("a")}, []int64{9}, "Script completed\nOutput:\n" +
+			`{"chunk_id":"2","session_id":9,"output":"{"}` + "\n" + `{"chunk_id":"3","session_id":13,"output":""}`, []Start{{13, 1}}},
+		{"two commands, chunks that do not line up", []Nested{cmd("a"), cmd("b")}, nil, `{"session_id":13,"output":""}`, nil},
+		{"no output", []Nested{cmd("a")}, nil, "", nil},
+		{"braces in an output", []Nested{cmd("a"), cmd("b")}, nil, "Script completed\nOutput:\n" +
+			`{"chunk_id":"1","wall_time_seconds":1.0,"session_id":11,"output":"{\"a\": {}}"}` + "\n" +
+			`{"chunk_id":"2","wall_time_seconds":1.0,"exit_code":0,"output":"}"}`, []Start{{11, 0}}},
+		{"wrapped by Promise.allSettled", []Nested{cmd("a"), cmd("b")}, nil, "Script completed\nOutput:\n" +
+			`{"status":"fulfilled","value":{"chunk_id":"1","wall_time_seconds":1.0,"exit_code":0,"output":""}}` + "\n" +
+			`{"i":1,"result":{"chunk_id":"2","wall_time_seconds":1.0,"session_id":12,"output":""}}`, []Start{{12, 1}}},
+		{"after a truncation note", []Nested{cmd("a"), cmd("b")}, nil, "Script completed\nOutput:\n" +
+			`{"chunk_id":"1","wall_time_seconds":1.0,"session_id":11,"output":""}` + "\n" +
+			"Warning: truncated output (original token count: 4000)\nTotal output lines: 812\n\n" +
+			`{"chunk_id":"2","wall_time_seconds":1.0,"session_id":12,"original_token_count":4000,"output":"…"}`, []Start{{11, 0}, {12, 1}}},
+	}
+	for _, c := range cases {
+		if got := Starts(c.nested, c.polls, c.output); fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
 	}
 }

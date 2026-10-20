@@ -431,10 +431,10 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "text(await tools.write_stdin({session_id:20183,chars:\"\",yield_time_ms:1000,max_output_tokens:4000}));",
+      "input_summary": "Waited for background terminal 20183 · exited 0",
       "input": "text(await tools.write_stdin({session_id:20183,chars:\"\",yield_time_ms:1000,max_output_tokens:4000}));\nfor (const path of [\"docs/img/m3d-logos/entrance-sign.png\",\"docs/img/m3d-logos/reception-wall.png\",\"docs/img/m3d-logos/city-lit-and-dim.png\",\"/tmp/h3d-ux-r1-logos/panel.png\"]) {\nconst r=await tools.view_image({path});image(r.image_url);\n}\n",
       "status": "ok",
-      "output_text": "Script completed\nWall time 0.2 seconds\nOutput:\n\n{\"chunk_id\":\"2eb995\",\"wall_time_seconds\":0.000103136,\"exit_code\":0,\"original_token_count\":362,\"output\":\"Logo set for Work.\\n✓ Screenshot saved to /tmp/h3d-ux-r1-logos/panel.png\\n\\\"{\\\\\\\"focus\\\\\\\":\\\\\\\"\u003cbutton class=\\\\\\\\\\\\\\\"btn btn--sm\\\\\\\\\\\\\\\" data-key=\\\\\\\\\\\\\\\"logo-set:b_3f09a1c2d4e5\\\\\\\\\\\\\\\" aria-label=\\\\\\\\\\\\\\\"Change the logo of Work\\\\\\\\\\\\\\\" type=\\\\\\\\\\\\\\\"button\\\\\\\\\\\\\\\"\u003e\u003csvg viewBox=\\\\\\\\\\\\\\\"0 0 24 24\\\\\\\\\\\\\\\" fill=\\\\\\\\\\\\\\\"none\\\\\\\\\\\\\\\" stroke=\\\\\\\\\\\\\\\"currentColor\\\\\\\\\\\\\\\" stroke-width=\\\\\\\\\\\\\\\"2\\\\\\\\\\\\\\\" stroke-linecap=\\\\\\\\\\\\\\\"round\\\\\\\\\\\\\\\" stroke-linejoin=\\\\\\\\\\\\\\\"round\\\\\\\\\\\\\\\" aria-hidden=\\\\\\\\\\\\\\\"true…",
+      "output_text": "Logo set for Work.\n✓ Screenshot saved to /tmp/h3d-ux-r1-logos/panel.png\n\"{\\\"focus\\\":\\\"\u003cbutton class=\\\\\\\"btn btn--sm\\\\\\\" data-key=\\\\\\\"logo-set:b_3f09a1c2d4e5\\\\\\\" aria-label=\\\\\\\"Change the logo of Work\\\\\\\" type=\\\\\\\"button\\\\\\\"\u003e\u003csvg viewBox=\\\\\\\"0 0 24 24\\\\\\\" fill=\\\\\\\"none\\\\\\\" stroke=\\\\\\\"currentColor\\\\\\\" stroke-width=\\\\\\\"2\\\\\\\" stroke-linecap=\\\\\\\"round\\\\\\\" stroke-linejoin=\\\\\\\"round\\\\\\\" aria-hidden=\\\\\\\"true…",
       "images": [
         {
           "image": {

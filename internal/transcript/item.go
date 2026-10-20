@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/activity"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
 
@@ -67,7 +68,13 @@ type contrib struct {
 	maybeImg bool
 	// script: a Codex exec script's call, for linkScript (#21).
 	script bool
-	apply  func(b *builder)
+	// #132: terms are a Codex call's background terminals (the sessions its
+	// commands start, the ones it polls), poll the poll it is; out is a
+	// Codex call result's text. The index reads them.
+	terms *activity.Terminals
+	poll  *pollCall
+	out   string
+	apply func(b *builder)
 }
 
 // builder assembles an item from its contributions.
@@ -88,6 +95,10 @@ type builder struct {
 	// Codex recorded it did; script: the call is an exec script, whose
 	// patches' text only says what it proposes.
 	literal, script bool
+	// poll is a Codex poll's call (#132); pollCmd the command of the
+	// session it polls, from the index ("": unknown).
+	poll    *pollCall
+	pollCmd string
 }
 
 type blockParts struct {

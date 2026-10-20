@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/activity"
 	"github.com/JeffreyVdb/herdr-3d/internal/jsonl"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 )
@@ -110,6 +111,13 @@ type Log struct {
 	// shortest line that gets one.
 	big     map[int64]*bigRec
 	bigLine int
+	// #132 (polls.go): the commands of the sessions started (the newest
+	// maxTermSessions, oldest first in termOrder), the open calls that may
+	// start some, and each poll's command (by entry; known sessions only).
+	sessions  map[int64]string
+	termOrder []int64
+	starting  map[int32]*activity.Terminals
+	polled    map[int32]string
 }
 
 func parserOf(harness string) func(int64, []byte) ([]contrib, string) {
@@ -178,7 +186,8 @@ func open(harness, path string, fi fs.FileInfo, opts []Option) (*Log, error) {
 	}
 	l := &Log{harness: harness, path: path, parse: parserOf(harness), f: f, r: f, fi: got, ready: make(chan struct{}),
 		done: make(chan struct{}), byID: map[string]int32{}, msgs: map[string]*msgState{}, subs: map[*Sub]struct{}{},
-		env: newImageEnv(), big: map[int64]*bigRec{}, bigLine: bigLine}
+		env: newImageEnv(), big: map[int64]*bigRec{}, bigLine: bigLine, sessions: map[int64]string{}, starting: map[int32]*activity.Terminals{},
+		polled: map[int32]string{}}
 	for _, o := range opts {
 		o(l)
 	}
@@ -398,6 +407,7 @@ func (l *Log) index(off int64, n int, cs []contrib, version string, r *bigRec) {
 			if c.kind == proto.ItemTool || c.kind == proto.ItemSubagent {
 				l.open = append(l.open, i)
 			}
+			l.terminals(i, c)
 		case linkBlock:
 			m := l.msg(c.msg)
 			if i, ok := m.blocks[c.block]; ok {
@@ -432,9 +442,11 @@ func (l *Log) index(off int64, n int, cs []contrib, version string, r *bigRec) {
 			}
 			l.addSpan(i, sp, c)
 			l.closeCall(i)
+			l.started(i, c.out)
 		case linkAbort:
 			for _, i := range l.open {
 				l.addSpan(i, sp, c)
+				delete(l.starting, i)
 			}
 			l.open = l.open[:0]
 		case linkMerge:
@@ -449,6 +461,43 @@ func (l *Log) index(off int64, n int, cs []contrib, version string, r *bigRec) {
 				}
 			}
 		}
+	}
+}
+
+// terminals notes a new call's background terminals (#132): a call whose
+// commands may start sessions waits for its result; a poll gets the
+// command of the session it polls, if it is known.
+func (l *Log) terminals(i int32, c *contrib) {
+	if c.terms != nil && starts(c.terms) {
+		l.starting[i] = c.terms
+	}
+	if c.poll != nil {
+		if cmd, ok := l.sessions[c.poll.sessions[0]]; ok {
+			l.polled[i] = cmd
+		}
+	}
+}
+
+// started notes the sessions a call's result (out) says its commands
+// started (#132).
+func (l *Log) started(i int32, out string) {
+	t := l.starting[i]
+	if t == nil {
+		return
+	}
+	delete(l.starting, i)
+	for _, st := range activity.Starts(t.Nested, t.Polls, out) {
+		if st.Session <= 0 || t.Nested[st.Nested].Command == "" {
+			continue // a command it could not read (a template literal)
+		}
+		if _, ok := l.sessions[st.Session]; !ok {
+			l.termOrder = append(l.termOrder, st.Session)
+			if len(l.termOrder) > maxTermSessions {
+				delete(l.sessions, l.termOrder[0])
+				l.termOrder = l.termOrder[1:]
+			}
+		}
+		l.sessions[st.Session] = clipSummary(t.Nested[st.Nested].Command)
 	}
 }
 
@@ -507,9 +556,16 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 		return nil, err
 	}
 	es := make([]entry, len(idx))
+	var cmds map[int]string   // #132: the polls' commands, by j
 	var big map[int64]*bigRec // the records of the items' big lines (capped)
 	for j, i := range idx {
 		es[j] = l.entries[i]
+		if cmd, ok := l.polled[i]; ok {
+			if cmds == nil {
+				cmds = map[int]string{}
+			}
+			cmds[j] = cmd
+		}
 		es[j].spans = append([]span(nil), l.entries[i].spans...)
 		for _, sp := range es[j].spans {
 			if r := l.big[sp.off]; r != nil && !full {
@@ -553,7 +609,7 @@ func (l *Log) items(idx []int32, full bool) ([]proto.TranscriptItem, error) {
 			if b == nil {
 				b = newBuilder(e.id, int64(idx[j])+1, c)
 				b.it.Kind, b.it.Hidden = e.kind, e.hidden
-				b.env = l.env
+				b.env, b.pollCmd = l.env, cmds[j]
 			}
 			b.add(c)
 		}
