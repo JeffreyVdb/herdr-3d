@@ -15,7 +15,9 @@ import { chips, gitView, modelField, worktreeControl, type DialogHost } from './
 import type { HireModelPrefs } from './hireModelPrefs';
 import type { HirePrefs } from './hirePrefs';
 import { failureText } from './messages';
-import { onReviewKey, reviewButton, type Go } from './secretsFlow';
+import { classifierView, onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './secretsFlow';
+import { askCallout, delegates, instructionsPanel, INSTRUCTIONS_HINT_OFF, INSTRUCTIONS_HINT_ON } from './hireInstructions';
+import { instructionsBlocker, nudgeWanted } from '../world/hirePresets';
 import { mountComposer, type Composer } from './composer/composer';
 import { Draft as PromptDraft, type Uploader } from './composer/draft';
 import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
@@ -27,6 +29,10 @@ import { HIRE_PROMPT_MAX_BYTES, mentionOf } from './composer/model';
  * the hire spec prefilled as the hire dialog is (`hire.prepare`), wake the floor, the missed-window policy and the
  * handoff the worker reads: none, one from the floor's cabinet, or (from a transcript row) that message, filed as a
  * literal handoff on Save with one op for the form's life, so a re-save never files it twice.
+ *
+ * #127: "Add herdr hiring instructions", as the plain Hire worker form has it (#117): off for a new schedule (a prefill
+ * never ticks it), an edit's as saved; the bridge adds the floor's lines when it fires. With the box off, Save asks the
+ * classifier after the secrets review and, on a "yes", asks in the dialog before anything is filed or saved.
  */
 
 export interface ScheduleFormHost extends DialogHost {
@@ -90,7 +96,18 @@ export interface ScheduleFormSummary {
   status: string;
   error: boolean;
   saving: boolean;
+  /** #127: the box (null: this bridge does not take it): ticked, the lines `hire.prepare` showed (null: not known now). */
+  instructions: { on: boolean; lines: string | null } | null;
+  /** #127: the classifier's question is open. */
+  asking: boolean;
 }
+
+/** #127: the question Save asks, with the box off, when the classifier says the prompt starts other agents (`HIRE_ASK_TEXT`'s, for a scheduled worker). */
+export const SCHEDULE_ASK_TEXT = 'This scheduled task starts other agents (workers or subagents). Add herdr hiring instructions so they get their own workspace on this floor?';
+/** #127: "What's added" when `hire.prepare` did not answer (an asleep floor): the bridge resolves the lines when it fires. */
+export const SCHEDULE_LINES_MISSING = 'The floor’s hiring instructions are added when it starts; herdr-world could not show them now.';
+/** #127: how a size blocker names a schedule's prompt and the box. */
+const SCHEDULE_LINES_BLOCKER = { task: 'the prompt', scope: '' };
 
 const CLOCK_ICON = '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>';
 const SEARCH_MS = 180;
@@ -131,7 +148,10 @@ export class ScheduleFormDialog {
   private readonly worktreeSlot = h('div');
   private readonly missSlot = h('div', { class: 'sf-row' });
   private readonly handoffSlot = h('div', { class: 'sf-handoff' });
+  private readonly instructionsSlot = h('div');
   private readonly notices = h('div', { class: 'dd-notices' });
+  /** #127: the classifier's question, by the buttons. */
+  private readonly askEl = h('div', { class: 'dd-asking' });
   private readonly statusEl = h('p', { class: 'dd-status', role: 'status' });
   private readonly alertEl = h('p', { class: 'dd-status dd-status--error', role: 'alert' });
   private readonly actions = h('div', { class: 'dd-actions' });
@@ -175,6 +195,19 @@ export class ScheduleFormDialog {
   private modelQuery = '';
   /** When the time field was last read. */
   private parsedAt = 0;
+  /** #127: "What's added" stays open across a re-render. */
+  private linesOpen = false;
+  /** #127: the prompt's byte count with the lines, kept current while typing (null: not shown). */
+  private bytesEl: HTMLElement | null = null;
+  /**
+   * #127: the question open in the dialog (the classifier said the prompt starts other agents, the box was off): how the
+   * save goes on with either answer, and the form it was asked about (`key`: a change to it drops the question).
+   */
+  private asking: { gen: number; key: string; go: (withLines: boolean) => void } | null = null;
+  /** #127: per form (an edit's schedule, a new one's floor), the prompt "Schedule without" was answered for: not asked again. */
+  private readonly declined = new Map<string, string>();
+  /** #127: the prompt the edited schedule was saved with: unchanged, Save does not ask (its saved choice stands). */
+  private savedPrompt: string | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -213,9 +246,9 @@ export class ScheduleFormDialog {
       h('div', { class: 'dd-field' }, h('label', { for: 'sf-cwd' }, 'Folder'), this.cwdIn, h('p', { class: 'field-hint' }, 'Where the agent starts, on the server. It must exist when you save and when it starts.')),
     );
     const wake = h('label', { class: 'dd-check', for: 'sf-wake' }, this.wakeIn, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, 'Wake the floor if it is asleep'));
-    this.form.append(h('div', { class: 'dd-field' }, h('label', { for: 'sf-title-in' }, 'Title'), this.titleIn), whenField, promptField, this.agentSlot, place, this.worktreeSlot, wake, this.missSlot, this.handoffSlot);
+    this.form.append(h('div', { class: 'dd-field' }, h('label', { for: 'sf-title-in' }, 'Title'), this.titleIn), whenField, promptField, this.instructionsSlot, this.agentSlot, place, this.worktreeSlot, wake, this.missSlot, this.handoffSlot);
     this.handoffSlot.append(this.handoffPick, this.cabBox);
-    this.dialog.append(this.head, this.form, h('footer', { class: 'dd-foot' }, this.notices, this.statusEl, this.alertEl, this.actions));
+    this.dialog.append(this.head, this.form, h('footer', { class: 'dd-foot' }, this.notices, this.askEl, this.statusEl, this.alertEl, this.actions));
 
     this.titleIn.addEventListener('input', () => {
       this.f.title = this.titleIn.value;
@@ -280,9 +313,20 @@ export class ScheduleFormDialog {
       if (this.cabTimer) clearTimeout(this.cabTimer);
       if (this.ticker) clearInterval(this.ticker);
       this.ticker = null;
+      this.asking = null;
+      this.askEl.replaceChildren();
       this.composer.closePreview();
     });
-    this.dialog.addEventListener('cancel', () => {
+    this.dialog.addEventListener('cancel', (e) => {
+      // #127: Esc on the question goes back to the form, keeping it; nothing is filed or saved.
+      if (this.asking) {
+        e.preventDefault();
+        this.asking = null;
+        this.setStatus('Not saved: the prompt is still here.');
+        this.renderActions();
+        this.composer.focus();
+        return;
+      }
       // Esc while the save is on its way: it still lands; the form just goes. (#108: not while its prompt is resolved,
       // scanned or scanned again after a refusal, nor while the message is filed: then nothing is saved, and nothing is said.)
       if (this.sending === this.formGen) this.host.toast('The schedule is still being saved; the list shows it once herdr-world answers.', 'info');
@@ -306,7 +350,7 @@ export class ScheduleFormDialog {
   }
 
   private blank(floor: string): ScheduleForm {
-    return { floor, title: '', prompt: '', due: null, dueError: '', harness: '', model: '', effort: '', cwd: '', worktree: false, wakeFloor: true, onMiss: 'run_late', maxLateHours: '', handoff: { kind: 'none' } };
+    return { floor, title: '', prompt: '', due: null, dueError: '', harness: '', model: '', effort: '', cwd: '', worktree: false, wakeFloor: true, onMiss: 'run_late', maxLateHours: '', handoff: { kind: 'none' }, instructions: false };
   }
 
   private newDraft(text: string): PromptDraft {
@@ -342,6 +386,10 @@ export class ScheduleFormDialog {
     this.saving = false;
     this.composer.setBusy(false);
     this.modelQuery = '';
+    this.asking = null;
+    this.askEl.replaceChildren();
+    this.linesOpen = false;
+    this.savedPrompt = e?.prompt ?? null;
     this.setStatus('');
     if (e) {
       Object.assign(this.f, {
@@ -355,6 +403,8 @@ export class ScheduleFormDialog {
         wakeFloor: e.wake_floor,
         onMiss: e.on_miss,
         maxLateHours: e.max_lateness_ms ? String(Math.round((e.max_lateness_ms / 3_600_000) * 100) / 100) : '',
+        // #127: as saved (a bridge that does not take it shows no box and sends nothing).
+        instructions: this.instructionsShown() && e.herdr_instructions === true,
       });
       this.handoffMode = e.handoff_path ? 'keep' : 'none';
     } else {
@@ -464,6 +514,8 @@ export class ScheduleFormDialog {
     // The prompt as the checks see it: the text, an image as its marker, a file as its mention.
     let n = 0;
     this.f.prompt = this.composer.getSnapshot().segments.map((g) => (g.kind === 'text' ? g.text : g.kind === 'image' ? `[Image #${++n}]` : mentionOf(g.path))).join('');
+    const lines = this.lines();
+    if (this.bytesEl && lines !== null) this.bytesEl.textContent = this.bytesText(lines);
     this.renderActions();
   }
 
@@ -499,6 +551,7 @@ export class ScheduleFormDialog {
 
   private renderAll(): void {
     this.renderHead();
+    this.renderInstructions();
     this.renderAgent();
     this.renderWorktree();
     this.renderMiss();
@@ -515,6 +568,52 @@ export class ScheduleFormDialog {
       h('div', { class: 'dd-titles' }, h('h2', { id: 'sf-title' }, title), h('p', { id: 'sf-sub' }, `${inboxWhere(this.host.store, this.f.floor)} · a fresh worker is hired at that time`)),
       h('button', { class: 'btn btn--icon dd-close', 'data-key': 'close', 'aria-label': 'Close', title: 'Close (Esc)', onclick: () => this.close() }, icon(ICON.close)),
     );
+  }
+
+  /** #127: the bridge takes the flag (its snapshot's `schedule_herdr_instructions`): the box shows. */
+  private instructionsShown(): boolean {
+    return this.host.store.schedules.instructions;
+  }
+
+  /** #127: the herdr hiring instructions this floor's fire would add, as `hire.prepare` showed them (null: not known now). */
+  private lines(): string | null {
+    return this.instructionsShown() ? (this.prep?.herdr_instructions ?? null) : null;
+  }
+
+  private bytesText(lines: string): string {
+    return `With them, the prompt is ${(bytes(this.f.prompt) + 2 + bytes(lines)).toLocaleString('en-US')} of ${HIRE_PROMPT_MAX_BYTES.toLocaleString('en-US')} bytes.`;
+  }
+
+  /**
+   * #127: "Add herdr hiring instructions" under the prompt it adds to, the plain Hire worker form's (#117): ticked, "What's
+   * added" shows the lines with this floor's id (or says they are added when it starts, when `hire.prepare` did not answer).
+   */
+  private renderInstructions(): void {
+    if (!this.instructionsShown()) {
+      this.bytesEl = null;
+      this.instructionsSlot.replaceChildren();
+      return;
+    }
+    const lines = this.lines();
+    const on = this.f.instructions;
+    this.bytesEl = on && lines !== null ? h('p', { class: 'field-hint dd-instructions-bytes', 'data-hook': 'instructions-bytes' }, this.bytesText(lines)) : null;
+    const panel = instructionsPanel({
+      id: 'sf-instructions',
+      on,
+      hint: on ? INSTRUCTIONS_HINT_ON : INSTRUCTIONS_HINT_OFF,
+      intro: 'After the prompt (and its handoff) and a blank line, the worker gets:',
+      lines,
+      missing: SCHEDULE_LINES_MISSING,
+      bytes: this.bytesEl,
+      open: this.linesOpen,
+      onChange: (v) => {
+        this.f.instructions = v;
+        this.renderInstructions();
+        this.renderActions();
+      },
+      onToggle: (open) => (this.linesOpen = open),
+    });
+    replaceKeepingFocus(this.instructionsSlot, [panel]);
   }
 
   private renderAgent(): void {
@@ -719,12 +818,19 @@ export class ScheduleFormDialog {
     if (this.host.unsupported(this.mode === 'edit' ? 'schedule.update' : 'schedule.create') || !this.host.store.schedules.known) return 'This herdr-world can’t schedule agents yet: it is older than scheduled agents.';
     const gone = this.stale();
     if (gone) return gone;
+    if (this.asking) return 'Answer the question above first.';
     if (this.saving) return 'Saving…';
     if (this.preparing && !this.f.harness) return 'Waiting for herdr-world…';
     // The cabinet's pick is asked for last: the rest of the spec is checked as if it were made.
     const choosing = this.handoffMode === 'cabinet' && !this.picked;
     const f = { ...this.f, handoff: choosing ? { kind: 'path' as const, path: '/' } : this.handoff() };
-    return scheduleBlocker(f, this.options(), this.host.now(), bytes(this.f.prompt)) ?? (choosing ? 'Pick a handoff from the cabinet, or choose None.' : null);
+    return scheduleBlocker(f, this.options(), this.host.now(), bytes(this.f.prompt)) ?? this.instructionsWhy(this.f.prompt) ?? (choosing ? 'Pick a handoff from the cabinet, or choose None.' : null);
+  }
+
+  /** #127: the prompt with the floor's lines is over 32 KiB (only when they are known; else the bridge says so at Save). */
+  private instructionsWhy(prompt: string): string | null {
+    const lines = this.lines();
+    return this.f.instructions && lines !== null && prompt.trim() ? instructionsBlocker(prompt, lines, SCHEDULE_LINES_BLOCKER) : null;
   }
 
   private renderNotices(): void {
@@ -736,6 +842,7 @@ export class ScheduleFormDialog {
   }
 
   private renderActions(): void {
+    this.renderAsk();
     const why = this.blocker();
     const label = this.mode === 'edit' ? 'Save changes' : this.handoffMode === 'transcript' && !this.filedPath ? 'File and schedule' : 'Schedule';
     const btn = h('button', { type: 'submit', form: 'sf-form', class: 'btn btn--primary', 'data-key': 'save', 'aria-disabled': why ? 'true' : null, 'aria-describedby': 'sf-why' }, label);
@@ -754,10 +861,17 @@ export class ScheduleFormDialog {
    * Save: the time read again (relative input counts from now), the prompt resolved, the message filed, then the schedule.
    * #108 round 4: with the switch on (or `manual`: "Review secrets"), the prompt is reviewed after it is resolved and before
    * anything is filed or saved: a saved prompt keeps no protected file, so every match stays as typed (the dialog says
-   * so) and the save carries that review; Cancel saves nothing.
+   * so) and the save carries that review; Cancel saves nothing. #127: then, with the box off, the classifier's say on the
+   * reviewed prompt; a "yes" asks in the dialog before anything is filed or saved.
    */
   async save(manual = false): Promise<void> {
     if (this.saving || !this.dialog.open) return;
+    // #127: the question is open: it is answered first (an Enter or a click on Save never answers it).
+    this.renderAsk();
+    if (this.asking) {
+      this.focusAsk();
+      return;
+    }
     this.reparse(false);
     const why = this.blocker();
     if (why) {
@@ -769,38 +883,64 @@ export class ScheduleFormDialog {
     // The spec as it is now: what changes while saving is for the next Save.
     const form: ScheduleForm = { ...this.f, handoff: this.handoff() };
     const handoffMode = this.handoffMode;
-    this.saving = true;
-    this.lockPlace();
-    this.setStatus(handoffMode === 'transcript' && !this.filedPath ? 'Filing the message…' : 'Saving…');
-    this.composer.setBusy(true);
-    this.renderActions();
-    const end = (msg: string, error: boolean) => {
-      this.saving = false;
-      this.lockPlace();
-      this.composer.setBusy(false);
-      this.setStatus(msg, error);
-      this.renderHandoff();
-      this.renderActions();
-    };
+    const key = this.askKey();
+    this.busy(true);
     const text = await this.composer.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
     if (gen !== this.formGen || !this.dialog.open) return;
-    if (!text.ok) return end(text.reason === 'upload' ? 'An image did not upload: retry it or remove it.' : text.reason === 'refused' ? text.message : 'The prompt could not be read.', true);
+    if (!text.ok) return this.ended(text.reason === 'upload' ? 'An image did not upload: retry it or remove it.' : text.reason === 'refused' ? text.message : 'The prompt could not be read.', true);
     const flow = this.host.secrets;
     // (Closed meanwhile, or opened again: nothing of it goes, no review opens.)
     const sreq = { key: `schedule:${this.mode === 'edit' ? this.editId : 'new'}`, text: text.text, target: `“${form.title.trim() || 'the schedule'}”`, stored: true, manual, live: () => gen === this.formGen && this.dialog.open };
     let go: Go = { kind: 'send', protects: 0, shown: text.text, review: null };
-    if (manual && !text.text) return end('Write a prompt first, then review its secrets.', true);
+    if (manual && !text.text) return this.ended('Write a prompt first, then review its secrets.', true);
     if (text.text && flow && (flow.on || manual)) {
       this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the prompt…');
       const out = await flow.review(sreq);
       if (gen !== this.formGen || !this.dialog.open) return;
-      if (out.kind === 'kept') return end(out.why === 'cancel' ? 'Not saved: the prompt is still here.' : out.message, out.why === 'failed');
+      if (out.kind === 'kept') return this.ended(out.why === 'cancel' ? 'Not saved: the prompt is still here.' : out.message, out.why === 'failed');
       go = out;
-      this.setStatus(handoffMode === 'transcript' && !this.filedPath ? 'Filing the message…' : 'Saving…');
+      this.setStatus(this.savingText());
     }
+    const finish = () => this.finish(gen, form, text.text, go, sreq);
+    // #127: the box off: does the prompt start other agents? Only a "yes" in time stops the save, to ask.
+    if (text.text && !form.instructions && this.askWanted(text.text)) {
+      this.setStatus('Checking whether the prompt starts other agents…');
+      const asked = classifierView(text.text, go);
+      const yes = await delegates((t, a) => this.host.send(t, a), asked.prompt, asked.secrets);
+      if (gen !== this.formGen || !this.dialog.open) return;
+      if (yes) {
+        // The form changed while it was checked: the answer is about another one.
+        if (key !== this.askKey()) return this.ended('The form changed while its prompt was checked: nothing was saved. Save again to go on.', false);
+        this.ended('', false);
+        this.ask(gen, (withLines) => {
+          if (withLines) {
+            // The box as the question answered it, before anything that can stop the save, so the form says what was asked.
+            this.f.instructions = form.instructions = true;
+            this.renderInstructions();
+            const blocked = this.instructionsWhy(text.text);
+            if (blocked) {
+              this.setStatus(blocked, true);
+              this.renderActions();
+              this.dialog.querySelector<HTMLElement>('#sf-instructions')?.focus();
+              return;
+            }
+          } else this.declined.set(this.draftKey(), text.text);
+          this.busy(true);
+          void finish();
+        });
+        return;
+      }
+      this.setStatus(this.savingText());
+    }
+    return finish();
+  }
+
+  /** The save's tail, once its prompt was reviewed (and the question answered): the message filed, then the schedule. */
+  private async finish(gen: number, form: ScheduleForm, prompt: string, go: Go, sreq: Parameters<PromptSecretsFlow['deliver']>[0]): Promise<void> {
+    const flow = this.host.secrets;
     let path: string | null = null;
     const t = this.prefill.transcript;
-    if (handoffMode === 'transcript' && t) {
+    if (form.handoff.kind === 'transcript' && t) {
       if (!this.filedPath) {
         const c = t.candidate;
         const filing = this.filing ?? { op: newOp(), path: null };
@@ -813,13 +953,14 @@ export class ScheduleFormDialog {
           this.renderActions();
         }
         if (gen !== this.formGen || !this.dialog.open) return;
-        if (!a.ok) return end(`${failureText('worker.handoff', a.code, a.message, { worker: t.name })} Nothing was scheduled.`, true);
+        if (!a.ok) return this.ended(`${failureText('worker.handoff', a.code, a.message, { worker: t.name })} Nothing was scheduled.`, true);
         this.filing = filing;
       }
       path = this.filedPath;
       this.setStatus('Saving…');
     }
-    const spec = scheduleSpec(form, text.text, path, this.mode === 'create' ? (this.prefill.source ?? (t ? { kind: 'transcript', worker: t.worker, ...(t.candidate.message ? { message: t.candidate.message } : {}) } : undefined)) : undefined);
+    // #127: the flag only to a bridge that takes it (an older one refuses the field).
+    const spec = scheduleSpec({ ...form, instructions: form.instructions && this.instructionsShown() }, prompt, path, this.mode === 'create' ? (this.prefill.source ?? (t ? { kind: 'transcript', worker: t.worker, ...(t.candidate.message ? { message: t.candidate.message } : {}) } : undefined)) : undefined);
     const cmd = this.mode === 'edit' ? 'schedule.update' : 'schedule.create';
     const send = (g: Go) => {
       this.sending = gen;
@@ -830,9 +971,9 @@ export class ScheduleFormDialog {
     };
     const d = flow ? await flow.deliver(sreq, go, send) : ({ kind: 'answered', result: await send(go) } as const);
     if (gen !== this.formGen || !this.dialog.open) return;
-    if (d.kind === 'kept') return end(d.message, d.why === 'failed');
+    if (d.kind === 'kept') return this.ended(d.message, d.why === 'failed');
     const r = d.result;
-    if (!r.ok) return end(`${scheduleFailureText(cmd, r.code, r.message, spec.title)}${this.filedPath ? ' The message is filed; saving again uses it.' : ''}`, true);
+    if (!r.ok) return this.ended(`${scheduleFailureText(cmd, r.code, r.message, spec.title)}${this.filedPath ? ' The message is filed; saving again uses it.' : ''}`, true);
     const s = r.data as Schedule;
     this.saving = false;
     this.lockPlace();
@@ -840,6 +981,79 @@ export class ScheduleFormDialog {
     this.close();
     this.host.toast(this.mode === 'edit' ? `Saved “${s.title}”.` : `Scheduled “${s.title}” for ${whenText(s.due_at, this.zone)}.`, 'info');
     this.host.saved?.(s, this.mode === 'create');
+  }
+
+  private savingText(): string {
+    return this.handoffMode === 'transcript' && !this.filedPath ? 'Filing the message…' : 'Saving…';
+  }
+
+  /** A save on its way: the place locked, the composer busy, its status. */
+  private busy(on: boolean): void {
+    this.saving = on;
+    this.lockPlace();
+    this.composer.setBusy(on);
+    if (on) this.setStatus(this.savingText());
+    this.renderActions();
+  }
+
+  /** A save that stopped: the form back, with why. */
+  private ended(msg: string, error: boolean): void {
+    this.busy(false);
+    this.setStatus(msg, error);
+    this.renderHandoff();
+    this.renderActions();
+  }
+
+  /**
+   * #127: whether Save asks the classifier if the prompt starts other agents (`nudgeWanted`, as the Hire worker form): a
+   * bridge with the box and the check, the classifier ready, the box off, no `h3d_floor` in it, not answered "Schedule
+   * without" for exactly this text, and (an edit) not the prompt it was saved with: its saved choice stands.
+   */
+  private askWanted(prompt: string): boolean {
+    if (!this.instructionsShown() || (this.mode === 'edit' && prompt === this.savedPrompt)) return false;
+    const supported = !this.host.unsupported('hire_preset.check');
+    const ready = supported && this.host.store.ai?.state?.classifier.state === 'ready';
+    return nudgeWanted({ prompt, instructions: this.f.instructions }, { supported, ready, dismissed: this.declined.get(this.draftKey()) ?? null });
+  }
+
+  /** Which form a "Schedule without" is remembered for: an edit's schedule, a new one's floor. */
+  private draftKey(): string {
+    return this.mode === 'edit' ? `edit:${this.editId}` : `new:${this.f.floor}`;
+  }
+
+  /** The form the question was asked about: any change to it takes the question back (`go` would save something else). The time as typed: "in 2h" moving on is no change. */
+  private askKey(): string {
+    return JSON.stringify([{ ...this.f, due: null, dueError: '' }, this.whenIn.value, this.handoffMode, this.picked?.path ?? null]);
+  }
+
+  /** #127: the question, in the dialog by the buttons; focus goes to it only now, after the answer arrived. */
+  private ask(gen: number, go: (withLines: boolean) => void): void {
+    this.asking = { gen, key: this.askKey(), go };
+    this.askEl.replaceChildren(
+      askCallout({ hook: 'sf-ask', text: SCHEDULE_ASK_TEXT, withText: 'Schedule with instructions', withoutText: 'Schedule without', withoutTitle: 'Save as typed; this text is not asked about again', answer: (w) => this.answer(w) }),
+    );
+    this.renderActions();
+    this.focusAsk();
+  }
+
+  private focusAsk(): void {
+    this.askEl.querySelector<HTMLElement>('[data-key="ask-with"]')?.focus();
+  }
+
+  private answer(withLines: boolean): void {
+    this.renderAsk();
+    const a = this.asking;
+    if (!a) return;
+    this.asking = null;
+    this.renderAsk();
+    a.go(withLines);
+  }
+
+  /** The question goes when its form changed (typing, a pick, the box, the time, the handoff), or its dialog did. */
+  private renderAsk(): void {
+    const a = this.asking;
+    if (a && (a.gen !== this.formGen || !this.dialog.open || a.key !== this.askKey())) this.asking = null;
+    if (!this.asking) this.askEl.replaceChildren();
   }
 
   private setStatus(msg: string, error = false): void {
@@ -878,6 +1092,8 @@ export class ScheduleFormDialog {
       status: this.statusText,
       error: this.statusError,
       saving: this.saving,
+      instructions: this.instructionsShown() ? { on: this.f.instructions, lines: this.lines() } : null,
+      asking: this.asking !== null,
     };
   }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Schedule } from '../src/net/protocol.ts';
 import { SimWorld, type SimOptions } from './fixture-sim.ts';
+import { herdrInstructions } from './fixture-start.ts';
 
 // #64 schedules: the simulator's scheduled agents follow #62's rules: the spec's checks, the state rules and their
 // errors, the events, the fire (a hire through the simulator's own worker.hire), `sim.schedule_fire`'s outcomes and the
@@ -182,6 +183,33 @@ describe('fixture schedules', () => {
     r.ack('sim.schedule_fail', { code: 'busy' });
     expect(r.err('schedule.create', SPEC)).toMatchObject({ code: 'busy', message: expect.stringMatching(/^busy: cwd is in the worktree being removed/) });
     expect(r.ack('schedule.create', SPEC).data.state).toBe('scheduled');
+  });
+
+  it('#127: advertises and stores herdr_instructions, fires with the floor’s lines last; an older bridge refuses the field', () => {
+    const r = rig();
+    expect((r.sim.snapshot().world as { schedule_herdr_instructions?: boolean }).schedule_herdr_instructions).toBe(true);
+    const c = r.ack('schedule.create', { ...SPEC, herdr_instructions: true, handoff_path: '/h/a.md' });
+    expect(c.data.herdr_instructions).toBe(true);
+    expect((c.events[0]?.schedule as Schedule).herdr_instructions).toBe(true);
+    expect(r.view()?.find((s) => s.id === c.data.id)?.herdr_instructions).toBe(true);
+    // Update replaces it with the rest of the spec; off leaves it out of the view.
+    expect(r.ack('schedule.update', { id: c.data.id, ...SPEC }).data.herdr_instructions).toBeUndefined();
+    expect(r.ack('schedule.update', { id: c.data.id, ...SPEC, herdr_instructions: true, handoff_path: '/h/a.md' }).data.herdr_instructions).toBe(true);
+    expect(r.err('schedule.create', { ...SPEC, herdr_instructions: 'yes' })?.code).toBe('bad_request');
+    const room = 32 * 1024 - 2 - new TextEncoder().encode(herdrInstructions('f1')).length;
+    expect(r.err('schedule.create', { ...SPEC, prompt: 'x'.repeat(room + 1), herdr_instructions: true })?.message).toMatch(/herdr hiring instructions/);
+    r.ack('schedule.create', { ...SPEC, prompt: 'x'.repeat(room + 1) });
+    r.ack('schedule.run_now', { id: c.data.id });
+    r.advance(10);
+    const first = r.ack('sim.first_prompts', {}).data as unknown as Array<{ floor: string; prompt: string }>;
+    expect(first.at(-1)).toMatchObject({ floor: 'f1', prompt: `Delete the backups.\n\nRead /h/a.md and continue the work. Invoke the skills it suggests.\n\n${herdrInstructions('f1')}` });
+
+    for (const fail of ['no_schedule_instructions', 'no_herdr_instructions']) {
+      const old = rig({ fail });
+      expect((old.sim.snapshot().world as { schedule_herdr_instructions?: boolean }).schedule_herdr_instructions).toBeUndefined();
+      expect(old.err('schedule.create', { ...SPEC, herdr_instructions: false })?.message).toMatch(/unknown field/);
+      expect(old.ack('schedule.create', SPEC).data.herdr_instructions).toBeUndefined();
+    }
   });
 
   it('simschedules seeds every state across two floors', () => {

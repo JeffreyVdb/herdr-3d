@@ -1,5 +1,5 @@
 import type { CommandResult } from '../net/client';
-import type { CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePresetCheckAck, HirePrepare } from '../net/protocol';
+import type { CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare } from '../net/protocol';
 import {
   baseText,
   capacityView,
@@ -27,6 +27,7 @@ import type { WorldStore } from '../world/store';
 import { h, icon, ICON } from './dom';
 import { failureText } from './messages';
 import { hiredToast } from './hiredToast';
+import { askCallout, delegates, instructionsPanel, INSTRUCTIONS_HINT_OFF, INSTRUCTIONS_HINT_ON } from './hireInstructions';
 import { HireCoordinator, notPromptedText, notSentText, type HireCoordinatorHost, type HireOutcome } from './hireCoordinator';
 import type { HireModelPrefs } from './hireModelPrefs';
 import type { HirePrefs } from './hirePrefs';
@@ -1157,39 +1158,23 @@ export class HireDialog {
    * "What's added" shows the exact lines with this floor's id, and the byte count includes them.
    */
   private instructionsControl(lines: string): HTMLElement {
-    const box = h('input', { type: 'checkbox', id: 'hire-instructions', 'data-key': 'instructions', 'aria-describedby': 'hire-instructions-hint' });
-    box.checked = this.addLines;
-    box.addEventListener('change', () => {
-      this.addLines = box.checked;
-      this.render();
-    });
     const saved = this.exact?.instructions === true;
-    const hint =
-      this.exact && this.addLines !== saved
-        ? `${this.addLines ? 'On' : 'Off'} for this hire only; the preset has it ${saved ? 'on' : 'off'}.`
-        : this.addLines
-          ? 'Each agent this worker starts gets its own herdr workspace or tab, tagged with this floor.'
-          : 'Tick it if this task starts other agents: they get their own herdr workspace or tab on this floor.';
-    const panel = h(
-      'div',
-      { class: 'dd-field dd-instructions', 'data-hook': 'instructions', 'data-on': this.addLines ? 'true' : 'false' },
-      h('label', { class: 'dd-check', for: 'hire-instructions' }, box, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, 'Add herdr hiring instructions')),
-      h('p', { class: 'field-hint dd-base', id: 'hire-instructions-hint' }, hint),
-    );
-    if (this.addLines) {
-      this.bytesEl = h('p', { class: 'field-hint dd-instructions-bytes', 'data-hook': 'instructions-bytes' }, this.bytesText(lines));
-      const details = h(
-        'details',
-        { class: 'dd-instructions-lines', 'data-hook': 'instructions-lines', open: this.linesOpen },
-          h('summary', { 'data-key': 'instructions-lines' }, 'What’s added'),
-          h('p', { class: 'field-hint dd-instructions-intro' }, 'After the first task and a blank line, the worker gets:'),
-        h('pre', {}, lines),
-        this.bytesEl,
-      );
-      details.addEventListener('toggle', () => (this.linesOpen = details.open));
-      panel.append(details);
-    }
-    return panel;
+    const hint = this.exact && this.addLines !== saved ? `${this.addLines ? 'On' : 'Off'} for this hire only; the preset has it ${saved ? 'on' : 'off'}.` : this.addLines ? INSTRUCTIONS_HINT_ON : INSTRUCTIONS_HINT_OFF;
+    this.bytesEl = this.addLines ? h('p', { class: 'field-hint dd-instructions-bytes', 'data-hook': 'instructions-bytes' }, this.bytesText(lines)) : null;
+    return instructionsPanel({
+      id: 'hire-instructions',
+      on: this.addLines,
+      hint,
+      intro: 'After the first task and a blank line, the worker gets:',
+      lines,
+      bytes: this.bytesEl,
+      open: this.linesOpen,
+      onChange: (on) => {
+        this.addLines = on;
+        this.render();
+      },
+      onToggle: (open) => (this.linesOpen = open),
+    });
   }
 
   /** #248: one chip per set level; one that cannot be used now is shown off, with why as its tooltip. */
@@ -1475,7 +1460,7 @@ export class HireDialog {
       this.reviewing = gen;
       this.classifying = true;
       const asked = reviewed ? classifierView(reviewed.text, reviewed.secrets.go) : { prompt: args.prompt };
-      const yes = await this.delegates(asked.prompt, asked.secrets);
+      const yes = await delegates((t, a) => this.host.send(t, a), asked.prompt, asked.secrets);
       this.classifying = false;
       if (this.reviewing === gen) this.reviewing = -1;
       if (!still()) return;
@@ -1526,12 +1511,6 @@ export class HireDialog {
     return nudgeWanted({ prompt: this.f.prompt, instructions: this.addLines }, { supported, ready, dismissed: this.declined.get(this.draftKey()) ?? null });
   }
 
-  /** #117: the classifier's say on the first task (`classifierView` of the text the review saw: its `secrets`, or the text redacted where the review protects): false for anything but a "yes" (a refusal, a timeout, an older bridge's `unknown_command`). Never logged. */
-  private async delegates(prompt: string, secrets?: Go['secrets']): Promise<boolean> {
-    const r = await this.host.send('hire_preset.check', { prompt, ...(secrets ? { secrets } : {}) });
-    return r.ok && (r.data as HirePresetCheckAck | undefined)?.delegates === true;
-  }
-
   /** The form the question was asked about: any change to it takes the question back (`go` would hire something else). */
   private askKey(): string {
     return JSON.stringify([this.floor, this.desk, this.f, this.addLines]);
@@ -1540,15 +1519,8 @@ export class HireDialog {
   /** #117: the question, in the dialog by the buttons: "Hire with instructions" / "Hire without"; focus goes to the first only now, after the answer arrived. */
   private ask(gen: number, go: (withLines: boolean) => void): void {
     this.asking = { gen, key: this.askKey(), go };
-    const without = h('button', { type: 'button', class: 'btn btn--sm', 'data-key': 'ask-without', title: 'Hire as typed; this text is not asked about again', onclick: () => this.answer(false) }, 'Hire without');
-    const withLines = h('button', { type: 'button', class: 'btn btn--sm btn--primary', 'data-key': 'ask-with', onclick: () => this.answer(true) }, 'Hire with instructions');
-    // The key held down since Hire (Enter repeats) must not land here as an answer: only a fresh press does.
-    for (const b of [without, withLines])
-      b.addEventListener('keydown', (e) => {
-        if (e.repeat) e.preventDefault();
-      });
     this.askEl.replaceChildren(
-      h('div', { class: 'dd-callout pp-confirm', role: 'alert', 'data-hook': 'hire-ask' }, h('p', {}, HIRE_ASK_TEXT), h('div', { class: 'pp-confirm-actions' }, without, withLines)),
+      askCallout({ hook: 'hire-ask', text: HIRE_ASK_TEXT, withText: 'Hire with instructions', withoutText: 'Hire without', withoutTitle: 'Hire as typed; this text is not asked about again', answer: (w) => this.answer(w) }),
     );
     this.renderActions();
     this.focusAsk();
