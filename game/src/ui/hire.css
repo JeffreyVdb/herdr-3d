@@ -339,6 +339,9 @@
   background: var(--ok-bg);
 }
 .dd-check {
+  /* #127: the containing block of its hidden checkbox, as .dd-chip is of its radio (#40): focusing the box scrolls the
+     form's body to it, never the dialog around it (which clips, and went blank below a long prompt). */
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
