@@ -43,7 +43,7 @@ const (
 	// MaxDisk is the default bound on the bytes the disk cache keeps.
 	MaxDisk = 512 << 20
 	// MaxThumbDisk is the default bound on the thumbnails the disk cache
-	// keeps, apart from MaxDisk: some 2,000 at the #125 sample's 30 kB.
+	// keeps, apart from MaxDisk: some 2,500 at the #125 sample's 25 kB.
 	MaxThumbDisk = 64 << 20
 	// MaxImage is the largest image the bridge takes (an inline image, a
 	// file): 25 MiB.
@@ -71,7 +71,7 @@ const (
 	// bytes in the #125 sample) is JPEG.
 	pngKeepPct = 200
 	// pngLevel is the PNG thumbnails' compression: the default level is
-	// some 6% smaller than BestSpeed for some 5 ms more, paid once now
+	// some 6% smaller than BestSpeed for some 4 ms more, paid once now
 	// that the thumbnail is kept on disk.
 	pngLevel = png.DefaultCompression
 )
@@ -720,12 +720,23 @@ func (c *Cache) thumbDiskPut(hash string, t Thumb) {
 	c.trimThumbDisk()
 }
 
-// mkPrivate makes dir 0700 (an existing one too).
+// mkPrivate makes dir 0700 (an existing one too; never through a link).
 func mkPrivate(dir string) error {
 	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return errors.New("not a directory: " + dir)
+	}
 	return os.Chmod(dir, 0o700)
+}
+
+// realDir removes p unless it is a directory (a symlink or a file there
+// is removed itself, never followed).
+func realDir(p string) {
+	if fi, err := os.Lstat(p); err == nil && !fi.IsDir() {
+		_ = os.Remove(p)
+	}
 }
 
 // initThumbDisk, once: removes the other variants under t/ and leftovers
@@ -738,6 +749,8 @@ func (c *Cache) initThumbDisk() {
 	}
 	c.thumbDiskInit = true
 	top := filepath.Join(c.dir, "t")
+	realDir(top)
+	realDir(c.thumbDir())
 	ents, _ := os.ReadDir(top)
 	for _, e := range ents {
 		if e.Name() != thumbVariant || !e.IsDir() {

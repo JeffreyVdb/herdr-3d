@@ -674,3 +674,39 @@ func TestThumbFailuresAndMemoryOnly(t *testing.T) {
 		t.Errorf("failures left %v", ents)
 	}
 }
+
+// t/ (or the variant's directory) that is a symlink or a file is removed,
+// never followed: what it points at is left alone.
+func TestThumbDirIsNeverFollowed(t *testing.T) {
+	dir, elsewhere := t.TempDir(), t.TempDir()
+	keep := filepath.Join(elsewhere, "keep")
+	_ = os.WriteFile(keep, []byte("not the cache's"), 0o644)
+	if err := os.Symlink(elsewhere, filepath.Join(dir, "t")); err != nil {
+		t.Fatal(err)
+	}
+	b := pngOf(t, 600, 400, 9)
+	c, _ := New(Config{Dir: dir})
+	if _, err := c.Thumb(Hash(b), func() ([]byte, error) { return b, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(filepath.Join(dir, "t")); err != nil || !fi.IsDir() {
+		t.Errorf("t/ is %v, %v", fi, err)
+	}
+	if fi, err := os.Stat(keep); err != nil || fi.Mode().Perm() != 0o644 {
+		t.Errorf("the link's target was touched: %v %v", fi, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "t", thumbVariant, Hash(b))); err != nil {
+		t.Error(err)
+	}
+	// The variant's directory as a file.
+	dir2 := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir2, "t"), 0o700)
+	_ = os.WriteFile(filepath.Join(dir2, "t", thumbVariant), []byte("x"), 0o600)
+	c2, _ := New(Config{Dir: dir2})
+	if _, err := c2.Thumb(Hash(b), func() ([]byte, error) { return b, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir2, "t", thumbVariant, Hash(b))); err != nil {
+		t.Error(err)
+	}
+}
