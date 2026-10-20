@@ -2302,6 +2302,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.HirePresets = h.hirePresetViews()                 // #93
 	w.HerdrInstructions = true                          // #95
 	w.ScheduleHerdrInstructions = true                  // #127
+	w.PreparePreview = true                             // #134
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

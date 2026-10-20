@@ -308,6 +308,10 @@ leaves it out and refuses the field as unknown: a client never sends it there.
 bridge from before #127 leaves it out and refuses the field as unknown, even when it says `herdr_instructions` (that one
 is `worker.hire`'s and the presets'): a client never sends a schedule's flag there.
 
+`prepare_preview` (#134) is `true` when `hire.prepare` and `run.prepare` take `preview: true`: the git state from the
+local refs, without `git fetch origin` (see [Hire and send home](#hire-and-send-home)). A bridge from before #134 leaves
+it out and refuses the field as unknown: a client never sends it there, and reconnecting to such a bridge resets it.
+
 `screen` (M13) is `{"sharing": false}`, or `{"sharing": true, "surface": "browser|window|monitor"}` while a connected
 game shares its screen (see [Screen share](#screen-share)); a bridge from before M13 leaves it out.
 
@@ -962,7 +966,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `floor.rename` | `{"floor": string, "name": string}`: a virtual floor's display name | — | `floor.upsert` |
 | `floor.delete` | `{"floor": string, "move_workers"?: bool}`: a virtual floor; refused while it has workers unless `move_workers` is `true`, which moves them to its base session's real floor first | — | `floor.removed` (with `floor_id`), `building.upsert` when it was in a building, #93 `hire_preset.removed` for each of its own hire presets; with moved workers, their `worker.upsert` on the real floor (new `floor`, `desk_index`, maybe `name`) after the `floor.removed` |
 | `floor.hide` | `{"floor": string, "hidden": bool}`: #58 decision 2, a floor's stored hidden setting (any floor; see [Virtual floors](#virtual-floors)) | — | `floor.upsert` with `hidden`, to every client; none when it was already so |
-| `hire.prepare` | `{"floor"|"session": string, "cwd"?: string}` | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity", "herdr_instructions"}` (see [Hire and send home](#hire-and-send-home)) | — |
+| `hire.prepare` | `{"floor"|"session": string, "cwd"?: string, "preview"?: bool}` (#134 `preview` only to a bridge whose snapshot says `prepare_preview`) | what the hire dialog shows: `{"cwd", "choice", "choice_source", "label", "git", "capacity", "herdr_instructions"}` (see [Hire and send home](#hire-and-send-home)) | — |
 | `worker.hire` | `{"floor"|"session", "desk_index": int, "harness", "model", "effort", "label"?, "cwd"?, "worktree"?: bool, "prompt"?, "herdr_instructions"?: bool, "secrets"?: SecretsReview, "secrets_pending"?: string}` (#108: see [Prompt secrets](#prompt-secrets)) | `{"id", "workspace_id", "branch"?, "base_sha"?, "trust", "prompted"?, "prompt_error"?, "protected"?: int}` (`fetch_error` is reserved: a failed fetch is `fetch_failed`) | `floor.upsert` (when `desks` changes), then `worker.upsert` of the new worker at `desk_index` with `hired_at`, `harness`, `model`, `effort`, then its later upserts / statuses (marker, agent). #58 decision 3: on a virtual floor whose base session is asleep, `floor.wake`'s events for every floor of the session come first (see [Virtual floors](#virtual-floors)) |
 | `worker.fire.prepare` | `{"id": string}` | `{"name", "label", "branch"?, "worktree", "dirty", "unpushed", "can_delete", "can_delete_branch", "reason"?, "can_fire", "fire_blocked"?}` | — |
 | `worker.fire` | `{"id": string, "worktree"?: "keep" \| "delete" \| "delete_branch"}` (default `keep`) | `{"worktree": "kept" \| "deleted" \| "deleted_branch", "released": bool, "note"?}` | `worker.removed` with `reason: "sent_home"`, then `floor.upsert` when `desks` changes |
@@ -989,7 +993,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `preset.create` | `{"name": string, "roles": {…}}` | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
 | `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
-| `run.prepare` | `{"floor"|"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?}` | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
+| `run.prepare` | `{"floor"|"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?, "preview"?: bool}` (#134 `preview` as `hire.prepare`'s) | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
 | `run.start` | `{"floor"|"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?, "secrets"?: {"text"?, "extra"?, "prompt"?: SecretsReview}}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
 | `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers when queued (see [Plan limits](#plan-limits)) |
 | `ai.get` | `{}` | the AI state (see [AI integration](#ai-integration)) | — |
@@ -1632,6 +1636,17 @@ Hire and send home act only on **running** floors the bridge watches (`--session
 **`hire.prepare`** fills the hire dialog. It changes nothing (it does run `git fetch origin`, which only updates
 remote-tracking refs) and is audited like any command.
 
+**#134 `preview: true`** (only to a bridge whose snapshot says `prepare_preview`; `run.prepare` takes it too) reads
+the git state from the local refs and does not fetch: the answer comes without waiting for origin (a fetch is bounded
+at 20 s). `git` is then as below with `preview: true`, `fetched: false` and no `fetch_error`: nothing was checked, so
+nothing failed. `base_sha` / `base_time` are the last fetched `origin/<default_branch>`; without local origin refs,
+`default_branch` and `base_sha` are `""`. A worktree stays on offer either way: `worker.hire` (and `run.start`, and a
+schedule's fire) always fetches origin before it chooses the base and is refused with `fetch_failed` when that fails.
+The game previews on opening a dialog (Hire, Hire Review, Start a run, a schedule's form), on a folder change and on
+Start a run's field changes; **Fetch again** and the recheck after a `capacity` or `fetch_failed` refusal leave
+`preview` out and fetch, and a dialog keeps such a fetch's answer over a later preview of the same repository.
+Without `preview` (an older client), every prepare fetches as below.
+
 ```json
 {"t":"hire.prepare","req_id":"30","args":{"session":"herdr-3d"}}
 {"t":"ack","req_id":"30","data":{"cwd":"/home/dev/devel/herdr-3d",
@@ -1648,7 +1663,7 @@ remote-tracking refs) and is audited like any command.
 | `cwd` | `args.cwd` when given (an absolute, existing directory, else `bad_request`), else the floor's effective default cwd (`settings.default_cwd ?? suggested.default_cwd`), else the bridge user's home directory |
 | `choice`, `choice_source` | the harness/model/effort to pre-select: the floor's `default_hire` (`"floor_default"`), else the last choice hired on this floor (`"last"`, stored per floor in SQLite, table `floor_hire_last`), else `null` (`"none"`). A remembered choice no longer in `hire_options` is skipped. |
 | `label` | the next generated worker name (a name no worker of the floor owns or holds): the default label, and the new worker's name when the hire keeps it |
-| `git` | `null` when `cwd` is not in a git work tree. Else `repo_root` (the work tree's top level), `default_branch` (from `origin/HEAD`, else `main` / `master` when `origin/<that>` exists; `""` when unknown), `base_sha` and `base_time` (unix ms, commit time) of `origin/<default_branch>` **after** `git fetch origin`, `fetched` and, when the fetch failed (no `origin`, offline, …, bounded at 20 s), `fetch_error`. A failed fetch is not an error of `hire.prepare` (the base shown is then the last fetched one), but the dialog should warn: a worktree hire now would be refused with `fetch_failed`. A plain hire is unaffected. |
+| `git` | `null` when `cwd` is not in a git work tree. Else `repo_root` (the work tree's top level), `default_branch` (from `origin/HEAD`, else `main` / `master` when `origin/<that>` exists; `""` when unknown), `base_sha` and `base_time` (unix ms, commit time) of `origin/<default_branch>` **after** `git fetch origin`, `fetched` and, when the fetch failed (no `origin`, offline, …, bounded at 20 s), `fetch_error`. A failed fetch is not an error of `hire.prepare` (the base shown is then the last fetched one), but the dialog should warn: a worktree hire now would be refused with `fetch_failed`. A plain hire is unaffected. #134: a `preview` reads the local refs instead: `preview: true`, `fetched: false`, no `fetch_error` (see above). |
 | `herdr_instructions` | #95: the herdr hiring instructions for this floor, exactly as `worker.hire` with `herdr_instructions` adds them after a blank line: `run.start`'s placement line, floor line (`h3d_floor=<this floor id>`; a client from before floor ids gets the session's) and, since H3D-2, the agent line asking for `h3d_harness` / `h3d_model` / `h3d_effort`. The hire form shows them before Hire. A bridge from before #95 leaves it out. |
 | `capacity` | workers on this floor (`floor.count`, hires in flight included; a repository's idle main checkout is not a worker, see "Hidden main checkouts") and on every running floor the bridge watches (`host.count`), with the configured caps (`--warn-workers-per-floor` / `--max-workers-per-floor`, `--warn-workers` / `--max-workers`). A hire that would reach above `hard` is refused (`capacity`); above `soft` the dialog should warn. `load` is the host's 1-minute load average, CPU count and memory in use (`/proc`); absent when unreadable. |
 
@@ -1924,7 +1939,7 @@ high, researchers codex sol low; the orchestrator claude opus medium), once: del
 `preset.delete` answer as in [Commands](#commands).
 
 **`run.prepare`** fills the start-run dialog and its prompt preview. It changes nothing (it runs `git fetch origin` as
-`hire.prepare` does):
+`hire.prepare` does, and as there #134 `preview: true` reads the local refs instead):
 
 ```json
 {"t":"run.prepare","req_id":"40","args":{"session":"lab","issue":3}}
@@ -1943,6 +1958,7 @@ high, researchers codex sol low; the orchestrator claude opus medium), once: del
 | `preset` | a preset id (`not_found`); default: the floor's `last_preset`, else the preset named "Build team" (ignoring case), else the first by name; `""` when there is no preset (then no `prompt` either) |
 | `orch` | `{"harness", "model", "effort"}` of `hire_options`; default: the preset's `orch` |
 | `extra` | extra instructions for the prompt, at most 8192 bytes |
+| `preview` | #134: a bool (default `false`): `git` from the local refs, without a fetch, as `hire.prepare`'s |
 
 | field | |
 |---|---|

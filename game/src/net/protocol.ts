@@ -557,6 +557,8 @@ export interface World {
    * is `worker.hire`'s).
    */
   schedule_herdr_instructions?: boolean;
+  /** #134: `hire.prepare` and `run.prepare` take `preview: true` (local git only, no fetch). Absent from a bridge before #134, which refuses the field. */
+  prepare_preview?: boolean;
   /**
    * #22 native child agents: every worker's, the workers in snapshot order and each one's in the order first seen (a parent
    * may come after its child). Absent from a bridge before #22: a client reads that as `[]`.
@@ -749,9 +751,11 @@ export interface HireGit {
   base_sha: string;
   /** Unix ms, the base commit's time. */
   base_time: number;
-  /** False when `git fetch origin` failed: a worktree hire is then refused (`fetch_failed`), a plain one is not. */
+  /** True after a successful fetch. False after a failed one (`worktree` is then refused with `fetch_failed`), and in a #134 preview (`preview`), which did not fetch. */
   fetched: boolean;
   fetch_error?: string;
+  /** #134: local refs only, not a fetch's answer (no `fetch_error`); a worktree hire still fetches before it branches. */
+  preview?: boolean;
 }
 
 export interface Cap {
@@ -903,8 +907,8 @@ export interface CommandArgs {
   /** #58 decision 2: a floor's stored hidden setting (any floor). */
   'floor.hide': { floor: string; hidden: boolean };
   'floor.settings.set': { floor: string } & SettingsPatch;
-  /** M4 */
-  'hire.prepare': { floor: string; cwd?: string };
+  /** M4; #134 `preview`: only to a bridge whose snapshot has `prepare_preview`. */
+  'hire.prepare': { floor: string; cwd?: string; preview?: boolean };
   /** #213: a dictated sentence to a hire proposal (docs/protocol.md "Hire interpretation"); a follow-up carries the review's proposal as `pending`. Acks `HireInterpretAck`. */
   'hire.interpret': {
     text: string;
@@ -989,7 +993,8 @@ export interface CommandArgs {
   /** `roles` replaces all five. */
   'preset.update': { id: string; name?: string; roles?: PresetRoles };
   'preset.delete': { id: string };
-  'run.prepare': RunTicketArgs & { floor: string; preset?: string; orch?: Hire; extra?: string };
+  /** #134 `preview`: as `hire.prepare`'s. */
+  'run.prepare': RunTicketArgs & { floor: string; preset?: string; orch?: Hire; extra?: string; preview?: boolean };
   'run.start': RunTicketArgs & {
     floor: string;
     desk_index: number;

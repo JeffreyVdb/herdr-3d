@@ -397,7 +397,7 @@ func (h *Hub) startRunPrepare(ctx context.Context, c *Client, cmd proto.Command)
 			}
 			compose(t)
 		}
-		res.Git = h.gitInfo(ctx, cwd)
+		res.Git = h.gitInfo(ctx, cwd, !a.Preview)
 		if h.opts.Load != nil {
 			res.Capacity.Load = h.opts.Load()
 		}

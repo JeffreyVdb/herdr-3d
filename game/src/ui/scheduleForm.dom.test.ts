@@ -30,7 +30,7 @@ function sched(o: Partial<Schedule> = {}): Schedule {
   return { id: 'sch_1', floor: 'f1', title: 'After the soak', prompt: 'Delete the backups.', due_at: T + 5 * H, on_miss: 'run_late', max_lateness_ms: 2 * H, harness: 'codex', model: 'gpt-6-sol', effort: 'medium', cwd: '/home/dev/other', worktree: true, wake_floor: false, handoff_path: '/h/old.md', source: { kind: 'manual' }, state: 'scheduled', created_at: T - H, updated_at: T - H, ...o };
 }
 
-function setup(o: { replies?: Partial<Record<string, Reply | ((args: Record<string, unknown>) => Reply)>>; floorSettings?: Record<string, unknown> } = {}) {
+function setup(o: { replies?: Partial<Record<string, Reply | ((args: Record<string, unknown>) => Reply)>>; floorSettings?: Record<string, unknown>; preparePreview?: boolean } = {}) {
   document.body.replaceChildren();
   const schedules = new ScheduleBook();
   schedules.reset([]);
@@ -51,6 +51,7 @@ function setup(o: { replies?: Partial<Record<string, Reply | ((args: Record<stri
       floorName: (id: string) => floors.get(id)?.name ?? id,
       floorView: () => ({ settings: o.floorSettings ?? {}, suggested: {} }),
       city: () => [{ floors: [{ id: 'f1' }] }],
+      preparePreview: o.preparePreview ?? false,
     },
     unsupported: () => false,
     toast: (m: string) => toasts.push(m),
@@ -186,6 +187,25 @@ describe('ScheduleFormDialog (#64 schedules)', () => {
     p.dispatchEvent(new Event('change'));
     expect(e.dlg.summary().when).toBe('2026-10-20 09:30');
     expect(e.dlg.summary().due).not.toBeNull();
+  });
+
+  it('#134: prefills from a preview where the bridge takes one: no fetch, the worktree stays on, the base says what it is', async () => {
+    const git = { ...PREP.git!, fetched: false, preview: true };
+    const e = setup({ preparePreview: true, replies: { 'hire.prepare': (args) => ({ ok: true, data: { ...PREP, cwd: (args.cwd as string) ?? PREP.cwd, git: args.cwd ? { ...git, default_branch: '', base_sha: '', base_time: 0 } : git } }) } });
+    e.dlg.open({ floor: 'f1' });
+    await e.flush();
+    expect(e.of('hire.prepare')[0]?.args).toEqual({ floor: 'f1', preview: true });
+    expect(e.dlg.summary().worktree).toBe(true);
+    expect(e.q('#sf-worktree-base').textContent).toBe('A new h3d/… branch from origin/main @ abc1234, 1 h old (last fetched; refreshed before branching)');
+    // Another folder, whose checkout has no origin refs yet: not known, not a failure; still a worktree.
+    const s0 = sched();
+    e.schedules.upsert(s0);
+    e.dlg.close();
+    e.dlg.open({ floor: 'f1', edit: s0 });
+    await e.flush();
+    expect(e.of('hire.prepare')[1]?.args).toEqual({ floor: 'f1', cwd: '/home/dev/other', preview: true });
+    expect(e.dlg.summary().worktree).toBe(true);
+    expect(e.q('#sf-worktree-base').textContent).toBe('A new h3d/… branch from origin/HEAD (not fetched into this checkout yet; checked before branching)');
   });
 
   it('a floor that can’t prepare (asleep) falls back to its settings and says so', async () => {
