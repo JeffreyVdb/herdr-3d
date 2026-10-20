@@ -1,0 +1,117 @@
+{
+  "ok": true,
+  "stage": "complete",
+  "cases": [
+    {
+      "case": "seed_personal",
+      "exit": 0,
+      "milliseconds": 10.697,
+      "stderr_empty": true
+    },
+    {
+      "case": "seed_work",
+      "exit": 0,
+      "milliseconds": 13.581,
+      "stderr_empty": true
+    },
+    {
+      "case": "missing_key",
+      "exit": 1,
+      "milliseconds": 9.983,
+      "stderr_empty": true
+    },
+    {
+      "case": "invalid_skip_api",
+      "exit": 2,
+      "milliseconds": 6.717,
+      "stderr_empty": true
+    },
+    {
+      "case": "switch_personal",
+      "exit": 0,
+      "milliseconds": 10.944,
+      "stderr_empty": true
+    },
+    {
+      "case": "personal_started",
+      "identity_matches": true,
+      "plan": "prolite",
+      "email_present": true
+    },
+    {
+      "case": "switch_work",
+      "exit": 0,
+      "milliseconds": 7.089,
+      "stderr_empty": true
+    },
+    {
+      "case": "personal_cached_after_switch",
+      "identity_matches": true,
+      "plan": "prolite",
+      "email_present": true
+    },
+    {
+      "case": "work_started",
+      "identity_matches": true,
+      "plan": "team",
+      "email_present": true
+    },
+    {
+      "case": "restore_personal",
+      "exit": 0,
+      "milliseconds": 18.485,
+      "stderr_empty": true
+    },
+    {
+      "case": "work_cached_after_restore",
+      "identity_matches": true,
+      "plan": "team",
+      "email_present": true
+    },
+    {
+      "case": "restarted_with_personal_active",
+      "identity_matches": true,
+      "plan": "prolite",
+      "email_present": true
+    },
+    {
+      "case": "resumed_work_thread_on_personal",
+      "identity_matches": true,
+      "plan": "prolite",
+      "email_present": true
+    },
+    {
+      "case": "rotation_switch_back_work",
+      "exit": 0,
+      "milliseconds": 4.182,
+      "stderr_empty": true
+    },
+    {
+      "case": "rotated_work_snapshot_valid",
+      "identity_matches": true,
+      "plan": "team",
+      "email_present": true
+    },
+    {
+      "case": "rotation_restore_personal",
+      "exit": 0,
+      "milliseconds": 3.71,
+      "stderr_empty": true
+    }
+  ],
+  "real_model": false,
+  "native_work_refresh_succeeded": true,
+  "refresh_token_rotated": true,
+  "native_work_refresh_count": 2,
+  "switch_start_confirm_restore_seconds": 0.84,
+  "controlled_401_failed_with_account_mismatch": true,
+  "real_rotated_snapshot_preserved": true,
+  "oauth_refresh_requests": 0,
+  "switcher_network_attempts": 0,
+  "restored_refresh_token_accepted": true,
+  "personal_auth_unchanged": true,
+  "source_auth_files_unchanged_during_temporary_phase": true,
+  "codex_version": "codex-cli 0.163.0",
+  "switcher_version": "codex-auth 0.3.2-alpha.1",
+  "research_date": "2026-10-20"
+}
