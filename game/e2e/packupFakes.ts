@@ -11,6 +11,34 @@ import { packupParts, packupScore } from '../tools/fixture-ai-responses.ts';
 export const JEV_KEY = 'jev-test-key-0123456789';
 export const LLM_KEY = 'sk-test-llm-key-abcdef';
 export const CLEANUP = 'Once that is done: Stop every server, background process, pane and freelancer you started in this session. Don’t touch anything else.';
+const PACKUP_TIME = new Date('2026-09-30T12:00:00Z');
+
+/** Install before navigation: Date is fixed, while timers and rendering keep running normally. */
+export async function setUpPackupClock(page: Page): Promise<void> {
+  await page.clock.setFixedTime(PACKUP_TIME);
+}
+
+/**
+ * Positive UI checks exercise the model result and confirm, independent of browser callback scheduling under load.
+ * Invoke an already checked button with evaluate(click), or press Enter: locator.click() needs animation frames.
+ * The real clock resumes before any explicit slow-provider or late-ack deadline assertion.
+ */
+export async function withPositivePackup(page: Page, submit: () => Promise<void>): Promise<void> {
+  const before = await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'packup.detect').length);
+  await page.clock.pauseAt(PACKUP_TIME);
+  try {
+    await submit();
+    await expect.poll(async () => JSON.stringify(await page.evaluate((n) => window.__h3d.sent().filter((c) => c.t === 'packup.detect')[n]?.result ?? null, before)),
+      { message: 'the positive pack-up check receives its actual matching result', timeout: 20_000 }).toMatch(/"ok":true.*"matched":true/);
+    await expect.poll(() => page.evaluate(() => {
+      const d = window.__h3d.dialog();
+      return d?.kind === 'send-home' ? d.state : null;
+    }), { message: 'the positive pack-up confirmation is ready', timeout: 20_000 }).toBe('ready');
+    await expect(page.locator('dialog.desk-dlg--home')).toBeVisible();
+  } finally {
+    await page.clock.resume();
+  }
+}
 
 export interface Fake {
   url: string;

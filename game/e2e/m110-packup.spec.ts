@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { frames, openGame, seatMode, settingsSection, shot, watchErrors, openMenu } from './game';
-import { CLEANUP, fakeJev, fakeOpenAI, setUpModels, switchOn } from './packupFakes';
+import { CLEANUP, fakeJev, fakeOpenAI, setUpModels, setUpPackupClock, switchOn, withPositivePackup } from './packupFakes';
 
 // #110 pack up on request against the fixture bridge (`sim=1`, tools/fixture-packup.ts), whose AI integration calls
 // fake Jev and OpenAI-compatible servers started here on OS-leased loopback ports: no spec reaches a real provider.
@@ -80,6 +80,7 @@ test('Settings: the switch is off until a test passed, after the follow-up quest
 
 test('the P overlay: checking…, the confirm with the leaving part struck, an edited task, Send and go home is a wrap-up', async ({ page }) => {
   test.setTimeout(120_000);
+  await setUpPackupClock(page);
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
@@ -94,7 +95,7 @@ test('the P overlay: checking…, the confirm with the leaving part struck, an e
     const overlay = page.locator('dialog.desk-dlg--prompt');
     await expect(overlay).toBeVisible();
     await page.keyboard.type('Fix the header, then go home.');
-    await page.keyboard.press('Enter');
+    await withPositivePackup(page, () => page.keyboard.press('Enter'));
     const d = await packupDialog(page);
     expect(d.title).toBe('Send the task, then send Marble home');
     expect(d.choice).toBe('delete_branch');
@@ -141,6 +142,7 @@ async function sitAtTranscript(page: Page, name: string): Promise<string> {
 
 test('the laptop’s prompt box: send as written, cancel, nothing left, a tampered cut, Esc while checking, the timeouts', async ({ page }) => {
   test.setTimeout(180_000);
+  await setUpPackupClock(page);
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
@@ -151,18 +153,19 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     const tx = page.locator('.seat-transcript .tx');
     const input = tx.locator('.tx-input');
     const confirm = page.locator('dialog.desk-dlg--home');
-    const write = async (text: string) => {
+    const write = async (text: string, positive = false) => {
       await expect(input).toHaveAttribute('contenteditable', 'true', { timeout: 20_000 });
       await input.click();
       await page.keyboard.press('Control+A');
       await page.keyboard.press('Delete');
       await page.keyboard.type(text);
-      await page.keyboard.press('Enter');
+      if (positive) await withPositivePackup(page, () => page.keyboard.press('Enter'));
+      else await page.keyboard.press('Enter');
     };
     const prompts = async () => (await sent(page, 'worker.prompt')).map((c) => (c.args as { text: string }).text);
 
     // Send as written (stay): the prompt goes as you wrote it, through worker.prompt.
-    await write('Please make a PR and end your turn');
+    await write('Please make a PR and end your turn', true);
     await packupDialog(page);
     await expect(confirm.locator('[data-key="pk-original"] del')).toHaveText(' and end your turn');
     await confirm.getByRole('button', { name: 'Send as written (stay)' }).click();
@@ -172,7 +175,7 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     expect(await sent(page, 'worker.wrapup')).toHaveLength(0);
 
     // Cancel (Esc): nothing is sent, the draft stays in the box.
-    await write('Please make a PR and stop working');
+    await write('Please make a PR and stop working', true);
     await packupDialog(page);
     await page.keyboard.press('Escape');
     await expect(confirm).toBeHidden();
@@ -187,7 +190,7 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     await expect(input).toHaveText(''); // its ack came: the box takes the next one
 
     // Nothing left of it: the plain send-home dialog, nothing sent.
-    await write('Go home and clean up the worktree.');
+    await write('Go home and clean up the worktree.', true);
     await expect.poll(async () => (await home(page))?.mode ?? null).toBe('home');
     await page.keyboard.press('Escape');
     expect(await prompts()).toHaveLength(2);

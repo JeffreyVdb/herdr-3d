@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { frames, leftInTerminal, openGame, openMenu, seatMode, settingsSection, shot, watchErrors } from './game';
-import { CLEANUP, fakeJev, fakeOpenAI, switchOn } from './packupFakes';
+import { CLEANUP, fakeJev, fakeOpenAI, setUpPackupClock, switchOn, withPositivePackup } from './packupFakes';
 import { boot, SURFACES } from './ui-surfaces';
 
 // #108 round 3: "Review prompt secrets before sending" against the fixture bridge (`sim=1`, tools/fixture-secrets.ts and
@@ -534,6 +534,7 @@ test('round 4: pack up reads the references (“Confirm and continue”); “Sen
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
+    await setUpPackupClock(page);
     await openGame(page, 'demo-m5', '', `${SIM}&simclock=manual&simsecretson=1&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
@@ -553,9 +554,9 @@ test('round 4: pack up reads the references (“Confirm and continue”); “Sen
     await write('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and end your turn');
     await expect(dlg).toBeVisible();
     expect(await review(page)).toMatchObject({ action: 'Confirm and continue', counts: { found: 1 } });
-    await dlg.getByRole('button', { name: 'Confirm and continue' }).click();
-    await expect.poll(async () => JSON.stringify((await sent(page, 'packup.detect'))[0]?.result ?? null),
-      { message: 'the reviewed pack-up prompt receives a positive model result' }).toMatch(/"ok":true.*"matched":true/);
+    const proceed = dlg.getByRole('button', { name: 'Confirm and continue' });
+    await expect(proceed).toBeEnabled();
+    await withPositivePackup(page, () => proceed.evaluate((button) => (button as HTMLButtonElement).click()));
     await expect(confirm).toBeVisible();
     const [detect] = await sent(page, 'packup.detect');
     expect((detect!.args as { secrets?: unknown }).secrets).toBeTruthy();
@@ -589,6 +590,7 @@ test('round 4: pack up’s “Send and go home”: the task (references) and the
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
+    await setUpPackupClock(page);
     await openGame(page, 'demo-m4', '', `${SIM}&simclock=manual&simsecretson=1&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
@@ -603,9 +605,9 @@ test('round 4: pack up’s “Send and go home”: the task (references) and the
     const dlg = page.locator('dialog.desk-dlg--secrets');
     await expect(dlg).toBeVisible();
     expect(await review(page)).toMatchObject({ action: 'Confirm and continue' });
-    await dlg.getByRole('button', { name: 'Confirm and continue' }).click();
-    await expect.poll(async () => JSON.stringify((await sent(page, 'packup.detect'))[0]?.result ?? null),
-      { message: 'the reviewed pack-up prompt receives a positive model result' }).toMatch(/"ok":true.*"matched":true/);
+    const proceed = dlg.getByRole('button', { name: 'Confirm and continue' });
+    await expect(proceed).toBeEnabled();
+    await withPositivePackup(page, () => proceed.evaluate((button) => (button as HTMLButtonElement).click()));
     const confirm = page.locator('dialog.desk-dlg--home');
     await expect(confirm).toBeVisible();
     await expect(confirm.locator('[data-key="pk-original"]')).not.toContainText('hunter22');
@@ -617,7 +619,8 @@ test('round 4: pack up’s “Send and go home”: the task (references) and the
     expect(detect.data?.task).toMatch(/^Fix the header with PASSWORD=\[secret in file [^\]]+\]\.?$/);
     expect(wrap!.args).toMatchObject({ id, prompt: `${detect.data?.task}\n\n${CLEANUP}`, secrets_pending: detect.data?.secrets_pending });
     expect((wrap!.args as { secrets?: unknown }).secrets).toBeUndefined();
-    await expect.poll(async () => (await sent(page, 'worker.wrapup'))[0]?.result?.ok).toBe(true);
+    await expect.poll(async () => (await sent(page, 'worker.wrapup'))[0]?.result,
+      { message: 'the wrap-up is acknowledged after its world updates', timeout: 20_000 }).toMatchObject({ ok: true });
     const refs = refsOf(detect.data?.task);
     await expect.poll(async () => (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => refs.has(f.path)).map((f) => [f.owner, f.text])).toEqual([[id, 'hunter22']]);
     expect(await sent(page, 'worker.prompt')).toEqual([]);
