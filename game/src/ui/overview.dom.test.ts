@@ -613,3 +613,103 @@ describe('the overview page (#118)', () => {
     vi.restoreAllMocks();
   });
 });
+
+describe('opening the page again (#145)', () => {
+  const rowEls = () => [...document.querySelectorAll<HTMLElement>('.ov-board > .ov-row')];
+  const frame = () => new Promise<void>((r) => requestAnimationFrame(() => r()));
+  /** Every `animate` call (jsdom has none): the folds a refresh starts. */
+  function stubAnimate(): { calls: Element[]; restore: () => void } {
+    const proto = HTMLElement.prototype as unknown as { animate?: unknown };
+    const had = proto.animate;
+    const calls: Element[] = [];
+    proto.animate = function (this: Element) {
+      calls.push(this);
+      return { finished: new Promise<void>(() => undefined), cancel: () => undefined } as unknown as Animation;
+    };
+    return { calls, restore: () => void (proto.animate = had) };
+  }
+
+  it('the same floor again keeps its rows: the same elements, nothing built again', async () => {
+    const { ov } = setup();
+    ov.open('top');
+    const before = rowEls();
+    const what = before.map((el) => el.querySelector('.ov-what'));
+    ov.closeNow();
+    ov.open('top');
+    const after = rowEls();
+    expect(after).toHaveLength(before.length);
+    after.forEach((el, i) => expect(el, el.dataset.key).toBe(before[i]));
+    after.forEach((el, i) => expect(el.querySelector('.ov-what')).toBe(what[i]));
+    expect(keys(ov)).toEqual(['o1', '  c1', '  r1', 'emp']);
+    // The cascade plays again over the kept rows, and the first row is focused, as on a first open.
+    expect(document.querySelector('.ov')?.classList.contains('ov--enter')).toBe(true);
+    await frame();
+    expect(ov.info().focused).toBe('o1');
+    expect(document.activeElement?.getAttribute('data-key')).toBe('o1');
+  });
+
+  it('what changed while it was closed shows at once: a new row, a departed one, a status, with no flash or fold', () => {
+    const anim = stubAnimate();
+    try {
+      const { ov, store } = setup();
+      ov.open('top');
+      const kept = document.querySelector('.ov-row[data-key="o1"]');
+      ov.closeNow();
+      store.applyEvent({ t: 'worker.status', seq: 2, id: 'emp', session: 'top', workspace_id: 'ws-emp', status: 'working', prev_status: 'blocked', status_since: NOW, title: 'Coding' }, NOW);
+      store.applyEvent({ t: 'worker.removed', seq: 3, id: 'r1', session: 'top', workspace_id: 'ws-r1' }, NOW);
+      store.applyEvent({ t: 'worker.upsert', seq: 4, worker: worker('n1', { desk_index: 4, status: 'working' }) }, NOW);
+      ov.open('top');
+      expect(keys(ov)).toEqual(['o1', '  c1', 'emp', 'n1']);
+      expect(rowEls().map((e) => e.dataset.key)).toEqual(['o1', 'c1', 'emp', 'n1']);
+      expect(document.querySelector('.ov-row[data-key="o1"]')).toBe(kept);
+      const emp = document.querySelector<HTMLElement>('.ov-row[data-key="emp"]');
+      expect(emp?.dataset.display).toBe('working');
+      expect(document.querySelectorAll('.ov-row--flash, .ov-row--new, .ov-row--leaving, .ov-flip-in')).toHaveLength(0);
+      expect(anim.calls.filter((el) => el.classList.contains('ov-row'))).toHaveLength(0);
+      // A row the filter hides now goes at once too (Active only: c1 idle, never folding away during the open).
+      ov.closeNow();
+      key('f');
+      ov.open('top');
+      key('f');
+      ov.closeNow();
+      ov.open('top');
+      expect(document.querySelectorAll('.ov-row--leaving')).toHaveLength(0);
+      expect(rowEls().map((e) => e.dataset.key)).toEqual(keys(ov).map((k) => k.trim()));
+    } finally {
+      anim.restore();
+    }
+  });
+
+  it('another view builds its own rows: the all-floors page, then the floor again', () => {
+    const { ov } = setup();
+    ov.open('top');
+    const before = rowEls();
+    key('a');
+    expect(ov.info().view).toBe('city');
+    expect(rowEls().some((el) => before.includes(el))).toBe(false);
+    ov.closeNow();
+    ov.open('top');
+    expect(keys(ov)).toEqual(['o1', '  c1', '  r1', 'emp']);
+    expect(rowEls().some((el) => before.includes(el))).toBe(false);
+  });
+
+  it('the first row takes the focus on the next frame, not in the key that opened the page; a key pressed first wins', async () => {
+    const { ov } = setup();
+    const opener = document.body.appendChild(document.createElement('button'));
+    opener.focus();
+    ov.open('top');
+    expect(document.activeElement).toBe(opener);
+    expect(ov.info().focused).toBe('o1');
+    key('ArrowDown');
+    expect(document.activeElement?.getAttribute('data-key')).toBe('c1');
+    await frame();
+    expect(document.activeElement?.getAttribute('data-key')).toBe('c1');
+    ov.closeNow();
+    expect(document.activeElement).toBe(opener);
+    // Closed before its frame: nothing is focused on the closed page.
+    ov.open('top');
+    ov.closeNow();
+    await frame();
+    expect(document.activeElement).toBe(opener);
+  });
+});

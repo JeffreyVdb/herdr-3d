@@ -205,6 +205,10 @@ export class OverviewOverlay {
   private readonly hireBtn: HTMLButtonElement;
   private readonly showAllBtn: HTMLButtonElement;
   private view: OverviewView | null = null;
+  /** #145: the view the board's rows are of; they stay when the page closes, and opening that view again keeps them. */
+  private built: OverviewView | null = null;
+  /** #145: the open's own refresh: what changed while the page was closed shows at once (no flash, fold or flip). */
+  private opening = false;
   private keysEl: HTMLElement | null = null;
   private from: ViewRect | null = null;
   private rows = new Map<string, RowEntry>();
@@ -345,15 +349,23 @@ export class OverviewOverlay {
     this.view = view;
     this.from = from;
     this.returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    this.reset();
+    // #145: the view it last showed keeps its rows (the refresh brings them up to date); another one is built anew.
+    if (this.built && sameView(this.built, view)) this.reuse();
+    else this.reset();
+    this.built = view;
     this.root.hidden = false;
     this.root.setAttribute('open', ''); // the corner's plate and inbox chip step aside (ui/corner.ts)
     this.inertBackground(true);
     window.addEventListener('keydown', this.onKeyCapture, true);
     this.root.classList.add('ov--enter');
-    this.refresh();
+    this.opening = true;
+    try {
+      this.refresh();
+    } finally {
+      this.opening = false;
+    }
     this.grow(true);
-    this.focusFirst();
+    this.focusSoon(true);
     this.timer = setInterval(() => this.refresh(), 20_000); // the since column
     setTimeout(() => this.root.classList.remove('ov--enter'), 1200);
   }
@@ -361,11 +373,12 @@ export class OverviewOverlay {
   /** #188: the open page shows another view in place (`a`): no grow, its rows cascade in again. */
   private switchTo(view: OverviewView): void {
     this.view = view;
+    this.built = view;
     this.from = null; // the all-floors page closes into the centre
     this.reset();
     this.root.classList.add('ov--enter');
     this.refresh();
-    this.focusFirst();
+    this.focusSoon(false);
     setTimeout(() => this.root.classList.remove('ov--enter'), 1200);
   }
 
@@ -378,10 +391,33 @@ export class OverviewOverlay {
     this.focusKey = null;
   }
 
-  private focusFirst(): void {
-    const first = this.board.querySelector<HTMLElement>('.ov-row');
-    if (first) first.focus({ preventScroll: true });
-    else [...this.emptyEl.querySelectorAll('button')].find((b) => !b.hidden)?.focus();
+  /**
+   * #145: the kept rows of the view opened again: from the top, the first row focused, their skeletons turning again (the
+   * close stopped them). The refresh that follows updates what changed.
+   */
+  private reuse(): void {
+    this.focusKey = null;
+    for (const e of this.rows.values()) {
+      const line = e.what?.now?.el;
+      if (line?.classList.contains('ov-now--loading')) this.flaps.skeleton(line, [...line.querySelectorAll<HTMLElement>('.ov-fc')]);
+    }
+  }
+
+  /**
+   * The focused row (the first on an open) takes the focus on the frame the page first draws, never in the key that
+   * opened it: focusing needs the page laid out (#145: that layout was most of an open's time), and the frame lays it out
+   * anyway. A key pressed before then has moved the focus itself; `top`: a kept board goes back to its top first.
+   */
+  private focusSoon(top: boolean): void {
+    const view = this.view;
+    const later = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 0);
+    later(() => {
+      if (this.view !== view || this.closing || this.root.contains(document.activeElement)) return;
+      if (top) this.board.scrollTop = 0;
+      const row = this.focusKey ? this.rows.get(this.focusKey)?.el : null;
+      if (row) row.focus({ preventScroll: true });
+      else [...this.emptyEl.querySelectorAll('button')].find((b) => !b.hidden)?.focus();
+    });
   }
 
   /** Esc: shrinks back into the wall screen (when it is still in view) and closes. */
@@ -413,6 +449,9 @@ export class OverviewOverlay {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.flaps.clear();
+    // #145: the rows stay for the next open: a one-shot motion the hidden page cut short would play again then.
+    for (const el of [...this.leaving.keys()]) this.drop(el);
+    for (const el of this.board.querySelectorAll('.ov-row--new, .ov-row--flash, .ov-flip-in')) el.classList.remove('ov-row--new', 'ov-row--flash', 'ov-flip-in');
     this.returnFocus?.focus?.();
     this.host.closed();
   }
@@ -507,8 +546,8 @@ export class OverviewOverlay {
         entry.sig = sig;
         if (!this.root.classList.contains('ov--enter') && !calm) retrigger(el, 'ov-row--new');
       } else if (entry.sig !== sig) {
-        const flash = !calm && display !== null && entry.display !== null && entry.display !== display;
-        this.fill(entry, v, now, true);
+        const flash = !calm && !this.opening && display !== null && entry.display !== null && entry.display !== display;
+        this.fill(entry, v, now, !this.opening);
         entry.sig = sig;
         if (flash) retrigger(entry.el, 'ov-row--flash');
       } else this.since(entry.el, v.row, now);
@@ -524,8 +563,9 @@ export class OverviewOverlay {
     for (const [k, e] of this.rows) {
       if (!seen.has(k)) {
         if (e.what?.now) this.flaps.cancel(e.what.now.el);
-        // A row of a group you just collapsed, or one the filter hides now, folds away where it was; one that left goes at once.
-        if (!calm && present.has(k) && typeof e.el.animate === 'function') {
+        // A row of a group you just collapsed, or one the filter hides now, folds away where it was; one that left goes at once
+        // (#145: as does any on the open of a kept board: it went while the page was closed).
+        if (!calm && !this.opening && present.has(k) && typeof e.el.animate === 'function') {
           this.leaving.set(e.el, k);
           fold.push(e.el);
         } else e.el.remove();
@@ -584,18 +624,24 @@ export class OverviewOverlay {
    * and the tab order at once (inert, hidden from assistive tech); calm never gets here (they go at once).
    */
   private foldAway(els: HTMLElement[]): void {
-    els.forEach((el, i) => {
+    for (const el of els) {
       el.inert = true;
       el.tabIndex = -1;
       el.setAttribute('aria-hidden', 'true');
       el.removeAttribute('role');
       el.classList.remove('ov-row--new', 'ov-row--flash');
       el.classList.add('ov-row--leaving');
-      const h = el.offsetHeight;
+    }
+    // #145: their sizes read after every change above, so the board is laid out once, not once a row (a row off the
+    // view is skipped: its size is the one it last had, its content is not laid out).
+    const from = els.map((el) => {
       const cs = getComputedStyle(el);
+      return { height: `${el.offsetHeight}px`, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom };
+    });
+    els.forEach((el, i) => {
       const anim = el.animate(
         [
-          { height: `${h}px`, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1, transform: 'translateY(0) scaleY(1)' },
+          { ...from[i], opacity: 1, transform: 'translateY(0) scaleY(1)' },
           { opacity: 0, offset: 0.62 },
           { height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0, transform: 'translateY(-6px) scaleY(0.96)' },
         ],
