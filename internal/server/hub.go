@@ -1210,8 +1210,13 @@ func (h *Hub) reply(c *Client, cmd proto.Command, data any, err error) {
 		h.deliver(c, mustJSON(proto.Error{T: proto.TError, ReqID: cmd.ReqID, Code: code, Message: err.Error()}))
 		return
 	}
+	h.replyAck(c, cmd, mustJSON(proto.Ack{T: proto.TAck, ReqID: cmd.ReqID, Data: data}))
+}
+
+// replyAck sends cmd's ack, already encoded.
+func (h *Hub) replyAck(c *Client, cmd proto.Command, ack []byte) {
 	h.log.Info("command applied", "client", c.name, "cmd", cmd.T, "req_id", cmd.ReqID)
-	h.deliver(c, mustJSON(proto.Ack{T: proto.TAck, ReqID: cmd.ReqID, Data: data}))
+	h.deliver(c, ack)
 }
 
 var (
