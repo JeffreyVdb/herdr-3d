@@ -161,7 +161,7 @@ counts long tasks and long animation frames over all of it:
 | Worst page: first frame after `setItems` | 2,006–2,053 ms | **42 ms** |
 | Worst page: longest task | 1,298–1,419 ms | **none over 50 ms** |
 | Worst page: every row built | (one task) | 234–253 ms after `setItems` |
-| Worst page: elements | 43,272 | 4,206 (diff lines near the view only, no hidden system row) |
+| Worst page: elements | 43,272 | 4,206 (diff lines near the view only, no hidden system row; 40,686 once round 2 below draws every line) |
 | 64 pages, warm pass: first frame | median 517 ms, max 2,006 ms | **median 41 ms, max 62 ms** |
 | 64 pages, warm pass: longest frame while the rows fill in | (one task) | 60 ms on one page, the rest under 50 ms |
 
@@ -191,3 +191,51 @@ Two measured turns of the design: `scheduler.yield()` continuations ran seven 15
 112 ms frame (none rendered between them), so a slice now runs right after a frame is drawn; and one 200-line diff took
 25 ms of layout (each line is a max-content grid), so a diff near the view is drawn 50 lines a frame, its height held.
 
+
+### Review round 2: every diff line drawn, the loader under "Hide tool calls"
+
+The review found two gaps. A diff that never came near the view never got its lines, so find in page (Ctrl+F) missed
+them, as base did not. And with "Hide tool calls" on, the first build counted rows that CSS hides: on a 4x slower CPU it
+could end on none that shows, with the loader already gone.
+
+Now, once the last row is built, the view draws every diff still put off, newest first, one at a time, from one driver
+per frame: 50 lines of a body near the view, 500 in all, within the 8 ms budget. `data-drawing` is on the view until the
+last line is in. The diff body has `content-visibility: auto` (and `contain-intrinsic-block-size` at its lines' size),
+so a body away from the view is not laid out. Chosen by measurement on the six heaviest pages (warm pass), worst page
+(9,320 lines):
+
+| Drawing after the backfill | Last line in the DOM | Longest frame |
+| --- | ---: | ---: |
+| No `content-visibility`, 50 lines a frame | 3,264 ms | 17–33 ms |
+| No `content-visibility`, 200 lines a frame | 1,518 ms | 33–67 ms (one 56 ms frame on another page) |
+| No `content-visibility`, 500 lines a frame | 1,156 ms | up to 106 ms |
+| `content-visibility: auto`, 50 lines a frame | 3,014 ms | 17 ms |
+| **`content-visibility: auto`, 500 lines a frame** | **337 ms** | **17 ms** |
+
+`window.find` finds text in a skipped body (Chromium 149): [find.mjs](transcript-open-bench/find.mjs) checks it on a
+synthetic page, with changed files at the top, in the middle, among the newest rows, and one past "Show next"'s cut that
+must stay out. It also checks the loader under "Hide tool calls" at 4x CPU slowdown: one assistant row, then 199 Bash
+calls. Before the fix, 3 of 2,009 lines were in the DOM and 6 frames showed neither a row nor the loader. After it,
+every line is found, the cut line is not, and no frame is blank.
+
+`browser.mjs` now also waits for `data-drawing` and reports `drawn` (the last line in the DOM), `lines` and the frame
+gaps. Over the 64 pages, warm pass: first frame median 31 ms, max 40 ms; no long task; no frame over 17 ms from the first
+frame until the last diff line; the worst page's last line in at 326–329 ms after `setItems`, with 9,320 lines and
+40,686 elements (base: 43,272, which included the 871 hidden system rows). Cold first pass: the first page opened 75 ms,
+one 50 ms task in its first frame, no fill frame over 50 ms.
+
+`app.mjs` now also reports `drawnMs` and the longest frame from the first painted rows to the last diff line
+(`fillLoafMs`, `fillGapMs`), and, within that, after the backfill (`drawLoafMs`). Five runs, worst page, with HEAD before
+the fix (five runs) for comparison:
+
+| | Before the fix | After |
+| --- | ---: | ---: |
+| Sit → first painted rows | 288–342 ms | 275–362 ms |
+| Sit → every row built | 663–674 ms | 656–712 ms |
+| Sit → last diff line in the DOM | (never, away from the view) | 953–1,007 ms |
+| Longest frame while rows and diffs fill in | 77–83 ms | 75–87 ms |
+| Longest frame while the diffs are drawn | | **none over 50 ms** |
+
+The 75–87 ms frame is the same one before and after: ~550 ms after the sit, during the backfill, a `ResizeObserver`
+callback's forced layout of the timeline (26–36 ms), a slice (~20 ms), the scene's frame (~20 ms) and its rendering. No
+script in it runs over 50 ms.
