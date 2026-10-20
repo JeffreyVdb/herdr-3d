@@ -40,15 +40,17 @@ async function aim(page: Page, x: number, z: number, tx: number, ty: number, tz:
   await frames(page, 3);
 }
 
-/** Frame by frame samples of the walks to an orchestrator's desk until none is left (or `ms` pass). */
-function sample(page: Page, ms = 40_000) {
+/** Samples every frame until deliveries finish. An optional report starts only after sampling is armed. */
+function sample(page: Page, ms = 40_000, report?: Record<string, unknown>) {
   return page.evaluate(
-    (limit) =>
-      new Promise<Array<{ t: number; id: string; phase: string; x: number; y: number; z: number; folder: string; swivel: number; reach: number; chair: number; landed: boolean; walked: number; length: number; count: number; door: number; out: number[]; trays: number[]; cards: number[] }>>((resolve) => {
+    ({ limit, report }) =>
+      new Promise<Array<{ t: number; id: string; phase: string; x: number; y: number; z: number; folder: string; swivel: number; reach: number; chair: number; landed: boolean; walked: number; length: number; count: number; door: number; out: number[]; trays: number[]; cards: number[] }>>((resolve, reject) => {
         const t0 = performance.now();
         const out: Array<{ t: number; id: string; phase: string; x: number; y: number; z: number; folder: string; swivel: number; reach: number; chair: number; landed: boolean; walked: number; length: number; count: number; door: number; out: number[]; trays: number[]; cards: number[] }> = [];
         let seen = false;
+        let failed = false;
         const tick = () => {
+          if (failed) return;
           const t = performance.now() - t0;
           const all = window.__h3d.arrivals();
           const ds = all.filter((a) => a.kind === 'deliver');
@@ -58,8 +60,17 @@ function sample(page: Page, ms = 40_000) {
           else requestAnimationFrame(tick);
         };
         tick();
+        if (report) void window.__h3d.simCrew({ step: 'report', ...report }).then((result) => {
+          if (!result.ok) {
+            failed = true;
+            reject(new Error(`sim.crew report failed: ${JSON.stringify(result)}`));
+          }
+        }, (error) => {
+          failed = true;
+          reject(error);
+        });
       }),
-    ms,
+    { limit: ms, report },
   );
 }
 
@@ -106,11 +117,10 @@ test('a report walks over to the orchestrator’s desk and back in about 8 s, th
   const orchSeat = L.slots[0]!.seat;
   // From the aisle behind the pod, so its card is in view; the walk starts at once.
   await aim(page, orchSeat.x - 3.4, orchSeat.z - 2.0, (orchSeat.x + seat.x) / 2, 0.95, orchSeat.z);
-  await page.evaluate(() => window.__h3d.simCrew({ step: 'report', verdict: 'PASS' }));
-  const t0 = Date.now();
-  const samples = await sample(page);
-  const took = Date.now() - t0;
+  const samples = await sample(page, 40_000, { verdict: 'PASS' });
   expect(samples.length).toBeGreaterThan(10);
+  // Measure the observed animation, excluding the fixture command's transport time.
+  const took = samples.at(-1)!.t - samples[0]!.t;
   expect(phases(samples)).toEqual(['stand', 'walk', 'hand', 'walk', 'sit']);
   expect(took).toBeLessThan(9500);
   // It left its seat, reached the hand-over spot beside the orchestrator's chair (0.8 m, facing it), and came back.
@@ -153,8 +163,7 @@ test('a busy orchestrator turns in its chair to take the folder and turns back',
   const before = (await trayOf(page, 4))!.folders;
   const { desk } = await hireAndWork(page, { orch: lobby.id });
   expect(desk).toBe(5);
-  await page.evaluate(() => window.__h3d.simCrew({ step: 'report', summary: 'Implemented the lobby; checks are green.' }));
-  const samples = await sample(page);
+  const samples = await sample(page, 40_000, { summary: 'Implemented the lobby; checks are green.' });
   expect(phases(samples)).toEqual(['stand', 'walk', 'hand', 'walk', 'sit']);
   // It swivels all the way round and reaches, then back to its desk.
   expect(Math.max(...samples.map((s) => s.swivel))).toBe(1);
@@ -178,8 +187,7 @@ test('the corner office: the walker goes up the mezzanine stair and through the 
   expect((await trayOf(page, corner.desk))?.folders).toBe(0);
   // Faster than real time: it is a long way round.
   await page.evaluate(() => window.__h3d.arrivalRate(3));
-  await page.evaluate(() => window.__h3d.simCrew({ step: 'report', verdict: 'CHANGES_REQUIRED', blockers: 2 }));
-  const samples = await sample(page, 90_000);
+  const samples = await sample(page, 90_000, { verdict: 'CHANGES_REQUIRED', blockers: 2 });
   // (Sped up, the last half second can fall between two frames.)
   expect(phases(samples).slice(0, 4)).toEqual(['stand', 'walk', 'hand', 'walk']);
   const L = (await page.evaluate(() => window.__h3d.layout('lab')))!;

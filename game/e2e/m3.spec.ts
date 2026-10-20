@@ -163,10 +163,10 @@ test('elevator: E at the elevator lists the building’s floors with state and c
   await expect(page.locator('.prompt .key').first()).not.toHaveAttribute('aria-disabled', 'true');
 
   // A movement key held while the panel opens does not keep walking behind it.
-  const pose = await page.evaluate(() => window.__h3d.pose());
   await page.keyboard.down('KeyW');
   await page.keyboard.press('KeyE');
   await expect(page.locator('dialog.panel h2')).toHaveText('Work');
+  const pose = await page.evaluate(() => window.__h3d.pose());
   await frames(page, 6);
   expect(await page.evaluate(() => window.__h3d.pose())).toEqual(pose);
   await page.keyboard.up('KeyW');

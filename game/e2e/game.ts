@@ -11,7 +11,10 @@ export const NOON = '2026-09-30T12:00';
 /** Collects page errors; call `expectClean()` at the end of a test. */
 export function watchErrors(page: Page): () => void {
   const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('pageerror', (e) => {
+    errors.push(e.message);
+    console.log(`page error: ${e.message}`);
+  });
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push(m.text());
     if (m.type() === 'warning' && !m.text().includes('GL Driver Message')) console.log(`page warning: ${m.text()}`);
@@ -93,7 +96,14 @@ export async function seatMode(page: Page, mode: 'terminal' | 'transcript'): Pro
   if ((await page.evaluate(() => window.__h3d.seat().mode)) !== mode) await page.keyboard.press('Control+Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe(mode);
   if (mode === 'transcript') {
-    await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mounted), {
+    await expect.poll(() => page.evaluate(() => {
+      const transcript = window.__h3d.transcript();
+      if (transcript?.mounted) return true;
+      return JSON.stringify({
+        transcript, seat: window.__h3d.seat(), error: window.__h3d.error,
+        sent: window.__h3d.sent().slice(-10).map(({ t, result }) => ({ t, result })),
+      });
+    }), {
       message: 'the conversation renderer is mounted', timeout: 20_000,
     }).toBe(true);
     await expect(page.locator('.seat-transcript .txl:visible'), 'the conversation has its first rows or empty state').toHaveCount(0, { timeout: 20_000 });
