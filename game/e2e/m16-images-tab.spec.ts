@@ -195,8 +195,8 @@ test('sit / images / stand cycles leave no views, tabs, feeds or watches behind'
   test.setTimeout(120_000);
   const clean = watchErrors(page);
   const worker = await sitAt(page, 'Nibble');
-  // Desks near you may hold a watch of their own (their prints): what a cycle must not do is add to them.
-  let baseline: { watches: number; feeds: number } | null = null;
+  // The print planner runs every 250 ms with hysteresis, so nearby desks can legitimately change between cycles.
+  // Standing may keep exactly those desks' watches and feeds; no seated view's resources may remain beside them.
   for (let i = 0; i < 6; i++) {
     if (i > 0) {
       expect(await page.evaluate((w) => window.__h3d.sitAt(w), worker)).toBe(true);
@@ -214,10 +214,14 @@ test('sit / images / stand cycles leave no views, tabs, feeds or watches behind'
     await page.keyboard.press('Escape');
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBeNull();
     expect(await page.locator('.seat-transcript').count()).toBe(0);
-    await frames(page, 4);
-    const now = { watches: (await txState(page)).watches, feeds: (await page.evaluate(() => window.__h3d.imageFeeds())).ids.length };
-    baseline ??= now;
-    expect(now).toEqual(baseline);
+    await expect.poll(() => page.evaluate(() => {
+      const prints = window.__h3d.prints();
+      const desks = (prints?.desks ?? []).map((desk) => desk.id).sort();
+      return {
+        watches: JSON.stringify([...(prints?.watches ?? [])].sort()) === JSON.stringify(desks),
+        feeds: JSON.stringify(window.__h3d.imageFeeds().ids.sort()) === JSON.stringify(desks),
+      };
+    }), { message: 'only active print desks retain watches and image feeds after standing' }).toEqual({ watches: true, feeds: true });
   }
   const c = (await txState(page)).counts;
   expect(c.tabsMounted).toBe(6);

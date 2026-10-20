@@ -147,13 +147,15 @@ test('#140: a terminal-only built-in has a badge; sending it shows the terminal,
   await expect(pop(page)).toBeHidden();
   await page.keyboard.press('Enter');
   await expect.poll(async () => (await sent(page, 'worker.prompt')).map((x) => (x.args as { text: string }).text)).toEqual(['/model opus']);
-  await frames(page, 10);
+  await expect(input(page)).toHaveAttribute('contenteditable', 'true', { timeout: 20_000 });
+  await expect(input(page)).toHaveText('');
   expect(await page.evaluate(() => window.__h3d.seat().mode)).toBe('transcript');
 
   // Picked from the popup and sent (Pebble works on the last prompt meanwhile): the bridge says it shows only in the
   // terminal, so the terminal is shown.
   await input(page).click();
   await page.keyboard.type('/usa');
+  await expect(usage.locator('.tx-cmd-name')).toHaveText('/usage');
   await page.keyboard.press('Enter');
   await expect(input(page)).toHaveText('/usage ');
   await page.keyboard.press('Enter');

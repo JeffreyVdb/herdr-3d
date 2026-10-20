@@ -19,7 +19,8 @@ async function idOf(page: Page, session: string, name: string): Promise<string> 
 async function packupDialog(page: Page): Promise<Home> {
   await expect.poll(async () => {
     const d = await home(page);
-    return d?.kind === 'send-home' && d.mode === 'packup' && d.state;
+    if (d?.kind === 'send-home' && d.mode === 'packup' && d.state === 'ready') return 'ready';
+    return JSON.stringify({ dialog: d, detect: (await sent(page, 'packup.detect')).at(-1)?.result ?? null });
   }, { message: 'pack-up confirm ready', timeout: 10_000 }).toBe('ready');
   return (await home(page)) as Home;
 }
@@ -151,6 +152,7 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     const input = tx.locator('.tx-input');
     const confirm = page.locator('dialog.desk-dlg--home');
     const write = async (text: string) => {
+      await expect(input).toHaveAttribute('contenteditable', 'true', { timeout: 20_000 });
       await input.click();
       await page.keyboard.press('Control+A');
       await page.keyboard.press('Delete');
@@ -220,6 +222,8 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     const detected = await lastDetect();
     expect(detected).toMatchObject(detected?.ok ? { ok: true, data: { matched: false } } : { ok: false, code: 'timeout' });
     expect((await prompts()).filter((p) => p === 'SLOW: make a PR and end your turn')).toHaveLength(1);
+    await expect(input).toHaveAttribute('contenteditable', 'true', { timeout: 20_000 });
+    await expect(input).toHaveText('');
 
     // The game's own bound: an answer held 4 s on the way (a slow link, a busy bridge) is too late. 1.5 s after Send the
     // prompt goes as written, for a slow model's no match and for a match alike, and the late match opens nothing.

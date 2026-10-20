@@ -19,7 +19,8 @@ with ZipFile(io.BytesIO(archive)) as release:
     root = "dejavu-fonts-ttf-2.37/"
     font = TTFont(io.BytesIO(release.read(root + "ttf/DejaVuSansMono.ttf")))
     sans = TTFont(io.BytesIO(release.read(root + "ttf/DejaVuSans.ttf")))
-    (out / "LICENSE").write_bytes(release.read(root + "LICENSE"))
+    license_text = release.read(root + "LICENSE").decode("utf-8")
+    (out / "LICENSE").write_text("\n".join(line.rstrip() for line in license_text.splitlines()) + "\n")
 
 # Mono omits braille. Give the fixture's one braille character the same
 # advance, using the corresponding Sans glyph from this same release.

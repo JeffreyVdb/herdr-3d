@@ -534,7 +534,7 @@ test('round 4: pack up reads the references (“Confirm and continue”); “Sen
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
-    await openGame(page, 'demo-m5', '', `${SIM}&simecho=200&simsecretson=1&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
+    await openGame(page, 'demo-m5', '', `${SIM}&simclock=manual&simsecretson=1&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
     const id = await sitAt(page, 'Pebble', 'transcript');
@@ -554,6 +554,8 @@ test('round 4: pack up reads the references (“Confirm and continue”); “Sen
     await expect(dlg).toBeVisible();
     expect(await review(page)).toMatchObject({ action: 'Confirm and continue', counts: { found: 1 } });
     await dlg.getByRole('button', { name: 'Confirm and continue' }).click();
+    await expect.poll(async () => JSON.stringify((await sent(page, 'packup.detect'))[0]?.result ?? null),
+      { message: 'the reviewed pack-up prompt receives a positive model result' }).toMatch(/"ok":true.*"matched":true/);
     await expect(confirm).toBeVisible();
     const [detect] = await sent(page, 'packup.detect');
     expect((detect!.args as { secrets?: unknown }).secrets).toBeTruthy();
@@ -565,6 +567,8 @@ test('round 4: pack up reads the references (“Confirm and continue”); “Sen
     await confirm.getByRole('button', { name: 'Send as written (stay)' }).click();
     await expect(confirm).toBeHidden();
     await expect.poll(async () => (await sent(page, 'worker.prompt')).length).toBe(1);
+    // Only the prompt's delivery needs a scripted timer; unrelated worker turns stay pinned throughout the review.
+    expect(await page.evaluate(() => window.__h3d.simAdvance(200))).toBe(true);
     const [prompt] = await sent(page, 'worker.prompt');
     expect(prompt!.args).toEqual({ id, text: ackd.data?.sent, secrets_pending: ackd.data?.secrets_pending });
     await expect.poll(async () => (prompt!.result as { ok?: boolean } | undefined)?.ok ?? (await sent(page, 'worker.prompt'))[0]?.result?.ok).toBe(true);
@@ -585,7 +589,7 @@ test('round 4: pack up’s “Send and go home”: the task (references) and the
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
-    await openGame(page, 'demo-m4', '', `${SIM}&simsecretson=1&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
+    await openGame(page, 'demo-m4', '', `${SIM}&simclock=manual&simsecretson=1&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
     await page.evaluate(() => window.__h3d.enterFloor('pastry'));
@@ -600,6 +604,8 @@ test('round 4: pack up’s “Send and go home”: the task (references) and the
     await expect(dlg).toBeVisible();
     expect(await review(page)).toMatchObject({ action: 'Confirm and continue' });
     await dlg.getByRole('button', { name: 'Confirm and continue' }).click();
+    await expect.poll(async () => JSON.stringify((await sent(page, 'packup.detect'))[0]?.result ?? null),
+      { message: 'the reviewed pack-up prompt receives a positive model result' }).toMatch(/"ok":true.*"matched":true/);
     const confirm = page.locator('dialog.desk-dlg--home');
     await expect(confirm).toBeVisible();
     await expect(confirm.locator('[data-key="pk-original"]')).not.toContainText('hunter22');
