@@ -1366,11 +1366,13 @@ class Transcript implements TranscriptView {
   private readonly loader: HTMLElement;
   /**
    * #126: the changed files' lines still to draw, by body, in the order they were built (the newest rows' first). The ones
-   * that come near the view go first (`drawQueue`); once the open settles, every other one, one at a time (`draining`),
-   * so find in page finds every line. DIFF_NEAR / DIFF_FRAME lines a frame at most (`drawing`: the next frame is to draw them).
+   * that come near the view go first (`drawQueue`); once the open settles, every other one the observer said is away from
+   * it (`far`), one at a time (`draining`), so find in page finds every line. DIFF_NEAR / DIFF_FRAME lines a frame at most
+   * (`drawing`: the next frame is to draw them).
    */
   private lazyIO: IntersectionObserver | null = null;
   private readonly lazyDraw = new Map<Element, DiffStep>();
+  private readonly far = new WeakSet<Element>();
   private readonly drawQueue: Array<[Element, DiffStep]> = [];
   private draining: [Element, DiffStep] | null = null;
   private drawing = false;
@@ -2852,14 +2854,26 @@ class Transcript implements TranscriptView {
     if (typeof IntersectionObserver === 'undefined') return false;
     this.lazyIO ??= new IntersectionObserver(
       (entries) => {
+        let near = false;
         for (const e of entries) {
-          if (!e.isIntersecting) continue;
+          if (!e.isIntersecting) {
+            this.far.add(e.target);
+            continue;
+          }
+          this.far.delete(e.target);
           this.lazyIO?.unobserve(e.target);
           const f = this.lazyDraw.get(e.target);
           this.lazyDraw.delete(e.target);
           if (f) this.drawQueue.push([e.target, f]);
+          // One drawn as away from the view came near: the rest of it at a near one's pace.
+          if (this.draining?.[0] === e.target) {
+            this.drawQueue.push(this.draining);
+            this.draining = null;
+          }
+          near = true;
         }
-        this.drawDue();
+        // The far ones wait for the frames' drawing (`drawSoon`); what came near is drawn now.
+        if (near) this.drawDue();
       },
       { root: this.scroller, rootMargin: '100% 0px' },
     );
@@ -2891,6 +2905,7 @@ class Transcript implements TranscriptView {
         if (!done) continue;
         if (near) this.drawQueue.shift();
         else this.draining = null;
+        this.lazyIO?.unobserve(next[0]);
       }
     });
     this.stick();
@@ -2899,12 +2914,21 @@ class Transcript implements TranscriptView {
     if (this.drawQueue.length || ((this.draining || this.lazyDraw.size) && !this.timeline.building)) this.drawSoon();
   }
 
-  /** #126: once the open settled, the next diff put off, in the order they were built. */
+  /**
+   * #126: once the open settled, the next diff put off, in the order they were built, of those the observer said are away
+   * from the view (a body near it but not reported yet would be drawn and laid out at the far pace). It stays observed
+   * until drawn.
+   */
   private nextLazy(): [Element, DiffStep] | null {
     for (const [el, step] of this.lazyDraw) {
+      if (!el.isConnected) {
+        this.lazyDraw.delete(el);
+        this.lazyIO?.unobserve(el);
+        continue;
+      }
+      if (!this.far.has(el)) continue;
       this.lazyDraw.delete(el);
-      this.lazyIO?.unobserve(el);
-      if (el.isConnected) return [el, step];
+      return [el, step];
     }
     return null;
   }

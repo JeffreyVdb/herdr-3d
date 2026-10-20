@@ -358,13 +358,23 @@ describe('#126: every diff line drawn once the open settles', () => {
     for (let n = 0; drawing() && n < 500; n++) await slice();
   }
 
+  /** The observer's callback and what it watches: its first report says each body is away from the view, as a real one's does. */
+  let io: { cb: IntersectionObserverCallback; watched: Set<Element> };
+  const report = (el: Element, isIntersecting: boolean) => io.cb([{ target: el, isIntersecting } as unknown as IntersectionObserverEntry], {} as IntersectionObserver);
   beforeEach(() => {
-    // Nothing ever comes near the view.
     vi.stubGlobal(
       'IntersectionObserver',
       class {
-        observe() {}
-        unobserve() {}
+        constructor(cb: IntersectionObserverCallback) {
+          io = { cb, watched: new Set() };
+        }
+        observe(el: Element) {
+          io.watched.add(el);
+          queueMicrotask(() => report(el, false));
+        }
+        unobserve(el: Element) {
+          io.watched.delete(el);
+        }
         disconnect() {}
       },
     );
@@ -480,6 +490,51 @@ describe('#126: every diff line drawn once the open settles', () => {
     expect(drawing()).toBe(true);
     await settled();
     expect(drawnLines()).toBe(40 + 1200 + 7 + 5);
+  });
+
+  it('a body not said to be away from the view is left to the observer (near it, it is drawn at a near one’s pace)', async () => {
+    view = mountTranscript(container, host());
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: IntersectionObserverCallback) {
+          io = { cb, watched: new Set() };
+        }
+        observe(el: Element) {
+          io.watched.add(el); // no report yet
+        }
+        unobserve(el: Element) {
+          io.watched.delete(el);
+        }
+        disconnect() {}
+      },
+    );
+    view.setItems([say(1), edit(2, 'a.ts', 400), say(3)]);
+    for (let n = 0; n < 5; n++) await slice();
+    expect(drawnLines()).toBe(0);
+    expect(drawing()).toBe(true);
+    report($('.tx-diff-body') as HTMLElement, true);
+    expect(drawnLines()).toBe(50);
+    await slice();
+    expect(drawnLines()).toBeLessThanOrEqual(100);
+    await settled();
+    expect(drawnLines()).toBe(400);
+    expect(io.watched.size).toBe(0);
+  });
+
+  it('one drawn away from the view that comes near goes on at a near one’s pace', async () => {
+    view = mountTranscript(container, host());
+    view.setItems([say(1), edit(2, 'a.ts', 1900), say(3)]);
+    await slice();
+    const first = drawnLines();
+    expect(first).toBe(500);
+    report($('.tx-diff-body') as HTMLElement, true);
+    expect(drawnLines() - first).toBe(50); // what comes near is drawn at once
+    await slice();
+    expect(drawnLines() - first).toBeLessThanOrEqual(100);
+    await settled();
+    expect(drawnLines()).toBe(1900);
+    expect(io.watched.size).toBe(0);
   });
 
   it('draws a frame’s lines at most per frame', async () => {
