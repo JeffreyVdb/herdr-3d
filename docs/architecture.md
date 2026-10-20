@@ -568,7 +568,7 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   and a floor that outgrows a kit gets a larger one. The office's two lamps are the same lights on every floor. An office
   left is disposed after the next one drew a frame (the shaders they share stay), the building's outside is kept while
   you are in the city, and a ride with no office loaded builds and compiles the new office behind the closed doors
-  (`decisions.md` "#141").
+  (what the world disposes meanwhile is released again after the compile, `render/disposeHold.ts`; `decisions.md` "#141").
 - **Frame-rate policy**: 120 Hz while interacting, 30–60 Hz idle, paused when hidden, battery-saver toggle.
   Instancing + frame-rate policy dominate battery use (energy at 120 fps: rigid +26 vs skinned +67, `top` power).
 - **Shell**: Chrome `--app` window on the helper's localhost URL. Chrome runs 120 Hz natively (even on battery), and it is

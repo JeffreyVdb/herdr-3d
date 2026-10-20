@@ -1765,7 +1765,8 @@ make e2e-extended             # on request: every functional spec below (the who
                               # again (through the city, floor to floor, outgrowing the pool, asleep, shadows=0) draws
                               # what it draws entered first on a new page, mesh by mesh and by screenshot, each pooled
                               # mesh from its own buffers; live changes after a re-entry; ten rides A -> B -> A leave the
-                              # renderer's memory flat. h141-floor-entry-perf.spec.ts (@perf): perf-floor60 and demo-m3b's
+                              # renderer's memory flat; a resize, asleep or removal during a new page's first ride (its
+                              # compile) leaves what the same change after the ride leaves. h141-floor-entry-perf.spec.ts (@perf): perf-floor60 and demo-m3b's
                               # floors entered and entered again (first frame, longest frame), and a new page's first
                               # ride through the doors (the longest frame shut, the first frame opening);
                               # test-results/h141-floor-{entry,ride}-perf[-<H3D_DIST>].json, H3D_141_RUNS=<n>

@@ -59,7 +59,7 @@ function ownBuffers(p: Probe): string[] {
     for (const m of k.meshes) {
       if (!m.inOffice) continue;
       // A mesh drawn has a render object to check (none would make this check vacuous).
-      if (m.visible && m.count > 0 && !m.bound.length) out.push(`${m.name}: drawn, but no render object of it was found`);
+      if (m.shown && m.count > 0 && !m.bound.length) out.push(`${m.name}: drawn, but no render object of it was found`);
       for (const b of m.bound) if (!b.matrix || b.color === false) out.push(`${m.name}: its render state reads ${!b.matrix ? 'another matrix buffer' : 'another colour buffer'}`);
     }
   return out;
@@ -212,4 +212,93 @@ test('ten rides between two floors leave nothing behind: geometries, textures, r
   console.log(`h141 memory per cycle: ${JSON.stringify(rows)}`);
   const first = rows[0] as Probe['memory'];
   for (const [i, r] of rows.slice(1).entries()) expect(r, `cycle ${i + 2} against the first`).toEqual(first);
+});
+
+// A new page's first ride to a floor (through the doors, from the city) compiles its shaders while the doors are shut,
+// a yield at a time (app.ts `warmUp`). World events arriving in those yields must leave nothing behind and the right
+// floor drawn: each is compared with the same event once the doors are open.
+const SCRATCHPAD = (desks: number, state: string) => ({ t: 'floor.upsert', seq: 0, floor: { session: 'scratchpad', state, building: 'b_3f09a1c2d4e5', index: 0, desks } });
+
+/** scratchpad entered through the doors on a new page, with `event` on the compile's first yield or once the ride ended. */
+async function coldRide(browser: import('@playwright/test').Browser, event: object, during: boolean): Promise<{ page: Page; clean: () => void; close: () => Promise<void> }> {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await ctx.newPage();
+  const clean = watchErrors(page);
+  await openGame(page, 'demo-m6');
+  const fired = await page.evaluate(
+    async ({ event, during }) => {
+      const inject = () => window.__h3d.inject(event as never);
+      const s = (window as unknown as { scheduler: { yield: () => Promise<void> } }).scheduler;
+      const yieldTo = s.yield;
+      let fired = false;
+      // The doors are shut and you are on the floor: the yields are the compile's.
+      if (during)
+        s.yield = () => {
+          const v = window.__h3d.view();
+          if (!fired && v.mode === 'floor' && v.busy) {
+            fired = true;
+            inject();
+          }
+          return yieldTo.call(s);
+        };
+      (document.querySelector('.floor-list button[data-floor="scratchpad"]') as HTMLButtonElement).click();
+      const wait = async (done: () => boolean) => {
+        const start = performance.now();
+        while (!done() && performance.now() - start < 20_000) await new Promise((r) => setTimeout(r, 10));
+      };
+      await wait(() => window.__h3d.view().mode === 'floor');
+      await wait(() => !window.__h3d.view().busy);
+      s.yield = yieldTo;
+      if (!during) inject();
+      return fired;
+    },
+    { event, during },
+  );
+  expect(fired, 'the event arrived during the compile').toBe(during);
+  return { page, clean, close: () => ctx.close() };
+}
+
+/** What the renderer holds once the page went on to `floors` (the offices it left released by then). */
+async function memoryAfter(page: Page, floors: string[]): Promise<Probe['memory']> {
+  for (const f of floors) await enter(page, f);
+  return (await probe(page)).p.memory;
+}
+
+for (const [what, event] of [
+  ['resized (6 to 35 desks: the kits grow, the outside changes shape)', SCRATCHPAD(35, 'running')],
+  ['asleep', SCRATCHPAD(6, 'asleep')],
+] as const) {
+  test(`scratchpad ${what} during a cold ride's compile: drawn as on a new page, nothing kept that the same change after the ride does not keep`, async ({ browser }) => {
+    test.setTimeout(240_000);
+    const fresh = await freshProbe(browser, 'scratchpad', '', async (p) => {
+      await p.evaluate((e) => window.__h3d.inject(e as never), event);
+      await frames(p, 8);
+    });
+    const memory: Probe['memory'][] = [];
+    for (const during of [false, true]) {
+      const { page, clean, close } = await coldRide(browser, event, during);
+      await frames(page, 8);
+      expect(await page.evaluate(() => window.__h3d.view().floor)).toBe('scratchpad');
+      await matches(page, fresh, `scratchpad ${what} ${during ? 'during' : 'after'} the compile`);
+      memory.push(await memoryAfter(page, ['herdr-3d', 'scratchpad']));
+      clean();
+      await close();
+    }
+    console.log(`h141 ${what}: after the ride, during the compile: ${JSON.stringify(memory)}`);
+    expect(memory[1], 'during the compile against after the ride').toEqual(memory[0]);
+  });
+}
+
+test("scratchpad removed during a cold ride's compile: you are put out in the city once the doors open, as after the ride", async ({ browser }) => {
+  test.setTimeout(240_000);
+  const memory: Probe['memory'][] = [];
+  for (const during of [false, true]) {
+    const { page, clean, close } = await coldRide(browser, { t: 'floor.removed', seq: 1_000_000, session: 'scratchpad' }, during);
+    await expect.poll(() => page.evaluate(() => window.__h3d.view()), { timeout: 20_000 }).toMatchObject({ mode: 'city', busy: false });
+    memory.push(await memoryAfter(page, ['herdr-3d', 'lab']));
+    clean();
+    await close();
+  }
+  console.log(`h141 removed: after the ride, during the compile: ${JSON.stringify(memory)}`);
+  expect(memory[1], 'during the compile against after the ride').toEqual(memory[0]);
 });

@@ -16,6 +16,8 @@ export interface PooledMeshProbe {
   material: { type: string; color: number | null; emissive: number | null; map: string | null };
   /** In the office drawn now (under `root`). */
   inOffice: boolean;
+  /** It and every parent shown (an asleep floor hides its screens' group, and with it the frozen screens). */
+  shown: boolean;
   /**
    * Render objects of this mesh and whether each one's compiled state reads this mesh's own `instanceMatrix` array (a
    * uniform buffer or a vertex buffer) and its own `instanceColor` array (null: the mesh has none).
@@ -74,6 +76,10 @@ export function probePool(pool: FloorPool, renderer: THREE.WebGPURenderer, scene
     for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p === top) return true;
     return false;
   };
+  const shown = (o: THREE.Object3D): boolean => {
+    for (let p: THREE.Object3D | null = o; p; p = p.parent) if (!p.visible) return false;
+    return true;
+  };
   const hex = (c: unknown) => (c instanceof THREE.Color ? c.getHex() : null);
   const kits = pool.kits().map(({ key, kit }) => ({
     key,
@@ -90,6 +96,7 @@ export function probePool(pool: FloorPool, renderer: THREE.WebGPURenderer, scene
         receiveShadow: m.receiveShadow,
         material: { type: mat.type, color: hex(mat.color), emissive: hex(mat.emissive), map: mat.map ? size(mat.map.image) : null },
         inOffice: under(m, root),
+        shown: shown(m),
         bound: (byObject.get(m) ?? []).map((ro) => ({ matrix: reads(ro, m.instanceMatrix.array), color: m.instanceColor ? reads(ro, m.instanceColor.array) : null })),
       };
       if (data) {

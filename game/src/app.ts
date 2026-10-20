@@ -13,6 +13,7 @@ import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
 import { memberOf, officeLamps, OfficeView, REACH, seatOf, type AwaySeat, type Target } from './render/office';
 import { FloorPool } from './render/floorPool';
+import { holdDisposals } from './render/disposeHold';
 import { probePool, type PoolProbe } from './render/floorPoolProbe';
 import type { LobbyTarget, LobbyView } from './render/lobby';
 import { OutsideView } from './render/outside';
@@ -2152,11 +2153,14 @@ export class App {
       // The scene's cache key is kept per render call (three's NodeManager.getCacheKey): a new call, so the lamps the
       // office brought into the scene are in it.
       (this.r.info as { calls: number }).calls++;
-      // It picks what to compile before its first await: the parts can go back as they were at once.
-      const done = this.r.compileAsync(this.walk.scene, this.fpCam);
-      for (const o of shown) o.visible = false;
-      for (const o of culled) o.frustumCulled = true;
-      await done;
+      // It picks what to compile before its first await: the parts can go back as they were at once. What the world
+      // disposes while it builds (a resize, the outside rebuilt) is released again once it has (`holdDisposals`).
+      await holdDisposals(() => {
+        const done = this.r.compileAsync(this.walk.scene, this.fpCam);
+        for (const o of shown) o.visible = false;
+        for (const o of culled) o.frustumCulled = true;
+        return done;
+      });
     } finally {
       this.warming = false;
     }
@@ -2431,7 +2435,8 @@ export class App {
     if (!ctx || (floor && (!fv || storey < 0))) {
       // #187: not while you sit at a laptop of it: the floor you were reading stays as it was (its worker is away, see
       // `Laptops.whyAway`) until you get up yourself; `step` then comes back here and leaves.
-      if (this.laptops.seated) {
+      // #141: nor through the doors (a cold ride's compile holds them shut): out once they are open.
+      if (this.laptops.seated || this.transitioning) {
         this.orphaned = true;
         return;
       }
@@ -3834,7 +3839,7 @@ export class App {
     // Round 4: and the confirmation that removes the seated worker's protected files (the seat bar's chip opens it).
     const blocked = this.planOpen || this.panels.open || (this.dialogOpen && !this.sendHome.keepsSeat && !this.handoffDialog.keepsSeat && !this.scheduleForm.keepsSeat && !this.overview.isOpen && !this.secretsReview.isOpen && !this.revokeSecrets.keepsSeat) || this.hud.sheetOpen || this.transitioning;
     this.laptops.frame({ now: performance.now(), office: this.office, onFloor, camera: this.fpCam, walker: this.walker, blocked });
-    if (this.orphaned && !this.laptops.seated) {
+    if (this.orphaned && !this.laptops.seated && !this.transitioning) {
       this.orphaned = false;
       if (this.mode === 'floor') this.syncWalk();
     }
