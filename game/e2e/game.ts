@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -103,4 +103,36 @@ export async function settingsSection(page: Page, id: string) {
   const panel = dialog.locator(`.settings-section[data-section="${id}"]`);
   await expect(panel).toBeVisible();
   return panel;
+}
+
+/**
+ * #127: the in-dialog question (Hire's, the schedule form's) at a phone's width and a desktop's: its text and both
+ * answers inside the dialog, which clips (nothing scrolls sideways); at a desktop's, the answers on one row. Each size
+ * leaves `<name>-<width>.png` in test-results; the viewport is put back after.
+ */
+export async function askFits(page: Page, dialog: Locator, ask: Locator, name: string): Promise<void> {
+  const was = page.viewportSize();
+  for (const [width, height] of [[390, 844], [360, 740], [1440, 900]] as const) {
+    await page.setViewportSize({ width, height });
+    await frames(page, 2);
+    await expect(ask).toBeVisible();
+    const path = resolve(RESULTS, `${name}-${width}.png`);
+    mkdirSync(dirname(path), { recursive: true });
+    await page.screenshot({ path });
+    const dlg = (await dialog.boundingBox())!;
+    const buttons = await ask.getByRole('button').all();
+    expect(buttons).toHaveLength(2);
+    for (const part of [ask, ask.locator('p'), ...buttons]) {
+      const b = (await part.boundingBox())!;
+      const what = `${name} at ${width}px: ${await part.evaluate((e) => e.textContent?.slice(0, 30))}`;
+      expect(b.x, what).toBeGreaterThanOrEqual(dlg.x);
+      expect(b.x + b.width, what).toBeLessThanOrEqual(dlg.x + dlg.width);
+    }
+    if (width > 560) {
+      const [a, b] = await Promise.all(buttons.map(async (x) => (await x.boundingBox())!.y));
+      expect(a, `${name} at ${width}px: the answers on one row`).toBe(b);
+    }
+  }
+  if (was) await page.setViewportSize(was);
+  await frames(page, 2);
 }

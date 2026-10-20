@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Page } from '@playwright/test';
 import { herdrInstructions } from '../tools/fixture-start.ts';
-import { frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
+import { askFits, frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
 
 // #127 on demo-m3 with the simulator (tools/fixture-schedule.ts): the schedule form has "Add herdr hiring instructions"
 // (off), and with it off Save asks "Schedule with instructions" / "Schedule without" when the classifier says the
@@ -102,6 +102,9 @@ test('Save asks about a prompt that starts agents: “Schedule with instructions
     expect(await sent(page, 'hire_preset.check')).toEqual([{ prompt: TASK }]);
     expect(await sent(page, 'schedule.create')).toEqual([]);
     await shot(page, 'h127-schedule-question');
+    // On a phone the question wraps inside the dialog; on a desktop its answers keep one row.
+    await askFits(page, form(page), ask, 'h127-schedule-question');
+    await expect(ask.getByRole('button', { name: 'Schedule with instructions' })).toBeFocused();
 
     // Esc: back to the form, nothing saved; Save again asks again.
     await page.keyboard.press('Escape');
