@@ -50,6 +50,8 @@ import { walkOutRoute, type Waypoint } from './world/route';
 export interface H3DDebug {
   backend: BackendName | null;
   frames: number;
+  /** #143: the game clock (`App.time`, ms: the frame's rAF timestamp) that the last rendered frame was stepped to. */
+  frameAt: number;
   error: string | null;
   /** True once a world snapshot has been rendered. */
   ready: boolean;
@@ -389,6 +391,7 @@ let screenTrace: Array<{ frame: number; screens: ReturnType<H3DDebug['screens']>
 const h3d: H3DDebug = {
   backend: null,
   frames: 0,
+  frameAt: 0,
   error: null,
   ready: false,
   view: () => ({
@@ -798,6 +801,7 @@ async function start(): Promise<void> {
   a.render = () => {
     origRender();
     h3d.frames = a.frames;
+    h3d.frameAt = a.time * 1000;
     screenTrace?.push({ frame: a.frames, screens: a.laptops.screens() });
     if (!h3d.ready && a.store.snapshots > 0) h3d.ready = true;
   };

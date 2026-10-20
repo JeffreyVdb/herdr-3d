@@ -9,7 +9,7 @@ import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
 import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type ScheduleSuggestion, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation, type HireInterpretAck } from './net/protocol';
 import { CityView } from './render/city';
-import { ACTIVE_WINDOW_MS, shouldRender, targetHz } from './render/framePolicy';
+import { ACTIVE_WINDOW_MS, shouldRender, targetHz, type Coverage } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
 import { memberOf, OfficeView, REACH, seatOf, type AwaySeat, type Target } from './render/office';
 import type { LobbyTarget, LobbyView } from './render/lobby';
@@ -396,6 +396,8 @@ export class App {
   /** #142: what `tick` decided, counted per display frame since the last reset (`__h3d.pacing`); world changes and board pushes beside it. */
   private readonly pacing = { hz: 0, active: false, sinceActivity: 0, ticks: { 0: 0, 30: 0, 60: 0, 120: 0 } as Record<number, number>, held: 0, walker: 0, tween: 0, transition: 0, arrivals: 0, boards: 0, changes: 0, boardPushes: 0 };
   private lastRender = -Infinity;
+  /** #143: what covered the viewport at the last tick. */
+  private covered: Coverage = 'none';
   private lastT = 0;
   private statusDirty = true;
   private cameraMoved = true;
@@ -3621,6 +3623,12 @@ export class App {
 
   /** Animation-loop callback: frame pacing, then update + render. */
   tick(now: number): void {
+    // #143: the overview page (once grown) hides the scene, the whiteboard's scrim nearly does: a few frames a second
+    // keep step() going under them. Uncovered, the scene counts as just moved: the next vsync draws the world as it is
+    // now, at the full rate, while the page shrinks away.
+    const covered: Coverage = this.overview.covering ? 'opaque' : this.whiteboard.isOpen ? 'scrim' : 'none';
+    if (covered !== this.covered && (this.covered === 'opaque' || covered === 'none')) this.activity(false);
+    this.covered = covered;
     const walker = this.walker.moving;
     const tween = this.tween !== null;
     const transition = this.transitioning;
@@ -3628,7 +3636,7 @@ export class App {
     const boards = !!this.office?.boardsBusy;
     const active = walker || tween || transition || arrivals || boards;
     const sinceActivity = active ? 0 : now - this.lastActivity;
-    const hz = targetHz({ hidden: document.hidden, batterySaver: this.batterySaver, sinceActivity });
+    const hz = targetHz({ hidden: document.hidden, batterySaver: this.batterySaver, sinceActivity, covered });
     this.countPacing(hz, active, sinceActivity, walker, tween, transition, arrivals, boards);
     if (!shouldRender(now, this.lastRender, hz)) return;
     const dt = Math.min(0.1, this.lastRender === -Infinity ? 1 / 60 : (now - this.lastRender) / 1000);
