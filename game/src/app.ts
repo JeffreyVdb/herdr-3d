@@ -9,7 +9,7 @@ import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
 import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type ScheduleSuggestion, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation, type HireInterpretAck } from './net/protocol';
 import { CityView } from './render/city';
-import { shouldRender, targetHz } from './render/framePolicy';
+import { shouldRender, targetHz, type Coverage } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
 import { memberOf, OfficeView, REACH, seatOf, type AwaySeat, type Target } from './render/office';
 import type { LobbyTarget, LobbyView } from './render/lobby';
@@ -394,6 +394,8 @@ export class App {
   private planOpen = false;
   private lastActivity = 0;
   private lastRender = -Infinity;
+  /** #143: what covered the viewport at the last tick. */
+  private covered: Coverage = 'none';
   private lastT = 0;
   private statusDirty = true;
   private cameraMoved = true;
@@ -3619,8 +3621,14 @@ export class App {
 
   /** Animation-loop callback: frame pacing, then update + render. */
   tick(now: number): void {
+    // #143: the overview page (once grown) hides the scene, the whiteboard's scrim nearly does: a few frames a second
+    // keep step() going under them. Uncovered, the scene counts as just moved: the next vsync draws the world as it is
+    // now, at the full rate, while the page shrinks away.
+    const covered: Coverage = this.overview.covering ? 'opaque' : this.whiteboard.isOpen ? 'scrim' : 'none';
+    if (covered !== this.covered && (this.covered === 'opaque' || covered === 'none')) this.activity(false);
+    this.covered = covered;
     const active = this.walker.moving || this.tween !== null || this.transitioning || this.arrivals.count > 0 || !!this.office?.boardsBusy;
-    const hz = targetHz({ hidden: document.hidden, batterySaver: this.batterySaver, sinceActivity: active ? 0 : now - this.lastActivity });
+    const hz = targetHz({ hidden: document.hidden, batterySaver: this.batterySaver, sinceActivity: active ? 0 : now - this.lastActivity, covered });
     if (!shouldRender(now, this.lastRender, hz)) return;
     const dt = Math.min(0.1, this.lastRender === -Infinity ? 1 / 60 : (now - this.lastRender) / 1000);
     this.lastRender = now;

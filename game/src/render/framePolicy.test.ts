@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACTIVE_WINDOW_MS, shouldRender, targetHz } from './framePolicy';
+import { ACTIVE_WINDOW_MS, OPAQUE_HZ, SCRIM_HZ, shouldRender, targetHz } from './framePolicy';
 
 describe('targetHz', () => {
   it.each([
@@ -11,6 +11,27 @@ describe('targetHz', () => {
     [{ hidden: true, batterySaver: true, sinceActivity: 0 }, 0],
   ])('%j -> %i Hz', (inp, hz) => {
     expect(targetHz(inp)).toBe(hz);
+  });
+
+  // #143: a full-screen layer over the scene caps the rate, whatever else holds it up.
+  it.each([
+    [{ hidden: false, batterySaver: false, sinceActivity: 0, covered: 'none' as const }, 120],
+    [{ hidden: false, batterySaver: true, sinceActivity: ACTIVE_WINDOW_MS + 1, covered: 'none' as const }, 30],
+    [{ hidden: false, batterySaver: false, sinceActivity: 0, covered: 'opaque' as const }, OPAQUE_HZ],
+    [{ hidden: false, batterySaver: false, sinceActivity: ACTIVE_WINDOW_MS + 1, covered: 'opaque' as const }, OPAQUE_HZ],
+    [{ hidden: false, batterySaver: true, sinceActivity: 0, covered: 'opaque' as const }, OPAQUE_HZ],
+    [{ hidden: true, batterySaver: false, sinceActivity: 0, covered: 'opaque' as const }, 0],
+    [{ hidden: false, batterySaver: false, sinceActivity: 0, covered: 'scrim' as const }, SCRIM_HZ],
+    [{ hidden: false, batterySaver: false, sinceActivity: ACTIVE_WINDOW_MS + 1, covered: 'scrim' as const }, SCRIM_HZ],
+    [{ hidden: false, batterySaver: true, sinceActivity: ACTIVE_WINDOW_MS + 1, covered: 'scrim' as const }, SCRIM_HZ],
+    [{ hidden: true, batterySaver: true, sinceActivity: 0, covered: 'scrim' as const }, 0],
+  ])('%j -> %i Hz', (inp, hz) => {
+    expect(targetHz(inp)).toBe(hz);
+  });
+
+  it('caps below every uncovered rate, opaque below scrim', () => {
+    expect(OPAQUE_HZ).toBeLessThan(SCRIM_HZ);
+    expect(SCRIM_HZ).toBeLessThan(30);
   });
 });
 
@@ -39,6 +60,12 @@ describe('shouldRender', () => {
     const n = rendered(120, 30);
     expect(n).toBeGreaterThanOrEqual(30);
     expect(n).toBeLessThanOrEqual(40);
+  });
+  it('renders the opaque cap at about one frame a second more than it asks, on 60 and 120 Hz displays (#143)', () => {
+    // 2 s of vsyncs: the quarter-frame slack rounds the 250 ms period down to the vsync at or past 187.5 ms.
+    expect(rendered(60, OPAQUE_HZ, 120)).toBe(10); // every 200 ms
+    expect(rendered(120, OPAQUE_HZ, 240)).toBeLessThanOrEqual(11); // every ~192 ms
+    expect(rendered(120, OPAQUE_HZ, 240)).toBeGreaterThanOrEqual(2 * OPAQUE_HZ);
   });
   it('never renders when paused', () => {
     expect(rendered(120, 0)).toBe(0);
