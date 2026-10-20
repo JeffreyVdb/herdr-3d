@@ -50,9 +50,13 @@ type HireHerdr interface {
 }
 
 // Git is the typed git runner (*gitops.Git) hires and send-homes use.
-// TopLevel returns gitops.ErrNotRepo outside a git work tree.
+// TopLevel and MainCheckout return gitops.ErrNotRepo outside a git work
+// tree.
 type Git interface {
 	TopLevel(ctx context.Context, dir string) (string, error)
+	// MainCheckout is the repository's main checkout, also from inside a
+	// linked worktree: herdr makes worktrees only from it.
+	MainCheckout(ctx context.Context, dir string) (string, error)
 	Fetch(ctx context.Context, dir string) error
 	DefaultBranch(ctx context.Context, dir string) string
 	Commit(ctx context.Context, dir, ref string) (string, time.Time, error)
@@ -804,7 +808,7 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 
 	if op.worktree {
 		var err error
-		if repo, err = git.TopLevel(ctx, op.cwd); err != nil {
+		if repo, err = git.MainCheckout(ctx, op.cwd); err != nil {
 			if errors.Is(err, gitops.ErrNotRepo) {
 				fail(bad("worktree: %s is not in a git work tree", op.cwd))
 			} else {
