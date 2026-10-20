@@ -587,6 +587,7 @@ conversation, watched by its own target ([A child's transcript](#a-childs-transc
 | `parent` | `root` \| `child` \| `unresolved` | its immediate parent; always present (see below) |
 | `parent_id` | string, optional | with `parent: "child"` only: that child's `id` |
 | `name`, `type`, `description` | string, optional | as the provider gives them (Claude: the subagent type and the task's description; Codex: the nickname and role); at most 128, 128 and 1000 bytes |
+| `model`, `effort` | string, optional | what the child runs on, as its own transcript reports it: the model id (as a worker's `model`) and its effort level; Claude only (a Codex child's are not observed); at most 80 bytes each |
 | `state` | `running` \| `completed` \| `idle` \| `shut_down` \| `interrupted` \| `unknown` | its lifecycle (see below) |
 | `source` | string | the evidence source that set `state`: `hook` (Claude's `SubagentStart`/`SubagentStop`), `transcript`, `app_server`, `rollout`, `fixture` (the test source); a client shows any other as it is |
 | `started_at`, `last_activity_at`, `ended_at` | int, optional | unix **milliseconds**, from the evidence (the provider's clock, not the bridge's as `status_since`); absent when not known. `started_at` keeps the earliest seen, `last_activity_at` the latest |
@@ -624,7 +625,7 @@ is that row. One case does remove a row: a child seen both by its native id alon
 tool call) and from its dispatch before the evidence that links the two. The row seen first stays and the other merges
 into it: a `child.removed` of the other first, then `child.upsert`s of the one that stays and of the merged row's children.
 The row that stays keeps every field either row observed, as if one row had seen both rows' evidence in the order the
-bridge observed it: a field only one has is kept; of a `name`, `type`, `description`, `transcript`, `ended_at` (a resumed
+bridge observed it: a field only one has is kept; of a `name`, `type`, `description`, `model`, `effort`, `transcript`, `ended_at` (a resumed
 `running` clears it) or `state` (with its `source`) both have, the one observed later; the earliest `started_at` and the
 latest `last_activity_at`. Its parent is the one of the two observed later if it is still a parent once they are one row,
 else the other's, else `unresolved`: never the row itself (a parent that was the other row) nor a cycle; the merged row's
@@ -667,6 +668,7 @@ and `child.removed` as above, with `provider: "claude"`.
 |---|---|
 | `native_id` | the child's `agentId` |
 | `name`, `type`, `description` | the Agent call's `name` (when given), `subagent_type` (else the meta's `agentType`, else a hook's `agent_type`), `description` (else the meta's) |
+| `model`, `effort` | the child's latest own `assistant` record's `message.model` (`[1m]` dropped; never `<synthetic>`) and its `effort`, cleaned as a worker's are; not a fork's copied context |
 | `parent` | `root` when the call is in the root's transcript; `child` when it is in a child's transcript (that child), or by the meta's `parentAgentId`; `root` for a meta's `spawnDepth: 1` with no call seen; else `unresolved` |
 | `state` | below |
 | `source` | `transcript`, or `hook` while a call is known only from the bridge's hooks |

@@ -435,11 +435,28 @@
 .ov-row--child[aria-expanded='true']::after {
   top: 27px;
 }
+/* Its name's line never wraps (a long name went under its mark): the name gives way first, cut with an ellipsis (the
+   whole of it on hover), its type and chips keep their size. Its model, when known, under it as a worker's is. */
+.ov-cline {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+}
+.ov-cline > * {
+  flex: none;
+}
 .ov-row--child .ov-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   font-size: 17px;
   font-weight: 680;
   letter-spacing: 0.005em;
+  text-overflow: ellipsis;
   text-transform: none;
+  white-space: nowrap;
 }
 .ov-row--child .ov-mark {
   width: 14px;

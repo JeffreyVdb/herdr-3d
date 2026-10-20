@@ -60,6 +60,12 @@ type Evidence struct {
 	Name        string `json:"name,omitempty"`
 	Type        string `json:"type,omitempty"`
 	Description string `json:"description,omitempty"`
+	// Model and Effort are what the child itself runs on, as its own
+	// transcript reports them (Claude: its latest assistant record's model
+	// and effort), cleaned the way a worker's are (usage.CleanModel,
+	// usage.CleanEffort).
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 	// State is one of proto.ChildStates ("": the observation shows none; a
 	// value outside them is read as proto.ChildUnknown).
 	State string `json:"state,omitempty"`

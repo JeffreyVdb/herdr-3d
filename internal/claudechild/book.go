@@ -12,6 +12,7 @@ import (
 	"github.com/JeffreyVdb/herdr-3d/internal/childagents"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/transcript"
+	"github.com/JeffreyVdb/herdr-3d/internal/usage"
 )
 
 // Timings of the derivation (the bridge's clock, never the evidence's).
@@ -109,6 +110,9 @@ type file struct {
 	prompt  int64 // the latest prompt's (its task, a resume, a Stop hook's feedback)
 	fork    bool
 	copying int // records of a fork's copied context still to skip
+	// model and effort are its latest assistant record's (cleaned as a
+	// worker's are): what the child runs on.
+	model, effort string
 	// sessionOK and agentOK say its first record naming a session, and its
 	// first naming an agent, named this one (a fork's first line names
 	// its agent only).
@@ -210,6 +214,11 @@ func (f *facts) childLine(session, agent string, b []byte) {
 			if l.prompt() {
 				fl.prompt = max(fl.prompt, ts)
 			}
+		}
+	}
+	if l.Type == "assistant" && l.Message != nil {
+		if m := usage.CleanModel(l.Message.Model); m != "" {
+			fl.model, fl.effort = m, usage.CleanEffort(l.Effort)
 		}
 	}
 	if fl.sessionOK {
@@ -654,6 +663,7 @@ func evidence(session string, f *facts, h *hookFacts, k kid, unpaired bool, now 
 			e.StartedAt = fl.first
 		}
 		e.LastActivityAt = fl.last
+		e.Model, e.Effort = fl.model, fl.effort
 	}
 	switch {
 	case fl != nil:
