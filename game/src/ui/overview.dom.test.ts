@@ -757,6 +757,31 @@ describe('opening the page again (#145)', () => {
     expect(rowEls().some((el) => before.includes(el))).toBe(false);
   });
 
+  it('an open never scrolls the board: the same view again or another, it stays where it was (the first row focused without scrolling to it)', async () => {
+    const { ov } = setup();
+    ov.open('top');
+    await frame();
+    const board = document.querySelector('.ov-board') as HTMLElement;
+    const writes: number[] = [];
+    Object.defineProperty(board, 'scrollTop', { configurable: true, get: () => 900, set: (v: number) => writes.push(v) });
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    try {
+      ov.closeNow();
+      ov.open('top');
+      await frame();
+      expect(document.activeElement?.getAttribute('data-key')).toBe('o1');
+      key('a');
+      await frame();
+      expect(ov.info().view).toBe('city');
+      expect(writes).toEqual([]);
+      const rows = focus.mock.contexts.flatMap((el, i) => ((el as HTMLElement).classList.contains('ov-row') ? [focus.mock.calls[i]?.[0]] : []));
+      expect(rows.length).toBeGreaterThanOrEqual(2);
+      for (const o of rows) expect(o).toEqual({ preventScroll: true });
+    } finally {
+      focus.mockRestore();
+    }
+  });
+
   it('the first row takes the focus on the next frame, not in the key that opened the page; a key pressed first wins', async () => {
     const { ov } = setup();
     const opener = document.body.appendChild(document.createElement('button'));

@@ -379,7 +379,7 @@ export class OverviewOverlay {
     void this.grow(true).then((done) => {
       if (done && this.isOpen && !this.closing) this.covered = true;
     });
-    this.focusSoon(true);
+    this.focusSoon();
     this.timer = setInterval(() => this.refresh(), 20_000); // the since column
     setTimeout(() => this.root.classList.remove('ov--enter'), 1200);
   }
@@ -392,7 +392,7 @@ export class OverviewOverlay {
     this.reset();
     this.root.classList.add('ov--enter');
     this.refresh();
-    this.focusSoon(false);
+    this.focusSoon();
     setTimeout(() => this.root.classList.remove('ov--enter'), 1200);
   }
 
@@ -406,8 +406,9 @@ export class OverviewOverlay {
   }
 
   /**
-   * #145: the kept rows of the view opened again: the first row to take the focus (`focusSoon` puts the board back at its
-   * top), their skeletons turning again (the close stopped them). The refresh that follows updates what changed.
+   * #145: the kept rows of the view opened again: the first row to take the focus (the board stays where it was
+   * scrolled, as when every open built it anew), their skeletons turning again (the close stopped them). The refresh
+   * that follows updates what changed.
    */
   private reuse(): void {
     this.focusKey = null;
@@ -420,17 +421,16 @@ export class OverviewOverlay {
   /**
    * The focused row (the first on an open) takes the focus on the frame the page first draws, never in the key that
    * opened it: focusing needs the page laid out (#145: that layout was most of an open's time), and the frame lays it out
-   * anyway. A key pressed before then has moved the focus onto the page itself; `top`: a kept board goes back to its top
-   * first.
+   * anyway. A key pressed before then has moved the focus onto the page itself. The focus never scrolls the board: a
+   * page opened again shows where it was scrolled to.
    */
-  private focusSoon(top: boolean): void {
+  private focusSoon(): void {
     const view = this.view;
     const was = document.activeElement;
     const later = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 0);
     later(() => {
       const moved = document.activeElement !== was && this.root.contains(document.activeElement);
       if (this.view !== view || this.closing || moved) return;
-      if (top) this.board.scrollTop = 0;
       const row = this.focusKey ? this.rows.get(this.focusKey)?.el : null;
       if (row) row.focus({ preventScroll: true });
       else [...this.emptyEl.querySelectorAll('button')].find((b) => !b.hidden)?.focus();

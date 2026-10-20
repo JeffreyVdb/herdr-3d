@@ -6,9 +6,9 @@ import { frames, openGame, watchErrors } from './game';
 
 // #145: the overview page's own cost. Its endless motion (a working lamp's blink, the needs-you ring, a busy mark) moves
 // opacity and transform only, never a property that repaints; a row off the board's view is skipped (content-visibility):
-// it does not animate, and keys still reach it (focused, scrolled to, drawn whole); the lamp's glow and the ring fit
-// inside their row (its paint is clipped there); opening the view again keeps its rows, and shows what changed while it
-// was closed. perf-floor60 is 60 workers (36 working, 6 needing you) on one floor; demo-m118's lab nests freelancers.
+// it does not animate, and keys still reach it (focused, scrolled to, drawn whole), and its estimated height keeps the
+// scrollbar's length in every layout and theme; the lamp's glow and the ring fit inside their row (its paint is clipped
+// there); opening the view again keeps its rows and where it was scrolled to, and shows what changed while it was closed. perf-floor60 is 60 workers (36 working, 6 needing you) on one floor; demo-m118's lab nests freelancers.
 
 const info = (page: Page) => page.evaluate(() => window.__h3d.overview()?.page ?? null);
 const UBUNTU = { 'h3d.theme.ui': 'ubuntu', 'h3d.theme.transcript': 'ubuntu', 'h3d.theme.terminal': 'ubuntu' };
@@ -111,6 +111,47 @@ test('keys reach a skipped row: focused, scrolled into view, drawn whole; the sc
   clean();
 });
 
+test('the scrollbar holds its length on every floor\'s long page: Quiet and Ubuntu, wide, narrow and on a phone', async ({ browser }) => {
+  test.setTimeout(300_000);
+  // Each row kind's estimate per layout and theme (overview.css): scrolled top to bottom, each row drawn as it comes
+  // near, the board's length stays within 3% of its length with every row drawn (perf-city240, All: 240 workers, 30 floors).
+  for (const [theme, store] of [['quiet', {}], ['ubuntu', UBUNTU]] as const) {
+    for (const [width, height] of [[1280, 720], [600, 844], [390, 844]] as const) {
+      const page = await browser.newPage({ viewport: { width, height } });
+      await page.addInitScript((s) => {
+        for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v);
+      }, store as Record<string, string>);
+      await openGame(page, 'perf-city240', '&screens=0');
+      await frames(page, 3);
+      await page.waitForTimeout(2500);
+      await openPage(page);
+      await page.keyboard.press('KeyF');
+      await expect.poll(async () => (await info(page))?.rows?.length).toBe(270);
+      await expect(page.locator('.ov')).not.toHaveClass(/ov--enter/, { timeout: 5000 });
+      const { lengths, full } = await page.locator('.ov-board').evaluate(async (b) => {
+        const frame = () => new Promise((r) => requestAnimationFrame(r));
+        const lengths: number[] = [];
+        for (let y = 0; y <= b.scrollHeight; y += 400) {
+          b.scrollTop = y;
+          await frame();
+          await frame();
+          lengths.push(b.scrollHeight);
+        }
+        const all = document.createElement('style');
+        all.textContent = '.ov-row { content-visibility: visible !important; }';
+        document.head.append(all);
+        const full = b.scrollHeight;
+        all.remove();
+        return { lengths, full };
+      });
+      const off = Math.max(...lengths.map((l) => Math.abs(l - full))) / full;
+      test.info().annotations.push({ type: 'length', description: `${theme} ${width}x${height}: ${lengths[0]}..${lengths.at(-1)} of ${full}, at most ${(off * 100).toFixed(1)}% off` });
+      expect.soft(off, `${theme} ${width}px: ${lengths[0]} → ${lengths.at(-1)} of ${full}`).toBeLessThan(0.03);
+      await page.close();
+    }
+  }
+});
+
 test('the glow and the ring fit inside their row (its paint is clipped there): Quiet and Ubuntu, wide and on a phone', async ({ browser }) => {
   test.setTimeout(240_000);
   for (const [theme, store] of [['quiet', {}], ['ubuntu', UBUNTU]] as const) {
@@ -147,7 +188,7 @@ function crew(): Worker[] {
   return snap.world.workers;
 }
 
-test('opening the view again keeps its rows, from the top with the first focused; what changed while closed shows', async ({ page }) => {
+test('opening the view again keeps its rows and where it was scrolled to, the first focused; what changed while closed shows', async ({ page }) => {
   test.setTimeout(150_000);
   const clean = watchErrors(page);
   await onPerfFloor(page);
@@ -155,8 +196,23 @@ test('opening the view again keeps its rows, from the top with the first focused
   // Each row tagged: the same element is the same tag after the page closes and opens again.
   const tags = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.ov-board > .ov-row')].map((el, i) => ((el as HTMLElement & { h145?: number }).h145 = i)));
   const first = (await info(page))?.rows ?? [];
+  const board = page.locator('.ov-board');
+  // Where the board is scrolled to, and the rows in its view.
+  const at = () =>
+    board.evaluate((b) => {
+      const v = b.getBoundingClientRect();
+      const keys = [...b.querySelectorAll<HTMLElement>(':scope > .ov-row')].filter((r) => {
+        const x = r.getBoundingClientRect();
+        return x.bottom > v.top && x.top < v.bottom;
+      });
+      return { top: b.scrollTop, keys: keys.map((r) => r.dataset.key) };
+    });
   await page.keyboard.press('End');
-  await expect.poll(() => page.locator('.ov-board').evaluate((b) => b.scrollTop)).toBeGreaterThan(1000);
+  await expect.poll(() => board.evaluate((b) => b.scrollTop)).toBeGreaterThan(1000);
+  // Up some, off the bottom (rows above it never drawn yet): the place to come back to.
+  await board.evaluate((b) => (b.scrollTop -= 900));
+  await frames(page, 2);
+  const was = await at();
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await info(page))?.open).toBe(false);
   await page.keyboard.press('KeyO');
@@ -164,9 +220,18 @@ test('opening the view again keeps its rows, from the top with the first focused
   // The cascade plays over the kept rows.
   await expect(page.locator('.ov')).toHaveClass(/ov--enter/);
   expect(await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.ov-board > .ov-row')].map((el) => (el as HTMLElement & { h145?: number }).h145))).toEqual(tags);
+  // As when every open built the rows anew: the board where it was, the same rows in view, the first row focused
+  // without scrolling to it.
   await expect(page.locator(`.ov-row[data-key="${first[0]?.key}"]`)).toBeFocused();
-  expect(await page.locator('.ov-board').evaluate((b) => b.scrollTop)).toBe(0);
+  const back = await at();
+  expect(Math.abs(back.top - was.top)).toBeLessThanOrEqual(1);
+  expect(back.keys).toEqual(was.keys);
+  expect(back.keys).not.toContain(first[0]?.key);
   await expect(page.locator('.ov')).not.toHaveClass(/ov--enter/, { timeout: 5000 });
+  // The next key goes on from the focused row: the second, scrolled into view.
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator(`.ov-row[data-key="${first[1]?.key}"]`)).toBeFocused();
+  await expect(page.locator(`.ov-row[data-key="${first[1]?.key}"]`)).toBeInViewport({ ratio: 1 });
 
   // Closed: one worker goes home, one stops working, one is hired. Open: the page shows them as they are.
   await page.keyboard.press('Escape');
@@ -198,10 +263,14 @@ test('opening the view again keeps its rows, from the top with the first focused
   const kept = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('.ov-board > .ov-row')].filter((el) => (el as HTMLElement & { h145?: number }).h145 !== undefined).length);
   expect(kept).toBe(first.length - 1);
 
-  // `a` still switches to every floor's page, and back to the floor's.
+  // `a` still switches to every floor's page; the board stays where it was scrolled (as it always did), its first row
+  // focused.
   await expect(page.locator('.ov')).not.toHaveClass(/ov--enter/, { timeout: 5000 });
+  await board.evaluate((b) => (b.scrollTop = 1500));
   await page.keyboard.press('KeyA');
   await expect.poll(async () => (await info(page))?.view).toBe('city');
   await expect.poll(async () => (await info(page))?.rows?.[0]?.kind).toBe('floor');
+  await expect.poll(async () => (await info(page))?.focused).toBe((await info(page))?.rows?.[0]?.key);
+  expect(Math.abs((await board.evaluate((b) => b.scrollTop)) - 1500)).toBeLessThanOrEqual(1);
   clean();
 });
