@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/JeffreyVdb/herdr-3d/internal/herdr"
 )
 
 // CheckoutInfo is where git says a checkout is.
@@ -51,6 +53,30 @@ func (g *Git) Checkout(ctx context.Context, dir string) (CheckoutInfo, error) {
 		return CheckoutInfo{}, fmt.Errorf("git rev-parse --show-toplevel --git-dir --git-common-dir: unexpected %q", out)
 	}
 	return CheckoutInfo{TopLevel: filepath.Clean(top), GitDir: filepath.Clean(gitDir), CommonDir: filepath.Clean(common)}, nil
+}
+
+// MainCheckout returns the top level of the main checkout of the
+// repository dir is in: dir's own top level in a main checkout, the
+// checkout that owns the common directory in a linked worktree. A linked
+// worktree whose main checkout is not <common dir>/.. (a bare repository,
+// or a --separate-git-dir one) has none it can name. ErrNotRepo outside a
+// git work tree.
+func (g *Git) MainCheckout(ctx context.Context, dir string) (string, error) {
+	info, err := g.Checkout(ctx, dir)
+	if err != nil {
+		return "", err
+	}
+	main := info.TopLevel
+	if info.GitDir != info.CommonDir {
+		main = filepath.Dir(info.CommonDir)
+		if m, err := g.Checkout(ctx, main); err != nil || m.TopLevel != main || m.GitDir != info.CommonDir {
+			return "", fmt.Errorf("%s is a linked worktree of %s, which has no main checkout", info.TopLevel, info.CommonDir)
+		}
+	}
+	if !herdr.ValidDir(main) {
+		return "", fmt.Errorf("git: unexpected main checkout %q", main)
+	}
+	return main, nil
 }
 
 // Origin returns the URL of dir's origin remote ("" when it has none).

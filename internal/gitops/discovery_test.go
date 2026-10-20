@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -30,6 +31,13 @@ func TestCheckoutAndOrigin(t *testing.T) {
 	git(t, root, "init", "-q", "-b", "trunk", main)
 	git(t, main, "commit", "-q", "--allow-empty", "-m", "one")
 	git(t, main, "worktree", "add", "-q", "-b", "side", wt)
+	bare, bareWT := filepath.Join(root, "bare.git"), filepath.Join(root, "bare-wt")
+	git(t, root, "init", "-q", "--bare", "-b", "trunk", bare)
+	git(t, bare, "worktree", "add", "-q", "--orphan", "-b", "side", bareWT)
+	sub := filepath.Join(wt, "a")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	decoy := filepath.Join(root, "decoy")
 	git(t, root, "init", "-q", decoy)
 	other := filepath.Join(root, "other")
@@ -51,6 +59,19 @@ func TestCheckoutAndOrigin(t *testing.T) {
 	}
 	if _, err := g.Checkout(ctx, root); !errors.Is(err, ErrNotRepo) {
 		t.Fatalf("Checkout outside a repo: %v", err)
+	}
+	// The main checkout, from it and from anywhere in a linked worktree;
+	// a bare repository's worktree has none.
+	for _, dir := range []string{main, wt, sub} {
+		if m, err := g.MainCheckout(ctx, dir); m != main || err != nil {
+			t.Fatalf("MainCheckout(%s) = %q, %v", dir, m, err)
+		}
+	}
+	if m, err := g.MainCheckout(ctx, bareWT); err == nil || !strings.Contains(err.Error(), "has no main checkout") {
+		t.Fatalf("MainCheckout(worktree of a bare repo) = %q, %v", m, err)
+	}
+	if _, err := g.MainCheckout(ctx, root); !errors.Is(err, ErrNotRepo) {
+		t.Fatalf("MainCheckout outside a repo: %v", err)
 	}
 	if o, err := g.Origin(ctx, main); o != "" || err != nil {
 		t.Fatalf("Origin without a remote = %q, %v", o, err)
