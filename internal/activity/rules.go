@@ -317,11 +317,18 @@ func codexScript(script string) Call {
 }
 
 // scriptCall is one tools.<name>( call of a Codex script: its name and the
-// script after it, up to the next call.
+// script after it, up to the next call. A call written inside a string
+// literal or a comment is text, not a call (#132: typed code, a grep for
+// one); a script whose literals the scan cannot close counts every match.
 type scriptCall struct{ name, args string }
 
 func scriptCalls(script string) []scriptCall {
 	locs := toolCallRe.FindAllStringSubmatchIndex(script, -1)
+	if len(locs) > 0 {
+		if spans, ok := literalSpans(script); ok {
+			locs = outsideSpans(locs, spans)
+		}
+	}
 	var calls []scriptCall
 	for i, l := range locs {
 		end := len(script)
@@ -331,6 +338,112 @@ func scriptCalls(script string) []scriptCall {
 		calls = append(calls, scriptCall{name: script[l[2]:l[3]], args: script[l[1]:end]})
 	}
 	return calls
+}
+
+// literalSpans are where a JS script's string literals ("…", '…', the
+// text of `…` but not its ${…}) and comments are, in order, [start, end).
+// ok is false when one does not end: a cut script, a quoted string with a
+// newline in it (a regex literal or the like the scan misread). Regex
+// literals are not read; a // after a backslash is not a comment.
+func literalSpans(s string) (spans [][2]int, ok bool) {
+	var subs []int // the brace depth at each open ${
+	depth := 0
+	// template reads a template's text after i (its ` or the } of a ${…})
+	// to its end (true) or to a ${ (false), and returns where it stopped
+	// (-1: no end).
+	template := func(i int) (int, bool) {
+		for j := i + 1; j < len(s); j++ {
+			switch {
+			case s[j] == '\\':
+				j++
+			case s[j] == '`':
+				spans = append(spans, [2]int{i, j + 1})
+				return j, true
+			case s[j] == '$' && j+1 < len(s) && s[j+1] == '{':
+				spans = append(spans, [2]int{i, j + 2})
+				return j + 1, false
+			}
+		}
+		return -1, false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"' || c == '\'':
+			j := i + 1
+			for ; j < len(s) && s[j] != c; j++ {
+				if s[j] == '\n' {
+					return nil, false
+				}
+				if s[j] == '\\' {
+					j++
+				}
+			}
+			if j >= len(s) {
+				return nil, false
+			}
+			spans = append(spans, [2]int{i, j + 1})
+			i = j
+		case c == '`':
+			j, closed := template(i)
+			if j < 0 {
+				return nil, false
+			}
+			if !closed {
+				subs = append(subs, depth)
+				depth++
+			}
+			i = j
+		case c == '/' && i+1 < len(s) && (s[i+1] == '/' || s[i+1] == '*') && (i == 0 || s[i-1] != '\\'):
+			end := len(s)
+			if s[i+1] == '/' {
+				if j := strings.IndexByte(s[i:], '\n'); j >= 0 {
+					end = i + j
+				}
+			} else {
+				j := strings.Index(s[i+2:], "*/")
+				if j < 0 {
+					return nil, false
+				}
+				end = i + 2 + j + 2
+			}
+			spans = append(spans, [2]int{i, end})
+			i = end - 1
+		case c == '{':
+			depth++
+		case c == '}':
+			depth--
+			if n := len(subs); n > 0 && depth == subs[n-1] {
+				subs = subs[:n-1]
+				j, closed := template(i)
+				if j < 0 {
+					return nil, false
+				}
+				if !closed {
+					subs = append(subs, depth)
+					depth++
+				}
+				i = j
+			}
+		}
+	}
+	return spans, len(subs) == 0
+}
+
+// outsideSpans are the matches of locs that start outside spans (both in
+// order).
+func outsideSpans(locs [][]int, spans [][2]int) [][]int {
+	var out [][]int
+	k := 0
+	for _, l := range locs {
+		for k < len(spans) && spans[k][1] <= l[0] {
+			k++
+		}
+		if k == len(spans) || l[0] < spans[k][0] {
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // scriptArg is the string argument re finds in a call's args ("": none).

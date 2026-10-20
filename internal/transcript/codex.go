@@ -386,7 +386,7 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 		}
 		return []contrib{{id: callID, kind: proto.ItemTool, ts: ts, maybeImg: viewPath != "", script: script, terms: terms, poll: poll, apply: func(b *builder) {
 			if poll != nil {
-				b.call(name, input, poll.summary(b.pollCmd, ""))
+				b.call(name, input, poll.summary(b.pollCmd))
 				b.poll = poll
 			} else {
 				b.call(name, input, summary)
@@ -428,10 +428,10 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 		}
 		return []contrib{{link: linkResult, id: it.CallID, kind: proto.ItemTool, ts: ts, imgs: images, out: text,
 			apply: func(b *builder) {
-				if p := b.poll; p != nil { // #132: the outcome, and only the new output
+				if p := b.poll; p != nil { // #132: the process, and only the new output
 					r := p.pollOutput(text)
 					b.result(r.status(status), r.body, images)
-					b.tool().InputSummary = p.summary(b.pollCmd, r.outcome())
+					b.tool().Terminal = r.term
 				} else {
 					b.result(status, text, images)
 				}

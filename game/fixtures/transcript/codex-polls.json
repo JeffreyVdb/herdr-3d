@@ -52,10 +52,14 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Waited for pnpm exec vitest run · still running · 30s",
+      "input_summary": "Waited for pnpm exec vitest run",
       "input": "text(await tools.write_stdin({session_id:41001,\"chars\":\"\",\"yield_time_ms\":30000,\"max_output_tokens\":4000}));\n",
       "status": "ok",
-      "output_text": " ✓ src/tide.test.ts (12 tests) 41ms"
+      "output_text": " ✓ src/tide.test.ts (12 tests) 41ms",
+      "terminal": {
+        "state": "running",
+        "wall_seconds": 30
+      }
     }
   },
   {
@@ -65,10 +69,14 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Waited for pnpm build · exited 0",
+      "input_summary": "Waited for pnpm build",
       "input": "const r = await tools.write_stdin({session_id:41002,chars:\"\",yield_time_ms:5000,max_output_tokens:1000});\ntext(r);\n",
       "status": "ok",
-      "output_text": "✓ built in 3.41s"
+      "output_text": "✓ built in 3.41s",
+      "terminal": {
+        "state": "exited",
+        "exit_code": 0
+      }
     }
   },
   {
@@ -121,10 +129,14 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Waited for pnpm exec vitest run · exited 1",
+      "input_summary": "Waited for pnpm exec vitest run",
       "input": "text(await tools.write_stdin({session_id:41001,chars:\"\",yield_time_ms:30000,max_output_tokens:4000}));\n",
       "status": "error",
-      "output_text": " ❯ src/moon.test.ts (3 tests | 1 failed) 12ms\n Tests  1 failed | 14 passed (15)"
+      "output_text": " ❯ src/moon.test.ts (3 tests | 1 failed) 12ms\n Tests  1 failed | 14 passed (15)",
+      "terminal": {
+        "state": "exited",
+        "exit_code": 1
+      }
     }
   },
   {
@@ -147,10 +159,14 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Sent ^C to uv run pytest -x · exited 130",
+      "input_summary": "Sent ^C to uv run pytest -x",
       "input": "text(await tools.write_stdin({session_id:41003,chars:\"\\u0003\",yield_time_ms:2000}));\n",
       "status": "error",
-      "output_text": "KeyboardInterrupt"
+      "output_text": "KeyboardInterrupt",
+      "terminal": {
+        "state": "exited",
+        "exit_code": 130
+      }
     }
   },
   {
@@ -173,10 +189,14 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Sent y⏎ to npm create vite@latest tide-app · still running · 2s",
+      "input_summary": "Sent y⏎ to npm create vite@latest tide-app",
       "input": "text(await tools.write_stdin({session_id:41004,chars:'y\\n',yield_time_ms:2000}));\n",
       "status": "ok",
-      "output_text": "◆  Select a framework:"
+      "output_text": "◆  Select a framework:",
+      "terminal": {
+        "state": "running",
+        "wall_seconds": 2
+      }
     }
   },
   {
@@ -186,9 +206,13 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Waited for background terminal 39999 · still running · 5s",
+      "input_summary": "Waited for background terminal 39999",
       "input": "text(await tools.write_stdin({session_id:39999,chars:\"\",yield_time_ms:5000}));\n",
-      "status": "ok"
+      "status": "ok",
+      "terminal": {
+        "state": "running",
+        "wall_seconds": 5
+      }
     }
   },
   {
@@ -198,9 +222,13 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Waited for npm create vite@latest tide-app (+1 more) · still running · 1s",
+      "input_summary": "Waited for npm create vite@latest tide-app (+1 more)",
       "input": "text(await tools.write_stdin({session_id:41004,chars:\"\",yield_time_ms:1000}));\ntext(await tools.write_stdin({session_id:39999,chars:\"\",yield_time_ms:1000}));\n",
-      "status": "ok"
+      "status": "ok",
+      "terminal": {
+        "state": "running",
+        "wall_seconds": 1
+      }
     }
   },
   {
@@ -210,7 +238,7 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Waited for npm create vite@latest tide-app · exited 0",
+      "input_summary": "Waited for npm create vite@latest tide-app",
       "input": "text(await tools.write_stdin({session_id:41004,chars:\"\",yield_time_ms:1000}));\nconst r = await tools.view_image({path:\"/home/dev/tide/shots/home.png\"});\nimage(r.image_url);\n",
       "status": "ok",
       "output_text": "Done. Now run:\n  cd tide-app",
@@ -230,7 +258,11 @@
             "ts": 1792483570000
           }
         }
-      ]
+      ],
+      "terminal": {
+        "state": "exited",
+        "exit_code": 0
+      }
     }
   },
   {
@@ -266,10 +298,14 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Waited for pnpm dev · still running · 10s",
+      "input_summary": "Waited for pnpm dev",
       "input": "text(await tools.write_stdin({\"session_id\":41006,\"chars\":\"\",\"yield_time_ms\":10000,\"max_output_tokens\":200}));\n",
       "status": "ok",
-      "output_text": "Warning: truncated output (original token count: 4000)\nTotal output lines: 812\n\n  ➜  Local:   http://localhost:5173/\n…"
+      "output_text": "Warning: truncated output (original token count: 4000)\nTotal output lines: 812\n\n  ➜  Local:   http://localhost:5173/\n…",
+      "terminal": {
+        "state": "running",
+        "wall_seconds": 10
+      }
     }
   },
   {
@@ -279,9 +315,13 @@
     "kind": "tool",
     "tool": {
       "name": "exec",
-      "input_summary": "Waited for background terminal · still running · 1s",
+      "input_summary": "Waited for background terminal",
       "input": "const id = 41005;\ntext(await tools.write_stdin({session_id:id,chars:\"\",yield_time_ms:1000,max_output_tokens:500}));\n",
-      "status": "ok"
+      "status": "ok",
+      "terminal": {
+        "state": "running",
+        "wall_seconds": 1
+      }
     }
   },
   {
@@ -366,14 +406,18 @@
     "kind": "tool",
     "tool": {
       "name": "write_stdin",
-      "input_summary": "Waited for cargo build --release · still running · 30s",
+      "input_summary": "Waited for cargo build --release",
       "input": {
         "session_id": 52001,
         "chars": "",
         "yield_time_ms": 30000,
         "max_output_tokens": 4000
       },
-      "status": "ok"
+      "status": "ok",
+      "terminal": {
+        "state": "running",
+        "wall_seconds": 30.0013
+      }
     }
   },
   {
@@ -383,14 +427,18 @@
     "kind": "tool",
     "tool": {
       "name": "write_stdin",
-      "input_summary": "Waited for cargo build --release · exited 0",
+      "input_summary": "Waited for cargo build --release",
       "input": {
         "session_id": 52001,
         "chars": "",
         "yield_time_ms": 30000
       },
       "status": "ok",
-      "output_text": "    Finished `release` profile [optimized] target(s) in 52.4s\n"
+      "output_text": "    Finished `release` profile [optimized] target(s) in 52.4s\n",
+      "terminal": {
+        "state": "exited",
+        "exit_code": 0
+      }
     }
   },
   {
@@ -400,13 +448,17 @@
     "kind": "tool",
     "tool": {
       "name": "write_stdin",
-      "input_summary": "Sent ^D to background terminal 52999 · exited 0",
+      "input_summary": "Sent ^D to background terminal 52999",
       "input": {
         "session_id": 52999,
         "chars": "\u0004",
         "yield_time_ms": 1000
       },
-      "status": "ok"
+      "status": "ok",
+      "terminal": {
+        "state": "exited",
+        "exit_code": 0
+      }
     }
   },
   {

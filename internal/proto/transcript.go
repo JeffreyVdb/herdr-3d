@@ -176,6 +176,26 @@ type TranscriptTool struct {
 	// Claude Code, recording off, not a Bash call): unknown, not "no changes".
 	// #21: a running Codex exec script's patches it cannot show (Computed).
 	Changes *TranscriptChanges `json:"changes,omitempty"`
+	// Terminal (#132) is what a Codex poll of a background terminal says of
+	// the process it polled, once its result is in. Absent: not a poll, or
+	// the result says neither.
+	Terminal *TranscriptTerminal `json:"terminal,omitempty"`
+}
+
+// Terminal states of a polled process (#132).
+const (
+	TerminalRunning = "running"
+	TerminalExited  = "exited"
+)
+
+// TranscriptTerminal is a polled background terminal's process (#132):
+// still running (WallSeconds: how long the poll waited, when said) or
+// exited with ExitCode. A poll of several processes: the first that exited
+// other than 0, else the first.
+type TranscriptTerminal struct {
+	State       string   `json:"state"`
+	ExitCode    *int64   `json:"exit_code,omitempty"`
+	WallSeconds *float64 `json:"wall_seconds,omitempty"`
 }
 
 // TranscriptChanges is a command's file changes as Claude Code recorded them

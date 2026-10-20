@@ -2,8 +2,6 @@ package transcript
 
 import (
 	"encoding/json"
-	"fmt"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,9 +62,9 @@ func starts(t *activity.Terminals) bool {
 }
 
 // summary is the poll's row summary: what it did to which command (cmd:
-// the first session's, "" unknown), then the outcome (when its result is
-// in). The command gives way to the cap, the rest does not.
-func (p *pollCall) summary(cmd, outcome string) string {
+// the first session's, "" unknown), and how many more it polled. The
+// command gives way to the cap; what the process did is the row's Terminal.
+func (p *pollCall) summary(cmd string) string {
 	target := strings.TrimSpace(cmd)
 	if target == "" {
 		target = "background terminal"
@@ -79,9 +77,9 @@ func (p *pollCall) summary(cmd, outcome string) string {
 		more = " (+" + strconv.Itoa(len(p.sessions)-1) + " more)"
 	}
 	if p.chars == "" {
-		return clipSummaryWith("Waited for "+target, more+outcome)
+		return clipSummaryWith("Waited for "+target, more)
 	}
-	return clipSummaryWith("Sent "+readableChars(p.chars)+" to "+target, more+outcome)
+	return clipSummaryWith("Sent "+readableChars(p.chars)+" to "+target, more)
 }
 
 // readableChars is typed text as a summary shows it: scrubbed, control
@@ -111,37 +109,25 @@ func readableChars(s string) string {
 	return b.String()
 }
 
-// pollResult is what a poll's output says: whether the process is still
-// running (and how long the poll waited) or exited (with its code), and
-// its new output.
+// pollResult is what a poll's output says: its process (nil: not said)
+// and its new output.
 type pollResult struct {
-	known, running bool
-	code           int64
-	wall           float64 // seconds, -1: not said
-	body           string
-	decoded        bool // body is the new output (else the output as it was)
+	term    *proto.TranscriptTerminal
+	body    string
+	decoded bool // body is the new output (else the output as it was)
 }
 
-// outcome is the summary's suffix of a poll's result.
-func (r pollResult) outcome() string {
-	switch {
-	case !r.known:
-		return ""
-	case r.running && r.wall >= 0:
-		return " · still running · " + seconds(r.wall)
-	case r.running:
-		return " · still running"
-	}
-	return " · exited " + strconv.FormatInt(r.code, 10)
+func running(wall *float64) *proto.TranscriptTerminal {
+	return &proto.TranscriptTerminal{State: proto.TerminalRunning, WallSeconds: wall}
 }
 
-// seconds is a wait as a summary says it: 30s, 1.5s, 2m 10s.
-func seconds(s float64) string {
-	if s >= 60 {
-		n := int64(math.Round(s))
-		return fmt.Sprintf("%dm %ds", n/60, n%60)
-	}
-	return strconv.FormatFloat(math.Round(s*10)/10, 'f', -1, 64) + "s"
+func exited(code int64) *proto.TranscriptTerminal {
+	return &proto.TranscriptTerminal{State: proto.TerminalExited, ExitCode: &code}
+}
+
+// failed reports whether t exited other than 0.
+func failed(t *proto.TranscriptTerminal) bool {
+	return t != nil && t.State == proto.TerminalExited && t.ExitCode != nil && *t.ExitCode != 0
 }
 
 var (
@@ -151,28 +137,31 @@ var (
 )
 
 // pollOutput reads a poll's output text: a direct write_stdin's header and
-// output, or a script's chunks (the first poll's says the outcome; the
-// body is every chunk's output). Text it cannot read is the body as is.
+// output, or a script's chunks (the body is every chunk's output; the
+// process the first that exited other than 0, else the first's). Text it
+// cannot read is the body as is.
 func (p *pollCall) pollOutput(text string) pollResult {
-	r := pollResult{wall: -1, body: text}
+	r := pollResult{body: text}
 	head, out, ok := strings.Cut(text, "Output:\n")
 	if !ok {
 		return r
 	}
 	if p.direct {
 		if m := directExit.FindStringSubmatch(head); m != nil {
-			r.known, r.code = true, parseInt(m[1])
+			r.term = exited(parseInt(m[1]))
 		} else if directRunning.MatchString(head) {
-			r.known, r.running = true, true
-		}
-		if m := directWall.FindStringSubmatch(head); m != nil && r.running {
-			r.wall, _ = strconv.ParseFloat(m[1], 64)
+			var wall *float64
+			if m := directWall.FindStringSubmatch(head); m != nil {
+				if w, err := strconv.ParseFloat(m[1], 64); err == nil {
+					wall = &w
+				}
+			}
+			r.term = running(wall)
 		}
 		r.body, r.decoded = out, true
 		return r
 	}
 	var bodies []string
-	first := true
 	for _, line := range strings.Split(out, "\n") {
 		c, ok := activity.ReadChunk(line)
 		if !ok {
@@ -181,17 +170,15 @@ func (p *pollCall) pollOutput(text string) pollResult {
 		}
 		r.decoded = true
 		bodies = append(bodies, strings.TrimSuffix(c.Output, "\n"))
-		if first {
-			first = false
-			switch {
-			case c.ExitCode != nil:
-				r.known, r.code = true, *c.ExitCode
-			case c.Session != 0:
-				r.known, r.running = true, true
-				if c.Wall != nil {
-					r.wall = *c.Wall
-				}
-			}
+		var t *proto.TranscriptTerminal
+		switch {
+		case c.ExitCode != nil:
+			t = exited(*c.ExitCode)
+		case c.Session != 0:
+			t = running(c.Wall)
+		}
+		if r.term == nil || (t != nil && failed(t) && !failed(r.term)) {
+			r.term = t
 		}
 	}
 	if r.decoded {
@@ -205,10 +192,10 @@ func parseInt(s string) int64 {
 	return n
 }
 
-// pollStatus is a poll's status: an exit other than 0 is an error, a
-// still running process is a poll that is done.
+// status is a poll's status: a process that exited other than 0 is an
+// error, a still running process is a poll that is done.
 func (r pollResult) status(status string) string {
-	if r.known && !r.running && r.code != 0 {
+	if failed(r.term) {
 		return proto.ToolError
 	}
 	return status
