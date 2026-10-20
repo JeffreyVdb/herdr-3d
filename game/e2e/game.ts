@@ -110,6 +110,18 @@ export async function seatMode(page: Page, mode: 'terminal' | 'transcript'): Pro
   }
 }
 
+/** A schedule's hire preparation completed; the form exposes its resolved choices. */
+export async function expectScheduleReady(page: Page): Promise<void> {
+  await expect.poll(() => page.evaluate(() => {
+    const form = window.__h3d.scheduleForm();
+    if (form?.open === true && form.preparing === false) return true;
+    return JSON.stringify({
+      form: form ? { open: form.open, mode: form.mode, floor: form.floor, preparing: form.preparing } : null,
+      prepare: window.__h3d.sent().filter(({ t }) => t === 'hire.prepare').at(-1)?.result,
+    });
+  }), { message: 'the schedule form finished preparing', timeout: 20_000 }).toBe(true);
+}
+
 /**
  * The top bar keeps only state; its commands are rows of the Menu button's popover. Opens it (when it is not open) so a
  * row can be clicked: the menu closes itself when a row does something.

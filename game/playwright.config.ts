@@ -52,6 +52,9 @@ export default defineConfig({
   ...profile,
   outputDir: 'test-results/artifacts',
   timeout: 120_000,
+  // Parallel renderers can dispatch completed bridge work after 5s (hire/run, secret scans, schedule preparation).
+  // Wait for the expected state; passing assertions return immediately. Latency contracts set their own budgets.
+  expect: { timeout: 20_000 },
   retries: 0,
   fullyParallel: true,
   workers,

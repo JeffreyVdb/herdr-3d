@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { expect, test, type Page } from '@playwright/test';
 import { herdrInstructions } from '../tools/fixture-start.ts';
 import { hiringScore } from '../tools/fixture-ai-responses.ts';
-import { askFits, frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
+import { askFits, expectScheduleReady, frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
 
 // #127 on demo-m3 with the simulator (tools/fixture-schedule.ts): the schedule form has "Add herdr hiring instructions"
 // (off), and with it off Save asks "Schedule with instructions" / "Schedule without" when the classifier says the
@@ -71,7 +71,7 @@ async function newSchedule(page: Page): Promise<void> {
   await expect(list).toBeVisible();
   await list.locator('[data-key="new"]').click();
   await expect(form(page)).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.preparing)).toBe(false);
+  await expectScheduleReady(page);
 }
 
 async function fill(page: Page, title: string, prompt: string): Promise<void> {

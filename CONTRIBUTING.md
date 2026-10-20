@@ -178,7 +178,9 @@ make browsers          # download the Chromium revision the pinned Playwright ex
   its own page against the shared preview server and writes only its own `test-results/<name>.png`, so keep it that
   way: no shared files, no fixed ports, no order between tests (also within a file: no `describe.serial`, no pages
   shared through `beforeAll`, no module-level mutable state). Keep functional waits tied to the state the next action
-  needs: parallel rendering load can delay browser callbacks on either hardware or software rendering. Measure suite
+  needs: parallel rendering load can delay browser callbacks on either hardware or software rendering. State assertions
+  have a 20 s default expectation budget and return as soon as they pass. Keep feature latency contracts explicit with
+  their own elapsed-time checks or poll deadlines. Measure suite
   duration and first-attempt failures when choosing a worker count for a host; retain failures as evidence rather than
   relying on fewer workers to hide a readiness race. On Mesa software rendering, `LP_NUM_THREADS` (rasterizer threads
   per pool, default the CPU count) reaches the browser too; capping it alone made the historical llvmpipe run slower.

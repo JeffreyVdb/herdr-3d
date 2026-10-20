@@ -19,6 +19,21 @@ const sent = (page: Page, t: string) => page.evaluate((x) => window.__h3d.sent()
 type Review = Extract<NonNullable<ReturnType<Window['__h3d']['dialog']>>, { kind: 'secrets-review' }>;
 const review = (page: Page) => page.evaluate(() => window.__h3d.dialog()) as Promise<Review | null>;
 
+/** The bridge finishes its scan (or scans again after a stale review) before the review opens. */
+async function secretReviewReady(page: Page, notice?: string): Promise<void> {
+  await expect.poll(() => page.evaluate((notice) => {
+    const dialog = window.__h3d.dialog();
+    if (dialog?.kind === 'secrets-review' && (!notice || dialog.notice?.includes(notice))) return 'ready';
+    const scan = window.__h3d.sent().filter((c) => c.t === 'prompt_secrets.scan').at(-1)?.result;
+    return JSON.stringify({
+      dialog: dialog?.kind ?? null,
+      scan: !scan ? 'pending' : scan.ok ? 'acknowledged' : scan.code,
+      notice: dialog?.kind === 'secrets-review' ? dialog.notice : null,
+    });
+  }, notice), { message: 'the prompt scan opens its secret review', timeout: 20_000 }).toBe('ready');
+  await expect(page.locator('dialog.desk-dlg--secrets')).toBeVisible();
+}
+
 /** The file paths of the `[secret in file …]` references in a sent text (the fixture's file list is the whole host's). */
 const refsOf = (sent: string | undefined) => new Set([...(sent ?? '').matchAll(/\[secret in file ([^\]]+)\]/g)].map((m) => m[1]));
 
@@ -116,7 +131,7 @@ test('the P overlay: found → the whole prompt reviewed (ignore one, correct on
   await noSecretStored(page, 'typed');
   await page.keyboard.press('Enter');
   const dlg = page.locator('dialog.desk-dlg--secrets');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   // Nothing went: only the scan, and the log keeps no text of it.
   expect(await sent(page, 'worker.prompt')).toEqual([]);
   expect((await sent(page, 'prompt_secrets.scan')).map((c) => c.args)).toEqual([{ text: '[redacted]', length: TEXT.length }]);
@@ -206,7 +221,7 @@ test('the laptop’s prompt box: Cancel sends nothing and keeps the draft (in me
   await expect(page.locator('.seat-transcript .tx-review')).toBeVisible();
   await page.keyboard.press('Enter');
   const dlg = page.locator('dialog.desk-dlg--secrets');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   // Esc is Cancel: nothing sent, still seated, the draft still in the box.
   await page.keyboard.press('Escape');
   await expect(dlg).toBeHidden();
@@ -219,7 +234,7 @@ test('the laptop’s prompt box: Cancel sends nothing and keeps the draft (in me
   // Again, and Confirm (all protected): the pending row never shows a value, then shows what was sent.
   await input.click();
   await page.keyboard.press('Enter');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   await dlg.getByRole('button', { name: 'Confirm and send' }).click();
   const row = page.locator('.seat-transcript .tx-pending .tx-md');
   await expect(row).toContainText('[secret');
@@ -242,7 +257,7 @@ test('a paste into an agent’s terminal is reviewed first: exact UTF-16 ranges 
     document.querySelector('.seat-input')?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   }, paste);
   const dlg = page.locator('dialog.desk-dlg--secrets');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
   expect(await reviewText(page)).toBe(paste);
   expect(await sent(page, 'worker.prompt')).toEqual([]);
@@ -274,9 +289,10 @@ test('stale: reviewed again with a note, sent only on the new Confirm; the switc
   await page.keyboard.insertText('ship it with TOKEN=abc123xyz');
   await page.keyboard.press('Enter');
   const dlg = page.locator('dialog.desk-dlg--secrets');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   await dlg.getByRole('button', { name: 'Confirm and send' }).click();
   // The bridge says the review is stale: it opens again, with why, and nothing went.
+  await secretReviewReady(page, 'no longer fits');
   await expect(dlg.locator('.sr-notice')).toContainText('no longer fits');
   expect((await sent(page, 'worker.prompt')).map((c) => c.result?.code)).toEqual(['secrets_review_stale']);
   await dlg.getByRole('button', { name: 'Confirm and send' }).click();
@@ -287,7 +303,7 @@ test('stale: reviewed again with a note, sent only on the new Confirm; the switc
   await overlay.locator('#prompt-text').click();
   await page.keyboard.insertText('and TOKEN=zzz999yyy');
   await page.keyboard.press('Enter');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   await page.evaluate(() => window.__h3d.inject({ t: 'prompt_secrets.update', seq: 1_000_001, enabled: false, available: true }));
   await expect(dlg).toBeHidden();
   await expect(overlay.locator('p.dd-status[role="status"]')).toContainText('switched off');
@@ -312,7 +328,7 @@ test('a prompt near 16 KiB with matches near its start, middle and end: N brings
   await page.keyboard.insertText(text);
   await page.keyboard.press('Enter');
   const dlg = page.locator('dialog.desk-dlg--secrets');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   expect(await reviewText(page)).toBe(text);
   const inView = (key: string) =>
     page.evaluate((k) => {
@@ -417,7 +433,7 @@ test('the review at 1280x720, at 200% zoom (640x360) and on a phone (390x844, to
     await page.keyboard.insertText(long);
     await page.locator('dialog.desk-dlg--prompt [data-key="send"]').click();
     const dlg = page.locator('dialog.desk-dlg--secrets');
-    await expect(dlg).toBeVisible();
+    await secretReviewReady(page);
     // The dialog's entrance done (finite animations only) before anything is measured.
     await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().iterations !== Infinity).map((a) => a.finished.catch(() => undefined))));
     const at = `${size.name}`;
@@ -501,14 +517,14 @@ test('round 4: a hire’s first task with a protected value: reviewed before the
   // Ctrl+Shift+X in the first task: the review on purpose, as its button; Cancel gives the task back, nothing hired.
   await expect(page.locator('#hire-task')).toBeFocused();
   await page.keyboard.press('Control+Shift+X');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   expect(await review(page)).toMatchObject({ manual: true, counts: { found: 1 } });
   await dlg.locator('[data-key="cancel"]').click();
   await expect(dlg).toBeHidden();
   await expect.poll(async () => ((await page.evaluate(() => window.__h3d.dialog())) as { state?: string } | null)?.state).toBe('ready');
   expect(await sent(page, 'worker.hire')).toEqual([]);
   await hire.locator('[data-key="hire"]').click();
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   expect(await review(page)).toMatchObject({ target: expect.stringMatching(/ at Desk 6$/), action: 'Confirm and send', counts: { found: 1, protect: 1 } });
   expect(await sent(page, 'worker.hire')).toEqual([]);
   await dlg.getByRole('button', { name: 'Confirm and send' }).click();
@@ -552,7 +568,7 @@ test('round 4: pack up reads the references (“Confirm and continue”); “Sen
 
     // Send as written (stay): the text the check read (references) goes with its hand-over, no review again.
     await write('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and end your turn');
-    await expect(dlg).toBeVisible();
+    await secretReviewReady(page);
     expect(await review(page)).toMatchObject({ action: 'Confirm and continue', counts: { found: 1 } });
     const proceed = dlg.getByRole('button', { name: 'Confirm and continue' });
     await expect(proceed).toBeEnabled();
@@ -603,7 +619,7 @@ test('round 4: pack up’s “Send and go home”: the task (references) and the
     await page.keyboard.insertText('Fix the header with PASSWORD=hunter22, then go home.');
     await page.keyboard.press('Enter');
     const dlg = page.locator('dialog.desk-dlg--secrets');
-    await expect(dlg).toBeVisible();
+    await secretReviewReady(page);
     expect(await review(page)).toMatchObject({ action: 'Confirm and continue' });
     const proceed = dlg.getByRole('button', { name: 'Confirm and continue' });
     await expect(proceed).toBeEnabled();
@@ -650,7 +666,7 @@ test('round 4: a schedule’s prompt is saved with every match ignored: Protect 
   await page.keyboard.insertText(prompt);
   await form.locator('[data-key="save"]').click();
   const dlg = page.locator('dialog.desk-dlg--secrets');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   expect(await review(page)).toMatchObject({ action: 'Confirm and save', stored: expect.stringMatching(/^A saved prompt keeps no protected file/), counts: { protect: 0, ignore: 1 } });
   await expect(dlg.locator('.sr-stored')).toBeVisible();
   await expect(dlg.locator('.sr-tag')).toHaveText(['Ignored']);
@@ -721,7 +737,7 @@ async function sendProtectedFromBox(page: Page): Promise<string> {
   await page.keyboard.insertText('Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 now');
   await page.keyboard.press('Enter');
   const dlg = page.locator('dialog.desk-dlg--secrets');
-  await expect(dlg).toBeVisible();
+  await secretReviewReady(page);
   await dlg.getByRole('button', { name: 'Confirm and send' }).click();
   await expect(dlg).toBeHidden();
   await expect.poll(async () => (await sent(page, 'worker.prompt'))[0]?.result?.ok, { timeout: 30_000 }).toBe(true);

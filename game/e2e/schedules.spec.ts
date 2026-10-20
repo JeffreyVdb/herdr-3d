@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, openMenu, seatMode, shot, watchErrors } from './game';
+import { expectScheduleReady, frames, openGame, openMenu, seatMode, shot, watchErrors } from './game';
 
 test.use({ timezoneId: 'Europe/Brussels' });
 
@@ -94,7 +94,7 @@ test('“Schedule follow-up…” files the reply once, as written, and schedule
   await follow.click();
   const form = page.getByRole('dialog', { name: 'Schedule a follow-up to Zippy' });
   await expect(form).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.preparing)).toBe(false);
+  await expectScheduleReady(page);
   const f = await page.evaluate(() => window.__h3d.scheduleForm());
   expect(f).toMatchObject({ handoff: 'transcript', when: '', due: null, harness: w.harness, cwd: w.cwd });
   await form.locator('#sf-title-in').fill('After the soak');
@@ -207,7 +207,7 @@ test('the suggestion chip opens the form prefilled; Save schedules it and the ch
   await chip.click();
   const form = page.getByRole('dialog', { name: 'Schedule a follow-up to Zippy' });
   await expect(form).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.preparing)).toBe(false);
+  await expectScheduleReady(page);
   const f = await page.evaluate(() => window.__h3d.scheduleForm());
   expect(f).toMatchObject({ title: 'Post-soak cleanup: Vector 0.59 rollout', handoff: 'transcript', harness: w.harness, cwd: w.cwd });
   expect(f?.due).toBe(due);
