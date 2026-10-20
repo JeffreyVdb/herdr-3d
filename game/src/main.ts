@@ -123,8 +123,8 @@ export interface H3DDebug {
   /** The world's worker as the bridge sent it (a copy; null: none). */
   worker(id: string): Worker | null;
   leaveFloor(): Promise<void>;
-  /** #141: the floor pool's meshes and lamps as drawn (`data`: the instances in use; `t`: after one frame at that time). */
-  floorPool(o?: { data?: boolean; t?: number }): import('./render/floorPoolProbe').PoolProbe | null;
+  /** #141: the floor pool's meshes and lamps as drawn (`data`: the instances in use; `t`: after one frame at that time, `hold`: the loop paused on it until `resume`). */
+  floorPool(o?: { data?: boolean; t?: number; hold?: boolean; resume?: boolean }): import('./render/floorPoolProbe').PoolProbe | null;
   /** `y` (feet above the street) places you on any floor, landing, the street or in the lobby. */
   setPose(p: Pose): void;
   /** M3b: with `y` (feet above the street), `area` and `storey` (the floor, or the landing's floor). */

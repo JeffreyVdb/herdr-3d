@@ -5,9 +5,12 @@ import type { Floor, Worker } from '../net/protocol';
 import { WorldStore } from '../world/store';
 import { FloorPool, poolCapacity, POOL_STEP } from './floorPool';
 import { MonitorCards } from './monitorCards';
+import { ScreenMeshes } from './screens';
 import { LAMPS, officeLamps, OfficeView } from './office';
 
 const STATUS = ['working', 'idle', 'blocked', 'done'] as const;
+/** The kits sized by the floor's desks (the others hold a fixed number: plants, rack LEDs, notes). */
+const BY_DESK = new Set(['crowd', 'desks', 'trays', 'cards', 'monitors', 'screens.frozen']);
 
 /** A tiny seeded PRNG (mulberry32): the same sequences every run. */
 function rng(seed: number): () => number {
@@ -25,9 +28,9 @@ function rng(seed: number): () => number {
 function world(desks: number[], rand: () => number): WorldStore {
   const floors: Floor[] = desks.map((d, i) => ({ session: `f${i}`, state: rand() < 0.2 ? 'asleep' : 'running', building: 'b1', index: i, desks: d }));
   const workers: Worker[] = floors.flatMap((f) =>
-    Array.from({ length: f.desks }, (_, k) => k)
+    Array.from({ length: f.desks ?? 0 }, (_, k: number) => k)
       .filter(() => rand() < 0.5)
-      .map((k) => ({ id: `${f.session}-w${k}`, session: f.session, workspace_id: `ws-${f.session}-${k}`, label: `w${k}`, name: `W${k}`, desk_index: k, harness: 'claude', model: 'claude-opus-5-5', status: STATUS[Math.floor(rand() * STATUS.length)] as Worker['status'] })),
+      .map((k) => ({ id: `${f.session}-w${k}`, session: f.session, workspace_id: `ws-${f.session}-${k}`, label: `w${k}`, name: `W${k}`, desk_index: k, harness: 'claude', model: 'claude-opus-5-5', status: STATUS[Math.floor(rand() * STATUS.length)] as string })),
   );
   const s = new WorldStore(1000);
   s.applySnapshot({ t: 'world.snapshot', seq: 1, world: { buildings: [{ id: 'b1', name: 'Work', sort: 0, floors: floors.map((f) => f.session) }], unassigned: [], floors, workers } });
@@ -76,15 +79,20 @@ describe('FloorPool (#141)', () => {
       let lampAt: Array<{ index: number; targetIndex: number }> | null = null;
       let office: OfficeView | null = null;
       let cards: MonitorCards | null = null;
+      let screens: ScreenMeshes | null = null;
       // Offices left, disposed one load later (the app disposes them after the next office's first frame).
       let retired: OfficeView[] = [];
       for (let step = 0; step < 16; step++) {
         const f = Math.floor(rand() * desks.length);
         const next = new OfficeView(store.floorView(`f${f}`) as NonNullable<ReturnType<WorldStore['floorView']>>, { shadows: rand() < 0.5, pool });
+        // What the laptops add to each office (laptop/index.ts `attach`).
         const nextCards = new MonitorCards(next.layout.slots, pool);
-        next.root.add(nextCards.group);
+        const nextScreens = new ScreenMeshes(next.layout.slots, pool);
+        next.root.add(nextCards.group, nextScreens.group);
         if (office) retired.push(office);
         cards?.dispose();
+        screens?.dispose();
+        screens = nextScreens;
         for (const o of retired.splice(0, rand() < 0.5 ? retired.length : 0)) o.dispose();
         office = next;
         cards = nextCards;
@@ -102,12 +110,12 @@ describe('FloorPool (#141)', () => {
               watch(s.mesh.geometry);
             }
           }
-          expect(slots[0]?.capacity).toBeGreaterThanOrEqual(need);
+          if (BY_DESK.has(key)) expect(slots[0]?.capacity, key).toBeGreaterThanOrEqual(need);
           const before = prev?.get(key);
           if (!before) continue;
           const grew = (slots[0]?.capacity ?? 0) > (before[0]?.capacity ?? 0);
-          // A kit grows only for a floor it has no room for.
-          expect(grew, key).toBe(need > (before[0]?.capacity ?? 0));
+          // A kit grows only for a floor it has no room for (a fixed-size one never).
+          expect(grew, key).toBe(BY_DESK.has(key) && need > (before[0]?.capacity ?? 0));
           if (!grew) expect(slots[0]?.capacity).toBe(before[0]?.capacity);
           slots.forEach((s, i) => {
             const b = before[i] as Snap;

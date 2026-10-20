@@ -1,10 +1,47 @@
 // Runs ON THE MAC (piped over ssh by tools/mac-perf.ts, nothing is copied):
 // headless Chrome through ~/h3d-tools playwright-core, one page per job, one
 // JSON line per job on stdout (bench result, optional base64 PNG).
-//   argv[2]: base64 JSON { base, jobs: [{ name, path, floor?, pose?, bench?, shot?, settle? }] }
+//   argv[2]: base64 JSON { base, jobs: [{ name, path, floor?, pose?, bench?, shot?, settle?, entry? }] }
+//   entry (#141): { floors, rounds }: each floor entered (and left for the city) `rounds` times, timed from enterFloor
+//         to the next drawn frame, with the longest long-animation-frame of the 1.5 s after it; the first entry of a
+//         floor is cold, the others warm
 //   pose: overview | row (on the floor) | street | landing | window (M3b: outside, the top landing, a south window) | laptop (M5: seated at one)
 //         mezz | desk (M3c: at the corner office's glass on the mezzanine, seated at your desk)
 //         boards (M7: south of the board wall, facing the issues board)
+/** #141: floor entries timed in the page (see the header). */
+async function entries(page, { floors, rounds }) {
+  await page.evaluate(() => {
+    window.__loaf = [];
+    new PerformanceObserver((l) => {
+      for (const e of l.getEntries()) window.__loaf.push({ at: e.startTime, ms: e.duration });
+    }).observe({ type: 'long-animation-frame', buffered: false });
+  });
+  const out = [];
+  const seen = new Set();
+  for (let r = 0; r < rounds; r++) {
+    for (const floor of floors) {
+      const e = await page.evaluate(async (fl) => {
+        const f0 = window.__h3d.frames;
+        const t0 = performance.now();
+        await window.__h3d.enterFloor(fl);
+        await new Promise((res) => {
+          const chk = () => (window.__h3d.frames > f0 ? res() : requestAnimationFrame(chk));
+          requestAnimationFrame(chk);
+        });
+        const first = performance.now() - t0;
+        await new Promise((res) => setTimeout(res, 1500));
+        const loafs = window.__loaf.filter((x) => x.at + x.ms >= t0 && x.at <= t0 + 1500).map((x) => x.ms);
+        return { firstFrameMs: Math.round(first), maxLoafMs: Math.round(Math.max(0, ...loafs)) };
+      }, floor);
+      out.push({ floor, cold: !seen.has(floor), ...e });
+      seen.add(floor);
+      await page.evaluate(() => window.__h3d.leaveFloor());
+      await page.waitForTimeout(800);
+    }
+  }
+  return out;
+}
+
 const cfg = JSON.parse(Buffer.from(process.argv[2] ?? '', 'base64').toString('utf8'));
 const { chromium } = await import('playwright-core');
 const exe = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -77,6 +114,7 @@ try {
         );
       }
       await page.waitForTimeout(job.settle ?? 1500);
+      if (job.entry) out.entries = await entries(page, job.entry);
       if (job.bench) out.bench = await page.evaluate((o) => window.__h3d.bench(o), job.bench);
       if (job.shot) out.png = (await page.screenshot()).toString('base64');
     } catch (e) {

@@ -82,6 +82,9 @@ const jobs = [
   { name: 'boards100', path: `/?ws=${encodeURIComponent('/fixture/perf-boards?play=none&sim=1&simusage=0')}&ts`, floor: 'perf-floor', pose: 'boards', bench: BENCH, shot: true, settle: 4000 },
   { name: 'boards0', path: `/?ws=${encodeURIComponent('/fixture/perf-boards?play=none&sim=1&simusage=0&simfail=no_m7')}&ts`, floor: 'perf-floor', pose: 'boards', bench: BENCH, settle: 4000 },
   { name: 'floor60-street', path: `/?${fx('perf-floor60')}&ts`, floor: 'perf-floor', pose: 'street', bench: BENCH, settle: 2500 },
+  // #141: floor entry, `enterFloor` to the next drawn frame: each floor's first entry (cold) and the ones after (warm).
+  { name: 'floor60-entry', path: `/?${fx('perf-floor60')}`, entry: { floors: ['perf-floor'], rounds: 3 } },
+  { name: 'm3b-entry', path: `/?${fx('demo-m3b')}`, entry: { floors: ['herdr-3d', 'depot-manager', 'pastry', 'scratchpad'], rounds: 2 } },
   { name: 'demo-city', path: `/?${fx('demo')}`, shot: true, settle: 2500 },
   { name: 'demo-desk-row', path: `/?${fx('demo')}`, floor: 'herdr-3d', pose: 'row', shot: true },
   // Diagnostics (select with H3D_PERF_JOBS=a,b,…).

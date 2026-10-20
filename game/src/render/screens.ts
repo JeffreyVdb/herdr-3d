@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { attribute, texture, uv, vec2 } from 'three/tsl';
 import type { DeskSlot } from '../world/layout';
 import { glassGeometry, screenGeometry } from './desks';
+import { meshKit, reuse, type FloorPool, type PoolKit } from './floorPool';
 
 /**
  * A frozen screen's cell in the atlas (the monitor's terminal area, M6b: its
@@ -34,6 +35,36 @@ export interface ScreenOwner {
  * laptops is one draw call. A laptop never seen live keeps its glow (the
  * desk's own screen colour). Asleep, all of it goes dark.
  */
+/** #141: the frozen screens' batch (a cell of the atlas per desk, `capacity` desks) and its atlas (see `FloorPool`). */
+interface FrozenKit extends PoolKit {
+  mesh: THREE.InstancedMesh;
+  cell: THREE.InstancedBufferAttribute;
+  canvas: HTMLCanvasElement;
+  g: CanvasRenderingContext2D;
+  tex: THREE.CanvasTexture;
+}
+
+function frozenKit(capacity: number): FrozenKit {
+  const geo = screenGeometry(0.001);
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W * COLS;
+  canvas.height = CELL_H * Math.ceil(FROZEN_CELLS / COLS);
+  const g = canvas.getContext('2d', { alpha: false });
+  if (!g) throw new Error('2D canvas unavailable');
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  const cell = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
+  geo.setAttribute('aCell', cell);
+  const mat = new THREE.MeshBasicNodeMaterial();
+  const c = attribute('aCell', 'vec4');
+  mat.colorNode = texture(tex, vec2(c.x.add(uv().x.mul(c.z)), c.y.add(uv().y.mul(c.w)))).rgb;
+  const mesh = new THREE.InstancedMesh(geo, mat, capacity);
+  mesh.frustumCulled = false;
+  return meshKit(capacity, [mesh], { mesh, cell, canvas, g, tex }, () => tex.dispose());
+}
+
 export class ScreenMeshes {
   readonly group = new THREE.Group();
   private readonly geo: THREE.BufferGeometry;
@@ -41,8 +72,9 @@ export class ScreenMeshes {
   private readonly fullGeo: THREE.BufferGeometry;
   /** Desks whose live screen covers the whole glass (the one you sit at). */
   private full: number | null = null;
-  private readonly frozenGeo: THREE.BufferGeometry;
   private readonly live = new Map<number, THREE.Mesh>();
+  private readonly kit: FrozenKit;
+  private readonly pooled: boolean;
   private readonly frozenMesh: THREE.InstancedMesh;
   private readonly canvas: HTMLCanvasElement;
   private readonly g: CanvasRenderingContext2D;
@@ -65,32 +97,33 @@ export class ScreenMeshes {
   private readonly one = new THREE.Vector3(1, 1, 1);
   private readonly up = new THREE.Vector3(0, 1, 0);
 
-  constructor(private readonly slots: readonly DeskSlot[]) {
+  /** `pool`: the frozen screens' batch and atlas kept from floor to floor (#141); none: their own. */
+  constructor(
+    private readonly slots: readonly DeskSlot[],
+    pool?: FloorPool,
+  ) {
     this.group.name = 'screens';
     this.geo = screenGeometry(0.0015);
     this.fullGeo = glassGeometry(0.0015);
-    this.frozenGeo = screenGeometry(0.001);
-    this.canvas = document.createElement('canvas');
-    this.canvas.width = CELL_W * COLS;
-    this.canvas.height = CELL_H * Math.ceil(FROZEN_CELLS / COLS);
-    const g = this.canvas.getContext('2d', { alpha: false });
-    if (!g) throw new Error('2D canvas unavailable');
-    this.g = g;
-    this.tex = new THREE.CanvasTexture(this.canvas);
-    this.tex.colorSpace = THREE.SRGBColorSpace;
-    this.tex.generateMipmaps = false;
-    this.tex.minFilter = THREE.LinearFilter;
     const n = Math.max(1, slots.length);
-    this.cell = new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4);
-    this.frozenGeo.setAttribute('aCell', this.cell);
-    const mat = new THREE.MeshBasicNodeMaterial();
-    const c = attribute('aCell', 'vec4');
-    mat.colorNode = texture(this.tex, vec2(c.x.add(uv().x.mul(c.z)), c.y.add(uv().y.mul(c.w)))).rgb;
-    this.frozenMesh = new THREE.InstancedMesh(this.frozenGeo, mat, n);
+    this.pooled = !!pool;
+    this.kit = pool ? pool.take('screens.frozen', n, this, frozenKit) : frozenKit(n);
+    this.kit.holder = this;
+    ({ canvas: this.canvas, g: this.g, tex: this.tex, cell: this.cell, mesh: this.frozenMesh } = this.kit);
+    // A new floor's atlas starts black, its cells unset, as a new one does.
+    this.g.fillStyle = '#000';
+    this.g.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    this.cell.array.fill(0, 0, n * 4);
+    this.cell.needsUpdate = true;
+    reuse(this.frozenMesh, n);
     this.frozenMesh.name = 'screens.frozen';
-    this.frozenMesh.frustumCulled = false;
     for (let i = 0; i < n; i++) this.frozenMesh.setMatrixAt(i, ZERO);
     this.group.add(this.frozenMesh);
+  }
+
+  /** #141: still the screens its batch draws (pooled screens of a floor you left write nothing). */
+  private get drawing(): boolean {
+    return this.kit.holder === this;
   }
 
   /** Whether the desk has a slot (a floor that shrank has fewer). */
@@ -156,7 +189,7 @@ export class ScreenMeshes {
 
   /** Keeps `src` (a live screen's canvas, `owner`'s) as the desk's frozen screen. */
   freeze(desk: number, src: CanvasImageSource, owner: ScreenOwner): void {
-    if (!this.slots[desk]) return;
+    if (!this.slots[desk] || !this.drawing) return;
     let cell = this.frozen.get(desk);
     if (cell === undefined) {
       if (this.frozen.size >= FROZEN_CELLS) {
@@ -194,6 +227,7 @@ export class ScreenMeshes {
 
   /** Puts a desk's frozen instance where `shown` and `covered` say (its slot, or nowhere). */
   private place(desk: number): void {
+    if (!this.drawing) return;
     this.frozenMesh.setMatrixAt(desk, this.shown(desk) && !this.covered.has(desk) ? this.slotMatrix(desk) : ZERO);
     this.frozenMesh.instanceMatrix.needsUpdate = true;
   }
@@ -265,7 +299,7 @@ export class ScreenMeshes {
    * carries go on the glass in the same frame (the texture and the instance matrices reach the GPU in the same render).
    */
   update(now: number): void {
-    if (!this.atlasDirty || now - this.lastUpload < ATLAS_UPLOAD_MS) return;
+    if (!this.atlasDirty || now - this.lastUpload < ATLAS_UPLOAD_MS || !this.drawing) return;
     this.atlasDirty = false;
     this.lastUpload = now;
     this.tex.needsUpdate = true;
@@ -287,9 +321,7 @@ export class ScreenMeshes {
     for (const d of [...this.live.keys()]) this.setLive(d, null);
     this.geo.dispose();
     this.fullGeo.dispose();
-    this.frozenGeo.dispose();
-    (this.frozenMesh.material as THREE.Material).dispose();
-    this.frozenMesh.dispose();
-    this.tex.dispose();
+    // A pooled batch and atlas are the pool's: they stay.
+    if (!this.pooled) this.kit.dispose();
   }
 }

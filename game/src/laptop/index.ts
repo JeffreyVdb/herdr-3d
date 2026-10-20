@@ -1083,7 +1083,7 @@ export class Laptops {
     this.liveAt.clear();
     this.planner.clear();
     if (office) {
-      this.meshes = new ScreenMeshes(office.layout.slots);
+      this.meshes = new ScreenMeshes(office.layout.slots, office.pool ?? undefined);
       office.root.add(this.meshes.group);
       const prints = new PrintMeshes(office.layout.slots);
       office.root.add(prints.group);

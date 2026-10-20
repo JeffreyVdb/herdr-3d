@@ -380,9 +380,9 @@ export class OfficeView {
       this.root.add(lamp, lamp.target);
     }
 
-    this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·');
+    this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·', this.pool ?? undefined);
     this.root.add(this.props.group);
-    this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex));
+    this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex), this.pool ?? undefined);
     this.root.add(this.boards.group);
 
     this.kits = L.slots.map((s) => deskKit(s));
@@ -999,6 +999,11 @@ export class OfficeView {
     this.cardCam = cardCam;
     this.cards.update(cardCam, this.anchors, vp, moved || this.cardsDirty);
     this.cardsDirty = false;
+  }
+
+  /** #141: whether the pool's lamps and meshes are this office's still (no office was built after it). */
+  get holdsPool(): boolean {
+    return !this.pool || this.pool.lamps.every((l) => l.parent === this.root);
   }
 
   /** #141: `fn` runs when the office is disposed (at once if it is): things drawn in it that are not its own (the laptops' screens). */

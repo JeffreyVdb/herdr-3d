@@ -395,6 +395,10 @@ export class App {
    * shaders the next one draws with (disposed first, those would be built again).
    */
   private retired: OfficeView[] = [];
+  /** #141: a cold entry's shaders are compiling behind the doors: no frame is drawn meanwhile (`warmUp`). */
+  private warming = false;
+  /** #141: the outside of the building you left for the city (see `keepOutside`). */
+  private kept: { shape: string; view: OutsideView } | null = null;
   private fireDoor = 0;
   private mezzDoor = 0;
   /** Whether the hint on screen is the seated one. */
@@ -962,15 +966,16 @@ export class App {
 
   /**
    * #141: the floor pool as the renderer draws it (test hook); `t`: first one frame at that time with the loop paused, so
-   * two pages on the same floor at the same pose dump the same instances.
+   * two pages on the same floor at the same pose dump the same instances (`hold`: the loop stays paused, that frame on
+   * the canvas, until a call with `resume`).
    */
-  poolInfo(o: { data?: boolean; t?: number } = {}): PoolProbe {
+  poolInfo(o: { data?: boolean; t?: number; hold?: boolean; resume?: boolean } = {}): PoolProbe {
     if (o.t !== undefined) {
       this.pause();
       this.step(0, o.t);
       this.render();
-      this.resume();
-    }
+      if (!o.hold) this.resume();
+    } else if (o.resume) this.resume();
     return probePool(this.pool, this.r, this.walk.scene, this.office?.root ?? null, !!o.data);
   }
 
@@ -2084,13 +2089,28 @@ export class App {
   async enterFloor(floor: string, opts: { transition?: boolean; pose?: Pose } = {}): Promise<void> {
     const fv = this.store.floorView(floor);
     if (!fv || this.transitioning) return;
-    const swap = () => {
+    // #141: no office loaded (the city, a lobby): through the doors, its office is built while they close and its
+    // shaders compiled before they open, so no frame stalls on them. Without doors the swap is at once, as before.
+    const cold = !this.office && opts.transition !== false && !reducedMotionTest();
+    let early: OfficeView | null = null;
+    if (cold) {
+      setTimeout(() => {
+        const ctx = this.buildingFor(floor);
+        const v = this.store.floorView(floor);
+        if (ctx && v && this.transitioning && !this.office) early = new OfficeView(v, { shadows: this.shadows, outline: ctx.outline, owner: this.owner, pool: this.pool });
+      }, 0);
+    }
+    const swap = async () => {
       // #58: the floor you enter is listed while you are on it, hidden or not (pinned before its building is read).
       if (this.store.pin(floor)) this.city.build(this.store.city());
       // Read the floor again: events keep arriving while the doors close, and
       // until the office exists nothing else applies them to it.
       const now = this.store.floorView(floor);
       const ctx = now ? this.buildingFor(floor) : null;
+      // The office built early is used when it is still the floor's (same desks and outline) and still holds the pool.
+      const pre: OfficeView | null = early;
+      const fresh = pre && now && ctx && pre.holdsPool && pre.apply(now, ctx.outline) ? pre : null;
+      if (pre && pre !== fresh) pre.dispose();
       if (!now || !ctx) {
         this.hud.toast(`${this.store.floorName(floor)} is gone.`);
         return;
@@ -2098,14 +2118,48 @@ export class App {
       this.walker.stop();
       this.setBuilding(ctx);
       const storey = ctx.floors.findIndex((f) => f.id === floor);
-      this.loadFloor(storey, now);
+      this.loadFloor(storey, now, fresh);
       this.enterWalk();
       const L = (this.office as OfficeView).layout;
       const p = opts.pose ?? { x: L.spawn.x, z: L.spawn.z, yaw: L.spawn.yaw, pitch: -0.05 };
       this.walker.place(p.x, p.z, p.yaw, p.pitch ?? 0, p.y ?? floorY(storey));
       this.afterPlace();
+      if (cold) await this.warmUp();
     };
     await this.ride(fv.level ? `${fv.level.number}` : fv.name, swap, opts.transition);
+  }
+
+  /**
+   * #141: compiles what the floor's first frame draws while the doors are shut, the frame loop held meanwhile (the
+   * doors hide the canvas): `compileAsync` builds an object at a time and yields between them, where that frame would
+   * build them all at once. Everything in the office is compiled, not only what the camera sees and is shown now (the
+   * crew's props, the trays); the shadow pass is not (three builds it on the first frame, still behind the doors).
+   */
+  private async warmUp(): Promise<void> {
+    const office = this.office;
+    if (!office) return;
+    this.warming = true;
+    try {
+      const shown: THREE.Object3D[] = [];
+      const culled: THREE.Object3D[] = [];
+      office.root.traverse((o) => {
+        if (!(o as THREE.Mesh).isMesh) return;
+        if (!o.visible) shown.push(o);
+        if (o.frustumCulled) culled.push(o);
+      });
+      for (const o of shown) o.visible = true;
+      for (const o of culled) o.frustumCulled = false;
+      // The scene's cache key is kept per render call (three's NodeManager.getCacheKey): a new call, so the lamps the
+      // office brought into the scene are in it.
+      (this.r.info as { calls: number }).calls++;
+      // It picks what to compile before its first await: the parts can go back as they were at once.
+      const done = this.r.compileAsync(this.walk.scene, this.planOpen ? this.planCam : this.fpCam);
+      for (const o of shown) o.visible = false;
+      for (const o of culled) o.frustumCulled = true;
+      await done;
+    } finally {
+      this.warming = false;
+    }
   }
 
   /** The elevator to a building's lobby (null: the unassigned lot's). */
@@ -2130,10 +2184,10 @@ export class App {
   }
 
   /** Elevator doors close, `swap` runs, doors open (or at once, for tests and reduced motion). */
-  private async ride(label: string, swap: () => void, transition = true): Promise<void> {
+  private async ride(label: string, swap: () => void | Promise<void>, transition = true): Promise<void> {
     this.transitioning = true;
     try {
-      if (transition === false || reducedMotionTest()) swap();
+      if (transition === false || reducedMotionTest()) void swap();
       else await this.hud.doorsTransition(label, swap);
     } finally {
       this.transitioning = false;
@@ -2167,7 +2221,7 @@ export class App {
       this.walker.release();
       this.walker.stop();
       this.unloadFloor();
-      this.dropOutside();
+      this.keepOutside();
       this.arrivals.clear();
       this.endDeliveries(null); // M6c
       this.building = null;
@@ -2223,7 +2277,11 @@ export class App {
     let o = this.walk.outside;
     if (!o || !prev || prev.shape !== ctx.shape) {
       this.dropOutside();
-      o = new OutsideView(ctx.plan, ctx.openings, { name: ctx.name, tint: ctx.tint, floors: ctx.floors.map((f) => ({ id: f.id, name: f.name, asleep: f.asleep })) });
+      // #141: back in the building you left for the city: its outside as it was (nothing of it built again).
+      const kept = this.kept;
+      this.kept = null;
+      if (kept && kept.shape !== ctx.shape) kept.view.dispose();
+      o = kept?.shape === ctx.shape ? kept.view : new OutsideView(ctx.plan, ctx.openings, { name: ctx.name, tint: ctx.tint, floors: ctx.floors.map((f) => ({ id: f.id, name: f.name, asleep: f.asleep })) });
       o.lobby.setReceptionist(this.reception.object);
       this.walk.setOutside(o);
       o.setLoaded(this.loaded);
@@ -2286,6 +2344,17 @@ export class App {
     return deleteLogo(this.url, building);
   }
 
+  /** #141: leaving for the city, the building's outside is kept (out of the scene) for the next entry into it. */
+  private keepOutside(): void {
+    const o = this.walk.outside;
+    const shape = this.building?.shape;
+    if (!o || shape === undefined) return this.dropOutside();
+    o.lobby.slot.clear();
+    this.walk.setOutside(null);
+    this.kept?.view.dispose();
+    this.kept = { shape, view: o };
+  }
+
   private dropOutside(): void {
     const o = this.walk.outside;
     if (!o) return;
@@ -2296,14 +2365,15 @@ export class App {
   }
 
   /** Gives floor `storey` of the current building its interior (the one you are on or about to enter). */
-  private loadFloor(storey: number, view?: FloorView): void {
+  /** `built`: its office, built already for this floor and view (#141: while the doors closed). */
+  private loadFloor(storey: number, view?: FloorView, built: OfficeView | null = null): void {
     const ctx = this.building;
     const f = ctx?.floors[storey];
     const fv = view ?? (f ? this.store.floorView(f.id) : null);
     if (!ctx || !fv) return;
     const old = this.office;
     this.endDeliveries(fv.id); // M6c: the reports on the floor you leave resolve at once
-    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner, pool: this.pool });
+    this.office = built ?? new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner, pool: this.pool });
     this.loaded = storey;
     this.mezzDoor = 0;
     this.fireDoor = 0;
@@ -3649,6 +3719,7 @@ export class App {
 
   /** Animation-loop callback: frame pacing, then update + render. */
   tick(now: number): void {
+    if (this.warming) return;
     const active = this.walker.moving || this.tween !== null || this.transitioning || this.arrivals.count > 0 || !!this.office?.boardsBusy;
     const hz = targetHz({ hidden: document.hidden, batterySaver: this.batterySaver, sinceActivity: active ? 0 : now - this.lastActivity });
     if (!shouldRender(now, this.lastRender, hz)) return;

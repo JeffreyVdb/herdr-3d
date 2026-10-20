@@ -29,6 +29,14 @@ export interface PoolProbe {
   lamps: Array<{ name: string; parent: string | null; index: number; position: number[]; target: number[]; targetInScene: boolean; intensity: number; id: number }>;
   /** Instanced meshes under `scene` sharing a uuid (must be none). */
   sharedUuids: string[];
+  /** What the renderer holds: `renderer.info.memory`, its render objects, compiled states and pipelines (a leak shows here). */
+  memory: { geometries: number; textures: number; attributes: number; programs: number; renderObjects: number; states: number; pipelines: number };
+}
+
+interface RendererInternals {
+  _objects?: { _renderObjects?: Set<RenderObjectLike> };
+  _nodes?: { nodeBuilderCache?: Map<unknown, unknown> };
+  _pipelines?: { caches?: Map<unknown, unknown> };
 }
 
 interface RenderObjectLike {
@@ -54,7 +62,8 @@ function reads(ro: RenderObjectLike, array: ArrayLike<number>): boolean {
 }
 
 export function probePool(pool: FloorPool, renderer: THREE.WebGPURenderer, scene: THREE.Object3D, root: THREE.Object3D | null, data: boolean): PoolProbe {
-  const objects = (renderer as unknown as { _objects?: { _renderObjects?: Set<RenderObjectLike> } })._objects?._renderObjects ?? new Set<RenderObjectLike>();
+  const internals = renderer as unknown as RendererInternals;
+  const objects = internals._objects?._renderObjects ?? new Set<RenderObjectLike>();
   const byObject = new Map<THREE.Object3D, RenderObjectLike[]>();
   for (const ro of objects) {
     const l = byObject.get(ro.object) ?? [];
@@ -109,5 +118,14 @@ export function probePool(pool: FloorPool, renderer: THREE.WebGPURenderer, scene
       id: l.id,
     })),
     sharedUuids: [...seen].filter(([, n]) => n > 1).map(([u]) => u),
+    memory: {
+      geometries: renderer.info.memory.geometries,
+      textures: renderer.info.memory.textures,
+      attributes: renderer.info.memory.attributes,
+      programs: renderer.info.memory.programs,
+      renderObjects: objects.size,
+      states: internals._nodes?.nodeBuilderCache?.size ?? -1,
+      pipelines: internals._pipelines?.caches?.size ?? -1,
+    },
   };
 }

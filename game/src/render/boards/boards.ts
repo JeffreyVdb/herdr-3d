@@ -4,6 +4,7 @@ import { closesText, holdersOf, issuePlacements, keysById, PR_CAP, paperOf, pinO
 import { hash32 } from '../../world/derive';
 import type { Prop } from '../../world/layout';
 import type { WorkerView } from '../../world/store';
+import type { FloorPool } from '../floorPool';
 import { BODY_TINTS } from '../palette';
 import { NoteFlights, type FlightInfo } from './flight';
 import { Gong } from './gong';
@@ -68,6 +69,8 @@ export class BoardsView {
     height: number,
     /** Puts a board's backdrop texture on its front. */
     swap: (id: 'board.issues' | 'board.prs', tex: THREE.Texture) => void,
+    /** #141: the notes' batches and atlases from there. */
+    pool?: FloorPool,
   ) {
     this.group.name = 'boards';
     this.heightM = height;
@@ -80,10 +83,10 @@ export class BoardsView {
     this.issuesAt = place('board.issues');
     this.prsAt = place('board.prs');
     this.issues = this.issuesAt
-      ? new NoteBoard<IssueFace>({ size: this.issuesAt.size, cell: ISSUE_CELL, cols: 8, rows: 4, draw: (g, x, y, f) => drawIssueNote(g, x, y, f), same: sameIssueFace, backdrop: (t) => swap('board.issues', t) })
+      ? new NoteBoard<IssueFace>({ size: this.issuesAt.size, cell: ISSUE_CELL, cols: 8, rows: 4, draw: (g, x, y, f) => drawIssueNote(g, x, y, f), same: sameIssueFace, backdrop: (t) => swap('board.issues', t), pool: pool && { pool, key: 'notes.issues' } })
       : null;
     this.prs = this.prsAt
-      ? new NoteBoard<PrFace>({ size: this.prsAt.size, cell: PR_CELL, cols: 4, rows: 6, draw: (g, x, y, f) => drawPrNote(g, x, y, f), same: samePrFace, backdrop: (t) => swap('board.prs', t) })
+      ? new NoteBoard<PrFace>({ size: this.prsAt.size, cell: PR_CELL, cols: 4, rows: 6, draw: (g, x, y, f) => drawPrNote(g, x, y, f), same: samePrFace, backdrop: (t) => swap('board.prs', t), pool: pool && { pool, key: 'notes.prs' } })
       : null;
     if (this.issues && this.issuesAt) {
       this.issues.group.position.copy(this.issuesAt.origin);
