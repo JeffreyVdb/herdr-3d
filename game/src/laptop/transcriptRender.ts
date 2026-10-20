@@ -2909,8 +2909,7 @@ class Transcript implements TranscriptView {
       }
     });
     this.stick();
-    const more = this.drawQueue.length > 0 || this.draining !== null || this.lazyDraw.size > 0;
-    this.root.toggleAttribute('data-drawing', more);
+    this.drawn();
     if (this.drawQueue.length || ((this.draining || this.lazyDraw.size) && !this.timeline.building)) this.drawSoon();
   }
 
@@ -2931,6 +2930,23 @@ class Transcript implements TranscriptView {
       return [el, step];
     }
     return null;
+  }
+
+  /** #126: the rest of a body's lines put off, now (End on it). */
+  private drawAll(el: Element): void {
+    const i = this.drawQueue.findIndex(([b]) => b === el);
+    const step = i >= 0 ? this.drawQueue.splice(i, 1)[0]?.[1] : this.draining?.[0] === el ? this.draining[1] : this.lazyDraw.get(el);
+    if (!step) return;
+    if (this.draining?.[0] === el) this.draining = null;
+    this.lazyDraw.delete(el);
+    this.lazyIO?.unobserve(el);
+    this.keepPlace(() => step(Infinity));
+    this.drawn();
+  }
+
+  /** #126: `data-drawing` while lines are still to draw. */
+  private drawn(): void {
+    this.root.toggleAttribute('data-drawing', this.drawQueue.length > 0 || this.draining !== null || this.lazyDraw.size > 0);
   }
 
   /** #126: `drawDue` after the next frame (one at a time). */
@@ -3140,6 +3156,7 @@ class Transcript implements TranscriptView {
         dy = -Infinity;
         break;
       case 'End':
+        this.drawAll(el); // #126: its last line, not the last drawn so far
         dy = Infinity;
         break;
       case 'j':

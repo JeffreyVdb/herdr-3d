@@ -537,6 +537,23 @@ describe('#126: every diff line drawn once the open settles', () => {
     expect(io.watched.size).toBe(0);
   });
 
+  it('End on a body still drawing draws the rest of it first: its last line', async () => {
+    view = mountTranscript(container, host());
+    view.setItems([say(1), edit(2, 'a.ts', 1900), say(3)]);
+    await slice();
+    const body = $('.tx-diff-body') as HTMLElement;
+    report(body, true);
+    expect(drawnLines()).toBeLessThan(1900);
+    body.focus();
+    body.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+    expect(drawnLines()).toBe(1900);
+    expect(body.style.height).toBe('');
+    expect(drawing()).toBe(false);
+    expect(io.watched.size).toBe(0);
+    await settled();
+    expect(drawnLines()).toBe(1900);
+  });
+
   it('draws a frame’s lines at most per frame', async () => {
     view = mountTranscript(container, host());
     view.setItems([edit(1, 'a.ts', 1900), edit(2, 'b.ts', 1900), say(3)]);
