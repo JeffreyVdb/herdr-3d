@@ -51,6 +51,9 @@ type Nested struct {
 	Kind    Kind
 	Detail  string
 	OK      bool
+	// Command is an exec_command's cmd, Chars what a write_stdin types ("":
+	// a poll); only CodexTerminals sets them (#132).
+	Command, Chars string
 }
 
 // Classify places a tool call: its kind, a short and safe detail, and
@@ -68,13 +71,19 @@ var metaTools = set("Skill", "ToolSearch", "ListMcpResourcesTool", "ReadMcpResou
 	"AskUserQuestion", "request_user_input", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource",
 	"tool_search", "skill")
 
-// Analyze places a tool call (the rules' whole answer).
-func Analyze(harness, name string, input json.RawMessage) Call {
+// bareName is a tool's name without the namespace Codex may give it.
+func bareName(name string) string {
 	if i := strings.LastIndexByte(name, '.'); i >= 0 && !strings.HasPrefix(name, "mcp__") {
 		if ns := name[:i]; ns == "functions" || ns == "multi_tool_use" || ns == "tools" {
-			name = name[i+1:]
+			return name[i+1:]
 		}
 	}
+	return name
+}
+
+// Analyze places a tool call (the rules' whole answer).
+func Analyze(harness, name string, input json.RawMessage) Call {
+	name = bareName(name)
 	if metaTools[name] {
 		return Call{Keep: true, OK: true}
 	}
@@ -229,7 +238,7 @@ var cmdArgRe = regexp.MustCompile(`["']?\bcmd["']?\s*:\s*("(?:[^"\\]|\\.)*"|'(?:
 // sessionArgRe and charsArgRe are a write_stdin's session and its input.
 var (
 	sessionArgRe = regexp.MustCompile(`["']?\bsession_id["']?\s*:\s*(\d+)`)
-	charsArgRe   = regexp.MustCompile(`["']?\bchars["']?\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')`)
+	charsArgRe   = regexp.MustCompile(`["']?\bchars["']?\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|` + "`[^`]*`" + `)`)
 	pathArgRe    = regexp.MustCompile(`["']?\bpath["']?\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')`)
 	patchArgRe   = regexp.MustCompile(`\*\*\* (?:Update|Add|Delete) File: ([^\n"\\]+)`)
 )
@@ -239,16 +248,7 @@ var (
 // every exec_command's cmd; only write_stdin, wait or sleep is waiting
 // (or a polled session's label); web is researching, update_plan planning.
 func codexScript(script string) Call {
-	locs := toolCallRe.FindAllStringSubmatchIndex(script, -1)
-	type call struct{ name, args string }
-	var calls []call
-	for i, l := range locs {
-		end := len(script)
-		if i+1 < len(locs) {
-			end = locs[i+1][0]
-		}
-		calls = append(calls, call{name: script[l[2]:l[3]], args: script[l[1]:end]})
-	}
+	calls := scriptCalls(script)
 	var c Call
 	var image string
 	var patches []string
@@ -268,18 +268,12 @@ func codexScript(script string) Call {
 				patches = append(patches, "")
 			}
 		case x.name == "exec_command":
-			cmd := ""
-			if m := cmdArgRe.FindStringSubmatch(x.args); m != nil {
-				cmd = jsString(m[1])
-			}
+			cmd := scriptArg(cmdArgRe, x.args)
 			cmds = append(cmds, cmd)
 			sc := shellCall("exec_command", cmd)
 			c.Nested = append(c.Nested, Nested{Kind: sc.Kind, Detail: sc.Detail, OK: sc.OK})
 		case x.name == "write_stdin":
-			var id int64
-			if m := sessionArgRe.FindStringSubmatch(x.args); m != nil {
-				id, _ = strconv.ParseInt(m[1], 10, 64)
-			}
+			id := scriptSession(x.args)
 			c.Polls = append(c.Polls, id)
 			c.Nested = append(c.Nested, Nested{Session: id})
 		case x.name == "wait" || x.name == "sleep" || x.name == "wait_agent":
@@ -320,6 +314,249 @@ func codexScript(script string) Call {
 		c.Kind = KindWorking
 	}
 	return c
+}
+
+// scriptCall is one tools.<name>( call of a Codex script: its name and the
+// script after it, up to the next call. What a write_stdin types (chars)
+// and what an exec_command runs (cmd) is text, not code: a call written in
+// it is not one (#132: typed code, a grep for a call). Any other match
+// counts, wherever it is (a comment, another string): the script is not
+// lexed, so a regex literal or a division can never hide a real call.
+type scriptCall struct{ name, args string }
+
+// textKeys are the argument of a call whose string value is text.
+var textKeys = map[string]string{"write_stdin": "chars", "exec_command": "cmd"}
+
+func scriptCalls(script string) []scriptCall {
+	var texts [][2]int // the text of the calls kept so far, still ahead
+	locs := toolCallRe.FindAllStringSubmatchIndex(script, -1)
+	kept := locs[:0]
+	for _, l := range locs {
+		if inText(&texts, l[0]) {
+			continue
+		}
+		kept = append(kept, l)
+		if key, ok := textKeys[script[l[2]:l[3]]]; ok {
+			if start, end, ok := textArg(script, l[1], key); ok {
+				texts = append(texts, [2]int{start, end})
+			}
+		}
+	}
+	var calls []scriptCall
+	for i, l := range kept {
+		end := len(script)
+		if i+1 < len(kept) {
+			end = kept[i+1][0]
+		}
+		calls = append(calls, scriptCall{name: script[l[2]:l[3]], args: script[l[1]:end]})
+	}
+	return calls
+}
+
+// inText says whether at is inside one of texts, dropping those that end
+// before it (the matches come in order).
+func inText(texts *[][2]int, at int) bool {
+	in := false
+	kept := (*texts)[:0]
+	for _, t := range *texts {
+		if t[1] <= at {
+			continue
+		}
+		kept = append(kept, t)
+		in = in || t[0] <= at
+	}
+	*texts = kept
+	return in
+}
+
+// textArg is where the string value of key is in a call's argument object,
+// read from i (just after the call's paren) one key: value pair at a time:
+// bare or quoted keys, shorthand, values that are a string, a template
+// without ${…}, a number or a name. ok is false for anything else (an
+// expression, a regex, a nested object, a value with a newline, no such
+// key, a key that is not a string): then nothing in the call is text.
+func textArg(s string, i int, key string) (start, end int, ok bool) {
+	i = skipSpace(s, i)
+	if i >= len(s) || s[i] != '{' {
+		return 0, 0, false
+	}
+	for i++; ; i++ {
+		i = skipSpace(s, i)
+		if i >= len(s) {
+			return 0, 0, false
+		}
+		var k string
+		switch c := s[i]; {
+		case c == '"' || c == '\'':
+			e := jsQuoted(s, i)
+			if e < 0 {
+				return 0, 0, false
+			}
+			k, i = s[i+1:e-1], e
+		case c == '_' || c == '$' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z':
+			j := i + 1
+			for j < len(s) && jsNamePart(s[j]) {
+				j++
+			}
+			k, i = s[i:j], j
+		default:
+			return 0, 0, false
+		}
+		i = skipSpace(s, i)
+		if i < len(s) && s[i] == ',' {
+			continue // shorthand
+		}
+		if i >= len(s) || s[i] != ':' {
+			return 0, 0, false
+		}
+		i = skipSpace(s, i+1)
+		if i >= len(s) {
+			return 0, 0, false
+		}
+		v, e := i, -1
+		switch s[i] {
+		case '"', '\'':
+			e = jsQuoted(s, i)
+		case '`':
+			e = jsTemplate(s, i)
+		default:
+			if k == key {
+				return 0, 0, false
+			}
+			for e = i; e < len(s) && (jsNamePart(s[e]) || s[e] == '.' || s[e] == '-' || s[e] == '+'); e++ {
+			}
+			if e == i {
+				return 0, 0, false
+			}
+		}
+		if e < 0 {
+			return 0, 0, false
+		}
+		i = skipSpace(s, e)
+		if i >= len(s) || s[i] != ',' && s[i] != '}' {
+			return 0, 0, false
+		}
+		if k == key {
+			return v, e, true
+		}
+		if s[i] == '}' {
+			return 0, 0, false
+		}
+	}
+}
+
+// jsQuoted is the end of the "…" or '…' string at i (-1: a newline in it,
+// or no end).
+func jsQuoted(s string, i int) int {
+	for j := i + 1; j < len(s); j++ {
+		switch s[j] {
+		case s[i]:
+			return j + 1
+		case '\\':
+			j++
+		case '\n', '\r':
+			return -1
+		}
+	}
+	return -1
+}
+
+// jsTemplate is the end of the `…` template at i (-1: a ${…} in it, or no
+// end).
+func jsTemplate(s string, i int) int {
+	for j := i + 1; j < len(s); j++ {
+		switch {
+		case s[j] == '`':
+			return j + 1
+		case s[j] == '\\':
+			j++
+		case s[j] == '$' && j+1 < len(s) && s[j+1] == '{':
+			return -1
+		}
+	}
+	return -1
+}
+
+func jsNamePart(c byte) bool {
+	return c == '_' || c == '$' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9'
+}
+
+func skipSpace(s string, i int) int {
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+		i++
+	}
+	return i
+}
+
+// scriptArg is the string argument re finds in a call's args ("": none).
+func scriptArg(re *regexp.Regexp, args string) string {
+	if m := re.FindStringSubmatch(args); m != nil {
+		return jsString(m[1])
+	}
+	return ""
+}
+
+// scriptSession is a write_stdin's session in a call's args (0: none).
+func scriptSession(args string) int64 {
+	var id int64
+	if m := sessionArgRe.FindStringSubmatch(args); m != nil {
+		id, _ = strconv.ParseInt(m[1], 10, 64)
+	}
+	return id
+}
+
+// Terminals is what a Codex call does with background terminals (#132),
+// read without the shell rules: its exec_command and write_stdin calls in
+// order (Nested, with their Command and Chars, never a Kind; a session that
+// is not a literal is -1), the sessions it polls, and Other: it calls some
+// other tool than these and view_image.
+type Terminals struct {
+	Nested []Nested
+	Polls  []int64
+	Other  bool
+}
+
+// CodexTerminals reads a Codex call (a direct exec_command or write_stdin,
+// or a code-mode exec script) as Terminals; any other call is Other.
+func CodexTerminals(name string, input json.RawMessage) Terminals {
+	var t Terminals
+	switch bareName(name) {
+	case "exec_command":
+		var in struct {
+			Cmd string `json:"cmd"`
+		}
+		_ = json.Unmarshal(input, &in)
+		t.Nested = []Nested{{Command: in.Cmd}}
+	case "write_stdin":
+		var in struct {
+			Session int64  `json:"session_id"`
+			Chars   string `json:"chars"`
+		}
+		_ = json.Unmarshal(input, &in)
+		t.Nested, t.Polls = []Nested{{Session: in.Session, Chars: in.Chars}}, []int64{in.Session}
+	case "exec":
+		var script string
+		_ = json.Unmarshal(input, &script)
+		for _, x := range scriptCalls(script) {
+			switch x.name {
+			case "exec_command":
+				t.Nested = append(t.Nested, Nested{Command: scriptArg(cmdArgRe, x.args)})
+			case "write_stdin":
+				id := scriptSession(x.args)
+				if id == 0 {
+					id = -1 // not a literal (a variable): unknown, and not a command's
+				}
+				t.Nested = append(t.Nested, Nested{Session: id, Chars: scriptArg(charsArgRe, x.args)})
+				t.Polls = append(t.Polls, id)
+			case "view_image":
+			default:
+				t.Other = true
+			}
+		}
+	default:
+		t.Other = true
+	}
+	return t
 }
 
 // jsString is a JS string literal's value (best effort).
@@ -445,55 +682,157 @@ const maxSessions = 64
 
 var (
 	// runningRe is a direct exec_command's output for a process still
-	// running; chunkRe a code-mode call's result (one JSON object per call).
+	// running.
 	runningRe = regexp.MustCompile(`Process running with session ID (\d+)`)
-	chunkRe   = regexp.MustCompile(`\{"chunk_id"[^{}]*\}|\{[^{}]*"session_id"\s*:\s*\d+[^{}]*\}|\{[^{}]*"exit_code"[^{}]*\}`)
 	sidRe     = regexp.MustCompile(`"session_id"\s*:\s*(\d+)`)
 )
+
+// Chunk is a code-mode call's result in its script's output (#132): a line
+// of compact JSON, alone, after Codex's note that it cut the output, or
+// wrapped by the script (Promise.allSettled's {status, value}, {i, result}).
+type Chunk struct {
+	Session  int64    // the session still running (0: none)
+	ExitCode *int64   // the process exited, with this code
+	Wall     *float64 // seconds the call waited
+	Output   string
+	// Cut: the line itself was cut; Output is what was whole of it, "…"
+	// after it.
+	Cut bool
+}
+
+type chunkJSON struct {
+	ChunkID  *string  `json:"chunk_id"`
+	Wall     *float64 `json:"wall_time_seconds"`
+	Session  *int64   `json:"session_id"`
+	ExitCode *int64   `json:"exit_code"`
+	Output   *string  `json:"output"`
+	// A wrapper's chunk.
+	Value  json.RawMessage `json:"value"`
+	Result json.RawMessage `json:"result"`
+}
+
+func (c *chunkJSON) chunk() bool {
+	return c.Output != nil && (c.ChunkID != nil || c.Session != nil || c.ExitCode != nil)
+}
+
+// ReadChunk reads one line of a script's output as a chunk.
+func ReadChunk(line string) (Chunk, bool) {
+	if !strings.HasPrefix(line, "{") {
+		return Chunk{}, false
+	}
+	var c chunkJSON
+	cut := false
+	if json.Unmarshal([]byte(line), &c) != nil {
+		// A cut line: its fields before the output, and as much of the
+		// output as is whole.
+		head, rest, ok := strings.Cut(line, `"output":"`)
+		c = chunkJSON{}
+		if !ok || json.Unmarshal([]byte(strings.TrimSuffix(head, ",")+"}"), &c) != nil {
+			return Chunk{}, false
+		}
+		rest = strings.TrimSuffix(rest, "…")
+		for range 8 { // an escape the cut split
+			var o string
+			if json.Unmarshal([]byte(`"`+rest+`"`), &o) == nil {
+				c.Output, cut = &o, true
+				break
+			}
+			if rest == "" {
+				break
+			}
+			rest = rest[:len(rest)-1]
+		}
+	}
+	if !c.chunk() {
+		inner := c.Value
+		if len(inner) == 0 {
+			inner = c.Result
+		}
+		c = chunkJSON{}
+		if len(inner) == 0 || inner[0] != '{' || json.Unmarshal(inner, &c) != nil || !c.chunk() {
+			return Chunk{}, false
+		}
+	}
+	out := Chunk{ExitCode: c.ExitCode, Wall: c.Wall, Output: *c.Output, Cut: cut}
+	if c.Session != nil {
+		out.Session = *c.Session
+	}
+	if cut {
+		out.Output += "…"
+	}
+	return out, true
+}
+
+// Chunks are the chunks of a script's output, in order.
+func Chunks(output string) []Chunk {
+	var out []Chunk
+	for line := range strings.SplitSeq(output, "\n") {
+		if c, ok := ReadChunk(line); ok {
+			out = append(out, c)
+		}
+	}
+	return out
+}
 
 // Started notes the sessions a call's output says are running: a direct
 // exec_command's, or a script's, its results matched to its calls in order.
 func (s *Sessions) Started(c Call, output string) {
-	if len(c.Nested) == 0 || output == "" {
-		return
+	for _, st := range Starts(c.Nested, c.Polls, output) {
+		s.put(st.Session, c.Nested[st.Nested])
 	}
-	if m := runningRe.FindStringSubmatch(output); m != nil && len(c.Nested) == 1 && c.Nested[0].Session == 0 {
+}
+
+// Start is a session a call's output says is running, and the call that
+// started it: its index in the call's Nested.
+type Start struct {
+	Session int64
+	Nested  int
+}
+
+// Starts are the sessions output says the calls nested (a call's Nested,
+// polling polls) started, in order: a direct exec_command's, or a
+// script's, its results matched to its calls in order (several when they
+// do not line up but only one call starts sessions).
+func Starts(nested []Nested, polls []int64, output string) []Start {
+	if len(nested) == 0 || output == "" {
+		return nil
+	}
+	if m := runningRe.FindStringSubmatch(output); m != nil && len(nested) == 1 && nested[0].Session == 0 {
 		id, _ := strconv.ParseInt(m[1], 10, 64)
-		s.put(id, c.Nested[0])
-		return
+		return []Start{{id, 0}}
 	}
-	chunks := chunkRe.FindAllString(output, -1)
-	if len(chunks) == len(c.Nested) {
+	var out []Start
+	chunks := Chunks(output)
+	if len(chunks) == len(nested) {
 		for i, ch := range chunks {
-			m := sidRe.FindStringSubmatch(ch)
-			if m == nil || c.Nested[i].Session != 0 {
+			if ch.Session == 0 || nested[i].Session != 0 {
 				continue
 			}
-			id, _ := strconv.ParseInt(m[1], 10, 64)
-			s.put(id, c.Nested[i])
+			out = append(out, Start{ch.Session, i})
 		}
-		return
+		return out
 	}
 	// The results do not line up: with one command, every new session is
 	// its.
-	var only *Nested
-	for i := range c.Nested {
-		if c.Nested[i].Session == 0 {
-			if only != nil {
-				return
+	only := -1
+	for i := range nested {
+		if nested[i].Session == 0 {
+			if only >= 0 {
+				return nil
 			}
-			only = &c.Nested[i]
+			only = i
 		}
 	}
-	if only == nil {
-		return
+	if only < 0 {
+		return nil
 	}
 	for _, m := range append(sidRe.FindAllStringSubmatch(output, -1), runningRe.FindAllStringSubmatch(output, -1)...) {
 		id, _ := strconv.ParseInt(m[1], 10, 64)
-		if !contains64(c.Polls, id) {
-			s.put(id, *only)
+		if !contains64(polls, id) {
+			out = append(out, Start{id, only})
 		}
 	}
+	return out
 }
 
 func (s *Sessions) put(id int64, n Nested) {

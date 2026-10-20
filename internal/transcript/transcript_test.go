@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -505,10 +506,21 @@ func TestExecSummary(t *testing.T) {
 		{"two commands", `tools.exec_command({cmd:"ls"}); tools.exec_command({cmd:"pwd"});`, "ls (+1 more)"},
 		{"stdin polls are not commands", `tools.write_stdin({session_id:1}); tools.exec_command({cmd:"ls"});`, "ls"},
 		{"first line only", `tools.exec_command({cmd:"a\nb"}); tools.exec_command({cmd:"c"});`, "a (+1 more)"},
-		{"no cmd", `text(await tools.write_stdin({session_id:1}));`, "fallback"},
+		{"no cmd: a poll, whose row says what it waits on (#132)", `text(await tools.write_stdin({session_id:1}));`, "fallback"},
 	} {
 		if got := execSummary(c.code, "fallback"); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	// #132: a script that polls and runs a command keeps the command's
+	// summary; one that only polls is a poll row (TestCodexPolls).
+	for code, poll := range map[string]bool{
+		`tools.write_stdin({session_id:1}); tools.exec_command({cmd:"ls"});`: false,
+		`text(await tools.write_stdin({session_id:1}));`:                     true,
+	} {
+		in, _ := json.Marshal(code)
+		if _, p := codexTerminals("exec", in); (p != nil) != poll {
+			t.Errorf("%s: poll %v, want %v", code, p != nil, poll)
 		}
 	}
 	long := strings.Repeat("x", 300)

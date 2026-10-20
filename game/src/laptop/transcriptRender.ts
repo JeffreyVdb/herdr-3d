@@ -1,7 +1,7 @@
 import './transcript.css';
 import DOMPurify, { type Config, type DOMPurify as Purifier } from 'dompurify';
 import { Marked } from 'marked';
-import type { Ask, CommandArgs, Followup, HandoffCandidate, ScheduleSuggestion, TranscriptChanges, TranscriptCollab, TranscriptDiff, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
+import type { Ask, CommandArgs, Followup, HandoffCandidate, ScheduleSuggestion, TranscriptChanges, TranscriptCollab, TranscriptDiff, TranscriptItem, TranscriptTerminal, Usage, WorkerCodex } from '../net/protocol';
 import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
@@ -630,6 +630,22 @@ function emptyNote(d: TranscriptDiff): string {
 }
 
 const STATUS_TEXT: Record<string, string> = { running: 'running', ok: 'done', error: 'error', interrupted: 'interrupted', denied: 'denied' };
+
+/**
+ * #132: a poll's process, beside the call's own status: `process running` (never the call's `running`) or `exited N`,
+ * the wait in the title. Null: not a poll, or its result said neither.
+ */
+function terminalTag(t: TranscriptTerminal | undefined): HTMLElement | null {
+  if (!t || typeof t !== 'object') return null;
+  const wall = typeof t.wall_seconds === 'number' && t.wall_seconds >= 0 ? duration(t.wall_seconds * 1000) : '';
+  if (t.state === 'running') {
+    const title = `The process is still running${wall ? ` (the poll waited ${wall})` : ''}`;
+    return h('span', { class: 'tx-tool-term', 'data-state': 'running', title }, 'process running');
+  }
+  if (t.state !== 'exited' || typeof t.exit_code !== 'number') return null;
+  const code = t.exit_code;
+  return h('span', { class: 'tx-tool-term', 'data-state': 'exited', 'data-failed': code !== 0, title: `The process exited with code ${code}` }, `exited ${code}`);
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // Diffs
@@ -2282,16 +2298,21 @@ class Transcript implements TranscriptView {
     const status = typeof t.status === 'string' ? t.status : 'running';
     const row = h('li', { class: 'tx-item tx-tool', 'data-status': status });
     const dur = this.toolDuration(it, status);
+    // #132: a poll the view did not see finish: how long it waited is how long it took.
+    const wall = t.terminal?.wall_seconds;
+    if (status !== 'running' && !dur.textContent && typeof wall === 'number' && wall >= 0) dur.textContent = duration(wall * 1000);
     const diffs = this.diffsOf(it, t, scope);
     // A file recorded without lines (no_diff) counts nothing: no "+0 −0" for an overwrite whose lines are unknown.
     const counted = diffs.filter((d) => d.no_diff !== true);
     const stat = counted.length ? counted.map((d) => diffStat(d.hunks)).reduce((a, b) => ({ add: a.add + b.add, del: a.del + b.del })) : null;
+    const term = terminalTag(t.terminal);
     const head = h(
       'button',
-      { class: 'tx-tool-row', 'aria-expanded': 'false' },
+      { class: term ? 'tx-tool-row tx-tool-row-term' : 'tx-tool-row', 'aria-expanded': 'false' },
       h('span', { class: 'tx-tool-icon' }, icon(toolIcon(String(t.name ?? '')))),
       h('span', { class: 'tx-tool-name' }, String(t.name ?? 'tool')),
       h('span', { class: 'tx-tool-sum' }, String(t.input_summary ?? '')),
+      term,
       stat ? statEl(stat.add, stat.del) : null,
       h('span', { class: 'tx-tool-status' }, STATUS_TEXT[status] ?? status),
       dur,

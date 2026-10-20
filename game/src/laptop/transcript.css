@@ -816,6 +816,28 @@
   font-variant-ligatures: none;
   font-size: var(--tx-mono-fs, 11.5px);
 }
+/* #132: a poll's process, right after its command and never cut with it (the command gives way). A tag, not the call's
+   dot: the call is done, the process may not be. A non-zero exit takes the error's colour. */
+.tx-tool-row-term > .tx-tool-sum {
+  flex: 0 1 auto;
+}
+.tx-tool-term {
+  flex: none;
+  margin-right: auto;
+  padding: 0 5px;
+  border: 1px solid var(--ctl-border);
+  border-radius: 4px;
+  color: var(--ctl-text-2);
+  font-family: var(--tx-mono);
+  font-variant-ligatures: none;
+  font-size: var(--tx-mono-fs, 11.5px);
+  line-height: 1.45;
+  white-space: nowrap;
+}
+.tx-tool-term[data-failed] {
+  border-color: color-mix(in srgb, var(--tx-red) 55%, transparent);
+  color: var(--tx-red);
+}
 /* #56: a Codex collaboration row says what happened in words; only the names it is about are set as code. */
 .tx-collab-verb,
 .tx-collab-sum {
@@ -2229,6 +2251,27 @@
   }
   .tx-zoom-level {
     min-width: 36px;
+  }
+}
+@container tx (max-width: 520px) {
+  /* #132: too narrow for both on one line: a poll's process goes under its command (a full-width break before it),
+     lined up with the tool's name, and the command keeps the first line's room. */
+  .tx-tool-row-term {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .tx-tool-row-term > .tx-tool-sum {
+    flex: 1 1 0;
+  }
+  .tx-tool-row-term::after {
+    content: '';
+    order: 1;
+    flex-basis: 100%;
+    height: 0;
+  }
+  .tx-tool-row-term > .tx-tool-term {
+    order: 2;
+    margin-left: calc(14px * var(--tx-k, 1) + 8px);
   }
 }
 @container tx (max-width: 520px) {

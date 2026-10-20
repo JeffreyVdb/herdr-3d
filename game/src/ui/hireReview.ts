@@ -1,5 +1,5 @@
 import type { CommandArgs, HireGit, HireInterpretation, HirePrepare } from '../net/protocol';
-import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, offeredOptions, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
+import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, newerGit, offeredOptions, OriginFetches, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
 import {
   applyInterpretation,
   editTask,
@@ -187,6 +187,8 @@ export class HireReviewDialog {
   private prepGen = 0;
   /** Bumped by every keystroke in the folder: a folder check is for the folder it was asked about, never a newer one. */
   private folderRev = 0;
+  /** #134: the fetches for origin sent (a recheck, Fetch again): a folder typed or previewed meanwhile does not drop their answer. */
+  private fetches = new OriginFetches();
   /** A check of a folder (or a fetch again) is on its way: Hire waits for it. */
   private checking = false;
   /** The folder the prepare's git and worktree state is for: a different one in the form waits for its own check. */
@@ -298,7 +300,8 @@ export class HireReviewDialog {
     this.state = 'preparing';
     this.panelKeys.clear();
     this.showDraft(this.newDraft(this.choice.task));
-    this.setStatus('Checking the floor, the folder and origin…');
+    // #134: a preview does not fetch origin, so the wait does not name it.
+    this.setStatus(this.host.store.preparePreview ? 'Checking the floor and the folder…' : 'Checking the floor, the folder and origin…');
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
     this.focusFirst();
@@ -363,7 +366,7 @@ export class HireReviewDialog {
 
   // ---- prepare -----------------------------------------------------------------------
 
-  private async prepare(cwd?: string): Promise<void> {
+  private async prepare(cwd?: string, fetch = false): Promise<void> {
     const gen = ++this.prepGen;
     const epoch = this.epoch;
     const folder = this.folderRev;
@@ -375,6 +378,9 @@ export class HireReviewDialog {
     }
     const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (cwd) args.cwd = cwd;
+    if (!fetch && this.host.store.preparePreview) args.preview = true;
+    // #134: a fetch sent now is newer than a recheck on its way.
+    if (!args.preview) this.fetches.start();
     this.checking = !!cwd && !!this.prep;
     const r = await this.host.send('hire.prepare', args);
     // A newer prepare, a closed or reopened review, a hire sent meanwhile, a folder typed since: this answer is not for what is on screen.
@@ -410,7 +416,9 @@ export class HireReviewDialog {
   }
 
   /** A new git answer: no worktree after a failed fetch; restore the configured default once it can be made again. */
-  private adoptGit(g: HireGit | null): void {
+  private adoptGit(got: HireGit | null): void {
+    // #134: a preview of the same repository does not replace a fetch's answer (Fetch again, a recheck) shown already.
+    const g = newerGit(this.prep?.git, got);
     const was = this.prep ? worktreeUsable(this.prep.git) : false;
     if (this.prep) this.prep = { ...this.prep, git: g };
     if (!worktreeUsable(g)) this.f.worktree = false;
@@ -434,7 +442,7 @@ export class HireReviewDialog {
     const cwd = this.effectiveCwd();
     if (!cwd || (cwd === this.checked && !again)) return null;
     this.setStatus(again ? 'Fetching origin again…' : 'Checking the folder…');
-    return this.prepare(cwd);
+    return this.prepare(cwd, again);
   }
 
   private async refetch(): Promise<void> {
@@ -895,6 +903,11 @@ export class HireReviewDialog {
       // Not a render: a button clicked right now (Fetch again) is still there; the answer renders.
       if (this.checkFolder()) this.renderActions();
     });
+    // #134: the recheck's answer may draw this field again while it is typed in: the new one sends no `change`, so
+    // leaving it checks a folder no check was sent for.
+    cwd.addEventListener('blur', () => {
+      if (this.dialog.open && !this.checking && this.checkFolder()) this.renderActions();
+    });
     // Enter in a field is not a hire (there is no form): only the Hire button is.
     for (const el of [label, cwd]) el.addEventListener('keydown', (e) => e.key === 'Enter' && e.preventDefault());
     nodes.push(
@@ -1110,6 +1123,25 @@ export class HireReviewDialog {
     }
     // Back to the review as it was: nothing was cleared, a new press is a new hire (never after an unknown outcome unasked).
     this.setStatus(o.kind === 'unknown' ? `${msg} Look at the desk before you hire again.` : msg, true);
+    this.render();
+    if (o.kind === 'failed' && o.code === 'fetch_failed') void this.recheck();
+  }
+
+  /** #134: after a fetch refusal (the review opened on a preview): origin as it is now; the refusal stays in the status. */
+  private async recheck(): Promise<void> {
+    const [ticket, epoch] = [this.fetches.start(), this.epoch];
+    const r = await this.host.send('hire.prepare', { floor: this.floor, ...(this.checked ? { cwd: this.checked } : {}) });
+    if (r.ok) this.fetched(ticket, epoch, r.data as HirePrepare);
+  }
+
+  /**
+   * #134: the recheck's answer, when no newer fetch was sent: origin and the caps as they are now, while the review shows
+   * the same repository (a folder typed or previewed meanwhile does not drop it); the folder checked and the status stay.
+   */
+  private fetched(ticket: number, epoch: number, p: HirePrepare): void {
+    if (!this.prep || !this.dialog.open || epoch !== this.epoch || this.state !== 'ready' || !this.fetches.current(ticket, this.prep.git, p.git)) return;
+    this.adoptGit(p.git);
+    this.prep = { ...this.prep, capacity: p.capacity };
     this.render();
   }
 

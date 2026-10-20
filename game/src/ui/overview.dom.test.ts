@@ -554,6 +554,70 @@ describe('the overview page (#118)', () => {
     }
   });
 
+  it('covers the scene only once the grow is over, across a switch, until a close starts (#143)', async () => {
+    const anims: Array<{ opts: KeyframeAnimationOptions; done: () => void; fail: () => void }> = [];
+    const proto = HTMLElement.prototype as unknown as { animate?: unknown };
+    const had = proto.animate;
+    proto.animate = function (this: Element, _frames: Keyframe[], opts: KeyframeAnimationOptions) {
+      let done = () => {};
+      let fail = () => {};
+      const finished = new Promise<void>((res, rej) => ((done = res), (fail = () => rej(new DOMException('cancelled', 'AbortError')))));
+      anims.push({ opts, done, fail });
+      return { finished, cancel: () => fail() } as unknown as Animation;
+    };
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+    try {
+      const { ov, host } = setup();
+      ov.open('top');
+      expect(ov.covering).toBe(false); // the clip path shows the scene while it grows
+      expect(ov.info().covering).toBe(false);
+      anims.at(-1)?.done();
+      await settle();
+      expect(ov.covering).toBe(true);
+      expect(ov.info().covering).toBe(true);
+      ov.openCity(); // `a`: in place, no grow
+      expect(anims).toHaveLength(1);
+      expect(ov.covering).toBe(true);
+      const closing = ov.close();
+      expect(ov.covering).toBe(false); // before the shrink plays
+      expect(anims).toHaveLength(2);
+      anims.at(-1)?.done();
+      await closing;
+      expect(host.closed).toHaveBeenCalledTimes(1);
+      expect(ov.covering).toBe(false);
+
+      // Esc during the grow: the cancelled grow never counts.
+      ov.open('top');
+      const grow = anims.at(-1);
+      const closing2 = ov.close();
+      grow?.done(); // (a late resolution of the old one changes nothing either)
+      anims.at(-1)?.done();
+      await closing2;
+      await settle();
+      expect(ov.covering).toBe(false);
+
+      // A row's go-to closes at once.
+      ov.open('top');
+      anims.at(-1)?.done();
+      await settle();
+      expect(ov.covering).toBe(true);
+      ov.closeNow();
+      expect(ov.covering).toBe(false);
+      await settle();
+      expect(ov.covering).toBe(false);
+    } finally {
+      proto.animate = had;
+    }
+    // No Web Animations: no grow, so it covers as soon as it is open.
+    document.body.innerHTML = '';
+    const plain = setup();
+    plain.ov.open('top');
+    await settle();
+    expect(plain.ov.covering).toBe(true);
+    plain.ov.closeNow();
+    expect(plain.ov.covering).toBe(false);
+  });
+
   it('Expand all and Collapse all buttons', () => {
     const { ov } = setup();
     ov.open('top');

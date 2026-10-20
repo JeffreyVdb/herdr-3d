@@ -523,16 +523,26 @@ test('two hires at once: Esc on a pending hire, then another; each keeps its own
   clean();
 });
 
-test('a failed git fetch: no worktree from a stale origin, the error and Fetch again by the buttons; a plain hire still goes (1024×640)', async ({ page }) => {
+test('a failed git fetch: opens on the last fetched base, the worktree hire is refused, then no worktree from a stale origin, the error and Fetch again by the buttons; a plain hire still goes (1024×640)', async ({ page }) => {
   test.setTimeout(90_000);
   const clean = watchErrors(page);
   await page.setViewportSize({ width: 1024, height: 640 });
   await openGame(page, 'demo-m4', '', `${SIM}&simfail=fetch_failed`);
   await enter(page, 'herdr-3d');
   await page.evaluate(() => window.__h3d.openHire());
+  // #134: the dialog opens on a preview of the local refs: origin is not fetched yet, so nothing has failed.
   let d = await hireDialog(page);
-  expect(d.form).toMatchObject({ cwd: '/home/dev/devel/herdr-3d', worktree: false });
-  expect(d.git).toMatchObject({ usable: false, noteError: true, note: 'git fetch origin failed: ssh: Could not resolve hostname github.com (simulated). A worktree needs a fresh origin/main: fetch again, or hire without one.' });
+  expect(d.form).toMatchObject({ cwd: '/home/dev/devel/herdr-3d', worktree: true });
+  expect(d.git).toMatchObject({ usable: true, note: null, hint: 'last fetched; refreshed before branching' });
+  await expect(page.locator('#hire-worktree-base')).toHaveText(/^A new h3d\/… branch from origin\/main @ [0-9a-f]{7}, 3 h old \(last fetched; refreshed before branching\)$/);
+  // The worktree hire fetches first, and is refused: the dialog then fetches origin itself and says why.
+  await page.locator('#hire-task').fill('Tidy the fixtures');
+  await page.locator('dialog.desk-dlg--hire [data-key="hire"]').click();
+  await expect.poll(async () => ((await dialog(page)) as Hire | null)?.git?.usable).toBe(false);
+  d = (await dialog(page)) as Hire;
+  expect(d.form).toMatchObject({ prompt: 'Tidy the fixtures', worktree: false });
+  expect(d.git).toMatchObject({ usable: false, noteError: true, hint: null, note: 'git fetch origin failed: ssh: Could not resolve hostname github.com (simulated). A worktree needs a fresh origin/main: fetch again, or hire without one.' });
+  expect((await sent(page)).filter((c) => c.t === 'hire.prepare').map((c) => c.args)).toEqual([{ floor: 'herdr-3d', preview: true }, { floor: 'herdr-3d', cwd: '/home/dev/devel/herdr-3d' }]);
   const box = page.locator('#hire-worktree');
   await expect(box).toBeDisabled();
   await expect(box).not.toBeChecked();
@@ -545,11 +555,10 @@ test('a failed git fetch: no worktree from a stale origin, the error and Fetch a
   await expect(page.locator('dialog.desk-dlg--hire [data-key="hire"]')).toBeInViewport({ ratio: 1 });
   expect(await page.locator('dialog.desk-dlg--hire .dd-body').evaluate((b) => b.scrollTop)).toBe(0);
   await shot(page, 'm4-hire-fetch-failed');
-  // Fetch again: hire.prepare once more for the same folder (origin is still down here); the form stays.
-  await page.locator('#hire-task').fill('Tidy the fixtures');
+  // Fetch again: hire.prepare once more for the same folder, fetching (origin is still down here); the form stays.
   await page.locator('[data-key="refetch"]').click();
-  await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'hire.prepare').length).toBe(2);
-  expect((await sent(page)).filter((c) => c.t === 'hire.prepare').map((c) => c.args)).toEqual([{ floor: 'herdr-3d' }, { floor: 'herdr-3d', cwd: '/home/dev/devel/herdr-3d' }]);
+  await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'hire.prepare').length).toBe(3);
+  expect((await sent(page)).filter((c) => c.t === 'hire.prepare').map((c) => c.args)[2]).toEqual({ floor: 'herdr-3d', cwd: '/home/dev/devel/herdr-3d' });
   await expect.poll(async () => ((await dialog(page)) as Hire).refetching).toBe(false);
   d = (await dialog(page)) as Hire;
   expect(d).toMatchObject({ state: 'ready', blocker: null, form: { prompt: 'Tidy the fixtures', worktree: false }, git: { usable: false } });
@@ -558,9 +567,12 @@ test('a failed git fetch: no worktree from a stale origin, the error and Fetch a
   await page.locator('dialog.desk-dlg--hire [data-key="hire"]').click();
   await expect.poll(() => dialog(page)).toBeNull();
   const hire = (await sent(page)).filter((c) => c.t === 'worker.hire');
+  const args = { floor: 'herdr-3d', desk_index: 5, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Gumdrop', cwd: '/home/dev/devel/herdr-3d', prompt: 'Tidy the fixtures' };
   expect(hire.map((c) => c.args)).toEqual([
-    { floor: 'herdr-3d', desk_index: 5, harness: 'claude', model: 'claude-opus-5-5', effort: 'high', label: 'Gumdrop', cwd: '/home/dev/devel/herdr-3d', worktree: false, prompt: 'Tidy the fixtures' },
+    { ...args, worktree: true },
+    { ...args, worktree: false },
   ]);
+  expect(hire.map((c) => c.result?.ok)).toEqual([false, true]);
   await expect(page.locator('.toast')).toHaveText('Hired Gumdrop at Desk 6. Here they come.');
   clean();
 });

@@ -131,6 +131,8 @@ export interface OverviewInfo {
   calm: boolean;
   /** Where the open began: the wall screen's rectangle, or null for the centre. */
   from: ViewRect | null;
+  /** #143: the page hides the whole scene (`OverviewOverlay.covering`). */
+  covering: boolean;
 }
 
 const reducedMotion = () => globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
@@ -221,6 +223,7 @@ export class OverviewOverlay {
   private timer: ReturnType<typeof setInterval> | null = null;
   private closing: Promise<void> | null = null;
   private anim: Animation | null = null;
+  private covered = false;
   private readonly onKeyCapture = (e: KeyboardEvent) => this.keyCapture(e);
   /** How many rows each group holds (also while it is collapsed). */
   private sizes = new Map<string, number>();
@@ -324,6 +327,14 @@ export class OverviewOverlay {
     return this.view !== null;
   }
 
+  /**
+   * #143: the page hides the whole scene, so the game draws it at a few frames a second (`render/framePolicy.ts`).
+   * From the end of the opening grow (the clip path shows the scene until then) until a close starts, across a switch.
+   */
+  get covering(): boolean {
+    return this.covered;
+  }
+
   /** The floor of a floor's page; null on the all-floors page and when closed. */
   get floor(): string | null {
     return this.view?.kind === 'floor' ? this.view.floor : null;
@@ -364,7 +375,10 @@ export class OverviewOverlay {
     } finally {
       this.opening = false;
     }
-    this.grow(true);
+    this.covered = false;
+    void this.grow(true).then((done) => {
+      if (done && this.isOpen && !this.closing) this.covered = true;
+    });
     this.focusSoon(true);
     this.timer = setInterval(() => this.refresh(), 20_000); // the since column
     setTimeout(() => this.root.classList.remove('ov--enter'), 1200);
@@ -428,6 +442,7 @@ export class OverviewOverlay {
     const view = this.view;
     if (!view) return Promise.resolve();
     if (this.closing) return this.closing;
+    this.covered = false; // the shrink shows the scene again
     this.closing = (async () => {
       this.from = this.from && view.kind === 'floor' ? (this.host.screenRect(view.floor) ?? null) : null;
       await this.grow(false);
@@ -438,6 +453,7 @@ export class OverviewOverlay {
 
   /** Closes at once (a row's go-to: the teleport must not wait for an animation). */
   closeNow(): void {
+    this.covered = false;
     this.anim?.cancel();
     this.finish();
   }
@@ -445,6 +461,7 @@ export class OverviewOverlay {
   private finish(): void {
     if (!this.view) return;
     this.view = null;
+    this.covered = false;
     this.root.hidden = true;
     this.root.removeAttribute('open');
     this.inertBackground(false);
@@ -463,8 +480,11 @@ export class OverviewOverlay {
     return reducedMotion() || this.host.calm();
   }
 
-  /** The grow (FLIP-style, on a clip path, so text never stretches) and its reverse. Resolves when it ends. */
-  private grow(opening: boolean): Promise<void> {
+  /**
+   * The grow (FLIP-style, on a clip path, so text never stretches) and its reverse. Resolves when it ends: true when it
+   * played to its end, false when it was cancelled or another one took its place.
+   */
+  private grow(opening: boolean): Promise<boolean> {
     this.anim?.cancel();
     const w = window.innerWidth;
     const hh = window.innerHeight;
@@ -472,7 +492,7 @@ export class OverviewOverlay {
     const r = f ? { l: f.left, t: f.top, r: w - (f.left + f.width), b: hh - (f.top + f.height) } : { l: w * 0.36, t: hh * 0.36, r: w * 0.36, b: hh * 0.36 };
     const small = `inset(${r.t.toFixed(1)}px ${r.r.toFixed(1)}px ${r.b.toFixed(1)}px ${r.l.toFixed(1)}px round 6px)`;
     const full = 'inset(0px 0px 0px 0px round 0px)';
-    if (typeof this.root.animate !== 'function') return Promise.resolve();
+    if (typeof this.root.animate !== 'function') return Promise.resolve(true);
     const quiet = this.calm();
     const frames: Keyframe[] = quiet ? [{ opacity: 0 }, { opacity: 1 }] : [{ clipPath: small, opacity: 0.6 }, { clipPath: full, opacity: 1 }];
     const anim = this.root.animate(opening ? frames : [...frames].reverse(), { duration: quiet ? 140 : opening ? GROW_MS : GROW_MS * 0.8, easing: opening ? 'cubic-bezier(0.16, 1, 0.3, 1)' : 'cubic-bezier(0.7, 0, 0.84, 0)', fill: opening ? 'none' : 'forwards' });
@@ -480,8 +500,9 @@ export class OverviewOverlay {
     return anim.finished.then(
       () => {
         if (!opening) anim.cancel();
+        return this.anim === anim;
       },
-      () => undefined,
+      () => false,
     );
   }
 
@@ -1103,6 +1124,7 @@ export class OverviewOverlay {
       empty: this.isOpen && this.visible.length === 0,
       calm: this.root.hasAttribute('data-calm'),
       from: this.from,
+      covering: this.covered,
     };
   }
 }
