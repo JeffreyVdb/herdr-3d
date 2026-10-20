@@ -12,6 +12,7 @@ import { newOp } from '../world/handoff';
 import { backdropPolicy } from './dismiss';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
 import { chips, gitView, modelField, worktreeControl, type DialogHost } from './hire';
+import { notSentText } from './hireCoordinator';
 import type { HireModelPrefs } from './hireModelPrefs';
 import type { HirePrefs } from './hirePrefs';
 import { failureText } from './messages';
@@ -884,10 +885,19 @@ export class ScheduleFormDialog {
     const form: ScheduleForm = { ...this.f, handoff: this.handoff() };
     const handoffMode = this.handoffMode;
     const key = this.askKey();
+    // #127: with the box on and the lines known, they count against the budget the images' paths resolve in (as a hire's
+    // do, #95 decision 5): a prompt they take over is stopped here, before anything is filed or saved.
+    const lines = form.instructions ? this.lines() : null;
+    const added = lines !== null && form.prompt.trim() ? 2 + bytes(lines) : 0;
     this.busy(true);
-    const text = await this.composer.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
+    const text = await this.composer.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES - added });
     if (gen !== this.formGen || !this.dialog.open) return;
-    if (!text.ok) return this.ended(text.reason === 'upload' ? 'An image did not upload: retry it or remove it.' : text.reason === 'refused' ? text.message : 'The prompt could not be read.', true);
+    if (!text.ok) {
+      const over = added > 0 && text.reason === 'serialize' && text.error.kind === 'too_long';
+      this.ended(over ? notSentText(text, '', added) : text.reason === 'upload' ? 'An image did not upload: retry it or remove it.' : text.reason === 'refused' ? text.message : 'The prompt could not be read.', true);
+      if (over) this.dialog.querySelector<HTMLElement>('#sf-instructions')?.focus();
+      return;
+    }
     const flow = this.host.secrets;
     // (Closed meanwhile, or opened again: nothing of it goes, no review opens.)
     const sreq = { key: `schedule:${this.mode === 'edit' ? this.editId : 'new'}`, text: text.text, target: `“${form.title.trim() || 'the schedule'}”`, stored: true, manual, live: () => gen === this.formGen && this.dialog.open };

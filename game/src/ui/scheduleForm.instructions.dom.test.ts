@@ -64,6 +64,7 @@ function setup(o: Opts = {}) {
       city: () => [{ floors: [{ id: 'f1' }] }],
       ...(o.classifier === null ? {} : { ai: { state: { classifier: { state: o.classifier ?? 'ready' } } } }),
     },
+    upload: async () => ({ ok: true, data: { path: '/drop/image.png' } }),
     unsupported: (t: string) => !!o.unsupported?.includes(t),
     toast: () => {},
     now: () => T,
@@ -276,6 +277,71 @@ describe('ScheduleFormDialog: herdr hiring instructions (#127)', () => {
     expect(e.dlg.summary()).toMatchObject({ asking: false, saving: false, error: true, instructions: { on: true } });
     expect(e.dlg.summary().status).toMatch(/^With the herdr hiring instructions, the prompt is \d+ bytes over 32 KiB/);
     expect(document.activeElement?.id).toBe('sf-instructions');
+    expect(e.of('worker.handoff')).toEqual([]);
+    expect(e.of('schedule.create')).toEqual([]);
+  });
+
+  // An image counts as its short marker while typing; Save sizes the prompt with its uploaded path, and the lines.
+  const image = async (e: ReturnType<typeof setup>) => {
+    e.draft().addImages([new File(['x'], 'shot.png', { type: 'image/png' })]);
+    await flush();
+  };
+  const resolvedOver = async (e: ReturnType<typeof setup>) => {
+    const r = await e.draft().resolve({ maxBytes: 64 * 1024 });
+    if (!r.ok) throw new Error(`resolve failed: ${JSON.stringify(r)}`);
+    return enc.encode(r.text).length + 2 + enc.encode(LINES).length - 32 * 1024;
+  };
+  const room = 32 * 1024 - 2 - enc.encode(LINES).length;
+
+  it('the box ticked by hand, an image’s path taking the prompt with the lines over 32 KiB: nothing filed or saved, the box still ticked', async () => {
+    const e = setup({ classifier: null });
+    await e.open({ prefill: { title: 'Follow up', transcript: { worker: 'A', name: 'Pixel', candidate: CAND } } }, 'x'.repeat(room - 10));
+    await image(e);
+    e.tick(true);
+    // The marker fits: no blocker while typing.
+    expect(e.dlg.summary().blocker).toBeNull();
+    expect(await resolvedOver(e)).toBeGreaterThan(0);
+    await e.save();
+    expect(e.dlg.summary()).toMatchObject({ asking: false, saving: false, error: true, instructions: { on: true } });
+    expect(e.dlg.summary().status).toMatch(/with the image and file paths and the herdr hiring instructions.*untick Add herdr hiring instructions/);
+    expect(document.activeElement?.id).toBe('sf-instructions');
+    expect(e.of('worker.handoff')).toEqual([]);
+    expect(e.of('schedule.create')).toEqual([]);
+  });
+
+  it('the image’s path with the lines exactly at 32 KiB saves with the flag', async () => {
+    const e = setup({ classifier: null });
+    await e.open({}, 'x'.repeat(room - 100));
+    await image(e);
+    e.tick(true);
+    e.draft().replace(0, 0, 'x'.repeat(-(await resolvedOver(e))));
+    await flush();
+    expect(await resolvedOver(e)).toBe(0);
+    await e.save();
+    expect(e.of('schedule.create')).toEqual([expect.objectContaining({ herdr_instructions: true })]);
+  });
+
+  it('Edit with the box on: an image’s path taking it over with the lines updates nothing', async () => {
+    const on = sched({ herdr_instructions: true });
+    const e = setup({ list: [on] });
+    await e.open({ edit: on }, 'x'.repeat(room - 10 - enc.encode(TASK).length));
+    await image(e);
+    expect(e.dlg.summary().blocker).toBeNull();
+    expect(await resolvedOver(e)).toBeGreaterThan(0);
+    await e.save();
+    expect(e.dlg.summary()).toMatchObject({ saving: false, error: true, instructions: { on: true } });
+    expect(e.of('schedule.update')).toEqual([]);
+  });
+
+  it('“Schedule with instructions” with an image’s path taking it over: nothing filed or saved', async () => {
+    const e = setup();
+    const text = 'Start an agent for each service. ';
+    await e.open({ prefill: { title: 'Follow up', transcript: { worker: 'A', name: 'Pixel', candidate: CAND } } }, text + 'x'.repeat(room - 10 - text.length));
+    await image(e);
+    await e.save();
+    await e.press('ask-with');
+    expect(e.dlg.summary()).toMatchObject({ asking: false, saving: false, error: true, instructions: { on: true } });
+    expect(e.dlg.summary().status).toMatch(/^With the herdr hiring instructions, the prompt is \d+ bytes over 32 KiB/);
     expect(e.of('worker.handoff')).toEqual([]);
     expect(e.of('schedule.create')).toEqual([]);
   });
