@@ -212,6 +212,8 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
 
     // The dialog itself never scrolls: its header, the error, the box and the footer's buttons are inside it.
     expect(await form(page).evaluate((d) => d.scrollTop)).toBe(0);
+    // Nothing in it reaches past its box, so no focus can scroll it.
+    expect(await form(page).evaluate((d) => d.scrollHeight - d.clientHeight)).toBe(0);
     const dlg = (await form(page).boundingBox())!;
     const body = (await form(page).locator('.dd-body').boundingBox())!;
     const parts = [
