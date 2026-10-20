@@ -22,7 +22,11 @@
 // - `sim.schedule_fire {id, late_ms?, fail?, skip?}` (the simulator's own) plays an outcome now, whatever the clock:
 //   `fail` (a reason, or true) fails it, `skip` (a reason, or true) skips it as missed, `late_ms` fires it that late
 //   (`fired_at = due_at + late_ms`), else it fires as above; `sim.schedule_fail {code, message?}` makes the next
-//   create, update or retry answer that error (`busy`: a send home removes the worktree its cwd is in, #63).
+//   create, update or retry answer that error (`busy`: a send home removes the worktree its cwd is in, #63);
+// - #127: the snapshot says `schedule_herdr_instructions: true` (left out with `simfail=no_schedule_instructions`, or
+//   `no_herdr_instructions`: then the field is refused as unknown, `bad_request`); create / update store
+//   `herdr_instructions` (a bool; on, the prompt with a blank line and the floor's lines must fit 32 KiB) and the view
+//   echoes it; the fire hires with `herdr_instructions`, so the simulator's worker.hire adds the floor's lines last.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
 import type { HireOptions, Schedule, ScheduleSource, Worker } from '../src/net/protocol.ts';
@@ -49,6 +53,8 @@ export interface ScheduleHost {
   hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void;
   /** #108: why a fire with the switch on refuses the stored prompt (its candidates not reviewed), or null: it goes. */
   stored?(s: Schedule): string | null;
+  /** #127: the herdr hiring instructions for a floor (its worker.hire's), when schedules take the flag. */
+  lines?(floor: string): string;
 }
 
 const enc = new TextEncoder();
@@ -71,20 +77,24 @@ const utc = (ms: number) => `${new Date(ms).toISOString().slice(0, 16).replace('
 export class ScheduleSim {
   private readonly h: ScheduleHost;
   readonly enabled: boolean;
+  /** #127: schedules take `herdr_instructions` (the snapshot's `schedule_herdr_instructions`). */
+  readonly instructions: boolean;
   /** In view and out of it (cancelled, dismissed), by id. */
   private readonly all = new Map<string, Schedule>();
   private readonly timers = new Map<string, unknown>();
   private next = 0;
   private failNext: { code: string; message: string } | null = null;
 
-  constructor(h: ScheduleHost, enabled: boolean, seed = 0) {
+  constructor(h: ScheduleHost, enabled: boolean, seed = 0, instructions = true) {
     this.h = h;
     this.enabled = enabled;
+    this.instructions = enabled && instructions;
     if (enabled && seed > 0) this.seed(seed);
   }
 
   decorate(world: Obj): void {
     if (this.enabled) world.schedules = this.view();
+    if (this.instructions) world.schedule_herdr_instructions = true; // #127
   }
 
   /** The view (#62 decision 10). */
@@ -240,11 +250,18 @@ export class ScheduleSim {
     if (handoff && !handoff.startsWith('/')) throw this.bad(`handoff_path must be an absolute path, got ${JSON.stringify(handoff)}`);
     if (a.worktree !== undefined && typeof a.worktree !== 'boolean') throw this.bad('worktree must be a bool');
     if (a.wake_floor !== undefined && typeof a.wake_floor !== 'boolean') throw this.bad('wake_floor must be a bool');
+    // #127: an older bridge refuses the unknown field; on, the prompt fits with the floor's lines.
+    if (a.herdr_instructions !== undefined && !this.instructions) throw this.bad('json: unknown field "herdr_instructions"');
+    if (a.herdr_instructions !== undefined && typeof a.herdr_instructions !== 'boolean') throw this.bad('herdr_instructions must be a bool');
+    const lines = a.herdr_instructions === true ? (this.h.lines?.(s.floor) ?? '') : '';
+    if (prompt && lines && bytes(prompt) + 2 + bytes(lines) > MAX_PROMPT) throw this.bad(`prompt with the herdr hiring instructions must be at most ${MAX_PROMPT} bytes, got ${bytes(prompt) + 2 + bytes(lines)}`);
     Object.assign(s, { title, prompt, due_at: due, on_miss: onMiss, harness, model, effort, cwd, worktree: a.worktree === true, wake_floor: a.wake_floor !== false });
     if (typeof max === 'number') s.max_lateness_ms = max;
     else delete s.max_lateness_ms;
     if (handoff) s.handoff_path = handoff;
     else delete s.handoff_path;
+    if (a.herdr_instructions === true) s.herdr_instructions = true;
+    else delete s.herdr_instructions;
   }
 
   private upsert(send: Send, s: Schedule): void {
@@ -322,7 +339,7 @@ export class ScheduleSim {
     if (unreviewed) return end('failed', unreviewed);
     try {
       this.h.hireWorker(
-        { session: s.floor, desk_index: desk, harness: s.harness, model: s.model, effort: s.effort, cwd: s.cwd, worktree: s.worktree, prompt: parts.join('\n\n') },
+        { session: s.floor, desk_index: desk, harness: s.harness, model: s.model, effort: s.effort, cwd: s.cwd, worktree: s.worktree, prompt: parts.join('\n\n'), ...(s.herdr_instructions ? { herdr_instructions: true } : {}) },
         send,
         (d) => {
           s.worker_id = String((d as Obj | undefined)?.id ?? '');

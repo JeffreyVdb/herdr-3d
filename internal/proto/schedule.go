@@ -97,6 +97,12 @@ type ScheduleSpec struct {
 	// Secrets (#108 round 2, optional): the review of Prompt's possible
 	// secrets; a stored prompt's decisions all ignore.
 	Secrets *SecretsReview `json:"secrets,omitempty"`
+	// HerdrInstructions (#127): "Add herdr hiring instructions": its fire
+	// adds the herdr hiring instructions for its floor after the prompt
+	// (and the handoff), as worker.hire's flag does. Send it only to a
+	// bridge with World.ScheduleHerdrInstructions (an older one refuses the
+	// unknown field).
+	HerdrInstructions bool `json:"herdr_instructions,omitempty"`
 }
 
 // ScheduleCreateArgs are the args of schedule.create.
@@ -148,4 +154,7 @@ type Schedule struct {
 	CreatedAt   int64  `json:"created_at"`
 	UpdatedAt   int64  `json:"updated_at"`
 	DismissedAt *int64 `json:"dismissed_at,omitempty"`
+	// HerdrInstructions (#127): its fire adds the herdr hiring
+	// instructions (ScheduleSpec's).
+	HerdrInstructions bool `json:"herdr_instructions,omitempty"`
 }

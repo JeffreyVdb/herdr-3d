@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Page } from '@playwright/test';
 import { herdrInstructions } from '../tools/fixture-start.ts';
-import { frames, openGame, openMenu, settingsSection, watchErrors } from './game';
+import { askFits, frames, openGame, openMenu, settingsSection, watchErrors } from './game';
 
 // #117 on demo-m3 with the simulator (tools/fixture-hirepreset.ts): a plain Hire worker has the "Add herdr hiring
 // instructions" box (off), and with it off the dialog asks "Hire with instructions" / "Hire without" when the classifier
@@ -130,6 +130,9 @@ test('the question: Esc keeps the task, “Hire without” hires as typed, “Hi
     expect(await checks(page)).toHaveLength(1);
     expect(((await checks(page))[0]?.args as { prompt: string }).prompt).toBe(TASK);
     await page.screenshot({ path: info.outputPath('hire-question.png') });
+    // #127: on a phone the question wraps inside the dialog; on a desktop its answers keep one row.
+    await askFits(page, hireDlg(page), ask, 'h117-hire-question');
+    await expect(ask.getByRole('button', { name: 'Hire with instructions' })).toBeFocused();
 
     // Esc: back to the form, the task kept, nobody hired, the dialog open.
     await page.keyboard.press('Escape');

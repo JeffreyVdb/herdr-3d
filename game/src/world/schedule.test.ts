@@ -130,7 +130,7 @@ describe('scheduleToast', () => {
 
 const OPTS: HireOptions = { claude: { models: ['claude-opus-5-5'], efforts: ['low', 'high'] } };
 function form(o: Partial<ScheduleForm> = {}): ScheduleForm {
-  return { floor: 'herdr-3d', title: 'After the soak', prompt: 'Delete the backups.', due: T + H, dueError: '', harness: 'claude', model: 'claude-opus-5-5', effort: 'high', cwd: '/home/dev/herdr-3d', worktree: true, wakeFloor: true, onMiss: 'run_late', maxLateHours: '', handoff: { kind: 'none' }, ...o };
+  return { floor: 'herdr-3d', title: 'After the soak', prompt: 'Delete the backups.', due: T + H, dueError: '', harness: 'claude', model: 'claude-opus-5-5', effort: 'high', cwd: '/home/dev/herdr-3d', worktree: true, wakeFloor: true, onMiss: 'run_late', maxLateHours: '', handoff: { kind: 'none' }, instructions: false, ...o };
 }
 
 describe('scheduleBlocker', () => {
@@ -186,5 +186,22 @@ describe('scheduleSpec', () => {
     expect(t.source).toEqual(src);
     expect(maxLateMs('')).toBeNull();
     expect(maxLateMs('2,5')).toBe(2.5 * H);
+  });
+});
+
+describe('#127 schedules’ herdr hiring instructions', () => {
+  it('the spec carries the flag only when ticked (off: the field is left out)', () => {
+    expect(scheduleSpec(form({ instructions: true }), 'Spawn reviewers.', null).herdr_instructions).toBe(true);
+    expect('herdr_instructions' in scheduleSpec(form(), 'Spawn reviewers.', null)).toBe(false);
+  });
+
+  it('the book knows whether the bridge takes the flag (absent: an older bridge)', () => {
+    const st = new WorldStore(T);
+    const snap = (flag?: boolean): Snapshot => ({ t: 'world.snapshot', seq: 1, world: { buildings: [], unassigned: [], floors: [], workers: [], schedules: [sched('a', { herdr_instructions: true })], ...(flag !== undefined ? { schedule_herdr_instructions: flag } : {}) } });
+    st.applySnapshot(snap(true));
+    expect(st.schedules.instructions).toBe(true);
+    expect(st.schedules.get('a')?.herdr_instructions).toBe(true);
+    st.applySnapshot(snap());
+    expect(st.schedules.instructions).toBe(false);
   });
 });

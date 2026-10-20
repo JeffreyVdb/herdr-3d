@@ -186,12 +186,13 @@ export function nudgeWanted(d: Pick<HirePresetDraft, 'prompt' | 'instructions'>,
 
 /**
  * #95: why a hire cannot add the herdr hiring instructions (`lines`, hire.prepare's) to `prompt` (null: it can): the
- * bridge adds them after a blank line, so the whole has to fit the first prompt's 32 KiB, and they need a task.
+ * bridge adds them after a blank line, so the whole has to fit the first prompt's 32 KiB, and they need a task. `o`: how
+ * the reason names the task and the box's scope (#127: a schedule's prompt).
  */
-export function instructionsBlocker(prompt: string, lines: string): string | null {
-  if (!prompt.trim()) return 'Write a first task: the herdr hiring instructions go after it. Or untick Add herdr hiring instructions for this hire.';
+export function instructionsBlocker(prompt: string, lines: string, o: { task: string; scope: string } = { task: 'the first task', scope: ' for this hire' }): string | null {
+  if (!prompt.trim()) return `Write a first task: the herdr hiring instructions go after it. Or untick Add herdr hiring instructions${o.scope}.`;
   const over = bytes(prompt) + 2 + bytes(lines) - PRESET_PROMPT_MAX_BYTES;
-  if (over > 0) return `With the herdr hiring instructions, the first task is ${over.toLocaleString('en-US')} ${over === 1 ? 'byte' : 'bytes'} over 32 KiB. Shorten it, or untick Add herdr hiring instructions for this hire.`;
+  if (over > 0) return `With the herdr hiring instructions, ${o.task} is ${over.toLocaleString('en-US')} ${over === 1 ? 'byte' : 'bytes'} over 32 KiB. Shorten it, or untick Add herdr hiring instructions${o.scope}.`;
   return null;
 }
 

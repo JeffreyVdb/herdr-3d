@@ -308,7 +308,7 @@ export class WorldStore {
     this.repoDiscovery.reset(s.world.repo_discovery); // #54
     this.kaneo.reset(s.world.kaneo); // #184
     this.handoffs.reset(s.world.handoffs); // #223
-    this.schedules.reset(s.world.schedules); // #64 schedules (a bridge before #62 sends none)
+    this.schedules.reset(s.world.schedules, s.world.schedule_herdr_instructions); // #64 schedules (a bridge before #62 sends none), #127
     this.children.reset(s.world.children, s.world.workers.filter((w) => w && typeof w.id === 'string')); // #22 (none before #22)
     this.hirePresets.reset(s.world.hire_presets, s.world.herdr_instructions); // #93 (a bridge before #93 sends none), #95
     this.inboxDismissed.clear(); // #106

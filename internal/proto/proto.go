@@ -243,6 +243,10 @@ type World struct {
 	// the hire presets' herdr_instructions, hire.prepare's lines). Always
 	// true: a bridge before #95 leaves it out, and refuses the field.
 	HerdrInstructions bool `json:"herdr_instructions,omitempty"`
+	// #127: schedules take ScheduleSpec's herdr_instructions and their fire
+	// adds the lines. Always true: a bridge before #127 leaves it out, and
+	// refuses the field (HerdrInstructions alone is worker.hire's).
+	ScheduleHerdrInstructions bool `json:"schedule_herdr_instructions,omitempty"`
 	// #22: the native child agents of every worker, the workers in snapshot
 	// order and each worker's in the order the bridge first saw them.
 	// Always present ([] when none): a bridge before #22 leaves it out.

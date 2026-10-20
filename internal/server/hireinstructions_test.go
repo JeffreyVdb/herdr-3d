@@ -225,6 +225,12 @@ func hpCheck(t *testing.T, c *client, prompt string) proto.HirePresetCheckResult
 	return res
 }
 
+// checkQuestion is hire_preset.check's question: #127 counts a workspace
+// recreated to resume another agent.
+const checkQuestion = "Does this task tell the AI coding agent to start, spawn, hire, resume or hand work to other AI agents " +
+	"(subagents, workers, coders, reviewers), including recreating a workspace to resume another agent, " +
+	"instead of doing all of it itself?"
+
 // #95: hire_preset.check asks the classifier whether a prompt hands work to
 // other agents: delegates from 0.7 up. Below it, a classifier error, one
 // that is not ready (no call) or none at all: delegates false, the preset
@@ -234,7 +240,7 @@ func TestHirePresetCheck(t *testing.T) {
 	roles := newPkRoles()
 	score := 0.0
 	roles.cls.Func = func(_ context.Context, state map[string]any, q string) (float64, error) {
-		if !strings.Contains(q, "subagents, workers") || state["prompt"] == nil {
+		if q != checkQuestion || state["prompt"] == nil {
 			return 0, errors.New("unexpected ask")
 		}
 		roles.mu.Lock()

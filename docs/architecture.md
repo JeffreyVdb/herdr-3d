@@ -326,7 +326,11 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   deletes anything; a crash while `running` resolves on startup from whether the worker was ever seen. #63: a
   `scheduled` or `waiting` schedule holds the linked worktree its `cwd` is in (`internal/server/schedulehold.go`,
   derived from the schedules on each check, never cached): send-home prepare, fire and wrap-up refuse to delete it, and
-  a wrap-up's CLEAN keeps it instead.
+  a wrap-up's CLEAN keeps it instead. #127: a schedule with `herdr_instructions` fires with the herdr hiring instructions for
+  its own floor after its prompt: `fireSchedule` composes them through `hireLines` (`internal/server/hire.go`), the
+  helper `worker.hire` uses, so the lines are in the prompt `hireShape` checks and `compose` translates the task alone;
+  `applyScheduleSpec` checks the stored prompt with them at save. The game's form shares the box, the question and the
+  classifier call with the Hire worker form (`ui/hireInstructions.ts`).
 - **Schedule suggestions** (#66, part 5 of #61; `protocol.md` "Schedule suggestions", `decisions.md` "#66"): when an
   agent's final reply says a step must wait, the bridge drafts a schedule and the game offers it as a chip on that
   reply; nothing is scheduled until the schedule form is saved. `internal/schedsuggest` (only `internal/ai`,
@@ -345,7 +349,7 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   call slots, the timeouts and the one retry are shared. The **classifier**: the follow-up questions (#90) and the
   schedule suggestions (#66) on each settled turn end (one `ClassifyMany` when both look at a message), pack up on
   request (#110, `packup.detect`), "Classify unknown commands" (#98, `internal/activity`) and the hire presets' nudge
-  (#95, `hire_preset.check`). The **LLM**: the follow-up extraction (#90), the schedule suggestion's draft (#66), pack
+  (#95, `hire_preset.check`; #117 a plain Hire, #127 a schedule's Save). The **LLM**: the follow-up extraction (#90), the schedule suggestion's draft (#66), pack
   up's cut (#110), the floor overview summaries (#118, `internal/digest`), LLM handoffs (#9, `internal/handoffllm`) and
   the dictated hire (#211, `internal/hireintent`). A feature runs only while it is switched on and its roles are
   `ready`.

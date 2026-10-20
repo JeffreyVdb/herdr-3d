@@ -25,11 +25,15 @@ const ATTENTION: ReadonlySet<ScheduleState> = new Set(['failed', 'skipped']);
  */
 export class ScheduleBook {
   known = false;
+  /** #127: the snapshot says `schedule_herdr_instructions`: schedules take the flag (never send it otherwise). */
+  instructions = false;
   version = 0;
   private readonly byId = new Map<string, Schedule>();
 
-  reset(list: Schedule[] | undefined): void {
+  /** From a snapshot's `world.schedules` (undefined is a bridge before #62) and #127 `world.schedule_herdr_instructions`. */
+  reset(list: Schedule[] | undefined, instructions?: boolean): void {
     this.known = Array.isArray(list);
+    this.instructions = instructions === true;
     this.byId.clear();
     for (const s of list ?? []) if (isSchedule(s)) this.byId.set(s.id, s);
     this.version++;
@@ -162,6 +166,8 @@ export interface ScheduleForm {
   maxLateHours: string;
   /** The handoff the worker reads: none, a cabinet entry's (or the edited schedule's) path, or this transcript message filed on save. */
   handoff: { kind: 'none' } | { kind: 'path'; path: string; title?: string } | { kind: 'transcript' };
+  /** #127: "Add herdr hiring instructions" (sent only when the bridge takes it). */
+  instructions: boolean;
 }
 
 const bytes = (s: string) => new TextEncoder().encode(s).length;
@@ -223,6 +229,7 @@ export function scheduleSpec(f: ScheduleForm, prompt: string, handoffPath: strin
   const path = f.handoff.kind === 'path' ? f.handoff.path : f.handoff.kind === 'transcript' ? handoffPath : null;
   if (path) spec.handoff_path = path;
   if (source) spec.source = source;
+  if (f.instructions) spec.herdr_instructions = true;
   return spec;
 }
 
