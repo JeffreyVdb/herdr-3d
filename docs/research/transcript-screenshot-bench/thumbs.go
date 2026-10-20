@@ -5,7 +5,8 @@
 //
 // The corpus is capture.mjs's directory: images/ (originals), thumbs/ (the
 // previews the bridge served) and capture-results.json. Inputs must be
-// private local files; only aggregate measurements are printed, and the
+// private local files; only aggregate measurements are printed. The new
+// previews are written to <corpus>/policy/ (0600, for browser.mjs) and the
 // cache directories are made under $TMPDIR and removed.
 //
 // The first form measures the preview policy (#125): bytes of the previews
@@ -14,7 +15,7 @@
 // that converts, fully cold). serve answers the full-app scenario
 // (app.mjs): GET /thumb?hash= and /full?hash= with transcript.image's ack
 // data, from an imgcache.Cache (-legacy: the code before #125, previews
-// kept only in memory), and /reset?bridge=cold|restart, /stats.
+// kept only in memory), and /reset?bridge=cold|restart, /stats[?clear=1].
 package main
 
 import (
@@ -194,6 +195,11 @@ func measure(dir string) {
 	var ratios []float64
 	type pair struct{ png, jpeg int }
 	var pairs []pair
+	// The new previews, for browser.mjs: <corpus>/policy/<ref hash>, private.
+	pdir := filepath.Join(dir, "policy")
+	if err := os.MkdirAll(pdir, 0o700); err != nil {
+		fail("%v", err)
+	}
 	for _, s := range corpus {
 		g := groups[s.SourceMime]
 		if g == nil {
@@ -207,6 +213,9 @@ func measure(dir string) {
 				fail("MakeThumb: %v", err)
 			}
 			now = th.Data
+			if err := os.WriteFile(filepath.Join(pdir, s.Hash), th.Data, 0o600); err != nil {
+				fail("%v", err)
+			}
 			if th.Mime == imgcache.PNG {
 				g.PNGAfter++
 			}
@@ -416,13 +425,17 @@ func serve(args []string) {
 			http.Error(w, err.Error(), 400)
 		}
 	})
-	mux.HandleFunc("/stats", func(w http.ResponseWriter, _ *http.Request) {
+	// /stats: what was served since the last /stats?clear=1 (or reset).
+	mux.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		out := map[string]any{"requests": s.reqs, "bytes": s.bytes}
 		if len(s.thumbMS) > 0 {
 			ms := slices.Clone(s.thumbMS)
 			out["thumb_ms"] = stats("", len(ms), 0, ms)
+		}
+		if r.URL.Query().Get("clear") == "1" {
+			s.reqs, s.bytes, s.thumbMS = 0, 0, nil
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	})

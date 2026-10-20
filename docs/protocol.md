@@ -3545,7 +3545,11 @@ whose output has no image (the file it named, exactly that file). A `url` source
 recently used out first), and in a `0600`-file / `0700`-directory disk cache under `$XDG_CACHE_HOME/herdr-world/img/`
 (`--image-cache <dir>`, `-` for none; 512 MiB, oldest out first) so bytes that left memory come back without reading
 the transcript again; if they are in neither, the bridge reads the transcript line they came from again, so the cache
-never has to be complete. Items never hold base64. The original of an image over 25 MB is not kept.
+never has to be complete. Items never hold base64. The original of an image over 25 MB is not kept. #125: thumbnails
+are kept too, under `t/<variant>/` of that directory (the variant names the algorithm's version and settings; another
+variant's directory is removed on first use), with their own bound (64 MiB, least recently used out first) and a
+checksum each (a damaged file is removed and the thumbnail cut again), so a restart or the memory bound does not cut a
+thumbnail twice.
 
 **Path images** are read only under an **allowlist of roots**: Drop Zone's data directory (`--dropzone-data`, default
 `$DROPZONE_DATA` or `~/drops`: where #13/#51's `[Image #n: /abs/path]` markers point), `~/.codex/generated_images` (beside
@@ -3559,7 +3563,9 @@ view shows as text with "not available". A path that vanished is the same. The c
 this connection watches and **only for a hash the bridge already sent this connection** (in the watch ack, a push, a
 page, an item or the image list; else `not_found`, also for a hash that never was in the transcript). Ack:
 `{mime, width, height, bytes, size, data}` with `data` the base64 of the image (`thumb`: at most **480 px** on the
-longest side, PNG, or JPEG for a JPEG original; a GIF is its first frame). A `full` image whose base64 would be over
+longest side; a GIF is its first frame; #125: JPEG quality 82 for a JPEG original and for an opaque one whose lossless PNG
+would be more than twice the JPEG's bytes, PNG for one with transparency or whose PNG is that small: `mime` says
+which, whatever the original's type). A `full` image whose base64 would be over
 **12 MiB** is `too_large` (the view keeps the thumbnail and says so). An image that can no longer be read (a file
 changed under its hash, gone) is `not_found`; `binary` never has bytes. `agent` reads a Claude subagent's timeline like
 `transcript.page` does. A watch has at most 16 image reads in flight (`busy` above). Not audit-logged (a read of what the
