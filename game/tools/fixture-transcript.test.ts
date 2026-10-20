@@ -192,7 +192,7 @@ describe('TranscriptSim', () => {
     sim.handle({ t: 'transcript.watch', req_id: 'w', args: { id } }, (m) => out.push(m));
     const items = watchAck((out.find((m) => m.req_id === 'w') as { data: unknown }).data).items;
     expect(items[0]?.id).toBe('h132-ask');
-    expect(items.find((it) => it.id === 'call_p132exit1')?.tool).toMatchObject({ input_summary: 'Waited for pnpm exec vitest run · exited 1', status: 'error' });
+    expect(items.find((it) => it.id === 'call_p132exit1')?.tool).toMatchObject({ input_summary: 'Waited for pnpm exec vitest run', status: 'error', terminal: { state: 'exited', exit_code: 1 } });
     expect(items.map((it) => it.seq)).toEqual(items.map((_, i) => i + 1));
   });
 });

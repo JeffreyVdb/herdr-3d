@@ -28,9 +28,13 @@ test('a poll names the command it waits on and what happened; opened, its new ou
   const clean = watchErrors(page);
   const tx = await sitAt(page);
   const sum = (id: string) => tx.locator(`[data-id="${id}"] .tx-tool-sum`);
-  await expect(sum('call_p132running')).toHaveText('Waited for pnpm exec vitest run · still running · 30s');
-  await expect(sum('call_p132ctrlc')).toHaveText('Sent ^C to uv run pytest -x · exited 130');
-  await expect(sum('call_p132unknown')).toHaveText('Waited for background terminal 39999 · still running · 5s');
+  const term = (id: string) => tx.locator(`[data-id="${id}"] .tx-tool-term`);
+  await expect(sum('call_p132running')).toHaveText('Waited for pnpm exec vitest run');
+  await expect(term('call_p132running')).toHaveText('process running');
+  await expect(sum('call_p132ctrlc')).toHaveText('Sent ^C to uv run pytest -x');
+  await expect(term('call_p132ctrlc')).toHaveText('exited 130');
+  await expect(sum('call_p132unknown')).toHaveText('Waited for background terminal 39999');
+  await expect(term('call_p132unknown')).toHaveText('process running');
   await expect(tx.locator('.tx-tool-sum', { hasText: 'tools.write_stdin' })).toHaveCount(0);
   const failed = tx.locator('[data-id="call_p132exit1"]');
   await expect(failed).toHaveAttribute('data-status', 'error');
@@ -42,8 +46,51 @@ test('a poll names the command it waits on and what happened; opened, its new ou
   await frames(page, 4);
   await shot(page, 'h132-codex-polls');
   await page.setViewportSize({ width: 390, height: 844 });
+  // At phone width the command gives way: the process stays whole, inside its row and every box that clips it.
+  const running = tx.locator('[data-id="call_p132running"]');
+  await running.scrollIntoViewIfNeeded();
+  await frames(page, 4);
+  await expect.poll(() => clipped(running.locator('.tx-tool-term'))).toBe('');
+  expect(await running.locator('.tx-tool-sum').evaluate((e) => e.scrollWidth > e.clientWidth)).toBe(true);
+  await shot(page, 'h132-codex-polls-390-running');
+  // Both transcript presets, light and dark: the process still whole, a failed one in the error's colour.
+  const ctrlc = tx.locator('[data-id="call_p132ctrlc"]');
+  for (const preset of ['quiet', 'ubuntu'] as const) {
+    await tx.locator(`.tx-theme[data-theme-id="${preset}"]`).click();
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+      for (const r of [ctrlc, running]) {
+        await r.scrollIntoViewIfNeeded();
+        await frames(page, 3);
+        await expect.poll(() => clipped(r.locator('.tx-tool-term'))).toBe('');
+      }
+      const [fail, ok] = await Promise.all([ctrlc, running].map((r) => r.locator('.tx-tool-term').evaluate((e) => getComputedStyle(e).color)));
+      expect(fail).not.toBe(ok);
+      await shot(page, `h132-codex-polls-390-${preset}-${colorScheme}`);
+    }
+  }
+  await page.emulateMedia({ colorScheme: null });
+  await tx.locator('.tx-theme[data-theme-id="quiet"]').click();
   await tx.locator('[data-id="call_p132image"]').scrollIntoViewIfNeeded();
   await frames(page, 4);
   await shot(page, 'h132-codex-polls-390');
   clean();
 });
+
+/** Why el is not fully shown ('' when it is): cut in itself, or outside its row or an ancestor that clips. */
+function clipped(el: Locator): Promise<string> {
+  return el.evaluate((e) => {
+    if (e.scrollWidth > e.clientWidth) return `cut: ${e.scrollWidth} > ${e.clientWidth}`;
+    const r = e.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return 'no box';
+    const row = e.closest('.tx-tool-row');
+    for (let a = e.parentElement; a; a = a.parentElement) {
+      if (a !== row && getComputedStyle(a).overflow === 'visible') continue;
+      const b = a.getBoundingClientRect();
+      if (r.left < b.left - 0.5 || r.right > b.right + 0.5 || r.top < b.top - 0.5 || r.bottom > b.bottom + 0.5) {
+        return `outside ${a.className || a.tagName}: [${r.left},${r.right}] in [${b.left},${b.right}]`;
+      }
+    }
+    return '';
+  });
+}
