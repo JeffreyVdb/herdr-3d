@@ -5,6 +5,10 @@ with few or no images, which #125 (compact, persistently cached image previews) 
 investigation on `main` at `4d5c380`: Chromium 149.0.7827.55, Intel Core i7-10750H, Linux.
 Ticket: [#126](https://github.com/JeffreyVdb/herdr-3d/issues/126).
 
+**Status (2026-10-20):** parts 1 and 2 (the client) are implemented: a loading state from the overlay's first frame, the
+newest rows first and the older ones in the background, system rows and diff lines built when they show
+(docs/decisions.md "#126", [Implementation results](#implementation-results) below). Part 3 (the bridge) is separate.
+
 **Finding:** in normal transcripts the bridge answers in tens to a few hundred milliseconds. Most of the wait is the
 **client's first render**: the whole page's rows are built, then laid out in one main-thread task, which reached
 1.7 s on a 6 MB Claude transcript in an isolated page with no 3D scene. Until that task ends, the view shows nothing,
@@ -135,7 +139,107 @@ portlease run --project herdr-3d --worktree . --name bench --service transcript-
   node docs/research/transcript-open-bench/experiments.mjs /private/acks
 portlease run --project herdr-3d --worktree . --name bench --service transcript-open -- \
   node docs/research/transcript-open-bench/profile.mjs /private/acks/claude-03.json
+portlease run --project herdr-3d --worktree . --name bench --service transcript-open -- \
+  node docs/research/transcript-open-bench/app.mjs /private/acks/claude-03.json 5
 ```
 
 `watch.mjs` watches and then unwatches every Claude and Codex worker of the bridge it connects to; it sends nothing
 else. No application code was changed by this investigation.
+
+## Implementation results
+
+Measured on `h3d/126-transcript-open` (base `2c2cf64`, which has #125), same host and browser. The private page dumps
+are the first pages of the 64 Claude transcripts over 4 MB on this host (`open.go`); the worst is again the 1,070-item
+page with 43,272 elements (`claude-43` of that run).
+
+[browser.mjs](transcript-open-bench/browser.mjs) now copies the items into the page and mounts the view a frame
+before it sets them (as the app mounts before the ack), then waits for the background build (`data-building`) and
+counts long tasks and long animation frames over all of it:
+
+| | Before | After |
+| --- | ---: | ---: |
+| Worst page: first frame after `setItems` | 2,006–2,053 ms | **42 ms** |
+| Worst page: longest task | 1,298–1,419 ms | **none over 50 ms** |
+| Worst page: every row built | (one task) | 234–253 ms after `setItems` |
+| Worst page: elements | 43,272 | 4,206 (diff lines near the view only, no hidden system row; 40,686 once round 2 below draws every line) |
+| 64 pages, warm pass: first frame | median 517 ms, max 2,006 ms | **median 41 ms, max 62 ms** |
+| 64 pages, warm pass: longest frame while the rows fill in | (one task) | 60 ms on one page, the rest under 50 ms |
+
+The cold first pass (a fresh page: JIT, the first markdown and sanitiser use) is slower on the first page opened
+(142 ms) and had one fill frame of 60–85 ms on 3 of 64 pages: one row that took ~40 ms to build the first time (a slice
+builds one row at least). Warm, none.
+
+[app.mjs](transcript-open-bench/app.mjs) times the real app with the scene: the Vite dev server (`make dev`'s, with the
+fixture server), demo-m5 with the simulating bridge serving the worst page as every worker's transcript
+(`simtx=file`), seated at Tofu, headless Chromium through ANGLE/Vulkan (the scene at 56–60 fps here). Five runs after,
+three before:
+
+| | Before | After |
+| --- | ---: | ---: |
+| Sit → first painted rows | 3,635–4,522 ms | **362–429 ms** |
+| Longest gap between two frames | 3,400–4,300 ms | **100 ms** (200 ms once) |
+| Sit → the outline on screen | (nothing) | 65–107 ms (the overlay shows it in its first frame) |
+| Sit → every row built | | 722–812 ms |
+
+Without sitting, the scene's longest frame over the same seconds is 17 ms (`H3D_BENCH_SIT=0`). What is left in the
+longest frame: the first build after the module loaded (~70 ms with the scene running, its forced layout ~20 ms), the
+dev server's module evaluation, and in the 200 ms run the ack's own message task (its JSON and the first build, the ack
+having come after the mount). The dev server serves the modules unbundled, so the module import is slower than in the
+built app.
+
+Two measured turns of the design: `scheduler.yield()` continuations ran seven 15 ms slices back to back inside one
+112 ms frame (none rendered between them), so a slice now runs right after a frame is drawn; and one 200-line diff took
+25 ms of layout (each line is a max-content grid), so a diff near the view is drawn 50 lines a frame, its height held.
+
+
+### Review round 2: every diff line drawn, the loader under "Hide tool calls"
+
+The review found two gaps. A diff that never came near the view never got its lines, so find in page (Ctrl+F) missed
+them, as base did not. And with "Hide tool calls" on, the first build counted rows that CSS hides: on a 4x slower CPU it
+could end on none that shows, with the loader already gone.
+
+Now, once the last row is built, the view draws every diff still put off that the observer reported away from the view,
+newest first, one at a time, from one driver per frame: 50 lines of a body near the view, 500 in all, within the 8 ms
+budget. (Taking a body before its first report drew one in view at the far pace: h206's "Show the whole change" on a
+2,000-line diff then had 3–4 tasks of ~55 ms, each a ~45 ms forced layout; none since.) End on a body still drawing
+draws the rest of it first. `data-drawing` is on the view until the
+last line is in. The diff body has `content-visibility: auto` (and `contain-intrinsic-block-size` at its lines' size),
+so a body away from the view is not laid out. Chosen by measurement on the six heaviest pages (warm pass), worst page
+(9,320 lines):
+
+| Drawing after the backfill | Last line in the DOM | Longest frame |
+| --- | ---: | ---: |
+| No `content-visibility`, 50 lines a frame | 3,264 ms | 17–33 ms |
+| No `content-visibility`, 200 lines a frame | 1,518 ms | 33–67 ms (one 56 ms frame on another page) |
+| No `content-visibility`, 500 lines a frame | 1,156 ms | up to 106 ms |
+| `content-visibility: auto`, 50 lines a frame | 3,014 ms | 17 ms |
+| **`content-visibility: auto`, 500 lines a frame** | **337 ms** | **17 ms** |
+
+`window.find` finds text in a skipped body (Chromium 149): [find.mjs](transcript-open-bench/find.mjs) checks it on a
+synthetic page, with changed files at the top, in the middle, among the newest rows, and one past "Show next"'s cut that
+must stay out. It also checks the loader under "Hide tool calls" at 4x CPU slowdown: one assistant row, then 199 Bash
+calls. Before the fix, 3 of 2,009 lines were in the DOM and 6 frames showed neither a row nor the loader. After it,
+every line is found, the cut line is not, and no frame is blank.
+
+`browser.mjs` now also waits for `data-drawing` and reports `drawn` (the last line in the DOM), `lines` and the frame
+gaps. Over the 64 pages, warm pass: first frame median 29 ms, max 38 ms; no long task; no frame over 17 ms from the first
+frame until the last diff line; the worst page's last line in at 359–367 ms after `setItems`, with 9,320 lines and
+40,686 elements (base: 43,272, which included the 871 hidden system rows). Cold first pass: the first page opened 75 ms;
+one fill frame of 54 ms on the second page opened (a 51 ms task while its rows were built: the cold first-use row of
+round 1, then 60–85 ms on 3 pages); none while diffs are drawn.
+
+`app.mjs` now also reports `drawnMs` and the longest frame from the first painted rows to the last diff line
+(`fillLoafMs`, `fillGapMs`), and, within that, after the backfill (`drawLoafMs`). Five runs, worst page, with HEAD before
+the fix (five runs) for comparison:
+
+| | Before the fix | After |
+| --- | ---: | ---: |
+| Sit → first painted rows | 288–342 ms | 284–344 ms |
+| Sit → every row built | 663–674 ms | 632–708 ms |
+| Sit → last diff line in the DOM | (never, away from the view) | 956–1,027 ms |
+| Longest frame while rows and diffs fill in | 77–83 ms | 66–91 ms |
+| Longest frame while the diffs are drawn | | **none over 50 ms** |
+
+The 66–91 ms frame is the same one before and after: ~500–570 ms after the sit, during the backfill, a `ResizeObserver`
+callback's forced layout of the timeline (22–35 ms), a slice (~22 ms), the scene's frame (~20 ms) and its rendering. No
+script in it runs over 50 ms.

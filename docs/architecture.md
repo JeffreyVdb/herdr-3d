@@ -550,6 +550,14 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
 - **three.js r186 + TypeScript + Vite**, `WebGPURenderer` (auto WebGL2 fallback), HTML/CSS menus (hire dialog:
   harness → model → effort; #212: a dictated hire opens an accordion review of the same fields, and only its Hire launches),
   xterm.js 6 for laptop screens (render to texture only for the focused desk).
+- **The laptop's conversation view** (M16; #126): a DOM overlay over the monitor (`laptop/transcriptRender.ts`, a
+  module loaded when it first shows). Until the watch's ack it shows a conversation opening (`laptop/transcriptLoading.ts`,
+  in the main bundle: the overlay's stand-in while the module loads, then the view's own until the ack), never "No
+  conversation yet.". A fresh timeline builds its newest rows at once, stuck to the bottom, and the older ones above them
+  in ~8 ms slices, one after each drawn frame, the reader's place held; hidden system rows are built when "Show system"
+  shows them, a changed file's lines when it comes near the view and, once every row is built, all the others (so find in
+  page finds them). With "Hide tool calls" on it stays opening until a row that shows is built. Counts read the items,
+  never the rows (`decisions.md` "#126").
 - **Workers**: original procedural rigid-part characters (capsule body, goggle + strap, tiny limbs), one `InstancedMesh`
   per part, animation in code. Measured on M2 Max at 3024×1890 with shadows: **240 workers 1.2 ms/frame pipelined,
   600 workers 3.1 ms** (Chrome 153 WebGPU); 120 Hz budget is 8.33 ms. Skinned Kenney: 4.9 ms @240, 14 ms @600.

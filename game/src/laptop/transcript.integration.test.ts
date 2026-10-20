@@ -82,11 +82,17 @@ describe('transcript mode with the real render module', () => {
     await settle(() => !!box.querySelector('.tx'));
     expect(box.hidden).toBe(false);
     expect(r.mode.counts.mounted).toBe(1);
-    const rows = [...box.querySelectorAll<HTMLElement>('.tx-list:not(.tx-nested) > .tx-item')];
-    expect(rows.length).toBe(CLAUDE.length);
-    // What the bridge hides waits for "show system"; its other notices (an interrupt, command output) are shown.
-    const hidden = CLAUDE.filter((it) => it.hidden).map((it) => it.id);
-    expect(rows.filter((row) => row.classList.contains('tx-sys')).map((row) => row.dataset.id)).toEqual(hidden);
+    const rowIds = () => [...box.querySelectorAll<HTMLElement>('.tx-list:not(.tx-nested) > .tx-item')].map((row) => row.dataset.id);
+    // What the bridge hides waits for "show system" (#126: unbuilt till then); its other notices (an interrupt, command
+    // output) are shown.
+    const system = (it: TranscriptItem) => it.hidden === true || it.kind === 'unknown';
+    const hidden = CLAUDE.filter(system).map((it) => it.id);
+    expect(hidden.length).toBeGreaterThan(0);
+    expect(rowIds()).toEqual(CLAUDE.filter((it) => !system(it)).map((it) => it.id));
+    (box.querySelector('.tx-sys-toggle') as HTMLButtonElement).click();
+    expect(rowIds()).toEqual(CLAUDE.map((it) => it.id));
+    expect([...box.querySelectorAll<HTMLElement>('.tx-list:not(.tx-nested) > .tx-sys')].map((row) => row.dataset.id)).toEqual(hidden);
+    (box.querySelector('.tx-sys-toggle') as HTMLButtonElement).click();
     const visibleNotices = CLAUDE.filter((it) => it.kind === 'notice' && !it.hidden);
     expect(visibleNotices.length).toBeGreaterThan(0);
     for (const n of visibleNotices) expect(box.querySelector(`[data-id="${CSS.escape(n.id)}"]`)?.classList.contains('tx-sys')).toBe(false);
@@ -232,14 +238,15 @@ describe('transcript mode with the real render module', () => {
     watches()[1]?.resolve(ack(CLAUDE));
     await Promise.resolve();
     expect(r.mode.itemCount).toBe(CLAUDE.length);
-    expect(box.querySelectorAll('.tx-list:not(.tx-nested) > .tx-item').length).toBe(CLAUDE.length);
+    expect(box.querySelectorAll('.tx-list:not(.tx-nested) > .tx-item').length).toBe(CLAUDE.filter((it) => it.hidden !== true && it.kind !== 'unknown').length);
     expect((box.querySelector('.tx-empty') as HTMLElement).hidden).toBe(true);
 
     // Live: appended after the history.
     const next: TranscriptItem = { id: 'live-1', seq: 10_000, ts: 0, kind: 'assistant', parts: [{ text: 'after' }] };
     r.watches.items({ t: 'transcript.items', id: 'w1', items: [next], updates: [] });
     expect(r.mode.itemCount).toBe(CLAUDE.length + 1);
-    expect(box.querySelectorAll('.tx-list:not(.tx-nested) > .tx-item').length).toBe(CLAUDE.length + 1);
+    expect(box.querySelectorAll('.tx-list:not(.tx-nested) > .tx-item').length).toBe(CLAUDE.filter((it) => it.hidden !== true && it.kind !== 'unknown').length + 1);
+    expect(box.querySelector('.tx-list:not(.tx-nested) > .tx-item:last-child')?.getAttribute('data-id')).toBe('live-1');
     r.mode.stand();
   });
 
@@ -298,6 +305,7 @@ describe('transcript mode with the real render module', () => {
     const box = r.mode.box as HTMLElement;
     await settle(() => !!box.querySelector('.tx'));
     expect((box.querySelector('.tx-empty') as HTMLElement).hidden).toBe(false);
+    expect((box.querySelector('.txl') as HTMLElement).hidden).toBe(true); // #126: answered: empty, not opening
     r.watches.items({ t: 'transcript.items', id: 'w3', items: CLAUDE.slice(0, 3), updates: [], harness: 'claude', session: 's3', version: '2.1.0', cursor: 'c:1', has_more: false, pending: false });
     expect(box.querySelectorAll('.tx-list > .tx-item').length).toBe(3);
     expect((box.querySelector('.tx-empty') as HTMLElement).hidden).toBe(true);
@@ -411,12 +419,17 @@ describe('#26: a child’s conversation with the real render module', () => {
     expect(childView.querySelector('.tx-crumb-state')?.textContent).toBe('running 2m');
     expect(childView.querySelector('.tx-title')).toBeNull();
     expect(childView.querySelector('.tx-child-foot')?.textContent).toContain('Back to Nibble');
-    expect(childView.querySelector('.tx-empty')?.textContent).toBe('Opening Explore’s conversation…');
+    // #126: until its watch answers it is opening (the outline, its words), not empty.
+    expect(childView.querySelector<HTMLElement>('.tx-empty')?.hidden).toBe(true);
+    expect(childView.querySelector<HTMLElement>('.txl')?.hidden).toBe(false);
+    expect(childView.querySelector('.txl')?.textContent).toBe('Opening Explore’s conversation…');
     expect((parentView.parentElement as HTMLElement).hidden).toBe(true);
 
-    // Not written yet: said so. Then it appears, live on the same watch.
+    // Not written yet: said so (its own words, not the outline). Then it appears, live on the same watch.
     last('transcript.watch').resolve({ ok: true, data: { harness: 'claude', session: '', version: '', cursor: 'c:1', has_more: false, pending: true, availability: 'pending', items: [] } });
     await settle(() => childView.querySelector('.tx-empty')?.textContent?.startsWith('Explore hasn’t written anything yet') === true);
+    expect(childView.querySelector<HTMLElement>('.tx-empty')?.hidden).toBe(false);
+    expect(childView.querySelector<HTMLElement>('.txl')?.hidden).toBe(true);
     watches.items({ t: 'transcript.items', id: 'w1', child: ada, items: SUBAGENT, updates: [], harness: 'claude', session: 'aa37', version: '2.1.0', cursor: 'c:1', has_more: false, pending: false, availability: 'available' });
     await settle(() => childView.querySelectorAll('.tx-item').length > 0);
     expect(childView.querySelector<HTMLElement>('.tx-empty')?.hidden).toBe(true);

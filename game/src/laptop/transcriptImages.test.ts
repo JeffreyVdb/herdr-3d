@@ -291,7 +291,8 @@ describe('images in the conversation', () => {
     await flush();
     expect(asked).toEqual([]);
     expect(observed.length).toBe(2);
-    const second = observed[1] as (typeof observed)[number];
+    // #126: the newest rows are built first: the second image's is the one in the last row.
+    const second = observed.find((o) => o.el.closest('.tx-item') === $$('.tx-list > .tx-item').at(-1)) as (typeof observed)[number];
     second.cb([{ target: second.el, isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
     await flush();
     await flush();

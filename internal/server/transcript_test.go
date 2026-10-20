@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -246,6 +247,12 @@ func (l *logBuf) Write(p []byte) (int, error) {
 	return l.b.Write(p)
 }
 
+func (l *logBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
 func (l *logBuf) lines(msg string) []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -307,6 +314,80 @@ func TestTranscriptRewatchAndEmptyAckLog(t *testing.T) {
 	if len(l) != 1 || !strings.Contains(l[0], "level=DEBUG") || !strings.Contains(l[0], "worker="+id2) ||
 		!strings.Contains(l[0], "pending=true") || !strings.Contains(l[0], "items=0") || !strings.Contains(l[0], "limit=10") {
 		t.Fatalf("empty ack log = %q", l)
+	}
+}
+
+// Each watch's first page is logged at debug with what it cost (#126): the
+// wait for the log's index, the page's read and the ack's (or, after a
+// pending ack, the push's) size, never content.
+func TestTranscriptReadLog(t *testing.T) {
+	t.Parallel()
+	const sess, other = "0a0b0c0d-5555-4555-8555-555555555571", "0a0b0c0d-5555-4555-8555-555555555572"
+	dir := t.TempDir()
+	writeTranscript(t, filepath.Join(dir, "-home-u-w1", sess+".jsonl"), fixture(t, "claude", "message.jsonl"))
+	var logs logBuf
+	b := startBridge(t, "", server.Options{Usage: &server.UsageConfig{Roots: usage.Roots{ClaudeProjects: dir},
+		Interval: 20 * time.Millisecond}, TranscriptFlush: 10 * time.Millisecond,
+		Log: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	c := b.connect(proto.Hello{})
+	c.snapshot()
+	w1 := worker("w1", "a", sess, "working")
+	w1.Harness = world.HarnessClaude
+	w2 := worker("w2", "b", "", "idle")
+	b.floor("s1", true, w1, w2)
+	id := workerID(t, c, sess)
+
+	_, m := c.command(proto.CmdTranscriptWatch, "rw1", proto.TranscriptWatchArgs{ID: id, Limit: 200})
+	var ack proto.Ack
+	if err := json.Unmarshal(m.raw, &ack); err != nil || m.env.T != proto.TAck {
+		t.Fatalf("ack: %s", m.raw)
+	}
+	res := decode[proto.TranscriptWatchResult](t, ack)
+	l := logs.lines("transcript watch read")
+	if len(l) != 1 {
+		t.Fatalf("read logs = %q", l)
+	}
+	for _, f := range []string{"level=DEBUG", "worker=" + id, "child=false", "req_id=rw1", "limit=200",
+		fmt.Sprintf("items=%d", len(res.Items)), fmt.Sprintf("bytes=%d", len(m.raw)), "wait_ms=", "page_ms="} {
+		if !strings.Contains(l[0], f) {
+			t.Errorf("read log lacks %q: %q", f, l[0])
+		}
+	}
+
+	// A pending watch logs nothing until its transcript appears; then the
+	// push it gets is logged.
+	id2 := ""
+	for _, w := range b.connect(proto.Hello{}).snapshot().World.Workers {
+		if w.ID != id {
+			id2 = w.ID
+		}
+	}
+	if _, ack := c.mustAck(proto.CmdTranscriptWatch, proto.TranscriptWatchArgs{ID: id2, Limit: 10}); !decode[proto.TranscriptWatchResult](t, ack).Pending {
+		t.Fatal("not pending")
+	}
+	if l := logs.lines("transcript watch read"); len(l) != 1 {
+		t.Fatalf("a pending ack logged a read: %q", l)
+	}
+	writeTranscript(t, filepath.Join(dir, "-home-u-w2", other+".jsonl"), fixture(t, "claude", "user.jsonl"))
+	w2.AgentSession, w2.Harness = other, world.HarnessClaude
+	b.floor("s1", true, w1, w2)
+	p, cl := c.push(id2)
+	if cl.Reason != "" || p.TranscriptHead == nil || len(p.Items) == 0 {
+		t.Fatalf("appeared: %+v %+v", p, cl)
+	}
+	l = logs.lines("transcript watch read")
+	if len(l) != 2 || !strings.Contains(l[1], "worker="+id2) || !strings.Contains(l[1], `req_id=""`) ||
+		!strings.Contains(l[1], fmt.Sprintf("items=%d", len(p.Items))) || strings.Contains(l[1], "bytes=0") {
+		t.Fatalf("push read log = %q", l)
+	}
+
+	// No transcript text in the logs.
+	for _, it := range append(res.Items, p.Items...) {
+		for _, part := range it.Parts {
+			if len(part.Text) > 8 && strings.Contains(logs.String(), part.Text) {
+				t.Errorf("the log has the text of %s", it.ID)
+			}
+		}
 	}
 }
 

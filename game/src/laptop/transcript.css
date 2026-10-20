@@ -1102,12 +1102,14 @@
   color: var(--tx-red);
 }
 /* #171: 26em, but never taller than the timeline's view (--tx-view-h, measured), less room for the file's header: at 200%
-   on a laptop's screen 26em is more than the view, whose keys could then not bring its last lines in. */
+   on a laptop's screen 26em is more than the view, whose keys could then not bring its last lines in. #126: away from the
+   view its lines are not laid out (find in page still finds them), at the size they will take (set with them). */
 .tx-diff-body {
   max-height: min(26em, max(6em, calc(var(--tx-view-h, 100cqh) - 3em)));
   overflow: auto;
   font: var(--tx-mono-fs, 11.5px)/1.5 var(--tx-mono);
   font-variant-ligatures: none;
+  content-visibility: auto;
 }
 /* #171: it takes the focus to scroll from the keyboard; the file's box clips outside it, so the ring goes inside. */
 .tx .tx-diff-body:focus-visible {

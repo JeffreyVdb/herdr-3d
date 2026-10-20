@@ -27,6 +27,9 @@
 // - #21: `demo-h21` is Codex's code changes in every source and state (`h21Timeline`), half of them older than a watch's
 //   window: "Jump to message" from its screenshot pages them in.
 // - #56: `demo-h56` is Codex's collaboration calls and agent messages (`h56Timeline`).
+// - #126: `file` is the items of a page dump (`{items}`, as docs/research/transcript-open-bench/open.go writes it) named
+//   by the server's `H3D_SIMTX_FILE`: a real transcript in the running app, to time an open with the scene up (the
+//   bench's app.mjs). Dev only: the dump holds transcript text and stays outside the repository.
 // - #26: a native child's own transcript (`child: {id, generation, provider}` on watch/unwatch/page/item/image/images),
 //   for the children the world has (the children fixtures, `?ws=/fixture/children-nested?sim=1`): a child of another
 //   generation is `stale`, one the worker has not (or of another provider) `not_found`. A child whose row has no native id
@@ -346,6 +349,14 @@ const TIMELINES: Record<string, { items: (now: number) => TranscriptItem[]; full
   'demo-h56': { items: h56Timeline, full: () => [] },
 };
 
+/** #126: `simtx=file`: the items of the page dump `H3D_SIMTX_FILE` names (none set: the demo). */
+function fileTimeline(): (typeof TIMELINES)[string] | undefined {
+  const path = process.env.H3D_SIMTX_FILE;
+  if (!path) return undefined;
+  const items = (JSON.parse(readFileSync(path, 'utf8')) as { items?: TranscriptItem[] }).items ?? [];
+  return { items: () => items.map((it) => ({ ...it })), full: () => [] };
+}
+
 /** Every image ref of an item, in order. */
 function refsOf(it: TranscriptItem): ImageRef[] {
   const out: ImageRef[] = [];
@@ -402,7 +413,7 @@ export class TranscriptSim {
   constructor(host: TranscriptHost, on = true, timeline?: string) {
     this.host = host;
     this.on = on;
-    this.timeline = timeline && Object.hasOwn(TIMELINES, timeline) ? TIMELINES[timeline] : undefined;
+    this.timeline = timeline === 'file' ? fileTimeline() : timeline && Object.hasOwn(TIMELINES, timeline) ? TIMELINES[timeline] : undefined;
   }
 
   /** Handles the transcript commands; false for anything else. */

@@ -197,7 +197,9 @@ test('sitting again at a desk whose prints kept its watch shows the whole conver
   await seatMode(page, 'transcript');
   const tx = page.locator('.seat-transcript');
   await expect(tx).toBeVisible();
-  await expect(tx.locator('.tx-list:not(.tx-nested) > .tx-item')).toHaveCount(history);
+  // #126: every item but the hidden system ones, which are built once "Show system" shows them (and counted there).
+  const system = Number(/\((\d+)\)/.exec((await tx.locator('.tx-sys-toggle').textContent()) ?? '')?.[1] ?? 0);
+  await expect(tx.locator('.tx-list:not(.tx-nested) > .tx-item')).toHaveCount(history - system);
   await expect(tx.locator('.tx-list:not(.tx-nested) > .tx-item:not(.tx-sys)').first()).toBeVisible();
   await expect(tx.locator('.tx-empty')).toBeHidden();
 
