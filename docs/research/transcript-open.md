@@ -198,8 +198,11 @@ The review found two gaps. A diff that never came near the view never got its li
 them, as base did not. And with "Hide tool calls" on, the first build counted rows that CSS hides: on a 4x slower CPU it
 could end on none that shows, with the loader already gone.
 
-Now, once the last row is built, the view draws every diff still put off, newest first, one at a time, from one driver
-per frame: 50 lines of a body near the view, 500 in all, within the 8 ms budget. `data-drawing` is on the view until the
+Now, once the last row is built, the view draws every diff still put off that the observer reported away from the view,
+newest first, one at a time, from one driver per frame: 50 lines of a body near the view, 500 in all, within the 8 ms
+budget. (Taking a body before its first report drew one in view at the far pace: h206's "Show the whole change" on a
+2,000-line diff then had 3–4 tasks of ~55 ms, each a ~45 ms forced layout; none since.) End on a body still drawing
+draws the rest of it first. `data-drawing` is on the view until the
 last line is in. The diff body has `content-visibility: auto` (and `contain-intrinsic-block-size` at its lines' size),
 so a body away from the view is not laid out. Chosen by measurement on the six heaviest pages (warm pass), worst page
 (9,320 lines):
@@ -219,10 +222,11 @@ calls. Before the fix, 3 of 2,009 lines were in the DOM and 6 frames showed neit
 every line is found, the cut line is not, and no frame is blank.
 
 `browser.mjs` now also waits for `data-drawing` and reports `drawn` (the last line in the DOM), `lines` and the frame
-gaps. Over the 64 pages, warm pass: first frame median 31 ms, max 40 ms; no long task; no frame over 17 ms from the first
-frame until the last diff line; the worst page's last line in at 326–329 ms after `setItems`, with 9,320 lines and
-40,686 elements (base: 43,272, which included the 871 hidden system rows). Cold first pass: the first page opened 75 ms,
-one 50 ms task in its first frame, no fill frame over 50 ms.
+gaps. Over the 64 pages, warm pass: first frame median 29 ms, max 38 ms; no long task; no frame over 17 ms from the first
+frame until the last diff line; the worst page's last line in at 359–367 ms after `setItems`, with 9,320 lines and
+40,686 elements (base: 43,272, which included the 871 hidden system rows). Cold first pass: the first page opened 75 ms;
+one fill frame of 54 ms on the second page opened (a 51 ms task while its rows were built: the cold first-use row of
+round 1, then 60–85 ms on 3 pages); none while diffs are drawn.
 
 `app.mjs` now also reports `drawnMs` and the longest frame from the first painted rows to the last diff line
 (`fillLoafMs`, `fillGapMs`), and, within that, after the backfill (`drawLoafMs`). Five runs, worst page, with HEAD before
@@ -230,12 +234,12 @@ the fix (five runs) for comparison:
 
 | | Before the fix | After |
 | --- | ---: | ---: |
-| Sit → first painted rows | 288–342 ms | 275–362 ms |
-| Sit → every row built | 663–674 ms | 656–712 ms |
-| Sit → last diff line in the DOM | (never, away from the view) | 953–1,007 ms |
-| Longest frame while rows and diffs fill in | 77–83 ms | 75–87 ms |
+| Sit → first painted rows | 288–342 ms | 284–344 ms |
+| Sit → every row built | 663–674 ms | 632–708 ms |
+| Sit → last diff line in the DOM | (never, away from the view) | 956–1,027 ms |
+| Longest frame while rows and diffs fill in | 77–83 ms | 66–91 ms |
 | Longest frame while the diffs are drawn | | **none over 50 ms** |
 
-The 75–87 ms frame is the same one before and after: ~550 ms after the sit, during the backfill, a `ResizeObserver`
-callback's forced layout of the timeline (26–36 ms), a slice (~20 ms), the scene's frame (~20 ms) and its rendering. No
+The 66–91 ms frame is the same one before and after: ~500–570 ms after the sit, during the backfill, a `ResizeObserver`
+callback's forced layout of the timeline (22–35 ms), a slice (~22 ms), the scene's frame (~20 ms) and its rendering. No
 script in it runs over 50 ms.
