@@ -539,7 +539,15 @@ test('round 4: a hire’s first task with a protected value: reviewed before the
   expect(args.secrets.decisions).toEqual([{ candidate: 'c1', action: 'protect', start: task.indexOf('ghp_'), end: task.indexOf('ghp_') + 'ghp_abcdefghijklmnopqrstu1'.length }]);
   const ack = cmd!.result as { data?: { id: string; protected?: number } };
   expect(ack.data?.protected).toBe(1);
-  await expect.poll(async () => (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => f.owner === ack.data?.id).map((f) => f.text)).toEqual(['ghp_abcdefghijklmnopqrstu1']);
+  const first = (await page.evaluate(() => window.__h3d.simFirstPrompts())).find((p) => p.id === ack.data?.id);
+  expect(first).toMatchObject({ id: ack.data?.id, floor: 'herdr-3d' });
+  const refs = refsOf(first?.prompt);
+  expect(refs.size).toBe(1);
+  expect(first?.prompt).toBe(task.replace('ghp_abcdefghijklmnopqrstu1', `[secret in file ${[...refs][0]}]`));
+  // The host-wide file list includes other bridges whose deterministic worker ids are the same: these exact paths
+  // are the files this worker received. Both their contents and their ownership must match, and its bridge holds one.
+  await expect.poll(async () => (await page.evaluate(() => window.__h3d.simSecretFiles())).filter((f) => refs.has(f.path)).map((f) => [f.owner, f.text])).toEqual([[ack.data?.id, 'ghp_abcdefghijklmnopqrstu1']]);
+  expect(await page.evaluate((id) => window.__h3d.worker(id)?.secret_files, ack.data!.id)).toBe(1);
   expect(JSON.stringify(await page.evaluate(() => window.__h3d.sent()))).not.toContain('ghp_abcdefghijklmnopqrstu1');
   await noSecretStored(page, 'hired');
   clean();
