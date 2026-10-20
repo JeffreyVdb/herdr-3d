@@ -174,6 +174,30 @@ export function newerGit(had: HireGit | null | undefined, got: HireGit | null): 
   return got?.preview && had && !had.preview && had.repo_root === got.repo_root ? had : got;
 }
 
+/**
+ * #134: the fetches a dialog sent for origin. A preview never cancels one: a fetch's answer is still the dialog's when
+ * no fetch was sent after it (nor the dialog opened again) and the dialog shows the repository it is about, whatever
+ * previews were sent or answered meanwhile (`newerGit` keeps it over those). Another repository's answer is dropped.
+ */
+export class OriginFetches {
+  private n = 0;
+
+  /** A fetch sent now: every older one's answer is stale. */
+  start(): number {
+    return ++this.n;
+  }
+
+  /** The dialog opened again: no fetch sent before is its. */
+  forget(): void {
+    this.n++;
+  }
+
+  /** Whether fetch `ticket`'s git `got` is still for `shown`, the git on screen (no repository on either side: the same). */
+  current(ticket: number, shown: HireGit | null | undefined, got: HireGit | null): boolean {
+    return ticket === this.n && (shown?.repo_root ?? null) === (got?.repo_root ?? null);
+  }
+}
+
 /** The desks of a floor nobody sits at, lowest first. */
 export function freeDesks(v: FloorView): number[] {
   const out: number[] = [];

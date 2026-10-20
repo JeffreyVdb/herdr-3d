@@ -14,6 +14,7 @@ import {
   modelsFor,
   newerGit,
   offeredOptions,
+  OriginFetches,
   resolveChoice,
   resolveVisibleChoice,
   visibleOptions,
@@ -480,6 +481,8 @@ export class HireDialog {
   private statusError = false;
   /** Bumped on every open / prepare, so a late answer for an older one is dropped. */
   private gen = 0;
+  /** #134: the fetches for origin sent (a recheck, Fetch again): a folder previewed meanwhile does not drop their answer. */
+  private fetches = new OriginFetches();
   /** Opening a newer form prevents a late background failure from restoring the old one. */
   private opening = 0;
   private hireBtn: HTMLButtonElement | null = null;
@@ -618,6 +621,7 @@ export class HireDialog {
    */
   open(floor: string, desk: number, prefill: HirePrefill = {}): void {
     this.opening++;
+    this.fetches.forget();
     this.floor = floor;
     this.desk = desk;
     this.prep = null;
@@ -699,9 +703,13 @@ export class HireDialog {
     const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (cwd) args.cwd = cwd;
     if (!fetch && this.host.store.preparePreview) args.preview = true;
+    const ticket = args.preview ? null : this.fetches.start();
     const r = await this.host.send('hire.prepare', args);
-    // A hire sent meanwhile: its form stays as sent.
-    if (gen !== this.gen || !this.dialog.open || this.state === 'hiring') return;
+    // A hire sent meanwhile: its form stays as sent. #134: a fetch's answer still says what origin is for the repository shown.
+    if (gen !== this.gen || !this.dialog.open || this.state === 'hiring') {
+      if (r.ok && ticket !== null) this.fetched(ticket, r.data as HirePrepare);
+      return;
+    }
     if (!r.ok) {
       // A folder that did not check out keeps the rest of the form.
       if (this.prep && cwd) {
@@ -1666,12 +1674,19 @@ export class HireDialog {
 
   /** After a capacity or fetch refusal: the caps and origin as they are now (the refusal stays in the status). */
   private async recheck(): Promise<void> {
-    const gen = this.gen;
     const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (this.prep?.cwd) args.cwd = this.prep.cwd;
+    const ticket = this.fetches.start();
     const r = await this.host.send('hire.prepare', args);
-    if (!r.ok || !this.prep || !this.dialog.open || gen !== this.gen || this.state !== 'ready') return;
-    const p = r.data as HirePrepare;
+    if (r.ok) this.fetched(ticket, r.data as HirePrepare);
+  }
+
+  /**
+   * #134: a fetch's answer that no newer prepare took over (a recheck, or one a folder preview replaced): origin and the
+   * caps as they are now, while the form shows the same repository; the folder, the form and the status stay.
+   */
+  private fetched(ticket: number, p: HirePrepare): void {
+    if (!this.prep || !this.dialog.open || this.state !== 'ready' || !this.fetches.current(ticket, this.prep.git, p.git)) return;
     this.adoptGit(p.git);
     this.prep = { ...this.prep, capacity: p.capacity };
     this.render();

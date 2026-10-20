@@ -1,5 +1,5 @@
 import type { CommandArgs, HireGit, HireInterpretation, HirePrepare } from '../net/protocol';
-import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, newerGit, offeredOptions, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
+import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, newerGit, offeredOptions, OriginFetches, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
 import {
   applyInterpretation,
   editTask,
@@ -187,6 +187,8 @@ export class HireReviewDialog {
   private prepGen = 0;
   /** Bumped by every keystroke in the folder: a folder check is for the folder it was asked about, never a newer one. */
   private folderRev = 0;
+  /** #134: the fetches for origin sent (a recheck, Fetch again): a folder typed or previewed meanwhile does not drop their answer. */
+  private fetches = new OriginFetches();
   /** A check of a folder (or a fetch again) is on its way: Hire waits for it. */
   private checking = false;
   /** The folder the prepare's git and worktree state is for: a different one in the form waits for its own check. */
@@ -377,10 +379,15 @@ export class HireReviewDialog {
     const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (cwd) args.cwd = cwd;
     if (!fetch && this.host.store.preparePreview) args.preview = true;
+    const ticket = args.preview ? null : this.fetches.start();
     this.checking = !!cwd && !!this.prep;
     const r = await this.host.send('hire.prepare', args);
-    // A newer prepare, a closed or reopened review, a hire sent meanwhile, a folder typed since: this answer is not for what is on screen.
-    if (gen !== this.prepGen || epoch !== this.epoch || !this.dialog.open || this.state === 'hiring' || folder !== this.folderRev) return;
+    // A newer prepare, a closed or reopened review, a hire sent meanwhile, a folder typed since: this answer is not for what
+    // is on screen. #134: a fetch's answer still says what origin is for the repository shown.
+    if (gen !== this.prepGen || epoch !== this.epoch || !this.dialog.open || this.state === 'hiring' || folder !== this.folderRev) {
+      if (r.ok && ticket !== null) this.fetched(ticket, epoch, r.data as HirePrepare);
+      return;
+    }
     this.checking = false;
     if (!r.ok) {
       this.state = this.prep && cwd ? 'ready' : 'failed';
@@ -1120,10 +1127,17 @@ export class HireReviewDialog {
 
   /** #134: after a fetch refusal (the review opened on a preview): origin as it is now; the refusal stays in the status. */
   private async recheck(): Promise<void> {
-    const [gen, epoch, folder] = [this.prepGen, this.epoch, this.folderRev];
+    const [ticket, epoch] = [this.fetches.start(), this.epoch];
     const r = await this.host.send('hire.prepare', { floor: this.floor, ...(this.checked ? { cwd: this.checked } : {}) });
-    if (!r.ok || !this.prep || !this.dialog.open || gen !== this.prepGen || epoch !== this.epoch || folder !== this.folderRev || this.state !== 'ready') return;
-    const p = r.data as HirePrepare;
+    if (r.ok) this.fetched(ticket, epoch, r.data as HirePrepare);
+  }
+
+  /**
+   * #134: a fetch's answer that no newer prepare took over (a recheck, or one a folder typed or previewed replaced):
+   * origin and the caps as they are now, while the review shows the same repository; the folder checked and the status stay.
+   */
+  private fetched(ticket: number, epoch: number, p: HirePrepare): void {
+    if (!this.prep || !this.dialog.open || epoch !== this.epoch || this.state !== 'ready' || !this.fetches.current(ticket, this.prep.git, p.git)) return;
     this.adoptGit(p.git);
     this.prep = { ...this.prep, capacity: p.capacity };
     this.render();

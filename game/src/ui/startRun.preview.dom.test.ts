@@ -49,7 +49,7 @@ function setup(o: { supported?: boolean } = {}) {
   const host = { store, send, unsupported: () => false, reserve: () => () => {}, held: () => new Set<number>(), toast: () => {}, now: () => Date.now(), upload: () => new Promise(() => {}), hireAt: () => {}, openPresets: () => {}, started: () => {}, secrets: b.flow } as unknown as StartRunHost;
   const dlg = new StartRunDialog(document.body, host);
   const release = () => held.splice(0).forEach((r) => r());
-  return { dlg, state, prepares, release };
+  return { dlg, state, prepares, release, held };
 }
 
 const base = () => document.querySelector('#run-worktree-base')?.textContent ?? '';
@@ -135,6 +135,50 @@ describe('StartRunDialog: the base as a preview (#134)', () => {
     expect(t.prepares.at(-1)).toEqual({ floor: 'floor', text: 'Tidy the lobby, then the roof' });
     expect(t.dlg.summary()?.git).toMatchObject({ usable: true, note: null, hint: null });
     expect(refetch()).toBeNull();
+    t.dlg.close();
+  });
+
+  it.each([
+    { name: 'answered, then an edit', before: true, order: [0], origin: 'down' as const, fetches: false },
+    { name: 'on its way, an edit, then the fetch fails', before: false, order: [0, 1], origin: 'down' as const, fetches: true },
+    { name: 'on its way, an edit answered first, then the fetch fails', before: false, order: [1, 0], origin: 'down' as const, fetches: true },
+    { name: 'on its way, an edit, then the fetch finds origin', before: false, order: [0, 1], origin: 'up' as const, fetches: true },
+  ])('#134 R1: the recheck after a fetch refusal $name: the edit never hides what origin is', async (c) => {
+    const t = setup();
+    t.state.origin = 'down';
+    t.state.starts.push({ ok: false, code: 'fetch_failed', message: 'git fetch origin failed: origin is offline' });
+    t.dlg.open({ floor: 'floor', desk: 0 });
+    await flush();
+    type('Tidy the lobby');
+    await settle();
+    t.state.origin = c.origin;
+    t.state.hold = true;
+    document.querySelector<HTMLElement>('[data-key="start"]')!.click();
+    await flush();
+    await flush();
+    expect(t.prepares.at(-1)).toEqual({ floor: 'floor', text: 'Tidy the lobby' });
+    if (c.before) t.release();
+    await flush();
+    type('Tidy the roof');
+    await new Promise((r) => setTimeout(r, 300));
+    // An edit while the recheck is on its way fetches too (the recheck's answer is dropped); after it, a preview.
+    expect(t.prepares.at(-1)).toEqual({ floor: 'floor', text: 'Tidy the roof', ...(c.fetches ? {} : { preview: true }) });
+    t.state.hold = false;
+    const held = t.held.splice(0);
+    for (const i of c.order) held[i]!();
+    await flush();
+    const usable = c.origin === 'up';
+    expect(t.dlg.summary()?.git).toMatchObject({ usable, note: usable ? null : expect.stringContaining('origin is offline') });
+    expect(t.dlg.summary()?.form.worktree).toBe(usable);
+    expect(!!refetch()).toBe(!usable);
+    if (!usable) {
+      t.state.origin = 'up';
+      refetch()!.click();
+      await flush();
+      expect(t.prepares.at(-1)).toEqual({ floor: 'floor', text: 'Tidy the roof' });
+      expect(t.dlg.summary()?.git).toMatchObject({ usable: true, note: null });
+      expect(refetch()).toBeNull();
+    }
     t.dlg.close();
   });
 

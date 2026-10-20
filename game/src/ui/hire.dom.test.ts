@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CommandResult } from '../net/client';
+import type { HireGit } from '../net/protocol';
+import { FETCH_ORDERINGS, fetchedGit, ORIGIN_GIT, previewGit } from '../test/fetchOrderings';
 import type { Draft as PromptDraft } from './composer/draft';
 import { HireDialog, type HireHost } from './hire';
 
@@ -104,6 +107,115 @@ describe('HireDialog: clearing after an acknowledged hire', () => {
       { floor: 'floor', cwd: '/home/test' },
       { floor: 'floor', cwd: '/home/test' },
     ]);
+    expect(dlg.summary()?.form.worktree).toBe(true);
+    dlg.close();
+  });
+
+  it('#134 R1: a recheck still on its way when a folder of the same repository is previewed: its failure is shown', async () => {
+    const { dlg, host, inner } = setup();
+    host.store.preparePreview = true;
+    const git = { repo_root: '/home/test', default_branch: 'main', base_sha: '1234567', base_time: 1, fetched: false };
+    let finishRecheck!: (r: CommandResult) => void;
+    const send = vi.spyOn(host, 'send')
+      .mockResolvedValueOnce({ ok: true, data: { ...prep, git: { ...git, preview: true } } })
+      .mockResolvedValueOnce({ ok: false, code: 'fetch_failed', message: 'offline' })
+      .mockImplementationOnce(() => new Promise((resolve) => { finishRecheck = resolve; }))
+      .mockResolvedValueOnce({ ok: true, data: { ...prep, cwd: '/home/test/subdir', git: { ...git, preview: true } } });
+    dlg.open('floor', 0);
+    await tick();
+    await inner.hire();
+    await tick();
+    const folder = document.querySelector<HTMLInputElement>('#hire-cwd')!;
+    expect(folder.disabled).toBe(false);
+    folder.value = '/home/test/subdir';
+    folder.dispatchEvent(new Event('input'));
+    folder.dispatchEvent(new Event('change'));
+    await tick();
+    finishRecheck({ ok: true, data: { ...prep, git: { ...git, fetch_error: 'offline' } } });
+    await tick();
+    expect(send.mock.calls.filter(([t]) => t === 'hire.prepare').map(([, a]) => a)).toEqual([
+      { floor: 'floor', preview: true },
+      { floor: 'floor', cwd: '/home/test' },
+      { floor: 'floor', cwd: '/home/test/subdir', preview: true },
+    ]);
+    expect(dlg.summary()?.form.worktree).toBe(false);
+    expect(document.querySelector('[data-key="refetch"]')).not.toBeNull();
+    dlg.close();
+  });
+
+  it.each(FETCH_ORDERINGS)('#134 R1: $name: the worktree offered is $usable, and Fetch again fetches the folder', async (c) => {
+    const { dlg, host, inner } = setup();
+    host.store.preparePreview = true;
+    const prepares: Array<{ args: unknown; answer: (r: CommandResult) => void }> = [];
+    vi.spyOn(host, 'send').mockImplementation((t: string, args: unknown) => {
+      if (t === 'worker.hire') return Promise.resolve({ ok: false, code: 'fetch_failed', message: 'offline' });
+      return new Promise<CommandResult>((answer) => prepares.push({ args, answer }));
+    });
+    const answer = (git: HireGit, cwd = '/home/test') => ({ ok: true, data: { ...prep, cwd, git } }) as CommandResult;
+    dlg.open('floor', 0);
+    prepares.shift()!.answer(answer({ ...ORIGIN_GIT, preview: true }));
+    await tick();
+    await inner.hire();
+    await tick();
+    const recheck = prepares.shift()!;
+    expect(recheck.args).toEqual({ floor: 'floor', cwd: '/home/test' });
+    if (c.before) {
+      recheck.answer(answer(fetchedGit(c.origin)));
+      await tick();
+    }
+    const folder = document.querySelector<HTMLInputElement>('#hire-cwd')!;
+    folder.value = c.folder;
+    folder.dispatchEvent(new Event('input'));
+    folder.dispatchEvent(new Event('change'));
+    const preview = prepares.shift()!;
+    expect(preview.args).toEqual({ floor: 'floor', cwd: c.folder, preview: true });
+    for (const step of c.order) {
+      if (step === 'recheck') recheck.answer(answer(fetchedGit(c.origin)));
+      else preview.answer(answer(previewGit(c.folder), c.folder));
+      await tick();
+    }
+    const s = dlg.summary()!;
+    expect(s.form).toMatchObject({ cwd: c.folder, worktree: c.usable });
+    expect(s.git).toMatchObject({ usable: c.usable, note: c.usable ? null : expect.stringContaining('git fetch origin failed: offline') });
+    const again = document.querySelector<HTMLButtonElement>('[data-key="refetch"]');
+    expect(!!again).toBe(!c.usable);
+    if (again) {
+      // Fetch again fetches the folder now in the form (never a preview), and origin is back: the worktree is offered again.
+      again.click();
+      const fetch = prepares.shift()!;
+      expect(fetch.args).toEqual({ floor: 'floor', cwd: c.folder });
+      fetch.answer(answer({ ...ORIGIN_GIT, fetched: true }, c.folder));
+      await tick();
+      expect(dlg.summary()?.form.worktree).toBe(true);
+      expect(dlg.summary()?.git).toMatchObject({ usable: true, note: null });
+      expect(document.querySelector('[data-key="refetch"]')).toBeNull();
+    }
+    expect(prepares).toEqual([]);
+    dlg.close();
+  });
+
+  it('#134 R1: an older recheck answering after a newer one (two refused hires) is dropped', async () => {
+    const { dlg, host, inner } = setup();
+    host.store.preparePreview = true;
+    const prepares: Array<(r: CommandResult) => void> = [];
+    vi.spyOn(host, 'send').mockImplementation((t: string) => {
+      if (t === 'worker.hire') return Promise.resolve({ ok: false, code: 'fetch_failed', message: 'offline' });
+      return new Promise<CommandResult>((answer) => prepares.push(answer));
+    });
+    const answer = (git: HireGit) => ({ ok: true, data: { ...prep, git } }) as CommandResult;
+    dlg.open('floor', 0);
+    prepares.shift()!(answer({ ...ORIGIN_GIT, preview: true }));
+    await tick();
+    await inner.hire();
+    await tick();
+    await inner.hire();
+    await tick();
+    const [first, second] = prepares.splice(0);
+    second!(answer(fetchedGit('up')));
+    await tick();
+    first!(answer(fetchedGit('down')));
+    await tick();
+    expect(dlg.summary()?.git).toMatchObject({ usable: true, note: null });
     expect(dlg.summary()?.form.worktree).toBe(true);
     dlg.close();
   });

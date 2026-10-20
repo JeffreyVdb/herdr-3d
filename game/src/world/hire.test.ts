@@ -6,6 +6,7 @@ import {
   ageText,
   baseHint,
   newerGit,
+  OriginFetches,
   baseText,
   capacityView,
   capLevel,
@@ -122,6 +123,25 @@ describe('worktree base', () => {
     expect(newerGit(failed, null)).toBeNull();
     expect(newerGit(null, preview)).toBe(preview);
     expect(newerGit(undefined, preview)).toBe(preview);
+  });
+
+  it('#134: a fetch on its way is still the answer while no newer fetch was sent and the repository shown is its own', () => {
+    const fetches = new OriginFetches();
+    const preview: HireGit = { ...git, fetched: false, preview: true };
+    const failed: HireGit = { ...git, fetched: false, fetch_error: 'offline' };
+    const recheck = fetches.start();
+    // Previews sent or answered meanwhile take no ticket: a folder of the same repository on screen keeps the fetch's answer.
+    expect(fetches.current(recheck, preview, failed)).toBe(true);
+    expect(fetches.current(recheck, { ...preview, repo_root: '/elsewhere' }, failed)).toBe(false);
+    // No repository on either side (the caps after a capacity refusal): the same.
+    expect(fetches.current(recheck, null, null)).toBe(true);
+    expect(fetches.current(recheck, undefined, failed)).toBe(false);
+    // A newer fetch (Fetch again), or the dialog opened again: the older answer is stale.
+    const again = fetches.start();
+    expect(fetches.current(recheck, preview, failed)).toBe(false);
+    expect(fetches.current(again, preview, failed)).toBe(true);
+    fetches.forget();
+    expect(fetches.current(again, preview, failed)).toBe(false);
   });
 
   it('shows the SHA and its age', () => {
