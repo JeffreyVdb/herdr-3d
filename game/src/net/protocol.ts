@@ -1722,6 +1722,16 @@ export interface TranscriptDiff {
 }
 
 /**
+ * #132: a polled background terminal's process: still running (`wall_seconds`: how long the poll waited, when said) or
+ * exited with `exit_code`. A poll of several: the first that exited other than 0, else the first.
+ */
+export interface TranscriptTerminal {
+  state: 'running' | 'exited';
+  exit_code?: number;
+  wall_seconds?: number;
+}
+
+/**
  * #171: what a Claude Bash call's `bashEditDiff` says beyond its diffs (best effort). Absent from a tool: the source said
  * nothing (an older Claude Code, recording off): unknown, never "no changes".
  */
@@ -1808,6 +1818,8 @@ export interface TranscriptItem {
     ask?: TranscriptAsk;
     /** #171: a Claude Bash call's recorded changes beyond its diffs. */
     changes?: TranscriptChanges;
+    /** #132: a Codex poll of a background terminal, once its result is in: the process it polled. */
+    terminal?: TranscriptTerminal;
   };
   /** `agent_id` is '' until the call's result names it (its timeline: `transcript.page` with `agent`). */
   subagent?: { agent_id: string; description: string; status: string };

@@ -2,6 +2,7 @@ package activity
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -118,6 +119,10 @@ func TestClassifyRealToolCalls(t *testing.T) {
 		{"codex exec write_stdin + view_image is an image", Codex, "exec", script("text(await tools.write_stdin({session_id:19707,chars:\"\",\"yield_time_ms\":1000,\"max_output_tokens\":3500}));\nconst r=await tools.view_image({path:\"/home/u/runs/ux-evidence/needs-you-desk.png\"});image(r.image_url);\n"), KindImage, "needs-you-desk.png", true},
 		{"codex exec two images", Codex, "exec", script("const r=await tools.view_image({path:\"/tmp/shots/head-1500-partition.png\"});image(r.image_url);\nconst s=await tools.view_image({path:\"/tmp/shots/head-1300-sofa.png\"});image(s.image_url);\n"), KindImage, "head-1300-sofa.png", true},
 		{"codex exec poll only keeps", Codex, "exec", script(`text(await tools.write_stdin({session_id:19707,chars:"",yield_time_ms:1000}));`), "", "-", true},
+		// #132: a call written in what a poll types or a command runs is text.
+		{"codex exec typed code is a poll", Codex, "exec", script(`text(await tools.write_stdin({session_id:12,chars:"await tools.view_image({path:'a.png'})\n"}));`), "", "-", true},
+		{"codex exec grep for a call is a command", Codex, "exec", script(`text(await tools.exec_command({cmd:"rg -n 'tools.apply_patch\\(' internal"}));`), KindInvestigating, "", true},
+		{"codex exec a command between regexes", Codex, "exec", script(`const quote = /"/; text(await tools.exec_command({cmd:'go test ./...'})); const quote2 = /"/;`), KindTesting, "", true},
 		{"codex view_image", Codex, "view_image", json.RawMessage(`{"path":"/tmp/github-app-access-request-guide.png","detail":"original"}`), KindInvestigating, "github-app-access-request-guide…", true},
 		{"codex update_plan", Codex, "update_plan", json.RawMessage(`{"plan":[]}`), KindPlanning, "", true},
 		{"codex web", Codex, "exec", script(`text(await tools.web__run({search_query:[{q:"x"}]}));`), KindResearching, "", true},
@@ -231,5 +236,207 @@ func TestShellSplitting(t *testing.T) {
 	}
 	if len(segs[4].files) != 0 {
 		t.Fatalf("2>&1 is no file: %+v", segs[4])
+	}
+}
+
+// #132: what a Codex call does with background terminals, without the shell
+// rules: its commands, the sessions it polls and what it types.
+func TestCodexTerminals(t *testing.T) {
+	cases := []struct {
+		name, tool string
+		input      json.RawMessage
+		want       Terminals
+	}{
+		{"a pure poll", "exec", script(`const r = await tools.write_stdin({session_id:84659,chars:"",yield_time_ms:5000,max_output_tokens:1000});`),
+			Terminals{Nested: []Nested{{Session: 84659}}, Polls: []int64{84659}}},
+		{"quoted keys", "exec", script(`text(await tools.write_stdin({"session_id":12,"chars":"","yield_time_ms":30000}));`),
+			Terminals{Nested: []Nested{{Session: 12}}, Polls: []int64{12}}},
+		{"a session in a variable", "exec", script(`const id = 5; text(await tools.write_stdin({session_id:id,chars:""})); text(await tools.write_stdin({session_id, chars:""}));`),
+			Terminals{Nested: []Nested{{Session: -1}, {Session: -1}}, Polls: []int64{-1, -1}}},
+		{"no chars", "exec", script(`text(await tools.write_stdin({session_id:12}));`),
+			Terminals{Nested: []Nested{{Session: 12}}, Polls: []int64{12}}},
+		{"ctrl-c, escaped either way", "exec", script(`await tools.write_stdin({session_id:7,chars:"\u0003"}); await tools.write_stdin({session_id:8,chars:'\x03'});`),
+			Terminals{Nested: []Nested{{Session: 7, Chars: "\x03"}, {Session: 8, Chars: "\x03"}}, Polls: []int64{7, 8}}},
+		{"typed text in a template literal", "exec", script("await tools.write_stdin({session_id:7,chars:`y\n`});"),
+			Terminals{Nested: []Nested{{Session: 7, Chars: "y\n"}}, Polls: []int64{7}}},
+		{"a poll and an image", "exec", script(`text(await tools.write_stdin({session_id:3,chars:""})); image((await tools.view_image({path:"a.png"})).image_url);`),
+			Terminals{Nested: []Nested{{Session: 3}}, Polls: []int64{3}}},
+		{"a poll and a command", "exec", script(`await tools.write_stdin({session_id:3,chars:""}); await tools.exec_command({cmd:"ls -la"});`),
+			Terminals{Nested: []Nested{{Session: 3}, {Command: "ls -la"}}, Polls: []int64{3}}},
+		{"commands", "exec", script(`await Promise.all([tools.exec_command({cmd:"go test ./..."}), tools.exec_command({"cmd":'pnpm build'})]);`),
+			Terminals{Nested: []Nested{{Command: "go test ./..."}, {Command: "pnpm build"}}}},
+		{"a poll and a patch", "exec", script(`await tools.write_stdin({session_id:3,chars:""}); await tools.apply_patch("*** Begin Patch\n*** End Patch");`),
+			Terminals{Nested: []Nested{{Session: 3}}, Polls: []int64{3}, Other: true}},
+		// A call written in what a poll types or a command runs is not one.
+		{"typed code", "exec", script(`text(await tools.write_stdin({session_id:12,chars:"await tools.exec_command({cmd:'echo hi'})\n"}));`),
+			Terminals{Nested: []Nested{{Session: 12, Chars: "await tools.exec_command({cmd:'echo hi'})\n"}}, Polls: []int64{12}}},
+		{"a command that greps for a call", "exec", script(`text(await tools.exec_command({cmd:"rg -n 'tools.write_stdin\\(' internal"}));`),
+			Terminals{Nested: []Nested{{Command: `rg -n 'tools.write_stdin\(' internal`}}}},
+		{"an escaped quote", "exec", script(`await tools.write_stdin({session_id:4,chars:"say \"x\"; tools.exec_command(1)\n"});`),
+			Terminals{Nested: []Nested{{Session: 4, Chars: "say \"x\"; tools.exec_command(1)\n"}}, Polls: []int64{4}}},
+		{"single quotes", "exec", script(`await tools.write_stdin({session_id:4,chars:'it\'s tools.apply_patch('});`),
+			Terminals{Nested: []Nested{{Session: 4, Chars: "it's tools.apply_patch("}}, Polls: []int64{4}}},
+		{"template literals", "exec", script("await tools.write_stdin({session_id:4,chars:`tools.exec_command(`}); const t = `\\` tools.apply_patch(`;"),
+			Terminals{Nested: []Nested{{Session: 4, Chars: "tools.exec_command("}}, Polls: []int64{4}, Other: true}},
+		{"a call in a template's substitution", "exec", script("text(`${await tools.exec_command({cmd:'ls'})}`); await tools.write_stdin({session_id:4,chars:''});"),
+			Terminals{Nested: []Nested{{Command: "ls"}, {Session: 4}}, Polls: []int64{4}}},
+		// Only what a write_stdin types and what an exec_command runs is
+		// text; a call anywhere else counts, as it did before.
+		{"a call in a comment counts", "exec", script("// don't poll it yet: tools.exec_command(\n/* tools.apply_patch( it's */ await tools.write_stdin({session_id:4,chars:''});"),
+			Terminals{Nested: []Nested{{}, {Session: 4}}, Polls: []int64{4}, Other: true}},
+		{"a poll between regexes with quotes", "exec", script(`const quote = /"/; text(await tools.write_stdin({session_id:12,chars:''})); const quote2 = /"/;`),
+			Terminals{Nested: []Nested{{Session: 12}}, Polls: []int64{12}}},
+		// An argument the scan cannot read: every match after it counts.
+		{"a regex before the typed text", "exec", script(`await tools.write_stdin({session_id:s.match(/"/)[1],chars:"tools.exec_command("});`),
+			Terminals{Nested: []Nested{{Session: -1}, {}}, Polls: []int64{-1}}},
+		{"typed text with a substitution", "exec", script("await tools.write_stdin({session_id:4,chars:`${x} tools.exec_command(`});"),
+			Terminals{Nested: []Nested{{Session: 4}, {}}, Polls: []int64{4}}},
+		{"a newline in the typed text", "exec", script("await tools.write_stdin({session_id:4,chars:\"a\nb tools.exec_command(\"});"),
+			Terminals{Nested: []Nested{{Session: 4}, {}}, Polls: []int64{4}}},
+		{"typed text joined to more", "exec", script(`await tools.write_stdin({session_id:4,chars:"a" + "tools.exec_command("});`),
+			Terminals{Nested: []Nested{{Session: 4, Chars: "a"}, {}}, Polls: []int64{4}}},
+		{"another argument's text counts", "exec", script(`await tools.view_image({path:"tools.apply_patch("});`), Terminals{Other: true}},
+		{"an unterminated string: every match counts", "exec", script(`const s = 'it; await tools.exec_command({cmd:"ls"}); await tools.write_stdin({session_id:4,chars:""});`),
+			Terminals{Nested: []Nested{{Command: "ls"}, {Session: 4}}, Polls: []int64{4}}},
+		{"a newline in a quoted string: every match counts", "exec", script("const s = 'it\nawait tools.exec_command({cmd:\"ls\"}); // '\nawait tools.write_stdin({session_id:4,chars:''});"),
+			Terminals{Nested: []Nested{{Command: "ls"}, {Session: 4}}, Polls: []int64{4}}},
+		{"direct exec_command", "exec_command", execCmd("uv run pytest -x"), Terminals{Nested: []Nested{{Command: "uv run pytest -x"}}}},
+		{"direct write_stdin", "write_stdin", json.RawMessage(`{"session_id":4321,"chars":"\u0004","yield_time_ms":30000}`),
+			Terminals{Nested: []Nested{{Session: 4321, Chars: "\x04"}}, Polls: []int64{4321}}},
+		{"namespaced", "functions.write_stdin", json.RawMessage(`{"session_id":5}`), Terminals{Nested: []Nested{{Session: 5}}, Polls: []int64{5}}},
+		{"another tool", "apply_patch", json.RawMessage(`"*** Begin Patch"`), Terminals{Other: true}},
+	}
+	for _, c := range cases {
+		got := CodexTerminals(c.tool, c.input)
+		if g, w := fmt.Sprintf("%+v", got), fmt.Sprintf("%+v", c.want); g != w {
+			t.Errorf("%s: %s, want %s", c.name, g, w)
+		}
+	}
+}
+
+// #132: a script's calls, whatever surrounds them. Each hazard is a piece
+// of valid JS that confuses a scan for literals (a quote in a regex, a
+// division, quotes in a comment, a template, typed code), with the calls
+// it holds; a real call before one, between two (every pair) and after
+// one is found, in order, and only a call written in what a write_stdin
+// types or an exec_command runs is left out.
+func TestScriptCallsMatrix(t *testing.T) {
+	hazards := []struct {
+		code  string
+		calls []string
+	}{
+		// Regex literals.
+		{`const q = /"/;`, nil},
+		{`const a = /'/;`, nil},
+		{"const b = /`/;", nil},
+		{`const cls = /["']/g;`, nil},
+		{`const p = /a\/"b/;`, nil},
+		{`const u = /https?:\/\//;`, nil},
+		{`if (/'/.test(s)) n++;`, nil},
+		{`const m = s.replace(/"/g, "'");`, nil},
+		// Division.
+		{`const r = a / b / c;`, nil},
+		{`const h = x/2;`, nil},
+		{`const d = (n) / 2;`, nil},
+		// Comments.
+		{"// it's \"quoted\"\n", nil},
+		{`/* don't "stop" */`, nil},
+		{"// a quote: '\n", nil},
+		{"/* a backtick: ` */", nil},
+		// Templates.
+		{"const t = `it's \"x\"`;", nil},
+		{"const t2 = `a ${b} 'c`;", nil},
+		{"text(`${await tools.exec_command({cmd:'ls'})}`);", []string{"exec_command ls"}},
+		// Strings, and typed or run text that holds a call.
+		{`const s = "it's";`, nil},
+		{`const s2 = 'say "hi"';`, nil},
+		{`await tools.write_stdin({session_id:5,chars:"await tools.exec_command({cmd:'echo'})\n"});`, []string{"write_stdin 5"}},
+		{`await tools.write_stdin({"session_id":6,"chars":'tools.write_stdin({chars:\'x\'})'});`, []string{"write_stdin 6"}},
+		{`await tools.write_stdin({session_id:7,chars:"say \"hi\" tools.exec_command("});`, []string{"write_stdin 7"}},
+		{`await tools.exec_command({cmd:"rg -n 'tools.exec_command\\(' internal"});`, []string{`exec_command rg -n 'tools.exec_command\(' internal`}},
+		{"await tools.exec_command({\"cmd\":`tools.view_image(`, yield_time_ms:1000});", []string{"exec_command tools.view_image("}},
+		// A call in a comment counts, as it did before.
+		{"// see tools.view_image(\n", []string{"view_image"}},
+	}
+	reals := []struct{ code, call string }{
+		{`await tools.write_stdin({session_id:12,chars:''});`, "write_stdin 12"},
+		{`await tools.exec_command({cmd:'go test ./...'});`, "exec_command go test ./..."},
+		{`await tools.view_image({path:'a.png'});`, "view_image"},
+	}
+	calls := func(script string) []string {
+		var out []string
+		for _, x := range scriptCalls(script) {
+			switch x.name {
+			case "write_stdin":
+				out = append(out, fmt.Sprintf("write_stdin %d", scriptSession(x.args)))
+			case "exec_command":
+				out = append(out, "exec_command "+scriptArg(cmdArgRe, x.args))
+			default:
+				out = append(out, x.name)
+			}
+		}
+		return out
+	}
+	check := func(script string, want []string) {
+		t.Helper()
+		if g, w := strings.Join(calls(script), " | "), strings.Join(want, " | "); g != w {
+			t.Errorf("%s\n got  %s\n want %s", script, g, w)
+		}
+	}
+	n := 0
+	for _, r := range reals {
+		for _, h := range hazards {
+			check(r.code+" "+h.code, append([]string{r.call}, h.calls...))
+			check(h.code+" "+r.code, append(append([]string(nil), h.calls...), r.call))
+			for _, h2 := range hazards {
+				want := append(append(append([]string(nil), h.calls...), r.call), h2.calls...)
+				check(h.code+" "+r.code+" "+h2.code, want)
+				n++
+			}
+			n += 2
+		}
+	}
+	if n != len(reals)*len(hazards)*(len(hazards)+2) {
+		t.Fatal(n)
+	}
+}
+
+// #132: the sessions a call's output says its commands started, matched as
+// Sessions.Started matches them.
+func TestStarts(t *testing.T) {
+	cmd := func(s string) Nested { return Nested{Command: s} }
+	poll := func(id int64) Nested { return Nested{Session: id} }
+	cases := []struct {
+		name   string
+		nested []Nested
+		polls  []int64
+		output string
+		want   []Start
+	}{
+		{"direct, running", []Nested{cmd("a")}, nil, "Chunk ID: 1\nWall time: 10.0 seconds\nProcess running with session ID 4321\nOutput:\n", []Start{{4321, 0}}},
+		{"direct, exited", []Nested{cmd("a")}, nil, "Chunk ID: 1\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\nok\n", nil},
+		{"chunks in call order", []Nested{poll(9), cmd("a"), cmd("b")}, []int64{9}, "Script completed\nWall time 1.0 seconds\nOutput:\n" +
+			`{"chunk_id":"1","wall_time_seconds":0.5,"exit_code":0,"output":""}` + "\n" +
+			`{"chunk_id":"2","wall_time_seconds":1.0,"session_id":11,"output":""}` + "\n" +
+			`{"chunk_id":"3","wall_time_seconds":1.0,"session_id":12,"output":""}`, []Start{{11, 1}, {12, 2}}},
+		{"one command, chunks that do not line up", []Nested{poll(9), cmd("a")}, []int64{9}, "Script completed\nOutput:\n" +
+			`{"chunk_id":"2","session_id":9,"output":"{"}` + "\n" + `{"chunk_id":"3","session_id":13,"output":""}`, []Start{{13, 1}}},
+		{"two commands, chunks that do not line up", []Nested{cmd("a"), cmd("b")}, nil, `{"session_id":13,"output":""}`, nil},
+		{"no output", []Nested{cmd("a")}, nil, "", nil},
+		{"braces in an output", []Nested{cmd("a"), cmd("b")}, nil, "Script completed\nOutput:\n" +
+			`{"chunk_id":"1","wall_time_seconds":1.0,"session_id":11,"output":"{\"a\": {}}"}` + "\n" +
+			`{"chunk_id":"2","wall_time_seconds":1.0,"exit_code":0,"output":"}"}`, []Start{{11, 0}}},
+		{"wrapped by Promise.allSettled", []Nested{cmd("a"), cmd("b")}, nil, "Script completed\nOutput:\n" +
+			`{"status":"fulfilled","value":{"chunk_id":"1","wall_time_seconds":1.0,"exit_code":0,"output":""}}` + "\n" +
+			`{"i":1,"result":{"chunk_id":"2","wall_time_seconds":1.0,"session_id":12,"output":""}}`, []Start{{12, 1}}},
+		{"after a truncation note", []Nested{cmd("a"), cmd("b")}, nil, "Script completed\nOutput:\n" +
+			`{"chunk_id":"1","wall_time_seconds":1.0,"session_id":11,"output":""}` + "\n" +
+			"Warning: truncated output (original token count: 4000)\nTotal output lines: 812\n\n" +
+			`{"chunk_id":"2","wall_time_seconds":1.0,"session_id":12,"original_token_count":4000,"output":"…"}`, []Start{{11, 0}, {12, 1}}},
+	}
+	for _, c := range cases {
+		if got := Starts(c.nested, c.polls, c.output); fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
 	}
 }
