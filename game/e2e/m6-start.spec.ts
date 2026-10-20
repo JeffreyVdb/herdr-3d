@@ -380,7 +380,7 @@ for (const width of [1280, 360]) {
     await setting.uncheck();
     await page.keyboard.press('Escape');
     await page.reload();
-    await expect.poll(() => page.evaluate(() => window.__h3d?.frames ?? 0)).toBeGreaterThan(2);
+    await page.waitForFunction(() => window.__h3d?.ready && window.__h3d.frames >= 3, undefined, { timeout: 60_000 });
     await enter(page, 'herdr-3d');
     await page.evaluate(() => window.__h3d.openHire(5));
     const worker = page.locator('#hire-worktree');

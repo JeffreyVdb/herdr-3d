@@ -48,7 +48,7 @@ export async function frames(page: Page, n = 3): Promise<void> {
 /**
  * #43: the bridge sends world events before its acknowledgement. Parallel pages can spend several
  * seconds applying and rendering those events before dispatching the ack. The fixture uses a 150 ms Node timer.
- * Allow 20 s for this end-to-end state change; keep ordinary UI assertions at their own bound.
+ * Allow 20 s for this end-to-end state change; feature latency contracts retain their explicit bounds.
  */
 export async function expectCommandDone(page: Page, command: 'worker.hire' | 'worker.fire' | 'run.start'): Promise<void> {
   await expect.poll(() => page.evaluate((t) => ({
