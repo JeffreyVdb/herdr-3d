@@ -174,3 +174,65 @@ test('no classifier: the box ticked by hand saves the option; a bridge whose sch
   expect((await sent(old, 'schedule.create'))[0]).not.toHaveProperty('herdr_instructions');
   cleanOld();
 });
+
+// U2: the prompt fits with its image's short marker, but not once the image's path and the lines are in: Save stops,
+// and the error, the box and the dialog's controls stay on screen (the box's hidden input scrolled the dialog itself).
+for (const [width, height] of [[1440, 900], [390, 844]] as const) {
+  test(`at ${width}px, an uploaded image that takes a near-limit prompt with the box over the limit: the error and the ticked box stay in view`, async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width, height });
+    const clean = watchErrors(page);
+    await boot(page, null);
+    await newSchedule(page);
+    await fill(page, 'Image overflow', 'x'.repeat(32097));
+    await page.evaluate(async () => {
+      const c = document.createElement('canvas');
+      c.width = 64;
+      c.height = 64;
+      (c.getContext('2d') as CanvasRenderingContext2D).fillRect(0, 0, 32, 32);
+      const blob = await new Promise<Blob>((r) => c.toBlob((b) => r(b as Blob), 'image/png'));
+      const dt = new DataTransfer();
+      dt.items.add(new File([blob], 'overflow.png', { type: 'image/png' }));
+      (document.querySelector('#sf-prompt') as HTMLElement).dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    });
+    await expect(form(page).locator('.cmp-chip .cmp-state')).toHaveText('Uploaded', { timeout: 15_000 });
+    const box = form(page).locator('#sf-instructions');
+    await form(page).locator('label[for="sf-instructions"]').click();
+    await expect(box).toBeChecked();
+    await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.instructions?.lines ?? null)).not.toBeNull();
+    expect(await page.evaluate(() => window.__h3d.scheduleForm()?.blocker)).toBeNull();
+
+    await form(page).locator('[data-key="save"]').click();
+    await expect.poll(() => page.evaluate(() => window.__h3d.scheduleForm()?.error)).toBe(true);
+    const alert = form(page).locator('.dd-foot [role="alert"]');
+    await expect(alert).toContainText('with the image and file paths and the herdr hiring instructions');
+    await expect(box).toBeFocused();
+    await expect(box).toBeChecked();
+    await frames(page, 2);
+
+    // The dialog itself never scrolls: its header, the error, the box and the footer's buttons are inside it.
+    expect(await form(page).evaluate((d) => d.scrollTop)).toBe(0);
+    const dlg = (await form(page).boundingBox())!;
+    const body = (await form(page).locator('.dd-body').boundingBox())!;
+    const parts = [
+      [form(page).locator('.dd-head'), dlg],
+      [form(page).locator('[data-key="close"]'), dlg],
+      [alert, dlg],
+      [form(page).locator('[data-key="save"]'), dlg],
+      [form(page).locator('[data-key="cancel"]'), dlg],
+      // The box in the part of the form its scrolling body shows.
+      [form(page).locator('label[for="sf-instructions"] .dd-check-box'), body],
+    ] as const;
+    for (const [part, within] of parts) {
+      const b = (await part.boundingBox())!;
+      const what = `at ${width}px: ${await part.evaluate((e) => e.outerHTML.slice(0, 60))}`;
+      expect(b.y, what).toBeGreaterThanOrEqual(within.y);
+      expect(b.y + b.height, what).toBeLessThanOrEqual(within.y + within.height + 0.5);
+    }
+    await shot(page, `h127-schedule-image-overflow-${width}`);
+    expect(await sent(page, 'schedule.create')).toEqual([]);
+    expect(await sent(page, 'schedule.update')).toEqual([]);
+    expect(await sent(page, 'worker.handoff')).toEqual([]);
+    clean();
+  });
+}
