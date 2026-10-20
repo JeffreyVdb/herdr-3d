@@ -96,7 +96,7 @@ func (h *Hub) loadSchedules(ctx context.Context) error {
 func scheduleView(s store.Schedule) proto.Schedule {
 	v := proto.Schedule{ID: s.ID, Floor: s.Floor, Title: s.Title, Prompt: s.Prompt, DueAt: s.DueAt, OnMiss: s.OnMiss,
 		Harness: s.Harness, Model: s.Model, Effort: s.Effort, Cwd: s.Cwd, Worktree: s.Worktree, WakeFloor: s.WakeFloor,
-		HandoffPath: s.HandoffPath, Source: proto.ScheduleSource{Kind: s.Source, Worker: s.SourceWorker, Message: s.SourceMessage},
+		HandoffPath: s.HandoffPath, HerdrInstructions: s.HerdrInstructions, Source: proto.ScheduleSource{Kind: s.Source, Worker: s.SourceWorker, Message: s.SourceMessage},
 		State: s.State, StateReason: s.StateReason, WorkerID: s.WorkerID, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
 	opt := func(ms int64) *int64 {
 		if ms == 0 {
@@ -335,11 +335,16 @@ func (h *Hub) fireSchedule(ctx context.Context, s store.Schedule, now time.Time)
 		return
 	}
 	a := proto.WorkerHireArgs{Floor: s.Floor, DeskIndex: &desk, Harness: s.Harness, Model: s.Model, Effort: s.Effort,
-		Cwd: s.Cwd, Worktree: s.Worktree, Prompt: h.schedulePrompt(s, now)}
+		Cwd: s.Cwd, Worktree: s.Worktree, Prompt: h.schedulePrompt(s, now), HerdrInstructions: s.HerdrInstructions}
 	cmd := proto.Command{T: proto.CmdWorkerHire, ReqID: "schedule:" + s.ID, Args: mustJSON(struct {
 		Schedule string `json:"schedule"`
 		proto.WorkerHireArgs
 	}{s.ID, a})}
+	// #127: the herdr hiring instructions for the schedule's own floor (a
+	// virtual floor's v-… id), once, after the task (the late notice, the
+	// prompt, the handoff), as worker.hire adds them: the whole prompt is
+	// checked, the task alone translated.
+	a, compose := hireLines(a)
 	sid := s.ID
 	// #108 round 2: with prompt secrets reviewed, the stored prompt goes
 	// only as its review left it (runHire checks it before anything else).
@@ -347,7 +352,7 @@ func (h *Hub) fireSchedule(ctx context.Context, s store.Schedule, now time.Time)
 	if h.ps.enabled && s.Prompt != "" {
 		sec = &hireSecrets{rev: h.ps.rev, stored: &storedPrompt{text: s.Prompt, record: s.SecretsReview}}
 	}
-	err := h.beginHire(ctx, h.sc.client, cmd, a, nil, nil, &hireWatch{
+	err := h.beginHire(ctx, h.sc.client, cmd, a, nil, compose, &hireWatch{
 		begun: func(ctx context.Context, id string) error {
 			s.State, s.StateReason, s.FiredAt, s.WorkerID = store.ScheduleRunning, "", now.UnixMilli(), id
 			h.log.Info("schedule fired", "schedule", sid, "floor", s.Floor, "desk", desk, "worker", id)
@@ -713,6 +718,17 @@ func (h *Hub) applyScheduleSpec(s *store.Schedule, a proto.ScheduleSpec, now tim
 		if err := checkTyped(a.Harness, a.Prompt, herdr.MaxPrompt, "prompt"); err != nil {
 			return err
 		}
+		// #127: and with the herdr hiring instructions its fire adds (a
+		// late notice or a handoff that pushes a fire over is that fire's).
+		if a.HerdrInstructions {
+			whole := withHireLines(proto.WorkerHireArgs{Floor: s.Floor, Prompt: a.Prompt, HerdrInstructions: true}).Prompt
+			if !herdr.ValidPrompt(whole) {
+				return bad("prompt with the herdr hiring instructions must be at most %d bytes, got %d", herdr.MaxPrompt, len(whole))
+			}
+			if err := checkTyped(a.Harness, whole, herdr.MaxPrompt, "prompt with the herdr hiring instructions"); err != nil {
+				return err
+			}
+		}
 	}
 	if !filepath.IsAbs(a.Cwd) || !herdr.ValidDir(filepath.Clean(a.Cwd)) {
 		return bad("cwd must be an absolute path, got %q", a.Cwd)
@@ -734,5 +750,6 @@ func (h *Hub) applyScheduleSpec(s *store.Schedule, a proto.ScheduleSpec, now tim
 	}
 	s.Title, s.Prompt, s.DueAt, s.OnMiss, s.MaxLateness = title, a.Prompt, a.DueAt, onMiss, maxLate
 	s.Harness, s.Model, s.Effort, s.Cwd, s.Worktree, s.WakeFloor, s.HandoffPath = a.Harness, a.Model, a.Effort, cwd, a.Worktree, wake, path
+	s.HerdrInstructions = a.HerdrInstructions
 	return nil
 }

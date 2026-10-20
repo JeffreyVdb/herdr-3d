@@ -221,6 +221,8 @@ var migrations = []string{
 	// the messages they looked at.
 	migrationScheduleSuggest,
 	migrationNotifyMode,
+	// #127: schedules' "Add herdr hiring instructions".
+	migrationScheduleInstructions,
 }
 
 // Fingerprint kinds.

@@ -510,17 +510,23 @@ func withHireLines(a proto.WorkerHireArgs) proto.WorkerHireArgs {
 	return a
 }
 
-// hireTask begins a worker.hire whose task (a.Prompt, without the herdr
-// hiring instructions) is as it is sent. The whole prompt is checked
-// (hireShape, and beginHire's), and the task alone is translated (#39):
-// hirePromptFor falls back to a.Prompt, the lines included.
-func (h *Hub) hireTask(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs, sec *hireSecrets) error {
-	var compose firstPrompt
-	if a.HerdrInstructions {
-		task, lines := a.Prompt, "\n\n"+hireInstructions(a.Floor)
-		compose = func(tr func(string) string) string { return tr(task) + lines }
+// hireLines is withHireLines(a) and, with the lines, the compose that
+// translates the task (a.Prompt as given) alone (#39): beginHire checks
+// the whole prompt (hireShape), and hirePromptFor falls back to it, the
+// lines included. worker.hire's and a schedule's fire (#127) share it.
+func hireLines(a proto.WorkerHireArgs) (proto.WorkerHireArgs, firstPrompt) {
+	if !a.HerdrInstructions {
+		return a, nil
 	}
-	return h.beginHire(ctx, c, cmd, withHireLines(a), nil, compose, nil, sec)
+	task, lines := a.Prompt, "\n\n"+hireInstructions(a.Floor)
+	return withHireLines(a), func(tr func(string) string) string { return tr(task) + lines }
+}
+
+// hireTask begins a worker.hire whose task (a.Prompt, without the herdr
+// hiring instructions) is as it is sent, with the lines (hireLines).
+func (h *Hub) hireTask(ctx context.Context, c *Client, cmd proto.Command, a proto.WorkerHireArgs, sec *hireSecrets) error {
+	a, compose := hireLines(a)
+	return h.beginHire(ctx, c, cmd, a, nil, compose, nil, sec)
 }
 
 // reviewedHire is worker.hire's prompt through the gate (#108 round 2),

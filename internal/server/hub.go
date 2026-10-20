@@ -2296,6 +2296,7 @@ func (h *Hub) snapshot() proto.Snapshot {
 	w.Schedules = h.schedulesView()                     // #62
 	w.HirePresets = h.hirePresetViews()                 // #93
 	w.HerdrInstructions = true                          // #95
+	w.ScheduleHerdrInstructions = true                  // #127
 	placed := map[string]bool{}
 	var order []string
 	for _, b := range w.Buildings {

@@ -45,6 +45,10 @@ const migrationSchedule = `CREATE TABLE schedule (
 	);
 	CREATE INDEX schedule_floor_state ON schedule (floor, state);`
 
+// migrationScheduleInstructions adds #127's "Add herdr hiring
+// instructions" to schedules: off for every schedule made before it.
+const migrationScheduleInstructions = `ALTER TABLE schedule ADD COLUMN herdr_instructions INTEGER NOT NULL DEFAULT 0;`
+
 // Schedule states (#62).
 const (
 	ScheduleScheduled = "scheduled"
@@ -79,18 +83,21 @@ type Schedule struct {
 	// possible secrets with every one left as typed ("": never reviewed;
 	// see migrationPromptSecretsReviewed).
 	SecretsReview string
+	// HerdrInstructions (#127): its fire adds the herdr hiring
+	// instructions for its floor after its prompt (never stored in Prompt).
+	HerdrInstructions bool
 }
 
 const scheduleCols = `id, floor, title, prompt, due_at, on_miss, max_lateness_ms, harness, model, effort, cwd, worktree,
 	wake_floor, handoff_path, source, source_worker, source_message, state, state_reason, seen_at, fired_at, worker_id,
-	created_at, updated_at, dismissed_at, secrets_review`
+	created_at, updated_at, dismissed_at, secrets_review, herdr_instructions`
 
 func scanSchedule(sc interface{ Scan(...any) error }) (Schedule, error) {
 	var s Schedule
 	var maxLate, seen, fired, dismissed sql.NullInt64
 	err := sc.Scan(&s.ID, &s.Floor, &s.Title, &s.Prompt, &s.DueAt, &s.OnMiss, &maxLate, &s.Harness, &s.Model, &s.Effort,
 		&s.Cwd, &s.Worktree, &s.WakeFloor, &s.HandoffPath, &s.Source, &s.SourceWorker, &s.SourceMessage, &s.State,
-		&s.StateReason, &seen, &fired, &s.WorkerID, &s.CreatedAt, &s.UpdatedAt, &dismissed, &s.SecretsReview)
+		&s.StateReason, &seen, &fired, &s.WorkerID, &s.CreatedAt, &s.UpdatedAt, &dismissed, &s.SecretsReview, &s.HerdrInstructions)
 	s.MaxLateness, s.SeenAt, s.FiredAt, s.DismissedAt = maxLate.Int64, seen.Int64, fired.Int64, dismissed.Int64
 	return s, err
 }
@@ -98,11 +105,11 @@ func scanSchedule(sc interface{ Scan(...any) error }) (Schedule, error) {
 // AddSchedule stores a new schedule.
 func (s *Store) AddSchedule(ctx context.Context, sc Schedule) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO schedule (`+scheduleCols+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sc.ID, sc.Floor, sc.Title, sc.Prompt, sc.DueAt, sc.OnMiss, nullID(sc.MaxLateness), sc.Harness, sc.Model, sc.Effort,
 		sc.Cwd, sc.Worktree, sc.WakeFloor, sc.HandoffPath, sc.Source, sc.SourceWorker, sc.SourceMessage, sc.State,
 		sc.StateReason, nullID(sc.SeenAt), nullID(sc.FiredAt), sc.WorkerID, sc.CreatedAt, sc.UpdatedAt, nullID(sc.DismissedAt),
-		sc.SecretsReview)
+		sc.SecretsReview, sc.HerdrInstructions)
 	return err
 }
 
@@ -111,10 +118,11 @@ func (s *Store) AddSchedule(ctx context.Context, sc Schedule) error {
 func (s *Store) SaveSchedule(ctx context.Context, sc Schedule) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE schedule SET title = ?, prompt = ?, due_at = ?, on_miss = ?, max_lateness_ms = ?,
 		harness = ?, model = ?, effort = ?, cwd = ?, worktree = ?, wake_floor = ?, handoff_path = ?, state = ?, state_reason = ?,
-		seen_at = ?, fired_at = ?, worker_id = ?, updated_at = ?, dismissed_at = ?, secrets_review = ? WHERE id = ?`,
+		seen_at = ?, fired_at = ?, worker_id = ?, updated_at = ?, dismissed_at = ?, secrets_review = ?,
+		herdr_instructions = ? WHERE id = ?`,
 		sc.Title, sc.Prompt, sc.DueAt, sc.OnMiss, nullID(sc.MaxLateness), sc.Harness, sc.Model, sc.Effort, sc.Cwd, sc.Worktree,
 		sc.WakeFloor, sc.HandoffPath, sc.State, sc.StateReason, nullID(sc.SeenAt), nullID(sc.FiredAt), sc.WorkerID, sc.UpdatedAt,
-		nullID(sc.DismissedAt), sc.SecretsReview, sc.ID)
+		nullID(sc.DismissedAt), sc.SecretsReview, sc.HerdrInstructions, sc.ID)
 	if err != nil {
 		return err
 	}
