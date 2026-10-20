@@ -27,9 +27,13 @@ import type { HeldReview } from '../world/palette';
 import { backdropPolicy } from './dismiss';
 import { dialogChips, secretPreviewNodes, secretRefLine, secretsDirOf } from './secretChips';
 import { h, icon, ICON, replaceKeepingFocus } from './dom';
+import { mountComposer, type Composer } from './composer/composer';
+import { Draft as PromptDraft, type DraftSnapshot } from './composer/draft';
 import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
-import { capacityBlock, chips, gitView, modelField, worktreeControl, type HireHost, type HireSummary } from './hire';
-import { backgroundOutcomeText, HireCoordinator, notPromptedText, type HireOutcome } from './hireCoordinator';
+import { CommandCatalogs } from '../laptop/commandCatalog';
+import { CompletionScope, hireLookupKey, hireSources, type HireLookup } from './dialogCompletion';
+import { capacityBlock, chips, gitView, modelField, promptText, worktreeControl, type HireHost, type HireSummary } from './hire';
+import { backgroundOutcomeText, HireCoordinator, notPromptedText, notSentText, type HireOutcome } from './hireCoordinator';
 import { hiredToast } from './hiredToast';
 import { failureText } from './messages';
 import { onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './secretsFlow';
@@ -50,6 +54,10 @@ import { onReviewKey, reviewButton, type Go, type PromptSecretsFlow } from './se
  *
  * Late answers (the interpreter's, `hire.prepare`'s) are guarded by a counter: an `epoch` that every open and close bumps,
  * and the review's edit count (`ticket`), so a reply never changes a field the human edited after it was asked for.
+ *
+ * The task is the shared composer (#51), as in the hire dialog: pasted images, `/` skills, `@` files and `@r:`
+ * repositories of the hire's context (#39). Hire resolves it first (its images uploaded, their paths in the text), so the
+ * secrets review and `worker.hire` see the text the agent gets.
  *
  * #33: a background hire hands no draft to the coordinator, so the review keeps what was reviewed when Hire was pressed
  * (`Reviewed`). Refused or unanswered, it gives it back: the review opens again with it when nothing else is open (its
@@ -96,6 +104,8 @@ interface Reviewed {
   pending: HireInterpretation | null;
   /** #108: the interpreter's hand-over for `pending` (null: none). */
   handover: string | null;
+  /** The task's composer draft, its images too. */
+  draft: PromptDraft;
   keep: Array<{ harness: string; model: string }>;
   openSet: Set<ReviewSection>;
   defaultCwd: string;
@@ -122,8 +132,20 @@ export class HireReviewDialog {
   private readonly actions = h('div', { class: 'dd-actions' });
   private readonly foot = h('footer', { class: 'dd-foot' }, this.notices, this.statusEl, this.alertEl, this.actions);
   private readonly sections = new Map<ReviewSection, { root: HTMLElement; toggle: HTMLButtonElement; panel: HTMLElement; sum: HTMLElement; tape: HTMLElement }>();
+  /**
+   * #39: what the task's completion looks up: the floor, the harness and the folder `worker.hire` would get now, once
+   * `hire.prepare` answered and a harness is chosen.
+   */
+  private lookup: HireLookup | null = null;
+  private ownCatalogs: CommandCatalogs | null = null;
+  private readonly lookups = new CompletionScope(
+    () => this.lookupKey(),
+    () => hireSources(this.lookupHost(), this.lookup as HireLookup),
+  );
   /** The task: one editor for the whole review, never rebuilt (its caret and scroll stay while the rest redraws). */
-  private readonly taskEl = h('textarea', { id: 'review-task', class: 'rv-task', 'data-key': 'task', rows: 6, spellcheck: 'true', 'aria-describedby': 'review-task-refs review-task-hint', 'aria-label': 'Task, the complete text' });
+  private readonly composer: Composer;
+  /** Drafts of background hires on their way: a refusal gives them back, so they are not disposed meanwhile. */
+  private readonly away = new Set<PromptDraft>();
   /** #108 round 4: under the task, the protected files its references point at (the box keeps them as written). */
   private readonly refLine = secretRefLine('review-task-refs', () => dialogChips(this.secretsDir(), (m, e) => this.setStatus(m, e)));
   private readonly panelKeys = new Map<string, string>();
@@ -133,6 +155,8 @@ export class HireReviewDialog {
   private hiringText: string | null = null;
   /** #108: the review (`epoch`) whose Hire reviews its task now: nobody is hired yet, so closing hires nobody. */
   private reviewing = -1;
+  /** `reviewing` is the upload of the task's images (not the secrets review): what the toast says on Esc. */
+  private uploading = false;
   private desk = 0;
   private state: ReviewState = 'preparing';
   private prep: HirePrepare | null = null;
@@ -192,6 +216,20 @@ export class HireReviewDialog {
         holdTask: (id, text, from) => host.holdTask?.(id, text, from) ?? false,
       });
     this.host.modelPrefs?.onChange(() => this.dialog.open && this.state !== 'hiring' && this.render());
+    this.composer = mountComposer({
+      draft: this.newDraft(''),
+      // The popup stays inside the dialog's body (it scrolls, and would clip it).
+      complete: { sources: this.lookups.sources, bounds: () => this.body },
+      labelledBy: 'review-task-label',
+      describedBy: 'review-task-refs review-task-hint',
+      placeholder: 'What should the agent work on?',
+      // Enter adds a line, and no key hires: only the Hire button does (#212).
+      submitPolicy: 'mod-enter',
+      onChange: (s) => this.taskChanged(s),
+    });
+    // The editor takes the textarea's hooks: the tests and the focus keys know `#review-task`.
+    this.composer.editor.id = 'review-task';
+    this.composer.editor.dataset.key = 'task';
     this.alertEl.hidden = true;
     this.statusEl.hidden = true;
     for (const id of REVIEW_SECTIONS) this.body.append(this.buildSection(id));
@@ -199,11 +237,16 @@ export class HireReviewDialog {
     this.dialog.append(this.head, this.body, this.foot);
     this.dialog.addEventListener('close', () => {
       if (!this.dialog.open) this.epoch++;
+      // An enlarged image is nested in this dialog: it goes with it (it holds a window key listener).
+      this.composer.closePreview();
     });
     this.dialog.addEventListener('cancel', () => {
       // Esc while the hire is on its way: the hire still happens; the dialog just goes. (#108: not before its task was
       // reviewed: then nobody is hired.)
-      if (this.state === 'hiring') this.host.toast(this.reviewing === this.epoch ? 'Not hired: it was closed before its task was checked for secrets.' : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
+      if (this.state === 'hiring') {
+        const why = this.uploading ? 'its images were uploaded' : 'its task was checked for secrets';
+        this.host.toast(this.reviewing === this.epoch ? `Not hired: it was closed before ${why}.` : 'The hire is still on its way; the worker shows up at the desk when it is done.', 'info');
+      }
     });
     // Typed text and consequential choices in here: only the close button, Cancel and Esc close it, never the backdrop.
     backdropPolicy(this.dialog, 'none');
@@ -254,7 +297,7 @@ export class HireReviewDialog {
     this.defaultCwd = '';
     this.state = 'preparing';
     this.panelKeys.clear();
-    this.taskEl.value = this.choice.task;
+    this.showDraft(this.newDraft(this.choice.task));
     this.setStatus('Checking the floor, the folder and origin…');
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
@@ -294,7 +337,7 @@ export class HireReviewDialog {
     this.keep.push({ harness: interp.harness.value ?? '', model: interp.model.value ?? '' });
     this.choice = applyInterpretation(this.choice, interp, this.host.store.hireOptions, ticket.rev);
     // The editor shows the task as it is; one the human is typing in is theirs and was not replaced (`edited`).
-    if (this.taskEl.value !== this.choice.task) this.taskEl.value = this.choice.task;
+    if (promptText(this.composer.getSnapshot()) !== this.choice.task) this.showDraft(this.newDraft(this.choice.task));
     this.reopen();
     this.render();
     return true;
@@ -565,19 +608,83 @@ export class HireReviewDialog {
   private buildTask(): void {
     const panel = this.sections.get('task')!.panel;
     // #108: the task's review on purpose, Ctrl/⌘+Shift+X (with the switch on); the switch shows or hides its button.
-    onReviewKey(this.taskEl, () => this.host.secrets, () => void this.hire(true));
+    onReviewKey(this.composer.editor, () => this.host.secrets, () => void this.hire(true));
     this.host.secrets?.onChange(() => {
       if (this.dialog.open) this.renderActions();
     });
-    this.taskEl.addEventListener('input', () => {
-      this.choice = editTask(this.choice, this.taskEl.value);
-      this.syncSections();
-      this.renderActions();
-    });
     panel.append(
-      h('div', { class: 'dd-field' }, h('label', { for: 'review-task' }, 'The complete task'), this.taskEl, this.refLine.el, h('p', { class: 'field-hint', id: 'review-task-hint' }, 'Sent to the agent as its first task, exactly as written here. ', h('kbd', {}, 'Enter'), ' adds a line.')),
+      h(
+        'div',
+        { class: 'dd-field rv-task' },
+        h('label', { id: 'review-task-label', onclick: () => this.composer.focus() }, 'The complete task'),
+        this.composer.element,
+        this.refLine.el,
+        h('p', { class: 'field-hint', id: 'review-task-hint' }, 'Sent to the agent as its first task, exactly as written here. ', h('kbd', {}, 'Enter'), ' adds a line · paste a screenshot to add it.'),
+      ),
       h('p', { class: 'rv-prov', 'data-hook': 'task-origin' }),
     );
+  }
+
+  /** The task changed (typing, an image added or removed, an upload finished or failed): only a new text is an edit. */
+  private taskChanged(s: DraftSnapshot): void {
+    const text = promptText(s);
+    if (text === this.choice.task) return;
+    this.choice = editTask(this.choice, text);
+    this.syncSections();
+    this.renderActions();
+  }
+
+  private newDraft(text: string): PromptDraft {
+    const d = new PromptDraft({
+      upload: (file, hint, signal) => this.host.upload(file, hint, signal),
+      label: () => this.f.label.trim() || this.prep?.label || 'hire',
+      maxPromptBytes: HIRE_PROMPT_MAX_BYTES,
+    });
+    if (text) d.replace(0, 0, text);
+    return d;
+  }
+
+  /** Shows `d` in the editor; the draft it replaces goes, unless a hire on its way or a held review still has it. */
+  private showDraft(d: PromptDraft): void {
+    const old = this.composer.getDraft();
+    if (old === d) return;
+    this.composer.setDraft(d);
+    this.drop(old);
+  }
+
+  /** Disposes `d` (its uploads, its images' URLs) when nothing holds it any more. */
+  private drop(d: PromptDraft): void {
+    if (d === this.composer.getDraft() || this.away.has(d) || [...this.held.values()].some((h) => h.reviewed.draft === d)) return;
+    d.dispose();
+  }
+
+  /**
+   * #39: the key of the completion's context now (null: not prepared yet, or no harness). Its folder and worktree are
+   * `worker.hire`'s (`hireArgs`), as the hire dialog's.
+   */
+  private lookupKey(): string | null {
+    const p = this.prep;
+    if (!this.dialog.open || !p || !this.choice.harness || this.state === 'preparing' || this.state === 'failed') return (this.lookup = null);
+    const a = hireArgs(this.floor, this.desk, this.form(), p.git);
+    this.lookup = { floor: this.floor, harness: this.choice.harness, ...(a.cwd ? { cwd: a.cwd } : {}), worktree: !!a.worktree };
+    return hireLookupKey(this.lookup);
+  }
+
+  private lookupHost() {
+    const host = this.host;
+    return {
+      send: host.send.bind(host),
+      unsupported: (t: Parameters<HireHost['unsupported']>[0]) => host.unsupported(t),
+      catalogs: host.catalogs ?? (this.ownCatalogs ??= new CommandCatalogs({ send: (t, args) => host.send(t, args) })),
+      repoRefs: host.store.repoRefs,
+      repoDiscovery: host.store.repoDiscovery,
+      floorName: (id: string) => host.store.floorName(id),
+    };
+  }
+
+  /** The completion test hook: its context's generation (it steps on every change of floor, harness, folder or worktree). */
+  get lookupGeneration(): number {
+    return this.lookups.generation;
   }
 
   private toggle(id: ReviewSection): void {
@@ -676,7 +783,9 @@ export class HireReviewDialog {
     this.panel('agent', [c.harness, c.model, c.origin.harness, c.origin.model, c.said.harness, c.said.model, labelsOf(cat, c.harness), this.host.modelPrefs?.version, busy, this.keep.length], () => this.agentPanel(offered));
     this.panel('effort', [c.harness, c.model, c.effort, c.origin.effort, c.said.effort, busy, this.pending?.questions.find((q) => q.field === 'effort')?.text], () => this.effortPanel());
     this.panel('where', [this.floor, this.desk, this.state, this.prep, this.f.worktree, this.refetching, taken, this.host.store.limits.version, busy, where], () => this.wherePanel(taken));
-    this.taskEl.disabled = busy;
+    // Busy, not disabled, while the hire is on its way (#216 decisions row 14).
+    this.composer.setBusy(busy);
+    this.lookups.check();
     this.syncSections();
 
     const notices: Node[] = [];
@@ -881,6 +990,35 @@ export class HireReviewDialog {
     const floor = this.floor;
     const desk = this.desk;
     const args = hireArgs(floor, desk, this.form(), this.prep.git);
+    if (manual && !args.prompt) {
+      this.setStatus('Write the task first, then review its secrets.', true);
+      return;
+    }
+    const epoch0 = this.epoch;
+    const live = () => this.dialog.open && epoch0 === this.epoch;
+    // The task as the agent gets it: its images uploaded, their paths (and the files' mentions) in the text. Nothing is
+    // held or sent before; a failed upload keeps the review as it is, each failed image with its Retry.
+    if (args.prompt) {
+      const doc = this.composer.getDraft();
+      const waiting = doc.snapshot().images.filter((i) => i.status === 'pending' || i.status === 'uploading').length;
+      // A second press meanwhile is the same hire (`state`), and the box is busy: what is typed now is not sent.
+      this.state = 'hiring';
+      if (waiting) this.setStatus(`Uploading ${waiting === 1 ? 'the image' : `${waiting} images`}…`);
+      this.render();
+      this.reviewing = epoch0;
+      this.uploading = true;
+      const res = await doc.resolve({ maxBytes: HIRE_PROMPT_MAX_BYTES });
+      this.uploading = false;
+      if (this.reviewing === epoch0) this.reviewing = -1;
+      if (!live()) return;
+      this.state = 'ready';
+      if (!res.ok) {
+        this.setStatus(notSentText(res, '') || 'Not hired: the task could not be made.', true);
+        this.render();
+        return;
+      }
+      args.prompt = res.text;
+    }
     // #108 round 4: the task, reviewed before anything of it goes, unless it is the interpreter's as it answered it (the
     // hand-over covers that: what you left as typed is not proposed twice). The hand-over goes with any task (its files
     // are the new worker's).
@@ -889,16 +1027,15 @@ export class HireReviewDialog {
     const covered = handover !== null && args.prompt === this.pending?.task.value;
     let secrets: { flow: PromptSecretsFlow; req: { key: string; text: string; target: string; manual: boolean }; go: Go } | undefined;
     if (args.prompt && flow && (manual || (flow.on && !covered))) {
-      const epoch0 = this.epoch;
       const req = { key: `review:${floor}:${desk}`, text: args.prompt, target: `${args.label ?? this.prep.label} at Desk ${desk + 1}`, manual };
       this.state = 'hiring';
       this.setStatus(manual ? 'Opening the review of its secrets…' : 'Looking for secrets in the task…');
       this.render();
       // (Closed meanwhile: no review opens for it. The coordinator's copy has no `live`: the hire is on its way then.)
       this.reviewing = epoch0;
-      const out = await flow.review({ ...req, live: () => this.dialog.open && epoch0 === this.epoch });
+      const out = await flow.review({ ...req, live });
       if (this.reviewing === epoch0) this.reviewing = -1;
-      if (!this.dialog.open || epoch0 !== this.epoch) return;
+      if (!live()) return;
       this.state = 'ready';
       if (out.kind === 'kept') {
         this.setStatus(out.why === 'cancel' ? 'Not hired: the review was cancelled. The task is still here.' : out.message, out.why === 'failed');
@@ -906,9 +1043,6 @@ export class HireReviewDialog {
         return;
       }
       secrets = { flow, req, go: out };
-    } else if (manual && !args.prompt) {
-      this.setStatus('Write the task first, then review its secrets.', true);
-      return;
     }
     if (handover) args.secrets_pending = handover;
     const who = args.label ?? this.prep.label;
@@ -937,14 +1071,17 @@ export class HireReviewDialog {
       // The review goes now and the player plays on; the coordinator says how it ended (one toast, a beep on success).
       // #58 decision 3: a hire on an asleep virtual floor wakes it first, which takes a while: say so now.
       if (this.wakes()) this.host.toast(`Waking floor ${this.floorName()}… ${who} is hired once it is up.`, 'info');
+      this.away.add(reviewed.draft);
       this.close();
       const o = await op.done;
-      if (o.kind === 'failed' || o.kind === 'unknown') return this.giveBack(reviewed, o, backgroundOutcomeText(op.request, o));
-      if (o.kind === 'not_sent' && opening === this.opening && !document.querySelector('dialog[open]')) {
+      this.away.delete(reviewed.draft);
+      if (o.kind === 'failed' || o.kind === 'unknown') this.giveBack(reviewed, o, backgroundOutcomeText(op.request, o));
+      else if (o.kind === 'not_sent' && opening === this.opening && !document.querySelector('dialog[open]')) {
         this.dialog.showModal();
         this.landed(o, { floor, desk, who, epoch: this.epoch });
         this.focusFirst();
       }
+      this.drop(reviewed.draft);
       return;
     }
     this.render();
@@ -988,6 +1125,7 @@ export class HireReviewDialog {
       prep: this.prep as HirePrepare,
       pending: this.pending,
       handover: this.handover,
+      draft: this.composer.getDraft(),
       keep: [...this.keep],
       openSet: new Set(this.openSet),
       defaultCwd: this.defaultCwd,
@@ -1065,7 +1203,7 @@ export class HireReviewDialog {
     this.hiringText = null;
     this.state = 'ready';
     this.panelKeys.clear();
-    this.taskEl.value = this.choice.task;
+    this.showDraft(r.draft);
     this.setStatus(status, true);
     this.render();
     if (!this.dialog.open) this.dialog.showModal();

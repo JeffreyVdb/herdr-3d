@@ -1025,9 +1025,12 @@
   align-items: center;
   gap: 6px;
 }
-.rv-task {
-  min-height: 9rem;
-  max-height: 40vh;
+/* The task's composer (#51), sized as its textarea was: it grows to 40vh, then scrolls inside. */
+.rv-task .cmp {
+  --cmp-min-height: 9rem;
+  --cmp-max-height: 40vh;
+}
+.rv-task .cmp-editor {
   font-size: 14px;
 }
 .rv-place {
