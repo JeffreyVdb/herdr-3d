@@ -2,7 +2,7 @@
 // the fixture server), demo-m5 with the simulating bridge serving a page dump as every worker's transcript
 // (`simtx=file`, tools/fixture-transcript.ts), then sitting down at a worker (the conversation is what you sit down to).
 // Times from the sit to the first painted rows of the timeline, and the longest gap between two frames over the next
-// seconds (and the long animation frames). Run from the repo root on one of open.go's private dumps:
+// seconds (and the long animation frames; `fill…`: from the first painted rows until the last diff line is drawn). Run from the repo root on one of open.go's private dumps:
 //   portlease run --project herdr-3d --worktree . --name bench --service transcript-open -- \
 //     node docs/research/transcript-open-bench/app.mjs PRIVATE_OUT_DIR/claude-NN.json [RUNS]
 // H3D_BENCH_HEADED=1 opens a window; the default is headless Chromium (ANGLE/Vulkan). H3D_BENCH_SIT=0 does not sit: the
@@ -35,7 +35,7 @@ for (let run = 0; run < runs; run++) {
   // The scene settles (shaders compiled, the floor drawn) before the open is timed.
   await page.waitForTimeout(3000);
   const r = await page.evaluate(async (i) => {
-    const out = { firstRows: -1, loader: -1, built: -1, maxGap: 0, frames: 0, loaf: 0, loafs: 0, worst: [] };
+    const out = { firstRows: -1, loader: -1, built: -1, drawn: -1, fillGap: 0, fillLoaf: 0, drawLoaf: 0, fillWorst: [], maxGap: 0, frames: 0, loaf: 0, loafs: 0, worst: [] };
     let last = 0;
     let seen = -1;
     let stop = false;
@@ -43,6 +43,8 @@ for (let run = 0; run < runs; run++) {
     const frame = (t) => {
       if (stop) return;
       if (last) out.maxGap = Math.max(out.maxGap, t - last);
+      // From the first painted rows until the last diff line is drawn: the rows and diffs filling in.
+      if (last && out.firstRows >= 0 && out.drawn < 0) out.fillGap = Math.max(out.fillGap, t - last);
       last = t;
       out.frames++;
       const tx = document.querySelector('.tx');
@@ -50,19 +52,24 @@ for (let run = 0; run < runs; run++) {
       if (seen < 0 && document.querySelector('.tx-list:not(.tx-nested) > .tx-item')) seen = t;
       else if (seen >= 0 && out.firstRows < 0) out.firstRows = t - t0; // the frame after the rows came: they are painted
       if (out.firstRows >= 0 && out.built < 0 && tx && !tx.hasAttribute('data-building')) out.built = performance.now() - t0;
+      if (out.built >= 0 && out.drawn < 0 && tx && !tx.hasAttribute('data-drawing')) out.drawn = performance.now() - t0;
       requestAnimationFrame(frame);
     };
     const po = new PerformanceObserver((l) => {
       for (const e of l.getEntries()) {
         out.loafs++;
+        const at = (u) => (u || '').split('/').pop().split('?')[0];
+        const what = () => [{ at: Math.round(e.startTime - t0), render: Math.round(e.renderStart ? e.startTime + e.duration - e.renderStart : 0) }, ...[...e.scripts].sort((a, b) => b.duration - a.duration).slice(0, 4).map((x) => ({ ms: Math.round(x.duration), forced: Math.round(x.forcedStyleAndLayoutDuration), by: x.invoker, src: `${at(x.sourceURL)}:${x.sourceFunctionName}` }))];
+        if (out.firstRows >= 0 && e.startTime - t0 >= out.firstRows && (out.drawn < 0 || e.startTime - t0 <= out.drawn) && e.duration > out.fillLoaf) {
+          out.fillLoaf = e.duration;
+          out.fillWorst = what();
+        }
+        // After the last row is built: the diff lines' drawing.
+        if (out.built >= 0 && e.startTime - t0 >= out.built && (out.drawn < 0 || e.startTime - t0 <= out.drawn)) out.drawLoaf = Math.max(out.drawLoaf, e.duration);
         if (e.duration <= out.loaf) continue;
         out.loaf = e.duration;
         // What the longest frame ran: its scripts (where they came from, what started them) and its own rendering.
-        const at = (u) => (u || '').split('/').pop().split('?')[0];
-        out.worst = [
-          { at: Math.round(e.startTime - t0), render: Math.round(e.renderStart ? e.startTime + e.duration - e.renderStart : 0) },
-          ...[...e.scripts].sort((a, b) => b.duration - a.duration).slice(0, 4).map((x) => ({ ms: Math.round(x.duration), forced: Math.round(x.forcedStyleAndLayoutDuration), by: x.invoker, src: `${at(x.sourceURL)}:${x.sourceFunctionName}` })),
-        ];
+        out.worst = what();
       }
     });
     po.observe({ type: 'long-animation-frame' });
@@ -74,7 +81,7 @@ for (let run = 0; run < runs; run++) {
     out.nodes = document.querySelector('.tx')?.querySelectorAll('*').length ?? 0;
     return out;
   }, sit ? id : '');
-  console.log(JSON.stringify({ run, firstRowsMs: round(r.firstRows), loaderMs: round(r.loader), builtMs: round(r.built), maxFrameGapMs: round(r.maxGap), frames8s: r.frames, maxLoafMs: round(r.loaf), loafs: r.loafs, nodes: r.nodes, worstFrame: r.worst }));
+  console.log(JSON.stringify({ run, firstRowsMs: round(r.firstRows), loaderMs: round(r.loader), builtMs: round(r.built), drawnMs: round(r.drawn), maxFrameGapMs: round(r.maxGap), fillGapMs: round(r.fillGap), fillLoafMs: round(r.fillLoaf), drawLoafMs: round(r.drawLoaf), frames8s: r.frames, maxLoafMs: round(r.loaf), loafs: r.loafs, nodes: r.nodes, worstFrame: r.worst, fillWorstFrame: r.fillWorst }));
   await page.close();
 }
 await browser.close();
