@@ -9,7 +9,7 @@ import { LogoCache } from './render/logos';
 import { LogoSync } from './render/logoSync';
 import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMessage, type CommandArgs, type CommandName, type HandoffCandidate, type HandoffEntry, type IssueCard, type Schedule, type ScheduleSuggestion, type MergedPullRequest, type MergeMethod, type PullRequest, type Question, type WatchBoardAck, type WorldEvent, type HireInterpretation, type HireInterpretAck } from './net/protocol';
 import { CityView } from './render/city';
-import { shouldRender, targetHz } from './render/framePolicy';
+import { ACTIVE_WINDOW_MS, shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
 import { memberOf, OfficeView, REACH, seatOf, type AwaySeat, type Target } from './render/office';
 import type { LobbyTarget, LobbyView } from './render/lobby';
@@ -393,6 +393,8 @@ export class App {
   private readonly shadows: boolean;
   private planOpen = false;
   private lastActivity = 0;
+  /** #142: what `tick` decided, counted per display frame since the last reset (`__h3d.pacing`); world changes and board pushes beside it. */
+  private readonly pacing = { hz: 0, active: false, sinceActivity: 0, ticks: { 0: 0, 30: 0, 60: 0, 120: 0 } as Record<number, number>, held: 0, walker: 0, tween: 0, transition: 0, arrivals: 0, boards: 0, changes: 0, boardPushes: 0 };
   private lastRender = -Infinity;
   private lastT = 0;
   private statusDirty = true;
@@ -966,6 +968,7 @@ export class App {
   // ---- world -> views --------------------------------------------------------
 
   private applyChange(c: Change): void {
+    this.pacing.changes++;
     this.statusDirty = true;
     this.planDirty = true;
     this.activity(false);
@@ -2912,6 +2915,7 @@ export class App {
         st.off ? { task: st.off.text, live: !this.unsupported.has('board.watch'), why: st.off.sub ?? st.off.text } : msg && msg.fetched_at ? { task: `${msg.provider_name} · ${n} open`, live: true } : { task: 'Waiting for the bridge…', live: true };
       this.hud.setBoardInfo('board.issues', info(st.issues, st.issues?.cards.filter((c) => c.state === 'open').length ?? 0));
       this.hud.setBoardInfo('board.prs', info(st.prs, st.prs?.prs.length ?? 0));
+      this.pacing.boardPushes++;
       this.activity(false);
     }
     this.boardsPanel.refresh();
@@ -3619,13 +3623,46 @@ export class App {
 
   /** Animation-loop callback: frame pacing, then update + render. */
   tick(now: number): void {
-    const active = this.walker.moving || this.tween !== null || this.transitioning || this.arrivals.count > 0 || !!this.office?.boardsBusy;
-    const hz = targetHz({ hidden: document.hidden, batterySaver: this.batterySaver, sinceActivity: active ? 0 : now - this.lastActivity });
+    const walker = this.walker.moving;
+    const tween = this.tween !== null;
+    const transition = this.transitioning;
+    const arrivals = this.arrivals.count > 0;
+    const boards = !!this.office?.boardsBusy;
+    const active = walker || tween || transition || arrivals || boards;
+    const sinceActivity = active ? 0 : now - this.lastActivity;
+    const hz = targetHz({ hidden: document.hidden, batterySaver: this.batterySaver, sinceActivity });
+    this.countPacing(hz, active, sinceActivity, walker, tween, transition, arrivals, boards);
     if (!shouldRender(now, this.lastRender, hz)) return;
     const dt = Math.min(0.1, this.lastRender === -Infinity ? 1 / 60 : (now - this.lastRender) / 1000);
     this.lastRender = now;
     this.step(dt, now / 1000);
     this.render();
+  }
+
+  /** #142: one display frame's decision into `pacing`; `held`: the fast rate kept by the activity window alone (nothing animates). Allocates nothing. */
+  private countPacing(hz: number, active: boolean, sinceActivity: number, walker: boolean, tween: boolean, transition: boolean, arrivals: boolean, boards: boolean): void {
+    const p = this.pacing;
+    p.hz = hz;
+    p.active = active;
+    p.sinceActivity = sinceActivity;
+    p.ticks[hz] = (p.ticks[hz] ?? 0) + 1;
+    if (!active && hz > 0 && sinceActivity < ACTIVE_WINDOW_MS) p.held++;
+    if (walker) p.walker++;
+    if (tween) p.tween++;
+    if (transition) p.transition++;
+    if (arrivals) p.arrivals++;
+    if (boards) p.boards++;
+  }
+
+  /** #142: the frame decisions counted since the last `reset` (test hook), and the last one. */
+  pacingInfo(reset = false): { hz: number; active: boolean; sinceActivity: number; ticks: Record<number, number>; held: number; walker: number; tween: number; transition: number; arrivals: number; boards: number; changes: number; boardPushes: number } {
+    const p = this.pacing;
+    const out = { ...p, sinceActivity: Math.round(p.sinceActivity), ticks: { ...p.ticks } };
+    if (reset) {
+      for (const k of Object.keys(p.ticks)) p.ticks[Number(k)] = 0;
+      p.held = p.walker = p.tween = p.transition = p.arrivals = p.boards = p.changes = p.boardPushes = 0;
+    }
+    return out;
   }
 
   // ---- time of day (M17) -------------------------------------------------------
