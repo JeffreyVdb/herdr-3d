@@ -147,13 +147,14 @@ test('old and transcript readings are dimmed with the time they are as of', asyn
   await openGame(page, 'demo-m4', '', SIM('old'));
   let w = await withReadings(page);
   expect(w.lines.map((l) => l.stale)).toEqual([true, false]);
-  await expect(limits(page).locator('.lm-line[data-provider="claude"] .lm-asof')).toHaveText(/^as of \d\d:\d\d$/);
+  // A stale reading can be from yesterday during a run near midnight; the formatter includes its weekday then.
+  await expect(limits(page).locator('.lm-line[data-provider="claude"] .lm-asof')).toHaveText(/^as of (?:(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) )?\d\d:\d\d$/);
   expect(await limits(page).locator('.lm-line[data-provider="claude"] .lm-wins').evaluate((e) => getComputedStyle(e).opacity)).toBe('0.72');
   await openGame(page, 'demo-m4', '', SIM('transcript'));
   w = await withReadings(page);
   expect(w.lines.map((l) => l.stale)).toEqual([false, true]);
   await page.locator('.lm-strip').click();
-  await expect(page.locator('.lm-sec[data-provider="codex"] .lm-read')).toHaveText(/^As of \d\d:\d\d, from the last Codex session log$/);
+  await expect(page.locator('.lm-sec[data-provider="codex"] .lm-read')).toHaveText(/^As of (?:(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat) )?\d\d:\d\d, from the last Codex session log$/);
   await shot(page, 'm10-stale');
 });
 
