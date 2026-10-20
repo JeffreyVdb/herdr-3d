@@ -63,11 +63,12 @@ const expectFresh = (r: Awaited<ReturnType<typeof closeFresh>>) => {
   expect(r.stale.frames, why).toBe(r.f0);
   expect(r.stale.shown, why).toBe(r.from);
   expect(r.covering, why).toBe(false);
-  // The first frame after the close shows the change, stepped on its own clock, at the full rate again.
+  // The first frame after the close shows the change, stepped on its own clock, at the full rate again (the close
+  // counts as activity: 120, not the idle 60).
   expect(r.frames, why).toBe(r.f0 + 1);
   expect(r.shown, why).toBe(r.to);
   expect(r.frameAt, why).toBeGreaterThan(r.at0);
-  expect(r.hz, why).toBeGreaterThan(OPAQUE_HZ);
+  expect(r.hz, why).toBe(120);
 };
 
 test('the overview page, once grown, draws the scene at a few frames a second; a close draws the world at once (#143)', async ({ page }) => {
