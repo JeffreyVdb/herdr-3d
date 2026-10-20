@@ -5,6 +5,10 @@ with few or no images, which #125 (compact, persistently cached image previews) 
 investigation on `main` at `4d5c380`: Chromium 149.0.7827.55, Intel Core i7-10750H, Linux.
 Ticket: [#126](https://github.com/JeffreyVdb/herdr-3d/issues/126).
 
+**Status (2026-10-20):** parts 1 and 2 (the client) are implemented: a loading state from the overlay's first frame, the
+newest rows first and the older ones in the background, system rows and diff lines built when they show
+(docs/decisions.md "#126", [Implementation results](#implementation-results) below). Part 3 (the bridge) is separate.
+
 **Finding:** in normal transcripts the bridge answers in tens to a few hundred milliseconds. Most of the wait is the
 **client's first render**: the whole page's rows are built, then laid out in one main-thread task, which reached
 1.7 s on a 6 MB Claude transcript in an isolated page with no 3D scene. Until that task ends, the view shows nothing,
@@ -135,7 +139,55 @@ portlease run --project herdr-3d --worktree . --name bench --service transcript-
   node docs/research/transcript-open-bench/experiments.mjs /private/acks
 portlease run --project herdr-3d --worktree . --name bench --service transcript-open -- \
   node docs/research/transcript-open-bench/profile.mjs /private/acks/claude-03.json
+portlease run --project herdr-3d --worktree . --name bench --service transcript-open -- \
+  node docs/research/transcript-open-bench/app.mjs /private/acks/claude-03.json 5
 ```
 
 `watch.mjs` watches and then unwatches every Claude and Codex worker of the bridge it connects to; it sends nothing
 else. No application code was changed by this investigation.
+
+## Implementation results
+
+Measured on `h3d/126-transcript-open` (base `2c2cf64`, which has #125), same host and browser. The private page dumps
+are the first pages of the 64 Claude transcripts over 4 MB on this host (`open.go`); the worst is again the 1,070-item
+page with 43,272 elements (`claude-43` of that run).
+
+[browser.mjs](transcript-open-bench/browser.mjs) now copies the items into the page and mounts the view a frame
+before it sets them (as the app mounts before the ack), then waits for the background build (`data-building`) and
+counts long tasks and long animation frames over all of it:
+
+| | Before | After |
+| --- | ---: | ---: |
+| Worst page: first frame after `setItems` | 2,006–2,053 ms | **42 ms** |
+| Worst page: longest task | 1,298–1,419 ms | **none over 50 ms** |
+| Worst page: every row built | (one task) | 234–253 ms after `setItems` |
+| Worst page: elements | 43,272 | 4,206 (diff lines near the view only, no hidden system row) |
+| 64 pages, warm pass: first frame | median 517 ms, max 2,006 ms | **median 41 ms, max 62 ms** |
+| 64 pages, warm pass: longest frame while the rows fill in | (one task) | 60 ms on one page, the rest under 50 ms |
+
+The cold first pass (a fresh page: JIT, the first markdown and sanitiser use) is slower on the first page opened
+(142 ms) and had one fill frame of 60–85 ms on 3 of 64 pages: one row that took ~40 ms to build the first time (a slice
+builds one row at least). Warm, none.
+
+[app.mjs](transcript-open-bench/app.mjs) times the real app with the scene: the Vite dev server (`make dev`'s, with the
+fixture server), demo-m5 with the simulating bridge serving the worst page as every worker's transcript
+(`simtx=file`), seated at Tofu, headless Chromium through ANGLE/Vulkan (the scene at 56–60 fps here). Five runs after,
+three before:
+
+| | Before | After |
+| --- | ---: | ---: |
+| Sit → first painted rows | 3,635–4,522 ms | **362–429 ms** |
+| Longest gap between two frames | 3,400–4,300 ms | **100 ms** (200 ms once) |
+| Sit → the outline on screen | (nothing) | 65–107 ms (the overlay shows it in its first frame) |
+| Sit → every row built | | 722–812 ms |
+
+Without sitting, the scene's longest frame over the same seconds is 17 ms (`H3D_BENCH_SIT=0`). What is left in the
+longest frame: the first build after the module loaded (~70 ms with the scene running, its forced layout ~20 ms), the
+dev server's module evaluation, and in the 200 ms run the ack's own message task (its JSON and the first build, the ack
+having come after the mount). The dev server serves the modules unbundled, so the module import is slower than in the
+built app.
+
+Two measured turns of the design: `scheduler.yield()` continuations ran seven 15 ms slices back to back inside one
+112 ms frame (none rendered between them), so a slice now runs right after a frame is drawn; and one 200-line diff took
+25 ms of layout (each line is a max-content grid), so a diff near the view is drawn 50 lines a frame, its height held.
+

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CommandResult } from '../net/client';
 import type { Ask, Followup, Question, TranscriptItem, Usage, WorkerCodex } from '../net/protocol';
 import { ImageFeed } from './imageFeed';
-import { hasTranscript, subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptRenderHost } from './transcriptMode';
+import { hasTranscript, subagentItems, TranscriptMode, type MountTranscript, type SeatMode, type TranscriptModeHost, type TranscriptRenderHost } from './transcriptMode';
 import { TranscriptWatches, watchAck } from './transcriptWatches';
 import { activityCue, promptKey, reconcile, SENT_TIMEOUT_MS, type ActivityCue, type PendingPrompt } from './transcriptActivity';
 
@@ -13,8 +13,13 @@ class FakeBox {
   hidden = false;
   focused = 0;
   style: Record<string, string> = {};
+  /** #126: what was put in it (the stand-in while the render module loads). */
+  children: unknown[] = [];
   constructor(private readonly layer: FakeBox[]) {
     layer.push(this);
+  }
+  append(...c: unknown[]): void {
+    this.children.push(...c);
   }
   remove(): void {
     const i = this.layer.indexOf(this);
@@ -57,6 +62,11 @@ class FakeView {
   pending: Array<readonly PendingPrompt[]> = [];
   setPending(rows: readonly PendingPrompt[]): void {
     this.pending.push(rows);
+  }
+  /** #126: what it was told of the watch's answer (apart from `calls`). */
+  loadings: boolean[] = [];
+  setLoading(on: boolean): void {
+    this.loadings.push(on);
   }
   attachTabs(): void {}
   hasItem(): boolean {
@@ -106,7 +116,7 @@ const flush = async () => {
   for (let i = 0; i < 4; i++) await Promise.resolve();
 };
 
-function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscript | null>; feed?: ImageFeed } = {}) {
+function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscript | null>; feed?: ImageFeed; extra?: Partial<TranscriptModeHost> } = {}) {
   const layer: FakeBox[] = [];
   const views: FakeView[] = [];
   const sent: Array<{ t: string; args: Record<string, unknown>; resolve: (r: CommandResult) => void }> = [];
@@ -128,6 +138,7 @@ function harness(o: { storage?: unknown; renderer?: () => Promise<MountTranscrip
     storage,
     status: (kind, text) => status.push([kind, text]),
     modeChanged: (m) => modes.push(m),
+    ...o.extra,
   });
   return { tx, layer, views, sent, status, modes, storage, mount, clock };
 }
@@ -1244,5 +1255,89 @@ describe('#141: the prompt box’s draft and file search', () => {
     expect(f?.id).toBe('a');
     void f?.search.send('worker.files', { id: 'a', query: 'comp', limit: 30 });
     expect(h.sent.at(-1)).toMatchObject({ t: 'worker.files', args: { id: 'a', query: 'comp', limit: 30 } });
+  });
+});
+
+describe('#126: the conversation opening', () => {
+  it('mounts the view opening until the ack; the ack ends it, and a re-watch’s keeps it ended', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada');
+    await flush();
+    const v = h.views[0] as FakeView;
+    expect(v.host.loading).toBe(true);
+    expect(v.calls).toEqual(['set ']);
+    h.tx.reset('a', ack([]));
+    expect(v.loadings).toEqual([false]);
+    h.tx.reset('a', ack([item('x1')]));
+    expect(v.loadings.every((on) => !on)).toBe(true);
+    // Sitting again starts over: opening until its own ack.
+    h.tx.sit('a', 'Ada');
+    await flush();
+    expect(h.views[1]?.host.loading).toBe(true);
+  });
+
+  it('an ack that came while the module loaded: the view mounts opening, its items go in after the first frame', async () => {
+    let load: (m: MountTranscript | null) => void = () => {};
+    const frames: Array<() => void> = [];
+    const h = harness({ renderer: () => new Promise((r) => (load = r)), extra: { frame: (fn) => frames.push(fn) } });
+    h.tx.sit('a', 'Ada');
+    h.tx.reset('a', ack([item('x1'), item('x2', 2)]));
+    load(h.mount);
+    await flush();
+    const v = h.views[0] as FakeView;
+    // Answered, but nothing drawn yet: opening, not empty.
+    expect(v.host.loading).toBe(true);
+    expect(v.calls).toEqual([]);
+    expect(frames).toHaveLength(1);
+    frames.shift()?.();
+    expect(v.calls).toEqual(['set x1,x2']);
+    // An ack with nothing: empty from the start.
+    h.tx.sit('b', 'Bo');
+    h.tx.reset('b', ack([]));
+    await flush();
+    load(h.mount);
+    await flush();
+    expect(h.views[1]?.host.loading).toBe(false);
+    expect(frames).toHaveLength(0);
+  });
+
+  it('stands in for the view while the render module loads (in the overlay), and goes when it mounts or fails', async () => {
+    let load: (m: MountTranscript | null) => void = () => {};
+    const made: Array<{ who: string; removed: boolean; remove(): void }> = [];
+    const loading = (who: string) => {
+      const el = { who, removed: false, remove: () => (el.removed = true) };
+      made.push(el);
+      return el as unknown as HTMLElement;
+    };
+    const h = harness({ renderer: () => new Promise((r) => (load = r)), extra: { loading } });
+    h.tx.sit('a', 'Ada');
+    expect(made.map((m) => m.who)).toEqual(['Ada']);
+    expect(h.layer[0]?.children).toEqual([made[0]]);
+    load(h.mount);
+    await flush();
+    expect(made[0]?.removed).toBe(true);
+    expect(h.views).toHaveLength(1);
+    // A module that does not load: the stand-in goes with it, the terminal is back.
+    h.tx.sit('b', 'Bo');
+    expect(made.map((m) => m.who)).toEqual(['Ada', 'Bo']);
+    load(null);
+    await flush();
+    expect(made[1]?.removed).toBe(true);
+    expect(h.tx.mode).toBe('terminal');
+  });
+
+  it('a child’s view is opening until its own watch answers', async () => {
+    const h = harness();
+    h.tx.sit('a', 'Ada');
+    await flush();
+    h.tx.reset('a', ack([item('x1')]));
+    const target = { id: 'ch1', generation: 1, provider: 'claude' as const };
+    h.tx.openChild(target, { name: 'Explore', state: 'running', since: 'running 1m' });
+    await flush();
+    const c = h.views[1] as FakeView;
+    expect(c.host.child?.name).toBe('Explore');
+    expect(c.host.loading).toBe(true);
+    h.tx.resetChild('a', target, watchAck({ harness: 'claude', session: '', cursor: 'c:1', pending: true, availability: 'pending', items: [] }));
+    expect(c.loadings).toEqual([false]);
   });
 });

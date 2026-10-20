@@ -53,12 +53,14 @@ describe('the inline Handoff button', () => {
     expect(pressed.map((c) => c.id)).toEqual(['c-msg_a']);
   });
 
-  it('is on no row when the page does not hold the reply, and appears when its page loads', () => {
+  it('is on no row when the page does not hold the reply, and appears when its page loads', async () => {
     view = mountTranscript(container, host());
     view.setItems([it2('msg_x#0', 10, 'assistant'), it2('msg_y#0', 11, 'assistant')]);
     view.setHandoff?.(cand('msg_a'));
     expect(buttons()).toHaveLength(0); // never the last row of a partial page
     view.setItems([it2('msg_a#0', 5, 'assistant'), it2('msg_x#0', 10, 'assistant'), it2('msg_y#0', 11, 'assistant')]);
+    // #126: the older page's rows are built above the others in the background; the button comes with its row.
+    while (container.querySelector('.tx[data-building]')) await new Promise((r) => setTimeout(r, 0));
     expect(buttons().map(rowOf)).toEqual(['msg_a#0']);
   });
 

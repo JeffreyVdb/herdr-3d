@@ -36,6 +36,7 @@ import { LaptopTerminal, LIVE_SIZE } from './terminal';
 import { createSeatTabs, FLIP_KEY } from './seatTabs';
 import { childEndText, hasTranscript, loadImagesTab, loadRenderer, TranscriptMode, type ChildInfo, type OverlayRect, type SeatMode } from './transcriptMode';
 import { TranscriptWatches, WATCH_LIMIT } from './transcriptWatches';
+import { loadingScreen } from './transcriptLoading';
 import { Watches } from './watches';
 import type { PackupCheck } from '../ui/packupSend';
 import { secretFilesOf } from '../world/revokeSecrets';
@@ -320,6 +321,8 @@ export class Laptops {
         box.append(pane);
         return pane;
       },
+      loading: (who) => loadingScreen(who), // #126
+      frame: (fn) => requestAnimationFrame(() => setTimeout(fn, 0)),
       overlay: () => {
         const box = document.createElement('div');
         box.className = 'seat-transcript';

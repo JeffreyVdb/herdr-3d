@@ -315,9 +315,9 @@ describe('rows per kind', () => {
     expect(row('i1').getAttribute('role')).toBeNull();
     expect(row('i1').querySelector('[role="separator"]')).not.toBeNull();
     expect(row('i1').classList.contains('tx-sys')).toBe(false);
-    expect(row('i2').classList.contains('tx-sys')).toBe(true);
-    expect(row('i3').classList.contains('tx-sys')).toBe(true);
-    expect(row('i3').querySelector('.tx-raw')?.textContent).toBe('queue-operation');
+    // #126: hidden, they have no rows yet (they are counted all the same), and are built when they first show, in place.
+    expect($('[data-id="i2"]')).toBeNull();
+    expect($('[data-id="i3"]')).toBeNull();
     const root = $('.tx') as HTMLElement;
     const btn = $('.tx-sys-toggle') as HTMLButtonElement;
     expect(root.dataset.system).toBe('hidden');
@@ -326,6 +326,13 @@ describe('rows per kind', () => {
     expect(root.dataset.system).toBe('shown');
     expect(btn.getAttribute('aria-pressed')).toBe('true');
     expect(row('i2').textContent).toContain('Turn took 12s');
+    expect(row('i2').classList.contains('tx-sys')).toBe(true);
+    expect(row('i3').classList.contains('tx-sys')).toBe(true);
+    expect(row('i3').querySelector('.tx-raw')?.textContent).toBe('queue-operation');
+    expect($$('.tx-list > .tx-item').map((r) => r.dataset.id)).toEqual(['i1', 'i2', 'i3', 'i4']);
+    // Hidden again, they stay built (and hidden).
+    btn.click();
+    expect(row('i2').classList.contains('tx-sys')).toBe(true);
   });
 
   it('malformed items never throw: they fall back to an unknown row', () => {

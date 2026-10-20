@@ -1,0 +1,136 @@
+/*
+ * #126: the conversation opening (transcriptLoading.ts). In the transcript preset's colours (`--tx-*`, on the root
+ * element; ui/themes.css has Quiet's defaults), the strip and the prompt box's place in the UI theme's (`--ctl-*`), as
+ * the view's own parts are (#216). The rows brighten in turn from the bottom up, by opacity alone (the compositor's: it
+ * keeps going while the page builds the timeline); under reduced motion they stay still.
+ */
+
+/* In the timeline: the outline sits at the bottom of the view, where the newest rows come; a short view cuts it at the
+   top, as it would the conversation, and the words stay in sight. */
+.txl {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 10px;
+  height: 100%;
+  overflow: hidden;
+}
+.txl[hidden] {
+  display: none;
+}
+.txl-rows {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.txl-row {
+  animation: txl-wave 1.6s ease-in-out calc(var(--txl-i, 0) * 120ms) infinite both;
+  opacity: 0.55;
+}
+.txl-said {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+  padding: 0.3em 0;
+}
+.txl-line {
+  display: block;
+  height: 0.75em;
+  max-width: 100%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tx-text) 11%, transparent);
+}
+/* A tool call's row: its icon and its summary in an outlined box, as the timeline draws one. */
+.txl-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 0.55em 9px;
+  border: 1px solid var(--tx-line);
+  border-radius: 6px;
+}
+.txl-tool .txl-line {
+  flex: 0 1 auto;
+}
+.txl-icon {
+  flex: none;
+  width: 1em;
+  height: 1em;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--tx-text) 14%, transparent);
+}
+/* Your bubble, on the right, with its own corner. */
+.txl-you {
+  display: flex;
+  justify-content: flex-end;
+}
+.txl-bubble {
+  display: block;
+  height: 2.6em;
+  border-radius: 14px 14px 4px 14px;
+  background: var(--tx-bg-3);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tx-blue) 18%, transparent);
+}
+.txl-text {
+  flex: none;
+  margin: 0;
+  padding: 0 2px;
+  color: var(--tx-text-3);
+  font-size: calc(12.5px * var(--tx-k, 1));
+}
+@keyframes txl-wave {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .txl-row {
+    animation: none;
+    opacity: 0.75;
+  }
+}
+
+/* The screen's stand-in while the render module loads: the view's strip, its timeline and its prompt box's place, so
+   the view takes over in the same places. */
+.txl-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  color: var(--tx-text);
+  background: var(--tx-bg);
+  font-family: var(--tx-prose);
+  font-size: var(--tx-fs, 13.5px);
+  line-height: 1.5;
+}
+.txl-screen *,
+.txl-screen *::before,
+.txl-screen *::after {
+  box-sizing: border-box;
+}
+.txl-bar {
+  flex: none;
+  height: 36px;
+  border-bottom: 1px solid var(--ctl-line);
+  background: var(--ctl-bar);
+}
+.txl-main {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 14px 14px;
+}
+.txl-foot {
+  flex: none;
+  height: 49px;
+  border-top: 1px solid var(--ctl-line);
+  background: var(--ctl-bar);
+}

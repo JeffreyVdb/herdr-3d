@@ -82,6 +82,13 @@ export interface TranscriptModeHost {
   pane?(box: HTMLElement): HTMLElement;
   /** The tab strip; `pick` switches the view. */
   tabs?(pick: (mode: ReadMode) => void): SeatTabs;
+  /**
+   * #126: what stands in for a conversation (`who`'s) while the render module loads: its outline, opening
+   * (`transcriptLoading.ts`). None: nothing.
+   */
+  loading?(who: string): HTMLElement;
+  /** #126: runs `fn` once the next frame is drawn (none: now). */
+  frame?(fn: () => void): void;
   /** A new, empty, hidden overlay element in the HUD; the controller removes it (`remove()`). */
   overlay(): HTMLElement;
   /** Where the last mode per worker is kept (null: nowhere, it lasts until the page reloads). */
@@ -145,6 +152,8 @@ interface ChildSitting {
   view: TranscriptView | null;
   pane: HTMLElement | null;
   mounting: boolean;
+  /** #126: what stands in for its view while the render module loads (null: none). */
+  loader: HTMLElement | null;
 }
 
 /** Remembered per worker: the ones last left in terminal mode (#98: the conversation is the default), newest last. */
@@ -235,6 +244,10 @@ interface Sitting {
   tab: ImagesTabView | null;
   /** The render module is loading for this seat. */
   mounting: boolean;
+  /** #126: what stands in for the conversation while the render module loads (null: none). */
+  loader: HTMLElement | null;
+  /** #126: the watch answered (its ack reset the timeline): an empty timeline is empty, not opening. */
+  acked: boolean;
   mountingTab: boolean;
   /** The view read last (what Ctrl+Esc goes back to). */
   reading: ReadMode;
@@ -379,7 +392,7 @@ export class TranscriptMode {
     const last: ReadMode = canRead && this.host.imagesRenderer && readModes(this.host.storage, IMAGES_KEY).includes(id) ? 'images' : 'transcript';
     this.s = {
       id, name, harness, gen: ++this.gen, mode: 'terminal', items: [], index: new Map(), question: null, questionKey: '', ask: null, askKey: '', followup: null, followupKey: '', handoff: null, handoffKey: '', suggestion: null, suggestionKey: '', codex: null, codexWorking: false, codexKey: '', usage: null, usageKey: '', box: null, view: null,
-      viewPane: null, tabPane: null, tab: null, mounting: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
+      viewPane: null, tabPane: null, tab: null, mounting: false, loader: null, acked: false, mountingTab: false, reading: last, cursor: '', hasMore: false, reveal: null,
       revealing: false, unsub: null, relist: null, imageCount: null, tabs: null, focusLater: false, status: null, since: 0, mark: null, sendMark: null,
       pending: [], taken: new Set(), timeline: null, cueKey: '', cueDirty: true, child: null,
     };
@@ -485,6 +498,12 @@ export class TranscriptMode {
     }
     if (s.mounting) return;
     s.mounting = true;
+    // #126: the conversation opening, in the view's place, while its module loads (then the view says it, until the ack).
+    const pane = s.viewPane ?? this.pane(s);
+    s.viewPane = pane === s.box ? null : pane;
+    if (s.viewPane) s.viewPane.hidden = false;
+    s.loader ??= this.host.loading?.(s.name) ?? null;
+    if (s.loader) pane.append(s.loader);
     const gen = s.gen;
     void this.host.renderer().then(
       (mount) => this.mounted(gen, mount),
@@ -646,12 +665,14 @@ export class TranscriptMode {
     const s = this.s;
     if (!s || s.gen !== gen || !s.box) return;
     s.mounting = false;
+    s.loader?.remove();
+    s.loader = null;
     if (!mount) {
       this.setMode('terminal', false);
       this.host.status('error', 'The transcript view did not load: try again.');
       return;
     }
-    const pane = this.pane(s);
+    const pane = s.viewPane ?? this.pane(s);
     s.viewPane = pane === s.box ? null : pane;
     // #26: a child opened meanwhile stays on top; this view waits underneath.
     if (s.viewPane) s.viewPane.hidden = s.mode !== 'transcript' || !!s.child;
@@ -664,7 +685,14 @@ export class TranscriptMode {
       s.view.attachTabs(strip.create());
       this.tabsChanged(s);
     }
-    s.view.setItems([...s.items]);
+    // #126: what the watch sent while the module loaded goes in after the view's first frame (two tasks, not one long
+    // one); the view says it is opening till then.
+    const view = s.view;
+    const fill = () => {
+      if (this.s === s && s.view === view) view.setItems([...s.items]);
+    };
+    if (s.items.length && this.host.frame) this.host.frame(fill);
+    else fill();
     if (s.question) s.view.setBlocked(s.question);
     if (s.ask) s.view.setAsk(s.ask);
     if (s.followup) s.view.setFollowup(s.followup);
@@ -858,6 +886,7 @@ export class TranscriptMode {
     const handoff = this.host.handoff;
     const follow = this.host.scheduleFollowup;
     return {
+      loading: !s.acked || s.items.length > 0, // #126: till the ack, or the items it brought are in
       ...(handoff ? { onHandoff: (c: HandoffCandidate) => live() && handoff(s.id, c) } : {}),
       ...(follow ? { onScheduleFollowup: (c: HandoffCandidate, sug?: ScheduleSuggestion) => live() && follow(s.id, c, sug) } : {}),
       // #66: the chip's ×: the suggestion goes for good (the upsert takes the chip away).
@@ -1078,7 +1107,7 @@ export class TranscriptMode {
       this.childSeen(info);
     } else {
       this.dropChild(s);
-      s.child = { target, info, items: [], index: new Map(), cursor: '', hasMore: false, availability: null, view: null, pane: null, mounting: false };
+      s.child = { target, info, items: [], index: new Map(), cursor: '', hasMore: false, availability: null, view: null, pane: null, mounting: false, loader: null };
       this.host.childChanged?.();
     }
     if (s.mode !== 'transcript') this.setMode('transcript', false);
@@ -1129,16 +1158,21 @@ export class TranscriptMode {
     }
     if (c.mounting) return;
     c.mounting = true;
+    // #126: as the worker's: the child's conversation opening, while the module loads.
+    const pane = c.pane ?? this.pane(s);
+    c.pane = pane === s.box ? null : pane;
+    c.loader ??= this.host.loading?.(c.info.name) ?? null;
+    if (c.loader) pane.append(c.loader);
     const gen = s.gen;
     const done = (mount: MountTranscript | null) => {
       if (this.s?.gen !== gen || this.s.child !== c || !this.s.box) return;
       c.mounting = false;
+      c.loader?.remove();
+      c.loader = null;
       if (!mount) {
         this.closeChild({ kind: 'error', text: 'The transcript view did not load: try again.' });
         return;
       }
-      const pane = this.pane(s);
-      c.pane = pane === s.box ? null : pane;
       if (c.pane) c.pane.hidden = s.mode !== 'transcript';
       c.view = mount(pane, this.childHost(s, c));
       this.counts.mounted++;
@@ -1162,6 +1196,7 @@ export class TranscriptMode {
     return {
       images: this.host.feed(s.id, target),
       label: s.name,
+      loading: c.availability === null, // #126
       ...(this.host.prefs ? { prefs: this.host.prefs } : {}),
       cwd: () => this.host.cwd?.(s.id) ?? null,
       onPromptSubmit: () => Promise.resolve(false),
@@ -1228,6 +1263,7 @@ export class TranscriptMode {
     c.hasMore = ack.has_more;
     c.availability = ack.availability ?? (ack.pending ? 'pending' : 'available');
     c.view?.setItems([...c.items]);
+    c.view?.setLoading?.(false); // #126
     this.childDrawn(c);
   }
 
@@ -1266,6 +1302,9 @@ export class TranscriptMode {
     s.cursor = ack.cursor;
     s.hasMore = ack.has_more;
     s.view?.setItems([...s.items]);
+    // #126: from now on an empty timeline is empty (a re-watch's ack keeps what shows until it replaces it).
+    s.acked = true;
+    s.view?.setLoading?.(false);
     this.itemsChanged(s, s.items);
   }
 

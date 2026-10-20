@@ -6,7 +6,7 @@ import { AskCard, askItem, type AskResult } from './askCard';
 import { AsyncCard, type AsyncResult } from './asyncCard';
 import { AsyncDrafts } from './asyncDrafts';
 import { isSendKey, reveal, type AnswerOptions } from './askStack';
-import { diffColours } from './diffHighlight';
+import { diffColours, type DiffColours } from './diffHighlight';
 import { FollowupCard, type FollowupMessage, type FollowupResult } from './followupCard';
 import type { FollowupDraft } from './followupDrafts';
 import type { ImageFeed } from './imageFeed';
@@ -36,6 +36,7 @@ import { chipSecretRefs } from '../ui/secretChips';
 import type { ActivityCue, PendingPrompt } from './transcriptActivity';
 import { ChildBar, type ChildViewHost, type ChildViewState } from './transcriptChild';
 import { reviewKey } from '../ui/secretsFlow';
+import { loadingOutline } from './transcriptLoading';
 import { keyName } from '../input/shortcuts';
 
 /**
@@ -135,6 +136,11 @@ export interface TranscriptRenderHost {
    * box, cards or context meter; its bar is a breadcrumb back to the worker (`transcriptChild.ts`).
    */
   child?: ChildViewHost | null;
+  /**
+   * #126: the watch has not answered yet: the timeline says the conversation is opening (never "No conversation yet."),
+   * until `setLoading(false)` or items come. None: answered.
+   */
+  loading?: boolean;
 }
 
 export interface BlockedQuestion {
@@ -186,6 +192,8 @@ export interface TranscriptView {
   focusPrompt(): void;
   /** #26: a child's view: its state, its log's availability and whether older items can be shown. */
   setChild?(s: ChildViewState): void;
+  /** #126: whether the watch's answer is still to come (`TranscriptRenderHost.loading`). */
+  setLoading?(loading: boolean): void;
   destroy(): void;
 }
 
@@ -224,10 +232,13 @@ export function stripAnsi(s: string): string {
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+/** #126: one formatter for every row's time (`toLocaleString` makes one per call: a third of a millisecond each). */
+let clockFormat: Intl.DateTimeFormat | null = null;
+
 function clock(ts: number): string {
   if (!Number.isFinite(ts) || ts <= 0) return '';
-  const d = new Date(ts);
-  return d.toLocaleString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', month: 'short', day: 'numeric' });
+  clockFormat ??= new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', month: 'short', day: 'numeric' });
+  return clockFormat.format(new Date(ts));
 }
 
 /** 0.4s, 12s, 3m 05s, 1h 02m. */
@@ -685,6 +696,8 @@ function diffStat(hunks: unknown[]): { add: number; del: number } {
 
 /** The lines a diff draws at a time: its first ones, then each "Show next" (#171). */
 const MAX_DIFF_LINES = 2000;
+/** #126: the lines a diff drawn near the view puts in per frame (its first ones at once, the rest the frames after). */
+const DIFF_SLICE = 50;
 
 const statEl = (add: number, del: number) => h('span', { class: 'tx-diff-stat' }, h('span', { class: 'tx-add-n' }, `+${add}`), ' ', h('span', { class: 'tx-del-n' }, `−${del}`));
 
@@ -717,15 +730,15 @@ function diffRows(hunks: unknown[]): { rows: DiffRow[]; lines: Array<string[] | 
 /**
  * A diff's lines as a unified view with line numbers: `limit` of them, then "Show next" adds MAX_DIFF_LINES more in place
  * (`around` wraps the change, to keep the reader's place; `onShown` hears how many show now). Its body scrolls, and takes
- * the focus to scroll from the keyboard (Transcript.onKey).
+ * the focus to scroll from the keyboard (Transcript.onKey). #126: `later` may put its lines off (true: it calls `draw` when
+ * the body comes near the view); the body keeps their room meanwhile, and they are drawn DIFF_SLICE a frame.
  */
-function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => void) => void, onShown: (shown: number) => void): HTMLElement {
+function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => void) => void, onShown: (shown: number) => void, later?: (el: HTMLElement, draw: () => void) => boolean): HTMLElement {
   const { rows, lines } = diffRows(Array.isArray(diff.hunks) ? diff.hunks : []);
   const total = rows.reduce((s, r) => s + (r.kind === 'head' ? 0 : 1), 0);
   const box = h('div', { class: 'tx-diff-lines' });
   const body = h('div', { class: 'tx-diff-body', role: 'table', tabindex: '0', 'aria-label': `Changes to ${String(diff.path ?? '')}` });
-  // #206: drawn plain, coloured once its hunk is tokenized (while these rows are still the page's).
-  const colours = diffColours(diff.path, lines, body);
+  let colours: DiffColours | null = null;
   let pos = 0;
   let shown = 0;
   const draw = (upTo: number) => {
@@ -746,20 +759,54 @@ function diffLines(diff: TranscriptDiff, limit: number, around: (change: () => v
     }
     body.append(page);
   };
-  draw(Math.max(limit, MAX_DIFF_LINES));
+  // The lines that show (a "Show next" adds to them); #126: the ones drawn so far may be fewer, for a frame or two.
+  let target = Math.max(limit, MAX_DIFF_LINES);
+  let started = false;
+  const start = () => {
+    if (started) return;
+    started = true;
+    // #206: drawn plain, coloured once its hunk is tokenized (while these rows are still the page's).
+    colours = diffColours(diff.path, lines, body);
+  };
+  const pump = () => {
+    draw(Math.min(target, shown + DIFF_SLICE));
+    if (shown < target && pos < rows.length) void backfill.yield().then(() => body.isConnected && pump());
+    else body.style.removeProperty('height');
+  };
+  // #126: as tall as its lines will be (each is a line of the body's font, whose own maximum caps it) until they are.
+  let n = 0;
+  let seen = 0;
+  for (const r of rows) {
+    if (r.kind !== 'head' && seen++ >= target) break;
+    n++;
+  }
+  body.style.height = `${n * 1.5}em`;
+  const deferred = later?.(body, () => {
+    start();
+    pump();
+  });
+  if (!deferred) {
+    start();
+    draw(target);
+    body.style.removeProperty('height');
+  }
   box.append(body);
-  if (total > shown) {
+  if (total > Math.min(total, target)) {
     const btn = h('button', { class: 'tx-link' });
     const note = h('div', { class: 'tx-note tx-diff-more' }, btn);
     const label = () => {
-      const left = total - shown;
+      const left = total - target;
       const next = Math.min(MAX_DIFF_LINES, left);
       btn.textContent = `Show next ${next.toLocaleString('en')} ${next === 1 ? 'line' : 'lines'} (${left.toLocaleString('en')} left)`;
     };
     label();
     btn.addEventListener('click', () => {
       around(() => {
+        start();
+        draw(target);
         draw(shown + MAX_DIFF_LINES);
+        target = shown;
+        body.style.removeProperty('height');
         if (shown < total) return label();
         note.remove();
         // The button is gone: the focus goes to the lines it showed, not to the page.
@@ -803,11 +850,71 @@ const PROMPT_HINT = `Message the agent…  (Enter sends, Shift+Enter for a new l
 const NO_UPLOAD: Uploader = () => Promise.resolve({ ok: false, code: 'unavailable', message: 'images cannot be uploaded from here' });
 const MAX_INPUT_JSON = 4000;
 
-/** A list of items (the transcript, or a subagent's nested one), in `seq` order, each row keyed by id. */
+/**
+ * #126: how the view's timeline is built when it starts over (its first items, a resync): its newest rows at once, then
+ * the older ones above them, a slice of about `budgetMs` at a time, each right after a frame is drawn, so the page paints
+ * and takes input between two (and the 3D scene keeps its frames). Not `scheduler.yield` alone: its continuations go
+ * before the frame's own work, and in Chrome 149 seven slices ran back to back in one 112 ms frame. Where no frame is
+ * drawn (a hidden page) it is `scheduler.yield`, else a timeout. Tests put in their own clock and yield.
+ */
+export const backfill = {
+  budgetMs: 8,
+  now: (): number => performance.now(),
+  yield: (): Promise<void> =>
+    new Promise((resume) => {
+      if (typeof requestAnimationFrame === 'function' && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        requestAnimationFrame(() => setTimeout(resume, 0));
+        return;
+      }
+      const s = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+      if (typeof s?.yield === 'function') void s.yield().then(resume);
+      else setTimeout(resume, 0);
+    }),
+};
+/** #126: the rows a fresh timeline builds at once (then more while they leave the view to fill, for TOPUP_MS at most). */
+const FIRST_ROWS = 30;
+const TOPUP_ROWS = 15;
+const TOPUP_MS = 30;
+/** #126: the most rows of one backfill slice (a clock that stands still builds no more than this at a time). */
+const SLICE_ROWS = 60;
+let fills = 0;
+
+/** #126: what a timeline that builds its older rows in the background asks of its view. */
+interface Backfill {
+  /** Rows `change` puts in above the others keep the ones on the screen where they are (following: the bottom). */
+  hold(change: () => void): void;
+  /** The rows built so far leave the view to fill: the first build goes on. */
+  room(): boolean;
+  /** The last row is built: what waited for all of them. */
+  done(): void;
+}
+
+/** #126: the same item again (a resync's): equal as the bridge sent it. */
+function sameItem(a: TranscriptItem, b: TranscriptItem): boolean {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A list of items (the transcript, or a subagent's nested one), in `seq` order, each row keyed by id. #126: every item
+ * is known at once (counts, tool calls and the rest read the items, never the rows), but the view's own timeline (the
+ * one with a `Backfill`) builds the rows of a fresh start newest first and the older ones in the background, and builds
+ * no system row until "Show system" is on.
+ */
 class Timeline {
   readonly el: HTMLOListElement;
   private items = new Map<string, TranscriptItem>();
   private rows = new Map<string, HTMLElement>();
+  /** #126: the items still to build, oldest first, all older than every row built: the backfill takes them from the end. */
+  private pending: string[] = [];
+  private readonly waiting = new Set<string>();
+  /** The items in `seq` order (null: to sort again). */
+  private order: TranscriptItem[] | null = null;
+  /** #126: the backfill running (its number; 0: none). */
+  private filling = 0;
   /** Merged image-only rows, and the first row of the run each is shown in. */
   private readonly merged = new Set<string>();
   private readonly leadOf = new Map<string, string>();
@@ -818,12 +925,18 @@ class Timeline {
     private readonly view: Transcript,
     readonly scope: string,
     nested: boolean,
+    private readonly bg: Backfill | null = null,
   ) {
     this.el = h('ol', { class: nested ? 'tx-list tx-nested' : 'tx-list' });
   }
 
   get size(): number {
     return this.items.size;
+  }
+
+  /** #126: older rows are being built. */
+  get building(): boolean {
+    return this.filling !== 0;
   }
 
   has(id: string): boolean {
@@ -853,25 +966,92 @@ class Timeline {
 
   /** #59: the tool rows (what "Hide tool calls" hides) that show otherwise (system ones only with "show system"). */
   tools(showSystem: boolean): TranscriptItem[] {
-    return [...this.items.values()].filter((it) => isToolRow(it) && (showSystem || !isSystem(it))).sort(bySeq);
+    return this.sorted().filter((it) => isToolRow(it) && (showSystem || !isSystem(it)));
   }
 
-  /** Replaces everything; returns the items that were not there before. */
+  private sorted(): TranscriptItem[] {
+    return (this.order ??= [...this.items.values()].sort(bySeq));
+  }
+
+  /** The items whose turn to be built has come (all but the backfill's), in order; a system one may have no row. */
+  private built(): TranscriptItem[] {
+    return this.waiting.size ? this.sorted().filter((it) => !this.waiting.has(it.id)) : this.sorted();
+  }
+
+  /** #126: whether an item gets a row now: a system one only once "Show system" is on, in the view's own timeline. */
+  private wants(it: TranscriptItem): boolean {
+    return !this.bg || !isSystem(it) || this.view.systemShown;
+  }
+
+  /**
+   * Replaces everything; returns the items that were not there before. #126: a row whose item did not change stays as it
+   * is, where it is (a resync of the same transcript, older items paged in). With no such row the newest rows come first
+   * and the older ones are built in the background; with some, only what changed is built, and the items older than them
+   * in the background.
+   */
   set(items: TranscriptItem[]): TranscriptItem[] {
-    const before = new Set(this.items.keys());
-    this.items.clear();
-    this.rows.clear();
-    const valid = items.filter(isItem);
-    for (const it of valid) this.items.set(it.id, it);
-    const sorted = [...this.items.values()].sort(bySeq);
-    const rows = sorted.map((it) => {
-      const row = this.view.renderRow(it, this.scope);
+    this.stop();
+    const before = this.items;
+    const was = this.rows;
+    this.items = new Map();
+    for (const it of items) if (isItem(it)) this.items.set(it.id, it);
+    this.order = null;
+    const sorted = this.sorted();
+    this.rows = new Map();
+    this.pending = [];
+    this.waiting.clear();
+    this.merged.clear();
+    this.leadOf.clear();
+    let oldest = -1;
+    sorted.forEach((it, i) => {
+      const row = was.get(it.id);
+      const prev = before.get(it.id);
+      if (!row || !prev || (prev !== it && !sameItem(prev, it))) return;
       this.rows.set(it.id, row);
-      return row;
+      if (oldest < 0) oldest = i;
     });
-    this.el.replaceChildren(...rows);
+    for (const [id, row] of was) if (this.rows.get(id) !== row) row.remove();
+    const bg = this.bg;
+    // The items from here on have their rows now; the ones before it wait for the backfill.
+    let from = sorted.length;
+    if (!bg || oldest >= 0) {
+      from = bg ? oldest : 0;
+      for (const it of sorted.slice(from)) if (!this.rows.has(it.id) && this.wants(it)) this.rows.set(it.id, this.view.renderRow(it, this.scope));
+      this.place(sorted.slice(from));
+    } else {
+      // A screenful at least, newest first.
+      const start = backfill.now();
+      let n = 0;
+      for (let limit = FIRST_ROWS; ; limit = n + TOPUP_ROWS) {
+        const rows: HTMLElement[] = [];
+        while (from > 0 && n < limit) {
+          const it = sorted[--from] as TranscriptItem;
+          if (!this.wants(it)) continue;
+          const row = this.view.renderRow(it, this.scope);
+          this.rows.set(it.id, row);
+          rows.push(row);
+          n++;
+        }
+        this.el.prepend(...rows.reverse());
+        if (from === 0 || backfill.now() - start > TOPUP_MS || !bg.room()) break;
+      }
+    }
+    this.pending = sorted.slice(0, from).map((it) => it.id);
+    for (const id of this.pending) this.waiting.add(id);
     this.regroup();
+    this.fill();
     return sorted.filter((it) => !before.has(it.id));
+  }
+
+  /** The rows of `list` (in order) in the list in that order, the ones already in place left where they are. */
+  private place(list: readonly TranscriptItem[]): void {
+    let at = this.el.firstElementChild;
+    for (const it of list) {
+      const row = this.rows.get(it.id);
+      if (!row) continue;
+      if (row === at) at = at.nextElementSibling;
+      else this.el.insertBefore(row, at);
+    }
   }
 
   /** Adds new items and replaces known ones in place; returns the new ones. */
@@ -881,19 +1061,133 @@ class Timeline {
       if (!isItem(it)) continue;
       const prev = this.items.get(it.id);
       this.items.set(it.id, it);
-      const row = this.view.renderRow(it, this.scope, prev);
+      this.order = null;
+      if (!prev) added.push(it);
+      // #126: one the backfill has not built yet is built as it is when its turn comes.
+      if (this.waiting.has(it.id)) {
+        if (prev && bySeq(prev, it) === 0) continue;
+        this.unwait(it.id);
+      }
       const old = this.rows.get(it.id);
+      if (!old && this.below(it)) {
+        this.wait(it.id);
+        continue;
+      }
+      if (!this.wants(it)) {
+        old?.remove();
+        this.rows.delete(it.id);
+        continue;
+      }
+      const row = this.view.renderRow(it, this.scope, prev);
       this.rows.set(it.id, row);
       if (old && prev && prev.seq === it.seq) {
         old.replaceWith(row);
         continue;
       }
       old?.remove();
-      if (!prev) added.push(it);
       this.insert(it, row);
     }
     this.regroup();
     return added;
+  }
+
+  /** #126: while the backfill runs, an item older than every row built waits with the others. */
+  private below(it: TranscriptItem): boolean {
+    if (!this.pending.length) return false;
+    const id = (this.el.firstElementChild as HTMLElement | null)?.dataset.id;
+    const top = id !== undefined ? this.items.get(id) : undefined;
+    return !top || bySeq(it, top) < 0;
+  }
+
+  private wait(id: string): void {
+    const it = this.items.get(id) as TranscriptItem;
+    let lo = 0;
+    let hi = this.pending.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const other = this.items.get(this.pending[mid] as string);
+      if (other && bySeq(other, it) <= 0) lo = mid + 1;
+      else hi = mid;
+    }
+    this.pending.splice(lo, 0, id);
+    this.waiting.add(id);
+  }
+
+  private unwait(id: string): void {
+    const i = this.pending.indexOf(id);
+    if (i >= 0) this.pending.splice(i, 1);
+    this.waiting.delete(id);
+  }
+
+  /** #126: builds what is still to build, newest first, a slice at a time; a new `set`, or `stop`, ends it. */
+  private fill(): void {
+    const bg = this.bg;
+    if (!bg || this.filling || !this.pending.length) return;
+    const run = ++fills;
+    this.filling = run;
+    void (async () => {
+      while (this.filling === run && this.pending.length) {
+        await backfill.yield();
+        if (this.filling !== run) return;
+        this.slice(backfill.budgetMs);
+      }
+      if (this.filling !== run) return;
+      this.filling = 0;
+      bg.done();
+    })();
+  }
+
+  /** #126: ends the backfill (a new `set`, the view gone); what it did not build waits. */
+  stop(): void {
+    this.filling = 0;
+  }
+
+  /**
+   * #126: the next rows still to build, newest first, until `budget` ms went by (one at least, SLICE_ROWS at most), put
+   * in above the others at once; their image runs are merged again with the run they may join below them.
+   */
+  private slice(budget: number): void {
+    const start = backfill.now();
+    const rows: HTMLElement[] = [];
+    let newest: TranscriptItem | null = null;
+    while (this.pending.length && rows.length < SLICE_ROWS && (!rows.length || backfill.now() - start < budget)) {
+      const id = this.pending.pop() as string;
+      this.waiting.delete(id);
+      const it = this.items.get(id);
+      if (!it || !this.wants(it)) continue;
+      const row = this.view.renderRow(it, this.scope);
+      this.rows.set(id, row);
+      rows.push(row);
+      newest ??= it;
+    }
+    if (!newest) return;
+    const page = document.createDocumentFragment();
+    page.append(...rows.reverse());
+    const list = this.built();
+    let end = list.indexOf(newest) + 1;
+    while (end < list.length && (isImageOnly(list[end] as TranscriptItem) || (!this.view.systemShown && isSystem(list[end] as TranscriptItem)))) end++;
+    (this.bg as Backfill).hold(() => {
+      this.el.prepend(page);
+      this.regroup(list.slice(0, end));
+    });
+  }
+
+  /** #126: builds what is still to build down to `id`, now (a jump to it). */
+  ensure(id: string): void {
+    while (this.waiting.has(id)) this.slice(Infinity);
+  }
+
+  /** #126: "Show system" turned on: the system rows not built yet are built now (the backfill builds its own as it goes). */
+  buildSystem(): void {
+    if (!this.bg) return;
+    const list = this.built();
+    let made = false;
+    for (const it of list) {
+      if (this.rows.has(it.id) || !this.wants(it)) continue;
+      this.rows.set(it.id, this.view.renderRow(it, this.scope));
+      made = true;
+    }
+    if (made) this.place(list);
   }
 
   /** The row an item is shown in: a merged image-only item shows in the row of the run's first. */
@@ -905,15 +1199,22 @@ class Timeline {
   /**
    * Runs of image-only items share one strip (`imageRuns` has the rule): the first item's row keeps every thumbnail of
    * the run and the others are hidden, so a run of screenshots reads as one row. Everything is undone and done again
-   * on every change, so an update of any item of a run (or a row that breaks it) is right.
+   * on every change, so an update of any item of a run (or a row that breaks it) is right. #126: of the items whose rows
+   * are built (`list`: a backfill slice's, which holds every run it can change, whole; the backfill's own are not built
+   * yet, so a run that goes on in them is merged again when they are).
    */
-  regroup(): void {
+  regroup(list: readonly TranscriptItem[] = this.built()): void {
+    const rows: HTMLElement[] = [];
+    for (const it of list) {
+      const r = this.rows.get(it.id);
+      if (r) rows.push(r);
+    }
     // A row seen for the first time is whole: its thumbnails are its own.
-    for (const r of this.rows.values()) {
+    for (const r of rows) {
       const strip = r.classList.contains('tx-imgonly') ? r.querySelector('.tx-strip') : null;
       if (strip && !this.own.has(r)) this.own.set(r, [...strip.children] as HTMLElement[]);
     }
-    for (const r of this.rows.values()) {
+    for (const r of rows) {
       const own = this.own.get(r);
       const strip = r.querySelector('.tx-strip');
       if (!own || !strip) continue;
@@ -924,10 +1225,11 @@ class Timeline {
         strip.setAttribute('aria-label', own.length > 1 ? `${own.length} images` : 'Image');
       }
     }
-    this.merged.clear();
-    this.leadOf.clear();
-    const sorted = [...this.items.values()].sort(bySeq);
-    for (const ids of imageRuns(sorted, this.view.systemShown)) {
+    for (const it of list) {
+      this.merged.delete(it.id);
+      this.leadOf.delete(it.id);
+    }
+    for (const ids of imageRuns(list, this.view.systemShown)) {
       if (ids.length < 2) continue;
       const lead = this.rows.get(ids[0] as string);
       const leadStrip = lead?.querySelector('.tx-strip');
@@ -1031,6 +1333,15 @@ class Transcript implements TranscriptView {
   private readonly sending: SendGate;
   private readonly offSending: () => void;
   private readonly empty: HTMLDivElement;
+  /** #126: the watch's answer is still to come: the outline of a conversation opening stands in the empty state's place. */
+  private loading: boolean;
+  private readonly loader: HTMLElement;
+  /** #126: the changed files' lines still to draw, drawn once they come near the view. */
+  private lazyIO: IntersectionObserver | null = null;
+  private readonly lazyDraw = new Map<Element, () => void>();
+  /** #126: the ones come near the view, drawn a frame's budget at a time (`drawing`: a frame is drawing them). */
+  private readonly drawQueue: Array<() => void> = [];
+  private drawing = false;
   /** #26: a child's breadcrumb, read-only note and older items' button (null: the worker's own view). */
   private readonly childBar: ChildBar | null = null;
 
@@ -1093,16 +1404,18 @@ class Transcript implements TranscriptView {
     container: HTMLElement,
     private readonly host: TranscriptRenderHost,
   ) {
-    this.timeline = new Timeline(this, '', false);
+    this.timeline = new Timeline(this, '', false, { hold: (change) => this.holdBottom(change), room: () => this.room(), done: () => this.filled() });
     this.countEl = h('span', { class: 'tx-count' });
     this.sysBtn = h('button', { class: 'tx-sys-toggle', 'aria-pressed': 'false', title: 'Show system notices and unrecognised entries', onclick: () => this.toggleSystem() });
     this.banner = h('div', { class: 'tx-banner', role: 'alert', hidden: true });
     this.empty = h('div', { class: 'tx-empty' }, 'No conversation yet.');
+    this.loading = host.loading === true;
+    this.loader = loadingOutline(host.child?.name ?? host.label ?? null);
     this.pendingList = h('ol', { class: 'tx-list tx-pending-list', 'aria-label': 'Prompts on their way' });
     this.tail = h('div', { class: 'tx-tail' }, this.pendingList);
     this.live = h('div', { class: 'tx-live', role: 'status', 'aria-live': 'polite' });
     this.pendingLive = h('div', { class: 'tx-pending-live', role: 'status', 'aria-live': 'polite' });
-    this.scroller = h('div', { class: 'tx-scroll', tabindex: '-1', 'aria-label': 'Conversation' }, this.empty, this.timeline.el, this.tail);
+    this.scroller = h('div', { class: 'tx-scroll', tabindex: '-1', 'aria-label': 'Conversation' }, this.empty, this.loader, this.timeline.el, this.tail);
     this.thumbs = new Thumbs({ feed: host.images, root: this.scroller });
     this.jump = h('button', { class: 'tx-jump', hidden: true, onclick: () => this.toBottom() });
     this.composer = mountComposer({
@@ -1310,6 +1623,8 @@ class Transcript implements TranscriptView {
     const hadAny = this.timeline.size > 0;
     const wasFailed = new Set(this.timeline.tools(true).filter((t) => t.tool?.status === 'error').map((t) => t.id));
     const added = this.timeline.set(Array.isArray(items) ? items : []);
+    if (this.timeline.size) this.loading = false;
+    this.root.toggleAttribute('data-building', this.timeline.building);
     // #59: the first timeline (a failure that came while the terminal was up, before this view) or a resync is no
     // quieter than a live update: this turn's hidden failures you have not seen fail yet go on the chip.
     if (this.prefs.hideTools) for (const t of this.currentTurnTools()) if (t.tool?.status === 'error' && !wasFailed.has(t.id) && !toolHasChanges(t)) this.failedHidden.add(t.id);
@@ -1670,6 +1985,7 @@ class Transcript implements TranscriptView {
 
   scrollToItem(id: string): boolean {
     if (this.destroyed) return false;
+    this.timeline.ensure(id); // #126: the backfill had not got to it yet
     const row = this.timeline.row(id);
     if (!row) return false;
     // Reveal a hidden system row too? Images never come from one.
@@ -1691,10 +2007,20 @@ class Transcript implements TranscriptView {
     if (!this.destroyed) this.childBar?.set(s);
   }
 
+  setLoading(loading: boolean): void {
+    if (this.destroyed || this.loading === loading) return;
+    this.loading = loading;
+    this.updateCounts();
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     if (this.suggestionTick) clearInterval(this.suggestionTick); // #66
     this.destroyed = true;
+    this.timeline.stop(); // #126
+    this.lazyIO?.disconnect();
+    this.lazyDraw.clear();
+    this.drawQueue.length = 0;
     if (this.ticker) clearInterval(this.ticker);
     this.ticker = null;
     this.resize?.disconnect();
@@ -2043,7 +2369,7 @@ class Transcript implements TranscriptView {
       if (!open || body.childNodes.length) return;
       // Drawn on first open: a long history of changes shown closed costs nothing.
       if (d.no_diff === true || !hunks.length) body.append(h('div', { class: 'tx-chg-note' }, emptyNote(d)));
-      else body.append(diffLines(d, this.diffShown.get(key) ?? MAX_DIFF_LINES, (change) => this.keepPlace(change), (n) => this.diffShown.set(key, n)));
+      else body.append(diffLines(d, this.diffShown.get(key) ?? MAX_DIFF_LINES, (change) => this.keepPlace(change), (n) => this.diffShown.set(key, n), (el, draw) => this.later(el, draw)));
       if (d.truncated === true) {
         const note = h('div', { class: 'tx-chg-note tx-chg-cutnote' }, 'Cut to fit the list: only the start is shown.');
         if (load) note.append(h('span', { class: 'tx-chg-load' }, ' ', h('button', { class: 'tx-link', onclick: load }, 'Show the whole change')));
@@ -2444,6 +2770,70 @@ class Transcript implements TranscriptView {
     this.following = true;
   }
 
+  /**
+   * #126: rows `change` puts in above the others leave the ones on the screen where they were: the bottom stays as far
+   * away as it was (an absolute target, which a scroll anchoring correction cannot add to), or following, the bottom.
+   */
+  private holdBottom(change: () => void): void {
+    const s = this.scroller;
+    const below = s.scrollHeight - s.scrollTop;
+    change();
+    if (this.following) this.stick(true);
+    else s.scrollTop = s.scrollHeight - below;
+  }
+
+  /** #126: the rows built so far leave the view (and a little above it) to fill. */
+  private room(): boolean {
+    const s = this.scroller;
+    return s.clientHeight > 0 && s.scrollHeight < s.clientHeight * 1.25;
+  }
+
+  /** #126: the backfill built the last row: what looks for a row anywhere in the timeline looks again. */
+  private filled(): void {
+    if (this.destroyed) return;
+    this.root.removeAttribute('data-building');
+    this.syncHandoff();
+    this.fileRefs.place();
+    this.stick();
+  }
+
+  /** #126: `draw` runs once `el` comes near the view, keeping the reader's place; false: no IntersectionObserver, not put off. */
+  private later(el: HTMLElement, draw: () => void): boolean {
+    if (typeof IntersectionObserver === 'undefined') return false;
+    this.lazyIO ??= new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          this.lazyIO?.unobserve(e.target);
+          const f = this.lazyDraw.get(e.target);
+          this.lazyDraw.delete(e.target);
+          if (f) this.drawQueue.push(f);
+        }
+        this.drawDue();
+      },
+      { root: this.scroller, rootMargin: '100% 0px' },
+    );
+    this.lazyDraw.set(el, draw);
+    this.lazyIO.observe(el);
+    return true;
+  }
+
+  /** #126: draws what came near the view, `backfill.budgetMs` of it per frame, the reader's place (or the bottom) kept. */
+  private drawDue(): void {
+    if (this.drawing || this.destroyed || !this.drawQueue.length) return;
+    const start = backfill.now();
+    this.keepPlace(() => {
+      while (this.drawQueue.length && backfill.now() - start < backfill.budgetMs) this.drawQueue.shift()?.();
+    });
+    this.stick();
+    if (!this.drawQueue.length) return;
+    this.drawing = true;
+    void backfill.yield().then(() => {
+      this.drawing = false;
+      this.drawDue();
+    });
+  }
+
   private toBottom(): void {
     this.stick(true);
     this.fresh.clear();
@@ -2466,7 +2856,9 @@ class Transcript implements TranscriptView {
     this.countEl.textContent = n ? `${n - sys} ${n - sys === 1 ? 'entry' : 'entries'}` : '';
     this.sysBtn.textContent = sys ? `Show system (${sys})` : 'Show system';
     if (this.showSystem) this.sysBtn.textContent = sys ? `Hide system (${sys})` : 'Hide system';
-    this.empty.hidden = n > 0 || this.pendingRows.length > 0;
+    // #126: empty only once the watch said so; until then the conversation is opening.
+    this.empty.hidden = n > 0 || this.pendingRows.length > 0 || this.loading;
+    this.loader.hidden = !this.loading || n > 0;
     const tools = this.timeline.tools(this.showSystem).length;
     this.toolsCount.textContent = tools ? String(tools) : '';
     this.renderBusy();
@@ -2598,6 +2990,7 @@ class Transcript implements TranscriptView {
 
   private toggleSystem(): void {
     this.showSystem = !this.showSystem;
+    if (this.showSystem) this.timeline.buildSystem(); // #126: built the first time they show
     this.timeline.regroup();
     this.root.dataset.system = this.showSystem ? 'shown' : 'hidden';
     this.sysBtn.setAttribute('aria-pressed', String(this.showSystem));
