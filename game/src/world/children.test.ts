@@ -123,6 +123,10 @@ describe('#22 decodeChild', () => {
     expect(decodeChild({ ...child('ch_a'), parent: '' })?.parent).toBe('unresolved');
     expect(decodeChild({ ...child('ch_a'), parent: 'child', parent_id: 'ch_p' })).toMatchObject({ parent: 'child', parent_id: 'ch_p' });
     for (const s of ['running', 'completed', 'idle', 'shut_down', 'interrupted', 'unknown']) expect(decodeChild({ ...child('ch_a'), state: s })?.state).toBe(s);
+    expect(decodeChild({ ...child('ch_a'), model: 'claude-sonnet-5-5', effort: 'high' })).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'high' });
+    const noModel = decodeChild({ ...child('ch_a'), model: '', effort: 3 });
+    expect(noModel).not.toHaveProperty('model');
+    expect(noModel).not.toHaveProperty('effort');
     expect(decodeChild({ id: 'ch_a', worker_id: 'w1' })).toBeNull();
     expect(decodeChild({ worker_id: 'w1', generation: 1 })).toBeNull();
   });

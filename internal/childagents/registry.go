@@ -17,6 +17,7 @@ const (
 	MaxPerWorker = 500
 	maxName      = 128  // bytes of Name and Type
 	maxDesc      = 1000 // bytes of Description
+	maxModel     = 80   // bytes of Model and Effort (usage.CleanModel's bound)
 )
 
 // Why evidence was dropped (Apply's error; the hub logs it at debug).
@@ -60,7 +61,7 @@ type row struct {
 
 // seen is when evidence last set each last-wins field of a row, in its
 // root's observation order (0: never): a merge keeps the later of two rows'.
-type seen struct{ name, typ, desc, state, ended, transcript, parent int }
+type seen struct{ name, typ, desc, model, effort, state, ended, transcript, parent int }
 
 // New returns an empty registry.
 func New() *Registry {
@@ -300,6 +301,12 @@ func (rw *row) merge(e Evidence, at int) {
 	if e.Description != "" {
 		c.Description, rw.seen.desc = clip(e.Description, maxDesc), at
 	}
+	if e.Model != "" {
+		c.Model, rw.seen.model = clip(e.Model, maxModel), at
+	}
+	if e.Effort != "" {
+		c.Effort, rw.seen.effort = clip(e.Effort, maxModel), at
+	}
 	if e.State != "" {
 		c.State, c.Source, rw.seen.state = validState(e.State), e.Source, at
 		if c.State == proto.ChildRunning && e.EndedAt == 0 {
@@ -335,6 +342,12 @@ func (rw *row) fold(gone *row) {
 	}
 	if gone.seen.desc > rw.seen.desc {
 		c.Description, rw.seen.desc = g.Description, gone.seen.desc
+	}
+	if gone.seen.model > rw.seen.model {
+		c.Model, rw.seen.model = g.Model, gone.seen.model
+	}
+	if gone.seen.effort > rw.seen.effort {
+		c.Effort, rw.seen.effort = g.Effort, gone.seen.effort
 	}
 	if gone.seen.state > rw.seen.state {
 		c.State, c.Source, rw.seen.state = g.State, g.Source, gone.seen.state

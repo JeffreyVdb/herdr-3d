@@ -4,6 +4,7 @@ import {
   ageText,
   BLINK_MS,
   CHILD_TRANSCRIPT_WORD,
+  childShortName,
   childSinceText,
   endedChildGroups,
   sinceText,
@@ -377,7 +378,7 @@ export function buildOverviewScreen(box: Box3): OverviewScreenMesh {
 /** What a row shows on the wall (its redraw key): never the live activity, which moves all the time. */
 function face(v: VisibleRow, now: number): unknown[] {
   const r = v.row;
-  if (r.kind === 'child') return [r.key, v.depth, v.more, r.name, r.type, markFor(r.provider), r.state, r.unresolved, r.description, r.transcript, childSinceText(r, now)];
+  if (r.kind === 'child') return [r.key, v.depth, v.more, r.name, r.type, r.model, markFor(r.provider), r.state, r.unresolved, r.description, r.transcript, childSinceText(r, now)];
   if (r.kind !== 'worker') return [r.key, r.kind, v.depth, v.more, r.kind === 'ghost' ? [r.name, r.floor] : null];
   return [r.key, v.depth, v.more, r.name, r.display, markFor(r.harness), wallTag(r), !!r.orch?.overCap, r.runColor, metaLine(r), ticketLine(r), lineSegs(r, now), sinceText(r.display, r.since, now)];
 }
@@ -651,7 +652,7 @@ function paintChild(
   const chipsW = orphan ? chipW(g, orphan, u) + u * 1.2 : 0;
   g.font = `700 ${nameSize}px ${DISPLAY}`;
   g.fillStyle = TEXT;
-  const nameW = fitText(g, r.name, nameX, base, colWhat - nameX - Math.max(u * 6, chipsW + u));
+  const nameW = fitText(g, childShortName(r.name), nameX, base, colWhat - nameX - Math.max(u * 6, chipsW + u));
   if (orphan) {
     // Dashed, like its elbow: a chip that says what is missing, not a role.
     const cx = nameX + nameW + u * 1.2;
@@ -691,9 +692,12 @@ function paintChild(
   fitText(g, childMeta(r), colWho, base + u * 3.8, colWhat - colWho - u * 3);
 }
 
-/** #24: under a child's name on the wall (full mode): a provider without a mark, its type when it has a name, `subagent`. */
+/**
+ * #24: under a child's name on the wall (full mode): a provider without a mark, its type when it has a name, what it runs
+ * on when known, `subagent`.
+ */
 export function childMeta(r: OverviewChildRow): string {
-  return [markFor(r.provider) ? null : r.provider || null, r.type, 'subagent'].filter(Boolean).join(' · ');
+  return [markFor(r.provider) ? null : r.provider || null, r.type, r.model || null, 'subagent'].filter(Boolean).join(' · ');
 }
 
 /** `#118 · Floor overview` (the wall shows the ticket in its row's first line). */

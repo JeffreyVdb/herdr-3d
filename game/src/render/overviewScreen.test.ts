@@ -342,7 +342,7 @@ describe('#24 native children on the wall', () => {
     expect(screen.info()).toMatchObject({ rows: 41, compact: true, scrolling: true });
   });
 
-  it('under a child’s name: its type beside a name, `subagent`; a provider without a mark says its name', () => {
+  it('under a child’s name: its type beside a name, what it runs on, `subagent`; a provider without a mark says its name', () => {
     const r = (over: Partial<OverviewChildRow>): OverviewChildRow => ({
       kind: 'child',
       key: 'child:x',
@@ -352,6 +352,7 @@ describe('#24 native children on the wall', () => {
       name: 'Ada',
       type: null,
       description: null,
+      model: '',
       state: 'running',
       unresolved: false,
       startedAt: null,
@@ -363,5 +364,6 @@ describe('#24 native children on the wall', () => {
     expect(childMeta(r({ type: 'explorer' }))).toBe('explorer · subagent');
     expect(childMeta(r({}))).toBe('subagent');
     expect(childMeta(r({ provider: 'gemini' }))).toBe('gemini · subagent');
+    expect(childMeta(r({ provider: 'claude', type: 'general-purpose', model: 'Sonnet 5.5 high' }))).toBe('general-purpose · Sonnet 5.5 high · subagent');
   });
 });
