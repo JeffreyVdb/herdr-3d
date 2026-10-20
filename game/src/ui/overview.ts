@@ -392,8 +392,8 @@ export class OverviewOverlay {
   }
 
   /**
-   * #145: the kept rows of the view opened again: from the top, the first row focused, their skeletons turning again (the
-   * close stopped them). The refresh that follows updates what changed.
+   * #145: the kept rows of the view opened again: the first row to take the focus (`focusSoon` puts the board back at its
+   * top), their skeletons turning again (the close stopped them). The refresh that follows updates what changed.
    */
   private reuse(): void {
     this.focusKey = null;
@@ -406,13 +406,16 @@ export class OverviewOverlay {
   /**
    * The focused row (the first on an open) takes the focus on the frame the page first draws, never in the key that
    * opened it: focusing needs the page laid out (#145: that layout was most of an open's time), and the frame lays it out
-   * anyway. A key pressed before then has moved the focus itself; `top`: a kept board goes back to its top first.
+   * anyway. A key pressed before then has moved the focus onto the page itself; `top`: a kept board goes back to its top
+   * first.
    */
   private focusSoon(top: boolean): void {
     const view = this.view;
+    const was = document.activeElement;
     const later = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (cb: () => void) => setTimeout(cb, 0);
     later(() => {
-      if (this.view !== view || this.closing || this.root.contains(document.activeElement)) return;
+      const moved = document.activeElement !== was && this.root.contains(document.activeElement);
+      if (this.view !== view || this.closing || moved) return;
       if (top) this.board.scrollTop = 0;
       const row = this.focusKey ? this.rows.get(this.focusKey)?.el : null;
       if (row) row.focus({ preventScroll: true });
