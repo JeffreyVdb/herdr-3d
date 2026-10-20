@@ -183,6 +183,18 @@ describe('TranscriptSim', () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect([...older, ...items].map((it) => it.seq)).toEqual(ids.map((_, i) => i + 1));
   });
+
+  it('#132 simtx: demo-h132 watches get Codex polls of background terminals, named by their commands', () => {
+    const { snapshot } = loadFixture('demo-h171');
+    const out: Msg[] = [];
+    const sim = new SimWorld(snapshot as never, { stepMs: 100, transcript: 'demo-h132', now: () => 1_000_000, setTimeout: () => 0, clearTimeout: () => {} });
+    const id = (snapshot as unknown as typeof world).world.workers.find((w) => w.name === 'Nibble')?.id as string;
+    sim.handle({ t: 'transcript.watch', req_id: 'w', args: { id } }, (m) => out.push(m));
+    const items = watchAck((out.find((m) => m.req_id === 'w') as { data: unknown }).data).items;
+    expect(items[0]?.id).toBe('h132-ask');
+    expect(items.find((it) => it.id === 'call_p132exit1')?.tool).toMatchObject({ input_summary: 'Waited for pnpm exec vitest run · exited 1', status: 'error' });
+    expect(items.map((it) => it.seq)).toEqual(items.map((_, i) => i + 1));
+  });
 });
 
 describe('TranscriptSim: #26 child targets', () => {
