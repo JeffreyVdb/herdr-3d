@@ -158,8 +158,11 @@ test('a floor seen before is entered without rebuilding the office (#141)', { ta
   writeFileSync(resolve(RESULTS, `h141-floor-entry-perf${process.env.H3D_DIST ? `-${process.env.H3D_DIST}` : ''}.json`), JSON.stringify({ summary, pages: all }, null, 2));
   for (const p of all) for (const e of p.entries) console.log(`h141 ${p.page} ${e.floor}${e.cold ? ' (cold)' : ''}${e.switch ? ' (switch)' : ''}: first frame ${e.firstFrameMs} ms, swap ${e.swapMs} ms, longest frame ${e.maxLoafMs} ms`);
   console.log(`h141 perf summary: ${JSON.stringify(summary)}`);
-  // A warm entry draws its first frame in under half of the 650-835 ms it took before #141, every one of them.
+  // A warm entry draws its first frame in under half of the 650-835 ms it took before #141, every one of them; and its
+  // longest frame is no long one (the target is every one under 150 ms: 110-129 ms here, reported, not asserted, as a
+  // loaded host stretches single frames).
   expect(summary.warmFirstFrameMaxMs).toBeLessThan(350);
+  expect(summary.warmMedLoafMs).toBeLessThan(150);
 });
 
 test('the first ride to a floor keeps every frame short behind the doors (#141)', { tag: '@perf' }, async ({ browser }) => {
