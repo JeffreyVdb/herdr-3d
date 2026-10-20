@@ -1549,8 +1549,14 @@
   align-items: center;
   gap: 6px;
   font-style: italic;
-  animation: tx-pulse 1.2s ease-in-out infinite;
+  animation: tx-activity-pulse 1.2s ease-in-out infinite;
   will-change: opacity;
+}
+/* Text must remain readable at the dimmest point; the status dot's .35 pulse is too faint for words. */
+@keyframes tx-activity-pulse {
+  50% {
+    opacity: 0.8;
+  }
 }
 .tx-activity-label svg {
   color: var(--tx-blue-text);

@@ -383,6 +383,34 @@ for (const [name, theme, ink, fill, size] of [
     await expect.poll(async () => (await filled(jump)).bg, { message: 'hovered chip' }).toBe(theme === 'ubuntu' ? 'rgb(235, 101, 54)' : fill);
     expect(await filled(jump), 'hovered chip').toMatchObject({ fg: ink });
     await shot(page, `r2-jump-${name.toLowerCase().replace(/ /g, '-')}`);
+    // Finish the answer's scripted turn before keeping the worker at work for the pulse measurements.
+    await expect.poll(() => page.evaluate((id) => window.__h3d.worker(id)?.status, id), { timeout: 20_000 }).toBe('done');
+    expect(await page.evaluate((id) => window.__h3d.simStatus(id, 'working'), id)).toBe(true);
+    // Both activity words stay readable throughout their pulse, rather than depending on the sampled frame.
+    for (const [kind, word, seq] of [['thinking', 'Thinking…', 99], ['assistant', 'Working…', 100]] as const) {
+      const result = await page.evaluate(([id, kind, seq]) => window.__h3d.simTranscript({
+        id,
+        items: [{ id: `contrast-${kind}`, seq, ts: Date.now(), kind, parts: [{ text: 'Checking activity contrast.' }] }],
+      }), [id, kind, seq] as const);
+      expect(result.ok).toBe(true);
+      const label = tx.locator('.tx-activity-label');
+      await expect(label).toHaveText(word);
+      expect(await label.evaluate((el) => el.getAnimations().length)).toBe(1);
+      const opacity: number[] = [];
+      for (const phase of [0, 0.5, 1]) {
+        opacity.push(await label.evaluate((el, at) => {
+          const animation = el.getAnimations()[0]!;
+          animation.pause();
+          animation.currentTime = Number(animation.effect!.getTiming().duration) * at;
+          return Number(getComputedStyle(el).opacity);
+        }, phase));
+        const row = (await contrastScan(tx)).find((r) => r.cls === 'span.tx-activity-label');
+        expect(row, `${name}: ${word} at ${phase * 100}%`).toBeDefined();
+        expect(row!.ratio, `${name}: ${word} at ${phase * 100}%: ${JSON.stringify(row)}`).toBeGreaterThanOrEqual(4.5);
+      }
+      expect(opacity[1], 'the cue still pulses').toBeLessThan(opacity[0]!);
+      expect(opacity[2]).toBe(opacity[0]);
+    }
     // And the whole transcript, enabled controls included, still clears 4.5:1 on the ground each text sits on.
     expect((await contrastScan(tx)).filter((r) => r.ratio < 4.5 && theme === 'ubuntu')).toEqual([]);
   });
