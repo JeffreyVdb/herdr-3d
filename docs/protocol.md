@@ -587,6 +587,7 @@ conversation, watched by its own target ([A child's transcript](#a-childs-transc
 | `parent` | `root` \| `child` \| `unresolved` | its immediate parent; always present (see below) |
 | `parent_id` | string, optional | with `parent: "child"` only: that child's `id` |
 | `name`, `type`, `description` | string, optional | as the provider gives them (Claude: the subagent type and the task's description; Codex: the nickname and role); at most 128, 128 and 1000 bytes |
+| `model`, `effort` | string, optional | what the child runs on, as its own transcript reports it: the model id (as a worker's `model`) and its effort level; Claude only (a Codex child's are not observed); at most 80 bytes each |
 | `state` | `running` \| `completed` \| `idle` \| `shut_down` \| `interrupted` \| `unknown` | its lifecycle (see below) |
 | `source` | string | the evidence source that set `state`: `hook` (Claude's `SubagentStart`/`SubagentStop`), `transcript`, `app_server`, `rollout`, `fixture` (the test source); a client shows any other as it is |
 | `started_at`, `last_activity_at`, `ended_at` | int, optional | unix **milliseconds**, from the evidence (the provider's clock, not the bridge's as `status_since`); absent when not known. `started_at` keeps the earliest seen, `last_activity_at` the latest |
@@ -624,7 +625,7 @@ is that row. One case does remove a row: a child seen both by its native id alon
 tool call) and from its dispatch before the evidence that links the two. The row seen first stays and the other merges
 into it: a `child.removed` of the other first, then `child.upsert`s of the one that stays and of the merged row's children.
 The row that stays keeps every field either row observed, as if one row had seen both rows' evidence in the order the
-bridge observed it: a field only one has is kept; of a `name`, `type`, `description`, `transcript`, `ended_at` (a resumed
+bridge observed it: a field only one has is kept; of a `name`, `type`, `description`, `model`, `effort`, `transcript`, `ended_at` (a resumed
 `running` clears it) or `state` (with its `source`) both have, the one observed later; the earliest `started_at` and the
 latest `last_activity_at`. Its parent is the one of the two observed later if it is still a parent once they are one row,
 else the other's, else `unresolved`: never the row itself (a parent that was the other row) nor a cycle; the merged row's
@@ -667,6 +668,7 @@ and `child.removed` as above, with `provider: "claude"`.
 |---|---|
 | `native_id` | the child's `agentId` |
 | `name`, `type`, `description` | the Agent call's `name` (when given), `subagent_type` (else the meta's `agentType`, else a hook's `agent_type`), `description` (else the meta's) |
+| `model`, `effort` | the child's latest own `assistant` record's `message.model` (`[1m]` dropped; never `<synthetic>`) and its `effort`, cleaned as a worker's are; not a fork's copied context |
 | `parent` | `root` when the call is in the root's transcript; `child` when it is in a child's transcript (that child), or by the meta's `parentAgentId`; `root` for a meta's `spawnDepth: 1` with no call seen; else `unresolved` |
 | `state` | below |
 | `source` | `transcript`, or `hook` while a call is known only from the bridge's hooks |
@@ -3545,7 +3547,11 @@ whose output has no image (the file it named, exactly that file). A `url` source
 recently used out first), and in a `0600`-file / `0700`-directory disk cache under `$XDG_CACHE_HOME/herdr-world/img/`
 (`--image-cache <dir>`, `-` for none; 512 MiB, oldest out first) so bytes that left memory come back without reading
 the transcript again; if they are in neither, the bridge reads the transcript line they came from again, so the cache
-never has to be complete. Items never hold base64. The original of an image over 25 MB is not kept.
+never has to be complete. Items never hold base64. The original of an image over 25 MB is not kept. #125: thumbnails
+are kept too, under `t/<variant>/` of that directory (the variant names the algorithm's version and settings; another
+variant's directory is removed on first use), with their own bound (64 MiB, least recently used out first) and a
+checksum each (a damaged file is removed and the thumbnail cut again), so a restart or the memory bound does not cut a
+thumbnail twice.
 
 **Path images** are read only under an **allowlist of roots**: Drop Zone's data directory (`--dropzone-data`, default
 `$DROPZONE_DATA` or `~/drops`: where #13/#51's `[Image #n: /abs/path]` markers point), `~/.codex/generated_images` (beside
@@ -3559,7 +3565,9 @@ view shows as text with "not available". A path that vanished is the same. The c
 this connection watches and **only for a hash the bridge already sent this connection** (in the watch ack, a push, a
 page, an item or the image list; else `not_found`, also for a hash that never was in the transcript). Ack:
 `{mime, width, height, bytes, size, data}` with `data` the base64 of the image (`thumb`: at most **480 px** on the
-longest side, PNG, or JPEG for a JPEG original; a GIF is its first frame). A `full` image whose base64 would be over
+longest side; a GIF is its first frame; #125: JPEG quality 82 for a JPEG original and for an opaque one whose lossless PNG
+would be more than twice the JPEG's bytes, PNG for one with transparency or whose PNG is that small: `mime` says
+which, whatever the original's type). A `full` image whose base64 would be over
 **12 MiB** is `too_large` (the view keeps the thumbnail and says so). An image that can no longer be read (a file
 changed under its hash, gone) is `not_found`; `binary` never has bytes. `agent` reads a Claude subagent's timeline like
 `transcript.page` does. A watch has at most 16 image reads in flight (`busy` above). Not audit-logged (a read of what the

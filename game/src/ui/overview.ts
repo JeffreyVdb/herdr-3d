@@ -37,6 +37,7 @@ import {
   allNodes,
   BLINK_MS,
   CHILD_TRANSCRIPT_WORD,
+  childShortName,
   childSince,
   childSinceText,
   endedChildGroups,
@@ -715,15 +716,22 @@ export class OverviewOverlay {
     el.dataset.state = r.state;
     el.setAttribute('aria-label', childLabel(r, nest, now));
     const mark = markSvg(r.provider, 'ov-mark');
+    // The name never wraps under the mark: a short one for a long default (`general`), cut with an ellipsis past its
+    // room, the whole name on hover. What it runs on under it, as a worker's model is (none known: one line).
     const who = h(
       'div',
       { class: 'ov-who' },
-      mark,
-      h('span', { class: 'ov-name' }, r.name),
-      r.type ? h('span', { class: 'ov-ctype' }, r.type) : null,
-      r.unresolved ? h('span', { class: 'ov-orphan', title: 'No parent known yet: shown under its worker until the provider names one' }, 'parent unknown') : null,
-      nest > NEST_MAX ? h('span', { class: 'ov-level', title: `Nested ${nest} levels deep` }, `level ${nest}`) : null,
-      mark ? null : h('span', { class: 'ov-ctype' }, r.provider),
+      h(
+        'span',
+        { class: 'ov-cline' },
+        mark,
+        h('span', { class: 'ov-name', title: r.name }, childShortName(r.name)),
+        r.type ? h('span', { class: 'ov-ctype' }, r.type) : null,
+        r.unresolved ? h('span', { class: 'ov-orphan', title: 'No parent known yet: shown under its worker until the provider names one' }, 'parent unknown') : null,
+        nest > NEST_MAX ? h('span', { class: 'ov-level', title: `Nested ${nest} levels deep` }, `level ${nest}`) : null,
+        mark ? null : h('span', { class: 'ov-ctype' }, r.provider),
+      ),
+      r.model ? h('span', { class: 'ov-meta' }, r.model) : null,
     );
     // One line, so a long list stays dense: what it was asked (all of it on hover and focus), its transcript after it.
     const what = h(
@@ -1077,6 +1085,7 @@ function childLabel(r: OverviewChildRow, nest: number, now: number): string {
     `Subagent ${r.name}`,
     r.type,
     harnessName(r.provider) || null,
+    r.model || null,
     r.unresolved ? 'parent unknown' : null,
     nest > NEST_MAX ? `level ${nest}` : null,
     r.description ? `Task: ${r.description}` : null,

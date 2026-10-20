@@ -115,6 +115,8 @@ export interface OverviewChildRow {
   /** Its type when the name is something else (Codex: the role beside the nickname). */
   type: string | null;
   description: string | null;
+  /** What it runs on, as a worker's model is shown (#229, `Haiku 5.5 medium`); empty when not known (a Codex child). */
+  model: string;
   state: ChildState;
   /**
    * Shown directly under its worker with no parent known (`parent: 'unresolved'`, or a parent the list does not have):
@@ -302,7 +304,7 @@ export function overviewRow(v: WorkerView, floorTag: string | null, options: Hir
 }
 
 /** #24: a native child's row; `top`: it is at the top of its worker's tree (the root's, or no parent known). */
-export function childRow(c: Child, top: boolean): OverviewChildRow {
+export function childRow(c: Child, top: boolean, options: HireOptions = {}): OverviewChildRow {
   const name = c.name ?? c.type ?? 'Subagent';
   return {
     kind: 'child',
@@ -313,6 +315,7 @@ export function childRow(c: Child, top: boolean): OverviewChildRow {
     name,
     type: c.type && c.type !== name ? c.type : null,
     description: c.description?.replace(/\s+/g, ' ').trim() || null,
+    model: modelText(c.provider, c.model, c.effort, options),
     state: c.state,
     // childTree puts a child whose parent it lacks (or one in a cycle) at the top too: unresolved, whatever its field says.
     unresolved: top && c.parent !== 'root',
@@ -323,9 +326,17 @@ export function childRow(c: Child, top: boolean): OverviewChildRow {
   };
 }
 
+/** Names too long for a child row's name, shown shorter there (the full name stays on hover and in its spoken label). */
+const CHILD_SHORT_NAMES: Readonly<Record<string, string>> = { 'general-purpose': 'general' };
+
+/** A child's name as its row shows it: Claude Code's default `general-purpose` as `general`, any other as it is. */
+export function childShortName(name: string): string {
+  return Object.hasOwn(CHILD_SHORT_NAMES, name) ? CHILD_SHORT_NAMES[name]! : name;
+}
+
 /** #24: a worker's native children as nodes, in `childTree`'s order (deterministic, cycle-safe). */
 function childNodes(src: OverviewSource, workerId: string): OverviewNode[] {
-  const nodes = (t: ChildTreeNode[], top: boolean): OverviewNode[] => t.map((n) => ({ row: childRow(n.child, top), children: nodes(n.children, false) }));
+  const nodes = (t: ChildTreeNode[], top: boolean): OverviewNode[] => t.map((n) => ({ row: childRow(n.child, top, src.hireOptions), children: nodes(n.children, false) }));
   return nodes(childTree(src.children.of(workerId)), true);
 }
 

@@ -187,11 +187,85 @@ all tools sniff the actual format. No source images, hashes or private transcrip
 ```sh
 node docs/research/transcript-screenshot-bench/capture.mjs /private/office.sock WORKER_ID /private/corpus
 python docs/research/transcript-screenshot-bench/codecs.py /private/corpus
-go run docs/research/transcript-screenshot-bench/thumbs.go /private/corpus/images
+go run docs/research/transcript-screenshot-bench/thumbs.go /private/corpus   # #125: the corpus, not its images/
 portlease run --project herdr-3d --worktree . --name bench --service screenshot-bench -- \
   node docs/research/transcript-screenshot-bench/browser.mjs /private/corpus
+make screenshot-bench CORPUS=/private/corpus   # #125: the full-app scenario (below)
 ```
 
 The browser probe exercises already-local acknowledgements, excluding JSON transport parsing and network delay;
 it must not be presented as a live bridge end-to-end speedup. Generalized harnesses and sanitized aggregate results
 are in [transcript-screenshot-bench](transcript-screenshot-bench/).
+
+## Implementation results (#125, 2026-10-20)
+
+The policy the user chose and approved after reviewing every preview of the sample side by side (docs/decisions.md,
+2026-10-20): pure Go, JPEG sources stay JPEG q82, an opaque PNG/GIF/WebP preview is JPEG q82 unless its lossless PNG
+is at most 2× the JPEG's bytes, a preview with transparency stays PNG; previews are kept on disk per algorithm
+variant (`t/<variant>/`, 64 MiB of their own, checksummed). Same corpus, same host (Intel Core i7-10750H, NVIDIA
+RTX 2060), Go 1.27, Chromium 149.0.7827.55. Sanitized aggregates are in
+[results.json](transcript-screenshot-bench/results.json) under `implementation`.
+
+**Bytes.** 4,030,365 → **1,012,160 bytes, 74.89% fewer** over the 40 previews (`thumbs.go`, from the new
+`MakeThumb` itself): the 20 PNG previews 3,524,188 → 505,983, all now JPEG; the 20 JPEG previews unchanged (the 10
+whose originals are in the sample regenerate byte-identical, the other 10 are counted as served). The PNG previews
+are 4.75× to 9.04× their JPEG (median 6.72×), so the 2× threshold keeps none of them; any threshold up to 4 gives
+the same 74.89%, 5 keeps 2 (68.41%), 6 keeps 6 (52.95%). The sample has no flat UI screenshot to place the
+threshold; unit tests with synthetic flat and text-like images do. Encoded bytes are not decoded bitmap memory (the
+previews keep their 480 px) and not a promise of a proportional frame-rate gain.
+
+**Bridge side** (`go run thumbs.go`, median / p95 per image, three passes after one):
+
+| Path | ms |
+| --- | ---: |
+| Conversion before #125 (decode, resize, PNG `BestSpeed` / JPEG q82), 30 originals | 155.2 / 234.1 |
+| Conversion now (JPEG, then the PNG up to 2× the JPEG's bytes for a non-JPEG source) | 160.9 / 235.8 |
+| `Cache.Thumb` memory hit | 0.000 / 0.001 |
+| `Cache.Thumb` derived disk hit (a restart) | 0.156 / 0.207 |
+| `Cache.Thumb` original on disk, converts (before #125: every restart) | 126.2 / 245.3 |
+| `Cache.Thumb` fully cold (load, hash, store, convert) | 124.8 / 244.9 |
+
+Encoders alone on the PNG previews' pixels: PNG `BestSpeed` 13.2 / 17.6 ms, default 17.3 / 24.1 ms (6.6% smaller),
+best 498 / 755 ms, JPEG q82 9.1 / 13.5 ms. The new policy costs no more conversion time than the old one, so it does
+not move the cold bottleneck into generation; what it removes is the conversion after a restart or eviction.
+
+**Full app** (`make screenshot-bench`, `app.mjs`): the built game with its 3D scene on the GPU (ANGLE over Vulkan
+on the NVIDIA card, not software rendering), 1280 × 900 at DPR 1, the e2e fixture world, seated at a worker whose
+transcript is the captured one (425 items, 40 previews, a 12,035 px conversation in a 394 px tall view). Its
+`transcript.image` is served by `thumbs.go serve`, a real `imgcache.Cache` in a fresh directory (`-legacy`: the code
+before #125, previews in memory only). The view opens at the bottom, which has no image; the run then scrolls to
+the top at two screens a second and back, then six live items with images arrive half a second apart. A visible
+thumbnail's latency is the time it spent on screen before its picture loaded. Medians of three runs:
+
+| Bridge / browser | Policy | Preview kB | Thumbnails waited for | Visible latency p95 / max ms | Bridge per preview p50 ms | Scroll frame gap p95 / max ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| cold / cold | before | 4,030 | 11 of 40 | 418 / 476 | 154 | 16.8 / 50.0 |
+| cold / cold | #125 | 1,012 | 11 of 40 | 460 / 470 | 140 | 16.8 / 33.4 |
+| restart / cold | before | 4,030 | 11 of 40 | 433 / 439 | 162 | 16.8 / 50.0 |
+| restart / cold | #125 | 1,012 | **0** | **0 / 0** | **0.21** | 16.8 / 33.4 |
+| memory / cold | before | 4,030 | 0 | 0 / 0 | 0.00 | 16.8 / 116.6 |
+| memory / cold | #125 | 1,012 | 0 | 0 / 0 | 0.00 | 16.7 / 16.8 |
+| warm page | before | 0 | 0 | 0 / 0 | — | 16.8 / 33.4 |
+| warm page | #125 | 0 | 0 | 0 / 0 | — | 16.7 / 33.4 |
+
+- A **restart** (or memory eviction) used to cost the same as a cold bridge: every preview converted again, 11 of
+  the 40 shown late, up to 0.44 s. With the previews on disk nothing waits.
+- A **cold bridge** is conversion-bound either way (two at a time, ~150 ms each); the visible latency differs between
+  the policies only by run-to-run spread. Reducing it further needs fewer or cheaper conversions, not another codec.
+- A **warm page** (stand up and sit down again) asks the bridge for nothing: its ImageFeed still holds the previews,
+  so the bridge's state does not matter to it.
+- Frame gaps: p95 is one 60 Hz frame in every cell. The largest gaps with the old previews (116.6 ms on a warm bridge,
+  three gaps over 50 ms in the median run) did not occur with the new ones (16.8 ms); one run per cell has an
+  occasional 33–50 ms gap in both. Opening (sitting down, the seat's camera move, mounting the view) has a 117–200 ms
+  gap in every cell, images or not, and the view mounts in 180–350 ms.
+- `Timeline.regroup`, profiled over each whole session (open, the full scroll and six live updates, a 0.5 ms sampling
+  CPU profile): **2.2–3.9 ms in total** (medians; 1.7–8.6 ms over every run), against 8–22 s of sampled busy time
+  (the 3D scene included). It is not the bottleneck at this size;
+  it was left as it is.
+- JS heap after a session: 45–58 MB in every cell. This is not the decoded image memory, which the browser keeps
+  outside the JS heap and which the previews' unchanged dimensions decide.
+
+What the scenario leaves out: the bridge's transcript parsing and inline-image extraction (the watch is the captured
+one), its websocket and the network (the fixture's local one). The isolated renderer probe (`browser.mjs`, `policy`
+variant) agrees: in the repeated traversal the maximum frame gap was 17.4 ms with the new previews, 33.8 ms with the
+old ones and 16.9 ms with WebP q82.

@@ -250,5 +250,477 @@
         "warmP95FrameGap": 17.700000017881393
       }
     ]
+  },
+  "implementation": {
+    "date": "2026-10-20",
+    "ticket": 125,
+    "policy": "JPEG sources JPEG q82; opaque PNG/GIF/WebP previews JPEG q82 unless lossless PNG (default level) <= 2.00x the JPEG bytes; previews with transparency PNG; derived previews on disk under t/v1-480px-q82-png200-z0/, 64 MiB LRU",
+    "cpu": "Intel Core i7-10750H @ 2.60GHz",
+    "gpu": "NVIDIA GeForce RTX 2060 (ANGLE Vulkan)",
+    "go": [
+      {
+        "after_bytes": 1012160,
+        "before_bytes": 4030365,
+        "by_source": {
+          "image/jpeg": {
+            "Before": 506177,
+            "After": 506177,
+            "Images": 20,
+            "PNGAfter": 0
+          },
+          "image/png": {
+            "Before": 3524188,
+            "After": 505983,
+            "Images": 20,
+            "PNGAfter": 0
+          }
+        },
+        "originals": 30,
+        "previews": 40,
+        "reduction_pct": 74.887
+      },
+      {
+        "png_default_over_jpeg": {
+          "max": 9.04,
+          "median": 6.724,
+          "min": 4.75
+        }
+      },
+      {
+        "keep_png_at_most_x_jpeg": 1.5,
+        "kept_png": 0,
+        "of": 20,
+        "reduction_pct": 74.887
+      },
+      {
+        "keep_png_at_most_x_jpeg": 2,
+        "kept_png": 0,
+        "of": 20,
+        "reduction_pct": 74.887
+      },
+      {
+        "keep_png_at_most_x_jpeg": 3,
+        "kept_png": 0,
+        "of": 20,
+        "reduction_pct": 74.887
+      },
+      {
+        "keep_png_at_most_x_jpeg": 4,
+        "kept_png": 0,
+        "of": 20,
+        "reduction_pct": 74.887
+      },
+      {
+        "keep_png_at_most_x_jpeg": 5,
+        "kept_png": 2,
+        "of": 20,
+        "reduction_pct": 68.414
+      },
+      {
+        "keep_png_at_most_x_jpeg": 6,
+        "kept_png": 6,
+        "of": 20,
+        "reduction_pct": 52.952
+      },
+      {
+        "variant": "legacy MakeThumb (decode+resize+encode)",
+        "images": 30,
+        "bytes": 3801853,
+        "median_ms": 155.239,
+        "p95_ms": 234.14
+      },
+      {
+        "variant": "new MakeThumb (decode+resize+encode)",
+        "images": 30,
+        "bytes": 783648,
+        "median_ms": 160.851,
+        "p95_ms": 235.838
+      },
+      {
+        "variant": "png-speed (encode only)",
+        "images": 20,
+        "bytes": 3524188,
+        "median_ms": 13.155,
+        "p95_ms": 17.558
+      },
+      {
+        "variant": "png-default (encode only)",
+        "images": 20,
+        "bytes": 3290504,
+        "median_ms": 17.27,
+        "p95_ms": 24.104
+      },
+      {
+        "variant": "png-best (encode only)",
+        "images": 20,
+        "bytes": 3165896,
+        "median_ms": 497.623,
+        "p95_ms": 754.883
+      },
+      {
+        "variant": "jpeg-q82 (encode only)",
+        "images": 20,
+        "bytes": 505983,
+        "median_ms": 9.085,
+        "p95_ms": 13.511
+      },
+      {
+        "variant": "Cache.Thumb: memory hit",
+        "images": 40,
+        "median_ms": 0,
+        "p95_ms": 0.001
+      },
+      {
+        "variant": "Cache.Thumb: derived disk hit (restart)",
+        "images": 40,
+        "median_ms": 0.156,
+        "p95_ms": 0.207
+      },
+      {
+        "variant": "Cache.Thumb: original disk hit, converts",
+        "images": 40,
+        "median_ms": 126.21,
+        "p95_ms": 245.315
+      },
+      {
+        "variant": "Cache.Thumb: fully cold (load, hash, store, convert)",
+        "images": 40,
+        "median_ms": 124.826,
+        "p95_ms": 244.905
+      }
+    ],
+    "browser": "149.0.7827.55",
+    "app": {
+      "viewport": "1280x900 DPR 1",
+      "reps": 3,
+      "summary": [
+        {
+          "cell": "legacy | bridge cold | browser cold",
+          "reps": 3,
+          "mountedMs": 279,
+          "visibleThumbP95Ms": 418.1,
+          "visibleThumbMaxMs": 475.5,
+          "thumbsWaitedFor": 11,
+          "scrollGapP95Ms": 16.8,
+          "scrollGapMaxMs": 50,
+          "scrollGapsOver50": 0,
+          "openGapMaxMs": 150,
+          "liveGapMaxMs": 16.8,
+          "regroupMs": 3.4,
+          "bridgeThumbP50Ms": 154.032,
+          "bridgeThumbP95Ms": 451.884,
+          "previewKB": 4030,
+          "jsHeapMB": 54
+        },
+        {
+          "cell": "legacy | bridge memory | browser warm",
+          "reps": 3,
+          "mountedMs": 196,
+          "visibleThumbP95Ms": 0,
+          "visibleThumbMaxMs": 0,
+          "thumbsWaitedFor": 0,
+          "scrollGapP95Ms": 16.8,
+          "scrollGapMaxMs": 33.4,
+          "scrollGapsOver50": 0,
+          "openGapMaxMs": 133.4,
+          "liveGapMaxMs": 16.8,
+          "regroupMs": 3.5,
+          "bridgeThumbP50Ms": null,
+          "bridgeThumbP95Ms": null,
+          "previewKB": 0,
+          "jsHeapMB": 48.4
+        },
+        {
+          "cell": "legacy | bridge memory | browser cold",
+          "reps": 3,
+          "mountedMs": 281,
+          "visibleThumbP95Ms": 0,
+          "visibleThumbMaxMs": 0,
+          "thumbsWaitedFor": 0,
+          "scrollGapP95Ms": 16.8,
+          "scrollGapMaxMs": 116.6,
+          "scrollGapsOver50": 3,
+          "openGapMaxMs": 166.6,
+          "liveGapMaxMs": 16.8,
+          "regroupMs": 3.4,
+          "bridgeThumbP50Ms": 0,
+          "bridgeThumbP95Ms": 0.001,
+          "previewKB": 4030,
+          "jsHeapMB": 58.4
+        },
+        {
+          "cell": "legacy | bridge restart | browser cold",
+          "reps": 3,
+          "mountedMs": 284,
+          "visibleThumbP95Ms": 433.4,
+          "visibleThumbMaxMs": 438.9,
+          "thumbsWaitedFor": 11,
+          "scrollGapP95Ms": 16.8,
+          "scrollGapMaxMs": 50,
+          "scrollGapsOver50": 0,
+          "openGapMaxMs": 150,
+          "liveGapMaxMs": 16.8,
+          "regroupMs": 3.4,
+          "bridgeThumbP50Ms": 161.569,
+          "bridgeThumbP95Ms": 440.734,
+          "previewKB": 4030,
+          "jsHeapMB": 45.4
+        },
+        {
+          "cell": "new | bridge cold | browser cold",
+          "reps": 3,
+          "mountedMs": 274,
+          "visibleThumbP95Ms": 459.9,
+          "visibleThumbMaxMs": 469.7,
+          "thumbsWaitedFor": 11,
+          "scrollGapP95Ms": 16.8,
+          "scrollGapMaxMs": 33.4,
+          "scrollGapsOver50": 0,
+          "openGapMaxMs": 150,
+          "liveGapMaxMs": 16.8,
+          "regroupMs": 3.4,
+          "bridgeThumbP50Ms": 139.804,
+          "bridgeThumbP95Ms": 447.992,
+          "previewKB": 1012,
+          "jsHeapMB": 55.1
+        },
+        {
+          "cell": "new | bridge memory | browser warm",
+          "reps": 3,
+          "mountedMs": 180,
+          "visibleThumbP95Ms": 0,
+          "visibleThumbMaxMs": 0,
+          "thumbsWaitedFor": 0,
+          "scrollGapP95Ms": 16.7,
+          "scrollGapMaxMs": 33.4,
+          "scrollGapsOver50": 0,
+          "openGapMaxMs": 116.6,
+          "liveGapMaxMs": 16.8,
+          "regroupMs": 2.2,
+          "bridgeThumbP50Ms": null,
+          "bridgeThumbP95Ms": null,
+          "previewKB": 0,
+          "jsHeapMB": 51.2
+        },
+        {
+          "cell": "new | bridge memory | browser cold",
+          "reps": 3,
+          "mountedMs": 350,
+          "visibleThumbP95Ms": 0,
+          "visibleThumbMaxMs": 0,
+          "thumbsWaitedFor": 0,
+          "scrollGapP95Ms": 16.7,
+          "scrollGapMaxMs": 16.8,
+          "scrollGapsOver50": 0,
+          "openGapMaxMs": 200.1,
+          "liveGapMaxMs": 16.8,
+          "regroupMs": 3.9,
+          "bridgeThumbP50Ms": 0.002,
+          "bridgeThumbP95Ms": 0.017,
+          "previewKB": 1012,
+          "jsHeapMB": 52.5
+        },
+        {
+          "cell": "new | bridge restart | browser cold",
+          "reps": 3,
+          "mountedMs": 278,
+          "visibleThumbP95Ms": 0,
+          "visibleThumbMaxMs": 0,
+          "thumbsWaitedFor": 0,
+          "scrollGapP95Ms": 16.8,
+          "scrollGapMaxMs": 33.4,
+          "scrollGapsOver50": 0,
+          "openGapMaxMs": 150,
+          "liveGapMaxMs": 16.8,
+          "regroupMs": 2.2,
+          "bridgeThumbP50Ms": 0.211,
+          "bridgeThumbP95Ms": 0.386,
+          "previewKB": 1012,
+          "jsHeapMB": 53.1
+        }
+      ]
+    },
+    "browser_probe": {
+      "browser": "149.0.7827.55",
+      "results": [
+        {
+          "variant": "current",
+          "resetMs": 123.80000001192093,
+          "traverseMs": 442.5,
+          "warmTraverseMs": 300.69999998807907,
+          "requests": 40,
+          "loaded": 40,
+          "nodes": 2103,
+          "scrollHeight": 12056,
+          "longTasks": 1,
+          "maxLongTask": 245,
+          "maxFrameGap": 55.29999998211861,
+          "p95FrameGap": 55.29999998211861,
+          "warmMaxFrameGap": 21.5,
+          "warmP95FrameGap": 21.5
+        },
+        {
+          "variant": "without-images",
+          "resetMs": 45.900000005960464,
+          "traverseMs": 156.59999999403954,
+          "warmTraverseMs": 66.2000000178814,
+          "requests": 0,
+          "loaded": 0,
+          "nodes": 2002,
+          "scrollHeight": 2890,
+          "longTasks": 1,
+          "maxLongTask": 73,
+          "maxFrameGap": 16.799999982118607,
+          "p95FrameGap": 16.799999982118607,
+          "warmMaxFrameGap": 16.799999982118607,
+          "warmP95FrameGap": 16.799999982118607
+        },
+        {
+          "variant": "policy",
+          "resetMs": 49,
+          "traverseMs": 386.59999999403954,
+          "warmTraverseMs": 298.80000001192093,
+          "requests": 40,
+          "loaded": 40,
+          "nodes": 2103,
+          "scrollHeight": 12056,
+          "longTasks": 1,
+          "maxLongTask": 102,
+          "maxFrameGap": 17.30000001192093,
+          "p95FrameGap": 17.30000001192093,
+          "warmMaxFrameGap": 17.599999994039536,
+          "warmP95FrameGap": 17.599999994039536
+        },
+        {
+          "variant": "webp-nearlossless-q75",
+          "resetMs": 48.60000002384186,
+          "traverseMs": 413.30000001192093,
+          "warmTraverseMs": 291.7999999821186,
+          "requests": 40,
+          "loaded": 40,
+          "nodes": 2103,
+          "scrollHeight": 12056,
+          "longTasks": 1,
+          "maxLongTask": 129,
+          "maxFrameGap": 25.69999998807907,
+          "p95FrameGap": 25.69999998807907,
+          "warmMaxFrameGap": 17.599999994039536,
+          "warmP95FrameGap": 17.599999994039536
+        },
+        {
+          "variant": "webp-q82",
+          "resetMs": 46.400000005960464,
+          "traverseMs": 403.09999999403954,
+          "warmTraverseMs": 287.10000002384186,
+          "requests": 40,
+          "loaded": 40,
+          "nodes": 2103,
+          "scrollHeight": 12056,
+          "longTasks": 1,
+          "maxLongTask": 94,
+          "maxFrameGap": 16.899999976158142,
+          "p95FrameGap": 16.899999976158142,
+          "warmMaxFrameGap": 17.599999994039536,
+          "warmP95FrameGap": 17.599999994039536
+        },
+        {
+          "variant": "avif-q55",
+          "resetMs": 50.69999998807907,
+          "traverseMs": 414,
+          "warmTraverseMs": 290.7999999821186,
+          "requests": 40,
+          "loaded": 40,
+          "nodes": 2103,
+          "scrollHeight": 12056,
+          "longTasks": 1,
+          "maxLongTask": 97,
+          "maxFrameGap": 19.19999998807907,
+          "p95FrameGap": 19.19999998807907,
+          "warmMaxFrameGap": 17.599999994039536,
+          "warmP95FrameGap": 17.599999994039536
+        },
+        {
+          "variant": "current",
+          "resetMs": 46.60000002384186,
+          "traverseMs": 414.19999998807907,
+          "warmTraverseMs": 301.2000000178814,
+          "requests": 40,
+          "loaded": 40,
+          "nodes": 2103,
+          "scrollHeight": 12056,
+          "longTasks": 1,
+          "maxLongTask": 138,
+          "maxFrameGap": 33.79999998211861,
+          "p95FrameGap": 33.79999998211861,
+          "warmMaxFrameGap": 22.100000023841858,
+          "warmP95FrameGap": 22.100000023841858
+        },
+        {
+          "variant": "without-images",
+          "resetMs": 44,
+          "traverseMs": 154.90000000596046,
+          "warmTraverseMs": 66.30000001192093,
+          "requests": 0,
+          "loaded": 0,
+          "nodes": 2002,
+          "scrollHeight": 2890,
+          "longTasks": 1,
+          "maxLongTask": 64,
+          "maxFrameGap": 16.69999998807907,
+          "p95FrameGap": 16.69999998807907,
+          "warmMaxFrameGap": 16.799999982118607,
+          "warmP95FrameGap": 16.799999982118607
+        },
+        {
+          "variant": "policy",
+          "resetMs": 48.80000001192093,
+          "traverseMs": 401,
+          "warmTraverseMs": 299.40000000596046,
+          "requests": 40,
+          "loaded": 40,
+          "nodes": 2103,
+          "scrollHeight": 12056,
+          "longTasks": 1,
+          "maxLongTask": 91,
+          "maxFrameGap": 17.400000005960464,
+          "p95FrameGap": 17.400000005960464,
+          "warmMaxFrameGap": 17.599999994039536,
+          "warmP95FrameGap": 17.599999994039536
+        },
+        {
+          "variant": "webp-q82",
+          "resetMs": 76.39999997615814,
+          "traverseMs": 403.5,
+          "warmTraverseMs": 287,
+          "requests": 40,
+          "loaded": 40,
+          "nodes": 2103,
+          "scrollHeight": 12056,
+          "longTasks": 1,
+          "maxLongTask": 119,
+          "maxFrameGap": 16.900000005960464,
+          "p95FrameGap": 16.900000005960464,
+          "warmMaxFrameGap": 17.5,
+          "warmP95FrameGap": 17.5
+        },
+        {
+          "variant": "avif-q55",
+          "resetMs": 46.39999997615814,
+          "traverseMs": 424.7999999821186,
+          "warmTraverseMs": 290.09999999403954,
+          "requests": 40,
+          "loaded": 40,
+          "nodes": 2103,
+          "scrollHeight": 12056,
+          "longTasks": 1,
+          "maxLongTask": 82,
+          "maxFrameGap": 17,
+          "p95FrameGap": 17,
+          "warmMaxFrameGap": 17.599999994039536,
+          "warmP95FrameGap": 17.599999994039536
+        }
+      ]
+    },
+    "go_version": "1.27.0"
   }
 }

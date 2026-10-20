@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	xdraw "golang.org/x/image/draw"
@@ -41,6 +42,9 @@ const (
 	MaxMemory = 64 << 20
 	// MaxDisk is the default bound on the bytes the disk cache keeps.
 	MaxDisk = 512 << 20
+	// MaxThumbDisk is the default bound on the thumbnails the disk cache
+	// keeps, apart from MaxDisk: some 2,500 at the #125 sample's 25 kB.
+	MaxThumbDisk = 64 << 20
 	// MaxImage is the largest image the bridge takes (an inline image, a
 	// file): 25 MiB.
 	MaxImage = 25 << 20
@@ -51,6 +55,30 @@ const (
 	// decodeSlots is how many thumbnails are cut at once.
 	decodeSlots = 2
 )
+
+// How a thumbnail is encoded (#125, docs/decisions.md 2026-10-20). A change
+// to any of these changes MakeThumb's bytes for the same image: bump
+// thumbVersion too when the code changes them some other way, so the
+// derived disk cache drops what the old one made.
+const (
+	thumbVersion = 1
+	// jpegQuality is a JPEG thumbnail's quality.
+	jpegQuality = 82
+	// pngKeepPct: an opaque thumbnail of a PNG, GIF or WebP stays PNG when
+	// its lossless bytes are at most this % of its JPEG bytes. Flat
+	// interface and text screenshots keep exact edges for little more; a
+	// photograph or a busy screenshot cut down (5 to 9 times the JPEG
+	// bytes in the #125 sample) is JPEG.
+	pngKeepPct = 200
+	// pngLevel is the PNG thumbnails' compression: the default level is
+	// some 6% smaller than BestSpeed for some 4 ms more, paid once now
+	// that the thumbnail is kept on disk.
+	pngLevel = png.DefaultCompression
+)
+
+// thumbVariant names the thumbnails MakeThumb makes: the disk cache keeps
+// them in t/<thumbVariant>/ and removes every other variant.
+var thumbVariant = fmt.Sprintf("v%d-%dpx-q%d-png%d-z%d", thumbVersion, ThumbSide, jpegQuality, pngKeepPct, -pngLevel)
 
 // The image types the bridge serves. Anything else is "binary".
 const (
@@ -131,9 +159,12 @@ type Thumb struct {
 	Data          []byte
 }
 
-// MakeThumb decodes b and cuts a thumbnail: JPEG stays JPEG, everything
-// else (a GIF's first frame, WebP, PNG) is PNG. An image already within
-// ThumbSide is re-encoded unchanged in size (its bytes may be far smaller).
+// MakeThumb decodes b and cuts a thumbnail. A JPEG stays JPEG. Anything
+// else (a GIF's first frame, WebP, PNG) is PNG when the thumbnail has
+// transparency (kept, never put on a background), and otherwise JPEG
+// unless the lossless PNG is at most pngKeepPct % of the JPEG's bytes. An
+// image already within ThumbSide is re-encoded unchanged in size (its
+// bytes may be far smaller).
 func MakeThumb(b []byte) (Thumb, error) {
 	m := Sniff(b)
 	if m == "" {
@@ -157,18 +188,65 @@ func MakeThumb(b []byte) (Thumb, error) {
 		xdraw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), xdraw.Over, nil)
 		out = dst
 	}
-	var buf bytes.Buffer
-	if m == JPEG {
-		if err := jpeg.Encode(&buf, flatten(out), &jpeg.Options{Quality: 82}); err != nil {
+	thumb := func(mime string, data []byte) (Thumb, error) {
+		return Thumb{Mime: mime, Width: w, Height: h, Data: data}, nil
+	}
+	if m != JPEG && !opaque(out) && !opaque(src) {
+		data, err := encodePNG(out, 0)
+		if err != nil {
 			return Thumb{}, err
 		}
-		return Thumb{Mime: JPEG, Width: w, Height: h, Data: buf.Bytes()}, nil
+		return thumb(PNG, data)
 	}
-	enc := png.Encoder{CompressionLevel: png.BestSpeed}
-	if err := enc.Encode(&buf, out); err != nil {
+	var jbuf bytes.Buffer
+	// flatten: an opaque image is as it is (a resize may round an edge's
+	// alpha off 255).
+	if err := jpeg.Encode(&jbuf, flatten(out), &jpeg.Options{Quality: jpegQuality}); err != nil {
 		return Thumb{}, err
 	}
-	return Thumb{Mime: PNG, Width: w, Height: h, Data: buf.Bytes()}, nil
+	if m == JPEG {
+		return thumb(JPEG, jbuf.Bytes())
+	}
+	data, err := encodePNG(out, jbuf.Len()*pngKeepPct/100)
+	switch {
+	case err == nil:
+		return thumb(PNG, data)
+	case errors.Is(err, errOverBudget):
+		return thumb(JPEG, jbuf.Bytes())
+	}
+	return Thumb{}, err
+}
+
+// errOverBudget: a PNG grew past what it may be.
+var errOverBudget = errors.New("png over budget")
+
+// encodePNG is img as PNG at pngLevel; with budget > 0, errOverBudget as
+// soon as it is longer than that (the encoder stops there).
+func encodePNG(img image.Image, budget int) ([]byte, error) {
+	w := &budgetWriter{budget: budget}
+	if err := (&png.Encoder{CompressionLevel: pngLevel}).Encode(w, img); err != nil {
+		return nil, err
+	}
+	return w.buf.Bytes(), nil
+}
+
+type budgetWriter struct {
+	buf    bytes.Buffer
+	budget int
+}
+
+func (w *budgetWriter) Write(p []byte) (int, error) {
+	if w.budget > 0 && w.buf.Len()+len(p) > w.budget {
+		return 0, errOverBudget
+	}
+	return w.buf.Write(p)
+}
+
+// opaque reports whether img says it has no transparency (an image that
+// cannot say is taken as having some).
+func opaque(img image.Image) bool {
+	o, ok := img.(interface{ Opaque() bool })
+	return ok && o.Opaque()
 }
 
 // fit scales w x h so its longest side is at most side (never up).
@@ -184,7 +262,7 @@ func fit(w, h, side int) (int, int) {
 
 // flatten puts an image on white (JPEG has no alpha).
 func flatten(img image.Image) image.Image {
-	if o, ok := img.(interface{ Opaque() bool }); ok && o.Opaque() {
+	if opaque(img) {
 		return img
 	}
 	dst := image.NewRGBA(img.Bounds())
@@ -201,6 +279,9 @@ type Config struct {
 	// bounds it (default MaxDisk).
 	Dir          string
 	MaxDiskBytes int64
+	// MaxThumbDiskBytes bounds the thumbnails kept under Dir (default
+	// MaxThumbDisk).
+	MaxThumbDiskBytes int64
 }
 
 // DefaultDir is the disk cache's default place: $XDG_CACHE_HOME/herdr-world/img
@@ -236,9 +317,18 @@ type Cache struct {
 	diskSize int64
 	diskInit bool
 
+	// The thumbnails' disk (t/<thumbVariant>/<hash>), as dmu and its two
+	// for the images.
+	maxThumbDisk   int64
+	tdmu           sync.Mutex
+	thumbDiskSize  int64
+	thumbDiskInit  bool
+	thumbDiskReads atomic.Int64 // tests: reads of a thumbnail file
+
 	slots chan struct{}
 	tmu   sync.Mutex // one thumbnail per hash is cut at a time
 	tw    map[string]*thumbWait
+	cut   func([]byte) (Thumb, error) // MakeThumb (tests count it)
 }
 
 type thumbWait struct {
@@ -249,13 +339,16 @@ type thumbWait struct {
 
 // New makes a Cache. A Dir that cannot be made is an error.
 func New(cfg Config) (*Cache, error) {
-	c := &Cache{max: cfg.MaxBytes, dir: cfg.Dir, maxDisk: cfg.MaxDiskBytes, lru: list.New(),
-		items: map[string]*list.Element{}, slots: make(chan struct{}, decodeSlots), tw: map[string]*thumbWait{}}
+	c := &Cache{max: cfg.MaxBytes, dir: cfg.Dir, maxDisk: cfg.MaxDiskBytes, maxThumbDisk: cfg.MaxThumbDiskBytes, lru: list.New(),
+		items: map[string]*list.Element{}, slots: make(chan struct{}, decodeSlots), tw: map[string]*thumbWait{}, cut: MakeThumb}
 	if c.max <= 0 {
 		c.max = MaxMemory
 	}
 	if c.maxDisk <= 0 {
 		c.maxDisk = MaxDisk
+	}
+	if c.maxThumbDisk <= 0 {
+		c.maxThumbDisk = MaxThumbDisk
 	}
 	if c.dir != "" {
 		if err := os.MkdirAll(c.dir, 0o700); err != nil {
@@ -346,9 +439,11 @@ func (c *Cache) Get(hash string) ([]byte, bool) {
 	return data, true
 }
 
-// Thumb returns the thumbnail of the image under hash, cut from load()'s
-// bytes if there is none yet. load is called when the thumbnail is not
-// cached and the image is not either; it returns the image's bytes.
+// Thumb returns the thumbnail of the image under hash: from memory, else
+// from the disk cache's thumbnails, else cut from the image's bytes. load
+// is called when neither has the thumbnail and the cache does not have
+// the image either; it returns the image's bytes. One hash is read or cut
+// once however many ask at a time, and cutting waits for a decode slot.
 func (c *Cache) Thumb(hash string, load func() ([]byte, error)) (Thumb, error) {
 	key := "t:" + hash
 	if e, ok := c.memGet(key); ok {
@@ -373,6 +468,11 @@ func (c *Cache) Thumb(hash string, load func() ([]byte, error)) (Thumb, error) {
 		w.t = Thumb{Mime: e.meta.Mime, Width: e.meta.Width, Height: e.meta.Height, Data: e.data}
 		return w.t, nil
 	}
+	if t, ok := c.thumbDiskGet(hash); ok {
+		c.memPut(&memEntry{key: key, data: t.Data, meta: Thumb{Mime: t.Mime, Width: t.Width, Height: t.Height}})
+		w.t = t
+		return t, nil
+	}
 	data, ok := c.Get(hash)
 	if !ok {
 		var err error
@@ -387,13 +487,14 @@ func (c *Cache) Thumb(hash string, load func() ([]byte, error)) (Thumb, error) {
 		c.Put(hash, data)
 	}
 	c.slots <- struct{}{}
-	t, err := MakeThumb(data)
+	t, err := c.cut(data)
 	<-c.slots
 	if err != nil {
 		w.err = err
 		return Thumb{}, err
 	}
 	c.memPut(&memEntry{key: key, data: t.Data, meta: Thumb{Mime: t.Mime, Width: t.Width, Height: t.Height}})
+	c.thumbDiskPut(hash, t)
 	w.t = t
 	return t, nil
 }
@@ -498,6 +599,207 @@ func (c *Cache) trimDisk() {
 		}
 		if os.Remove(filepath.Join(c.dir, f.name)) == nil {
 			c.diskSize -= f.size
+		}
+	}
+}
+
+// --- thumbnails on disk (#125) ---
+//
+// A thumbnail does not hash to its image's name, so it is kept apart from
+// the images: <dir>/t/<thumbVariant>/<hash>, under its own bound. A file
+// is a header, then the thumbnail's bytes:
+//
+//	"h3dthumb" | format 1 | mime 'j' or 'p' | width, height (uint16 BE)
+//	| sha256(hash, thumbVariant, mime, width, height, bytes)
+//
+// The sum names the image and the variant: a damaged file, or one moved
+// from another name or variant, is a miss, removed and cut again.
+
+const (
+	thumbMagic  = "h3dthumb"
+	thumbHeader = len(thumbMagic) + 1 + 1 + 2 + 2 + sha256.Size
+	// maxThumbFile bounds a thumbnail file's read (an RGBA PNG of
+	// ThumbSide x ThumbSide is under 1 MiB).
+	maxThumbFile = 4 << 20
+)
+
+func (c *Cache) thumbDir() string { return filepath.Join(c.dir, "t", thumbVariant) }
+
+func thumbSum(hash string, mime byte, w, h int, data []byte) []byte {
+	s := sha256.New()
+	s.Write([]byte(hash))
+	s.Write([]byte(thumbVariant))
+	s.Write([]byte{0, mime, byte(w >> 8), byte(w), byte(h >> 8), byte(h)})
+	s.Write(data)
+	return s.Sum(nil)
+}
+
+var thumbMimes = map[byte]string{'j': JPEG, 'p': PNG}
+
+func (c *Cache) thumbDiskGet(hash string) (Thumb, bool) {
+	if c.dir == "" || !ValidHash(hash) {
+		return Thumb{}, false
+	}
+	c.initThumbDisk()
+	c.thumbDiskReads.Add(1)
+	p := filepath.Join(c.thumbDir(), hash)
+	f, err := os.OpenFile(p, os.O_RDONLY, 0)
+	if err != nil {
+		return Thumb{}, false
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		return Thumb{}, false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxThumbFile+1))
+	t, ok := parseThumb(hash, b)
+	if err != nil || !ok {
+		_ = os.Remove(p) // damaged or not this image's
+		return Thumb{}, false
+	}
+	now := time.Now()
+	_ = os.Chtimes(p, now, now) // recently used
+	return t, true
+}
+
+// parseThumb checks a thumbnail file of hash and returns its thumbnail.
+func parseThumb(hash string, b []byte) (Thumb, bool) {
+	if len(b) <= thumbHeader || len(b) > maxThumbFile || string(b[:len(thumbMagic)]) != thumbMagic || b[len(thumbMagic)] != 1 {
+		return Thumb{}, false
+	}
+	h := b[len(thumbMagic)+1:]
+	mime, ok := thumbMimes[h[0]]
+	w, ht := int(h[1])<<8|int(h[2]), int(h[3])<<8|int(h[4])
+	data := b[thumbHeader:]
+	if !ok || w < 1 || ht < 1 || w > ThumbSide || ht > ThumbSide || Sniff(data) != mime ||
+		!bytes.Equal(h[5:5+sha256.Size], thumbSum(hash, h[0], w, ht, data)) {
+		return Thumb{}, false
+	}
+	return Thumb{Mime: mime, Width: w, Height: ht, Data: data}, true
+}
+
+func (c *Cache) thumbDiskPut(hash string, t Thumb) {
+	if c.dir == "" || !ValidHash(hash) || t.Width > ThumbSide || t.Height > ThumbSide {
+		return
+	}
+	var mime byte
+	for k, m := range thumbMimes {
+		if m == t.Mime {
+			mime = k
+		}
+	}
+	if mime == 0 || thumbHeader+len(t.Data) > maxThumbFile {
+		return
+	}
+	c.initThumbDisk()
+	c.tdmu.Lock()
+	defer c.tdmu.Unlock()
+	if mkPrivate(filepath.Join(c.dir, "t")) != nil || mkPrivate(c.thumbDir()) != nil {
+		return
+	}
+	p := filepath.Join(c.thumbDir(), hash)
+	if fi, err := os.Lstat(p); err == nil {
+		c.thumbDiskSize -= fi.Size() // replaced (it was damaged)
+	}
+	f, err := os.CreateTemp(c.thumbDir(), ".tmp-*")
+	if err != nil {
+		return
+	}
+	name := f.Name()
+	_ = f.Chmod(0o600)
+	head := append([]byte(thumbMagic), 1, mime, byte(t.Width>>8), byte(t.Width), byte(t.Height>>8), byte(t.Height))
+	head = append(head, thumbSum(hash, mime, t.Width, t.Height, t.Data)...)
+	_, werr := f.Write(append(head, t.Data...))
+	cerr := f.Close()
+	if werr != nil || cerr != nil || os.Rename(name, p) != nil {
+		_ = os.Remove(name)
+		return
+	}
+	c.thumbDiskSize += int64(len(head) + len(t.Data))
+	c.trimThumbDisk()
+}
+
+// mkPrivate makes dir 0700 (an existing one too; never through a link).
+func mkPrivate(dir string) error {
+	if err := os.Mkdir(dir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return errors.New("not a directory: " + dir)
+	}
+	return os.Chmod(dir, 0o700)
+}
+
+// realDir removes p unless it is a directory (a symlink or a file there
+// is removed itself, never followed).
+func realDir(p string) {
+	if fi, err := os.Lstat(p); err == nil && !fi.IsDir() {
+		_ = os.Remove(p)
+	}
+}
+
+// initThumbDisk, once: removes the other variants under t/ and leftovers
+// in this one, and counts what is there.
+func (c *Cache) initThumbDisk() {
+	c.tdmu.Lock()
+	defer c.tdmu.Unlock()
+	if c.thumbDiskInit {
+		return
+	}
+	c.thumbDiskInit = true
+	top := filepath.Join(c.dir, "t")
+	realDir(top)
+	realDir(c.thumbDir())
+	ents, _ := os.ReadDir(top)
+	for _, e := range ents {
+		if e.Name() != thumbVariant || !e.IsDir() {
+			_ = os.RemoveAll(filepath.Join(top, e.Name()))
+		}
+	}
+	ents, _ = os.ReadDir(c.thumbDir())
+	for _, e := range ents {
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if !fi.Mode().IsRegular() || !ValidHash(e.Name()) {
+			_ = os.RemoveAll(filepath.Join(c.thumbDir(), e.Name()))
+			continue
+		}
+		c.thumbDiskSize += fi.Size()
+	}
+}
+
+// trimThumbDisk removes the least recently used thumbnails past the bound
+// (under tdmu), counting again what is there.
+func (c *Cache) trimThumbDisk() {
+	if c.thumbDiskSize <= c.maxThumbDisk {
+		return
+	}
+	ents, _ := os.ReadDir(c.thumbDir())
+	type file struct {
+		name string
+		size int64
+		mt   int64
+	}
+	var files []file
+	c.thumbDiskSize = 0
+	for _, e := range ents {
+		fi, err := e.Info()
+		if err != nil || !fi.Mode().IsRegular() || !ValidHash(e.Name()) {
+			continue
+		}
+		files = append(files, file{e.Name(), fi.Size(), fi.ModTime().UnixNano()})
+		c.thumbDiskSize += fi.Size()
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].mt < files[j].mt })
+	for _, f := range files {
+		if c.thumbDiskSize <= c.maxThumbDisk {
+			break
+		}
+		if os.Remove(filepath.Join(c.thumbDir(), f.name)) == nil {
+			c.thumbDiskSize -= f.size
 		}
 	}
 }

@@ -215,11 +215,11 @@ func TestMergeKeepsEveryObservedField(t *testing.T) {
 		r.Worker("w", "s")
 		d := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "d", Source: "transcript"})[0].Child.ID
 		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, NativeID: "a", State: proto.ChildRunning, Source: "hook",
-			Name: "Ada", StartedAt: 10, LastActivityAt: 20, Transcript: proto.TranscriptAvailable})
+			Name: "Ada", Model: "claude-haiku-5-5", Effort: "low", StartedAt: 10, LastActivityAt: 20, Transcript: proto.TranscriptAvailable})
 		evs := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildClaude, DispatchID: "d", NativeID: "a", Source: "transcript"})
 		want := proto.Child{ID: d, NativeID: "a", Provider: proto.ChildClaude, WorkerID: "w", AgentSession: "s", Generation: r.Generation("w"),
-			Parent: proto.ParentUnresolved, Name: "Ada", State: proto.ChildRunning, Source: "hook", StartedAt: 10, LastActivityAt: 20,
-			Transcript: proto.TranscriptAvailable}
+			Parent: proto.ParentUnresolved, Name: "Ada", Model: "claude-haiku-5-5", Effort: "low", State: proto.ChildRunning, Source: "hook", StartedAt: 10,
+			LastActivityAt: 20, Transcript: proto.TranscriptAvailable}
 		if len(evs) != 2 || evs[1].Child == nil || *evs[1].Child != want {
 			t.Fatalf("events %s\n%+v\nwant upsert of %+v", kinds(evs), evs, want)
 		}
@@ -232,16 +232,18 @@ func TestMergeKeepsEveryObservedField(t *testing.T) {
 		r.Worker("w", "s")
 		// The provisional row: completed (older), its type and description.
 		d := apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildCodex, DispatchID: "d", State: proto.ChildCompleted, Source: "rollout",
-			Type: "worker", Description: "first", StartedAt: 30, LastActivityAt: 40, EndedAt: 45, Transcript: proto.TranscriptPending})[0].Child.ID
+			Type: "worker", Description: "first", Model: "gpt-6-sol", Effort: "low", StartedAt: 30, LastActivityAt: 40, EndedAt: 45, Transcript: proto.TranscriptPending})[0].Child.ID
 		// The native row: running again (newer: clears the end), a newer
-		// description, no type, an earlier start, an earlier activity.
+		// description and model, no type or effort, an earlier start, an
+		// earlier activity.
 		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildCodex, NativeID: "a", State: proto.ChildRunning, Source: "app_server",
-			Name: "Ada", Description: "second", StartedAt: 25, LastActivityAt: 35})
+			Name: "Ada", Description: "second", Model: "gpt-6-sol-mini", StartedAt: 25, LastActivityAt: 35})
 		// Then the provisional row's transcript, newer than nothing.
 		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildCodex, DispatchID: "d", Source: "rollout", Transcript: proto.TranscriptAvailable})
 		apply(t, r, childagents.Evidence{Session: "s", Provider: proto.ChildCodex, DispatchID: "d", NativeID: "a", Source: "rollout"})
 		want := proto.Child{ID: d, NativeID: "a", Provider: proto.ChildCodex, WorkerID: "w", AgentSession: "s", Generation: r.Generation("w"),
-			Parent: proto.ParentUnresolved, Name: "Ada", Type: "worker", Description: "second", State: proto.ChildRunning, Source: "app_server",
+			Parent: proto.ParentUnresolved, Name: "Ada", Type: "worker", Description: "second", Model: "gpt-6-sol-mini", Effort: "low",
+			State: proto.ChildRunning, Source: "app_server",
 			StartedAt: 25, LastActivityAt: 40, Transcript: proto.TranscriptAvailable}
 		if cs := r.Children("w"); len(cs) != 1 || cs[0] != want {
 			t.Fatalf("children = %+v\nwant %+v", cs, want)
