@@ -61,6 +61,19 @@ test('world events in the city and on a floor keep the idle rate; a wheel gets 1
   // Real animation (an arrival, a walk-out) is 120 Hz by design: none plays here.
   expectIdle(floor, 60);
   await wheelThenIdle(page, 120, 60);
+
+  // Seated at a working agent: its screen and conversation keep updating; only the glide in had the fast rate.
+  const id = await page.evaluate(() => {
+    const ids = window.__h3d.world().find((f) => f.id === 'herdr-3d')?.workers.map((w) => w.id) ?? [];
+    return ids.find((i) => window.__h3d.worker(i)?.status === 'working') ?? '';
+  });
+  expect(id).not.toBe('');
+  expect(await page.evaluate((i) => window.__h3d.face(i), id)).toBe(true);
+  await frames(page, 3);
+  expect(await page.evaluate((i) => window.__h3d.sitAt(i), id)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
+  const seated = await sample(page, 'seated');
+  expectIdle(seated, 60);
   clean();
 });
 
