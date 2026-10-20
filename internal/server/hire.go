@@ -50,9 +50,13 @@ type HireHerdr interface {
 }
 
 // Git is the typed git runner (*gitops.Git) hires and send-homes use.
-// TopLevel returns gitops.ErrNotRepo outside a git work tree.
+// TopLevel and MainCheckout return gitops.ErrNotRepo outside a git work
+// tree.
 type Git interface {
 	TopLevel(ctx context.Context, dir string) (string, error)
+	// MainCheckout is the repository's main checkout, also from inside a
+	// linked worktree: herdr makes worktrees only from it.
+	MainCheckout(ctx context.Context, dir string) (string, error)
 	Fetch(ctx context.Context, dir string) error
 	DefaultBranch(ctx context.Context, dir string) string
 	Commit(ctx context.Context, dir, ref string) (string, time.Time, error)
@@ -428,7 +432,7 @@ func (h *Hub) startHirePrepare(ctx context.Context, c *Client, cmd proto.Command
 	held, released := h.heldNames(a.Floor, h.opts.Now())
 	res.Label = world.PickName(uuid.NewString(), held, released)
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
-		res.Git = h.gitInfo(ctx, cwd)
+		res.Git = h.gitInfo(ctx, cwd, !a.Preview)
 		if h.opts.Load != nil {
 			res.Capacity.Load = h.opts.Load()
 		}
@@ -438,7 +442,8 @@ func (h *Hub) startHirePrepare(ctx context.Context, c *Client, cmd proto.Command
 }
 
 // gitInfo is the hire dialog's git state of dir: nil outside a work tree.
-func (h *Hub) gitInfo(ctx context.Context, dir string) *proto.HireGit {
+// A preview reads only local refs; the worktree hire fetches before branching.
+func (h *Hub) gitInfo(ctx context.Context, dir string, fetch bool) *proto.HireGit {
 	if h.opts.Git == nil {
 		return nil
 	}
@@ -449,9 +454,12 @@ func (h *Hub) gitInfo(ctx context.Context, dir string) *proto.HireGit {
 		}
 		return nil
 	}
-	g := &proto.HireGit{RepoRoot: top, Fetched: true}
-	if err := h.opts.Git.Fetch(ctx, top); err != nil {
-		g.Fetched, g.FetchError = false, err.Error()
+	g := &proto.HireGit{RepoRoot: top, Preview: !fetch}
+	if fetch {
+		g.Fetched = true
+		if err := h.opts.Git.Fetch(ctx, top); err != nil {
+			g.Fetched, g.FetchError = false, err.Error()
+		}
 	}
 	g.DefaultBranch = h.opts.Git.DefaultBranch(ctx, top)
 	if g.DefaultBranch != "" {
@@ -800,7 +808,7 @@ func (h *Hub) runHire(ctx context.Context, op *hireOp) {
 
 	if op.worktree {
 		var err error
-		if repo, err = git.TopLevel(ctx, op.cwd); err != nil {
+		if repo, err = git.MainCheckout(ctx, op.cwd); err != nil {
 			if errors.Is(err, gitops.ErrNotRepo) {
 				fail(bad("worktree: %s is not in a git work tree", op.cwd))
 			} else {

@@ -50,7 +50,7 @@ func TestGitAllowlist(t *testing.T) {
 		methods = append(methods, typ.Method(i).Name)
 	}
 	if w := []string{"AheadOf", "BranchTip", "BranchUnpushed", "Changes", "Checkout", "Commit", "CurrentBranch", "DefaultBranch", "DeleteBranch",
-		"Fetch", "IndexPath", "ListFiles", "Origin", "Push", "Status", "Subjects", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
+		"Fetch", "IndexPath", "ListFiles", "MainCheckout", "Origin", "Push", "Status", "Subjects", "TopLevel", "Unpushed"}; !slices.Equal(methods, w) {
 		t.Fatalf("Git methods = %v, want %v", methods, w)
 	}
 

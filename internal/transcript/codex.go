@@ -376,14 +376,21 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 			_ = json.Unmarshal(input, &in)
 			viewPath = in.Path
 		}
+		// #132: the background terminals it starts or polls.
+		terms, poll := codexTerminals(it.Name, input)
 		var ask *askCall // #57: the question card
 		if it.Name == CodexAskTool && it.Namespace == "" {
 			if a, ok := parseAsk(Codex, input); ok {
 				ask = &a
 			}
 		}
-		return []contrib{{id: callID, kind: proto.ItemTool, ts: ts, maybeImg: viewPath != "", script: script, apply: func(b *builder) {
-			b.call(name, input, summary)
+		return []contrib{{id: callID, kind: proto.ItemTool, ts: ts, maybeImg: viewPath != "", script: script, terms: terms, poll: poll, apply: func(b *builder) {
+			if poll != nil {
+				b.call(name, input, poll.summary(b.pollCmd))
+				b.poll = poll
+			} else {
+				b.call(name, input, summary)
+			}
 			b.script = script
 			if co != nil {
 				c := *co
@@ -419,9 +426,15 @@ func codexResponse(it *codexItem, lineID string, ts int64, pc *parseCtx) []contr
 		for _, u := range it.Output.images {
 			images = append(images, pc.codexImage(u, proto.OriginAgent, proto.KindViewed))
 		}
-		return []contrib{{link: linkResult, id: it.CallID, kind: proto.ItemTool, ts: ts, imgs: images,
+		return []contrib{{link: linkResult, id: it.CallID, kind: proto.ItemTool, ts: ts, imgs: images, out: text,
 			apply: func(b *builder) {
-				b.result(status, text, images)
+				if p := b.poll; p != nil { // #132: the process, and only the new output
+					r := p.pollOutput(text)
+					b.result(r.status(status), r.body, images)
+					b.tool().Terminal = r.term
+				} else {
+					b.result(status, text, images)
+				}
 				if b.it.Collab != nil {
 					collabOutput(b.it.Collab, text)
 				}

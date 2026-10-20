@@ -1,6 +1,7 @@
 import type { CommandResult } from '../net/client';
 import type { CommandArgs, CommandName, HireAck, HireGit, HireOptions, HirePrepare } from '../net/protocol';
 import {
+  baseHint,
   baseText,
   capacityView,
   choiceNote,
@@ -11,7 +12,9 @@ import {
   HARNESS_LABEL,
   hireBlocker,
   modelsFor,
+  newerGit,
   offeredOptions,
+  OriginFetches,
   resolveChoice,
   resolveVisibleChoice,
   visibleOptions,
@@ -167,7 +170,8 @@ export interface HireSummary {
   state: HireState;
   form: HireForm;
   /** The worktree option as shown (null: hidden, the folder is no git repo); `usable` false after a failed fetch. */
-  git: { base: string; usable: boolean; note: string | null; noteError: boolean } | null;
+  /** `hint` (#134): a preview's base is the last fetched one, or not known yet (null: a fetch's answer). */
+  git: { base: string; hint: string | null; usable: boolean; note: string | null; noteError: boolean } | null;
   /** "Fetch again" is on its way. */
   refetching: boolean;
   choiceNote: string | null;
@@ -195,7 +199,7 @@ export interface HireSummary {
 export function gitView(g: HireGit | null, now: number): HireSummary['git'] {
   if (!g) return null;
   const n = fetchNote(g);
-  return { base: baseText(g, now), usable: worktreeUsable(g), note: n?.text ?? null, noteError: n?.error ?? false };
+  return { base: baseText(g, now), hint: baseHint(g), usable: worktreeUsable(g), note: n?.text ?? null, noteError: n?.error ?? false };
 }
 
 const DESK_PLUS = '<path d="M12 5v14M5 12h14"/>';
@@ -247,7 +251,8 @@ export function capacityBlock(c: CapacityView, p: HirePrepare, floor: string): H
 }
 
 /**
- * The worktree option: a checkbox (off, and disabled, after a failed fetch) and the base it would branch from.
+ * The worktree option: a checkbox (off, and disabled, after a failed fetch) and the base it would branch from (#134: a
+ * preview's says what it is).
  * `id` names the checkbox, so the dialogs that show it keep their own hooks.
  */
 export function worktreeControl(g: NonNullable<HireSummary['git']>, on: boolean, onChange: (v: boolean) => void, id = 'hire-worktree'): HTMLElement {
@@ -265,6 +270,7 @@ export function worktreeControl(g: NonNullable<HireSummary['git']>, on: boolean,
       { class: 'dd-base', id: `${id}-base` },
       !g.usable ? 'Off: origin could not be fetched. Last fetched ' : on ? 'A new h3d/… branch from ' : 'Would branch from ',
       h('code', {}, g.base),
+      g.hint ? ` (${g.hint})` : null,
     ),
   );
 }
@@ -475,6 +481,8 @@ export class HireDialog {
   private statusError = false;
   /** Bumped on every open / prepare, so a late answer for an older one is dropped. */
   private gen = 0;
+  /** #134: the fetches for origin sent (a recheck, Fetch again): a folder previewed meanwhile does not drop their answer. */
+  private fetches = new OriginFetches();
   /** Opening a newer form prevents a late background failure from restoring the old one. */
   private opening = 0;
   private hireBtn: HTMLButtonElement | null = null;
@@ -613,6 +621,7 @@ export class HireDialog {
    */
   open(floor: string, desk: number, prefill: HirePrefill = {}): void {
     this.opening++;
+    this.fetches.forget();
     this.floor = floor;
     this.desk = desk;
     this.prep = null;
@@ -642,7 +651,7 @@ export class HireDialog {
     this.state = 'preparing';
     this.renderedKey = '';
     this.refetching = false;
-    this.setStatus('Checking the floor, the folder and origin…');
+    this.setStatus(this.checkingText());
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
     this.editor.focus();
@@ -683,7 +692,7 @@ export class HireDialog {
     return this.lookups.generation;
   }
 
-  private async prepare(cwd?: string): Promise<void> {
+  private async prepare(cwd?: string, fetch = false): Promise<void> {
     const gen = ++this.gen;
     if (this.host.unsupported('hire.prepare')) {
       this.state = 'failed';
@@ -693,6 +702,9 @@ export class HireDialog {
     }
     const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (cwd) args.cwd = cwd;
+    if (!fetch && this.host.store.preparePreview) args.preview = true;
+    // #134: a fetch sent now is newer than a recheck on its way.
+    if (!args.preview) this.fetches.start();
     const r = await this.host.send('hire.prepare', args);
     // A hire sent meanwhile: its form stays as sent.
     if (gen !== this.gen || !this.dialog.open || this.state === 'hiring') return;
@@ -747,7 +759,9 @@ export class HireDialog {
   }
 
   /** A new git answer: no worktree after a failed fetch; restore the configured default once it can be made again. */
-  private adoptGit(g: HireGit | null): void {
+  private adoptGit(got: HireGit | null): void {
+    // #134: a preview of the same repository does not replace a fetch's answer (Fetch again, a recheck) shown already.
+    const g = newerGit(this.prep?.git, got);
     const was = this.prep ? worktreeUsable(this.prep.git) : false;
     if (this.prep) this.prep = { ...this.prep, git: g };
     if (!worktreeUsable(g)) this.f.worktree = false;
@@ -760,7 +774,7 @@ export class HireDialog {
     this.refetching = true;
     this.setStatus('Fetching origin again…');
     this.render();
-    await this.prepare(this.prep.cwd);
+    await this.prepare(this.prep.cwd, true);
     if (!this.refetching) return;
     this.refetching = false;
     if (this.dialog.open) {
@@ -1330,9 +1344,14 @@ export class HireDialog {
     return text.trim() || images || (doc?.doc.chips.length ?? 0) > 0 ? { text, images } : null;
   }
 
+  /** #134: a preview does not fetch origin, so the wait does not name it. */
+  private checkingText(): string {
+    return this.host.store.preparePreview ? 'Checking the floor and the folder…' : 'Checking the floor, the folder and origin…';
+  }
+
   private retry(): void {
     this.state = 'preparing';
-    this.setStatus('Checking the floor, the folder and origin…');
+    this.setStatus(this.checkingText());
     this.render();
     void this.prepare();
   }
@@ -1653,12 +1672,19 @@ export class HireDialog {
 
   /** After a capacity or fetch refusal: the caps and origin as they are now (the refusal stays in the status). */
   private async recheck(): Promise<void> {
-    const gen = this.gen;
     const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (this.prep?.cwd) args.cwd = this.prep.cwd;
+    const ticket = this.fetches.start();
     const r = await this.host.send('hire.prepare', args);
-    if (!r.ok || !this.prep || !this.dialog.open || gen !== this.gen || this.state !== 'ready') return;
-    const p = r.data as HirePrepare;
+    if (r.ok) this.fetched(ticket, r.data as HirePrepare);
+  }
+
+  /**
+   * #134: the recheck's answer, when no newer fetch was sent: origin and the caps as they are now, while the form shows
+   * the same repository (a folder previewed meanwhile does not drop it); the folder, the form and the status stay.
+   */
+  private fetched(ticket: number, p: HirePrepare): void {
+    if (!this.prep || !this.dialog.open || this.state !== 'ready' || !this.fetches.current(ticket, this.prep.git, p.git)) return;
     this.adoptGit(p.git);
     this.prep = { ...this.prep, capacity: p.capacity };
     this.render();

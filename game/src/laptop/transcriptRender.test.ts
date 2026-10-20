@@ -691,6 +691,102 @@ describe('#56: Codex collaboration calls and messages', () => {
   });
 });
 
+describe('#132: polls of a background terminal', () => {
+  // What the bridge makes of its synthetic rollouts (internal/transcript/testdata/codex/polls*.jsonl).
+  const POLLS = JSON.parse(readFileSync(join(import.meta.dirname, '../../fixtures/transcript/codex-polls.json'), 'utf8')) as TranscriptItem[];
+  const sum = (id: string) => row(id).querySelector('.tx-tool-sum')?.textContent;
+  const term = (id: string) => row(id).querySelector<HTMLElement>('.tx-tool-term');
+
+  it('a poll names the command it waits on, never the script', () => {
+    mount();
+    view.setItems(POLLS);
+    expect(sum('call_p132running')).toBe('Waited for pnpm exec vitest run');
+    expect(sum('call_p132exit0')).toBe('Waited for pnpm build');
+    expect(sum('call_p132ctrlc')).toBe('Sent ^C to uv run pytest -x');
+    expect(sum('call_p132unknown')).toBe('Waited for background terminal 39999');
+    expect(sum('call_p132two')).toBe('Waited for npm create vite@latest tide-app (+1 more)');
+    // A script that also runs a command keeps the command's summary.
+    expect(sum('call_p132withcmd')).toBe('git status --short');
+    for (const s of $$('.tx-tool-sum')) expect(s.textContent).not.toContain('tools.');
+  });
+
+  it("the process is its own span after the command: still running, exited 0, exited non-zero, none", () => {
+    mount();
+    view.setItems(POLLS);
+    const run = term('call_p132running') as HTMLElement;
+    expect(run.textContent).toBe('process running');
+    expect(run.dataset.state).toBe('running');
+    expect(run.title).toBe('The process is still running (the poll waited 30s)');
+    expect(run.previousElementSibling?.classList.contains('tx-tool-sum')).toBe(true);
+    expect(term('call_p132exit0')?.textContent).toBe('exited 0');
+    expect(term('call_p132exit0')?.dataset.state).toBe('exited');
+    expect(term('call_p132exit0')?.hasAttribute('data-failed')).toBe(false);
+    expect(term('call_p132ctrlc')?.textContent).toBe('exited 130');
+    expect(term('call_p132ctrlc')?.title).toBe('The process exited with code 130');
+    expect(term('call_p132ctrlc')?.hasAttribute('data-failed')).toBe(true);
+    expect(term('call_p132variable')?.textContent).toBe('process running');
+    // No process said: no span (a result that is plain text, a poll still waiting, a command).
+    for (const id of ['call_p132plain', 'call_p132waiting', 'call_p132withcmd']) expect(term(id)).toBeNull();
+  });
+
+  it("the poll's wait is its duration when the view did not see it finish", () => {
+    mount();
+    view.setItems(POLLS);
+    expect(row('call_p132running').querySelector('.tx-tool-dur')?.textContent).toBe('30s');
+    expect(row('call_p132typed').querySelector('.tx-tool-dur')?.textContent).toBe('2s');
+    expect(row('call_p132exit0').querySelector('.tx-tool-dur')?.textContent).toBe('');
+    const lone = item('tool', { tool: { name: 'exec', input_summary: 'Waited for make', status: 'ok', terminal: { state: 'running' } } });
+    view.setItems([lone]);
+    expect(row(lone.id).querySelector('.tx-tool-term')?.getAttribute('title')).toBe('The process is still running');
+    expect(row(lone.id).querySelector('.tx-tool-dur')?.textContent).toBe('');
+  });
+
+  it("a poll's process comes in with its result, live; the duration is the view's own when it saw it finish", () => {
+    mount();
+    const poll = item('tool', { ts: Date.now() - 4200, tool: { name: 'exec', input_summary: 'Waited for make', status: 'running' } });
+    view.setItems([poll]);
+    expect(term(poll.id)).toBeNull();
+    view.applyUpdates([{ ...poll, tool: { name: 'exec', input_summary: 'Waited for make', status: 'error', terminal: { state: 'exited', exit_code: 2 } } }]);
+    expect(term(poll.id)?.textContent).toBe('exited 2');
+    expect(row(poll.id).dataset.status).toBe('error');
+    view.applyUpdates([{ ...poll, tool: { name: 'exec', input_summary: 'Waited for make', status: 'ok', terminal: { state: 'running', wall_seconds: 30 } } }]);
+    expect(term(poll.id)?.textContent).toBe('process running');
+    expect(row(poll.id).querySelector('.tx-tool-dur')?.textContent).toMatch(/^4s$/);
+  });
+
+  it('a non-zero exit is an error; a process still running is a poll that is done', () => {
+    mount();
+    view.setItems(POLLS);
+    expect(row('call_p132exit1').dataset.status).toBe('error');
+    expect(row('call_p132exit1').querySelector('.tx-tool-status')?.textContent).toBe('error');
+    expect(term('call_p132exit1')?.textContent).toBe('exited 1');
+    expect(row('call_p132running').dataset.status).toBe('ok');
+    expect(row('call_p132waiting').dataset.status).toBe('running');
+    expect(sum('call_p132waiting')).toBe('Waited for pnpm exec vitest run');
+  });
+
+  it('opened: the new output, not the chunk around it; the script is still the input', () => {
+    mount();
+    view.setItems(POLLS);
+    const r = row('call_p132exit1');
+    (r.querySelector('.tx-tool-row') as HTMLButtonElement).click();
+    const body = r.querySelector('.tx-tool-body') as HTMLElement;
+    expect(body.textContent).toContain('Tests  1 failed | 14 passed (15)');
+    expect(body.textContent).not.toContain('chunk_id');
+    expect(body.textContent).toContain('tools.write_stdin');
+  });
+
+  it('a poll with a screenshot keeps its strip, named by the poll', () => {
+    mount();
+    view.setItems(POLLS);
+    const r = row('call_p132image');
+    expect(sum('call_p132image')).toBe('Waited for npm create vite@latest tide-app');
+    expect(term('call_p132image')?.textContent).toBe('exited 0');
+    expect(r.querySelectorAll('.tx-strip .tx-imgcard')).toHaveLength(1);
+    expect(r.querySelector('.tx-strip')?.getAttribute('aria-label') ?? '').toContain('Waited for npm create vite@latest tide-app');
+  });
+});
+
 describe('live updates', () => {
   it('a running tool flips to ok in place (an update, not a duplicate) and shows how long it took', () => {
     mount();

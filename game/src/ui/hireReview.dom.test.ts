@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from '../net/client';
-import type { HireInterpretation, HireOptions, HirePrepare } from '../net/protocol';
+import type { HireGit, HireInterpretation, HireOptions, HirePrepare } from '../net/protocol';
+import { FETCH_ORDERINGS, fetchedGit, ORIGIN_GIT, previewGit } from '../test/fetchOrderings';
 import { CAT, FULL, NO_EFFORT } from '../world/hireReviewFixtures';
 import type { HireHost } from './hire';
 import { HireReviewDialog } from './hireReview';
@@ -73,7 +74,7 @@ function setup(over: Partial<Env> = {}, background = false) {
     now: () => Date.now(),
   } as unknown as HireHost;
   const rv = new HireReviewDialog(document.body, host);
-  return { rv, env, hires, prepares, toasts, reserved, goTos, prefs };
+  return { rv, host, env, hires, prepares, toasts, reserved, goTos, prefs };
 }
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
@@ -106,6 +107,156 @@ describe('HireReviewDialog', () => {
   afterEach(() => {
     document.body.replaceChildren();
     vi.unstubAllGlobals();
+  });
+
+  it.each([true, false])('requests a local preview only when the bridge supports it (%s)', async (supported) => {
+    const { rv, host } = setup();
+    host.store.preparePreview = supported;
+    const send = vi.spyOn(host, 'send');
+    rv.open('floor', FULL);
+    await tick();
+    expect(send).toHaveBeenCalledWith('hire.prepare', { floor: 'floor', ...(supported ? { preview: true } : {}) });
+    expect(rv.summary()?.state).toBe('ready');
+    rv.close();
+  });
+
+  it('#134: a fetch refusal after a preview fetches origin again: the worktree goes off and says why, the refusal stays', async () => {
+    const g = { repo_root: '/home/test', default_branch: 'main', base_sha: 'abcdef1234', base_time: Date.now(), fetched: false };
+    let down = false;
+    const { rv, host, hires } = setup({ prepare: async () => ({ ok: true, data: prep({ git: down ? { ...g, fetch_error: 'offline' } : { ...g, preview: true } }) }) as CommandResult });
+    host.store.preparePreview = true;
+    const send = vi.spyOn(host, 'send');
+    rv.open('floor', FULL);
+    await tick();
+    expect(rv.summary()?.form.worktree).toBe(true);
+    expect(rv.summary()?.git).toMatchObject({ usable: true, note: null, hint: 'last fetched; refreshed before branching' });
+    hireBtn().click();
+    await tick();
+    expect(hires[0]!.args.worktree).toBe(true);
+    down = true;
+    hires[0]!.answer({ ok: false, code: 'fetch_failed', message: 'git fetch origin failed: offline' } as CommandResult);
+    await tick();
+    await tick();
+    expect(send.mock.calls.filter(([t]) => t === 'hire.prepare').map(([, a]) => a)).toEqual([{ floor: 'floor', preview: true }, { floor: 'floor', cwd: '/home/test' }]);
+    expect(rv.summary()?.form.worktree).toBe(false);
+    expect(rv.summary()?.git).toMatchObject({ usable: false, hint: null, note: expect.stringContaining('git fetch origin failed: offline') });
+    expect(rv.summary()?.error).toBe(true);
+    rv.close();
+  });
+
+  it('#134 R1: a recheck still on its way when a folder of the same repository is previewed: its failure is shown', async () => {
+    const g = { repo_root: '/home/test', default_branch: 'main', base_sha: 'abcdef1234', base_time: Date.now(), fetched: false };
+    let finishRecheck!: (r: CommandResult) => void;
+    let calls = 0;
+    const { rv, host, hires } = setup({ prepare: async (cwd) => {
+      calls++;
+      if (calls === 2) return new Promise<CommandResult>((resolve) => { finishRecheck = resolve; });
+      return { ok: true, data: prep({ cwd: cwd || '/home/test', git: { ...g, preview: true } }) } as CommandResult;
+    } });
+    host.store.preparePreview = true;
+    rv.open('floor', FULL);
+    await tick();
+    hireBtn().click();
+    await tick();
+    hires[0]!.answer({ ok: false, code: 'fetch_failed', message: 'git fetch origin failed: offline' } as CommandResult);
+    await tick();
+    toggle('where').click();
+    const folder = q<HTMLInputElement>('#review-cwd')!;
+    expect(folder.disabled).toBe(false);
+    folder.value = '/home/test/subdir';
+    folder.dispatchEvent(new Event('input'));
+    folder.dispatchEvent(new Event('change'));
+    await tick();
+    finishRecheck({ ok: true, data: prep({ git: { ...g, fetch_error: 'offline' } }) } as CommandResult);
+    await tick();
+    expect(rv.summary()?.form.worktree).toBe(false);
+    expect(q('[data-key="refetch"]')).not.toBeNull();
+    rv.close();
+  });
+
+  it.each(FETCH_ORDERINGS)('#134 R1: $name: the worktree offered is $usable, and Fetch again fetches the folder', async (c) => {
+    const answers: Array<(r: CommandResult) => void> = [];
+    const { rv, host, hires } = setup({ prepare: () => new Promise<CommandResult>((answer) => answers.push(answer)) });
+    host.store.preparePreview = true;
+    const send = vi.spyOn(host, 'send');
+    const prepared = () => send.mock.calls.filter(([t]) => t === 'hire.prepare').map(([, a]) => a);
+    const answer = (git: HireGit, cwd = '/home/test') => ({ ok: true, data: prep({ cwd, git }) }) as CommandResult;
+    rv.open('floor', FULL);
+    answers.shift()!(answer({ ...ORIGIN_GIT, preview: true }));
+    await tick();
+    hireBtn().click();
+    await tick();
+    hires[0]!.answer({ ok: false, code: 'fetch_failed', message: 'git fetch origin failed: offline' } as CommandResult);
+    await tick();
+    const recheck = answers.shift()!;
+    expect(prepared().at(-1)).toEqual({ floor: 'floor', cwd: '/home/test' });
+    if (c.before) {
+      recheck(answer(fetchedGit(c.origin)));
+      await tick();
+    }
+    toggle('where').click();
+    const folder = q<HTMLInputElement>('#review-cwd')!;
+    folder.value = c.folder;
+    folder.dispatchEvent(new Event('input'));
+    folder.dispatchEvent(new Event('change'));
+    const preview = answers.shift()!;
+    expect(prepared().at(-1)).toEqual({ floor: 'floor', cwd: c.folder, preview: true });
+    for (const step of c.order) {
+      if (step === 'recheck') recheck(answer(fetchedGit(c.origin)));
+      else preview(answer(previewGit(c.folder), c.folder));
+      await tick();
+    }
+    const s = rv.summary()!;
+    expect(s.form).toMatchObject({ cwd: c.folder, worktree: c.usable });
+    expect(s.git).toMatchObject({ usable: c.usable, note: c.usable ? null : expect.stringContaining('git fetch origin failed: offline') });
+    const again = q<HTMLButtonElement>('[data-key="refetch"]');
+    expect(!!again).toBe(!c.usable);
+    if (again) {
+      // Fetch again fetches the folder now in the form (never a preview), and origin is back: the worktree is offered again.
+      again.click();
+      expect(prepared().at(-1)).toEqual({ floor: 'floor', cwd: c.folder });
+      answers.shift()!(answer({ ...ORIGIN_GIT, fetched: true }, c.folder));
+      await tick();
+      expect(rv.summary()?.form.worktree).toBe(true);
+      expect(rv.summary()?.git).toMatchObject({ usable: true, note: null });
+      expect(q('[data-key="refetch"]')).toBeNull();
+    }
+    expect(answers).toEqual([]);
+    rv.close();
+  });
+
+  it('#134 R1: the recheck answering while a folder is being typed: the typing goes on, and leaving the field checks it', async () => {
+    const answers: Array<(r: CommandResult) => void> = [];
+    const { rv, host, hires } = setup({ prepare: () => new Promise<CommandResult>((answer) => answers.push(answer)) });
+    host.store.preparePreview = true;
+    const send = vi.spyOn(host, 'send');
+    const answer = (git: HireGit, cwd = '/home/test') => ({ ok: true, data: prep({ cwd, git }) }) as CommandResult;
+    rv.open('floor', FULL);
+    answers.shift()!(answer({ ...ORIGIN_GIT, preview: true }));
+    await tick();
+    hireBtn().click();
+    await tick();
+    hires[0]!.answer({ ok: false, code: 'fetch_failed', message: 'git fetch origin failed: offline' } as CommandResult);
+    await tick();
+    toggle('where').click();
+    const folder = q<HTMLInputElement>('#review-cwd')!;
+    folder.focus();
+    folder.value = '/home/test/sub';
+    folder.dispatchEvent(new Event('input'));
+    answers.shift()!(answer(fetchedGit('down')));
+    await tick();
+    expect(rv.summary()?.git).toMatchObject({ usable: false });
+    const now = q<HTMLInputElement>('#review-cwd')!;
+    expect(document.activeElement).toBe(now);
+    expect(now.value).toBe('/home/test/sub');
+    // The field was drawn again under the typing: no `change` comes from it, so leaving it is what checks the folder.
+    now.blur();
+    expect(send.mock.calls.filter(([t]) => t === 'hire.prepare').map(([, a]) => a).at(-1)).toEqual({ floor: 'floor', cwd: '/home/test/sub', preview: true });
+    answers.shift()!(answer(previewGit('/home/test/sub'), '/home/test/sub'));
+    await tick();
+    expect(rv.summary()?.git).toMatchObject({ usable: false, note: expect.stringContaining('offline') });
+    expect(rv.summary()?.blocker ?? '').not.toMatch(/folder/);
+    rv.close();
   });
 
   describe('sections', () => {

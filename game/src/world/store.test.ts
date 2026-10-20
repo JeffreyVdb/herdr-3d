@@ -262,6 +262,15 @@ describe('WorldStore M3 fields', () => {
     expect(s.hireOptions).toEqual(DEFAULT_HIRE_OPTIONS);
   });
 
+  it('resets hire preview support when reconnecting to an older bridge', () => {
+    const s = new WorldStore();
+    expect(s.preparePreview).toBe(false);
+    s.applySnapshot(snap({ prepare_preview: true }));
+    expect(s.preparePreview).toBe(true);
+    s.applySnapshot(snap());
+    expect(s.preparePreview).toBe(false);
+  });
+
   it('keeps the readable model names of a catalog (#200) and drops labels of a shape it does not understand, never throwing', () => {
     const s = new WorldStore();
     const hire_options = {

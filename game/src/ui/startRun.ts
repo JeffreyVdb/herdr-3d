@@ -1,5 +1,5 @@
 import type { CommandArgs, Hire, HireGit, HireOptions, Preset, RunPrepare, RunStartAck } from '../net/protocol';
-import { baseText, capacityView, fetchNote, firstFreeDesk, freeDesks, HARNESS_LABEL, modelsFor, offeredOptions, resolveVisibleChoice, worktreeUsable, type CapacityView } from '../world/hire';
+import { baseHint, baseText, capacityView, fetchNote, firstFreeDesk, freeDesks, HARNESS_LABEL, modelsFor, newerGit, offeredOptions, resolveVisibleChoice, worktreeUsable, type CapacityView } from '../world/hire';
 import { labelsOf, modelEntries } from '../world/modelLabel';
 import { effortsFor } from '../world/settings';
 import {
@@ -91,7 +91,8 @@ export interface StartRunSummary {
   /** A `run.prepare` is on its way (or waiting out the debounce). */
   preparing: boolean;
   label: string;
-  git: { base: string; usable: boolean; note: string | null } | null;
+  /** `hint` (#134): a preview's base is the last fetched one, or not known yet (null: a fetch's answer). */
+  git: { base: string; hint: string | null; usable: boolean; note: string | null } | null;
   capacity: CapacityView | null;
   blocker: string | null;
   status: string;
@@ -137,6 +138,11 @@ export class StartRunDialog {
   private gen = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight = false;
+  /**
+   * #134: Fetch again or a fetch refusal asked for origin, and no answer that fetched has come back yet: until one
+   * does, every prepare fetches (a field typed meanwhile drops the first answer, never the fetch).
+   */
+  private fetchWanted = false;
   private presetsSeen = -1;
   private renderedKey = '';
   private startBtn: HTMLButtonElement | null = null;
@@ -319,9 +325,10 @@ export class StartRunDialog {
     this.presetsSeen = this.host.store.presets.version;
     this.clearTimer();
     this.inFlight = false;
+    this.fetchWanted = false;
     const off = runUnsupported(this.host);
     this.state = off ? 'failed' : 'preparing';
-    this.setStatus(off ?? 'Asking herdr-world for the team, the folder and origin…', !!off);
+    this.setStatus(off ?? this.askingText(), !!off);
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
     this.dialog.querySelector<HTMLElement>(fromTab ? '[data-key="tab:orch"]' : '#run-ticket')?.focus();
@@ -360,10 +367,20 @@ export class StartRunDialog {
     this.renderPreviewState();
   }
 
-  private async prepare(): Promise<void> {
+  /** #134: the wait names origin only when the bridge fetches it (an older bridge, on every prepare). */
+  private askingText(): string {
+    return this.host.store.preparePreview ? 'Asking herdr-world for the team and the folder…' : 'Asking herdr-world for the team, the folder and origin…';
+  }
+
+  /** `fetch` (Fetch again, after a fetch refusal): origin fetched now; else (#134) a preview of the local refs, where the bridge has one. */
+  private async prepare(fetch = false): Promise<void> {
     const gen = ++this.gen;
     this.inFlight = true;
-    const r = await this.host.send('run.prepare', prepareArgs(this.floor, this.f, this.ticket()));
+    if (fetch) this.fetchWanted = true;
+    const fetches = this.fetchWanted || !this.host.store.preparePreview;
+    const args = prepareArgs(this.floor, this.f, this.ticket());
+    if (!fetches) args.preview = true;
+    const r = await this.host.send('run.prepare', args);
     if (gen !== this.gen || !this.dialog.open || this.state === 'starting') return;
     this.inFlight = false;
     if (!r.ok) {
@@ -385,8 +402,10 @@ export class StartRunDialog {
       this.render();
       return;
     }
-    const p = r.data as RunPrepare;
+    if (fetches) this.fetchWanted = false;
     const first = !this.prep;
+    // #134: an edit's preview does not replace what a fetch said (the folder is the floor's, the same repository).
+    const p = { ...(r.data as RunPrepare), ...(this.prep ? { git: newerGit(this.prep.git, (r.data as RunPrepare).git) } : {}) };
     this.prep = p;
     if (first) {
       this.f.preset = p.preset;
@@ -496,7 +515,7 @@ export class StartRunDialog {
 
   private gitView(g: HireGit | null): StartRunSummary['git'] {
     if (!g) return null;
-    return { base: baseText(g, this.host.now()), usable: worktreeUsable(g), note: fetchNote(g)?.text ?? null };
+    return { base: baseText(g, this.host.now()), hint: baseHint(g), usable: worktreeUsable(g), note: fetchNote(g)?.text ?? null };
   }
 
   private preset(): Preset | null {
@@ -655,7 +674,13 @@ export class StartRunDialog {
           'div',
           { class: 'dd-worktree', 'data-on': on ? 'true' : 'false', 'data-off': g.usable ? null : 'true' },
           h('label', { class: 'dd-check', for: 'run-worktree' }, box, h('span', { class: 'dd-check-box', 'aria-hidden': 'true' }), h('span', {}, 'Work in its own git worktree & branch')),
-          h('p', { class: 'dd-base', id: 'run-worktree-base' }, !g.usable ? 'Off: origin could not be fetched. Last fetched ' : on ? 'A new h3d/… branch from ' : 'Would branch from ', h('code', {}, g.base)),
+          h(
+            'p',
+            { class: 'dd-base', id: 'run-worktree-base' },
+            !g.usable ? 'Off: origin could not be fetched. Last fetched ' : on ? 'A new h3d/… branch from ' : 'Would branch from ',
+            h('code', {}, g.base),
+            g.hint ? ` (${g.hint})` : null,
+          ),
         ),
       );
       if (g.note)
@@ -664,7 +689,7 @@ export class StartRunDialog {
             'div',
             { class: 'dd-callout dd-callout--error dd-fetch', role: 'alert' },
             h('p', {}, g.note.replace('hire without one', 'start without one')),
-            h('button', { class: 'btn btn--sm', 'data-key': 'refetch', disabled: this.state !== 'ready', onclick: () => void this.prepare() }, 'Fetch again'),
+            h('button', { class: 'btn btn--sm', 'data-key': 'refetch', disabled: this.state !== 'ready', onclick: () => void this.prepare(true) }, 'Fetch again'),
           ),
         );
     }
@@ -869,7 +894,7 @@ export class StartRunDialog {
 
   private retry(): void {
     this.state = 'preparing';
-    this.setStatus('Asking herdr-world for the team, the folder and origin…');
+    this.setStatus(this.askingText());
     this.render();
     void this.prepare();
   }
@@ -1036,7 +1061,8 @@ export class StartRunDialog {
     }
     this.setStatus(msg, true);
     this.render();
-    if (r.code === 'capacity' || r.code === 'fetch_failed') void this.prepare();
+    // The caps and origin as they are now (#134: fetched, as the dialog may have opened on a preview).
+    if (r.code === 'capacity' || r.code === 'fetch_failed') void this.prepare(true);
   }
 
   // ---- test hook ------------------------------------------------------------------------

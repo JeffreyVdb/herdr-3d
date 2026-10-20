@@ -465,13 +465,14 @@ export class ScheduleFormDialog {
   /**
    * `hire.prepare` for the floor (and a folder): `full` adopts its defaults (the choice, the folder, the worktree), as
    * the hire dialog opens; else only the git base of a new folder. Refused (an asleep floor, a folder that is not
-   * there): the form keeps what it has, falling back to the floor's settings, and says so.
+   * there): the form keeps what it has, falling back to the floor's settings, and says so. #134: a preview, never a
+   * fetch: the schedule's hire fetches origin when it fires, and what origin is now says nothing about then.
    */
   private async prepare(cwd: string | undefined, full: boolean): Promise<void> {
     const gen = ++this.prepGen;
     this.preparing = true;
     this.renderActions();
-    const r = this.host.unsupported('hire.prepare') ? { ok: false as const, code: 'unknown_command', message: '' } : await this.host.send('hire.prepare', { floor: this.f.floor, ...(cwd ? { cwd } : {}) });
+    const r = this.host.unsupported('hire.prepare') ? { ok: false as const, code: 'unknown_command', message: '' } : await this.host.send('hire.prepare', { floor: this.f.floor, ...(cwd ? { cwd } : {}), ...(this.host.store.preparePreview ? { preview: true } : {}) });
     if (gen !== this.prepGen || !this.dialog.open) return;
     this.preparing = false;
     const options = this.options();

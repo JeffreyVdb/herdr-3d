@@ -569,7 +569,8 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   left is disposed after the next one drew a frame (the shaders they share stay), the building's outside is kept while
   you are in the city, and a ride with no office loaded builds and compiles the new office behind the closed doors
   (what the world disposes meanwhile is released again after the compile, `render/disposeHold.ts`; `decisions.md` "#141").
-- **Frame-rate policy**: 120 Hz while interacting, 30–60 Hz idle, paused when hidden, battery-saver toggle.
+- **Frame-rate policy**: 120 Hz while interacting, 30–60 Hz idle, paused when hidden, battery-saver toggle; capped at
+  4 Hz under the opaque overview page and 20 Hz under the whiteboard's scrim (`decisions.md` "#143").
   Instancing + frame-rate policy dominate battery use (energy at 120 fps: rigid +26 vs skinned +67, `top` power).
 - **Shell**: Chrome `--app` window on the helper's localhost URL. Chrome runs 120 Hz natively (even on battery), and it is
   the same browser the test loop uses. Tauri 2 stays an option for later; WKWebView is 0–25 % slower and needs a private

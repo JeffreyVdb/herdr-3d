@@ -38,8 +38,9 @@ func (h *Hub) lookupFloor(session string) (*floorState, error) {
 
 // lookupDir is the folder a hire's lookups are made in (off the hub
 // goroutine): cwd (already hireCwd's) for a plain hire; for a worktree hire
-// its repository root, the checkout the worktree is made from (runHire's
-// TopLevel: the same key the first prompt's translation reads).
+// its repository's main checkout, the one the worktree is made from
+// (runHire's MainCheckout: the same key the first prompt's translation
+// reads).
 func (h *Hub) lookupDir(ctx context.Context, cwd string, worktree bool) (string, error) {
 	if !worktree {
 		return cwd, nil
@@ -47,7 +48,7 @@ func (h *Hub) lookupDir(ctx context.Context, cwd string, worktree bool) (string,
 	if h.opts.Git == nil {
 		return "", errors.New("worktree hires are not configured")
 	}
-	root, err := h.opts.Git.TopLevel(ctx, cwd)
+	root, err := h.opts.Git.MainCheckout(ctx, cwd)
 	switch {
 	case errors.Is(err, gitops.ErrNotRepo):
 		return "", bad("worktree: %s is not in a git work tree", cwd)
