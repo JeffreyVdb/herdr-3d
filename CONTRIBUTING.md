@@ -41,7 +41,8 @@
   steps, fed the same lines), `activity` (#98: the pure rule classifier of tool calls and shell commands, and the opt-in model for the
   commands it can't place: normalise, scrub, cache, budget), `imgcache` (M16 phase 2:
   the bounded content-addressed image cache, memory LRU plus an optional 0600/0700 disk cache; the type sniff, the
-  thumbnails, the path allowlist; pure Go), `runs` (M6: write-code runs, the
+  thumbnails (#125: JPEG or PNG by the policy in `MakeThumb`, kept on disk per algorithm variant under `t/`), the path
+  allowlist; pure Go), `runs` (M6: write-code runs, the
   freelancers' reports in the runs directory, their links to their orchestrator and their desks next to it), `limits` (M10: the Claude and
   Codex plan limits, read by running the two CLIs as probes through a fake-able process runner), `logo` (M3d: PNG, WebP
   and restricted SVG in, one PNG of at most 1024 px out; pure Go, only the bridge uses it), `upload` (#51: one image

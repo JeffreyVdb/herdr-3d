@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JeffreyVdb/herdr-3d/internal/imgcache"
 	"github.com/JeffreyVdb/herdr-3d/internal/proto"
 	"github.com/JeffreyVdb/herdr-3d/internal/server"
 	"github.com/JeffreyVdb/herdr-3d/internal/whiteboard"
@@ -409,9 +410,13 @@ func TestDropsListAndFile(t *testing.T) {
 	if st != 200 || !bytes.Equal(body, img) || hd.Get("Content-Type") != "image/png" {
 		t.Fatalf("drop: %d %v", st, hd)
 	}
-	st, body, _ = b.req("GET", "/drops/file?thumb=1&path="+url.QueryEscape(p), "", nil)
+	st, body, hd = b.req("GET", "/drops/file?thumb=1&path="+url.QueryEscape(p), "", nil)
 	if cfg, _, err := image.DecodeConfig(bytes.NewReader(body)); st != 200 || err != nil || cfg.Width != 480 {
 		t.Fatalf("thumb: %d %v %+v", st, err, cfg)
+	}
+	// #125: the thumbnail's type is its own (a PNG's may be a JPEG), and the header says it.
+	if ct := hd.Get("Content-Type"); ct != imgcache.Sniff(body) {
+		t.Errorf("thumb served as %q, its bytes are %q", ct, imgcache.Sniff(body))
 	}
 	outside := filepath.Join(t.TempDir(), "x.png")
 	_ = os.WriteFile(outside, img, 0o600)
