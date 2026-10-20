@@ -58,6 +58,8 @@ function ownBuffers(p: Probe): string[] {
   for (const k of p.kits)
     for (const m of k.meshes) {
       if (!m.inOffice) continue;
+      // A mesh drawn has a render object to check (none would make this check vacuous).
+      if (m.visible && m.count > 0 && !m.bound.length) out.push(`${m.name}: drawn, but no render object of it was found`);
       for (const b of m.bound) if (!b.matrix || b.color === false) out.push(`${m.name}: its render state reads ${!b.matrix ? 'another matrix buffer' : 'another colour buffer'}`);
     }
   return out;
@@ -158,6 +160,8 @@ test('live changes on a floor entered again show as on a new page: arrivals, lea
   const mover = lab.find((w) => w.desk === 5) as { id: string };
   // The same changes, on the pooled page and on a new one: an arrival, a leaver, a desk change, a status change.
   const changes = async (p: Page) => {
+    // The walks they start (the leaver packing up and out, the hire walking in) play fast and end before comparing.
+    await p.evaluate(() => window.__h3d.arrivalRate(20));
     await p.evaluate(
       ({ leaver, mover }) => {
         const w = (id: string) => window.__h3d.worker(id) as NonNullable<ReturnType<Window['__h3d']['worker']>>;
@@ -167,6 +171,7 @@ test('live changes on a floor entered again show as on a new page: arrivals, lea
       },
       { leaver: leaver.id, mover: mover.id },
     );
+    await expect.poll(() => p.evaluate(() => window.__h3d.arrivals().length + window.__h3d.desks().filter((d) => d.away !== null).length), { timeout: 30_000 }).toBe(0);
     await frames(p, 8);
   };
   await changes(page);

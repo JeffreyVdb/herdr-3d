@@ -2153,7 +2153,7 @@ export class App {
       // office brought into the scene are in it.
       (this.r.info as { calls: number }).calls++;
       // It picks what to compile before its first await: the parts can go back as they were at once.
-      const done = this.r.compileAsync(this.walk.scene, this.planOpen ? this.planCam : this.fpCam);
+      const done = this.r.compileAsync(this.walk.scene, this.fpCam);
       for (const o of shown) o.visible = false;
       for (const o of culled) o.frustumCulled = true;
       await done;
@@ -2364,8 +2364,10 @@ export class App {
     o.dispose();
   }
 
-  /** Gives floor `storey` of the current building its interior (the one you are on or about to enter). */
-  /** `built`: its office, built already for this floor and view (#141: while the doors closed). */
+  /**
+   * Gives floor `storey` of the current building its interior (the one you are on or about to enter); `built`: its
+   * office, built already for this floor and view (#141: while the doors closed).
+   */
   private loadFloor(storey: number, view?: FloorView, built: OfficeView | null = null): void {
     const ctx = this.building;
     const f = ctx?.floors[storey];

@@ -562,6 +562,13 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
   per part, animation in code. Measured on M2 Max at 3024×1890 with shadows: **240 workers 1.2 ms/frame pipelined,
   600 workers 3.1 ms** (Chrome 153 WebGPU); 120 Hz budget is 8.33 ms. Skinned Kenney: 4.9 ms @240, 14 ms @600.
   Non-instanced meshes: 17–25 ms → **everything repeated must be instanced**.
+- **Floor entry** (#141): three r186 keys an instanced mesh's compiled state by its uuid, so the office's instanced parts
+  (crowd, desks, trays, cards, monitor cards, frozen screens, plants, rack LEDs, note boards) draw from kits of a
+  `FloorPool` that outlives the office (`render/floorPool.ts`): a new floor writes its instances into the same meshes,
+  and a floor that outgrows a kit gets a larger one. The office's two lamps are the same lights on every floor. An office
+  left is disposed after the next one drew a frame (the shaders they share stay), the building's outside is kept while
+  you are in the city, and a ride with no office loaded builds and compiles the new office behind the closed doors
+  (`decisions.md` "#141").
 - **Frame-rate policy**: 120 Hz while interacting, 30–60 Hz idle, paused when hidden, battery-saver toggle.
   Instancing + frame-rate policy dominate battery use (energy at 120 fps: rigid +26 vs skinned +67, `top` power).
 - **Shell**: Chrome `--app` window on the helper's localhost URL. Chrome runs 120 Hz natively (even on battery), and it is

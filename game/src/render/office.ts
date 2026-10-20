@@ -179,8 +179,6 @@ export class OfficeView {
   readonly serial = ++officeSerial;
   /** #141: where its instanced parts and lamps come from (null: its own). */
   readonly pool: FloorPool | null;
-  /** #141: what goes with the office when it is disposed (see `onDispose`). */
-  private readonly disposers: Array<() => void> = [];
   private disposed = false;
   readonly layout: FloorLayout;
   /** #58: the floor id. */
@@ -1006,17 +1004,10 @@ export class OfficeView {
     return !this.pool || this.pool.lamps.every((l) => l.parent === this.root);
   }
 
-  /** #141: `fn` runs when the office is disposed (at once if it is): things drawn in it that are not its own (the laptops' screens). */
-  onDispose(fn: () => void): void {
-    if (this.disposed) fn();
-    else this.disposers.push(fn);
-  }
-
-  /** #141: its pooled meshes and lamps stay (the next office draws with them); everything else goes. */
+  /** #141: its pooled meshes and lamps stay (the next office draws with them); everything else goes, once. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    for (const fn of this.disposers.splice(0)) fn();
     this.cards.dispose();
     this.mezz.dispose();
     this.crowd.dispose();

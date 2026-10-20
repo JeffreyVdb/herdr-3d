@@ -1761,6 +1761,14 @@ make e2e-extended             # on request: every functional spec below (the who
                               # {city,floor,clock,street}.png, m17-about-time.png. m17-shadow-acne.spec.ts (#86): ?lat=51 at 09:00-17:00,
                               # no vertical stripes (stripeScore) on the whiteboard, partition, sofa and the city's walls; floor shadows stay. m17-perf.spec.ts: perf-floor60
                               # at night against noon (H3D_M17_RUNS=<n> pairs, H3D_DIST=<build> for a baseline)
+                              # #141 floor entry on demo-m6 (h141-floor-entry.spec.ts, __h3d.floorPool): a floor entered
+                              # again (through the city, floor to floor, outgrowing the pool, asleep, shadows=0) draws
+                              # what it draws entered first on a new page, mesh by mesh and by screenshot, each pooled
+                              # mesh from its own buffers; live changes after a re-entry; ten rides A -> B -> A leave the
+                              # renderer's memory flat. h141-floor-entry-perf.spec.ts (@perf): perf-floor60 and demo-m3b's
+                              # floors entered and entered again (first frame, longest frame), and a new page's first
+                              # ride through the doors (the longest frame shut, the first frame opening);
+                              # test-results/h141-floor-{entry,ride}-perf[-<H3D_DIST>].json, H3D_141_RUNS=<n>
                               # #59 transcript presets on demo-m5 with sim=1 (m59-themes.spec.ts): the font files a
                               # fresh load fetches (Quiet's only; a stored preset's only), each transcript preset
                               # from its strip (computed fonts: mono vs prose; the limits widget; a box in tool
@@ -1849,6 +1857,8 @@ pipelined throughput, GPU timestamps, and rAF frames that include DOM layout. M3
 `window8` (out of a top-floor window), and `floor60-street`; `bench()` reports the `area` it ran in. M3c jobs:
 `floor60-mezz` (at the corner office's glass, looking down over 60 workers), `floor60-desk` (seated at your desk) and
 `floor96-desk` (seated over 96 workers who all need you: every card shows).
+#141 jobs: `floor60-entry` and `m3b-entry` time `enterFloor` to the next drawn frame, and the longest
+long-animation-frame after it, for each floor's first entry (cold) and the ones after (warm), left for the city between.
 M5 jobs, on `perf-floor60` with the simulator: `floor60-screens` (the overview with four live laptop screens),
 `floor60-screens0` (the same with `screens=0`) and `floor60-laptop` (seated at a laptop). On the server,
 `H3D_BENCH=1` with the m5-screen spec runs the same comparison on WebGL2 (relative numbers only).
@@ -1862,7 +1872,9 @@ close the first page before benching the baseline, so the two runs don't share t
 `window.__h3d` (tests, perf): `backend`, `frames`, `error`, `ready`, `view()`, `lookAt()` → `{kind, id, name?, label?}`
 or null, `status(workerId)` → `{status, at}` as last rendered, `world()` (shown `name`/`desk` plus what the bridge
 sent, `bridgeName`/`bridgeDesk`, null from an older bridge), `layout(session)`, `enterFloor(session, pose?)`,
-`leaveFloor()`, `inject(event)` (applies a protocol event as if the bridge sent it), `setPose({x, z, yaw, pitch})`,
+`leaveFloor()`, `floorPool({data?, t?, hold?, resume?})` (#141: the pool's meshes as drawn, with the instances in use
+and whether the renderer's state reads each mesh's own buffers, the lamps, the renderer's memory; `t`: after one frame at
+that time, `hold`: the loop paused on it until `resume`), `inject(event)` (applies a protocol event as if the bridge sent it), `setPose({x, z, yaw, pitch})`,
 `pose()`, `plan(open)`, `focusBuilding(i)`, `cards()`, `badgePoint(session)`, `bench(opts)`. M3d: `logos()` → `{fetches, cached, city: [{building, hash, lit}], lobby: {canopy, wall}}` (`showing` `'logo'` | `'name'` and the
 hash on each of the entrance sign and the reception wall; null outside a building). M3: `view().asleep`
 (the office's lights are off), `world()[].building` (its name, null in the lot), `openElevator(building?)` (a building
