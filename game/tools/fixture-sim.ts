@@ -329,7 +329,7 @@ export class SimWorld {
         workers: this.workers,
         hire: this.hire,
         emit: (send, m) => this.emit(send, m),
-        prepare: (session) => this.hirePrepare({ session }),
+        prepare: (session, preview) => this.hirePrepare(preview ? { session, preview } : { session }),
         hireWorker: (a, send, ack, fail) => this.hireWorker(a, send, ack, fail),
         error: (code, message) => new CmdError(code, message),
         workItem: (session, wi) => this.kaneo.resolveWorkItem(session, wi) ?? this.boards.resolveWorkItem(session, wi),
@@ -640,6 +640,7 @@ export class SimWorld {
     const workers = order.flatMap((s) => this.workers.filter((w) => w.session === s));
     const world: Obj = { buildings, unassigned, floors, workers };
     if (this.hireSent) world.hire_options = this.hire;
+    world.prepare_preview = true; // #134
     this.start6.decorate(world);
     this.boards.decorate(world as { workers?: Worker[] });
     this.limits.decorate(world);
@@ -1765,15 +1766,19 @@ export class SimWorld {
   }
 
   private hirePrepare(a: Obj): Obj {
-    onlyKeys(a, ['session', 'cwd']);
+    onlyKeys(a, ['session', 'cwd', 'preview']);
     const f = this.runningFloor(a);
     if (a.cwd !== undefined && (typeof a.cwd !== 'string' || !a.cwd.startsWith('/'))) throw bad('cwd must be an absolute path');
+    if (a.preview !== undefined && typeof a.preview !== 'boolean') throw bad('preview must be a bool');
     const cwd = (a.cwd as string | undefined) ?? this.defaultCwd(f);
+    // #134: a preview reads the local refs (never a fetch's failure).
+    const git = this.git(cwd, a.preview !== true);
+    if (git && a.preview === true) Object.assign(git, { fetched: false, preview: true });
     return {
       cwd,
       ...this.choice(f),
       label: this.nextName(f.session),
-      git: this.git(cwd, true),
+      git,
       capacity: { floor: this.floorCap(f), host: this.hostCap(), load: { load1: 2.36, cpus: 16, mem_used_pct: 41.4 } },
       // #95: the lines a worker.hire with herdr_instructions adds here (the sim's session is the floor id).
       ...(this.hirePresets.instructions ? { herdr_instructions: herdrInstructions(f.session) } : {}),

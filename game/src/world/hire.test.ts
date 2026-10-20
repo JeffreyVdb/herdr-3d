@@ -4,6 +4,8 @@ import {
   floorClosed,
   resolveHireDesk,
   ageText,
+  baseHint,
+  newerGit,
   baseText,
   capacityView,
   capLevel,
@@ -88,6 +90,40 @@ describe('capacity', () => {
 });
 
 describe('worktree base', () => {
+  it('#134: a preview: the last fetched base, a worktree still offered (the hire fetches first), never a fetch failure', () => {
+    const preview: HireGit = { ...git, fetched: false, preview: true };
+    expect(worktreeUsable(preview)).toBe(true);
+    expect(fetchNote(preview)).toBeNull();
+    expect(baseText(preview, NOW)).toBe('origin/main @ 1a2b3c4, 3 h old');
+    expect(baseHint(preview)).toBe('last fetched; refreshed before branching');
+    expect(baseHint(git)).toBeNull();
+    const f = formFromPrepare(prep({ git: preview }), H);
+    expect(f.worktree).toBe(true);
+    expect(hireArgs('s', 0, f, preview).worktree).toBe(true);
+    // No local origin refs yet: not known, not a failure, and the worktree stays on.
+    const unknown: HireGit = { ...preview, default_branch: '', base_sha: '', base_time: 0 };
+    expect(baseText(unknown, NOW)).toBe('origin/HEAD');
+    expect(baseHint(unknown)).toBe('not fetched into this checkout yet; checked before branching');
+    expect(fetchNote(unknown)).toBeNull();
+    expect(formFromPrepare(prep({ git: unknown }), H).worktree).toBe(true);
+    // A fetch that failed is still one.
+    expect(worktreeUsable({ ...git, fetched: false, fetch_error: 'offline' })).toBe(false);
+  });
+
+  it('#134: a preview of the same repository does not replace what a fetch said', () => {
+    const failed: HireGit = { ...git, fetched: false, fetch_error: 'offline' };
+    const preview: HireGit = { ...git, fetched: false, preview: true };
+    expect(newerGit(failed, preview)).toBe(failed);
+    expect(newerGit(git, preview)).toBe(git);
+    // Another repository, a fetch's answer, nothing before: the new answer.
+    const other: HireGit = { ...preview, repo_root: '/elsewhere' };
+    expect(newerGit(failed, other)).toBe(other);
+    expect(newerGit(preview, git)).toBe(git);
+    expect(newerGit(failed, null)).toBeNull();
+    expect(newerGit(null, preview)).toBe(preview);
+    expect(newerGit(undefined, preview)).toBe(preview);
+  });
+
   it('shows the SHA and its age', () => {
     expect(baseText(git, NOW)).toBe('origin/main @ 1a2b3c4, 3 h old');
     expect(ageText(NOW - 30_000, NOW)).toBe('just now');

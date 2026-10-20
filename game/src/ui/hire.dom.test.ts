@@ -48,7 +48,7 @@ function setup() {
     upload: () => new Promise((r) => (finishUpload = r)),
   } as unknown as HireHost;
   const dlg = new HireDialog(document.body, host);
-  return { dlg, goTos, toasts, kinds, inner: dlg as unknown as Inner, ack: (r: unknown) => ack(r), finishUpload: (r: unknown) => finishUpload(r) };
+  return { dlg, host, goTos, toasts, kinds, inner: dlg as unknown as Inner, ack: (r: unknown) => ack(r), finishUpload: (r: unknown) => finishUpload(r) };
 }
 
 describe('HireDialog: clearing after an acknowledged hire', () => {
@@ -67,6 +67,45 @@ describe('HireDialog: clearing after an acknowledged hire', () => {
   afterEach(() => {
     document.body.replaceChildren();
     vi.unstubAllGlobals();
+  });
+
+  it.each([true, false])('requests a local preview only when the bridge supports it (%s)', async (supported) => {
+    const { dlg, host } = setup();
+    host.store.preparePreview = supported;
+    const send = vi.spyOn(host, 'send');
+    dlg.open('floor', 0);
+    // The wait names origin only where the bridge fetches it.
+    expect(dlg.summary()?.status).toBe(supported ? 'Checking the floor and the folder…' : 'Checking the floor, the folder and origin…');
+    await tick();
+    expect(send).toHaveBeenCalledWith('hire.prepare', { floor: 'floor', ...(supported ? { preview: true } : {}) });
+    expect(dlg.summary()?.state).toBe('ready');
+    dlg.close();
+  });
+
+  it('still checks a failed fetch and lets Fetch again retry origin after opening a preview', async () => {
+    const { dlg, host, inner } = setup();
+    host.store.preparePreview = true;
+    const git = { repo_root: '/home/test', default_branch: 'main', base_sha: '1234567', base_time: 1, fetched: false };
+    const send = vi.spyOn(host, 'send')
+      .mockResolvedValueOnce({ ok: true, data: { ...prep, git: { ...git, preview: true } } })
+      .mockResolvedValueOnce({ ok: false, code: 'fetch_failed', message: 'offline' })
+      .mockResolvedValueOnce({ ok: true, data: { ...prep, git: { ...git, fetch_error: 'offline' } } })
+      .mockResolvedValueOnce({ ok: true, data: { ...prep, git: { ...git, fetched: true } } });
+    dlg.open('floor', 0);
+    await tick();
+    expect(dlg.summary()?.form.worktree).toBe(true);
+    await inner.hire();
+    await tick();
+    expect(dlg.summary()?.form.worktree).toBe(false);
+    document.querySelector<HTMLButtonElement>('[data-key="refetch"]')!.click();
+    await tick();
+    expect(send.mock.calls.filter(([t]) => t === 'hire.prepare').map(([, a]) => a)).toEqual([
+      { floor: 'floor', preview: true },
+      { floor: 'floor', cwd: '/home/test' },
+      { floor: 'floor', cwd: '/home/test' },
+    ]);
+    expect(dlg.summary()?.form.worktree).toBe(true);
+    dlg.close();
   });
 
   it('keeps a newer draft of the same desk: memory and storage (Esc during an upload, reopen with a first task, edit, then the old hire acks)', async () => {

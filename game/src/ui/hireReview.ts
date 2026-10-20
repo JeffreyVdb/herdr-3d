@@ -1,5 +1,5 @@
 import type { CommandArgs, HireGit, HireInterpretation, HirePrepare } from '../net/protocol';
-import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, offeredOptions, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
+import { capacityView, capBlocker, firstFreeDesk, formFromPrepare, hireArgs, hireBlocker, HARNESS_LABEL, modelsFor, newerGit, offeredOptions, optionsBlocker, promptBlocker, resolveHireDesk, worktreeUsable, type CapacityView, type HireForm } from '../world/hire';
 import {
   applyInterpretation,
   editTask,
@@ -298,7 +298,8 @@ export class HireReviewDialog {
     this.state = 'preparing';
     this.panelKeys.clear();
     this.showDraft(this.newDraft(this.choice.task));
-    this.setStatus('Checking the floor, the folder and origin…');
+    // #134: a preview does not fetch origin, so the wait does not name it.
+    this.setStatus(this.host.store.preparePreview ? 'Checking the floor and the folder…' : 'Checking the floor, the folder and origin…');
     this.render();
     if (!this.dialog.open) this.dialog.showModal();
     this.focusFirst();
@@ -363,7 +364,7 @@ export class HireReviewDialog {
 
   // ---- prepare -----------------------------------------------------------------------
 
-  private async prepare(cwd?: string): Promise<void> {
+  private async prepare(cwd?: string, fetch = false): Promise<void> {
     const gen = ++this.prepGen;
     const epoch = this.epoch;
     const folder = this.folderRev;
@@ -375,6 +376,7 @@ export class HireReviewDialog {
     }
     const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (cwd) args.cwd = cwd;
+    if (!fetch && this.host.store.preparePreview) args.preview = true;
     this.checking = !!cwd && !!this.prep;
     const r = await this.host.send('hire.prepare', args);
     // A newer prepare, a closed or reopened review, a hire sent meanwhile, a folder typed since: this answer is not for what is on screen.
@@ -410,7 +412,9 @@ export class HireReviewDialog {
   }
 
   /** A new git answer: no worktree after a failed fetch; restore the configured default once it can be made again. */
-  private adoptGit(g: HireGit | null): void {
+  private adoptGit(got: HireGit | null): void {
+    // #134: a preview of the same repository does not replace a fetch's answer (Fetch again, a recheck) shown already.
+    const g = newerGit(this.prep?.git, got);
     const was = this.prep ? worktreeUsable(this.prep.git) : false;
     if (this.prep) this.prep = { ...this.prep, git: g };
     if (!worktreeUsable(g)) this.f.worktree = false;
@@ -434,7 +438,7 @@ export class HireReviewDialog {
     const cwd = this.effectiveCwd();
     if (!cwd || (cwd === this.checked && !again)) return null;
     this.setStatus(again ? 'Fetching origin again…' : 'Checking the folder…');
-    return this.prepare(cwd);
+    return this.prepare(cwd, again);
   }
 
   private async refetch(): Promise<void> {
@@ -1110,6 +1114,18 @@ export class HireReviewDialog {
     }
     // Back to the review as it was: nothing was cleared, a new press is a new hire (never after an unknown outcome unasked).
     this.setStatus(o.kind === 'unknown' ? `${msg} Look at the desk before you hire again.` : msg, true);
+    this.render();
+    if (o.kind === 'failed' && o.code === 'fetch_failed') void this.recheck();
+  }
+
+  /** #134: after a fetch refusal (the review opened on a preview): origin as it is now; the refusal stays in the status. */
+  private async recheck(): Promise<void> {
+    const [gen, epoch, folder] = [this.prepGen, this.epoch, this.folderRev];
+    const r = await this.host.send('hire.prepare', { floor: this.floor, ...(this.checked ? { cwd: this.checked } : {}) });
+    if (!r.ok || !this.prep || !this.dialog.open || gen !== this.prepGen || epoch !== this.epoch || folder !== this.folderRev || this.state !== 'ready') return;
+    const p = r.data as HirePrepare;
+    this.adoptGit(p.git);
+    this.prep = { ...this.prep, capacity: p.capacity };
     this.render();
   }
 

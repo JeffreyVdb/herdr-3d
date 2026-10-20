@@ -73,7 +73,7 @@ function setup(over: Partial<Env> = {}, background = false) {
     now: () => Date.now(),
   } as unknown as HireHost;
   const rv = new HireReviewDialog(document.body, host);
-  return { rv, env, hires, prepares, toasts, reserved, goTos, prefs };
+  return { rv, host, env, hires, prepares, toasts, reserved, goTos, prefs };
 }
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel);
@@ -106,6 +106,41 @@ describe('HireReviewDialog', () => {
   afterEach(() => {
     document.body.replaceChildren();
     vi.unstubAllGlobals();
+  });
+
+  it.each([true, false])('requests a local preview only when the bridge supports it (%s)', async (supported) => {
+    const { rv, host } = setup();
+    host.store.preparePreview = supported;
+    const send = vi.spyOn(host, 'send');
+    rv.open('floor', FULL);
+    await tick();
+    expect(send).toHaveBeenCalledWith('hire.prepare', { floor: 'floor', ...(supported ? { preview: true } : {}) });
+    expect(rv.summary()?.state).toBe('ready');
+    rv.close();
+  });
+
+  it('#134: a fetch refusal after a preview fetches origin again: the worktree goes off and says why, the refusal stays', async () => {
+    const g = { repo_root: '/home/test', default_branch: 'main', base_sha: 'abcdef1234', base_time: Date.now(), fetched: false };
+    let down = false;
+    const { rv, host, hires } = setup({ prepare: async () => ({ ok: true, data: prep({ git: down ? { ...g, fetch_error: 'offline' } : { ...g, preview: true } }) }) as CommandResult });
+    host.store.preparePreview = true;
+    const send = vi.spyOn(host, 'send');
+    rv.open('floor', FULL);
+    await tick();
+    expect(rv.summary()?.form.worktree).toBe(true);
+    expect(rv.summary()?.git).toMatchObject({ usable: true, note: null, hint: 'last fetched; refreshed before branching' });
+    hireBtn().click();
+    await tick();
+    expect(hires[0]!.args.worktree).toBe(true);
+    down = true;
+    hires[0]!.answer({ ok: false, code: 'fetch_failed', message: 'git fetch origin failed: offline' } as CommandResult);
+    await tick();
+    await tick();
+    expect(send.mock.calls.filter(([t]) => t === 'hire.prepare').map(([, a]) => a)).toEqual([{ floor: 'floor', preview: true }, { floor: 'floor', cwd: '/home/test' }]);
+    expect(rv.summary()?.form.worktree).toBe(false);
+    expect(rv.summary()?.git).toMatchObject({ usable: false, hint: null, note: expect.stringContaining('git fetch origin failed: offline') });
+    expect(rv.summary()?.error).toBe(true);
+    rv.close();
   });
 
   describe('sections', () => {

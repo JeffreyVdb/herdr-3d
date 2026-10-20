@@ -26,8 +26,8 @@ export interface StartDeps {
   workers: Worker[];
   hire: HireOptions;
   emit(send: Send, m: Obj): void;
-  /** `hire.prepare`'s answer for a floor (throws like it: unknown, asleep, busy). */
-  prepare(session: string): Obj;
+  /** `hire.prepare`'s answer for a floor (throws like it: unknown, asleep, busy); #134 `preview`: local refs, no fetch. */
+  prepare(session: string, preview: boolean): Obj;
   /** `worker.hire` as the simulator runs it (validation throws; the ack or the failure comes later). */
   hireWorker(a: Obj, send: Send, ack: (d?: unknown) => void, fail: (e: unknown) => void): void;
   error(code: string, message: string): Error;
@@ -330,14 +330,15 @@ export class StartSim {
   }
 
   private prepare(a: Obj): Obj {
-    this.only(a, ['session', 'issue', 'text', 'work_item', 'preset', 'orch', 'extra']);
+    this.only(a, ['session', 'issue', 'text', 'work_item', 'preset', 'orch', 'extra', 'preview']);
+    if (a.preview !== undefined && typeof a.preview !== 'boolean') throw this.bad('preview must be a bool');
     const f = this.floorOf(a);
     const t = this.ticket(a, f, false);
     const p = a.preset === undefined || a.preset === '' ? this.defaultPreset(f) : this.preset(a.preset);
     // No preset at all: preset "", orch as asked (else null), no prompt.
     const orch = a.orch !== undefined && a.orch !== null ? this.hireOf(a.orch, 'orch') : (p?.roles.orch ?? null);
     const extra = this.extraOf(a);
-    const h = this.d.prepare(f.session);
+    const h = this.d.prepare(f.session, a.preview === true);
     return {
       prompt: t && p && orch ? ticketPrompt(orch, t, p.roles, f.session, extra) : '',
       label: t ? runLabel(t) : '',
