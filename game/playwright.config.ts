@@ -65,7 +65,7 @@ export default defineConfig({
     headless: true,
     viewport: { width: 1280, height: 720 },
     launchOptions: {
-      // No GPU on the server: WebGL2 through ANGLE -> Vulkan -> mesa (lavapipe/llvmpipe).
+      // WebGL2 through ANGLE -> Vulkan: use the host GPU, or Mesa's software Vulkan on CPU-only runners.
       args: ['--use-angle=vulkan', '--enable-features=Vulkan', '--ignore-gpu-blocklist'],
     },
   },

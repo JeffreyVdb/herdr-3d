@@ -7,6 +7,8 @@ import { boot, SURFACES } from './ui-surfaces';
 // its fake detector). The switch in Settings; a prompt with possible secrets opens the review of the whole prompt, where
 // one match is ignored, one corrected and one value marked by hand; Confirm sends the decisions and the bridge sends the
 // prompt with file references. Cancel sends nothing. Nothing of a protected value reaches localStorage or the command log.
+// The two pack-up hand-over cases use the same scripted model replies in process: their focus is the protected-file
+// hand-over and confirmation. Provider HTTP setup, timeout behavior and model-response parsing have separate coverage.
 
 const SIM = 'play=none&sim=1&simms=200&simusage=0';
 const TEXT = 'Deploy with TOKEN=ghp_abcdefghijklmnopqrstu1 and PASSWORD="hunt😀r2"; the password is s3cr3t!x. Note: hunt😀r2 again, the db user is admin42';
@@ -532,7 +534,7 @@ test('round 4: pack up reads the references (“Confirm and continue”); “Sen
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
-    await openGame(page, 'demo-m5', '', `${SIM}&simecho=200&simsecretson=1&simjev=${encodeURIComponent(jev.url)}`);
+    await openGame(page, 'demo-m5', '', `${SIM}&simecho=200&simsecretson=1&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
     const id = await sitAt(page, 'Pebble', 'transcript');
@@ -583,7 +585,7 @@ test('round 4: pack up’s “Send and go home”: the task (references) and the
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
-    await openGame(page, 'demo-m4', '', `${SIM}&simsecretson=1&simjev=${encodeURIComponent(jev.url)}`);
+    await openGame(page, 'demo-m4', '', `${SIM}&simsecretson=1&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
     await page.evaluate(() => window.__h3d.enterFloor('pastry'));

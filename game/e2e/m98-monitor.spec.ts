@@ -205,6 +205,9 @@ test('prefers-reduced-motion holds every mascot on its first frame; with motion 
   const run = async (reduced: boolean): Promise<number> => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, reducedMotion: reduced ? 'reduce' : 'no-preference' });
     const page = await ctx.newPage();
+    // Hold the elapsed counter and daylight fixed while rAF keeps driving the mascot shader. A perspective crop
+    // can include a few counter pixels; their clock must not look like reduced-motion animation.
+    await page.clock.setFixedTime(new Date('2026-10-20T12:00:00Z'));
     const clean = watchErrors(page);
     const w = await open(page);
     const nibble = w.Nibble as { id: string; desk: number };

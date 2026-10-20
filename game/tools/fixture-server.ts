@@ -34,6 +34,7 @@
 // #92: `simjev=<url>` is where the simulated bridge calls Jev (the e2e's fake), `simai=off` a bridge without the AI service, `simfail=no_ai` one before it
 // (tools/fixture-ai.ts). #90: `sim.turn {id, text}` ends a worker's turn with that message, and follow-up questions
 // run on it once switched on (tools/fixture-followup.ts).
+// `simmodel=packup|hiring` answers those feature model calls in process for UI cases; Settings still uses HTTP.
 // #110: `sim.packup_lag {ms}` holds each later `packup.detect` ack that long after its answer (tools/fixture-packup.ts).
 // #106: `inbox.dismiss` records a done episode's dismissal, `sim.status {id, status}` moves a worker's status, `simfail=no_inbox` plays a
 // bridge before it (tools/fixture-inbox.ts).
@@ -229,6 +230,7 @@ export function fixtureUpgradeHandler(o: FixtureOptions = {}) {
             // #92: AI integration: Jev's address (the e2e's fake) and a bridge without the service.
             ...(q.get('simjev') ? { jev: q.get('simjev') as string } : {}),
             ...(q.get('simai') === 'off' ? { ai: 'off' as const } : {}),
+            ...(q.get('simmodel') === 'packup' || q.get('simmodel') === 'hiring' ? { modelFixture: q.get('simmodel') as 'packup' | 'hiring' } : {}),
             // #51: a long model list in the hire dialog.
             ...(q.get('simmodels') ? { models: Math.min(200, Math.max(0, Number(q.get('simmodels')) || 0)) } : {}),
             ...(q.get('simcrew') !== null ? { crewMs: Math.max(0, Number(q.get('simcrew')) || 0) } : {}),

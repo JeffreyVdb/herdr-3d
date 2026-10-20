@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
+import { expectCommandDone, frames, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // M6 start on demo-m4 with the simulating fixture server (tools/fixture-sim.ts,
 // tools/fixture-start.ts): herdr-3d (top floor of Work, repo JeffreyVdb/herdr-3d
@@ -129,7 +129,7 @@ test('E on an empty desk: Hire orchestrator from the keyboard, an issue number, 
   await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'run.start').map((c) => c.args)).toEqual([
     { floor: 'herdr-3d', desk_index: 5, issue: 7, orch: { harness: 'claude', model: 'claude-opus-5-5', effort: 'medium' }, preset: 'p_5eedb0000001', worktree: true },
   ]);
-  await expect.poll(() => dialog(page), { timeout: 15_000 }).toBeNull();
+  await expectCommandDone(page, 'run.start');
   await expect(page.locator('.toast')).toHaveText(/^Started a run on #7: Gumdrop takes Desk 6\. Here they come\.$/);
   const run = (await sent(page)).find((c) => c.t === 'run.start');
   const ack = (run?.result as { data?: { id: string; prompt: string; launch_id: string } } | undefined)?.data;
@@ -239,7 +239,7 @@ test('an edited prompt survives field changes, is sent as is, and can be reset',
   await expect.poll(async () => (await sent(page)).filter((c) => c.t === 'run.start').map((c) => (c.args as { prompt?: string }).prompt)).toEqual([
     '/write-code https://github.com/JeffreyVdb/herdr-3d/issues/7\n\nOnly the docs, please.',
   ]);
-  await expect.poll(() => dialog(page), { timeout: 15_000 }).toBeNull();
+  await expectCommandDone(page, 'run.start');
   const ack = (await sent(page)).find((c) => c.t === 'run.start')?.result as { data?: { prompt: string } } | undefined;
   expect(ack?.data?.prompt).toBe('/write-code https://github.com/JeffreyVdb/herdr-3d/issues/7\n\nOnly the docs, please.');
   clean();

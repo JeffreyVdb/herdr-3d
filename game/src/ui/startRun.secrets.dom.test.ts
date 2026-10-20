@@ -15,9 +15,14 @@ const PRESET: Preset = { id: 'p_000000000001', name: 'Team', roles: { orch: role
 const TICKET = 'Rotate the deploy credential, the old one is TOKEN=ghp_abcdefghijklmnopqrstu1';
 const EXTRA = 'Use PASSWORD=hunter22 for the staging database.';
 
+function cleanup() {
+  for (const dialog of document.querySelectorAll<HTMLDialogElement>('dialog[open]')) dialog.close();
+  document.body.replaceChildren();
+}
+
 /** `starts`: `run.start`'s answers in turn (then started); a promise is an answer still on its way. */
 function setup(o: { on?: boolean; starts?: Array<CommandResult | Promise<CommandResult>> } = {}) {
-  document.body.replaceChildren();
+  cleanup();
   const b = secretsBridge({ on: o.on ?? true });
   const refusals = [...(o.starts ?? [])];
   const sent: Array<{ t: string; args: Record<string, unknown> }> = [];
@@ -68,18 +73,20 @@ async function opened(t: ReturnType<typeof setup>, ticket: string, extra = '') {
     document.getSelection()?.setBaseAndExtent(node, extra.length, node, extra.length);
     ed.dispatchEvent(new Event('input', { bubbles: true }));
   }
-  await new Promise((r) => setTimeout(r, 400)); // the preview's run.prepare
+  await vi.advanceTimersByTimeAsync(400); // the preview's run.prepare
   await flush();
 }
 
 describe('StartRunDialog and prompt secrets (#108 round 4)', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     installDialogs();
     vi.stubGlobal('CSS', { escape: (s: string) => s });
   });
   afterEach(() => {
-    document.body.replaceChildren();
+    cleanup();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('the ticket and the extra instructions, each reviewed in turn (its name in the title); run.start carries both, keyed', async () => {
@@ -215,7 +222,7 @@ describe('StartRunDialog and prompt secrets (#108 round 4)', () => {
     const ta = document.querySelector<HTMLTextAreaElement>('#run-ticket')!;
     ta.value = TICKET;
     ta.dispatchEvent(new Event('input'));
-    await new Promise((r) => setTimeout(r, 400));
+    await vi.advanceTimersByTimeAsync(400);
     await flush();
     t.start();
     await flush();
@@ -248,7 +255,7 @@ describe('StartRunDialog and prompt secrets (#108 round 4)', () => {
     const ta = document.querySelector<HTMLTextAreaElement>('#run-ticket')!;
     ta.value = TICKET;
     ta.dispatchEvent(new Event('input'));
-    await new Promise((r) => setTimeout(r, 400));
+    await vi.advanceTimersByTimeAsync(400);
     await flush();
     const release = t.b.holdScans();
     t.start();

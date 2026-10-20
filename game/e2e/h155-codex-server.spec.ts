@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import type { Worker } from '../src/net/protocol';
-import { frames, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
+import { expectCommandDone, frames, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // #155: the Settings window's “Codex workers” switch against the fixture bridge (`sim=1`,
 // tools/fixture-codex-server.ts): off by default, switched on and off through codex_server.set, and disabled with
@@ -157,7 +157,7 @@ test(fb.name, async ({ page }) => {
   await page.locator('#hire-task').focus();
   await page.keyboard.type('Label the loaves');
   await page.keyboard.press('Enter');
-  await expect.poll(() => page.evaluate(() => window.__h3d.dialog())).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   const toast = page.locator('.toast');
   await expect(toast).toHaveText(fb.text);
   await expect(toast).toHaveAttribute('data-kind', 'warn');

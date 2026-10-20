@@ -10,6 +10,7 @@
 // - `simai=off` plays a bridge without the service: `ai.*` is `unsupported`; `simfail=no_ai` a bridge before #92.
 //
 // Plain erasable TypeScript: node runs it directly (tools/fixture-server.ts).
+import { fixtureModelResponse, type FixtureModel } from './fixture-ai-responses.ts';
 
 type Obj = Record<string, unknown>;
 type Send = (m: Obj) => void;
@@ -50,17 +51,20 @@ export class AiSim {
   private readonly mode: 'on' | 'off' | 'old';
   private readonly emit: (send: Send, m: Obj) => void;
   private readonly error: (code: string, message: string) => Error;
+  private readonly modelFixture: FixtureModel | undefined;
 
   constructor(
     jev: string,
     mode: 'on' | 'off' | 'old',
     emit: (send: Send, m: Obj) => void,
     error: (code: string, message: string) => Error,
+    modelFixture?: FixtureModel,
   ) {
     this.jev = jev;
     this.mode = mode;
     this.emit = emit;
     this.error = error;
+    this.modelFixture = modelFixture;
   }
 
   private conv(e: unknown): unknown {
@@ -125,6 +129,8 @@ export class AiSim {
   }
 
   private async call(method: string, url: string, key: string, body?: unknown): Promise<{ status: number; json: unknown }> {
+    const fixture = this.modelFixture && fixtureModelResponse(this.modelFixture, method, url, body);
+    if (fixture) return fixture;
     let res: Response;
     try {
       res = await fetch(url, {

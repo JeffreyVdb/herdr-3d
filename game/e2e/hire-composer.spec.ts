@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { frames, openGame, RESULTS, watchErrors } from './game';
+import { expectCommandDone, frames, openGame, RESULTS, watchErrors } from './game';
 
 // #51 part 3: the shared composer inside the real hire dialog (built game, fixture server with sim=1 and the fixture
 // POST /upload). Paste is a real ClipboardEvent carrying PNG Files, typing and keys are real keyboard input.
@@ -211,7 +211,7 @@ test('hire with two pasted images sends both markers in document order, with the
   const args = (await hires(page))[0]!.args as { prompt: string };
   // second.png was the second upload (n=2), first.png the first (n=1); in the text second comes first and is #1.
   expect(args.prompt).toMatch(/^a\[Image #1: \/home\/fixture\/drops\/2026-09\/h3d-[a-z0-9-]+-2\.png\]aa bbb ccc\[Image #2: \/home\/fixture\/drops\/2026-09\/h3d-[a-z0-9-]+-1\.png\]$/);
-  await expect.poll(() => dialog(page)).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   clean();
 });
 
@@ -269,8 +269,7 @@ test('a failed upload blocks the hire, keeps the prompt and shows a retry; then 
   expect(prompt).toMatch(/^look at this: \[Image #1: [^\]]+\]\[Image #2: [^\]]+\] thanks$/);
   const log = (await page.evaluate(async (k) => (await fetch(`/upload/_log?upload_key=${k}`)).json(), key)).data as Array<{ result: string; n: number }>;
   expect(log.map((e) => e.result)).toEqual(['dropzone_unavailable', 'ok', 'ok']);
-  // #43: the simulated hire ack runs on game time, which lags wall time under a loaded llvmpipe; 5 s is too short.
-  await expect.poll(() => dialog(page), { timeout: 20_000 }).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   clean();
 });
 
@@ -327,7 +326,7 @@ test('the desk keeps its draft, images too, across close and reopen and other de
   // Hire from the first desk: acknowledged, the draft goes (memory and storage).
   await openHire(page, one);
   await editor(page).press('Enter');
-  await expect.poll(() => dialog(page)).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   expect(await hires(page)).toHaveLength(1);
   await expect.poll(() => stored(page, one)).toBeNull();
   // (Desk `one` has its worker now, so its dialog cannot reopen to show the empty draft: the store is the check.)

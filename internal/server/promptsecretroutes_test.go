@@ -729,10 +729,12 @@ func TestPromptSecretsPreviewExpires(t *testing.T) {
 	if res.SecretsPending == "" || res.Protected != 2 {
 		t.Fatalf("ack %+v", res)
 	}
-	waitFor(t, "the unclaimed files to expire", func() bool { return len(protectedFiles(t, dir)) == 0 })
-	if rows, _ := hb.st.SecretOwners(context.Background()); len(rows) != 0 {
-		t.Fatalf("owners %+v", rows)
-	}
+	// The janitor unlinks files before deleting their owner rows. Observe
+	// both parts of the cleanup before asserting that the preview is gone.
+	waitFor(t, "the unclaimed files and owners to expire", func() bool {
+		rows, err := hb.st.SecretOwners(context.Background())
+		return err == nil && len(rows) == 0 && len(protectedFiles(t, dir)) == 0
+	})
 	_, m := hb.c.command(proto.CmdWorkerPrompt, "p", proto.WorkerPromptArgs{ID: ids["w1"], Text: res.Task, SecretsPending: res.SecretsPending})
 	if code := codeOf(m); code != proto.ErrSecretsReviewStale || len(term.Calls()) != 0 {
 		t.Fatalf("expired hand-over: %s", m.raw)
@@ -1010,10 +1012,10 @@ func TestPromptSecretsHireSwitchWhileHiring(t *testing.T) {
 			t.Fatalf("prompted: %q", call)
 		}
 	}
-	waitFor(t, "the files to go", func() bool { return len(protectedFiles(t, dir)) == 0 })
-	if rows, _ := hb.st.SecretOwners(context.Background()); len(rows) != 0 {
-		t.Fatalf("owners %+v", rows)
-	}
+	waitFor(t, "the files and owners to go", func() bool {
+		rows, err := hb.st.SecretOwners(context.Background())
+		return err == nil && len(rows) == 0 && len(protectedFiles(t, dir)) == 0
+	})
 	traceFree(t, hb.st, hb.db, []*client{hb.c}, routeSentinel)
 }
 

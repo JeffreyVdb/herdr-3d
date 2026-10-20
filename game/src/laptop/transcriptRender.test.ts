@@ -7,7 +7,7 @@ import { Draft as PromptDraft } from '../ui/composer/draft';
 import { WORKER_PROMPT_MAX_BYTES } from '../ui/composer/model';
 import { ViewPrefs } from '../ui/themePrefs';
 import { SendGate } from './transcriptDrafts';
-import { COLLAB_ENCRYPTED, duration, loadHighlighter, mountTranscript, parseHunk, renderMarkdown, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
+import { backfill, COLLAB_ENCRYPTED, duration, loadHighlighter, mountTranscript, parseHunk, renderMarkdown, stripAnsi, type BlockedQuestion, type TranscriptRenderHost, type TranscriptView } from './transcriptRender';
 
 interface FakeHost extends TranscriptRenderHost {
   prompts: string[];
@@ -52,6 +52,7 @@ const text = (t: string) => ({ text: t });
 let container: HTMLDivElement;
 let host: FakeHost;
 let view: TranscriptView;
+const savedNow = backfill.now;
 
 function mount(h: FakeHost = fakeHost()): TranscriptView {
   host = h;
@@ -101,6 +102,8 @@ function layout(el: HTMLElement, content: number | (() => number), client = 400)
 }
 
 beforeEach(() => {
+  // Small timeline assertions are synchronous here; transcriptOpen.dom.test.ts covers rendering budgets and yielding.
+  backfill.now = () => 0;
   seq = 0;
   container = document.createElement('div');
   document.body.append(container);
@@ -109,6 +112,7 @@ afterEach(() => {
   view?.destroy();
   container.remove();
   delete (window as unknown as Record<string, unknown>).__pwned;
+  backfill.now = savedNow;
 });
 
 describe('untrusted text renders inert (marked + DOMPurify)', () => {

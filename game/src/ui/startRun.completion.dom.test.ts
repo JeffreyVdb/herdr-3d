@@ -72,7 +72,7 @@ function setup() {
   return { dlg, asks, of: (t: string) => asks.filter((a) => a.t === t) };
 }
 
-const flush = () => new Promise((r) => setTimeout(r, 0));
+const flush = () => vi.advanceTimersByTimeAsync(0);
 const editor = (id: string) => document.querySelector<HTMLElement>(`#${id}`)!;
 const status = () => {
   const s = [...document.querySelectorAll<HTMLElement>('.desk-dlg--run .cmp-pop-status')].find((e) => !e.hidden && !e.closest('.cmp-pop')?.hasAttribute('hidden'));
@@ -95,6 +95,7 @@ function type(id: string, s: string): void {
 const press = (id: string, k: string, mod = false) => editor(id).dispatchEvent(new KeyboardEvent('keydown', { key: k, ctrlKey: mod, bubbles: true, cancelable: true }));
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   HTMLDialogElement.prototype.showModal = function () {
     this.setAttribute('open', '');
   };
@@ -105,6 +106,7 @@ beforeEach(() => {
   vi.stubGlobal('CSS', { escape: (s: string) => s });
 });
 afterEach(() => {
+  for (const dialog of document.querySelectorAll<HTMLDialogElement>('dialog[open]')) dialog.close();
   document.body.replaceChildren();
   vi.unstubAllGlobals();
   vi.useRealTimers();
@@ -112,7 +114,6 @@ afterEach(() => {
 
 describe('Start run: completion in Extra instructions and the First prompt (#39)', () => {
   it('a Kaneo task: @r: in Extra puts a repository’s folder in, the preview and run.start carry it', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { dlg, of } = setup();
     dlg.open({ floor: 'floor', desk: 0, workItem: ITEM });
     await vi.runAllTimersAsync();
@@ -126,7 +127,6 @@ describe('Start run: completion in Extra instructions and the First prompt (#39)
     const prepares = of('run.prepare');
     expect(prepares.at(-1)!.args).toMatchObject({ floor: 'floor', work_item: { provider: 'kaneo', id: 't1' }, extra: 'Please use /src/api ' });
     expect(text('run-prompt')).toContain('Please use /src/api');
-    vi.useRealTimers();
     press('run-extra', 'Enter', true);
     await flush();
     await flush();
@@ -157,7 +157,7 @@ describe('Start run: completion in Extra instructions and the First prompt (#39)
     const { dlg, of } = setup();
     dlg.open({ floor: 'floor', desk: 0, workItem: ITEM });
     await flush();
-    await new Promise((r) => setTimeout(r, 300));
+    await vi.advanceTimersByTimeAsync(300);
     type('run-prompt', ' @r:');
     expect(of('hire.repos')).toHaveLength(1);
   });

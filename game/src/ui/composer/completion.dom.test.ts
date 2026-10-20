@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CommandResult } from '../../net/client';
 import type { Source } from './complete';
 import { mountComposer, type Composer, type ComposerOptions } from './composer';
@@ -120,6 +120,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   for (const c of mounted.splice(0)) c.dispose();
+  vi.useRealTimers();
 });
 
 describe('opt-in', () => {
@@ -388,24 +389,24 @@ describe('closing', () => {
     expect(env.submits).toBe(1);
   });
 
-  it('text typed out of view gets a frame for the browser to scroll the caret back, then closes if it did not', async () => {
+  it('text typed out of view gets a frame for the browser to scroll the caret back, then closes if it did not', () => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame'] });
     const env = setup({ complete: { sources: [slash()] } });
     let scroll = 200;
     Object.defineProperty(env.editor, 'clientHeight', { configurable: true, value: 60 });
     Object.defineProperty(env.editor, 'clientWidth', { configurable: true, value: 300 });
     Object.defineProperty(env.editor, 'scrollTop', { configurable: true, get: () => scroll, set: (v: number) => (scroll = v) });
     env.editor.getBoundingClientRect = () => new DOMRect(0, 100, 300, 60);
-    const frame = () => new Promise((r) => setTimeout(r, 40));
     type(env, '/he');
     expect(open(env)).toBe(true);
     // The browser reveals the caret: it stays.
     scroll = 0;
-    await frame();
+    vi.advanceTimersToNextFrame();
     expect(open(env)).toBe(true);
     // It does not: closed.
     scroll = 200;
     type(env, 'l');
-    await frame();
+    vi.advanceTimersToNextFrame();
     expect(open(env)).toBe(false);
   });
 

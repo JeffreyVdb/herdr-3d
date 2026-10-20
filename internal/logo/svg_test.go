@@ -364,26 +364,40 @@ func TestSVGCostBounds(t *testing.T) {
 			t.Fatalf("one shape: %v", err)
 		}
 	})
-	// The heaviest documents of these kinds that the limits let through, drawn
-	// well inside the worker's deadline and the drawing budget.
+	// Keep the acceptance checks under parallel load; measure throughput with
+	// BenchmarkSVGWorstAccepted instead of asserting a machine's wall time.
+	for name, doc := range worstAcceptedSVGs() {
+		t.Run("worst accepted: "+name, func(t *testing.T) {
+			if err := renderWithin(t, doc, 5*time.Second); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func worstAcceptedSVGs() map[string]string {
+	vb100 := func(body string) string { return svgHead + `viewBox="0 0 100 100">` + body + `</svg>` }
 	curves := func(vb, coord string) string {
 		return svgHead + `viewBox="` + vb + `"><path d="M0 0 ` + strings.Repeat(fmt.Sprintf("C%s 0 0 %s %s %s C0 %s %s 0 0 0 ", coord, coord, coord, coord, coord, coord), 2000) +
 			`" fill="red" stroke="blue" stroke-width="1" stroke-linejoin="round" stroke-linecap="round"/></svg>`
 	}
-	worst := map[string]string{
+	return map[string]string{
 		"4000 curves each spanning the canvas, round strokes": curves("0 0 10 10", "10"),
 		"4000 curves reaching 3x past the canvas":             curves("0 0 10 10", "30"),
 		"the same at scale 1000":                              svgHead + `viewBox="0 0 10 10"><g transform="scale(1000)"><path d="M0 0 ` + strings.Repeat("C.0156 0 0 .0156 .0156 .0156 C0 .0156 .0156 0 0 0 ", 900) + `" fill="red" stroke="blue" stroke-width="0.001" stroke-linejoin="round"/></g></svg>`,
 		"8000 zigzag lines across the canvas":                 vb100(`<path d="M0 0 ` + strings.Repeat("L100 100 L0 100 L100 0 ", 2700) + `" fill="red" stroke="blue" stroke-width="20" stroke-linejoin="round"/>`),
 	}
-	for name, doc := range worst {
-		t.Run("worst accepted: "+name, func(t *testing.T) {
-			t0 := time.Now()
-			if err := renderWithin(t, doc, 5*time.Second); err != nil {
-				t.Fatal(err)
-			}
-			if d := time.Since(t0); d > 2*time.Second {
-				t.Fatalf("took %v", d)
+}
+
+func BenchmarkSVGWorstAccepted(b *testing.B) {
+	for name, doc := range worstAcceptedSVGs() {
+		b.Run(name, func(b *testing.B) {
+			src := []byte(doc)
+			b.ResetTimer()
+			for b.Loop() {
+				if _, err := normalizeInProcess(src); err != nil {
+					b.Fatal(err)
+				}
 			}
 		})
 	}

@@ -24,7 +24,7 @@ async function packupDialog(page: Page): Promise<Home> {
   return (await home(page)) as Home;
 }
 
-test('Settings: the switch is off until a test passed, beside the follow-up questions, in a wider dialog', async ({ page }) => {
+test('Settings: the switch is off until a test passed, after the follow-up questions, in a wider dialog', async ({ page }) => {
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
@@ -37,12 +37,12 @@ test('Settings: the switch is off until a test passed, beside the follow-up ques
     const section = await settingsSection(page, 'packup');
     await expect(section.getByRole('heading', { name: 'Pack up on request', level: 3 })).toBeVisible();
     await expect(section.locator('.settings-store')).toHaveText('Bridge');
-    // Right after the follow-up questions.
+    // The request classifiers follow the follow-up questions; other classifiers can sit between them.
     expect(await dialog.locator('section.settings-section').evaluateAll((s) => s.map((x) => (x as HTMLElement).dataset.section))).toEqual(
       expect.arrayContaining(['followups', 'packup']),
     );
     const order = await dialog.locator('section.settings-section').evaluateAll((s) => s.map((x) => (x as HTMLElement).dataset.section));
-    expect(order.indexOf('packup')).toBe(order.indexOf('followups') + 1);
+    expect(order.indexOf('packup')).toBeGreaterThan(order.indexOf('followups'));
     const toggle = section.getByRole('checkbox', { name: 'Pack up on request' });
     await expect(toggle).not.toBeChecked();
     await expect(toggle).toBeDisabled();
@@ -208,8 +208,8 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     expect(await page.evaluate(() => window.__h3d.seated())).toBe(id);
     expect(await page.evaluate(() => window.__h3d.seat().note)).toBe('Not sent: the prompt is still in the box.');
 
-    // A model too slow: the bridge gives up after 1.2 s, its no match comes within the game's 1.5 s, and the prompt goes
-    // as written (fail open).
+    // A model too slow: the bridge gives up after 1.2 s, and the prompt goes as written. Under rendering load the
+    // game's 1.5 s bound can win before that no-match reply is dispatched: both outcomes must fail open once.
     const lastDetect = async () => (await sent(page, 'packup.detect')).at(-1)?.result;
     let t0 = Date.now();
     await input.click();
@@ -217,7 +217,9 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     await expect.poll(prompts, { timeout: 6000 }).toContain('SLOW: make a PR and end your turn');
     expect(Date.now() - t0).toBeLessThan(4500);
     expect(await home(page)).toBeNull();
-    expect(await lastDetect()).toMatchObject({ ok: true, data: { matched: false } });
+    const detected = await lastDetect();
+    expect(detected).toMatchObject(detected?.ok ? { ok: true, data: { matched: false } } : { ok: false, code: 'timeout' });
+    expect((await prompts()).filter((p) => p === 'SLOW: make a PR and end your turn')).toHaveLength(1);
 
     // The game's own bound: an answer held 4 s on the way (a slow link, a busy bridge) is too late. 1.5 s after Send the
     // prompt goes as written, for a slow model's no match and for a match alike, and the late match opens nothing.

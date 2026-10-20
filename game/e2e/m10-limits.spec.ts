@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PNG } from 'pngjs';
-import { frames, leftInTerminal, openGame, shot, watchErrors, openMenu, settingsSection } from './game';
+import { frames, leftInTerminal, openGame, seatMode, shot, watchErrors, openMenu, settingsSection } from './game';
 
 // M10 (#12) on demo-m4 and the simulating fixture server (tools/fixture-limits.ts): the always-on plan limits widget in the
 // city, on a floor, over an overlay; its colours, panel, staleness, refresh and switch-off; and the limits inside the
@@ -358,7 +358,7 @@ test('at 390x640 an open panel folds away while a dialog is open, and comes back
   await expect(limits(page)).toHaveAttribute('data-folded', 'true');
   // The dialog carries the chosen harness's limits itself, and its controls are all reachable.
   await expect(page.locator('[data-hook="plan-limits"] .lm-line')).toHaveCount(1);
-  for (const sel of ['[data-key="task"]', '[data-key="close"]', '[data-key="hire"]']) await expect(page.locator(sel)).toBeInViewport();
+  for (const sel of ['[data-key="task"]', '[data-key="close"]', '[data-key="hire"]']) await expect(page.locator('dialog.desk-dlg--hire').locator(sel)).toBeInViewport();
   await shot(page, 'm10-narrow-hire');
   // Shift+L does not flip a hidden panel behind the dialog.
   await page.keyboard.press('Shift+L');
@@ -987,9 +987,7 @@ test('seated on a narrow viewport the glass leaves no gutter: the widget is away
   await sitAtLaptop(page);
   await expect(limits(page)).toHaveAttribute('data-dock', 'away');
   await expect(limits(page)).toBeHidden();
-  await page.keyboard.press('Control+Escape');
-  await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mode)).toBe('transcript');
-  await frames(page, 10);
+  await seatMode(page, 'transcript');
   await page.keyboard.press('Shift+L');
   await expect(limits(page)).toHaveAttribute('data-peek', 'true');
   await expect(page.locator('.lm-panel')).toBeVisible();

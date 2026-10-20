@@ -164,7 +164,7 @@ test('a bridge before host.watch shows the calm idle screen, never an error', as
   const r = await rack(page);
   expect(r?.rack?.lines).toEqual(['No host stats on this bridge']);
   await expect(page.locator('.prompt')).toContainText('No host stats on this bridge');
-  await expect(page.locator('.toast:not([hidden])')).not.toContainText(/host|rack|unknown/i); // no error toast about it
+  await expect(page.locator('.toast:not([hidden])').filter({ hasText: /host|rack|unknown/i })).toHaveCount(0);
   await page.waitForTimeout(2000);
   expect(await sent(page)).toEqual(['host.watch']); // asked once, never again
   await shot(page, 'h74-rack-old-bridge');

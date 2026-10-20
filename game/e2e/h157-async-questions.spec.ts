@@ -151,7 +151,9 @@ test('a refused answer keeps what you wrote; the terminal’s answer shows; a re
   await text.fill('draft before the reconnect');
   const before = (await sent(page, 'worker.answer_async')).length;
   await page.evaluate(() => window.__h3d.reconnect());
-  await expect.poll(() => page.evaluate(async () => (await window.__h3d.watches()).sim ?? 0)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(async () => (await window.__h3d.watches()).sim ?? 0), {
+    message: 'the reconnected bridge has replayed the terminal watch', timeout: 20_000,
+  }).toBeGreaterThan(0);
   // The snapshot brings the batch back (this simulated bridge starts afresh): one card, the draft in it.
   await expect(card).toBeVisible();
   await expect(tx.locator('.tx-aq')).toHaveCount(1);

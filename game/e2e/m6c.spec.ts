@@ -224,8 +224,9 @@ test('two reviewers finishing together queue: the second waits at its desk, hold
   expect(Math.max(...samples.map((s) => s.count))).toBe(1);
   const ids = [...new Set(samples.map((s) => s.id))];
   expect(ids).toHaveLength(2);
-  // (The first was already on its feet when sampling began.)
-  expect(phases(samples, ids[0])).toEqual(['walk', 'hand', 'walk', 'sit']);
+  // Sampling may begin while the first stands up or after it starts walking.
+  const first = phases(samples, ids[0]);
+  expect(first[0] === 'stand' ? first.slice(1) : first).toEqual(['walk', 'hand', 'walk', 'sit']);
   expect(phases(samples, ids[1])).toEqual(['stand', 'walk', 'hand', 'walk', 'sit']);
   // The second only stood up after the first sat down.
   const firstEnd = samples.findLast((s) => s.id === ids[0])!.t;

@@ -2,16 +2,16 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { expect, test, type Page } from '@playwright/test';
 import { herdrInstructions } from '../tools/fixture-start.ts';
+import { hiringScore } from '../tools/fixture-ai-responses.ts';
 import { askFits, frames, openGame, openMenu, settingsSection, shot, watchErrors } from './game';
 
 // #127 on demo-m3 with the simulator (tools/fixture-schedule.ts): the schedule form has "Add herdr hiring instructions"
 // (off), and with it off Save asks "Schedule with instructions" / "Schedule without" when the classifier says the
-// prompt starts other agents. The classifier is the bridge's own (`hire_preset.check` → tools/fixture-ai.ts), reading a
-// fake Jev started here that says yes to a prompt that starts an agent. Run now fires it: the simulator's hire adds the
-// floor's lines last.
+// prompt starts other agents. Settings uses the fake Jev started here; the UI's `hire_preset.check` parses the same
+// model response in process so provider latency cannot choose the fail-open path. The real classification threshold
+// and the question still run. Run now fires it: the simulator's hire adds the floor's lines last.
 
 const JEV_KEY = 'jev-test-key-0123456789';
-const STARTS = /\bstart\b.*\bagent\b/i;
 const TASK = 'Roll the upgrade out: start an agent for each service, and recreate a worker’s workspace to resume it when one stops.';
 const PLAIN = 'Tidy up the README and fix the typos.';
 
@@ -30,7 +30,7 @@ function fakeJev(): Promise<{ url: string; close(): Promise<void> }> {
     req.on('data', (c) => (body += c));
     req.on('end', () => {
       const prompt = (JSON.parse(body) as { state?: { prompt?: string } }).state?.prompt ?? '';
-      res.end(JSON.stringify({ answers: { question: { noul: STARTS.test(prompt) ? 0.97 : 0.03 } } }));
+      res.end(JSON.stringify({ answers: { question: { noul: hiringScore(prompt) } } }));
     });
   });
   return new Promise((done) =>
@@ -43,7 +43,7 @@ function fakeJev(): Promise<{ url: string; close(): Promise<void> }> {
 
 /** The game on pastry; `jev`: a classifier set up through Settings (null: none). */
 async function boot(page: Page, jev: string | null, more = ''): Promise<void> {
-  await openGame(page, 'demo-m3', '', `play=none&sim=1&simms=150&simusage=0&simhirepresets=${keyOf()}${more}${jev ? `&simjev=${encodeURIComponent(jev)}` : ''}`);
+  await openGame(page, 'demo-m3', '', `play=none&sim=1&simms=150&simusage=0&simhirepresets=${keyOf()}${more}${jev ? `&simmodel=hiring&simjev=${encodeURIComponent(jev)}` : ''}`);
   if (jev) {
     await openMenu(page);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();

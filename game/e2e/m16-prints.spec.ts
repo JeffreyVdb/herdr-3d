@@ -13,6 +13,8 @@ const SIM = 'play=none&sim=1&simms=500&simusage=0';
 type Prints = NonNullable<Awaited<ReturnType<typeof printsOf>>>;
 const printsOf = (page: Page) => page.evaluate(() => window.__h3d.prints());
 const deskOf = async (page: Page, id: string) => (await printsOf(page))?.desks.find((d) => d.id === id) ?? null;
+// Decode every thumbnail before checking the prints. These requests share the fixture server across parallel pages.
+const loadedPrints = (page: Page, id: string) => expect.poll(async () => (await deskOf(page, id))?.textures, { message: 'all six print textures are decoded', timeout: 15_000 }).toBe(6);
 
 async function open(page: Page): Promise<{ id: string; desk: number }> {
   await openGame(page, 'demo-m5', '', SIM);
@@ -60,7 +62,7 @@ test('a desk near you shows the conversation’s images as prints: IN left, OUT 
   await lookAtPrints(page, desk);
 
   // Seven prints: three in (one sent twice shows once, one outside the roots is blank) and four out.
-  await expect.poll(async () => (await deskOf(page, id))?.textures).toBe(6);
+  await loadedPrints(page, id);
   const d = (await deskOf(page, id)) as Prints['desks'][number];
   expect(d.prints).toHaveLength(7);
   expect(d.prints.filter((p) => p.tray === 'in')).toHaveLength(3);
@@ -117,7 +119,7 @@ test('walking away takes every print, texture and watch with it; 20 sit / stand 
   const clean = watchErrors(page);
   const { id, desk } = await open(page);
   await lookAtPrints(page, desk);
-  await expect.poll(async () => (await deskOf(page, id))?.textures).toBe(6);
+  await loadedPrints(page, id);
   const near = await page.evaluate(() => window.__h3d.pose());
   expect(near).not.toBeNull();
 
@@ -138,7 +140,7 @@ test('walking away takes every print, texture and watch with it; 20 sit / stand 
   for (let i = 0; i < 20; i++) {
     expect(await page.evaluate((i2) => window.__h3d.face(i2), id)).toBe(true);
     await lookAtPrints(page, desk);
-    await expect.poll(async () => (await deskOf(page, id))?.textures, { timeout: 15_000 }).toBe(6);
+    await loadedPrints(page, id);
     expect(await page.evaluate((w) => window.__h3d.sitAt(w), id)).toBe(true);
     await expect.poll(() => page.evaluate(() => window.__h3d.seated())).toBe(id);
     await frames(page, 2);
@@ -169,7 +171,7 @@ test('sitting again at a desk whose prints kept its watch shows the whole conver
   const clean = watchErrors(page);
   const { id, desk } = await open(page);
   await lookAtPrints(page, desk);
-  await expect.poll(async () => (await deskOf(page, id))?.textures).toBe(6);
+  await loadedPrints(page, id);
   const watchesOf = async () => (await page.evaluate(() => window.__h3d.watchLog())).filter((c) => c.t === 'transcript.watch' && (c.args as { id: string }).id === id);
   const items = () => page.evaluate(() => window.__h3d.transcript()?.items ?? 0);
   const sit = async () => {

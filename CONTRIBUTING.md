@@ -1684,6 +1684,7 @@ Tests:
 ```sh
 make test lint                # vitest + tsc (protocol client and requests, store, layout, collision, cards, frame
                               # policy, fixtures, settings validation/diffing, reordering, the command simulation)
+make -j2 test                 # overlap the independent Go, Vitest and shell suites
 make shot                     # Playwright WebGL2, just the screenshot: game/test-results/shot.png
 make e2e                      # the @smoke journeys of the specs below, WebGL2 (H3D_WORKERS parallel, one per host)
 make e2e-extended             # on request: every functional spec below (the whole suite before #42 took ~38 min):
@@ -1801,6 +1802,25 @@ pnpm -C game test:live:m3     # opt-in: buildings across a bridge restart, sleep
 pnpm -C game test:live:m5     # opt-in: the M5 laptops and panels against a real bridge and Claude (see below)
 pnpm -C game perf:mac         # opt-in: Metal/WebGPU perf + screenshots on the Mac -> game/test-results/perf/
 ```
+
+For order-dependent failures, keep the shuffle seed from the failing run. These runs bypass Go's result cache and
+exercise the same tests with parallel or serial scheduling:
+
+```sh
+go test -count=3 -parallel=8 -shuffle=359 ./...
+go test -count=1 -p=1 -parallel=1 -shuffle=359 ./...
+pnpm -C game exec vitest run --maxWorkers=4 --sequence.shuffle --sequence.seed=359
+pnpm -C game exec vitest run --maxWorkers=1 --sequence.shuffle --sequence.seed=359
+```
+
+Keep Vitest's per-file isolation and Playwright's zero retries. E2E command acknowledgements use
+`expectCommandDone` to await both the successful result and the closed dialog: world events before the ack can rebuild
+the scene under parallel rendering load. Performance measurements belong in benchmarks; for the largest
+accepted SVGs, use `go test ./internal/logo -run '^$' -bench BenchmarkSVGWorstAccepted -benchtime=1x`.
+
+If the host's `/tmp` quota is exhausted, use a short disk-backed temporary root such as `TMPDIR=/var/tmp` for unit
+tests. Long temporary roots can exceed Unix socket path limits. For E2E, `H3D_E2E_TMPDIR=/var/tmp` moves browser and
+preview-server temporary files while leaving portlease's shared lease state in its usual location.
 
 `test:live` builds `bin/herdr-world` from the worktree (or runs `H3D_LIVE_BRIDGE=<path>`, e.g. another branch's
 bridge built elsewhere), starts `herdr --session h3d-m2game-<random> server` (with

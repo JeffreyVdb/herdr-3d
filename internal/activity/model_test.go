@@ -368,6 +368,7 @@ func TestSettingsValidationAndEnvironment(t *testing.T) {
 func TestActivityHoldsAtMostOneSlot(t *testing.T) {
 	const key = "jev-test-key-0123456789"
 	release := make(chan struct{})
+	entered := make(chan struct{}, 4)
 	var inflight, maxInflight atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+key {
@@ -388,6 +389,7 @@ func TestActivityHoldsAtMostOneSlot(t *testing.T) {
 		}
 		if len(body.Questions) > 1 { // the activity's call: held until released
 			n := inflight.Add(1)
+			entered <- struct{}{}
 			defer inflight.Add(-1)
 			for m := maxInflight.Load(); n > m && !maxInflight.CompareAndSwap(m, n); m = maxInflight.Load() {
 			}
@@ -413,19 +415,37 @@ func TestActivityHoldsAtMostOneSlot(t *testing.T) {
 	s := newService(t, &roles{state: ai.StateReady, cls: svc.Classifier()}, nil, nil)
 	on(s, t)
 	var wg sync.WaitGroup
+	finished := make(chan error, 4)
 	busy := atomic.Int32{}
+	releaseCall := sync.OnceFunc(func() { close(release) })
+	defer func() { releaseCall(); wg.Wait() }()
 	for i := range 4 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := s.Classify(context.Background(), "Bash", "tool-"+string(rune('a'+i))); errors.Is(err, ErrBusy) {
+			_, err := s.Classify(context.Background(), "Bash", "tool-"+string(rune('a'+i)))
+			if errors.Is(err, ErrBusy) {
 				busy.Add(1)
 			}
+			finished <- err
 		}()
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for inflight.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
+	// All three competing attempts must observe the held call before it is
+	// released. A goroutine scheduled after release may legitimately succeed.
+	for range 3 {
+		select {
+		case err := <-finished:
+			if !errors.Is(err, ErrBusy) {
+				t.Fatalf("competing activity call: %v, want busy", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the competing activity calls did not finish while the first was held")
+		}
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the held activity call did not reach the provider")
 	}
 	// #90's call gets the other slot.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -433,7 +453,7 @@ func TestActivityHoldsAtMostOneSlot(t *testing.T) {
 	if _, err := svc.Classifier().Classify(ctx, map[string]any{"last_agent_message": "x?"}, "asks?"); err != nil {
 		t.Fatalf("another feature's call was starved: %v", err)
 	}
-	close(release)
+	releaseCall()
 	wg.Wait()
 	if maxInflight.Load() != 1 || busy.Load() != 3 {
 		t.Fatalf("%d activity calls at once, %d refused busy", maxInflight.Load(), busy.Load())

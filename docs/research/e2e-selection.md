@@ -85,10 +85,30 @@ chair" and `hire-composer.spec.ts` "a failed upload blocks the hire, keeps the p
 poll's default 5 s. Both passed when run alone right after (`make e2e-prebuilt SPEC='e2e/m4.spec.ts
 e2e/hire-composer.spec.ts' PROFILE=smoke`, 2 passed, 17.6 s). They are load-dependent and older than #42: the
 #241 bench runs (`docs/research/e2e-bench/results/`) record the same `toBeNull()` failure of `hire-composer.spec.ts:232`
-at 6, 8, 12 and 16 workers and of `m4.spec.ts:108` at 12 and 16. The simulator's hire ack is timed on the game's clock,
-which runs slower than wall time when llvmpipe is loaded, against a fixed 5 s poll. Not rerun to improve the number.
-After this run those two polls (only) got a 20 s timeout, so smoke stays green under load; #43 tracks the cause (the ack
-on game time).
+at 6, 8, 12 and 16 workers and of `m4.spec.ts:108` at 12 and 16. Not rerun to improve the number. After this run those
+two polls got a 20 s timeout; #43 investigated where the delay occurs.
+
+The #43 audit on 2026-10-20 reproduced the same "The hire is on its way" failure in a smaller scenario: open
+`demo-m4`, hire at pastry's desk 14, and require the dialog to close within 5 s. Five of twelve simultaneous copies
+failed (29.4 s for the batch). Browser WebSocket timestamps show the first `floor.upsert` arriving 152–209 ms after
+`worker.hire`, while the following world events and acknowledgement take several seconds to reach the page's
+handlers. The fixture uses Node's `setTimeout` unless `simclock=manual` is requested; it sends the floor update,
+worker update and acknowledgement in the same timer callback. A second batch removed the first task entirely and
+timed each browser message handler. The floor update took 147–441 ms, the worker update 45–128 ms, and the ack
+handler under 0.2 ms, while the ack reached that handler 2.74–5.13 s after sending the hire. Most delay falls between
+browser callbacks under rendering load. Two of twelve copies exceeded the original 5 s assertion; both then passed
+the shared acknowledgement expectation, and all twelve completed (24.8 s). This rules out the task classifier and
+the fixture's timer as the cause in this reproduction.
+
+`e2e/game.ts` now provides `expectCommandDone`: a shared 20 s bound for successful hire, send-home and run
+acknowledgements, checking both the successful command result and the closed dialog. Corresponding success polls
+use it; ordinary UI and Escape assertions keep their existing bounds. This accommodates page processing under
+parallel rendering load without adding sleeps or retries. Renderer performance work is separate.
+The original three affected scenarios also passed all twelve cases at twelve workers (four repetitions each,
+40.4 s for the batch), then all three at one worker (18.5 s). The current browser reported
+`ANGLE (NVIDIA, Vulkan 1.4.351 (NVIDIA NVIDIA GeForce RTX 2060 (0x00001F15)), NVIDIA)` through
+`WEBGL_debug_renderer_info`; this audit used hardware rendering. The earlier llvmpipe measurements above describe
+their historical environment.
 
 ## The smoke suite
 

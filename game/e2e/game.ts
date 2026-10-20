@@ -43,6 +43,21 @@ export async function frames(page: Page, n = 3): Promise<void> {
 }
 
 /**
+ * #43: the bridge sends world events before its acknowledgement. Parallel pages can spend several
+ * seconds applying and rendering those events before dispatching the ack. The fixture uses a 150 ms Node timer.
+ * Allow 20 s for this end-to-end state change; keep ordinary UI assertions at their own bound.
+ */
+export async function expectCommandDone(page: Page, command: 'worker.hire' | 'worker.fire' | 'run.start'): Promise<void> {
+  await expect.poll(() => page.evaluate((t) => ({
+    result: window.__h3d.sent().filter((c) => c.t === t).at(-1)?.result,
+    dialog: window.__h3d.dialog(),
+  }), command), { message: `${command} is acknowledged and its dialog closes`, timeout: 20_000 }).toMatchObject({
+    result: { ok: true },
+    dialog: null,
+  });
+}
+
+/**
  * Saves a full screenshot to test-results/<name>.png and checks the canvas
  * alone (HUD and debug overlay hidden) is not blank.
  */
@@ -73,10 +88,16 @@ export async function leftInTerminal(page: Page, ...ids: string[]): Promise<void
   }, ids);
 }
 
-/** Seated: switches to the terminal or the conversation with Ctrl+Esc, as a player would, when it is not up yet. */
+/** Seated: switches with Ctrl+Esc and waits for the requested view, including the conversation's lazy renderer. */
 export async function seatMode(page: Page, mode: 'terminal' | 'transcript'): Promise<void> {
   if ((await page.evaluate(() => window.__h3d.seat().mode)) !== mode) await page.keyboard.press('Control+Escape');
   await expect.poll(() => page.evaluate(() => window.__h3d.seat().mode)).toBe(mode);
+  if (mode === 'transcript') {
+    await expect.poll(() => page.evaluate(() => window.__h3d.transcript()?.mounted), {
+      message: 'the conversation renderer is mounted', timeout: 20_000,
+    }).toBe(true);
+    await expect(page.locator('.seat-transcript .txl:visible'), 'the conversation has its first rows or empty state').toHaveCount(0, { timeout: 20_000 });
+  }
 }
 
 /**

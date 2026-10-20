@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { frames, openGame, shot, watchErrors } from './game';
+import { expectCommandDone, frames, openGame, shot, watchErrors } from './game';
 
 // #58 virtual floors, on demo-h58 and the simulating fixture server (tools/fixture-sim.ts). Work, top to bottom:
 // herdr-3d, its virtual floor "Frontend" (two of its workers sit there), depot-manager (asleep) and its virtual floor
@@ -95,7 +95,7 @@ test('a virtual floor stands in its base’s building by its name, takes a hire,
   await expect(page.locator('#hire-sub')).toHaveText(/^Frontend · Floor 4 of 5 · Work$/);
   await noIdShown(page, 'hire dialog');
   await page.locator('dialog.desk-dlg--hire [data-key="hire"]').click();
-  await expect.poll(() => dialog(page), { timeout: 15_000 }).toBeNull();
+  await expectCommandDone(page, 'worker.hire');
   const hire = (await sent(page)).filter((c) => c.t === 'worker.hire');
   expect(hire.map((c) => c.args)).toEqual([expect.objectContaining({ floor: FRONT, desk_index: 3 })]);
   expect(hire[0]?.args).not.toHaveProperty('session');

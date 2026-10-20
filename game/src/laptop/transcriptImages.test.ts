@@ -20,9 +20,6 @@ beforeAll(() => {
     this.removeAttribute('open');
     this.dispatchEvent(new Event('close'));
   };
-  let n = 0;
-  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => `blob:test/${++n}`;
-  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
 });
 
 let seq = 0;
@@ -133,6 +130,9 @@ function mount(feed: ImageFeed | null, more: Partial<TranscriptRenderHost> = {})
 
 beforeEach(() => {
   seq = 0;
+  let n = 0;
+  (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => `blob:test/${++n}`;
+  (URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {};
   container = document.createElement('div');
   document.body.append(container);
 });

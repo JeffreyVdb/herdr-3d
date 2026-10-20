@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { frames, leftInTerminal, openGame, seatMode, shot, watchErrors } from './game';
 
@@ -199,6 +200,17 @@ test('Ubuntu: a table of box drawing stays lined up at 70, 100 and 200 %, and th
   const clean = watchErrors(page);
   const id = await sit(page);
   const tx = await transcript(page, id);
+  // The app's optional local fallback fonts differ by host. Keep its real family, unicode range and size-adjust,
+  // replacing only that face's source with a pinned monospace fixture for every symbol measured below.
+  const font = readFileSync(new URL('./fixtures/fonts/h3d-test-symbols.woff2', import.meta.url)).toString('base64');
+  await page.evaluate(async (bytes) => {
+    const rules = [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules]);
+    const face = rules.find((rule): rule is CSSFontFaceRule => rule instanceof CSSFontFaceRule && rule.style.getPropertyValue('font-family').replaceAll('"', '').replaceAll("'", '') === 'H3D Symbols Ubuntu');
+    if (!face) throw new Error('Ubuntu symbol fallback face is missing');
+    face.style.setProperty('src', `url("data:font/woff2;base64,${bytes}") format("woff2")`);
+    await document.fonts.load('14px "H3D Symbols Ubuntu"', '→←↑↓↔⇒⇄↩↵●◆▶✓✔✗✘❯★☐☑⠿≤≥≠');
+    await document.fonts.ready;
+  }, font);
   const widths = (id = 'u-box', rows = 6) =>
     tx.locator(`[data-id="${id}"] .tx-out`).evaluate((e, n) => {
       const r = document.createRange();

@@ -408,7 +408,7 @@ type Hub struct {
 	epoch   string
 	updates chan world.Update
 	ops     chan func(context.Context)
-	done    chan struct{} // closed when Run returns
+	done    chan struct{} // closed when Run stops processing operations, before waiting for background tasks
 
 	seq     uint64
 	ring    *ring
@@ -849,9 +849,12 @@ func (h *Hub) Rescans() <-chan struct{} { return h.rescan }
 // Run processes updates and client operations until ctx is done. Floor
 // operations still running end with ctx before it returns.
 func (h *Hub) Run(ctx context.Context) error {
-	defer close(h.done)
 	defer h.closePromptSecrets() // #108: once nothing uses the files
 	defer h.wg.Wait()
+	// Background tasks can query the hub (e.g. secrets cleanup reads live
+	// workers). Release those queries once the event loop stops, before
+	// waiting for the tasks that issued them.
+	defer close(h.done)
 	defer h.stopHostSampler() // #74
 	if h.opts.RepoOf != nil {
 		h.wg.Add(1)

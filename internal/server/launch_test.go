@@ -397,6 +397,7 @@ func TestRunStart(t *testing.T) {
 		}
 	}
 	hb.floorAt("t", false, nil)
+	hb.world(func(w proto.World) bool { return floorOf(w, "t").State == "asleep" })
 	c.mustError(proto.CmdRunStart, start(func(a map[string]any) { a["session"] = "t" }), proto.ErrInvalidState)
 }
 
