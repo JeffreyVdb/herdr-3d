@@ -428,7 +428,7 @@ func (h *Hub) startHirePrepare(ctx context.Context, c *Client, cmd proto.Command
 	held, released := h.heldNames(a.Floor, h.opts.Now())
 	res.Label = world.PickName(uuid.NewString(), held, released)
 	h.startAsync(ctx, c, cmd, func(ctx context.Context) (any, error) {
-		res.Git = h.gitInfo(ctx, cwd)
+		res.Git = h.gitInfo(ctx, cwd, !a.Preview)
 		if h.opts.Load != nil {
 			res.Capacity.Load = h.opts.Load()
 		}
@@ -438,7 +438,8 @@ func (h *Hub) startHirePrepare(ctx context.Context, c *Client, cmd proto.Command
 }
 
 // gitInfo is the hire dialog's git state of dir: nil outside a work tree.
-func (h *Hub) gitInfo(ctx context.Context, dir string) *proto.HireGit {
+// A preview reads only local refs; the worktree hire fetches before branching.
+func (h *Hub) gitInfo(ctx context.Context, dir string, fetch bool) *proto.HireGit {
 	if h.opts.Git == nil {
 		return nil
 	}
@@ -449,9 +450,12 @@ func (h *Hub) gitInfo(ctx context.Context, dir string) *proto.HireGit {
 		}
 		return nil
 	}
-	g := &proto.HireGit{RepoRoot: top, Fetched: true}
-	if err := h.opts.Git.Fetch(ctx, top); err != nil {
-		g.Fetched, g.FetchError = false, err.Error()
+	g := &proto.HireGit{RepoRoot: top, Preview: !fetch}
+	if fetch {
+		g.Fetched = true
+		if err := h.opts.Git.Fetch(ctx, top); err != nil {
+			g.Fetched, g.FetchError = false, err.Error()
+		}
 	}
 	g.DefaultBranch = h.opts.Git.DefaultBranch(ctx, top)
 	if g.DefaultBranch != "" {

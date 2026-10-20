@@ -247,6 +247,10 @@ type World struct {
 	// adds the lines. Always true: a bridge before #127 leaves it out, and
 	// refuses the field (HerdrInstructions alone is worker.hire's).
 	ScheduleHerdrInstructions bool `json:"schedule_herdr_instructions,omitempty"`
+	// #134: hire.prepare and run.prepare accept preview: true (local git
+	// only, no fetch). Always true: a bridge before #134 leaves it out, and
+	// refuses the field.
+	PreparePreview bool `json:"prepare_preview,omitempty"`
 	// #22: the native child agents of every worker, the workers in snapshot
 	// order and each worker's in the order the bridge first saw them.
 	// Always present ([] when none): a bridge before #22 leaves it out.
@@ -768,6 +772,9 @@ type HirePrepareArgs struct {
 	Session string `json:"session"`
 	Floor   string `json:"floor,omitempty"` // #58: the floor id (absent: Session's real floor)
 	Cwd     string `json:"cwd,omitempty"`
+	// #134: Preview reads local git only (no fetch); a worktree hire still
+	// fetches before choosing its base.
+	Preview bool `json:"preview,omitempty"`
 }
 
 // HirePrepareResult is the ack data of hire.prepare: what the hire dialog
@@ -785,8 +792,9 @@ type HirePrepareResult struct {
 	HerdrInstructions string `json:"herdr_instructions,omitempty"`
 }
 
-// HireGit is the git state of a hire's cwd: the base a worktree hire
-// branches from (origin/<default branch>, after a fetch).
+// HireGit is the git state of a hire's cwd: origin/<default branch>,
+// read locally in a preview or after a fetch otherwise. A worktree hire
+// fetches again before choosing the actual base.
 type HireGit struct {
 	RepoRoot      string `json:"repo_root"`
 	DefaultBranch string `json:"default_branch"`
@@ -794,6 +802,9 @@ type HireGit struct {
 	BaseTime      int64  `json:"base_time"` // unix ms, commit time
 	Fetched       bool   `json:"fetched"`
 	FetchError    string `json:"fetch_error,omitempty"`
+	// #134: Preview is local information, not a fetch result (Fetched is
+	// false, FetchError empty); a worktree hire fetches before branching.
+	Preview bool `json:"preview,omitempty"`
 }
 
 // Capacity is the worker count and caps of a floor and of the host.
