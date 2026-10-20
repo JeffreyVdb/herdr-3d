@@ -1088,7 +1088,7 @@ export class Laptops {
       const prints = new PrintMeshes(office.layout.slots);
       office.root.add(prints.group);
       this.prints.setMeshes(prints);
-      const cards = new MonitorCards(office.layout.slots);
+      const cards = new MonitorCards(office.layout.slots, office.pool ?? undefined);
       office.root.add(cards.group);
       this.monitors.setCards(cards);
     }

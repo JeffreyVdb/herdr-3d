@@ -6,6 +6,7 @@ import { MONITOR, monitorFrame } from '../world/deskKit';
 import type { DeskSlot } from '../world/layout';
 import { FONT } from './cards/layout';
 import { FRAMES, mascotPixels, POSE_FPS, SPRITE, SPRITE_COLS, SPRITE_ROWS, spriteRow } from './mascotArt';
+import { meshKit, reuse, type FloorPool, type PoolKit } from './floorPool';
 import { bitmapTexture } from './prints';
 
 /**
@@ -319,6 +320,92 @@ export interface MonitorLedger {
   closed: number;
 }
 
+const floatUniform = (v: number) => uniform(v);
+type FloatUniform = ReturnType<typeof floatUniform>;
+
+function cardMaterial(atlas: THREE.Texture, uTime: FloatUniform, uMotion: FloatUniform): THREE.MeshBasicNodeMaterial {
+  const m = new THREE.MeshBasicNodeMaterial();
+  const u = uv().x;
+  const v = uv().y;
+  const bg = color(CARD_BG);
+  const tone = attribute('aTone', 'vec3');
+  // The mascot: its row, and its frame from the time (frame 0 with reduced motion), on a pixel stage of the kind's colour.
+  const sp = attribute('aSprite', 'vec3');
+  const frame = floor(mod(uTime.mul(sp.z).add(sp.y), float(FRAMES))).mul(uMotion);
+  const edge = 0.5 / SPRITE;
+  const mu = clamp(u.div(SPLIT), edge, 1 - edge);
+  const mv = clamp(v, edge, 1 - edge);
+  const art = texture(spriteAtlas(), vec2(frame.add(mu).div(SPRITE_COLS), float(SPRITE_ROWS - 1).sub(sp.x).add(mv).div(SPRITE_ROWS)));
+  const px = floor(mu.mul(SPRITE)).add(0.5).sub(SPRITE / 2).div(11);
+  const py = floor(float(1).sub(mv).mul(SPRITE)).add(0.5).sub(28.5).div(2.5);
+  const stage = step(px.mul(px).add(py.mul(py)), float(1));
+  const left = mix(bg, tone, stage.mul(0.32)).mul(float(1).sub(art.a)).add(art.rgb);
+  // The text cell, and under it the counter's glyphs (the slot's glyph from the two attributes) in the kind's colour.
+  const cell = attribute('aCell', 'vec4');
+  const tu = clamp(u.sub(SPLIT).div(1 - SPLIT), 0, 1);
+  const tv = clamp(v.sub(TEXT_V0).div(1 - TEXT_V0), 0, 1);
+  const text = mix(bg, texture(atlas, vec2(cell.x.add(tu.mul(cell.z)), cell.y.add(tv.mul(cell.w)))).rgb, step(float(TEXT_V0), v));
+  const slotW = ((TIMER.h * monitorFrame().height) / monitorFrame().width) * (GLYPH_W / GLYPH_H);
+  const lu = u.sub(TIMER.u0).div(slotW * TIMER_SLOTS);
+  const lv = v.sub(TIMER.v0).div(TIMER.h);
+  const inT = step(float(0), lu).mul(step(lu, float(1))).mul(step(float(0), lv)).mul(step(lv, float(1)));
+  const at = clamp(lu, 0, 0.9999).mul(TIMER_SLOTS);
+  const slot = floor(at);
+  const a0 = attribute('aT0', 'vec4');
+  const a1 = attribute('aT1', 'vec4');
+  const code = select(
+    slot.lessThan(1),
+    a0.x,
+    select(slot.lessThan(2), a0.y, select(slot.lessThan(3), a0.z, select(slot.lessThan(4), a0.w, select(slot.lessThan(5), a1.x, select(slot.lessThan(6), a1.y, select(slot.lessThan(7), a1.z, a1.w)))))),
+  );
+  const glyph = texture(glyphAtlas(), vec2(code.add(fract(at)).div(TIMER_GLYPHS.length + 1), clamp(lv, 0, 1)));
+  const right = mix(text, tone, glyph.a.mul(inT));
+  m.colorNode = mix(right, left, step(u, float(SPLIT)));
+  return m;
+}
+
+
+/** #141: the cards' mesh, its per-desk attributes, its text atlas and its clock, sized for `capacity` desks (see `FloorPool`). */
+interface MonitorKit extends PoolKit {
+  mesh: THREE.InstancedMesh;
+  canvas: HTMLCanvasElement;
+  g: CanvasRenderingContext2D;
+  atlas: THREE.CanvasTexture;
+  aSprite: THREE.InstancedBufferAttribute;
+  aTone: THREE.InstancedBufferAttribute;
+  aCell: THREE.InstancedBufferAttribute;
+  aT0: THREE.InstancedBufferAttribute;
+  aT1: THREE.InstancedBufferAttribute;
+  uTime: FloatUniform;
+  uMotion: FloatUniform;
+}
+
+function monitorKit(capacity: number): MonitorKit {
+  const n = Math.max(1, capacity);
+  const rows = Math.ceil(n / COLS);
+  const { c, g } = canvas(CELL_W * COLS, CELL_H * rows);
+  const atlas = new THREE.CanvasTexture(c);
+  atlas.colorSpace = THREE.SRGBColorSpace;
+  atlas.minFilter = THREE.LinearMipmapLinearFilter;
+  atlas.anisotropy = 4;
+  const geo = areaGeometry(0, 0, 1, 1, LIFT);
+  const attr = (name: string, size: number) => {
+    const a = new THREE.InstancedBufferAttribute(new Float32Array(n * size), size);
+    geo.setAttribute(name, a);
+    return a;
+  };
+  const aSprite = attr('aSprite', 3);
+  const aTone = attr('aTone', 3);
+  const aCell = attr('aCell', 4);
+  const aT0 = attr('aT0', 4);
+  const aT1 = attr('aT1', 4);
+  const uTime = floatUniform(0);
+  const uMotion = floatUniform(1);
+  const mesh = new THREE.InstancedMesh(geo, cardMaterial(atlas, uTime, uMotion), n);
+  mesh.frustumCulled = false;
+  return meshKit(n, [mesh], { mesh, canvas: c, g, atlas, aSprite, aTone, aCell, aT0, aT1, uTime, uMotion }, () => atlas.dispose());
+}
+
 export class MonitorCards {
   readonly group = new THREE.Group();
   readonly ledger: MonitorLedger = { cells: 0, uploads: 0, timerWrites: 0, created: 0, disposed: 0, closed: 0 };
@@ -331,8 +418,10 @@ export class MonitorCards {
   private readonly aCell: THREE.InstancedBufferAttribute;
   private readonly aT0: THREE.InstancedBufferAttribute;
   private readonly aT1: THREE.InstancedBufferAttribute;
-  private readonly uTime = uniform(0);
-  private readonly uMotion = uniform(1);
+  private readonly uTime: FloatUniform;
+  private readonly uMotion: FloatUniform;
+  private readonly kit: MonitorKit;
+  private readonly pooled: boolean;
   private readonly shown = new Map<number, Shown>();
   private readonly images = new Map<number, ImageDesk>();
   private readonly bgMat = new THREE.MeshBasicMaterial({ color: CARD_BG });
@@ -345,81 +434,44 @@ export class MonitorCards {
   private readonly up = new THREE.Vector3(0, 1, 0);
   private readonly c = new THREE.Color();
 
-  constructor(private readonly slots: readonly DeskSlot[]) {
+  /** `pool`: the floor's cards, their mesh and atlas kept from floor to floor (#141); none: their own. */
+  constructor(
+    private readonly slots: readonly DeskSlot[],
+    pool?: FloorPool,
+  ) {
     this.group.name = 'monitors';
     const n = Math.max(1, slots.length);
-    const rows = Math.ceil(n / COLS);
-    const { c, g } = canvas(CELL_W * COLS, CELL_H * rows);
-    this.canvas = c;
-    this.g = g;
-    this.atlas = new THREE.CanvasTexture(c);
-    this.atlas.colorSpace = THREE.SRGBColorSpace;
-    this.atlas.minFilter = THREE.LinearMipmapLinearFilter;
-    this.atlas.anisotropy = 4;
-    const geo = areaGeometry(0, 0, 1, 1, LIFT);
-    const attr = (name: string, size: number) => {
-      const a = new THREE.InstancedBufferAttribute(new Float32Array(n * size), size);
-      geo.setAttribute(name, a);
-      return a;
-    };
-    this.aSprite = attr('aSprite', 3);
-    this.aTone = attr('aTone', 3);
-    this.aCell = attr('aCell', 4);
-    this.aT0 = attr('aT0', 4);
-    this.aT1 = attr('aT1', 4);
+    this.pooled = !!pool;
+    this.kit = pool ? pool.take('monitors', n, this, monitorKit) : monitorKit(n);
+    this.kit.holder = this;
+    ({ canvas: this.canvas, g: this.g, atlas: this.atlas, uTime: this.uTime, uMotion: this.uMotion } = this.kit);
+    ({ aSprite: this.aSprite, aTone: this.aTone, aCell: this.aCell, aT0: this.aT0, aT1: this.aT1 } = this.kit);
+    // A new floor's cells start blank and its attributes zero, as a new atlas and new attributes do.
+    this.g.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    for (const a of [this.aSprite, this.aTone, this.aT0, this.aT1]) {
+      a.array.fill(0, 0, n * a.itemSize);
+      a.needsUpdate = true;
+    }
+    this.uTime.value = 0;
+    this.uMotion.value = 1;
+    const c = this.canvas;
     for (let i = 0; i < n; i++) {
       const x = (i % COLS) * CELL_W;
       const y = Math.floor(i / COLS) * CELL_H;
       this.aCell.setXYZW(i, x / c.width, 1 - (y + CELL_H) / c.height, CELL_W / c.width, CELL_H / c.height);
     }
-    this.mesh = new THREE.InstancedMesh(geo, this.material(), n);
+    this.aCell.needsUpdate = true;
+    this.mesh = reuse(this.kit.mesh, n);
     this.mesh.name = 'monitors.cards';
-    this.mesh.frustumCulled = false;
     // No draw at all while no desk has a card (the Terminal preference, a floor of plain shells).
     this.mesh.visible = false;
     for (let i = 0; i < n; i++) this.mesh.setMatrixAt(i, ZERO);
     this.group.add(this.mesh);
   }
 
-  private material(): THREE.MeshBasicNodeMaterial {
-    const m = new THREE.MeshBasicNodeMaterial();
-    const u = uv().x;
-    const v = uv().y;
-    const bg = color(CARD_BG);
-    const tone = attribute('aTone', 'vec3');
-    // The mascot: its row, and its frame from the time (frame 0 with reduced motion), on a pixel stage of the kind's colour.
-    const sp = attribute('aSprite', 'vec3');
-    const frame = floor(mod(this.uTime.mul(sp.z).add(sp.y), float(FRAMES))).mul(this.uMotion);
-    const edge = 0.5 / SPRITE;
-    const mu = clamp(u.div(SPLIT), edge, 1 - edge);
-    const mv = clamp(v, edge, 1 - edge);
-    const art = texture(spriteAtlas(), vec2(frame.add(mu).div(SPRITE_COLS), float(SPRITE_ROWS - 1).sub(sp.x).add(mv).div(SPRITE_ROWS)));
-    const px = floor(mu.mul(SPRITE)).add(0.5).sub(SPRITE / 2).div(11);
-    const py = floor(float(1).sub(mv).mul(SPRITE)).add(0.5).sub(28.5).div(2.5);
-    const stage = step(px.mul(px).add(py.mul(py)), float(1));
-    const left = mix(bg, tone, stage.mul(0.32)).mul(float(1).sub(art.a)).add(art.rgb);
-    // The text cell, and under it the counter's glyphs (the slot's glyph from the two attributes) in the kind's colour.
-    const cell = attribute('aCell', 'vec4');
-    const tu = clamp(u.sub(SPLIT).div(1 - SPLIT), 0, 1);
-    const tv = clamp(v.sub(TEXT_V0).div(1 - TEXT_V0), 0, 1);
-    const text = mix(bg, texture(this.atlas, vec2(cell.x.add(tu.mul(cell.z)), cell.y.add(tv.mul(cell.w)))).rgb, step(float(TEXT_V0), v));
-    const slotW = ((TIMER.h * monitorFrame().height) / monitorFrame().width) * (GLYPH_W / GLYPH_H);
-    const lu = u.sub(TIMER.u0).div(slotW * TIMER_SLOTS);
-    const lv = v.sub(TIMER.v0).div(TIMER.h);
-    const inT = step(float(0), lu).mul(step(lu, float(1))).mul(step(float(0), lv)).mul(step(lv, float(1)));
-    const at = clamp(lu, 0, 0.9999).mul(TIMER_SLOTS);
-    const slot = floor(at);
-    const a0 = attribute('aT0', 'vec4');
-    const a1 = attribute('aT1', 'vec4');
-    const code = select(
-      slot.lessThan(1),
-      a0.x,
-      select(slot.lessThan(2), a0.y, select(slot.lessThan(3), a0.z, select(slot.lessThan(4), a0.w, select(slot.lessThan(5), a1.x, select(slot.lessThan(6), a1.y, select(slot.lessThan(7), a1.z, a1.w)))))),
-    );
-    const glyph = texture(glyphAtlas(), vec2(code.add(fract(at)).div(TIMER_GLYPHS.length + 1), clamp(lv, 0, 1)));
-    const right = mix(text, tone, glyph.a.mul(inT));
-    m.colorNode = mix(right, left, step(u, float(SPLIT)));
-    return m;
+  /** #141: still the cards its mesh draws (pooled cards of a floor you left write nothing). */
+  private get live(): boolean {
+    return this.kit.holder === this;
   }
 
   /** A desk's slot transform (the same as its desk art). */
@@ -435,7 +487,7 @@ export class MonitorCards {
    * desk to desk; `now` (unix ms) is for the counter.
    */
   set(desk: number, face: CardFace | null, phase: number, now: number): void {
-    if (!this.slots[desk]) return;
+    if (!this.slots[desk] || !this.live) return;
     const cur = this.shown.get(desk);
     if (!face) {
       if (!cur) return;
@@ -480,11 +532,13 @@ export class MonitorCards {
 
   /** Once a second (or sooner after a change): every card's counter. */
   tick(now: number): void {
+    if (!this.live) return;
     for (const [desk, s] of this.shown) this.writeTimer(desk, s, now);
   }
 
   /** Once per frame: the animation's time, and the text atlas's upload when a cell changed (throttled). */
   frame(t: number): void {
+    if (!this.live) return;
     this.uTime.value = t / 1000;
     if (!this.atlasDirty || t - this.lastUpload < UPLOAD_MS) return;
     this.atlasDirty = false;
@@ -495,6 +549,7 @@ export class MonitorCards {
 
   /** prefers-reduced-motion: every mascot holds its first frame. */
   setMotion(on: boolean): void {
+    if (!this.live) return;
     this.uMotion.value = on ? 1 : 0;
   }
 
@@ -608,10 +663,8 @@ export class MonitorCards {
   dispose(): void {
     for (const d of [...this.images.keys()]) this.clearImage(d);
     this.group.removeFromParent();
-    this.mesh.geometry.dispose();
-    (this.mesh.material as THREE.Material).dispose();
-    this.mesh.dispose();
-    this.atlas.dispose();
+    // A pooled card mesh and atlas are the pool's: they stay.
+    if (!this.pooled) this.kit.dispose();
     this.bgMat.dispose();
   }
 }

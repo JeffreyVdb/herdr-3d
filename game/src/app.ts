@@ -11,7 +11,9 @@ import { logoHashOf, type AnswerAck, type AnswerAskAck, type Ask, type BoardMess
 import { CityView } from './render/city';
 import { shouldRender, targetHz } from './render/framePolicy';
 import { Arrivals, type ArrivalInfo, type ArrivalSpec, type DeliverSpec, type DeskAway } from './render/arrivals';
-import { memberOf, OfficeView, REACH, seatOf, type AwaySeat, type Target } from './render/office';
+import { memberOf, officeLamps, OfficeView, REACH, seatOf, type AwaySeat, type Target } from './render/office';
+import { FloorPool } from './render/floorPool';
+import { probePool, type PoolProbe } from './render/floorPoolProbe';
 import type { LobbyTarget, LobbyView } from './render/lobby';
 import { OutsideView } from './render/outside';
 import { BUILDING_TINTS, LOT_TINT } from './render/palette';
@@ -386,6 +388,13 @@ export class App {
   rebuilds = 0;
   /** #187: the floor you sit at is gone from the world; the seat keeps its last scene until you get up. */
   private orphaned = false;
+  /** #141: the offices' instanced meshes and lamps, kept from floor to floor (docs/decisions.md). */
+  private readonly pool = new FloorPool(officeLamps);
+  /**
+   * #141: offices replaced or left, disposed once the next office has drawn a frame: until then they hold the shared
+   * shaders the next one draws with (disposed first, those would be built again).
+   */
+  private retired: OfficeView[] = [];
   private fireDoor = 0;
   private mezzDoor = 0;
   /** Whether the hint on screen is the seated one. */
@@ -949,6 +958,20 @@ export class App {
     this.bridges.onChange(() => this.syncBridgeName());
     this.client.start();
     void this.r.setAnimationLoop((t) => this.tick(t));
+  }
+
+  /**
+   * #141: the floor pool as the renderer draws it (test hook); `t`: first one frame at that time with the loop paused, so
+   * two pages on the same floor at the same pose dump the same instances.
+   */
+  poolInfo(o: { data?: boolean; t?: number } = {}): PoolProbe {
+    if (o.t !== undefined) {
+      this.pause();
+      this.step(0, o.t);
+      this.render();
+      this.resume();
+    }
+    return probePool(this.pool, this.r, this.walk.scene, this.office?.root ?? null, !!o.data);
   }
 
   /** Stops the frame loop (the benchmark drives frames itself). */
@@ -2280,13 +2303,13 @@ export class App {
     if (!ctx || !fv) return;
     const old = this.office;
     this.endDeliveries(fv.id); // M6c: the reports on the floor you leave resolve at once
-    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner });
+    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner, pool: this.pool });
     this.loaded = storey;
     this.mezzDoor = 0;
     this.fireDoor = 0;
     this.walk.setOffice(this.office, floorY(storey));
     this.walk.outside?.setLoaded(storey);
-    old?.dispose();
+    this.retire(old);
     this.screen.paint(); // M13: the share on this floor's TV
     this.office.setPlan(this.planOpen);
     this.syncDrawers(); // #223
@@ -2303,7 +2326,7 @@ export class App {
   private unloadFloor(): void {
     if (!this.office) return;
     this.endDeliveries(null); // M6c
-    this.office.dispose();
+    this.retire(this.office);
     this.office = null;
     this.loaded = null;
     this.syncBoardWatch();
@@ -2311,6 +2334,13 @@ export class App {
     this.walk.outside?.setLoaded(null);
     this.worldCache = null;
     this.statusDirty = true;
+  }
+
+  /** #141: an office out of the scene, disposed after the next office's first frame (`render`). */
+  private retire(o: OfficeView | null): void {
+    if (!o) return;
+    o.root.removeFromParent();
+    this.retired.push(o);
   }
 
   /** The world changed while walking: follow the building (floors moved, added, resized, asleep). */
@@ -2376,9 +2406,9 @@ export class App {
     if (!fv) return;
     const old = this.office;
     this.rebuilds++;
-    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner });
+    this.office = new OfficeView(fv, { shadows: this.shadows, outline: ctx.outline, owner: this.owner, pool: this.pool });
     this.walk.setOffice(this.office, floorY(this.loaded));
-    old.dispose();
+    this.retire(old);
     this.screen.paint(); // M13
     this.office.setDoor(this.fireDoor);
     this.office.setMezzDoor(this.mezzDoor);
@@ -3767,6 +3797,8 @@ export class App {
   render(): void {
     if (this.mode === 'floor') this.r.render(this.walk.scene, this.planOpen ? this.planCam : this.fpCam);
     else this.r.render(this.city.scene, this.cityCam);
+    // #141: the office drawn now holds the shaders it shares with the ones before it: they can go.
+    if (this.mode === 'floor' && this.office && this.retired.length) for (const o of this.retired.splice(0)) o.dispose();
     this.frames++;
     if (this.statusDirty) {
       this.statusDirty = false;
