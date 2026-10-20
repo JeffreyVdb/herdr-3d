@@ -225,7 +225,10 @@ the grill round's extraction against the configured LLM only with `H3D_FOLLOWUP_
   Kolkata and Lord Howe, with the zone a parameter (no `TZ`); the dialog and form have jsdom tests
   (`ui/schedules.dom.test.ts`, `ui/scheduleForm.dom.test.ts`); `game/e2e/schedules.spec.ts` drives the fixture bridge's
   schedules (`tools/fixture-schedule.ts`: `simschedules=<n>`, `sim.schedule_fire {id, late_ms?, fail?, skip?}`,
-  `sim.schedule_fail {code}`, `simfail=no_schedules`). For a UX look: `make dev`, then
+  `sim.schedule_fail {code}`, `simfail=no_schedules`). #127 a schedule's "Add herdr hiring instructions" and Save's
+  question: `go test ./internal/store ./internal/server -run 'ScheduleInstructions|ScheduleHerdrInstructions'`,
+  `ui/scheduleForm.instructions.dom.test.ts`, `tools/fixture-schedule.test.ts` (`simfail=no_schedule_instructions` plays
+  a bridge whose schedules do not take it) and `game/e2e/h127-schedule-instructions.spec.ts`. For a UX look: `make dev`, then
   `?ws=%2Ffixture%2Fdemo-m5%3Fplay%3Dnone%26sim%3D1%26simusage%3D0%26simschedules%3D8&floor=herdr-3d`, Menu → Schedules
   (`window.__h3d.simSchedule('sim.schedule_fire', {id, late_ms: 10800000})` plays a late fire; close the dialog first to
   see its toast).
