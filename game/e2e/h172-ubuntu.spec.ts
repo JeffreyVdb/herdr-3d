@@ -32,7 +32,7 @@ async function sit(page: Page, init: Record<string, string> = UBUNTU): Promise<s
 /** Ctrl+Esc to the conversation, plus a box with no fallback glyph, a table with one, rows of symbols, a reply with every emphasis. */
 async function transcript(page: Page, id: string): Promise<Locator> {
   await expect.poll(async () => (await page.evaluate(() => window.__h3d.transcript()))?.items ?? 0).toBeGreaterThan(10);
-  await page.keyboard.press('Control+Escape');
+  await seatMode(page, 'transcript');
   const tx = page.locator('.seat-transcript .tx');
   await expect(tx).toBeVisible();
   const r = await page.evaluate(
