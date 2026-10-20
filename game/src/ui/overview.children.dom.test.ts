@@ -117,6 +117,25 @@ describe('#24 child rows on the page', () => {
     expect(f?.getAttribute('aria-label')).toBe('Subagent Ada · worker · Codex · running 4m · transcript available: open its conversation');
   });
 
+  it('a name never wraps: a long default shown shorter, the whole name on hover; what it runs on under it when known', () => {
+    const { ov } = setup(
+      [worker('w')],
+      [child('gp', 'w', { type: 'general-purpose', model: 'claude-sonnet-5-5', effort: 'high', description: 'Enable SSM' }), child('ex', 'w', { type: 'Explore' })],
+    );
+    ov.open('top');
+    const gp = rowEl('child:gp');
+    const name = gp?.querySelector<HTMLElement>('.ov-name');
+    expect(name?.textContent).toBe('general');
+    expect(name?.title).toBe('general-purpose');
+    expect(name?.parentElement?.className).toBe('ov-cline');
+    expect(gp?.querySelector('.ov-cline .ov-mark')).not.toBeNull();
+    expect(gp?.querySelector('.ov-who > .ov-meta')?.textContent).toBe('Sonnet 5.5 high');
+    expect(gp?.getAttribute('aria-label')).toBe('Subagent general-purpose · Claude · Sonnet 5.5 high · Task: Enable SSM · running 4m · transcript available: open its conversation');
+    const ex = rowEl('child:ex');
+    expect(ex?.querySelector<HTMLElement>('.ov-name')?.title).toBe('Explore');
+    expect(ex?.querySelector('.ov-meta')).toBeNull();
+  });
+
   it('keeps the six states apart in words; unknown says so, with no time', () => {
     const states = ['running', 'completed', 'idle', 'shut_down', 'interrupted', 'unknown'] as const;
     const { ov } = setup([worker('w')], states.map((s) => child(s, 'w', { state: s, transcript: 'unavailable' })));

@@ -220,10 +220,13 @@ func (h *Hub) dropFloorHirePresets(floor string) {
 // #95 hire_preset.check: the classifier's question, the score from which a
 // prompt delegates (followup's default: a false positive is one question the
 // player dismisses, a miss puts agents on the wrong floor), and the bound
-// of the call (the game gives up at 1.5 s, as for packup.detect).
+// of the call (the game gives up at 1.5 s, as for packup.detect). #127: a
+// workspace recreated to resume another agent's conversation is delegation
+// too (it lost its floor tag).
 const (
-	hirePresetCheckQuestion = "Does this task tell the AI coding agent to start, spawn, hire or hand work to other AI agents " +
-		"(subagents, workers, coders, reviewers) instead of doing all of it itself?"
+	hirePresetCheckQuestion = "Does this task tell the AI coding agent to start, spawn, hire, resume or hand work to other AI agents " +
+		"(subagents, workers, coders, reviewers), including recreating a workspace to resume another agent, " +
+		"instead of doing all of it itself?"
 	hirePresetCheckThreshold = 0.7
 	hirePresetCheckTimeout   = 1200 * time.Millisecond
 )

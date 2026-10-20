@@ -303,6 +303,11 @@ presets](#hire-presets)); `[]` when there are none. A bridge from before #93 lea
 presets' `herdr_instructions`, `hire.prepare`'s lines; see [Hire presets](#hire-presets)). A bridge from before #95
 leaves it out and refuses the field as unknown: a client never sends it there.
 
+`schedule_herdr_instructions` (#127) is `true` when schedules take `herdr_instructions` (`schedule.create` /
+`schedule.update`, the schedule's view) and their fire adds the lines (see [Scheduled agents](#scheduled-agents)). A
+bridge from before #127 leaves it out and refuses the field as unknown, even when it says `herdr_instructions` (that one
+is `worker.hire`'s and the presets'): a client never sends a schedule's flag there.
+
 `screen` (M13) is `{"sharing": false}`, or `{"sharing": true, "surface": "browser|window|monitor"}` while a connected
 game shares its screen (see [Screen share](#screen-share)); a bridge from before M13 leaves it out.
 
@@ -587,6 +592,7 @@ conversation, watched by its own target ([A child's transcript](#a-childs-transc
 | `parent` | `root` \| `child` \| `unresolved` | its immediate parent; always present (see below) |
 | `parent_id` | string, optional | with `parent: "child"` only: that child's `id` |
 | `name`, `type`, `description` | string, optional | as the provider gives them (Claude: the subagent type and the task's description; Codex: the nickname and role); at most 128, 128 and 1000 bytes |
+| `model`, `effort` | string, optional | what the child runs on, as its own transcript reports it: the model id (as a worker's `model`) and its effort level; Claude only (a Codex child's are not observed); at most 80 bytes each |
 | `state` | `running` \| `completed` \| `idle` \| `shut_down` \| `interrupted` \| `unknown` | its lifecycle (see below) |
 | `source` | string | the evidence source that set `state`: `hook` (Claude's `SubagentStart`/`SubagentStop`), `transcript`, `app_server`, `rollout`, `fixture` (the test source); a client shows any other as it is |
 | `started_at`, `last_activity_at`, `ended_at` | int, optional | unix **milliseconds**, from the evidence (the provider's clock, not the bridge's as `status_since`); absent when not known. `started_at` keeps the earliest seen, `last_activity_at` the latest |
@@ -624,7 +630,7 @@ is that row. One case does remove a row: a child seen both by its native id alon
 tool call) and from its dispatch before the evidence that links the two. The row seen first stays and the other merges
 into it: a `child.removed` of the other first, then `child.upsert`s of the one that stays and of the merged row's children.
 The row that stays keeps every field either row observed, as if one row had seen both rows' evidence in the order the
-bridge observed it: a field only one has is kept; of a `name`, `type`, `description`, `transcript`, `ended_at` (a resumed
+bridge observed it: a field only one has is kept; of a `name`, `type`, `description`, `model`, `effort`, `transcript`, `ended_at` (a resumed
 `running` clears it) or `state` (with its `source`) both have, the one observed later; the earliest `started_at` and the
 latest `last_activity_at`. Its parent is the one of the two observed later if it is still a parent once they are one row,
 else the other's, else `unresolved`: never the row itself (a parent that was the other row) nor a cycle; the merged row's
@@ -667,6 +673,7 @@ and `child.removed` as above, with `provider: "claude"`.
 |---|---|
 | `native_id` | the child's `agentId` |
 | `name`, `type`, `description` | the Agent call's `name` (when given), `subagent_type` (else the meta's `agentType`, else a hook's `agent_type`), `description` (else the meta's) |
+| `model`, `effort` | the child's latest own `assistant` record's `message.model` (`[1m]` dropped; never `<synthetic>`) and its `effort`, cleaned as a worker's are; not a fork's copied context |
 | `parent` | `root` when the call is in the root's transcript; `child` when it is in a child's transcript (that child), or by the meta's `parentAgentId`; `root` for a meta's `spawnDepth: 1` with no call seen; else `unresolved` |
 | `state` | below |
 | `source` | `transcript`, or `hook` while a call is known only from the bridge's hooks |
@@ -1065,7 +1072,7 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `pr.merge` | `{"floor"|"session", "id", "method", "confirm": true, "override"?, "confirm_override"?}` | `{"merged": true}` | boards after the refresh |
 | `worker.open_pr.prepare` | `{"id"}` (worker id) | `{"can_open", "reason"?, "branch", "base", "ahead", "dirty", "existing"?, "title", "body"}` | — |
 | `worker.open_pr` | `{"id", "title", "body", "confirm": true}` | `{"pr": {"id", "key", "url"}, "pushed", "existed"}` | boards after the refresh |
-| `schedule.create` | #62: `{"floor", "title", "prompt", "due_at", "on_miss"?, "max_lateness_ms"?, "harness", "model", "effort", "cwd", "worktree"?, "wake_floor"?, "handoff_path"?, "source"?, "secrets"?: SecretsReview}` (see [Scheduled agents](#scheduled-agents); #108 `secrets`: [Prompt secrets](#prompt-secrets)) | the schedule | `schedule.upsert` |
+| `schedule.create` | #62: `{"floor", "title", "prompt", "due_at", "on_miss"?, "max_lateness_ms"?, "harness", "model", "effort", "cwd", "worktree"?, "wake_floor"?, "handoff_path"?, "source"?, "secrets"?: SecretsReview, "herdr_instructions"?: bool}` (see [Scheduled agents](#scheduled-agents); #108 `secrets`: [Prompt secrets](#prompt-secrets); #127 `herdr_instructions` only to a bridge whose snapshot says `schedule_herdr_instructions`) | the schedule | `schedule.upsert` |
 | `schedule.update` | `{"id", …}`: `schedule.create`'s args without `source`, the whole spec replaced; only while `scheduled`. `schedule.create`, `schedule.update` and `schedule.retry` answer `busy` while a send home removes the worktree `cwd` is in (#63, see "Worktree hold") | the schedule | `schedule.upsert` |
 | `schedule.cancel` | `{"id"}`; only while `scheduled` or `waiting` | the schedule, `cancelled` | `schedule.removed` |
 | `schedule.run_now` | `{"id", "secrets"?: SecretsReview}`; only while `scheduled` (#108: `secrets` reviews the stored prompt, see [Prompt secrets](#prompt-secrets)) | the schedule, as its fire left it (`running`, `waiting` or `failed`) | `schedule.upsert`, then the hire's |
@@ -5300,7 +5307,12 @@ asleep. `handoff_path`: an absolute path to a handoff the worker reads. `on_miss
 and `max_lateness_ms` (positive, `run_late` only; absent: no limit) are the missed-window policy below. `source` (create
 only; default `{"kind":"manual"}`): `manual`, `transcript` or `suggestion`, with the source `worker` and `message` ids
 when known; a `suggestion` one naming a worker's open suggestion closes it (#66, [Schedule
-suggestions](#schedule-suggestions)).
+suggestions](#schedule-suggestions)). `herdr_instructions` (#127; default false, left out of the view when off): "Add
+herdr hiring instructions", `worker.hire`'s flag for a scheduled hire: the fire adds the herdr hiring instructions for
+the schedule's floor (below, "The fire"); `schedule.update` replaces it with the rest of the spec. With a `prompt`, the
+prompt, a blank line and the floor's lines must fit 32 KiB together (typeable for Claude as a whole), else
+`bad_request`; a schedule with only a `handoff_path` may have it too. Only to a bridge whose snapshot says
+`schedule_herdr_instructions`.
 
 **States.** `scheduled` (not due) → `waiting` (due, its fire waits: the floor wakes, is busy, is not seen yet, or has no
 free desk; `state_reason` says which) → `running` (the hire is in flight; `worker_id`, `fired_at` set) → `done`
@@ -5379,8 +5391,12 @@ hire: `floor.upsert` when the floor grows a desk, the new worker's `worker.upser
    as with any hire. None free (hires in flight hold them all) → the schedule waits.
 6. The prompt: the late notice (if any), the schedule's `prompt`, then, with a `handoff_path`, the cabinet's Hire from
    handoff line, `Read <path> and continue the work. Invoke the skills it suggests.`, or, if that file is gone, `The
-   handoff <path> this task referenced was deleted; continue without it.`; the parts separated by a blank line. A
-   prompt that grows over 32 KiB this way fails the fire with the hire's `bad_request` message.
+   handoff <path> this task referenced was deleted; continue without it.`; the parts separated by a blank line. #127:
+   with `herdr_instructions`, a blank line and the herdr hiring instructions for the schedule's own floor (a virtual
+   floor's `v-…` id, never its base session; `hire.prepare`'s lines for that floor) come last, once, as `worker.hire`
+   adds them; Run now and Retry read the flag from the stored schedule. #39's Codex rewrite touches the rest only, never
+   the lines. A prompt that grows over 32 KiB this way (the whole of it, the lines included) fails the fire with the
+   hire's `bad_request` message.
 7. The hire succeeds → `done` with `worker_id` and `fired_at`. A hire error → `failed` with its message (as
    `worker.hire` would answer it; a hire that fails after herdr made its workspace rolls that workspace back, as any
    failed hire does). A worker hired whose prompt was not sent → `failed`, `"hired <name>, but its prompt was not sent:
@@ -5388,7 +5404,9 @@ hire: `floor.upsert` when the floor grows a desk, the new worker's `worker.upser
 
 Stored in SQLite `schedule (id, floor, title, prompt, due_at, on_miss, max_lateness_ms, harness, model, effort, cwd,
 worktree, wake_floor, handoff_path, source, source_worker, source_message, state, state_reason, seen_at, fired_at,
-worker_id, created_at, updated_at, dismissed_at)`; `seen_at` is when the runner first saw it due (a late run's mark).
+worker_id, created_at, updated_at, dismissed_at, secrets_review, herdr_instructions)`; `seen_at` is when the runner first
+saw it due (a late run's mark). `herdr_instructions` is 0 or 1 (#127's migration adds it, 0: every older schedule is
+off).
 A floor keeps its last 50 `done` schedules, by `fired_at`; older ones are deleted.
 
 ### Hire presets
@@ -5455,15 +5473,18 @@ when it is ticked: any `worker.hire` with a prompt takes it, preset or not. With
 without; the answer only decides whether the flag is sent. No bridge or protocol change: the command keeps its name.
 
 `hire_preset.check {"prompt"}` asks the AI integration's classifier (#92) "Does this task tell the AI coding agent to
-start, spawn, hire or hand work to other AI agents (subagents, workers, coders, reviewers) instead of doing all of it
-itself?" with state `{"prompt"}`: `delegates` is `score ≥ 0.7`. It fails open: no classifier, one not ready (no call),
+start, spawn, hire, resume or hand work to other AI agents (subagents, workers, coders, reviewers), including recreating
+a workspace to resume another agent, instead of doing all of it itself?" (#127 added resuming: a workspace recreated to
+resume an agent's conversation loses its floor tag) with state `{"prompt"}`: `delegates` is `score ≥ 0.7`. It fails open: no classifier, one not ready (no call),
 an error or 1.2 s gone by answer `{"delegates": false, "score": 0}`. The game asks it on a preset's Save with the box
 off and, on a "yes", asks the player whether to tick the box (never on Use); #117: and on a plain Hire worker's Hire
 with the box off, after the first task's secrets review (the review's resolved text, with its `secrets` when the review
 protects nothing; when it protects something, that text with each marked range as `[redacted]` and no `secrets`: the
 check takes only a review that leaves every candidate as typed, and the classifier must not read a protected value),
 asking "Hire with instructions" / "Hire without" on a "yes" (a form from a preset never asks). It gives up after 1.5 s and
-hires as typed. The audit log keeps the prompt's length only (`prompt_bytes`), never its text.
+hires as typed. #127: the schedule form's Save asks it the same way with its box off (after the prompt's secrets review,
+before a transcript reply is filed or anything is saved; not for an edit whose prompt is unchanged), asking "Schedule
+with instructions" / "Schedule without". The audit log keeps the prompt's length only (`prompt_bytes`), never its text.
 
 ```json
 {"t":"hire_preset.check","req_id":"c1","args":{"prompt":"For each pull request, spawn a subagent that merges it."}}

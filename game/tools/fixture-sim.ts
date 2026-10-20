@@ -75,7 +75,7 @@ import { CodexQuestionsSim } from './fixture-codex-questions.ts';
 import { HostSim } from './fixture-host.ts';
 // #223: literal handoffs and the filing cabinet (`worker.handoff*`, `handoff.*`, `sim.final`, `simhandoffs=<n>`, `simfail=no_handoff`).
 import { HandoffSim } from './fixture-handoff.ts';
-// #64 schedules: scheduled agents (`schedule.*`, `sim.schedule_fire`, `sim.schedule_fail`, `simschedules=<n>`, `simfail=no_schedules`).
+// #64 schedules: scheduled agents (`schedule.*`, `sim.schedule_fire`, `sim.schedule_fail`, `simschedules=<n>`, `simfail=no_schedules`; #127 `simfail=no_schedule_instructions`).
 import { ScheduleSim } from './fixture-schedule.ts';
 // #66: schedule suggestions (`schedule_suggestions.*`, `worker.dismiss_schedule_suggestion`, `sim.suggest`, `simschedsuggest=`, `simsuggest=<key>`).
 import { schedSuggestMode, SchedSuggestSim } from './fixture-schedsuggest.ts';
@@ -305,6 +305,7 @@ export class SimWorld {
     this.handoffSeed = o.handoffs ?? 0;
     this.scheduleMode = o.fail === 'no_schedules' ? 'off' : 'on'; // #64 schedules
     this.scheduleSeed = o.schedules ?? 0;
+    this.scheduleInstructions = o.fail !== 'no_schedule_instructions' && o.fail !== 'no_herdr_instructions'; // #127
     this.schedSuggestMode = o.schedSuggest; // #66
     this.suggestKey = o.suggestKey ?? null;
     this.handoffLlm = { ...(o.handoffLlm ? { state: o.handoffLlm } : {}), ...(o.handoffLlmOut ? { outcome: o.handoffLlmOut } : {}) }; // #9
@@ -516,6 +517,7 @@ export class SimWorld {
   private readonly handoffSeed: number;
   private readonly scheduleMode: 'on' | 'off';
   private readonly scheduleSeed: number;
+  private readonly scheduleInstructions: boolean;
   private readonly schedSuggestMode: string | undefined; // #66
   private readonly suggestKey: string | null;
   private readonly handoffLlm: { state?: string; outcome?: string };
@@ -1465,9 +1467,11 @@ export class SimWorld {
         },
         hireWorker: (a, send, ack, fail) => this.hireWorker(a, send, ack, fail),
         stored: (s) => this.secrets.storedFire(s.id, s.prompt), // #108
+        lines: (floor) => herdrInstructions(floor), // #127
       },
       this.scheduleMode !== 'off',
       this.scheduleSeed,
+      this.scheduleInstructions,
     );
     return this.scheduleSim;
   }

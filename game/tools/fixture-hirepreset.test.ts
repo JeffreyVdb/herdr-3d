@@ -164,7 +164,7 @@ describe('fixture herdr hiring instructions (#95)', () => {
     };
     const yes = host(0.9);
     expect(await yes.check('For each PR, spawn a subagent.')).toEqual({ delegates: true, score: 0.9 });
-    expect(yes.asked).toEqual([[{ prompt: 'For each PR, spawn a subagent.' }, expect.stringContaining('subagents, workers')]]);
+    expect(yes.asked).toEqual([[{ prompt: 'For each PR, spawn a subagent.' }, expect.stringContaining('including recreating a workspace to resume another agent')]]);
     expect(await host(0.69).check('Deploy.')).toEqual({ delegates: false, score: 0.69 });
     expect(await host(new Error('provider failed')).check('Deploy.')).toEqual({ delegates: false, score: 0 });
     const unready = host(null);

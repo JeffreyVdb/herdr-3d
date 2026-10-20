@@ -552,6 +552,12 @@ export interface World {
    */
   herdr_instructions?: boolean;
   /**
+   * #127: true when schedules take `herdr_instructions` (`schedule.create` / `schedule.update`, the view's) and their fire
+   * adds the lines. Absent from an older bridge, which refuses the field: never send it there (`herdr_instructions` alone
+   * is `worker.hire`'s).
+   */
+  schedule_herdr_instructions?: boolean;
+  /**
    * #22 native child agents: every worker's, the workers in snapshot order and each one's in the order first seen (a parent
    * may come after its child). Absent from a bridge before #22: a client reads that as `[]`.
    */
@@ -3410,6 +3416,8 @@ export interface ScheduleSpec {
   source?: ScheduleSource;
   /** #108 round 2: the review of `prompt` (a stored prompt: every decision ignore). */
   secrets?: SecretsReview;
+  /** #127: its fire adds the herdr hiring instructions for its floor after the prompt (only to a bridge whose snapshot says `schedule_herdr_instructions`). */
+  herdr_instructions?: boolean;
 }
 
 /** One schedule as the bridge shows it: every `schedule.*` ack, `World.schedules`, `schedule.upsert`. */
@@ -3438,6 +3446,8 @@ export interface Schedule {
   created_at: number;
   updated_at: number;
   dismissed_at?: number;
+  /** #127: its fire adds the herdr hiring instructions (absent: off). */
+  herdr_instructions?: boolean;
 }
 
 /** `schedule.upsert`: created, changed, or its state moved on (a fire began, waits, ended). */
@@ -3534,6 +3544,9 @@ export interface Child {
   name?: string;
   type?: string;
   description?: string;
+  /** What it runs on, as its own transcript reports it (Claude only): the model id and its effort level. */
+  model?: string;
+  effort?: string;
   state: ChildState;
   /** The evidence source that set `state` (`hook`, `transcript`, `app_server`, `rollout`, `fixture`, …). */
   source: string;
@@ -3585,7 +3598,7 @@ export function decodeChild(v: unknown): Child | null {
     c.parent = 'child';
     c.parent_id = v.parent_id;
   }
-  for (const k of ['native_id', 'name', 'type', 'description'] as const) {
+  for (const k of ['native_id', 'name', 'type', 'description', 'model', 'effort'] as const) {
     const x = v[k];
     if (isStr(x) && x) c[k] = x;
   }

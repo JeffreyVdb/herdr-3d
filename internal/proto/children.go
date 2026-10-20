@@ -90,6 +90,11 @@ type Child struct {
 	Name        string `json:"name,omitempty"`
 	Type        string `json:"type,omitempty"`
 	Description string `json:"description,omitempty"`
+	// Model and Effort are what the child runs on, as its own transcript
+	// reports them (Claude only: a Codex child's are not observed), when
+	// known: the model id as a worker's model is sent, its effort level.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 	// State is one of ChildStates; Source the evidence source that set it.
 	State  string `json:"state"`
 	Source string `json:"source"`

@@ -50,7 +50,8 @@
 // between the connections with that key (tools/fixture-repos.ts).
 // #93: `simhirepresets=<key>` shares the hire presets between the connections with that key, and keeps them across a
 // reload (tools/fixture-hirepreset.ts); `simfail=no_hire_presets` plays a bridge before them, #95
-// `simfail=no_herdr_instructions` one before "Add herdr hiring instructions".
+// `simfail=no_herdr_instructions` one before "Add herdr hiring instructions", #127 `simfail=no_schedule_instructions` one
+// whose schedules do not take them.
 // #108: `simsecrets=<key>` shares the "Review prompt secrets before sending" switch between the connections with that key,
 // `simsecretson=1` starts it on, `simsecretsdir=none` plays a bridge host without a private runtime directory;
 // `simfail=no_secrets` a bridge before it, `simfail=secrets_review_stale|secrets_review_required|secrets_unavailable|

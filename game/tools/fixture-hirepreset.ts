@@ -37,9 +37,9 @@ export interface HirePresetHost {
   readonly ai?: { ready(role: 'classifier'): boolean; classify(state: Obj, question: string): Promise<number> };
 }
 
-/** #95: hire_preset.check's question, threshold and bound, as the bridge's. */
+/** #95: hire_preset.check's question (#127: resuming another agent counts), threshold and bound, as the bridge's. */
 export const CHECK_QUESTION =
-  'Does this task tell the AI coding agent to start, spawn, hire or hand work to other AI agents (subagents, workers, coders, reviewers) instead of doing all of it itself?';
+  'Does this task tell the AI coding agent to start, spawn, hire, resume or hand work to other AI agents (subagents, workers, coders, reviewers), including recreating a workspace to resume another agent, instead of doing all of it itself?';
 const CHECK_THRESHOLD = 0.7;
 const CHECK_MS = 1200;
 

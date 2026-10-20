@@ -456,6 +456,52 @@ func TestForkCopiedCallIsNoSpawn(t *testing.T) {
 	r.noRemovals()
 }
 
+// What a child runs on is its own transcript's latest assistant record's
+// model and effort, cleaned as a worker's are: none before its first one,
+// never Claude Code's "<synthetic>", never a fork's copied context's.
+func TestModelAndEffortFromItsTranscript(t *testing.T) {
+	fx := load(t, "a")
+	const agent = "a8db619749ca642d6"
+	r := newRig(t, "a")
+	r.main(fx.parent[0])
+	r.child(agent, fx.child[agent][:6]...) // its prompt, no assistant record yet
+	r.meta(agent, fx.meta[agent], false, when("2026-10-17T20:43:35.150Z"))
+	r.poll()
+	if c := r.one(agent); c.Model != "" || c.Effort != "" {
+		t.Fatalf("before its first reply = %+v", c)
+	}
+	r.child(agent, fx.child[agent][6:]...)
+	r.poll()
+	if c := r.one(agent); c.Model != "claude-haiku-5-5" || c.Effort != "medium" {
+		t.Fatalf("recorded = %+v", c)
+	}
+	r.child(agent,
+		`{"type":"assistant","agentId":"`+agent+`","sessionId":"`+r.session+`","timestamp":"2026-10-17T20:44:00.000Z","effort":"High","message":{"model":"claude-sonnet-5-5[1m]","role":"assistant","content":[{"type":"text","text":"more"}]}}`,
+		`{"type":"assistant","agentId":"`+agent+`","sessionId":"`+r.session+`","timestamp":"2026-10-17T20:44:01.000Z","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"x"}]}}`)
+	r.poll()
+	if c := r.one(agent); c.Model != "claude-sonnet-5-5" || c.Effort != "high" {
+		t.Fatalf("a later model, then a synthetic record = %+v", c)
+	}
+
+	fx = load(t, "f")
+	const fork = "a87b102338484508a"
+	r = newRig(t, "f")
+	lines := slices.Clone(fx.child[fork])
+	lines[1] = strings.Replace(lines[1], `"model":"claude-haiku-5-5"`, `"model":"claude-opus-5-5"`, 1) // the parent's copied call
+	r.main(fx.parent[0])
+	r.child(fork, lines[:2]...)
+	r.meta(fork, fx.meta[fork], false, when("2026-10-17T20:47:38.450Z"))
+	r.poll()
+	if c := r.one(fork); c.Model != "" {
+		t.Fatalf("a fork's copied context = %+v", c)
+	}
+	r.child(fork, lines[2:]...)
+	r.poll()
+	if c := r.one(fork); c.Model != "claude-haiku-5-5" {
+		t.Fatalf("a fork's own = %+v", c)
+	}
+}
+
 // Run in the background by default (run_in_background omitted).
 func TestDefaultBackground(t *testing.T) {
 	fx := load(t, "g2")

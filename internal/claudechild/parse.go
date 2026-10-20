@@ -34,7 +34,12 @@ type line struct {
 	Content json.RawMessage `json:"content"`
 	Message *struct {
 		Content json.RawMessage `json:"content"`
+		// Model is the model an assistant record was made by.
+		Model string `json:"model"`
 	} `json:"message"`
+	// Effort is the reasoning effort Claude Code records on an assistant
+	// record, beside its message.
+	Effort        string          `json:"effort"`
 	ToolUseResult json.RawMessage `json:"toolUseResult"`
 }
 
