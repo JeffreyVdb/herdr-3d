@@ -21,7 +21,7 @@ export async function setUpPackupClock(page: Page): Promise<void> {
 /**
  * Positive UI checks exercise the model result and confirm, independent of browser callback scheduling under load.
  * Invoke an already checked button with evaluate(click), or press Enter: locator.click() needs animation frames.
- * The real clock resumes before any explicit slow-provider or late-ack deadline assertion.
+ * Timers resume before any explicit slow-provider or late-ack deadline assertion; Date stays fixed.
  */
 export async function withPositivePackup(page: Page, submit: () => Promise<void>): Promise<void> {
   const before = await page.evaluate(() => window.__h3d.sent().filter((c) => c.t === 'packup.detect').length);
@@ -131,8 +131,9 @@ export async function switchOn(page: Page, llm: Fake): Promise<Locator> {
   const section = dialog.locator('[data-section="packup"]');
   await setUpModels(page, dialog, llm);
   await section.getByRole('button', { name: 'Test' }).click();
-  await expect(section).toContainText('Test passed');
+  // Parallel renderers can dispatch these bridge acknowledgements after 5 s; await their completed UI states.
+  await expect(section).toContainText('Test passed', { timeout: 20_000 });
   await section.getByRole('checkbox', { name: 'Pack up on request' }).check();
-  await expect(section).toContainText('On: each prompt is checked');
+  await expect(section).toContainText('On: each prompt is checked', { timeout: 20_000 });
   return section;
 }

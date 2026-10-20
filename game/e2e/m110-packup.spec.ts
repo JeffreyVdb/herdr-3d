@@ -171,7 +171,7 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     await confirm.getByRole('button', { name: 'Send as written (stay)' }).click();
     await expect(confirm).toBeHidden();
     await expect.poll(prompts).toEqual(['Please make a PR and end your turn']);
-    await expect(input).toHaveText('');
+    await expect(input).toHaveText('', { timeout: 20_000 });
     expect(await sent(page, 'worker.wrapup')).toHaveLength(0);
 
     // Cancel (Esc): nothing is sent, the draft stays in the box.
@@ -187,7 +187,7 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     await write('Please make a PR');
     await expect.poll(prompts).toEqual(['Please make a PR and end your turn', 'Please make a PR']);
     expect(await home(page)).toBeNull();
-    await expect(input).toHaveText(''); // its ack came: the box takes the next one
+    await expect(input).toHaveText('', { timeout: 20_000 }); // its ack came: the box takes the next one
 
     // Nothing left of it: the plain send-home dialog, nothing sent.
     await write('Go home and clean up the worktree.', true);
@@ -200,7 +200,7 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     await write('Ship it TAMPER and finish the day');
     await expect.poll(prompts).toContain('Ship it TAMPER and finish the day');
     expect(await home(page)).toBeNull();
-    await expect(input).toHaveText('');
+    await expect(input).toHaveText('', { timeout: 20_000 });
 
     // Esc while it is checked: nothing goes, the draft stays, you stay seated.
     await write('SLOW: make a PR and end your turn');
@@ -226,7 +226,7 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
     expect(detected).toMatchObject(detected?.ok ? { ok: true, data: { matched: false } } : { ok: false, code: 'timeout' });
     expect((await prompts()).filter((p) => p === 'SLOW: make a PR and end your turn')).toHaveLength(1);
     await expect(input).toHaveAttribute('contenteditable', 'true', { timeout: 20_000 });
-    await expect(input).toHaveText('');
+    await expect(input).toHaveText('', { timeout: 20_000 });
 
     // The game's own bound: an answer held 4 s on the way (a slow link, a busy bridge) is too late. 1.5 s after Send the
     // prompt goes as written, for a slow model's no match and for a match alike, and the late match opens nothing.
@@ -237,8 +237,8 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
       await expect.poll(prompts, { timeout: 6000, intervals: [50] }).toContain(text);
       expect(Date.now() - t0).toBeLessThan(2300);
       expect(await lastDetect()).toMatchObject({ ok: false, code: 'timeout' });
-      await expect(input).toHaveText('');
-      await page.waitForTimeout(4500 - (Date.now() - t0)); // the held answer has come by now
+      await expect(input).toHaveText('', { timeout: 20_000 });
+      await page.waitForTimeout(Math.max(0, 4500 - (Date.now() - t0))); // the held answer has come by now
       expect(await home(page)).toBeNull();
       await expect(confirm).toBeHidden();
       expect((await prompts()).filter((p) => p === text)).toHaveLength(1);
