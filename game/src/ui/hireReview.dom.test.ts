@@ -7,6 +7,7 @@ import type { HireHost } from './hire';
 import { HireReviewDialog } from './hireReview';
 import { HirePrefs } from './hirePrefs';
 import { HIRE_PROMPT_MAX_BYTES } from './composer/model';
+import type { Draft as PromptDraft } from './composer/draft';
 
 // #212: the review of a dictated hire. Fixture interpretations (phase 4 does not exist yet); `worker.hire` is counted.
 
@@ -82,6 +83,13 @@ const hireBtn = () => q<HTMLButtonElement>('[data-key="hire"]')!;
 const pickChip = (name: string, value: string) => q<HTMLInputElement>(`[data-key="${name}:${value}"]`)!.click();
 const enter = (el: Element) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
 const secOf = (rv: HireReviewDialog, id: string) => rv.summary()!.sections.find((s) => s.id === id)!;
+/** The task's composer draft. */
+const draftOf = (rv: HireReviewDialog) => (rv as unknown as { composer: { getDraft(): PromptDraft } }).composer.getDraft();
+/** The human writes `text` over the whole task, as an edit in its box. */
+const setTask = (rv: HireReviewDialog, text: string) => {
+  const d = draftOf(rv);
+  d.replace(0, d.doc.text.length, text);
+};
 
 describe('HireReviewDialog', () => {
   beforeEach(() => {
@@ -203,7 +211,7 @@ describe('HireReviewDialog', () => {
       rv.open('floor', interp);
       await tick();
       toggle('task').click();
-      const text = q<HTMLTextAreaElement>('#review-task')!.value;
+      const text = draftOf(rv).doc.text;
       // sonnet has no xhigh... so use `high`, which every claude model takes: first keep
       pickChip('effort', 'high'); // opens nothing; effort now `high` (chosen)
       pickChip('model', 'claude-sonnet-5-5');
@@ -220,7 +228,7 @@ describe('HireReviewDialog', () => {
       expect([...document.querySelectorAll<HTMLInputElement>('[data-pick="effort"] input')].map((r) => r.value)).toEqual(['low', 'medium', 'high']);
       expect(q('#review-effort-q')!.textContent).toContain('“xhigh” is not supported by Haiku 5.5');
       expect(hireBtn().disabled).toBe(true);
-      expect(q<HTMLTextAreaElement>('#review-task')!.value).toBe(text);
+      expect(draftOf(rv).doc.text).toBe(text);
       expect(rv.summary()!.choice.task).toBe('fix the login bug.');
       pickChip('effort', 'medium');
       expect(hireBtn().disabled).toBe(false);
@@ -282,12 +290,10 @@ describe('HireReviewDialog', () => {
       const t = rv.begin()!;
       pickChip('effort', 'low');
       toggle('task').click();
-      const area = q<HTMLTextAreaElement>('#review-task')!;
-      area.value = 'my own wording';
-      area.dispatchEvent(new Event('input'));
+      setTask(rv, 'my own wording');
       expect(rv.apply({ ...FULL, effort: { provenance: 'dictated', value: 'high' }, task: { provenance: 'dictated', value: 'something else' } }, t)).toBe(true);
       expect(rv.summary()!.form).toMatchObject({ effort: 'low', prompt: 'my own wording' });
-      expect(area.value).toBe('my own wording');
+      expect(draftOf(rv).doc.text).toBe('my own wording');
       expect(secOf(rv, 'effort').origin).toBe('Your choice');
       expect(hires).toHaveLength(0);
     });
@@ -310,9 +316,7 @@ describe('HireReviewDialog', () => {
       const { rv } = setup({ prepare: () => new Promise((r) => (answer = r)) });
       rv.open('floor', FULL);
       toggle('task').click();
-      const area = q<HTMLTextAreaElement>('#review-task')!;
-      area.value = 'typed before the floor answered';
-      area.dispatchEvent(new Event('input'));
+      setTask(rv, 'typed before the floor answered');
       answer({ ok: true, data: prep() } as CommandResult);
       await tick();
       expect(rv.summary()!.form.prompt).toBe('typed before the floor answered');
@@ -378,9 +382,7 @@ describe('HireReviewDialog', () => {
       pickChip('model', 'claude-sonnet-5-5');
       pickChip('effort', 'medium');
       toggle('task').click();
-      const area = q<HTMLTextAreaElement>('#review-task')!;
-      area.value = 'fix the login bug.\nAnd its tests.';
-      area.dispatchEvent(new Event('input'));
+      setTask(rv, 'fix the login bug.\nAnd its tests.');
       expect(hires).toHaveLength(0);
       hireBtn().click();
       hireBtn().click();
@@ -390,7 +392,7 @@ describe('HireReviewDialog', () => {
       expect(hires[0]!.args).toEqual({ floor: 'floor', desk_index: 0, harness: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', label: 'Nibble', cwd: '/home/test', prompt: 'fix the login bug.\nAnd its tests.' });
       expect(reserved).toEqual([0]);
       // an edit after Hire does not reach the hire on its way
-      area.value = 'too late';
+      setTask(rv, 'too late');
       expect(hires[0]!.args.prompt).toBe('fix the login bug.\nAnd its tests.');
       hires[0]!.answer({ ok: true, data: { id: 'w1', workspace_id: 'ws', trust: 'none', prompted: true } } as CommandResult);
       await tick();
@@ -413,13 +415,10 @@ describe('HireReviewDialog', () => {
       rv.open('floor', FULL);
       await tick();
       toggle('task').click();
-      const area = q<HTMLTextAreaElement>('#review-task')!;
-      area.value = '  ';
-      area.dispatchEvent(new Event('input'));
+      setTask(rv, '  ');
       expect(hireBtn().disabled).toBe(true);
       expect(secOf(rv, 'task').attention).toBe(true);
-      area.value = '--help me';
-      area.dispatchEvent(new Event('input'));
+      setTask(rv, '--help me');
       expect(rv.summary()!.blocker).toMatch(/“--”/);
       expect(hireBtn().disabled).toBe(true);
     });
@@ -586,9 +585,7 @@ describe('HireReviewDialog', () => {
       t.rv.open('floor', NO_EFFORT);
       await tick();
       expect(t.rv.summary()!.desk).toBe(1);
-      const area = q<HTMLTextAreaElement>('#review-task')!;
-      area.value = 'sweep the floor';
-      area.dispatchEvent(new Event('input'));
+      setTask(t.rv, 'sweep the floor');
       const editing = t.rv.summary()!;
       t.hires[0]!.answer({ ok: false, code: 'disconnected', message: '' });
       await tick();

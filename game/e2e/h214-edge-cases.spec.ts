@@ -163,7 +163,7 @@ test('a review being edited while an earlier dictated hire completes is not clos
     // The keyboard is still in the task.
     await expect(task).toBeFocused();
     await page.keyboard.type(' Twice.');
-    await expect(task).toHaveValue('sweep the bakery floor. Then mop. Twice.');
+    await expect.poll(async () => (await now(page)).choice.task).toBe('sweep the bakery floor. Then mop. Twice.');
     expect(await hires(page)).toHaveLength(1);
 
     await confirm(page);
