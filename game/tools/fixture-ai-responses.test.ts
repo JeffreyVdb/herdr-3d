@@ -51,6 +51,20 @@ describe('in-process model replies for UI fixtures', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('keeps an explicit SLOW pack-up check on HTTP and preserves its classifier deadline', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    const ai = ready('packup');
+    const sim = new PackupSim({ workers: [{ id: 'w', agent_kind: 'claude' }] as Worker[], ai, emit: () => {}, error, now: Date.now });
+    Object.assign(sim, { enabled: true });
+    const text = 'SLOW: make a PR and end your turn';
+    const answer = new Promise((ack) => sim.handle('packup.detect', { id: 'w', text }, () => {}, ack, (e) => { throw e; }));
+    await vi.advanceTimersByTimeAsync(1201);
+    expect(await answer).toEqual({ matched: false, score: 0 });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0]![1]!.body as string)).toMatchObject({ state: { prompt: text } });
+  });
+
   it('keeps Settings model discovery and its test on the HTTP transport', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('/models') ? { models: [{ name: 'jev-latest' }] } : { answers: { question: { noul: 0.9 } } }))));
     const ai = ready('hiring');

@@ -83,7 +83,7 @@ test('the P overlay: checking…, the confirm with the leaving part struck, an e
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
-    await openGame(page, 'demo-m4', '', `play=none&sim=1&simms=150&simjev=${encodeURIComponent(jev.url)}`);
+    await openGame(page, 'demo-m4', '', `play=none&sim=1&simms=150&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
     await page.evaluate(() => window.__h3d.enterFloor('pastry'));
@@ -144,7 +144,7 @@ test('the laptop’s prompt box: send as written, cancel, nothing left, a tamper
   const clean = watchErrors(page);
   const [jev, llm] = [await fakeJev(), await fakeOpenAI()];
   try {
-    await openGame(page, 'demo-m5', '', `play=none&sim=1&simms=300&simusage=0&simecho=200&simjev=${encodeURIComponent(jev.url)}`);
+    await openGame(page, 'demo-m5', '', `play=none&sim=1&simms=300&simusage=0&simecho=200&simmodel=packup&simjev=${encodeURIComponent(jev.url)}`);
     await switchOn(page, llm);
     await page.keyboard.press('Escape');
     const id = await sitAtTranscript(page, 'Pebble');

@@ -28,6 +28,8 @@ export function fixtureModelResponse(model: FixtureModel, method: string, url: s
   if (method !== 'POST' || !object(body)) return null;
   const path = new URL(url).pathname;
   if (path.endsWith('/systemone') && object(body.state) && typeof body.state.prompt === 'string') {
+    // Explicit slow-provider cases keep their HTTP delay and the real classifier timeout.
+    if (model === 'packup' && body.state.prompt.includes('SLOW')) return null;
     return { status: 200, json: { answers: { question: { noul: (model === 'packup' ? packupScore : hiringScore)(body.state.prompt) } } } };
   }
   if (model === 'packup' && path.endsWith('/chat/completions') && Array.isArray(body.messages)) {
