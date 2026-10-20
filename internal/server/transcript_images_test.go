@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -234,18 +235,31 @@ func TestTranscriptImages(t *testing.T) {
 	}
 	c.mustAck(proto.CmdTranscriptImage, imageArgs(pushed, "thumb"))
 
-	// The disk cache is a private directory of private files.
-	if fi, err := os.Stat(cache.Dir()); err != nil || fi.Mode().Perm() != 0o700 {
-		t.Errorf("cache dir %v %v", fi, err)
-	}
-	ents, _ := os.ReadDir(cache.Dir())
-	if len(ents) == 0 {
-		t.Error("nothing in the disk cache")
-	}
-	for _, e := range ents {
-		if fi, _ := e.Info(); fi.Mode().Perm() != 0o600 {
-			t.Errorf("%s has mode %v", e.Name(), fi.Mode().Perm())
+	// The disk cache is private directories of private files: the images,
+	// and (#125) the thumbnails under t/.
+	files, thumbs := 0, 0
+	_ = filepath.WalkDir(cache.Dir(), func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			t.Error(err)
+			return nil
 		}
+		fi, _ := e.Info()
+		want := fs.FileMode(0o600)
+		if e.IsDir() {
+			want = 0o700
+		} else {
+			files++
+			if strings.Contains(p, string(filepath.Separator)+"t"+string(filepath.Separator)) {
+				thumbs++
+			}
+		}
+		if fi.Mode().Perm() != want {
+			t.Errorf("%s has mode %v", p, fi.Mode().Perm())
+		}
+		return nil
+	})
+	if files == 0 || thumbs == 0 {
+		t.Errorf("the disk cache holds %d files, %d thumbnails", files, thumbs)
 	}
 	// The audit log has no image commands, and no content.
 	rows, _ := b.st.AuditLog(t.Context())

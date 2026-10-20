@@ -36,7 +36,7 @@ EMBED_DIR := internal/webdist/game
 RELEASE_DIR := bin/release
 
 .PHONY: build go-build game-build test go-test game-test integration codex-shared-tui codex-shared-bridge secret-rules secret-rules-parity lint go-lint game-lint \
-	sh-test embed-game helper-darwin release-assets dev shot e2e e2e-prebuilt e2e-extended e2e-visual e2e-perf e2e-component e2e-list setup toolchain browsers browser-check deps clean
+	sh-test embed-game helper-darwin release-assets dev shot e2e e2e-prebuilt e2e-extended e2e-visual e2e-perf e2e-component e2e-list screenshot-bench setup toolchain browsers browser-check deps clean
 
 ## build: Go binaries (bin/) + game bundle (game/dist/)
 build: go-build game-build
@@ -157,6 +157,14 @@ e2e-perf: game-build
 e2e-component: PROFILE = component
 e2e-component: game-build
 	$(E2E_RUN)
+
+## screenshot-bench: #125's full-app scenario on a private capture (CORPUS=<dir> of capture.mjs; nothing of it is
+## written to the repo): build, then the conversation of screenshots opened and scrolled in the game, cold and warm
+## (docs/research/transcript-screenshot-bench/app.mjs; REPS=<n>, default 3). Under the e2e lock: one browser run per host
+screenshot-bench: game-build
+	@test -n "$(CORPUS)" || { echo "make screenshot-bench: CORPUS=<private capture directory> is needed" >&2; exit 1; }
+	@( $(E2E_LOCKED); set -x; $(PORTLEASE) --name preview --service screenshot-bench -- \
+		node docs/research/transcript-screenshot-bench/app.mjs "$(CORPUS)" --reps $(or $(REPS),3) 9>&- ) 9>"$(E2E_LOCK)"
 
 ## e2e-list: list the tests a selection runs, without a build, a port, a server or a browser (PROFILE, SPEC, GREP as for e2e)
 e2e-list: deps

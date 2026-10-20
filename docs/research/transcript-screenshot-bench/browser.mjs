@@ -1,10 +1,11 @@
 // Isolated real transcript renderer: no 3D scene, all image responses already local.
-// Run from repo root through portlease after capture.mjs and codecs.py.
+// Run from repo root through portlease after capture.mjs and thumbs.go (and codecs.py, for its codec variants).
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const {createServer}=await import(pathToFileURL(resolve('game/node_modules/vite/dist/node/index.js')));
 const {chromium}=await import(pathToFileURL(resolve('game/node_modules/@playwright/test/index.mjs')));
 import {readFile,writeFile} from 'node:fs/promises';
+import {existsSync} from 'node:fs';
 const root=resolve('game'), dir=process.argv[2];
 if (!dir || !process.env.PORTLEASE_BENCH_PORT) throw Error('usage: portlease run ... --name bench -- node browser.mjs PRIVATE_CAPTURE_DIR');
 const server=await createServer({root,server:{host:'127.0.0.1',port:Number(process.env.PORTLEASE_BENCH_PORT),strictPort:true}});await server.listen();
@@ -14,8 +15,15 @@ await page.route('**/__bench', route=>route.fulfill({contentType:'text/html',bod
 await page.goto('http://127.0.0.1:'+process.env.PORTLEASE_BENCH_PORT+'/__bench');await page.waitForFunction(()=>window.ready);
 const watch=JSON.parse(await readFile(dir+'/watch.json','utf8'));const capture=JSON.parse(await readFile(dir+'/capture-results.json','utf8'));
 const summary=[];
-for(const variant of ['current','without-images','webp-nearlossless-q75','webp-q82','avif-q55','current','without-images','webp-q82','avif-q55']){
- const data={};for(const r of capture){const keep=['current','without-images'].includes(variant)||r.sourceMime==='image/jpeg';const ext=keep?'png':variant.split('-')[0];const bytes=await readFile(`${dir}/${keep?'thumbs':variant}/${r.hash}.${ext}`);data[r.hash]={mime:keep?r.thumbMime:'image/'+ext,width:r.width,height:r.height,bytes:bytes.length,size:'thumb',data:bytes.toString('base64')};}
+// #125: 'policy' is the previews of the current MakeThumb (thumbs.go writes them to policy/, a preview without its
+// original stays as served); the codec directories are codecs.py's, where it was run.
+const sniff=b=>b[0]===0xff&&b[1]===0xd8?'image/jpeg':b[0]===0x89&&b[1]===0x50?'image/png':'image/webp';
+const codecs=['webp-nearlossless-q75','webp-q82','avif-q55'].filter(v=>existsSync(`${dir}/${v}`));
+const variants=['current','without-images',...(existsSync(`${dir}/policy`)?['policy']:[]),...codecs];
+for(const variant of [...variants,...variants.filter(v=>v!=='webp-nearlossless-q75')]){
+ const data={};for(const r of capture){
+  if(variant==='policy'){const p=`${dir}/policy/${r.hash}`;const bytes=await readFile(existsSync(p)?p:`${dir}/thumbs/${r.hash}.png`);data[r.hash]={mime:sniff(bytes),width:r.width,height:r.height,bytes:bytes.length,size:'thumb',data:bytes.toString('base64')};continue;}
+  const keep=['current','without-images'].includes(variant)||r.sourceMime==='image/jpeg';const ext=keep?'png':variant.split('-')[0];const bytes=await readFile(`${dir}/${keep?'thumbs':variant}/${r.hash}.${ext}`);data[r.hash]={mime:keep?r.thumbMime:'image/'+ext,width:r.width,height:r.height,bytes:bytes.length,size:'thumb',data:bytes.toString('base64')};}
  const result=await page.evaluate(async({items,data})=>{
   const root=document.getElementById('root');let feed;const requests=[];const long=[];const po=new PerformanceObserver(l=>long.push(...l.getEntries().map(x=>x.duration)));po.observe({type:'longtask',buffered:false});
   feed=new window.ImageFeed('bench',{send:async(t,a)=>{requests.push(a.hash);return {ok:true,data:data[a.hash]};}});feed.note(items);
