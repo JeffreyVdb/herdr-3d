@@ -379,15 +379,12 @@ export class HireReviewDialog {
     const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (cwd) args.cwd = cwd;
     if (!fetch && this.host.store.preparePreview) args.preview = true;
-    const ticket = args.preview ? null : this.fetches.start();
+    // #134: a fetch sent now is newer than a recheck on its way.
+    if (!args.preview) this.fetches.start();
     this.checking = !!cwd && !!this.prep;
     const r = await this.host.send('hire.prepare', args);
-    // A newer prepare, a closed or reopened review, a hire sent meanwhile, a folder typed since: this answer is not for what
-    // is on screen. #134: a fetch's answer still says what origin is for the repository shown.
-    if (gen !== this.prepGen || epoch !== this.epoch || !this.dialog.open || this.state === 'hiring' || folder !== this.folderRev) {
-      if (r.ok && ticket !== null) this.fetched(ticket, epoch, r.data as HirePrepare);
-      return;
-    }
+    // A newer prepare, a closed or reopened review, a hire sent meanwhile, a folder typed since: this answer is not for what is on screen.
+    if (gen !== this.prepGen || epoch !== this.epoch || !this.dialog.open || this.state === 'hiring' || folder !== this.folderRev) return;
     this.checking = false;
     if (!r.ok) {
       this.state = this.prep && cwd ? 'ready' : 'failed';
@@ -906,6 +903,11 @@ export class HireReviewDialog {
       // Not a render: a button clicked right now (Fetch again) is still there; the answer renders.
       if (this.checkFolder()) this.renderActions();
     });
+    // #134: the recheck's answer may draw this field again while it is typed in: the new one sends no `change`, so
+    // leaving it checks a folder no check was sent for.
+    cwd.addEventListener('blur', () => {
+      if (this.dialog.open && !this.checking && this.checkFolder()) this.renderActions();
+    });
     // Enter in a field is not a hire (there is no form): only the Hire button is.
     for (const el of [label, cwd]) el.addEventListener('keydown', (e) => e.key === 'Enter' && e.preventDefault());
     nodes.push(
@@ -1133,8 +1135,8 @@ export class HireReviewDialog {
   }
 
   /**
-   * #134: a fetch's answer that no newer prepare took over (a recheck, or one a folder typed or previewed replaced):
-   * origin and the caps as they are now, while the review shows the same repository; the folder checked and the status stay.
+   * #134: the recheck's answer, when no newer fetch was sent: origin and the caps as they are now, while the review shows
+   * the same repository (a folder typed or previewed meanwhile does not drop it); the folder checked and the status stay.
    */
   private fetched(ticket: number, epoch: number, p: HirePrepare): void {
     if (!this.prep || !this.dialog.open || epoch !== this.epoch || this.state !== 'ready' || !this.fetches.current(ticket, this.prep.git, p.git)) return;

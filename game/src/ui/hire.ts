@@ -703,13 +703,11 @@ export class HireDialog {
     const args: CommandArgs['hire.prepare'] = { floor: this.floor };
     if (cwd) args.cwd = cwd;
     if (!fetch && this.host.store.preparePreview) args.preview = true;
-    const ticket = args.preview ? null : this.fetches.start();
+    // #134: a fetch sent now is newer than a recheck on its way.
+    if (!args.preview) this.fetches.start();
     const r = await this.host.send('hire.prepare', args);
-    // A hire sent meanwhile: its form stays as sent. #134: a fetch's answer still says what origin is for the repository shown.
-    if (gen !== this.gen || !this.dialog.open || this.state === 'hiring') {
-      if (r.ok && ticket !== null) this.fetched(ticket, r.data as HirePrepare);
-      return;
-    }
+    // A hire sent meanwhile: its form stays as sent.
+    if (gen !== this.gen || !this.dialog.open || this.state === 'hiring') return;
     if (!r.ok) {
       // A folder that did not check out keeps the rest of the form.
       if (this.prep && cwd) {
@@ -1682,8 +1680,8 @@ export class HireDialog {
   }
 
   /**
-   * #134: a fetch's answer that no newer prepare took over (a recheck, or one a folder preview replaced): origin and the
-   * caps as they are now, while the form shows the same repository; the folder, the form and the status stay.
+   * #134: the recheck's answer, when no newer fetch was sent: origin and the caps as they are now, while the form shows
+   * the same repository (a folder previewed meanwhile does not drop it); the folder, the form and the status stay.
    */
   private fetched(ticket: number, p: HirePrepare): void {
     if (!this.prep || !this.dialog.open || this.state !== 'ready' || !this.fetches.current(ticket, this.prep.git, p.git)) return;

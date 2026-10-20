@@ -225,6 +225,40 @@ describe('HireReviewDialog', () => {
     rv.close();
   });
 
+  it('#134 R1: the recheck answering while a folder is being typed: the typing goes on, and leaving the field checks it', async () => {
+    const answers: Array<(r: CommandResult) => void> = [];
+    const { rv, host, hires } = setup({ prepare: () => new Promise<CommandResult>((answer) => answers.push(answer)) });
+    host.store.preparePreview = true;
+    const send = vi.spyOn(host, 'send');
+    const answer = (git: HireGit, cwd = '/home/test') => ({ ok: true, data: prep({ cwd, git }) }) as CommandResult;
+    rv.open('floor', FULL);
+    answers.shift()!(answer({ ...ORIGIN_GIT, preview: true }));
+    await tick();
+    hireBtn().click();
+    await tick();
+    hires[0]!.answer({ ok: false, code: 'fetch_failed', message: 'git fetch origin failed: offline' } as CommandResult);
+    await tick();
+    toggle('where').click();
+    const folder = q<HTMLInputElement>('#review-cwd')!;
+    folder.focus();
+    folder.value = '/home/test/sub';
+    folder.dispatchEvent(new Event('input'));
+    answers.shift()!(answer(fetchedGit('down')));
+    await tick();
+    expect(rv.summary()?.git).toMatchObject({ usable: false });
+    const now = q<HTMLInputElement>('#review-cwd')!;
+    expect(document.activeElement).toBe(now);
+    expect(now.value).toBe('/home/test/sub');
+    // The field was drawn again under the typing: no `change` comes from it, so leaving it is what checks the folder.
+    now.blur();
+    expect(send.mock.calls.filter(([t]) => t === 'hire.prepare').map(([, a]) => a).at(-1)).toEqual({ floor: 'floor', cwd: '/home/test/sub', preview: true });
+    answers.shift()!(answer(previewGit('/home/test/sub'), '/home/test/sub'));
+    await tick();
+    expect(rv.summary()?.git).toMatchObject({ usable: false, note: expect.stringContaining('offline') });
+    expect(rv.summary()?.blocker ?? '').not.toMatch(/folder/);
+    rv.close();
+  });
+
   describe('sections', () => {
     it('a fully specified interpretation: every section collapsed, its value in the summary', async () => {
       const { rv } = setup();
