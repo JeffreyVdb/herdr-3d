@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test, type CDPSession, type Page } from '@playwright/test';
+import { backendId, Layers, metrics, summarise, trace } from './perfTrace';
 import type { Worker } from '../src/net/protocol';
 import { frames, openGame, RESULTS, seatMode } from './game';
 
@@ -20,106 +21,6 @@ test.skip(!process.env.H3D_PERF, 'perf run: H3D_PERF=1');
 function pebble(): Worker {
   const snap = JSON.parse(readFileSync(resolve(import.meta.dirname, '../fixtures/demo-m5.jsonl'), 'utf8').split('\n')[0] ?? '{}') as { world: { workers: Worker[] } };
   return snap.world.workers.find((x) => x.name === 'Pebble') as Worker;
-}
-
-interface TraceEvent {
-  name: string;
-  cat: string;
-  ph: string;
-  pid: number;
-  tid: number;
-  ts: number;
-  dur?: number;
-  args?: { name?: string; data?: { clip?: number[]; nodeId?: number } };
-}
-
-async function trace(cdp: CDPSession, ms: number): Promise<TraceEvent[]> {
-  const events: TraceEvent[] = [];
-  const onData = (e: { value: unknown[] }) => {
-    events.push(...(e.value as TraceEvent[]));
-  };
-  cdp.on('Tracing.dataCollected', onData);
-  const done = new Promise<void>((r) => cdp.once('Tracing.tracingComplete', () => r()));
-  await cdp.send('Tracing.start', { categories: 'devtools.timeline,toplevel,gpu,viz,cc', transferMode: 'ReportEvents' });
-  await new Promise((r) => setTimeout(r, ms));
-  await cdp.send('Tracing.end');
-  await done;
-  cdp.off('Tracing.dataCollected', onData);
-  return events;
-}
-
-function summarise(events: TraceEvent[], ms: number) {
-  const threads = new Map<string, string>();
-  for (const e of events) if (e.ph === 'M' && e.name === 'thread_name' && e.args?.name) threads.set(`${e.pid}:${e.tid}`, e.args.name);
-  const busy: Record<string, number> = {};
-  let longTasks = 0;
-  for (const e of events) {
-    if (e.ph !== 'X' || (e.name !== 'ThreadControllerImpl::RunTask' && e.name !== 'RunTask') || !e.dur) continue;
-    const name = threads.get(`${e.pid}:${e.tid}`) ?? 'other';
-    busy[name] = (busy[name] ?? 0) + e.dur / 1000;
-    if (name === 'CrRendererMain' && e.dur > 50_000) longTasks++;
-  }
-  const paints = events.filter((e) => e.name === 'Paint' && (e.ph === 'X' || e.ph === 'B'));
-  let area = 0;
-  let small = 0;
-  for (const p of paints) {
-    const c = p.args?.data?.clip;
-    if (!c || c.length < 8) continue;
-    const xs = [c[0], c[2], c[4], c[6]] as number[];
-    const ys = [c[1], c[3], c[5], c[7]] as number[];
-    const r = { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) };
-    const a = (r.right - r.left) * (r.bottom - r.top);
-    area += a;
-    // A paint of less than a fifth of the 1280x720 viewport: not the whole-layer paints the page makes anyway.
-    if (a < 200_000) small++;
-  }
-  const count = (n: string) => events.filter((e) => e.name === n && (e.ph === 'X' || e.ph === 'B' || e.ph === 'I' || e.ph === 'i')).length;
-  const round = (x: number) => Math.round(x * 10) / 10;
-  return {
-    seconds: ms / 1000,
-    paints: paints.length,
-    paintArea: Math.round(area),
-    smallPaints: small,
-    layouts: count('Layout'),
-    recalcStyles: count('UpdateLayoutTree') + count('RecalculateStyles'),
-    longTasks,
-    busyMs: Object.fromEntries(Object.entries(busy).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, round(v)])),
-  };
-}
-
-interface Layer {
-  layerId: string;
-  backendNodeId?: number;
-  paintCount?: number;
-  drawsContent: boolean;
-  width: number;
-  height: number;
-}
-
-/** The compositor's layers as last reported (LayerTree.layerTreeDidChange), and the layer of a node. */
-class Layers {
-  last: Layer[] = [];
-  constructor(cdp: CDPSession) {
-    cdp.on('LayerTree.layerTreeDidChange', (e: { layers?: unknown[] }) => {
-      if (e.layers) this.last = e.layers as Layer[];
-    });
-  }
-  of(backendNodeId: number): Layer | null {
-    return this.last.find((l) => l.backendNodeId === backendNodeId) ?? null;
-  }
-}
-
-async function backendId(cdp: CDPSession, selector: string): Promise<number | null> {
-  const doc = (await cdp.send('DOM.getDocument', { depth: 0 })) as { root: { nodeId: number } };
-  const q = (await cdp.send('DOM.querySelector', { nodeId: doc.root.nodeId, selector })) as { nodeId: number };
-  if (!q.nodeId) return null;
-  const d = (await cdp.send('DOM.describeNode', { nodeId: q.nodeId })) as { node: { backendNodeId: number } };
-  return d.node.backendNodeId;
-}
-
-async function metrics(cdp: CDPSession): Promise<Record<string, number>> {
-  const r = (await cdp.send('Performance.getMetrics')) as { metrics: Array<{ name: string; value: number }> };
-  return Object.fromEntries(r.metrics.map((m) => [m.name, m.value]));
 }
 
 async function phase(page: Page, cdp: CDPSession, layers: Layers, label: number | null) {
