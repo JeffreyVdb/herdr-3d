@@ -58,6 +58,8 @@ type Control struct {
 	// #176: Duplex starts the terminal controller, a long-running command
 	// with a stdin (default: as Stream, with a stdin pipe). Tests inject a fake.
 	Duplex DuplexStreamer
+	// ver is the CLI's version, read once (Version).
+	ver versionCache
 
 	// #95: TypeGap is the pause after each chunk of a typed prompt
 	// (default DefaultTypeGap).
@@ -137,6 +139,9 @@ const (
 	opTypeText = "type-text"
 	// #176: the seated laptop's terminal controller.
 	opControl = "control"
+	// #176 part 2: the CLI's version (its controller takes mouse clicks from
+	// 0.9.2): the one operation without a session.
+	opVersion = "version"
 )
 
 // #155: control operations of a shared-server Codex worker.
@@ -239,6 +244,9 @@ var controlShapes = map[string][]string{
 	// refuses a second owner, and the bridge falls back to observe.
 	opControl: {"{herdr}", "--session", "{session}", "terminal", "session", "control", "{pane}",
 		"--cols", "{cols}", "--rows", "{rows}"},
+	// #176 part 2: what the controller takes depends on the release
+	// (terminal.mouse from 0.9.2). Read once; touches no session.
+	opVersion: {"{herdr}", "--version"},
 	// Laptop input: herdr key names ({keys} is one argv element per key),
 	// literal text without control characters, and the fixed xterm
 	// sequence of a key herdr 0.9.0 has no name for (delete, home, …).
@@ -639,7 +647,8 @@ func (c *Control) argv(op string, vars map[string]string) ([]string, error) {
 			return nil, fmt.Errorf("%w: invalid %s %q", ErrNotAllowed, name, v)
 		}
 	}
-	if s := vars["session"]; c.Only != nil && !c.Only.MatchString(s) {
+	// Every operation but the version names its session, which must be watched.
+	if s := vars["session"]; c.Only != nil && op != opVersion && !c.Only.MatchString(s) {
 		return nil, fmt.Errorf("%w: session %q is not watched", ErrNotAllowed, s)
 	}
 	if l, ok := vars["launcher"]; ok && !c.launcherFits(l) {
