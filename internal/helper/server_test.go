@@ -164,6 +164,68 @@ func expectWorld(t *testing.T, c *websocket.Conn) {
 	}
 }
 
+// countingConn counts the bytes the client reads: what crossed the wire.
+type countingConn struct {
+	net.Conn
+	read *atomic.Int64
+}
+
+func (c countingConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.read.Add(int64(n))
+	return n, err
+}
+
+// #147: the proxy passes the browser's permessage-deflate offer to the bridge
+// and its answer back, so what the bridge sends crosses the tunnel deflated.
+func TestWSCompression(t *testing.T) {
+	sock := filepath.Join(shortDir(t), "run", "bridge.sock")
+	startBridge(t, sock)
+	ts := helperServer(t, &socketBridge{sock: sock}, nil)
+
+	var wire atomic.Int64
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, resp, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(ts.URL, "http")+"/ws?token="+testToken, &websocket.DialOptions{
+		Host:            "127.0.0.1:7777",
+		HTTPHeader:      http.Header{"Origin": {"http://127.0.0.1:7777"}},
+		CompressionMode: websocket.CompressionContextTakeover,
+		HTTPClient: &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			var d net.Dialer
+			conn, err := d.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return countingConn{conn, &wire}, nil
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+	if ext := resp.Header.Get("Sec-WebSocket-Extensions"); !strings.Contains(ext, "permessage-deflate") {
+		t.Fatalf("Sec-WebSocket-Extensions = %q, want permessage-deflate", ext)
+	}
+	c.SetReadLimit(proto.MaxMessage)
+	hello, _ := json.Marshal(proto.Hello{T: proto.THello, Proto: proto.Version, Client: "helper-test"})
+	if err := c.Write(ctx, websocket.MessageText, hello); err != nil {
+		t.Fatal(err)
+	}
+	if _, raw, err := c.Read(ctx); err != nil || !strings.Contains(string(raw), `"t":"welcome"`) {
+		t.Fatalf("welcome = %s, %v", raw, err)
+	}
+	before := wire.Load()
+	_, raw, err := c.Read(ctx)
+	var snap proto.Snapshot
+	if err != nil || json.Unmarshal(raw, &snap) != nil || snap.T != proto.TSnapshot ||
+		len(snap.World.Workers) != 1 || snap.World.Workers[0].Label != "ORCH|m2" {
+		t.Fatalf("snapshot = %s, %v", raw, err)
+	}
+	if got := wire.Load() - before; got >= int64(len(raw))/2 {
+		t.Fatalf("snapshot of %d bytes took %d bytes on the wire", len(raw), got)
+	}
+}
+
 func TestBridgeDownIs502(t *testing.T) {
 	br := &socketBridge{sock: filepath.Join(shortDir(t), "missing.sock"), state: StateBackoff}
 	ts := helperServer(t, br, nil)
