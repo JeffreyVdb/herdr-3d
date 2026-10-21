@@ -996,11 +996,11 @@ without `req_id` too (an unknown `t` is not a command and is not logged).
 | `transcript.unwatch` | `{"id": string, "child"?: TranscriptChild}` | — | — |
 | `transcript.page` | `{"id": string, "before"?: cursor, "limit"?: 1–500, "agent"?: string, "child"?: TranscriptChild}` | `{"items", "cursor", "has_more"}` | — |
 | `transcript.item` | `{"id": string, "item": string, "agent"?: string, "child"?: TranscriptChild}` | `{"item"}` | — |
-| `preset.create` | `{"name": string, "roles": {…}}` | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
+| `preset.create` | `{"name": string, "roles": {…}}` (#167: a role may carry `codex_profile`, see [Run profiles](#run-profiles-the-orchestrator-and-the-teams-codex-roles)) | `{"id": string}` | `preset.upsert` (see [Team presets and starting a run](#team-presets-and-starting-a-run)) |
 | `preset.update` | `{"id": string, "name"?: string, "roles"?: {…}}` (`roles` replaces all five) | — | `preset.upsert`; none when nothing changed |
 | `preset.delete` | `{"id": string}` | — | `preset.removed`, then `floor.upsert` for the floors whose `last_preset` it was |
 | `run.prepare` | `{"floor"|"session", "issue"? \| "text"? \| "work_item"?, "preset"?, "orch"?, "extra"?, "preview"?: bool}` (#134 `preview` as `hire.prepare`'s) | what the start-run dialog shows: `{"prompt", "label", "ticket", "preset", "orch", "cwd", "git", "capacity"}` | — |
-| `run.start` | `{"floor"|"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?, "secrets"?: {"text"?, "extra"?, "prompt"?: SecretsReview}}` | `worker.hire`'s ack plus `{"launch_id", "prompt"}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
+| `run.start` | `{"floor"|"session", "desk_index", "issue" \| "text" \| "work_item", "orch", "preset", "extra"?, "worktree"?, "label"?, "prompt"?, "secrets"?: {"text"?, "extra"?, "prompt"?: SecretsReview}}` (#167: `orch` and the preset's roles may carry `codex_profile`: see [Run profiles](#run-profiles-the-orchestrator-and-the-teams-codex-roles)) | `worker.hire`'s ack plus `{"launch_id", "prompt", "codex_team_reason"?, "codex_team_note"?}` | `worker.hire`'s, then the orchestrator's `worker.upsert` with `issue` and `work_item`, and `floor.upsert` with `last_preset` |
 | `limits.refresh` | `{}` | `{"queued": bool}`: `false` when the last refresh was less than 20 s ago | `limits.update` for both providers (Codex: each visible profile, listed again first) when queued (see [Plan limits](#plan-limits)) |
 | `ai.get` | `{}` | the AI state (see [AI integration](#ai-integration)) | — |
 | `ai.models` | `{"role", "key"?, "base_url"?}` | `{"models": [{"id", "description"?}], "base_url"?}` | — |
@@ -2489,7 +2489,9 @@ an account, never reads a token and never runs codex-auth: it only looks at fold
   `rules` is always there (`[]` when none) and a profile flagged "may be used for anything" has `"anything": true`
   (absent: off). A bridge from before #140 leaves all three out and refuses `"auto"` as an unknown profile
   (`not_found`), so a client offers Auto only where `auto` is set. No folder is keyed `auto` (`~/.codex-auto` is
-  `auto-<hash>`).
+  `auto-<hash>`). #167: `"runs": true` says team preset roles and `run.prepare` / `run.start`'s `orch` take
+  `codex_profile` too (see [Run profiles](#run-profiles-the-orchestrator-and-the-teams-codex-roles)); a bridge from
+  before #167 leaves it out and refuses the field there.
 
 #### Hiring on a Codex profile
 
@@ -2647,6 +2649,41 @@ A hire without `codex_profile` (an older client, `run.start`, a schedule, write-
 before #140: the default profile. In the game, Auto is the hire dialog's and the preset editor's first "Codex profile"
 chip and a new Codex hire's default; a preset keeps the profile it has (one with none keeps meaning the default, one
 saved with Auto stores `"auto"`); with fewer than two usable profiles there is no picker and nothing is sent.
+
+#### Run profiles: the orchestrator and the team's Codex roles
+
+#167 (`docs/decisions.md` "#167 run profiles"). On a bridge whose `codex_profiles` says `runs`, a team preset role
+(`preset.create` / `preset.update`'s `roles.<role>`, and the snapshot's presets) and `run.prepare` / `run.start`'s
+`orch` take an optional `codex_profile`: a key or `"auto"`, Codex only (another harness: `bad_request`). Absent: the
+default profile, as before; an older bridge refuses the field (`bad_request`, unknown field), so a client sends it only
+to a bridge with `runs`. A preset role keeps a stored profile that is gone on `preset.update`; a new one must be listed
+(else `bad_request` naming the role: never `not_found`, which says the preset itself is gone).
+
+- **The orchestrator** is hired on `orch.codex_profile` exactly as a Codex worker on its `codex_profile` (see
+  [Hiring on a Codex profile](#hiring-on-a-codex-profile) and Auto above): the ack's `codex` and
+  `codex_profile_reason` are a hire's. A key that cannot be used refuses the run in its name (`bad_request`: "the
+  orchestrator's Codex profile cannot be used: …").
+- **Each Codex role** with a profile is resolved **once** by `run.start` (and the same way, for its preview, by
+  `run.prepare`): Auto by the picker with the floor's folder; a key checked as a hire's and signed in. One that cannot be
+  used refuses the run before anything reaches herdr, naming the role (`bad_request`: "the reviewers' Codex profile
+  cannot be used: work is not signed in. Run `CODEX_HOME=/home/u/.codex-work codex login` in a terminal."); in
+  `run.prepare`'s preview it is on the default. A `run.start` with its own `prompt` does not read the team.
+- **The prompt**: a role on another profile than the default has `, Codex profile <name> (CODEX_HOME=<home>, token
+  h3d_codex_profile=<key>)` on its team line, and one line after the herdr hiring lines tells the orchestrator to start
+  it with `CODEX_HOME` set (`herdr workspace create --env CODEX_HOME=<folder>`, or `export` in its pane) and to tag its
+  workspace `h3d_codex_profile=<key>`. With every role on the default the prompt is byte for byte the one before #167.
+  It never says `auto`.
+- **The ack** of `run.start` adds `codex_team_reason` (Auto's pick per role, `"reviewers: Account: work (rule
+  acme/*)"`, `"; "` between them) and `codex_team_note` (for each such profile whose home runs no herdr hook, the note a
+  hire on it gets); both absent when there is nothing to say.
+- **A workspace tagged** `h3d_codex_profile=<key>` (an agent the bridge did not start) is read in that profile's
+  `sessions`: its usage, transcript and images, and the sleep backfill. A key that is not listed is read nowhere.
+
+```json
+{"t":"preset.update","req_id":"p2","args":{"id":"p_1a2b3c4d5e6f","roles":{"orch":{"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"work"},"coder":{"harness":"claude","model":"claude-opus-5-5","effort":"medium"},"reviewer":{"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"auto"},"ux":{"harness":"codex","model":"gpt-6-sol","effort":"high"},"researcher":{"harness":"codex","model":"gpt-6-sol","effort":"low"}}}}
+{"t":"run.start","req_id":"r5","args":{"floor":"herdr-3d","desk_index":3,"text":"Tidy the lobby","orch":{"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"work"},"preset":"p_1a2b3c4d5e6f"}}
+{"t":"ack","req_id":"r5","data":{"id":"…","codex":{"mode":"shared","server":"running","profile":"work","account":"confirmed","plan":"team"},"launch_id":"l_…","prompt":"/write-code …","codex_team_reason":"reviewers: Account: work (rule acme/*)","codex_team_note":"work has no hooks.json with herdr's hook: …"}}
+```
 
 ### AI integration
 

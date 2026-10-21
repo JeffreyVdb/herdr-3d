@@ -400,13 +400,19 @@ func (h *Hub) startLegacy(ctx context.Context, session, pane string, rec store.C
 // the default profile, a worker hired before profiles, any other worker);
 // on another profile home is its folder, "" when that profile is gone (no
 // longer listed, or its folder gone): its sessions are read nowhere then,
-// never in the default's folder.
+// never in the default's folder. #167: a worker the bridge did not start
+// (an agent an orchestrator started) is on the profile its workspace's
+// h3d_codex_profile token names.
 func (h *Hub) codexHomeOf(id string) (home string, other bool) {
 	l, ok := h.cx.launches[id]
-	if !ok || l.Profile == "" {
+	key := l.Profile
+	if !ok {
+		key = tokenProfile(h.workers[id])
+	}
+	if key == "" {
 		return "", false
 	}
-	a, listed := h.codexAccount(l.Profile)
+	a, listed := h.codexAccount(key)
 	switch {
 	case listed && a.Default:
 		return "", false

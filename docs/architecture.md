@@ -238,6 +238,12 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
     `Service.Accounts` adds each visible shared profile's drift (read only: links, parsed `hooks.json` commands, real
     skill folders), so the limits poller's 2-minute listing publishes it in `codex_profiles.update`. A hire on a profile
     that does not share, or drifted, says so (`codexaccount.SetupNote`).
+    **Runs (#167; protocol "Run profiles", decisions "#167 run profiles"):** a run's orchestrator is hired on its
+    `orch.codex_profile` through this same path (`run.start` passes it to `beginHire`). The team preset's Codex roles,
+    which the orchestrator starts itself, are resolved once in `run.start` (`internal/server/runprofiles.go`: a key
+    checked and signed in, Auto picked with the floor's folder, off the hub goroutine) and named with their home and
+    an `h3d_codex_profile=<key>` token in its first prompt (`TeamPrompt`); a worker with no launch is read in the home
+    that token names (`codexHomeOf`).
   - **What a worker hired the usual way (legacy) lacks:** its async questions cannot be answered from the transcript
     (no join, no `worker.answer_async`); it answers them in its terminal, as every Codex worker did before #155. The rest
     (prompts, slash commands, approvals, images, sleep, wake, send home) works as for any Codex worker.

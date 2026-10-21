@@ -106,7 +106,7 @@ export class CodexProfilesSim {
       if (drift.length) out.drift = drift;
       return out;
     });
-    return { profiles, hire: true, auto: true, rules: this.rules.map((r) => ({ ...r })), share: true };
+    return { profiles, hire: true, auto: true, runs: true, rules: this.rules.map((r) => ({ ...r })), share: true }; // #167: runs (B), share (A)
   }
 
   /** #167: the plan of sharing `p` now (the fixture's default has config.toml, AGENTS.md and hooks.json). */

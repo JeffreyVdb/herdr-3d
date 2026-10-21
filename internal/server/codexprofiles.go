@@ -79,7 +79,7 @@ func (h *Hub) codexProfilesView() *proto.CodexProfiles {
 	}
 	rules := svc.Settings().Rules
 	out := &proto.CodexProfiles{Profiles: make([]proto.CodexProfile, 0, len(h.cp.list)), Hire: true, Auto: true,
-		Rules: make([]proto.CodexRule, 0, len(rules)), Share: true}
+		Runs: true, Rules: make([]proto.CodexRule, 0, len(rules)), Share: true}
 	for _, a := range h.cp.list {
 		plan := ""
 		if l, ok := h.limits[limitsKey(proto.LimitsCodex, a.Key)]; ok {

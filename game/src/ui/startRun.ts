@@ -23,7 +23,9 @@ import {
 import { h, icon, ICON } from './dom';
 import './start.css';
 import { deskTabs, pinIdOf } from './deskTabs';
-import { chips, type HireHost } from './hire';
+import { chips, profileChips, profileGoneNote, type HireHost } from './hire';
+// #167 run profiles
+import { roleGoneText, roleLoneGone, roleProfileChoice, withProfile, type RoleProfileChoice } from '../world/runProfiles';
 import { deskPins } from './hirePins';
 import { failureText } from './messages';
 import { onReviewKey, reviewButton, type FieldText, type GoFields } from './secretsFlow';
@@ -92,6 +94,8 @@ export interface StartRunSummary {
   /** A `run.prepare` is on its way (or waiting out the debounce). */
   preparing: boolean;
   label: string;
+  /** #167: the orchestrator's Codex profile as `run.start` sends it (null: none sent, the default). */
+  profile: string | null;
   /** `hint` (#134): a preview's base is the last fetched one, or not known yet (null: a fetch's answer). */
   git: { base: string; hint: string | null; usable: boolean; note: string | null } | null;
   capacity: CapacityView | null;
@@ -132,6 +136,8 @@ export class StartRunDialog {
   private preview: Preview = emptyPreview();
   /** The user picked the orchestrator's harness / model / effort: a new preset no longer changes it. */
   private orchTouched = false;
+  /** #167: the orchestrator's Codex profile as picked here (null: the preset's, else the default). */
+  private orchProfile: string | null = null;
   private ticketError: string | null = null;
   private statusText = '';
   private statusError = false;
@@ -202,6 +208,10 @@ export class StartRunDialog {
     });
     // Settings → Harness models changed what the orchestrator chips offer.
     this.host.modelPrefs?.onChange(() => this.visibilityChanged());
+    // #167: the profiles changed (one signed in, hidden, renamed): the orchestrator's chips follow.
+    this.host.store.codexProfiles?.onChange(() => {
+      if (this.dialog.open) this.render();
+    });
     // A pin added, removed or moved (a drag in this tab bar too): the tab bar follows.
     this.host.pins?.onChange(() => {
       if (this.dialog.open) this.render();
@@ -325,6 +335,7 @@ export class StartRunDialog {
     this.extraC.setDraft(this.extraDraft);
     this.promptC.setDraft(this.promptDraft);
     this.orchTouched = false;
+    this.orchProfile = null;
     this.ticketError = null;
     this.renderedKey = '';
     this.presetsSeen = this.host.store.presets.version;
@@ -563,7 +574,7 @@ export class StartRunDialog {
     const where = fv?.level ? `Floor ${fv.level.number} of ${fv.level.count} · ${fv.building?.name ?? ''}` : 'Unassigned lot';
     const book = this.host.store.presets;
     const free = fv ? freeDesks(fv).filter((d) => d === this.f.desk || !this.host.held(this.floor).has(d)) : [];
-    const key = JSON.stringify([this.floor, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null, this.host.store.limits.version, this.host.modelPrefs?.version, this.f.orch && labelsOf(this.host.store.hireOptions, this.f.orch.harness), this.host.store.hirePresets?.version, this.host.pins?.version]);
+    const key = JSON.stringify([this.floor, this.f.desk, this.state, this.f.workItem?.id ?? null, this.prep && { ...this.prep, prompt: '', label: '' }, this.f.preset, this.f.orch, this.f.worktree, where, this.takenBy(), this.statusText, book.version, free, this.ticketError !== null, this.host.store.limits.version, this.host.modelPrefs?.version, this.f.orch && labelsOf(this.host.store.hireOptions, this.f.orch.harness), this.host.store.hirePresets?.version, this.host.pins?.version, this.profileChoice(), this.loneGone()]);
     if (key === this.renderedKey) {
       this.renderLive();
       return;
@@ -649,6 +660,7 @@ export class StartRunDialog {
                 chips('orch-effort', 'Effort', effortsFor(options, o.harness, o.model), o.effort, (v) => this.pickOrch({ effort: v })),
               ]
             : [this.noModels(o.harness)]),
+          ...this.profileNodes(),
         ),
       );
     } else nodes.push(h('div', { class: 'dd-skeleton', 'aria-hidden': 'true' }, h('i'), h('i')));
@@ -926,9 +938,42 @@ export class StartRunDialog {
     this.render();
   }
 
+  /**
+   * #167: the orchestrator's "Codex profile", as a Codex hire's (Auto included; none with one usable profile or on a
+   * bridge that takes none): picked here, else the preset orchestrator's while it can be picked, else the default.
+   */
+  private profileChoice(): RoleProfileChoice | null {
+    const o = this.f.orch;
+    if (!o) return null;
+    return roleProfileChoice(this.host.store.codexProfiles?.state ?? null, o.harness, this.preset()?.roles.orch.codex_profile, this.orchProfile);
+  }
+
+  /** #167: the preset orchestrator's gone profile with no picker to say so. */
+  private loneGone(): string | null {
+    const o = this.f.orch;
+    return o ? roleLoneGone(this.host.store.codexProfiles?.state ?? null, o.harness, this.preset()?.roles.orch.codex_profile) : null;
+  }
+
+  private profileNodes(): HTMLElement[] {
+    const c = this.profileChoice();
+    if (!c) {
+      const lone = this.loneGone();
+      return lone ? [profileGoneNote(lone)] : [];
+    }
+    const note = roleGoneText(this.host.store.codexProfiles?.state ?? null, c);
+    return [
+      profileChips('orch-profile', c.list, c.key, (key) => {
+        this.orchProfile = key;
+        this.orchTouched = true;
+        this.render();
+      }, note, c.auto),
+    ];
+  }
+
   private pickPreset(id: string): void {
     this.f.preset = id;
     const p = this.host.store.presets.get(id);
+    if (!this.orchTouched) this.orchProfile = null; // #167: the new preset's
     if (p && !this.orchTouched) this.f.orch = resolveVisibleChoice(this.options(p), p.roles.orch);
     this.render();
     this.schedule();
@@ -995,6 +1040,7 @@ export class StartRunDialog {
     const form: RunForm = { ...this.f, extra: extra.text };
     const preview: Preview = prompt ? { ...this.preview, text: prompt.text } : this.preview;
     const args: CommandArgs['run.start'] = startArgs(floor, form, t, preview, this.prep, worktreeUsable(this.prep.git));
+    args.orch = withProfile(args.orch, this.profileChoice()?.key); // #167: only to a bridge that takes it, with a choice to make
     const who = args.label ?? this.prep.label;
     // #108: the texts the bridge reads (`extra` is in the composed prompt only, so not beside an edited one).
     const flow = this.host.secrets;
@@ -1060,6 +1106,12 @@ export class StartRunDialog {
       }
       // #186: as a hire's (hiredToast): a run on Codex's built-in server is a warning, a prompt not sent an error.
       const toast = hiredToast(`Started a run${on}: ${name} takes Desk ${(w?.desk ?? desk) + 1}. Here they come.`, ack, notSent);
+      // #167: what the team's Codex roles run on: Auto's picks, then their homes that run no herdr hook (a warning).
+      if (ack?.codex_team_reason) toast.text += ` Team: ${ack.codex_team_reason}.`;
+      if (ack?.codex_team_note) {
+        toast.text += ` ${ack.codex_team_note}`;
+        if (toast.kind === 'info') toast.kind = 'warn';
+      }
       this.host.toast(toast.text, toast.kind);
       if (ack?.id) this.host.started(ack.id, t.kind === 'work_item' ? { provider: t.item.provider, id: t.item.id } : undefined);
       return;
@@ -1093,6 +1145,7 @@ export class StartRunDialog {
       preview: { ...this.preview, stale: previewStale(this.preview) },
       preparing: this.timer !== null || this.inFlight,
       label: this.f.label.trim() || this.prep?.label || '',
+      profile: this.profileChoice()?.key ?? null,
       git: this.prep ? this.gitView(this.prep.git) : null,
       capacity: this.capacity(),
       blocker: this.blocker(),

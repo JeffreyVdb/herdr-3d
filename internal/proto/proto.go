@@ -366,6 +366,11 @@ type Hire struct {
 	Harness string `json:"harness"`
 	Model   string `json:"model"`
 	Effort  string `json:"effort"`
+	// CodexProfile (#167, optional, Codex only): a team preset role's and
+	// run.prepare / run.start's orch's Codex profile, a key or
+	// CodexProfileAuto; absent: the default profile. Only to a bridge with
+	// CodexProfiles.Runs (an older one refuses the unknown field).
+	CodexProfile string `json:"codex_profile,omitempty"`
 }
 
 // Suggested are the bridge's defaults for a floor: the most common GitHub

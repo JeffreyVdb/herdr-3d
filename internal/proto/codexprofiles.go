@@ -43,6 +43,9 @@ type CodexProfiles struct {
 	// Auto (#140): they also take CodexProfileAuto, and Rules and
 	// CodexProfile.Anything are the settings it follows.
 	Auto bool `json:"auto,omitempty"`
+	// Runs (#167): team preset roles and run.prepare / run.start's orch
+	// take codex_profile too (Auto included).
+	Runs bool `json:"runs,omitempty"`
 	// Rules (#140): the Auto hire's, in order (the first that matches
 	// wins). Always present on a bridge with Auto ([] when none).
 	Rules []CodexRule `json:"rules"`

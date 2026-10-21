@@ -8,10 +8,10 @@ import { AGENT_LINE, composePrompt, floorLine, ISSUE_STATUS_LINE, itemRef, PLACE
 type Msg = Record<string, unknown>;
 
 /** A sim on demo-m4 (herdr-3d: repo JeffreyVdb/herdr-3d, desks 5 and 12 free), a store fed by it, manual timers. */
-function rig(fail?: string) {
+function rig(fail?: string, codexProfiles?: number) {
   const timers: Array<() => void> = [];
   const { snapshot } = loadFixture('demo-m4');
-  const sim = new SimWorld(snapshot as never, { fail, setTimeout: (fn) => timers.push(fn), clearTimeout: () => {} });
+  const sim = new SimWorld(snapshot as never, { fail, setTimeout: (fn) => timers.push(fn), clearTimeout: () => {}, ...(codexProfiles ? { codexProfiles } : {}) });
   const store = new WorldStore(0);
   store.applySnapshot(sim.snapshot() as unknown as Snapshot);
   const out: Msg[] = [];
@@ -167,5 +167,33 @@ describe('SimWorld runs (M6)', () => {
     expect(r.cmd('run.start', { session: 'herdr-3d', desk_index: 5, text: 'x', orch: ROLES.orch, preset: 'p_nope' }).got()[0]).toMatchObject({ code: 'not_found' });
     expect(r.cmd('run.start', { session: 'herdr-3d', desk_index: 5, orch: ROLES.orch, preset: SIM_BUILD_TEAM.id }).got()[0]).toMatchObject({ code: 'bad_request' });
     expect(last(r.cmd('run.start', { session: 'herdr-3d', desk_index: 5, text: 'x', orch: ROLES.orch, preset: SIM_BUILD_TEAM.id, prompt: '--help' }).got())).toMatchObject({ code: 'bad_request' });
+  });
+});
+
+describe('SimWorld run profiles (#167)', () => {
+  const work = { harness: 'codex', model: 'gpt-6-sol', effort: 'high', codex_profile: 'work' };
+  it('a preset keeps a Codex role\'s profile; run.prepare and run.start name it; the orchestrator is hired on its own', () => {
+    const r = rig(undefined, 2);
+    expect(r.store.codexProfiles.state?.runs).toBe(true);
+    const id = data(last(r.cmd('preset.create', { name: 'Work team', roles: { ...ROLES, reviewer: work } }).got()))!.id as string;
+    expect(r.store.presets.get(id)?.roles.reviewer).toEqual(work);
+    const line = '- reviewers: codex gpt-6-sol, reasoning high, Codex profile work (CODEX_HOME=/home/u/.codex-work, token h3d_codex_profile=work)';
+    const orch = { harness: 'codex', model: 'gpt-6-sol', effort: 'high', codex_profile: 'work' };
+    const prep = data(last(r.cmd('run.prepare', { session: 'herdr-3d', text: 'Fix it', preset: id, orch: { ...orch, codex_profile: undefined } }).got()))!;
+    expect(String(prep.prompt).split('\n')).toContain(line);
+    const s = r.cmd('run.start', { session: 'herdr-3d', desk_index: 5, text: 'Fix it', orch, preset: id, worktree: false });
+    r.settle();
+    const ack = data(s.got().find((m) => m.req_id === s.req_id && m.t !== "progress"));
+    expect(ack?.prompt).toBe(prep.prompt);
+    expect(ack?.codex_team_note).toContain("work has no hooks.json with herdr's hook");
+    expect(r.store.workers.get(ack!.id as string)?.codex?.profile).toBe('work');
+  });
+  it('refuses a role on a profile that is not signed in, naming the role; a bridge without profiles refuses the field', () => {
+    const r = rig(undefined, 2);
+    const id = data(last(r.cmd('preset.create', { name: 'Spare team', roles: { ...ROLES, ux: { ...work, codex_profile: 'spare' } } }).got()))!.id as string;
+    const s = r.cmd('run.start', { session: 'herdr-3d', desk_index: 5, text: 'Fix it', orch: ROLES.orch, preset: id, worktree: false });
+    expect(last(s.got())).toMatchObject({ t: 'error', code: 'bad_request', message: expect.stringContaining("the ux reviewers' Codex profile cannot be used: spare is not signed in") });
+    const plain = rig();
+    expect(last(plain.cmd('preset.create', { name: 'Work team', roles: { ...ROLES, reviewer: work } }).got())).toMatchObject({ t: 'error', code: 'bad_request' });
   });
 });
