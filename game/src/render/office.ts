@@ -15,7 +15,7 @@ import { DeskSet } from './desks';
 import type { FloorPool } from './floorPool';
 import { TrayView } from './tray';
 import { MezzanineView } from './mezzanine';
-import { BODY_TINTS, OFFICE } from './palette';
+import { BODY_TINTS, officePalette } from './palette';
 import { buildProps, signTexture, type PropMeshes } from './props';
 import type { ClockFace } from './clock';
 import { PropViewer } from './propView';
@@ -26,6 +26,7 @@ import type { OverviewData } from '../world/overview';
 import { floorDepartures } from '../world/departures';
 import type { ScheduleBook } from '../world/schedule';
 import type { DeparturesInfo } from './departuresBoard';
+import { DEFAULT_UI_THEME, type UiThemeId } from '../ui/uiTheme';
 
 /** #118: the wall screen draws and pages only while it spans at least this share of the view's height (readable). */
 const OVERVIEW_READABLE = 0.3;
@@ -99,6 +100,8 @@ export interface OfficeOptions {
   owner?: string;
   /** #141: the meshes and lamps kept from floor to floor; none: the office makes its own. */
   pool?: FloorPool;
+  /** The UI theme the interior is dressed in (its walls, furniture and screens; `officePalette`); none: Quiet. */
+  theme?: UiThemeId;
 }
 
 /**
@@ -185,6 +188,8 @@ export class OfficeView {
   readonly id: string;
   /** #58: the floor's name (the overview screen's head). */
   readonly name: string;
+  /** The UI theme its walls, furniture and screens are dressed in. */
+  readonly theme: UiThemeId;
   readonly cards: AtlasCards;
   /** Worker id → status as last applied to the scene. */
   readonly applied = new Map<string, Display>();
@@ -250,13 +255,15 @@ export class OfficeView {
     this.anchors = Array.from({ length: L.desks }, () => null);
     this.root.name = `office:${view.id}`;
 
+    this.theme = o.theme ?? DEFAULT_UI_THEME;
+    const P = officePalette(this.theme);
     // Floor: office carpet, a lighter lobby south of the board wall.
     const boardZ = L.walls[4]?.min[2] ?? L.depth - 4.3;
-    const floorMat = new THREE.MeshToonMaterial({ color: OFFICE.floor });
+    const floorMat = new THREE.MeshToonMaterial({ color: P.floor });
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(L.width, L.depth).rotateX(-Math.PI / 2), floorMat);
     floor.position.set(L.width / 2, 0, L.depth / 2);
     floor.receiveShadow = true;
-    const lobby = new THREE.Mesh(new THREE.PlaneGeometry(L.width, L.depth - boardZ).rotateX(-Math.PI / 2), new THREE.MeshToonMaterial({ color: OFFICE.lobby }));
+    const lobby = new THREE.Mesh(new THREE.PlaneGeometry(L.width, L.depth - boardZ).rotateX(-Math.PI / 2), new THREE.MeshToonMaterial({ color: P.lobby }));
     lobby.position.set(L.width / 2, 0.002, (boardZ + L.depth) / 2);
     lobby.receiveShadow = true;
     this.addStatic(floor, lobby);
@@ -279,10 +286,10 @@ export class OfficeView {
       const b = L.walls[i] as Box3;
       return wallPieces(b, axis, L.openings.filter((w) => w.wall === side));
     });
-    const walls = new THREE.Mesh(mergeGeometries(pieces.map(boxGeo)), new THREE.MeshToonMaterial({ color: OFFICE.wall }));
+    const walls = new THREE.Mesh(mergeGeometries(pieces.map(boxGeo)), new THREE.MeshToonMaterial({ color: P.wall }));
     walls.receiveShadow = true;
     const partition = L.walls[4];
-    const board = partition ? new THREE.Mesh(boxGeo(partition), new THREE.MeshToonMaterial({ color: OFFICE.boardWall })) : null;
+    const board = partition ? new THREE.Mesh(boxGeo(partition), new THREE.MeshToonMaterial({ color: P.boardWall })) : null;
     if (board) {
       board.castShadow = board.receiveShadow = true;
       this.addStatic(board);
@@ -321,12 +328,12 @@ export class OfficeView {
       if (w.y0 < MEZZ_Y - 0.5 && w.y1 > MEZZ_Y + 0.5) trim.push(place(new THREE.BoxGeometry(len, 0.06, 0.06), 0, MEZZ_Y, 0.1));
       glass.push(place(new THREE.PlaneGeometry(len, h), 0, (w.y0 + w.y1) / 2, 0.1));
     }
-    const skirting = new THREE.Mesh(mergeGeometries(trim), new THREE.MeshToonMaterial({ color: OFFICE.boardWall }));
+    const skirting = new THREE.Mesh(mergeGeometries(trim), new THREE.MeshToonMaterial({ color: P.boardWall }));
     this.addStatic(walls, skirting);
     // One glass material: the windows, the corner office's walls and its door.
     const glassMat = new THREE.MeshBasicNodeMaterial({ color: GLASS_IN.color, transparent: true, opacity: GLASS_IN.opacity, depthWrite: false });
     this.glassMat = glassMat;
-    this.mezz = new MezzanineView(L.mezzanine, o.owner ?? 'You', glassMat, o.shadows);
+    this.mezz = new MezzanineView(L.mezzanine, o.owner ?? 'You', glassMat, o.shadows, P);
     this.addStatic(this.mezz.group);
     const pane = new THREE.Mesh(mergeGeometries([...glass, ...this.mezz.glass]), glassMat);
     for (const g of [...glass, ...this.mezz.glass]) g.dispose();
@@ -337,21 +344,21 @@ export class OfficeView {
     const leaf = mergeGeometries([
       new THREE.BoxGeometry(0.05, door.height, door.z1 - door.z0).translate(0, door.height / 2, 0),
     ]);
-    this.door = new THREE.Mesh(leaf, new THREE.MeshToonMaterial({ color: OFFICE.boardWall }));
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, (door.z1 - door.z0) * 0.7).translate(0.05, 1.05, 0), new THREE.MeshToonMaterial({ color: 0xffc233 }));
+    this.door = new THREE.Mesh(leaf, new THREE.MeshToonMaterial({ color: P.boardWall }));
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, (door.z1 - door.z0) * 0.7).translate(0.05, 1.05, 0), new THREE.MeshToonMaterial({ color: P.accent }));
     this.door.add(bar);
     this.doorClosedZ = (door.z0 + door.z1) / 2;
     this.door.position.set(-0.11, 0, this.doorClosedZ);
     this.door.castShadow = true;
     this.addStatic(this.door);
-    const exitTex = signTexture('Fire escape', 'walk up to the door', '#1c2540', '#ffc233', 512, 160);
+    const exitTex = signTexture('Fire escape', 'walk up to the door', P.sign.ground, P.sign.text, 512, 160);
     const exit = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.28).rotateY(Math.PI / 2), new THREE.MeshBasicMaterial({ map: exitTex }));
     exit.position.set(0.02, door.height + 0.3, this.doorClosedZ);
     this.addStatic(exit);
 
     // Ceiling with light panels (hidden in the floor plan).
     this.ceiling = new THREE.Group();
-    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(L.width, L.depth).rotateX(Math.PI / 2), new THREE.MeshToonMaterial({ color: OFFICE.ceiling }));
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(L.width, L.depth).rotateX(Math.PI / 2), new THREE.MeshToonMaterial({ color: P.ceiling }));
     ceil.position.set(L.width / 2, L.height, L.depth / 2);
     const panelMat = new THREE.MeshBasicMaterial({ color: 0xfff6dd });
     this.glow.push(panelMat);
@@ -378,14 +385,14 @@ export class OfficeView {
       this.root.add(lamp, lamp.target);
     }
 
-    this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·', this.pool ?? undefined);
+    this.props = buildProps(L.props, L, view.level ? `${view.level.number}` : '·', this.pool ?? undefined, P);
     this.root.add(this.props.group);
-    this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex), this.pool ?? undefined);
+    this.boards = new BoardsView(L.props, L.height, (id, tex) => this.props.swapBoard(id, tex), this.pool ?? undefined, P.boardStrip);
     this.root.add(this.boards.group);
 
     this.kits = L.slots.map((s) => deskKit(s));
     const pool = this.pool ?? undefined;
-    this.desks = new DeskSet(L.desks, o.shadows, { plus: true, kits: this.kits, pool });
+    this.desks = new DeskSet(L.desks, o.shadows, { plus: true, kits: this.kits, pool, palette: P });
     this.crowd = new Crowd(L.desks, o.shadows, false, pool);
     this.tray = new TrayView(L.desks, o.shadows, pool);
     this.root.add(this.desks.group, this.crowd.group, this.tray.group);

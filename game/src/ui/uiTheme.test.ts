@@ -35,7 +35,7 @@ describe('UI themes (#216)', () => {
     expect(uiThemeById('quiet').blurb).toBe('The current navy interface.');
     expect(uiThemeById('ubuntu').blurb).toBe('Ubuntu purple, orange accents, Ubuntu and Ubuntu Mono.');
     expect(UI_THEME_FIELD).toBe('UI theme');
-    expect(UI_THEME_HINT).toBe('Colors and fonts for menus, dialogs, bars, and controls. Transcript and terminal appearance are set separately.');
+    expect(UI_THEME_HINT).toBe('Colors and fonts for menus, dialogs, bars, and controls, and the colors of the office. Transcript and terminal appearance are set separately.');
     expect(UI_THEME_KEY).toBe('h3d.theme.ui');
   });
 

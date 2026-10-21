@@ -71,6 +71,8 @@ export class BoardsView {
     swap: (id: 'board.issues' | 'board.prs', tex: THREE.Texture) => void,
     /** #141: the notes' batches and atlases from there. */
     pool?: FloorPool,
+    /** The boards' title strips (the office's UI theme); none: Quiet's navy. */
+    strip?: string,
   ) {
     this.group.name = 'boards';
     this.heightM = height;
@@ -83,10 +85,10 @@ export class BoardsView {
     this.issuesAt = place('board.issues');
     this.prsAt = place('board.prs');
     this.issues = this.issuesAt
-      ? new NoteBoard<IssueFace>({ size: this.issuesAt.size, cell: ISSUE_CELL, cols: 8, rows: 4, draw: (g, x, y, f) => drawIssueNote(g, x, y, f), same: sameIssueFace, backdrop: (t) => swap('board.issues', t), pool: pool && { pool, key: 'notes.issues' } })
+      ? new NoteBoard<IssueFace>({ size: this.issuesAt.size, cell: ISSUE_CELL, cols: 8, rows: 4, draw: (g, x, y, f) => drawIssueNote(g, x, y, f), same: sameIssueFace, backdrop: (t) => swap('board.issues', t), strip, pool: pool && { pool, key: 'notes.issues' } })
       : null;
     this.prs = this.prsAt
-      ? new NoteBoard<PrFace>({ size: this.prsAt.size, cell: PR_CELL, cols: 4, rows: 6, draw: (g, x, y, f) => drawPrNote(g, x, y, f), same: samePrFace, backdrop: (t) => swap('board.prs', t), pool: pool && { pool, key: 'notes.prs' } })
+      ? new NoteBoard<PrFace>({ size: this.prsAt.size, cell: PR_CELL, cols: 4, rows: 6, draw: (g, x, y, f) => drawPrNote(g, x, y, f), same: samePrFace, backdrop: (t) => swap('board.prs', t), strip, pool: pool && { pool, key: 'notes.prs' } })
       : null;
     if (this.issues && this.issuesAt) {
       this.issues.group.position.copy(this.issuesAt.origin);

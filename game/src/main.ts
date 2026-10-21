@@ -171,8 +171,10 @@ export interface H3DDebug {
    */
   theme(): { ui: string; transcript: string; terminal: string; ready: string; transcriptZoom: number; terminalZoom: number; hideTools: boolean; showChanges: boolean; terminalFont: string | null };
   themeLoaded(): Promise<void>;
-  /** #187: how many times the floor's scene was rebuilt (a desk count or building outline change) since the page opened. */
+  /** #187: how many times the floor's scene was rebuilt (a desk count or building outline change, a UI theme switch) since the page opened. */
   officeRebuilds(): number;
+  /** The UI theme the office you are in is dressed in (null: no office). */
+  officeTheme(): string | null;
   /** M16: the seated view's mode, its transcript watches and items, the overlay's box (null: hidden) and whether the view is mounted. */
   transcript(): ReturnType<import('./laptop').Laptops['transcriptState']> | null;
   /** M16 phase 2: the prints on the desks near you (per desk: worker, prints with tray/blank/loaded/slot x,z), the textures' ledger, the transcript watches and lightboxes opened from prints. */
@@ -487,6 +489,7 @@ const h3d: H3DDebug = {
   },
   seated: () => app?.laptops.seated ?? null,
   officeRebuilds: () => app?.rebuilds ?? 0,
+  officeTheme: () => app?.office?.theme ?? null,
   sitAt: (id) => app?.sitAt(id) ?? false,
   screenText: (id) => app?.laptops.text(id) ?? null,
   frozenInk: (id) => app?.laptops.frozenInk(id) ?? null,
