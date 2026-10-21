@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { attribute, texture, uv, vec2 } from 'three/tsl';
 import type { BoardSize, Placement } from '../../world/boards';
 import { canvasSize, drawBackdrop, type Backdrop } from './paint';
+import { meshKit, reuse, type FloorPool, type PoolKit } from '../floorPool';
 
 /**
  * M7: one wall board: a cork backdrop (one texture, redrawn when the data changes) and its notes, drawn as one
@@ -25,6 +26,46 @@ export interface NoteBoardOptions<F> {
   same(a: F | undefined, b: F): boolean;
   /** Gets the backdrop texture to put on the board's front. */
   backdrop(tex: THREE.Texture): void;
+  /** #141: the notes' batch and atlas from there, as `key` (one per board); none: its own. */
+  pool?: { pool: FloorPool; key: string } | undefined;
+}
+
+/** #141: a board's notes batch (`capacity` notes) and their atlas (see `FloorPool`). */
+interface NotesKit extends PoolKit {
+  mesh: THREE.InstancedMesh;
+  atlas: HTMLCanvasElement;
+  atlasG: CanvasRenderingContext2D;
+  atlasTex: THREE.CanvasTexture;
+  cellAttr: THREE.InstancedBufferAttribute;
+  alphaAttr: THREE.InstancedBufferAttribute;
+}
+
+function notesKit(capacity: number, cell: { w: number; h: number }, cols: number, rows: number): NotesKit {
+  const atlas = document.createElement('canvas');
+  atlas.width = cell.w * cols;
+  atlas.height = cell.h * rows;
+  const atlasG = atlas.getContext('2d');
+  if (!atlasG) throw new Error('2D canvas unavailable');
+  const atlasTex = new THREE.CanvasTexture(atlas);
+  atlasTex.colorSpace = THREE.SRGBColorSpace;
+  atlasTex.anisotropy = 4;
+  const geo = new THREE.PlaneGeometry(1, 1);
+  const cellAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
+  const alphaAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1);
+  cellAttr.setUsage(THREE.DynamicDrawUsage);
+  alphaAttr.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('aCell', cellAttr);
+  geo.setAttribute('aAlpha', alphaAttr);
+  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
+  const c = attribute('aCell', 'vec4');
+  const t = texture(atlasTex, vec2(c.x.add(uv().x.mul(c.z)), c.y.add(uv().y.mul(c.w))));
+  mat.colorNode = t.rgb;
+  mat.opacityNode = t.a.mul(attribute('aAlpha', 'float'));
+  const mesh = new THREE.InstancedMesh(geo, mat, capacity);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 3;
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  return meshKit(capacity, [mesh], { mesh, atlas, atlasG, atlasTex, cellAttr, alphaAttr }, () => atlasTex.dispose());
 }
 
 /** What an animating note is at a moment. */
@@ -83,6 +124,7 @@ export class NoteBoard<F> {
   private readonly atlasTex: THREE.CanvasTexture;
   private readonly cellAttr: THREE.InstancedBufferAttribute;
   private readonly alphaAttr: THREE.InstancedBufferAttribute;
+  private readonly kit: NotesKit;
   private readonly notes = new Map<string, Note<F>>();
   private readonly free: number[] = [];
   private readonly capacity: number;
@@ -111,34 +153,14 @@ export class NoteBoard<F> {
     this.backTex.anisotropy = 4;
     o.backdrop(this.backTex);
 
-    this.atlas = document.createElement('canvas');
-    this.atlas.width = o.cell.w * o.cols;
-    this.atlas.height = o.cell.h * o.rows;
-    const ag = this.atlas.getContext('2d');
-    if (!ag) throw new Error('2D canvas unavailable');
-    this.atlasG = ag;
-    this.atlasTex = new THREE.CanvasTexture(this.atlas);
-    this.atlasTex.colorSpace = THREE.SRGBColorSpace;
-    this.atlasTex.anisotropy = 4;
-
-    const geo = new THREE.PlaneGeometry(1, 1);
-    this.cellAttr = new THREE.InstancedBufferAttribute(new Float32Array(this.capacity * 4), 4);
-    this.alphaAttr = new THREE.InstancedBufferAttribute(new Float32Array(this.capacity), 1);
-    this.cellAttr.setUsage(THREE.DynamicDrawUsage);
-    this.alphaAttr.setUsage(THREE.DynamicDrawUsage);
-    geo.setAttribute('aCell', this.cellAttr);
-    geo.setAttribute('aAlpha', this.alphaAttr);
-    const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
-    const c = attribute('aCell', 'vec4');
-    const t = texture(this.atlasTex, vec2(c.x.add(uv().x.mul(c.z)), c.y.add(uv().y.mul(c.w))));
-    mat.colorNode = t.rgb;
-    mat.opacityNode = t.a.mul(attribute('aAlpha', 'float'));
-    this.mesh = new THREE.InstancedMesh(geo, mat, this.capacity);
+    const make = () => notesKit(this.capacity, o.cell, o.cols, o.rows);
+    this.kit = o.pool ? o.pool.pool.take(o.pool.key, this.capacity, this, make) : make();
+    this.kit.holder = this;
+    ({ mesh: this.mesh, atlas: this.atlas, atlasG: this.atlasG, atlasTex: this.atlasTex, cellAttr: this.cellAttr, alphaAttr: this.alphaAttr } = this.kit);
+    // A new floor's board starts with a blank atlas and no notes, as a new one does.
+    this.atlasG.clearRect(0, 0, this.atlas.width, this.atlas.height);
+    reuse(this.mesh, 0);
     this.mesh.name = 'board.notes';
-    this.mesh.count = 0;
-    this.mesh.frustumCulled = false;
-    this.mesh.renderOrder = 3;
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.group.add(this.mesh);
   }
 
@@ -170,6 +192,8 @@ export class NoteBoard<F> {
    * slide there, ones no longer listed leave. `animate: false` places everything at once (the first fill).
    */
   setNotes(entries: readonly NoteEntry<F>[], now: number, animate = true): void {
+    // #141: a pooled board of a floor you left draws nothing.
+    if (this.kit.holder !== this) return;
     const seen = new Set<string>();
     let drawn = false;
     for (const e of entries.slice(0, this.capacity)) {
@@ -286,6 +310,7 @@ export class NoteBoard<F> {
   }
 
   private write(): void {
+    if (this.kit.holder !== this) return;
     let k = 0;
     const W = this.atlas.width;
     const H = this.atlas.height;
@@ -315,10 +340,8 @@ export class NoteBoard<F> {
 
   dispose(): void {
     this.backTex.dispose();
-    this.atlasTex.dispose();
-    this.mesh.geometry.dispose();
-    (this.mesh.material as THREE.Material).dispose();
-    this.mesh.dispose();
+    // A pooled batch and atlas are the pool's: they stay.
+    if (!this.o.pool) this.kit.dispose();
     this.group.removeFromParent();
   }
 }

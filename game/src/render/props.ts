@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Box3, Prop } from '../world/layout';
 import { FONT } from './cards/atlasCards';
+import { meshKit, reuse, type FloorPool, type PoolKit } from './floorPool';
 import { OFFICE } from './palette';
 import { buildClock, type ClockMesh } from './clock';
 import { buildRadio, type RadioMesh } from './radio';
@@ -170,7 +171,20 @@ export interface PropMeshes {
   dispose(): void;
 }
 
-export function buildProps(props: readonly Prop[], layout: { width: number; depth: number; rug: { x0: number; z0: number; x1: number; z1: number } }, floorLabel: string): PropMeshes {
+/** #141: the plants' pots and leaves, `n` of each (see `FloorPool`). */
+function plantKit(n: number): PoolKit & { pots: THREE.InstancedMesh; greens: THREE.InstancedMesh } {
+  const plant = mergeGeometries([new THREE.CylinderGeometry(0.2, 0.16, 0.36, 10).translate(0, 0.18, 0)]);
+  const leaves = mergeGeometries([
+    new THREE.SphereGeometry(0.34, 10, 8).translate(0, 0.72, 0),
+    new THREE.SphereGeometry(0.24, 10, 8).translate(0.14, 1.02, 0.05),
+  ]);
+  const pots = new THREE.InstancedMesh(plant, toon(OFFICE.pot), n);
+  const greens = new THREE.InstancedMesh(leaves, toon(OFFICE.plant), n);
+  return meshKit(n, [pots, greens], { pots, greens });
+}
+
+/** `pool`: the plants' and the rack LEDs' meshes from there (#141). */
+export function buildProps(props: readonly Prop[], layout: { width: number; depth: number; rug: { x0: number; z0: number; x1: number; z1: number } }, floorLabel: string, pool?: FloorPool): PropMeshes {
   const group = new THREE.Group();
   group.name = 'props';
   const textures: THREE.Texture[] = [];
@@ -240,7 +254,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
 
   // #74: the server rack: three draws (body, LEDs, screen); the app feeds it the host's frames.
   const rackProp = byId.get('server.rack');
-  const rack = rackProp ? buildRack(rackProp.box) : null;
+  const rack = rackProp ? buildRack(rackProp.box, pool) : null;
   if (rack) group.add(rack.group);
 
   const filing = byId.get('filing');
@@ -395,20 +409,16 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
     group.add(e.group);
   }
 
-  // Plants in the corners of the desk area.
-  const plant = mergeGeometries([new THREE.CylinderGeometry(0.2, 0.16, 0.36, 10).translate(0, 0.18, 0)]);
-  const leaves = mergeGeometries([
-    new THREE.SphereGeometry(0.34, 10, 8).translate(0, 0.72, 0),
-    new THREE.SphereGeometry(0.24, 10, 8).translate(0.14, 1.02, 0.05),
-  ]);
+  // Plants in the corners of the desk area (#141: pooled, the same two meshes on every floor).
   const spots = [
     [layout.width - 1.8, 0.6],
     [6.4, layout.depth - 0.7],
     [layout.width - 0.6, layout.depth - 0.7],
     [0.6, layout.depth - 0.7],
   ];
-  const pots = new THREE.InstancedMesh(plant, toon(OFFICE.pot), spots.length);
-  const greens = new THREE.InstancedMesh(leaves, toon(OFFICE.plant), spots.length);
+  const { pots, greens } = pool ? pool.take('plants', spots.length, group, plantKit) : plantKit(spots.length);
+  reuse(pots, spots.length);
+  reuse(greens, spots.length);
   spots.forEach(([x, z], i) => {
     const m = new THREE.Matrix4().makeTranslation(x as number, 0, z as number);
     pots.setMatrixAt(i, m);
@@ -467,7 +477,7 @@ export function buildProps(props: readonly Prop[], layout: { width: number; dept
       rack?.dispose(); // its screen's canvas texture and the LEDs
       wbShown?.dispose();
       group.traverse((o) => {
-        if (o instanceof THREE.Mesh) {
+        if (o instanceof THREE.Mesh && !pool?.owns(o)) {
           o.geometry.dispose();
           for (const m of Array.isArray(o.material) ? o.material : [o.material]) (m as THREE.Material).dispose();
         }

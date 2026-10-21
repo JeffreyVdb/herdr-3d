@@ -8,6 +8,7 @@ import { CARD_RANGE, selectCards, type CardRange } from './select';
 import { drawStamp, drawTag, stampWidth } from './crewCard';
 import { CREW_FONT } from './layout';
 import { sameCard, type CardData, type Viewport } from './types';
+import { meshKit, reuse, type FloorPool, type PoolKit } from '../floorPool';
 
 const COLS = 4;
 /** On-screen width of a card at scale 1 (CSS px). */
@@ -256,6 +257,33 @@ function atlasCanvas(w: number, h: number): { canvas: HTMLCanvasElement; g: Canv
   return { canvas, g, tex };
 }
 
+/** #141: the cards' two batches and their atlases, the compact one with a cell per desk for `capacity` desks (see `FloorPool`). */
+interface CardsKit extends PoolKit {
+  compact: Batch;
+  canvas: HTMLCanvasElement;
+  g: CanvasRenderingContext2D;
+  tex: THREE.CanvasTexture;
+  tall: Batch;
+  tallCanvas: HTMLCanvasElement;
+  tallG: CanvasRenderingContext2D;
+  tallTex: THREE.CanvasTexture;
+}
+
+function cardsKit(capacity: number): CardsKit {
+  const rows = Math.max(1, Math.ceil(capacity / COLS));
+  const { canvas, g, tex } = atlasCanvas(CELL_W * COLS, CELL_H * rows);
+  // An instance per desk: whatever the range's cap, every card of the floor can show at once.
+  const compact = batch(tex, new THREE.PlaneGeometry(1, CELL_H / CELL_W).translate(0, CELL_H / CELL_W / 2, 0), Math.max(1, capacity), 'cards.atlas', 10);
+  const { canvas: tallCanvas, g: tallG, tex: tallTex } = atlasCanvas(CELL_W * TALL_COLS, TALL_H * Math.ceil(TALL_CELLS / TALL_COLS));
+  // A unit quad standing on its bottom edge: each instance is scaled to its card's height.
+  const tall = batch(tallTex, new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0), TALL_CELLS, 'cards.tall', 11);
+  compact.mesh.add(tall.mesh);
+  return meshKit(capacity, [compact.mesh, tall.mesh], { compact, canvas, g, tex, tall, tallCanvas, tallG, tallTex }, () => {
+    tex.dispose();
+    tallTex.dispose();
+  });
+}
+
 /**
  * Speech-bubble cards drawn into one canvas atlas (a cell per desk, redrawn only when that
  * worker's card changes) and rendered as a single instanced quad batch facing
@@ -267,6 +295,8 @@ function atlasCanvas(w: number, h: number): { canvas: HTMLCanvasElement; g: Canv
  */
 export class AtlasCards {
   readonly object: THREE.InstancedMesh;
+  private readonly kit: CardsKit;
+  private readonly pooled: boolean;
   private readonly canvas: HTMLCanvasElement;
   private readonly g: CanvasRenderingContext2D;
   private readonly tex: THREE.CanvasTexture;
@@ -290,24 +320,31 @@ export class AtlasCards {
   private dirty = true;
   private showing: number[] = [];
 
+  /** `pool`: the office's cards, their batches and atlases kept from floor to floor (#141); none: their own. */
   constructor(
     readonly slots: number,
     private range: CardRange = CARD_RANGE,
     private readonly weight: (slot: number) => number = () => 1,
     private readonly occluded: (slot: number, dist: number) => boolean = () => false,
+    pool?: FloorPool,
   ) {
-    const rows = Math.max(1, Math.ceil(slots / COLS));
-    ({ canvas: this.canvas, g: this.g, tex: this.tex } = atlasCanvas(CELL_W * COLS, CELL_H * rows));
-    // An instance per desk: whatever the range's cap, every card of the floor can show at once.
-    const instances = Math.max(1, slots);
-    const compact = batch(this.tex, new THREE.PlaneGeometry(1, CELL_H / CELL_W).translate(0, CELL_H / CELL_W / 2, 0), instances, 'cards.atlas', 10);
-    this.object = compact.mesh;
-    this.cell = compact.cell;
-    this.alpha = compact.alpha;
-    ({ canvas: this.tallCanvas, g: this.tallG, tex: this.tallTex } = atlasCanvas(CELL_W * TALL_COLS, TALL_H * Math.ceil(TALL_CELLS / TALL_COLS)));
-    // A unit quad standing on its bottom edge: each instance is scaled to its card's height.
-    this.tall = batch(this.tallTex, new THREE.PlaneGeometry(1, 1).translate(0, 0.5, 0), TALL_CELLS, 'cards.tall', 11);
-    this.object.add(this.tall.mesh);
+    this.pooled = !!pool;
+    this.kit = pool ? pool.take('cards', slots, this, cardsKit) : cardsKit(slots);
+    this.kit.holder = this;
+    ({ canvas: this.canvas, g: this.g, tex: this.tex, tallCanvas: this.tallCanvas, tallG: this.tallG, tallTex: this.tallTex } = this.kit);
+    this.object = reuse(this.kit.compact.mesh, 0);
+    this.cell = this.kit.compact.cell;
+    this.alpha = this.kit.compact.alpha;
+    this.tall = this.kit.tall;
+    reuse(this.tall.mesh, 0);
+    // A new floor's cells start blank, as new atlases do.
+    this.g.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.tallG.clearRect(0, 0, this.tallCanvas.width, this.tallCanvas.height);
+  }
+
+  /** #141: still the cards its batches draw (pooled cards of a floor you left draw nothing). */
+  private get live(): boolean {
+    return this.kit.holder === this;
   }
 
   setCard(slot: number, card: CardData | null): void {
@@ -327,6 +364,7 @@ export class AtlasCards {
   }
 
   setVisible(v: boolean): void {
+    if (!this.live) return;
     this.object.visible = v;
     this.dirty = true;
   }
@@ -372,7 +410,7 @@ export class AtlasCards {
   }
 
   update(camera: THREE.PerspectiveCamera, anchors: ReadonlyArray<THREE.Vector3 | null>, vp: Viewport, force: boolean): void {
-    if (!this.object.visible || (!force && !this.dirty)) return;
+    if (!this.object.visible || (!force && !this.dirty) || !this.live) return;
     this.dirty = false;
     camera.getWorldDirection(this.fwd);
     const eff = anchors.map((a, i) => (a && this.cards.has(i) ? a : null));
@@ -454,13 +492,8 @@ export class AtlasCards {
     this.showing = chosen.map((c) => c.index);
   }
 
+  /** Pooled cards' batches and atlases are the pool's: they stay. */
   dispose(): void {
-    this.tex.dispose();
-    this.tallTex.dispose();
-    for (const mesh of [this.tall.mesh, this.object]) {
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
-      mesh.dispose();
-    }
+    if (!this.pooled) this.kit.dispose();
   }
 }

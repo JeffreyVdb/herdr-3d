@@ -6,6 +6,7 @@ import { CABLE_R, DOCK, KEYBOARD, LAPTOP, monitorFrame, MONITOR, MOUSE, STICKER_
 import { deskKit } from '../world/deskKit';
 import { CHAIR_IN_OFFSET, DESK_D, DESK_H, DESK_W, SEAT_OFFSET } from '../world/layout';
 import { BAND_COLOR, BAND_WORDS, bandAtlas, stickerAtlas, stickerLogo, STICKER_LOGOS, type BandStatus } from './deskArt';
+import { meshKit, reuse, type FloorPool, type PoolKit } from './floorPool';
 import { OFFICE } from './palette';
 
 /**
@@ -431,10 +432,119 @@ export function laptopMatrix(kit: DeskKit): THREE.Matrix4 {
   return T(kit.laptop.x, DESK_H + LAPTOP.sit, kit.laptop.z).multiply(RY(kit.laptop.yaw + (kit.side === 1 ? 0 : Math.PI)));
 }
 
+/** #141: the desks' meshes, a part per mesh, and their per-instance attributes, sized for `capacity` desks (see `FloorPool`). */
+interface DesksKit extends PoolKit {
+  parts: Partial<Record<Key, THREE.InstancedMesh>>;
+  attrs: Map<string, THREE.InstancedBufferAttribute>;
+}
+
+function desksKit(capacity: number, low: boolean, plus: boolean): DesksKit {
+  const n = Math.max(1, capacity);
+  const art = deskGeometries();
+  const geo = (k: Key): THREE.BufferGeometry => {
+    switch (k) {
+      case 'top':
+      case 'legs':
+      case 'chair':
+      case 'chairBase':
+      case 'plus':
+        return art[k];
+      case 'monitor': {
+        const p = new Paint();
+        if (low) {
+          // The city: a few pixels tall, so a plain panel on a neck.
+          const M = MONITOR;
+          p.add(box(M.glassW + 2 * M.bezel, M.glassH + 2 * M.bezel, M.depth), C.graphite, panelMatrix());
+          p.add(box(0.06, M.y - DESK_H, 0.03, 0, (M.y + DESK_H) / 2, M.z + 0.05), C.silver);
+        } else for (const x of monitorPieces()) p.add(x.geo, x.color);
+        return p.build();
+      }
+      case 'screen':
+        return screenGeometry();
+      case 'band':
+        return bandGeometry();
+      case 'kitL':
+        return kitGeometry(-1);
+      case 'kitR':
+        return kitGeometry(1);
+      case 'laptop':
+        return laptopGeometry();
+      case 'sticker':
+        return new THREE.CircleGeometry(STICKER_D / 2, 18).rotateY(Math.PI / 2);
+      case 'led':
+        return box(0.009, 0.0045, 0.009);
+      case 'pens':
+        return penGeometry();
+      default:
+        return itemGeometry(k);
+    }
+  };
+  const mat = (k: Key): THREE.Material => {
+    switch (k) {
+      case 'top':
+        return new THREE.MeshToonMaterial({ color: OFFICE.deskTop });
+      case 'legs':
+        return new THREE.MeshToonMaterial({ color: OFFICE.deskLeg });
+      case 'chair':
+        return new THREE.MeshToonMaterial({ color: OFFICE.chair });
+      case 'chairBase':
+        return new THREE.MeshToonMaterial({ color: OFFICE.chairBase });
+      case 'plus':
+        return new THREE.MeshToonMaterial({ color: OFFICE.plus, emissive: new THREE.Color(OFFICE.plus).multiplyScalar(0.45) });
+      case 'screen':
+      case 'led':
+        return new THREE.MeshBasicMaterial({ color: 0xffffff });
+      case 'band': {
+        // The bar's colour, the word in white on it (the atlas row this desk's status picks; the canvas's top row is v = 1).
+        const m = new THREE.MeshBasicNodeMaterial();
+        const row = float(BAND_WORDS.length - 1).sub(attribute('aWord', 'float'));
+        const t = texture(bandAtlas(), vec2(uv().x, row.add(uv().y).div(BAND_WORDS.length)));
+        m.colorNode = mix(attribute('aBand', 'vec3'), vec3(1, 1, 1), t.a);
+        return m;
+      }
+      case 'sticker': {
+        // The logo in its cell, the model family's colour in the ring round it.
+        const m = new THREE.MeshToonNodeMaterial();
+        const t = texture(stickerAtlas(), vec2(attribute('aLogo', 'float').add(uv().x).div(STICKER_LOGOS.length), uv().y));
+        m.colorNode = mix(attribute('aRim', 'vec3'), t.rgb, t.a);
+        return m;
+      }
+      case 'photo':
+      case 'notebook':
+        return tintMaterial();
+      default:
+        return vertexMaterial();
+    }
+  };
+  const parts: Partial<Record<Key, THREE.InstancedMesh>> = {};
+  const attrs = new Map<string, THREE.InstancedBufferAttribute>();
+  for (const k of Object.keys(PARTS) as Key[]) {
+    const d = PARTS[k];
+    if (low && !d.low) continue;
+    if (k === 'plus' && !plus) continue;
+    const g = geo(k);
+    for (const a of d.attrs ?? []) {
+      const attr = new THREE.InstancedBufferAttribute(new Float32Array(n * d.per * a.size), a.size);
+      g.setAttribute(a.name, attr);
+      attrs.set(`${k}.${a.name}`, attr);
+    }
+    const mesh = new THREE.InstancedMesh(g, mat(k), n * d.per);
+    mesh.frustumCulled = false;
+    // The parts with per-instance colours have them from the start (the shader is built with them or without).
+    if (k === 'screen' || k === 'led' || k === 'pens' || k === 'mug') mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * d.per * 3).fill(1), 3);
+    parts[k] = mesh;
+  }
+  // Unused geometry art of the low set.
+  for (const [k, g] of Object.entries(art)) if (!parts[k as Key]) g.dispose();
+  return meshKit(n, Object.values(parts), { parts, attrs });
+}
+
 export class DeskSet {
   readonly group = new THREE.Group();
+  private readonly kitOf: DesksKit;
+  private readonly pooled: boolean;
   private readonly meshes: Partial<Record<Key, THREE.InstancedMesh>>;
-  private readonly attrs = new Map<string, THREE.InstancedBufferAttribute>();
+  private readonly attrs: Map<string, THREE.InstancedBufferAttribute>;
   private readonly states: Array<DeskState | null>;
   private readonly local: Array<DeskLocal | null>;
   private readonly withPlus: boolean;
@@ -450,117 +560,44 @@ export class DeskSet {
   /**
    * `kits`: each desk's things (the office); none: the city's low desks.
    * `plus`: empty desks show their "+".
+   * `pool`: the office's desks, their meshes kept from floor to floor (#141); none: their own.
    */
   constructor(
     readonly capacity: number,
     shadows: boolean,
-    o: { plus: boolean; kits?: readonly DeskKit[] },
+    o: { plus: boolean; kits?: readonly DeskKit[]; pool?: FloorPool | undefined },
   ) {
     this.withPlus = o.plus;
     this.low = !o.kits;
     const n = Math.max(1, capacity);
     this.local = Array.from({ length: n }, (_, i) => (o.kits?.[i] ? this.localOf(o.kits[i] as DeskKit) : null));
-    const art = deskGeometries();
-    const band = bandAtlas();
-    const stickers = stickerAtlas();
-    const geo = (k: Key): THREE.BufferGeometry => {
-      switch (k) {
-        case 'top':
-        case 'legs':
-        case 'chair':
-        case 'chairBase':
-        case 'plus':
-          return art[k];
-        case 'monitor': {
-          const p = new Paint();
-          if (this.low) {
-            // The city: a few pixels tall, so a plain panel on a neck.
-            const M = MONITOR;
-            p.add(box(M.glassW + 2 * M.bezel, M.glassH + 2 * M.bezel, M.depth), C.graphite, panelMatrix());
-            p.add(box(0.06, M.y - DESK_H, 0.03, 0, (M.y + DESK_H) / 2, M.z + 0.05), C.silver);
-          } else for (const x of monitorPieces()) p.add(x.geo, x.color);
-          return p.build();
-        }
-        case 'screen':
-          return screenGeometry();
-        case 'band':
-          return bandGeometry();
-        case 'kitL':
-          return kitGeometry(-1);
-        case 'kitR':
-          return kitGeometry(1);
-        case 'laptop':
-          return laptopGeometry();
-        case 'sticker':
-          return new THREE.CircleGeometry(STICKER_D / 2, 18).rotateY(Math.PI / 2);
-        case 'led':
-          return box(0.009, 0.0045, 0.009);
-        case 'pens':
-          return penGeometry();
-        default:
-          return itemGeometry(k);
-      }
-    };
-    const mat = (k: Key): THREE.Material => {
-      switch (k) {
-        case 'top':
-          return new THREE.MeshToonMaterial({ color: OFFICE.deskTop });
-        case 'legs':
-          return new THREE.MeshToonMaterial({ color: OFFICE.deskLeg });
-        case 'chair':
-          return new THREE.MeshToonMaterial({ color: OFFICE.chair });
-        case 'chairBase':
-          return new THREE.MeshToonMaterial({ color: OFFICE.chairBase });
-        case 'plus':
-          return new THREE.MeshToonMaterial({ color: OFFICE.plus, emissive: new THREE.Color(OFFICE.plus).multiplyScalar(0.45) });
-        case 'screen':
-        case 'led':
-          return new THREE.MeshBasicMaterial({ color: 0xffffff });
-        case 'band': {
-          // The bar's colour, the word in white on it (the atlas row this desk's status picks; the canvas's top row is v = 1).
-          const m = new THREE.MeshBasicNodeMaterial();
-          const row = float(BAND_WORDS.length - 1).sub(attribute('aWord', 'float'));
-          const t = texture(band, vec2(uv().x, row.add(uv().y).div(BAND_WORDS.length)));
-          m.colorNode = mix(attribute('aBand', 'vec3'), vec3(1, 1, 1), t.a);
-          return m;
-        }
-        case 'sticker': {
-          // The logo in its cell, the model family's colour in the ring round it.
-          const m = new THREE.MeshToonNodeMaterial();
-          const t = texture(stickers, vec2(attribute('aLogo', 'float').add(uv().x).div(STICKER_LOGOS.length), uv().y));
-          m.colorNode = mix(attribute('aRim', 'vec3'), t.rgb, t.a);
-          return m;
-        }
-        case 'photo':
-        case 'notebook':
-          return tintMaterial();
-        default:
-          return vertexMaterial();
-      }
-    };
-    const meshes: Partial<Record<Key, THREE.InstancedMesh>> = {};
-    for (const k of Object.keys(PARTS) as Key[]) {
+    const make = (cap: number) => desksKit(cap, this.low, o.plus);
+    this.pooled = !!o.pool;
+    this.kitOf = o.pool ? o.pool.take(`desks${this.low ? '.low' : ''}${o.plus ? '' : '.noplus'}`, n, this, make) : make(n);
+    this.kitOf.holder = this;
+    this.meshes = this.kitOf.parts;
+    this.attrs = this.kitOf.attrs;
+    for (const [k, mesh] of Object.entries(this.meshes) as Array<[Key, THREE.InstancedMesh]>) {
       const d = PARTS[k];
-      if (this.low && !d.low) continue;
-      if (k === 'plus' && !o.plus) continue;
-      const g = geo(k);
-      for (const a of d.attrs ?? []) {
-        const attr = new THREE.InstancedBufferAttribute(new Float32Array(n * d.per * a.size), a.size);
-        g.setAttribute(a.name, attr);
-        this.attrs.set(`${k}.${a.name}`, attr);
-      }
-      const mesh = new THREE.InstancedMesh(g, mat(k), n * d.per);
+      reuse(mesh, n * d.per);
       mesh.name = `desks.${k}`;
-      mesh.frustumCulled = false;
       mesh.castShadow = shadows && d.shadow;
       mesh.receiveShadow = k === 'top';
       for (let i = 0; i < mesh.count; i++) mesh.setMatrixAt(i, ZERO);
-      if (k === 'screen' || k === 'led' || k === 'pens' || k === 'mug') for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.c.set(0xffffff));
+      if (mesh.instanceColor) for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.c.set(0xffffff));
+      for (const at of d.attrs ?? []) {
+        const attr = this.attrs.get(`${k}.${at.name}`) as THREE.InstancedBufferAttribute;
+        attr.array.fill(0, 0, n * d.per * at.size);
+        attr.needsUpdate = true;
+      }
       this.group.add(mesh);
-      meshes[k] = mesh;
     }
-    this.meshes = meshes;
     this.states = Array.from({ length: n }, () => null);
+  }
+
+  /** #141: still the desks its meshes draw (pooled desks of a floor you left write nothing). */
+  private get live(): boolean {
+    return this.kitOf.holder === this;
   }
 
   private localOf(kit: DeskKit): DeskLocal {
@@ -601,7 +638,7 @@ export class DeskSet {
 
   /** null hides the desk slot entirely. */
   set(i: number, d: DeskState | null): void {
-    if (i < 0 || i >= this.capacity) return;
+    if (i < 0 || i >= this.capacity || !this.live) return;
     this.states[i] = d;
     const M = this.meshes;
     if (!d) {
@@ -696,6 +733,7 @@ export class DeskSet {
 
   /** Screen flicker for working desks, and the bobbing "+" turned to the camera. */
   update(t: number, camera: THREE.Camera | null): void {
+    if (!this.live) return;
     const M = this.meshes;
     let colors = false;
     let plus = false;
@@ -754,11 +792,8 @@ export class DeskSet {
     return out;
   }
 
+  /** Pooled desks' meshes are the pool's: they stay. */
   dispose(): void {
-    for (const mesh of Object.values(this.meshes)) {
-      mesh.geometry.dispose();
-      (mesh.material as THREE.Material).dispose();
-      mesh.dispose();
-    }
+    if (!this.pooled) this.kitOf.dispose();
   }
 }

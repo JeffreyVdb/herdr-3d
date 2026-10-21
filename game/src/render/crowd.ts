@@ -6,6 +6,7 @@ import { INK } from './palette';
 import { CREW_PARTS, crewGeometries, DESK_ITEM, DESK_TOP, FLOOR_Y, PIP_OFF, PIP_OVER, WORN, type CrewLook, type CrewPartKey } from './crewLook';
 import { PASS_CAP } from '../world/crew';
 import { crewSpot } from '../world/deskKit';
+import { meshKit, reuse, type FloorPool, type PoolKit } from './floorPool';
 
 /**
  * Procedural rigid-part workers (docs/decisions.md): a round capsule body,
@@ -156,8 +157,47 @@ const TINTED: PartKey[] = ['body', 'armL', 'armR'];
 const CUED: PartKey[] = ['beanie', 'cap'];
 const NO_SHADOW: PartKey[] = ['pupils', 'mouth', 'lenses', 'zzz', 'exclaim'];
 
+/** #141: the crowd's meshes, a part per mesh, sized for `capacity` members (see `FloorPool`). */
+interface CrowdKit extends PoolKit {
+  parts: Record<PartKey, THREE.InstancedMesh>;
+  crew: Record<CrewPartKey, THREE.InstancedMesh>;
+}
+
+function crowdKit(capacity: number, low: boolean): CrowdKit {
+  const instanced = (geo: THREE.BufferGeometry, mat: THREE.Material, n: number, colored: boolean) => {
+    const mesh = new THREE.InstancedMesh(geo, mat, n);
+    mesh.frustumCulled = false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // A part with per-member colours has them from the start: the shader is built with them or without.
+    if (colored) mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
+    return mesh;
+  };
+  const geo = geometries(low);
+  const parts = Object.fromEntries(
+    (Object.keys(geo) as PartKey[]).map((key) => {
+      const tinted = TINTED.includes(key) || CUED.includes(key);
+      const mat = new THREE.MeshToonMaterial({ color: tinted ? 0xffffff : (COLORS[key] ?? 0xffffff) });
+      if (key === 'exclaim' || key === 'zzz') mat.emissive.set(COLORS[key] ?? 0xffffff).multiplyScalar(0.35);
+      return [key, instanced(geo[key], mat, Math.max(1, capacity * perOf(key)), tinted)];
+    }),
+  ) as Record<PartKey, THREE.InstancedMesh>;
+  const crewGeo = crewGeometries(low);
+  const crew = Object.fromEntries(
+    CREW_PARTS.map((d) => {
+      const mat = new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: !d.tinted });
+      if (d.emissive !== undefined) mat.emissive.set(d.emissive);
+      return [d.key, instanced(crewGeo[d.key], mat, Math.max(1, capacity * d.per), d.tinted)];
+    }),
+  ) as Record<CrewPartKey, THREE.InstancedMesh>;
+  return meshKit(capacity, [...Object.values(parts), ...Object.values(crew)], { parts, crew });
+}
+
+const perOf = (key: PartKey) => (key === 'zzz' ? 2 : 1);
+
 export class Crowd {
   readonly group = new THREE.Group();
+  private readonly kit: CrowdKit;
+  private readonly pooled: boolean;
   private readonly parts: Part[];
   private readonly byKey: Record<PartKey, Part>;
   private readonly members: Array<Member | null>;
@@ -179,47 +219,47 @@ export class Crowd {
   private readonly crewOn: boolean[];
   private readonly tmp3 = new THREE.Matrix4();
 
+  /** `pool`: the office's crowd, its meshes kept from floor to floor (#141); none: its own (the city, the walkers). */
   constructor(
     readonly capacity: number,
     shadows: boolean,
     low = false,
+    pool?: FloorPool,
   ) {
-    const geo = geometries(low);
-    this.parts = (Object.keys(geo) as PartKey[]).map((key) => {
-      const per = key === 'zzz' ? 2 : 1;
-      const tinted = TINTED.includes(key) || CUED.includes(key);
-      const mat = new THREE.MeshToonMaterial({ color: tinted ? 0xffffff : (COLORS[key] ?? 0xffffff) });
-      if (key === 'exclaim' || key === 'zzz') mat.emissive.set(COLORS[key] ?? 0xffffff).multiplyScalar(0.35);
-      const mesh = new THREE.InstancedMesh(geo[key], mat, Math.max(1, capacity * per));
+    const make = (cap: number) => crowdKit(cap, low);
+    this.pooled = !!pool;
+    this.kit = pool ? pool.take(low ? 'crowd.low' : 'crowd', capacity, this, make) : make(capacity);
+    this.kit.holder = this;
+    this.parts = (Object.keys(this.kit.parts) as PartKey[]).map((key) => {
+      const per = perOf(key);
+      const mesh = reuse(this.kit.parts[key], Math.max(1, capacity * per));
       mesh.name = `crowd.${key}`;
-      mesh.frustumCulled = false;
       mesh.castShadow = shadows && !NO_SHADOW.includes(key);
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       for (let i = 0; i < mesh.count; i++) mesh.setMatrixAt(i, ZERO);
-      if (tinted) for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.color.set(0xffffff));
+      if (mesh.instanceColor) for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.color.set(0xffffff));
       this.group.add(mesh);
       return { key, mesh, per };
     });
     this.byKey = Object.fromEntries(this.parts.map((p) => [p.key, p])) as Record<PartKey, Part>;
     this.members = Array.from({ length: capacity }, () => null);
-    const crewGeo = crewGeometries(low);
     const crewParts: Partial<Record<CrewPartKey, CrewPart>> = {};
     for (const d of CREW_PARTS) {
-      const mat = new THREE.MeshToonMaterial({ color: 0xffffff, vertexColors: !d.tinted });
-      if (d.emissive !== undefined) mat.emissive.set(d.emissive);
-      const mesh = new THREE.InstancedMesh(crewGeo[d.key], mat, Math.max(1, capacity * d.per));
+      const mesh = reuse(this.kit.crew[d.key], Math.max(1, capacity * d.per));
       mesh.name = `crowd.${d.key}`;
-      mesh.frustumCulled = false;
       mesh.castShadow = shadows && d.shadow;
       mesh.visible = false;
-      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       for (let i = 0; i < mesh.count; i++) mesh.setMatrixAt(i, ZERO);
-      if (d.tinted) for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.color.set(0xffffff));
+      if (mesh.instanceColor) for (let i = 0; i < mesh.count; i++) mesh.setColorAt(i, this.color.set(0xffffff));
       this.group.add(mesh);
       crewParts[d.key] = { mesh, per: d.per, used: false };
     }
     this.crewParts = crewParts as Record<CrewPartKey, CrewPart>;
     this.crewOn = Array.from({ length: capacity }, () => false);
+  }
+
+  /** #141: still the crowd its meshes draw (a pooled crowd of a floor you left writes nothing). */
+  private get live(): boolean {
+    return this.kit.holder === this;
   }
 
   /** M6: the crew parts drawn for member `i` (test hook). */
@@ -247,7 +287,7 @@ export class Crowd {
   }
 
   set(i: number, m: Member | null): void {
-    if (i < 0 || i >= this.capacity) return;
+    if (i < 0 || i >= this.capacity || !this.live) return;
     this.members[i] = m;
     if (!m) {
       for (const p of this.parts) for (let k = 0; k < p.per; k++) p.mesh.setMatrixAt(i * p.per + k, ZERO);
@@ -303,6 +343,7 @@ export class Crowd {
 
   /** Recomputes every member's pose for time `t` (seconds). */
   update(t: number): void {
+    if (!this.live) return;
     for (const p of Object.values(this.crewParts)) p.used = false;
     for (let i = 0; i < this.capacity; i++) {
       const m = this.members[i];
@@ -607,11 +648,8 @@ export class Crowd {
     }
   }
 
+  /** A pooled crowd's meshes are the pool's: they stay. */
   dispose(): void {
-    for (const p of this.parts) {
-      p.mesh.geometry.dispose();
-      (p.mesh.material as THREE.Material).dispose();
-      p.mesh.dispose();
-    }
+    if (!this.pooled) this.kit.dispose();
   }
 }
