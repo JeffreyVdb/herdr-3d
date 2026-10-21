@@ -161,11 +161,13 @@ func policyRefusal(p *codexProfileRun, r codexapp.Requirements) error {
 func (h *Hub) confirmProfile(ctx context.Context, p *codexProfileRun, sock string, rec *store.CodexLaunch) error {
 	host := h.opts.CodexHost
 	acct, req, err := host.ReadProfile(ctx, sock)
-	if err != nil {
+	switch {
+	case acct.Answered && !acct.SignedIn: // also when the policy read after it failed
+		return notSignedIn(p)
+	case err != nil:
 		profileChecked(p, rec, store.AccountUnconfirmed, "", "Could not confirm the account: "+err.Error()+".")
 		return nil
-	}
-	if !acct.SignedIn {
+	case !acct.SignedIn:
 		return notSignedIn(p)
 	}
 	if req.Refuses() {
@@ -199,6 +201,8 @@ func (h *Hub) checkHomeProfile(ctx context.Context, p *codexProfileRun, rec *sto
 	}
 	acct, req, err := h.opts.CodexHost.HomeProfile(ctx, p.env)
 	switch {
+	case acct.Answered && !acct.SignedIn: // also when the policy read after it failed
+		return notSignedIn(p)
 	case err != nil:
 		profileChecked(p, rec, store.AccountUnconfirmed, "", "Could not confirm the account: reading "+p.name+"'s sign-in failed ("+err.Error()+").")
 	case !acct.SignedIn:

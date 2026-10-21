@@ -24,14 +24,14 @@ func TestReadProfile(t *testing.T) {
 		want      Account
 		wantReq   Requirements
 	}{
-		{"signed in, no policy", signedIn, map[string]any{"requirements": nil}, Account{SignedIn: true, Plan: "team", ID: "acct-1"}, Requirements{}},
-		{"not signed in", map[string]any{"account": nil, "requiresOpenaiAuth": true}, map[string]any{"requirements": nil}, Account{}, Requirements{}},
+		{"signed in, no policy", signedIn, map[string]any{"requirements": nil}, Account{Answered: true, SignedIn: true, Plan: "team", ID: "acct-1"}, Requirements{}},
+		{"not signed in", map[string]any{"account": nil, "requiresOpenaiAuth": true}, map[string]any{"requirements": nil}, Account{Answered: true}, Requirements{}},
 		{"no workspaceRouting", map[string]any{"account": map[string]any{"type": "chatgpt", "email": "a@example.invalid", "planType": "plus"}},
-			map[string]any{"requirements": nil}, Account{SignedIn: true, Plan: "plus"}, Requirements{}},
+			map[string]any{"requirements": nil}, Account{Answered: true, SignedIn: true, Plan: "plus"}, Requirements{}},
 		{"a policy", signedIn, map[string]any{"requirements": map[string]any{
 			"allowedApprovalPolicies": []any{"on-request", map[string]any{"granular": map[string]any{}}},
 			"allowedSandboxModes":     []any{"read-only", "workspace-write"}}},
-			Account{SignedIn: true, Plan: "team", ID: "acct-1"},
+			Account{Answered: true, SignedIn: true, Plan: "team", ID: "acct-1"},
 			Requirements{Present: true, Approvals: []string{"on-request", "granular"}, Sandboxes: []string{"read-only", "workspace-write"}}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -68,6 +68,37 @@ func TestReadProfile(t *testing.T) {
 	}
 }
 
+// #139 R3: account: null stands when configRequirements/read fails after
+// it; an account/read that fails answers nothing.
+func TestReadProfileFails(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		fail string
+		want Account
+	}{
+		{"the policy read", "configRequirements/read", Account{Answered: true}},
+		{"the account read", "account/read", Account{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeServer(t)
+			f.respond = func(method string, _ map[string]any) (any, any, bool) {
+				switch {
+				case method == c.fail:
+					return nil, map[string]any{"code": -32601, "message": "unknown"}, false
+				case method == "account/read":
+					return map[string]any{"account": nil}, nil, false
+				}
+				return nil, map[string]any{"code": -32601, "message": "unknown"}, false
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if a, _, err := ReadProfile(ctx, f.sock); err == nil || a != c.want {
+				t.Fatalf("got %+v, %v", a, err)
+			}
+		})
+	}
+}
+
 func TestRequirementsRefuses(t *testing.T) {
 	for _, c := range []struct {
 		r    Requirements
@@ -89,7 +120,8 @@ func TestRequirementsRefuses(t *testing.T) {
 // fakeStdioCodex is `codex app-server` on stdio (TestMain): it answers
 // initialize, account/read (signed in as its CODEX_HOME's last element, or
 // not signed in when that is "nobody") and configRequirements/read (a
-// policy when that is "managed").
+// policy when that is "managed"; an error when it is "nopolicy", whose
+// account/read says not signed in).
 func fakeStdioCodex() {
 	sc := bufio.NewScanner(os.Stdin)
 	for sc.Scan() {
@@ -108,13 +140,18 @@ func fakeStdioCodex() {
 			home := filepath.Base(os.Getenv("CODEX_HOME"))
 			res = map[string]any{"account": map[string]any{"type": "chatgpt", "email": "x@example.invalid", "planType": "team"},
 				"workspaceRouting": map[string]any{"chatgptAccountId": home}}
-			if home == "nobody" {
+			if home == "nobody" || home == "nopolicy" {
 				res = map[string]any{"account": nil}
 			}
 		case "configRequirements/read":
 			res = map[string]any{"requirements": nil}
 			if filepath.Base(os.Getenv("CODEX_HOME")) == "managed" {
 				res = map[string]any{"requirements": map[string]any{"allowedSandboxModes": []any{"read-only"}}}
+			}
+			if filepath.Base(os.Getenv("CODEX_HOME")) == "nopolicy" {
+				b, _ := json.Marshal(map[string]any{"id": m["id"], "error": map[string]any{"code": -32601, "message": "unknown"}})
+				fmt.Println(string(b))
+				continue
 			}
 		}
 		fmt.Println(`{"method":"configWarning","params":{}}`) // a notification first: skipped
@@ -135,7 +172,7 @@ func TestReadHomeProfile(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	a, r, err := ReadHomeProfile(ctx, bin, []string{"CODEX_HOME=/home/u/.codex-work"})
-	if err != nil || a != (Account{SignedIn: true, Plan: "team", ID: ".codex-work"}) || r.Present {
+	if err != nil || a != (Account{Answered: true, SignedIn: true, Plan: "team", ID: ".codex-work"}) || r.Present {
 		t.Fatalf("got %+v %+v, %v", a, r, err)
 	}
 	if a, _, err := ReadHomeProfile(ctx, bin, []string{"CODEX_HOME=/home/u/nobody"}); err != nil || a.SignedIn {
@@ -143,6 +180,10 @@ func TestReadHomeProfile(t *testing.T) {
 	}
 	if _, r, err := ReadHomeProfile(ctx, bin, []string{"CODEX_HOME=/home/u/managed"}); err != nil || !r.Refuses() {
 		t.Fatalf("managed: %+v, %v", r, err)
+	}
+	// account: null stands when the policy read after it fails (#139 R3).
+	if a, _, err := ReadHomeProfile(ctx, bin, []string{"CODEX_HOME=/home/u/nopolicy"}); err == nil || a != (Account{Answered: true}) {
+		t.Fatalf("not signed in, no policy: %+v, %v", a, err)
 	}
 	if _, _, err := ReadHomeProfile(ctx, filepath.Join(t.TempDir(), "nope"), nil); err == nil {
 		t.Fatal("a missing codex answered")

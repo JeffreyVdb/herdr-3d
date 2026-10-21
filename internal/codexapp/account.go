@@ -21,6 +21,9 @@ import (
 // Account is what account/read says of a sign-in, without the email (it is
 // never decoded).
 type Account struct {
+	// Answered: account/read answered, so SignedIn and Plan are its reply's
+	// (also when the policy read after it failed).
+	Answered bool
 	// SignedIn: the reply has an account (null: not signed in).
 	SignedIn bool
 	// Plan is the account's planType ("team", "prolite"; "" when unsent).
@@ -66,7 +69,7 @@ type accountReply struct {
 }
 
 func (r accountReply) account() Account {
-	a := Account{SignedIn: r.Account != nil}
+	a := Account{Answered: true, SignedIn: r.Account != nil}
 	if r.Account != nil {
 		a.Plan = r.Account.PlanType
 	}

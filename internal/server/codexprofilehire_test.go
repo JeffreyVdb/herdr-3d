@@ -277,6 +277,10 @@ func TestProfileHireConfirm(t *testing.T) {
 		"not signed in": {server: func(string) (codexapp.Account, codexapp.Requirements, error) {
 			return codexapp.Account{}, codexapp.Requirements{}, nil
 		}, fails: "work is not signed in. Run `CODEX_HOME=%s codex login` in a terminal."},
+		// R3: account: null stands when the policy read after it fails.
+		"not signed in, the policy read fails": {server: func(string) (codexapp.Account, codexapp.Requirements, error) {
+			return codexapp.Account{Answered: true}, codexapp.Requirements{}, errors.New("configRequirements/read: app-server error -32601: unknown")
+		}, fails: "work is not signed in. Run `CODEX_HOME=%s codex login` in a terminal."},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -390,15 +394,18 @@ func TestProfileHireLegacy(t *testing.T) {
 		t.Fatalf("launch = %+v, result %s", l, m.raw)
 	}
 
-	// Not signed in: the hire fails before Codex starts.
-	pb.host.home = func([]string) (codexapp.Account, codexapp.Requirements, error) {
-		return codexapp.Account{}, codexapp.Requirements{}, nil
-	}
-	m, calls = pb.hire(t, 2, "work")
-	if e := hireError(t, m); !strings.Contains(e.Message, "work is not signed in") || slices.ContainsFunc(calls, func(c string) bool {
-		return strings.HasPrefix(c, "start-agent")
-	}) {
-		t.Fatalf("error %s, calls %q", m.raw, calls)
+	// Not signed in: the hire fails before Codex starts, also when the
+	// policy read after account/read fails (R3).
+	for desk, fail := range []error{nil, errors.New("configRequirements/read: context deadline exceeded")} {
+		pb.host.home = func([]string) (codexapp.Account, codexapp.Requirements, error) {
+			return codexapp.Account{Answered: true}, codexapp.Requirements{}, fail
+		}
+		m, calls = pb.hire(t, 2+desk, "work")
+		if e := hireError(t, m); !strings.Contains(e.Message, "work is not signed in") || slices.ContainsFunc(calls, func(c string) bool {
+			return strings.HasPrefix(c, "start-agent")
+		}) {
+			t.Fatalf("error %s, calls %q", m.raw, calls)
+		}
 	}
 	pb.balanced(t)
 }
