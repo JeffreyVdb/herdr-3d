@@ -216,11 +216,14 @@ Chrome window ── /ws, /logo, /upload, /screen, /whiteboard, /drops, /healthz
     compared with what Codex run on the folder alone reports (`workspaceRouting.chatgptAccountId`, never kept) and the
     launch records `confirmed`, `mismatch` or `unconfirmed` with the plan (`codex_launch.profile`, `account`,
     `profile_note`). Wake repeats prepare → export → server → checks → attach; a profile gone meanwhile wakes on the
-    default with a new Codex session. The default profile is the hire from before #139, byte for byte. **Limits:** a
-    worker on another profile writes its rollouts under that folder's `sessions/`, but the bridge's transcript, usage
-    and Codex-subagent readers look only in `--codex-sessions` (the default's), so such a worker has no transcript or
-    usage in the game; and a bare folder without herdr's session hook (`hooks.json` naming `herdr-agent-state.sh`)
-    never reports its thread, so the bridge cannot join it and every wake starts a new session (the hire says so).
+    default with a new Codex session. A worker without its own server is checked again on wake and woken the same way
+    by the floor's resume fallback. The default profile is the hire from before #139, byte for byte. **Sessions:** a
+    worker on another profile writes its rollouts under that folder's `sessions/`, and the bridge reads them there
+    (usage, transcript lines, Codex subagents, the lookup by folder, the sleep backfill, generated images), never in
+    `--codex-sessions`; that folder's `auth.json` is never read. A bare folder without herdr's session hook
+    (`hooks.json` naming `herdr-agent-state.sh`) never reports its thread: the bridge asks the worker's own server for
+    its one root thread (`codexapp.RootThread`, never a subagent's, never a guess between two), so it joins it and a
+    wake resumes it; a `/new` in the terminal is not followed (the hire says so).
   - **What a worker hired the usual way (legacy) lacks:** its async questions cannot be answered from the transcript
     (no join, no `worker.answer_async`); it answers them in its terminal, as every Codex worker did before #155. The rest
     (prompts, slash commands, approvals, images, sleep, wake, send home) works as for any Codex worker.

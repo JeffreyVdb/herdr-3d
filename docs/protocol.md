@@ -2488,8 +2488,8 @@ every Codex process it starts. Nothing is switched: two workers on two profiles 
   profile; `herdr agent start` takes no environment. A [shared](#shared-codex-server) worker's launcher also sets it on
   the server's own command line, after `~/.bashrc` (or `config.fish`), which cannot undo it.
 - **Checks**, once a shared worker's server answers: `account/read` (`refreshToken: false`) and
-  `configRequirements/read` on its socket. Not signed in (`account: null`) fails the hire (`hire_failed`, the server
-  stopped): "`<name>` is not signed in. Run `` `CODEX_HOME=<folder> codex login` `` in a terminal." A workspace policy
+  `configRequirements/read` on its socket. Not signed in (`account: null`, also when the policy read after it fails)
+  fails the hire (`hire_failed`, the server stopped): "`<name>` is not signed in. Run `` `CODEX_HOME=<folder> codex login` `` in a terminal." A workspace policy
   (`requirements` not null) that does not allow approval `never` or sandbox `danger-full-access`, what herdr-3d hires
   with, fails it too: "`<name>` does not allow workers that run without asking. Its workspace policy limits approvals to
   `<list>` and sandbox to `<list>`." Neither falls back to Codex's built-in server (it would meet the same account).
@@ -2499,10 +2499,16 @@ every Codex process it starts. Nothing is switched: two workers on two profiles 
   account: …"; e.g. a Codex that does not send the field). A worker without a server of its own (the switch off, or a
   hire that fell back) is checked through the folder alone: signed in and the policy, its account `unconfirmed` ("it
   has no Codex server of its own to ask").
-- **A bare folder**: a profile whose `hooks.json` (or `config.toml`) does not name herdr's `herdr-agent-state.sh` gets
-  the note "`<name>` has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the bridge
-  cannot join its thread (its async questions cannot be answered from the transcript) and a wake starts a new Codex
-  session." Not a failure.
+- **A bare folder**: a profile whose `hooks.json` (or `config.toml`) does not name herdr's `herdr-agent-state.sh` never
+  has herdr report the worker's session. A shared worker's thread is then taken from its own server (its one loaded
+  root thread, never a subagent's, never a guess between two), so the bridge joins it (`thread`) and a wake resumes it;
+  its note says "`<name>` has no hooks.json with herdr's hook: herdr is not told the worker's Codex session, so the
+  bridge takes its thread from the worker's own Codex server and does not follow a new session started in its terminal
+  (/new)." A worker without its own server: "… so the bridge finds it by the worker's folder in `<name>`'s sessions
+  (for its usage, and at sleep, so a wake resumes it)." Not a failure.
+- **Sessions**: such a worker's usage, transcript (lines, Codex subagents, generated images) and session found by its
+  folder are read in its profile's `sessions/`, never in `--codex-sessions`; a profile that is gone reads none. Its
+  usage's `cache.auth` is absent (the folder's `auth.json` is never read).
 - **The worker** (and the hire's ack) carry it on `codex`: `profile` (the key; absent: the default, and every worker
   hired before #139), `account` (`confirmed` | `mismatch` | `unconfirmed`; absent: not checked, the default), `plan`
   and `profile_note` (the notes above, in plain words). Never an email or an account id. A Codex hire on a profile
@@ -2510,13 +2516,16 @@ every Codex process it starts. Nothing is switched: two workers on two profiles 
   profile from `codex_profiles` by key, so a rename follows; with fewer than two visible profiles it shows nothing of
   this.
 - **Wake** prepares the stored profile again and exports its folder in the pane before the server starts (then the
-  checks, then the terminal attaches); a refusing profile fails the wake with the same words on the worker's `note`.
+  checks, then the terminal attaches); a refusing profile fails the wake with the same words on the worker's `note`
+  (a worker without a server of its own: on its `profile_note`, "The wake did not resume it: …").
   A profile that is gone (not listed, or its folder removed) wakes on the default profile with a **new** Codex session
   (its thread is in the gone folder, which no other home can resume): `profile` becomes the default's key and
   `profile_note` says "`<old name>` is gone: woke on `<default name>`. Its Codex session stays in that folder, so a new
-  one was started." A worker on a profile without a server of its own that herdr's own resume did not bring back gets
-  the export before the floor's resume fallback types `codex resume <id>`; `floor.sleep` does not backfill its session
-  id (`backfills[].skipped`: its sessions are in its profile's folder, not in `--codex-sessions`).
+  one was started." A worker on a profile without a server of its own that herdr's own resume did not bring back is
+  checked again and gets the export before the floor's resume fallback types `codex resume <id>`; on a gone profile the
+  fallback starts a new Codex session on the default instead, with the same `profile_note`. `floor.sleep` backfills its
+  session id from its profile's folder (a gone one: `backfills[].skipped`, "its Codex profile is gone: its sessions are
+  not read").
 
 ```json
 {"t":"worker.hire","req_id":"h7","args":{"floor":"herdr-3d","desk_index":5,"harness":"codex","model":"gpt-6-sol","effort":"high","codex_profile":"work"}}
